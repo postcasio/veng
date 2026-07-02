@@ -7,19 +7,13 @@
 
 #include <fmt/format.h>
 
+#include <Veng/Cook/JsonFile.h>
+#include <Veng/Renderer/Types.h>
+
 namespace Veng::Cook
 {
     namespace
     {
-        // Underlying-integer ordinals mirroring Veng::Renderer::Format
-        // (cycle-avoidance rule, CookedBlobs.h). The four float formats plus the
-        // RGBA16Uint bone-index format are the valid vertex-layout formats.
-        constexpr u32 FormatR32Sfloat = 7;
-        constexpr u32 FormatRG32Sfloat = 8;
-        constexpr u32 FormatRGB32Sfloat = 9;
-        constexpr u32 FormatRGBA32Sfloat = 10;
-        constexpr u32 FormatRGBA16Uint = 20;
-
         void SetName(char (&dest)[ShaderNameCapacity], std::string_view name)
         {
             const usize n = std::min(name.size(), static_cast<usize>(ShaderNameCapacity) - 1);
@@ -27,27 +21,29 @@ namespace Veng::Cook
             dest[n] = '\0';
         }
 
+        // The four float formats plus the RGBA16Uint bone-index format are the valid
+        // vertex-layout formats; the cooked element stores the Renderer::Format ordinal.
         optional<u32> ParseFormatString(const string& name)
         {
             if (name == "R32Sfloat")
             {
-                return FormatR32Sfloat;
+                return static_cast<u32>(Renderer::Format::R32Sfloat);
             }
             if (name == "RG32Sfloat")
             {
-                return FormatRG32Sfloat;
+                return static_cast<u32>(Renderer::Format::RG32Sfloat);
             }
             if (name == "RGB32Sfloat")
             {
-                return FormatRGB32Sfloat;
+                return static_cast<u32>(Renderer::Format::RGB32Sfloat);
             }
             if (name == "RGBA32Sfloat")
             {
-                return FormatRGBA32Sfloat;
+                return static_cast<u32>(Renderer::Format::RGBA32Sfloat);
             }
             if (name == "RGBA16Uint")
             {
-                return FormatRGBA16Uint;
+                return static_cast<u32>(Renderer::Format::RGBA16Uint);
             }
             return std::nullopt;
         }
@@ -100,24 +96,12 @@ namespace Veng::Cook
 
     Result<vector<CookedVertexLayoutElement>> ReadVertexLayoutFile(const path& filePath)
     {
-        const std::ifstream file(filePath, std::ios::binary);
-        if (!file)
+        const Result<json> parsed = ReadJsonFile(filePath, "vertex layout");
+        if (!parsed)
         {
-            return std::unexpected(
-                fmt::format("vertex layout '{}': failed to open", filePath.string()));
+            return std::unexpected(parsed.error());
         }
 
-        std::ostringstream ss;
-        ss << file.rdbuf();
-        const string content = ss.str();
-
-        const json parsed = json::parse(content, nullptr, false);
-        if (parsed.is_discarded())
-        {
-            return std::unexpected(
-                fmt::format("vertex layout '{}': invalid JSON", filePath.string()));
-        }
-
-        return ParseVertexLayoutElements(parsed, filePath.string());
+        return ParseVertexLayoutElements(*parsed, filePath.string());
     }
 }

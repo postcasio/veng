@@ -6,6 +6,7 @@
 #include <Veng/Renderer/Types.h>
 
 #include <array>
+#include <cstdlib>
 #include <string_view>
 
 namespace Veng
@@ -52,10 +53,35 @@ namespace Veng
     ///
     /// The single source of truth for the format's JSON/UI spelling, shared by the
     /// cooker's parser, the editor's writer, and the editor combos. Pure — no JSON
-    /// dependency.
+    /// dependency. Header-inline so the veng-free cooker core (and the core-pack
+    /// bootstrap) reads the one table without linking libveng.
     /// @param format  The format to name.
     /// @return The format's stable name; an empty view for an out-of-range value.
-    [[nodiscard]] VE_API std::string_view ToString(CompressionFormat format);
+    [[nodiscard]] constexpr std::string_view ToString(CompressionFormat format)
+    {
+        switch (format)
+        {
+        case CompressionFormat::RGBA8Unorm:
+            return "RGBA8Unorm";
+        case CompressionFormat::RGBA8Srgb:
+            return "RGBA8Srgb";
+        case CompressionFormat::BC7Unorm:
+            return "BC7Unorm";
+        case CompressionFormat::BC7Srgb:
+            return "BC7Srgb";
+        case CompressionFormat::ASTC4x4Unorm:
+            return "ASTC4x4Unorm";
+        case CompressionFormat::ASTC4x4Srgb:
+            return "ASTC4x4Srgb";
+        case CompressionFormat::RGBA16Sfloat:
+            return "RGBA16Sfloat";
+        case CompressionFormat::BC5Unorm:
+            return "BC5Unorm";
+        case CompressionFormat::BC4Unorm:
+            return "BC4Unorm";
+        }
+        return {};
+    }
 
     /// @brief Parses a compression-format name back to its enumerator.
     ///
@@ -63,16 +89,53 @@ namespace Veng
     /// case-sensitive.
     /// @param name  The authoring name, e.g. "BC7Unorm".
     /// @return The format, or nullopt when `name` matches no format.
-    [[nodiscard]] VE_API optional<CompressionFormat> ParseCompressionFormat(std::string_view name);
+    [[nodiscard]] constexpr optional<CompressionFormat>
+    ParseCompressionFormat(std::string_view name)
+    {
+        for (const CompressionFormat format : CompressionFormats)
+        {
+            if (ToString(format) == name)
+            {
+                return format;
+            }
+        }
+        return std::nullopt;
+    }
 
     /// @brief Lowers a compression format to the engine's Renderer::Format vocabulary.
     ///
     /// One exhaustive, Vulkan-free switch — the cook-time bridge from the small
-    /// closed codec-output set to the full engine format enum. Asserts on an
-    /// out-of-range value (a loud one-line fix, like the backend type mappings).
+    /// closed codec-output set to the full engine format enum. Aborts on an
+    /// out-of-range value (a loud one-line fix, like the backend type mappings);
+    /// the fatal path is a bare abort, not VE_ASSERT, so the header stays usable
+    /// without linking libveng.
     /// @param format  The codec output to lower.
     /// @return The matching Renderer::Format.
-    [[nodiscard]] VE_API Renderer::Format ToRendererFormat(CompressionFormat format);
+    [[nodiscard]] inline Renderer::Format ToRendererFormat(CompressionFormat format)
+    {
+        switch (format)
+        {
+        case CompressionFormat::RGBA8Unorm:
+            return Renderer::Format::RGBA8Unorm;
+        case CompressionFormat::RGBA8Srgb:
+            return Renderer::Format::RGBA8Srgb;
+        case CompressionFormat::BC7Unorm:
+            return Renderer::Format::BC7Unorm;
+        case CompressionFormat::BC7Srgb:
+            return Renderer::Format::BC7Srgb;
+        case CompressionFormat::ASTC4x4Unorm:
+            return Renderer::Format::ASTC4x4Unorm;
+        case CompressionFormat::ASTC4x4Srgb:
+            return Renderer::Format::ASTC4x4Srgb;
+        case CompressionFormat::RGBA16Sfloat:
+            return Renderer::Format::RGBA16Sfloat;
+        case CompressionFormat::BC5Unorm:
+            return Renderer::Format::BC5Unorm;
+        case CompressionFormat::BC4Unorm:
+            return Renderer::Format::BC4Unorm;
+        }
+        std::abort();
+    }
 }
 
 VE_ENUM(::Veng::CompressionFormat, 0xE374AB3EBA8855F6ULL)

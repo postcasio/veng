@@ -40,10 +40,27 @@ namespace Veng
     ///
     /// The single source of truth for the role's JSON/UI spelling, shared by the
     /// cooker's parser, the editor's writer, and the editor combos. Pure — no JSON
-    /// dependency.
+    /// dependency. Header-inline so the veng-free cooker core (and the core-pack
+    /// bootstrap) reads the one table without linking libveng.
     /// @param role  The role to name.
     /// @return The role's stable name; an empty view for an out-of-range value.
-    [[nodiscard]] VE_API std::string_view ToString(CompressionRole role);
+    [[nodiscard]] constexpr std::string_view ToString(CompressionRole role)
+    {
+        switch (role)
+        {
+        case CompressionRole::Color:
+            return "Color";
+        case CompressionRole::Normal:
+            return "Normal";
+        case CompressionRole::Mask:
+            return "Mask";
+        case CompressionRole::HDR:
+            return "HDR";
+        case CompressionRole::UI:
+            return "UI";
+        }
+        return {};
+    }
 
     /// @brief Parses a compression-role name back to its enumerator.
     ///
@@ -51,7 +68,17 @@ namespace Veng
     /// case-sensitive.
     /// @param name  The authoring name, e.g. "Normal".
     /// @return The role, or nullopt when `name` matches no role.
-    [[nodiscard]] VE_API optional<CompressionRole> ParseCompressionRole(std::string_view name);
+    [[nodiscard]] constexpr optional<CompressionRole> ParseCompressionRole(std::string_view name)
+    {
+        for (const CompressionRole role : CompressionRoles)
+        {
+            if (ToString(role) == name)
+            {
+                return role;
+            }
+        }
+        return std::nullopt;
+    }
 }
 
 VE_ENUM(::Veng::CompressionRole, 0x5C9A85A5EDBF200FULL)

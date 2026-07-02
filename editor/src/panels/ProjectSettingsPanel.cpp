@@ -3,6 +3,7 @@
 #include "AssetSourceIndex.h"
 #include "EditorIcons.h"
 #include "FieldWidget.h"
+#include "JsonUtil.h"
 #include "PreviewCapability.h"
 
 #include <Veng/Asset/AssetManager.h>
@@ -27,25 +28,6 @@ namespace VengEditor
 
     namespace
     {
-        // Reads the format a role resolves to from the fixed RoleToFormat record.
-        CompressionFormat RoleFormat(const RoleToFormat& table, CompressionRole role)
-        {
-            switch (role)
-            {
-            case CompressionRole::Color:
-                return table.Color;
-            case CompressionRole::Normal:
-                return table.Normal;
-            case CompressionRole::Mask:
-                return table.Mask;
-            case CompressionRole::HDR:
-                return table.HDR;
-            case CompressionRole::UI:
-                return table.UI;
-            }
-            return table.Color;
-        }
-
         // Serializes one BuildConfiguration to its *.buildcfg JSON shape, the same schema the
         // cooker's ParseBuildConfiguration reads back. Enums are written by name through the
         // shared tables, never by ordinal.
@@ -61,7 +43,7 @@ namespace VengEditor
             for (const CompressionRole role : CompressionRoles)
             {
                 formats[std::string(ToString(role))] =
-                    std::string(ToString(RoleFormat(config.Formats, role)));
+                    std::string(ToString(config.Formats.GetFormat(role)));
             }
             cfg["formats"] = std::move(formats);
             return cfg;
@@ -243,20 +225,7 @@ namespace VengEditor
 
         // Round-trip the existing project.veng so keys the panel does not own (packs) survive, and
         // each configuration rewrites its *.buildcfg where it already lives (e.g. under configs/).
-        nlohmann::json project = nlohmann::json::object();
-        {
-            std::ifstream in(m_ProjectFile, std::ios::binary);
-            if (in)
-            {
-                std::ostringstream contents;
-                contents << in.rdbuf();
-                nlohmann::json parsed = nlohmann::json::parse(contents.str(), nullptr, false);
-                if (!parsed.is_discarded() && parsed.is_object())
-                {
-                    project = std::move(parsed);
-                }
-            }
-        }
+        nlohmann::json project = ReadJsonObject(m_ProjectFile).value_or(nlohmann::json::object());
 
         // Map each existing configuration's name to its referenced relative path, so a save
         // rewrites the *.buildcfg in place rather than beside the project file.
@@ -270,17 +239,10 @@ namespace VengEditor
                     continue;
                 }
                 const string rel = entry.get<string>();
-                std::ifstream cf(dir / rel, std::ios::binary);
-                if (!cf)
+                const optional<nlohmann::json> cj = ReadJsonObject(dir / rel);
+                if (cj && cj->contains("name") && (*cj)["name"].is_string())
                 {
-                    continue;
-                }
-                std::ostringstream cc;
-                cc << cf.rdbuf();
-                const nlohmann::json cj = nlohmann::json::parse(cc.str(), nullptr, false);
-                if (cj.is_object() && cj.contains("name") && cj["name"].is_string())
-                {
-                    pathByName[cj["name"].get<string>()] = rel;
+                    pathByName[(*cj)["name"].get<string>()] = rel;
                 }
             }
         }

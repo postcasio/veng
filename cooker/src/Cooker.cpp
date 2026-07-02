@@ -9,6 +9,7 @@
 #include <xxhash.h>
 #include <zstd.h>
 
+#include <Veng/Cook/JsonFile.h>
 #include <Veng/Project/CompressionFormat.h>
 #include <Veng/Project/CompressionRole.h>
 
@@ -69,113 +70,17 @@ namespace Veng::Cook
             writer.Add(id, type, blob, Xxh3_128(blob));
         }
 
-        // The canonical authoring name of a CompressionFormat. The names match the spellings in
-        // Veng::ToString(CompressionFormat); duplicated here rather than calling that libveng symbol,
-        // since Cooker.cpp links into the veng-free core (and the core-pack bootstrap) that cannot
-        // reference libveng's out-of-line name tables.
-        string_view CompressionFormatName(CompressionFormat format)
-        {
-            switch (format)
-            {
-            case CompressionFormat::RGBA8Unorm:
-                return "RGBA8Unorm";
-            case CompressionFormat::RGBA8Srgb:
-                return "RGBA8Srgb";
-            case CompressionFormat::BC7Unorm:
-                return "BC7Unorm";
-            case CompressionFormat::BC7Srgb:
-                return "BC7Srgb";
-            case CompressionFormat::ASTC4x4Unorm:
-                return "ASTC4x4Unorm";
-            case CompressionFormat::ASTC4x4Srgb:
-                return "ASTC4x4Srgb";
-            case CompressionFormat::RGBA16Sfloat:
-                return "RGBA16Sfloat";
-            case CompressionFormat::BC5Unorm:
-                return "BC5Unorm";
-            case CompressionFormat::BC4Unorm:
-                return "BC4Unorm";
-            }
-            return {};
-        }
-
-        // The canonical authoring name of a CompressionRole, mirroring Veng::ToString(CompressionRole)
-        // for the same veng-free-link reason as CompressionFormatName.
-        string_view CompressionRoleName(CompressionRole role)
-        {
-            switch (role)
-            {
-            case CompressionRole::Color:
-                return "Color";
-            case CompressionRole::Normal:
-                return "Normal";
-            case CompressionRole::Mask:
-                return "Mask";
-            case CompressionRole::HDR:
-                return "HDR";
-            case CompressionRole::UI:
-                return "UI";
-            }
-            return {};
-        }
-
-        // Parses a CompressionFormat authoring name to its enumerator over the local name table.
-        optional<CompressionFormat> ParseCompressionFormatName(const string& name)
-        {
-            for (const CompressionFormat format : CompressionFormats)
-            {
-                if (CompressionFormatName(format) == name)
-                {
-                    return format;
-                }
-            }
-            return std::nullopt;
-        }
-
-        // Writes the format a role resolves to into the fixed RoleToFormat record.
-        void SetRoleFormat(RoleToFormat& table, CompressionRole role, CompressionFormat format)
-        {
-            switch (role)
-            {
-            case CompressionRole::Color:
-                table.Color = format;
-                return;
-            case CompressionRole::Normal:
-                table.Normal = format;
-                return;
-            case CompressionRole::Mask:
-                table.Mask = format;
-                return;
-            case CompressionRole::HDR:
-                table.HDR = format;
-                return;
-            case CompressionRole::UI:
-                table.UI = format;
-                return;
-            }
-        }
-
         // Parses and validates the common pack JSON preamble. On error returns a located message.
         Result<json> ReadAndValidatePack(const path& packJson)
         {
-            const std::ifstream file(packJson, std::ios::binary);
-            if (!file)
+            const Result<json> packResult = ReadJsonFile(packJson, "pack");
+            if (!packResult)
             {
-                return std::unexpected(fmt::format("pack '{}': failed to open", packJson.string()));
+                return std::unexpected(packResult.error());
             }
+            const json& pack = *packResult;
 
-            std::ostringstream contentStream;
-            contentStream << file.rdbuf();
-            const string content = contentStream.str();
-
-            const json pack = json::parse(content, nullptr, false);
-            if (pack.is_discarded())
-            {
-                return std::unexpected(fmt::format("pack '{}': invalid JSON", packJson.string()));
-            }
-
-            if (!pack.is_object() || !pack.contains("version") ||
-                !pack["version"].is_number_unsigned())
+            if (!pack.contains("version") || !pack["version"].is_number_unsigned())
             {
                 return std::unexpected(
                     fmt::format("pack '{}': missing or invalid 'version'", packJson.string()));
@@ -291,19 +196,12 @@ namespace Veng::Cook
 
     Result<BuildConfiguration> ParseBuildConfiguration(const path& configFile)
     {
-        const std::ifstream file(configFile, std::ios::binary);
-        if (!file)
+        const Result<json> cfgResult = ReadJsonFile(configFile, "config");
+        if (!cfgResult)
         {
-            return std::unexpected(fmt::format("config '{}': failed to open", configFile.string()));
+            return std::unexpected(cfgResult.error());
         }
-
-        std::ostringstream contentStream;
-        contentStream << file.rdbuf();
-        const json cfg = json::parse(contentStream.str(), nullptr, false);
-        if (cfg.is_discarded() || !cfg.is_object())
-        {
-            return std::unexpected(fmt::format("config '{}': invalid JSON", configFile.string()));
-        }
+        const json& cfg = *cfgResult;
 
         BuildConfiguration config;
         if (cfg.contains("name") && cfg["name"].is_string())
@@ -330,7 +228,7 @@ namespace Veng::Cook
             const json& formats = cfg["formats"];
             for (const CompressionRole role : CompressionRoles)
             {
-                const string roleName{CompressionRoleName(role)};
+                const string roleName{ToString(role)};
                 if (!formats.contains(roleName))
                 {
                     continue;
@@ -341,14 +239,14 @@ namespace Veng::Cook
                                                        configFile.string(), roleName));
                 }
                 const string formatName = formats[roleName].get<string>();
-                const optional<CompressionFormat> format = ParseCompressionFormatName(formatName);
+                const optional<CompressionFormat> format = ParseCompressionFormat(formatName);
                 if (!format)
                 {
                     return std::unexpected(
                         fmt::format("config '{}': formats.{}: unknown format '{}'",
                                     configFile.string(), roleName, formatName));
                 }
-                SetRoleFormat(config.Formats, role, *format);
+                config.Formats.SetFormat(role, *format);
             }
         }
 
@@ -357,20 +255,12 @@ namespace Veng::Cook
 
     Result<CookProject> ParseProject(const path& projectFile)
     {
-        const std::ifstream file(projectFile, std::ios::binary);
-        if (!file)
+        const Result<json> projectResult = ReadJsonFile(projectFile, "project");
+        if (!projectResult)
         {
-            return std::unexpected(
-                fmt::format("project '{}': failed to open", projectFile.string()));
+            return std::unexpected(projectResult.error());
         }
-
-        std::ostringstream contentStream;
-        contentStream << file.rdbuf();
-        const json project = json::parse(contentStream.str(), nullptr, false);
-        if (project.is_discarded() || !project.is_object())
-        {
-            return std::unexpected(fmt::format("project '{}': invalid JSON", projectFile.string()));
-        }
+        const json& project = *projectResult;
 
         CookProject parsed;
         parsed.Directory = projectFile.parent_path();

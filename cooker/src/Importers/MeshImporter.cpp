@@ -14,6 +14,8 @@
 #include <assimp/scene.h>
 
 #include <Veng/Asset/CookedBlobs.h>
+#include <Veng/Cook/JsonFile.h>
+#include <Veng/Renderer/Types.h>
 
 #include "SkeletonSource.h"
 
@@ -22,15 +24,13 @@ namespace Veng::Cook
     namespace
     {
         // Canonical mesh vertex layout: position/normal/tangent/uv, interleaved,
-        // all 32-bit float. Format ordinals mirror Veng::Renderer::Format
-        // (Renderer/Types.h) — kept in sync by hand per the cycle-avoidance rule
-        // in assetpack's CookedBlobs.h. MeshLoader validates the cooked attribute
-        // descriptor against this same layout.
-        constexpr u32 FormatRGBA32Sfloat = 10;
-        constexpr u32 FormatRGB32Sfloat = 9;
-        constexpr u32 FormatRG32Sfloat = 8;
-        constexpr u32 FormatRGBA16Uint = 20;
-        constexpr u32 IndexTypeU32 = 1; // underlying Renderer::IndexType::U32
+        // all 32-bit float. The cooked attribute descriptor stores Renderer::Format
+        // ordinals; MeshLoader validates it against this same layout.
+        constexpr u32 FormatRGBA32Sfloat = static_cast<u32>(Renderer::Format::RGBA32Sfloat);
+        constexpr u32 FormatRGB32Sfloat = static_cast<u32>(Renderer::Format::RGB32Sfloat);
+        constexpr u32 FormatRG32Sfloat = static_cast<u32>(Renderer::Format::RG32Sfloat);
+        constexpr u32 FormatRGBA16Uint = static_cast<u32>(Renderer::Format::RGBA16Uint);
+        constexpr u32 IndexTypeU32 = static_cast<u32>(Renderer::IndexType::U32);
 
         // The maximum bone influences per skinned vertex (aiProcess_LimitBoneWeights caps
         // assimp's output to this); matches the engine's skinned vertex shader.
@@ -138,21 +138,12 @@ namespace Veng::Cook
 
         const path sourcePath = context.PackDir / entry["source"].get<string>();
 
-        const std::ifstream sourceFile(sourcePath, std::ios::binary);
-        if (!sourceFile)
+        const Result<json> meshJsonResult = ReadJsonFile(sourcePath, "mesh importer");
+        if (!meshJsonResult)
         {
-            return std::unexpected(
-                fmt::format("mesh importer: failed to open '{}'", sourcePath.string()));
+            return std::unexpected(meshJsonResult.error());
         }
-
-        std::ostringstream contentStream;
-        contentStream << sourceFile.rdbuf();
-        const json meshJson = json::parse(contentStream.str(), nullptr, false);
-        if (meshJson.is_discarded() || !meshJson.is_object())
-        {
-            return std::unexpected(
-                fmt::format("mesh importer: '{}': invalid JSON", sourcePath.string()));
-        }
+        const json& meshJson = *meshJsonResult;
 
         if (!meshJson.contains("model") || !meshJson["model"].is_string())
         {

@@ -26,6 +26,52 @@ namespace Veng
         CompressionFormat HDR = CompressionFormat::RGBA16Sfloat;
         /// @brief Format the UI role resolves to.
         CompressionFormat UI = CompressionFormat::ASTC4x4Unorm;
+
+        /// @brief Reads the format @p role resolves to.
+        /// @param role  The role to look up.
+        /// @return The role's field; Color for an out-of-range value.
+        [[nodiscard]] constexpr CompressionFormat GetFormat(CompressionRole role) const
+        {
+            switch (role)
+            {
+            case CompressionRole::Color:
+                return Color;
+            case CompressionRole::Normal:
+                return Normal;
+            case CompressionRole::Mask:
+                return Mask;
+            case CompressionRole::HDR:
+                return HDR;
+            case CompressionRole::UI:
+                return UI;
+            }
+            return Color;
+        }
+
+        /// @brief Writes the format @p role resolves to.
+        /// @param role  The role whose field to set.
+        /// @param format  The format the role now resolves to.
+        constexpr void SetFormat(CompressionRole role, CompressionFormat format)
+        {
+            switch (role)
+            {
+            case CompressionRole::Color:
+                Color = format;
+                return;
+            case CompressionRole::Normal:
+                Normal = format;
+                return;
+            case CompressionRole::Mask:
+                Mask = format;
+                return;
+            case CompressionRole::HDR:
+                HDR = format;
+                return;
+            case CompressionRole::UI:
+                UI = format;
+                return;
+            }
+        }
     };
 
     /// @brief A named per-platform ship target: the codec policy plus output naming for one build configuration.

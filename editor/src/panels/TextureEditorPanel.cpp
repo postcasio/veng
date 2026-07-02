@@ -1,6 +1,7 @@
 #include "TextureEditorPanel.h"
 
 #include "EditorIcons.h"
+#include "JsonUtil.h"
 
 #include <Veng/Asset/Texture.h>
 #include <Veng/ImGui/ImGuiLayer.h>
@@ -12,6 +13,7 @@
 #include <Veng/Project/CompressionRole.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/Sampler.h>
+#include <Veng/Renderer/TypeNames.h>
 #include <Veng/Time.h>
 #include <Veng/UI/UI.h>
 
@@ -29,44 +31,6 @@ namespace VengEditor
     namespace
     {
         constexpr f32 DebounceSeconds = 0.3f;
-
-        // The importer's string vocabulary (TextureImporter.cpp). Kept in lockstep
-        // with the enum ordinals declared in the header.
-        const char* const FilterNames[] = {"nearest", "linear"};
-        const char* const WrapNames[] = {"repeat", "mirrored_repeat", "clamp_to_edge",
-                                         "clamp_to_border"};
-
-        template <typename E>
-        optional<E> ParseEnum(const std::string& value, const char* const* names, usize count)
-        {
-            for (usize i = 0; i < count; ++i)
-            {
-                if (value == names[i])
-                {
-                    return static_cast<E>(i);
-                }
-            }
-            return std::nullopt;
-        }
-
-        // Reads the format a role resolves to from a configuration's fixed RoleToFormat record.
-        CompressionFormat RoleFormat(const RoleToFormat& table, CompressionRole role)
-        {
-            switch (role)
-            {
-            case CompressionRole::Color:
-                return table.Color;
-            case CompressionRole::Normal:
-                return table.Normal;
-            case CompressionRole::Mask:
-                return table.Mask;
-            case CompressionRole::HDR:
-                return table.HDR;
-            case CompressionRole::UI:
-                return table.UI;
-            }
-            return table.Color;
-        }
     }
 
     TextureEditorPanel::TextureEditorPanel(AssetId id, path sourcePath, Renderer::Context& context,
@@ -97,21 +61,13 @@ namespace VengEditor
     {
         m_Settings = Settings{};
 
-        const std::ifstream file(m_SourcePath, std::ios::binary);
-        if (!file)
+        const optional<nlohmann::json> texResult = ReadJsonObject(m_SourcePath);
+        if (!texResult)
         {
-            Log::Error("Texture editor: failed to open {}", m_SourcePath.string());
+            Log::Error("Texture editor: failed to read {}", m_SourcePath.string());
             return;
         }
-
-        std::ostringstream contents;
-        contents << file.rdbuf();
-        const nlohmann::json tex = nlohmann::json::parse(contents.str(), nullptr, false);
-        if (tex.is_discarded() || !tex.is_object())
-        {
-            Log::Error("Texture editor: malformed JSON {}", m_SourcePath.string());
-            return;
-        }
+        const nlohmann::json& tex = *texResult;
 
         if (tex.contains("srgb") && tex["srgb"].is_boolean())
         {
@@ -128,23 +84,21 @@ namespace VengEditor
         if (tex.contains("sampler") && tex["sampler"].is_object())
         {
             const nlohmann::json& sampler = tex["sampler"];
-            auto readFilter = [&](const char* key, Filter& out)
+            auto readFilter = [&](const char* key, Renderer::Filter& out)
             {
                 if (sampler.contains(key) && sampler[key].is_string())
                 {
-                    if (auto parsed =
-                            ParseEnum<Filter>(sampler[key].get<std::string>(), FilterNames, 2))
+                    if (auto parsed = Renderer::ParseFilter(sampler[key].get<std::string>()))
                     {
                         out = *parsed;
                     }
                 }
             };
-            auto readWrap = [&](const char* key, Wrap& out)
+            auto readWrap = [&](const char* key, Renderer::AddressMode& out)
             {
                 if (sampler.contains(key) && sampler[key].is_string())
                 {
-                    if (auto parsed =
-                            ParseEnum<Wrap>(sampler[key].get<std::string>(), WrapNames, 4))
+                    if (auto parsed = Renderer::ParseAddressMode(sampler[key].get<std::string>()))
                     {
                         out = *parsed;
                     }
@@ -163,20 +117,7 @@ namespace VengEditor
     {
         // Read the existing file so unknown keys (image, anisotropy, hand-authored
         // structure) survive the round-trip — only the edited keys are patched.
-        nlohmann::json tex = nlohmann::json::object();
-        {
-            const std::ifstream file(m_SourcePath, std::ios::binary);
-            if (file)
-            {
-                std::ostringstream contents;
-                contents << file.rdbuf();
-                const nlohmann::json parsed = nlohmann::json::parse(contents.str(), nullptr, false);
-                if (!parsed.is_discarded() && parsed.is_object())
-                {
-                    tex = parsed;
-                }
-            }
-        }
+        nlohmann::json tex = ReadJsonObject(m_SourcePath).value_or(nlohmann::json::object());
 
         tex["srgb"] = m_Settings.Srgb;
 
@@ -196,11 +137,11 @@ namespace VengEditor
         {
             sampler = nlohmann::json::object();
         }
-        sampler["min"] = FilterNames[static_cast<u32>(m_Settings.Min)];
-        sampler["mag"] = FilterNames[static_cast<u32>(m_Settings.Mag)];
-        sampler["mipmap"] = FilterNames[static_cast<u32>(m_Settings.Mipmap)];
-        sampler["wrap_u"] = WrapNames[static_cast<u32>(m_Settings.WrapU)];
-        sampler["wrap_v"] = WrapNames[static_cast<u32>(m_Settings.WrapV)];
+        sampler["min"] = Renderer::FilterNames[static_cast<usize>(m_Settings.Min)];
+        sampler["mag"] = Renderer::FilterNames[static_cast<usize>(m_Settings.Mag)];
+        sampler["mipmap"] = Renderer::FilterNames[static_cast<usize>(m_Settings.Mipmap)];
+        sampler["wrap_u"] = Renderer::AddressModeNames[static_cast<usize>(m_Settings.WrapU)];
+        sampler["wrap_v"] = Renderer::AddressModeNames[static_cast<usize>(m_Settings.WrapV)];
 
         std::ofstream out(m_SourcePath, std::ios::binary | std::ios::trunc);
         if (!out)
@@ -340,7 +281,7 @@ namespace VengEditor
             const BuildConfiguration* config = m_ActiveConfig ? m_ActiveConfig() : nullptr;
             if (config != nullptr)
             {
-                const CompressionFormat format = RoleFormat(config->Formats, effectiveRole);
+                const CompressionFormat format = config->Formats.GetFormat(effectiveRole);
                 UI::TextDisabled(
                     fmt::format("→ {} for active config '{}'", ToString(format), config->Name));
             }
@@ -358,21 +299,21 @@ namespace VengEditor
             UI::TextDisabled(fmt::format("Previewing through '{}'", m_PreviewConfig().Name));
         }
 
-        auto filterCombo = [&](string_view label, Filter& value)
+        auto filterCombo = [&](string_view label, Renderer::Filter& value)
         {
             i32 current = static_cast<i32>(value);
             if (UI::Combo(label, current, FilterItems))
             {
-                value = static_cast<Filter>(current);
+                value = static_cast<Renderer::Filter>(current);
                 changed = true;
             }
         };
-        auto wrapCombo = [&](string_view label, Wrap& value)
+        auto wrapCombo = [&](string_view label, Renderer::AddressMode& value)
         {
             i32 current = static_cast<i32>(value);
             if (UI::Combo(label, current, WrapItems))
             {
-                value = static_cast<Wrap>(current);
+                value = static_cast<Renderer::AddressMode>(current);
                 changed = true;
             }
         };

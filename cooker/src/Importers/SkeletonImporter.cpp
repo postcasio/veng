@@ -13,6 +13,7 @@
 #include <assimp/scene.h>
 
 #include <Veng/Asset/CookedBlobs.h>
+#include <Veng/Cook/JsonFile.h>
 
 #include "SkeletonSource.h"
 
@@ -37,21 +38,12 @@ namespace Veng::Cook
 
         const path sourcePath = context.PackDir / entry["source"].get<string>();
 
-        const std::ifstream sourceFile(sourcePath, std::ios::binary);
-        if (!sourceFile)
+        const Result<json> skeletonJsonResult = ReadJsonFile(sourcePath, "skeleton importer");
+        if (!skeletonJsonResult)
         {
-            return std::unexpected(
-                fmt::format("skeleton importer: failed to open '{}'", sourcePath.string()));
+            return std::unexpected(skeletonJsonResult.error());
         }
-
-        std::ostringstream contentStream;
-        contentStream << sourceFile.rdbuf();
-        const json skeletonJson = json::parse(contentStream.str(), nullptr, false);
-        if (skeletonJson.is_discarded() || !skeletonJson.is_object())
-        {
-            return std::unexpected(
-                fmt::format("skeleton importer: '{}': invalid JSON", sourcePath.string()));
-        }
+        const json& skeletonJson = *skeletonJsonResult;
 
         if (!skeletonJson.contains("model") || !skeletonJson["model"].is_string())
         {

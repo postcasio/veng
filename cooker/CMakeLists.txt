@@ -199,6 +199,7 @@ set_directory_properties(PROPERTIES COMPILE_OPTIONS "${VENG_COOK_SAVED_COMPILE_O
 add_library(veng_cook_objs OBJECT
         src/AssetPack.cpp
         src/Cooker.cpp
+        src/JsonFile.cpp
         src/Verify.cpp
         src/CoreImporters.cpp
         src/Importers/RawImporter.cpp

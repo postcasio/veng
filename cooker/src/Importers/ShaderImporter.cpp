@@ -15,6 +15,8 @@
 #include <slang/slang-com-ptr.h>
 
 #include <Veng/Asset/CookedBlobs.h>
+#include <Veng/Cook/JsonFile.h>
+#include <Veng/Renderer/Types.h>
 
 #include "GraphShaderSource.h"
 #include "SlangSession.h"
@@ -26,27 +28,30 @@ namespace Veng::Cook
     {
         using Slang::ComPtr;
 
-        // The underlying-integer ordinals below mirror Veng::Renderer::ShaderStage /
-        // DescriptorType / Format (Renderer/Types.h) — kept in sync by hand per the
-        // cycle-avoidance rule documented in assetpack's CookedBlobs.h.
-        constexpr u32 ShaderStageVertex = 1u << 0;
-        constexpr u32 ShaderStageFragment = 1u << 1;
-        constexpr u32 ShaderStageCompute = 1u << 2;
+        // The cooked ShaderInterface stores the underlying-integer ordinals of the
+        // Veng::Renderer::ShaderStage / DescriptorType / Format vocabulary enums.
+        constexpr u32 ShaderStageVertex = static_cast<u32>(Renderer::ShaderStage::Vertex);
+        constexpr u32 ShaderStageFragment = static_cast<u32>(Renderer::ShaderStage::Fragment);
+        constexpr u32 ShaderStageCompute = static_cast<u32>(Renderer::ShaderStage::Compute);
 
-        constexpr u32 DescriptorTypeCombinedImageSampler = 0;
-        constexpr u32 DescriptorTypeSampledImage = 1;
-        constexpr u32 DescriptorTypeStorageImage = 2;
-        constexpr u32 DescriptorTypeUniformBuffer = 3;
-        constexpr u32 DescriptorTypeStorageBuffer = 4;
-        constexpr u32 DescriptorTypeSampler = 5;
+        constexpr u32 DescriptorTypeCombinedImageSampler =
+            static_cast<u32>(Renderer::DescriptorType::CombinedImageSampler);
+        constexpr u32 DescriptorTypeSampledImage =
+            static_cast<u32>(Renderer::DescriptorType::SampledImage);
+        constexpr u32 DescriptorTypeStorageImage =
+            static_cast<u32>(Renderer::DescriptorType::StorageImage);
+        constexpr u32 DescriptorTypeUniformBuffer =
+            static_cast<u32>(Renderer::DescriptorType::UniformBuffer);
+        constexpr u32 DescriptorTypeStorageBuffer =
+            static_cast<u32>(Renderer::DescriptorType::StorageBuffer);
+        constexpr u32 DescriptorTypeSampler = static_cast<u32>(Renderer::DescriptorType::Sampler);
 
-        // Format ordinals (mirroring Renderer::Format) — used for Slang reflection
-        // comparison against VertexLayout element formats.
-        constexpr u32 FormatR32Sfloat = 7;
-        constexpr u32 FormatRG32Sfloat = 8;
-        constexpr u32 FormatRGB32Sfloat = 9;
-        constexpr u32 FormatRGBA32Sfloat = 10;
-        constexpr u32 FormatRGBA16Uint = 20;
+        // Used for Slang reflection comparison against VertexLayout element formats.
+        constexpr u32 FormatR32Sfloat = static_cast<u32>(Renderer::Format::R32Sfloat);
+        constexpr u32 FormatRG32Sfloat = static_cast<u32>(Renderer::Format::RG32Sfloat);
+        constexpr u32 FormatRGB32Sfloat = static_cast<u32>(Renderer::Format::RGB32Sfloat);
+        constexpr u32 FormatRGBA32Sfloat = static_cast<u32>(Renderer::Format::RGBA32Sfloat);
+        constexpr u32 FormatRGBA16Uint = static_cast<u32>(Renderer::Format::RGBA16Uint);
 
         // Cooked names are fixed-size, nul-terminated char arrays (CookedBlobs.h);
         // truncate rather than fail on an over-long identifier.
@@ -575,17 +580,12 @@ namespace Veng::Cook
 
         const path shaderJsonPath = context.PackDir / entry["source"].get<string>();
 
-        const std::ifstream file(shaderJsonPath, std::ios::binary);
-        std::ostringstream oss;
-        oss << file.rdbuf();
-        const string text = oss.str();
-
-        const json shaderJson = json::parse(text, nullptr, false);
-        if (!shaderJson.is_object())
+        const Result<json> shaderJsonResult = ReadJsonFile(shaderJsonPath, "shader importer");
+        if (!shaderJsonResult)
         {
-            return std::unexpected(
-                fmt::format("shader importer: '{}': invalid JSON", shaderJsonPath.string()));
+            return std::unexpected(shaderJsonResult.error());
         }
+        const json& shaderJson = *shaderJsonResult;
 
         if (!shaderJson.contains("source") || !shaderJson["source"].is_string())
         {

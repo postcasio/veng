@@ -14,6 +14,7 @@
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Asset/Material.h>
 #include <Veng/Asset/Texture.h>
+#include <Veng/Cook/JsonFile.h>
 #include <Veng/Reflection/Serialize.h>
 #include <Veng/Reflection/TypeId.h>
 #include <Veng/Scene/Entity.h>
@@ -470,19 +471,12 @@ namespace Veng::Cook
         const path prefabPath = context.PackDir / entry["source"].get<string>();
         const string file = prefabPath.string();
 
-        const std::ifstream prefabFile(prefabPath, std::ios::binary);
-        if (!prefabFile)
+        const Result<json> prefabResult = ReadJsonFile(prefabPath, "prefab importer");
+        if (!prefabResult)
         {
-            return std::unexpected(fmt::format("prefab importer: failed to open '{}'", file));
+            return std::unexpected(prefabResult.error());
         }
-
-        std::ostringstream prefabStream;
-        prefabStream << prefabFile.rdbuf();
-        const json prefab = json::parse(prefabStream.str(), nullptr, false);
-        if (prefab.is_discarded() || !prefab.is_object())
-        {
-            return std::unexpected(fmt::format("prefab importer: '{}': invalid JSON", file));
-        }
+        const json& prefab = *prefabResult;
 
         if (!prefab.contains("entities") || !prefab["entities"].is_array())
         {

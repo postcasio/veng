@@ -1,5 +1,7 @@
 #include "AssetSourceIndex.h"
 
+#include "JsonUtil.h"
+
 #include <Veng/Log.h>
 
 #include <fstream>
@@ -16,18 +18,14 @@ namespace VengEditor
     {
         AssetSourceIndex index;
 
-        const std::ifstream file(manifestPath, std::ios::binary);
-        if (!file)
+        const optional<nlohmann::json> manifestResult = ReadJsonObject(manifestPath);
+        if (!manifestResult)
         {
-            Log::Error("AssetSourceIndex: failed to open manifest {}", manifestPath.string());
+            Log::Error("AssetSourceIndex: failed to read manifest {}", manifestPath.string());
             return index;
         }
-
-        std::ostringstream contents;
-        contents << file.rdbuf();
-        const nlohmann::json manifest = nlohmann::json::parse(contents.str(), nullptr, false);
-        if (manifest.is_discarded() || !manifest.is_object() || !manifest.contains("assets") ||
-            !manifest["assets"].is_array())
+        const nlohmann::json& manifest = *manifestResult;
+        if (!manifest.contains("assets") || !manifest["assets"].is_array())
         {
             Log::Error("AssetSourceIndex: malformed manifest {}", manifestPath.string());
             return index;

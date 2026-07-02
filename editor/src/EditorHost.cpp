@@ -19,6 +19,7 @@
 #include "AssetEditorPanel.h"
 #include "AssetSourceIndex.h"
 #include "CommandStack.h"
+#include "JsonUtil.h"
 #include "PreviewCapability.h"
 #include "StatusTracker.h"
 #include "panels/AssetBrowserPanel.h"
@@ -46,47 +47,6 @@ namespace VengEditor
 
     namespace
     {
-        // Writes the format a role resolves to into the fixed RoleToFormat record.
-        void SetRoleFormat(RoleToFormat& table, CompressionRole role, CompressionFormat format)
-        {
-            switch (role)
-            {
-            case CompressionRole::Color:
-                table.Color = format;
-                return;
-            case CompressionRole::Normal:
-                table.Normal = format;
-                return;
-            case CompressionRole::Mask:
-                table.Mask = format;
-                return;
-            case CompressionRole::HDR:
-                table.HDR = format;
-                return;
-            case CompressionRole::UI:
-                table.UI = format;
-                return;
-            }
-        }
-
-        // Reads a JSON file into a parsed object, or nullopt on missing/malformed input.
-        optional<nlohmann::json> ReadJsonObject(const path& file)
-        {
-            const std::ifstream stream(file, std::ios::binary);
-            if (!stream)
-            {
-                return std::nullopt;
-            }
-            std::ostringstream contents;
-            contents << stream.rdbuf();
-            nlohmann::json parsed = nlohmann::json::parse(contents.str(), nullptr, false);
-            if (parsed.is_discarded() || !parsed.is_object())
-            {
-                return std::nullopt;
-            }
-            return parsed;
-        }
-
         // Parses one *.buildcfg authoring file into a BuildConfiguration, the same schema the
         // ProjectSettingsPanel writes and the cooker reads. Enums parse by name; an absent field
         // keeps its default.
@@ -128,7 +88,7 @@ namespace VengEditor
                     if (const optional<CompressionFormat> format =
                             ParseCompressionFormat(formats[roleName].get<string>()))
                     {
-                        SetRoleFormat(config.Formats, role, *format);
+                        config.Formats.SetFormat(role, *format);
                     }
                 }
             }

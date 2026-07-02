@@ -3,11 +3,13 @@
 #include "AssetSourceIndex.h"
 #include "EditorIcons.h"
 #include "FieldWidget.h"
+#include "JsonUtil.h"
 
 #include <Veng/Asset/InputMappingContext.h>
 #include <Veng/Input.h>
 #include <Veng/Input/RawInput.h>
 #include <Veng/Log.h>
+#include <Veng/Reflection/EnumName.h>
 #include <Veng/Reflection/TypeId.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Time.h>
@@ -29,39 +31,6 @@ namespace VengEditor
     namespace
     {
         constexpr f32 DebounceSeconds = 0.3f;
-
-        // Parses an enum value by its authored name through the reflection enum table for T,
-        // matching the importer's by-name authoring (never ordinal). Returns nullopt on no match.
-        template <class T>
-        optional<T> ParseEnumByName(const TypeRegistry& registry, const std::string& name)
-        {
-            const TypeInfo& info = registry.Info(TypeIdOf<T>());
-            for (const EnumEntry& entry : info.Enumerators)
-            {
-                if (entry.Name == name)
-                {
-                    return static_cast<T>(entry.Value);
-                }
-            }
-            return std::nullopt;
-        }
-
-        // The authored name of an enum value through the reflection enum table for T, or the raw
-        // integer as a fallback for a value matching no enumerator.
-        template <class T>
-        std::string EnumName(const TypeRegistry& registry, T value)
-        {
-            const TypeInfo& info = registry.Info(TypeIdOf<T>());
-            const i64 raw = static_cast<i64>(value);
-            for (const EnumEntry& entry : info.Enumerators)
-            {
-                if (entry.Value == raw)
-                {
-                    return entry.Name;
-                }
-            }
-            return std::to_string(raw);
-        }
 
         const char* PhaseName(ActionPhase phase)
         {
@@ -106,23 +75,13 @@ namespace VengEditor
     {
         m_Doc = InputMapData{};
 
-        const std::ifstream file(m_SourcePath, std::ios::binary);
-        if (!file)
+        const optional<nlohmann::json> docResult = ReadJsonObject(m_SourcePath);
+        if (!docResult)
         {
-            Log::Error("Input map editor: failed to open {}", m_SourcePath.string());
+            Log::Error("Input map editor: failed to read {}", m_SourcePath.string());
             return;
         }
-
-        std::ostringstream contents;
-        contents << file.rdbuf();
-        const nlohmann::json doc = nlohmann::json::parse(contents.str(), nullptr, false);
-        if (doc.is_discarded() || !doc.is_object())
-        {
-            Log::Error("Input map editor: malformed JSON {}", m_SourcePath.string());
-            return;
-        }
-
-        const TypeRegistry& registry = m_Assets.GetTypeRegistry();
+        const nlohmann::json& doc = *docResult;
 
         if (doc.contains("actions") && doc["actions"].is_array())
         {
@@ -143,8 +102,7 @@ namespace VengEditor
                 }
                 if (actionJson.contains("kind") && actionJson["kind"].is_string())
                 {
-                    if (auto kind = ParseEnumByName<ActionKind>(
-                            registry, actionJson["kind"].get<std::string>()))
+                    if (auto kind = ParseEnum<ActionKind>(actionJson["kind"].get<std::string>()))
                     {
                         action.Kind = *kind;
                     }
@@ -167,8 +125,8 @@ namespace VengEditor
                     const nlohmann::json& sourceJson = bindingJson["source"];
                     if (sourceJson.contains("device") && sourceJson["device"].is_string())
                     {
-                        if (auto device = ParseEnumByName<InputDeviceType>(
-                                registry, sourceJson["device"].get<std::string>()))
+                        if (auto device =
+                                ParseEnum<InputDeviceType>(sourceJson["device"].get<std::string>()))
                         {
                             binding.Source.Device = *device;
                         }
@@ -185,8 +143,8 @@ namespace VengEditor
                 }
                 if (bindingJson.contains("axis") && bindingJson["axis"].is_string())
                 {
-                    if (auto axis = ParseEnumByName<AxisComponent>(
-                            registry, bindingJson["axis"].get<std::string>()))
+                    if (auto axis =
+                            ParseEnum<AxisComponent>(bindingJson["axis"].get<std::string>()))
                     {
                         binding.Axis = *axis;
                     }
@@ -204,22 +162,7 @@ namespace VengEditor
     {
         // Round-trip the existing file so unknown keys (a hand-authored comment field, future
         // per-map settings) survive; only the actions/bindings arrays are rewritten.
-        nlohmann::json doc = nlohmann::json::object();
-        {
-            const std::ifstream file(m_SourcePath, std::ios::binary);
-            if (file)
-            {
-                std::ostringstream contents;
-                contents << file.rdbuf();
-                const nlohmann::json parsed = nlohmann::json::parse(contents.str(), nullptr, false);
-                if (!parsed.is_discarded() && parsed.is_object())
-                {
-                    doc = parsed;
-                }
-            }
-        }
-
-        const TypeRegistry& registry = m_Assets.GetTypeRegistry();
+        nlohmann::json doc = ReadJsonObject(m_SourcePath).value_or(nlohmann::json::object());
 
         nlohmann::json actions = nlohmann::json::array();
         for (const InputAction& action : m_Doc.Actions)
@@ -227,7 +170,7 @@ namespace VengEditor
             nlohmann::json entry = nlohmann::json::object();
             entry["id"] = static_cast<u64>(action.Id);
             entry["name"] = action.Name;
-            entry["kind"] = EnumName(registry, action.Kind);
+            entry["kind"] = EnumeratorName(action.Kind);
             actions.push_back(std::move(entry));
         }
         doc["actions"] = std::move(actions);
@@ -236,13 +179,13 @@ namespace VengEditor
         for (const Binding& binding : m_Doc.Bindings)
         {
             nlohmann::json source = nlohmann::json::object();
-            source["device"] = EnumName(registry, binding.Source.Device);
+            source["device"] = EnumeratorName(binding.Source.Device);
             source["control"] = binding.Source.Control;
 
             nlohmann::json entry = nlohmann::json::object();
             entry["source"] = std::move(source);
             entry["action"] = static_cast<u64>(binding.Action);
-            entry["axis"] = EnumName(registry, binding.Axis);
+            entry["axis"] = EnumeratorName(binding.Axis);
             entry["scale"] = binding.Scale;
             bindings.push_back(std::move(entry));
         }

@@ -15,9 +15,12 @@
 #include <stb_image_resize2.h>
 
 #include <Veng/Asset/CookedBlobs.h>
+#include <Veng/Cook/JsonFile.h>
 #include <Veng/Project/BuildConfiguration.h>
 #include <Veng/Project/CompressionFormat.h>
 #include <Veng/Project/CompressionRole.h>
+#include <Veng/Renderer/TypeNames.h>
+#include <Veng/Renderer/Types.h>
 
 namespace Veng::Cook
 {
@@ -57,78 +60,17 @@ namespace Veng::Cook
             return std::nullopt;
         }
 
-        // Renderer::Format ordinals (Types.h), hand-synced per the cycle-avoidance rule:
-        // 2 = RGBA8Unorm, 3 = RGBA8Srgb, 21 = BC7Unorm, 22 = BC7Srgb, 23 = ASTC4x4Unorm,
-        // 24 = ASTC4x4Srgb, 26 = BC5Unorm, 27 = BC4Unorm. CookedTextureHeader.Format stores these
-        // literals and the engine's TextureLoader::BridgeFormat reads them back.
-        constexpr u32 RGBA8UnormFormat = 2;
-        constexpr u32 RGBA8SrgbFormat = 3;
-        constexpr u32 BC7UnormFormat = 21;
-        constexpr u32 BC7SrgbFormat = 22;
-        constexpr u32 ASTC4x4UnormFormat = 23;
-        constexpr u32 ASTC4x4SrgbFormat = 24;
-        constexpr u32 BC5UnormFormat = 26;
-        constexpr u32 BC4UnormFormat = 27;
-
-        // A texture's cook is one codec + one header Format ordinal + a channel layout. The codec
-        // drives the encode path (block-compress vs. raw copy); the ordinal is the hand-synced
-        // Renderer::Format value the engine's TextureLoader::BridgeFormat reads back; the layout is
-        // the channel convention the runtime sampler reads (NormalXY for a two-channel normal whose
-        // Z it reconstructs).
+        // A texture's cook is one codec + one header format + a channel layout. The codec drives
+        // the encode path (block-compress vs. raw copy); the format is the Renderer::Format whose
+        // ordinal CookedTextureHeader.Format stores and the engine's TextureLoader::BridgeFormat
+        // reads back; the layout is the channel convention the runtime sampler reads (NormalXY for
+        // a two-channel normal whose Z it reconstructs).
         struct ResolvedFormat
         {
             TextureCodec Codec{};
-            u32 FormatOrdinal{};
+            Renderer::Format Format{};
             CookedChannelLayout ChannelLayout = CookedChannelLayout::Direct;
         };
-
-        // Parses a "role" name to its CompressionRole. The names match the canonical authoring
-        // spellings in Veng::ToString(CompressionRole); the mapping is duplicated here rather than
-        // calling the libveng symbol, since the texture importer links into the veng-free cooker
-        // core (and the core-pack bootstrap) that cannot reference libveng's out-of-line tables.
-        optional<CompressionRole> ParseRole(const string& name)
-        {
-            if (name == "Color")
-            {
-                return CompressionRole::Color;
-            }
-            if (name == "Normal")
-            {
-                return CompressionRole::Normal;
-            }
-            if (name == "Mask")
-            {
-                return CompressionRole::Mask;
-            }
-            if (name == "HDR")
-            {
-                return CompressionRole::HDR;
-            }
-            if (name == "UI")
-            {
-                return CompressionRole::UI;
-            }
-            return std::nullopt;
-        }
-
-        // Reads the configuration's resolved format for a role from its fixed RoleToFormat record.
-        CompressionFormat RoleFormat(const RoleToFormat& table, CompressionRole role)
-        {
-            switch (role)
-            {
-            case CompressionRole::Color:
-                return table.Color;
-            case CompressionRole::Normal:
-                return table.Normal;
-            case CompressionRole::Mask:
-                return table.Mask;
-            case CompressionRole::HDR:
-                return table.HDR;
-            case CompressionRole::UI:
-                return table.UI;
-            }
-            return table.Color;
-        }
 
         // Lowers a CompressionFormat (the closed codec-output set a role table holds) to the cook's
         // codec + header Format ordinal + channel layout. RGBA16Sfloat has no LDR encode path in
@@ -142,31 +84,25 @@ namespace Veng::Cook
             const CookedChannelLayout astcLayout = role == CompressionRole::Normal
                                                        ? CookedChannelLayout::NormalXY
                                                        : CookedChannelLayout::Direct;
+            const Renderer::Format rendererFormat = ToRendererFormat(format);
             switch (format)
             {
             case CompressionFormat::RGBA8Unorm:
-                return ResolvedFormat{.Codec = TextureCodec::None,
-                                      .FormatOrdinal = RGBA8UnormFormat};
             case CompressionFormat::RGBA8Srgb:
-                return ResolvedFormat{.Codec = TextureCodec::None,
-                                      .FormatOrdinal = RGBA8SrgbFormat};
+                return ResolvedFormat{.Codec = TextureCodec::None, .Format = rendererFormat};
             case CompressionFormat::BC7Unorm:
-                return ResolvedFormat{.Codec = TextureCodec::BC7, .FormatOrdinal = BC7UnormFormat};
             case CompressionFormat::BC7Srgb:
-                return ResolvedFormat{.Codec = TextureCodec::BC7, .FormatOrdinal = BC7SrgbFormat};
+                return ResolvedFormat{.Codec = TextureCodec::BC7, .Format = rendererFormat};
             case CompressionFormat::BC5Unorm:
                 return ResolvedFormat{.Codec = TextureCodec::BC5,
-                                      .FormatOrdinal = BC5UnormFormat,
+                                      .Format = rendererFormat,
                                       .ChannelLayout = CookedChannelLayout::NormalXY};
             case CompressionFormat::BC4Unorm:
-                return ResolvedFormat{.Codec = TextureCodec::BC4, .FormatOrdinal = BC4UnormFormat};
+                return ResolvedFormat{.Codec = TextureCodec::BC4, .Format = rendererFormat};
             case CompressionFormat::ASTC4x4Unorm:
-                return ResolvedFormat{.Codec = TextureCodec::ASTC,
-                                      .FormatOrdinal = ASTC4x4UnormFormat,
-                                      .ChannelLayout = astcLayout};
             case CompressionFormat::ASTC4x4Srgb:
                 return ResolvedFormat{.Codec = TextureCodec::ASTC,
-                                      .FormatOrdinal = ASTC4x4SrgbFormat,
+                                      .Format = rendererFormat,
                                       .ChannelLayout = astcLayout};
             case CompressionFormat::RGBA16Sfloat:
                 return std::unexpected(
@@ -176,7 +112,7 @@ namespace Veng::Cook
             return std::unexpected(string("unmapped CompressionFormat"));
         }
 
-        // The codec + ordinal a raw "compression" codec name pins, keyed off the texture's sRGB
+        // The codec + format a raw "compression" codec name pins, keyed off the texture's sRGB
         // flag for its sRGB-aware format pair. This is the escape-hatch path: it wins over the role.
         ResolvedFormat RawCodecFormat(TextureCodec codec, bool srgb)
         {
@@ -184,21 +120,26 @@ namespace Veng::Cook
             {
             case TextureCodec::ASTC:
                 return ResolvedFormat{.Codec = TextureCodec::ASTC,
-                                      .FormatOrdinal =
-                                          srgb ? ASTC4x4SrgbFormat : ASTC4x4UnormFormat};
+                                      .Format = srgb ? Renderer::Format::ASTC4x4Srgb
+                                                     : Renderer::Format::ASTC4x4Unorm};
             case TextureCodec::BC7:
                 return ResolvedFormat{.Codec = TextureCodec::BC7,
-                                      .FormatOrdinal = srgb ? BC7SrgbFormat : BC7UnormFormat};
+                                      .Format = srgb ? Renderer::Format::BC7Srgb
+                                                     : Renderer::Format::BC7Unorm};
             case TextureCodec::BC5:
-                return ResolvedFormat{.Codec = TextureCodec::BC5, .FormatOrdinal = BC5UnormFormat};
+                return ResolvedFormat{.Codec = TextureCodec::BC5,
+                                      .Format = Renderer::Format::BC5Unorm};
             case TextureCodec::BC4:
-                return ResolvedFormat{.Codec = TextureCodec::BC4, .FormatOrdinal = BC4UnormFormat};
+                return ResolvedFormat{.Codec = TextureCodec::BC4,
+                                      .Format = Renderer::Format::BC4Unorm};
             case TextureCodec::None:
                 return ResolvedFormat{.Codec = TextureCodec::None,
-                                      .FormatOrdinal = srgb ? RGBA8SrgbFormat : RGBA8UnormFormat};
+                                      .Format = srgb ? Renderer::Format::RGBA8Srgb
+                                                     : Renderer::Format::RGBA8Unorm};
             }
             return ResolvedFormat{.Codec = TextureCodec::ASTC,
-                                  .FormatOrdinal = srgb ? ASTC4x4SrgbFormat : ASTC4x4UnormFormat};
+                                  .Format = srgb ? Renderer::Format::ASTC4x4Srgb
+                                                 : Renderer::Format::ASTC4x4Unorm};
         }
 
         // BC7 and ASTC 4x4 both encode a 4x4 texel tile into one 16-byte block; the full mip chain
@@ -412,55 +353,25 @@ namespace Veng::Cook
             return blocks;
         }
 
-        // The Parse* helpers below mirror Veng::Renderer::Filter / MipmapMode /
-        // AddressMode ordinals (Renderer/Types.h) — kept in sync by hand per the
-        // cycle-avoidance rule documented in assetpack's CookedBlobs.h.
+        // Thin ordinal adapters over the shared authoring-name tables
+        // (Renderer/TypeNames.h): CookedTextureHeader stores the enum ordinals as u32.
 
-        optional<u32> ParseFilter(const string& name)
+        optional<u32> ParseFilterOrdinal(const string& name)
         {
-            if (name == "nearest")
-            {
-                return 0u;
-            }
-            if (name == "linear")
-            {
-                return 1u;
-            }
-            return std::nullopt;
+            const optional<Renderer::Filter> filter = Renderer::ParseFilter(name);
+            return filter ? optional<u32>{static_cast<u32>(*filter)} : std::nullopt;
         }
 
-        optional<u32> ParseMipmapMode(const string& name)
+        optional<u32> ParseMipmapModeOrdinal(const string& name)
         {
-            if (name == "nearest")
-            {
-                return 0u;
-            }
-            if (name == "linear")
-            {
-                return 1u;
-            }
-            return std::nullopt;
+            const optional<Renderer::MipmapMode> mode = Renderer::ParseMipmapMode(name);
+            return mode ? optional<u32>{static_cast<u32>(*mode)} : std::nullopt;
         }
 
-        optional<u32> ParseAddressMode(const string& name)
+        optional<u32> ParseAddressModeOrdinal(const string& name)
         {
-            if (name == "repeat")
-            {
-                return 0u;
-            }
-            if (name == "mirrored_repeat")
-            {
-                return 1u;
-            }
-            if (name == "clamp_to_edge")
-            {
-                return 2u;
-            }
-            if (name == "clamp_to_border")
-            {
-                return 3u;
-            }
-            return std::nullopt;
+            const optional<Renderer::AddressMode> mode = Renderer::ParseAddressMode(name);
+            return mode ? optional<u32>{static_cast<u32>(*mode)} : std::nullopt;
         }
     }
 
@@ -473,21 +384,12 @@ namespace Veng::Cook
 
         const path sourcePath = context.PackDir / entry["source"].get<string>();
 
-        const std::ifstream sourceFile(sourcePath, std::ios::binary);
-        if (!sourceFile)
+        const Result<json> texJsonResult = ReadJsonFile(sourcePath, "texture importer");
+        if (!texJsonResult)
         {
-            return std::unexpected(
-                fmt::format("texture importer: failed to open '{}'", sourcePath.string()));
+            return std::unexpected(texJsonResult.error());
         }
-
-        std::ostringstream contentStream;
-        contentStream << sourceFile.rdbuf();
-        const json texJson = json::parse(contentStream.str(), nullptr, false);
-        if (texJson.is_discarded() || !texJson.is_object())
-        {
-            return std::unexpected(
-                fmt::format("texture importer: '{}': invalid JSON", sourcePath.string()));
-        }
+        const json& texJson = *texJsonResult;
 
         if (!texJson.contains("image") || !texJson["image"].is_string())
         {
@@ -530,7 +432,7 @@ namespace Veng::Cook
         if (texJson.contains("role") && texJson["role"].is_string())
         {
             const string roleName = texJson["role"].get<string>();
-            const optional<CompressionRole> parsed = ParseRole(roleName);
+            const optional<CompressionRole> parsed = ParseCompressionRole(roleName);
             if (!parsed)
             {
                 return std::unexpected(
@@ -548,7 +450,7 @@ namespace Veng::Cook
         }
         else if (context.Config != nullptr)
         {
-            const CompressionFormat roleFormat = RoleFormat(context.Config->Formats, role);
+            const CompressionFormat roleFormat = context.Config->Formats.GetFormat(role);
             const Result<ResolvedFormat> lowered = ResolveCompressionFormat(roleFormat, role);
             if (!lowered)
             {
@@ -571,11 +473,11 @@ namespace Veng::Cook
 
         // The resolved format is authoritative for sRGB-ness: it carries the role's intent, so a
         // config-driven Color → *Srgb encodes (and resizes) in gamma space regardless of the source
-        // "srgb" flag. The override and zero-config ordinals are keyed off "srgb", so this equals the
+        // "srgb" flag. The override and zero-config formats are keyed off "srgb", so this equals the
         // flag on those paths — the encode stays byte-identical.
-        const bool srgbEncode = resolved.FormatOrdinal == RGBA8SrgbFormat ||
-                                resolved.FormatOrdinal == BC7SrgbFormat ||
-                                resolved.FormatOrdinal == ASTC4x4SrgbFormat;
+        const bool srgbEncode = resolved.Format == Renderer::Format::RGBA8Srgb ||
+                                resolved.Format == Renderer::Format::BC7Srgb ||
+                                resolved.Format == Renderer::Format::ASTC4x4Srgb;
 
         const path imagePath = sourcePath.parent_path() / texJson["image"].get<string>();
         context.RecordDependency(imagePath);
@@ -650,7 +552,7 @@ namespace Veng::Cook
         }
 
         CookedTextureHeader header{};
-        header.Format = resolved.FormatOrdinal;
+        header.Format = static_cast<u32>(resolved.Format);
         header.Width = baseWidth;
         header.Height = baseHeight;
         header.MipCount = mipCount;
@@ -692,42 +594,46 @@ namespace Veng::Cook
                 return *parsed;
             };
 
-            const Result<u32> minFilter = field("min", ParseFilter, header.MinFilter);
+            const Result<u32> minFilter = field("min", ParseFilterOrdinal, header.MinFilter);
             if (!minFilter)
             {
                 return std::unexpected(minFilter.error());
             }
             header.MinFilter = *minFilter;
 
-            const Result<u32> magFilter = field("mag", ParseFilter, header.MagFilter);
+            const Result<u32> magFilter = field("mag", ParseFilterOrdinal, header.MagFilter);
             if (!magFilter)
             {
                 return std::unexpected(magFilter.error());
             }
             header.MagFilter = *magFilter;
 
-            const Result<u32> mipmapMode = field("mipmap", ParseMipmapMode, header.MipmapMode);
+            const Result<u32> mipmapMode =
+                field("mipmap", ParseMipmapModeOrdinal, header.MipmapMode);
             if (!mipmapMode)
             {
                 return std::unexpected(mipmapMode.error());
             }
             header.MipmapMode = *mipmapMode;
 
-            const Result<u32> addressModeU = field("wrap_u", ParseAddressMode, header.AddressModeU);
+            const Result<u32> addressModeU =
+                field("wrap_u", ParseAddressModeOrdinal, header.AddressModeU);
             if (!addressModeU)
             {
                 return std::unexpected(addressModeU.error());
             }
             header.AddressModeU = *addressModeU;
 
-            const Result<u32> addressModeV = field("wrap_v", ParseAddressMode, header.AddressModeV);
+            const Result<u32> addressModeV =
+                field("wrap_v", ParseAddressModeOrdinal, header.AddressModeV);
             if (!addressModeV)
             {
                 return std::unexpected(addressModeV.error());
             }
             header.AddressModeV = *addressModeV;
 
-            const Result<u32> addressModeW = field("wrap_w", ParseAddressMode, header.AddressModeW);
+            const Result<u32> addressModeW =
+                field("wrap_w", ParseAddressModeOrdinal, header.AddressModeW);
             if (!addressModeW)
             {
                 return std::unexpected(addressModeW.error());

@@ -36,25 +36,6 @@ namespace VengEditor
             }
             return Codec::Uncompressed;
         }
-
-        // Reads the format a role resolves to from the fixed RoleToFormat record.
-        CompressionFormat RoleFormat(const RoleToFormat& table, CompressionRole role)
-        {
-            switch (role)
-            {
-            case CompressionRole::Color:
-                return table.Color;
-            case CompressionRole::Normal:
-                return table.Normal;
-            case CompressionRole::Mask:
-                return table.Mask;
-            case CompressionRole::HDR:
-                return table.HDR;
-            case CompressionRole::UI:
-                return table.UI;
-            }
-            return table.Color;
-        }
     }
 
     bool IsFormatPreviewable(CompressionFormat format, const Renderer::Context& context)
@@ -76,7 +57,7 @@ namespace VengEditor
     {
         for (const CompressionRole role : CompressionRoles)
         {
-            const CompressionFormat format = RoleFormat(config.Formats, role);
+            const CompressionFormat format = config.Formats.GetFormat(role);
             if (IsFormatPreviewable(format, context))
             {
                 continue;

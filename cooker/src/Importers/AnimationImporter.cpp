@@ -18,6 +18,7 @@
 
 #include <Veng/Asset/Animation.h>
 #include <Veng/Asset/CookedBlobs.h>
+#include <Veng/Cook/JsonFile.h>
 
 #include "SkeletonSource.h"
 
@@ -166,21 +167,12 @@ namespace Veng::Cook
 
         const path sourcePath = context.PackDir / entry["source"].get<string>();
 
-        const std::ifstream sourceFile(sourcePath, std::ios::binary);
-        if (!sourceFile)
+        const Result<json> animJsonResult = ReadJsonFile(sourcePath, "animation importer");
+        if (!animJsonResult)
         {
-            return std::unexpected(
-                fmt::format("animation importer: failed to open '{}'", sourcePath.string()));
+            return std::unexpected(animJsonResult.error());
         }
-
-        std::ostringstream contentStream;
-        contentStream << sourceFile.rdbuf();
-        const json animJson = json::parse(contentStream.str(), nullptr, false);
-        if (animJson.is_discarded() || !animJson.is_object())
-        {
-            return std::unexpected(
-                fmt::format("animation importer: '{}': invalid JSON", sourcePath.string()));
-        }
+        const json& animJson = *animJsonResult;
 
         if (!animJson.contains("model") || !animJson["model"].is_string())
         {

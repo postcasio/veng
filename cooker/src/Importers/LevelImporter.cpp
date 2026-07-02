@@ -11,6 +11,7 @@
 
 #include <Veng/Asset/CookedBlobs.h>
 #include <Veng/Asset/Prefab.h>
+#include <Veng/Cook/JsonFile.h>
 #include <Veng/Reflection/Serialize.h>
 #include <Veng/Reflection/TypeId.h>
 #include <Veng/Reflection/TypeRegistry.h>
@@ -261,19 +262,12 @@ namespace Veng::Cook
         const path levelPath = context.PackDir / entry["source"].get<string>();
         const string file = levelPath.string();
 
-        const std::ifstream levelFile(levelPath, std::ios::binary);
-        if (!levelFile)
+        const Result<json> levelResult = ReadJsonFile(levelPath, "level importer");
+        if (!levelResult)
         {
-            return std::unexpected(fmt::format("level importer: failed to open '{}'", file));
+            return std::unexpected(levelResult.error());
         }
-
-        std::ostringstream levelStream;
-        levelStream << levelFile.rdbuf();
-        const json level = json::parse(levelStream.str(), nullptr, false);
-        if (level.is_discarded() || !level.is_object())
-        {
-            return std::unexpected(fmt::format("level importer: '{}': invalid JSON", file));
-        }
+        const json& level = *levelResult;
 
         // --- 2. The world prefab reference ---
 

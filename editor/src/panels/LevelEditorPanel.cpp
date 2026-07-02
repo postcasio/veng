@@ -11,6 +11,7 @@
 
 #include "AssetSourceIndex.h"
 #include "FieldWidget.h"
+#include "JsonUtil.h"
 #include "panels/SceneViewportPanel.h"
 
 #include <algorithm>
@@ -288,21 +289,13 @@ namespace VengEditor
         m_GameMode = GameModeConfig{};
         m_Render = LevelRenderSettings{};
 
-        const std::ifstream file(m_SourcePath, std::ios::binary);
-        if (!file)
+        const optional<nlohmann::json> levelResult = ReadJsonObject(m_SourcePath);
+        if (!levelResult)
         {
-            Log::Error("Level editor: failed to open {}", m_SourcePath.string());
+            Log::Error("Level editor: failed to read {}", m_SourcePath.string());
             return;
         }
-
-        std::ostringstream contents;
-        contents << file.rdbuf();
-        const nlohmann::json level = nlohmann::json::parse(contents.str(), nullptr, false);
-        if (level.is_discarded() || !level.is_object())
-        {
-            Log::Error("Level editor: malformed JSON {}", m_SourcePath.string());
-            return;
-        }
+        const nlohmann::json& level = *levelResult;
 
         if (level.contains("systems") && level["systems"].is_array())
         {
@@ -333,20 +326,7 @@ namespace VengEditor
     {
         // Read the existing file so unknown keys (the world id, hand-authored structure)
         // survive the round-trip — only the edited sections are patched.
-        nlohmann::json level = nlohmann::json::object();
-        {
-            const std::ifstream file(m_SourcePath, std::ios::binary);
-            if (file)
-            {
-                std::ostringstream contents;
-                contents << file.rdbuf();
-                const nlohmann::json parsed = nlohmann::json::parse(contents.str(), nullptr, false);
-                if (!parsed.is_discarded() && parsed.is_object())
-                {
-                    level = parsed;
-                }
-            }
-        }
+        nlohmann::json level = ReadJsonObject(m_SourcePath).value_or(nlohmann::json::object());
 
         nlohmann::json systems = nlohmann::json::array();
         for (const SystemId sysId : m_Systems)

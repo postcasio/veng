@@ -12,6 +12,7 @@
 #include <tinyexr.h>
 
 #include <Veng/Asset/CookedBlobs.h>
+#include <Veng/Cook/JsonFile.h>
 
 namespace Veng::Cook
 {
@@ -25,21 +26,12 @@ namespace Veng::Cook
 
         const path sourcePath = context.PackDir / entry["source"].get<string>();
 
-        const std::ifstream sourceFile(sourcePath, std::ios::binary);
-        if (!sourceFile)
+        const Result<json> envJsonResult = ReadJsonFile(sourcePath, "environment importer");
+        if (!envJsonResult)
         {
-            return std::unexpected(
-                fmt::format("environment importer: failed to open '{}'", sourcePath.string()));
+            return std::unexpected(envJsonResult.error());
         }
-
-        std::ostringstream contentStream;
-        contentStream << sourceFile.rdbuf();
-        const json envJson = json::parse(contentStream.str(), nullptr, false);
-        if (envJson.is_discarded() || !envJson.is_object())
-        {
-            return std::unexpected(
-                fmt::format("environment importer: '{}': invalid JSON", sourcePath.string()));
-        }
+        const json& envJson = *envJsonResult;
 
         if (!envJson.contains("image") || !envJson["image"].is_string())
         {

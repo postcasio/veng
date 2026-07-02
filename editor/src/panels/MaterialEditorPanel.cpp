@@ -3,6 +3,7 @@
 #include "AssetSourceIndex.h"
 #include "EditorIcons.h"
 #include "FieldWidget.h"
+#include "JsonUtil.h"
 
 #include <VengGraph/MaterialCompile.h>
 
@@ -87,20 +88,12 @@ namespace VengEditor
 
         // Read the parent's declared default-instance id from the source, if any; a save backfills
         // it (minting through m_MintId) when absent, so an editor-authored material never needs the
-        // hand-mint Plan 01's cook requires of a referenced material.
+        // hand-mint the cook requires of a referenced material.
+        if (const optional<Json> doc = ReadJsonObject(m_SourcePath);
+            doc && doc->contains("defaultInstance") &&
+            (*doc)["defaultInstance"].is_number_unsigned())
         {
-            const std::ifstream file(m_SourcePath, std::ios::binary);
-            if (file)
-            {
-                std::ostringstream contents;
-                contents << file.rdbuf();
-                const Json doc = Json::parse(contents.str(), nullptr, false);
-                if (!doc.is_discarded() && doc.is_object() && doc.contains("defaultInstance") &&
-                    doc["defaultInstance"].is_number_unsigned())
-                {
-                    m_DefaultInstanceId = AssetId{doc["defaultInstance"].get<u64>()};
-                }
-            }
+            m_DefaultInstanceId = AssetId{(*doc)["defaultInstance"].get<u64>()};
         }
 
         // The temp cook source is a fixed dotfile beside the real source so the
@@ -170,24 +163,17 @@ namespace VengEditor
 
         // The cooked Material does not surface its shader ids; read them from the
         // source document. They round-trip through the regenerated "shaders" block.
-        const std::ifstream file(m_SourcePath, std::ios::binary);
-        if (file)
+        if (const optional<Json> doc = ReadJsonObject(m_SourcePath);
+            doc && doc->contains("shaders") && (*doc)["shaders"].is_object())
         {
-            std::ostringstream contents;
-            contents << file.rdbuf();
-            const Json doc = Json::parse(contents.str(), nullptr, false);
-            if (!doc.is_discarded() && doc.is_object() && doc.contains("shaders") &&
-                doc["shaders"].is_object())
+            const Json& shaders = (*doc)["shaders"];
+            if (shaders.contains("vertex") && shaders["vertex"].is_number_unsigned())
             {
-                const Json& shaders = doc["shaders"];
-                if (shaders.contains("vertex") && shaders["vertex"].is_number_unsigned())
-                {
-                    m_VertexShader = AssetId{shaders["vertex"].get<u64>()};
-                }
-                if (shaders.contains("fragment") && shaders["fragment"].is_number_unsigned())
-                {
-                    m_FragmentShader = AssetId{shaders["fragment"].get<u64>()};
-                }
+                m_VertexShader = AssetId{shaders["vertex"].get<u64>()};
+            }
+            if (shaders.contains("fragment") && shaders["fragment"].is_number_unsigned())
+            {
+                m_FragmentShader = AssetId{shaders["fragment"].get<u64>()};
             }
         }
 
@@ -205,21 +191,13 @@ namespace VengEditor
             return;
         }
 
-        const std::ifstream file(entry->Source, std::ios::binary);
-        if (!file)
-        {
-            return;
-        }
-        std::ostringstream contents;
-        contents << file.rdbuf();
-        const Json doc = Json::parse(contents.str(), nullptr, false);
-        if (doc.is_discarded() || !doc.is_object() || !doc.contains("source") ||
-            !doc["source"].is_string())
+        const optional<Json> doc = ReadJsonObject(entry->Source);
+        if (!doc || !doc->contains("source") || !(*doc)["source"].is_string())
         {
             return;
         }
 
-        const string source = doc["source"].get<string>();
+        const string source = (*doc)["source"].get<string>();
         constexpr std::string_view GraphSuffix = ".graph.json";
         if (source.size() < GraphSuffix.size() ||
             source.compare(source.size() - GraphSuffix.size(), GraphSuffix.size(), GraphSuffix) !=
@@ -231,8 +209,8 @@ namespace VengEditor
         m_GraphSourced = true;
         m_ShaderJsonPath = entry->Source;
         m_GraphPath = entry->Source.parent_path() / source;
-        m_FragmentEntry = (doc.contains("entry") && doc["entry"].is_string())
-                              ? doc["entry"].get<string>()
+        m_FragmentEntry = (doc->contains("entry") && (*doc)["entry"].is_string())
+                              ? (*doc)["entry"].get<string>()
                               : string("fsMain");
     }
 

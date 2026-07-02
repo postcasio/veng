@@ -3,6 +3,7 @@
 #include "AssetChip.h"
 #include "AssetSourceIndex.h"
 #include "EditorIcons.h"
+#include "JsonUtil.h"
 
 #include <Veng/Application.h>
 #include <Veng/ImGui/ImGuiLayer.h>
@@ -78,18 +79,12 @@ namespace VengEditor
         m_AuthoredParams.clear();
         m_AuthoredTextures.clear();
 
-        const std::ifstream file(m_SourcePath, std::ios::binary);
-        if (!file)
+        const optional<Json> docResult = ReadJsonObject(m_SourcePath);
+        if (!docResult)
         {
             return;
         }
-        std::ostringstream contents;
-        contents << file.rdbuf();
-        const Json doc = Json::parse(contents.str(), nullptr, false);
-        if (doc.is_discarded() || !doc.is_object())
-        {
-            return;
-        }
+        const Json& doc = *docResult;
 
         if (doc.contains("parent") && doc["parent"].is_number_unsigned())
         {

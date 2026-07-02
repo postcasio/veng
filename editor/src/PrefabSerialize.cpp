@@ -1,5 +1,7 @@
 #include "PrefabSerialize.h"
 
+#include "JsonUtil.h"
+
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Reflection/FieldDescriptor.h>
 #include <Veng/Reflection/TypeId.h>
@@ -364,20 +366,7 @@ namespace VengEditor
         // Read the existing source so unknown keys (comments-as-keys, future fields, hand-authored
         // extras) survive — the prefab is patched, not regenerated. A missing or malformed file
         // starts from an empty document.
-        json prefab = json::object();
-        {
-            const std::ifstream file(sourcePath, std::ios::binary);
-            if (file)
-            {
-                std::ostringstream contents;
-                contents << file.rdbuf();
-                const json parsed = json::parse(contents.str(), nullptr, false);
-                if (!parsed.is_discarded() && parsed.is_object())
-                {
-                    prefab = parsed;
-                }
-            }
-        }
+        json prefab = ReadJsonObject(sourcePath).value_or(json::object());
 
         const vector<Entity> ordered = HierarchyOrderedEntities(scene);
 

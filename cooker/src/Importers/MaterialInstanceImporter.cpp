@@ -9,6 +9,7 @@
 #include <fmt/format.h>
 
 #include <Veng/Asset/CookedBlobs.h>
+#include <Veng/Cook/JsonFile.h>
 
 #include "GraphShaderSource.h"
 #include "SlangReflect.h"
@@ -30,22 +31,7 @@ namespace Veng::Cook
         // Reads a JSON file into a parsed object, returning a located error on I/O or parse failure.
         Result<json> ReadJsonObject(const path& file, std::string_view label)
         {
-            const std::ifstream in(file, std::ios::binary);
-            if (!in)
-            {
-                return std::unexpected(fmt::format("material instance importer: failed to open {} "
-                                                   "'{}'",
-                                                   label, file.string()));
-            }
-            std::ostringstream stream;
-            stream << in.rdbuf();
-            const json parsed = json::parse(stream.str(), nullptr, false);
-            if (parsed.is_discarded() || !parsed.is_object())
-            {
-                return std::unexpected(fmt::format(
-                    "material instance importer: {} '{}': invalid JSON", label, file.string()));
-            }
-            return parsed;
+            return ReadJsonFile(file, fmt::format("material instance importer: {}", label));
         }
 
         // One exposed parent field: its declared authoring type ("vec4"/"texture"/...) paired with

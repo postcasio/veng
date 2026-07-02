@@ -9,6 +9,7 @@
 #include <fmt/format.h>
 
 #include <Veng/Asset/CookedBlobs.h>
+#include <Veng/Cook/JsonFile.h>
 
 #include "GraphShaderSource.h"
 #include "SlangReflect.h"
@@ -67,21 +68,12 @@ namespace Veng::Cook
 
         const path vmatPath = context.PackDir / entry["source"].get<string>();
 
-        const std::ifstream vmatFile(vmatPath, std::ios::binary);
-        if (!vmatFile)
+        const Result<json> vmatResult = ReadJsonFile(vmatPath, "material importer");
+        if (!vmatResult)
         {
-            return std::unexpected(
-                fmt::format("material importer: failed to open '{}'", vmatPath.string()));
+            return std::unexpected(vmatResult.error());
         }
-
-        std::ostringstream vmatStream;
-        vmatStream << vmatFile.rdbuf();
-        const json vmat = json::parse(vmatStream.str(), nullptr, false);
-        if (vmat.is_discarded() || !vmat.is_object())
-        {
-            return std::unexpected(
-                fmt::format("material importer: '{}': invalid JSON", vmatPath.string()));
-        }
+        const json& vmat = *vmatResult;
 
         // --- 1b. Parse the optional domain (default surface) ---
 
@@ -186,22 +178,12 @@ namespace Veng::Cook
         // Read that JSON to locate the actual .slang source relative to its directory.
         const path shaderJsonPath = fragmentResolved->AbsolutePath;
 
-        const std::ifstream shaderJsonFile(shaderJsonPath, std::ios::binary);
-        if (!shaderJsonFile)
+        const Result<json> shaderJsonResult = ReadJsonFile(shaderJsonPath, "material importer");
+        if (!shaderJsonResult)
         {
-            return std::unexpected(
-                fmt::format("material importer: failed to open fragment shader json '{}'",
-                            shaderJsonPath.string()));
+            return std::unexpected(shaderJsonResult.error());
         }
-
-        std::ostringstream shaderJsonStream;
-        shaderJsonStream << shaderJsonFile.rdbuf();
-        const json shaderJson = json::parse(shaderJsonStream.str(), nullptr, false);
-        if (shaderJson.is_discarded() || !shaderJson.is_object())
-        {
-            return std::unexpected(
-                fmt::format("material importer: '{}': invalid JSON", shaderJsonPath.string()));
-        }
+        const json& shaderJson = *shaderJsonResult;
 
         if (!shaderJson.contains("source") || !shaderJson["source"].is_string())
         {

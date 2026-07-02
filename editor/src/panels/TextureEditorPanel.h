@@ -6,6 +6,7 @@
 #include <Veng/Asset/Texture.h>
 #include <Veng/Project/BuildConfiguration.h>
 #include <Veng/Project/CompressionRole.h>
+#include <Veng/Renderer/Types.h>
 
 #include <VengEditor/CookRequest.h>
 #include <VengEditor/EditorPanel.h>
@@ -63,30 +64,20 @@ namespace VengEditor
         void OnUI() override;
 
     private:
-        /// @brief Sampler filter modes; ordinals match the importer's string vocabulary.
-        enum class Filter : Veng::u32
-        {
-            Nearest = 0,
-            Linear = 1
-        };
-        /// @brief Texture wrap modes; ordinals match the importer's string vocabulary.
-        enum class Wrap : Veng::u32
-        {
-            Repeat = 0,
-            MirroredRepeat = 1,
-            ClampToEdge = 2,
-            ClampToBorder = 3
-        };
-
         /// @brief Editable subset of the .tex.json fields.
+        ///
+        /// The sampler fields are the engine vocabulary enums; their authoring
+        /// spellings come from the shared name tables (Renderer/TypeNames.h) the
+        /// importer parses by. The mip filter reuses Filter — its two authored
+        /// names and ordinals coincide with MipmapMode's.
         struct Settings
         {
             bool Srgb = true;
-            Filter Min = Filter::Linear;
-            Filter Mag = Filter::Linear;
-            Filter Mipmap = Filter::Linear;
-            Wrap WrapU = Wrap::Repeat;
-            Wrap WrapV = Wrap::Repeat;
+            Veng::Renderer::Filter Min = Veng::Renderer::Filter::Linear;
+            Veng::Renderer::Filter Mag = Veng::Renderer::Filter::Linear;
+            Veng::Renderer::Filter Mipmap = Veng::Renderer::Filter::Linear;
+            Veng::Renderer::AddressMode WrapU = Veng::Renderer::AddressMode::Repeat;
+            Veng::Renderer::AddressMode WrapV = Veng::Renderer::AddressMode::Repeat;
             /// @brief The authored compression role, or nullopt to fall back to the sRGB guess.
             Veng::optional<Veng::CompressionRole> Role;
         };

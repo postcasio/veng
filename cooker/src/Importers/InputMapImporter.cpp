@@ -11,7 +11,9 @@
 
 #include <Veng/Asset/CookedBlobs.h>
 #include <Veng/Asset/InputMappingContext.h>
+#include <Veng/Cook/JsonFile.h>
 #include <Veng/Input/Actions.h>
+#include <Veng/Reflection/EnumName.h>
 #include <Veng/Reflection/Serialize.h>
 #include <Veng/Reflection/TypeId.h>
 #include <Veng/Reflection/TypeRegistry.h>
@@ -25,23 +27,6 @@ namespace Veng::Cook
         string Located(const string& file, const string& reason)
         {
             return fmt::format("input map importer: '{}': {}", file, reason);
-        }
-
-        // Parses an enum value by its authored name through the reflection enum table for T.
-        // The JSON authors device / kind / axis by name (e.g. "Keyboard", "Axis2D", "Y"), never
-        // by ordinal, so a rename in C++ is a rebuild, not a silent shift.
-        template <class T>
-        Result<T> ParseEnumByName(const TypeRegistry& registry, const string& name)
-        {
-            const TypeInfo& info = registry.Info(TypeIdOf<T>());
-            for (const EnumEntry& entry : info.Enumerators)
-            {
-                if (entry.Name == name)
-                {
-                    return static_cast<T>(entry.Value);
-                }
-            }
-            return std::unexpected(fmt::format("unknown value '{}'", name));
         }
 
         template <class T>
@@ -64,19 +49,12 @@ namespace Veng::Cook
         const path sourcePath = context.PackDir / entry["source"].get<string>();
         const string file = sourcePath.string();
 
-        const std::ifstream sourceFile(sourcePath, std::ios::binary);
-        if (!sourceFile)
+        const Result<json> docResult = ReadJsonFile(sourcePath, "input map importer");
+        if (!docResult)
         {
-            return std::unexpected(fmt::format("input map importer: failed to open '{}'", file));
+            return std::unexpected(docResult.error());
         }
-
-        std::ostringstream sourceStream;
-        sourceStream << sourceFile.rdbuf();
-        const json doc = json::parse(sourceStream.str(), nullptr, false);
-        if (doc.is_discarded() || !doc.is_object())
-        {
-            return std::unexpected(Located(file, "invalid JSON"));
-        }
+        const json& doc = *docResult;
 
         // The context references only engine builtins (InputAction / Binding and their enums), so
         // it needs no game module: build a builtin-only registry for the enum tables + WriteFields.
@@ -118,11 +96,11 @@ namespace Veng::Cook
 
             const string kindName =
                 actionJson.contains("kind") ? actionJson["kind"].get<string>() : string("Button");
-            const Result<ActionKind> kind = ParseEnumByName<ActionKind>(registry, kindName);
+            const optional<ActionKind> kind = ParseEnum<ActionKind>(kindName);
             if (!kind)
             {
-                return std::unexpected(
-                    Located(file, fmt::format("action {}: kind: {}", id, kind.error())));
+                return std::unexpected(Located(
+                    file, fmt::format("action {}: kind: unknown value '{}'", id, kindName)));
             }
 
             InputAction action;
@@ -180,12 +158,12 @@ namespace Veng::Cook
                 const string deviceName = sourceJson.contains("device")
                                               ? sourceJson["device"].get<string>()
                                               : string("Keyboard");
-                const Result<InputDeviceType> device =
-                    ParseEnumByName<InputDeviceType>(registry, deviceName);
+                const optional<InputDeviceType> device = ParseEnum<InputDeviceType>(deviceName);
                 if (!device)
                 {
                     return std::unexpected(
-                        Located(file, fmt::format("binding source: device: {}", device.error())));
+                        Located(file, fmt::format("binding source: device: unknown value '{}'",
+                                                  deviceName)));
                 }
 
                 if (!sourceJson.contains("control") || !sourceJson["control"].is_number_unsigned())
@@ -198,12 +176,11 @@ namespace Veng::Cook
                 const string axisName = bindingJson.contains("axis")
                                             ? bindingJson["axis"].get<string>()
                                             : string("Whole");
-                const Result<AxisComponent> axis =
-                    ParseEnumByName<AxisComponent>(registry, axisName);
+                const optional<AxisComponent> axis = ParseEnum<AxisComponent>(axisName);
                 if (!axis)
                 {
                     return std::unexpected(
-                        Located(file, fmt::format("binding axis: {}", axis.error())));
+                        Located(file, fmt::format("binding axis: unknown value '{}'", axisName)));
                 }
 
                 // Axis/kind consistency: a Button action wants a Whole binding (an X/Y component
