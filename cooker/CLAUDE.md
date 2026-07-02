@@ -116,6 +116,18 @@ at cook time:
   + a value region of the param overrides' raw bytes); the instance owns no shader or pipeline — the
   parent supplies those. The importer is in the **core** set (it links only the Slang reflection +
   the graph-shader resolver hook, never libveng), so a bare-parent cook stays graph-aware.
+- **Input maps** (`*.inputmap.json`) cook an `InputMappingContext` (`AssetType::InputMap`)
+  through the **`InputMapImporter`**. The source declares its `"actions"` (each an unsigned
+  `id`, a `name`, and an enum `kind`) and its `"bindings"` (a raw `source` device/control, a
+  target `action` id, an `axis` component, and a `scale`); the importer decodes them into an
+  `InputMapData` and emits it through the shared `WriteFields` encoder — the reflected
+  actions + bindings, no bespoke binary format. Its core check is **binding → action
+  validation**: a binding must name an action the context's own `"actions"` declares (the
+  typo-catch a global registry would otherwise miss), and a duplicate action id, a null id,
+  or an unknown device/axis/kind name is a **located cook error** — the same discipline the
+  `MaterialImporter` applies to `.vmat` fields and the `PrefabImporter` to components. It
+  references only engine builtins (`InputAction`/`Binding` and their enums), so it needs no
+  game module.
 - **Skinned meshes, skeletons, and animations** come from a rigged model (FBX, via the
   enabled assimp FBX importer). The `MeshImporter` emits the skinned vertex layout when the
   `*.mesh.json` names a `"skeleton"` id: it caps each vertex to four normalized influences

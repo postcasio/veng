@@ -141,48 +141,46 @@ device / wire  →  PlayerInput  →  Intent  →  Transform
 The components live in
 [`engine/include/Veng/Scene/Components.h`](../../engine/include/Veng/Scene/Components.h):
 
-- **`PlayerInput`** — a per-player snapshot of *this tick's raw control state*:
-  `vec3 Move`, `vec2 Look`, `u32 Buttons`. For a local player it is filled from
-  `Veng::Input`; a remote player's would be filled from the wire.
+- **`PlayerInput`** — a per-seat snapshot of *this tick's resolved actions*: a set
+  of `{ ActionId, vec2 Value, ActionPhase }` samples read by action id
+  (`input.GetValue(Actions::Move)`, `input.WasTriggered(Actions::Jump)`). The engine's
+  builtin `InputMappingSystem` fills it for a local seat by resolving that seat's
+  active bindings against `Veng::Input`; a remote seat's arrives from the wire.
 - **`Intent`** — an *abstract, source-agnostic command*: `vec3 Move` (in the
   pawn's local frame), `vec2 Look`, `u32 Actions`. It answers "what does this pawn
   want to do this tick," divorced from who decided it.
 - **`Possesses`** — a seat-to-pawn link: `Entity Pawn`, the pawn this seat
   controls.
 
-### Stage 1 + 2: a control system reads input, writes intent
+### Stage 1: the engine resolves raw input into actions
+
+Stage 1 — device → `PlayerInput` — is done for you. Raw device state is bound to
+**named actions** through cooked, remappable data (an `InputMappingContext` asset,
+active per-seat via an `InputContextStack`), and the builtin **`InputMappingSystem`**
+resolves those bindings each tick into the seat's `PlayerInput`. It is the **only**
+system that reads raw device state, and it must be ordered **before** your control
+system in the level (registration order does not reorder an explicit `systems`
+list). Authoring the actions, the `*.inputmap.json`, and the seat's context stack is
+the subject of its own guide — **[Authoring input actions](authoring-input-actions.md)**;
+here we pick up at the resolved snapshot.
+
+### Stage 2: a control system reads actions, writes intent
 
 hello-triangle's `ControlSystem` (in
-[`main.cpp`](../../examples/hello-triangle/main.cpp)) is `Phase::Sim` and does
-exactly this — reads the always-present `Input` into the local player's
-`PlayerInput`, then maps that snapshot onto the possessed pawn's `Intent`:
+[`main.cpp`](../../examples/hello-triangle/main.cpp)) is `Phase::Sim` and maps the
+resolved `PlayerInput` onto the possessed pawn's `Intent`. It reads actions **by
+name** — never the device — so it consults only the snapshot `InputMappingSystem`
+already filled:
 
 ```cpp
 class ControlSystem final : public SceneSystem
 {
 public:
-    void OnUpdate(Scene& scene, const f32, const SystemContext& context) override
+    void OnUpdate(Scene& scene, const f32, const SystemContext&) override
     {
-        const Input& input = context.Input;
-
-        vec3 move{0.0f};
-        if (input.IsKeyDown(Key::W)) { move.z += 1.0f; }
-        if (input.IsKeyDown(Key::S)) { move.z -= 1.0f; }
-        if (input.IsKeyDown(Key::D)) { move.x += 1.0f; }
-        if (input.IsKeyDown(Key::A)) { move.x -= 1.0f; }
-
-        u32 buttons = 0;
-        if (input.IsKeyDown(Key::Space)) { buttons |= static_cast<u32>(PlayerButton::Jump); }
-
-        const vec2 look = input.GetMouseDelta();
-
         scene.Each<PlayerInput, Possesses>(
             [&](Entity, PlayerInput& player, Possesses& possesses)
             {
-                player.Move = move;
-                player.Look = look;
-                player.Buttons = buttons;
-
                 // An unwired seat is inert: skip rather than fault.
                 if (possesses.Pawn == Entity::Null || !scene.IsAlive(possesses.Pawn) ||
                     !scene.Has<Intent>(possesses.Pawn))
@@ -196,26 +194,29 @@ public:
 };
 ```
 
-The button bit layout (`PlayerButton::Jump`) is game policy — the engine treats
-the bitset as opaque. The mapping itself is factored into a pure free function so
-it is testable without an `Input` or a scene:
+The `Actions::Move` / `Look` / `Jump` constants are game policy — minted `ActionId`s
+the bindings target. The mapping itself is factored into a pure free function so it
+is testable without an `Input` or a scene:
 
 ```cpp
 Intent MapInputToIntent(const PlayerInput& input)
 {
+    const vec2 move = input.GetValue(Actions::Move);
+    const vec2 look = input.GetValue(Actions::Look);
+
     Intent intent;
-    intent.Move = input.Move;
-    intent.Look = input.Look;
-    intent.Actions = input.Buttons;
+    intent.Move = vec3(move.x, 0.0f, -move.y);
+    intent.Look = vec2(-look.x, 0.0f);
+    intent.Actions = input.IsHeld(Actions::Jump) ? 1u : 0u;
     return intent;
 }
 ```
 
-Note this Sim system *does* read `context.Input` — and that is the **one
-sanctioned place**. The control system is the edge that translates the device into
-the `Intent` snapshot; it is the boundary the determinism contract draws. Treat
-the look value here as a captured snapshot, not a continuous device poll consulted
-again downstream.
+Note this Sim system reads **no raw device state** — it reads the resolved
+`PlayerInput`, the deterministic snapshot. The one device read for the whole seat
+happened upstream, in `InputMappingSystem`, at the edge; everything from
+`PlayerInput` onward is a pure function of that snapshot. That is exactly the
+boundary the determinism contract draws.
 
 ### Stage 3: a movement system consumes intent, mutates state
 
@@ -494,6 +495,9 @@ This example reuses the real shipped pieces:
 
 ## Where to go next
 
+- **[Authoring input actions](authoring-input-actions.md)** — stage 1 of the
+  Input → Intent → Movement pattern in full: named actions, the `*.inputmap.json`
+  binding data, the seat's `InputContextStack`, and the ordering rule.
 - **[Wiring a level](wiring-a-level.md)** — the `Level` asset, world prefab versus
   level-scoped data, and the load-to-play flow.
 - The generated API reference (`cmake --build build --target docs`) documents

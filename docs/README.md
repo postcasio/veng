@@ -17,6 +17,12 @@ symbol: build the Doxygen reference with `cmake --build build --target docs`
   author's side: world prefab versus level-scoped data (game mode, the active
   system set, render settings), why a level is not a prefab, and the
   load-to-play flow.
+- **[Authoring input actions](guides/authoring-input-actions.md)** — the
+  action-mapping layer: declaring action-id constants, writing a
+  `*.inputmap.json` (actions + bindings), activating it from a seat's
+  `InputContextStack` in the player prefab, and reading actions by name in a
+  control system — plus why `InputMappingSystem` must run before the control
+  system and how the context stack switches schemes and gates focus.
 - **[Consuming veng](guides/consuming-veng.md)** — discovering veng from a game
   project with `find_package(veng)`: the three consumption modes (in-tree, build
   tree, install prefix), the `veng_ROOT` / `CMAKE_PREFIX_PATH` /

@@ -728,6 +728,14 @@ hand-written JSON **asset pack** into a single `.vengpack` archive; the engine
   `*.shader.json` / `*.vmat.json` / `*.prefab.json`) that the manifest entry points
   at; the sampler settings, import options, shader source/entry, material fields,
   and prefab entities/components live in those files.
+- **`AssetType::InputMap` — an `InputMappingContext`, a CPU-only asset** (like
+  `Skeleton`/`Animation`/`Level`, no GPU resource). Its `*.inputmap.json` source declares
+  the actions a scheme defines (id + name + `ActionKind`) and its raw-source → action
+  bindings; the cook validates every binding against the declared actions. The runtime loads
+  it by `AssetId` through the ordinary `Load`/`LoadSync` path and hot-reloads it through
+  `MountMemory`; a seat's `InputContextStack` references one or more by id, and
+  `InputMappingSystem` resolves the active set against the raw snapshot (see the Gameplay
+  control-flow section).
 - **Load is by opaque `u64` `AssetId`** through mounted archives.
   `AssetManager::Load<T>(AssetId)` is **async by default**: it returns a
   not-yet-resident `AssetHandle<T>` immediately and runs the decode + GPU upload
@@ -1167,17 +1175,59 @@ editor's external orbit `EditorCamera` (its own non-ECS camera, `editor/src/Edit
 coexist with zero renderer change. The prefab editor's Play mode can preview the scene's
 authored `Viewer` camera through `ResolvePrimaryCameraView` instead of its orbit camera.
 
-**Control flows Input → Intent → Movement.** Device/wire input is captured into a
-per-player **`PlayerInput`** snapshot (move/look axes + a button bitset); a **control**
-system translates it into an abstract **`Intent`** command (local-frame move, look delta,
-action bitset); a **movement** system (`MovementSystem`, `Veng/Scene/Movement.h`) and
-gameplay systems generally consume `Intent` and mutate state, scaled per pawn by an
-optional **`Mover`**. The `Intent` indirection is deliberate: it is the serializable
-chokepoint a net layer predicts and rolls back, and the uniform interface AI and remote
-players write through — both are drop-in `Intent` producers, no movement change. **A
-`Possesses { Entity Pawn }`** link names the pawn a seat controls; possession is
-independent of `Viewer.Camera` (a spectator views without possessing; a cutscene
-retargets the camera without un-possessing).
+**Control flows raw input → actions → `PlayerInput` → Intent → Movement.** Raw device
+state is bound to **named actions** through cooked, remappable data and resolved into a
+per-seat snapshot, which a game-specific control system reads to produce the abstract
+`Intent` gameplay consumes:
+
+- **The action-mapping layer** (`Veng/Input/`). An **`ActionId`** is a minted `u64` leaf
+  (authored like `AssetId`/`TypeId`); an action *exists* by being declared in a context,
+  so there is no registry. An **`InputMappingContext`** (`AssetType::InputMap`) declares
+  its actions (id + name + `ActionKind`) and a `vector<Binding>` (raw `InputSource` →
+  action, with a signed scale + axis-component modifier). **`ResolveActions(activeContexts,
+  raw, previous) → ActionState`** (`Veng/Input/Actions.h`) is the pure, device-free core —
+  bindings × the active context stack × the raw snapshot → each action's value + phase,
+  phase derived by comparing against the previous `ActionState`. It is unit-tested with no
+  window, foundation-first, mirroring `DecideBarrier`/`ComputeCascades`; `RawInput`
+  (`Veng/Input/RawInput.h`) is the thin adapter from `Veng::Input` to the resolver's
+  `RawInputView`.
+- **`PlayerInput` *is* the resolved `ActionState`.** The per-seat serializable snapshot is
+  a game-defined set of `ActionSample { ActionId; vec2 Value; ActionPhase }`, read by name
+  (`input.GetValue(Actions::Move)`, `input.WasTriggered(Actions::Jump)`) — not a fixed
+  `{Move, Look, Buttons}` struct. It serializes through the reflection serializer's
+  name-keyed `FieldClass::Array` encoding (each sample self-describing by its `ActionId`),
+  so it rides the ordinary cook/load/replicate path with no bespoke wire format.
+- **`InputContextStack`** is a per-seat component holding the ordered active
+  `AssetHandle<InputMappingContext>` (highest priority last), authored on the player
+  prefab. Gameplay systems push/pop it to switch schemes (enter a vehicle → push the
+  `vehicle` context); popping to empty neutralizes the seat's input. It is the fine-grained
+  sibling of the `InputRouter`'s coarse focus stack.
+- **`InputMappingSystem`** (`Veng/Scene/InputMappingSystem.h`) is the builtin Sim system
+  that resolves each locally-owned seat's `InputContextStack` against the raw snapshot into
+  that seat's `PlayerInput`. It is the **sole reader of raw device state**, registered in
+  `RegisterBuiltinSystems` **first** so it runs ahead of any control system — a level's
+  explicit `systems` order must place it before the control system that reads `PlayerInput`
+  (registration order does not reorder the list). It iterates `(Viewer, InputContextStack,
+  PlayerInput)` seats, so a world with none — the input-free minimal template — resolves
+  nothing, a clean no-op with no guard; in headless the neutral snapshot resolves to
+  all-`None`. `IsLocallyOwned` returns true for every seat today (the seam the net layer
+  keys on).
+
+A game-specific **control** system reads `PlayerInput` by action id and writes the abstract
+**`Intent`** command (local-frame move, look delta, action bitset); a **movement** system
+(`MovementSystem`, `Veng/Scene/Movement.h`) and gameplay systems generally consume `Intent`
+and mutate state, scaled per pawn by an optional **`Mover`**. **The layering invariant:**
+actions → `PlayerInput` → control system → `Intent` → gameplay; **only** the control system
+reads actions, and gameplay reads `Intent`. `Intent` is the serializable chokepoint a net
+layer predicts and rolls back and the uniform interface AI and remote players write through
+— both are drop-in `Intent` producers that never touch an action or a context, no movement
+change. (The net layer replicates `PlayerInput` — the action snapshot — for a human seat and
+re-derives its `Intent` server-side; AI and server-authoritative producers write `Intent`
+directly.) The gamepad `InputSource` arms are inert forward vocabulary: `Veng::Input` carries
+no gamepad state yet, so the resolver reads them as neutral until the device layer lands. **A
+`Possesses { Entity Pawn }`** link names the pawn a seat controls; possession is independent
+of `Viewer.Camera` (a spectator views without possessing; a cutscene retargets the camera
+without un-possessing).
 
 **`ConstantMotion` is the input-free counterpart** (`Veng/Scene/Motion.h`): an authored
 **`ConstantMotion { vec3 LinearVelocity; vec3 AngularVelocity; MotionSpace Space }`** is a

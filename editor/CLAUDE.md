@@ -197,6 +197,19 @@ mismatch at load); hosting separately built modules is a future module-ABI/SDK f
   over the same round-trip (writing/clearing the `"role"` key) and shows the **resolved
   format read-only** for the active configuration ("→ ASTC4x4Srgb for 'macos'"), so the
   artist picks intent and reads the platform's codec without choosing one.
+- **The input-map editor is near-free.** `InputMappingEditorPanel` (registered for
+  `AssetType::InputMap`) draws a `.inputmap.json`'s reflected document — its
+  `vector<InputAction>` actions and its `vector<Binding>` bindings — through the shared
+  reflection inspector (`DrawFields` over the same `FieldClass::Array` path the project-
+  settings panel uses), so the binding table is add/remove/edit-able with **no** bespoke
+  widget code. The one custom widget is an `ActionId` name combo scoped to the document's own
+  declared actions (a `u64` leaf has no default scalar widget), so a binding picks its action
+  by name, not a raw id. It recooks live behind the stable handle and hot-reloads, exposes a
+  `GetInspectables()` override for the editor MCP, and draws a **read-only resolved-state
+  preview** — the actions the current bindings resolve to over the editor's own input each
+  frame — so a binding's effect is observable without launching the game. It is deliberately
+  **basic by design**: no press-a-key-to-bind capture, no drag-reorder, no undo (the single-
+  asset editors have none), matching the texture/material editor idiom.
 - **The editor opens the project, not a manifest.** `EditorHostInfo::ProjectPath` (the source
   `project.veng`, passed by `--project`) is the editor's entrypoint: `EditorHost::Create` reads it
   through `LoadProjectSettings` (the host-owned `ProjectSettings` — its `Configurations`,

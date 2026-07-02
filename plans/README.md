@@ -785,6 +785,30 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   streaming/SSE, `resources/*`/`prompts/*`, auth/non-loopback, richer world- and node-graph-editing,
   and reflected commands stay future.
 
+- **[planset-42](planset-42/README.md)** — input actions: bindings as data, `PlayerInput` as
+  `ActionState` (✅ done, 5 plans). The second half of [future area 4](future/README.md#4-event--input-systems)'s
+  input work (the first, event routing, was planset-30): stop gameplay from reading raw keys.
+  A game authors **named actions** (`ActionId`, a minted `u64` leaf) and binds raw device inputs
+  to them through **cooked, remappable data** — an **`InputMappingContext`** asset
+  (`AssetType::InputMap`, its `*.inputmap.json` source validated binding-against-action by the
+  cooker **`InputMapImporter`**), active per-seat as an ordered **`InputContextStack`** — and the
+  builtin **`InputMappingSystem`** (a Sim system, the sole raw-input reader, ordered first)
+  resolves the active bindings each tick through the pure device-free **`ResolveActions`** core.
+  **`PlayerInput` *becomes* that resolved action snapshot** (the `ActionState`: a game-defined set
+  of `{ ActionId, vec2 Value, ActionPhase }`, serialized through the reflection serializer's
+  name-keyed array), and the control system reads actions **by name**
+  (`input.WasTriggered(Actions::Jump)`) instead of polling hardware — **superseding planset-29's
+  fixed-struct `PlayerInput { Move, Look, Buttons }`**. `Intent` is **untouched**: the action
+  layer feeds it and stops there, so AI and remote players stay drop-in `Intent` producers that
+  never consult an action or a context, and only the local human seat's input flows through
+  actions. A basic reflected **`InputMappingEditorPanel`** (registered for `AssetType::InputMap`)
+  rounds it out. Mostly **assembly on existing surface** (the seat model, the event-fed snapshot,
+  reflection's asset cook/load/inspector) — the module ABI stays at **version 4**. **Held back:**
+  multi-seat routing (with the gamepad device layer — the inert `Gamepad*` source arms wait on
+  it), the networking layer that replicates `PlayerInput`, a runtime remapping UI, richer
+  triggers/modifiers, and a global `ActionRegistry` — the **named next planset**, built on the
+  per-seat resolve seam this establishes.
+
 - **[future](future/README.md)** — work beyond the current plansets (📝 draft/vision,
   holding area; not a planset). Area 13's **prioritized first slice** — material
   **domains** (Surface + PostProcess), the unified ring-buffered parameter block, the
@@ -794,7 +818,7 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   sub-area D — its gates met by planset-10/11/12/14/15) are the **prioritized** next
   areas, whichever the next planset takes up. The rest of the remaining work is the
   **multi-seat input routing + networking** half of area 4 (its event-routing core landed in
-  planset-30) and the named still-future increments of the areas
+  planset-30 and its action-mapping layer in planset-42) and the named still-future increments of the areas
   done in part (hot-reload; the task graph; the systems framework +
   `ShaderInterface`/`MaterialField` unification; the über-pipeline batteries — now with
   PostProcess materials as the authorable-effect mechanism — + typed lights; render-graph

@@ -13,8 +13,8 @@ plansets (see [plans/README.md](../README.md)) and are *not* re-narrated here �
 only their **still-future remainder** is kept, plus any delivered capability a
 pending area builds on directly. The substance of this document is now the
 **remaining** work: **multi-seat input routing + networking (area 4), now that the
-event-routed input core is delivered** — and the named still-future increments of the
-areas done in part (areas 1, 2, 7, 8, 9, 10, 12, 15). The areas that were the prioritized
+event-routed input core and the action-mapping layer are both delivered** — and the
+named still-future increments of the areas done in part (areas 1, 2, 7, 8, 9, 10, 12, 15). The areas that were the prioritized
 next work — **material domains + shader-graph codegen (area 13)**, the editor's **scene
 editor (area 6, sub-area D)**, and **engine-owned material shader header + cross-pack Slang
 includes (area 14)** — are now **delivered** (plansets 36–39) and documented in their
@@ -40,38 +40,71 @@ gone — every resource `Create` takes an explicit `Context&`.
 
 ### 4. Event & input systems
 
-**Event routing landed; networking remains.** Gameplay drives the requirements (area 7,
-planset-29). The **event-routed input core is delivered**: the `Window` is the single event
-source (typed `Event` queue), an **`InputRouter`** routes each event to consumers by a
-**focus stack** (ImGui forwarded to under UI focus, the `Input` snapshot fed always, gameplay
-focus making the running game the exclusive owner with the cursor captured), and `Input` is an
-event-fed snapshot rather than a global poller. The editor's Play and the shipped sample push
-gameplay focus to own input; Shift+Esc (or window-focus loss) releases it. Today single-player
-still runs on **one `Veng::Input` → one `PlayerInput`**, the `Intent` chokepoint and Sim/View
-split are in place, and `Authority` is threaded — but nothing yet routes input *per seat* or
-replicates state. Two coupled bodies of work sit behind those seams:
+**The input half is delivered; multi-seat routing + networking remain, and are the named
+next planset.** Gameplay drives the requirements (area 7, planset-29). Two increments have
+landed. **Event routing (planset-30):** the `Window` is the single event source (typed
+`Event` queue), an **`InputRouter`** routes each event to consumers by a **focus stack**
+(ImGui forwarded to under UI focus, the `Input` snapshot fed always, gameplay focus making the
+running game the exclusive owner with the cursor captured), and `Input` is an event-fed
+snapshot rather than a global poller. **The action-mapping layer (planset-42):** raw device
+state is bound to **named actions** through cooked, remappable data (`InputMappingContext`
+assets, active per-seat via an `InputContextStack`), the builtin **`InputMappingSystem`**
+resolves the active bindings each tick, and **`PlayerInput` *is* the resolved action snapshot**
+(the `ActionState`) rather than a fixed `{Move, Look, Buttons}` struct — the control system
+reads actions by name (`input.WasTriggered(Actions::Jump)`) instead of polling hardware. The
+`Intent` chokepoint and Sim/View split are unchanged, and `Authority` is threaded — but nothing
+yet routes input *per seat* or replicates state. Two coupled bodies of work sit behind those
+seams:
 
 - **Multi-seat input routing.** Split-screen and AI-vs-player need input routed *per
-  `Viewer`/player* into the right `PlayerInput`, rather than one device feeding one
-  snapshot. The components are already written so this layer is additive — it routes into
-  the existing `PlayerInput`/`Possesses` seats, no gameplay rewrite. **The *pointer*-routing
-  seam is delivered (planset-31):** a `Viewport` owns its region and exposes
-  `WindowToViewport`/`ScreenToWorldRay`, so a router hit-tests a click against each
-  registered viewport's region to find the seat it belongs to (the editor already uses the
-  fraction/ray for picking). The remaining half is *device*-keyed routing — fanning gamepad
-  (and other per-device) events into the right `PlayerInput` by device id, which is
-  independent of viewports entirely. The two compose: pointer events route by region,
-  device events by id, both into the existing seats.
-- **The networking layer.** A net layer consumes the seams planset-29 established for it —
-  it serializes/predicts/rolls back `Intent`, replicates `Session`/pawn state by
-  `Authority`, and derives the View phase locally on each client. An ECS-native net model
-  (state + input replication, à la the ECS-netcode lineage) slots in behind the
-  Intent/Authority/Sim-View structure without dismantling anything, since none of those
-  seams reproduces an actor-network object graph.
+  `Viewer`/player* into the right seat's `InputContextStack` → `PlayerInput`, rather than one
+  device feeding one snapshot. `InputMappingSystem` already **resolves per seat**, so this
+  layer is additive routing, not a rewrite — it routes into the existing
+  `PlayerInput`/`Possesses` seats, no gameplay change. **The *pointer*-routing seam is
+  delivered (planset-31):** a `Viewport` owns its region and exposes
+  `WindowToViewport`/`ScreenToWorldRay`, so a router hit-tests a click against each registered
+  viewport's region to find the seat it belongs to (the editor already uses the fraction/ray
+  for picking). The remaining half is *device*-keyed routing — fanning gamepad (and other
+  per-device) events into the right seat by device id, independent of viewports entirely.
+  **The gamepad device layer lands here too:** planset-42 leaves the gamepad `InputSource`
+  arms as inert forward vocabulary (the resolver reads them as neutral), so filling
+  `Veng::Input` with pad state and fanning it per seat is part of this step. The two compose:
+  pointer events route by region, device events by id, both into the existing seats.
+- **The networking layer.** A net layer consumes the seams planset-29/42 established for it.
+  **`PlayerInput` (the action snapshot) is the replicated per-tick input** for a human seat:
+  the client sends `PlayerInput`, and the server re-derives that seat's `Intent` from it —
+  while **AI and server-authoritative producers still write `Intent` directly**, never
+  touching an action or a context. The net layer serializes/predicts/rolls back at the
+  `Intent`/state boundary, replicates `Session`/pawn state by `Authority`, and derives the
+  View phase locally on each client. An ECS-native net model (state + input replication, à la
+  the ECS-netcode lineage) slots in behind the Intent/Authority/Sim-View structure without
+  dismantling anything, since none of those seams reproduces an actor-network object graph. A
+  tighter positional/bit-packed `PlayerInput` wire encoding (schema keyed on the active
+  context) is a deliberate optimization for this planset, behind the stable `ActionState`
+  shape planset-42 froze.
 
-Multi-seat routing builds directly on the delivered `InputRouter`: it already owns the
-event→consumer routing seam, so per-`Viewer` routing extends it to fan one device (or several)
-into the right `PlayerInput` rather than the single shared snapshot.
+Multi-seat routing and networking are the **named next planset**, built directly on the seat
+seam planset-42 establishes: `InputMappingSystem` already resolves per seat, and the router
+already owns the event→consumer routing seam, so per-`Viewer` routing extends it to fan one
+device (or several) into the right seat rather than the single shared snapshot. A **playable
+splitscreen sample** is the demanding second consumer that lands with it.
+
+The **smaller named follow-ons**, behind the same `ResolveActions` core: a **runtime remapping
+UI** (an in-game settings screen mutating the active context and serializing user overrides to
+the per-OS user-data dir — a game-side `Veng::UI` feature, not an editor panel); **richer
+triggers/modifiers** (chorded / tap-vs-hold triggers, the full modifier zoo — swizzle, response
+curves, dead-zone shapes — beyond the current scale + axis-component); and a **global
+`ActionRegistry` + bespoke input-map editor** (a host-owned action catalog enabling
+cross-context validation, editor action dropdowns, and a press-to-bind capture UX — taken up
+when a data consumer of actions, e.g. visual scripting or a data-driven command palette, earns
+it, since today every action is a C++ constant).
+
+**Open seam (a later planset, not this one):** planset-42 requires a level's explicit `systems`
+order to hand-place `InputMappingSystem` **first**, because registration order does not reorder
+an authored list. Forcing a mandatory builtin ahead of the authored order regardless — a
+**system-priority / mandatory-first-builtin scheduling mechanism** — is a change to the
+scheduling model (the Sim/View two-pass split is the whole scheduler today) worth its own
+discussion, alongside area 7's richer system scheduler.
 
 ### 5. Unit testing / test infrastructure — DONE (planset-3 + planset-4)
 
@@ -123,6 +156,12 @@ gave the inspector a **presentation axis** — the `FieldDisplay` cascade (widge
 combos, collapsible structs/arrays/categories, conditional display). Native-type inspectors reuse
 area 10's module reflection; a `Scene` is runtime-only, so the authored asset is the `Prefab`, not
 a cooked scene. The current editor is documented in [editor/CLAUDE.md](../../editor/CLAUDE.md).
+
+**Open seam (a later planset, not scheduled):** the **single-asset editors** — texture, material,
+and now the planset-42 **input-map** editor — have **no undo**. The scene/level editors got a
+per-`AssetEditorPanel` `CommandStack` (planset-37), but the single-document editors round-trip JSON
+directly with no command layer. Adding **per-document undo (a `CommandStack`) to the single-asset
+editors** is a coherent, editor-wide follow-on worth its own scope.
 
 **The editor is a single shell launched against a project — delivered.** `veng_add_editor`
 no longer builds a per-game editor binary: one project-agnostic `veng-editor` exe (in `editor/`)
@@ -701,11 +740,13 @@ schedule. The areas that were the prioritized next work are now delivered:
 - **Engine-owned material shader header + cross-pack Slang includes (area 14) — delivered**
   as planset-38's codegen precursor (Plan 00).
 
-**Event & input + networking (area 4)** is now the **next gate** the delivered gameplay layer
-(area 7, planset-29) motivates — multi-seat input routing and a net layer consuming the
-`Intent`/`Authority`/Sim-View seams, built on the event-routed input core (planset-30). The
-remaining named still-future increments of the areas done in part (1, 2, 7, 8, 9, 10, 12, 15)
-are each independent and off the critical path — slot in whenever wanted.
+**Multi-seat input routing + networking (area 4)** is now the **next gate** the delivered
+gameplay layer (area 7, planset-29) motivates — per-seat routing (with the gamepad device layer)
+and a net layer consuming the `Intent`/`Authority`/Sim-View seams, built on the event-routed
+input core (planset-30) and the action-mapping layer (planset-42, `PlayerInput` = `ActionState`,
+`InputMappingSystem` resolving per seat). The remaining named still-future increments of the
+areas done in part (1, 2, 7, 8, 9, 10, 12, 15) are each independent and off the critical path —
+slot in whenever wanted.
 
 ## Cross-cutting concerns
 
@@ -760,9 +801,19 @@ conformance. Streaming/SSE, `resources/*`/`prompts/*`, auth/non-loopback, richer
 node-graph-editing via the `NodeGraph` serializer, reflected commands, and dock-layout
 choreography stay future (area 19 above).
 
-**The next gate:** area 4 (**events/input + networking**) — multi-seat input routing and
-a net layer over the `Intent`/`Authority`/Sim-View seams planset-29 established, built on the
-event-routed input core (planset-30).
+**Delivered (planset-42):** area 4's **action-mapping layer** (the input half) — named actions
+(`ActionId`) bound through cooked, remappable `InputMappingContext` data, resolved per seat by the
+builtin `InputMappingSystem` into a **`PlayerInput` that *is* the resolved `ActionState`** (the
+`{Move, Look, Buttons}` fixed struct superseded), the per-seat `InputContextStack`, the pure
+device-free `ResolveActions` core, the cooker `InputMapImporter` (binding→action validation), and
+the basic `InputMappingEditorPanel`. Gameplay still reads `Intent`; only the control system reads
+actions. Multi-seat routing (with the gamepad device layer), the networking layer, a runtime
+remapping UI, richer triggers/modifiers, and a global `ActionRegistry` stay future (area 4 above).
+
+**The next gate:** area 4 (**multi-seat input routing + networking**) — per-seat routing (with the
+gamepad device layer) and a net layer over the `Intent`/`Authority`/Sim-View seams planset-29
+established, built on the event-routed input core (planset-30) and the action-mapping seat seam
+(planset-42).
 
 **Undetailed / unscheduled:** the named still-future
 increments of the
