@@ -179,7 +179,7 @@ int main()
 
         const Json afterAdd = Payload(CallTool(client, "entity.get", Json{{"id", spawnId}}));
         const Json& light = afterAdd["components"]["Veng::Light"];
-        Check(light["Type"].value("name", std::string{}) == "Point",
+        Check(light["Type"].is_string() && light["Type"].get<std::string>() == "Point",
               "add_component seeded the Light enum by name");
         Check(std::abs(light["Intensity"].get<f32>() - 2.5f) < 1e-5f,
               "add_component seeded the Light scalar");
@@ -202,7 +202,7 @@ int main()
         const Json& light2 = afterSet["components"]["Veng::Light"];
         Check(std::abs(light2["Intensity"].get<f32>() - 9.0f) < 1e-5f,
               "set_field updated the Light intensity");
-        Check(light2["Type"].value("name", std::string{}) == "Point",
+        Check(light2["Type"].is_string() && light2["Type"].get<std::string>() == "Point",
               "set_field left the omitted Light enum unchanged (partial update)");
 
         // A set_field with a type-mismatched value is a located error, not a silent skip.
@@ -211,6 +211,14 @@ int main()
                                           {"component", "Veng::Light"},
                                           {"values", {{"Intensity", "not-a-number"}}}});
         Check(badSet.value("isError", false) == true, "a type-mismatched value is an isError");
+
+        // An enum field written as its raw integer ordinal is rejected — the hard cut, an
+        // enumerator name string only.
+        const Json badEnumSet = CallTool(
+            client, "entity.set_field",
+            Json{{"id", spawnId}, {"component", "Veng::Light"}, {"values", {{"Type", 1}}}});
+        Check(badEnumSet.value("isError", false) == true,
+              "an integer enum value is an isError — enumerator names only");
 
         // entity.remove_component removes the Light; the Hierarchy component is not removable.
         const Json removed = Payload(CallTool(client, "entity.remove_component",

@@ -2,18 +2,15 @@
 
 #include "JsonUtil.h"
 
-#include <Veng/Asset/Mesh.h>
-#include <Veng/Reflection/EnumName.h>
-#include <Veng/Reflection/FieldDescriptor.h>
+#include <Veng/Reflection/JsonSerialize.h>
 #include <Veng/Reflection/TypeId.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Entity.h>
 #include <Veng/Scene/Scene.h>
 
-#include <cstring>
+#include <algorithm>
 #include <fstream>
-#include <sstream>
 #include <system_error>
 
 #include <fmt/format.h>
@@ -27,226 +24,36 @@ namespace VengEditor
     {
         using json = nlohmann::json;
 
-        // Writes one reflected field at obj+field.Offset into its JSON value. Each arm is the
-        // exact inverse of PrefabImporter::BindField's matching FieldClass arm — read that switch
-        // alongside this one. The remap maps a live entity's slot index to its prefab-local index
-        // for Reference fields (the inverse of the loader's spawn-time remap).
-        json WriteField(const void* obj, const FieldDescriptor& field, const TypeRegistry& registry,
-                        const function<i64(u32 liveIndex)>& referenceIndex);
-
-        // Emits each field of `type` at `obj` as a name-keyed JSON object — the per-component /
-        // per-struct / per-variant-value body shared by the component walk and the Struct/Variant
-        // recursion.
-        json WriteFieldsObject(const void* obj, const TypeInfo& type, const TypeRegistry& registry,
-                               const function<i64(u32 liveIndex)>& referenceIndex)
+        // Builds the JsonFieldHooks for one entity's component write: a live Entity maps back
+        // to its prefab-local index (the inverse of the loader's spawn-time remap). AssetId
+        // validation is unset — the editor writes whatever handle the entity already carries.
+        JsonFieldHooks MakeWriteHooks(const function<i64(u32 liveIndex)>& referenceIndex)
         {
-            json out = json::object();
-            for (const FieldDescriptor& field : type.Fields)
+            JsonFieldHooks hooks;
+            hooks.WriteReference = [&referenceIndex](Entity entity) -> json
             {
-                // An empty variant (no active alternative) is omitted: the read arm leaves an
-                // absent variant empty, so emitting null — which BindField rejects as "expected an
-                // object with a string 'type' key" — would break the round-trip. A null Reference
-                // is distinct and is written as JSON null, which the reader does accept.
-                if (field.Class == FieldClass::Variant)
-                {
-                    const TypeInfo& variant = registry.Info(field.Type);
-                    const void* fieldPtr = static_cast<const u8*>(obj) + field.Offset;
-                    if (variant.VariantActiveType(fieldPtr) == InvalidTypeId)
-                    {
-                        continue;
-                    }
-                }
-
-                out[field.Name] =
-                    WriteField(static_cast<const u8*>(obj), field, registry, referenceIndex);
-            }
-            return out;
-        }
-
-        json WriteField(const void* obj, const FieldDescriptor& field, const TypeRegistry& registry,
-                        const function<i64(u32 liveIndex)>& referenceIndex)
-        {
-            const auto* fieldPtr = static_cast<const u8*>(obj) + field.Offset;
-
-            switch (field.Class)
-            {
-            case FieldClass::Scalar:
-            {
-                // Scalars are bool/f32/i32/u32/u64, read at the field's exact byte width by its
-                // leaf TypeId — the inverse of BindField's scalar coercion.
-                const TypeId t = field.Type;
-                if (t == TypeIdOf<bool>())
-                {
-                    bool v = false;
-                    std::memcpy(&v, fieldPtr, sizeof(v));
-                    return v;
-                }
-                if (t == TypeIdOf<f32>())
-                {
-                    f32 v = 0.0f;
-                    std::memcpy(&v, fieldPtr, sizeof(v));
-                    return v;
-                }
-                if (t == TypeIdOf<i32>())
-                {
-                    i32 v = 0;
-                    std::memcpy(&v, fieldPtr, sizeof(v));
-                    return v;
-                }
-                if (t == TypeIdOf<u32>())
-                {
-                    u32 v = 0;
-                    std::memcpy(&v, fieldPtr, sizeof(v));
-                    return v;
-                }
-                if (t == TypeIdOf<u64>())
-                {
-                    u64 v = 0;
-                    std::memcpy(&v, fieldPtr, sizeof(v));
-                    return v;
-                }
-                return nullptr;
-            }
-
-            case FieldClass::Vector:
-            case FieldClass::Quaternion:
-            case FieldClass::Matrix:
-            {
-                // A glm vector/quat/matrix is an array of its components in storage type — f32, or
-                // u32 for an unsigned-integer vector — arity = byte size / component size. A quat
-                // is [x,y,z,w] (glm memory layout), matching the read arm exactly.
-                const bool unsignedVector = field.Type == TypeIdOf<uvec2>();
-                const usize componentSize = unsignedVector ? sizeof(u32) : sizeof(f32);
-                const usize size = registry.Info(field.Type).Size;
-                const usize arity = size / componentSize;
-
-                json out = json::array();
-                if (unsignedVector)
-                {
-                    for (usize i = 0; i < arity; ++i)
-                    {
-                        u32 v = 0;
-                        std::memcpy(&v, fieldPtr + i * sizeof(u32), sizeof(u32));
-                        out.push_back(v);
-                    }
-                }
-                else
-                {
-                    for (usize i = 0; i < arity; ++i)
-                    {
-                        f32 v = 0.0f;
-                        std::memcpy(&v, fieldPtr + i * sizeof(f32), sizeof(f32));
-                        out.push_back(v);
-                    }
-                }
-                return out;
-            }
-
-            case FieldClass::String:
-            {
-                return *reinterpret_cast<const string*>(fieldPtr);
-            }
-
-            case FieldClass::AssetHandle:
-            {
-                // The handle stores the AssetId at offset 0 (pinned in AssetHandle.h); emit it as
-                // a decimal unsigned integer, the JSON convention BindField reads back.
-                u64 id = 0;
-                std::memcpy(&id, fieldPtr, sizeof(id));
-                return id;
-            }
-
-            case FieldClass::Enum:
-            {
-                // Written as the enumerator's authored name — the cooker's JsonReadFields
-                // accepts a string only, never an ordinal.
-                const TypeInfo& info = registry.Info(field.Type);
-                return EnumeratorName(info, LoadEnumBits(fieldPtr, info));
-            }
-
-            case FieldClass::Reference:
-            {
-                // A live Entity reference maps back to a prefab-local index (the inverse of the
-                // spawn-time remap); a null reference is JSON null.
-                const auto& entity = *reinterpret_cast<const Entity*>(fieldPtr);
                 if (entity.IsNull())
                 {
                     return nullptr;
                 }
                 const i64 index = referenceIndex(entity.Index);
-                if (index < 0)
-                {
-                    // The reference points outside the saved entity set; emit null rather than a
-                    // dangling index the cooker would reject as out of range.
-                    return nullptr;
-                }
-                return index;
-            }
-
-            case FieldClass::Struct:
-            {
-                return WriteFieldsObject(fieldPtr, registry.Info(field.Type), registry,
-                                         referenceIndex);
-            }
-
-            case FieldClass::Variant:
-            {
-                // A variant is authored as { "type": <qualified name>, "value": {…} }. An empty
-                // variant (no active alternative) is omitted entirely — the read arm leaves an
-                // absent or empty-"type" variant empty, so omission round-trips byte-identically.
-                const TypeInfo& info = registry.Info(field.Type);
-                const TypeId active = info.VariantActiveType(fieldPtr);
-                if (active == InvalidTypeId)
-                {
-                    return nullptr;
-                }
-
-                const TypeInfo& alt = registry.Info(active);
-                const void* member = info.VariantActivePtrConst(fieldPtr);
-
-                json out = json::object();
-                out["type"] = alt.QualifiedName;
-                out["value"] = WriteFieldsObject(member, alt, registry, referenceIndex);
-                return out;
-            }
-
-            case FieldClass::Array:
-            {
-                // A dynamic array is a JSON array of its elements, walked through the descriptor's
-                // type-erased shims (the inverse of an array read). Prefab sources do not yet cook
-                // array fields (BindField rejects them), but the writer emits the natural inverse
-                // so the arm is complete and a future cooker array arm round-trips.
-                const usize count = field.ArraySize != nullptr ? field.ArraySize(fieldPtr) : 0;
-                const TypeInfo& elem = registry.Info(field.ElementType);
-
-                json out = json::array();
-                for (usize i = 0; i < count; ++i)
-                {
-                    const void* element = field.ArrayElementConst(fieldPtr, i);
-                    FieldDescriptor elementField;
-                    elementField.Name = field.Name;
-                    elementField.Type = field.ElementType;
-                    elementField.Class = elem.Class;
-                    elementField.Offset = 0;
-                    out.push_back(WriteField(element, elementField, registry, referenceIndex));
-                }
-                return out;
-            }
-            }
-
-            return nullptr;
+                // The reference points outside the saved entity set; emit null rather than a
+                // dangling index the cooker would reject as out of range.
+                return index < 0 ? json(nullptr) : json(index);
+            };
+            return hooks;
         }
 
         // Patches the entity's `components` object: each live component the writer understands is
-        // rewritten (reusing the source key's exact spelling when it already named that component,
-        // so a "::Veng::Name"-spelled source stays byte-stable), and any source key that does not
+        // merge-written over its existing source object (preserving any key the shared walker does
+        // not own), reusing the source key's exact spelling when it already named that component
+        // so a "::Veng::Name"-spelled source stays byte-stable. Any source key that does not
         // resolve to a registered component type — comments-as-keys, future fields, hand-authored
         // extras — is preserved in place. A registered-type key the live entity no longer holds is
         // dropped (the component was removed). Components are emitted by ascending TypeId, so a
         // re-save produces a stable diff regardless of pool iteration order.
         json WriteComponents(const Scene& scene, Entity entity, const TypeRegistry& registry,
-                             const json& sourceComponents,
-                             const function<i64(u32 liveIndex)>& referenceIndex)
+                             const json& sourceComponents, const JsonFieldHooks& hooks)
         {
             vector<std::pair<TypeId, const void*>> components;
             const_cast<Scene&>(scene).ForEachComponent(entity, [&](TypeId id, void* component)
@@ -280,6 +87,7 @@ namespace VengEditor
                 // Reuse the source's spelling of this component's key when present (so a leading
                 // "::" or any qualified form authored by hand survives), else the canonical name.
                 string key = info.QualifiedName;
+                json existing = json::object();
                 if (sourceComponents.is_object())
                 {
                     for (auto it = sourceComponents.begin(); it != sourceComponents.end(); ++it)
@@ -287,12 +95,18 @@ namespace VengEditor
                         if (TypeNameMatches(info, it.key()))
                         {
                             key = it.key();
+                            existing = it.value();
                             break;
                         }
                     }
                 }
+                if (!existing.is_object())
+                {
+                    existing = json::object();
+                }
 
-                out[key] = WriteFieldsObject(component, info, registry, referenceIndex);
+                JsonWriteFields(existing, component, info, registry, hooks);
+                out[key] = std::move(existing);
             }
             return out;
         }
@@ -384,6 +198,7 @@ namespace VengEditor
             const auto it = indexInOrder.find(liveIndex);
             return it == indexInOrder.end() ? -1 : static_cast<i64>(it->second);
         };
+        const JsonFieldHooks hooks = MakeWriteHooks(referenceIndex);
 
         // Match each live entity to the source object carrying its id, so a patched entity keeps
         // every key the writer does not understand. A source object with no id falls back to
@@ -438,8 +253,7 @@ namespace VengEditor
                 out.contains("components") ? out["components"] : json::object();
 
             out[string{EntityIdKey}] = id;
-            out["components"] =
-                WriteComponents(scene, entity, registry, sourceComponents, referenceIndex);
+            out["components"] = WriteComponents(scene, entity, registry, sourceComponents, hooks);
             entities.push_back(std::move(out));
         }
 

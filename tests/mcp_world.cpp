@@ -241,9 +241,8 @@ int main()
         Check(std::abs(w.value("Speed", 0.0f) - 2.5f) < 1e-5f, "Widget Speed round-trips (Scalar)");
         Check(w["Tint"].is_array() && w["Tint"].size() == 3, "Widget Tint is a 3-array (Vector)");
         Check(std::abs(w["Tint"][1].get<f32>() - 0.2f) < 1e-5f, "Widget Tint.y round-trips");
-        Check(w["Kind"].value("name", std::string{}) == "Spot", "Widget Kind names its enumerator");
-        Check(w["Kind"].value("value", -1) == static_cast<int>(LightType::Spot),
-              "Widget Kind carries the raw enum value");
+        Check(w["Kind"].is_string() && w["Kind"].get<std::string>() == "Spot",
+              "Widget Kind is the bare enumerator name string");
         Check(w["Model"].get<std::string>() == std::to_string(0x1234ABCDULL),
               "Widget Model is the decimal AssetId (AssetHandle)");
         Check(w["Stat"].is_object() && w["Stat"].value("Level", 0) == 7,
