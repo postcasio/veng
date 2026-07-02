@@ -4,7 +4,7 @@
 `LevelEditorPanel`'s config round-trip write (and, where they read, read) through the shared
 walker, so a saved prefab/level authors enums by name — the write inverse of Plan 01's
 readers. MCP's `ReflectToJson` becomes a thin wrapper over the walker, and its enum output
-changes shape to the bare enumerator name. Depends on Plan 00; **sequenced after Plan 01**
+changes shape to the bare enumerator name. Depends on Plan 00b; **sequenced after Plan 01**
 (the editor must write what the cooker now reads — see the README Dependencies section).
 
 ## The starting point
@@ -32,7 +32,7 @@ changes shape to the bare enumerator name. Depends on Plan 00; **sequenced after
   overload `JsonWriteFields(existingComponentJson, componentPtr, typeInfo, registry, hooks)`
   with `WriteReference` = the existing live-entity→prefab-local-index mapping. The merge form
   is required, not the fresh-object one — the writer must preserve the unknown keys it reads
-  from source (Plan 00 grew this overload for exactly this). Enums come out as enumerator
+  from source (Plan 00b grew this overload for exactly this). Enums come out as enumerator
   names, matching what Plan 01's cooker now requires.
 - Any editor-side read of prefab source JSON in the same TU moves onto `JsonReadFields` with
   the inverse hook and `allowUnknownFields = true` (the editor's tolerant posture).

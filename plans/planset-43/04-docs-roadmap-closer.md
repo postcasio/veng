@@ -2,7 +2,7 @@
 
 **Goal:** the closer. Documentation catches up with the new posture (one JSON walker,
 enums by name, nlohmann PUBLIC, the respelled string forms), the dual-example conformance
-band runs end to end, and the planset closes out. Depends on Plans 00–03.
+band runs end to end, and the planset closes out. Depends on Plans 00a–03.
 
 ## What lands
 
@@ -33,7 +33,7 @@ band runs end to end, and the planset closes out. Depends on Plans 00–03.
   public surface" section rewritten** — nlohmann rides in transitively via `veng::veng`, so
   the surface is no longer JSON-library-free and the `mcp_include_hygiene` guard now covers
   httplib only (its header comment in `tests/mcp_include_hygiene.cpp` and the CMake comment
-  update with it, per Plan 00).
+  update with it, per Plan 00a).
 - **`assetpack/CLAUDE.md`:** the manifest `"type"` spellings, if quoted.
 
 ### 2. `docs/guides/` pass
@@ -75,6 +75,6 @@ band runs end to end, and the planset closes out. Depends on Plans 00–03.
 ## Out of scope
 
 - No further JSON surfaces or spellings migrate here — this plan documents and verifies what
-  Plans 00–03 landed. The Project-model hand-parsers stay deliberately unmigrated (README
+  Plans 00a–03 landed. The Project-model hand-parsers stay deliberately unmigrated (README
   future notes). This plan deliberately omits the "starting point" section the implementation
   plans carry: it is a pure closer with no single source file.

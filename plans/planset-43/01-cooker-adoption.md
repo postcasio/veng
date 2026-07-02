@@ -3,7 +3,7 @@
 **Goal:** the cooker's two reflection walkers become call sites of the shared one.
 `PrefabImporter` and `LevelImporter` drop their hand-rolled `BindField`s for
 `JsonReadFields` + hooks; enum fields in prefab/level JSON become enumerator-name strings
-(hard cut); every prefab JSON in the tree migrates in the same pass. Depends on Plan 00.
+(hard cut); every prefab JSON in the tree migrates in the same pass. Depends on Plan 00b.
 
 ## The starting point
 

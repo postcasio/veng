@@ -117,7 +117,7 @@ the consumers' now-redundant PRIVATE links are dropped or kept harmlessly. The
 resolve it. **This has a transitive consequence the planset owns explicitly:** `veng_mcp`
 links `veng` PUBLIC, so nlohmann now reaches mcp's consumers too — mcp's public surface is
 no longer JSON-library-free, and the `mcp_include_hygiene` test's contract narrows to
-httplib-only (re-scoped in Plan 00; the `mcp/CLAUDE.md` and root-`CLAUDE.md`
+httplib-only (re-scoped in Plan 00a; the `mcp/CLAUDE.md` and root-`CLAUDE.md`
 "JSON-library-free" claims are rewritten in Plan 04). The same edge publicizes nlohmann on
 `veng::graph` and the editor framework.
 
@@ -125,23 +125,27 @@ httplib-only (re-scoped in Plan 00; the `mcp/CLAUDE.md` and root-`CLAUDE.md`
 
 | # | Plan | Summary | Status |
 |---|------|---------|--------|
-| 00 | The engine JSON serializer + enum-name core | nlohmann → PUBLIC on `veng` (build tree, SDK export/install, include_hygiene); `Veng/Reflection/JsonSerialize.h` (`JsonReadFields`/`JsonWriteFields`, all FieldClasses, the AssetHandle/Reference policy hooks, dotted-path errors); the runtime-typed `EnumeratorName`/`ParseEnumValue`/`LoadEnumBits`/`StoreEnumBits` in `EnumName.h`. Enums by name from day one. Unit-tested round-trip over a reflected fixture type. | ready |
-| 01 | Cooker adoption: prefab + level | `PrefabImporter` and `LevelImporter` drop their `BindField`s for the shared walker (pack-resolve validation and entity-index remap as hooks; level config gains Enum/Variant/Array for free). Hard-cut enum strings; migrate the prefab JSON assets (both examples, cooker fixtures). Depends on 00. | ready |
-| 02 | Editor + MCP adoption | `PrefabSerialize` (write inverse via the walker, live-entity `WriteReference` hook), `LevelEditorPanel`'s config round-trip, and MCP's `ReflectToJson` (both directions) move onto the shared walker; MCP enum output becomes the bare name string. Depends on 00; sequenced after 01. | ready |
-| 03 | Graph enums + the spelling migrations | `NodeGraphSerialize` enum properties by name (+ both sample graphs); `MaterialDomain` `VE_ENUM` + `"Surface"`/`"PostProcess"` across importer/codegen/editor + every `.vmat`; `AssetType` manifest spellings + every `.vengpack.json`; the `"compression"` escape hatch → `TextureCodec` spellings + fixtures. Depends on 00 (independent of 01/02). | ready |
-| 04 | Docs, template co-migration + conformance, roadmap pass | Root/engine/cooker/editor/mcp `CLAUDE.md` updates (nlohmann PUBLIC + the mcp/graph JSON-free-surface reversal, the walker, the enum convention); `docs/guides/` pass (consuming-veng's dependency list, asset-format examples); a cook-throughput check; the full verification band incl. SDK conformance; planset status. The closer. Depends on 00–03. | ready |
+| 00a | nlohmann/json PUBLIC on `libveng` | The build-system half, landed alone first: nlohmann → PUBLIC on `veng` with the required FetchContent reorder; SDK export/install (`find_dependency` + `JSON_Install`) across all three consumption modes; redundant PRIVATE links dropped; `mcp_include_hygiene` re-scoped to httplib-only. No engine code consumes JSON yet. Acceptance is `sdk_conformance_*` green. | ready |
+| 00b | The JSON⇄reflection walker + enum-name core | `Veng/Reflection/JsonSerialize.h` (`JsonReadFields`/`JsonWriteFields` incl. the merge-write + tolerant-read forms, all FieldClasses, the AssetHandle/Reference policy hooks, dotted-path errors); the runtime-typed `EnumeratorName`/`ParseEnumValue`/`LoadEnumBits`/`StoreEnumBits` in `EnumName.h`. Enums by name from day one. Unit-tested round-trip over a reflected fixture type. Depends on 00a. | ready |
+| 01 | Cooker adoption: prefab + level | `PrefabImporter` and `LevelImporter` drop their `BindField`s for the shared walker (pack-resolve validation and entity-index remap as hooks; level config gains Enum/Variant/Array for free). Hard-cut enum strings; migrate the prefab JSON assets (both examples, cooker fixtures). Depends on 00b. | ready |
+| 02 | Editor + MCP adoption | `PrefabSerialize` (write inverse via the walker, live-entity `WriteReference` hook), `LevelEditorPanel`'s config round-trip, and MCP's `ReflectToJson` (both directions) move onto the shared walker; MCP enum output becomes the bare name string. Depends on 00b; sequenced after 01. | ready |
+| 03 | Graph enums + the spelling migrations | `NodeGraphSerialize` enum properties by name (+ both sample graphs); `MaterialDomain` `VE_ENUM` + `"Surface"`/`"PostProcess"` across importer/codegen/editor + every `.vmat`; `AssetType` manifest spellings + every `.vengpack.json`; the `"compression"` escape hatch → `TextureCodec` spellings + fixtures. Depends on 00b (independent of 01/02). | ready |
+| 04 | Docs, template co-migration + conformance, roadmap pass | Root/engine/cooker/editor/mcp `CLAUDE.md` updates (nlohmann PUBLIC + the mcp/graph JSON-free-surface reversal, the walker, the enum convention); `docs/guides/` pass (consuming-veng's dependency list, asset-format examples); a cook-throughput check; the full verification band incl. SDK conformance; planset status. The closer. Depends on 00a–03. | ready |
 
 > Status legend: `proposed` = drafted, awaiting review; `ready` = reviewed and approved;
 > `done` = implemented, migrated, verified, committed.
 
 ## Dependencies
 
-- **00 → 01 → 02, 00 → 03, {02, 03} → 04.** Plan 00 is the foundation. **01 and 02 are
-  sequenced (01 then 02, ideally one session):** 01 makes the cooker reject integer enums, so
-  the editor's writers (02) must land before any editor session produces prefabs the cooker
-  can no longer cook — the window where the editor writes integers the cooker rejects must not
-  be left open across sessions. Plan 03 is independent of 01/02 (different files, different
-  assets) and can run in parallel with them; 04 closes.
+- **00a → 00b → {01 → 02, 03} → 04.** Plan 00a (the dependency surface) lands and verifies
+  alone; 00b (the walker) rides on it. Both are the foundation everything else adopts. **01
+  and 02 are sequenced (01 then 02, ideally one session):** 01 makes the cooker reject integer
+  enums, so the editor's writers (02) must land before any editor session produces prefabs the
+  cooker can no longer cook — the window where the editor writes integers the cooker rejects
+  must not be left open across sessions. Plan 03 is independent of 01/02 (different files,
+  different assets) and can run in parallel with them; 04 closes. Splitting 00 isolates the
+  fiddly three-mode SDK plumbing (00a) from the large new walker code (00b), so a sonnet agent
+  can take each independently and each is separately verifiable.
 - The asset migrations ride the plan that hard-cuts their reader (01: prefab JSONs; 03:
   graphs, `.vmat`s, pack manifests, `.tex.json`s) — **both examples co-migrate in the same
   plan as the breaking change**, per the working norms; the template's breakage surfaces in
@@ -168,7 +172,7 @@ httplib-only (re-scoped in Plan 00; the `mcp/CLAUDE.md` and root-`CLAUDE.md`
   naming `nlohmann::json` in a public signature weds veng's public API to that library (a
   future swap is an API break). The engine home still wins on the single-serializer-beside-
   its-binary-twin grounds and because every actual caller already links `veng`, but the mcp
-  hygiene guard and the JSON-free-surface docs are updated to the new posture (Plans 00, 04),
+  hygiene guard and the JSON-free-surface docs are updated to the new posture (Plans 00a, 04),
   not left silently stale.
 - **Hard cut, no integer fallback.** Readers accept enumerator names only; every JSON asset
   in the tree migrates in the same plan as its reader. A leftover integer is a loud, located

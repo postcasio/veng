@@ -4,7 +4,7 @@
 convention. Node-graph enum properties serialize by name; the three legacy lowercase string
 forms — material `"domain"`, the pack-manifest `"type"`, the raw texture `"compression"` —
 move to exact C++ enumerator spellings; every affected JSON asset migrates in the same pass.
-Depends on Plan 00 (the enum-name functions); independent of Plans 01/02.
+Depends on Plan 00b (the enum-name functions); independent of Plans 01/02.
 
 ## The starting point
 
@@ -29,7 +29,7 @@ Depends on Plan 00 (the enum-name functions); independent of Plans 01/02.
 ### 1. Node-graph enum properties by name
 
 - `NodeGraphSerialize` writes an enum property as its enumerator name and reads names only
-  (the hard cut), through Plan 00's `EnumeratorName`/`ParseEnumValue`.
+  (the hard cut), through Plan 00b's `EnumeratorName`/`ParseEnumValue`.
 - The enumerator table reaches the serializer **without a TypeRegistry**, preserving the
   documented property-walk constraint: the `NodeCatalog` records each enum property type's
   `VE_ENUM` table at registration. **Mechanism:** an enumerator-span pointer attached at the

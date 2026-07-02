@@ -1,55 +1,30 @@
-# Plan 00 — the engine JSON serializer + enum-name core
+# Plan 00b — the JSON⇄reflection walker + enum-name core
 
-**Goal:** the foundation the rest of the planset adopts. nlohmann/json becomes a PUBLIC
-dependency of `libveng`; `Veng/Reflection/JsonSerialize.h` lands the shared JSON⇄reflection
-walker (all FieldClasses, policy hooks for the consumer-owned parts); `EnumName.h` gains the
-runtime-typed enum-name functions. Enums serialize by name from the first line of the walker.
-No consumer migrates yet — this plan is the library plus its unit tests.
+**Goal:** the code half of the foundation the rest of the planset adopts.
+`Veng/Reflection/JsonSerialize.h` lands the shared JSON⇄reflection walker (all FieldClasses,
+policy hooks for the consumer-owned parts, the merge-write + tolerant-read forms the editor
+needs); `EnumName.h` gains the runtime-typed enum-name functions. Enums serialize by name
+from the first line of the walker. No consumer migrates yet — this plan is the library plus
+its unit tests. **Depends on Plan 00a** (the public header names `json`, which requires
+nlohmann PUBLIC on `veng`).
 
 ## The starting point
 
 - `Veng/Reflection/Serialize.h` (`WriteFields`/`ReadFields`) is the shared **binary** walker;
   the JSON direction is forked five ways (PrefabImporter, LevelImporter, PrefabSerialize,
-  LevelEditorPanel's config round-trip, ReflectToJson) with no shared core.
+  LevelEditorPanel's config round-trip, ReflectToJson) with no shared core. `Serialize.h`'s
+  binary path reads/writes `Reference`/`AssetHandle` fields as raw bytes with no hook seam —
+  it runs only post-cook, where indices are already resolved — so the JSON walker's added
+  hook seam is the deliberate difference, not a gap the binary walker also has.
 - `Veng/Reflection/EnumName.h` has the compile-time-typed `ParseEnum<T>`/`EnumeratorName<T>`
   over the `VE_ENUM` enumerator tables (`TypeInfo::Enumerators`); the reflection-walking
   serializers need the same over a runtime `TypeInfo&` (MCP hand-rolls exactly this loop).
-- nlohmann/json is FetchContent-pinned at the top level and linked PRIVATE by cooker
-  (`veng_cook_objs` has it PUBLIC internally), editor, graph, and mcp; `libveng` has no JSON
-  dependency and `include_hygiene` compiles public headers against PUBLIC deps only.
+- nlohmann/json is PUBLIC on `veng` as of Plan 00a, so a public reflection header may name
+  `json`.
 
 ## What lands
 
-### 1. nlohmann/json PUBLIC on `veng`
-
-- `target_link_libraries(veng PUBLIC nlohmann_json::nlohmann_json)`. **Required reordering:**
-  today the nlohmann `FetchContent_Declare`/`FetchContent_MakeAvailable` block runs *after*
-  `add_subdirectory(assetpack)`/`add_subdirectory(engine)` (it sits in the graph/cooker
-  preamble). It must move **before** those `add_subdirectory` calls, or the `nlohmann_json`
-  target does not yet exist when `engine/CMakeLists.txt` names it and configure fails with an
-  unknown-target error. This is not conditional.
-- **SDK export/install:** the installed `veng-config.cmake` gains
-  `find_dependency(nlohmann_json)`, and the install prefix carries nlohmann (enable the
-  FetchContent'd project's install — `JSON_Install` — so the SDK is self-contained, matching
-  how the other exported PUBLIC deps resolve). The build-tree mode already has the target in
-  scope; verify the exported `vengTargets` resolve it there too.
-- `include_hygiene` needs no change in intent — nlohmann simply joins glm/fmt/ImGui in the
-  PUBLIC link set it compiles against.
-- Consumers' now-redundant PRIVATE links (editor, mcp, graph, cooker) are dropped where the
-  transitive PUBLIC edge covers them; comments in those CMakeLists that assert "nlohmann
-  stays PRIVATE / never reaches a public header" are updated to the new posture.
-- **`mcp_include_hygiene` re-scoped.** `tests/mcp_include_hygiene.cpp` links `veng::mcp`
-  alone to prove `Veng/Mcp/` public headers pull in neither nlohmann nor httplib. Once
-  `veng` carries nlohmann PUBLIC, `veng::mcp` inherits nlohmann's include path transitively
-  (through its `PUBLIC veng::veng` link), so the test can no longer distinguish "an Mcp
-  header leaks nlohmann" from "nlohmann always rides along via `veng::veng`" — its JSON half
-  stops guarding. Narrow its stated contract (and header comment) to **httplib-only**; the
-  JSON-free-surface claims in `mcp/CLAUDE.md` and root `CLAUDE.md` are rewritten in Plan 04.
-- **Acceptance:** `sdk_conformance_install` and `sdk_conformance_buildtree` green — all three
-  consumption modes resolve the new dependency; `mcp_include_hygiene` green under its
-  narrowed (httplib-only) contract.
-
-### 2. `Veng/Reflection/JsonSerialize.h`
+### 1. `Veng/Reflection/JsonSerialize.h`
 
 ```cpp
 /// @brief Policy hooks for the consumer-owned parts of JSON field binding.
@@ -102,7 +77,7 @@ void JsonWriteFields(json& into, const void* obj, const TypeInfo& type,
   name"), returned as `VoidResult`; the consumer prepends its located prefix. No formatting
   hook.
 
-### 3. The runtime-typed enum functions in `EnumName.h`
+### 2. The runtime-typed enum functions in `EnumName.h`
 
 ```cpp
 [[nodiscard]] string EnumeratorName(const TypeInfo& info, i64 value);
@@ -119,7 +94,7 @@ void StoreEnumBits(void* fieldPtr, const TypeInfo& info, i64 value);
   **string only**, `ParseEnumValue` → `StoreEnumBits`, error on a non-string or unknown name
   (the hard cut — readers get no integer tolerance).
 
-### 4. Unit tests
+### 3. Unit tests
 
 - A `tests/unit` fixture type exercising every FieldClass (nested struct, enum, variant,
   array, asset handle, reference via a stub hook) round-trips `JsonWriteFields` →
@@ -136,8 +111,9 @@ void StoreEnumBits(void* fieldPtr, const TypeInfo& info, i64 value);
 
 ## Verification
 
-- `build-debug` clean; `ctest` green including the new unit band; `include_hygiene` green
-  with the new PUBLIC dep; `sdk_conformance_install` / `sdk_conformance_buildtree` green.
+- `build-debug` clean; `ctest` green including the new unit band; `include_hygiene` still
+  green with `JsonSerialize.h` now naming `json` in a public header (the 00a PUBLIC link
+  covers it).
 
 ## Out of scope
 
