@@ -28,17 +28,24 @@ the new builtin `InputMappingSystem` do not force the minimal app to carry input
 (the system iterates seats; a world with no `Viewer`/`InputContextStack` seat resolves nothing, a
 clean no-op). The template stays input-free — the point is proving the minimal app is *unaffected*.
 If the reshape leaks any required wiring into it, that is a design leak to fix here, not to paper over
-in the template. (No `.inputmap` asset is added to the template; the maximal sample carries the
-end-to-end input path.)
+in the template. Concretely, a leak would surface as: the template needing a
+`Viewer`/`InputContextStack`/`PlayerInput` component it has no use for, `InputMappingSystem` asserting
+or erroring on a `Viewer`-less world, or the template's authored level having to name
+`InputMappingSystem` in its `systems` order. If any of those appears, the fix belongs in Plan 01/02
+(e.g. the empty-world resolve is already a clean no-op) — the template's level data and `main.cpp`
+should stay byte-untouched. (No `.inputmap` asset is added to the template; the maximal sample carries
+the end-to-end input path.)
 
 ### 2. Docs
 
 - **A `docs/guides/` entry — "authoring input actions"**: declare action-id constants, write a
-  `*.inputmap.json` (actions + bindings), reference it from a seat's `InputContextStack` in the world
-  prefab, and read actions by name in a control system (`input.WasTriggered(Actions::Jump)`). The key
-  teaching points: gameplay reads `Intent` (not actions), only the control system reads actions,
-  `InputMappingSystem` must run before the control system, and context-stack push/pop switches
-  schemes.
+  `*.inputmap.json` (actions + bindings), reference it from a seat's `InputContextStack` in the
+  **player prefab**, and read actions by name in a control system (`input.WasTriggered(Actions::Jump)`).
+  The key teaching points: gameplay reads `Intent` (not actions), only the control system reads
+  actions, `InputMappingSystem` must be listed **before the control system in the level's `systems`
+  order** (registration order does not reorder an explicit list), context-stack push/pop switches
+  schemes (**and gates focus** — pop the gameplay context to neutralize input), and gamepad source
+  arms are inert until the device layer lands next planset.
 - **`engine/CLAUDE.md`** — extend the *Gameplay* section: `PlayerInput` is now the resolved
   `ActionState`; `InputContextStack` + the builtin `InputMappingSystem` (sole raw-input reader, Sim,
   first, locally-owned seats); the `ResolveActions` pure core in `Veng/Input/`; the `AssetType::InputMap`
@@ -56,11 +63,20 @@ end-to-end input path.)
 - **`plans/future/README.md` area 4** — mark the **input half delivered** (event routing was already
   delivered by planset-30; this planset delivers the action-mapping layer and `PlayerInput` =
   `ActionState`). Re-cut the *remaining* to: **multi-seat input routing** (pointer-by-region +
-  device-by-id into per-seat `InputContextStack` → `PlayerInput`) and **the networking layer**
-  (replicate `PlayerInput`, re-derive `Intent` server-side), naming them the **next planset** built
-  directly on this planset's seat seam — `InputMappingSystem` already resolves per seat, so multi-seat
-  is additive routing. Note the *runtime remapping UI* and *richer triggers/modifiers* + a *global
+  device-by-id into per-seat `InputContextStack` → `PlayerInput`, **and the gamepad device layer** the
+  inert `Gamepad*` source arms wait on) and **the networking layer**, naming them the **next planset**
+  built directly on this planset's seat seam — `InputMappingSystem` already resolves per seat, so
+  multi-seat is additive routing. **Reconcile the net-chokepoint wording:** area 4 currently says the
+  net layer serializes `Intent`; this planset makes `PlayerInput` (the action snapshot) the replicated
+  per-tick input from which the server re-derives `Intent`, so update area 4 to state that split
+  explicitly (client sends `PlayerInput`; AI/server-authoritative producers still write `Intent`
+  directly). Note the *runtime remapping UI* and *richer triggers/modifiers* + a *global
   `ActionRegistry`/bespoke editor* as the smaller named follow-ons.
+- **Record two seam questions this planset surfaced** (for a later planset, not built here): **(a)** a
+  system-priority / mandatory-first-builtin mechanism — today a level's explicit `systems` order must
+  hand-place `InputMappingSystem` first, and forcing it regardless of the authored order is a
+  scheduling-model change worth its own discussion; **(b)** per-document undo (a `CommandStack`) for
+  the single-asset editors (texture / material / input-map), which today have none.
 - **`plans/README.md`** — add the planset-42 entry (the recap paragraph, house style: what it delivers,
   what it supersedes — the `PlayerInput` reshape supersedes planset-29's fixed-struct `PlayerInput` —
   and what it holds back).
@@ -68,8 +84,10 @@ end-to-end input path.)
 
 ### 4. Verification band (the whole planset)
 
-- **`ctest -R action_resolve`** (Plan 00 pure tests), the `cooker` `.inputmap` validation tests (Plan
-  02), and the `PlayerInput`/`InputContextStack` prefab round-trip (Plan 01) all green.
+- **`ctest -R action_resolve`** (Plan 00 pure tests), the headless resolve→`PlayerInput`→`Intent`
+  end-to-end test and the updated `control_movement` (Plan 01), the `cooker` `.inputmap` validation
+  tests (Plan 02), and the `PlayerInput` prefab round-trip (Plan 01; `InputContextStack` round-trip in
+  Plan 02) all green.
 - **`hello_triangle-launcher` under `HT_SMOKE`** writes the correct-sized PPM; **`smoke_golden`
   unmoved** (input is neutral in smoke, so the render is byte-identical — a green golden is expected,
   not evidence the feature works; the resolve/cook/round-trip tests are that evidence).

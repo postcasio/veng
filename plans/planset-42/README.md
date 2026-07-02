@@ -8,7 +8,7 @@ binds raw device inputs to them through **cooked, remappable data** (`InputMappi
 assets, active per-seat as a context stack), and an engine system resolves those bindings each
 tick into the seat's input snapshot. `PlayerInput` **becomes** that resolved action snapshot
 (the `ActionState`) — a game-defined set of action values, not a fixed `{Move, Look, Buttons}`
-struct — and the control system reads actions **by name** (`input.GetAxis(Actions::Move)`,
+struct — and the control system reads actions **by name** (`input.GetValue(Actions::Move)`,
 `input.WasTriggered(Actions::Jump)`) instead of polling hardware.
 
 `Intent` is **untouched**. The action layer feeds `Intent`, it does not replace it, and gameplay
@@ -29,12 +29,16 @@ this is mostly *assembly on existing surface*, not new engine mechanism:
   writes no new seat concept.
 - **Raw input is already an event-fed snapshot.** planset-30 made `Veng::Input` an event-fed
   snapshot behind the `InputRouter`'s focus stack, and `SystemContext.Input` is always present
-  (neutral all-zeros in headless). The action layer reads that snapshot — it adds no new device
-  plumbing.
+  (neutral all-zeros in headless). The action layer reads that snapshot — keyboard and mouse today —
+  and adds no new device plumbing. `Veng::Input` has **no gamepad surface yet**: the binding
+  vocabulary carries gamepad source arms so the design is ready for them, but the resolver treats
+  those arms as neutral until the device layer lands (the next planset, with multi-seat device
+  routing).
 - **Reflection gives the asset its cook, load, and editor for free.** An `InputMappingContext` is
   reflected data: it cooks and loads like every other asset, and its binding table draws an
-  editable inspector through `DrawFieldWidget` with **no bespoke widget code** — exactly as
-  `ProjectSettings::Configurations` (a `FieldClass::Array`) does. The editor panel is therefore
+  editable inspector through `DrawFieldWidget` — the same `FieldClass::Array` path
+  `ProjectSettings::Configurations` uses — with just **one small registered widget** (an `ActionId`
+  name combo, since a `u64` leaf has no default scalar widget). The editor panel is therefore
   *almost free*.
 - **The system + id conventions are settled.** `InputMappingSystem` is a builtin `SceneSystem`
   registered exactly like `MovementSystem`; `ActionId` is a minted `u64` leaf authored exactly like
@@ -82,7 +86,7 @@ this is mostly *assembly on existing surface*, not new engine mechanism:
   instead of an opaque `u32 Buttons`.
 - **Bindings are a cooked asset.** `InputMappingContext` (`AssetType::InputMap`) declares its
   actions (id + name + kind) and a `vector<Binding>` (raw source → action, with minimal
-  scale/invert/axis-component modifiers). A game authors a `*.inputmap.json` source; the cook
+  scale/axis-component modifiers). A game authors a `*.inputmap.json` source; the cook
   validates every binding against the context's declared actions; the runtime loads it by `AssetId`
   and hot-reloads it through the existing `MountMemory` path.
 - **Contexts are a per-seat stack.** An **`InputContextStack`** component holds the ordered active
@@ -99,11 +103,11 @@ this is mostly *assembly on existing surface*, not new engine mechanism:
 
 | # | Plan | Summary | Status |
 |---|------|---------|--------|
-| 00 | Action types + the pure resolve core | The `ActionId` leaf, `ActionKind`/`ActionSample`/`ActionPhase`, `InputSource`/`Binding`/`InputAction`, the in-memory `ResolvedContext`, and the device-free `ResolveActions(activeContexts, rawState) → ActionState` pure function. Fully unit-tested, no window. Foundation-first. | proposed |
-| 01 | `PlayerInput` → `ActionState` + `InputMappingSystem` (single seat) | Repurpose `PlayerInput` to the resolved action snapshot (the stable-ordered-schema wire representation decided here); add the `InputContextStack` component and the builtin **`InputMappingSystem`** (Sim, ordered first, the sole raw-input reader), writing each locally-owned seat's `PlayerInput`. Migrate hello-triangle: delete the `Key::` polling, keep only the named-action `PlayerInput→Intent` policy. Depends on 00. | proposed |
-| 02 | The cooked `InputMappingContext` asset | `AssetType::InputMap`, the `*.inputmap.json` source, the cooker `InputMapImporter` (binding→action validation), the runtime loader, `AssetManager::Load`, hot-reload via `MountMemory`. hello-triangle's bindings move from C++ into a cooked asset the game references; the level/game names the default context to push. Depends on 01. | proposed |
-| 03 | The editor panel | `InputMappingEditorPanel` registered for `AssetType::InputMap`: the reflected binding-table inspector (free `DrawFieldWidget`) + action-name labels + live recook→hot-reload preview, matching the texture/material editor idiom. Basic by design. Depends on 02. | proposed |
-| 04 | Docs, template co-migration, roadmap pass | `docs/guides/` input-mapping entry; `engine/CLAUDE.md` + `editor/CLAUDE.md` updates; `examples/template` co-migration (it drives a spinning cube with no player input — verify it still needs none, or gains a minimal binding); the `future/README.md` area-4 update naming multi-seat routing + networking as the next planset built on the seat seam; the full verification band. The closer. Depends on 00–03. | proposed |
+| 00 | Action types + the pure resolve core | The `ActionId` leaf, `ActionKind`/`ActionSample`/`ActionPhase`, `InputSource`/`Binding`/`InputAction`, the in-memory `ResolvedContext`, and the device-free `ResolveActions(activeContexts, rawState) → ActionState` pure function. Fully unit-tested, no window. Foundation-first. | ready |
+| 01 | `PlayerInput` → `ActionState` + `InputMappingSystem` (single seat) | Repurpose `PlayerInput` to the resolved action snapshot (serialized through the reflection serializer's name-keyed array, no bespoke wire format); add the `InputContextStack` component and the builtin **`InputMappingSystem`** (Sim, ordered first, the sole raw-input reader), writing each locally-owned seat's `PlayerInput`. Migrate hello-triangle: delete the `Key::` polling, keep only the named-action `PlayerInput→Intent` policy, add `InputMappingSystem` to the level's system order, and pop the gameplay context on focus release. Depends on 00. | ready |
+| 02 | The cooked `InputMappingContext` asset | `AssetType::InputMap`, the `*.inputmap.json` source, the cooker `InputMapImporter` (binding→action validation), the runtime loader, `AssetManager::Load`, hot-reload via `MountMemory`. hello-triangle's bindings move from C++ into a cooked asset the game references; the level/game names the default context to push. Depends on 01. | ready |
+| 03 | The editor panel | `InputMappingEditorPanel` registered for `AssetType::InputMap`: the reflected binding-table inspector (free `DrawFieldWidget`) + action-name labels + live recook→hot-reload preview, matching the texture/material editor idiom. Basic by design. Depends on 02. | ready |
+| 04 | Docs, template co-migration, roadmap pass | `docs/guides/` input-mapping entry; `engine/CLAUDE.md` + `editor/CLAUDE.md` updates; `examples/template` co-migration (it drives a spinning cube with no player input — verify it still needs none, or gains a minimal binding); the `future/README.md` area-4 update naming multi-seat routing + networking as the next planset built on the seat seam; the full verification band. The closer. Depends on 00–03. | ready |
 
 > Status legend: `proposed` = drafted, awaiting review; `ready` = reviewed and approved;
 > `done` = implemented, migrated, verified, committed.
@@ -122,12 +126,16 @@ this is mostly *assembly on existing surface*, not new engine mechanism:
 ## The decisions this planset settles
 
 - **`PlayerInput` is the `ActionState`.** The resolved per-seat action snapshot *is* the
-  serializable input the type always advertised. There is no separate `ActionState` struct beside
-  `PlayerInput`; they are one object. The wire form is a **fixed positional vector in the active
-  context's declared action order** (the schema resolved once when the context stack changes), not a
-  per-tick map of `ActionId`s — so the game-defined action set costs no serialization width over a
-  fixed struct. This is the one representation decision worth pinning early (like `Authority`,
-  painful to reshape once it is on the wire).
+  serializable input the type always advertised. `PlayerInput` is a **thin component wrapper over the
+  one `ActionState`** the pure resolver returns — composition, not a second parallel snapshot type.
+  It serializes through the reflection serializer's **name-keyed `FieldClass::Array` encoding** like
+  any reflected component (each `ActionSample` self-describing by its `ActionId`), riding the same
+  cook/load/replicate path every component takes — **no bespoke wire format in this planset**. The
+  `Actions` set is kept in a deterministic stack-declared order (Plan 00's resolution invariant), so
+  the same active stack yields the same sample layout for stable diffing/preview — but that is a
+  resolution property, not a wire-width commitment. A tighter positional/bit-packed net encoding
+  (schema keyed on the active context) is a deliberate optimization deferred to the networking
+  planset, behind this stable `ActionState` shape.
 - **Gameplay reads `Intent`, only the local human control system reads actions.** The action layer
   is client-local and device-facing; it produces `Intent` and stops there. AI systems and the future
   net layer produce `Intent` directly, never touching an action or a context. This preserves the
@@ -139,12 +147,13 @@ this is mostly *assembly on existing surface*, not new engine mechanism:
   ids, and the module ABI is unchanged. A global action registry (for cross-context validation and
   editor name lookup) is a clean later addition if a real editor or visual-scripting consumer wants
   it.
-- **The editor panel is basic and free, not bespoke.** The reflected binding table draws through
-  `DrawFieldWidget` like any reflected asset; the panel adds only action-name labels and the live
-  recook loop. A press-a-key-to-bind capture widget, an action dropdown driven by a registry, and a
-  drag-to-reorder binding UX are deferred — there is no data consumer of actions yet (everything is
-  C++), so the investment is not justified until visual scripting or a runtime remapping screen
-  needs it.
+- **The editor panel is basic and near-free, not bespoke.** The reflected binding table draws through
+  `DrawFieldWidget` like any reflected asset; the panel adds one registered `ActionId` name-combo
+  widget (a `u64` leaf has no default scalar widget), a `GetInspectables()` override for MCP, and the
+  live recook loop — no `CommandStack`/undo (the single-asset editors have none). A press-a-key-to-bind
+  capture widget, an action dropdown driven by a global registry, and a drag-to-reorder binding UX are
+  deferred — there is no data consumer of actions yet (everything is C++), so the investment is not
+  justified until visual scripting or a runtime remapping screen needs it.
 - **`InputMappingSystem` is a builtin Sim system, ordered first.** It is the single reader of raw
   device state, registered in `RegisterBuiltinSystems` beside `MovementSystem`. It runs for
   **locally-owned** seats only; a remote/AI seat's `PlayerInput` arrives replicated or synthesized,
@@ -156,14 +165,17 @@ this is mostly *assembly on existing surface*, not new engine mechanism:
 - **Multi-seat input routing + the networking layer** — the other half of area 4, the **named next
   planset**. Multi-seat routes raw events *per seat*: pointer/keyboard by region (planset-31's
   `WindowToViewport`) and device events by id, each into the right seat's `InputContextStack` →
-  `PlayerInput`. The net layer replicates `PlayerInput` (now the tight action snapshot) and re-derives
-  `Intent` server-side. This planset builds the seat seam both consume: `InputMappingSystem` already
+  `PlayerInput`. **Gamepad device input lands here** — this planset leaves the gamepad `InputSource`
+  arms as inert forward vocabulary; the device layer that fills `Veng::Input` with pad state (and
+  fans it per seat) is part of this next step. The net layer replicates `PlayerInput` (the action
+  snapshot) and re-derives `Intent` server-side. This planset builds the seat seam both consume:
+  `InputMappingSystem` already
   resolves *per seat*, so multi-seat is additive routing, not a rewrite. A **playable splitscreen
   sample** is the demanding second consumer that lands with it.
 - **Runtime remapping UI.** An in-game settings screen that rebinds keys is a game-side `Veng::UI`
   feature (mutating the active context, serializing user overrides to the per-OS user-data dir), not
   an editor panel. Distinct surface, separate planset.
-- **Richer triggers/modifiers.** A first cut keeps modifiers minimal (scale, invert, axis component)
+- **Richer triggers/modifiers.** A first cut keeps modifiers minimal (scale, axis component)
   and phases to started/ongoing/completed. Unreal-style chorded / tap-vs-hold / hold-and-release
   triggers and the full modifier zoo (swizzle, response curves, dead-zone shapes) are a later
   refinement behind the same `ResolveActions` core.

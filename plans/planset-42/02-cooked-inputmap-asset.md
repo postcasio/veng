@@ -36,7 +36,7 @@ class InputMappingContext      // AssetType::InputMap
 public:
     std::span<const InputAction> GetActions() const;
     std::span<const Binding>     GetBindings() const;
-    const ResolvedContext&       Resolved() const;   // the resolver-ready form, built at load
+    const ResolvedContext&       GetResolved() const;   // the resolver-ready form, built at load
 private:
     vector<InputAction> m_Actions;
     vector<Binding>     m_Bindings;
@@ -44,11 +44,12 @@ private:
 };
 ```
 
-- `AssetType::InputMap` added to the closed `AssetType` set; `CookedInputMapHeader { Version; }` for
-  a loud stale-blob reject, matching the other cooked headers.
+- `AssetType::InputMap` added to the closed `AssetType` set, **with its `ToString`/`ParseAssetType`
+  arms** in `assetpack` (the `"input_map"` manifest name) so a pack manifest parses the type;
+  `CookedInputMapHeader { Version; }` for a loud stale-blob reject, matching the other cooked headers.
 - The blob **is** the `WriteFields` encoding of the `{ vector<InputAction>, vector<Binding> }` — no
   new format. The loader `ReadFields` them and builds `m_Resolved` (indexing bindings by action,
-  computing the positional action schema order Plan 01's wire form depends on).
+  computing the deterministic action schema order Plan 00's resolution invariant depends on).
 
 ### 2. The source and the importer
 
@@ -65,7 +66,6 @@ A `*.inputmap.json` source:
     { "source": { "device": "Keyboard", "control": 83 }, "action": 12345678901234567890, "axis": "Y", "scale": -1.0 },
     { "source": { "device": "Keyboard", "control": 68 }, "action": 12345678901234567890, "axis": "X", "scale":  1.0 },
     { "source": { "device": "Keyboard", "control": 65 }, "action": 12345678901234567890, "axis": "X", "scale": -1.0 },
-    { "source": { "device": "GamepadAxis", "control": 0 }, "action": 12345678901234567890, "axis": "Whole" },
     { "source": { "device": "Keyboard", "control": 32 }, "action":  9876543210987654321, "axis": "Whole" }
   ]
 }
@@ -82,7 +82,7 @@ against reflected descriptors:
 - ids are non-null and unique within the context;
 - enum fields (`device`, `kind`, `axis`) parse by name through the shared enum tables.
 
-An omitted optional (`scale`, `invert`) defaults, the same schema tolerance every importer gives.
+An omitted optional (`scale`, `axis`) defaults, the same schema tolerance every importer gives.
 
 ### 3. The runtime loader
 
@@ -98,11 +98,12 @@ through the ordinary async `Load` / blocking `LoadSync` path. It is CPU-only (no
   resolves to empty actions until it streams in — the ordinary async-load contract).
 - hello-triangle's in-C++ context (Plan 01) becomes a cooked `gameplay.inputmap.json` in its asset
   pack; the game's action-id constants stay in C++ and match the cooked ids.
-- **The seat gets its context from the level.** The world prefab's seat entity carries an
-  `InputContextStack` whose `Active` lists the `gameplay` context `AssetId` — authored data, resolved
-  as an ordinary prefab `AssetHandle` dependency. So "which scheme is active" is level/prefab data,
-  not code — a gameplay system still push/pops for transient contexts (vehicle, menu), but the base
-  context is authored.
+- **The seat gets its context from the prefab.** hello-triangle's seat is authored in the **player
+  prefab** (spawned by the game-mode `SpawnPlayerRule`, not in the world prefab), so its
+  `InputContextStack` — `Active` listing the `gameplay` context `AssetId` — is authored there,
+  resolved as an ordinary prefab `AssetHandle` dependency. So "which scheme is active" is prefab data,
+  not code — a gameplay system still push/pops for transient contexts (vehicle, menu) and for the
+  focus gate (Plan 01), but the base context is authored.
 
 ### 5. Hot-reload
 
@@ -118,6 +119,10 @@ machinery with no new mechanism.
 - **Build-order edge.** A pack containing an `.inputmap` needs no module (unlike a prefab pack) — the
   context references no game types, only action ids — so it stays module-independent in
   `veng_add_asset_pack`.
+- **Gamepad sources are inert forward vocabulary.** A binding may name a `Gamepad*` source and the
+  importer accepts it, but `Veng::Input` carries no pad state yet, so it resolves neutral until the
+  device layer lands next planset. hello-triangle's cooked context is therefore keyboard/mouse only —
+  no stick binding it can't exercise.
 - **Mint the ids.** Replace the placeholder `AssetId`/`ActionId` literals with `vengc generate-id`
   values once green, in both the JSON (decimal) and the C++ constants (hex), per the working norms.
 
@@ -127,7 +132,7 @@ machinery with no new mechanism.
   the asset + loader.
 - `assetpack/…` — `AssetType::InputMap` + `CookedInputMapHeader`.
 - `cooker/…` — `InputMapImporter` + its validation, wired into the cook dispatch.
-- `examples/hello-triangle/assets/…` — `gameplay.inputmap.json`, referenced by the world prefab's
+- `examples/hello-triangle/assets/…` — `gameplay.inputmap.json`, referenced by the **player prefab's**
   seat `InputContextStack`; `main.cpp` drops the in-C++ context, keeps the action-id constants.
 
 ## Verification
