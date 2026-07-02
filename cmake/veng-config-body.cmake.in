@@ -28,8 +28,8 @@ endif ()
 # on the imported target existing — a no-op in an editor-less build-tree config rather than a dangle.
 # libveng_cook is statically linked into the exes and not exported, so no cook alias is needed — a
 # consumer never links the cooker. The editor's only PUBLIC deps (veng::veng, veng::graph, and the
-# ImGui headers riding veng's interface) are already resolved above, so no extra find_dependency is
-# required.
+# ImGui headers riding veng's interface) are already resolved above (veng::veng's own PUBLIC deps —
+# glm/fmt/nlohmann_json — included), so no extra find_dependency is required.
 if (TARGET veng::veng-editor AND NOT TARGET veng-editor)
     add_executable(veng-editor ALIAS veng::veng-editor)
 endif ()
@@ -39,7 +39,8 @@ endif ()
 # veng::mcp is the optional MCP server library, always in the export set (built and installed
 # from a full SDK build, linked on demand). Recreate the in-tree veng::mcp alias so a consumer's
 # target_link_libraries(app veng::mcp) resolves the imported veng::veng_mcp identically. Its only
-# PUBLIC dep is veng::veng (resolved above); json/httplib are PRIVATE, so no extra find_dependency.
+# PUBLIC dep is veng::veng (resolved above, nlohmann_json included); httplib is PRIVATE, so no
+# extra find_dependency is needed on veng::mcp's account.
 if (TARGET veng::veng_mcp AND NOT TARGET veng::mcp)
     add_library(veng::mcp ALIAS veng::veng_mcp)
 endif ()

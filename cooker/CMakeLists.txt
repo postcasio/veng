@@ -2,9 +2,11 @@
 #
 # Offline importer/cooker: parses a JSON asset pack, dispatches each entry to
 # a registered AssetImporter, and writes a .vengpack archive via
-# assetpack's ArchiveWriter. All of its dependencies (nlohmann/json, stb,
-# assimp, Slang, xxHash) are cooker-only — the engine never links any of them,
-# nor libveng_cook itself.
+# assetpack's ArchiveWriter. stb, assimp, Slang, and xxHash are cooker-only — the
+# engine never links any of them, nor libveng_cook itself. nlohmann/json is the one
+# exception: veng now carries it PUBLIC (the reflection JSON walker), so
+# veng_cook_objs' own PUBLIC link below is redundant with the transitive edge but is
+# kept — the cooker's public Cook/Types.h headers name nlohmann::json directly.
 #
 # veng is the tools: the cooker builds unconditionally whenever veng is built from
 # source. A library-only consumer uses find_package(veng) and gets the prebuilt
@@ -91,16 +93,9 @@ set_source_files_properties(
         src/Importers/TextureImporter.cpp
         PROPERTIES COMPILE_OPTIONS $<$<CONFIG:Debug>:-O2>)
 
-# nlohmann/json — pack + per-asset JSON parsing (cooker-only; the runtime
-# reads the binary archive, never JSON).
-set(JSON_BuildTests OFF CACHE INTERNAL "")
-FetchContent_Declare(
-        nlohmann_json
-        GIT_REPOSITORY https://github.com/nlohmann/json.git
-        GIT_TAG v3.11.3
-        GIT_SHALLOW TRUE
-)
-FetchContent_MakeAvailable(nlohmann_json)
+# nlohmann/json — pack + per-asset JSON parsing. veng's root CMakeLists.txt makes
+# nlohmann_json::nlohmann_json available (now PUBLIC on veng itself) before this
+# subdirectory is added, so no FetchContent of its own is needed here.
 
 # assimp — mesh import. The one heavy dependency; strictly cooker-only, so a
 # consumer of libveng never pays for it. Trim it

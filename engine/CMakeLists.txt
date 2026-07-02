@@ -181,14 +181,17 @@ endif ()
 
 # glm and fmt appear in veng's public headers (engine vector/matrix types and
 # string formatting), so they stay PUBLIC. veng::assetpack is PUBLIC too —
-# AssetId and friends appear in the public AssetManager API. Vulkan,
-# GLFW, VMA and nfd are hidden behind the Native idiom (see
-# Veng/Renderer/Native.h) — no public header pulls them in, so they link
+# AssetId and friends appear in the public AssetManager API. nlohmann/json is
+# PUBLIC too — the reflection JSON walker (Veng/Reflection/JsonSerialize.h) names
+# json types directly, so every consumer of that header needs the include resolved
+# through this link. Vulkan, GLFW, VMA and nfd are hidden behind the Native idiom
+# (see Veng/Renderer/Native.h) — no public header pulls them in, so they link
 # PRIVATE and stay out of the consumer include graph.
 target_link_libraries(veng PUBLIC
         glm::glm
         fmt::fmt
         veng::assetpack
+        nlohmann_json::nlohmann_json
 )
 
 target_link_libraries(veng PRIVATE

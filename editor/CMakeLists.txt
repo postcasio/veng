@@ -75,17 +75,20 @@ if (MSVC)
 endif ()
 
 # nlohmann/json — the texture editor reads/writes per-asset .tex.json sources and
-# the asset source index parses the pack manifest. Used only in .cpp (never in a
-# public header), so it is a PRIVATE dependency: it does not leak into editor
-# modules or libveng. JSON_NOEXCEPTION matches the cooker's contract under
-# -fno-exceptions (JSON_THROW becomes std::abort, guarded by is_*() checks).
+# the asset source index parses the pack manifest. Used directly in .cpp (never in a
+# public header), so this library still names the target itself (PRIVATE) even
+# though veng::veng below now carries it PUBLIC too. JSON_NOEXCEPTION matches the
+# cooker's contract under -fno-exceptions (JSON_THROW becomes std::abort, guarded
+# by is_*() checks).
 target_link_libraries(veng_editor PRIVATE nlohmann_json::nlohmann_json)
 target_compile_definitions(veng_editor PRIVATE JSON_NOEXCEPTION)
 
 # veng_editor is a shared library a downstream EDITOR_MODULE links (veng_editor::veng_editor),
 # so it joins vengTargets and installs its public VengEditor/ headers beside libveng. The
 # installed lib finds libveng / libveng_graph beside it through @loader_path/../lib (macOS) or
-# $ORIGIN/../lib (Linux). imnodes/nlohmann stay PRIVATE — never a VengEditor/ public header.
+# $ORIGIN/../lib (Linux). imnodes stays PRIVATE — never a VengEditor/ public header. nlohmann
+# stays PRIVATE here too, but reaches a consumer transitively through the PUBLIC veng::veng
+# link, already covered by veng-config's find_dependency(nlohmann_json).
 if (APPLE)
     set_target_properties(veng_editor PROPERTIES
             INSTALL_RPATH "@loader_path/../${CMAKE_INSTALL_LIBDIR}")

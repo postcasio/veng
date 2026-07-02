@@ -4,10 +4,13 @@
 #
 # An optional engine-tier library a consuming app (game or editor) links to expose
 # its live systems to AI agents over the Model Context Protocol. It is NOT linked by
-# libveng and adds no dependency to any existing consumer — a distinct veng::mcp
-# target a consumer opts into, exactly as veng::graph is. Its public surface is
-# JSON-library-free (a tool handler is Result<string>(string_view)); nlohmann/json
-# and cpp-httplib are PRIVATE and never reach a public header.
+# libveng and adds no dependency to any existing consumer beyond what veng::veng
+# itself now carries — a distinct veng::mcp target a consumer opts into, exactly as
+# veng::graph is. A tool handler is still Result<string>(string_view) — no nlohmann
+# type appears in a Veng/Mcp/ public header — but nlohmann/json now reaches this
+# library's consumers transitively through the PUBLIC veng::veng link below (veng
+# itself carries nlohmann PUBLIC). cpp-httplib stays PRIVATE and never reaches a
+# public header or a consumer.
 
 add_library(veng_mcp SHARED
         src/McpServer.cpp
@@ -55,9 +58,10 @@ if (MSVC)
     set_target_properties(veng_mcp PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
 endif ()
 
-# nlohmann/json — JSON-RPC (de)serialization used only in .cpp (never a public header),
-# so a PRIVATE dependency: it leaks into neither consumers nor libveng. JSON_NOEXCEPTION
-# matches the -fno-exceptions contract (parse errors are checked, not thrown).
+# nlohmann/json — JSON-RPC (de)serialization used directly in .cpp, so this library
+# still names the target itself (PRIVATE: never a public header here) even though
+# veng::veng below now carries it PUBLIC too. JSON_NOEXCEPTION matches the
+# -fno-exceptions contract (parse errors are checked, not thrown).
 target_link_libraries(veng_mcp PRIVATE nlohmann_json::nlohmann_json)
 target_compile_definitions(veng_mcp PRIVATE JSON_NOEXCEPTION)
 
@@ -82,8 +86,10 @@ target_link_libraries(veng_mcp PRIVATE Threads::Threads)
 # (target_link_libraries(app veng::mcp)) and the installed veng-editor exe links, so it joins
 # the vengTargets export set and installs its public Veng/Mcp/ headers beside libveng — exactly
 # as veng::graph does. The installed lib finds libveng beside it through @loader_path (macOS) or
-# $ORIGIN (Linux). nlohmann/json and the vendored httplib stay PRIVATE — never a Veng/Mcp/ public
-# header — so a consumer linking veng::mcp needs no extra find_dependency in veng-config.
+# $ORIGIN (Linux). The vendored httplib stays PRIVATE — never a Veng/Mcp/ public header. nlohmann/json
+# is PRIVATE here too, but reaches a consumer transitively through the PUBLIC veng::veng link
+# (veng-config's find_dependency(nlohmann_json) already covers it), so no extra find_dependency
+# is needed in veng-config on veng::mcp's account.
 if (VENG_INSTALL_SDK OR PROJECT_IS_TOP_LEVEL)
     if (APPLE)
         set_target_properties(veng_mcp PROPERTIES INSTALL_RPATH "@loader_path")

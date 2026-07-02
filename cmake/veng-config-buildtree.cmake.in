@@ -19,12 +19,13 @@ macro(check_required_components _NAME)
     endforeach ()
 endmacro()
 
-# veng's exported link interface names glm::glm, fmt::fmt (PUBLIC on veng), and
-# libzstd_static (PUBLIC through the static assetpack). In a build tree those dependency
-# targets live in scattered FetchContent build dirs, not one install prefix, so resolve
-# each from the build-tree export it wrote rather than a find_dependency against a prefix.
-# The paths are the FetchContent build dirs baked at generate time. Vulkan is a real system
-# find_package, so it resolves the same way in every mode.
+# veng's exported link interface names glm::glm, fmt::fmt, nlohmann_json::nlohmann_json
+# (all PUBLIC on veng), and libzstd_static (PUBLIC through the static assetpack). In a
+# build tree those dependency targets live in scattered FetchContent build dirs, not one
+# install prefix, so resolve each from the build-tree export it wrote rather than a
+# find_dependency against a prefix. The paths are the FetchContent build dirs baked at
+# generate time. Vulkan is a real system find_package, so it resolves the same way in
+# every mode.
 find_dependency(Vulkan)
 if (NOT TARGET fmt::fmt)
     include("@FMT_BINARY_DIR@/fmt-targets.cmake")
@@ -34,6 +35,9 @@ if (NOT TARGET glm::glm)
 endif ()
 if (NOT TARGET libzstd_static)
     include("@zstd_BINARY_DIR@/zstdTargets.cmake")
+endif ()
+if (NOT TARGET nlohmann_json::nlohmann_json)
+    include("@nlohmann_json_BINARY_DIR@/nlohmann_jsonTargets.cmake")
 endif ()
 
 # The consumption mode the helper modules resolve their mode-keyed path variables against.

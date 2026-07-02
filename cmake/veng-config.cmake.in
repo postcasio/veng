@@ -11,6 +11,10 @@ find_dependency(fmt)
 find_dependency(VulkanMemoryAllocator)
 find_dependency(nfd)
 
+# nlohmann/json is PUBLIC on veng (the reflection JSON walker), so its imported
+# target must be resolved for veng-targets.cmake's link interface to import.
+find_dependency(nlohmann_json)
+
 # zstd is PUBLIC through assetpack (the runtime inflates compressed archive blobs), so its
 # imported target must be resolved for veng-targets.cmake's link interface to import.
 find_dependency(zstd)

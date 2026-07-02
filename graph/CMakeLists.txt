@@ -8,7 +8,8 @@
 # libveng_editor (which draws the graph UI) and libveng_cook (which generates the
 # fragment shader from a graph), so the editor preview and the offline cook run the
 # identical walk. Knows nothing of ImGui or Vulkan — it names only Veng reflection,
-# string/PinType/glm in its public headers, and nlohmann/json privately in its .cpp.
+# string/PinType/glm in its public headers, and nlohmann/json in its .cpp (also PUBLIC
+# on veng::veng below, which this library links PUBLIC).
 
 add_library(veng_graph SHARED
         src/NodeGraph.cpp
@@ -43,10 +44,11 @@ if (MSVC)
     set_target_properties(veng_graph PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
 endif ()
 
-# nlohmann/json — graph (de)serialization and the .vmat field-list write use it only
-# in .cpp (never a public header), so it is a PRIVATE dependency: it leaks into
-# neither consumers nor libveng. JSON_NOEXCEPTION matches the -fno-exceptions
-# contract (JSON_THROW becomes std::abort, guarded by is_*() checks).
+# nlohmann/json — graph (de)serialization and the .vmat field-list write use it
+# directly in .cpp (never a VengGraph/ public header), so this library still names
+# the target itself (PRIVATE) even though veng::veng below now carries it PUBLIC
+# too. JSON_NOEXCEPTION matches the -fno-exceptions contract (JSON_THROW becomes
+# std::abort, guarded by is_*() checks).
 target_link_libraries(veng_graph PRIVATE nlohmann_json::nlohmann_json)
 target_compile_definitions(veng_graph PRIVATE JSON_NOEXCEPTION)
 
@@ -54,8 +56,10 @@ target_compile_definitions(veng_graph PRIVATE JSON_NOEXCEPTION)
 # veng::cook → veng::graph) and a downstream EDITOR_MODULE links PUBLIC through
 # veng_editor, so it joins vengTargets and installs beside libveng with its public
 # VengGraph/ headers. The installed lib finds libveng beside it through
-# @loader_path/../lib (macOS) or $ORIGIN/../lib (Linux). nlohmann/json stays PRIVATE —
-# never a VengGraph/ public header.
+# @loader_path/../lib (macOS) or $ORIGIN/../lib (Linux). nlohmann/json stays PRIVATE
+# here — never a VengGraph/ public header — but reaches a consumer transitively
+# through the PUBLIC veng::veng link, already covered by veng-config's
+# find_dependency(nlohmann_json).
 if (APPLE)
     set_target_properties(veng_graph PROPERTIES
             INSTALL_RPATH "@loader_path/../${CMAKE_INSTALL_LIBDIR}")

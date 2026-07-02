@@ -209,6 +209,23 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(imnodes)
 
+# nlohmann/json (header-only). PUBLIC in veng's link interface (the reflection JSON
+# walker names json types), so JSON_Install is forced ON: nlohmann must export itself
+# for install(EXPORT vengTargets) to resolve nlohmann_json::nlohmann_json and for
+# find_package(veng) to be self-contained, matching glm/fmt/VMA/nfd. Declared and made
+# available here — before add_subdirectory(assetpack)/add_subdirectory(engine) below —
+# because engine/CMakeLists.txt links nlohmann_json::nlohmann_json PUBLIC on veng; the
+# target must already exist when it does, or configure fails with an unknown-target error.
+set(JSON_BuildTests OFF CACHE INTERNAL "")
+set(JSON_Install ON CACHE BOOL "" FORCE)
+FetchContent_Declare(
+        nlohmann_json
+        GIT_REPOSITORY https://github.com/nlohmann/json.git
+        GIT_TAG v3.11.3
+        GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(nlohmann_json)
+
 # ---------------------------------------------------------------------------
 # clang-tidy (opt-in)
 # ---------------------------------------------------------------------------
@@ -258,22 +275,11 @@ add_subdirectory(engine)
 # (graph-sourced fragment cook) and the editor (graph UI + preview). veng is the tools:
 # a from-source build always builds the cooker + graph, so this builds unconditionally
 # (a library-only consumer uses find_package(veng) and gets the prebuilt imported tools).
-# It needs nlohmann/json (graph serialization), so make that available before the cooker's
-# own fetch declares it.
-set(JSON_BuildTests OFF CACHE INTERNAL "")
-FetchContent_Declare(
-        nlohmann_json
-        GIT_REPOSITORY https://github.com/nlohmann/json.git
-        GIT_TAG v3.11.3
-        GIT_SHALLOW TRUE
-)
-FetchContent_MakeAvailable(nlohmann_json)
 add_subdirectory(graph)
 
 # The optional MCP server library — an engine-tier lib a consumer opts into to expose
 # its live systems to AI agents. Not linked by libveng; built unconditionally from
-# source (like the cooker). It links veng::veng, so it comes after engine, and needs
-# nlohmann/json (made available above), so it comes after that.
+# source (like the cooker). It links veng::veng, so it comes after engine.
 add_subdirectory(mcp)
 
 add_subdirectory(cooker)
@@ -652,11 +658,11 @@ if (VENG_BUILD_TESTS)
             SKIP_RETURN_CODE 77 PASS_REGULAR_EXPRESSION "not a sampled or storage image")
 
     # Include-hygiene guard: compiles every public header while linking only the
-    # PUBLIC deps of veng (glm, fmt, ImGui). Because Vulkan/GLFW/VMA/nfd link
-    # PRIVATE, this fails to build if a public header leaks a backend header.
+    # PUBLIC deps of veng (glm, fmt, nlohmann/json, ImGui). Because Vulkan/GLFW/VMA/nfd
+    # link PRIVATE, this fails to build if a public header leaks a backend header.
     # Also links veng_editor::veng_editor so the sweep covers the VengEditor/
     # public headers: it propagates their include dir and the editor's PUBLIC deps
-    # (glm/fmt/ImGui via veng) while keeping imnodes and nlohmann PRIVATE, so a
+    # (glm/fmt/nlohmann/json/ImGui via veng) while keeping imnodes PRIVATE, so a
     # leaked backend include in an editor public header fails this build too.
     add_executable(veng_test_include_hygiene tests/include_hygiene.cpp)
     target_link_libraries(veng_test_include_hygiene PRIVATE veng::veng veng::graph
@@ -665,10 +671,14 @@ if (VENG_BUILD_TESTS)
     add_test(NAME include_hygiene COMMAND veng_test_include_hygiene)
 
     # ---- MCP band (veng::mcp, driver-free) ----------------------------------
-    # A sibling include-hygiene guard over the Veng/Mcp/ public headers: it links
-    # veng::mcp but NOT nlohmann/json or the vendored httplib, so a json/httplib leak
-    # into a public header fails this build. A different boundary than the Vulkan/GLFW
-    # exclusion above, so it gets its own test rather than growing that link line.
+    # A sibling include-hygiene guard over the Veng/Mcp/ public headers, narrowed to
+    # httplib-only: it links veng::mcp but NOT the vendored httplib directly, so a
+    # httplib leak into a public header fails this build. nlohmann/json is not excluded
+    # here — veng::mcp inherits it transitively through its PUBLIC veng::veng link (veng
+    # itself carries nlohmann PUBLIC), so this test can no longer distinguish "an Mcp
+    # header leaks nlohmann" from "nlohmann always rides along via veng::veng". A
+    # different boundary than the Vulkan/GLFW exclusion above, so it gets its own test
+    # rather than growing that link line.
     add_executable(veng_test_mcp_include_hygiene tests/mcp_include_hygiene.cpp)
     target_link_libraries(veng_test_mcp_include_hygiene PRIVATE veng::mcp)
 
