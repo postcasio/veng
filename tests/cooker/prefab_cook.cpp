@@ -9,8 +9,10 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <random>
 
 #include <doctest/doctest.h>
+#include <fmt/format.h>
 
 #include <Veng/Asset/Archive.h>
 #include <Veng/Asset/CookedBlobs.h>
@@ -57,8 +59,11 @@ namespace
         Cooker cooker;
         RegisterBuiltinImporters(cooker);
 
-        const path outArchive =
-            std::filesystem::temp_directory_path() / "veng_cooker_prefab.vengpack";
+        // Unique per call: ctest runs each case as its own process in parallel, and a
+        // shared fixed name lets concurrent cases cook over and delete each other's archive.
+        std::random_device rng;
+        const path outArchive = std::filesystem::temp_directory_path() /
+                                fmt::format("veng_cooker_prefab_{:08x}.vengpack", rng());
 
         const VoidResult cookResult = cooker.CookPack(packJson, outArchive, refs, types);
         if (!cookResult.has_value())
@@ -69,16 +74,20 @@ namespace
         const Result<ArchiveReader> reader = ArchiveReader::Open(outArchive);
         if (!reader.has_value())
         {
+            std::filesystem::remove(outArchive);
             return std::unexpected(reader.error());
         }
 
         const optional<ArchiveEntry> entry = reader->Find(prefabId);
         if (!entry.has_value())
         {
+            std::filesystem::remove(outArchive);
             return std::unexpected(string("prefab entry missing from archive"));
         }
 
-        return vector<u8>(entry->Blob.begin(), entry->Blob.end());
+        vector<u8> blob(entry->Blob.begin(), entry->Blob.end());
+        std::filesystem::remove(outArchive);
+        return blob;
     }
 
     // Writes a one-entity prefab JSON and a one-entry prefab pack into a temp dir,
