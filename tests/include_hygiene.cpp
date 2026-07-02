@@ -37,6 +37,7 @@
 #include <Veng/Assert.h>
 #include <Veng/Event.h>
 #include <Veng/Input.h>
+#include <Veng/Input/Actions.h>
 #include <Veng/Log.h>
 #include <Veng/Result.h>
 #include <Veng/Time.h>
