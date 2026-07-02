@@ -810,7 +810,7 @@ Plans are grouped into numbered **plansets**, each a coherent phase of work.
   per-seat resolve seam this establishes.
 
 - **[planset-43](planset-43/README.md)** — JSON serialization unified: one reflection
-  walker, enums by name (📝 proposed, 5 plans). Collapses the four hand-rolled
+  walker, enums by name (✅ done, 6 plans). Collapses the four hand-rolled
   JSON⇄reflection walkers (the cooker's `PrefabImporter`/`LevelImporter`, the editor's
   `PrefabSerialize`, MCP's `ReflectToJson` — ~2,200 near-duplicate lines) into **one
   policy-hooked walker in `Veng/Reflection/JsonSerialize.h`**, beside the binary
