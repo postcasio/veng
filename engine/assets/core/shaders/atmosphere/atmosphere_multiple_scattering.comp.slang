@@ -39,7 +39,7 @@ float3 GatherRadiance(AtmosphereParams a, float r, float3 viewW, float muS, floa
             float phi = 2.0 * Pi * (float(p) + 0.5) / float(Phi);
             float3 w = float3(sinT * cos(phi), cosT, sinT * sin(phi));
             float muW = ClampCosine(dot(up, w));
-            float3 uvw = ScatteringUvwFromParams(a, r, muW, muS);
+            float3 uvw = ScatteringUvwFromParams(a, r, muW, muS, RayHitsGround(a, r, muW));
             float4 s = g_PrevTotal.SampleLevel(g_Sampler, uvw, 0.0);
             float nu = dot(w, sunDir);
             float phase = (3.0 / (16.0 * Pi)) * (1.0 + nu * nu);
@@ -62,14 +62,14 @@ void csMain(uint3 id : SV_DispatchThreadID)
     float r;
     float mu;
     float muS;
-    ScatteringParamsFromTexel(a, int3(id), r, mu, muS);
+    bool hitsGround;
+    ScatteringParamsFromTexel(a, int3(id), r, mu, muS, hitsGround);
 
     // Local frame at the voxel: up is radial; the sun lies in the up/forward plane at cosine muS.
     float3 up = float3(0.0, 1.0, 0.0);
     float3 sunDir = float3(sqrt(max(1.0 - muS * muS, 0.0)), muS, 0.0);
     float3 viewW = float3(sqrt(max(1.0 - mu * mu, 0.0)), mu, 0.0);
 
-    bool hitsGround = RayHitsGround(a, r, mu);
     float dist = hitsGround ? DistanceToGround(a, r, mu) : DistanceToTop(a, r, mu);
     const int Steps = 16;
     float dt = dist / float(Steps);

@@ -45,7 +45,7 @@ float3 SkyRadiance(AtmosphereParams a, float3 viewDir, float3 sunDir, float view
     float muS = ClampCosine(dot(up, sunDir));
     float nu = dot(viewDir, sunDir);
 
-    float3 uvw = ScatteringUvwFromParams(a, r, mu, muS);
+    float3 uvw = ScatteringUvwFromParams(a, r, mu, muS, RayHitsGround(a, r, mu));
     float4 s = g_Scattering.SampleLevel(g_AtmosphereSampler, uvw, 0.0);
 
     float rayleighPhase = (3.0 / (16.0 * Pi)) * (1.0 + nu * nu);

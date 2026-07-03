@@ -128,11 +128,20 @@ float3 SampleTransmittanceToSun(AtmosphereParams a, Texture2D<float4> lut, Sampl
 //
 // The scattering table is parameterized on altitude r, view-zenith cosine mu, and sun-zenith
 // cosine muS, stored as a 3D texture: z = r slice (ScatteringRRes), y = mu (ScatteringMuRes),
-// x = muS (ScatteringMuSRes). The view-sun azimuth (nu) is not tabulated; the phase functions
-// are applied at sample time, the standard real-time simplification of Bruneton's 4D table —
-// it keeps the volume tractable while preserving the day/night, horizon, and altitude behavior.
-// Rayleigh and Mie are stored together (RGB = Rayleigh, A would lose chroma), so single and
-// multiple scattering each keep a full RGB Rayleigh term and a grey Mie term folded in.
+// x = muS (ScatteringMuSRes). The three axes use Bruneton's non-linear mappings so texel
+// resolution follows where the sky varies fastest:
+//   r   maps through rho/H, the horizon distance over its maximum.
+//   mu  is horizon-split: the lower half of the axis holds ground-intersecting rays (mapped by
+//       distance-to-ground), the upper half holds sky rays (mapped by distance-to-top). The two
+//       halves meet at the horizon with a half-texel inset each, so a sample never interpolates
+//       across the ground/sky discontinuity.
+//   muS is warped to pack most texels near muS = 0, the horizon band where the sunset ramp from
+//       red to blue lives; a linear muS averages that whole ramp into a few texels and greys it.
+// The view-sun azimuth (nu) is not tabulated; the phase functions are applied at sample time,
+// the standard real-time reduction of Bruneton's 4D table, preserving the day/night, horizon,
+// and altitude behavior. Rayleigh and Mie are stored together (RGB = Rayleigh, A the grey Mie
+// term), so single and multiple scattering each keep a full RGB Rayleigh term and a grey Mie
+// term folded in.
 
 static const int3 ScatteringSize =
     int3(ScatteringMuSRes, ScatteringMuRes, ScatteringRRes);
@@ -147,8 +156,15 @@ float UnitFromTexCoord(float t, int size)
     return (t - 0.5 / float(size)) / (1.0 - 1.0 / float(size));
 }
 
+// Sun-zenith cosine below which the sky is dark; Bruneton's mu_s_min = cos(102 deg). The muS
+// mapping warps around this floor to spend most texels near the horizon.
+static const float ScatteringMuSMin = -0.2079116908;
+
+// Decodes a scattering texel to (r, mu, muS) and reports whether the mu row is a
+// ground-intersecting ray. rayHitsGround comes from the row's half rather than a re-derivation,
+// so a precompute march uses exactly the endpoint its texel's mu was encoded against.
 void ScatteringParamsFromTexel(AtmosphereParams a, int3 texel, out float r, out float mu,
-                               out float muS)
+                               out float muS, out bool rayHitsGround)
 {
     float H = sqrt(max(a.AtmosphereRadius * a.AtmosphereRadius - a.PlanetRadius * a.PlanetRadius,
                        0.0));
@@ -157,24 +173,76 @@ void ScatteringParamsFromTexel(AtmosphereParams a, int3 texel, out float r, out 
     r = clamp(sqrt(rho * rho + a.PlanetRadius * a.PlanetRadius), a.PlanetRadius,
               a.AtmosphereRadius);
 
-    float xMu = UnitFromTexCoord((float(texel.y) + 0.5) / float(ScatteringMuRes), ScatteringMuRes);
-    mu = ClampCosine(2.0 * xMu - 1.0);
+    float uMu = (float(texel.y) + 0.5) / float(ScatteringMuRes);
+    if (uMu < 0.5)
+    {
+        // Lower half: ground rays, distance-to-ground over [r - Rp, rho].
+        float dMin = r - a.PlanetRadius;
+        float dMax = rho;
+        float d = dMin + (dMax - dMin) * UnitFromTexCoord(1.0 - 2.0 * uMu, ScatteringMuRes / 2);
+        mu = d == 0.0 ? -1.0 : ClampCosine(-(rho * rho + d * d) / (2.0 * r * d));
+        rayHitsGround = true;
+    }
+    else
+    {
+        // Upper half: sky rays, distance-to-top over [Ra - r, rho + H].
+        float dMin = a.AtmosphereRadius - r;
+        float dMax = rho + H;
+        float d = dMin + (dMax - dMin) * UnitFromTexCoord(2.0 * uMu - 1.0, ScatteringMuRes / 2);
+        mu = d == 0.0 ? 1.0 : ClampCosine((H * H - rho * rho - d * d) / (2.0 * r * d));
+        rayHitsGround = false;
+    }
 
-    float xMuS =
-        UnitFromTexCoord((float(texel.x) + 0.5) / float(ScatteringMuSRes), ScatteringMuSRes);
-    muS = ClampCosine(2.0 * xMuS - 1.0);
+    float xMuS = UnitFromTexCoord((float(texel.x) + 0.5) / float(ScatteringMuSRes),
+                                  ScatteringMuSRes);
+    float dMinS = a.AtmosphereRadius - a.PlanetRadius;
+    float dMaxS = H;
+    float D = DistanceToTop(a, a.PlanetRadius, ScatteringMuSMin);
+    float A = (D - dMinS) / (dMaxS - dMinS);
+    float aVal = (A - xMuS * A) / (1.0 + xMuS * A);
+    float dS = dMinS + min(aVal, A) * (dMaxS - dMinS);
+    muS = dS == 0.0 ? 1.0 : ClampCosine((H * H - dS * dS) / (2.0 * a.PlanetRadius * dS));
 }
 
-float3 ScatteringUvwFromParams(AtmosphereParams a, float r, float mu, float muS)
+// Encodes (r, mu, muS) to a scattering texture coordinate. rayHitsGround selects the mu half so
+// the coordinate lands on the same side of the horizon split the parameters describe; it is the
+// exact inverse of ScatteringParamsFromTexel.
+float3 ScatteringUvwFromParams(AtmosphereParams a, float r, float mu, float muS,
+                               bool rayHitsGround)
 {
     float H = sqrt(max(a.AtmosphereRadius * a.AtmosphereRadius - a.PlanetRadius * a.PlanetRadius,
                        0.0));
     float rho = sqrt(max(r * r - a.PlanetRadius * a.PlanetRadius, 0.0));
-    float xR = H > 0.0 ? rho / H : 0.0;
-    float xMu = mu * 0.5 + 0.5;
-    float xMuS = muS * 0.5 + 0.5;
-    return float3(TexCoordFromUnit(xMuS, ScatteringMuSRes),
-                  TexCoordFromUnit(xMu, ScatteringMuRes),
-                  TexCoordFromUnit(xR, ScatteringRRes));
+    float uR = TexCoordFromUnit(H > 0.0 ? rho / H : 0.0, ScatteringRRes);
+
+    float rMu = r * mu;
+    float discriminant = rMu * rMu - r * r + a.PlanetRadius * a.PlanetRadius;
+    float uMu;
+    if (rayHitsGround)
+    {
+        float d = -rMu - sqrt(max(discriminant, 0.0));
+        float dMin = r - a.PlanetRadius;
+        float dMax = rho;
+        float x = dMax == dMin ? 0.0 : (d - dMin) / (dMax - dMin);
+        uMu = 0.5 - 0.5 * TexCoordFromUnit(x, ScatteringMuRes / 2);
+    }
+    else
+    {
+        float d = -rMu + sqrt(max(discriminant + H * H, 0.0));
+        float dMin = a.AtmosphereRadius - r;
+        float dMax = rho + H;
+        float x = (dMax - dMin) > 0.0 ? (d - dMin) / (dMax - dMin) : 0.0;
+        uMu = 0.5 + 0.5 * TexCoordFromUnit(x, ScatteringMuRes / 2);
+    }
+
+    float dS = DistanceToTop(a, a.PlanetRadius, muS);
+    float dMinS = a.AtmosphereRadius - a.PlanetRadius;
+    float dMaxS = H;
+    float aVal = (dS - dMinS) / (dMaxS - dMinS);
+    float D = DistanceToTop(a, a.PlanetRadius, ScatteringMuSMin);
+    float A = (D - dMinS) / (dMaxS - dMinS);
+    float uMuS = TexCoordFromUnit(max(1.0 - aVal / A, 0.0) / (1.0 + aVal), ScatteringMuSRes);
+
+    return float3(uMuS, uMu, uR);
 }
 

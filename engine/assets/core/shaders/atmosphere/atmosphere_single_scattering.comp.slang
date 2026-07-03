@@ -30,9 +30,9 @@ void csMain(uint3 id : SV_DispatchThreadID)
     float r;
     float mu;
     float muS;
-    ScatteringParamsFromTexel(a, int3(id), r, mu, muS);
+    bool hitsGround;
+    ScatteringParamsFromTexel(a, int3(id), r, mu, muS, hitsGround);
 
-    bool hitsGround = RayHitsGround(a, r, mu);
     float dist = hitsGround ? DistanceToGround(a, r, mu) : DistanceToTop(a, r, mu);
 
     const int Steps = 50;

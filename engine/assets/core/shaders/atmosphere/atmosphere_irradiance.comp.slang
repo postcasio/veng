@@ -44,7 +44,7 @@ void csMain(uint3 id : SV_DispatchThreadID)
             float phi = 2.0 * Pi * (float(p) + 0.5) / float(Phi);
             float3 w = float3(sinT * cos(phi), cosT, sinT * sin(phi));
             float muW = ClampCosine(dot(up, w));
-            float3 uvw = ScatteringUvwFromParams(a, r, muW, muS);
+            float3 uvw = ScatteringUvwFromParams(a, r, muW, muS, RayHitsGround(a, r, muW));
             float3 radiance = g_Scattering.SampleLevel(g_Sampler, uvw, 0.0).rgb;
             sum += radiance * cosT;
         }
