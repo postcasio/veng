@@ -43,8 +43,10 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cstdlib>
 #include <fstream>
+#include <span>
 
 using namespace Veng;
 
@@ -331,6 +333,11 @@ protected:
             // mouse-look runs against a hidden, locked cursor (Escape frees it for the debug UI;
             // a click on the scene re-captures it).
             GetInputRouter().PushFocus(InputFocus::Gameplay);
+
+            // HT_SPLITSCREEN launches straight into the two-seat mode (equivalent to pressing F2
+            // once the world is up); the flush at the top of the first Update applies it. Off by
+            // default, so the ordinary run and the smoke path stay single-seat.
+            m_SplitScreenRequested = std::getenv("HT_SPLITSCREEN") != nullptr;
         }
     }
 
@@ -367,6 +374,14 @@ protected:
             }
             return;
         }
+
+        // F2 requests toggling the two-seat split-screen mode; the request is applied here, at the
+        // top-of-frame safe point outside any Scene iteration, so the seat spawn/despawn is legal.
+        if (GetInput().WasKeyPressed(Key::F2))
+        {
+            m_SplitScreenRequested = !m_SplitScreenRequested;
+        }
+        ApplySplitScreenRequest();
 
         // Escape frees the mouse to drive the debug UI; a left click on the scene (outside any
         // ImGui window) re-captures it and resumes mouse-look. ImGui's NewFrame already ran this
@@ -422,6 +437,136 @@ protected:
                     }
                 }
             });
+    }
+
+    // Brings the live split-screen state in line with the requested state, at the top-of-frame
+    // safe point (called from OnUpdate, outside any Scene iteration) so the seat spawn/despawn and
+    // the managed-viewport reconfigure are legal structural changes. A no-op when already in sync.
+    void ApplySplitScreenRequest()
+    {
+        if (m_SplitScreenRequested == m_SplitScreenActive)
+        {
+            return;
+        }
+
+        if (m_SplitScreenRequested)
+        {
+            EnterSplitScreen();
+        }
+        else
+        {
+            ExitSplitScreen();
+        }
+        m_SplitScreenActive = m_SplitScreenRequested;
+    }
+
+    // Spawns seat B (a second player prefab: Viewer + camera + pawn + Possesses + InputContextStack
+    // + SeatInput) and reconfigures the managed viewport list to two quadrants — seat A on the left
+    // half, seat B on the right half bound to seat B's Viewer so the engine resolves + pushes its
+    // camera and associates its region with the router. Seat B is retyped pad-only (a controller
+    // guest) and its pawn nudged aside so the two players are visibly distinct; seat A keeps its
+    // authored keyboard/mouse SeatInput. Both drive through the unchanged action → intent → movement
+    // pipeline — no new gameplay system.
+    void EnterSplitScreen()
+    {
+        Scene* world = GetWorld();
+        const GameModeConfig* config =
+            world != nullptr ? world->TryGetFirst<GameModeConfig>() : nullptr;
+        if (world == nullptr || config == nullptr || !config->PlayerPrefab.IsLoaded())
+        {
+            // Nothing to split into (no world or the player prefab is not resident); leave the
+            // request satisfied by the single-seat view rather than half-applying.
+            m_SplitScreenRequested = false;
+            return;
+        }
+
+        m_SeatBRoots = config->PlayerPrefab.Get()->SpawnInto(*world, GetAssetManager()).Roots;
+
+        // Retype the spawned seat to a pad-only guest and offset its pawn so the two players do not
+        // overlap. The prefab's seat carries Viewer + SeatInput; its pawn carries Intent.
+        Entity seatB = Entity::Null;
+        world->Each<Viewer, SeatInput>(
+            [&](const Entity seat, Viewer&, SeatInput& devices)
+            {
+                if (!devices.UsesKeyboardMouse)
+                {
+                    return;
+                }
+                // The keyboard/mouse seats are seat A (authored) and the freshly-spawned copy; the
+                // copy is the one whose seat entity is in m_SeatBRoots' subtree. Match by root.
+                if (std::ranges::find(m_SeatBRoots, seat) != m_SeatBRoots.end())
+                {
+                    seatB = seat;
+                    devices.UsesKeyboardMouse = false;
+                    devices.Gamepad = GamepadId(0);
+                    devices.WantsGamepad = false;
+                }
+            });
+
+        if (seatB != Entity::Null)
+        {
+            if (const Possesses* possesses = world->TryGet<Possesses>(seatB);
+                possesses != nullptr && world->IsAlive(possesses->Pawn) &&
+                world->Has<Transform>(possesses->Pawn))
+            {
+                world->Get<Transform>(possesses->Pawn).Position += vec3(3.0f, 0.0f, 0.0f);
+            }
+            m_SeatBViewer = seatB;
+        }
+
+        ReconfigureSplitViewports();
+    }
+
+    // Despawns seat B and reconfigures the managed list back to one full-window viewport (dropping
+    // seat B's viewport, which self-clears its router association), restoring seat A full-window.
+    void ExitSplitScreen()
+    {
+        const ManagedViewportInfo single = SplitViewportInfo(ViewportLayout{}, Entity::Null);
+        ReconfigureManagedViewports(std::span{&single, 1});
+
+        Scene* world = GetWorld();
+        if (world != nullptr)
+        {
+            for (const Entity entity : m_SeatBRoots)
+            {
+                if (world->IsAlive(entity))
+                {
+                    world->DestroyEntity(entity);
+                }
+            }
+        }
+        m_SeatBRoots.clear();
+        m_SeatBViewer = Entity::Null;
+    }
+
+    // Reconfigures the managed list to two quadrant viewports: seat A's viewport narrows to the
+    // left half (unbound — the engine already pushes the primary seat's camera), seat B's is the
+    // right half bound to its Viewer so the engine resolves its camera and associates the region.
+    void ReconfigureSplitViewports()
+    {
+        const std::array quadrants{
+            SplitViewportInfo(ViewportLayout{.Offset = {0.0f, 0.0f}, .Extent = {0.5f, 1.0f}},
+                              Entity::Null),
+            SplitViewportInfo(ViewportLayout{.Offset = {0.5f, 0.0f}, .Extent = {0.5f, 1.0f}},
+                              m_SeatBViewer),
+        };
+        ReconfigureManagedViewports(quadrants);
+    }
+
+    // Builds a managed-viewport info at the given layout and bound seat, carrying the sample's
+    // current SceneRenderer topology (SSR + debug-view extras seeded in OnWorldLoaded) and the
+    // windowed adaptive-resolution opt-in, so a reconfigured viewport renders identically to the
+    // primary.
+    [[nodiscard]] ManagedViewportInfo SplitViewportInfo(const ViewportLayout layout,
+                                                        const Entity viewer) const
+    {
+        return ManagedViewportInfo{
+            .Settings = m_SceneSettings,
+            .MaxAllocationScale = 1.0f,
+            .DynamicResolution = Renderer::DynamicResolutionSettings{},
+            .Layout = layout,
+            .Viewer = viewer,
+        };
     }
 
     void OnRender() override
@@ -613,6 +758,18 @@ private:
 
     // Pauses the managed world's simulation so the broadphase reads `static`; never set in smoke.
     bool m_PauseSpin = false;
+
+    // The opt-in two-seat split-screen mode, off by default. The requested state is toggled by F2
+    // (and seeded from HT_SPLITSCREEN); ApplySplitScreenRequest brings the live state (m_Split-
+    // ScreenActive) in line at the top-of-frame safe point. Windowed-only — the smoke path never
+    // enters it, so the golden runs single-seat.
+    bool m_SplitScreenRequested = false;
+    bool m_SplitScreenActive = false;
+
+    // Seat B's spawned root entities (empty when single-seat) and its Viewer seat, tracked so the
+    // mode can despawn the seat and bind its right-half viewport on reconfigure.
+    vector<Entity> m_SeatBRoots;
+    Entity m_SeatBViewer = Entity::Null;
 };
 
 // Factory captures the headless flag so the launcher stays game-agnostic.
