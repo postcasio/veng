@@ -4,9 +4,14 @@
 #include <Veng/Cook/Cooker.h>
 #include <Veng/Log.h>
 
+#ifdef VENG_EDITOR_WITH_MCP
+#include <Veng/Mcp/McpClientCli.h>
 #include <Veng/Mcp/McpHost.h>
 #include <Veng/Mcp/McpServer.h>
 #include <Veng/Mcp/McpServerInfo.h>
+
+#include <iostream>
+#endif
 
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Scene/Scene.h>
@@ -17,7 +22,9 @@
 #include "AssetEditorPanel.h"
 #include "AssetSourceIndex.h"
 #include "CookSession.h"
+#ifdef VENG_EDITOR_WITH_MCP
 #include "EditorMcp.h"
+#endif
 
 #ifndef VENG_EDITOR_VERSION
 #define VENG_EDITOR_VERSION "unknown"
@@ -27,6 +34,7 @@ namespace
 {
     using namespace Veng;
 
+#ifdef VENG_EDITOR_WITH_MCP
     /// @brief Parsed --mcp flags: whether the server is on, its port, and the write gate.
     struct McpOptions
     {
@@ -200,6 +208,7 @@ namespace
         service->Start(host, options);
         return service;
     }
+#endif
 }
 
 // veng-editor: the single, project-agnostic editor shell. Launched with a project; it reads the
@@ -225,6 +234,20 @@ int main(const int argc, char** argv)
         }
     }
 
+#ifdef VENG_EDITOR_WITH_MCP
+    // --connect=<port|host:port> makes the editor exe a client of an already-running MCP
+    // server (a game or another editor), not a server: it drives one tool call and exits
+    // before any window or device is created — the mirror of --mcp, which starts a server.
+    for (Veng::usize i = 1; i < args.size(); ++i)
+    {
+        if (args[i] == "--connect" || args[i].starts_with("--connect="))
+        {
+            const Veng::vector<Veng::string> clientArgs(args.begin() + 1, args.end());
+            return Veng::Mcp::RunClientCli(clientArgs, std::cout, std::cerr, "veng-editor");
+        }
+    }
+#endif
+
     Veng::optional<Veng::path> projectPath;
     Veng::optional<Veng::path> buildDir;
     for (Veng::usize i = 1; i < args.size(); ++i)
@@ -239,7 +262,9 @@ int main(const int argc, char** argv)
         }
     }
 
+#ifdef VENG_EDITOR_WITH_MCP
     const McpOptions mcpOptions = ParseMcpOptions(args);
+#endif
 
     const VengEditor::EditorHostInfo info{
         .ProjectPath = projectPath,
@@ -278,6 +303,7 @@ int main(const int argc, char** argv)
     // resolves the project and build dir as absolute paths, needing no working-directory selector).
     Veng::Unique<VengEditor::EditorHost> host = VengEditor::EditorHost::Create(info);
 
+#ifdef VENG_EDITOR_WITH_MCP
     // The MCP server is constructed only under --mcp, so the editor's default launch and its smokes
     // are unaffected; it drives Pump() through the host's frame pump and stops with its Unique.
     // Construction is deferred to the host's post-initialize callback: the service's McpHost binds
@@ -287,6 +313,7 @@ int main(const int argc, char** argv)
     {
         host->SetOnInitialized([&mcp, &host, mcpOptions] { mcp = StartMcp(*host, mcpOptions); });
     }
+#endif
 
     host->Run({args.front()});
 

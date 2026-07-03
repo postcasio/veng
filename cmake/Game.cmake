@@ -1,7 +1,17 @@
 # veng_add_game(<name>
 #     SOURCES   <game sources...>        # the libgame translation units
 #     [PROJECT  <veng_add_project host target>] # optional: the project's host-config target
+#     [MCP]                              # opt in: link the launcher against veng::mcp and
+#                                        #   compile its --connect client short-circuit
 # )
+#
+# MCP turns the launcher into an MCP client: it links veng::mcp and compiles
+# VENG_LAUNCHER_MCP into the exe, activating launcher_main.cpp's --connect
+# short-circuit (a client of an already-running MCP server, driving one tool call and
+# exiting before the game module loads). veng::mcp is an SDK library (exported in
+# vengTargets, resolved by find_package(veng) like veng::graph), so the link resolves
+# in all three consumption modes. Without MCP the launcher is byte-for-byte unchanged:
+# no veng::mcp link, VENG_LAUNCHER_MCP undefined, the --connect code compiled out.
 #
 # Produces lib<name> (SHARED, links veng::veng) and <name>-launcher (exe, the veng
 # launcher compiled with VENG_GAME_MODULE pointing at lib<name>).
@@ -26,13 +36,21 @@ if (NOT VENG_PACKAGE_MODE)
 endif ()
 
 function(veng_add_game NAME)
-    cmake_parse_arguments(ARG "" "PROJECT" "SOURCES" ${ARGN})
+    cmake_parse_arguments(ARG "MCP" "PROJECT" "SOURCES" ${ARGN})
 
     add_library(${NAME} SHARED ${ARG_SOURCES})
     target_link_libraries(${NAME} PRIVATE veng::veng)
 
     add_executable(${NAME}-launcher ${VENG_LAUNCHER_MAIN})
     target_link_libraries(${NAME}-launcher PRIVATE veng::veng)
+
+    # MCP opt-in: the launcher becomes an MCP client (its --connect short-circuit),
+    # nothing more. The game's server, if it has one, is started by the game module
+    # (which links veng::mcp itself), not the launcher.
+    if (ARG_MCP)
+        target_link_libraries(${NAME}-launcher PRIVATE veng::mcp)
+        target_compile_definitions(${NAME}-launcher PRIVATE VENG_LAUNCHER_MCP)
+    endif ()
     # The launcher dlopens the module by file name; resolve it beside the launcher
     # binary so the pair is relocatable (build tree and a shipped directory both work).
     target_compile_definitions(${NAME}-launcher PRIVATE

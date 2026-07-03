@@ -9,9 +9,41 @@
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/SystemRegistry.h>
 
+#ifdef VENG_LAUNCHER_MCP
+#include <Veng/Mcp/McpClientCli.h>
+
+#include <iostream>
+
+namespace
+{
+    // The launcher's own basename (from argv[0]), attributing a --connect error line to the
+    // exe the user ran rather than to a generic label.
+    Veng::string ProgramName(const char* arg0)
+    {
+        const Veng::string_view full{arg0 != nullptr ? arg0 : ""};
+        const Veng::usize slash = full.find_last_of("/\\");
+        return Veng::string(slash == Veng::string_view::npos ? full : full.substr(slash + 1));
+    }
+}
+#endif
+
 // Generic launcher emitted by veng_add_game; VENG_GAME_MODULE is baked in at compile time.
 int main(const int argc, char** argv)
 {
+#ifdef VENG_LAUNCHER_MCP
+    // --connect=<port|host:port> makes the launcher a client of an already-running MCP
+    // server, not a game: it drives one tool call and exits before the module is loaded.
+    const Veng::vector<Veng::string> args(argv, argv + argc);
+    for (Veng::usize i = 1; i < args.size(); ++i)
+    {
+        if (args[i] == "--connect" || args[i].starts_with("--connect="))
+        {
+            const Veng::vector<Veng::string> clientArgs(args.begin() + 1, args.end());
+            return Veng::Mcp::RunClientCli(clientArgs, std::cout, std::cerr, ProgramName(argv[0]));
+        }
+    }
+#endif
+
     // Declared first so it destructs last: the factory closure and type descriptors
     // are code/data in the module image, so the registries and app must be destroyed
     // before the module is unloaded.
