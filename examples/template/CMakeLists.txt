@@ -35,13 +35,16 @@ veng_add_project(template_assets
 # dlopens it). veng_add_game copies the host-default config's cooked project + packs beside the
 # launcher so the set is a relocatable directory.
 #
-# The template deliberately stays MCP-free: an MCP server is not part of "the smallest correct
-# app". A find_package(veng) consumer adds one by linking veng::mcp and constructing an McpServer
-# from an McpHost (the maximal sample, examples/hello-triangle, is the worked recipe behind
-# HT_MCP); the minimal starter does not, so it opens no socket and pulls in no server thread.
+# MCP here is deliberate and proves the veng_add_game(... MCP) vocabulary resolves out of tree
+# (veng::mcp as a find_package(veng) package): it compiles the launcher's --connect client, so
+# the SDK conformance build exercises the opt-in. A real shipped game should drop MCP unless it
+# wants the --connect client in its ship exe — a template still MCP-free would leave the opt-in
+# untested through the out-of-tree package path. Note this opts in only the launcher's *client*;
+# the template links no veng::mcp server (an MCP server is not part of "the smallest correct app").
 veng_add_game(template
         SOURCES main.cpp
-        PROJECT ${template_assets_HOST_TARGET})
+        PROJECT ${template_assets_HOST_TARGET}
+        MCP)
 
 # The minimal app gets editor support for free: the shared veng-editor opens its project, loads
 # libtemplate (named in project.veng), and edits its live sources. `cmake --build build --target

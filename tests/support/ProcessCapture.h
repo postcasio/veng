@@ -15,6 +15,7 @@
 #include <windows.h>
 #else
 #include <csignal>
+#include <poll.h>
 #include <sys/wait.h>
 #include <thread>
 #include <unistd.h>
@@ -134,6 +135,55 @@ namespace VengTest
         return WaitForSingleObject(launched.Process.hProcess, 0) == WAIT_TIMEOUT;
     }
 
+    // The outcome of running a short-lived child to its natural exit: its drained stdout+stderr,
+    // the real exit code, and whether it exited on its own. Exited == false means the child had
+    // to be force-killed at the wait bound — a hang, reported as a test failure, never a masked 0.
+    struct RunResult
+    {
+        std::string Output;
+        int ExitCode = -1;
+        bool Exited = false;
+    };
+
+    // Spawns args to completion, draining stdout+stderr and reading the real exit code. The wait
+    // bound must exceed the client's own socket timeout so a slow-but-succeeding call exits on its
+    // own before the force-kill; a force-kill leaves Exited false, the caller's hang signal.
+    inline RunResult RunToCompletion(const std::vector<std::string>& args, int waitSeconds = 30)
+    {
+        RunResult result;
+        Launched launched;
+        if (!SpawnCaptured(args, launched))
+        {
+            return result;
+        }
+
+        char chunk[256];
+        DWORD read = 0;
+        while (ReadFile(launched.ReadPipe, chunk, sizeof(chunk), &read, nullptr) && read != 0)
+        {
+            result.Output.append(chunk, read);
+        }
+
+        const DWORD waited =
+            WaitForSingleObject(launched.Process.hProcess, static_cast<DWORD>(waitSeconds) * 1000);
+        if (waited == WAIT_OBJECT_0)
+        {
+            DWORD code = 0;
+            GetExitCodeProcess(launched.Process.hProcess, &code);
+            result.ExitCode = static_cast<int>(code);
+            result.Exited = true;
+        }
+        else
+        {
+            TerminateProcess(launched.Process.hProcess, 0);
+            WaitForSingleObject(launched.Process.hProcess, 5000);
+        }
+        CloseHandle(launched.Process.hProcess);
+        CloseHandle(launched.Process.hThread);
+        CloseHandle(launched.ReadPipe);
+        return result;
+    }
+
 #else
 
     struct Launched
@@ -233,6 +283,75 @@ namespace VengTest
     {
         int status = 0;
         return waitpid(launched.Pid, &status, WNOHANG) == 0;
+    }
+
+    // The outcome of running a short-lived child to its natural exit: its drained stdout+stderr,
+    // the real exit code, and whether it exited on its own. Exited == false means the child had
+    // to be force-killed at the wait bound — a hang, reported as a test failure, never a masked 0.
+    struct RunResult
+    {
+        std::string Output;
+        int ExitCode = -1;
+        bool Exited = false;
+    };
+
+    // Spawns args to completion, draining stdout+stderr and reading the real exit code via
+    // WEXITSTATUS. The wait bound must exceed the client's own socket timeout so a slow-but-
+    // succeeding call exits on its own before the SIGKILL; a force-kill leaves Exited false, the
+    // caller's hang signal. The pipe read is deadline-polled so a hung child cannot block the
+    // drain past the bound.
+    inline RunResult RunToCompletion(const std::vector<std::string>& args, int waitSeconds = 30)
+    {
+        RunResult result;
+        Launched launched;
+        if (!SpawnCaptured(args, launched))
+        {
+            return result;
+        }
+
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(waitSeconds);
+        char chunk[256];
+        while (std::chrono::steady_clock::now() < deadline)
+        {
+            pollfd fd{.fd = launched.ReadFd, .events = POLLIN, .revents = 0};
+            const int ready = poll(&fd, 1, 100);
+            if (ready < 0)
+            {
+                break;
+            }
+            if (ready == 0)
+            {
+                continue;
+            }
+            const ssize_t got = read(launched.ReadFd, chunk, sizeof(chunk));
+            if (got <= 0)
+            {
+                break; // pipe closed — the child's stdout/stderr are done
+            }
+            result.Output.append(chunk, static_cast<std::size_t>(got));
+        }
+
+        int status = 0;
+        // A closed pipe means the child is exiting; give the reap a brief bounded window before
+        // force-killing, so a child that has already written all its output and is exiting cleanly
+        // is reaped for its real code rather than raced to a SIGKILL.
+        for (int attempt = 0; attempt < 50 && std::chrono::steady_clock::now() < deadline;
+             ++attempt)
+        {
+            if (waitpid(launched.Pid, &status, WNOHANG) == launched.Pid)
+            {
+                result.ExitCode = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+                result.Exited = WIFEXITED(status);
+                close(launched.ReadFd);
+                return result;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+
+        kill(launched.Pid, SIGKILL);
+        waitpid(launched.Pid, &status, 0);
+        close(launched.ReadFd);
+        return result; // Exited stays false: the child had to be force-killed
     }
 
 #endif

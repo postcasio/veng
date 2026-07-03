@@ -21,6 +21,17 @@ host's Vulkan SDK / Slang at runtime. **`veng-editor --version`** prints `veng-e
 and exits before opening a window or creating a device — the SDK identity probe the conformance
 tests run.
 
+**`veng-editor --connect=<port|host:port>`** is the client mirror of `--mcp`: where `--mcp[=port]`
+(add `--mcp-write` for mutations) runs the editor's own MCP *server*, `--connect` makes the exe a
+one-shot *client* of an already-running MCP server — it drives one tool call (or `--list`) and
+`return`s **before** any window or device is created, exactly as `--version` does, calling the
+shared `Mcp::RunClientCli` with `"veng-editor"` as its error label (the grammar + exit-code map
+live in [mcp/CLAUDE.md](../mcp/CLAUDE.md)). Both the `--mcp` server and the `--connect` client — the
+whole MCP surface of the exe, plus `EditorMcp.cpp` and the `veng::mcp` link — are gated behind the
+**`VENG_EDITOR_WITH_MCP`** cache option (default **on**); building it off yields an MCP-free editor
+with no `veng::mcp` link and neither flag. (It is distinct from the unrelated `VENG_EDITOR_MCP`
+source-path CACHE INTERNAL string, which is untouched.)
+
 It is launched with `--project <project.veng>`;
 it reads the module(s) the project names (`ProjectSettings::Module` / `EditorModule`, from the
 `"module"` / `"editorModule"` keys) and `dlopen`s them from the project's **build-output dir** the

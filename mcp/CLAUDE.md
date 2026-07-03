@@ -47,6 +47,37 @@ below.
   (0 picks an ephemeral port readable via `GetPort()`), `BindLoopbackOnly`, and
   `AllowMutations`.
 
+## The client half — `McpClient` + `RunClientCli`
+
+`veng::mcp` ships the request/response **client** beside the server, so a running server (a game
+or the editor) is drivable from a shell without a separate MCP client library or a standalone
+tool. Both halves live in the one library and share its vendored transport.
+
+- **`McpClient`** (`Veng/Mcp/McpClient.h`) is the reusable transport half: `Create(const
+  McpClientInfo&)` opens a loopback connection; `CallTool(name, argumentsJson)` and
+  `ListTools()` each perform one `POST /`, parse the single JSON body, and return a `Result`.
+  Because the server is stateless (no `Mcp-Session-Id`, no SSE, no gated `initialize`), a call
+  is a bare `POST` + one `json::parse` with nothing to tear down. It mirrors `McpServer`'s
+  discipline exactly: the public header names **no** httplib or nlohmann type, the vendored
+  transport stays PRIVATE, and its TU compiles `-fexceptions`. `McpCallResult` carries the
+  content blocks plus the `isError` flag, so a caller distinguishes a JSON-RPC protocol error
+  from a tool error.
+- **`RunClientCli(args, out, err, label) -> int`** (`Veng/Mcp/McpClientCli.h`) is the shared
+  shell-facing driver: it parses the CLI argument vector, drives one `McpClient` call (or the
+  tools listing), writes the tool payload to `out` / a human-readable error to `err`, and
+  returns the process exit code. `label` is the invoking exe's name, so an error line is
+  attributed to the exe the user ran. It lives here so both front ends share one arg grammar and
+  one exit-code map: **0** ok · **1** usage · **2** cannot reach the host · **3** JSON-RPC
+  protocol error · **4** tool result flagged `isError`. The grammar and the exit-code table are
+  the normative copy — [docs/guides/consuming-mcp.md](../docs/guides/consuming-mcp.md)'s "Driving
+  a running server from the shell" is the reader-facing view.
+
+**There is no standalone `veng-mcp` tool.** The client is a capability of the exes that already
+link `veng::mcp`: `veng-editor --connect` (behind `VENG_EDITOR_WITH_MCP`) and a game's
+`<name>-launcher --connect` (behind `veng_add_game(... MCP)`). Both `main`s are ~10 lines that
+strip `argv[0]` and call `RunClientCli` before any engine init — a pure client, no window, no
+device, no module load.
+
 ## The network-thread ↔ render-thread request queue — the inverse of `TaskSystem`
 
 Every engine-touching tool runs on the **render thread** at the pump point. The network
@@ -340,15 +371,30 @@ httplib stays PRIVATE and `veng-config` already carries `find_dependency(nlohman
   path).
 - **`mcp_mutation`** — the mutation tools behind `AllowMutations`, including the routed
   `ApplyMutation` hook and the batch delete verbs' per-item / over-limit result model.
-- **`mcp_include_hygiene`** — compiles every `Veng/Mcp/` public header linking only the PUBLIC
-  deps, guarding the surface's httplib-free contract (nlohmann is no longer distinguishable
-  from the transitive `veng::veng` edge, so the test's JSON half is retired).
+- **`mcp_client`** — the client transport smoke: stand a server up in-process, drive
+  `McpClient::ListTools` + `CallTool ping` + both failure paths (protocol error, tool `isError`).
+- **`mcp_cli`** — `RunClientCli` in-process against an in-process server: the arg grammar,
+  `--list` / `--search`, `--json`, the `key=value` assembly, the exit-code map, and the
+  label-prefixed error lines — driven directly (bypassing any `main`).
+- **`mcp_include_hygiene`** — compiles every `Veng/Mcp/` public header (the client's
+  `McpClient.h` / `McpClientInfo.h` / `McpClientCli.h` among them) linking only the PUBLIC deps,
+  guarding the surface's httplib-free contract (nlohmann is no longer distinguishable from the
+  transitive `veng::veng` edge, so the test's JSON half is retired).
 - **`mcp_conformance`** — the shipping path: drive the hello-triangle server behind `HT_MCP`,
   assert the engine tool set is present and `render.stats` executes against the primary
   viewport.
+- **`mcp_cli_conformance`** — the shipping *client* path: launch `hello_triangle-launcher` behind
+  `HT_MCP` + `HT_SMOKE`, then drive it a second time as a `--connect` client (`--list`, a
+  `render.stats` + `world.list_entities` `tools/call`, and both nonzero error paths), asserting
+  the client's own exit codes and round-tripped payloads through the shipped exe. `gpu`-labelled,
+  skips 77 when the launcher skipped for want of an ICD.
 - **`editor_mcp_conformance`** — the editor shipping path: launch `veng-editor --mcp` against
   the hello-triangle project and drive `render.stats` plus an `editor.set_field` Bloom toggle
   (a `Configure` recompile) against the startup level document, asserting each call succeeds
   and the editor survives. Needs a display as well as a device (the editor opens a window);
   either missing skips like the rest of the `gpu` band.
+- **`editor_mcp_cli_conformance`** — the editor shipping *client* path: launch `veng-editor
+  --mcp` against the hello-triangle project and drive it with `veng-editor --connect` (`--list`,
+  `editor.list_panels`, both error paths), exercising the editor exe's gated `--connect` seam end
+  to end. `gpu`-labelled, skips 77 with no device/display.
 - The editor `editor_mcp` cases cover the `editor.*` tools over a host.

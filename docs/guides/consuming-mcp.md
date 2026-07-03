@@ -162,6 +162,76 @@ curl -s http://127.0.0.1:8765/ -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"
 
 The server reports protocol version `2025-06-18` and the `tools` capability.
 
+## Driving a running server from the shell
+
+You do not need an MCP client library to poke a running server. The `veng::mcp` library ships
+a **one-shot client** exposed as a `--connect` mode on two exes veng already builds — the
+editor exe, and a game launcher built with **`veng_add_game(... MCP)`**. It is **not** a
+standalone tool: the client rides the same exe that already links `veng::mcp`, so there is no
+extra binary to build, ship, or find.
+
+Each `--connect` invocation is **stateless and single-shot** — it opens a loopback connection,
+issues exactly one request (a `tools/call` or a `tools/list`), prints the result, and exits.
+There is no session and nothing to tear down, so every call is independent; the port comes from
+the server's own "listening on `<ip>:<port>`" line.
+
+### The grammar
+
+The grammar is identical on both front ends; only the program you invoke differs:
+
+```sh
+veng-editor     --connect=<port|host:port> <tool-name> [key=value ...] [--json '<obj>'] [--raw] [--output <file>]
+<name>-launcher --connect=<port|host:port> --list [--search <query>]
+```
+
+- **`--connect=<port>`** targets `127.0.0.1:<port>` (the server's default loopback bind);
+  **`--connect=<host>:<port>`** targets an explicit host (for a server started with
+  `BindLoopbackOnly = false`). Required.
+- **The tool name is a positional** (`--connect=5124 render.stats`), reading as `noun.verb`.
+- **Arguments** are `key=value` pairs; each value is parsed as JSON when it parses (`limit=10`
+  is the number `10`, `enabled=true` a bool) and treated as a string otherwise (`name=foo` →
+  `"foo"`). A nested/object argument goes through **`--json '{…}'`**, which supplies the whole
+  `arguments` object verbatim and is mutually exclusive with `key=value`.
+- **`--list`** prints every advertised tool (`name` — `description`); **`--search <query>`**
+  filters that list by a case-insensitive substring over name + description.
+- **`--raw`** prints the full `result` object (envelope included) instead of the concatenated
+  text payload; **`--output <file>`** writes an image content block (`render.screenshot`,
+  base64-decoded) to a file rather than summarizing it on stdout.
+
+### The exit-code contract
+
+A shell (or an agent on the `Bash` path) reads success from the **exit code** and the payload
+from **stdout**; every failure collapses to a nonzero code and one human-readable stderr line
+prefixed with the invoking exe's name (`<label>` below — `veng-editor`, `hello_triangle-launcher`,
+…):
+
+| Outcome | stdout | stderr | exit |
+|---|---|---|---|
+| Tool call OK | the tool result payload (text content blocks, concatenated) | — | `0` |
+| `--list` / `--search` OK | the tool listing | — | `0` |
+| Usage / bad args | — | usage line | `1` |
+| Connection refused / no response / timeout | — | `<label>: cannot reach <host>:<port>: …` | `2` |
+| JSON-RPC protocol error (an `error` object) | — | `<label>: rpc error: <message>` | `3` |
+| Tool result `isError: true` (including an unknown tool name) | — | `<label>: <tool>: <error text>` | `4` |
+
+### A worked example
+
+Discover the tools, then read the render stats, piping the payload straight into `jq` (success
+stdout is the payload, not the JSON-RPC envelope):
+
+```sh
+veng-editor --connect=5124 --list
+# world.list_entities — List entities in the current world (paginated).
+# render.stats — Cull-funnel counts and the last GPU frame time.
+# ...
+
+veng-editor --connect=5124 render.stats | jq '.gpu_frame_time_ms'
+# 1.83
+```
+
+The same commands work against a game whose launcher was built with `veng_add_game(... MCP)`,
+by invoking `<name>-launcher --connect=<port>` instead of `veng-editor`.
+
 ## The editor host
 
 The `veng-editor` exe links `veng::mcp` and runs the server behind `--mcp[=port]` (add

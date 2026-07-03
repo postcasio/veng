@@ -1196,6 +1196,46 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle-launcher AND TARGET veng_test_gol
             WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     endif ()
 
+    # ---- MCP client-CLI conformance smoke (gpu;mcp band) --------------------
+    # The shipping-client analogue of mcp_conformance: it launches hello_triangle-launcher under
+    # HT_MCP=0 + HT_SMOKE, reads the readiness line, then runs the same launcher as a --connect
+    # client (--list, a render.stats + world.list_entities tools/call, and both nonzero error
+    # paths) as a subprocess, asserting the client's own exit codes and payloads. It parses the
+    # payloads with nlohmann/json but needs no httplib (it does not speak the wire itself — the
+    # launcher's client does). Labelled gpu; the harness returns 77 when the launcher skipped for
+    # want of a Vulkan ICD, keeping it in the gpu skip band.
+    add_executable(veng_test_mcp_cli_conformance tests/mcp_cli_conformance.cpp)
+    target_link_libraries(veng_test_mcp_cli_conformance PRIVATE nlohmann_json::nlohmann_json)
+    target_compile_definitions(veng_test_mcp_cli_conformance PRIVATE JSON_NOEXCEPTION
+        VENG_LAUNCHER_BIN="$<TARGET_FILE:hello_triangle-launcher>")
+    add_dependencies(veng_test_mcp_cli_conformance hello_triangle-launcher)
+
+    add_test(NAME mcp_cli_conformance COMMAND veng_test_mcp_cli_conformance)
+    set_tests_properties(mcp_cli_conformance PROPERTIES LABELS "gpu;mcp" SKIP_RETURN_CODE 77
+        WORKING_DIRECTORY $<TARGET_FILE_DIR:hello_triangle-launcher>)
+
+    # ---- Editor MCP client-CLI conformance smoke (gpu;mcp band) -------------
+    # The editor analogue of mcp_cli_conformance, through the shipping veng-editor path: launch
+    # veng-editor --mcp against the hello-triangle project and drive it with veng-editor --connect
+    # (--list, editor.list_panels, and both error paths). Exercises the editor exe's gated
+    # --connect seam end to end. The editor opens a real window, so a missing display skips like a
+    # missing ICD (77). Registered only when the editor exe exists and is built with MCP support.
+    if (VENG_EDITOR_WITH_MCP AND TARGET veng-editor AND TARGET hello_triangle_editor)
+        add_executable(veng_test_editor_mcp_cli_conformance tests/editor_mcp_cli_conformance.cpp)
+        target_link_libraries(veng_test_editor_mcp_cli_conformance
+            PRIVATE nlohmann_json::nlohmann_json)
+        target_compile_definitions(veng_test_editor_mcp_cli_conformance PRIVATE JSON_NOEXCEPTION
+            VENG_EDITOR_BIN="$<TARGET_FILE:veng-editor>"
+            VENG_EDITOR_PROJECT="${CMAKE_CURRENT_SOURCE_DIR}/examples/hello-triangle/project.veng"
+            VENG_EDITOR_BUILD_DIR="$<TARGET_FILE_DIR:hello_triangle-launcher>")
+        add_dependencies(veng_test_editor_mcp_cli_conformance
+            veng-editor hello_triangle-launcher hello_triangle_editor)
+
+        add_test(NAME editor_mcp_cli_conformance COMMAND veng_test_editor_mcp_cli_conformance)
+        set_tests_properties(editor_mcp_cli_conformance PROPERTIES LABELS "gpu;mcp"
+            SKIP_RETURN_CODE 77 WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    endif ()
+
     # ---- Local validation-error gate ----------------------------------------
     # ctest -L validation: runs the gpu-labelled binaries that emit Vulkan
     # validation messages under VE_DEBUG and fails if a new [ERROR] Vulkan

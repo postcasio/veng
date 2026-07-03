@@ -61,7 +61,12 @@ is thin (shared deps + `add_subdirectory` per lib).
   thread. Links `veng::veng` PUBLIC (which carries nlohmann/json PUBLIC in turn, so it is now
   transitively public on `veng::mcp` too) plus cpp-httplib (vendored) PRIVATE; no `Veng/Mcp/`
   header names a JSON type directly, but the public surface is no longer JSON-library-free —
-  `mcp_include_hygiene` guards httplib only. **Not** linked by `libveng` — a
+  `mcp_include_hygiene` guards httplib only. The library also ships a **client half**
+  (`Mcp::McpClient` + the shared `Mcp::RunClientCli` driver) so a running server is drivable from
+  a shell: it is exposed as a `--connect` mode on the exes that already link `veng::mcp` —
+  `veng-editor` (behind `VENG_EDITOR_WITH_MCP`) and a game's `<name>-launcher` (behind
+  `veng_add_game(... MCP)`), behind an MCP build opt-in — **not** a separate tool. **Not** linked
+  by `libveng` — a
   distinct target a consumer opts into, exactly as `veng::graph` is. Editor-free: the engine
   tools live here, the editor registers its own into the same server (`editor/src/EditorMcp`).
 - `examples/hello-triangle/` — the canonical **maximal** sample app and the smoke

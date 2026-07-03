@@ -21,9 +21,14 @@ veng_add_project(hello_triangle_assets
 # The game splits into libhello_triangle (the runtime) and hello_triangle-launcher (the shipped
 # exe that dlopens it). veng_add_game copies the host-default config's cooked project + packs
 # beside the launcher so the set is a relocatable directory.
+# MCP opts the launcher into the --connect client: it links hello_triangle-launcher against
+# veng::mcp and compiles its --connect short-circuit, so the shipped exe can drive a running MCP
+# server from a shell (the mcp_cli_conformance test exercises exactly this). The game's own MCP
+# *server* is started by the game module (which links veng::mcp itself, below), not the launcher.
 veng_add_game(hello_triangle
         SOURCES main.cpp
-        PROJECT ${hello_triangle_assets_HOST_TARGET})
+        PROJECT ${hello_triangle_assets_HOST_TARGET}
+        MCP)
 
 # The maximal sample links veng::mcp — the optional MCP server library — as the worked example
 # a consumer copies: construct an McpServer from an McpHost, pump it once per frame. It stays

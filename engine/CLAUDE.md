@@ -97,8 +97,15 @@ borrows the `TypeRegistry`
 and the `SystemRegistry` (`GetTypeRegistry()` / `GetSystemRegistry()`) and still owns
 `Context`/`AssetManager`/`TaskSystem` unchanged — the
 launcher reads the factory back, constructs the app, and calls `Run()`.
-`veng_add_game(<name> SOURCES … [ASSET_PACK …])` is the build entry: it emits
-`lib<name>` + `<name>-launcher` from one declaration. It compiles the launcher exe from
+`veng_add_game(<name> SOURCES … [ASSET_PACK …] [MCP])` is the build entry: it emits
+`lib<name>` + `<name>-launcher` from one declaration. The bare **`MCP`** option opts the
+launcher into the MCP `--connect` **client**: it links `<name>-launcher` against `veng::mcp` and
+compiles `VENG_LAUNCHER_MCP` into it, activating `launcher_main.cpp`'s `--connect` short-circuit
+(a one-shot client of an already-running MCP server, driving one tool call and exiting **before**
+the game module is loaded — a pure client, no engine init). Without `MCP` the launcher is
+byte-for-byte unchanged (no `veng::mcp` link, the `--connect` code compiled out); the game's own
+MCP *server* is started by the game **module** (which links `veng::mcp` itself), never by the
+launcher, so the launcher opt-in adds only the client. It compiles the launcher exe from
 **`launcher_main.cpp`** — an **installed SDK artifact** whose path is `VENG_LAUNCHER_MAIN`,
 mode-resolved to the source tree in-tree and to the installed/build-tree location under a
 `find_package(veng)` — so a downstream game builds the real shipping launcher without a veng
