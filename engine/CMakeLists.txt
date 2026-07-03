@@ -43,6 +43,7 @@ add_library(veng SHARED
         src/Math/Noise.cpp
         src/Module/ApplicationRegistry.cpp
         src/Module/ModuleLoader.cpp
+        src/Platform/UserPaths.cpp
         src/Task/TaskSystem.cpp
         src/Time.cpp
         src/Window.cpp

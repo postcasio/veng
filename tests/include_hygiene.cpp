@@ -72,6 +72,8 @@
 #include <Veng/Module/Module.h>
 #include <Veng/Module/ModuleLoader.h>
 
+#include <Veng/Platform/UserPaths.h>
+
 #include <Veng/Reflection/EnumName.h>
 #include <Veng/Reflection/FieldDescriptor.h>
 #include <Veng/Reflection/JsonSerialize.h>
