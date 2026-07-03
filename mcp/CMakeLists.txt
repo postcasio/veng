@@ -15,6 +15,7 @@
 add_library(veng_mcp SHARED
         src/McpServer.cpp
         src/McpClient.cpp
+        src/McpClientCli.cpp
         src/ReflectToJson.cpp
         src/WorldTools.cpp
         src/RenderTools.cpp
@@ -52,9 +53,12 @@ target_precompile_headers(veng_mcp PRIVATE <Veng/Veng.h>)
 # the CALLER of httplib and nlohmann, so McpClient.cpp instead contains its own throws:
 # every nlohmann read is non-throwing, every dump uses the replace handler, and each
 # public method's whole body is wrapped in a TU-local try/catch — so no exception crosses
-# into the -fno-exceptions front-end. The target-wide PCH is built -fno-exceptions, so
-# skip it for these -fexceptions TUs.
-set_source_files_properties(src/Vendor/HttpLib.cpp src/McpServer.cpp src/McpClient.cpp PROPERTIES
+# into the -fno-exceptions front-end. McpClientCli.cpp is the same CALLER position over
+# nlohmann alone (it includes no httplib): every read is non-throwing, so nothing throws,
+# and it is -fexceptions only because nlohmann's headers name throw internally. The
+# target-wide PCH is built -fno-exceptions, so skip it for these -fexceptions TUs.
+set_source_files_properties(src/Vendor/HttpLib.cpp src/McpServer.cpp src/McpClient.cpp
+        src/McpClientCli.cpp PROPERTIES
         COMPILE_OPTIONS -fexceptions
         SKIP_PRECOMPILE_HEADERS ON)
 

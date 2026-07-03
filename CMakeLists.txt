@@ -748,6 +748,19 @@ if (VENG_BUILD_TESTS)
     add_test(NAME mcp_client COMMAND veng_test_mcp_client)
     set_tests_properties(mcp_client PROPERTIES LABELS mcp)
 
+    # The client-driver proof: stand an McpServer up in-process (ping / err / echo_args tools),
+    # pump it on a background thread, and drive RunClientCli with argument vectors and captured
+    # ostringstream sinks — the arg grammar, the payload-to-stdout / error-to-stderr / exit-code
+    # map, --list/--search, key=value JSON typing, --json, and the label-prefixed error lines.
+    # nlohmann here only asserts on the echoed payloads. Device-free, so it runs in the default band.
+    add_executable(veng_test_mcp_cli tests/mcp_cli.cpp)
+    target_link_libraries(veng_test_mcp_cli PRIVATE veng::mcp veng::veng
+            nlohmann_json::nlohmann_json)
+    target_compile_definitions(veng_test_mcp_cli PRIVATE JSON_NOEXCEPTION)
+
+    add_test(NAME mcp_cli COMMAND veng_test_mcp_cli)
+    set_tests_properties(mcp_cli PROPERTIES LABELS mcp)
+
     # The render-tools proof (mcp_screenshot) is registered after veng_test_shaders
     # (it renders the cube fixture through the test shader pack) further below.
 
