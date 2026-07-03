@@ -734,6 +734,20 @@ if (VENG_BUILD_TESTS)
     add_test(NAME mcp_mutation COMMAND veng_test_mcp_mutation)
     set_tests_properties(mcp_mutation PROPERTIES LABELS mcp)
 
+    # The client proof: stand an McpServer up in-process (a ping tool + an always-failing
+    # err tool), pump it on a background thread, and drive McpClient against it — ListTools,
+    # CallTool ok, the tool-error shape (isError), the unknown-tool result, and a dead-port
+    # connection error within the timeout. The client is exercised through its public header
+    # (no httplib/nlohmann type); nlohmann here only parses the ping payload the test asserts
+    # on. Device-free, so it runs in the default band.
+    add_executable(veng_test_mcp_client tests/mcp_client.cpp)
+    target_link_libraries(veng_test_mcp_client PRIVATE veng::mcp veng::veng
+            nlohmann_json::nlohmann_json)
+    target_compile_definitions(veng_test_mcp_client PRIVATE JSON_NOEXCEPTION)
+
+    add_test(NAME mcp_client COMMAND veng_test_mcp_client)
+    set_tests_properties(mcp_client PROPERTIES LABELS mcp)
+
     # The render-tools proof (mcp_screenshot) is registered after veng_test_shaders
     # (it renders the cube fixture through the test shader pack) further below.
 

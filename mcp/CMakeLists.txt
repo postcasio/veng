@@ -14,6 +14,7 @@
 
 add_library(veng_mcp SHARED
         src/McpServer.cpp
+        src/McpClient.cpp
         src/ReflectToJson.cpp
         src/WorldTools.cpp
         src/RenderTools.cpp
@@ -42,13 +43,18 @@ target_precompile_headers(veng_mcp PRIVATE <Veng/Veng.h>)
 
 # cpp-httplib (vendored single header, src/Vendor/httplib.h) carries inline try/throw
 # bodies, so every TU that includes it is compiled -fexceptions: the vendor aggregation
-# TU (HttpLib.cpp) and McpServer.cpp, which owns the httplib::Server. Per-TU exception
-# settings are a supported mix: the runtime unwinder is always present; -fno-exceptions
-# only forbids throw/catch in that TU. Safety rests on containment — httplib catches any
-# throw at its own dispatch boundary (set_exception_handler / its routing try/catch) and
-# veng's own handler code never throws, so none unwinds into a -fno-exceptions frame. The
-# target-wide PCH is built -fno-exceptions, so skip it for these -fexceptions TUs.
-set_source_files_properties(src/Vendor/HttpLib.cpp src/McpServer.cpp PROPERTIES
+# TU (HttpLib.cpp), McpServer.cpp (the httplib::Server), and McpClient.cpp (the
+# httplib::Client). Per-TU exception settings are a supported mix: the runtime unwinder
+# is always present; -fno-exceptions only forbids throw/catch in that TU. On the server
+# side, safety rests on containment — httplib catches any throw at its own dispatch
+# boundary (set_exception_handler / its routing try/catch) and veng's own handler code
+# never throws, so none unwinds into a -fno-exceptions frame. On the client side, veng is
+# the CALLER of httplib and nlohmann, so McpClient.cpp instead contains its own throws:
+# every nlohmann read is non-throwing, every dump uses the replace handler, and each
+# public method's whole body is wrapped in a TU-local try/catch — so no exception crosses
+# into the -fno-exceptions front-end. The target-wide PCH is built -fno-exceptions, so
+# skip it for these -fexceptions TUs.
+set_source_files_properties(src/Vendor/HttpLib.cpp src/McpServer.cpp src/McpClient.cpp PROPERTIES
         COMPILE_OPTIONS -fexceptions
         SKIP_PRECOMPILE_HEADERS ON)
 

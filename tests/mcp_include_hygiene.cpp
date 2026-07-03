@@ -12,6 +12,8 @@
 // This is a different boundary than tests/include_hygiene.cpp's Vulkan/GLFW
 // exclusion, so it is its own test: a failure names which boundary broke.
 
+#include <Veng/Mcp/McpClient.h>
+#include <Veng/Mcp/McpClientInfo.h>
 #include <Veng/Mcp/McpServer.h>
 #include <Veng/Mcp/McpServerInfo.h>
 #include <Veng/Mcp/McpTool.h>
