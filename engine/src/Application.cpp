@@ -15,6 +15,7 @@
 #include <Veng/Scene/SceneViewport.h>
 
 #include <algorithm>
+#include <span>
 
 namespace Veng
 {
@@ -144,11 +145,13 @@ namespace Veng
             VE_ASSERT(mounted, "{}", mounted.error());
         }
 
-        VE_ASSERT(project->StartupLevel.IsValid(), "project '{}' declares no startup level",
+        // A --level override selects a different level from the project's mounted packs; without
+        // it the cooked project's own startup level is used.
+        const AssetId startupLevel = m_LaunchArgs.Level.value_or(project->StartupLevel);
+        VE_ASSERT(startupLevel.IsValid(), "project '{}' declares no startup level",
                   m_Info.World->Project.string());
 
-        const AssetResult<AssetHandle<Level>> level =
-            m_AssetManager->LoadSync<Level>(project->StartupLevel);
+        const AssetResult<AssetHandle<Level>> level = m_AssetManager->LoadSync<Level>(startupLevel);
         VE_ASSERT(level.has_value(), "{}", level.error().Detail);
         m_WorldLevel = *level;
 
@@ -284,18 +287,21 @@ namespace Veng
 
     void Application::Run(vector<string> arguments)
     {
-        // A second argument selects the working directory (launcher convention).
-        if (arguments.size() > 1)
+        // Parse argv (without the program name) once; the engine consumes the recognised options
+        // itself and a game can read them back through GetLaunchArguments().
+        const std::span<const string> tokens =
+            arguments.empty() ? std::span<const string>{} : std::span(arguments).subspan(1);
+        Result<LaunchArguments> parsed = LaunchArguments::Parse(tokens);
+        VE_ASSERT(parsed, "{}", parsed.error());
+        m_LaunchArgs = std::move(*parsed);
+
+        // A leading positional argument selects the working directory (launcher convention).
+        if (m_LaunchArgs.WorkingDirectory)
         {
-            if (std::filesystem::exists(arguments[1]) &&
-                std::filesystem::is_directory(arguments[1]))
-            {
-                std::filesystem::current_path(arguments[1]);
-            }
-            else
-            {
-                VE_ASSERT(false, "Invalid directory: {}", arguments[1]);
-            }
+            const path& dir = *m_LaunchArgs.WorkingDirectory;
+            VE_ASSERT(std::filesystem::exists(dir) && std::filesystem::is_directory(dir),
+                      "Invalid directory: {}", dir.string());
+            std::filesystem::current_path(dir);
         }
 
         Time::Initialize();

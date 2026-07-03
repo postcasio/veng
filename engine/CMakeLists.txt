@@ -35,6 +35,7 @@ add_library(veng SHARED
         src/Input/Actions.cpp
         src/Input/RawInput.cpp
         src/InputRouter.cpp
+        src/LaunchArguments.cpp
         src/Log.cpp
         src/Math/AABB.cpp
         src/Math/BVH.cpp

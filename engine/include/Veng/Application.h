@@ -2,6 +2,7 @@
 
 #include <Veng/Veng.h>
 #include <Veng/Assert.h>
+#include <Veng/LaunchArguments.h>
 #include <Veng/Window.h>
 #include <Veng/Input.h>
 #include <Veng/InputRouter.h>
@@ -155,6 +156,12 @@ namespace Veng
 
         /// @brief Returns the application window.
         [[nodiscard]] Window& GetWindow() const { return *m_Window; }
+
+        /// @brief Returns the launch arguments parsed from the command line at Run.
+        ///
+        /// Populated before Initialize; the engine already consumes the options it recognises
+        /// (e.g. the startup-level override), so a game reads this only to inspect them itself.
+        [[nodiscard]] const LaunchArguments& GetLaunchArguments() const { return m_LaunchArgs; }
 
         /// @brief Returns the frame-coherent input service.
         ///
@@ -336,6 +343,9 @@ namespace Veng
         void RenderManagedTail(Renderer::CommandBuffer& cmd);
 
         ApplicationInfo m_Info;
+
+        /// @brief Command-line arguments parsed once in Run, before Initialize.
+        LaunchArguments m_LaunchArgs;
 
         /// @brief Borrowed from the host; must outlive this app and every Scene it creates.
         TypeRegistry& m_TypeRegistry;

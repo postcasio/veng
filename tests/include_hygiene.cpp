@@ -40,6 +40,7 @@
 #include <Veng/Input.h>
 #include <Veng/Input/Actions.h>
 #include <Veng/Input/RawInput.h>
+#include <Veng/LaunchArguments.h>
 #include <Veng/Log.h>
 #include <Veng/Result.h>
 #include <Veng/Time.h>

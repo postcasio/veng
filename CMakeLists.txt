@@ -481,6 +481,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/transient_allocation.cpp
             tests/unit/asset_archive.cpp
             tests/unit/cooked_project.cpp
+            tests/unit/launch_arguments.cpp
             tests/unit/asset_manager.cpp
             tests/unit/primitives.cpp
             tests/unit/bounds.cpp
