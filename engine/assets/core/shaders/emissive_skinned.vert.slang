@@ -1,4 +1,4 @@
-#include "Veng/material.slang"
+#include "Veng/surface.slang"
 
 // Skinned emissive forward vertex stage. Skins the position through the per-instance bone
 // palette like surface_skinned.vert, then forwards only the UV and this draw's emissive

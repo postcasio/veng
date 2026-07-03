@@ -81,7 +81,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    // The brick shaders `#include "Veng/material.slang"`; the engine core shader dir is on
+    // The brick shaders `#include "Veng/surface.slang"`; the engine core shader dir is on
     // the cook's Slang search path so the cross-pack include resolves.
     const VoidResult cookResult =
         cooker.CookPack(fixtureDir / "gbuffer_pack.json", outArchive, {}, nullptr, nullptr, nullptr,

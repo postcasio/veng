@@ -1,4 +1,4 @@
-#include "Veng/material.slang"
+#include "Veng/surface.slang"
 
 // Emissive forward vertex stage. Shares the canonical vertex layout with surface.vert
 // (position/normal/tangent/uv on binding 0, the instance-rate candidate id on binding

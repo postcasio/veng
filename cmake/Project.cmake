@@ -122,7 +122,7 @@ function(veng_add_project TARGET_NAME)
         list(APPEND CFG_OUTPUTS ${PROJ_OUT})
 
         # The engine core shader dir is on every cook's Slang search path so a consumer
-        # shader resolves `#include "Veng/material.slang"`. A source-dir include still wins.
+        # shader resolves `#include "Veng/surface.slang"`. A source-dir include still wins.
         add_custom_command(
                 OUTPUT ${CFG_OUTPUTS}
                 COMMAND ${CMAKE_COMMAND} -E make_directory ${ARG_OUTPUT_DIR}

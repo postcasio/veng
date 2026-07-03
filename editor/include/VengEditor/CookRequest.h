@@ -59,7 +59,7 @@ namespace VengEditor
 
         /// @brief Engine core shader directory added to the cook's Slang search path.
         ///
-        /// A material cook reflects a fragment shader that may `#include "Veng/material.slang"`;
+        /// A material cook reflects a fragment shader that may `#include "Veng/surface.slang"`;
         /// this dir lets that cross-pack include resolve, mirroring the file-based build's
         /// `--shader-include`. Empty for a source needing no engine shader header. The host
         /// fills it from the core pack's directory; a panel leaves it empty.

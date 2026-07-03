@@ -116,7 +116,7 @@ namespace Veng::Cook
         /// @param config          Active build configuration driving the cook, or nullptr.
         /// @param configFile      Source file of `config`, recorded as a central dependency; empty if none.
         /// @param shaderIncludeDir Engine core shader dir threaded onto each Slang session's search
-        ///                         path so a consumer shader resolves `#include "Veng/material.slang"`;
+        ///                         path so a consumer shader resolves `#include "Veng/surface.slang"`;
         ///                         empty for a cook that ships no engine shader header (the core pack).
         [[nodiscard]] VoidResult
         CookPack(const path& packJson, const path& outArchive,
@@ -140,7 +140,7 @@ namespace Veng::Cook
         /// @param config         Active build configuration driving role→format resolution, or
         ///                       nullptr for the zero-config defaults.
         /// @param shaderIncludeDir Engine core shader dir threaded onto each Slang session's search
-        ///                         path so a consumer shader resolves `#include "Veng/material.slang"`;
+        ///                         path so a consumer shader resolves `#include "Veng/surface.slang"`;
         ///                         empty for a cook that ships no engine shader header.
         [[nodiscard]] Result<vector<u8>> CookSource(const path& sourcePath, AssetId id,
                                                     AssetType type,

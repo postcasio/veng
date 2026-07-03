@@ -338,8 +338,8 @@ mismatch at load); hosting separately built modules is a future module-ABI/SDK f
   contract. `MaterialOutput` emits the domain entry point (`GBufferOutput fsMain` for Surface,
   `float4 fsMain … : SV_Target0` for PostProcess) with defined defaults for unconnected sinks
   (Surface: Albedo `float4(0,0,0,1)`, Normal the geometric `input.v_WorldNormal`, ORM
-  `float3(1,1,0)`, Velocity always `ComputeMotionVector(...)`); the source is prefixed with
-  `#include "Veng/material.slang"`. Textures stay node properties
+  `float3(1,1,0)`, Velocity always `ComputeMotionVector(...)`); the source is prefixed with its
+  domain's contract include (`Veng/surface.slang` or `Veng/postprocess.slang`). Textures stay node properties
   (`FieldClass::AssetHandle`), not wired pins, so the topology core stays asset-agnostic. The
   graph (nodes, positions, property values, links) is embedded under an `"_editor"` key in the
   `.vmat.json`; `MaterialEditorPanel` drives the imnodes canvas + a node-property inspector

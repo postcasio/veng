@@ -1,4 +1,4 @@
-#include "Veng/material.slang"
+#include "Veng/surface.slang"
 
 // Deferred surface vertex stage. VSInput matches veng's canonical vertex layout
 // (Mesh::CanonicalLayout / the core pack's canonical layout):

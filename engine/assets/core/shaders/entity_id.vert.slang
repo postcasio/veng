@@ -1,4 +1,4 @@
-#include "Veng/material.slang"
+#include "Veng/surface.slang"
 
 // Entity-id picking vertex stage (static meshes). A minimal sibling of surface.vert: it reads
 // the per-draw DrawData by the instance-rate candidate id and emits only the clip position and

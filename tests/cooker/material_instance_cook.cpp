@@ -36,7 +36,7 @@ namespace
 
     // A canonical-layout Surface vertex stage (matches the core surface.vert contract),
     // so the parent material's shaders both compile from a self-contained pack.
-    constexpr std::string_view SurfaceVert = R"(#include "Veng/material.slang"
+    constexpr std::string_view SurfaceVert = R"(#include "Veng/surface.slang"
 struct VSInput
 {
     float3 a_Position : POSITION;
@@ -67,7 +67,7 @@ SurfaceFragmentInput vsMain(VSInput input)
     // A parent fragment exposing BaseColor (texture+sampler) + BaseColorFactor (vec4),
     // plus an engine-bound-only field that the parent .vmat does NOT declare exposed,
     // so an instance overriding it is rejected as non-exposed.
-    constexpr std::string_view BrickFrag = R"(#include "Veng/material.slang"
+    constexpr std::string_view BrickFrag = R"(#include "Veng/surface.slang"
 struct MaterialParams
 {
     float4 BaseColorFactor;

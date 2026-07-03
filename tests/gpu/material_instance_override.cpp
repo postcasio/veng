@@ -114,7 +114,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
   ]
 })");
 
-    WriteFile(dir / "surface.vert.slang", R"(#include "Veng/material.slang"
+    WriteFile(dir / "surface.vert.slang", R"(#include "Veng/surface.slang"
 struct VSInput
 {
     float3 a_Position : POSITION;
@@ -147,7 +147,7 @@ SurfaceFragmentInput vsMain(VSInput input)
 
     // The parent fragment writes BaseColorFactor straight to the albedo channel, so the
     // rendered albedo IS the material's exposed param — directly readable.
-    WriteFile(dir / "brick.frag.slang", R"(#include "Veng/material.slang"
+    WriteFile(dir / "brick.frag.slang", R"(#include "Veng/surface.slang"
 struct MaterialParams
 {
     float4 BaseColorFactor;

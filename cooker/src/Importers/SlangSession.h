@@ -52,7 +52,7 @@ namespace Veng::Cook
     ///
     /// The source file's own directory is first so a local file always shadows a same-named
     /// engine file; the engine core shader directory (when non-empty) is second so a consumer
-    /// `.slang` resolves `#include "Veng/material.slang"`. The returned vector owns the path
+    /// `.slang` resolves `#include "Veng/surface.slang"`. The returned vector owns the path
     /// strings; the caller keeps it alive while it holds the returned pointer array.
     /// @param sourceDir           Directory of the .slang source being compiled (always added).
     /// @param engineShaderIncludeDir  Engine core shader dir; skipped when empty (zero-config cook).

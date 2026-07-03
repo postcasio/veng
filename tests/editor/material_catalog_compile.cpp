@@ -205,7 +205,7 @@ TEST_CASE("CompileMaterialGraph: a bare Surface output emits defined defaults")
     REQUIRE(r.has_value());
     const Veng::string& src = r->Source;
 
-    CHECK(Contains(src, "#include \"Veng/material.slang\""));
+    CHECK(Contains(src, "#include \"Veng/surface.slang\""));
     CHECK(Contains(src, "GBufferOutput fsMain(SurfaceFragmentInput input)"));
     // Unconnected sink defaults.
     CHECK(Contains(src, "o.Albedo = float4(0,0,0,1)"));
@@ -230,10 +230,11 @@ TEST_CASE("CompileMaterialGraph: a bare PostProcess output passes the screen sam
     REQUIRE(r.has_value());
     const Veng::string& src = r->Source;
 
+    CHECK(Contains(src, "#include \"Veng/postprocess.slang\""));
     CHECK(Contains(src, "float4 fsMain(PostProcessFragmentInput input) : SV_Target0"));
-    // The PostProcess selector arrives at push offset 0, which the engine header's g_PC
-    // reads as FrameBase.
-    CHECK(Contains(src, "g_PC.FrameBase"));
+    // The PostProcess selector arrives at push offset 0, read through the postprocess
+    // header's g_PC.MaterialIndex.
+    CHECK(Contains(src, "g_PC.MaterialIndex"));
 }
 
 TEST_CASE("CompileMaterialGraph: a connected Param feeds the Albedo sink")

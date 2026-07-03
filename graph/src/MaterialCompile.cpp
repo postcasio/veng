@@ -248,7 +248,13 @@ namespace VengGraph
 
         // --- Assemble the generated source ---
 
-        Veng::string source = "#include \"Veng/material.slang\"\n\n";
+        // A Surface graph reads the surface contract; a fullscreen (PostProcess/Sky) graph the
+        // postprocess contract — each domain's include declares its own fragment-input struct
+        // and push block.
+        const char* const domainInclude = domain == Veng::MaterialDomain::Surface
+                                              ? "Veng/surface.slang"
+                                              : "Veng/postprocess.slang";
+        Veng::string source = fmt::format("#include \"{}\"\n\n", domainInclude);
 
         // The generated MaterialParams struct, exactly the texture + exposed/engine-bound
         // param fields the walk collected. Order them large-alignment-first (descending
@@ -303,10 +309,10 @@ namespace VengGraph
             source += "[shader(\"fragment\")]\n";
             source += "float4 fsMain(PostProcessFragmentInput input) : SV_Target0\n{\n";
             // A PostProcess material pushes its frame-folded selector at push-constant
-            // offset 0 (Material::Bind, SelectorOffset 0). The engine header's g_PC reads
-            // offset 0 as FrameBase, so that field carries the selector here — a Surface
-            // shader instead reads its selector from the v_MaterialIndex interpolant.
-            source += "    MaterialParams p = LoadMaterialParams(g_PC.FrameBase);\n";
+            // offset 0 (Material::Bind, SelectorOffset 0), read through the postprocess
+            // header's g_PC.MaterialIndex — a Surface shader instead reads its selector from
+            // the v_MaterialIndex interpolant.
+            source += "    MaterialParams p = LoadMaterialParams(g_PC.MaterialIndex);\n";
             source += ctx.Body;
             source += fmt::format("    return {};\n}}\n",
                                   sinkOr(0, "g_Textures[0].Sample(g_Samplers[0], input.v_UV)"));

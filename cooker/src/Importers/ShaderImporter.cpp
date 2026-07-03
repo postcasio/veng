@@ -286,7 +286,7 @@ namespace Veng::Cook
             }
 
             // Slang reports every file the module pulled in — the .slang source
-            // plus each file it imports/includes (e.g. material.slang). Recording
+            // plus each file it imports/includes (e.g. surface.slang). Recording
             // them re-cooks the shader when any included source changes, which a
             // manifest naming only the entry .slang cannot capture. A graph-generated
             // module is loaded from a string under a synthetic virtual path that has no

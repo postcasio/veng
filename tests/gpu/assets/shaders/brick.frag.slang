@@ -1,4 +1,4 @@
-#include "Veng/material.slang"
+#include "Veng/surface.slang"
 
 // Deferred opaque metallic-roughness material fragment stage (gpu fixture): loads
 // the per-draw MaterialParams block, samples base color tinted by BaseColorFactor,

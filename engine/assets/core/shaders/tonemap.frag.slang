@@ -11,6 +11,10 @@
 // reference ACES tone curve): cheap, no LUT, perceptually close enough. The
 // output stays linear; the swapchain composite handles final display encoding.
 
+// The PostProcess contract: the set-0 bindless declarations, the post push block
+// (g_PC), and the PostProcessFragmentInput struct this fragment reads.
+#include "Veng/postprocess.slang"
+
 // MaterialParams is this material's whole parameter block: the bindless handle
 // slots for the HDR input (uint members the post pass writes each frame with the
 // renderer's current HDR target index) beside the authored Exposure param,
@@ -27,31 +31,10 @@ struct MaterialParams
     float  Exposure;    // authored param, set per frame from the SceneView
 };
 
-static const uint MaterialParamStride = 256;
-
-[[vk::binding(0, 0)]] Texture2D g_Textures[];
-[[vk::binding(1, 0)]] SamplerState g_Samplers[];
-[[vk::binding(4, 0)]] ByteAddressBuffer g_MaterialParams;
-
 MaterialParams LoadMaterialParams(uint index)
 {
     return g_MaterialParams.Load<MaterialParams>(index * MaterialParamStride);
 }
-
-// A PostProcess shader's per-draw selector sits at push-constant offset 0 (no
-// geometry block precedes it, unlike a Surface shader's MVP).
-struct PushConstants
-{
-    uint MaterialIndex;
-};
-
-[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
-
-struct VSOutput
-{
-    float4 sv_position : SV_Position;
-    float2 v_UV : TEXCOORD0;
-};
 
 // The Narkowicz ACES filmic approximation: a rational fit of the ACES reference
 // tone curve, applied per channel.
@@ -66,7 +49,7 @@ float3 AcesApprox(float3 x)
 }
 
 [shader("fragment")]
-float4 fsMain(VSOutput input) : SV_Target0
+float4 fsMain(PostProcessFragmentInput input) : SV_Target0
 {
     MaterialParams p = LoadMaterialParams(g_PC.MaterialIndex);
     // The HDR source is rendered into a dynamic-resolution sub-rect; this terminal pass renders the

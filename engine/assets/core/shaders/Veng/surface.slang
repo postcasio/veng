@@ -1,10 +1,11 @@
-// The engine's material contract: the bindless declarations, per-frame view block,
-// per-draw data, g-buffer output, motion-vector helper, the domain-keyed push blocks,
-// and the per-domain fragment-input struct a Surface or PostProcess fragment reads.
-// A consumer (or generated) shader `#include`s this and declares its own MaterialParams
-// beside it — the parameter block is per-shader by definition (the cooker reflects each
-// shader's own struct to pack its fields at the reflected offsets), so it is not part of
-// the engine contract.
+// The engine's Surface material contract: the set-0 bindless declarations, the per-frame
+// view block, the per-draw data, the g-buffer output, the motion-vector and normal helpers,
+// the surface push block, and the fragment-input struct a Surface fragment reads. A Surface
+// material (canonical-layout vertex stage, g-buffer MRT output, drawn per-submesh) `#include`s
+// this and declares its own MaterialParams beside it — the parameter block is per-shader by
+// definition (the cooker reflects each shader's own struct to pack its fields at the reflected
+// offsets), so it is not part of the engine contract. The PostProcess and Sky domains have
+// their own contracts in Veng/postprocess.slang and Veng/sky.slang.
 //
 // The set-0 bindings mirror the BindlessRegistry layout (sampled images = 0, samplers = 1,
 // per-material block = 4, view constants = 5).
@@ -138,28 +139,3 @@ struct SurfaceFragmentInput
     float4 v_CurClip : TEXCOORD2;   // unjittered current clip position (g-buffer motion vector)
     float4 v_PrevClip : TEXCOORD3;  // unjittered previous clip position (g-buffer motion vector)
 };
-
-// The screen-UV interpolant a PostProcess fragment reads, written by the fullscreen
-// vertex stage (fullscreen.vert). A PostProcess fragment's fsMain signature takes this
-// struct and reads its material selector from the PostProcessPushConstants block, since
-// it has no per-draw v_MaterialIndex interpolant.
-struct PostProcessFragmentInput
-{
-    float4 sv_position : SV_Position;
-    float2 v_UV : TEXCOORD0;
-};
-
-// A PostProcess fragment's per-draw selector sits at push-constant offset 0 (no geometry
-// block precedes it, unlike a Surface shader's MVP). A PostProcess fragment reads its
-// material index here rather than from a vertex interpolant.
-struct PostProcessPushConstants
-{
-    uint MaterialIndex;
-};
-
-// The Sky material domain's fragment contract (its input struct, push block, depth-mask
-// helper, and view-ray reconstruction) lives in Veng/sky.slang — a standalone include a
-// sky fragment `#include`s instead of this file, so it declares exactly one push_constant
-// block (the sky push). This file's g_PC (the surface push) would collide with it. The
-// g_Buffers[] bindless array above is shared: both a Sky shader (via sky.slang) and a
-// data-driven Surface/PostProcess shader read the same set-0 binding.

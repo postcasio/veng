@@ -36,7 +36,7 @@ include(CMakePackageConfigHelpers)
 # two audiences resolve to the same source-tree paths.
 #
 # VENG_CORE_SHADER_DIR is threaded to every cook as `--shader-include` so a consumer (or
-# generated) `.slang` resolves `#include "Veng/material.slang"` against the engine header;
+# generated) `.slang` resolves `#include "Veng/surface.slang"` against the engine header;
 # veng_add_asset_pack / veng_add_project pass it, and the test cooks pass it too. The core
 # pack itself cooks without it — its shaders reach the header through their own dir.
 # VENG_CORE_PACK_JSON is the core pack's source manifest a downstream cook `--reference`s
@@ -993,7 +993,7 @@ if (VENG_BUILD_TESTS)
             # PostProcessScenePass to assert it samples an upstream target and
             # writes it through unchanged.
             GPU_POSTPROCESS_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/gpu/assets"
-            # The gbuffer fixture's brick shaders `#include "Veng/material.slang"`,
+            # The gbuffer fixture's brick shaders `#include "Veng/surface.slang"`,
             # so the in-process cook adds the engine core shader dir to its search path.
             VENG_CORE_SHADER_DIR="${VENG_CORE_SHADER_DIR}"
     )
@@ -1040,7 +1040,7 @@ if (VENG_BUILD_TESTS)
                 ${CMAKE_CURRENT_SOURCE_DIR}/editor/src)
         target_compile_definitions(veng_test_material_preview PRIVATE
                 GPU_GBUFFER_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/gpu/assets"
-                # The brick shaders `#include "Veng/material.slang"`; the in-process cook
+                # The brick shaders `#include "Veng/surface.slang"`; the in-process cook
                 # adds the engine core shader dir to its Slang search path.
                 VENG_CORE_SHADER_DIR="${VENG_CORE_SHADER_DIR}")
 
@@ -1061,7 +1061,7 @@ if (VENG_BUILD_TESTS)
     target_compile_definitions(veng_test_multi_viewport_imgui PRIVATE
             GPU_GBUFFER_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/gpu/assets"
             # The white-plane fixture reuses the brick shaders, which
-            # `#include "Veng/material.slang"`; the in-process cook adds the engine
+            # `#include "Veng/surface.slang"`; the in-process cook adds the engine
             # core shader dir to its Slang search path.
             VENG_CORE_SHADER_DIR="${VENG_CORE_SHADER_DIR}")
 
@@ -1352,7 +1352,7 @@ install(TARGETS veng
 install(DIRECTORY engine/include/Veng DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
 # Engine core-data source: the core pack manifest (core.vengpack.json), the vertex-layout
-# JSONs, and shaders/ (the Veng/material.slang header a consumer shader #includes and the
+# JSONs, and shaders/ (the Veng/surface.slang header a consumer shader #includes and the
 # standard per-domain vertex shaders a material references by core-pack id). A downstream
 # cook resolves core-pack ids from the source manifest (--reference) and #includes the
 # engine shader header off its Slang search path — the installed source serves both, with

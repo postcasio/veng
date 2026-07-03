@@ -1,4 +1,4 @@
-#include "Veng/material.slang"
+#include "Veng/surface.slang"
 
 // Deferred opaque character material fragment stage for the RenderPeople scan: a
 // diffuse + normal + glossiness set rather than a packed ORM map. It samples base color

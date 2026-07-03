@@ -1,4 +1,4 @@
-#include "Veng/material.slang"
+#include "Veng/surface.slang"
 
 // Emissive forward fragment stage. Outputs only the additive emissive term — the
 // per-draw emissive color modulated by an optional emissive texture — into the lit HDR

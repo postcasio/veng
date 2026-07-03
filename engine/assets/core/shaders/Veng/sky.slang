@@ -1,9 +1,10 @@
 // The engine's Sky material contract: the set-0 bindless declarations a sky material reads,
 // the per-frame view block, the sky push block, the fragment-input struct, and the two
 // helpers a sky fragment builds on — the g-buffer depth-mask discard and the per-pixel
-// view-ray reconstruction. A Sky material `#include`s this (not Veng/material.slang, whose
+// view-ray reconstruction. A Sky material `#include`s this (not Veng/surface.slang, whose
 // g_PC surface push would collide with the sky push) and writes only its radiance function
-// of a world-space view direction.
+// of a world-space view direction. The Surface and PostProcess domains have their own
+// contracts in Veng/surface.slang and Veng/postprocess.slang.
 //
 // A Sky material is a fullscreen shader run in the SkyScenePass slot: it fills the
 // background (the far-plane, un-shaded pixels) with sky radiance and composites over the

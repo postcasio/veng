@@ -126,7 +126,7 @@ namespace Veng::Renderer
 
     namespace
     {
-        // Matches the SkyPushConstants block in Veng/material.slang: the frame-folded material
+        // Matches the SkyPushConstants block in Veng/sky.slang: the frame-folded material
         // selector, then the g-buffer depth handle, its sampler, and the current view-constants
         // region the sky fragment reconstructs the view ray from.
         struct SkyMaterialPushConstants

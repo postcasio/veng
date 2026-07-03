@@ -52,7 +52,7 @@ namespace Veng::Cook
         const BuildConfiguration* Config = nullptr;
         /// @brief Engine core shader directory added to every Slang session's search path.
         ///
-        /// Lets a consumer `.slang` resolve `#include "Veng/material.slang"` against the engine
+        /// Lets a consumer `.slang` resolve `#include "Veng/surface.slang"` against the engine
         /// core shader dir. Added after the source file's own directory, so a local file shadows
         /// a same-named engine file. Empty for a cook that ships no engine shader header (the core
         /// pack itself, whose shaders reach the engine header through their own source dir).

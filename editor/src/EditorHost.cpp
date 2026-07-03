@@ -779,7 +779,7 @@ namespace VengEditor
             resolved.ReferenceManifests.push_back(m_CorePackManifest);
             // The engine core shaders sit in the core pack's own directory; threading it as the
             // shader-include dir lets a recooked material's fragment resolve `#include
-            // "Veng/material.slang"`, mirroring the file-based cook's --shader-include.
+            // "Veng/surface.slang"`, mirroring the file-based cook's --shader-include.
             resolved.ShaderIncludeDir = m_CorePackManifest.parent_path() / "shaders";
         }
 

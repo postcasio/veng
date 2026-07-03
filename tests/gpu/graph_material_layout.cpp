@@ -141,7 +141,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 })");
 
     // The canonical-layout surface vertex stage (matches the core surface.vert contract).
-    WriteFile(dir / "surface.vert.slang", R"(#include "Veng/material.slang"
+    WriteFile(dir / "surface.vert.slang", R"(#include "Veng/surface.slang"
 struct VSInput
 {
     float3 a_Position : POSITION;

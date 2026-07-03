@@ -299,7 +299,7 @@ namespace Veng::Renderer
             u32 Sampler;
         };
 
-        // The surface push block (vertex stage), matching material.slang PushConstants:
+        // The surface push block (vertex stage), matching surface.slang PushConstants:
         // FrameBase folds the ring-buffered DrawData region into the candidate id; the
         // view-constants index selects the per-frame set-0 view block the vertex stage
         // multiplies by. Both cull modes push the same block.
@@ -420,7 +420,7 @@ namespace Veng::Renderer
 
         // The per-frame view-constants block (set-0 binding 5): camera/view state only.
         // The directional shadow system rides the set-1 ShadowConstants block.
-        // Mirrors material.slang ViewConstants byte-for-byte.
+        // Mirrors view_constants.slang ViewConstants byte-for-byte.
         struct ViewConstantsBlock
         {
             mat4 InvViewProj;    // world-position reconstruction from depth (jittered under TAA)

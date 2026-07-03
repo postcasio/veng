@@ -52,7 +52,7 @@ namespace Veng::Cook
     /// @param slangSource The Slang module source (a .slang file or graph-generated text).
     /// @param structName  Name of the struct to reflect.
     /// @param shaderIncludeDir Engine core shader dir added to the Slang search path so the
-    ///                         source resolves `#include "Veng/material.slang"`; empty to skip it.
+    ///                         source resolves `#include "Veng/surface.slang"`; empty to skip it.
     /// @param optional    If true, a missing struct is not an error.
     [[nodiscard]] Result<ReflectedStruct> ReflectStructLayout(const SlangModuleSource& slangSource,
                                                               std::string_view structName,
@@ -84,7 +84,7 @@ namespace Veng::Cook
     /// @param slangSource The Slang module source (a .slang file or graph-generated text).
     /// @param entry       Name of the fragment entry point to reflect.
     /// @param shaderIncludeDir Engine core shader dir added to the Slang search path so the
-    ///                         source resolves `#include "Veng/material.slang"`; empty to skip it.
+    ///                         source resolves `#include "Veng/surface.slang"`; empty to skip it.
     [[nodiscard]] Result<vector<ReflectedFragmentOutput>>
     ReflectFragmentOutputs(const SlangModuleSource& slangSource, std::string_view entry,
                            const path& shaderIncludeDir = {});

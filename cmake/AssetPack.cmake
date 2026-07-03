@@ -113,7 +113,7 @@ function(veng_add_asset_pack TARGET_NAME)
     # so a re-cook triggers when any of them changes, with no hand-maintained
     # DEPENDS list to drift. (ARG_DEPENDS remains an optional manual supplement.)
     # The engine core shader dir is on every cook's Slang search path so a consumer
-    # shader resolves `#include "Veng/material.slang"`. A source-dir include still wins.
+    # shader resolves `#include "Veng/surface.slang"`. A source-dir include still wins.
     add_custom_command(
             OUTPUT ${PACK_OUTPUT}
             COMMAND ${CMAKE_COMMAND} -E make_directory ${OUTPUT_DIR}

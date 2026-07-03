@@ -61,8 +61,9 @@ namespace VengGraph
     /// output is a pure function of the graph. Link-recorded coercion (f32→vecN,
     /// vec4→vec3/vec2) wraps an upstream expr substituted into a lower-arity input.
     /// MaterialOutput emits the domain entry point (GBufferOutput for Surface,
-    /// SV_Target0 for PostProcess), defaulting unconnected sinks, prefixed with
-    /// #include "Veng/material.slang" and a provisional MaterialParams struct.
+    /// SV_Target0 for PostProcess), defaulting unconnected sinks, prefixed with the
+    /// domain's contract include (Veng/surface.slang or Veng/postprocess.slang) and a
+    /// provisional MaterialParams struct.
     /// @param graph   The material graph to walk.
     /// @param catalog Catalog resolving node types by id.
     /// @param emit    Emit-fn table keyed by node-type id (from RegisterMaterialNodeTypes).
