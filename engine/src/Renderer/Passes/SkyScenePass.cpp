@@ -1,10 +1,15 @@
 #include "SkyScenePass.h"
 
+#include <fmt/format.h>
+
+#include <Veng/Assert.h>
+#include <Veng/Asset/MaterialInstance.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/DescriptorSet.h>
 #include <Veng/Renderer/GraphicsPipeline.h>
+#include <Veng/Renderer/PipelineLayout.h>
 #include <Veng/Renderer/SceneRenderer.h>
 
 namespace Veng::Renderer
@@ -114,6 +119,120 @@ namespace Veng::Renderer
                         .AtmosphereRadius = a.AtmosphereRadius,
                         .SunAngularRadius = a.SunAngularRadius,
                         .SunIrradiance = a.SunIrradiance,
+                    });
+                    cmd.DrawFullscreenTriangle();
+                });
+    }
+
+    namespace
+    {
+        // Matches the SkyPushConstants block in Veng/material.slang: the frame-folded material
+        // selector, then the g-buffer depth handle, its sampler, and the current view-constants
+        // region the sky fragment reconstructs the view ray from.
+        struct SkyMaterialPushConstants
+        {
+            u32 MaterialIndex;
+            u32 DepthTexture;
+            u32 DepthSampler;
+            u32 ViewConstantsIndex;
+        };
+    }
+
+    SkyMaterialScenePass::SkyMaterialScenePass(Context& context, ResourceId targetId,
+                                               ResourceId depthId, TextureHandle depthHandle,
+                                               SamplerHandle samplerHandle, Format targetFormat,
+                                               uvec2 extent)
+        : m_Context(context), m_TargetId(targetId), m_DepthId(depthId), m_DepthHandle(depthHandle),
+          m_SamplerHandle(samplerHandle), m_TargetFormat(targetFormat), m_Extent(extent)
+    {
+    }
+
+    void SkyMaterialScenePass::SetMaterial(AssetHandle<MaterialInstance> material)
+    {
+        m_Material = std::move(material);
+    }
+
+    void SkyMaterialScenePass::Resize(const uvec2 extent)
+    {
+        m_Extent = extent;
+    }
+
+    void SkyMaterialScenePass::BuildPipeline()
+    {
+        VE_ASSERT(m_Material.IsLoaded(), "SkyMaterialScenePass: the Sky material is not resident");
+
+        const MaterialInstance& material = *m_Material.Get();
+        VE_ASSERT(material.GetDomain() == MaterialDomain::Sky,
+                  "SkyMaterialScenePass: material '{}' is not a Sky material", material.GetName());
+
+        // Only this scene-color-format-dependent pipeline is the pass's to build; the layout
+        // (set 0 reserved, the sky push range) comes from the material loader.
+        m_Pipeline = GraphicsPipeline::Create(
+            m_Context,
+            {
+                .Name = fmt::format("Sky Material Pipeline ({})", material.GetName()),
+                .ColorAttachments = {{.Format = m_TargetFormat}},
+                .PipelineLayout = material.GetPipelineLayout(),
+                .ShaderStages =
+                    {
+                        {.Stage = ShaderStage::Vertex, .Module = material.GetVertexModule()},
+                        {.Stage = ShaderStage::Fragment, .Module = material.GetFragmentModule()},
+                    },
+            });
+        m_PipelineMaterialId = m_Material.Id().Value;
+    }
+
+    void SkyMaterialScenePass::Declare(RenderGraph& graph, const PassIO& /*io*/)
+    {
+        // No material bound this frame → contribute nothing (the sky slot stays the lit color).
+        if (!m_Material.IsLoaded())
+        {
+            m_Pipeline.reset();
+            m_PipelineMaterialId = 0;
+            return;
+        }
+
+        // Rebuild when the bound material identity changes (a new sky authored/hot-reloaded).
+        if (!m_Pipeline || m_PipelineMaterialId != m_Material.Id().Value)
+        {
+            BuildPipeline();
+        }
+
+        const TextureHandle depthHandle = m_DepthHandle;
+        const SamplerHandle samplerHandle = m_SamplerHandle;
+
+        graph
+            .AddPass("Sky Material")
+            // Composite over the lit scene color (preserve it; the shader discards foreground).
+            .Color({
+                .Resource = m_TargetId,
+                .Load = LoadOp::Load,
+                .Store = StoreOp::Store,
+            })
+            .Sample(m_DepthId)
+            .Execute(
+                [this, depthHandle, samplerHandle](PassContext& inner)
+                {
+                    const ScenePassContext ctx = Wrap(inner);
+                    CommandBuffer& cmd = ctx.Cmd();
+                    const SceneView& view = ctx.View();
+                    auto& material = const_cast<MaterialInstance&>(*m_Material.Get());
+                    const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
+
+                    const uvec2 renderExtent = view.RenderExtent;
+                    cmd.BindPipeline(m_Pipeline);
+                    cmd.SetViewport({0, 0}, renderExtent);
+                    cmd.SetScissor({0, 0}, renderExtent);
+                    registry.Bind(cmd);
+
+                    // The material's own param writes (e.g. SetStorageBufferHandle) landed already;
+                    // here the pass pushes the whole sky push block — the frame-folded selector plus
+                    // the runtime depth handle/sampler/view-constants the material's contract reads.
+                    cmd.PushConstants(SkyMaterialPushConstants{
+                        .MaterialIndex = material.GetMaterialSelector(),
+                        .DepthTexture = depthHandle.Index,
+                        .DepthSampler = samplerHandle.Index,
+                        .ViewConstantsIndex = registry.GetCurrentViewConstantsIndex(),
                     });
                     cmd.DrawFullscreenTriangle();
                 });

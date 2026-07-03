@@ -103,6 +103,19 @@ namespace Veng
         /// Same semantics as SetTextureHandle but targets a SamplerHandle field.
         void SetSamplerHandle(std::string_view name, Renderer::SamplerHandle handle);
 
+        /// @brief Writes a bindless byte-address storage-buffer index into a StorageBufferHandle field by name.
+        ///
+        /// Experimental, opt-in. Binds a game-supplied storage buffer to a material by handle: the
+        /// game creates a storage Buffer, uploads its data, registers it with BindlessRegistry to get
+        /// a StorageBufferHandle, and sets it here; the shader reads it typed through the set-0
+        /// g_Buffers[] array (g_Buffers[params.Handle].Load<T>(off)). The field carries no cooked
+        /// default — it is runtime-bound. Keeps no asset resident; the caller owns the buffer's
+        /// lifetime and its bindless registration. The write lands in the ring-buffered block's
+        /// current frame region, so it is cheap and frame-safe.
+        /// @param name   The StorageBufferHandle field to write.
+        /// @param handle The bindless storage-buffer handle to bind.
+        void SetStorageBufferHandle(std::string_view name, Renderer::StorageBufferHandle handle);
+
         /// @brief The additive emissive term an instance contributes to the forward emissive pass.
         ///
         /// Resolved from the instance's own (override-patched) parameter block: the rgb color

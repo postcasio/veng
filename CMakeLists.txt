@@ -910,6 +910,10 @@ if (VENG_BUILD_TESTS)
             tests/gpu/descriptor_write_paths.cpp
             tests/gpu/isolation.cpp
             tests/gpu/bindless_registry.cpp
+            # The byte-address storage-buffer bindless input (set-0 g_Buffers[]) spike +
+            # the SetStorageBufferHandle material path: registers a buffer beside a sampler
+            # in set 0 and reads it from a fragment shader through a Sky-domain material.
+            tests/gpu/bindless_storage_buffer.cpp
             tests/gpu/ring_buffered_material.cpp
             tests/gpu/timeline_semaphore.cpp
             tests/gpu/transfer_retire.cpp

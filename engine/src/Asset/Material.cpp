@@ -82,10 +82,11 @@ namespace Veng
         VE_ASSERT(!m_Finalized, "Material::Finalize: '{}' already finalized", m_Name);
         VE_ASSERT(layout != nullptr, "Material::Finalize: '{}' given a null pipeline layout",
                   m_Name);
-        // A Surface material binds its own pipeline; a PostProcess material is
-        // finalized with a null pipeline (the PostProcessScenePass builds the
-        // GraphicsPipeline against its color format and binds it).
-        VE_ASSERT(pipeline != nullptr || m_Domain == MaterialDomain::PostProcess,
+        // A Surface material binds its own pipeline; a PostProcess or Sky material is
+        // finalized with a null pipeline (its fullscreen pass builds the GraphicsPipeline
+        // against the runtime color format and binds it).
+        VE_ASSERT(pipeline != nullptr || m_Domain == MaterialDomain::PostProcess ||
+                      m_Domain == MaterialDomain::Sky,
                   "Material::Finalize: '{}' given a null pipeline", m_Name);
 
         m_PipelineLayout = std::move(layout);

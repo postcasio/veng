@@ -66,6 +66,12 @@ namespace Veng::Renderer
         vec3 SunDirection{0.0f, 1.0f, 0.0f};
         /// @brief Procedural-atmosphere parameters; the renderer regenerates the LUTs on change.
         Atmosphere Atmosphere;
+        /// @brief Authored Sky-domain material rendered as the background sky; empty for none.
+        ///
+        /// Effective only when SceneRendererSettings::SkyMaterial is on. The material owns its own
+        /// params and any buffers it reads (bound via MaterialInstance::SetStorageBufferHandle);
+        /// the engine supplies the view ray and the g-buffer depth mask. Fills the background only.
+        AssetHandle<MaterialInstance> SkyMaterial;
         /// @brief Bloom bright-pass luminance knee.
         f32 BloomThreshold = 1.0f;
         /// @brief Bloom composite mix intensity.

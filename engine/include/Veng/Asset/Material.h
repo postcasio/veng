@@ -25,15 +25,18 @@ namespace Veng
     /// @brief Selects a material's output contract, pipeline shape, standard vertex shader, and invocation site.
     ///
     /// Surface writes the g-buffer and is drawn per submesh by the geometry pass; PostProcess writes a
-    /// single final color and is invoked fullscreen by the post chain. The parameter schema, bindless
-    /// handles, authoring, and editor inspector are shared across domains. Surface is 0 so a
-    /// zero-initialized header defaults to the Surface domain.
+    /// single final color and is invoked fullscreen by the post chain; Sky writes background radiance
+    /// and is invoked fullscreen in the sky slot (composited over the lit scene with LoadOp::Load). The
+    /// parameter schema, bindless handles, authoring, and editor inspector are shared across domains.
+    /// Surface is 0 so a zero-initialized header defaults to the Surface domain.
     enum class MaterialDomain : u32
     {
         /// @brief G-buffer MRT output; drawn per submesh by the geometry pass.
         Surface = 0,
         /// @brief Single color output; invoked fullscreen by the post chain.
         PostProcess = 1,
+        /// @brief Background sky radiance; invoked fullscreen in the sky slot, composited over lit scene color.
+        Sky = 2,
     };
 
     /// @brief One reflected material parameter field, kept at runtime for name-based SetTexture/SetParam dispatch.
@@ -44,7 +47,9 @@ namespace Veng
         {
             Param = 0,
             TextureHandle = 1,
-            SamplerHandle = 2
+            SamplerHandle = 2,
+            /// @brief A runtime-bound byte-address storage-buffer slot (experimental); no cooked default.
+            StorageBufferHandle = 3
         };
 
         /// @brief Field name; matched by SetTexture/SetParam.
@@ -229,4 +234,5 @@ namespace Veng
 VE_ENUM(::Veng::MaterialDomain, 0x34CF0B4F57300AF1ULL)
 VE_ENUMERATOR(Surface)
 VE_ENUMERATOR(PostProcess)
+VE_ENUMERATOR(Sky)
 VE_ENUM_END();

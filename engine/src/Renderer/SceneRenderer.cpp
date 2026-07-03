@@ -3330,6 +3330,7 @@ namespace Veng::Renderer
         const bool ssaoActive = ssaoFold || debugAo;
         m_SsaoActive = ssaoActive;
         m_SsaoPass = nullptr;
+        m_SkyMaterialPass = nullptr;
 
         // SSR is a Final-only effect plus its own debug arm; the debug arm force-wires the
         // trace so the raw reflection target is visible regardless of the Settings.SSR toggle.
@@ -3516,6 +3517,18 @@ namespace Veng::Renderer
                     m_DepthHandle, m_SamplerHandle, m_Extent));
             }
 
+            // An authored Sky-domain material composites in the same slot as the atmosphere/skybox;
+            // per frame it is a no-op unless SceneView::SkyMaterial is bound. The pass builds its
+            // pipeline from the material's fragment shader against HdrFormat (the lit target).
+            if (m_Settings.SkyMaterial)
+            {
+                auto skyMaterialPass = CreateUnique<SkyMaterialScenePass>(
+                    m_Context, lightingTargetId, depthId, m_DepthHandle, m_SamplerHandle, HdrFormat,
+                    m_Extent);
+                m_SkyMaterialPass = skyMaterialPass.get();
+                m_Passes.push_back(std::move(skyMaterialPass));
+            }
+
             // Emissive adds each surface's RGB emissive term into the lit scene color, after the
             // sky composites and before the TAA/bloom tail, so the emission resolves and blooms with
             // the scene. Re-rasterizes the gathered survivors with additive blend + read-only depth.
@@ -3644,6 +3657,14 @@ namespace Veng::Renderer
                 m_Passes.push_back(CreateUnique<SkyScenePass>(
                     m_Context, m_SkyPipeline, m_Atmosphere->GetSet(), lightingTargetId, depthId,
                     m_DepthHandle, m_SamplerHandle, m_Extent));
+            }
+            if (m_Settings.SkyMaterial)
+            {
+                auto skyMaterialPass = CreateUnique<SkyMaterialScenePass>(
+                    m_Context, lightingTargetId, depthId, m_DepthHandle, m_SamplerHandle, HdrFormat,
+                    m_Extent);
+                m_SkyMaterialPass = skyMaterialPass.get();
+                m_Passes.push_back(std::move(skyMaterialPass));
             }
             if (m_Settings.Emissive)
             {
@@ -4681,6 +4702,14 @@ namespace Veng::Renderer
             tonemap.SetParam("Exposure", view.Exposure);
             // The terminal tonemap reads the sub-rect HDR and upscales it to the full output.
             tonemap.SetParam("RenderScale", vec4(renderScaleUV, maxValidUV));
+        }
+
+        // Forward this frame's authored sky material to the sky-material pass (a no-op when the
+        // pass is absent or no material is bound). The game has already written the material's own
+        // params/handles (e.g. SetStorageBufferHandle) before Render.
+        if (m_SkyMaterialPass != nullptr)
+        {
+            m_SkyMaterialPass->SetMaterial(view.SkyMaterial);
         }
 
         // Pack every Light entity into the GPU light layout: directional selection,

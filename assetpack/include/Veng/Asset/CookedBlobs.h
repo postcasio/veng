@@ -276,8 +276,8 @@ namespace Veng
     ///
     /// Domain is the underlying integer of Veng::MaterialDomain (cycle-avoidance rule above):
     /// 0 = Surface (the default — a material with no "domain" key cooks as Surface),
-    /// 1 = PostProcess. The loader casts it to the engine enum, guarded by a VE_ASSERT on an
-    /// out-of-range value.
+    /// 1 = PostProcess, 2 = Sky. The loader casts it to the engine enum, guarded by a VE_ASSERT
+    /// on an out-of-range value.
     struct CookedMaterialHeader
     {
         /// @brief AssetId of the vertex-stage Shader asset.
@@ -298,7 +298,8 @@ namespace Veng
     ///
     /// Param fields (Kind 0) carry their value pre-packed at Offset. Handle fields (Kind 1/2)
     /// carry an AssetId in TextureId that the loader resolves to a bindless handle and writes
-    /// as a u32 at Offset. Offset is within the one block.
+    /// as a u32 at Offset. A storage-buffer handle (Kind 3) is always runtime-bound (TextureId 0)
+    /// — the game writes its bindless index per frame. Offset is within the one block.
     struct CookedMaterialField
     {
         /// @brief Nul-terminated field name, at most ShaderNameCapacity - 1 bytes.
@@ -307,9 +308,9 @@ namespace Veng
         u32 Offset = 0;
         /// @brief Byte size of the field.
         u32 Size = 0;
-        /// @brief Field kind: 0 = param value, 1 = sampled-image handle, 2 = sampler handle.
+        /// @brief Field kind: 0 = param value, 1 = sampled-image handle, 2 = sampler handle, 3 = storage-buffer handle.
         u32 Kind = 0;
-        /// @brief AssetId for Kinds 1/2 (resolved to a bindless handle at load time); 0 for params.
+        /// @brief AssetId for Kinds 1/2 (resolved to a bindless handle at load time); 0 for params and storage-buffer handles.
         u64 TextureId = 0;
     };
 

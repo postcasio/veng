@@ -1,0 +1,4 @@
+{
+  "source": "bindless_buffer.frag.slang",
+  "entry": "fsMain"
+}

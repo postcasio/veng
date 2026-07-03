@@ -69,14 +69,32 @@ namespace Veng::Renderer
         [[nodiscard]] bool IsValid() const { return Index != Invalid; }
     };
 
+    /// @brief Slot index into the byte-address storage-buffer array (set 0, binding StorageBufferBinding).
+    ///
+    /// Indexes `ByteAddressBuffer g_Buffers[]` in the shader: a material loads typed at
+    /// a byte offset (`g_Buffers[handle].Load<T>(off)`), the engine staying layout-agnostic.
+    /// The bound buffer is a plain (non-dynamic) storage buffer read at full range and
+    /// selected by this index — never a dynamic descriptor offset (which mistranslates
+    /// inside set 0's Metal argument buffer on MoltenVK), the same discipline the material
+    /// param block follows.
+    struct StorageBufferHandle
+    {
+        /// @brief Sentinel for an unregistered storage buffer.
+        static constexpr u32 Invalid = ~0u;
+        /// @brief Slot in the storage-buffer array.
+        u32 Index = Invalid;
+        /// @brief Returns true if the handle names a registered storage buffer slot.
+        [[nodiscard]] bool IsValid() const { return Index != Invalid; }
+    };
+
     /// @brief The global bindless descriptor set: set 0, reserved in every
     /// PipelineLayout so it can be bound once and never rebound for the rest of a pass.
     ///
     /// Owned by Context — created during Initialize() and destroyed in Dispose() —
     /// and reachable via Context::GetBindlessRegistry().
     ///
-    /// Provides three arrayed, partiallyBound + updateAfterBind bindings (sampled
-    /// images, samplers, storage images). Register() allocates a free-list slot,
+    /// Provides four arrayed, partiallyBound + updateAfterBind bindings (sampled
+    /// images, samplers, storage images, byte-address storage buffers). Register() allocates a free-list slot,
     /// writes the resource into that slot, keeps a Ref so the resource cannot dangle
     /// while a live handle still names it, and returns a typed handle. Release()
     /// defers reclaiming the slot until Context::AcquireNextFrame() has cycled past
@@ -108,6 +126,16 @@ namespace Veng::Renderer
         /// @brief Registers a storage image view and returns its handle.
         [[nodiscard]] StorageImageHandle RegisterStorage(const Ref<ImageView>& storage);
 
+        /// @brief Registers a byte-address storage buffer and returns its handle.
+        ///
+        /// Experimental, opt-in. The buffer joins the set-0 `g_Buffers[]` array at a free slot,
+        /// bound at full range and read by handle index — a material reads it typed on the shader
+        /// side (`g_Buffers[handle].Load<T>(off)`), the engine holding it as layout-agnostic bytes.
+        /// The registry keeps a Ref so the buffer cannot dangle while a live handle names it.
+        /// @param buffer The storage buffer to register.
+        /// @return A handle naming the allocated storage-buffer slot.
+        [[nodiscard]] StorageBufferHandle Register(const Ref<Buffer>& buffer);
+
         /// @brief Allocates a material slot and stores its parameter block.
         ///
         /// The block holds the material's whole entry — bindless handle slots and
@@ -136,6 +164,9 @@ namespace Veng::Renderer
 
         /// @brief Deferred release of a storage image handle. A default-constructed (invalid) handle is a no-op.
         void Release(StorageImageHandle handle);
+
+        /// @brief Deferred release of a storage buffer handle. A default-constructed (invalid) handle is a no-op.
+        void Release(StorageBufferHandle handle);
 
         /// @brief Deferred release of a material handle. A default-constructed (invalid) handle is a no-op.
         void Release(MaterialHandle handle);
@@ -223,6 +254,8 @@ namespace Veng::Renderer
         static constexpr u32 SamplerBinding = 1;
         /// @brief Binding index for the storage-image array.
         static constexpr u32 StorageImageBinding = 2;
+        /// @brief Binding index for the byte-address storage-buffer array.
+        static constexpr u32 StorageBufferBinding = 3;
         /// @brief Binding index for the material parameter buffer.
         static constexpr u32 MaterialParamBinding = 4;
         /// @brief Binding index for the view-constants buffer.
@@ -236,6 +269,8 @@ namespace Veng::Renderer
         static constexpr u32 MaxSamplers = 128;
         /// @brief Maximum registered storage images.
         static constexpr u32 MaxStorageImages = 512;
+        /// @brief Maximum registered byte-address storage buffers.
+        static constexpr u32 MaxStorageBuffers = 256;
         /// @brief Maximum registered material slots.
         static constexpr u32 MaxMaterials = 256;
 
@@ -313,6 +348,8 @@ namespace Veng::Renderer
         void WriteSampler(u32 index, const Ref<Sampler>& sampler) const;
         /// @brief Writes a storage image view into the descriptor set at the given storage slot.
         void WriteStorageImage(u32 index, const Ref<ImageView>& view) const;
+        /// @brief Writes a byte-address storage buffer into the descriptor set at the given buffer slot.
+        void WriteStorageBuffer(u32 index, const Ref<Buffer>& buffer) const;
 
         /// @brief The owning context.
         Context& m_Context;
@@ -327,6 +364,8 @@ namespace Veng::Renderer
         SlotArray m_Samplers;
         /// @brief Slot allocator for the storage-image array.
         SlotArray m_StorageImages;
+        /// @brief Slot allocator for the byte-address storage-buffer array.
+        SlotArray m_StorageBuffers;
 
         /// @brief The per-material block buffer (binding MaterialParamBinding).
         ///

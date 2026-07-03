@@ -4,6 +4,8 @@
 #include <Veng/Module/Module.h>
 
 #include <Veng/Asset/AssetManager.h>
+#include <Veng/Renderer/Buffer.h>
+#include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/Sampler.h>
@@ -13,6 +15,7 @@
 #include <Veng/Asset/Level.h>
 #include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Asset/Material.h>
+#include <Veng/Asset/MaterialInstance.h>
 #include <Veng/Asset/Texture.h>
 #include <Veng/UI/UI.h>
 #include <Veng/UI/DebugPanels.h>
@@ -292,6 +295,11 @@ protected:
             ApplyLevelRenderSettings(*render, m_SceneSettings, GetWorldViewState());
         }
         ApplySceneSky(world, m_SceneSettings, GetWorldViewState());
+
+        // HT_SKY_MATERIAL opts in to the authored Sky-domain material demo (off by default so the
+        // smoke golden is untouched): an authored gradient sky reading a small point buffer through
+        // the storage-buffer material input.
+        SetupSkyMaterialIfRequested();
 
         // SSR is off by default in the engine; the sample opts in to show reflections off the
         // gradient-roughness ground plane (at the engine-default half SSR resolution).
@@ -584,9 +592,88 @@ protected:
         m_McpServer.reset();
         m_SceneTexture.reset();
         m_SceneSampler.reset();
+
+        // Release the sky point buffer's bindless slot (a no-op when the demo was off), then drop
+        // the buffer and the material handle — including the per-frame view's copy, so the Material
+        // asset retires before the asset manager and the device tear down.
+        GetRenderContext().GetBindlessRegistry().Release(m_SkyPointHandle);
+        m_SkyPointBuffer.reset();
+        GetWorldViewState().SkyMaterial = {};
+        m_SkyMaterial = {};
     }
 
 private:
+    // Loads the authored Sky material and binds a small game-supplied point buffer to it when
+    // HT_SKY_MATERIAL is set. This is the opt-in demo of the engine's Sky material domain + the
+    // storage-buffer material input: the game creates a storage Buffer of points, uploads them,
+    // registers the buffer with the bindless registry, and binds it to the material by handle via
+    // SetStorageBufferHandle — the sky shader reads the points typed from the set-0 g_Buffers[]
+    // array. Env-gated so the default smoke/golden path never enables the sky and stays untouched.
+    void SetupSkyMaterialIfRequested()
+    {
+        if (std::getenv("HT_SKY_MATERIAL") == nullptr)
+        {
+            return;
+        }
+
+        // The gradient Sky material's default instance (the .vmat's defaultInstance id).
+        constexpr AssetId SkyMaterialId{0x8F81DD9B40954C95ULL};
+        const AssetResult<AssetHandle<MaterialInstance>> sky =
+            GetAssetManager().LoadSync<MaterialInstance>(SkyMaterialId);
+        if (!sky)
+        {
+            Veng::Log::Warn("hello-triangle: sky material {} failed to load: {}",
+                            SkyMaterialId.Value, sky.error().Detail);
+            return;
+        }
+        m_SkyMaterial = *sky;
+
+        // A handful of bright points along fixed directions. Matches the shader's SkyPoint struct
+        // (float3 Direction, float Size, float3 Color, float Pad = 32 bytes).
+        struct SkyPoint
+        {
+            vec3 Direction;
+            f32 Size;
+            vec3 Color;
+            f32 Pad;
+        };
+        const vector<SkyPoint> points = {
+            {.Direction = glm::normalize(vec3{0.3f, 0.8f, 0.5f}),
+             .Size = 0.004f,
+             .Color = vec3{1.0f, 0.9f, 0.8f},
+             .Pad = 0.0f},
+            {.Direction = glm::normalize(vec3{-0.6f, 0.4f, -0.7f}),
+             .Size = 0.003f,
+             .Color = vec3{0.8f, 0.85f, 1.0f},
+             .Pad = 0.0f},
+            {.Direction = glm::normalize(vec3{0.1f, 0.6f, -0.9f}),
+             .Size = 0.005f,
+             .Color = vec3{1.0f, 0.7f, 0.6f},
+             .Pad = 0.0f},
+        };
+
+        m_SkyPointBuffer = Renderer::Buffer::Create(GetRenderContext(),
+                                                    {
+                                                        .Name = "Sky Points",
+                                                        .Size = points.size() * sizeof(SkyPoint),
+                                                        .Usage = Renderer::BufferUsage::Storage,
+                                                        .HostMapped = true,
+                                                    });
+        std::memcpy(m_SkyPointBuffer->GetMappedData(), points.data(),
+                    points.size() * sizeof(SkyPoint));
+
+        // Register the buffer to get its bindless handle, then bind it to the material. The write
+        // lands in the ring-buffered param block. PointCount is authored in the .vmat to match this
+        // fixed point set.
+        m_SkyPointHandle = GetRenderContext().GetBindlessRegistry().Register(m_SkyPointBuffer);
+        auto& material = const_cast<MaterialInstance&>(*m_SkyMaterial.Get());
+        material.SetStorageBufferHandle("Points", m_SkyPointHandle);
+
+        // Enable the sky-material topology and push the material on the per-frame view.
+        m_SceneSettings.SkyMaterial = true;
+        GetWorldViewState().SkyMaterial = m_SkyMaterial;
+    }
+
     // Constructs the MCP server when HT_MCP=<port> is set (HT_MCP=0 picks an ephemeral port), so the
     // sample exposes its live world/render surface to an agent. This is the ~10-line consumer recipe:
     // fill an McpHost from the app's systems, construct the server, and pump it once per frame
@@ -730,6 +817,15 @@ private:
     // level (plus the sample's SSR/debug-view extras) in OnWorldLoaded. The per-frame tonemap/bloom
     // values ride the engine's managed-world ViewState (GetWorldViewState) instead.
     Renderer::SceneRendererSettings m_SceneSettings;
+
+    // The opt-in authored Sky material (HT_SKY_MATERIAL), off by default so the smoke golden is
+    // untouched. When enabled, the sample loads a gradient sky material, fills a small point buffer,
+    // registers it in the bindless registry, and binds it to the material by handle — exercising the
+    // Sky material domain and the storage-buffer material input. The buffer + its handle are owned
+    // here and released in OnDispose.
+    AssetHandle<MaterialInstance> m_SkyMaterial;
+    Ref<Renderer::Buffer> m_SkyPointBuffer;
+    Renderer::StorageBufferHandle m_SkyPointHandle;
 
     // Recreated when Configure invalidates the viewport's output image.
     Ref<Renderer::Sampler> m_SceneSampler;

@@ -75,6 +75,17 @@ namespace Veng::Renderer
                          .Count = MaxStorageImages,
                          .Stages = ShaderStage::All,
                          .Bindless = true},
+                        // The byte-address storage-buffer array: a `ByteAddressBuffer g_Buffers[]`
+                        // on the shader side, each slot a whole game-supplied buffer read at full
+                        // range and selected by handle index. A non-dynamic, update-after-bind
+                        // array — no dynamic descriptor offset (which mistranslates inside set 0's
+                        // Metal argument buffer on MoltenVK), so a uniform-per-draw handle indexes
+                        // it exactly as the sampled-image array is indexed.
+                        {.Binding = StorageBufferBinding,
+                         .Type = DescriptorType::StorageBuffer,
+                         .Count = MaxStorageBuffers,
+                         .Stages = ShaderStage::All,
+                         .Bindless = true},
                         // The per-material block buffer: a single ByteAddressBuffer on the
                         // shader side, byte-addressed at index * MaterialParamStride. A draw
                         // folds the current frame's region base into that index, so the load
@@ -146,6 +157,7 @@ namespace Veng::Renderer
         m_Textures.Init(MaxTextures, m_FramesInFlight);
         m_Samplers.Init(MaxSamplers, m_FramesInFlight);
         m_StorageImages.Init(MaxStorageImages, m_FramesInFlight);
+        m_StorageBuffers.Init(MaxStorageBuffers, m_FramesInFlight);
         m_Materials.Init(MaxMaterials, m_FramesInFlight);
         m_MaterialEntries.resize(MaxMaterials);
     }
@@ -208,6 +220,28 @@ namespace Veng::Renderer
         GetVkDevice(m_Context).updateDescriptorSets(write, {});
     }
 
+    void BindlessRegistry::WriteStorageBuffer(u32 index, const Ref<Buffer>& buffer) const
+    {
+        // Bind the whole buffer at full range; a material selects the slot by handle index and
+        // byte-addresses inside it, so there is no dynamic offset.
+        const vk::DescriptorBufferInfo bufferInfo{
+            .buffer = GetVkBuffer(*buffer),
+            .offset = 0,
+            .range = VK_WHOLE_SIZE,
+        };
+
+        const vk::WriteDescriptorSet write{
+            .dstSet = GetVkDescriptorSet(*m_Set),
+            .dstBinding = StorageBufferBinding,
+            .dstArrayElement = index,
+            .descriptorCount = 1,
+            .descriptorType = ToVk(DescriptorType::StorageBuffer),
+            .pBufferInfo = &bufferInfo,
+        };
+
+        GetVkDevice(m_Context).updateDescriptorSets(write, {});
+    }
+
     TextureHandle BindlessRegistry::Register(const Ref<ImageView>& sampled)
     {
         const u32 index = m_Textures.Allocate(sampled, "texture");
@@ -227,6 +261,13 @@ namespace Veng::Renderer
         const u32 index = m_StorageImages.Allocate(storage, "storage image");
         WriteStorageImage(index, storage);
         return StorageImageHandle{index};
+    }
+
+    StorageBufferHandle BindlessRegistry::Register(const Ref<Buffer>& buffer)
+    {
+        const u32 index = m_StorageBuffers.Allocate(buffer, "storage buffer");
+        WriteStorageBuffer(index, buffer);
+        return StorageBufferHandle{index};
     }
 
     MaterialHandle BindlessRegistry::RegisterMaterial(std::span<const std::byte> block)
@@ -298,6 +339,15 @@ namespace Veng::Renderer
             return;
         }
         m_StorageImages.ReleaseDeferred(handle.Index, m_Context.GetCurrentFrameInFlight());
+    }
+
+    void BindlessRegistry::Release(StorageBufferHandle handle)
+    {
+        if (!handle.IsValid())
+        {
+            return;
+        }
+        m_StorageBuffers.ReleaseDeferred(handle.Index, m_Context.GetCurrentFrameInFlight());
     }
 
     void BindlessRegistry::Release(MaterialHandle handle)
@@ -374,6 +424,7 @@ namespace Veng::Renderer
         m_Textures.OnFrameAcquired(frameInFlight);
         m_Samplers.OnFrameAcquired(frameInFlight);
         m_StorageImages.OnFrameAcquired(frameInFlight);
+        m_StorageBuffers.OnFrameAcquired(frameInFlight);
         m_Materials.OnFrameAcquired(frameInFlight);
 
         // Reset the per-frame view slot: the first Viewport::Render this frame takes slot 0.
