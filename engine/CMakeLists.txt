@@ -50,6 +50,7 @@ add_library(veng SHARED
         src/UI/Widgets.cpp
         src/UI/Layout.cpp
         src/UI/Scopes.cpp
+        src/UI/Joined.cpp
         src/UI/Query.cpp
         src/UI/DebugPanels.cpp
         src/Reflection/FieldDisplay.cpp

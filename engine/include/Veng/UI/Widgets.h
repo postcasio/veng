@@ -177,6 +177,42 @@ namespace Veng::UI
     /// @return True the frame `active` changes.
     [[nodiscard]] bool ToggleButton(string_view label, bool& active);
 
+    /// @brief Draws a square icon button that aligns with framed widgets on the same row.
+    ///
+    /// The button is frame-height × frame-height (`GetFrameHeight()` on a side), with the glyph
+    /// centered, so a row of icon buttons is uniform and lines up exactly with an `InputText` or
+    /// `Combo` beside them. Inside a `Joined` scope the button squares the edges it shares with a
+    /// neighbor and keeps its outer corners rounded.
+    /// @param glyph  Icon glyph drawn centered in the button (a FontAwesome literal).
+    /// @return True the frame the button is clicked.
+    [[nodiscard]] bool IconButton(string_view glyph);
+
+    /// @brief Draws a square icon button that renders in the accent state while toggled on.
+    ///
+    /// The square sibling of `ToggleButton`: frame-height × frame-height with the glyph centered,
+    /// filled with the theme `Accent` (hover/press use `AccentHovered`/`AccentActive`) while
+    /// `active` is true so its on-state reads at a glance. A click flips `active` in place.
+    /// Returns true only the frame the state changes, matching the "changed" convention.
+    /// @param glyph   Icon glyph drawn centered in the button (a FontAwesome literal).
+    /// @param active  Toggle state, flipped in place on click.
+    /// @return True the frame `active` changes.
+    [[nodiscard]] bool IconToggleButton(string_view glyph, bool& active);
+
+    /// @brief Draws an exclusive one-active-of-N button row as one fused control.
+    ///
+    /// The segments touch edge to edge with only the row's outer corners rounded (first segment's
+    /// left, last segment's right); the active segment fills with the theme `Accent`
+    /// (hover/press `AccentHovered`/`AccentActive`) and draws its label in the on-accent text
+    /// color, while the inactive segments use the `Button` color family. An icon-glyph label sizes
+    /// its segment square (like `IconButton`); a text label sizes to the text plus frame padding.
+    /// A non-empty per-item `Tooltip` shows on hover. Clicking a segment sets `index` to it.
+    /// @param id     ImGui id for the group.
+    /// @param index  Active segment index, updated in place on click.
+    /// @param items  The segments, in order.
+    /// @return True only the frame `index` changes.
+    [[nodiscard]] bool ButtonGroup(string_view id, i32& index,
+                                   std::span<const ButtonGroupItem> items);
+
     /// @brief Draws a selectable row.
     ///
     /// `SelectableFlags::SpanAllColumns` makes the highlight cover a multi-column table

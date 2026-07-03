@@ -1,6 +1,8 @@
 #include <Veng/UI/Scopes.h>
 #include <Veng/UI/Theme.h>
 
+#include "Joined.h"
+
 #include <Veng/Assert.h>
 
 #include <imgui.h>
@@ -226,6 +228,14 @@ namespace Veng::UI
         }
     }
 
+    ScopedJoined::~ScopedJoined()
+    {
+        if (m_Live)
+        {
+            JoinedEnd();
+        }
+    }
+
     ScopedWindow Window(string_view title, bool* open, WindowFlags flags)
     {
         const string id = AsCStr(title);
@@ -251,6 +261,13 @@ namespace Veng::UI
 
         ImGui::BeginChild(label.c_str(), ImVec2(0.0f, 0.0f), ImGuiChildFlags_AutoResizeY);
         return ScopedToolbar();
+    }
+
+    ScopedJoined Joined(string_view id)
+    {
+        VE_ASSERT(!JoinedActive(), "UI::Joined scopes may not nest");
+        JoinedBegin(id);
+        return ScopedJoined{};
     }
 
     ScopedWindow ViewportOverlay(string_view id, OverlayAnchor anchor, vec2 padding)

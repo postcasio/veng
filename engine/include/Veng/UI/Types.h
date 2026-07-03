@@ -205,6 +205,19 @@ namespace Veng::UI
         ItemSpacing,
     };
 
+    /// @brief One segment of a `ButtonGroup` exclusive button row.
+    ///
+    /// `Label` is the segment's text or icon glyph (an icon-only label sizes square, like
+    /// `IconButton`); `Tooltip` is shown on hover when non-empty. Both are non-owning views
+    /// the caller keeps alive for the `ButtonGroup` call.
+    struct ButtonGroupItem
+    {
+        /// @brief Segment label — plain text, or an icon glyph that sizes the segment square.
+        string_view Label;
+        /// @brief Hover tooltip; an empty view shows none.
+        string_view Tooltip;
+    };
+
     /// @brief Placement of a viewport overlay within its parent window's content region.
     ///
     /// Names one of the six edge/corner anchor points an overlay panel pins to. The

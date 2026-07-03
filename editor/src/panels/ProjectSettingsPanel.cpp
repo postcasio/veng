@@ -126,18 +126,21 @@ namespace VengEditor
         UI::Separator();
 
         const bool canSave = !m_ProjectFile.empty();
+        if (auto bar = UI::Toolbar("##project-toolbar"))
         {
-            auto disabled = UI::Disabled(!canSave);
-            if (UI::Button(Icons::Save))
             {
-                Save();
+                auto disabled = UI::Disabled(!canSave);
+                if (UI::IconButton(Icons::Save))
+                {
+                    Save();
+                }
+                UI::Tooltip("Save project.veng and each configuration's .buildcfg");
             }
-            UI::Tooltip("Save project.veng and each configuration's .buildcfg");
-        }
-        if (!canSave)
-        {
-            UI::SameLine();
-            UI::TextDisabled("(no project file path)");
+            if (!canSave)
+            {
+                UI::SameLine();
+                UI::TextDisabled("(no project file path)");
+            }
         }
 
         if (m_Error)

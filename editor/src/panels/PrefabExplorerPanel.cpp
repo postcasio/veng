@@ -126,25 +126,28 @@ namespace VengEditor
         m_Pending.clear();
 
         // Toolbar: add a root entity, delete the selection, then the name filter.
-        if (UI::Button(Icons::Add))
+        if (auto bar = UI::Toolbar("##explorer-toolbar"))
         {
-            m_Pending.push_back(PendingOp{.Op = PendingOp::Kind::CreateRoot});
-        }
-        UI::Tooltip("Add a root entity");
-        UI::SameLine();
-        {
-            const UI::DisabledScope disabled = UI::Disabled(!m_Ctx.HasSelection());
-            if (UI::Button(Icons::Clear))
+            if (UI::IconButton(Icons::Add))
             {
-                m_Pending.push_back(PendingOp{.Op = PendingOp::Kind::DeleteSelection});
+                m_Pending.push_back(PendingOp{.Op = PendingOp::Kind::CreateRoot});
             }
-        }
-        UI::Tooltip("Delete the selected entities (Del)");
-        UI::SameLine();
-        UI::SetNextItemWidth(-1.0f);
-        if (UI::InputTextWithHint("##search", "Search…", m_Filter))
-        {
-            m_FilterLower = ToLower(m_Filter);
+            UI::Tooltip("Add a root entity");
+            UI::SameLine();
+            {
+                const UI::DisabledScope disabled = UI::Disabled(!m_Ctx.HasSelection());
+                if (UI::IconButton(Icons::Clear))
+                {
+                    m_Pending.push_back(PendingOp{.Op = PendingOp::Kind::DeleteSelection});
+                }
+            }
+            UI::Tooltip("Delete the selected entities (Del)");
+            UI::SameLine();
+            UI::SetNextItemWidth(-1.0f);
+            if (UI::InputTextWithHint("##search", "Search…", m_Filter))
+            {
+                m_FilterLower = ToLower(m_Filter);
+            }
         }
 
         BuildSnapshot();

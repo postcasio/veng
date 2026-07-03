@@ -230,14 +230,13 @@ namespace VengEditor
 
     void PrefabEditorPanel::DrawDocumentToolbar()
     {
-        const UI::Theme& theme = UI::GetTheme();
         const bool playing = m_Context.IsPlaying();
 
         // Save the document; greyed out with nothing unsaved. Mirrors File-menu Save / Ctrl+S,
         // dispatching to the document's own Save (a level saves its config too).
         {
             const UI::DisabledScope disabled = UI::Disabled(!HasUnsavedChanges());
-            if (UI::Button(Icons::Save))
+            if (UI::IconButton(Icons::Save))
             {
                 const VoidResult saved = Save();
                 if (!saved)
@@ -252,12 +251,13 @@ namespace VengEditor
         UI::Separator();
         UI::SameLine();
 
-        // Play transport: Play while editing; Stop + Pause/Resume while playing.
+        // Play transport: Play while editing; Stop + Pause/Resume while playing. Play draws
+        // accent-filled while editing — a momentary click via an always-on toggle button, which
+        // renders in the accent state and reports the click as its state flips off.
         {
             const UI::DisabledScope disabled = UI::Disabled(playing);
-            const UI::StyleColorScope accent =
-                UI::StyleColor(UI::StyleColorId::Button, theme.Accent);
-            if (UI::Button(Icons::Play))
+            bool playActive = true;
+            if (UI::IconToggleButton(Icons::Play, playActive))
             {
                 Play();
             }
@@ -267,7 +267,7 @@ namespace VengEditor
         UI::SameLine();
         {
             const UI::DisabledScope disabled = UI::Disabled(!playing);
-            if (UI::Button(Icons::Stop))
+            if (UI::IconButton(Icons::Stop))
             {
                 Stop();
             }
@@ -275,7 +275,7 @@ namespace VengEditor
 
             UI::SameLine();
             const bool paused = m_Context.Play == PlayState::Paused;
-            if (UI::Button(paused ? Icons::Play : Icons::Pause))
+            if (UI::IconButton(paused ? Icons::Play : Icons::Pause))
             {
                 if (paused)
                 {
@@ -294,31 +294,20 @@ namespace VengEditor
         UI::Separator();
         UI::SameLine();
 
-        // Gizmo-mode segment over the shared document mode (PrefabEditContext::Gizmo) every
-        // viewport reads; mirrors the W/E/R keys. Disabled while playing (gizmos are an edit aid)
-        // — the keys are gated the same way. The active mode's button is accent-tinted to read as
-        // selected.
+        // Gizmo-mode group over the shared document mode (PrefabEditContext::Gizmo) every viewport
+        // reads; mirrors the W/E/R keys. Disabled while playing (gizmos are an edit aid) — the keys
+        // are gated the same way. The active mode's segment is accent-filled to read as selected.
         const UI::DisabledScope gizmoDisabled = UI::Disabled(playing);
-        const GizmoMode mode = m_Context.Gizmo;
-        auto modeButton =
-            [&](const string_view label, const GizmoMode target, const string_view tooltip)
-        {
-            const optional<UI::StyleColorScope> accent =
-                mode == target ? optional<UI::StyleColorScope>{UI::StyleColor(
-                                     UI::StyleColorId::Button, theme.Accent)}
-                               : std::nullopt;
-            if (UI::Button(label))
-            {
-                m_Context.Gizmo = target;
-            }
-            UI::Tooltip(tooltip);
+        const UI::ButtonGroupItem gizmoModes[] = {
+            {.Label = Icons::Translate, .Tooltip = "Translate (W)"},
+            {.Label = Icons::Rotate, .Tooltip = "Rotate (E)"},
+            {.Label = Icons::Scale, .Tooltip = "Scale (R)"},
         };
-
-        modeButton(Icons::Translate, GizmoMode::Translate, "Translate (W)");
-        UI::SameLine();
-        modeButton(Icons::Rotate, GizmoMode::Rotate, "Rotate (E)");
-        UI::SameLine();
-        modeButton(Icons::Scale, GizmoMode::Scale, "Scale (R)");
+        i32 gizmoIndex = static_cast<i32>(m_Context.Gizmo);
+        if (UI::ButtonGroup("##gizmo", gizmoIndex, gizmoModes))
+        {
+            m_Context.Gizmo = static_cast<GizmoMode>(gizmoIndex);
+        }
     }
 
     void PrefabEditorPanel::OnUI()

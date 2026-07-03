@@ -335,18 +335,21 @@ namespace VengEditor
 
         UI::Separator();
 
-        if (UI::Button(Icons::Save))
+        if (auto bar = UI::Toolbar("##texture-toolbar"))
         {
-            SaveSettings();
+            if (UI::IconButton(Icons::Save))
+            {
+                SaveSettings();
+            }
+            UI::Tooltip("Save the texture settings to its .tex.json");
+            UI::SameLine();
+            if (UI::IconButton(Icons::Revert))
+            {
+                LoadSettings();
+                SaveSettings();
+                TriggerCook();
+            }
+            UI::Tooltip("Discard edits and reload the settings from disk");
         }
-        UI::Tooltip("Save the texture settings to its .tex.json");
-        UI::SameLine();
-        if (UI::Button(Icons::Revert))
-        {
-            LoadSettings();
-            SaveSettings();
-            TriggerCook();
-        }
-        UI::Tooltip("Discard edits and reload the settings from disk");
     }
 }

@@ -367,29 +367,19 @@ namespace VengEditor
             LoadTable();
         }
 
-        // Toolbar: three exclusive view-mode toggles plus a fill-width search box.
+        // Toolbar: one exclusive view-mode button group plus a fill-width search box.
         if (auto bar = UI::Toolbar("##asset-toolbar"))
         {
-            bool details = m_ViewMode == ViewMode::DetailList;
-            if (UI::ToggleButton(fmt::format("{}##view_list", Icons::ViewList), details))
+            const UI::ButtonGroupItem viewModes[] = {
+                {.Label = Icons::ViewList, .Tooltip = "Detail list"},
+                {.Label = Icons::ViewColumns, .Tooltip = "Columns"},
+                {.Label = Icons::ViewGrid, .Tooltip = "Icon grid"},
+            };
+            i32 viewIndex = static_cast<i32>(m_ViewMode);
+            if (UI::ButtonGroup("##view", viewIndex, viewModes))
             {
-                m_ViewMode = ViewMode::DetailList;
+                m_ViewMode = static_cast<ViewMode>(viewIndex);
             }
-            UI::Tooltip("Detail list");
-            UI::SameLine();
-            bool columns = m_ViewMode == ViewMode::Columns;
-            if (UI::ToggleButton(fmt::format("{}##view_columns", Icons::ViewColumns), columns))
-            {
-                m_ViewMode = ViewMode::Columns;
-            }
-            UI::Tooltip("Columns");
-            UI::SameLine();
-            bool icons = m_ViewMode == ViewMode::Icons;
-            if (UI::ToggleButton(fmt::format("{}##view_icons", Icons::ViewGrid), icons))
-            {
-                m_ViewMode = ViewMode::Icons;
-            }
-            UI::Tooltip("Icon grid");
             UI::SameLine();
             UI::SetNextItemWidth(-1.0f);
             (void)UI::InputTextWithHint("##search", "Search", m_Filter);

@@ -2,6 +2,8 @@
 #include <Veng/UI/Layout.h>
 #include <Veng/UI/Theme.h>
 
+#include "Joined.h"
+
 #include <imgui.h>
 #include <glm/gtc/type_ptr.hpp>
 
@@ -178,6 +180,13 @@ namespace Veng::UI
             const ImGuiInputTextFlags flags =
                 ImGuiInputTextFlags_CallbackResize |
                 (multiline ? ImGuiInputTextFlags_None : ImGuiInputTextFlags_EnterReturnsTrue);
+
+            // A single-line field participates in a joined group (a search box fused with a
+            // trailing button); a multi-line box never appears in one.
+            if (!multiline)
+            {
+                JoinedPreItem();
+            }
             bool entered = false;
             if (multiline)
             {
@@ -194,6 +203,11 @@ namespace Veng::UI
             {
                 entered = ImGui::InputText(id.c_str(), s_Scratch.data(), s_Scratch.size(), flags,
                                            resizeCallback, &s_Scratch);
+            }
+
+            if (!multiline)
+            {
+                JoinedPostItem();
             }
 
             // ImGui::IsItemActive is valid only after the widget is submitted, so the
@@ -241,8 +255,11 @@ namespace Veng::UI
                                         : string_view{};
         const string previewStr(preview);
 
+        JoinedPreItem();
         bool changed = false;
-        if (ImGui::BeginCombo(id.c_str(), previewStr.c_str()))
+        const bool open = ImGui::BeginCombo(id.c_str(), previewStr.c_str());
+        JoinedPostItem();
+        if (open)
         {
             for (usize i = 0; i < items.size(); ++i)
             {
@@ -266,7 +283,10 @@ namespace Veng::UI
     bool Button(string_view label)
     {
         const string id = AsCStr(label);
-        return ImGui::Button(id.c_str());
+        JoinedPreItem();
+        const bool clicked = ImGui::Button(id.c_str());
+        JoinedPostItem();
+        return clicked;
     }
 
     bool SmallButton(string_view label)
@@ -308,6 +328,142 @@ namespace Veng::UI
             active = !active;
         }
         return clicked;
+    }
+
+    namespace
+    {
+        // Draws one custom icon/label segment: an InvisibleButton hit area with a rounded fill
+        // and centered text drawn over it, matching the Badge draw-list pattern. The fill color
+        // is picked from the given rest/hovered/active family by the item's live interaction
+        // state, and only the requested outer corners round (the rest square against neighbors).
+        // Returns whether the segment was clicked this frame.
+        bool DrawSegment(string_view id, string_view text, vec2 size, vec4 rest, vec4 hovered,
+                         vec4 active, vec4 textColor, ImDrawFlags cornerFlags)
+        {
+            const string label(id);
+            // Draw only the visible portion of the label — the id part after `##` is ImGui's
+            // convention for a hidden id suffix and must not render.
+            const string str(text.substr(0, text.find("##")));
+            const ImVec2 pos = ImGui::GetCursorScreenPos();
+
+            const bool clicked = ImGui::InvisibleButton(label.c_str(), size);
+            const bool isHovered = ImGui::IsItemHovered();
+            const bool isActive = ImGui::IsItemActive();
+
+            const vec4 fill = isActive ? active : (isHovered ? hovered : rest);
+
+            ImDrawList* drawList = ImGui::GetWindowDrawList();
+            const ImVec2 max = ImVec2(pos.x + size.x, pos.y + size.y);
+            // Authored colors are sRGB; linearize for the linear UI pipeline.
+            drawList->AddRectFilled(pos, max, ImGui::GetColorU32(SrgbToLinear(fill)),
+                                    GetTheme().FrameRounding, cornerFlags);
+
+            const ImVec2 textSize = ImGui::CalcTextSize(str.c_str());
+            const ImVec2 textPos = ImVec2(pos.x + ((size.x - textSize.x) * 0.5f),
+                                          pos.y + ((size.y - textSize.y) * 0.5f));
+            drawList->AddText(textPos, ImGui::GetColorU32(SrgbToLinear(textColor)), str.c_str());
+            return clicked;
+        }
+    }
+
+    bool IconButton(string_view glyph)
+    {
+        const Theme& theme = GetTheme();
+        const f32 side = ImGui::GetFrameHeight();
+
+        JoinedPreItem();
+        const ImDrawFlags corners = JoinedCornerFlags(true, true);
+        const bool clicked =
+            DrawSegment(glyph, glyph, vec2(side, side), theme.SurfaceRaised, theme.SurfaceHovered,
+                        theme.SurfaceActive, theme.Text, corners);
+        JoinedPostItem();
+        return clicked;
+    }
+
+    bool IconToggleButton(string_view glyph, bool& active)
+    {
+        const Theme& theme = GetTheme();
+        const f32 side = ImGui::GetFrameHeight();
+
+        // While on the button fills with the accent family and draws on-accent text; while off it
+        // reads as a plain surface button, matching ToggleButton's on/off treatment.
+        const vec4 rest = active ? theme.Accent : theme.SurfaceRaised;
+        const vec4 hovered = active ? theme.AccentHovered : theme.SurfaceHovered;
+        const vec4 pressed = active ? theme.AccentActive : theme.SurfaceActive;
+        const vec4 textColor = active ? theme.TextOnAccent : theme.Text;
+
+        JoinedPreItem();
+        const ImDrawFlags corners = JoinedCornerFlags(true, true);
+        const bool clicked =
+            DrawSegment(glyph, glyph, vec2(side, side), rest, hovered, pressed, textColor, corners);
+        JoinedPostItem();
+
+        if (clicked)
+        {
+            active = !active;
+        }
+        return clicked;
+    }
+
+    bool ButtonGroup(string_view id, i32& index, std::span<const ButtonGroupItem> items)
+    {
+        const Theme& theme = GetTheme();
+        const ImGuiStyle& style = ImGui::GetStyle();
+        const f32 side = ImGui::GetFrameHeight();
+
+        const string groupId = AsCStr(id);
+        ImGui::PushID(groupId.c_str());
+
+        // A group is one fused control: only its outer segments' outer edges round, and inside
+        // an enclosing Joined scope JoinedCornerFlags squares the whole group.
+        JoinedPreItem();
+
+        bool changed = false;
+        for (usize i = 0; i < items.size(); ++i)
+        {
+            const ButtonGroupItem& item = items[i];
+            const string labelStr(item.Label);
+
+            // An icon glyph sizes the segment square; a text label sizes to its text plus frame
+            // padding, matching a stock button's width.
+            const ImVec2 textSize = ImGui::CalcTextSize(labelStr.c_str());
+            const bool iconOnly = textSize.x <= side;
+            const f32 width = iconOnly ? side : textSize.x + (style.FramePadding.x * 2.0f);
+
+            const bool isActive = static_cast<i32>(i) == index;
+            const vec4 rest = isActive ? theme.Accent : theme.SurfaceRaised;
+            const vec4 hovered = isActive ? theme.AccentHovered : theme.SurfaceHovered;
+            const vec4 pressed = isActive ? theme.AccentActive : theme.SurfaceActive;
+            const vec4 textColor = isActive ? theme.TextOnAccent : theme.Text;
+
+            const bool roundLeft = i == 0;
+            const bool roundRight = i + 1 == items.size();
+            const ImDrawFlags corners = JoinedCornerFlags(roundLeft, roundRight);
+
+            if (i > 0)
+            {
+                ImGui::SameLine(0.0f, 0.0f);
+            }
+
+            if (DrawSegment(fmt::format("##seg{}", i), item.Label, vec2(width, side), rest, hovered,
+                            pressed, textColor, corners))
+            {
+                if (index != static_cast<i32>(i))
+                {
+                    index = static_cast<i32>(i);
+                    changed = true;
+                }
+            }
+            if (!item.Tooltip.empty() && ImGui::IsItemHovered())
+            {
+                const string tip(item.Tooltip);
+                ImGui::SetTooltip("%s", tip.c_str());
+            }
+        }
+
+        JoinedPostItem();
+        ImGui::PopID();
+        return changed;
     }
 
     namespace

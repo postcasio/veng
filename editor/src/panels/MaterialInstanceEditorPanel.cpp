@@ -335,15 +335,18 @@ namespace VengEditor
         }
 
         // Toolbar.
-        if (UI::Button(Icons::Save))
+        if (auto bar = UI::Toolbar("##matinst-toolbar"))
         {
-            WriteDocument(m_SourcePath);
-        }
-        UI::Tooltip("Save the overrides to the .vmatinst.json");
-        if (m_Cooking)
-        {
-            UI::SameLine();
-            UI::Text("Cooking...");
+            if (UI::IconButton(Icons::Save))
+            {
+                WriteDocument(m_SourcePath);
+            }
+            UI::Tooltip("Save the overrides to the .vmatinst.json");
+            if (m_Cooking)
+            {
+                UI::SameLine();
+                UI::Text("Cooking...");
+            }
         }
         if (m_CookError)
         {

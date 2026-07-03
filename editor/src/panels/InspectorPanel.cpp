@@ -166,9 +166,10 @@ namespace VengEditor
         // context-menu Remove Component above; the header's SetNextItemAllowOverlap lets it click.
         if (removable)
         {
-            UI::SetCursorPos(
-                vec2{headerOrigin.x + regionWidth - frameHeight, headerOrigin.y + vpad});
-            if (UI::SmallButton(Icons::Remove))
+            // A square icon button fills the header row height; right-align it by its own
+            // frame-height width so it sits flush against the header's trailing edge.
+            UI::SetCursorPos(vec2{headerOrigin.x + regionWidth - frameHeight, headerOrigin.y});
+            if (UI::IconButton(Icons::Remove))
             {
                 outRemoveId = id;
                 outRemove = true;

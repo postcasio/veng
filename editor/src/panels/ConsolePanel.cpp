@@ -32,7 +32,7 @@ namespace VengEditor
     {
         if (auto bar = UI::Toolbar("##console-toolbar"))
         {
-            if (UI::Button(Icons::Clear))
+            if (UI::IconButton(Icons::Clear))
             {
                 m_Entries.clear();
             }

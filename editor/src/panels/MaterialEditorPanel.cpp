@@ -778,43 +778,46 @@ namespace VengEditor
         }
 
         // Toolbar.
+        if (auto bar = UI::Toolbar("##material-toolbar"))
         {
-            auto disabled = UI::Disabled(m_ReadOnly);
-            if (UI::Button(Icons::Save))
             {
-                // A graph-sourced material's authored graph is the shader's .graph.json;
-                // persist it beside the regenerated .vmat field list.
-                if (m_GraphSourced)
+                auto disabled = UI::Disabled(m_ReadOnly);
+                if (UI::IconButton(Icons::Save))
                 {
-                    std::ofstream out(m_GraphPath, std::ios::binary | std::ios::trunc);
-                    if (out)
+                    // A graph-sourced material's authored graph is the shader's .graph.json;
+                    // persist it beside the regenerated .vmat field list.
+                    if (m_GraphSourced)
                     {
-                        out << WriteNodeGraph(*m_Graph, m_Catalog) << '\n';
+                        std::ofstream out(m_GraphPath, std::ios::binary | std::ios::trunc);
+                        if (out)
+                        {
+                            out << WriteNodeGraph(*m_Graph, m_Catalog) << '\n';
+                        }
                     }
+                    WriteVmat(m_SourcePath);
                 }
-                WriteVmat(m_SourcePath);
+                UI::Tooltip("Save the material graph to its .vmat.json");
             }
-            UI::Tooltip("Save the material graph to its .vmat.json");
-        }
-        UI::SameLine();
-        if (UI::Button(Icons::Revert))
-        {
-            m_Catalog = NodeCatalog{};
-            m_Emit = MaterialEmitTable{};
-            m_ReadOnly = false;
-            BuildGraph();
-            TriggerCook();
-        }
-        UI::Tooltip("Discard edits and reload the material from disk");
-        if (m_ReadOnly)
-        {
             UI::SameLine();
-            UI::TextColored({0.9f, 0.8f, 0.3f, 1.0f}, "(read-only: newer graph version)");
-        }
-        if (m_Cooking)
-        {
-            UI::SameLine();
-            UI::Text("Cooking...");
+            if (UI::IconButton(Icons::Revert))
+            {
+                m_Catalog = NodeCatalog{};
+                m_Emit = MaterialEmitTable{};
+                m_ReadOnly = false;
+                BuildGraph();
+                TriggerCook();
+            }
+            UI::Tooltip("Discard edits and reload the material from disk");
+            if (m_ReadOnly)
+            {
+                UI::SameLine();
+                UI::TextColored({0.9f, 0.8f, 0.3f, 1.0f}, "(read-only: newer graph version)");
+            }
+            if (m_Cooking)
+            {
+                UI::SameLine();
+                UI::Text("Cooking...");
+            }
         }
         if (m_CookError)
         {

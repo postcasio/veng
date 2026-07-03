@@ -374,19 +374,22 @@ namespace VengEditor
 
         UI::Separator();
 
-        if (UI::Button(Icons::Save))
+        if (auto bar = UI::Toolbar("##inputmap-toolbar"))
         {
-            SaveDocument();
+            if (UI::IconButton(Icons::Save))
+            {
+                SaveDocument();
+            }
+            UI::Tooltip("Save the input map to its .inputmap.json");
+            UI::SameLine();
+            if (UI::IconButton(Icons::Revert))
+            {
+                LoadDocument();
+                SaveDocument();
+                TriggerCook();
+            }
+            UI::Tooltip("Discard edits and reload the input map from disk");
         }
-        UI::Tooltip("Save the input map to its .inputmap.json");
-        UI::SameLine();
-        if (UI::Button(Icons::Revert))
-        {
-            LoadDocument();
-            SaveDocument();
-            TriggerCook();
-        }
-        UI::Tooltip("Discard edits and reload the input map from disk");
     }
 
     vector<Inspectable> InputMappingEditorPanel::GetInspectables()

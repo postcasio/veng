@@ -457,7 +457,7 @@ namespace VengEditor
             UI::Tooltip("Vertical field of view");
 
             UI::SameLine();
-            if (UI::Button(Icons::Frame))
+            if (UI::IconButton(Icons::Frame))
             {
                 FrameSelection();
             }

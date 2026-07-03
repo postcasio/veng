@@ -154,7 +154,7 @@ namespace VengEditor
             if (!ref.IsNull())
             {
                 UI::SameLine();
-                if (UI::SmallButton(fmt::format("{}##clear{}", Icons::Remove, label)))
+                if (UI::IconButton(fmt::format("{}##clear{}", Icons::Remove, label)))
                 {
                     ref = Entity::Null;
                     changed = true;
@@ -444,7 +444,7 @@ namespace VengEditor
             bool changed = false;
 
             // The value cell of the field's own row holds the Add button.
-            if (UI::SmallButton(fmt::format("{}##add{}", Icons::Add, label)))
+            if (UI::IconButton(fmt::format("{}##add{}", Icons::Add, label)))
             {
                 const usize count = field.ArraySize(fieldPtr);
                 field.ArrayResize(fieldPtr, count + 1);
@@ -480,7 +480,7 @@ namespace VengEditor
                     elementField.Display = field.Display;
                     changed |= DrawValueWidget(element, elementField, "##elemval", ctx);
                     UI::SameLine();
-                    if (UI::SmallButton(fmt::format("{}##remove", Icons::Remove)))
+                    if (UI::IconButton(fmt::format("{}##remove", Icons::Remove)))
                     {
                         removeAt = i;
                     }
@@ -495,7 +495,7 @@ namespace VengEditor
                     const bool open =
                         UI::PropertyHeader(fmt::format("[{}]##elemhdr", i), defaultOpen);
                     UI::TableSetColumnIndex(1);
-                    if (UI::SmallButton(fmt::format("{}##remove", Icons::Remove)))
+                    if (UI::IconButton(fmt::format("{}##remove", Icons::Remove)))
                     {
                         removeAt = i;
                     }
@@ -507,7 +507,7 @@ namespace VengEditor
                 }
 
                 UI::PropertyLabel(fmt::format("[{}]", i));
-                if (UI::SmallButton(fmt::format("{}##remove", Icons::Remove)))
+                if (UI::IconButton(fmt::format("{}##remove", Icons::Remove)))
                 {
                     removeAt = i;
                 }

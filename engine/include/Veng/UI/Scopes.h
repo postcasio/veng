@@ -107,6 +107,38 @@ namespace Veng::UI
         bool m_Live = true;
     };
 
+    /// @brief Scope guard for a `UI::Joined` group.
+    ///
+    /// While the guard is live, adjacent `Veng::UI` widgets fuse into one visual control: each
+    /// widget after the first is placed hard against the previous one (no spacing), and every
+    /// widget in the group draws square-cornered so the row reads as a single flat block. The
+    /// guard's destructor ends the group and restores the prior spacing/rounding state. The body
+    /// always draws — a group has no collapsed state — so `operator bool` is always true; the
+    /// guard exists for the RAII close, not a visibility gate.
+    class [[nodiscard]] ScopedJoined
+    {
+    public:
+        /// @brief Constructs the guard.
+        ScopedJoined() = default;
+
+        /// @brief Ends the joined group and restores the pushed spacing/rounding state.
+        ~ScopedJoined();
+
+        ScopedJoined(const ScopedJoined&) = delete;
+        ScopedJoined& operator=(const ScopedJoined&) = delete;
+
+        /// @brief Move constructor; invalidates the source so its destructor is a no-op.
+        ScopedJoined(ScopedJoined&& other) noexcept { other.m_Live = false; }
+        ScopedJoined& operator=(ScopedJoined&&) = delete;
+
+        /// @brief Always true; the joined group body is unconditionally drawn.
+        explicit operator bool() const { return true; }
+
+    private:
+        /// @brief False after a move; suppresses the destructor call.
+        bool m_Live = true;
+    };
+
     /// @brief Scope guard for `ImGui::TreeNodeEx` and `CollapsingHeader`.
     ///
     /// A `TreeNodeEx` that is open owes a `TreePop`; `CollapsingHeader` has no pop
@@ -481,6 +513,24 @@ namespace Veng::UI
     /// @param id  ImGui id string for the toolbar's child region.
     /// @return A scope guard whose body is always drawn.
     [[nodiscard]] ScopedToolbar Toolbar(string_view id);
+
+    /// @brief Fuses adjacent widgets into one visual control and returns a scope guard.
+    ///
+    /// Lay a search box, a combo, and a trailing button out on one line inside the returned
+    /// scope, in order, with **no** `SameLine` between them — the group places each widget hard
+    /// against the previous one and draws every widget square-cornered, so the row reads as one
+    /// flat fused block:
+    /// `if (auto g = UI::Joined("##find")) { UI::InputText(...); UI::IconButton(...); }`.
+    /// The group squares uniformly because a stock framed widget cannot round per-corner and an
+    /// immediate-mode widget cannot know it is the group's last item; a set of buttons wanting
+    /// the rounded-pill treatment is `ButtonGroup`, which owns its whole shape. Instrumented
+    /// widgets — `InputText`/`InputTextWithHint`, `Button`, `IconButton`, `IconToggleButton`,
+    /// `Combo`, and the `ButtonGroup` segments — participate; other widgets inside the scope
+    /// draw normally. Groups may not nest.
+    /// @param id  ImGui id string for the group.
+    /// @return A scope guard whose body is always drawn.
+    /// @pre No `Joined` scope is already active (nesting is asserted against).
+    [[nodiscard]] ScopedJoined Joined(string_view id);
 
     /// @brief Pins a translucent, auto-sized overlay panel inside the current window.
     ///
