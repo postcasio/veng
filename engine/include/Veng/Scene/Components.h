@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Veng/Veng.h>
+#include <Veng/Input.h>
 #include <Veng/Input/Actions.h>
 #include <Veng/Renderer/Atmosphere.h>
 #include <Veng/Renderer/SunPosition.h>
@@ -386,6 +387,29 @@ namespace Veng
         Entity Pawn = Entity::Null;
     };
 
+    /// @brief The physical devices that feed one local seat's input this session.
+    ///
+    /// Lives on the Viewer entity beside Possesses and InputContextStack. InputMappingSystem
+    /// builds a per-seat filtered view (SeatInputView) from it — gamepad arms scoped to Gamepad,
+    /// keyboard/mouse arms present only when UsesKeyboardMouse — so two seats with different
+    /// assignments resolve to distinct PlayerInputs. Authorable in a level and serialized through
+    /// the reflection path. A seat with no SeatInput takes no local device input:
+    /// InputMappingSystem skips it, so its PlayerInput is synthesized or replicated (the AI/remote
+    /// path).
+    struct SeatInput
+    {
+        /// @brief Whether this seat reads the keyboard (and, region-gated elsewhere, the pointer).
+        bool UsesKeyboardMouse = true;
+        /// @brief The pad slot assigned to this seat, or GamepadId::None for no pad.
+        GamepadId Gamepad = GamepadId::None;
+        /// @brief Whether DeviceAssignmentSystem auto-fills the Gamepad slot when a pad connects.
+        ///
+        /// Independent of UsesKeyboardMouse: the ordinary single-player seat opts into both a
+        /// keyboard and an auto-assigned pad. The flag fills a None Gamepad slot on connect; a
+        /// level-authored slot is left untouched.
+        bool WantsGamepad = false;
+    };
+
     /// @brief Per-pawn movement tuning the movement system scales its integration by.
     ///
     /// Authored data so a pawn's feel is tunable. A pawn without a Mover moves at the
@@ -749,6 +773,12 @@ VE_REFLECT_END();
 
 VE_REFLECT(::Veng::Possesses, 0xC7D4144C7DF95B9BULL)
 VE_FIELD(Pawn, .DisplayName = "Pawn")
+VE_REFLECT_END();
+
+VE_REFLECT(::Veng::SeatInput, 0x2D178569EDDBC215ULL)
+VE_FIELD(UsesKeyboardMouse, .DisplayName = "Uses Keyboard/Mouse")
+VE_FIELD(Gamepad, .DisplayName = "Gamepad")
+VE_FIELD(WantsGamepad, .DisplayName = "Wants Gamepad")
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::Mover, 0x7774F1C2B00DE07EULL)

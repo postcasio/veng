@@ -2,6 +2,7 @@
 
 #include <Veng/Scene/AnimationSystem.h>
 #include <Veng/Scene/CameraRig.h>
+#include <Veng/Scene/DeviceAssignmentSystem.h>
 #include <Veng/Scene/InputMappingSystem.h>
 #include <Veng/Scene/Motion.h>
 #include <Veng/Scene/Movement.h>
@@ -14,6 +15,10 @@ namespace Veng
     {
         // Builtins go through the same Register<T> path as game systems; no special-casing.
         // A level names the subset and order it runs — this only makes them resolvable.
+
+        // Auto-assigns a connected pad into an opted-in seat's SeatInput slot; ordered before
+        // InputMappingSystem so a pad connected this tick is assigned before this tick's resolve.
+        registry.Register<DeviceAssignmentSystem>();
 
         // The sole reader of raw device state, registered first so it runs ahead of any
         // control system that reads the resolved PlayerInput.

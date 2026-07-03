@@ -34,6 +34,9 @@ namespace Veng
         registry.Register<InputMapData>();
         registry.Register<Intent>();
         registry.Register<Possesses>();
+        // The seat's device assignment: which keyboard/pad feed this seat, read per seat by
+        // InputMappingSystem to build a filtered raw view. Absent ⇒ the seat reads no local device.
+        registry.Register<SeatInput>();
         registry.Register<Mover>();
 
         // Autonomous constant transform velocity (drift + spin) the ConstantMotionSystem

@@ -52,6 +52,11 @@
           "Camera": 0
         },
         "::Veng::PlayerInput": {},
+        "::Veng::SeatInput": {
+          "UsesKeyboardMouse": true,
+          "Gamepad": "None",
+          "WantsGamepad": true
+        },
         "::Veng::InputContextStack": {
           "Active": [
             "0xE65128F84910FBB9"

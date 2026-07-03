@@ -22,15 +22,17 @@ namespace Veng
 
     /// @brief Builtin Sim system that resolves each seat's active contexts into its PlayerInput.
     ///
-    /// The single reader of raw device state: it adapts the always-present Veng::Input snapshot
-    /// through RawInput and calls ResolveActions over each locally-owned seat's InputContextStack,
-    /// storing the result in the seat's PlayerInput and threading the previous PlayerInput for
-    /// phase derivation. Registered first in RegisterBuiltinSystems so it runs ahead of any
-    /// control system; in headless the neutral snapshot resolves to all-None with no guard.
+    /// The single reader of raw device state: for each locally-owned seat it builds a SeatInputView
+    /// over the always-present Veng::Input snapshot scoped to that seat's SeatInput devices, calls
+    /// ResolveActions over the seat's InputContextStack, and stores the result in the seat's
+    /// PlayerInput, threading the previous PlayerInput for phase derivation. Because the query
+    /// includes SeatInput, a seat lacking it is skipped — its PlayerInput is synthesized or
+    /// replicated (the AI/remote path). Registered first in RegisterBuiltinSystems so it runs ahead
+    /// of any control system; in headless the neutral snapshot resolves to all-None with no guard.
     class InputMappingSystem final : public SceneSystem
     {
     public:
-        /// @brief Resolves every (Viewer, InputContextStack, PlayerInput) seat's input this tick.
+        /// @brief Resolves every (Viewer, InputContextStack, PlayerInput, SeatInput) seat this tick.
         /// @param scene    The scene whose seats are resolved.
         /// @param delta    Time in seconds since the previous tick (unused).
         /// @param context  Per-tick services; the raw input snapshot is read here.

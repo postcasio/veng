@@ -19,12 +19,11 @@ namespace Veng
 
     void InputMappingSystem::OnUpdate(Scene& scene, const f32, const SystemContext& context)
     {
-        const RawInput raw{context.Input};
-
         // Reused across seats to gather each stack's resident contexts, lowest priority first.
         vector<ResolvedContext> active;
-        scene.Each<Viewer, InputContextStack, PlayerInput>(
-            [&](const Entity seat, Viewer&, InputContextStack& stack, PlayerInput& input)
+        scene.Each<Viewer, InputContextStack, PlayerInput, SeatInput>(
+            [&](const Entity seat, Viewer&, InputContextStack& stack, PlayerInput& input,
+                SeatInput& devices)
             {
                 if (!IsLocallyOwned(scene, seat))
                 {
@@ -42,8 +41,10 @@ namespace Veng
                     }
                 }
 
-                // Phase comes from last tick's resolved state, so the system holds no
-                // cross-tick state of its own.
+                // Each seat resolves against a view scoped to its own devices, so two seats with
+                // different assignments produce distinct PlayerInputs. Phase comes from last tick's
+                // resolved state, so the system holds no cross-tick state of its own.
+                const SeatInputView raw{context.Input, devices};
                 input.State = ResolveActions(active, raw, input.State);
             });
     }
