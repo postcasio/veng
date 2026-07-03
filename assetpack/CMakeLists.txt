@@ -9,6 +9,7 @@ add_library(libveng_assetpack STATIC
         src/AssetType.cpp
         src/AtomicFile.cpp
         src/CookedProject.cpp
+        src/HexId.cpp
 )
 add_library(veng::assetpack ALIAS libveng_assetpack)
 

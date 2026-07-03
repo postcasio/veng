@@ -465,9 +465,10 @@ int main(int argc, char** argv)
         }
 
         const AssetId id = GenerateAssetId(packPtrs);
-        // Hex for C++ literals, decimal for JSON packs (JSON has no hex literal).
-        fmt::print("hex (C++):      0x{:X}\n", id.Value);
-        fmt::print("decimal (JSON): {}\n", id.Value);
+        // One canonical spelling: a zero-padded 16-digit hex literal in C++, the same
+        // string quoted in JSON.
+        fmt::print("hex (C++):   0x{:016X}ULL\n", id.Value);
+        fmt::print("hex (JSON):  \"0x{:016X}\"\n", id.Value);
         return 0;
     }
 

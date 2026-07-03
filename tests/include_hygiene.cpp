@@ -17,6 +17,7 @@
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Asset/AssetType.h>
 #include <Veng/Asset/CookedBlobs.h>
+#include <Veng/Asset/HexId.h>
 
 #include <Veng/Asset/AssetError.h>
 #include <Veng/Asset/AssetHandle.h>
