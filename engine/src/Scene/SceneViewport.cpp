@@ -36,7 +36,7 @@ namespace Veng
         view.BloomIntensity = render.BloomIntensity;
     }
 
-    void ApplySceneSky(const Scene& scene, Renderer::SceneRendererSettings& settings,
+    void ApplySceneSky(Scene& scene, Renderer::SceneRendererSettings& settings,
                        Renderer::ViewState& view)
     {
         // Environment component → image-based lighting + skybox. Absent clears both, so removing
@@ -81,20 +81,39 @@ namespace Veng
             settings.Skylight = false;
         }
 
-        // The sky and the SH skylight share the scene's sun: the toward-sun direction is the inverse
-        // of the first directional light's world-space travel direction (a sun overhead travels
-        // down). No directional light leaves the default world-up sun.
+        // The sky, the SH skylight, and direct lighting share the scene's one sun: the first
+        // directional light. No directional light leaves the default world-up sun.
         view.SunDirection = vec3(0.0f, 1.0f, 0.0f);
-        for ([[maybe_unused]] auto [entity, light] : scene.View<Light>())
+        Light* sun = nullptr;
+        for (auto [entity, light] : scene.View<Light>())
         {
             if (light.Type == LightType::Directional)
             {
-                const f32 length = glm::length(light.Direction);
-                if (length > 1e-4f)
-                {
-                    view.SunDirection = -light.Direction / length;
-                }
+                sun = &light;
                 break;
+            }
+        }
+
+        // TimeOfDay component → the sun is derived, not authored: the toward-sun direction comes
+        // from the hour + orbit, and the directional light's travel direction is written from it
+        // so direct lighting and shadows track the same derived sun. Absent, the sun direction is
+        // the inverse of the light's authored world-space travel direction (a sun overhead
+        // travels down).
+        if (const TimeOfDay* time = scene.TryGetFirst<TimeOfDay>())
+        {
+            view.SunDirection =
+                Renderer::ComputeSunDirection(time->Orbit, time->Hours, time->DayOfYear);
+            if (sun != nullptr)
+            {
+                sun->Direction = -view.SunDirection;
+            }
+        }
+        else if (sun != nullptr)
+        {
+            const f32 length = glm::length(sun->Direction);
+            if (length > 1e-4f)
+            {
+                view.SunDirection = -sun->Direction / length;
             }
         }
     }

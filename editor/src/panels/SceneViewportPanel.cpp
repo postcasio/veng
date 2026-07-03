@@ -679,7 +679,8 @@ namespace VengEditor
             .BloomIntensity = m_BloomIntensity,
         };
 
-        // Resolve the scene's sky/lighting components (Environment / Atmosphere / Skylight) and its
+        // Resolve the scene's sky/lighting components (Environment / Atmosphere / Skylight /
+        // TimeOfDay) and its
         // directional sun onto this frame's view and the sky topology — the same mapping the runtime
         // uses, so adding a component in the editor lights the scene immediately. A sky topology
         // change flags a Configure, applied next frame at the top of OnUI (one frame of latency, like

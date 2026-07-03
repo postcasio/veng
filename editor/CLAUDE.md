@@ -92,7 +92,7 @@ mismatch at load); hosting separately built modules is a future module-ABI/SDK f
   `SystemId` list — and a **settings panel** drawing the `GameModeConfig` and the post/pipeline
   `LevelRenderSettings` through the shared reflection inspector (`DrawFieldWidget`). The
   sky/environment is **not** in that panel: it is author-opt-in `Environment` / `Atmosphere` /
-  `Skylight` components added to world entities through the ordinary inspector Add-Component
+  `Skylight` / `TimeOfDay` components added to world entities through the ordinary inspector Add-Component
   surface, which the viewport resolves each frame (`ApplySceneSky`) so the sky appears the moment a
   component is added. System *params* stay components, edited through the world surface like any
   other; the level editor adds **no new inspector machinery** — the catalog drives the systems panel

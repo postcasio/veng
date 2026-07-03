@@ -48,7 +48,8 @@ each pack it names, loads its **startup level** (declared by the cooked project)
 (`Level::LoadInto`, the `Scene` owning its `SceneSimulation`), seeds the managed viewport's topology
 + per-frame view from the spawned scene — the level's `LevelRenderSettings` post knobs
 (`ApplyLevelRenderSettings`) plus the author-opt-in sky/lighting components (`ApplySceneSky`:
-`Environment` / `Atmosphere` / `Skylight` + the directional sun) — fires the
+`Environment` / `Atmosphere` / `Skylight` / `TimeOfDay` + the directional sun — a `TimeOfDay`
+derives the sun direction from its hour + orbit and writes the directional light from it) — fires the
 `OnWorldLoaded(Scene&, ResidencyBatch&)` hook, then starts the simulation. Each `Frame` it
 ticks the world (`Scene::TickSimulation`, unless `SetWorldPaused`), calls `OnUpdate`, then
 **resolves the primary camera and pushes the `ViewState`** into the managed viewport
@@ -1337,8 +1338,8 @@ asset (`AssetType::Level`, `Veng/Asset/Level.h`) does not embed world entities: 
 data — the ordered active `SystemId` set, the `GameModeConfig`, and a tolerant
 **`LevelRenderSettings`** subset (the view-wide post/pipeline knobs — exposure, bloom, shadow/AO
 toggles the app maps onto its `SceneRendererSettings`/`SceneView`). The sky/environment is **not** a
-level field: it is author-opt-in scene components (`Environment` / `Atmosphere` / `Skylight`) on the
-world prefab, resolved by `ApplySceneSky`. This resolves the prefab dual-purpose tension by
+level field: it is author-opt-in scene components (`Environment` / `Atmosphere` / `Skylight` /
+`TimeOfDay`) on the world prefab, resolved by `ApplySceneSky`. This resolves the prefab dual-purpose tension by
 *reusing* prefab serialization, not embedding a second copy: a prefab is a reusable recipe
 again, the `Level` is the once-loaded playable unit (named `Level`, not `Scene`, to avoid
 colliding with the runtime `Scene`). It is CPU data with no GPU resource, loaded through the

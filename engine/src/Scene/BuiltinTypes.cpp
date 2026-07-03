@@ -55,9 +55,11 @@ namespace Veng
         registry.Register<LevelRenderSettings>();
 
         // Author-opt-in sky/lighting components: presence drives the renderer's sky/IBL topology.
-        // Renderer::Atmosphere registers transitively through the Atmosphere component's Params field.
+        // Renderer::Atmosphere and Renderer::SunOrbit register transitively through the Atmosphere
+        // component's Params field and the TimeOfDay component's Orbit field.
         registry.Register<Environment>();
         registry.Register<Atmosphere>();
         registry.Register<Skylight>();
+        registry.Register<TimeOfDay>();
     }
 }

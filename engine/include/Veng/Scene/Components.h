@@ -3,6 +3,7 @@
 #include <Veng/Veng.h>
 #include <Veng/Input/Actions.h>
 #include <Veng/Renderer/Atmosphere.h>
+#include <Veng/Renderer/SunPosition.h>
 #include <Veng/Scene/Entity.h>
 #include <Veng/Reflection/Reflect.h>
 #include <Veng/Reflection/Variant.h>
@@ -549,8 +550,9 @@ namespace Veng
     /// An author adds this component to a scene entity to render the procedural sky behind the
     /// scene; its presence drives the SkyScenePass topology and the per-frame sky enable. The sun
     /// direction is not stored here — it is the inverse of the scene's first directional Light's
-    /// travel direction, so the sky and the lighting share one sun. An alternative sky source to
-    /// the environment skybox, independent of image-based lighting.
+    /// travel direction (itself derivable from a TimeOfDay component), so the sky and the lighting
+    /// share one sun. An alternative sky source to the environment skybox, independent of
+    /// image-based lighting.
     struct Atmosphere
     {
         /// @brief Scales the sky + sun-disk radiance.
@@ -574,13 +576,31 @@ namespace Veng
         f32 Intensity = 1.0f;
     };
 
+    /// @brief Time-of-day sun drive: the author's opt-in to derive the sun from a clock time.
+    ///
+    /// An author adds this component to a scene entity to position the sun by time of day
+    /// instead of authoring a direction: the toward-sun direction is derived from Hours,
+    /// DayOfYear, and the orbital parameters, and the scene's first directional Light's
+    /// travel direction is written from it — so direct lighting, shadows, the procedural
+    /// sky, and the SH skylight all track the one derived sun. While present, the light's
+    /// authored Direction is overwritten; a game animates the cycle by advancing Hours.
+    struct TimeOfDay
+    {
+        /// @brief Time of day in solar hours; 12 is solar noon. Wraps over 24.
+        f32 Hours = 12.0f;
+        /// @brief Day of the year, measured from the northern spring equinox (days).
+        f32 DayOfYear = 0.0f;
+        /// @brief Orbital and site parameters the sun path is derived from; Earth defaults.
+        Renderer::SunOrbit Orbit;
+    };
+
     /// @brief Level-scoped post/pipeline render knobs.
     ///
     /// Carried on a Level and seeded into the renderer the app drives — a reflected,
     /// tolerantly-serialized struct, not a renderer type, so the renderer stays untouched
     /// and a new field does not invalidate existing level blobs. The sky/environment knobs
     /// are not here: they are author-opt-in scene components (Environment / Atmosphere /
-    /// Skylight). This struct carries the view-wide post and pipeline toggles the app maps
+    /// Skylight / TimeOfDay). This struct carries the view-wide post and pipeline toggles the app maps
     /// onto its SceneRendererSettings (Bloom / Shadows / AO) and its per-frame SceneView
     /// (Exposure, BloomIntensity).
     struct LevelRenderSettings
@@ -794,6 +814,14 @@ VE_REFLECT_END();
 
 VE_REFLECT(::Veng::Skylight, 0x6430ED5BA1EE715BULL)
 VE_FIELD(Intensity, .DisplayName = "Intensity", .Display = {.Min = 0.0})
+VE_REFLECT_END();
+
+VE_REFLECT(::Veng::TimeOfDay, 0x3096812B98FEC8D2ULL)
+VE_FIELD(Hours, .DisplayName = "Hours", .Tooltip = "Solar hours; 12 is noon",
+         .Display = {.Min = 0.0, .Max = 24.0})
+VE_FIELD(DayOfYear, .DisplayName = "Day of year",
+         .Tooltip = "Days since the northern spring equinox", .Display = {.Min = 0.0})
+VE_FIELD(Orbit, .DisplayName = "Orbit")
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::LevelRenderSettings, 0x28E4618C66455E21ULL)

@@ -50,18 +50,22 @@ namespace Veng
 
     /// @brief Resolves a scene's sky/lighting components onto a renderer's topology and per-frame view.
     ///
-    /// Reads the author-opt-in components (Environment / Atmosphere / Skylight) and the first
-    /// directional Light, writing the IBL/skybox/atmosphere topology toggles onto a
+    /// Reads the author-opt-in components (Environment / Atmosphere / Skylight / TimeOfDay) and the
+    /// first directional Light, writing the IBL/skybox/atmosphere topology toggles onto a
     /// SceneRendererSettings (applied through Viewport::Configure) and the environment handle,
     /// intensities, atmosphere params, and the toward-sun direction onto a ViewState (pushed each
     /// frame). A component's presence drives its feature; its absence reverts to the fallback (no
     /// environment, no sky). The sun direction is the inverse of the directional light's travel
-    /// direction, so the sky and lighting share one sun. The single mapping the managed world and
+    /// direction, so the sky and lighting share one sun — unless a TimeOfDay component is present,
+    /// in which case the toward-sun direction is derived from its hour and orbit and the directional
+    /// light's travel direction is written from it (the one scene write this call makes), keeping
+    /// direct lighting and shadows on the same derived sun. The single mapping the managed world and
     /// the editor viewport share, so adding a component in the editor lights the scene the same way
     /// the runtime does.
-    /// @param scene     The scene whose sky/lighting components and directional light are read.
+    /// @param scene     The scene whose sky/lighting components and directional light are read;
+    ///                  a TimeOfDay component writes the directional light's Direction in place.
     /// @param settings  The topology/sizing knobs to update (the sky toggles are written in place).
     /// @param view      The per-frame view to seed (environment / intensities / sun / atmosphere).
-    void ApplySceneSky(const Scene& scene, Renderer::SceneRendererSettings& settings,
+    void ApplySceneSky(Scene& scene, Renderer::SceneRendererSettings& settings,
                        Renderer::ViewState& view);
 }

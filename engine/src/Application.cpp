@@ -161,7 +161,8 @@ namespace Veng
         // Seed the managed viewport's topology and the per-frame view knobs from the scene, starting
         // from the configured initial settings: the level's post knobs (a seeded LevelRenderSettings
         // component) plus the author-opt-in sky/lighting components (Environment / Atmosphere /
-        // Skylight) and the directional light's sun. Seeded once here; the game owns later changes.
+        // Skylight / TimeOfDay) and the directional light's sun. Seeded once here; the game owns
+        // later changes.
         Renderer::SceneRendererSettings settings = m_Info.ManagedViewport->Settings;
         if (const LevelRenderSettings* render = m_World->TryGetFirst<LevelRenderSettings>())
         {
