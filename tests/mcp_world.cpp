@@ -8,6 +8,7 @@
 // filter, an unregistered-type isError (process stays alive), and pagination walking the
 // full entity set exactly once. Pure logic + loopback, no GPU, so it runs in the default band.
 
+#include <Veng/Asset/HexId.h>
 #include <Veng/Mcp/McpHost.h>
 #include <Veng/Mcp/McpServer.h>
 #include <Veng/Mcp/McpServerInfo.h>
@@ -243,8 +244,8 @@ int main()
         Check(std::abs(w["Tint"][1].get<f32>() - 0.2f) < 1e-5f, "Widget Tint.y round-trips");
         Check(w["Kind"].is_string() && w["Kind"].get<std::string>() == "Spot",
               "Widget Kind is the bare enumerator name string");
-        Check(w["Model"].get<std::string>() == std::to_string(0x1234ABCDULL),
-              "Widget Model is the decimal AssetId (AssetHandle)");
+        Check(w["Model"].get<std::string>() == FormatAssetId(AssetId{0x1234ABCDULL}),
+              "Widget Model is the canonical hex AssetId (AssetHandle)");
         Check(w["Stat"].is_object() && w["Stat"].value("Level", 0) == 7,
               "Widget Stat recurses into the nested Struct");
 

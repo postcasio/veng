@@ -1,6 +1,7 @@
 #include <Veng/Reflection/JsonSerialize.h>
 
 #include <Veng/Assert.h>
+#include <Veng/Asset/HexId.h>
 #include <Veng/Reflection/EnumName.h>
 
 #include <algorithm>
@@ -131,13 +132,17 @@ namespace Veng
                 std::memcpy(fieldPtr, &id, sizeof(id));
                 return {};
             }
-            if (!value.is_number_unsigned())
+            if (!value.is_string())
             {
-                return std::unexpected(
-                    fmt::format("{}: expected an unsigned integer AssetId", path));
+                return std::unexpected(fmt::format("{}: expected a hex-string AssetId", path));
             }
 
-            const u64 id = value.get<u64>();
+            const optional<AssetId> parsed = ParseAssetId(value.get<string>());
+            if (!parsed)
+            {
+                return std::unexpected(fmt::format("{}: expected a hex-string AssetId", path));
+            }
+            const u64 id = parsed->Value;
             if (id != 0 && hooks.ValidateAssetId)
             {
                 const VoidResult validated = hooks.ValidateAssetId(id, fieldType);
@@ -407,7 +412,7 @@ namespace Veng
         {
             u64 id = 0;
             std::memcpy(&id, fieldPtr, sizeof(id));
-            return id;
+            return id == 0 ? Json(nullptr) : Json(FormatAssetId(AssetId{id}));
         }
 
         Json WriteEnum(const void* fieldPtr, const TypeInfo& info)

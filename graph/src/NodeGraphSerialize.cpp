@@ -1,6 +1,7 @@
 #include <VengGraph/NodeGraphSerialize.h>
 
 #include <Veng/Assert.h>
+#include <Veng/Asset/HexId.h>
 #include <Veng/Log.h>
 #include <Veng/Reflection/EnumName.h>
 #include <Veng/Reflection/TypeId.h>
@@ -171,14 +172,14 @@ namespace VengGraph
             case Veng::FieldClass::AssetHandle:
             {
                 // The leading u64 AssetId; an invalid (zero) id serializes as
-                // null — "no asset".
+                // null — "no asset". A nonzero id is the canonical hex string.
                 Veng::u64 id = 0;
                 std::memcpy(&id, fieldPtr, sizeof(id));
                 if (id == 0)
                 {
                     return nullptr;
                 }
-                return id;
+                return Veng::FormatAssetId(Veng::AssetId{id});
             }
             case Veng::FieldClass::String:
             {
@@ -251,9 +252,16 @@ namespace VengGraph
             }
             case Veng::FieldClass::AssetHandle:
             {
-                // null/non-number leaves id zero ("no asset"); rehydration to a live
-                // handle is the panel's job.
-                Veng::u64 id = value.is_number_unsigned() ? value.get<Veng::u64>() : 0;
+                // A hex-string id decodes to its AssetId; null or any other value leaves
+                // id zero ("no asset"), the same tolerant default the Enum arm above uses
+                // on an unmatched value. Rehydration to a live handle is the panel's job.
+                Veng::u64 id = 0;
+                if (value.is_string())
+                {
+                    id = Veng::ParseAssetId(value.get<Veng::string>())
+                             .value_or(Veng::AssetId{})
+                             .Value;
+                }
                 std::memcpy(fieldPtr, &id, sizeof(id));
                 break;
             }

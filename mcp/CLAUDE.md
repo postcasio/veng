@@ -163,12 +163,12 @@ schema-drift tolerance (an unknown field is skipped).
 - **`FieldsToJson`/`JsonToFields`** (`src/ReflectToJson.{h,cpp}`) are thin wrappers over the
   shared `Veng::JsonWriteFields`/`JsonReadFields` walker (`Veng/Reflection/JsonSerialize.h`):
   MCP supplies its own entity-addressing hooks (a `Reference` field reads/writes
-  `{ index, generation }`) and re-encodes each `AssetHandle` leaf between the walker's raw
-  integer and a decimal string, so a 64-bit `AssetId` round-trips exactly through a
-  JSON-number client. This is the canonical MCP component encoding every dumping and mutation
+  `{ index, generation }`); the walker itself encodes an `AssetHandle` as the canonical hex
+  string, so a 64-bit `AssetId` round-trips losslessly through any JSON client with no
+  MCP-local re-encoding. This is the canonical MCP component encoding every dumping and mutation
   tool reuses. Per class: Scalar → number/bool; Vector/Quaternion → array; Matrix → nested
   array; String → string; **Enum → the bare enumerator name string** (never an object or the
-  raw integer); `AssetHandle` → the referenced `AssetId` as a decimal string; `Reference` →
+  raw integer); `AssetHandle` → the referenced `AssetId` as a canonical hex string; `Reference` →
   the entity's `{ index, generation }`; Struct → a recursed object; Variant →
   `{ type, value }`; Array → a JSON array.
 - **`JsonToFields`** is the inverse and the JSON analogue of the binary `ReadFields`: it walks
