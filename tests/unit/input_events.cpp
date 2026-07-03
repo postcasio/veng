@@ -118,6 +118,12 @@ TEST_CASE("Input: a null window leaves the neutral all-zeros headless state")
     CHECK(input.GetMouseDelta() == vec2{0, 0});
     CHECK(input.GetScrollDelta() == vec2{0, 0});
 
+    // No pads: the gamepad surface reports neutral, unchanged by the headless run.
+    CHECK(input.ConnectedGamepads().empty());
+    CHECK_FALSE(input.IsGamepadConnected(static_cast<GamepadId>(0)));
+    CHECK_FALSE(input.IsGamepadButtonDown(static_cast<GamepadId>(0), GamepadButton::A));
+    CHECK(input.GetGamepadAxis(static_cast<GamepadId>(0), GamepadAxis::LeftX) == 0.0f);
+
     // No window to capture against.
     CHECK_FALSE(input.IsMouseCaptured());
 }

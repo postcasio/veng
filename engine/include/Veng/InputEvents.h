@@ -200,4 +200,43 @@ namespace Veng
         /// @brief True when the cursor entered, false when it left.
         const bool m_Entered;
     };
+
+    /// @brief Fired when a gamepad is connected to a slot.
+    ///
+    /// The discrete transition an assignment policy consumes; per-frame button/axis state stays a
+    /// polled snapshot on Veng::Input, not events.
+    class GamepadConnectedEvent final : public Event
+    {
+    public:
+        /// @brief Constructs the event with the slot the pad connected to.
+        explicit GamepadConnectedEvent(GamepadId id) : m_Id(id) {}
+
+        /// @brief Injects this event's type-identity members (see the EVENT macro).
+        EVENT(GamepadConnected);
+
+        /// @brief Returns the slot the pad connected to.
+        [[nodiscard]] GamepadId GetGamepadId() const { return m_Id; }
+
+    private:
+        /// @brief The slot the pad connected to.
+        const GamepadId m_Id;
+    };
+
+    /// @brief Fired when a gamepad is disconnected from a slot.
+    class GamepadDisconnectedEvent final : public Event
+    {
+    public:
+        /// @brief Constructs the event with the slot the pad left.
+        explicit GamepadDisconnectedEvent(GamepadId id) : m_Id(id) {}
+
+        /// @brief Injects this event's type-identity members (see the EVENT macro).
+        EVENT(GamepadDisconnected);
+
+        /// @brief Returns the slot the pad left.
+        [[nodiscard]] GamepadId GetGamepadId() const { return m_Id; }
+
+    private:
+        /// @brief The slot the pad left.
+        const GamepadId m_Id;
+    };
 }

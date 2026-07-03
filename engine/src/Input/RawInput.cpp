@@ -18,7 +18,12 @@ namespace Veng
             return m_Input.IsMouseButtonDown(static_cast<MouseButton>(code));
         }
 
-        // Gamepad buttons read neutral until the device layer lands.
+        if (device == InputDeviceType::GamepadButton)
+        {
+            return m_Input.IsGamepadButtonDown(DesignatedGamepad(),
+                                               static_cast<GamepadButton>(code));
+        }
+
         return false;
     }
 
@@ -38,7 +43,17 @@ namespace Veng
             }
         }
 
-        // Gamepad axes read neutral until the device layer lands.
+        if (device == InputDeviceType::GamepadAxis)
+        {
+            return m_Input.GetGamepadAxis(DesignatedGamepad(), static_cast<GamepadAxis>(code));
+        }
+
         return 0.0f;
+    }
+
+    GamepadId RawInput::DesignatedGamepad() const
+    {
+        const std::span<const GamepadId> connected = m_Input.ConnectedGamepads();
+        return connected.empty() ? GamepadId::None : connected.front();
     }
 }

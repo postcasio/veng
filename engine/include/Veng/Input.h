@@ -1,8 +1,10 @@
 #pragma once
 
 #include <array>
+#include <span>
 
 #include <Veng/Veng.h>
+#include <Veng/Reflection/Reflect.h>
 
 namespace Veng
 {
@@ -104,6 +106,65 @@ namespace Veng
         Middle = 2,
     };
 
+    /// @brief Identity of a connected gamepad: the GLFW joystick slot, stable while it stays connected.
+    ///
+    /// The raw slot (0..15), not a dense index over the connected set: a slot is reused only after
+    /// its pad disconnects, so a persisted assignment never silently re-points at a different pad.
+    enum class GamepadId : u32
+    {
+        /// @brief The empty id, distinct from every real slot.
+        None = 0xFFFFFFFFu
+    };
+
+    /// @brief Engine gamepad button vocabulary (mapped to GLFW_GAMEPAD_BUTTON_* at the poll boundary).
+    enum class GamepadButton : u32
+    {
+        A,
+        B,
+        X,
+        Y,
+        LeftBumper,
+        RightBumper,
+        Back,
+        Start,
+        Guide,
+        LeftThumb,
+        RightThumb,
+        DpadUp,
+        DpadRight,
+        DpadDown,
+        DpadLeft,
+        /// @brief Count of buttons; sizes the per-pad button array, excluded from the authored set.
+        Count
+    };
+
+    /// @brief Engine gamepad axis vocabulary (mapped to GLFW_GAMEPAD_AXIS_* at the poll boundary).
+    enum class GamepadAxis : u32
+    {
+        LeftX,
+        LeftY,
+        RightX,
+        RightY,
+        LeftTrigger,
+        RightTrigger,
+        /// @brief Count of axes; sizes the per-pad axis array, excluded from the authored set.
+        Count
+    };
+
+    /// @brief One pad's raw state for a frame: the poll target, a GLFW-free struct.
+    ///
+    /// Sticks report −1..1 and triggers 0..1; Buttons/Axes index by GamepadButton / GamepadAxis so
+    /// the arrays size off the enum Count sentinel and cannot drift when a control is added.
+    struct GamepadState
+    {
+        /// @brief Whether this slot holds a connected, gamepad-mapped pad this frame.
+        bool Connected = false;
+        /// @brief Per-button held state, indexed by GamepadButton.
+        std::array<bool, usize(GamepadButton::Count)> Buttons{};
+        /// @brief Per-axis value, indexed by GamepadAxis (sticks −1..1, triggers 0..1).
+        std::array<f32, usize(GamepadAxis::Count)> Axes{};
+    };
+
     class Window;
     class Event;
 
@@ -186,11 +247,44 @@ namespace Veng
         /// @brief Returns true if the mouse cursor is currently captured.
         [[nodiscard]] bool IsMouseCaptured() const;
 
+        /// @brief Replaces this frame's polled gamepad state for every slot.
+        ///
+        /// The window layer polls each present joystick once per frame and hands the full
+        /// slot-indexed set here; a slot with no connected pad carries a default (unconnected)
+        /// GamepadState. Called after BeginFrame's roll so the previous-frame button bits the
+        /// pressed-edge query reads are already captured. Headless never calls it, so the pad
+        /// surface stays the neutral no-pads state.
+        /// @param states  One GamepadState per slot; must span all slots the queries can name.
+        void IngestGamepadStates(std::span<const GamepadState> states);
+
+        /// @brief Returns true if the given slot currently holds a connected pad.
+        [[nodiscard]] bool IsGamepadConnected(GamepadId id) const;
+
+        /// @brief Returns true if the given pad's button is currently held down.
+        ///
+        /// Reports neutral for a stale or disconnected slot, so a query by an id whose pad
+        /// left never reads a reused slot's new occupant.
+        [[nodiscard]] bool IsGamepadButtonDown(GamepadId id, GamepadButton button) const;
+
+        /// @brief Returns true only on the frame the pad's button transitioned from up to down.
+        [[nodiscard]] bool WasGamepadButtonPressed(GamepadId id, GamepadButton button) const;
+
+        /// @brief Returns the given pad's axis value (sticks −1..1, triggers 0..1), zero if absent.
+        [[nodiscard]] f32 GetGamepadAxis(GamepadId id, GamepadAxis axis) const;
+
+        /// @brief Returns the slots currently holding a connected pad, in ascending slot order.
+        [[nodiscard]] std::span<const GamepadId> ConnectedGamepads() const;
+
     private:
         /// @brief Highest GLFW key code, sizing the key state bitsets.
         static constexpr usize MaxKeys = 512;
         /// @brief Number of tracked mouse buttons.
         static constexpr usize MaxMouseButtons = 8;
+        /// @brief Number of GLFW joystick slots, sizing the slot-indexed pad state.
+        static constexpr usize MaxGamepads = 16;
+
+        /// @brief Returns the per-slot state for a valid slot id, or nullptr for None/out-of-range.
+        [[nodiscard]] const GamepadState* PadFor(GamepadId id) const;
 
         /// @brief Borrowed window polled for input state; nullptr in a headless run.
         Window* m_Window;
@@ -215,5 +309,40 @@ namespace Veng
 
         /// @brief False until the first move event seeds m_MousePosition, so the opening move reports no delta.
         bool m_HavePosition = false;
+
+        /// @brief Per-slot pad state this frame, filled by IngestGamepadStates.
+        std::array<GamepadState, MaxGamepads> m_Gamepads{};
+        /// @brief Per-slot button bits last frame, for the pad pressed-edge query.
+        std::array<std::array<bool, usize(GamepadButton::Count)>, MaxGamepads>
+            m_PreviousGamepadButtons{};
+        /// @brief Slots marked Connected this frame, rebuilt in IngestGamepadStates for ConnectedGamepads.
+        vector<GamepadId> m_ConnectedGamepads;
     };
 }
+
+VE_ENUM(::Veng::GamepadButton, 0xA40829295182994CULL)
+VE_ENUMERATOR(A)
+VE_ENUMERATOR(B)
+VE_ENUMERATOR(X)
+VE_ENUMERATOR(Y)
+VE_ENUMERATOR(LeftBumper)
+VE_ENUMERATOR(RightBumper)
+VE_ENUMERATOR(Back)
+VE_ENUMERATOR(Start)
+VE_ENUMERATOR(Guide)
+VE_ENUMERATOR(LeftThumb)
+VE_ENUMERATOR(RightThumb)
+VE_ENUMERATOR(DpadUp)
+VE_ENUMERATOR(DpadRight)
+VE_ENUMERATOR(DpadDown)
+VE_ENUMERATOR(DpadLeft)
+VE_ENUM_END();
+
+VE_ENUM(::Veng::GamepadAxis, 0x512AC8C48915CA9EULL)
+VE_ENUMERATOR(LeftX)
+VE_ENUMERATOR(LeftY)
+VE_ENUMERATOR(RightX)
+VE_ENUMERATOR(RightY)
+VE_ENUMERATOR(LeftTrigger)
+VE_ENUMERATOR(RightTrigger)
+VE_ENUM_END();

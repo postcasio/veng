@@ -113,6 +113,15 @@ namespace Veng
         /// @param handler  Invoked with each queued event in arrival order.
         void DrainEvents(const std::function<void(Event&)>& handler);
 
+        /// @brief Polls every present joystick into a slot-indexed GamepadState set.
+        ///
+        /// Fills one GamepadState per slot the span covers, from GLFW's polled gamepad API; a slot
+        /// with no gamepad-mapped pad is left unconnected. The one place GLFW's gamepad state is
+        /// read, so Veng::Input stays backend-free. Called once per frame before the snapshot is
+        /// finalized; connect/disconnect transitions arrive separately as queued events.
+        /// @param states  Slot-indexed output, one entry per joystick slot to poll.
+        void PollGamepads(std::span<GamepadState> states) const;
+
         /// @brief Signals the run loop to exit; sets IsOpen() to false without destroying anything.
         void Close();
 

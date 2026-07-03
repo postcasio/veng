@@ -46,7 +46,11 @@ namespace Veng
         /// @brief The scroll wheel moved.
         MouseScrolled,
         /// @brief The cursor entered or left the window's content area.
-        MouseEntered
+        MouseEntered,
+        /// @brief A gamepad was connected to a slot.
+        GamepadConnected,
+        /// @brief A gamepad was disconnected from a slot.
+        GamepadDisconnected
     };
 
     /// @brief Abstract base for all engine events.

@@ -15,6 +15,7 @@
 #include <Veng/Scene/SceneViewport.h>
 
 #include <algorithm>
+#include <array>
 #include <span>
 
 namespace Veng
@@ -387,6 +388,12 @@ namespace Veng
         {
             m_Window->Update();
             m_Window->DrainEvents([this](Event& event) { m_InputRouter->Dispatch(event); });
+
+            // Poll every joystick slot into the snapshot after BeginFrame's roll: gamepads are
+            // polled per frame, unlike the callback-driven keyboard/mouse folded via DrainEvents.
+            std::array<GamepadState, 16> pads{};
+            m_Window->PollGamepads(pads);
+            m_Input->IngestGamepadStates(pads);
         }
 
         // After the events are forwarded: ImGui's NewFrame consumes them this frame.

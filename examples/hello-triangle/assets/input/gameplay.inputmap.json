@@ -73,6 +73,42 @@
     },
     {
       "source": {
+        "device": "GamepadAxis",
+        "control": 0
+      },
+      "action": "0x74080D78CF763EC4",
+      "axis": "X",
+      "scale": 1.0
+    },
+    {
+      "source": {
+        "device": "GamepadAxis",
+        "control": 1
+      },
+      "action": "0x74080D78CF763EC4",
+      "axis": "Y",
+      "scale": -1.0
+    },
+    {
+      "source": {
+        "device": "GamepadAxis",
+        "control": 2
+      },
+      "action": "0x6DB6F4088653942D",
+      "axis": "X",
+      "scale": 1.0
+    },
+    {
+      "source": {
+        "device": "GamepadAxis",
+        "control": 3
+      },
+      "action": "0x6DB6F4088653942D",
+      "axis": "Y",
+      "scale": 1.0
+    },
+    {
+      "source": {
         "device": "Keyboard",
         "control": 32
       },

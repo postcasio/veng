@@ -15,10 +15,31 @@ namespace Veng
     {
         bool s_GlfwInitialized = false;
 
+        // The joystick callback is a GLFW global with no window argument, so the single-window
+        // engine routes connect/disconnect events through the live window here.
+        Window* s_JoystickEventWindow = nullptr;
+
         void GLFWErrorCallback(int err, const char* message)
         {
             VE_ASSERT(false, "GLFW error ({0}): {1}", err, message);
         }
+
+        // Engine GamepadButton index → GLFW_GAMEPAD_BUTTON_*, in GamepadButton declaration order.
+        constexpr std::array<int, usize(GamepadButton::Count)> GamepadButtonToGlfw{
+            GLFW_GAMEPAD_BUTTON_A,           GLFW_GAMEPAD_BUTTON_B,
+            GLFW_GAMEPAD_BUTTON_X,           GLFW_GAMEPAD_BUTTON_Y,
+            GLFW_GAMEPAD_BUTTON_LEFT_BUMPER, GLFW_GAMEPAD_BUTTON_RIGHT_BUMPER,
+            GLFW_GAMEPAD_BUTTON_BACK,        GLFW_GAMEPAD_BUTTON_START,
+            GLFW_GAMEPAD_BUTTON_GUIDE,       GLFW_GAMEPAD_BUTTON_LEFT_THUMB,
+            GLFW_GAMEPAD_BUTTON_RIGHT_THUMB, GLFW_GAMEPAD_BUTTON_DPAD_UP,
+            GLFW_GAMEPAD_BUTTON_DPAD_RIGHT,  GLFW_GAMEPAD_BUTTON_DPAD_DOWN,
+            GLFW_GAMEPAD_BUTTON_DPAD_LEFT};
+
+        // Engine GamepadAxis index → GLFW_GAMEPAD_AXIS_*, in GamepadAxis declaration order.
+        constexpr std::array<int, usize(GamepadAxis::Count)> GamepadAxisToGlfw{
+            GLFW_GAMEPAD_AXIS_LEFT_X,       GLFW_GAMEPAD_AXIS_LEFT_Y,
+            GLFW_GAMEPAD_AXIS_RIGHT_X,      GLFW_GAMEPAD_AXIS_RIGHT_Y,
+            GLFW_GAMEPAD_AXIS_LEFT_TRIGGER, GLFW_GAMEPAD_AXIS_RIGHT_TRIGGER};
     }
 
     Window::Window(const WindowInfo& info)
@@ -161,6 +182,28 @@ namespace Veng
                 window->m_Events.push_back(CreateUnique<MouseScrolledEvent>(offset));
             });
 
+        // The joystick callback is a GLFW global; route its connect/disconnect through this window.
+        s_JoystickEventWindow = this;
+        glfwSetJoystickCallback(
+            [](int jid, int event)
+            {
+                if (s_JoystickEventWindow == nullptr)
+                {
+                    return;
+                }
+                const auto id = static_cast<GamepadId>(jid);
+                if (event == GLFW_CONNECTED)
+                {
+                    s_JoystickEventWindow->m_Events.push_back(
+                        CreateUnique<GamepadConnectedEvent>(id));
+                }
+                else if (event == GLFW_DISCONNECTED)
+                {
+                    s_JoystickEventWindow->m_Events.push_back(
+                        CreateUnique<GamepadDisconnectedEvent>(id));
+                }
+            });
+
         {
             int width, height;
             glfwGetFramebufferSize(m_Handle, &width, &height);
@@ -246,6 +289,12 @@ namespace Veng
     // veng is single-window, so window destruction terminates GLFW.
     Window::~Window()
     {
+        if (s_JoystickEventWindow == this)
+        {
+            glfwSetJoystickCallback(nullptr);
+            s_JoystickEventWindow = nullptr;
+        }
+
         if (m_Handle)
         {
             glfwDestroyWindow(m_Handle);
@@ -254,6 +303,33 @@ namespace Veng
 
         glfwTerminate();
         s_GlfwInitialized = false;
+    }
+
+    void Window::PollGamepads(const std::span<GamepadState> states) const
+    {
+        for (usize slot = 0; slot < states.size(); ++slot)
+        {
+            GamepadState& state = states[slot];
+            state = GamepadState{};
+
+            const auto jid = static_cast<int>(slot);
+            GLFWgamepadstate raw;
+            if (glfwJoystickPresent(jid) != GLFW_TRUE ||
+                glfwGetGamepadState(jid, &raw) != GLFW_TRUE)
+            {
+                continue;
+            }
+
+            state.Connected = true;
+            for (usize button = 0; button < state.Buttons.size(); ++button)
+            {
+                state.Buttons[button] = raw.buttons[GamepadButtonToGlfw[button]] == GLFW_PRESS;
+            }
+            for (usize axis = 0; axis < state.Axes.size(); ++axis)
+            {
+                state.Axes[axis] = raw.axes[GamepadAxisToGlfw[axis]];
+            }
+        }
     }
 
     void Window::SpinUntilValidSize()

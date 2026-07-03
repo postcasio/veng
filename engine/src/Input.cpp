@@ -12,6 +12,13 @@ namespace Veng
         m_PreviousKeys = m_Keys;
         m_PreviousMouseButtons = m_MouseButtons;
 
+        // Roll the pad button bits before this frame's poll overwrites the current state, so the
+        // pressed-edge query compares this frame's poll against last frame's.
+        for (usize slot = 0; slot < MaxGamepads; ++slot)
+        {
+            m_PreviousGamepadButtons[slot] = m_Gamepads[slot].Buttons;
+        }
+
         // Deltas are per-frame: the router accumulates this frame's move/scroll events
         // into them via ApplyEvent after this roll.
         m_MouseDelta = {0, 0};
@@ -157,5 +164,61 @@ namespace Veng
     bool Input::IsMouseCaptured() const
     {
         return m_Window != nullptr && m_Window->IsMouseCaptured();
+    }
+
+    void Input::IngestGamepadStates(const std::span<const GamepadState> states)
+    {
+        m_ConnectedGamepads.clear();
+        for (usize slot = 0; slot < MaxGamepads; ++slot)
+        {
+            m_Gamepads[slot] = slot < states.size() ? states[slot] : GamepadState{};
+            if (m_Gamepads[slot].Connected)
+            {
+                m_ConnectedGamepads.push_back(static_cast<GamepadId>(slot));
+            }
+        }
+    }
+
+    const GamepadState* Input::PadFor(const GamepadId id) const
+    {
+        const auto slot = static_cast<usize>(id);
+        if (slot >= MaxGamepads || !m_Gamepads[slot].Connected)
+        {
+            return nullptr;
+        }
+        return &m_Gamepads[slot];
+    }
+
+    bool Input::IsGamepadConnected(const GamepadId id) const
+    {
+        return PadFor(id) != nullptr;
+    }
+
+    bool Input::IsGamepadButtonDown(const GamepadId id, const GamepadButton button) const
+    {
+        const GamepadState* pad = PadFor(id);
+        return pad != nullptr && pad->Buttons[static_cast<usize>(button)];
+    }
+
+    bool Input::WasGamepadButtonPressed(const GamepadId id, const GamepadButton button) const
+    {
+        const GamepadState* pad = PadFor(id);
+        if (pad == nullptr)
+        {
+            return false;
+        }
+        const auto index = static_cast<usize>(button);
+        return pad->Buttons[index] && !m_PreviousGamepadButtons[static_cast<usize>(id)][index];
+    }
+
+    f32 Input::GetGamepadAxis(const GamepadId id, const GamepadAxis axis) const
+    {
+        const GamepadState* pad = PadFor(id);
+        return pad != nullptr ? pad->Axes[static_cast<usize>(axis)] : 0.0f;
+    }
+
+    std::span<const GamepadId> Input::ConnectedGamepads() const
+    {
+        return m_ConnectedGamepads;
     }
 }

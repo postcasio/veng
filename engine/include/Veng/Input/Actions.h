@@ -43,10 +43,6 @@ namespace Veng
     };
 
     /// @brief Which raw device a binding reads.
-    ///
-    /// The Gamepad* arms are forward vocabulary: Veng::Input carries no gamepad state yet, so
-    /// the resolver reads them as neutral until the device layer lands. Keyboard and mouse are
-    /// live now.
     enum class InputDeviceType : u32
     {
         /// @brief A keyboard key (Control is a key code).
@@ -55,9 +51,9 @@ namespace Veng
         MouseButton,
         /// @brief A mouse motion axis (Control selects the axis).
         MouseAxis,
-        /// @brief A gamepad button (forward vocabulary; read as neutral).
+        /// @brief A gamepad button (Control is a GamepadButton index).
         GamepadButton,
-        /// @brief A gamepad analog axis (forward vocabulary; read as neutral).
+        /// @brief A gamepad analog axis (Control is a GamepadAxis index).
         GamepadAxis
     };
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Veng/Veng.h>
+#include <Veng/Input.h>
 #include <Veng/Input/Actions.h>
 
 namespace Veng
@@ -11,12 +12,14 @@ namespace Veng
     ///
     /// The thin bridge InputMappingSystem feeds ResolveActions: it reads only this tick's
     /// state from the borrowed Veng::Input, so the resolver derives action phase from the
-    /// previous ActionState it is threaded, not from any previous-raw query. A gamepad
-    /// source reads neutral (Veng::Input carries no gamepad state yet). Public so the
-    /// editor's input-mapping preview reuses the identical read surface.
+    /// previous ActionState it is threaded, not from any previous-raw query. A gamepad source
+    /// reads the single designated pad — the first connected GamepadId — so single-seat play is
+    /// controller-drivable. Public so the editor's input-mapping preview reuses the identical
+    /// read surface.
     ///
     /// Mouse-axis Control codes are MouseAxisX / MouseAxisY (the pointer delta components);
-    /// keyboard/mouse-button codes are the raw Key / MouseButton values a binding stores.
+    /// keyboard/mouse-button codes are the raw Key / MouseButton values a binding stores; gamepad
+    /// Control codes are the GamepadButton / GamepadAxis indices.
     class RawInput final : public RawInputView
     {
     public:
@@ -36,17 +39,20 @@ namespace Veng
 
         /// @brief Whether a device button is down this tick.
         /// @param device  The device the button belongs to.
-        /// @param code    The button index.
-        /// @return True while the button is held; false for a gamepad source (no device state yet).
+        /// @param code    The button index (a GamepadButton for a gamepad source).
+        /// @return True while the button is held; a gamepad source reads the designated pad.
         [[nodiscard]] bool IsButtonDown(InputDeviceType device, u32 code) const override;
 
         /// @brief The value of a device axis this tick.
         /// @param device  The device the axis belongs to.
-        /// @param code    The axis index (MouseAxisX / MouseAxisY for the mouse).
-        /// @return The axis value; zero for a gamepad source (no device state yet).
+        /// @param code    The axis index (MouseAxisX / MouseAxisY for the mouse, a GamepadAxis for a pad).
+        /// @return The axis value; a gamepad source reads the designated pad.
         [[nodiscard]] f32 GetAxis(InputDeviceType device, u32 code) const override;
 
     private:
+        /// @brief The designated pad the gamepad arms read: the first connected slot, or None.
+        [[nodiscard]] GamepadId DesignatedGamepad() const;
+
         /// @brief The borrowed input snapshot read for this tick's raw state.
         const Input& m_Input;
     };

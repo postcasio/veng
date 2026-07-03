@@ -476,6 +476,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/input_events.cpp
             tests/unit/input_router.cpp
             tests/unit/action_resolve.cpp
+            tests/unit/gamepad_adapter.cpp
             tests/unit/light_packing.cpp
             tests/unit/shader_interface.cpp
             tests/unit/transient_allocation.cpp
