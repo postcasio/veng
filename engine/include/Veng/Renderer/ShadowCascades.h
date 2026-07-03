@@ -22,6 +22,15 @@ namespace Veng::Renderer
         /// @brief Per-cascade world → light-clip matrices; only [0, Count) are valid.
         std::array<mat4, MaxCascades> ViewProj;
 
+        /// @brief Per-cascade world → light-clip matrices for caster culling; [0, Count) valid.
+        ///
+        /// The light-axis near plane is extended toward the light (by the scene bound, or the
+        /// fixed pullback when it is empty) so an off-screen caster between the light and the
+        /// slice survives the cull. With PancakeNear the render ViewProj keeps a tight near and
+        /// depth clamp flattens those casters onto it; without PancakeNear the two matrices are
+        /// identical.
+        std::array<mat4, MaxCascades> CullViewProj;
+
         /// @brief Each cascade's far distance in view space.
         ///
         /// The lighting pass selects a cascade by comparing the fragment's view depth
@@ -29,6 +38,19 @@ namespace Veng::Renderer
         /// MaxCascades == 4 this array packs directly into the ShadowConstants
         /// CascadeSplits vec4.
         std::array<f32, MaxCascades> SplitFar;
+
+        /// @brief Each cascade's world units per shadow-map texel; [0, Count) valid.
+        ///
+        /// The exact snap increment the cascade's light-space box was quantized to. The
+        /// lighting pass scales its normal-offset and depth bias by it, so bias grows with
+        /// cascade coarseness instead of being recovered approximately from the matrix.
+        std::array<f32, MaxCascades> TexelWorldSize;
+
+        /// @brief Each cascade's render ortho depth extent (far - near) in world units.
+        ///
+        /// Converts a world-space depth bias into the NDC-z units the shadow compare runs
+        /// in: one NDC-z unit spans this many world units. [0, Count) valid.
+        std::array<f32, MaxCascades> DepthRange;
 
         /// @brief Number of valid cascades; clamp(settings.Count, 1, MaxCascades).
         u32 Count = 0;
@@ -43,6 +65,21 @@ namespace Veng::Renderer
         f32 Lambda = 0.85f;
         /// @brief Per-cascade tile edge in texels; drives texel snapping.
         u32 Resolution = 1024;
+        /// @brief View-space cap on the shadowed range; 0 disables the cap.
+        ///
+        /// The fitted far split is clamped to this distance, so a distant camera far plane
+        /// (or a scene larger than shadows usefully cover) cannot spread the cascades thin.
+        /// The lighting pass fades shadows out approaching the last split, so the cap reads
+        /// as a fade, not a hard edge.
+        f32 MaxDistance = 0.0f;
+        /// @brief Keep each cascade's ortho near tight to its slice for depth-clamped rendering.
+        ///
+        /// Requires the shadow pipeline to rasterize with depth clamp enabled: casters between
+        /// the light and the slice fall outside the tight near plane and are pancaked onto it
+        /// instead of clipped. Culling uses the extended CullViewProj either way. Keeping the
+        /// depth range tight makes NDC-z bias resolution independent of the scene's extent
+        /// along the light.
+        bool PancakeNear = false;
     };
 
     /// @brief Computes per-cascade fit-to-frustum light matrices.
@@ -51,8 +88,10 @@ namespace Veng::Renderer
     /// empty) does two things: it clamps the split range to the view-depth extent of the
     /// camera-frustum ∩ scene-bound intersection, so the cascades fit only the visible
     /// receivers rather than the camera's full clip range or the scene's full depth, and
-    /// it extends each cascade's near plane toward the light so off-screen casters are
-    /// included.
+    /// it extends each cascade's cull matrix's near plane toward the light so off-screen
+    /// casters are included (the render matrix too, unless settings.PancakeNear keeps it
+    /// tight for a depth-clamped shadow pass). settings.MaxDistance additionally caps the
+    /// fitted far split.
     /// @param camera       The view camera that defines the split frustum.
     /// @param lightDir     World-space direction the light travels (toward receivers).
     /// @param sceneBounds  World-space scene bound; may be empty.

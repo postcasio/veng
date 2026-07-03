@@ -275,5 +275,11 @@ namespace Veng::Renderer
         /// Sampling an ASTC LDR block-compressed image is legal only with the feature enabled; set
         /// in CreateDevice from the physical device's reported support.
         bool AstcSupported = false;
+
+        /// @brief True when depthClamp was supported and enabled at device creation.
+        ///
+        /// Gates GraphicsPipelineInfo::DepthClampEnable (shadow pancaking); set in CreateDevice
+        /// from the physical device's reported support.
+        bool DepthClampSupported = false;
     };
 }

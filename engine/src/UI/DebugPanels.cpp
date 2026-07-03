@@ -226,6 +226,12 @@ namespace Veng::UI
             changed = true;
         }
 
+        if (UI::Drag("Max shadow distance", settings.MaxShadowDistance,
+                     {.Speed = 1.0f, .Min = 0.0f, .Max = 10000.0f}))
+        {
+            changed = true;
+        }
+
         changed |= UI::Checkbox("Punctual shadows", settings.PunctualShadows);
 
         i32 punctualResolution = static_cast<i32>(settings.PunctualShadowResolution);

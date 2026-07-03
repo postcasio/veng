@@ -578,6 +578,11 @@ namespace Veng::Renderer
         return m_Native->AstcSupported;
     }
 
+    bool Context::IsDepthClampSupported() const
+    {
+        return m_Native->DepthClampSupported;
+    }
+
     bool Context::IsGpuTimingSupported() const
     {
         return m_GpuTimingSupported;
@@ -1114,6 +1119,11 @@ namespace Veng::Renderer
         const bool astcSupported = features2.features.textureCompressionASTC_LDR;
         AstcSupported = astcSupported;
         features2.features.textureCompressionASTC_LDR = astcSupported ? vk::True : vk::False;
+
+        // depthClamp gates GraphicsPipelineInfo::DepthClampEnable (shadow pancaking). The
+        // queried value already reflects support and is passed through to createDevice
+        // unchanged; record it so IsDepthClampSupported() reports the enabled state.
+        DepthClampSupported = features2.features.depthClamp;
 
         // Timeline semaphores are required for the async-upload sync channel.
         // Fatal-assert if the device lacks support before enabling the feature.

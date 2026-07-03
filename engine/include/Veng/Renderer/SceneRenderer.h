@@ -279,6 +279,15 @@ namespace Veng::Renderer
         /// Recompile-safe: it changes the cascade fit, not the atlas size or topology.
         f32 CascadeSplitLambda = 0.85f;
 
+        /// @brief View-space cap on the directional-shadow range, in world units; 0 = uncapped.
+        ///
+        /// The cascade far split is fitted to the visible scene and then clamped to this
+        /// distance, so a large scene (or a distant camera far plane) cannot spread the
+        /// cascades thin — texel density near the camera is preserved and shadows fade out
+        /// approaching the cap rather than ending at a hard edge. Recompile-safe: it changes
+        /// the cascade fit, not the atlas size or topology.
+        f32 MaxShadowDistance = 100.0f;
+
         /// @brief Whether screen-space reflections run.
         ///
         /// A topology change: it inserts the SSR min-Z reduction, trace, blur, and composite
@@ -533,6 +542,14 @@ namespace Veng::Renderer
         /// lighting pass reads the tile-remapped matrices from the set-1 ShadowConstants buffer.
         /// A caller's values are overwritten.
         std::array<mat4, MaxCascades> CascadeViewProj{};
+        /// @brief RAW per-cascade caster-cull transforms this frame; near-extended toward the light.
+        ///
+        /// The shadow pass culls casters against these (a caster between the light and the
+        /// slice must survive) but renders through CascadeViewProj, whose tight near plane the
+        /// depth-clamped pipeline pancakes those casters onto. Identical to CascadeViewProj on
+        /// a device without depth clamp. Only [0, CascadeCount) are valid; a caller's values
+        /// are overwritten.
+        std::array<mat4, MaxCascades> CascadeCullViewProj{};
         /// @brief Number of valid entries in CascadeViewProj; set by the renderer each Execute.
         u32 CascadeCount = 0;
 

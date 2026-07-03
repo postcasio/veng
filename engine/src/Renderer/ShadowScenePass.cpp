@@ -118,6 +118,10 @@ namespace Veng::Renderer
                 .CullMode = CullMode::Front,
                 .DepthTestEnable = true,
                 .DepthWriteEnable = true,
+                // Pancake casters nearer than the cascade's tight near plane onto it; must
+                // match ComputeCascades' PancakeNear so the cull-only near extension is
+                // rasterizable. False on both sides when the device lacks depthClamp.
+                .DepthClampEnable = m_Context.IsDepthClampSupported(),
             });
 
         BuildSkinnedPipeline(assets, vertexBufferLayout.has_value());
@@ -179,6 +183,7 @@ namespace Veng::Renderer
                            .CullMode = CullMode::Front,
                            .DepthTestEnable = true,
                            .DepthWriteEnable = true,
+                           .DepthClampEnable = m_Context.IsDepthClampSupported(),
                        });
     }
 
@@ -248,11 +253,12 @@ namespace Veng::Renderer
 
                         const mat4 lightViewProj = view.CascadeViewProj[k];
 
-                        // Cull against the cascade's own light frustum: an off-screen mesh
-                        // can still cast a shadow into view; CascadeViewProj[k] is fit to the
-                        // camera slice and extended toward the light, so only what falls
-                        // completely outside the cascade's volume is dropped.
-                        const Frustum cascadeFrustum = Frustum::FromViewProjection(lightViewProj);
+                        // Cull against the near-extended cull matrix, not the render matrix:
+                        // an off-screen caster between the light and the slice must survive
+                        // the cull so the depth-clamped rasterization can pancake it onto the
+                        // render matrix's tight near plane.
+                        const Frustum cascadeFrustum =
+                            Frustum::FromViewProjection(view.CascadeCullViewProj[k]);
 
                         m_CullScratch.clear();
                         if (m_FrustumCull)

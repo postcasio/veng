@@ -13,6 +13,8 @@ struct ShadowConstants
     float4x4 CascadeViewProj[MaxCascades]; // tile-remap baked in
     float4   CascadeSplits;                // per-cascade view-space far distance
     float4   ShadowParams;                 // x 1/tileRes, y blend-band, z count, w enabled
+    float4   CascadeTexelSize;             // per-cascade world units per shadow texel
+    float4   CascadeDepthRange;            // per-cascade render ortho depth extent, world units
 };
 
 [[vk::binding(0, 1)]] Texture2D g_ShadowAtlas;
@@ -63,23 +65,6 @@ uint SelectCascade(float viewDepth, uint count)
     return count;
 }
 
-// The world-units-per-texel of a cascade, recovered from the cascade's clip-space
-// extent: a cascade's CascadeViewProj maps its world slice to one atlas tile, so the
-// world width covered by the tile is 2 / |column-scale of the projection| folded
-// over the tile fraction. Approximated from the matrix's X basis length, which scales
-// inversely with the cascade's world extent — coarser far cascades return a larger
-// value and so take more bias.
-float CascadeWorldPerTexel(uint cascade, uint count)
-{
-    // The matrix's first column length (the NDC-x per world-x rate) shrinks as the
-    // cascade covers more world; its reciprocal grows with the cascade's world span.
-    float3 xBasis = float3(g_Shadow.CascadeViewProj[cascade][0].x,
-                           g_Shadow.CascadeViewProj[cascade][1].x,
-                           g_Shadow.CascadeViewProj[cascade][2].x);
-    float ndcPerWorld = max(length(xBasis), 1e-6);
-    return 1.0 / ndcPerWorld;
-}
-
 // Project worldPos by a tile-remapped view-proj and PCF-SampleCmp the atlas tile it
 // lands in. The matrix bakes in the tile UV remap (cascade or punctual record), so
 // the projected NDC.xy already lies in the tile's atlas window. The reference depth
@@ -121,8 +106,11 @@ float SampleAtlasTile(Texture2D atlas, SamplerComparisonState cmp, float4x4 tile
     return visibility / weight;
 }
 
-// Sample cascade k's atlas tile with a PCF grid of hardware comparison taps. The
-// reference depth carries a per-cascade-scaled, slope-scaled bias.
+// Sample cascade k's atlas tile with a PCF grid of hardware comparison taps. Acne is
+// held off by two texel-proportional terms, both in world units so they track cascade
+// coarseness and stay independent of the light-space depth range: a normal-offset that
+// displaces the sample point off the surface, and a depth bias converted to the
+// compare's NDC-z through the cascade's actual depth extent.
 float SampleCascade(float3 worldPos, float3 N, float3 L, uint cascade, uint count)
 {
     float texel = g_Shadow.ShadowParams.x; // 1 / tileRes (atlas-relative texel size)
@@ -135,17 +123,23 @@ float SampleCascade(float3 worldPos, float3 N, float3 L, uint cascade, uint coun
     float2 tileMin = float2(float(cascade % columns), float(cascade / columns)) * tileSize;
     float2 tileMax = tileMin + tileSize;
 
-    // Per-cascade bias: coarser far cascades cover more world per texel and need more
-    // depth bias to stay acne-free. A slope-scaled term grows as the surface turns
-    // away from the light. The scale folds the cascade's world-per-texel in.
     float nDotL = saturate(dot(N, L));
-    float worldPerTexel = CascadeWorldPerTexel(cascade, count);
     float slope = clamp(1.0 - nDotL, 0.0, 1.0);
-    float bias = (0.0008 + 0.0040 * slope) * (worldPerTexel * 64.0);
-    bias = clamp(bias, 0.0002, 0.01);
+    float worldPerTexel = g_Shadow.CascadeTexelSize[cascade];
+
+    // Normal-offset: a PCF tap up to ShadowPcfRadius+1 texels away can land on a
+    // depth texel whose world position differs by that many texels across the surface;
+    // stepping the sample point one-or-so texels off the surface keeps the compare on
+    // the lit side. Grows toward grazing where a texel spans more surface depth.
+    float3 samplePos = worldPos + N * (worldPerTexel * (1.0 + 2.0 * slope));
+
+    // Depth bias: a fraction of a texel of world depth, converted to the NDC-z the
+    // hardware compare runs in through this cascade's real depth extent.
+    float biasWorld = worldPerTexel * (0.5 + 1.0 * slope);
+    float bias = biasWorld / max(g_Shadow.CascadeDepthRange[cascade], 1e-4);
 
     return SampleAtlasTile(g_ShadowAtlas, g_ShadowSampler, g_Shadow.CascadeViewProj[cascade],
-                           worldPos, bias, float2(texel, texel), tileMin, tileMax);
+                           samplePos, bias, float2(texel, texel), tileMin, tileMax);
 }
 
 // Cascaded directional-shadow visibility via hardware SampleCmp. Selects the cascade
@@ -187,6 +181,14 @@ float DirectionalShadowVisibility(float3 worldPos, float3 N, float3 L, float vie
             visibility = lerp(visibility, nextVisibility, t);
         }
     }
+
+    // Distance fade: shadows dissolve over the last tenth of the shadowed range, so
+    // the range cap (MaxShadowDistance, or the fitted far) reads as a gradient rather
+    // than a hard edge where the last cascade ends.
+    float lastSplit = g_Shadow.CascadeSplits[count - 1];
+    float fadeStart = lastSplit * 0.9;
+    visibility = lerp(visibility, 1.0,
+                      saturate((viewDepth - fadeStart) / max(lastSplit - fadeStart, 1e-4)));
 
     return visibility;
 }

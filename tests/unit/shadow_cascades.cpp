@@ -325,6 +325,111 @@ TEST_CASE("ComputeCascades: split range fits the frustum-visible slab, not the w
     CHECK(data.SplitFar[0] > 25.0f);
 }
 
+TEST_CASE("ComputeCascades: MaxDistance caps the far split")
+{
+    const CameraView camera = MakeTestCamera(0.1f, 1000.0f);
+    const vec3 lightDir(0.3f, -1.0f, 0.2f);
+
+    const CascadeData uncapped =
+        ComputeCascades(camera, lightDir, AABB::Empty(), CascadeSettings{});
+    CHECK(uncapped.SplitFar[uncapped.Count - 1] == camera.GetFar());
+
+    const CascadeData capped =
+        ComputeCascades(camera, lightDir, AABB::Empty(), CascadeSettings{.MaxDistance = 100.0f});
+    CHECK(capped.SplitFar[capped.Count - 1] == doctest::Approx(100.0f));
+    for (u32 i = 1; i < capped.Count; ++i)
+    {
+        CHECK(capped.SplitFar[i] > capped.SplitFar[i - 1]);
+    }
+
+    // A cap the visible range already sits inside changes nothing.
+    const CascadeData slack =
+        ComputeCascades(camera, lightDir, AABB::Empty(), CascadeSettings{.MaxDistance = 5000.0f});
+    CHECK(slack.SplitFar[slack.Count - 1] == camera.GetFar());
+
+    // A degenerate cap at or below the near plane is ignored rather than asserting.
+    const CascadeData tiny =
+        ComputeCascades(camera, lightDir, AABB::Empty(), CascadeSettings{.MaxDistance = 0.05f});
+    CHECK(tiny.SplitFar[tiny.Count - 1] == camera.GetFar());
+}
+
+TEST_CASE("ComputeCascades: without PancakeNear the cull matrix equals the render matrix")
+{
+    const CameraView camera = MakeTestCamera();
+    const AABB tall{.Min = vec3(-20.0f, -1.0f, -20.0f), .Max = vec3(20.0f, 30.0f, 20.0f)};
+    const CascadeData data =
+        ComputeCascades(camera, vec3(0.3f, -1.0f, 0.2f), tall, CascadeSettings{});
+
+    for (u32 k = 0; k < data.Count; ++k)
+    {
+        for (int c = 0; c < 4; ++c)
+        {
+            for (int r = 0; r < 4; ++r)
+            {
+                CHECK(data.ViewProj[k][c][r] == data.CullViewProj[k][c][r]);
+            }
+        }
+    }
+}
+
+TEST_CASE("ComputeCascades: PancakeNear keeps the render near tight and the cull near extended")
+{
+    const CameraView camera = MakeTestCamera(0.1f, 100.0f);
+    const vec3 lightDir(0.3f, -1.0f, 0.2f);
+
+    // A bound tall along the light axis: a caster high above the frustum slice.
+    const AABB tall{.Min = vec3(-20.0f, -1.0f, -20.0f), .Max = vec3(20.0f, 30.0f, 20.0f)};
+    const CascadeData pancaked =
+        ComputeCascades(camera, lightDir, tall, CascadeSettings{.PancakeNear = true});
+    const CascadeData extended = ComputeCascades(camera, lightDir, tall, CascadeSettings{});
+
+    // The high caster falls before the pancaked render near (ndc.z < 0 — the depth
+    // clamp flattens it at raster time) but inside the cull matrix's depth range.
+    const vec3 highCaster(0.0f, 25.0f, 0.0f);
+    const vec4 renderClip = pancaked.ViewProj[0] * vec4(highCaster, 1.0f);
+    CHECK(vec3(renderClip).z / renderClip.w < 0.0f);
+    const vec4 cullClip = pancaked.CullViewProj[0] * vec4(highCaster, 1.0f);
+    const f32 cullZ = vec3(cullClip).z / cullClip.w;
+    CHECK(cullZ >= 0.0f);
+    CHECK(cullZ <= 1.0f);
+
+    // The tight render range is what pancaking buys: a fraction of the extended one.
+    CHECK(pancaked.DepthRange[0] < extended.DepthRange[0]);
+
+    // XY fit is untouched: only the near plane differs between the two modes. The
+    // NDC-x-per-world rate is the matrix's first row (glm [c][0] across columns).
+    const auto xRow = [](const mat4& m) { return glm::length(vec3(m[0][0], m[1][0], m[2][0])); };
+    CHECK(xRow(pancaked.ViewProj[0]) == doctest::Approx(xRow(extended.ViewProj[0])));
+}
+
+TEST_CASE("ComputeCascades: TexelWorldSize and DepthRange are positive and texel-consistent")
+{
+    const CameraView camera = MakeTestCamera(0.1f, 100.0f);
+    const CascadeSettings settings{.Resolution = 1024, .PancakeNear = true};
+    const CascadeData data =
+        ComputeCascades(camera, vec3(0.3f, -1.0f, 0.2f), AABB::Empty(), settings);
+
+    for (u32 k = 0; k < data.Count; ++k)
+    {
+        CHECK(data.TexelWorldSize[k] > 0.0f);
+        CHECK(data.DepthRange[k] > 0.0f);
+        // The snapped ortho width is the slice diameter plus the two-texel guard band;
+        // world-per-texel times the resolution recovers it from the projection scale
+        // (orthoZO: proj[0][0] = 2/width, so width = 2/|X row|, row 0 = glm [c][0]).
+        const f32 width = 2.0f / glm::length(vec3(data.ViewProj[k][0][0], data.ViewProj[k][1][0],
+                                                  data.ViewProj[k][2][0]));
+        const f32 expectedWidth =
+            data.TexelWorldSize[k] * (static_cast<f32>(settings.Resolution) + 2.0f);
+        CHECK(width == doctest::Approx(expectedWidth).epsilon(0.001));
+    }
+
+    // Cascades cover progressively more world per texel.
+    for (u32 k = 1; k < data.Count; ++k)
+    {
+        CHECK(data.TexelWorldSize[k] > data.TexelWorldSize[k - 1]);
+    }
+}
+
 TEST_CASE("ComputeShadowAtlasGrid: tile layout scales with cascade count")
 {
     // 1 -> 1x1, 2 -> 2x1, 3/4 -> 2x2; counts clamp to [1, MaxCascades].

@@ -148,6 +148,14 @@ namespace Veng::Renderer
         /// ASTC-cooked texture there.
         [[nodiscard]] bool IsAstcSupported() const;
 
+        /// @brief Returns true when rasterization depth clamping can be enabled on a pipeline.
+        ///
+        /// True only when depthClamp was supported by the physical device and was therefore
+        /// enabled at device creation. Gates GraphicsPipelineInfo::DepthClampEnable — the shadow
+        /// pass uses it to pancake casters nearer than a cascade's tight near plane onto it
+        /// instead of extending the depth range to the scene bound.
+        [[nodiscard]] bool IsDepthClampSupported() const;
+
         /// @brief Returns true when the graphics queue can timestamp GPU work.
         ///
         /// True when the graphics queue family reports a non-zero timestampValidBits and the

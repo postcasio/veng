@@ -46,6 +46,12 @@ namespace Veng::Renderer
         bool DepthWriteEnable = false;
         /// @brief Depth comparison operator.
         CompareOp DepthCompareOp = CompareOp::LessOrEqual;
+        /// @brief Clamp rasterized depth to the viewport range instead of clipping at near/far.
+        ///
+        /// Legal only when Context::IsDepthClampSupported() is true. The shadow pass uses it
+        /// to pancake casters nearer than a cascade's tight near plane onto it, keeping the
+        /// shadow map's depth resolution independent of the scene's extent along the light.
+        bool DepthClampEnable = false;
     };
 
     /// @brief A compiled Vulkan graphics pipeline.

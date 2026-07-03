@@ -644,16 +644,17 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         REQUIRE_FALSE(casterBounds.IsEmpty());
         CHECK_FALSE(Intersects(cameraFrustum, casterBounds));
 
-        // But it IS kept by some cascade frustum — the cascades are fit to the camera
-        // slice and extended toward the light, so the high light-ward caster lands in
-        // at least one cascade's frustum and survives the shadow pass's cull.
-        const CascadeData cascades =
-            ComputeCascades(shadowCamera, lightTravel, sceneBounds,
-                            {.Count = MaxCascades, .Lambda = 0.85f, .Resolution = 1024});
+        // But it IS kept by some cascade's CULL frustum — the matrix the shadow pass
+        // culls with is near-extended toward the light, so the high light-ward caster
+        // survives even under PancakeNear, where the render matrix's tight near would
+        // exclude it (depth clamp pancakes it at raster time instead).
+        const CascadeData cascades = ComputeCascades(
+            shadowCamera, lightTravel, sceneBounds,
+            {.Count = MaxCascades, .Lambda = 0.85f, .Resolution = 1024, .PancakeNear = true});
         bool keptBySomeCascade = false;
         for (u32 k = 0; k < cascades.Count; ++k)
         {
-            const Frustum cascadeFrustum = Frustum::FromViewProjection(cascades.ViewProj[k]);
+            const Frustum cascadeFrustum = Frustum::FromViewProjection(cascades.CullViewProj[k]);
             if (Intersects(cascadeFrustum, casterBounds))
             {
                 keptBySomeCascade = true;
@@ -704,9 +705,10 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                             {.Count = MaxCascades, .Lambda = 0.85f, .Resolution = 1024});
         REQUIRE(cascades.Count >= 2);
 
-        const Frustum nearCascade = Frustum::FromViewProjection(cascades.ViewProj[0]);
+        // The cull matrices are what the shadow pass drops casters by.
+        const Frustum nearCascade = Frustum::FromViewProjection(cascades.CullViewProj[0]);
         const Frustum farCascade =
-            Frustum::FromViewProjection(cascades.ViewProj[cascades.Count - 1]);
+            Frustum::FromViewProjection(cascades.CullViewProj[cascades.Count - 1]);
 
         // The far-down-range cube lies beyond cascade 0's tight near slice but inside
         // the far cascade's wide slice — culled from one cascade, kept by the other.

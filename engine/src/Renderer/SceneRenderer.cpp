@@ -445,11 +445,13 @@ namespace Veng::Renderer
         {
             mat4 CascadeViewProj[MaxCascades]; // 256 — tile-remap baked in (for the sample)
             vec4 CascadeSplits;                // 16  — per-cascade view-space far distance
-            vec4 ShadowParams; // 16  — x 1/tileRes, y blend-band, z count, w enabled
+            vec4 ShadowParams;                 // 16 — x 1/tileRes, y blend-band, z count, w enabled
+            vec4 CascadeTexelSize;             // 16 — per-cascade world units per shadow texel
+            vec4 CascadeDepthRange; // 16 — per-cascade render ortho depth extent, world units
         };
 
-        static_assert(sizeof(ShadowConstantsBlock) == 288,
-                      "ShadowConstantsBlock must be the std140-packed 288-byte block");
+        static_assert(sizeof(ShadowConstantsBlock) == 320,
+                      "ShadowConstantsBlock must be the std140-packed 320-byte block");
 
         // Set 1 binding 3, ring-buffered dynamic uniform. Separate from ShadowConstantsBlock
         // so the directional block's layout is unchanged when punctual records are added.
@@ -4704,13 +4706,17 @@ namespace Veng::Renderer
         m_Broadphase.Sync(view.World);
         const AABB sceneBounds = m_Broadphase.GetSceneBounds();
 
-        // sceneBounds extends only the per-cascade light-axis near plane (off-screen casters);
-        // the cascade XY extent comes from the camera frustum slice.
+        // sceneBounds extends only the per-cascade light-axis cull near plane (off-screen
+        // casters); the cascade XY extent comes from the camera frustum slice. With depth
+        // clamp the render near stays tight and the shadow pipelines pancake nearer casters
+        // onto it — PancakeNear must match the pipelines' DepthClampEnable.
         const CascadeData cascades =
             ComputeCascades(view.Camera, packed.DirectionalTravel, sceneBounds,
                             {.Count = m_Settings.CascadeCount,
                              .Lambda = m_Settings.CascadeSplitLambda,
-                             .Resolution = m_Settings.ShadowResolution});
+                             .Resolution = m_Settings.ShadowResolution,
+                             .MaxDistance = m_Settings.MaxShadowDistance,
+                             .PancakeNear = m_Context.IsDepthClampSupported()});
 
         // Thread the raw (non-tile-remapped) cascade matrices to the shadow pass,
         // which renders each cascade with its viewport placing it in the atlas tile.
@@ -4718,6 +4724,7 @@ namespace Veng::Renderer
         resolvedView.RenderExtent = validExtent;
         resolvedView.LightCount = packed.LightCount;
         resolvedView.CascadeViewProj = cascades.ViewProj;
+        resolvedView.CascadeCullViewProj = cascades.CullViewProj;
         resolvedView.CascadeCount = cascades.Count;
         resolvedView.PunctualShadows = packed.PunctualRecords;
         resolvedView.PunctualShadowCount = packed.PunctualCount;
@@ -4815,6 +4822,8 @@ namespace Veng::Renderer
             shadowConstants.CascadeViewProj[k] =
                 ComposeTileRemap(cascades.ViewProj[k], k, grid.Columns, grid.Rows);
             shadowConstants.CascadeSplits[k] = cascades.SplitFar[k];
+            shadowConstants.CascadeTexelSize[k] = cascades.TexelWorldSize[k];
+            shadowConstants.CascadeDepthRange[k] = cascades.DepthRange[k];
         }
         // Blend band: a view-space distance before each cascade's far split where the
         // lighting pass cross-fades into the next cascade. Sized from the first (smallest)

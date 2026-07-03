@@ -234,6 +234,14 @@ namespace Veng::Renderer
             }
         }
 
+        // Cap the shadowed range: a fitted far past MaxDistance spreads cascades over
+        // world the shadows cannot usefully resolve. Skipped when the cap would not
+        // leave a valid range (a camera already inside the cap distance of its near).
+        if (settings.MaxDistance > 0.0f && settings.MaxDistance > near)
+        {
+            far = std::min(far, settings.MaxDistance);
+        }
+
         VE_ASSERT(far > near && near > 0.0f,
                   "ComputeCascades needs far > near > 0 (got near={}, far={})", near, far);
 
@@ -315,30 +323,45 @@ namespace Veng::Renderer
             // glm::orthoZO takes positive distances in front of the eye; light view
             // looks down -Z, so a light-space z of -d is a front distance of d. The
             // deeper edge (more-negative z) is the larger front distance.
-            f32 nearDistance = -(centerLight.z + radius);      // front distance to the near edge
-            const f32 farDistance = -(centerLight.z - radius); // front distance to the far edge
+            const f32 tightNearDistance = -(centerLight.z + radius); // front distance, near edge
+            const f32 farDistance = -(centerLight.z - radius);       // front distance, far edge
 
-            // Extend the near plane toward the light via the scene bound so casters
-            // between the light and the slice still cast into it. Only the
-            // light-axis near plane moves; the texel-snapped left/right/bottom/top
-            // are untouched, so XY texel density is undisturbed.
+            // The near plane extended toward the light via the scene bound so casters
+            // between the light and the slice still reach it. Only the light-axis near
+            // plane moves; the texel-snapped left/right/bottom/top are untouched, so XY
+            // texel density is undisturbed.
+            f32 extendedNearDistance = tightNearDistance;
             if (!sceneBounds.IsEmpty())
             {
                 const AABB boundsLight = sceneBounds.Transformed(lightView);
                 // The bound's nearest extent toward the light is its smallest front
                 // distance, i.e. its largest (least-negative) light-space z.
                 const f32 boundsNearDistance = -boundsLight.Max.z;
-                nearDistance = std::min(nearDistance, boundsNearDistance);
+                extendedNearDistance = std::min(extendedNearDistance, boundsNearDistance);
             }
             else
             {
-                nearDistance -= EmptyBoundsPullback;
+                extendedNearDistance -= EmptyBoundsPullback;
             }
 
-            mat4 ortho = glm::orthoZO(left, right, bottom, top, nearDistance, farDistance);
-            ortho[1][1] *= -1.0f; // Vulkan clip space has Y pointing down.
+            // The render matrix keeps the tight near under PancakeNear (depth clamp
+            // pancakes nearer casters onto it), so its NDC-z resolution tracks the slice,
+            // not the scene's extent along the light. The cull matrix always spans the
+            // extended range so those casters survive the broadphase cull.
+            const f32 renderNearDistance =
+                settings.PancakeNear ? tightNearDistance : extendedNearDistance;
 
+            mat4 ortho = glm::orthoZO(left, right, bottom, top, renderNearDistance, farDistance);
+            ortho[1][1] *= -1.0f; // Vulkan clip space has Y pointing down.
             data.ViewProj[k] = ortho * lightView;
+
+            mat4 cullOrtho =
+                glm::orthoZO(left, right, bottom, top, extendedNearDistance, farDistance);
+            cullOrtho[1][1] *= -1.0f;
+            data.CullViewProj[k] = cullOrtho * lightView;
+
+            data.TexelWorldSize[k] = worldUnitsPerTexel;
+            data.DepthRange[k] = farDistance - renderNearDistance;
         }
 
         return data;

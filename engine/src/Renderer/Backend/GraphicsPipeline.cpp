@@ -117,7 +117,7 @@ namespace Veng::Renderer
                                                                 .scissorCount = 1};
 
         const vk::PipelineRasterizationStateCreateInfo rasterizerState = {
-            .depthClampEnable = vk::False,
+            .depthClampEnable = VK_BOOL(info.DepthClampEnable),
             .rasterizerDiscardEnable = vk::False,
             .polygonMode = ToVk(info.PolygonMode),
             .cullMode = ToVk(info.CullMode),
