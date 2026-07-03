@@ -4497,6 +4497,13 @@
         "::Veng::Skylight": {
           "Intensity": 0.3
         },
+        "::Veng::TimeOfDay": {
+          "Hours": 11.0,
+          "DayOfYear": 28.0,
+          "Orbit": {
+            "Latitude": 40.0
+          }
+        },
         "::Veng::Hierarchy": {
           "Parent": 101
         }

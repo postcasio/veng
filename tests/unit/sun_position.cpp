@@ -5,6 +5,7 @@
 
 #include <doctest/doctest.h>
 
+#include <Veng/Reflection/JsonSerialize.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Renderer/SunPosition.h>
@@ -102,6 +103,67 @@ TEST_CASE("NorthHeading spins the sun path about world up")
     CHECK(noon.z == doctest::Approx(0.0f));
 }
 
+TEST_CASE("Polar latitudes get polar night and midnight sun at the solstices")
+{
+    SunOrbit orbit;
+    orbit.Latitude = 80.0f; // Inside the polar circle for Earth's tilt.
+
+    // Northern winter solstice: the sun never clears the horizon.
+    const f32 winter = orbit.YearLength * 0.75f;
+    // Northern summer solstice: it never sets.
+    const f32 summer = orbit.YearLength * 0.25f;
+    for (f32 hour = 0.0f; hour < 24.0f; hour += 1.5f)
+    {
+        CHECK(ComputeSunDirection(orbit, hour, winter).y < 0.0f);
+        CHECK(ComputeSunDirection(orbit, hour, summer).y > 0.0f);
+    }
+}
+
+TEST_CASE("An extreme axial tilt keeps the declination and directions valid")
+{
+    SunOrbit orbit;
+    orbit.AxialTilt = 97.8f; // A Uranus-like sideways spin axis.
+
+    // asin-form declination saturates at +/- 90 degrees instead of overshooting.
+    const f32 solstice = ComputeSunDeclination(orbit, orbit.YearLength * 0.25f);
+    CHECK(solstice <= glm::half_pi<f32>() + 1e-4f);
+    CHECK(solstice == doctest::Approx(std::asin(std::sin(glm::radians(97.8f)))));
+
+    for (f32 hour = 0.0f; hour < 24.0f; hour += 3.0f)
+    {
+        CHECK(glm::length(ComputeSunDirection(orbit, hour, orbit.YearLength * 0.25f)) ==
+              doctest::Approx(1.0f));
+    }
+}
+
+TEST_CASE("TimeOfDay round-trips through the JSON reflection walker")
+{
+    TypeRegistry registry;
+    RegisterBuiltinTypes(registry);
+    const JsonFieldHooks hooks{};
+    const TypeInfo& info = registry.Info(registry.IdOf<TimeOfDay>());
+
+    TimeOfDay src;
+    src.Hours = 6.75f;
+    src.DayOfYear = 200.5f;
+    src.Orbit.AxialTilt = 25.19f;
+    src.Orbit.Latitude = -33.9f;
+    src.Orbit.YearLength = 687.0f;
+    src.Orbit.NorthHeading = 135.0f;
+
+    const nlohmann::json doc = JsonWriteFields(&src, info, registry, hooks);
+
+    TimeOfDay dst;
+    const VoidResult result = JsonReadFields(&dst, info, doc, registry, hooks);
+    REQUIRE(result);
+    CHECK(dst.Hours == src.Hours);
+    CHECK(dst.DayOfYear == src.DayOfYear);
+    CHECK(dst.Orbit.AxialTilt == src.Orbit.AxialTilt);
+    CHECK(dst.Orbit.Latitude == src.Orbit.Latitude);
+    CHECK(dst.Orbit.YearLength == src.Orbit.YearLength);
+    CHECK(dst.Orbit.NorthHeading == src.Orbit.NorthHeading);
+}
+
 TEST_CASE("ApplySceneSky derives the sun from TimeOfDay and writes the directional light")
 {
     TypeRegistry registry;
@@ -147,6 +209,39 @@ TEST_CASE("ApplySceneSky without TimeOfDay keeps the light-authored sun")
     ApplySceneSky(*scene, settings, view);
 
     CHECK(VecApprox(view.SunDirection, -scene->Get<Light>(lightEntity).Direction));
+}
+
+TEST_CASE("ApplySceneSky writes the first directional light even behind other light types")
+{
+    TypeRegistry registry;
+    RegisterBuiltinTypes(registry);
+    const Unique<Scene> scene = Scene::Create(registry);
+
+    // A point light created first must be skipped by the directional-sun search and
+    // left untouched by the TimeOfDay write.
+    const Entity pointEntity = scene->CreateEntity();
+    Light point;
+    point.Type = LightType::Point;
+    point.Direction = vec3(0.0f, -1.0f, 0.0f);
+    scene->Add<Light>(pointEntity, point);
+
+    const Entity sunEntity = scene->CreateEntity();
+    Light sun;
+    sun.Type = LightType::Directional;
+    sun.Direction = vec3(0.0f, -1.0f, 0.0f);
+    scene->Add<Light>(sunEntity, sun);
+
+    TimeOfDay time;
+    time.Hours = 16.0f;
+    scene->Add<TimeOfDay>(scene->CreateEntity(), time);
+
+    SceneRendererSettings settings;
+    ViewState view;
+    ApplySceneSky(*scene, settings, view);
+
+    const vec3 expected = ComputeSunDirection(time.Orbit, time.Hours, time.DayOfYear);
+    CHECK(VecApprox(scene->Get<Light>(sunEntity).Direction, -expected));
+    CHECK(VecApprox(scene->Get<Light>(pointEntity).Direction, vec3(0.0f, -1.0f, 0.0f)));
 }
 
 TEST_CASE("ApplySceneSky with TimeOfDay but no directional light still derives the view sun")

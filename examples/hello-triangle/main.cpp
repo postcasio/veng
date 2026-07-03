@@ -281,7 +281,8 @@ protected:
     {
         // Seed the editable topology copy from the scene — the level's post knobs (a seeded
         // LevelRenderSettings component) plus the author-opt-in sky/lighting components (the HDRI
-        // Environment, any Atmosphere/Skylight) and the directional sun — read by the same queries
+        // Environment, any Atmosphere/Skylight/TimeOfDay) and the directional sun — read by the
+        // same queries
         // the engine used, so the debug RenderSettingsEditor starts in sync. The exposure, bloom,
         // and environment already rode the engine's view push. Absent settings leave the defaults.
         if (const LevelRenderSettings* render = world.TryGetFirst<LevelRenderSettings>())
