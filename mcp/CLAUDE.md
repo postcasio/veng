@@ -345,8 +345,11 @@ m_McpServer->Pump();
 
 `hello-triangle` ([examples/hello-triangle/main.cpp](../examples/hello-triangle/main.cpp)) is
 the worked reference — its `StartMcpServerIfRequested` is that recipe, env-gated behind
-`HT_MCP` so the default `HT_SMOKE`/golden path opens no socket. The consumption walkthrough is
-[docs/guides/consuming-mcp.md](../docs/guides/consuming-mcp.md).
+`HT_MCP` so the default `HT_SMOKE`/golden path opens no socket. Its convenience targets serve
+on fixed loopback ports so a client has a known address: `hello_triangle-run` binds the game
+server on **`127.0.0.1:5200`** (`HT_MCP=5200`, writes enabled), and the `veng-editor` target
+binds the editor server on **`127.0.0.1:5201`** (`--mcp=5201 --mcp-write`). The consumption
+walkthrough is [docs/guides/consuming-mcp.md](../docs/guides/consuming-mcp.md).
 
 ## Build & install
 
