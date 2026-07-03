@@ -493,6 +493,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/frustum.cpp
             tests/unit/spherical_harmonics.cpp
             tests/unit/bvh.cpp
+            tests/unit/math_random.cpp
             tests/unit/shadow_cascades.cpp
             tests/unit/punctual_shadows.cpp
             tests/unit/hi_z_history.cpp

@@ -40,6 +40,7 @@ add_library(veng SHARED
         src/Math/AABB.cpp
         src/Math/BVH.cpp
         src/Math/Frustum.cpp
+        src/Math/Noise.cpp
         src/Module/ApplicationRegistry.cpp
         src/Module/ModuleLoader.cpp
         src/Task/TaskSystem.cpp
