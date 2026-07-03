@@ -125,6 +125,16 @@
       "id": "0xE65128F84910FBB9",
       "type": "InputMap",
       "source": "input/gameplay.inputmap.json"
+    },
+    {
+      "id": "0x7CDE28720C89A71B",
+      "type": "Shader",
+      "source": "shaders/gradient_sky.frag.shader.json"
+    },
+    {
+      "id": "0xFE67988D945A948D",
+      "type": "Material",
+      "source": "materials/gradient_sky.vmat.json"
     }
   ]
 }

@@ -1,0 +1,29 @@
+{
+  "defaultInstance": "0x8F81DD9B40954C95",
+  "domain": "Sky",
+  "shaders": {
+    "vertex": "0xF46DD3C6F2AE0628",
+    "fragment": "0x7CDE28720C89A71B"
+  },
+  "fields": [
+    {
+      "name": "HorizonColor",
+      "type": "vec4",
+      "value": [0.05, 0.06, 0.12, 1.0]
+    },
+    {
+      "name": "ZenithColor",
+      "type": "vec4",
+      "value": [0.01, 0.01, 0.04, 1.0]
+    },
+    {
+      "name": "Points",
+      "type": "storagebuffer"
+    },
+    {
+      "name": "PointCount",
+      "type": "uint",
+      "value": 3
+    }
+  ]
+}

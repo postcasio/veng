@@ -336,6 +336,17 @@ namespace Veng::Renderer
         /// image-based lighting (the EnvironmentMap IBL path is independent).
         bool Atmosphere = false;
 
+        /// @brief Whether an authored Sky-domain material renders as the background sky.
+        ///
+        /// A topology change: it inserts/removes the fullscreen SkyMaterialScenePass in the same
+        /// slot as the cubemap skybox and the procedural atmosphere (after lighting, before the
+        /// bloom/tonemap tail). The pass runs the Sky material supplied per-frame on the
+        /// SceneView (SkyMaterial), reconstructing the view ray and discarding foreground; it is a
+        /// per-frame no-op unless a Sky material is bound. Off by default, so the shipping path and
+        /// smoke_golden are untouched. An authored sky source, peer to the environment skybox and
+        /// the procedural atmosphere; it fills the background only (it feeds no image-based lighting).
+        bool SkyMaterial = false;
+
         /// @brief Whether the dynamic sky-projected SH ambient lights the scene's diffuse term.
         ///
         /// Gates the per-frame CPU project-and-upload: each Execute samples the Atmosphere sky
@@ -515,6 +526,17 @@ namespace Veng::Renderer
         /// Compared field-for-field against the last-generated set each Execute; a change records
         /// the (one-time) LUT regeneration before the graph. Ignored when the atmosphere sky is off.
         Atmosphere Atmosphere;
+
+        /// @brief Authored Sky-domain material rendered as the background sky; empty for none.
+        ///
+        /// Effective only when SceneRendererSettings::SkyMaterial is on: the SkyMaterialScenePass
+        /// runs this material fullscreen in the sky slot, compositing its radiance over the lit
+        /// scene color. An unset (or not-yet-loaded) handle leaves the sky slot empty (the lit
+        /// color shows through), so a scene without an authored sky is unchanged. The material owns
+        /// its own params and any buffers/textures it reads (a game binds a storage buffer via
+        /// MaterialInstance::SetStorageBufferHandle); the engine supplies only the view ray and the
+        /// g-buffer depth mask. It fills the background only — it feeds no image-based lighting.
+        AssetHandle<MaterialInstance> SkyMaterial;
 
         /// @brief Bloom bright-pass luminance knee; pushed to the downsample compute each Execute.
         ///
@@ -1697,6 +1719,11 @@ namespace Veng::Renderer
         bool m_SsaoActive = false;
         /// @brief Non-owning pointer into m_Passes to the SsaoScenePass; null when AO is off.
         class SsaoScenePass* m_SsaoPass = nullptr;
+
+        /// @brief Non-owning pointer into m_Passes to the SkyMaterialScenePass; null when SkyMaterial is off.
+        ///
+        /// Execute forwards the per-frame SceneView::SkyMaterial to it before the graph runs.
+        class SkyMaterialScenePass* m_SkyMaterialPass = nullptr;
 
         /// @brief True when the last Rebuild wired the SSR passes (Final mode + Settings.SSR, or the
         ///        Reflections debug arm). Execute binds the SSR imports only when true.

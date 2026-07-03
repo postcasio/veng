@@ -23,11 +23,12 @@ namespace Veng
     namespace
     {
         // The push-constant offset of the per-draw materialIndex selector, keyed on
-        // domain. A PostProcess shader pushes its selector at offset 0 — a 4-byte
-        // push range. A Surface material reads its material index from the per-draw
-        // DrawData SSBO (indexed by the candidate id), not a push, so it carries the
-        // Material::NoSelectorPush sentinel and pushes nothing.
-        constexpr u32 PostProcessSelectorPushOffset = 0;
+        // domain. A PostProcess or Sky shader pushes its selector at offset 0 — the
+        // first member of its fullscreen push block, a 4-byte push range. A Surface
+        // material reads its material index from the per-draw DrawData SSBO (indexed by
+        // the candidate id), not a push, so it carries the Material::NoSelectorPush
+        // sentinel and pushes nothing.
+        constexpr u32 FullscreenSelectorPushOffset = 0;
 
         u32 SelectorPushOffsetFor(MaterialDomain domain)
         {
@@ -36,7 +37,8 @@ namespace Veng
             case MaterialDomain::Surface:
                 return Material::NoSelectorPush;
             case MaterialDomain::PostProcess:
-                return PostProcessSelectorPushOffset;
+            case MaterialDomain::Sky:
+                return FullscreenSelectorPushOffset;
             }
             VE_ASSERT(false, "MaterialLoader: unmapped MaterialDomain {}",
                       static_cast<u32>(domain));
@@ -258,7 +260,7 @@ namespace Veng
 
         // Domain is stored as the underlying integer; the cook validates the fragment
         // outputs against the domain's contract, so the runtime asserts range and trusts it.
-        VE_ASSERT(header.Domain <= static_cast<u32>(MaterialDomain::PostProcess),
+        VE_ASSERT(header.Domain <= static_cast<u32>(MaterialDomain::Sky),
                   "material: header Domain {} is out of range for MaterialDomain", header.Domain);
         const auto domain = static_cast<MaterialDomain>(header.Domain);
 
@@ -364,14 +366,21 @@ namespace Veng
             case 2:
                 kind = Veng::MaterialField::FieldKind::SamplerHandle;
                 break;
+            case 3:
+                kind = Veng::MaterialField::FieldKind::StorageBufferHandle;
+                break;
             default:
                 return std::unexpected(
                     Corrupt(id, fmt::format("material: field {} '{}' has unrecognized Kind {}", i,
                                             BridgeName(cf.Name), cf.Kind)));
             }
 
+            // Storage-buffer handles are always runtime-bound (no cooked asset) — they
+            // resolve like a runtime-bound texture handle: a uint slot the game writes
+            // per frame via SetStorageBufferHandle, with no dependency to load.
             const bool isHandle = kind == Veng::MaterialField::FieldKind::TextureHandle ||
-                                  kind == Veng::MaterialField::FieldKind::SamplerHandle;
+                                  kind == Veng::MaterialField::FieldKind::SamplerHandle ||
+                                  kind == Veng::MaterialField::FieldKind::StorageBufferHandle;
 
             if (isHandle)
             {

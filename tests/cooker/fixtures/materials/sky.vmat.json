@@ -1,0 +1,23 @@
+{
+  "domain": "Sky",
+  "shaders": {
+    "vertex": "0x0000000000001005",
+    "fragment": "0x00000000000010D0"
+  },
+  "fields": [
+    {
+      "name": "Tint",
+      "type": "vec4",
+      "value": [0.1, 0.2, 0.3, 1.0]
+    },
+    {
+      "name": "Points",
+      "type": "storagebuffer"
+    },
+    {
+      "name": "Count",
+      "type": "uint",
+      "value": 4
+    }
+  ]
+}

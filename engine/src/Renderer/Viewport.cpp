@@ -270,6 +270,7 @@ namespace Veng::Renderer
             .AtmosphereEnabled = m_ViewState.AtmosphereEnabled,
             .SunDirection = m_ViewState.SunDirection,
             .Atmosphere = m_ViewState.Atmosphere,
+            .SkyMaterial = m_ViewState.SkyMaterial,
             .BloomThreshold = m_ViewState.BloomThreshold,
             .BloomIntensity = m_ViewState.BloomIntensity,
             .BloomRadius = m_ViewState.BloomRadius,

@@ -388,6 +388,67 @@ TEST_CASE("Cooker: a postprocess material cooks with domain 1")
     std::filesystem::remove(outArchive);
 }
 
+TEST_CASE("Cooker: a sky material cooks with domain 2 and a storage-buffer handle field")
+{
+    // A Sky material declares "domain": "Sky" and its fragment writes a single float4
+    // SV_Target0 (radiance). It also declares a "storagebuffer" field, which cooks as a
+    // runtime-bound handle (Kind 3, TextureId 0).
+    const path packJson = FixtureDir / "material_sky_pack.json";
+    const path outArchive =
+        std::filesystem::temp_directory_path() / "veng_cooker_material_sky.vengpack";
+
+    const Result<ArchiveReader> reader = CookMaterialPack(packJson, outArchive);
+    REQUIRE(reader.has_value());
+
+    const optional<ArchiveEntry> entry = reader->Find(AssetId{0xC84});
+    REQUIRE(entry.has_value());
+
+    CookedMaterialHeader header{};
+    std::memcpy(&header, entry->Blob.data(), sizeof(header));
+    CHECK(header.Version == CookedMaterialVersion);
+    CHECK(header.Domain == 2u);    // Sky
+    CHECK(header.FieldCount == 3); // Tint + Points + Count
+
+    const auto* fieldTable = reinterpret_cast<const CookedMaterialField*>(
+        entry->Blob.data() + sizeof(CookedMaterialHeader));
+
+    // The Points field cooks as a Kind 3 storage-buffer handle with no cooked asset.
+    const CookedMaterialField* points = nullptr;
+    for (u32 i = 0; i < header.FieldCount; ++i)
+    {
+        if (std::string_view(fieldTable[i].Name) == "Points")
+        {
+            points = &fieldTable[i];
+        }
+    }
+    REQUIRE(points != nullptr);
+    CHECK(points->Kind == 3u);
+    CHECK(points->Size == 4u);
+    CHECK(points->TextureId == 0ULL);
+
+    std::filesystem::remove(outArchive);
+}
+
+TEST_CASE("Cooker: a sky material whose fragment writes the MRT is a located cook error")
+{
+    // A Sky material must write a single float4 SV_Target0 (background radiance), not the
+    // g-buffer MRT. Pointing it at a g-buffer fragment shader violates the radiance contract.
+    const path packJson = FixtureDir / "material_sky_wrong_output_pack.json";
+    const path outArchive =
+        std::filesystem::temp_directory_path() / "veng_cooker_material_sky_wrong.vengpack";
+
+    Cooker cooker;
+    RegisterBuiltinImporters(cooker);
+
+    const VoidResult result = cooker.CookPack(packJson, outArchive);
+
+    REQUIRE(!result.has_value());
+    CHECK(result.error().find("sky material must write a single float4 SV_Target0") !=
+          string::npos);
+
+    std::filesystem::remove(outArchive);
+}
+
 TEST_CASE("Cooker: an unknown domain is a located cook error")
 {
     const path packJson = FixtureDir / "material_bad_domain_pack.json";

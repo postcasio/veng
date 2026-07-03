@@ -296,6 +296,10 @@ namespace VengGraph
         }
         else
         {
+            // Both the fullscreen fragment domains emit a single float4 SV_Target0. A Sky
+            // graph material reconstructs no view ray here — the graph node set exposes no
+            // sky inputs — so a graph-sourced sky is authored as a plain color function; its
+            // view-ray/depth-mask contract is written in Slang instead (SkyFragmentInput).
             source += "[shader(\"fragment\")]\n";
             source += "float4 fsMain(PostProcessFragmentInput input) : SV_Target0\n{\n";
             // A PostProcess material pushes its frame-folded selector at push-constant

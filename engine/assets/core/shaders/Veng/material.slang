@@ -20,6 +20,13 @@ static const uint MaterialParamStride = 256;
 
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
 [[vk::binding(1, 0)]] SamplerState g_Samplers[];
+// The byte-address storage-buffer bindless array (set 0, binding 3): each slot a whole
+// game-supplied buffer a material reads typed at a byte offset
+// (g_Buffers[params.Handle].Load<T>(off)), bound at full range and selected by handle
+// index. The engine stays layout-agnostic (bytes + a slot); the shader owns the struct,
+// mirroring the param block's own byte-addressed design. A material's handle is uniform
+// across a draw (one material → one handle), so a load needs no NonUniformResourceIndex.
+[[vk::binding(3, 0)]] ByteAddressBuffer g_Buffers[];
 [[vk::binding(4, 0)]] ByteAddressBuffer g_MaterialParams;
 
 // Per-draw record indexed by the candidate id, std430-identical to the engine's
@@ -149,3 +156,10 @@ struct PostProcessPushConstants
 {
     uint MaterialIndex;
 };
+
+// The Sky material domain's fragment contract (its input struct, push block, depth-mask
+// helper, and view-ray reconstruction) lives in Veng/sky.slang — a standalone include a
+// sky fragment `#include`s instead of this file, so it declares exactly one push_constant
+// block (the sky push). This file's g_PC (the surface push) would collide with it. The
+// g_Buffers[] bindless array above is shared: both a Sky shader (via sky.slang) and a
+// data-driven Surface/PostProcess shader read the same set-0 binding.

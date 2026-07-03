@@ -86,17 +86,19 @@ namespace Veng::Cook
         {
             if (!vmat["domain"].is_string())
             {
-                return std::unexpected(fmt::format("material importer: '{}': 'domain' must be a "
-                                                   "string (\"Surface\" or \"PostProcess\")",
-                                                   vmatPath.string()));
+                return std::unexpected(
+                    fmt::format("material importer: '{}': 'domain' must be a string "
+                                "(\"Surface\", \"PostProcess\", or \"Sky\")",
+                                vmatPath.string()));
             }
             const string domainStr = vmat["domain"].get<string>();
             const optional<MaterialDomain> parsed = ParseEnum<MaterialDomain>(domainStr);
             if (!parsed)
             {
-                return std::unexpected(fmt::format("material importer: '{}': unknown domain '{}' "
-                                                   "(expected \"Surface\" or \"PostProcess\")",
-                                                   vmatPath.string(), domainStr));
+                return std::unexpected(
+                    fmt::format("material importer: '{}': unknown domain '{}' "
+                                "(expected \"Surface\", \"PostProcess\", or \"Sky\")",
+                                vmatPath.string(), domainStr));
             }
             domainValue = *parsed;
         }
@@ -237,7 +239,8 @@ namespace Veng::Cook
 
         // Surface: float4 SV_Target0 (albedo) + SV_Target1 (normal) + SV_Target2 (ORM) +
         // float2 SV_Target3 (screen-space motion vector). PostProcess: single float4 SV_Target0.
-        // Mismatch is a located cook error.
+        // Sky: single float4 SV_Target0 (background radiance, not a g-buffer MRT). Mismatch is a
+        // located cook error.
         const Result<vector<ReflectedFragmentOutput>> outputs =
             ReflectFragmentOutputs(fragSource, fragEntry, context.ShaderIncludeDir);
         if (!outputs)
@@ -261,6 +264,22 @@ namespace Veng::Cook
                                 "(float4 SV_Target0 + float4 SV_Target1 + float4 SV_Target2 + "
                                 "float2 SV_Target3); its fragment shader does not",
                                 vmatPath.string()));
+            }
+        }
+        else if (domainValue == MaterialDomain::Sky)
+        {
+            // A Sky material outputs radiance into the single scene-color target, not the
+            // g-buffer MRT — a single float4 SV_Target0. A sky fragment that writes the
+            // g-buffer set (or any further target) violates the sky-slot contract.
+            const bool ok = outputs->size() == 1 && (*outputs)[0].TargetIndex == 0 &&
+                            (*outputs)[0].IsFloat && (*outputs)[0].ComponentCount == 4;
+            if (!ok)
+            {
+                return std::unexpected(fmt::format(
+                    "material importer: '{}': sky material must write a single float4 SV_Target0 "
+                    "(background radiance) and no further targets — not the g-buffer MRT; its "
+                    "fragment shader does not",
+                    vmatPath.string()));
             }
         }
         else // PostProcess
@@ -339,7 +358,7 @@ namespace Veng::Cook
             }
 
             const vector<string> AllowedTypes = {"texture", "sampler", "float", "vec2",
-                                                 "vec3",    "vec4",    "uint"};
+                                                 "vec3",    "vec4",    "uint",  "storagebuffer"};
             if (std::ranges::find(AllowedTypes, decl.Type) == AllowedTypes.end())
             {
                 return std::unexpected(fmt::format(
@@ -390,6 +409,12 @@ namespace Veng::Cook
                         decl.Name));
                 }
                 decl.UintValue = fieldJson["value"].get<u32>();
+            }
+            else if (decl.Type == "storagebuffer")
+            {
+                // A storage-buffer field is always runtime-bound: the game registers a buffer
+                // and writes its bindless index per frame via SetStorageBufferHandle. It carries
+                // no cooked default, so nothing more is parsed here.
             }
             else
             {
@@ -470,7 +495,7 @@ namespace Veng::Cook
             CookedMaterialField cookedField{};
             SetName(cookedField.Name, decl.Name);
 
-            if (decl.Type == "texture" || decl.Type == "sampler")
+            if (decl.Type == "texture" || decl.Type == "sampler" || decl.Type == "storagebuffer")
             {
                 // Handle fields are uint members of the one block.
                 auto it = blockByName.find(decl.Name);
@@ -494,7 +519,14 @@ namespace Veng::Cook
                 cookedField.Offset = reflField.Offset;
                 cookedField.Size = reflField.Size;
 
-                if (decl.Type == "texture")
+                if (decl.Type == "storagebuffer")
+                {
+                    // A runtime-bound storage-buffer handle (Kind 3): no cooked asset, its
+                    // bindless index written per frame via SetStorageBufferHandle.
+                    cookedField.Kind = 3;
+                    cookedField.TextureId = 0;
+                }
+                else if (decl.Type == "texture")
                 {
                     // A runtime-bound texture field (no 'id') resolves no asset —
                     // it carries TextureId 0, and the renderer writes its bindless

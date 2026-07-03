@@ -55,6 +55,16 @@
       "id": "0x0000000000001F4B",
       "type": "Shader",
       "source": "sh_eval.comp.shader.json"
+    },
+    {
+      "id": "0x0000000000001F4C",
+      "type": "Shader",
+      "source": "bindless_buffer.frag.shader.json"
+    },
+    {
+      "id": "0x0000000000001F4D",
+      "type": "Shader",
+      "source": "material_buffer.frag.shader.json"
     }
   ]
 }
