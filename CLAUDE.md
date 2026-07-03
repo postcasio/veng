@@ -88,7 +88,6 @@ is thin (shared deps + `add_subdirectory` per lib).
   plain `cmake --build`.
 - `tests/` — `include_hygiene`, `headless_smoke`, `compute_dispatch`, plus the
   `unit`, `death`, `gpu`, and `cooker` suites (and `shaders/`, `support/`).
-- `plans/` — the roadmap. See **Working norms** below.
 
 ### Module guides
 
@@ -411,8 +410,8 @@ no prefix beyond `Get` and reads as a plain noun where natural (`PopupMousePosit
 ### Comments — factual reasons, not planning history
 
 A code comment states a fact about the code as it is *now*. It does not narrate
-how the code got here or what is planned for it. The roadmap lives in `plans/`;
-git history records the evolution. Neither belongs in a comment.
+how the code got here or what is planned for it. The roadmap lives outside this
+repo; git history records the evolution. Neither belongs in a comment.
 
 There are **two tiers** of comment, and the rules below apply to both:
 
@@ -617,10 +616,11 @@ keep glm/fmt PUBLIC and the backend libs PRIVATE.
 
 ## Working norms
 
-The roadmap lives in `plans/` — read it there, don't duplicate it. `plans/README.md`
-indexes the **plansets** (numbered coherent phases) and `plans/future/` (a
-vision/holding area: asset system, threading, events/input, testing). Each
-planset/future README carries the detail, decisions, and per-plan status column.
+The **engine roadmap lives at the workspace root** — in `plans/`, a sibling of this repo,
+tracked by neither (it is kept out of the public engine tree; see the workspace `CLAUDE.md`).
+`plans/README.md` indexes the **plansets** (numbered coherent phases) and `plans/future/` (a
+vision/holding area: asset system, threading, events/input, testing). Each planset/future
+README carries the detail, decisions, and per-plan status column.
 
 **Plan work** — one planset per session, on the user's cue, dispatching its plans as
 appropriate (independent plans in parallel, dependent plans in sequence, derived from
@@ -637,9 +637,10 @@ the plans' direction). Per plan:
    `hello_triangle-launcher` under `HT_SMOKE` writes a correct-sized PPM) — don't
    also do a separate release build. The template has no smoke/PPM path; its conformance
    tests configure + build it standalone and probe `veng-editor --version`.
-4. Update the planset README status column.
-5. Commit, one commit per plan: `Plan NN: <summary>` (or `planset-N:` / `future:`
-   for roadmap-only changes), with a `Co-Authored-By` trailer.
+4. Update the plan's status column in the roadmap (at the workspace root).
+5. Commit the code, one commit per plan in this repo: `Plan NN: <summary>`, with a
+   `Co-Authored-By` trailer. Roadmap-only edits — status columns, planset drafts — live at
+   the workspace root and are committed to neither repo.
 
 **When a new `AssetId` is needed**, use a clearly-marked placeholder id while
 implementing — don't break flow to mint one mid-task. Once the build is working

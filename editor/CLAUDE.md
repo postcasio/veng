@@ -33,8 +33,7 @@ resolves it — no CMake in the launch loop (the seam a future project-picker la
 optional editor-extension module beside the launcher, and registers a per-project `<name>-editor`
 **run target** that launches `veng-editor` with the project's source `project.veng`. **Same-tree
 only** — a module must be built from the editor's own source tree (`VengModuleAbiVersion` rejects a
-mismatch at load); hosting separately built modules is a future module-ABI/SDK freeze (see
-[plans/future/README.md](../plans/future/README.md), area 6).
+mismatch at load); hosting separately built modules is a future module-ABI/SDK freeze.
 
 - **`EditorHost`** is an `Application` subclass living in `libveng_editor`. It builds a
   top-level single-window `DockSpace` (`ImGuiConfigFlags_DockingEnable`; multi-viewport

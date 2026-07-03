@@ -216,4 +216,4 @@ model agent-reachable.
   assets by id, never by path.
 
 Authentication, non-loopback exposure, and server→client streaming are out of scope of this
-transport; see [plans/future/README.md](../../plans/future/README.md).
+transport.

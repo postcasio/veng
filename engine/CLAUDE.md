@@ -679,7 +679,7 @@ surface; it does not link the editor framework for a debug slider.)
   surface within `include_hygiene`'s existing guarantee.
 - **ImGui stays a PUBLIC dependency** (wrapper-only) — the aim is call-site consistency and a
   tight surface, not hiding ImGui. Driving ImGui fully private (no `<imgui.h>` reachable
-  through any public header, imgui linked PRIVATE) is a possible later planset `Veng::UI`
+  through any public header, imgui linked PRIVATE) is a possible later direction `Veng::UI`
   unblocks.
 - **`ImVec2`/`ImVec4` convert implicitly to/from glm's `vec2`/`vec4`.** `Veng/Vendor/ImGuiConfig.h`
   injects the conversions through ImGui's `IM_VEC2_CLASS_EXTRA`/`IM_VEC4_CLASS_EXTRA` hooks, wired
@@ -1368,7 +1368,7 @@ tables; the engine owns the JSON⇄reflection walker (`Veng/Reflection/JsonSeria
 above) that a shared walker could bind these structs through, but the cooker's
 `ParseBuildConfiguration`/`ParseProject` (`Cooker.cpp`) and the editor's
 `ProjectSettingsPanel` still hand-parse them directly — the one reflected model in the tree
-not yet on the shared walker (a natural later pass; see `plans/future/README.md`). Cooked
+not yet on the shared walker (a natural later pass). Cooked
 blobs stay binary regardless — the runtime load path parses no JSON either way.
 
 - **`ProjectSettings`** (`Veng/Project/ProjectSettings.h`) — one per project (the JSON file

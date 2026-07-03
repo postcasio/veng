@@ -286,7 +286,7 @@ The binding vocabulary carries `GamepadButton` / `GamepadAxis` source arms so a
 `*.inputmap.json` can already name them, but **`Veng::Input` has no gamepad state
 yet**: the resolver reads a gamepad source as neutral (zero), so a gamepad binding
 is inert until the device layer lands. That layer — filling `Veng::Input` with pad
-state and fanning devices per seat — is the next planset, alongside multi-seat input
+state and fanning devices per seat — is a future direction, alongside multi-seat input
 routing. Author keyboard/mouse bindings today; gamepad bindings are forward-ready
 but do nothing yet.
 

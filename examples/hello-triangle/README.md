@@ -5,7 +5,7 @@ offscreen scene image, shown inside an ImGui window (via `ImGuiTexture`), and a
 fullscreen composite pass blends the scene image and the ImGui output into the
 swapchain image.
 
-It deliberately exercises the API surface the `plans/` rework touches: window +
+It deliberately exercises a broad slice of the engine API: window +
 application lifecycle, shader loading, vertex buffers + layout, push constants,
 dynamic graphics pipelines, descriptor set layout/creation/update, samplers,
 image views over engine-owned images (`Context::GetImGuiImage`), manual image
