@@ -7,6 +7,7 @@
 #include "PreviewCapability.h"
 
 #include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/HexId.h>
 #include <Veng/Log.h>
 #include <Veng/Project/BuildConfiguration.h>
 #include <Veng/Project/CompressionFormat.h>
@@ -253,7 +254,7 @@ namespace VengEditor
         project["activeConfiguration"] = m_Settings.ActiveConfiguration;
         if (m_Settings.StartupLevel.IsValid())
         {
-            project["startupLevel"] = m_Settings.StartupLevel.Value;
+            project["startupLevel"] = FormatAssetId(m_Settings.StartupLevel);
         }
         else
         {

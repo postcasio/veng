@@ -25,10 +25,10 @@ namespace
         std::ofstream out(manifest, std::ios::binary | std::ios::trunc);
         out << R"({
   "assets": [
-    { "id": 1001, "type": "Texture",  "source": "a.tex.json" },
-    { "id": 1002, "type": "Texture",  "source": "b.tex.json" },
-    { "id": 2001, "type": "Material", "source": "m.vmat.json" },
-    { "id": 3001, "type": "Mesh",     "source": "x.mesh.json" }
+    { "id": "0x00000000000003E9", "type": "Texture",  "source": "a.tex.json" },
+    { "id": "0x00000000000003EA", "type": "Texture",  "source": "b.tex.json" },
+    { "id": "0x00000000000007D1", "type": "Material", "source": "m.vmat.json" },
+    { "id": "0x0000000000000BB9", "type": "Mesh",     "source": "x.mesh.json" }
   ]
 })";
         return manifest;

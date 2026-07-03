@@ -19,6 +19,7 @@
 
 #include <Veng/Asset/AssetHandle.h>
 #include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/HexId.h>
 #include <Veng/Reflection/Serialize.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/Scene.h>
@@ -137,31 +138,14 @@ namespace VengEditor
             return 0;
         }
 
-        /// @brief Resolves an AssetId argument (decimal string or number) from a request, or a false optional.
+        /// @brief Resolves an AssetId argument (a canonical hex id string) from a request, or a false optional.
         optional<AssetId> ParseAssetId(const Json& args)
         {
-            if (!args.is_object() || !args.contains("asset"))
+            if (!args.is_object() || !args.contains("asset") || !args["asset"].is_string())
             {
                 return std::nullopt;
             }
-            const Json& asset = args["asset"];
-            if (asset.is_string())
-            {
-                const string text = asset.get<string>();
-                u64 value = 0;
-                const auto [ptr, ec] =
-                    std::from_chars(text.data(), text.data() + text.size(), value);
-                if (ec != std::errc{} || ptr != text.data() + text.size())
-                {
-                    return std::nullopt;
-                }
-                return AssetId{value};
-            }
-            if (asset.is_number_unsigned())
-            {
-                return AssetId{asset.get<u64>()};
-            }
-            return std::nullopt;
+            return Veng::ParseAssetId(args["asset"].get<string>());
         }
 
         /// @brief Adds a component seeded with agent-supplied values as one undoable step.
@@ -389,7 +373,7 @@ namespace VengEditor
                 for (; index < rows.size() && assets.size() < limit; ++index)
                 {
                     const Row& row = rows[index];
-                    assets.push_back(Json{{"id", std::to_string(row.Id.Value)},
+                    assets.push_back(Json{{"id", FormatAssetId(row.Id)},
                                           {"name", row.Entry->RelativeSource.string()},
                                           {"type", ToString(row.Entry->Type)},
                                           {"source", row.Entry->Source.string()}});
@@ -458,7 +442,7 @@ namespace VengEditor
                 }
                 const optional<string> status =
                     host.CookStatus ? host.CookStatus(*id) : std::nullopt;
-                return Json{{"asset", std::to_string(id->Value)},
+                return Json{{"asset", FormatAssetId(*id)},
                             {"status", status.value_or(string("none"))}}
                     .dump();
             };
@@ -605,7 +589,7 @@ namespace VengEditor
             tool.Name = "editor.open_asset";
             tool.Description =
                 "Opens the registered editor for an asset. Argument: { asset: <AssetId> } (a "
-                "decimal id string or number). Errors when the id is unknown to the project or its "
+                "canonical hex id string). Errors when the id is unknown to the project or its "
                 "type has no editor.";
             tool.InputSchemaJson =
                 R"({"type":"object","required":["asset"],"properties":{"asset":{"type":"string"}}})";
@@ -626,7 +610,7 @@ namespace VengEditor
                     return std::unexpected(
                         fmt::format("asset {} is unknown or its type has no editor", id->Value));
                 }
-                return Json{{"opened", std::to_string(id->Value)}}.dump();
+                return Json{{"opened", FormatAssetId(*id)}}.dump();
             };
             server.RegisterTool(std::move(tool));
         }
@@ -698,7 +682,7 @@ namespace VengEditor
                 {
                     return std::unexpected(kicked.error());
                 }
-                return Json{{"status", "started"}, {"asset", std::to_string(id->Value)}}.dump();
+                return Json{{"status", "started"}, {"asset", FormatAssetId(*id)}}.dump();
             };
             server.RegisterTool(std::move(tool));
         }

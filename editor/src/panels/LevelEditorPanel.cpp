@@ -1,6 +1,7 @@
 #include "panels/LevelEditorPanel.h"
 
 #include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/HexId.h>
 #include <Veng/Asset/Prefab.h>
 #include <Veng/Log.h>
 #include <Veng/Reflection/JsonSerialize.h>
@@ -137,9 +138,19 @@ namespace VengEditor
         {
             for (const nlohmann::json& sysId : level["systems"])
             {
-                if (sysId.is_number_unsigned())
+                if (!sysId.is_string())
                 {
-                    m_Systems.push_back(sysId.get<u64>());
+                    Log::Error("Level editor: '{}': a 'systems' entry must be a hex id string",
+                               m_SourcePath.string());
+                }
+                else if (const optional<u64> parsed = ParseHexId(sysId.get<std::string>()))
+                {
+                    m_Systems.push_back(static_cast<SystemId>(*parsed));
+                }
+                else
+                {
+                    Log::Error("Level editor: '{}': a 'systems' entry is a malformed hex id '{}'",
+                               m_SourcePath.string(), sysId.get<std::string>());
                 }
             }
         }
@@ -172,7 +183,7 @@ namespace VengEditor
         nlohmann::json systems = nlohmann::json::array();
         for (const SystemId sysId : m_Systems)
         {
-            systems.push_back(sysId);
+            systems.push_back(FormatHexId(static_cast<u64>(sysId)));
         }
         level["systems"] = std::move(systems);
 

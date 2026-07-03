@@ -2,6 +2,7 @@
 
 #include <Veng/Assert.h>
 #include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/HexId.h>
 #include <Veng/ImGui/ImGuiLayer.h>
 #include <Veng/Log.h>
 #include <Veng/Module/Module.h>
@@ -164,10 +165,23 @@ namespace VengEditor
                 settings.ActiveConfiguration = (*project)["activeConfiguration"].get<string>();
             }
 
-            if (project->contains("startupLevel") &&
-                (*project)["startupLevel"].is_number_unsigned())
+            if (project->contains("startupLevel"))
             {
-                settings.StartupLevel = AssetId{.Value = (*project)["startupLevel"].get<u64>()};
+                if (!(*project)["startupLevel"].is_string())
+                {
+                    Log::Error("Project '{}': 'startupLevel' must be a hex id string",
+                               projectFile.string());
+                }
+                else if (const optional<AssetId> startup =
+                             ParseAssetId((*project)["startupLevel"].get<string>()))
+                {
+                    settings.StartupLevel = *startup;
+                }
+                else
+                {
+                    Log::Error("Project '{}': 'startupLevel' is a malformed hex id '{}'",
+                               projectFile.string(), (*project)["startupLevel"].get<string>());
+                }
             }
 
             // The module(s) the editor dlopens, named logically (the build writes lib<name>.<ext>

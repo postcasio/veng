@@ -2,6 +2,7 @@
 
 #include "JsonUtil.h"
 
+#include <Veng/Asset/HexId.h>
 #include <Veng/Log.h>
 
 #include <fstream>
@@ -34,7 +35,7 @@ namespace VengEditor
         const path manifestDir = manifestPath.parent_path();
         for (const nlohmann::json& entry : manifest["assets"])
         {
-            if (!entry.is_object() || !entry.contains("id") || !entry["id"].is_number_unsigned() ||
+            if (!entry.is_object() || !entry.contains("id") || !entry["id"].is_string() ||
                 !entry.contains("type") || !entry["type"].is_string() ||
                 !entry.contains("source") || !entry["source"].is_string())
             {
@@ -47,7 +48,14 @@ namespace VengEditor
                 continue;
             }
 
-            const u64 id = entry["id"].get<u64>();
+            const optional<AssetId> parsedId = ParseAssetId(entry["id"].get<std::string>());
+            if (!parsedId)
+            {
+                Log::Error("AssetSourceIndex: manifest '{}': malformed hex id '{}'",
+                           manifestPath.string(), entry["id"].get<std::string>());
+                continue;
+            }
+            const u64 id = parsedId->Value;
             const std::string source = entry["source"].get<std::string>();
             index.m_Entries[id] = Entry{
                 .Type = *type,

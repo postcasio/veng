@@ -8,6 +8,7 @@
 #include <VengGraph/MaterialCompile.h>
 
 #include <Veng/Application.h>
+#include <Veng/Asset/HexId.h>
 #include <Veng/Asset/Material.h>
 #include <Veng/Asset/MaterialInstance.h>
 #include <Veng/ImGui/ImGuiLayer.h>
@@ -90,10 +91,23 @@ namespace VengEditor
         // it (minting through m_MintId) when absent, so an editor-authored material never needs the
         // hand-mint the cook requires of a referenced material.
         if (const optional<Json> doc = ReadJsonObject(m_SourcePath);
-            doc && doc->contains("defaultInstance") &&
-            (*doc)["defaultInstance"].is_number_unsigned())
+            doc && doc->contains("defaultInstance"))
         {
-            m_DefaultInstanceId = AssetId{(*doc)["defaultInstance"].get<u64>()};
+            const Json& value = (*doc)["defaultInstance"];
+            if (!value.is_string())
+            {
+                Log::Error("Material editor: '{}': 'defaultInstance' must be a hex id string",
+                           m_SourcePath.string());
+            }
+            else if (const optional<AssetId> parsed = ParseAssetId(value.get<std::string>()))
+            {
+                m_DefaultInstanceId = *parsed;
+            }
+            else
+            {
+                Log::Error("Material editor: '{}': 'defaultInstance' is a malformed hex id '{}'",
+                           m_SourcePath.string(), value.get<std::string>());
+            }
         }
 
         // The temp cook source is a fixed dotfile beside the real source so the
@@ -167,13 +181,42 @@ namespace VengEditor
             doc && doc->contains("shaders") && (*doc)["shaders"].is_object())
         {
             const Json& shaders = (*doc)["shaders"];
-            if (shaders.contains("vertex") && shaders["vertex"].is_number_unsigned())
+            if (shaders.contains("vertex"))
             {
-                m_VertexShader = AssetId{shaders["vertex"].get<u64>()};
+                if (!shaders["vertex"].is_string())
+                {
+                    Log::Error("Material editor: '{}': 'shaders.vertex' must be a hex id string",
+                               m_SourcePath.string());
+                }
+                else if (const optional<AssetId> parsed =
+                             ParseAssetId(shaders["vertex"].get<std::string>()))
+                {
+                    m_VertexShader = *parsed;
+                }
+                else
+                {
+                    Log::Error("Material editor: '{}': 'shaders.vertex' is a malformed hex id '{}'",
+                               m_SourcePath.string(), shaders["vertex"].get<std::string>());
+                }
             }
-            if (shaders.contains("fragment") && shaders["fragment"].is_number_unsigned())
+            if (shaders.contains("fragment"))
             {
-                m_FragmentShader = AssetId{shaders["fragment"].get<u64>()};
+                if (!shaders["fragment"].is_string())
+                {
+                    Log::Error("Material editor: '{}': 'shaders.fragment' must be a hex id string",
+                               m_SourcePath.string());
+                }
+                else if (const optional<AssetId> parsed =
+                             ParseAssetId(shaders["fragment"].get<std::string>()))
+                {
+                    m_FragmentShader = *parsed;
+                }
+                else
+                {
+                    Log::Error(
+                        "Material editor: '{}': 'shaders.fragment' is a malformed hex id '{}'",
+                        m_SourcePath.string(), shaders["fragment"].get<std::string>());
+                }
             }
         }
 
@@ -342,7 +385,7 @@ namespace VengEditor
             }
             if (m_DefaultInstanceId.IsValid())
             {
-                doc["defaultInstance"] = m_DefaultInstanceId.Value;
+                doc["defaultInstance"] = FormatAssetId(m_DefaultInstanceId);
             }
             return doc.dump(4);
         }
@@ -375,7 +418,7 @@ namespace VengEditor
 
         if (m_DefaultInstanceId.IsValid())
         {
-            doc["defaultInstance"] = m_DefaultInstanceId.Value;
+            doc["defaultInstance"] = FormatAssetId(m_DefaultInstanceId);
         }
 
         return doc.dump(4);

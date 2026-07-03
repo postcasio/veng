@@ -5,6 +5,7 @@
 #include "FieldWidget.h"
 #include "JsonUtil.h"
 
+#include <Veng/Asset/HexId.h>
 #include <Veng/Asset/InputMappingContext.h>
 #include <Veng/Input.h>
 #include <Veng/Input/RawInput.h>
@@ -92,9 +93,24 @@ namespace VengEditor
                     continue;
                 }
                 InputAction action;
-                if (actionJson.contains("id") && actionJson["id"].is_number_unsigned())
+                if (actionJson.contains("id"))
                 {
-                    action.Id = static_cast<ActionId>(actionJson["id"].get<u64>());
+                    if (!actionJson["id"].is_string())
+                    {
+                        Log::Error("Input map editor: '{}': an action 'id' must be a hex id string",
+                                   m_SourcePath.string());
+                    }
+                    else if (const optional<u64> parsed =
+                                 ParseHexId(actionJson["id"].get<std::string>()))
+                    {
+                        action.Id = static_cast<ActionId>(*parsed);
+                    }
+                    else
+                    {
+                        Log::Error(
+                            "Input map editor: '{}': an action 'id' is a malformed hex id '{}'",
+                            m_SourcePath.string(), actionJson["id"].get<std::string>());
+                    }
                 }
                 if (actionJson.contains("name") && actionJson["name"].is_string())
                 {
@@ -137,9 +153,25 @@ namespace VengEditor
                         binding.Source.Control = sourceJson["control"].get<u32>();
                     }
                 }
-                if (bindingJson.contains("action") && bindingJson["action"].is_number_unsigned())
+                if (bindingJson.contains("action"))
                 {
-                    binding.Action = static_cast<ActionId>(bindingJson["action"].get<u64>());
+                    if (!bindingJson["action"].is_string())
+                    {
+                        Log::Error(
+                            "Input map editor: '{}': a binding 'action' must be a hex id string",
+                            m_SourcePath.string());
+                    }
+                    else if (const optional<u64> parsed =
+                                 ParseHexId(bindingJson["action"].get<std::string>()))
+                    {
+                        binding.Action = static_cast<ActionId>(*parsed);
+                    }
+                    else
+                    {
+                        Log::Error(
+                            "Input map editor: '{}': a binding 'action' is a malformed hex id '{}'",
+                            m_SourcePath.string(), bindingJson["action"].get<std::string>());
+                    }
                 }
                 if (bindingJson.contains("axis") && bindingJson["axis"].is_string())
                 {
@@ -168,7 +200,7 @@ namespace VengEditor
         for (const InputAction& action : m_Doc.Actions)
         {
             nlohmann::json entry = nlohmann::json::object();
-            entry["id"] = static_cast<u64>(action.Id);
+            entry["id"] = FormatHexId(static_cast<u64>(action.Id));
             entry["name"] = action.Name;
             entry["kind"] = EnumeratorName(action.Kind);
             actions.push_back(std::move(entry));
@@ -184,7 +216,7 @@ namespace VengEditor
 
             nlohmann::json entry = nlohmann::json::object();
             entry["source"] = std::move(source);
-            entry["action"] = static_cast<u64>(binding.Action);
+            entry["action"] = FormatHexId(static_cast<u64>(binding.Action));
             entry["axis"] = EnumeratorName(binding.Axis);
             entry["scale"] = binding.Scale;
             bindings.push_back(std::move(entry));

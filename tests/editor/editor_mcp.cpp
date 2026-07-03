@@ -356,9 +356,9 @@ namespace
         std::ofstream out(manifest, std::ios::binary | std::ios::trunc);
         out << R"({
   "assets": [
-    { "id": 1001, "type": "Texture",  "source": "a.tex.json" },
-    { "id": 1002, "type": "Texture",  "source": "b.tex.json" },
-    { "id": 2001, "type": "Material", "source": "m.vmat.json" }
+    { "id": "0x00000000000003E9", "type": "Texture",  "source": "a.tex.json" },
+    { "id": "0x00000000000003EA", "type": "Texture",  "source": "b.tex.json" },
+    { "id": "0x00000000000007D1", "type": "Material", "source": "m.vmat.json" }
   ]
 })";
         return manifest;
@@ -460,7 +460,7 @@ TEST_CASE("editor MCP host tools: list_assets, set_panel_visible, open_asset, co
         const Json all = Payload(CallTool(client, "editor.list_assets", Json::object()));
         REQUIRE(all.is_object());
         REQUIRE(all["assets"].size() == 3);
-        CHECK(all["assets"][0].value("id", std::string{}) == "1001");
+        CHECK(all["assets"][0].value("id", std::string{}) == "0x00000000000003E9");
         CHECK(all["assets"][0].value("type", std::string{}) == "Texture");
         CHECK_FALSE(all.contains("nextCursor"));
 
@@ -490,24 +490,26 @@ TEST_CASE("editor MCP host tools: list_assets, set_panel_visible, open_asset, co
         CHECK(badPanel.value("isError", false) == true);
 
         // editor.open_asset resolves a known id through the host; an unknown id is an isError.
-        const Json openOk = Payload(CallTool(client, "editor.open_asset", Json{{"asset", "1001"}}));
-        CHECK(openOk.value("opened", std::string{}) == "1001");
+        const Json openOk =
+            Payload(CallTool(client, "editor.open_asset", Json{{"asset", "0x00000000000003E9"}}));
+        CHECK(openOk.value("opened", std::string{}) == "0x00000000000003E9");
         REQUIRE(opened.has_value());
         CHECK(opened->Value == 1001);
-        const Json openBad = CallTool(client, "editor.open_asset", Json{{"asset", "9999"}});
+        const Json openBad =
+            CallTool(client, "editor.open_asset", Json{{"asset", "0x0000000000002710"}});
         CHECK(openBad.value("isError", false) == true);
 
         // editor.request_cook kicks the cook (fire-and-poll) and editor.cook_status reports it.
         const Json started =
-            Payload(CallTool(client, "editor.request_cook", Json{{"asset", "2001"}}));
+            Payload(CallTool(client, "editor.request_cook", Json{{"asset", "0x00000000000007D1"}}));
         CHECK(started.value("status", std::string{}) == "started");
         REQUIRE(cooked.has_value());
         CHECK(cooked->Value == 2001);
         const Json status =
-            Payload(CallTool(client, "editor.cook_status", Json{{"asset", "2001"}}));
+            Payload(CallTool(client, "editor.cook_status", Json{{"asset", "0x00000000000007D1"}}));
         CHECK(status.value("status", std::string{}) == "running");
         const Json noStatus =
-            Payload(CallTool(client, "editor.cook_status", Json{{"asset", "1001"}}));
+            Payload(CallTool(client, "editor.cook_status", Json{{"asset", "0x00000000000003E9"}}));
         CHECK(noStatus.value("status", std::string{}) == "none");
 
         // editor.screenshot_panel over a scene-less host reports no scene, never a null deref.

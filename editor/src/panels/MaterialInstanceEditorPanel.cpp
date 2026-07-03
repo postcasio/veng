@@ -6,6 +6,7 @@
 #include "JsonUtil.h"
 
 #include <Veng/Application.h>
+#include <Veng/Asset/HexId.h>
 #include <Veng/ImGui/ImGuiLayer.h>
 #include <Veng/Log.h>
 #include <Veng/Renderer/Context.h>
@@ -86,9 +87,23 @@ namespace VengEditor
         }
         const Json& doc = *docResult;
 
-        if (doc.contains("parent") && doc["parent"].is_number_unsigned())
+        if (doc.contains("parent"))
         {
-            m_ParentId = AssetId{doc["parent"].get<u64>()};
+            if (!doc["parent"].is_string())
+            {
+                Log::Error("Material-instance editor: '{}': 'parent' must be a hex id string",
+                           m_SourcePath.string());
+            }
+            else if (const optional<AssetId> parsed =
+                         ParseAssetId(doc["parent"].get<std::string>()))
+            {
+                m_ParentId = *parsed;
+            }
+            else
+            {
+                Log::Error("Material-instance editor: '{}': 'parent' is a malformed hex id '{}'",
+                           m_SourcePath.string(), doc["parent"].get<std::string>());
+            }
         }
 
         if (!doc.contains("overrides") || !doc["overrides"].is_object())
@@ -97,14 +112,30 @@ namespace VengEditor
         }
         for (const auto& [name, value] : doc["overrides"].items())
         {
-            if (value.is_number_unsigned())
+            // A bare hex-id string is a texture override id; an { "id": <hexId> } object is the
+            // same texture override in object form.
+            const Json* texId = nullptr;
+            if (value.is_string())
             {
-                // A bare unsigned value is a texture override id.
-                m_AuthoredTextures[name] = AssetId{value.get<u64>()};
+                texId = &value;
             }
-            else if (value.is_object() && value.contains("id") && value["id"].is_number_unsigned())
+            else if (value.is_object() && value.contains("id") && value["id"].is_string())
             {
-                m_AuthoredTextures[name] = AssetId{value["id"].get<u64>()};
+                texId = &value["id"];
+            }
+
+            if (texId != nullptr)
+            {
+                if (const optional<AssetId> parsed = ParseAssetId(texId->get<std::string>()))
+                {
+                    m_AuthoredTextures[name] = *parsed;
+                }
+                else
+                {
+                    Log::Error("Material-instance editor: '{}': texture override '{}' is a "
+                               "malformed hex id '{}'",
+                               m_SourcePath.string(), name, texId->get<std::string>());
+                }
             }
             else if (value.is_number())
             {
@@ -217,7 +248,7 @@ namespace VengEditor
     string MaterialInstanceEditorPanel::AssembleDocument() const
     {
         Json doc = Json::object();
-        doc["parent"] = m_ParentId.Value;
+        doc["parent"] = FormatAssetId(m_ParentId);
 
         Json overrides = Json::object();
         for (const OverrideSlot& slot : m_Slots)
@@ -230,7 +261,7 @@ namespace VengEditor
             {
                 if (slot.Texture.IsValid())
                 {
-                    overrides[slot.Name] = slot.Texture.Value;
+                    overrides[slot.Name] = FormatAssetId(slot.Texture);
                 }
             }
             else if (slot.Components == 1)
