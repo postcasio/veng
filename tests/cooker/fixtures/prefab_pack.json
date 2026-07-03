@@ -1,6 +1,10 @@
 {
   "version": 1,
   "assets": [
-    { "id": 9001, "type": "Prefab", "source": "prefabs/scene.prefab.json" }
+    {
+      "id": "0x0000000000002329",
+      "type": "Prefab",
+      "source": "prefabs/scene.prefab.json"
+    }
   ]
 }

@@ -3,17 +3,53 @@
     {
       "name": "Root",
       "components": {
-        "::Veng::Name":         { "Value": "Root" },
-        "::Veng::Transform":    { "Position": [1, 2, 3], "Rotation": [0, 0, 0, 1], "Scale": [1, 1, 1] },
-        "::Veng::MeshRenderer": { "Mesh": 8001 },
-        "Spinner":              { "SpeedRadiansPerSec": 1.5, "Axis": [0, 0, 1] }
+        "::Veng::Name": {
+          "Value": "Root"
+        },
+        "::Veng::Transform": {
+          "Position": [
+            1,
+            2,
+            3
+          ],
+          "Rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "Scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "::Veng::MeshRenderer": {
+          "Mesh": "0x0000000000001F41"
+        },
+        "Spinner": {
+          "SpeedRadiansPerSec": 1.5,
+          "Axis": [
+            0,
+            0,
+            1
+          ]
+        }
       }
     },
     {
       "name": "Child",
       "components": {
-        "::Veng::Transform": { "Position": [0, 0, 0] },
-        "::Veng::Hierarchy": { "Parent": 0 }
+        "::Veng::Transform": {
+          "Position": [
+            0,
+            0,
+            0
+          ]
+        },
+        "::Veng::Hierarchy": {
+          "Parent": 0
+        }
       }
     }
   ]

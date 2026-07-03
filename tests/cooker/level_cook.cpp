@@ -15,6 +15,7 @@
 
 #include <Veng/Asset/Archive.h>
 #include <Veng/Asset/CookedBlobs.h>
+#include <Veng/Asset/HexId.h>
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
 #include <Veng/Cook/ModuleTypes.h>
@@ -96,7 +97,7 @@ namespace
         json pack;
         pack["version"] = 1;
         json asset;
-        asset["id"] = 7777;
+        asset["id"] = FormatHexId(7777);
         asset["type"] = "Level";
         asset["source"] = levelPath.filename().string();
         pack["assets"] = json::array({asset});
@@ -110,9 +111,11 @@ namespace
     json SampleLevel()
     {
         json level;
-        level["world"] = WorldPrefabId;
-        level["systems"] = json::array({SpawnPlayerRuleId, ControlSystemId, MovementSystemId});
-        level["gameMode"] = {{"PlayerPrefab", PlayerPrefabId}, {"ScoreToWin", 3}};
+        level["world"] = FormatHexId(WorldPrefabId);
+        level["systems"] =
+            json::array({FormatHexId(SpawnPlayerRuleId), FormatHexId(ControlSystemId),
+                         FormatHexId(MovementSystemId)});
+        level["gameMode"] = {{"PlayerPrefab", FormatHexId(PlayerPrefabId)}, {"ScoreToWin", 3}};
         level["render"] = {{"Exposure", 2.5}, {"Bloom", true}, {"BloomIntensity", 1.5}};
         return level;
     }
@@ -181,7 +184,8 @@ TEST_CASE("level cook: an unknown system id is a located error")
     const LoadedModuleTypes module = LoadRegistry();
 
     json level = SampleLevel();
-    level["systems"] = json::array({SpawnPlayerRuleId, 0xDEADBEEFCAFEF00DULL});
+    level["systems"] =
+        json::array({FormatHexId(SpawnPlayerRuleId), FormatHexId(0xDEADBEEFCAFEF00DULL)});
     const path packJson = WriteLevelPack("level_unknown_system", level);
     const path refs[] = {path(VENG_HT_ASSETS_DIR) / "sample.vengpack.json"};
 
@@ -197,7 +201,7 @@ TEST_CASE("level cook: a world id resolving to a non-prefab is a located error")
 
     // Id 1001 resolves to a texture in the sample pack, not a prefab.
     json level = SampleLevel();
-    level["world"] = 1001;
+    level["world"] = FormatHexId(1001);
     const path packJson = WriteLevelPack("level_world_nonprefab", level);
     const path refs[] = {path(VENG_HT_ASSETS_DIR) / "sample.vengpack.json"};
 

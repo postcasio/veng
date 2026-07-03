@@ -1,8 +1,20 @@
 {
   "version": 1,
   "assets": [
-    { "id": 9501, "type": "Shader",   "source": "shaders/fullscreen.vert.shader.json" },
-    { "id": 9502, "type": "Shader",   "source": "shaders/identity_post.frag.shader.json" },
-    { "id": 9503, "type": "Material", "source": "materials/identity_post.vmat.json" }
+    {
+      "id": "0x000000000000251D",
+      "type": "Shader",
+      "source": "shaders/fullscreen.vert.shader.json"
+    },
+    {
+      "id": "0x000000000000251E",
+      "type": "Shader",
+      "source": "shaders/identity_post.frag.shader.json"
+    },
+    {
+      "id": "0x000000000000251F",
+      "type": "Material",
+      "source": "materials/identity_post.vmat.json"
+    }
   ]
 }

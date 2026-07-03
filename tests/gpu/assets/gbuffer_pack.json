@@ -1,10 +1,30 @@
 {
   "version": 1,
   "assets": [
-    { "id": 9201, "type": "VertexLayout", "source": "layouts/canonical.vlayout.json" },
-    { "id": 9001, "type": "Texture",  "source": "textures/brick.tex.json" },
-    { "id": 9101, "type": "Shader",   "source": "shaders/brick.vert.shader.json" },
-    { "id": 9102, "type": "Shader",   "source": "shaders/brick.frag.shader.json" },
-    { "id": 9003, "type": "Material", "source": "materials/brick.vmat.json" }
+    {
+      "id": "0x00000000000023F1",
+      "type": "VertexLayout",
+      "source": "layouts/canonical.vlayout.json"
+    },
+    {
+      "id": "0x0000000000002329",
+      "type": "Texture",
+      "source": "textures/brick.tex.json"
+    },
+    {
+      "id": "0x000000000000238D",
+      "type": "Shader",
+      "source": "shaders/brick.vert.shader.json"
+    },
+    {
+      "id": "0x000000000000238E",
+      "type": "Shader",
+      "source": "shaders/brick.frag.shader.json"
+    },
+    {
+      "id": "0x000000000000232B",
+      "type": "Material",
+      "source": "materials/brick.vmat.json"
+    }
   ]
 }

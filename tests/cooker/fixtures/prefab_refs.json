@@ -1,7 +1,15 @@
 {
   "version": 1,
   "assets": [
-    { "id": 8001, "type": "Mesh", "source": "meshes/cube.mesh.json" },
-    { "id": 8002, "type": "Texture", "source": "textures/texture.tex.json" }
+    {
+      "id": "0x0000000000001F41",
+      "type": "Mesh",
+      "source": "meshes/cube.mesh.json"
+    },
+    {
+      "id": "0x0000000000001F42",
+      "type": "Texture",
+      "source": "textures/texture.tex.json"
+    }
   ]
 }

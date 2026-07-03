@@ -1,1 +1,5 @@
-{ "source": "mesh.vert.slang", "entry": "vsMain", "vertex_layout": 7001 }
+{
+  "source": "mesh.vert.slang",
+  "entry": "vsMain",
+  "vertex_layout": "0x0000000000001B59"
+}

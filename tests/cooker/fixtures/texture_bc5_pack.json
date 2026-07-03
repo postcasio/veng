@@ -1,6 +1,10 @@
 {
   "version": 1,
   "assets": [
-    { "id": 1602805406925422595, "type": "Texture", "source": "textures/texture_bc5_normal.tex.json" }
+    {
+      "id": "0x163E4F068BDD8003",
+      "type": "Texture",
+      "source": "textures/texture_bc5_normal.tex.json"
+    }
   ]
 }

@@ -14,6 +14,7 @@
 
 #include <Veng/Asset/Archive.h>
 #include <Veng/Asset/CookedBlobs.h>
+#include <Veng/Asset/HexId.h>
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
 #include <Veng/Reflection/Reflect.h>
@@ -97,7 +98,7 @@ namespace
         std::ofstream(prefabPath) << prefab.dump();
 
         json asset;
-        asset["id"] = 4242;
+        asset["id"] = FormatHexId(4242);
         asset["type"] = "Prefab";
         asset["source"] = prefabPath.filename().string();
 

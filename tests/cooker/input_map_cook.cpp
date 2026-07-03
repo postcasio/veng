@@ -15,6 +15,7 @@
 
 #include <Veng/Asset/Archive.h>
 #include <Veng/Asset/CookedBlobs.h>
+#include <Veng/Asset/HexId.h>
 #include <Veng/Asset/InputMappingContext.h>
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
@@ -80,7 +81,7 @@ namespace
         json pack;
         pack["version"] = 1;
         json asset;
-        asset["id"] = 7777;
+        asset["id"] = FormatHexId(7777);
         asset["type"] = "InputMap";
         asset["source"] = mapPath.filename().string();
         pack["assets"] = json::array({asset});
@@ -93,22 +94,24 @@ namespace
     json SampleMap()
     {
         json map;
-        map["actions"] = json::array({{{"id", MoveId}, {"name", "Move"}, {"kind", "Axis2D"}},
-                                      {{"id", JumpId}, {"name", "Jump"}, {"kind", "Button"}}});
+        const string moveId = FormatHexId(MoveId);
+        const string jumpId = FormatHexId(JumpId);
+        map["actions"] = json::array({{{"id", moveId}, {"name", "Move"}, {"kind", "Axis2D"}},
+                                      {{"id", jumpId}, {"name", "Jump"}, {"kind", "Button"}}});
         map["bindings"] = json::array({{{"source", {{"device", "Keyboard"}, {"control", 68}}},
-                                        {"action", MoveId},
+                                        {"action", moveId},
                                         {"axis", "X"},
                                         {"scale", 1.0}},
                                        {{"source", {{"device", "Keyboard"}, {"control", 65}}},
-                                        {"action", MoveId},
+                                        {"action", moveId},
                                         {"axis", "X"},
                                         {"scale", -1.0}},
                                        {{"source", {{"device", "Keyboard"}, {"control", 87}}},
-                                        {"action", MoveId},
+                                        {"action", moveId},
                                         {"axis", "Y"},
                                         {"scale", 1.0}},
                                        {{"source", {{"device", "Keyboard"}, {"control", 32}}},
-                                        {"action", JumpId},
+                                        {"action", jumpId},
                                         {"axis", "Whole"}}});
         return map;
     }
@@ -167,7 +170,7 @@ TEST_CASE("input map cook: a binding onto an undeclared action is a located erro
     json map = SampleMap();
     // Bind a control to an action id this context never declares.
     map["bindings"].push_back({{"source", {{"device", "Keyboard"}, {"control", 70}}},
-                               {"action", 0x1234567890ABCDEFULL},
+                               {"action", FormatHexId(0x1234567890ABCDEFULL)},
                                {"axis", "Whole"}});
     const path packJson = WriteInputMapPack("inputmap_unknown_action", map);
 
@@ -180,8 +183,9 @@ TEST_CASE("input map cook: an X/Y component on a Button action is a located erro
 {
     json map = SampleMap();
     // Jump is a Button; an X component onto it is a kind/axis mismatch.
-    map["bindings"].push_back(
-        {{"source", {{"device", "Keyboard"}, {"control", 71}}}, {"action", JumpId}, {"axis", "X"}});
+    map["bindings"].push_back({{"source", {{"device", "Keyboard"}, {"control", 71}}},
+                               {"action", FormatHexId(JumpId)},
+                               {"axis", "X"}});
     const path packJson = WriteInputMapPack("inputmap_axis_mismatch", map);
 
     const Result<vector<u8>> blob = CookInputMap(packJson, AssetId{7777});
@@ -192,7 +196,7 @@ TEST_CASE("input map cook: an X/Y component on a Button action is a located erro
 TEST_CASE("input map cook: a null action id is a located error")
 {
     json map = SampleMap();
-    map["actions"].push_back({{"id", 0}, {"name", "Bad"}, {"kind", "Button"}});
+    map["actions"].push_back({{"id", FormatHexId(0)}, {"name", "Bad"}, {"kind", "Button"}});
     const path packJson = WriteInputMapPack("inputmap_null_id", map);
 
     const Result<vector<u8>> blob = CookInputMap(packJson, AssetId{7777});
@@ -203,7 +207,8 @@ TEST_CASE("input map cook: a null action id is a located error")
 TEST_CASE("input map cook: a duplicate action id is a located error")
 {
     json map = SampleMap();
-    map["actions"].push_back({{"id", MoveId}, {"name", "MoveAgain"}, {"kind", "Axis2D"}});
+    map["actions"].push_back(
+        {{"id", FormatHexId(MoveId)}, {"name", "MoveAgain"}, {"kind", "Axis2D"}});
     const path packJson = WriteInputMapPack("inputmap_dup_id", map);
 
     const Result<vector<u8>> blob = CookInputMap(packJson, AssetId{7777});

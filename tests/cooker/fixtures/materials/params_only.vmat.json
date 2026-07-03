@@ -1,7 +1,23 @@
 {
-  "shaders": { "vertex": 4101, "fragment": 4203 },
+  "shaders": {
+    "vertex": "0x0000000000001005",
+    "fragment": "0x000000000000106B"
+  },
   "fields": [
-    { "name": "Factors",  "type": "vec4",  "value": [1.0, 0.5, 0.25, 1.0] },
-    { "name": "Strength", "type": "float", "value": 2.0 }
+    {
+      "name": "Factors",
+      "type": "vec4",
+      "value": [
+        1.0,
+        0.5,
+        0.25,
+        1.0
+      ]
+    },
+    {
+      "name": "Strength",
+      "type": "float",
+      "value": 2.0
+    }
   ]
 }

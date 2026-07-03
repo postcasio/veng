@@ -1,14 +1,14 @@
 {
-    "activeConfiguration": "macos",
-    "configurations": [
-        "configs/macos.buildcfg",
-        "configs/windows.buildcfg",
-        "configs/linux.buildcfg"
-    ],
-    "editorModule": "hello_triangle_editor",
-    "module": "hello_triangle",
-    "packs": [
-        "assets/sample.vengpack.json"
-    ],
-    "startupLevel": 10791442065337163528
+  "activeConfiguration": "macos",
+  "configurations": [
+    "configs/macos.buildcfg",
+    "configs/windows.buildcfg",
+    "configs/linux.buildcfg"
+  ],
+  "editorModule": "hello_triangle_editor",
+  "module": "hello_triangle",
+  "packs": [
+    "assets/sample.vengpack.json"
+  ],
+  "startupLevel": "0x95C2E76206A11F08"
 }

@@ -1,9 +1,9 @@
 {
-  "defaultInstance": 13053759821581030982,
+  "defaultInstance": "0xB52845655C9A9646",
   "domain": "Surface",
   "shaders": {
-    "vertex": 7619531439638779021,
-    "fragment": 1005
+    "vertex": "0x69BE03796E97148D",
+    "fragment": "0x00000000000003ED"
   },
   "fields": [
     {
@@ -29,7 +29,7 @@
     {
       "name": "BaseColor",
       "type": "texture",
-      "id": 1001
+      "id": "0x00000000000003E9"
     },
     {
       "name": "BaseColorSampler",

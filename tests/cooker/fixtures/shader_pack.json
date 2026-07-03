@@ -1,8 +1,20 @@
 {
   "version": 1,
   "assets": [
-    { "id": 7001, "type": "VertexLayout", "source": "layouts/canonical.vlayout.json" },
-    { "id": 4001, "type": "Shader", "source": "shaders/mesh.vert.shader.json" },
-    { "id": 4002, "type": "Shader", "source": "shaders/brick.frag.shader.json" }
+    {
+      "id": "0x0000000000001B59",
+      "type": "VertexLayout",
+      "source": "layouts/canonical.vlayout.json"
+    },
+    {
+      "id": "0x0000000000000FA1",
+      "type": "Shader",
+      "source": "shaders/mesh.vert.shader.json"
+    },
+    {
+      "id": "0x0000000000000FA2",
+      "type": "Shader",
+      "source": "shaders/brick.frag.shader.json"
+    }
   ]
 }

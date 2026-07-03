@@ -15,7 +15,10 @@ serialization — neither importer nor loader.
 - **`AssetId` is an opaque `u64`.** Assets are addressed by id, never by path, at
   runtime. The same id is byte-identical across the cooker/runtime boundary (and
   across the module boundary for `TypeId`), so the cooker writes the ids the runtime
-  reads.
+  reads. In hand-authored JSON an id is addressed as a **canonical hex string** —
+  `"0x"` + 16 uppercase hex digits — through the JSON-free codec in `Veng/Asset/HexId.h`
+  (`FormatAssetId`/`ParseAssetId` over `FormatHexId`/`ParseHexId`), never a bare number
+  (which truncates past `2^53` through any double-based JSON tool).
 - **An archive is built from a pure `{ id, type, source }` manifest.** The format
   carries no per-asset settings — those live in the per-asset JSON sources the
   manifest points at, consumed by the cooker, not by this library.

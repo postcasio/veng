@@ -1,9 +1,9 @@
 {
-  "defaultInstance": 7724578570308231164,
+  "defaultInstance": "0x6B3337487AD11FFC",
   "domain": "Surface",
   "shaders": {
-    "vertex": 7619531439638779021,
-    "fragment": 11347999176829791418
+    "vertex": "0x69BE03796E97148D",
+    "fragment": "0x9D7C3120865D6CBA"
   },
   "fields": [
     {

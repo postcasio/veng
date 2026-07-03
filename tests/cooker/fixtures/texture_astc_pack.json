@@ -1,6 +1,10 @@
 {
   "version": 1,
   "assets": [
-    { "id": 15620888746683984667, "type": "Texture", "source": "textures/texture_astc.tex.json" }
+    {
+      "id": "0xD8C88B8D55FEEB1B",
+      "type": "Texture",
+      "source": "textures/texture_astc.tex.json"
+    }
   ]
 }

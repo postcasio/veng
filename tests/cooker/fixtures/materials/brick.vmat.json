@@ -1,14 +1,14 @@
 {
-  "defaultInstance": 9001003,
+  "defaultInstance": "0x000000000089582B",
   "shaders": {
-    "vertex": 4101,
-    "fragment": 4102
+    "vertex": "0x0000000000001005",
+    "fragment": "0x0000000000001006"
   },
   "fields": [
     {
       "name": "Albedo",
       "type": "texture",
-      "id": 2001
+      "id": "0x00000000000007D1"
     },
     {
       "name": "AlbedoSampler",

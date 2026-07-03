@@ -1,14 +1,14 @@
 {
-  "defaultInstance": 9000003,
+  "defaultInstance": "0x0000000000895443",
   "shaders": {
-    "vertex": 9101,
-    "fragment": 9102
+    "vertex": "0x000000000000238D",
+    "fragment": "0x000000000000238E"
   },
   "fields": [
     {
       "name": "BaseColor",
       "type": "texture",
-      "id": 9001
+      "id": "0x0000000000002329"
     },
     {
       "name": "BaseColorSampler",
@@ -18,7 +18,7 @@
     {
       "name": "ORM",
       "type": "texture",
-      "id": 9001
+      "id": "0x0000000000002329"
     },
     {
       "name": "ORMSampler",

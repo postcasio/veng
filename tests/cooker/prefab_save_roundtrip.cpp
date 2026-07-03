@@ -17,6 +17,7 @@
 
 #include <Veng/Asset/Archive.h>
 #include <Veng/Asset/CookedBlobs.h>
+#include <Veng/Asset/HexId.h>
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
@@ -127,7 +128,7 @@ namespace
         json pack;
         pack["version"] = 1;
         json asset;
-        asset["id"] = id.Value;
+        asset["id"] = FormatHexId(id.Value);
         asset["type"] = "Prefab";
         asset["source"] = prefabPath.filename().string();
         pack["assets"] = json::array({asset});
@@ -272,7 +273,7 @@ TEST_CASE("prefab save: every FieldClass round-trips through save → cook → d
     CHECK(hier.Parent.Generation == 0u);
 }
 
-TEST_CASE("prefab save: an AssetHandle field round-trips its decimal id")
+TEST_CASE("prefab save: an AssetHandle field round-trips its hex-string id")
 {
     const TypeRegistry registry = BuildRegistry();
 
@@ -281,7 +282,7 @@ TEST_CASE("prefab save: an AssetHandle field round-trips its decimal id")
     auto& all = scene->Add<AllFields>(entity);
 
     // Construct a handle carrying a concrete AssetId: the id lives at offset 0, which the
-    // writer emits as a decimal unsigned integer and BindField reads back.
+    // writer emits as a canonical hex-id string and BindField reads back.
     const u64 meshId = 8001ULL;
     std::memcpy(static_cast<void*>(&all.Mesh), &meshId, sizeof(meshId));
 
@@ -290,12 +291,12 @@ TEST_CASE("prefab save: an AssetHandle field round-trips its decimal id")
 
     REQUIRE(VengEditor::PrefabSerialize::Save(*scene, registry, prefabPath).has_value());
 
-    // The saved JSON carries the decimal id (the JSON convention), not hex.
+    // The saved JSON carries the canonical hex-id string (the JSON convention), not a number.
     const json doc = ReadDoc(prefabPath);
     REQUIRE(doc["entities"].is_array());
     const json& comp = doc["entities"][0]["components"]["AllFields"];
-    CHECK(comp["Mesh"].is_number_unsigned());
-    CHECK(comp["Mesh"].get<u64>() == meshId);
+    CHECK(comp["Mesh"].is_string());
+    CHECK(comp["Mesh"].get<string>() == FormatHexId(meshId));
 
     const Result<vector<u8>> blobResult =
         CookPrefabSource("save_handle", prefabPath, AssetId{7002}, registry);

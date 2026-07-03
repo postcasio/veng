@@ -1,6 +1,10 @@
 {
   "version": 1,
   "assets": [
-    { "id": 7001, "type": "VertexLayout", "source": "layouts/canonical.vlayout.json" }
+    {
+      "id": "0x0000000000001B59",
+      "type": "VertexLayout",
+      "source": "layouts/canonical.vlayout.json"
+    }
   ]
 }

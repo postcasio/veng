@@ -1,6 +1,11 @@
 {
-  "parent": 1003,
+  "parent": "0x00000000000003EB",
   "overrides": {
-    "BaseColorFactor": [0.95, 0.45, 0.2, 1.0]
+    "BaseColorFactor": [
+      0.95,
+      0.45,
+      0.2,
+      1.0
+    ]
   }
 }

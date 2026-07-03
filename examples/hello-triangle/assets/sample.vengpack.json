@@ -1,30 +1,130 @@
 {
   "version": 1,
   "assets": [
-    { "id": 1001, "type": "Texture",  "source": "textures/brick_basecolor.tex.json" },
-    { "id": 1006, "type": "Texture",  "source": "textures/brick_orm.tex.json" },
-    { "id": 1007, "type": "Texture",  "source": "textures/brick_normal.tex.json" },
-    { "id": 1002, "type": "Mesh",     "source": "meshes/cube.mesh.json" },
-    { "id": 1005, "type": "Shader",   "source": "shaders/brick.frag.shader.json" },
-    { "id": 1003, "type": "Material", "source": "materials/brick.vmat.json" },
-    { "id": 37147948036194274, "type": "MaterialInstance", "source": "materials/brick_tinted.vmatinst.json" },
-    { "id": 12029434833302479675, "type": "MaterialInstance", "source": "materials/emitter.vmatinst.json" },
-    { "id": 14864592943833126790, "type": "Texture",  "source": "textures/ground_white.tex.json" },
-    { "id": 3191587071494521605,  "type": "Texture",  "source": "textures/ground_flatnormal.tex.json" },
-    { "id": 8259845233708650356,  "type": "Texture",  "source": "textures/ground_orm_gradient.tex.json" },
-    { "id": 13198082285665137860, "type": "Material", "source": "materials/ground.vmat.json" },
-    { "id": 2278059023381261311, "type": "Texture",   "source": "characters/nathan/nathan_dif.tex.json" },
-    { "id": 10925766838385922562, "type": "Texture",  "source": "characters/nathan/nathan_norm.tex.json" },
-    { "id": 3475155866124685026, "type": "Texture",   "source": "characters/nathan/nathan_gloss.tex.json" },
-    { "id": 48274702747265810, "type": "Skeleton",    "source": "characters/nathan/nathan.skeleton.json" },
-    { "id": 4971316837671446691, "type": "Animation", "source": "characters/nathan/nathan.walk.animation.json" },
-    { "id": 9446507351868888852, "type": "Shader",    "source": "shaders/character.frag.shader.json" },
-    { "id": 252717381658754241, "type": "Material",   "source": "materials/character.vmat.json" },
-    { "id": 2751177482215621782, "type": "Mesh",      "source": "characters/nathan/nathan.mesh.json" },
-    { "id": 13493236524696338033, "type": "Prefab", "source": "prefabs/player.prefab.json" },
-    { "id": 11611391513566245589, "type": "Prefab", "source": "prefabs/scene.prefab.json" },
-    { "id": 10791442065337163528, "type": "Level",  "source": "levels/sample.level.json" },
-    { "id": 10517717547470730851, "type": "Environment", "source": "hdris/rogland_clear_night.env.json" },
-    { "id": 16596091148679838649, "type": "InputMap", "source": "input/gameplay.inputmap.json" }
+    {
+      "id": "0x00000000000003E9",
+      "type": "Texture",
+      "source": "textures/brick_basecolor.tex.json"
+    },
+    {
+      "id": "0x00000000000003EE",
+      "type": "Texture",
+      "source": "textures/brick_orm.tex.json"
+    },
+    {
+      "id": "0x00000000000003EF",
+      "type": "Texture",
+      "source": "textures/brick_normal.tex.json"
+    },
+    {
+      "id": "0x00000000000003EA",
+      "type": "Mesh",
+      "source": "meshes/cube.mesh.json"
+    },
+    {
+      "id": "0x00000000000003ED",
+      "type": "Shader",
+      "source": "shaders/brick.frag.shader.json"
+    },
+    {
+      "id": "0x00000000000003EB",
+      "type": "Material",
+      "source": "materials/brick.vmat.json"
+    },
+    {
+      "id": "0x0083F9DCA6D4FFE2",
+      "type": "MaterialInstance",
+      "source": "materials/brick_tinted.vmatinst.json"
+    },
+    {
+      "id": "0xA6F1233F07B4633B",
+      "type": "MaterialInstance",
+      "source": "materials/emitter.vmatinst.json"
+    },
+    {
+      "id": "0xCE49A486C3F39786",
+      "type": "Texture",
+      "source": "textures/ground_white.tex.json"
+    },
+    {
+      "id": "0x2C4ACB8822290305",
+      "type": "Texture",
+      "source": "textures/ground_flatnormal.tex.json"
+    },
+    {
+      "id": "0x72A0DD7A3EE84F74",
+      "type": "Texture",
+      "source": "textures/ground_orm_gradient.tex.json"
+    },
+    {
+      "id": "0xB72901E9917234C4",
+      "type": "Material",
+      "source": "materials/ground.vmat.json"
+    },
+    {
+      "id": "0x1F9D4A9CB2036BFF",
+      "type": "Texture",
+      "source": "characters/nathan/nathan_dif.tex.json"
+    },
+    {
+      "id": "0x97A01F0D64BC5202",
+      "type": "Texture",
+      "source": "characters/nathan/nathan_norm.tex.json"
+    },
+    {
+      "id": "0x303A3BD91B7A0EE2",
+      "type": "Texture",
+      "source": "characters/nathan/nathan_gloss.tex.json"
+    },
+    {
+      "id": "0x00AB81961CE36B12",
+      "type": "Skeleton",
+      "source": "characters/nathan/nathan.skeleton.json"
+    },
+    {
+      "id": "0x44FDAA531F5328A3",
+      "type": "Animation",
+      "source": "characters/nathan/nathan.walk.animation.json"
+    },
+    {
+      "id": "0x8318BC630442D714",
+      "type": "Shader",
+      "source": "shaders/character.frag.shader.json"
+    },
+    {
+      "id": "0x0381D51EA2563CC1",
+      "type": "Material",
+      "source": "materials/character.vmat.json"
+    },
+    {
+      "id": "0x262E2557FD840496",
+      "type": "Mesh",
+      "source": "characters/nathan/nathan.mesh.json"
+    },
+    {
+      "id": "0xBB419B2104D9FE71",
+      "type": "Prefab",
+      "source": "prefabs/player.prefab.json"
+    },
+    {
+      "id": "0xA123F30FD219F2D5",
+      "type": "Prefab",
+      "source": "prefabs/scene.prefab.json"
+    },
+    {
+      "id": "0x95C2E76206A11F08",
+      "type": "Level",
+      "source": "levels/sample.level.json"
+    },
+    {
+      "id": "0x91F6706258E2B663",
+      "type": "Environment",
+      "source": "hdris/rogland_clear_night.env.json"
+    },
+    {
+      "id": "0xE65128F84910FBB9",
+      "type": "InputMap",
+      "source": "input/gameplay.inputmap.json"
+    }
   ]
 }

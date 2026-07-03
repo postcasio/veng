@@ -7,5 +7,7 @@
     "generate_tangents": true,
     "join_identical_vertices": true
   },
-  "materials": { "0": 9001003 }
+  "materials": {
+    "0": "0x000000000089582B"
+  }
 }

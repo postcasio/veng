@@ -258,8 +258,9 @@ so the cooker and the runtime loader share one encoder.
   build-order edge between packs. `veng_add_project` wires it.
 - **`verify`** — re-hash a `.vengpack`'s blobs + TOC digest and exit nonzero on any
   mismatch.
-- **`generate-id`** — mint a collision-free `AssetId` (prints hex for C++ literals and
-  decimal for JSON packs; `--reference <pack.json>` to avoid existing ids). The same mint is a
+- **`generate-id`** — mint a collision-free `AssetId` (prints the zero-padded hex in both
+  spellings: `0x{:016X}ULL` for C++ literals and `"0x{:016X}"` for JSON packs;
+  `--reference <pack.json>` to avoid existing ids). The same mint is a
   callable in-process API — `GenerateAssetId(span<const path> referencePackPaths)` (`Cooker.h`,
   over `ParseAssetPack` + the `AssetPack`-checking overload) — so the editor mints the
   `defaultInstance` id without shelling out to the CLI.

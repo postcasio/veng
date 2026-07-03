@@ -1,6 +1,10 @@
 {
   "version": 1,
   "assets": [
-    { "id": 4001, "type": "Shader", "source": "shaders/mesh.vert.shader.json" }
+    {
+      "id": "0x0000000000000FA1",
+      "type": "Shader",
+      "source": "shaders/mesh.vert.shader.json"
+    }
   ]
 }

@@ -69,7 +69,7 @@ namespace Veng::Cook
     ///
     /// Reads the `"packs"`, `"configurations"`, `"activeConfiguration"`, and `"startupLevel"` keys;
     /// relative `packs`/`configurations` entries resolve against the project file's directory. The
-    /// `"startupLevel"` is a decimal AssetId; an absent or zero key yields the invalid id. Errors
+    /// `"startupLevel"` is a hex-string AssetId; an absent or zero key yields the invalid id. Errors
     /// are located: `"project '<path>': <reason>"`.
     /// @param projectFile  Path to the `project.veng` JSON file.
     /// @return The parsed project on success, or a located error.

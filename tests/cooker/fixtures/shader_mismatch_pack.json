@@ -1,7 +1,15 @@
 {
   "version": 1,
   "assets": [
-    { "id": 7101, "type": "VertexLayout", "source": "layouts/positiononly.vlayout.json" },
-    { "id": 4101, "type": "Shader", "source": "shaders/mesh.vert.mismatch.shader.json" }
+    {
+      "id": "0x0000000000001BBD",
+      "type": "VertexLayout",
+      "source": "layouts/positiononly.vlayout.json"
+    },
+    {
+      "id": "0x0000000000001005",
+      "type": "Shader",
+      "source": "shaders/mesh.vert.mismatch.shader.json"
+    }
   ]
 }

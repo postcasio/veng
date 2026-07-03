@@ -1,7 +1,15 @@
 {
   "version": 1,
   "assets": [
-    { "id": 11214326246509566196, "type": "Texture", "source": "light.tex.json" },
-    { "id": 75671398121622365, "type": "Texture", "source": "camera.tex.json" }
+    {
+      "id": "0x9BA14A4E1E8AD8F4",
+      "type": "Texture",
+      "source": "light.tex.json"
+    },
+    {
+      "id": "0x010CD6BC54B24B5D",
+      "type": "Texture",
+      "source": "camera.tex.json"
+    }
   ]
 }

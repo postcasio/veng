@@ -1,9 +1,33 @@
 {
-  "shaders": { "vertex": 4101, "fragment": 4102 },
+  "shaders": {
+    "vertex": "0x0000000000001005",
+    "fragment": "0x0000000000001006"
+  },
   "fields": [
-    { "name": "Albedo",        "type": "texture", "id": 2001 },
-    { "name": "AlbedoSampler", "type": "sampler", "texture": "Albedo" },
-    { "name": "Factors",       "type": "vec4",    "value": [1.0, 0.9, 0.8, 1.0] },
-    { "name": "Missing",       "type": "texture", "id": 2001 }
+    {
+      "name": "Albedo",
+      "type": "texture",
+      "id": "0x00000000000007D1"
+    },
+    {
+      "name": "AlbedoSampler",
+      "type": "sampler",
+      "texture": "Albedo"
+    },
+    {
+      "name": "Factors",
+      "type": "vec4",
+      "value": [
+        1.0,
+        0.9,
+        0.8,
+        1.0
+      ]
+    },
+    {
+      "name": "Missing",
+      "type": "texture",
+      "id": "0x00000000000007D1"
+    }
   ]
 }

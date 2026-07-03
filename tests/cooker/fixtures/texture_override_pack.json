@@ -1,6 +1,10 @@
 {
   "version": 1,
   "assets": [
-    { "id": 3141734212779017441, "type": "Texture", "source": "textures/texture_override.tex.json" }
+    {
+      "id": "0x2B99AE9EF36284E1",
+      "type": "Texture",
+      "source": "textures/texture_override.tex.json"
+    }
   ]
 }

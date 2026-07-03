@@ -1,6 +1,10 @@
 {
   "version": 1,
   "assets": [
-    { "id": 2001, "type": "Texture", "source": "textures/texture.tex.json" }
+    {
+      "id": "0x00000000000007D1",
+      "type": "Texture",
+      "source": "textures/texture.tex.json"
+    }
   ]
 }

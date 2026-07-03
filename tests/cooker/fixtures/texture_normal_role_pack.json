@@ -1,6 +1,10 @@
 {
   "version": 1,
   "assets": [
-    { "id": 1602805406889425644, "type": "Texture", "source": "textures/texture_normal_role.tex.json" }
+    {
+      "id": "0x163E4F0689B83AEC",
+      "type": "Texture",
+      "source": "textures/texture_normal_role.tex.json"
+    }
   ]
 }

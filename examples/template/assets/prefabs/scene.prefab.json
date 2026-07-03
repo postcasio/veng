@@ -6,9 +6,22 @@
           "Value": "Camera"
         },
         "::Veng::Transform": {
-          "Position": [0.0, 1.5, 4.0],
-          "Rotation": [-0.1784245, 0.0, 0.0, 0.9839534],
-          "Scale": [1.0, 1.0, 1.0]
+          "Position": [
+            0.0,
+            1.5,
+            4.0
+          ],
+          "Rotation": [
+            -0.1784245,
+            0.0,
+            0.0,
+            0.9839534
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
         },
         "::Veng::Camera": {
           "FovY": 1.0471975511965976,
@@ -23,14 +36,35 @@
           "Value": "Sun"
         },
         "::Veng::Transform": {
-          "Position": [0.0, 0.0, 0.0],
-          "Rotation": [0.0, 0.0, 0.0, 1.0],
-          "Scale": [1.0, 1.0, 1.0]
+          "Position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "Rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
         },
         "::Veng::Light": {
           "Type": "Directional",
-          "Direction": [-0.324442, -0.811107, -0.486664],
-          "Color": [1.0, 1.0, 1.0],
+          "Direction": [
+            -0.324442,
+            -0.811107,
+            -0.486664
+          ],
+          "Color": [
+            1.0,
+            1.0,
+            1.0
+          ],
           "Intensity": 3.0
         }
       }
@@ -41,12 +75,29 @@
           "Value": "Cube"
         },
         "::Veng::Transform": {
-          "Position": [0.0, 0.0, 0.0],
-          "Rotation": [0.0, 0.0, 0.0, 1.0],
-          "Scale": [1.0, 1.0, 1.0]
+          "Position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "Rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
         },
         "::Veng::ConstantMotion": {
-          "AngularVelocity": [0.0, 0.6, 0.0],
+          "AngularVelocity": [
+            0.0,
+            0.6,
+            0.0
+          ],
           "Space": "World"
         },
         "::Veng::MeshRenderer": {
@@ -54,7 +105,7 @@
             "type": "::Veng::CubeShape",
             "value": {
               "Extent": 1.0,
-              "Material": 7724578570308231164
+              "Material": "0x6B3337487AD11FFC"
             }
           }
         }

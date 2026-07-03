@@ -69,15 +69,15 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         out << R"({
   "version": 1,
   "assets": [
-    { "id": 9201, "type": "VertexLayout", "source": ")"
+    { "id": "0x00000000000023F1", "type": "VertexLayout", "source": ")"
             << (fixtureDir / "layouts/canonical.vlayout.json").string() << R"(" },
-    { "id": 9001, "type": "Texture",  "source": ")"
+    { "id": "0x0000000000002329", "type": "Texture",  "source": ")"
             << (fixtureDir / "textures/brick.tex.json").string() << R"(" },
-    { "id": 9101, "type": "Shader",   "source": ")"
+    { "id": "0x000000000000238D", "type": "Shader",   "source": ")"
             << (fixtureDir / "shaders/brick.vert.shader.json").string() << R"(" },
-    { "id": 9102, "type": "Shader",   "source": ")"
+    { "id": "0x000000000000238E", "type": "Shader",   "source": ")"
             << (fixtureDir / "shaders/brick.frag.shader.json").string() << R"(" },
-    { "id": 9003, "type": "Material", "source": ")"
+    { "id": "0x000000000000232B", "type": "Material", "source": ")"
             << (fixtureDir / "materials/brick.vmat.json").string() << R"(" }
   ]
 })";

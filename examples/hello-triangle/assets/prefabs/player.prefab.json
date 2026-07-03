@@ -54,7 +54,7 @@
         "::Veng::PlayerInput": {},
         "::Veng::InputContextStack": {
           "Active": [
-            16596091148679838649
+            "0xE65128F84910FBB9"
           ]
         },
         "::Veng::Possesses": {
@@ -127,10 +127,10 @@
           "Parent": 2
         },
         "::Veng::MeshRenderer": {
-          "Mesh": 2751177482215621782
+          "Mesh": "0x262E2557FD840496"
         },
         "::Veng::Animator": {
-          "Clip": 4971316837671446691,
+          "Clip": "0x44FDAA531F5328A3",
           "Speed": 1.0,
           "Loop": true,
           "Playing": true

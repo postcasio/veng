@@ -1,9 +1,24 @@
 {
   "domain": "Surface",
-  "shaders": { "vertex": 4101, "fragment": 4302 },
+  "shaders": {
+    "vertex": "0x0000000000001005",
+    "fragment": "0x00000000000010CE"
+  },
   "fields": [
-    { "name": "Hdr",        "type": "texture", "id": 2001 },
-    { "name": "HdrSampler", "type": "sampler", "texture": "Hdr" },
-    { "name": "Exposure",   "type": "float",   "value": 1.0 }
+    {
+      "name": "Hdr",
+      "type": "texture",
+      "id": "0x00000000000007D1"
+    },
+    {
+      "name": "HdrSampler",
+      "type": "sampler",
+      "texture": "Hdr"
+    },
+    {
+      "name": "Exposure",
+      "type": "float",
+      "value": 1.0
+    }
   ]
 }

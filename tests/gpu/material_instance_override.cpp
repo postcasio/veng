@@ -141,8 +141,9 @@ SurfaceFragmentInput vsMain(VSInput input)
     return output;
 }
 )");
-    WriteFile(dir / "surface.vert.shader.json",
-              R"({ "source": "surface.vert.slang", "entry": "vsMain", "vertex_layout": 8001 })");
+    WriteFile(
+        dir / "surface.vert.shader.json",
+        R"({ "source": "surface.vert.slang", "entry": "vsMain", "vertex_layout": "0x0000000000001F41" })");
 
     // The parent fragment writes BaseColorFactor straight to the albedo channel, so the
     // rendered albedo IS the material's exposed param — directly readable.
@@ -169,9 +170,9 @@ GBufferOutput fsMain(SurfaceFragmentInput input)
 
     WriteFile(dir / "brick.vmat.json",
               fmt::format(R"({{
-  "defaultInstance": 9008004,
+  "defaultInstance": "0x0000000000897384",
   "domain": "Surface",
-  "shaders": {{ "vertex": 8002, "fragment": 8003 }},
+  "shaders": {{ "vertex": "0x0000000000001F42", "fragment": "0x0000000000001F43" }},
   "fields": [
     {{ "name": "BaseColorFactor", "type": "vec4", "value": [{}, {}, {}, {}] }}
   ]
@@ -180,7 +181,7 @@ GBufferOutput fsMain(SurfaceFragmentInput input)
 
     WriteFile(dir / "tinted.vmatinst.json",
               fmt::format(R"({{
-  "parent": 8004,
+  "parent": "0x0000000000001F44",
   "overrides": {{ "BaseColorFactor": [{}, {}, {}, {}] }}
 }})",
                           OverrideColor.x, OverrideColor.y, OverrideColor.z, OverrideColor.w));
@@ -188,11 +189,11 @@ GBufferOutput fsMain(SurfaceFragmentInput input)
     WriteFile(dir / "pack.json", R"({
   "version": 1,
   "assets": [
-    { "id": 8001, "type": "VertexLayout",     "source": "canonical.vlayout.json" },
-    { "id": 8002, "type": "Shader",           "source": "surface.vert.shader.json" },
-    { "id": 8003, "type": "Shader",           "source": "brick.frag.shader.json" },
-    { "id": 8004, "type": "Material",         "source": "brick.vmat.json" },
-    { "id": 8005, "type": "MaterialInstance", "source": "tinted.vmatinst.json" }
+    { "id": "0x0000000000001F41", "type": "VertexLayout",     "source": "canonical.vlayout.json" },
+    { "id": "0x0000000000001F42", "type": "Shader",           "source": "surface.vert.shader.json" },
+    { "id": "0x0000000000001F43", "type": "Shader",           "source": "brick.frag.shader.json" },
+    { "id": "0x0000000000001F44", "type": "Material",         "source": "brick.vmat.json" },
+    { "id": "0x0000000000001F45", "type": "MaterialInstance", "source": "tinted.vmatinst.json" }
   ]
 })");
 

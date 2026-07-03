@@ -1,67 +1,315 @@
 {
   "version": 1,
   "assets": [
-    { "id": 5603155022528551788, "type": "VertexLayout", "source": "layouts/canonical.vlayout.json" },
-    { "id": 5802985661779036512, "type": "VertexLayout", "source": "layouts/screenspace.vlayout.json" },
-    { "id": 9444255541371061951, "type": "VertexLayout", "source": "layouts/positiononly.vlayout.json" },
-    { "id": 15320822976973617713, "type": "VertexLayout", "source": "layouts/skinned.vlayout.json" },
-    { "id": 15017974748652859786, "type": "VertexLayout", "source": "layouts/debugline.vlayout.json" },
-    { "id": 17612966569144354344, "type": "Shader", "source": "shaders/fullscreen.vert.shader.json" },
-    { "id": 7619531439638779021, "type": "Shader", "source": "shaders/surface.vert.shader.json" },
-    { "id": 10974119373792664188, "type": "Shader", "source": "shaders/surface_skinned.vert.shader.json" },
-    { "id": 1543631628486536060, "type": "Shader", "source": "shaders/shadow_depth.vert.shader.json" },
-    { "id": 9501315951625322784, "type": "Shader", "source": "shaders/shadow_depth_skinned.vert.shader.json" },
-    { "id": 17946686809606999015, "type": "Shader", "source": "shaders/albedo_blit.frag.shader.json" },
-    { "id": 7307630994487561247, "type": "Shader", "source": "shaders/deferred_lighting.frag.shader.json" },
-    { "id": 7993710284532515999, "type": "Shader", "source": "shaders/deferred_lighting_ssao.frag.shader.json" },
-    { "id": 9461737088382889473, "type": "Shader", "source": "shaders/deferred_lighting_cascades.frag.shader.json" },
-    { "id": 14752213323634855566, "type": "Shader", "source": "shaders/ssao.frag.shader.json" },
-    { "id": 13742412625165098291, "type": "Shader", "source": "shaders/hdr_blit.frag.shader.json" },
-    { "id": 7952927765378679446, "type": "Shader", "source": "shaders/tonemap.frag.shader.json" },
-    { "id": 6497805523787376077, "type": "Shader", "source": "shaders/normal_blit.frag.shader.json" },
-    { "id": 16167746220292282069, "type": "Shader", "source": "shaders/depth_blit.frag.shader.json" },
-    { "id": 8760263556840862177, "type": "Shader", "source": "shaders/orm_blit.frag.shader.json" },
-    { "id": 10923282159882548452, "type": "Shader", "source": "shaders/ao_blit.frag.shader.json" },
-    { "id": 820171714434363792, "type": "Shader", "source": "shaders/shadow_blit.frag.shader.json" },
-    { "id": 5462853072295605294, "type": "Shader", "source": "shaders/composite.frag.shader.json" },
-    { "id": 7312399908429670073, "type": "Shader", "source": "shaders/gather.frag.shader.json" },
-    { "id": 6595541164917365819, "type": "Shader", "source": "shaders/bloom_down.comp.shader.json" },
-    { "id": 5703853090831845874, "type": "Shader", "source": "shaders/bloom_up.comp.shader.json" },
-    { "id": 14635194204496837615, "type": "Shader", "source": "shaders/bloom_down_kawase.comp.shader.json" },
-    { "id": 875562690703217618, "type": "Shader", "source": "shaders/bloom_up_kawase.comp.shader.json" },
-    { "id": 5994913674751862095, "type": "Shader", "source": "shaders/bloom_composite.comp.shader.json" },
-    { "id": 14636915322047737276, "type": "Shader", "source": "shaders/hi_z_reduce.comp.shader.json" },
-    { "id": 4658282122408301406, "type": "Shader", "source": "shaders/hi_z_occlusion_test.comp.shader.json" },
-    { "id": 6908974071528311634, "type": "Shader", "source": "shaders/occlusion_cull.comp.shader.json" },
-    { "id": 17471639324806791998, "type": "Shader", "source": "shaders/taa_resolve.frag.shader.json" },
-    { "id": 572832496162056639, "type": "Shader", "source": "shaders/taa_history_copy.frag.shader.json" },
-    { "id": 14759435582217356029, "type": "Shader", "source": "shaders/motion_blit.frag.shader.json" },
-    { "id": 13693390691917013114, "type": "Shader", "source": "shaders/entity_id.frag.shader.json" },
-    { "id": 16292773621404642277, "type": "Shader", "source": "shaders/entity_id.vert.shader.json" },
-    { "id": 9201752149324508687, "type": "Shader", "source": "shaders/entity_id_skinned.vert.shader.json" },
-    { "id": 2012390707317946525, "type": "Shader", "source": "shaders/entity_id_billboard.vert.shader.json" },
-    { "id": 2727315388288512838, "type": "Shader", "source": "shaders/entity_id_billboard.frag.shader.json" },
-    { "id": 13672220138851212916, "type": "Shader", "source": "shaders/ssr_trace.frag.shader.json" },
-    { "id": 17153908925538740214, "type": "Shader", "source": "shaders/ssr_blur_down.comp.shader.json" },
-    { "id": 5825948086578327969, "type": "Shader", "source": "shaders/ssr_composite.frag.shader.json" },
-    { "id": 10653949101260228506, "type": "Shader", "source": "shaders/ssr_hiz_reduce.comp.shader.json" },
-    { "id": 15529445843628382280, "type": "Shader", "source": "shaders/ibl_equirect_to_cube.comp.shader.json" },
-    { "id": 8370908130628051935,  "type": "Shader", "source": "shaders/ibl_irradiance.comp.shader.json" },
-    { "id": 427731706800222545,   "type": "Shader", "source": "shaders/ibl_prefilter.comp.shader.json" },
-    { "id": 9944075845009600008,  "type": "Shader", "source": "shaders/ibl_brdf_lut.comp.shader.json" },
-    { "id": 18205072294976643471, "type": "Shader", "source": "shaders/skybox.frag.shader.json" },
-    { "id": 6971316502757412238, "type": "Shader", "source": "shaders/atmosphere/atmosphere_transmittance.comp.shader.json" },
-    { "id": 17806969010341046278, "type": "Shader", "source": "shaders/atmosphere/atmosphere_single_scattering.comp.shader.json" },
-    { "id": 14939110639026576439, "type": "Shader", "source": "shaders/atmosphere/atmosphere_multiple_scattering.comp.shader.json" },
-    { "id": 16324018921654250864, "type": "Shader", "source": "shaders/atmosphere/atmosphere_irradiance.comp.shader.json" },
-    { "id": 9063170064657643608, "type": "Shader", "source": "shaders/atmosphere/atmosphere_sky.frag.shader.json" },
-    { "id": 11583985665354890033, "type": "Shader", "source": "shaders/debug_line.vert.shader.json" },
-    { "id": 7909061617139444202, "type": "Shader", "source": "shaders/debug_line.frag.shader.json" },
-    { "id": 4042385539205693696, "type": "Shader", "source": "shaders/debug_billboard.vert.shader.json" },
-    { "id": 3834025836854019546, "type": "Shader", "source": "shaders/debug_billboard.frag.shader.json" },
-    { "id": 7542712814785632894, "type": "Shader", "source": "shaders/emissive.vert.shader.json" },
-    { "id": 14613782249640445990, "type": "Shader", "source": "shaders/emissive.frag.shader.json" },
-    { "id": 3261539366325962248, "type": "Shader", "source": "shaders/emissive_skinned.vert.shader.json" },
-    { "id": 13589203438992884788, "type": "Material", "source": "materials/tonemap.vmat.json" }
+    {
+      "id": "0x4DC267CE63429B6C",
+      "type": "VertexLayout",
+      "source": "layouts/canonical.vlayout.json"
+    },
+    {
+      "id": "0x508858B6BF064960",
+      "type": "VertexLayout",
+      "source": "layouts/screenspace.vlayout.json"
+    },
+    {
+      "id": "0x8310BC60876FC6BF",
+      "type": "VertexLayout",
+      "source": "layouts/positiononly.vlayout.json"
+    },
+    {
+      "id": "0xD49E7F530927BA31",
+      "type": "VertexLayout",
+      "source": "layouts/skinned.vlayout.json"
+    },
+    {
+      "id": "0xD06A90771B3D718A",
+      "type": "VertexLayout",
+      "source": "layouts/debugline.vlayout.json"
+    },
+    {
+      "id": "0xF46DD3C6F2AE0628",
+      "type": "Shader",
+      "source": "shaders/fullscreen.vert.shader.json"
+    },
+    {
+      "id": "0x69BE03796E97148D",
+      "type": "Shader",
+      "source": "shaders/surface.vert.shader.json"
+    },
+    {
+      "id": "0x984BE76D55A4DA7C",
+      "type": "Shader",
+      "source": "shaders/surface_skinned.vert.shader.json"
+    },
+    {
+      "id": "0x156C14C99FFF6B7C",
+      "type": "Shader",
+      "source": "shaders/shadow_depth.vert.shader.json"
+    },
+    {
+      "id": "0x83DB748493614120",
+      "type": "Shader",
+      "source": "shaders/shadow_depth_skinned.vert.shader.json"
+    },
+    {
+      "id": "0xF90F709155D04BE7",
+      "type": "Shader",
+      "source": "shaders/albedo_blit.frag.shader.json"
+    },
+    {
+      "id": "0x6569EBAC0810CC1F",
+      "type": "Shader",
+      "source": "shaders/deferred_lighting.frag.shader.json"
+    },
+    {
+      "id": "0x6EEF5D26BAF2849F",
+      "type": "Shader",
+      "source": "shaders/deferred_lighting_ssao.frag.shader.json"
+    },
+    {
+      "id": "0x834ED7C05F336E01",
+      "type": "Shader",
+      "source": "shaders/deferred_lighting_cascades.frag.shader.json"
+    },
+    {
+      "id": "0xCCBA63DB760A4E8E",
+      "type": "Shader",
+      "source": "shaders/ssao.frag.shader.json"
+    },
+    {
+      "id": "0xBEB6DB78DFCF1D33",
+      "type": "Shader",
+      "source": "shaders/hdr_blit.frag.shader.json"
+    },
+    {
+      "id": "0x6E5E79AA8BBCC296",
+      "type": "Shader",
+      "source": "shaders/tonemap.frag.shader.json"
+    },
+    {
+      "id": "0x5A2CD7B270EAE5CD",
+      "type": "Shader",
+      "source": "shaders/normal_blit.frag.shader.json"
+    },
+    {
+      "id": "0xE05F5F86E72F96D5",
+      "type": "Shader",
+      "source": "shaders/depth_blit.frag.shader.json"
+    },
+    {
+      "id": "0x7992B54A844CB1E1",
+      "type": "Shader",
+      "source": "shaders/orm_blit.frag.shader.json"
+    },
+    {
+      "id": "0x97974B40192934E4",
+      "type": "Shader",
+      "source": "shaders/ao_blit.frag.shader.json"
+    },
+    {
+      "id": "0x0B61D5D42DAEF190",
+      "type": "Shader",
+      "source": "shaders/shadow_blit.frag.shader.json"
+    },
+    {
+      "id": "0x4BCFF3ED0254B42E",
+      "type": "Shader",
+      "source": "shaders/composite.frag.shader.json"
+    },
+    {
+      "id": "0x657ADCF9558CA6B9",
+      "type": "Shader",
+      "source": "shaders/gather.frag.shader.json"
+    },
+    {
+      "id": "0x5B8811BEAC5D9C3B",
+      "type": "Shader",
+      "source": "shaders/bloom_down.comp.shader.json"
+    },
+    {
+      "id": "0x4F28282A720BC9F2",
+      "type": "Shader",
+      "source": "shaders/bloom_up.comp.shader.json"
+    },
+    {
+      "id": "0xCB1AA796A1E3BBEF",
+      "type": "Shader",
+      "source": "shaders/bloom_down_kawase.comp.shader.json"
+    },
+    {
+      "id": "0x0C269FA0D5F353D2",
+      "type": "Shader",
+      "source": "shaders/bloom_up_kawase.comp.shader.json"
+    },
+    {
+      "id": "0x533236398AB7654F",
+      "type": "Shader",
+      "source": "shaders/bloom_composite.comp.shader.json"
+    },
+    {
+      "id": "0xCB20C4EF8A20ADBC",
+      "type": "Shader",
+      "source": "shaders/hi_z_reduce.comp.shader.json"
+    },
+    {
+      "id": "0x40A58AE8E1B3135E",
+      "type": "Shader",
+      "source": "shaders/hi_z_occlusion_test.comp.shader.json"
+    },
+    {
+      "id": "0x5FE19B500FD44B52",
+      "type": "Shader",
+      "source": "shaders/occlusion_cull.comp.shader.json"
+    },
+    {
+      "id": "0xF277BB65AEDAC33E",
+      "type": "Shader",
+      "source": "shaders/taa_resolve.frag.shader.json"
+    },
+    {
+      "id": "0x07F31C1EC98A29BF",
+      "type": "Shader",
+      "source": "shaders/taa_history_copy.frag.shader.json"
+    },
+    {
+      "id": "0xCCD40C76935382FD",
+      "type": "Shader",
+      "source": "shaders/motion_blit.frag.shader.json"
+    },
+    {
+      "id": "0xBE08B2489A5AA07A",
+      "type": "Shader",
+      "source": "shaders/entity_id.frag.shader.json"
+    },
+    {
+      "id": "0xE21B8F492DADABE5",
+      "type": "Shader",
+      "source": "shaders/entity_id.vert.shader.json"
+    },
+    {
+      "id": "0x7FB330D3ABACAE0F",
+      "type": "Shader",
+      "source": "shaders/entity_id_skinned.vert.shader.json"
+    },
+    {
+      "id": "0x1BED72AFAAFBB89D",
+      "type": "Shader",
+      "source": "shaders/entity_id_billboard.vert.shader.json"
+    },
+    {
+      "id": "0x25D95EE54D64B346",
+      "type": "Shader",
+      "source": "shaders/entity_id_billboard.frag.shader.json"
+    },
+    {
+      "id": "0xBDBD7BC71B2B1E74",
+      "type": "Shader",
+      "source": "shaders/ssr_trace.frag.shader.json"
+    },
+    {
+      "id": "0xEE0EED485023A7F6",
+      "type": "Shader",
+      "source": "shaders/ssr_blur_down.comp.shader.json"
+    },
+    {
+      "id": "0x50D9ECEAE45E31A1",
+      "type": "Shader",
+      "source": "shaders/ssr_composite.frag.shader.json"
+    },
+    {
+      "id": "0x93DA6E42B3B5479A",
+      "type": "Shader",
+      "source": "shaders/ssr_hiz_reduce.comp.shader.json"
+    },
+    {
+      "id": "0xD783ACB75C22D848",
+      "type": "Shader",
+      "source": "shaders/ibl_equirect_to_cube.comp.shader.json"
+    },
+    {
+      "id": "0x742B70980583A3DF",
+      "type": "Shader",
+      "source": "shaders/ibl_irradiance.comp.shader.json"
+    },
+    {
+      "id": "0x05EF9BB89AFFB151",
+      "type": "Shader",
+      "source": "shaders/ibl_prefilter.comp.shader.json"
+    },
+    {
+      "id": "0x8A00744B8956EE08",
+      "type": "Shader",
+      "source": "shaders/ibl_brdf_lut.comp.shader.json"
+    },
+    {
+      "id": "0xFCA568CC3463618F",
+      "type": "Shader",
+      "source": "shaders/skybox.frag.shader.json"
+    },
+    {
+      "id": "0x60BF176C73AC8D8E",
+      "type": "Shader",
+      "source": "shaders/atmosphere/atmosphere_transmittance.comp.shader.json"
+    },
+    {
+      "id": "0xF71F0FF833C46806",
+      "type": "Shader",
+      "source": "shaders/atmosphere/atmosphere_single_scattering.comp.shader.json"
+    },
+    {
+      "id": "0xCF5261F9B3701C37",
+      "type": "Shader",
+      "source": "shaders/atmosphere/atmosphere_multiple_scattering.comp.shader.json"
+    },
+    {
+      "id": "0xE28A90B88BF4ED70",
+      "type": "Shader",
+      "source": "shaders/atmosphere/atmosphere_irradiance.comp.shader.json"
+    },
+    {
+      "id": "0x7DC6D927B2DF7858",
+      "type": "Shader",
+      "source": "shaders/atmosphere/atmosphere_sky.frag.shader.json"
+    },
+    {
+      "id": "0xA0C295968AB1FB31",
+      "type": "Shader",
+      "source": "shaders/debug_line.vert.shader.json"
+    },
+    {
+      "id": "0x6DC2A1A30445E9EA",
+      "type": "Shader",
+      "source": "shaders/debug_line.frag.shader.json"
+    },
+    {
+      "id": "0x3819703AFD880100",
+      "type": "Shader",
+      "source": "shaders/debug_billboard.vert.shader.json"
+    },
+    {
+      "id": "0x3535322F615A85DA",
+      "type": "Shader",
+      "source": "shaders/debug_billboard.frag.shader.json"
+    },
+    {
+      "id": "0x68AD195790159A7E",
+      "type": "Shader",
+      "source": "shaders/emissive.vert.shader.json"
+    },
+    {
+      "id": "0xCACE958766BA4826",
+      "type": "Shader",
+      "source": "shaders/emissive.frag.shader.json"
+    },
+    {
+      "id": "0x2D4350C5F6CFC608",
+      "type": "Shader",
+      "source": "shaders/emissive_skinned.vert.shader.json"
+    },
+    {
+      "id": "0xBC968C8771B00434",
+      "type": "Material",
+      "source": "materials/tonemap.vmat.json"
+    }
   ]
 }

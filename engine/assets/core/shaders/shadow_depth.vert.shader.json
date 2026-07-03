@@ -1,5 +1,5 @@
 {
   "source": "shadow_depth.vert.slang",
   "entry": "vsMain",
-  "vertex_layout": 5603155022528551788
+  "vertex_layout": "0x4DC267CE63429B6C"
 }

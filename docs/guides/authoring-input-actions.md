@@ -81,18 +81,18 @@ at runtime by `AssetId`. hello-triangle's
 ```json
 {
   "actions": [
-    { "id": 8360947520741195460,  "name": "Move", "kind": "Axis2D" },
-    { "id": 7905774513346024493,  "name": "Look", "kind": "Axis2D" },
-    { "id": 13135361833009734947, "name": "Jump", "kind": "Button" }
+    { "id": "0x74080D78CF763EC4", "name": "Move", "kind": "Axis2D" },
+    { "id": "0x6DB6F4088653942D", "name": "Look", "kind": "Axis2D" },
+    { "id": "0xB64A2DFE34C4E523", "name": "Jump", "kind": "Button" }
   ],
   "bindings": [
-    { "source": { "device": "Keyboard",  "control": 68 }, "action": 8360947520741195460, "axis": "X", "scale":  1.0 },
-    { "source": { "device": "Keyboard",  "control": 65 }, "action": 8360947520741195460, "axis": "X", "scale": -1.0 },
-    { "source": { "device": "Keyboard",  "control": 87 }, "action": 8360947520741195460, "axis": "Y", "scale":  1.0 },
-    { "source": { "device": "Keyboard",  "control": 83 }, "action": 8360947520741195460, "axis": "Y", "scale": -1.0 },
-    { "source": { "device": "MouseAxis", "control": 0  }, "action": 7905774513346024493, "axis": "X", "scale":  1.0 },
-    { "source": { "device": "MouseAxis", "control": 1  }, "action": 7905774513346024493, "axis": "Y", "scale":  1.0 },
-    { "source": { "device": "Keyboard",  "control": 32 }, "action": 13135361833009734947, "axis": "Whole" }
+    { "source": { "device": "Keyboard",  "control": 68 }, "action": "0x74080D78CF763EC4", "axis": "X", "scale":  1.0 },
+    { "source": { "device": "Keyboard",  "control": 65 }, "action": "0x74080D78CF763EC4", "axis": "X", "scale": -1.0 },
+    { "source": { "device": "Keyboard",  "control": 87 }, "action": "0x74080D78CF763EC4", "axis": "Y", "scale":  1.0 },
+    { "source": { "device": "Keyboard",  "control": 83 }, "action": "0x74080D78CF763EC4", "axis": "Y", "scale": -1.0 },
+    { "source": { "device": "MouseAxis", "control": 0  }, "action": "0x6DB6F4088653942D", "axis": "X", "scale":  1.0 },
+    { "source": { "device": "MouseAxis", "control": 1  }, "action": "0x6DB6F4088653942D", "axis": "Y", "scale":  1.0 },
+    { "source": { "device": "Keyboard",  "control": 32 }, "action": "0xB64A2DFE34C4E523", "axis": "Whole" }
   ]
 }
 ```
@@ -119,7 +119,7 @@ an unknown device/axis/kind name. Add the source to the asset pack manifest like
 any other asset:
 
 ```json
-{ "id": 16596091148679838649, "type": "InputMap", "source": "input/gameplay.inputmap.json" }
+{ "id": "0xE65128F84910FBB9", "type": "InputMap", "source": "input/gameplay.inputmap.json" }
 ```
 
 The bindings are **data**, so retargeting `Jump` from Space to Enter, or adding a

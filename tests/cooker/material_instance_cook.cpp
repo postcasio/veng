@@ -109,7 +109,7 @@ GBufferOutput fsMain(SurfaceFragmentInput input)
         WriteFile(dir / "surface.vert.slang", SurfaceVert);
         WriteFile(
             dir / "surface.vert.shader.json",
-            R"({ "source": "surface.vert.slang", "entry": "vsMain", "vertex_layout": 7001 })");
+            R"({ "source": "surface.vert.slang", "entry": "vsMain", "vertex_layout": "0x0000000000001B59" })");
 
         WriteFile(dir / "brick.frag.slang", BrickFrag);
         WriteFile(dir / "brick.frag.shader.json",
@@ -134,10 +134,10 @@ GBufferOutput fsMain(SurfaceFragmentInput input)
         // EngineBound is reflected in the shader but NOT declared here, so it is not exposed.
         WriteFile(dir / "brick.vmat.json", R"({
   "domain": "Surface",
-  "shaders": { "vertex": 7002, "fragment": 7003 },
+  "shaders": { "vertex": "0x0000000000001B5A", "fragment": "0x0000000000001B5B" },
   "fields": [
     { "name": "BaseColorFactor",  "type": "vec4",    "value": [1.0, 1.0, 1.0, 1.0] },
-    { "name": "BaseColor",        "type": "texture", "id": 7004 },
+    { "name": "BaseColor",        "type": "texture", "id": "0x0000000000001B5C" },
     { "name": "BaseColorSampler", "type": "sampler", "texture": "BaseColor" }
   ]
 })");
@@ -152,12 +152,12 @@ GBufferOutput fsMain(SurfaceFragmentInput input)
         WriteFile(dir / "pack.json", fmt::format(R"({{
   "version": 1,
   "assets": [
-    {{ "id": 7001, "type": "VertexLayout",     "source": "canonical.vlayout.json" }},
-    {{ "id": 7002, "type": "Shader",           "source": "surface.vert.shader.json" }},
-    {{ "id": 7003, "type": "Shader",           "source": "brick.frag.shader.json" }},
-    {{ "id": 7004, "type": "Texture",          "source": "white.tex.json" }},
-    {{ "id": 7005, "type": "Material",         "source": "brick.vmat.json" }},
-    {{ "id": 7006, "type": "MaterialInstance", "source": "{}" }}
+    {{ "id": "0x0000000000001B59", "type": "VertexLayout",     "source": "canonical.vlayout.json" }},
+    {{ "id": "0x0000000000001B5A", "type": "Shader",           "source": "surface.vert.shader.json" }},
+    {{ "id": "0x0000000000001B5B", "type": "Shader",           "source": "brick.frag.shader.json" }},
+    {{ "id": "0x0000000000001B5C", "type": "Texture",          "source": "white.tex.json" }},
+    {{ "id": "0x0000000000001B5D", "type": "Material",         "source": "brick.vmat.json" }},
+    {{ "id": "0x0000000000001B5E", "type": "MaterialInstance", "source": "{}" }}
   ]
 }})",
                                                  instanceSource));
@@ -180,10 +180,10 @@ TEST_CASE("Cooker: a material instance overriding an exposed vec4 + texture cook
 {
     const path dir = WriteParentPack("valid");
     WriteFile(dir / "tinted.vmatinst.json", R"({
-  "parent": 7005,
+  "parent": "0x0000000000001B5D",
   "overrides": {
     "BaseColorFactor": [0.9, 0.4, 0.2, 1.0],
-    "BaseColor": 7004
+    "BaseColor": "0x0000000000001B5C"
   }
 })");
 
@@ -245,7 +245,7 @@ TEST_CASE("Cooker: an override naming a non-exposed field is a located cook erro
 {
     const path dir = WriteParentPack("nonexposed");
     WriteFile(dir / "bad.vmatinst.json", R"({
-  "parent": 7005,
+  "parent": "0x0000000000001B5D",
   "overrides": { "NotAField": [1.0, 0.0, 0.0, 1.0] }
 })");
 
@@ -263,7 +263,7 @@ TEST_CASE("Cooker: an override naming an engine-bound (non-exposed) field is a l
     // so it is not an override surface — exactly the engine-bound exclusion.
     const path dir = WriteParentPack("enginebound");
     WriteFile(dir / "bad.vmatinst.json", R"({
-  "parent": 7005,
+  "parent": "0x0000000000001B5D",
   "overrides": { "EngineBound": 3 }
 })");
 
@@ -279,7 +279,7 @@ TEST_CASE("Cooker: a type-mismatched override (scalar over a vec4 field) is a lo
 {
     const path dir = WriteParentPack("typemismatch");
     WriteFile(dir / "bad.vmatinst.json", R"({
-  "parent": 7005,
+  "parent": "0x0000000000001B5D",
   "overrides": { "BaseColorFactor": 0.5 }
 })");
 

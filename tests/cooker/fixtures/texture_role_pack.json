@@ -1,6 +1,10 @@
 {
   "version": 1,
   "assets": [
-    { "id": 9787698919995868622, "type": "Texture", "source": "textures/texture_role.tex.json" }
+    {
+      "id": "0x87D4E44F6ED405CE",
+      "type": "Texture",
+      "source": "textures/texture_role.tex.json"
+    }
   ]
 }

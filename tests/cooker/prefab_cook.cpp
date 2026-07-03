@@ -16,6 +16,7 @@
 
 #include <Veng/Asset/Archive.h>
 #include <Veng/Asset/CookedBlobs.h>
+#include <Veng/Asset/HexId.h>
 #include <Veng/Asset/InputMappingContext.h>
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Cook/BuiltinImporters.h>
@@ -111,7 +112,7 @@ namespace
         pack["version"] = 1;
         pack["assets"] = json::array();
         json asset;
-        asset["id"] = 4242;
+        asset["id"] = FormatHexId(4242);
         asset["type"] = "Prefab";
         asset["source"] = prefabPath.filename().string();
         pack["assets"].push_back(asset);
@@ -354,7 +355,7 @@ TEST_CASE("prefab cook: an AssetHandle id resolving to the wrong type is a locat
     // 8002 resolves to a Texture in the reference pack, but MeshRenderer.Mesh
     // expects a Mesh.
     json renderer;
-    renderer["Mesh"] = 8002;
+    renderer["Mesh"] = FormatHexId(8002);
     json components;
     components["::Veng::MeshRenderer"] = renderer;
 
@@ -371,7 +372,7 @@ TEST_CASE("prefab cook: an AssetHandle id resolving to the wrong type is a locat
     json pack;
     pack["version"] = 1;
     json asset;
-    asset["id"] = 4242;
+    asset["id"] = FormatHexId(4242);
     asset["type"] = "Prefab";
     asset["source"] = prefabPath.filename().string();
     pack["assets"] = json::array({asset});
@@ -391,7 +392,7 @@ TEST_CASE("prefab cook: a non-resident AssetHandle id is accepted as-is")
 
     // An id not in the pack or any reference pack: residency is the runtime's job.
     json renderer;
-    renderer["Mesh"] = 1234567890123ULL;
+    renderer["Mesh"] = FormatHexId(1234567890123ULL);
     json components;
     components["::Veng::MeshRenderer"] = renderer;
     const path packJson = WriteInlinePrefab("prefab_handle_nonresident", components);
@@ -424,7 +425,7 @@ TEST_CASE("prefab cook: an InputContextStack AssetHandle array round-trips its c
     constexpr u64 ContextB = 999999000000000002ULL;
 
     json stack;
-    stack["Active"] = json::array({ContextA, ContextB});
+    stack["Active"] = json::array({FormatHexId(ContextA), FormatHexId(ContextB)});
     json components;
     components["::Veng::InputContextStack"] = stack;
     const path packJson = WriteInlinePrefab("prefab_input_stack", components);

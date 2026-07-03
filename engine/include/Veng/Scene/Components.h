@@ -618,7 +618,7 @@ namespace Veng
     };
 }
 
-VE_ENUM(::Veng::LightType, 0x6B1D62EF4B5A16ULL)
+VE_ENUM(::Veng::LightType, 0x006B1D62EF4B5A16ULL)
 VE_ENUMERATOR(Directional)
 VE_ENUMERATOR(Point)
 VE_ENUMERATOR(Spot)
@@ -643,7 +643,7 @@ VE_FIELD(Extent, .DisplayName = "Extent", .Display = {.Min = 0.001})
 VE_FIELD(Material, .DisplayName = "Material")
 VE_REFLECT_END();
 
-VE_REFLECT(::Veng::PlaneShape, 0xE53DEFF5662A295ULL)
+VE_REFLECT(::Veng::PlaneShape, 0x0E53DEFF5662A295ULL)
 VE_FIELD(Size, .DisplayName = "Size", .Display = {.Min = 0.001})
 VE_FIELD(Subdivisions, .DisplayName = "Subdivisions", .Display = {.Min = 1})
 VE_FIELD(Material, .DisplayName = "Material")

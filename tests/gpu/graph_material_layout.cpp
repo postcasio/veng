@@ -171,8 +171,9 @@ SurfaceFragmentInput vsMain(VSInput input)
     return output;
 }
 )");
-    WriteFile(dir / "surface.vert.shader.json",
-              R"({ "source": "surface.vert.slang", "entry": "vsMain", "vertex_layout": 9701 })");
+    WriteFile(
+        dir / "surface.vert.shader.json",
+        R"({ "source": "surface.vert.slang", "entry": "vsMain", "vertex_layout": "0x00000000000025E5" })");
 
     WriteFile(dir / "tint.frag.graph.json", WriteNodeGraph(graph, catalog));
     WriteFile(dir / "tint.frag.shader.json",
@@ -184,16 +185,16 @@ SurfaceFragmentInput vsMain(VSInput input)
         .Fields = {}, .VertexShader = AssetId{9702}, .FragmentShader = AssetId{9703}};
     // The default-instance id lives in the .vmat source; inject it into the generated document.
     string tintVmat = WriteMaterialVmat(generated->Fields, iface, MaterialDomain::Surface);
-    tintVmat.insert(tintVmat.find('{') + 1, "\n  \"defaultInstance\": 9009704,");
+    tintVmat.insert(tintVmat.find('{') + 1, "\n  \"defaultInstance\": \"0x0000000000897A28\",");
     WriteFile(dir / "tint.vmat.json", tintVmat);
 
     WriteFile(dir / "pack.json", R"({
   "version": 1,
   "assets": [
-    { "id": 9701, "type": "VertexLayout", "source": "canonical.vlayout.json" },
-    { "id": 9702, "type": "Shader",       "source": "surface.vert.shader.json" },
-    { "id": 9703, "type": "Shader",       "source": "tint.frag.shader.json" },
-    { "id": 9704, "type": "Material",     "source": "tint.vmat.json" }
+    { "id": "0x00000000000025E5", "type": "VertexLayout", "source": "canonical.vlayout.json" },
+    { "id": "0x00000000000025E6", "type": "Shader",       "source": "surface.vert.shader.json" },
+    { "id": "0x00000000000025E7", "type": "Shader",       "source": "tint.frag.shader.json" },
+    { "id": "0x00000000000025E8", "type": "Material",     "source": "tint.vmat.json" }
   ]
 })");
 

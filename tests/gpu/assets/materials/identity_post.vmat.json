@@ -1,9 +1,9 @@
 {
-  "defaultInstance": 9000503,
+  "defaultInstance": "0x0000000000895637",
   "domain": "PostProcess",
   "shaders": {
-    "vertex": 9501,
-    "fragment": 9502
+    "vertex": "0x000000000000251D",
+    "fragment": "0x000000000000251E"
   },
   "fields": [
     {

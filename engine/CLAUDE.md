@@ -1045,8 +1045,9 @@ the host (launcher or cooker) constructs it, pre-registers the builtins, fills i
 `Scene::Create(TypeRegistry&)`. It is generic over *any* reflected
 type — leaf field types, nested structs, and components share **one `TypeId` space**.
 Each type carries a stable `u64` **`TypeId` authored exactly like an `AssetId`**:
-hardcoded `0x…ULL` for engine types, `vengc generate-id` for game types, hex in C++ /
-decimal in JSON. It is a compile-time constant (`TypeIdOf<T>()` reads it off a trait,
+hardcoded zero-padded `0x…ULL` for engine types, `vengc generate-id` for game types —
+the same zero-padded hex spelling in C++ and (where an id reaches JSON) as a hex string,
+never a bare decimal. It is a compile-time constant (`TypeIdOf<T>()` reads it off a trait,
 independent of registration order), persisted directly (a scene stores a component's
 `TypeId`, never its name), and byte-identical across the module boundary (so the
 cooker reflecting a module reads the same ids the runtime does); two

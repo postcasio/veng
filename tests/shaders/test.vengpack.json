@@ -1,16 +1,60 @@
 {
   "version": 1,
   "assets": [
-    { "id": 8001, "type": "Shader", "source": "invert.comp.shader.json" },
-    { "id": 8002, "type": "Shader", "source": "fullscreen.vert.shader.json" },
-    { "id": 8003, "type": "Shader", "source": "sample.frag.shader.json" },
-    { "id": 8004, "type": "Shader", "source": "bindless_sample.frag.shader.json" },
-    { "id": 8005, "type": "Shader", "source": "material_param.frag.shader.json" },
-    { "id": 8006, "type": "Shader", "source": "indirect_instance.vert.shader.json" },
-    { "id": 8007, "type": "Shader", "source": "indirect_instance.frag.shader.json" },
-    { "id": 8008, "type": "Shader", "source": "indirect_cull.comp.shader.json" },
-    { "id": 8009, "type": "Shader", "source": "volume_write.comp.shader.json" },
-    { "id": 8010, "type": "Shader", "source": "volume_sample.comp.shader.json" },
-    { "id": 8011, "type": "Shader", "source": "sh_eval.comp.shader.json" }
+    {
+      "id": "0x0000000000001F41",
+      "type": "Shader",
+      "source": "invert.comp.shader.json"
+    },
+    {
+      "id": "0x0000000000001F42",
+      "type": "Shader",
+      "source": "fullscreen.vert.shader.json"
+    },
+    {
+      "id": "0x0000000000001F43",
+      "type": "Shader",
+      "source": "sample.frag.shader.json"
+    },
+    {
+      "id": "0x0000000000001F44",
+      "type": "Shader",
+      "source": "bindless_sample.frag.shader.json"
+    },
+    {
+      "id": "0x0000000000001F45",
+      "type": "Shader",
+      "source": "material_param.frag.shader.json"
+    },
+    {
+      "id": "0x0000000000001F46",
+      "type": "Shader",
+      "source": "indirect_instance.vert.shader.json"
+    },
+    {
+      "id": "0x0000000000001F47",
+      "type": "Shader",
+      "source": "indirect_instance.frag.shader.json"
+    },
+    {
+      "id": "0x0000000000001F48",
+      "type": "Shader",
+      "source": "indirect_cull.comp.shader.json"
+    },
+    {
+      "id": "0x0000000000001F49",
+      "type": "Shader",
+      "source": "volume_write.comp.shader.json"
+    },
+    {
+      "id": "0x0000000000001F4A",
+      "type": "Shader",
+      "source": "volume_sample.comp.shader.json"
+    },
+    {
+      "id": "0x0000000000001F4B",
+      "type": "Shader",
+      "source": "sh_eval.comp.shader.json"
+    }
   ]
 }

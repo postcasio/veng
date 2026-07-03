@@ -41,16 +41,16 @@ and its `*.level.json` source carries four pieces. hello-triangle's
 
 ```json
 {
-  "world": 11611391513566245589,
+  "world": "0xA123F30FD219F2D5",
   "systems": [
-    8128120177403478945,
-    2030943125819365810,
-    4323789676874032403,
-    13095149762400407006,
-    5673716953921245912
+    "0x70CCE23C99D1C3A1",
+    "0x1C2F5C03357C19B2",
+    "0x3C012FCD7D93E513",
+    "0xB5BB5153EC6ACDDE",
+    "0x4EBD17824A9652D8"
   ],
   "gameMode": {
-    "PlayerPrefab": 13493236524696338033,
+    "PlayerPrefab": "0xBB419B2104D9FE71",
     "ScoreToWin": 0
   },
   "render": {
@@ -68,8 +68,9 @@ and its `*.level.json` source carries four pieces. hello-triangle's
   (meshes, materials) resolve as ordinary load-time dependencies.
 - **`systems`** — the ordered active `SystemId` set, in run order. These ids name
   registered systems from the `SystemRegistry` catalog; the simulation runs exactly
-  this set, in this order (honoring the Sim/View phase split). The ids in JSON are
-  decimal; in C++ they are uppercase-hex `0x…ULL` literals. The five above are, in
+  this set, in this order (honoring the Sim/View phase split). The ids are the same
+  zero-padded hex spelling in both: a `"0x…"` string in JSON, a `0x…ULL` literal in C++.
+  The five above are, in
   order, the spawn rule, control, movement, spinner, and camera-rig systems.
 - **`gameMode`** — the `GameModeConfig` seeded onto the `Session` entity at load:
   the `PlayerPrefab` a spawn rule instantiates and the mode parameters

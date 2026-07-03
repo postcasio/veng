@@ -1,6 +1,10 @@
 {
   "version": 1,
   "assets": [
-    { "id": 7432533269144336662, "type": "Texture", "source": "textures/texture_mipped.tex.json" }
+    {
+      "id": "0x6725A9A1089EF916",
+      "type": "Texture",
+      "source": "textures/texture_mipped.tex.json"
+    }
   ]
 }
