@@ -14,6 +14,7 @@
 #include <assimp/scene.h>
 
 #include <Veng/Asset/CookedBlobs.h>
+#include <Veng/Asset/HexId.h>
 #include <Veng/Cook/JsonFile.h>
 #include <Veng/Renderer/Types.h>
 
@@ -117,15 +118,29 @@ namespace Veng::Cook
             f32 Weight = 0.0f;
         };
 
-        // Reads a per-submesh material override AssetId from { "<index>": <u64> }, or 0.
-        u64 SubMeshMaterialId(const json& materials, unsigned int meshIndex)
+        // Reads a per-submesh material override AssetId from { "<index>": "<hexId>" }, or 0 when
+        // the submesh has no override. The map key is the decimal submesh index (not an id); the
+        // value is the material's hex id string. A present-but-malformed value is a located error.
+        Result<u64> SubMeshMaterialId(const json& materials, unsigned int meshIndex)
         {
             const string key = std::to_string(meshIndex);
-            if (materials.contains(key) && materials[key].is_number_unsigned())
+            if (!materials.contains(key))
             {
-                return materials[key].get<u64>();
+                return 0;
             }
-            return 0;
+            if (!materials[key].is_string())
+            {
+                return std::unexpected(
+                    fmt::format("mesh importer: 'materials[\"{}\"]' must be a hex id string", key));
+            }
+            const optional<AssetId> parsed = ParseAssetId(materials[key].get<string>());
+            if (!parsed)
+            {
+                return std::unexpected(
+                    fmt::format("mesh importer: 'materials[\"{}\"]' is a malformed hex id '{}'",
+                                key, materials[key].get<string>()));
+            }
+            return parsed->Value;
         }
     }
 
@@ -156,8 +171,25 @@ namespace Veng::Cook
 
         // A "skeleton" key marks a skinned mesh: its vertices carry bone indices/weights and
         // the cooked header references the named Skeleton asset.
-        const bool skinned = meshJson.contains("skeleton") && meshJson["skeleton"].is_number();
-        const u64 skeletonId = skinned ? meshJson["skeleton"].get<u64>() : 0;
+        const bool skinned = meshJson.contains("skeleton");
+        u64 skeletonId = 0;
+        if (skinned)
+        {
+            if (!meshJson["skeleton"].is_string())
+            {
+                return std::unexpected(
+                    fmt::format("mesh importer: '{}': 'skeleton' must be a hex id string",
+                                sourcePath.string()));
+            }
+            const optional<AssetId> parsed = ParseAssetId(meshJson["skeleton"].get<string>());
+            if (!parsed)
+            {
+                return std::unexpected(
+                    fmt::format("mesh importer: '{}': 'skeleton' is a malformed hex id '{}'",
+                                sourcePath.string(), meshJson["skeleton"].get<string>()));
+            }
+            skeletonId = parsed->Value;
+        }
 
         // Import settings -> assimp post-process flags. Defaults: generate normals +
         // tangents, join identical verts.
@@ -353,10 +385,17 @@ namespace Veng::Cook
 
             const u32 indexCount = static_cast<u32>(indices.size()) - indexOffset;
 
+            const Result<u64> materialId = SubMeshMaterialId(materials, meshIndex);
+            if (!materialId)
+            {
+                return std::unexpected(fmt::format("mesh importer: '{}': {}", sourcePath.string(),
+                                                   materialId.error()));
+            }
+
             subMeshes.push_back(CookedSubMesh{
                 .IndexOffset = indexOffset,
                 .IndexCount = indexCount,
-                .MaterialId = SubMeshMaterialId(materials, meshIndex),
+                .MaterialId = *materialId,
             });
         }
 

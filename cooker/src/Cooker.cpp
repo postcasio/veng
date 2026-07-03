@@ -10,6 +10,7 @@
 #include <zstd.h>
 
 #include <Veng/Asset/AtomicFile.h>
+#include <Veng/Asset/HexId.h>
 #include <Veng/Cook/JsonFile.h>
 #include <Veng/Project/CompressionFormat.h>
 #include <Veng/Project/CompressionRole.h>
@@ -128,13 +129,22 @@ namespace Veng::Cook
                                                    packJson.string(), index));
             }
 
-            if (!entry.contains("id") || !entry["id"].is_number_unsigned())
+            if (!entry.contains("id") || !entry["id"].is_string())
             {
-                return std::unexpected(fmt::format("pack '{}': asset[{}]: missing or invalid 'id'",
-                                                   packJson.string(), index));
+                return std::unexpected(fmt::format(
+                    "pack '{}': asset[{}]: missing or invalid 'id' (expected hex id string)",
+                    packJson.string(), index));
             }
 
-            const u64 id = entry["id"].get<u64>();
+            const optional<AssetId> parsedId = ParseAssetId(entry["id"].get<string>());
+            if (!parsedId)
+            {
+                return std::unexpected(fmt::format("pack '{}': asset[{}]: malformed hex id '{}'",
+                                                   packJson.string(), index,
+                                                   entry["id"].get<string>()));
+            }
+
+            const u64 id = parsedId->Value;
             if (id == 0)
             {
                 return std::unexpected(fmt::format("pack '{}': asset[{}]: asset id 0 is reserved",
@@ -306,12 +316,19 @@ namespace Veng::Cook
 
         if (project.contains("startupLevel"))
         {
-            if (!project["startupLevel"].is_number_unsigned())
+            if (!project["startupLevel"].is_string())
             {
                 return std::unexpected(fmt::format(
-                    "project '{}': startupLevel is not an unsigned integer", projectFile.string()));
+                    "project '{}': startupLevel is not a hex id string", projectFile.string()));
             }
-            parsed.StartupLevel = AssetId{.Value = project["startupLevel"].get<u64>()};
+            const optional<AssetId> startup = ParseAssetId(project["startupLevel"].get<string>());
+            if (!startup)
+            {
+                return std::unexpected(
+                    fmt::format("project '{}': startupLevel is a malformed hex id '{}'",
+                                projectFile.string(), project["startupLevel"].get<string>()));
+            }
+            parsed.StartupLevel = *startup;
         }
 
         return parsed;
@@ -603,12 +620,18 @@ namespace Veng::Cook
             return std::unexpected("entry is not an object");
         }
 
-        if (!entry.contains("id") || !entry["id"].is_number_unsigned())
+        if (!entry.contains("id") || !entry["id"].is_string())
         {
-            return std::unexpected("missing or invalid 'id' (expected a non-zero u64)");
+            return std::unexpected("missing or invalid 'id' (expected a hex id string)");
         }
 
-        const u64 id = entry["id"].get<u64>();
+        const optional<AssetId> parsedId = ParseAssetId(entry["id"].get<string>());
+        if (!parsedId)
+        {
+            return std::unexpected(fmt::format("malformed hex id '{}'", entry["id"].get<string>()));
+        }
+
+        const u64 id = parsedId->Value;
         if (id == 0)
         {
             return std::unexpected("asset id 0 is reserved (invalid AssetId)");
@@ -670,11 +693,19 @@ namespace Veng::Cook
 
             if (vmat.contains("defaultInstance"))
             {
-                if (!vmat["defaultInstance"].is_number_unsigned())
+                if (!vmat["defaultInstance"].is_string())
                 {
-                    return std::unexpected("'defaultInstance' must be an unsigned u64 AssetId");
+                    return std::unexpected("'defaultInstance' must be a hex id string");
                 }
-                const u64 defaultInstanceId = vmat["defaultInstance"].get<u64>();
+                const optional<AssetId> parsedDefault =
+                    ParseAssetId(vmat["defaultInstance"].get<string>());
+                if (!parsedDefault)
+                {
+                    return std::unexpected(
+                        fmt::format("'defaultInstance' is a malformed hex id '{}'",
+                                    vmat["defaultInstance"].get<string>()));
+                }
+                const u64 defaultInstanceId = parsedDefault->Value;
                 if (defaultInstanceId == 0)
                 {
                     return std::unexpected("'defaultInstance' id 0 is reserved (invalid AssetId)");

@@ -9,6 +9,7 @@
 #include <fmt/format.h>
 
 #include <Veng/Asset/CookedBlobs.h>
+#include <Veng/Asset/HexId.h>
 #include <Veng/Cook/JsonFile.h>
 
 #include "GraphShaderSource.h"
@@ -53,13 +54,22 @@ namespace Veng::Cook
             // Resolve the parent's fragment shader to reflect its MaterialParams layout.
             if (!parentVmat.contains("shaders") || !parentVmat["shaders"].is_object() ||
                 !parentVmat["shaders"].contains("fragment") ||
-                !parentVmat["shaders"]["fragment"].is_number_unsigned())
+                !parentVmat["shaders"]["fragment"].is_string())
+            {
+                return std::unexpected(fmt::format("material instance importer: parent '{}' has no "
+                                                   "'shaders.fragment' hex id string",
+                                                   parentVmatPath.string()));
+            }
+            const optional<AssetId> fragmentParsed =
+                ParseAssetId(parentVmat["shaders"]["fragment"].get<string>());
+            if (!fragmentParsed)
             {
                 return std::unexpected(fmt::format(
-                    "material instance importer: parent '{}' has no 'shaders.fragment' AssetId",
-                    parentVmatPath.string()));
+                    "material instance importer: parent '{}' 'shaders.fragment' is a malformed hex "
+                    "id '{}'",
+                    parentVmatPath.string(), parentVmat["shaders"]["fragment"].get<string>()));
             }
-            const u64 fragmentShaderId = parentVmat["shaders"]["fragment"].get<u64>();
+            const u64 fragmentShaderId = fragmentParsed->Value;
 
             const optional<ResolvedSource> fragmentResolved =
                 context.Resolve(AssetId{.Value = fragmentShaderId});
@@ -214,13 +224,19 @@ namespace Veng::Cook
 
         // --- 2. Resolve the parent Material ---
 
-        if (!inst.contains("parent") || !inst["parent"].is_number_unsigned())
+        if (!inst.contains("parent") || !inst["parent"].is_string())
         {
-            return std::unexpected(fmt::format("material instance importer: '{}': 'parent' must be "
-                                               "an unsigned integer Material AssetId",
-                                               label));
+            return std::unexpected(fmt::format(
+                "material instance importer: '{}': 'parent' must be a hex id string", label));
         }
-        const u64 parentId = inst["parent"].get<u64>();
+        const optional<AssetId> parentParsed = ParseAssetId(inst["parent"].get<string>());
+        if (!parentParsed)
+        {
+            return std::unexpected(
+                fmt::format("material instance importer: '{}': 'parent' is a malformed hex id '{}'",
+                            label, inst["parent"].get<string>()));
+        }
+        const u64 parentId = parentParsed->Value;
 
         const optional<ResolvedSource> parentResolved = context.Resolve(AssetId{.Value = parentId});
         if (!parentResolved)
@@ -293,25 +309,34 @@ namespace Veng::Cook
 
                 if (field.Type == "texture")
                 {
-                    // A texture override carries an AssetId — accept either a bare unsigned id or
-                    // an { "id": <AssetId> } object, mirroring the .vmat texture-field spelling.
-                    u64 textureId = 0;
-                    if (value.is_number_unsigned())
+                    // A texture override carries an AssetId — accept either a bare hex-id string or
+                    // an { "id": <hexId> } object, mirroring the .vmat texture-field spelling.
+                    const json* idJson = nullptr;
+                    if (value.is_string())
                     {
-                        textureId = value.get<u64>();
+                        idJson = &value;
                     }
-                    else if (value.is_object() && value.contains("id") &&
-                             value["id"].is_number_unsigned())
+                    else if (value.is_object() && value.contains("id") && value["id"].is_string())
                     {
-                        textureId = value["id"].get<u64>();
+                        idJson = &value["id"];
                     }
                     else
                     {
                         return std::unexpected(fmt::format(
-                            "material instance importer: '{}': texture override '{}' must be an "
-                            "unsigned AssetId (or {{ \"id\": <AssetId> }})",
+                            "material instance importer: '{}': texture override '{}' must be a hex "
+                            "id string (or {{ \"id\": <hexId> }})",
                             label, name));
                     }
+
+                    const optional<AssetId> texParsed = ParseAssetId(idJson->get<string>());
+                    if (!texParsed)
+                    {
+                        return std::unexpected(fmt::format("material instance importer: '{}': "
+                                                           "texture override '{}' is a malformed "
+                                                           "hex id '{}'",
+                                                           label, name, idJson->get<string>()));
+                    }
+                    const u64 textureId = texParsed->Value;
 
                     const optional<ResolvedSource> texResolved =
                         context.Resolve(AssetId{.Value = textureId});
@@ -449,7 +474,7 @@ namespace Veng::Cook
     Result<vector<u8>> CookDefaultInstanceBlob(const CookContext& context, u64 parentId)
     {
         json inst;
-        inst["parent"] = parentId;
+        inst["parent"] = FormatAssetId(AssetId{.Value = parentId});
         inst["overrides"] = json::object();
 
         return CookMaterialInstanceDocument(

@@ -1,6 +1,7 @@
 #include <VengGraph/MaterialCompile.h>
 
 #include <Veng/Assert.h>
+#include <Veng/Asset/HexId.h>
 #include <Veng/Reflection/EnumName.h>
 #include <Veng/Reflection/TypeId.h>
 
@@ -356,8 +357,8 @@ namespace VengGraph
         out["domain"] = Veng::EnumeratorName(domain);
 
         Json shaders = Json::object();
-        shaders["vertex"] = shader.VertexShader.Value;
-        shaders["fragment"] = shader.FragmentShader.Value;
+        shaders["vertex"] = Veng::FormatAssetId(shader.VertexShader);
+        shaders["fragment"] = Veng::FormatAssetId(shader.FragmentShader);
         out["shaders"] = std::move(shaders);
 
         Json fieldArray = Json::array();
@@ -369,7 +370,7 @@ namespace VengGraph
 
             if (field.Type == "texture")
             {
-                entry["id"] = field.TextureId;
+                entry["id"] = Veng::FormatAssetId(Veng::AssetId{.Value = field.TextureId});
             }
             else if (field.Type == "sampler")
             {

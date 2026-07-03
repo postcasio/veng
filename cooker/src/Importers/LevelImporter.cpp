@@ -10,6 +10,7 @@
 #include <fmt/format.h>
 
 #include <Veng/Asset/CookedBlobs.h>
+#include <Veng/Asset/HexId.h>
 #include <Veng/Asset/Prefab.h>
 #include <Veng/Cook/JsonFile.h>
 #include <Veng/Reflection/JsonSerialize.h>
@@ -100,12 +101,20 @@ namespace Veng::Cook
 
         // --- 2. The world prefab reference ---
 
-        if (!level.contains("world") || !level["world"].is_number_unsigned())
+        if (!level.contains("world") || !level["world"].is_string())
+        {
+            return std::unexpected(fmt::format("level importer: '{}': missing or invalid 'world' "
+                                               "prefab id (expected hex id string)",
+                                               file));
+        }
+        const optional<AssetId> worldParsed = ParseAssetId(level["world"].get<string>());
+        if (!worldParsed)
         {
             return std::unexpected(
-                fmt::format("level importer: '{}': missing or invalid 'world' prefab id", file));
+                fmt::format("level importer: '{}': 'world' is a malformed hex id '{}'", file,
+                            level["world"].get<string>()));
         }
-        const u64 worldId = level["world"].get<u64>();
+        const u64 worldId = worldParsed->Value;
         if (worldId == 0)
         {
             return std::unexpected(
@@ -137,13 +146,19 @@ namespace Veng::Cook
             }
             for (const json& idValue : level["systems"])
             {
-                if (!idValue.is_number_unsigned())
+                if (!idValue.is_string())
                 {
                     return std::unexpected(fmt::format(
-                        "level importer: '{}': 'systems' entry must be an unsigned SystemId",
-                        file));
+                        "level importer: '{}': 'systems' entry must be a hex id string", file));
                 }
-                const u64 sysId = idValue.get<u64>();
+                const optional<u64> sysParsed = ParseHexId(idValue.get<string>());
+                if (!sysParsed)
+                {
+                    return std::unexpected(fmt::format(
+                        "level importer: '{}': 'systems' entry is a malformed hex id '{}'", file,
+                        idValue.get<string>()));
+                }
+                const u64 sysId = *sysParsed;
 
                 // Each named system must resolve against the module's registered catalog.
                 bool known = false;

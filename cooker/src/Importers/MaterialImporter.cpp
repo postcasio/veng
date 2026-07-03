@@ -9,6 +9,7 @@
 #include <fmt/format.h>
 
 #include <Veng/Asset/CookedBlobs.h>
+#include <Veng/Asset/HexId.h>
 #include <Veng/Asset/Material.h>
 #include <Veng/Cook/JsonFile.h>
 #include <Veng/Reflection/EnumName.h>
@@ -110,20 +111,34 @@ namespace Veng::Cook
 
         const json& shaders = vmat["shaders"];
 
-        if (!shaders.contains("vertex") || !shaders["vertex"].is_number_unsigned())
+        if (!shaders.contains("vertex") || !shaders["vertex"].is_string())
         {
-            return std::unexpected(
-                "material importer: 'shaders.vertex' must be an unsigned integer AssetId");
+            return std::unexpected("material importer: 'shaders.vertex' must be a hex id string");
         }
 
-        if (!shaders.contains("fragment") || !shaders["fragment"].is_number_unsigned())
+        if (!shaders.contains("fragment") || !shaders["fragment"].is_string())
         {
-            return std::unexpected(
-                "material importer: 'shaders.fragment' must be an unsigned integer AssetId");
+            return std::unexpected("material importer: 'shaders.fragment' must be a hex id string");
         }
 
-        const u64 vertexShaderId = shaders["vertex"].get<u64>();
-        const u64 fragmentShaderId = shaders["fragment"].get<u64>();
+        const optional<AssetId> vertexParsed = ParseAssetId(shaders["vertex"].get<string>());
+        if (!vertexParsed)
+        {
+            return std::unexpected(
+                fmt::format("material importer: 'shaders.vertex' is a malformed hex id '{}'",
+                            shaders["vertex"].get<string>()));
+        }
+
+        const optional<AssetId> fragmentParsed = ParseAssetId(shaders["fragment"].get<string>());
+        if (!fragmentParsed)
+        {
+            return std::unexpected(
+                fmt::format("material importer: 'shaders.fragment' is a malformed hex id '{}'",
+                            shaders["fragment"].get<string>()));
+        }
+
+        const u64 vertexShaderId = vertexParsed->Value;
+        const u64 fragmentShaderId = fragmentParsed->Value;
 
         if (!context.Resolve)
         {
@@ -339,13 +354,21 @@ namespace Veng::Cook
                 // field with no resolved id and the loader patches no asset.
                 if (fieldJson.contains("id"))
                 {
-                    if (!fieldJson["id"].is_number_unsigned())
+                    if (!fieldJson["id"].is_string())
                     {
                         return std::unexpected(fmt::format("material importer: texture field '{}' "
-                                                           "'id' must be an unsigned integer",
+                                                           "'id' must be a hex id string",
                                                            decl.Name));
                     }
-                    decl.TextureAssetId = fieldJson["id"].get<u64>();
+                    const optional<AssetId> parsed = ParseAssetId(fieldJson["id"].get<string>());
+                    if (!parsed)
+                    {
+                        return std::unexpected(fmt::format("material importer: texture field '{}' "
+                                                           "'id' is a malformed hex id '{}'",
+                                                           decl.Name,
+                                                           fieldJson["id"].get<string>()));
+                    }
+                    decl.TextureAssetId = parsed->Value;
                 }
             }
             else if (decl.Type == "sampler")

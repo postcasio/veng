@@ -15,6 +15,7 @@
 #include <slang/slang-com-ptr.h>
 
 #include <Veng/Asset/CookedBlobs.h>
+#include <Veng/Asset/HexId.h>
 #include <Veng/Cook/JsonFile.h>
 #include <Veng/Renderer/Types.h>
 
@@ -600,10 +601,23 @@ namespace Veng::Cook
         }
 
         u64 vertexLayoutAssetId = 0;
-        if (shaderJson.contains("vertex_layout") &&
-            shaderJson["vertex_layout"].is_number_unsigned())
+        if (shaderJson.contains("vertex_layout"))
         {
-            vertexLayoutAssetId = shaderJson["vertex_layout"].get<u64>();
+            if (!shaderJson["vertex_layout"].is_string())
+            {
+                return std::unexpected(
+                    fmt::format("shader importer: '{}': 'vertex_layout' must be a hex id string",
+                                shaderJsonPath.string()));
+            }
+            const optional<AssetId> parsed =
+                ParseAssetId(shaderJson["vertex_layout"].get<string>());
+            if (!parsed)
+            {
+                return std::unexpected(fmt::format(
+                    "shader importer: '{}': 'vertex_layout' is a malformed hex id '{}'",
+                    shaderJsonPath.string(), shaderJson["vertex_layout"].get<string>()));
+            }
+            vertexLayoutAssetId = parsed->Value;
         }
 
         // A graph-sourced shader names a *.graph.json: resolve it, run the shared emit

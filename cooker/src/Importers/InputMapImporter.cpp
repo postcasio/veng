@@ -10,6 +10,7 @@
 #include <fmt/format.h>
 
 #include <Veng/Asset/CookedBlobs.h>
+#include <Veng/Asset/HexId.h>
 #include <Veng/Asset/InputMappingContext.h>
 #include <Veng/Cook/JsonFile.h>
 #include <Veng/Input/Actions.h>
@@ -78,12 +79,20 @@ namespace Veng::Cook
             {
                 return std::unexpected(Located(file, "each 'actions' entry must be an object"));
             }
-            if (!actionJson.contains("id") || !actionJson["id"].is_number_unsigned())
+            if (!actionJson.contains("id") || !actionJson["id"].is_string())
             {
-                return std::unexpected(Located(file, "an action is missing an unsigned 'id'"));
+                return std::unexpected(Located(file, "an action is missing a hex-id-string 'id'"));
             }
 
-            const u64 id = actionJson["id"].get<u64>();
+            const optional<u64> parsedId = ParseHexId(actionJson["id"].get<string>());
+            if (!parsedId)
+            {
+                return std::unexpected(
+                    Located(file, fmt::format("an action 'id' is a malformed hex id '{}'",
+                                              actionJson["id"].get<string>())));
+            }
+
+            const u64 id = *parsedId;
             if (id == 0)
             {
                 return std::unexpected(Located(file, "an action 'id' must be non-null"));
@@ -129,12 +138,19 @@ namespace Veng::Cook
                         Located(file, "each 'bindings' entry must be an object"));
                 }
 
-                if (!bindingJson.contains("action") || !bindingJson["action"].is_number_unsigned())
+                if (!bindingJson.contains("action") || !bindingJson["action"].is_string())
                 {
                     return std::unexpected(
-                        Located(file, "a binding is missing an unsigned 'action' id"));
+                        Located(file, "a binding is missing a hex-id-string 'action' id"));
                 }
-                const u64 actionId = bindingJson["action"].get<u64>();
+                const optional<u64> parsedAction = ParseHexId(bindingJson["action"].get<string>());
+                if (!parsedAction)
+                {
+                    return std::unexpected(
+                        Located(file, fmt::format("a binding 'action' is a malformed hex id '{}'",
+                                                  bindingJson["action"].get<string>())));
+                }
+                const u64 actionId = *parsedAction;
 
                 // The typo-catch a global registry would otherwise miss: a binding must name an
                 // action this context declares.
