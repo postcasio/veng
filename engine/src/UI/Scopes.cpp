@@ -30,6 +30,10 @@ namespace Veng::UI
             {
                 out |= ImGuiWindowFlags_HorizontalScrollbar;
             }
+            if ((flags & WindowFlags::UnsavedDocument) != WindowFlags::None)
+            {
+                out |= ImGuiWindowFlags_UnsavedDocument;
+            }
             return out;
         }
 

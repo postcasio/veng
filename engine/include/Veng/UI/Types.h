@@ -96,6 +96,10 @@ namespace Veng::UI
         NoScrollWithMouse = 2,
         /// @brief Shows a horizontal scrollbar when content overflows.
         HorizontalScrollbar = 4,
+        /// @brief Marks the window as an unsaved document: draws a dot next to the title (a
+        /// docked tab shows it beside the tab label). The marker lives in the rendering, not
+        /// the title string, so toggling it never changes the window id.
+        UnsavedDocument = 8,
     };
 
     /// @brief Bitwise OR of two `WindowFlags` values.

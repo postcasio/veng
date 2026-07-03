@@ -53,7 +53,12 @@ namespace VengEditor
         {
             const UI::StyleVarScope padding =
                 UI::StyleVar(UI::StyleVarId::WindowPadding, vec2(0, 0));
-            if (auto window = UI::Window(GetTitle(), open))
+            // The unsaved marker is a window flag (an ImGui-drawn dot), not a title prefix, so a
+            // clean→dirty transition never changes the window id and never steals focus from a
+            // field being edited in a docked child.
+            const UI::WindowFlags docFlags =
+                HasUnsavedChanges() ? UI::WindowFlags::UnsavedDocument : UI::WindowFlags::None;
+            if (auto window = UI::Window(GetTitle(), open, docFlags))
             {
                 documentVisible = true;
                 if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))

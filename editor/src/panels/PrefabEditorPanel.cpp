@@ -62,11 +62,11 @@ namespace VengEditor
 
     string_view PrefabEditorPanel::GetTitle() const
     {
-        // Recompute each call so the host's dock-key lookup and the document window label agree.
-        // The "##" suffix is the stable ImGui dock identity; only the visible label before it
-        // carries the unsaved marker, so toggling the marker never re-docks the window.
-        const bool dirty = HasUnsavedChanges();
-        m_DisplayTitle = fmt::format("{}{}{}", dirty ? "*" : "", m_BaseTitle, m_TitleId);
+        // The title is invariant across edits: the "##" suffix is the window/dock identity and
+        // the label before it never changes. The unsaved state is shown by the document window's
+        // UnsavedDocument flag (an ImGui-drawn dot), not by mutating this string — an id change
+        // here would drop keyboard focus from a field being edited in a docked child.
+        m_DisplayTitle = fmt::format("{}{}", m_BaseTitle, m_TitleId);
         return m_DisplayTitle;
     }
 
