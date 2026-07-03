@@ -603,13 +603,15 @@ namespace VengEditor
         in.FrameSelection = (hovered || focused) && m_Input.WasKeyPressed(Key::F);
         in.Aspect = static_cast<f32>(renderExtent.x) / static_cast<f32>(renderExtent.y);
 
-        // While the game owns input the editor camera stands down (the router already holds
-        // the cursor captured); otherwise the camera reads input and drives its own transient
-        // navigation cursor lock for the RMB-fly drag.
-        // A click the camera (or play capture) consumed is navigation, not a selection: an RMB-fly,
-        // an MMB-pan, or an Alt-orbit drag. Tracked so HandleClickToSelect only picks on a bare click.
+        // The editor camera reads viewport input only in edit mode. While a game is running it
+        // stands down for the whole session — not just while the game holds focus, but also after
+        // the player releases the cursor with Shift+Esc to click the editor UI; the released cursor
+        // returns to the UI, never to the editor camera. In edit mode the camera reads input and
+        // drives its own transient navigation cursor lock for the RMB-fly drag.
+        // A click the camera consumed is navigation, not a selection: an RMB-fly, an MMB-pan, or an
+        // Alt-orbit drag. Tracked so HandleClickToSelect only picks on a bare click.
         bool cameraConsumed = gameplayFocused;
-        if (gameplayFocused)
+        if (m_Ctx.IsPlaying())
         {
             m_View = m_Camera.GetView();
         }
