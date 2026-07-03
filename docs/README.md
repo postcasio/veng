@@ -23,6 +23,13 @@ symbol: build the Doxygen reference with `cmake --build build --target docs`
   `InputContextStack` in the player prefab, and reading actions by name in a
   control system — plus why `InputMappingSystem` must run before the control
   system and how the context stack switches schemes and gates focus.
+- **[Multi-seat input and split-screen](guides/multi-seat-input.md)** — routing
+  input per seat: the `SeatInput` component naming each seat's devices, the
+  `DeviceAssignmentSystem` auto-assigning pads, the per-seat filtered view, how the
+  pointer routes by viewport region (and is inert under cursor capture),
+  reconfiguring the managed viewport list into quadrants with
+  `ReconfigureManagedViewports`, and spawning a second seat — with the boundary that
+  routing stops at `PlayerInput`.
 - **[Consuming veng](guides/consuming-veng.md)** — discovering veng from a game
   project with `find_package(veng)`: the three consumption modes (in-tree, build
   tree, install prefix), the `veng_ROOT` / `CMAKE_PREFIX_PATH` /

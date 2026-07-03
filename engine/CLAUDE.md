@@ -40,6 +40,22 @@ scene through `GetPrimaryViewport()->SetViewState` each frame. The editor leaves
 `ManagedViewport` unset, so `GetPrimaryViewport()` is null and it registers its own
 viewports.
 
+**The managed viewport is a *list*, and split-screen is a runtime reconfigure of it.**
+`ManagedViewportInfo` additionally carries a **normalized `Layout`** (an offset + extent in
+`[0,1]` window fractions the engine resolves to pixels as `round(Layout · render extent)` on
+construction and every swapchain resize, so quadrants are resize-stable) and an optional bound
+**`Viewer`** seat. `Application` manages a `vector` of them: `GetManagedViewport(n)` /
+`GetManagedViewportCount()` reach the set (index 0 is the primary, `GetPrimaryViewport()`), and
+**`ReconfigureManagedViewports(span)`** — applied at a safe point (top of frame, outside
+iteration) — replaces the set, resolving each `Layout` to pixels and re-registering in order. A
+viewport that names a `Viewer` has its camera resolved and pushed by the per-frame world drive
+(`ResolveCameraView`) and its region associated with the `InputRouter` (`AssociateViewportSeat`,
+so a free pointer over it routes to that seat); an unbound viewport takes the scene's primary
+camera and routes no pointer. The gather + composite tail is **unchanged** — it already
+assembles every registered `Presented` viewport — so split-screen is "reconfigure to N quadrant
+`Layout`s," not a bespoke render path. A single default-`Layout` managed viewport is
+byte-identical to an untracked full-window one, so the default single-seat path is unchanged.
+
 **`Application` optionally bootstraps and drives the whole game world.** Set
 `ApplicationInfo::World` (`GameWorldInfo { path Project; }`, alongside `ManagedViewport`)
 and `Application` runs the game: at the end of `Initialize` (after `OnInitialize`) it reads
@@ -1252,10 +1268,32 @@ per-seat snapshot, which a game-specific control system reads to produce the abs
   `RegisterBuiltinSystems` **first** so it runs ahead of any control system — a level's
   explicit `systems` order must place it before the control system that reads `PlayerInput`
   (registration order does not reorder the list). It iterates `(Viewer, InputContextStack,
-  PlayerInput)` seats, so a world with none — the input-free minimal template — resolves
-  nothing, a clean no-op with no guard; in headless the neutral snapshot resolves to
+  PlayerInput, SeatInput)` seats, so a world with none — the input-free minimal template —
+  resolves nothing, a clean no-op with no guard; in headless the neutral snapshot resolves to
   all-`None`. `IsLocallyOwned` returns true for every seat today (the seam the net layer
   keys on).
+- **`SeatInput` scopes the raw read *per seat*.** A reflected **`SeatInput`** component
+  (`Veng/Scene/Components.h`, `UsesKeyboardMouse` + a `Gamepad` id + `WantsGamepad`) on the
+  `Viewer` seat names that seat's devices; `InputMappingSystem` builds each seat a filtered
+  **`SeatInputView`** (`Veng/Input/RawInput.h`, superseding the shared `RawInput` adapter) and
+  resolves against it, so two seats with different assignments produce distinct `PlayerInput`s.
+  The view's arms route two ways: a **gamepad** arm reads *only* the seat's assigned pad (by
+  `GamepadId`); a **keyboard** arm reads the shared keyboard only when the seat sets
+  `UsesKeyboardMouse`; a **pointer** arm is gated *both* by `UsesKeyboardMouse` *and* by owning
+  the cursor's viewport region this frame (position reported viewport-local, look-delta left raw
+  and sensitivity-invariant). Region routing is **inert while the cursor is captured** — a
+  captured pointer belongs wholly to the single `UsesKeyboardMouse` seat (delta-look needs no
+  position); it applies only for a free cursor. The `InputRouter` computes the per-frame
+  `PointerRouting` (which seat owns the free pointer, hit-testing `WindowToViewport` against each
+  `Presented` viewport's region in association order); `Application` threads it onto the
+  `SystemContext`. A **`DeviceAssignmentSystem`** (a Sim system registered before
+  `InputMappingSystem`) reconciles each seat's `Gamepad` against `Veng::Input::ConnectedGamepads`:
+  a connected-but-unheld pad is auto-assigned to the first `WantsGamepad` seat with a `None` slot,
+  a disconnected slot is cleared, a level-authored slot is respected. **A seat with no `SeatInput`
+  is skipped** — its `PlayerInput` is synthesized or replicated (the AI/remote path) — so every
+  local human seat must author one (a consumer-facing behavioral change, and a re-cook, since
+  `SeatInput` is a new reflected builtin `TypeId`). `SeatInput`, the gamepad surface, and the
+  managed-viewport-list methods are all additive — the **module ABI is unchanged (version 4)**.
 
 A game-specific **control** system reads `PlayerInput` by action id and writes the abstract
 **`Intent`** command (local-frame move, look delta, action bitset); a **movement** system
@@ -1267,8 +1305,11 @@ layer predicts and rolls back and the uniform interface AI and remote players wr
 — both are drop-in `Intent` producers that never touch an action or a context, no movement
 change. (The net layer replicates `PlayerInput` — the action snapshot — for a human seat and
 re-derives its `Intent` server-side; AI and server-authoritative producers write `Intent`
-directly.) The gamepad `InputSource` arms are inert forward vocabulary: `Veng::Input` carries
-no gamepad state yet, so the resolver reads them as neutral until the device layer lands. **A
+directly.) The gamepad `InputSource` arms are live: `Veng::Input` (`Veng/Input.h`) carries a
+gamepad device surface — pads tracked by `GamepadId` (a stable GLFW joystick slot 0..15), polled
+once per frame into the same event-fed snapshot as keyboard/mouse, queried through
+`IsGamepadButtonDown` / `GetGamepadAxis` / `ConnectedGamepads`, with connect/disconnect surfaced
+as events. A `SeatInputView`'s gamepad arm reads the seat's assigned pad through it. **A
 `Possesses { Entity Pawn }`** link names the pawn a seat controls; possession is independent
 of `Viewer.Camera` (a spectator views without possessing; a cutscene retargets the camera
 without un-possessing).

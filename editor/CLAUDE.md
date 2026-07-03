@@ -119,6 +119,18 @@ mismatch at load); hosting separately built modules is a future module-ABI/SDK f
   marker and the Save action's enabled state fold the config dirtiness in alongside the command stack
   (`HasUnsavedChanges`). Play runs **exactly the level's ordered system set** through the base's play
   machinery (`GetPlaySystems`), distinct from a bare prefab document's "all registered" set.
+- **The editor's Play seat is single, keyboard/mouse; multi-seat is a game-runtime concern.**
+  Play ticks the play-clone `SceneSimulation` (`PrefabEditorPanel::TickPlaySimulation`) with a
+  `SystemContext{ .Assets, .Input }` that leaves `Pointer` at its default (empty `PointerRouting`,
+  `Owner == Entity::Null`), so `InputMappingSystem` resolves each authored `SeatInput` seat's
+  device-and-keyboard arms but every seat reads **neutral pointer** — the editor's play scene
+  renders through its own `Offscreen` `SceneViewportPanel` viewport, which is never a `Presented`
+  managed viewport and so is neither gathered into the window nor pointer-associated with the
+  `InputRouter`. Split-screen (`ReconfigureManagedViewports`, the managed viewport list, and the
+  region-gated pointer) is an `Application`-level game-runtime capability the editor does not
+  exercise: it registers no `Presented` viewport, drives no managed-viewport list, and previews a
+  scene's single authored `Viewer` seat. A seat's `SeatInput` is edited through the ordinary
+  reflection inspector like any other component.
 - **`PrefabExplorerPanel` is a full scene-graph tree** over the intrusive `Hierarchy`
   ([engine/CLAUDE.md](../engine/CLAUDE.md)): roots are entities with a null parent, children
   walk `ForEachChild` in order. It drives the shared selection (click / Ctrl-click toggle),
