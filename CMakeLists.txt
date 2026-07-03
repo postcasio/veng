@@ -522,6 +522,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/camera_rig.cpp
             tests/unit/game_mode.cpp
             tests/unit/viewport_mapping.cpp
+            tests/unit/managed_viewports.cpp
             tests/unit/dynamic_resolution.cpp
     )
     target_link_libraries(veng_test_unit PRIVATE veng::veng doctest::doctest)

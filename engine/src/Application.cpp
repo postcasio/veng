@@ -11,6 +11,10 @@
 #include <Veng/Renderer/SwapChainCompositePass.h>
 #include <Veng/Renderer/Viewport.h>
 
+#include <Veng/Renderer/Image.h>
+#include <Veng/Renderer/ImageView.h>
+
+#include <Veng/Scene/Camera.h>
 #include <Veng/Scene/SceneSystem.h>
 #include <Veng/Scene/SceneViewport.h>
 
@@ -64,52 +68,27 @@ namespace Veng
         // three; the ImGui layer is nullable (UI-free) and the window is nullable (headless).
         m_InputRouter = CreateUnique<InputRouter>(m_Window.get(), *m_Input, m_ImGuiLayer.get());
 
-        // The opt-in managed primary viewport: one Presented viewport covering the window, owned
-        // and driven by the engine so a game pushes only a ViewState. Built before OnInitialize so
-        // a subclass can Configure it and read its renderer there.
-        if (m_Info.ManagedViewport)
+        // The opt-in managed viewport set: Presented viewports owned and driven by the engine so a
+        // game pushes only a ViewState (or names a Viewer). Built before OnInitialize so a subclass
+        // can Configure one and read its renderer there. The singular ManagedViewport is sugar for a
+        // one-element ManagedViewports.
+        if (!m_Info.ManagedViewports.empty() || m_Info.ManagedViewport)
         {
-            const ManagedViewportInfo& managed = *m_Info.ManagedViewport;
-
-            // The managed viewport covers the whole window: with no explicit Extent its region
-            // is the render-target extent (the swapchain framebuffer extent windowed — larger
-            // than the logical window on a HiDPI display — and HeadlessExtent headless), so the
-            // gather places it across the full target rather than a sub-rect. A non-zero Extent
-            // pins a fixed render resolution instead.
-            const bool trackWindow = managed.Extent == uvec2{};
-            const uvec2 extent = trackWindow ? m_RenderContext.GetRenderExtent() : managed.Extent;
-
-            m_PrimaryViewport = Renderer::Viewport::Create({
-                .Context = m_RenderContext,
-                .Assets = *m_AssetManager,
-                .Region = {.Offset = {0, 0}, .Extent = extent},
-                .ColorFormat = managed.ColorFormat,
-                .Settings = managed.Settings,
-                .RenderScale = managed.RenderScale,
-                .MaxAllocationScale = managed.MaxAllocationScale,
-                .Role = Renderer::ViewportRole::Presented,
-            });
-
-            // Opt-in adaptive resolution: the viewport drives its own per-frame sub-rect scale from
-            // GPU frame time over the fixed allocation.
-            if (managed.DynamicResolution)
+            vector<ManagedViewportInfo> infos = m_Info.ManagedViewports;
+            if (infos.empty())
             {
-                m_PrimaryViewport->SetDynamicResolution(*managed.DynamicResolution);
+                infos.push_back(*m_Info.ManagedViewport);
             }
+            BuildManagedViewports(infos);
 
-            RegisterViewport(*m_PrimaryViewport);
-
-            // A window-tracking managed viewport follows swapchain resizes so it keeps covering
-            // the window; SetRegion debounces the SceneRenderer::Resize to the next Render.
-            // Headless has no swapchain, so the fixed internal extent stands.
-            if (trackWindow && !m_Info.Headless)
+            // Window-tracking managed viewports follow swapchain resizes so their regions keep
+            // tracking the window from their normalized Layouts; SetRegion debounces each
+            // SceneRenderer::Resize to the next Render. Headless has no swapchain, so the fixed
+            // internal extents stand.
+            if (!m_Info.Headless)
             {
                 m_RenderContext.AddSwapChainInvalidationCallback(
-                    [this]
-                    {
-                        m_PrimaryViewport->SetRegion(
-                            {.Offset = {0, 0}, .Extent = m_RenderContext.GetRenderExtent()});
-                    });
+                    [this] { ResolveManagedViewportLayouts(); });
             }
         }
 
@@ -126,7 +105,7 @@ namespace Veng
         // The engine-managed game world bootstraps after OnInitialize, so a subclass has already
         // set up its ImGui surface and read the managed viewport. It renders through the managed
         // viewport, so it is gated on one being present.
-        if (m_Info.World && m_PrimaryViewport)
+        if (m_Info.World && GetPrimaryViewport())
         {
             BootstrapWorld();
         }
@@ -167,19 +146,118 @@ namespace Veng
         // component) plus the author-opt-in sky/lighting components (Environment / Atmosphere /
         // Skylight / TimeOfDay) and the directional light's sun. Seeded once here; the game owns
         // later changes.
-        Renderer::SceneRendererSettings settings = m_Info.ManagedViewport->Settings;
+        Renderer::SceneRendererSettings settings = m_ManagedViewports.front().Info.Settings;
         if (const LevelRenderSettings* render = m_World->TryGetFirst<LevelRenderSettings>())
         {
             ApplyLevelRenderSettings(*render, settings, m_WorldView);
         }
         ApplySceneSky(*m_World, settings, m_WorldView);
-        m_PrimaryViewport->Configure(settings);
+        GetPrimaryViewport()->Configure(settings);
 
         // Hand the world to the subclass before the simulation starts, so a game can read its
         // config from the scene, wait on residency, or capture input focus first.
         OnWorldLoaded(*m_World, instance.Pending);
 
         m_World->StartSimulation(SystemContext{.Assets = *m_AssetManager, .Input = *m_Input});
+    }
+
+    Renderer::ViewportRegion
+    Application::ResolveManagedRegion(const ManagedViewportInfo& info) const
+    {
+        // A pinned Extent is a fixed render resolution at the origin — the region does not track the
+        // window. Otherwise the region is round(Layout · render extent): the swapchain framebuffer
+        // extent windowed (larger than the logical window on a HiDPI display), HeadlessExtent headless.
+        if (info.Extent != uvec2{})
+        {
+            return {.Offset = {0, 0}, .Extent = info.Extent};
+        }
+
+        const vec2 renderExtent = vec2(m_RenderContext.GetRenderExtent());
+        const ivec2 offset = ivec2(glm::round(info.Layout.Offset * renderExtent));
+        const uvec2 extent = uvec2(glm::round(info.Layout.Extent * renderExtent));
+        return {.Offset = offset, .Extent = extent};
+    }
+
+    void Application::BuildManagedViewports(std::span<const ManagedViewportInfo> infos)
+    {
+        // Drop the prior set first (each Unique self-unregisters from the drive-list), then build
+        // the new one in order so index 0 is the primary.
+        m_ManagedViewports.clear();
+        m_ManagedViewports.reserve(infos.size());
+
+        for (const ManagedViewportInfo& info : infos)
+        {
+            Unique<Renderer::Viewport> viewport = Renderer::Viewport::Create({
+                .Context = m_RenderContext,
+                .Assets = *m_AssetManager,
+                .Region = ResolveManagedRegion(info),
+                .ColorFormat = info.ColorFormat,
+                .Settings = info.Settings,
+                .RenderScale = info.RenderScale,
+                .MaxAllocationScale = info.MaxAllocationScale,
+                .Role = Renderer::ViewportRole::Presented,
+            });
+
+            // Opt-in adaptive resolution: the viewport drives its own per-frame sub-rect scale from
+            // GPU frame time over the fixed allocation.
+            if (info.DynamicResolution)
+            {
+                viewport->SetDynamicResolution(*info.DynamicResolution);
+            }
+
+            RegisterViewport(*viewport);
+            m_ManagedViewports.push_back({.Viewport = std::move(viewport), .Info = info});
+        }
+    }
+
+    void Application::ResolveManagedViewportLayouts()
+    {
+        for (ManagedViewport& managed : m_ManagedViewports)
+        {
+            // A pinned viewport keeps its fixed internal extent; a window-tracking one re-resolves
+            // its region from its Layout so the gather places it correctly across the resize.
+            if (managed.Info.Extent == uvec2{})
+            {
+                managed.Viewport->SetRegion(ResolveManagedRegion(managed.Info));
+            }
+        }
+    }
+
+    void Application::PushManagedViewportView(const ManagedViewport& managed, const f32 delta)
+    {
+        Renderer::Viewport& viewport = *managed.Viewport;
+
+        // A viewport with no bound Viewer takes the scene's primary camera — the delivered
+        // single-viewport path, byte-identical for the default managed viewport.
+        if (managed.Info.Viewer == Entity::Null)
+        {
+            PushSceneView(viewport, *m_World, m_WorldView, delta);
+            return;
+        }
+
+        // A bound Viewer resolves that seat's camera at the viewport's aspect, falling back to the
+        // default framing when the seat resolves none (mirrors PushSceneView's fallback).
+        const Ref<Renderer::ImageView> output = viewport.GetOutput();
+        const f32 aspect = static_cast<f32>(output->GetImage()->GetWidth()) /
+                           static_cast<f32>(output->GetImage()->GetHeight());
+
+        Renderer::ViewState state = m_WorldView;
+        state.World = m_World.get();
+        state.Camera = ResolveCameraView(*m_World, managed.Info.Viewer, aspect)
+                           .value_or(DefaultCameraView(aspect));
+        state.Delta = delta;
+        viewport.SetViewState(state);
+    }
+
+    void Application::ReconfigureManagedViewports(std::span<const ManagedViewportInfo> viewports)
+    {
+        VE_ASSERT(!m_ManagedViewports.empty(),
+                  "ReconfigureManagedViewports requires a managed viewport configured at startup");
+
+        // Defer to the top of the next frame — outside any Scene/viewport-list iteration — mirroring
+        // the SetRegion resize debounce. The rebuild constructs/drops viewports, which must not run
+        // mid-drive.
+        m_PendingReconfigure = vector<ManagedViewportInfo>(viewports.begin(), viewports.end());
     }
 
     void Application::InitializeManagedTail()
@@ -332,10 +410,10 @@ namespace Veng
         m_WorldLevel = {};
         m_WorldView.Environment = {};
 
-        // Drop the engine-owned managed tail and primary viewport before the context: the gather
-        // and composite hold GPU resources, and the primary viewport self-unregisters from the
+        // Drop the engine-owned managed tail and managed viewports before the context: the gather
+        // and composite hold GPU resources, and each managed viewport self-unregisters from the
         // still-live drive-list. A subclass's panel-owned viewports are released in OnDispose
-        // above, so the drive-list is empty (or holds only the managed primary) by here.
+        // above, so the drive-list is empty (or holds only the managed viewports) by here.
         m_CompositeGraph.reset();
         m_Composite.reset();
         m_GatherGraph.reset();
@@ -345,7 +423,7 @@ namespace Veng
         // change-detection; clear it so dropping the viewports below releases their outputs and
         // the images retire, rather than outliving the context's allocator.
         m_GatheredPlacements.clear();
-        m_PrimaryViewport.reset();
+        m_ManagedViewports.clear();
 
         // The router borrows the window, input, and ImGui layer; drop it before any of them.
         m_InputRouter.reset();
@@ -370,6 +448,15 @@ namespace Veng
 
     void Application::Frame()
     {
+        // Apply a deferred managed-viewport reconfigure at the top of the frame, outside any
+        // Scene/viewport-list iteration: it drops and constructs viewports (mutating the drive-list),
+        // which must not run mid-drive. Regions resolve from each info's Layout here.
+        if (m_PendingReconfigure)
+        {
+            BuildManagedViewports(*m_PendingReconfigure);
+            m_PendingReconfigure.reset();
+        }
+
         // Before BeginFrame: continuations that register or retire resources must
         // land before AcquireNextFrame or their GPU-state mutation is frame-ambiguous.
         m_TaskSystem->PumpMainThread();
@@ -412,12 +499,16 @@ namespace Veng
 
         OnUpdate(delta);
 
-        // Push the managed world's render source into the managed viewport: the primary camera
-        // resolved at the viewport's aspect plus the per-frame view knobs. After OnUpdate so a
-        // game's per-frame scene edits are reflected; before the viewport render phase reads it.
-        if (m_World && m_PrimaryViewport)
+        // Push the managed world's render source into each managed viewport: a viewport naming a
+        // Viewer gets that seat's camera resolved at its aspect, otherwise the scene's primary
+        // camera. Plus the per-frame view knobs. After OnUpdate so a game's per-frame scene edits are
+        // reflected; before the viewport render phase reads it.
+        if (m_World)
         {
-            PushSceneView(*m_PrimaryViewport, *m_World, m_WorldView, delta);
+            for (const ManagedViewport& managed : m_ManagedViewports)
+            {
+                PushManagedViewportView(managed, delta);
+            }
         }
 
         m_RenderContext.BeginFrame();

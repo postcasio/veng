@@ -20,6 +20,8 @@
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/SystemRegistry.h>
 
+#include <span>
+
 namespace Veng
 {
     /// @brief Returns the directory containing the running executable.
@@ -29,12 +31,28 @@ namespace Veng
     /// @return Absolute path to the directory holding the running binary.
     [[nodiscard]] VE_API path ExecutableDirectory();
 
-    /// @brief Opt-in configuration for the engine-owned managed primary viewport.
+    /// @brief A rectangle in normalized window fractions ([0,1]), resolved to pixels per resize.
     ///
-    /// Set ApplicationInfo::ManagedViewport to this to have Application construct, register, and
-    /// drive one Presented viewport whose region tracks the whole window. A game flips this on and
-    /// pushes its scene through GetPrimaryViewport()->SetViewState each frame, owning no
-    /// SceneRenderer, sampler, texture, or composite. The editor leaves it unset.
+    /// Where a managed viewport sits in the window, as fractions the engine resolves to pixel
+    /// regions at construction and on every swapchain resize (round(Layout · render extent)). The
+    /// default is the full window, so a single managed viewport with the default Layout covers the
+    /// whole window exactly as an untracked one does. Two quadrant Layouts give resize-stable
+    /// split-screen with no game code.
+    struct ViewportLayout
+    {
+        /// @brief Top-left, as a fraction of the window ([0,1]).
+        vec2 Offset = {0.0f, 0.0f};
+        /// @brief Size, as a fraction of the window ([0,1]); full window by default.
+        vec2 Extent = {1.0f, 1.0f};
+    };
+
+    /// @brief Opt-in configuration for one engine-owned managed viewport.
+    ///
+    /// Set ApplicationInfo::ManagedViewport (or an element of ApplicationInfo::ManagedViewports) to
+    /// this to have Application construct, register, and drive one Presented viewport whose region
+    /// follows its normalized Layout across resizes. A game flips this on and pushes its scene
+    /// through GetManagedViewport(n)->SetViewState each frame (or names a Viewer for the engine to
+    /// resolve), owning no SceneRenderer, sampler, texture, or composite. The editor leaves it unset.
     struct ManagedViewportInfo
     {
         /// @brief Render extent the managed viewport's SceneRenderer is sized to.
@@ -68,6 +86,20 @@ namespace Veng
         /// allocation; inert on a device without GPU timing. Unset leaves the scale fixed at
         /// RenderScale.
         optional<Renderer::DynamicResolutionSettings> DynamicResolution;
+        /// @brief Where in the window this managed viewport sits; resolved to pixels per resize.
+        ///
+        /// Meaningful only when Extent tracks the window (the default empty Extent): the engine
+        /// resolves the pixel region as round(Layout · render extent) at construction and on every
+        /// swapchain resize. The default full-window Layout is byte-identical to a single untracked
+        /// viewport covering the whole window. Ignored when Extent pins a fixed render resolution.
+        ViewportLayout Layout;
+        /// @brief Optional seat whose camera the engine resolves and pushes into this viewport.
+        ///
+        /// When set (and ApplicationInfo::World is on), the per-frame world drive resolves this
+        /// seat's CameraView (ResolveCameraView) and pushes it into this viewport, generalizing the
+        /// primary-camera push to a named seat. Entity::Null (the default) leaves the viewport for
+        /// the game to drive itself through GetManagedViewport(n)->SetViewState.
+        Entity Viewer = Entity::Null;
     };
 
     /// @brief Opt-in configuration for the engine-managed game world.
@@ -122,10 +154,20 @@ namespace Veng
         optional<path> PipelineCachePath = std::nullopt;
         /// @brief Opt-in engine-owned managed primary viewport; nullopt leaves the app to own its views.
         ///
-        /// When set, Application constructs one Presented viewport covering the window, registers
-        /// it, tracks swapchain resize, and exposes it via GetPrimaryViewport(). The plug-and-play
-        /// path for a game. Unset (the editor) means GetPrimaryViewport() returns null.
+        /// When set, Application constructs one Presented viewport covering the window (default full
+        /// Layout), registers it, tracks swapchain resize, and exposes it via GetPrimaryViewport().
+        /// The plug-and-play path for a game. Convenience for a one-element ManagedViewports: when
+        /// ManagedViewports is empty this becomes its sole entry. Unset (the editor) means
+        /// GetPrimaryViewport() returns null.
         optional<ManagedViewportInfo> ManagedViewport = std::nullopt;
+        /// @brief Opt-in engine-owned managed viewport set; the multi-viewport form of ManagedViewport.
+        ///
+        /// When non-empty, this is the managed set the engine constructs, registers, and drives —
+        /// each with its normalized Layout resolved to pixels per resize, index 0 the primary. The
+        /// singular ManagedViewport is sugar for a one-element vector: if this is empty and
+        /// ManagedViewport is set, that one info becomes the sole managed viewport. Runtime changes
+        /// go through ReconfigureManagedViewports.
+        vector<ManagedViewportInfo> ManagedViewports;
         /// @brief Opt-in engine-managed game world; nullopt leaves the app to load and drive its own.
         ///
         /// When set (and ManagedViewport is too), Application mounts the named pack, loads the
@@ -227,15 +269,45 @@ namespace Veng
         /// @param viewport  The viewport to drive; its lifetime stays with the caller.
         void RegisterViewport(Renderer::Viewport& viewport);
 
+        /// @brief Returns the number of engine-owned managed viewports.
+        ///
+        /// Zero when ApplicationInfo::ManagedViewport / ManagedViewports is unset; one for the
+        /// plug-and-play default; more after a split-screen ReconfigureManagedViewports.
+        /// @return The managed viewport count.
+        [[nodiscard]] usize GetManagedViewportCount() const { return m_ManagedViewports.size(); }
+
+        /// @brief Returns the engine-owned managed viewport at an index, or null when out of range.
+        ///
+        /// The game pushes its scene and camera through the returned viewport's SetViewState each
+        /// frame (or the engine resolves a bound Viewer for it). Index 0 is the primary.
+        /// @param index  The managed viewport index.
+        /// @return The managed viewport, or nullptr when index is out of range.
+        [[nodiscard]] Renderer::Viewport* GetManagedViewport(usize index) const
+        {
+            return index < m_ManagedViewports.size() ? m_ManagedViewports[index].Viewport.get()
+                                                     : nullptr;
+        }
+
         /// @brief Returns the engine-owned managed primary viewport, or null when unconfigured.
         ///
-        /// Non-null only when ApplicationInfo::ManagedViewport is set. The game pushes its scene
-        /// and camera through the returned viewport's SetViewState each frame.
+        /// Equivalent to GetManagedViewport(0). Non-null only when a managed viewport is configured.
+        /// The game pushes its scene and camera through the returned viewport's SetViewState each
+        /// frame. Stays index 0 across a ReconfigureManagedViewports.
         /// @return The managed primary viewport, or nullptr.
         [[nodiscard]] Renderer::Viewport* GetPrimaryViewport() const
         {
-            return m_PrimaryViewport.get();
+            return GetManagedViewport(0);
         }
+
+        /// @brief Rebuilds the engine-managed viewport set at a safe point.
+        ///
+        /// Records the requested set and applies it at the top of the next frame, before any system
+        /// iteration — never mid-iteration, mirroring the SetRegion resize debounce. The apply drops
+        /// removed viewports (RAII self-unregister), constructs added ones, registers them, and
+        /// resolves each Layout to pixels; index 0 remains the primary. Split-screen is a two-element
+        /// reconfigure. Requires a managed viewport to have been configured at startup.
+        /// @param viewports  The new managed set; each info's Layout, Viewer, and render knobs apply.
+        void ReconfigureManagedViewports(std::span<const ManagedViewportInfo> viewports);
 
         /// @brief Returns the managed primary viewport's debug-draw accumulator, or null when unconfigured.
         ///
@@ -247,7 +319,8 @@ namespace Veng
         /// @return The primary viewport's DebugDraw accumulator, or nullptr.
         [[nodiscard]] Renderer::DebugDraw* GetDebugDraw() const
         {
-            return m_PrimaryViewport ? &m_PrimaryViewport->GetDebugDraw() : nullptr;
+            const Renderer::Viewport* primary = GetPrimaryViewport();
+            return primary ? &primary->GetDebugDraw() : nullptr;
         }
 
         /// @brief Returns the engine-managed game world's Scene, or null when unmanaged.
@@ -317,6 +390,19 @@ namespace Veng
         void RequestExit() { m_ShouldExit = true; }
 
     private:
+        /// @brief One engine-owned managed viewport plus the info it was built from.
+        ///
+        /// The owning Unique self-unregisters from m_Viewports on drop; the retained Info supplies
+        /// the normalized Layout the resize callback re-resolves and the optional bound Viewer the
+        /// world drive resolves a camera for.
+        struct ManagedViewport
+        {
+            /// @brief The owned, registered Presented viewport.
+            Unique<Renderer::Viewport> Viewport;
+            /// @brief The info this viewport was constructed from (Layout, Viewer, render knobs).
+            ManagedViewportInfo Info;
+        };
+
         void Initialize();
         void Frame();
 
@@ -327,6 +413,41 @@ namespace Veng
         /// the level's render settings, spawns the world (LoadInto), fires OnWorldLoaded, then
         /// starts the scene's simulation. A missing pack or startup level is a fatal assert.
         void BootstrapWorld();
+
+        /// @brief Builds the managed viewport set from a list of infos, registering each.
+        ///
+        /// Replaces m_ManagedViewports: constructs one Presented Viewport per info at its
+        /// Layout-resolved region, applies its dynamic-resolution opt-in, and registers it in order
+        /// (index 0 the primary). The prior set's Uniques are dropped first, self-unregistering.
+        /// @param infos  The managed viewport infos to build from.
+        void BuildManagedViewports(std::span<const ManagedViewportInfo> infos);
+
+        /// @brief Resolves an info's normalized Layout to a pixel region against the render extent.
+        ///
+        /// round(Layout · GetRenderExtent()) when the info tracks the window (empty Extent); a fixed
+        /// region at the pinned Extent otherwise. The single source the constructor and the resize
+        /// callback both use, so a viewport's region and its resize tracking agree.
+        /// @param info  The managed viewport info to resolve.
+        /// @return The pixel region for the viewport.
+        [[nodiscard]] Renderer::ViewportRegion
+        ResolveManagedRegion(const ManagedViewportInfo& info) const;
+
+        /// @brief Pushes the managed world's render source into one managed viewport.
+        ///
+        /// A viewport naming a Viewer resolves that seat's CameraView (ResolveCameraView) at the
+        /// viewport's aspect; one with no bound Viewer takes the scene's primary camera (PushSceneView).
+        /// Fills the per-frame view knobs and pushes via SetViewState. Called per managed viewport
+        /// each frame when a managed world is running.
+        /// @param managed  The managed viewport (and its bound Viewer) to push into.
+        /// @param delta    Frame delta in seconds, forwarded to the renderer.
+        void PushManagedViewportView(const ManagedViewport& managed, f32 delta);
+
+        /// @brief Re-resolves every window-tracking managed viewport's region from its Layout.
+        ///
+        /// The swapchain-invalidation callback: recomputes each managed viewport's region as
+        /// round(Layout · GetRenderExtent()) so quadrant regions track the window; SetRegion
+        /// debounces each SceneRenderer::Resize to the next Render. Pinned viewports are untouched.
+        void ResolveManagedViewportLayouts();
 
         /// @brief Constructs the managed gather pass and swapchain composite tail.
         ///
@@ -379,8 +500,17 @@ namespace Veng
         /// panel-owned viewports destruct before this base member, so the back-reference is live.
         vector<Renderer::Viewport*> m_Viewports;
 
-        /// @brief The engine-owned managed primary viewport; null when ManagedViewport is unset.
-        Unique<Renderer::Viewport> m_PrimaryViewport;
+        /// @brief The engine-owned managed viewport set; empty when no managed viewport is configured.
+        ///
+        /// Index 0 is the primary. Constructed at Initialize from ApplicationInfo, rebuilt by a
+        /// deferred ReconfigureManagedViewports at the top of a frame.
+        vector<ManagedViewport> m_ManagedViewports;
+
+        /// @brief A pending managed-viewport reconfigure, applied at the top of the next frame.
+        ///
+        /// Set by ReconfigureManagedViewports, consumed (and cleared) before any system iteration in
+        /// Frame, so the rebuild never runs mid-iteration. nullopt when none is pending.
+        optional<vector<ManagedViewportInfo>> m_PendingReconfigure;
 
         /// @brief The engine-managed game world's Scene (sim attached); null when World is unset.
         Unique<Scene> m_World;
