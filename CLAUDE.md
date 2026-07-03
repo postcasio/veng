@@ -668,3 +668,16 @@ the id in both spellings — `0x{:016X}ULL` for C++ and `"0x{:016X}"` for JSON.
 mechanical multi-file edits, focused sub-task implementation). Keep orchestration,
 design decisions, verification, and commits on the main thread. Don't spawn for
 trivial single-file edits that are faster inline.
+
+**Driving a running MCP server.** When a task needs to inspect or manipulate a live
+engine instance — a running game or an open editor — reach it through the MCP client
+rather than adding one-off instrumentation. Any exe built with the MCP opt-in
+(`veng-editor`, or a game's `<name>-launcher` built with `veng_add_game(... MCP)`)
+exposes a `--connect=<port>` client against an already-running server's loopback port
+(the server prints its bound port on its `listening on <ip>:<port>` line). **Discover the
+surface before using it, don't assume it**: `--connect=<port> --list` (optionally
+`--search <query>`) enumerates every tool the server advertises with its description, so
+list first, then call — never guess a tool name or its arguments. A call is
+`--connect=<port> <tool> [key=value …]` (or `--json '<obj>'` for structured arguments):
+exit 0 with the payload on stdout on success, a nonzero code with a one-line stderr
+reason otherwise. See [mcp/CLAUDE.md](mcp/CLAUDE.md) for the client and driver detail.
