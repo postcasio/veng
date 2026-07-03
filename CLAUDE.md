@@ -118,7 +118,7 @@ per-module architecture lives in a `CLAUDE.md` inside each library:
 # Default build — VE_DEBUG=ON (Vulkan validation on). Configure once, then build.
 cmake -B build-debug -S . -DVE_DEBUG=ON
 cmake --build build-debug -j 4
-ctest --test-dir build-debug --output-on-failure
+ctest --test-dir build-debug -j 4 --output-on-failure
 ```
 
 **Build and test the debug build only — do not build twice.** The `build-debug`
@@ -339,7 +339,7 @@ build both routinely.
 - **Validation errors do NOT fail tests by themselves.** The debug-messenger
   callback (`engine/src/Renderer/Backend/Context.cpp`) only `Log::Error`s on validation
   errors — it never aborts. So a green `ctest` under `VE_DEBUG` only means
-  something if the validation gate ran: `ctest --test-dir build-debug -L
+  something if the validation gate ran: `ctest --test-dir build-debug -j 4 -L
   validation` (the `validation_gate` test) runs the `gpu`-labelled binaries and
   fails on any unallowlisted `Vulkan validation` ERROR line
   (`cmake/ValidationGate.cmake`; allowlist currently empty). The benign MoltenVK
