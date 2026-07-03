@@ -7,6 +7,7 @@
 #include <Veng/Mcp/McpTool.h>
 
 #include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/HexId.h>
 #include <Veng/Asset/Prefab.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/Components.h>
@@ -14,8 +15,6 @@
 #include <Veng/Scene/Scene.h>
 
 #include <nlohmann/json.hpp>
-
-#include <charconv>
 
 namespace Veng::Mcp
 {
@@ -653,27 +652,20 @@ namespace Veng::Mcp
                     return std::unexpected(string("expected { asset: <AssetId> }"));
                 }
 
-                u64 rawId = 0;
                 const Json& asset = args["asset"];
-                if (asset.is_string())
-                {
-                    const string text = asset.get<string>();
-                    if (std::from_chars(text.data(), text.data() + text.size(), rawId).ec !=
-                        std::errc{})
-                    {
-                        return std::unexpected(fmt::format("invalid AssetId '{}'", text));
-                    }
-                }
-                else if (asset.is_number_unsigned())
-                {
-                    rawId = asset.get<u64>();
-                }
-                else
+                if (!asset.is_string())
                 {
                     return std::unexpected(
-                        string("'asset' must be an AssetId as a decimal string or number"));
+                        string("'asset' must be an AssetId as a canonical hex string "
+                               "(e.g. \"0x00000000000003E9\")"));
                 }
-                const AssetId assetId{rawId};
+                const string assetText = asset.get<string>();
+                const optional<AssetId> parsedAsset = ParseAssetId(assetText);
+                if (!parsedAsset)
+                {
+                    return std::unexpected(fmt::format("invalid AssetId '{}'", assetText));
+                }
+                const AssetId assetId = *parsedAsset;
 
                 Entity parent = Entity::Null;
                 if (args.contains("parent") && args["parent"].is_object())
@@ -698,7 +690,8 @@ namespace Veng::Mcp
                     host.Assets.LoadSync<Prefab>(assetId);
                 if (!prefab)
                 {
-                    return std::unexpected(fmt::format("prefab {} did not load", rawId));
+                    return std::unexpected(
+                        fmt::format("prefab {} did not load", FormatAssetId(assetId)));
                 }
 
                 const Prefab::SpawnResult spawned = (*prefab)->SpawnInto(**scene, host.Assets);
