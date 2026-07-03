@@ -4,8 +4,10 @@
 #include <Veng/Module/Module.h>
 
 #include <Veng/Asset/AssetManager.h>
+#include <Veng/Math/Random.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
+#include <Veng/Renderer/PointField.h>
 #include <Veng/Renderer/Sampler.h>
 #include <Veng/Renderer/Viewport.h>
 #include <Veng/ImGui/ImGuiLayer.h>
@@ -308,9 +310,24 @@ protected:
             m_SceneSettings.Mode = static_cast<Renderer::DebugView>(std::atoi(dv));
         }
 
+        // HT_POINTFIELD opts into the point-field mode: a large culled, LOD'd field of random
+        // colored points drawn around the scene. Off by default so the golden/smoke path is
+        // untouched. Zoom the camera (mouse-wheel dolly in the windowed run) to watch individual
+        // stars resolve up close and collapse to an aggregate density glow far out; the frustum
+        // cull drops the off-screen cells.
+        if (std::getenv("HT_POINTFIELD"))
+        {
+            BuildPointField();
+            m_SceneSettings.PointField = true;
+        }
+
         // Apply the sample's topology to the managed viewport; the engine already configured it
         // from the level, so this layers the sample's extras on. Recreates the scene texture.
         ReconfigureScene();
+
+        // Hand the built field to the (reconfigured) renderer; the borrowed pointer takes effect
+        // the next Execute. A no-op when the point-field mode is off (m_PointField stays null).
+        GetPrimaryViewport()->GetRenderer().SetPointField(m_PointField.get());
 
         // HT_RENDER_SCALE pins a fixed render scale (the headless capture has no slider): it drives
         // the dynamic-resolution sub-rect so a reduced-resolution render can be captured and diffed.
@@ -584,6 +601,14 @@ protected:
         m_McpServer.reset();
         m_SceneTexture.reset();
         m_SceneSampler.reset();
+
+        // The renderer only borrows the field; clear its pointer before releasing the field so a
+        // final Execute never reads a freed buffer, then drop the field.
+        if (const Renderer::Viewport* const viewport = GetPrimaryViewport())
+        {
+            viewport->GetRenderer().SetPointField(nullptr);
+        }
+        m_PointField.reset();
     }
 
 private:
@@ -697,6 +722,42 @@ private:
         }
     }
 
+    // Builds the opt-in point field: a box of random colored points around the scene origin,
+    // deterministically seeded so the windowed and headless runs draw the same field. Sized well
+    // under PointField::MaxPoints — this is a demonstration field, not a stress test.
+    void BuildPointField()
+    {
+        constexpr u32 PointCount = 40000;
+        constexpr f32 HalfExtent = 60.0f;
+
+        vector<Renderer::FieldPoint> points;
+        points.reserve(PointCount);
+        Rng rng(0xF1E1DC0DEULL);
+        for (u32 i = 0; i < PointCount; ++i)
+        {
+            const vec3 position(rng.NextFloat(-HalfExtent, HalfExtent),
+                                rng.NextFloat(-HalfExtent, HalfExtent),
+                                rng.NextFloat(-HalfExtent, HalfExtent));
+            // Warm-to-cool random star colors, packed RGBA8 (R low byte).
+            const u32 r = static_cast<u32>(rng.NextFloat(120.0f, 255.0f));
+            const u32 g = static_cast<u32>(rng.NextFloat(120.0f, 255.0f));
+            const u32 b = static_cast<u32>(rng.NextFloat(160.0f, 255.0f));
+            const u32 color = r | (g << 8) | (b << 16) | (0xFFu << 24);
+            points.push_back(Renderer::FieldPoint{
+                .Position = position,
+                .ColorRgba8 = color,
+                .Size = rng.NextFloat(0.15f, 0.4f),
+            });
+        }
+
+        m_PointField = Renderer::PointField::Create(GetRenderContext(),
+                                                    {
+                                                        .Name = "HelloTriangle Point Field",
+                                                        .Points = points,
+                                                        .CellSize = 12.0f,
+                                                    });
+    }
+
     void WriteSceneCapture(const char* outPath) const
     {
         const Ref<Renderer::Image> output = GetPrimaryViewport()->GetOutput()->GetImage();
@@ -730,6 +791,11 @@ private:
     // level (plus the sample's SSR/debug-view extras) in OnWorldLoaded. The per-frame tonemap/bloom
     // values ride the engine's managed-world ViewState (GetWorldViewState) instead.
     Renderer::SceneRendererSettings m_SceneSettings;
+
+    // The opt-in point field (HT_POINTFIELD), null when the mode is off. Built once in
+    // OnWorldLoaded and drawn by the renderer's PointFieldScenePass each frame; released before
+    // the renderer in OnDispose (the renderer only borrows it).
+    Unique<Renderer::PointField> m_PointField;
 
     // Recreated when Configure invalidates the viewport's output image.
     Ref<Renderer::Sampler> m_SceneSampler;

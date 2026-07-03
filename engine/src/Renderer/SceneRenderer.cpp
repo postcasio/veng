@@ -4,6 +4,7 @@
 #include "DebugDrawScenePass.h"
 #include "EnvironmentIbl.h"
 #include "Passes/AtmospherePrecompute.h"
+#include "Passes/PointFieldScenePass.h"
 #include "Passes/SkyScenePass.h"
 #include "ShadowScenePass.h"
 #include "PunctualShadowScenePass.h"
@@ -3570,6 +3571,16 @@ namespace Veng::Renderer
                     m_Context, m_Assets, &m_DebugDraw, m_OutputFormat, m_SamplerHandle,
                     m_Context.GetMaxFramesInFlight(), m_Extent));
             }
+
+            // The point-field pass composites the borrowed field over the tonemapped LDR color,
+            // after tonemap like DebugDraw — an unlit emissive primitive, frustum-culled with a
+            // screen-density LOD. A per-frame no-op unless a non-empty field is set.
+            if (m_Settings.PointField)
+            {
+                m_Passes.push_back(CreateUnique<PointFieldScenePass>(
+                    m_Context, m_Assets, &m_PointField, m_OutputFormat, m_SamplerHandle,
+                    m_Context.GetMaxFramesInFlight(), m_Extent));
+            }
             break;
         }
         case DebugView::Albedo:
@@ -5167,6 +5178,16 @@ namespace Veng::Renderer
     DebugDraw& SceneRenderer::GetDebugDraw() const
     {
         return m_DebugDraw;
+    }
+
+    void SceneRenderer::SetPointField(const PointField* const field)
+    {
+        m_PointField = field;
+    }
+
+    const PointField* SceneRenderer::GetPointField() const
+    {
+        return m_PointField;
     }
 
     void SceneRenderer::RequestPick(const uvec2 texel)

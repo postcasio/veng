@@ -292,6 +292,26 @@
       "source": "shaders/debug_billboard.frag.shader.json"
     },
     {
+      "id": "0x21CF1A41D3AA8650",
+      "type": "Shader",
+      "source": "shaders/pointfield/point_sprite.vert.shader.json"
+    },
+    {
+      "id": "0x5C4D5DCE40951527",
+      "type": "Shader",
+      "source": "shaders/pointfield/point_sprite.frag.shader.json"
+    },
+    {
+      "id": "0x7876DE17593B6A1C",
+      "type": "Shader",
+      "source": "shaders/pointfield/point_aggregate.vert.shader.json"
+    },
+    {
+      "id": "0xA0E92CDBACECE971",
+      "type": "Shader",
+      "source": "shaders/pointfield/point_aggregate.frag.shader.json"
+    },
+    {
       "id": "0x68AD195790159A7E",
       "type": "Shader",
       "source": "shaders/emissive.vert.shader.json"

@@ -57,6 +57,7 @@ namespace Veng::Renderer
     class DescriptorSetLayout;
     class EnvironmentIbl;
     class AtmospherePrecompute;
+    class PointField;
 
     /// @brief Maximum number of simultaneously shadowed point/spot lights.
     ///
@@ -384,6 +385,16 @@ namespace Veng::Renderer
         /// scene color. The pass samples the g-buffer depth for a depth-aware occluded fade rather
         /// than hardware depth-testing. Off by default, so the default render is unchanged.
         bool DebugDraw = false;
+
+        /// @brief Whether the point-field pass runs (off by default).
+        ///
+        /// A topology change: it inserts the PointFieldScenePass after the terminal tonemap (Final
+        /// mode only), drawing the field set via SceneRenderer::SetPointField frustum-culled with a
+        /// screen-density LOD (individual sprites resolving to an aggregate density splat). The pass
+        /// samples the g-buffer depth for the sprites' occluded fade rather than hardware depth-
+        /// testing. A per-frame no-op unless a non-empty field is set. Off by default, so the default
+        /// render is unchanged.
+        bool PointField = false;
 
         /// @brief Whether the entity-id picking pass runs (off by default).
         ///
@@ -822,6 +833,18 @@ namespace Veng::Renderer
         /// identity, not the per-frame accumulator state.
         /// @return The renderer-owned DebugDraw accumulator.
         [[nodiscard]] DebugDraw& GetDebugDraw() const;
+
+        /// @brief Sets the point field the PointFieldScenePass draws, or null to draw none.
+        ///
+        /// The field is borrowed (not owned) and must outlive the renderer or be cleared before it
+        /// is destroyed. Effective only when SceneRendererSettings::PointField is set; a null field
+        /// (the default) makes the pass a per-frame no-op. Setting a new field takes effect the next
+        /// Execute with no reconfigure — only the pass's borrowed pointer changes, not the topology.
+        /// @param field  The field to draw, or nullptr for none.
+        void SetPointField(const PointField* field);
+
+        /// @brief Returns the point field currently set for the PointFieldScenePass, or null.
+        [[nodiscard]] const PointField* GetPointField() const;
 
         /// @brief Records a pending pick at a render-target texel, serviced by the next Execute(s).
         ///
@@ -1733,6 +1756,12 @@ namespace Veng::Renderer
         /// renderer's constness is its own identity, not the per-frame accumulator. Cleared at
         /// the start of every Execute.
         mutable DebugDraw m_DebugDraw;
+
+        /// @brief Borrowed point field the PointFieldScenePass draws, set via SetPointField; null for none.
+        ///
+        /// Held by pointer-to-pointer in the pass so a SetPointField takes effect the next Execute
+        /// with no reconfigure. Not owned — the consumer owns the field's lifetime.
+        const PointField* m_PointField = nullptr;
 
         /// @brief Entity-id picking target (R32Uint), allocated only when Settings.Picking is set.
         ///

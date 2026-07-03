@@ -82,6 +82,8 @@ add_library(veng SHARED
         src/Renderer/GatherPass.cpp
         src/Renderer/DebugDraw.cpp
         src/Renderer/DebugDrawScenePass.cpp
+        src/Renderer/PointField.cpp
+        src/Renderer/Passes/PointFieldScenePass.cpp
         src/Renderer/EnvironmentIbl.cpp
         src/Renderer/RenderGraph.cpp
         src/Renderer/SceneRenderer.cpp
