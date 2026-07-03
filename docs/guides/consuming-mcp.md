@@ -137,10 +137,14 @@ With `AllowMutations` off (the default), the server registers the read-only fami
   **`render.list_viewports`**, **`render.stats`** (cull counts + last GPU frame time).
 
 Flip `AllowMutations` on and the write family appears: **`entity.add_component`**,
-**`entity.remove_component`**, **`entity.set_field`**, **`entity.spawn`**,
-**`entity.destroy`**, **`world.load_prefab`**. A component's fields read out and write back
-through the same reflection walk the editor inspector and the cook use, so a new field on a
-registered component appears over MCP with no MCP change.
+**`entity.remove_component`**, **`entity.remove_component_many`**, **`entity.set_field`**,
+**`entity.spawn`**, **`entity.destroy`**, **`entity.destroy_many`**, **`world.load_prefab`**.
+A component's fields read out and write back through the same reflection walk the editor
+inspector and the cook use, so a new field on a registered component appears over MCP with no
+MCP change. The two batch delete verbs take a list capped at 20 items (`entity.destroy_many`'s
+`{ ids: […] }`, `entity.remove_component_many`'s `{ items: [ { id, component }, … ] }`), apply
+each edit independently, and return a per-item result — a stale entity or absent component
+fails only its own item, so one bad handle never sinks the whole call.
 
 ## Connecting a client
 

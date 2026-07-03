@@ -199,9 +199,19 @@ family registers from the editor side.
   viewport".
 - **`world.load_prefab` and the `entity.*` mutation verbs**
   (`src/MutationTools.cpp`, registered only when `AllowMutations` is set) —
-  `entity.add_component`, `entity.remove_component`, `entity.set_field`, `entity.spawn`,
-  `entity.destroy`, `world.load_prefab`. Each builds a resolved, validated `McpMutation` and
-  applies it at the mutation-safe pump point.
+  `entity.add_component`, `entity.remove_component`, `entity.remove_component_many`,
+  `entity.set_field`, `entity.spawn`, `entity.destroy`, `entity.destroy_many`,
+  `world.load_prefab`. Each builds a resolved, validated `McpMutation` and applies it at the
+  mutation-safe pump point. The two **batch delete** verbs (`entity.destroy_many`,
+  `entity.remove_component_many`) take a list capped at `MaxBatchSize` (20) and share the
+  single verbs' per-item appliers (`DestroyOne` / `RemoveComponentOne`): they **validate the
+  request shape up front** (non-empty, within the cap, each item well-formed) and reject a
+  structural error as the whole call, then **apply each edit independently**, reporting a
+  per-item `{ id, error }` for one that can't be performed — a stale entity (including one an
+  earlier destroy in the same batch already took), an absent or unregistered component, the
+  unremovable `Hierarchy` link — without aborting the rest. The cap mirrors the list tools'
+  pagination limit: a context-volume convention for a single trusted local client, not a DoS
+  defense.
 - **`editor.*`** (`editor/src/EditorMcp.cpp`, registered by the `veng-editor` exe, not the
   library) — split by write posture exactly as the built-in tools are, so a read-only editor
   server honestly lists no write verbs. `RegisterEditorReadTools` (always) registers the
@@ -329,7 +339,7 @@ httplib stays PRIVATE and `veng-config` already carries `find_dependency(nlohman
 - **`mcp_screenshot`** — `render.screenshot` (`gpu`-labelled: the viewport `Download` → PNG
   path).
 - **`mcp_mutation`** — the mutation tools behind `AllowMutations`, including the routed
-  `ApplyMutation` hook.
+  `ApplyMutation` hook and the batch delete verbs' per-item / over-limit result model.
 - **`mcp_include_hygiene`** — compiles every `Veng/Mcp/` public header linking only the PUBLIC
   deps, guarding the surface's httplib-free contract (nlohmann is no longer distinguishable
   from the transitive `veng::veng` edge, so the test's JSON half is retired).

@@ -23,6 +23,13 @@ namespace Veng::Mcp
 
     namespace
     {
+        /// @brief The most entities or components a single batch delete verb accepts.
+        ///
+        /// A trusted-local-client context cap, not a DoS defense: it keeps one call's per-item
+        /// result list legible and bounds the work a single pump does, mirroring the list tools'
+        /// pagination cap. A batch over this size is a whole-call located error.
+        constexpr usize MaxBatchSize = 20;
+
         /// @brief Reads an entity handle from `{ id: {index,generation} }` or a bare `{ index, generation }`.
         ///
         /// Returns Entity::Null when neither shape is present or the fields are not numbers, which
@@ -108,6 +115,91 @@ namespace Veng::Mcp
         bool RouteMutation(const McpHost& host, const McpMutation& mutation)
         {
             return host.ApplyMutation && host.ApplyMutation(mutation);
+        }
+
+        /// @brief Validates a batch array: non-empty and within MaxBatchSize.
+        ///
+        /// A structural request error the batch verbs reject as the whole-call error, distinct
+        /// from a per-item failure (a stale entity, an absent component) reported inside results.
+        /// @param array  The JSON array the verb batches over.
+        /// @param field  The argument name to name in the error message.
+        VoidResult ValidateBatch(const Json& array, const char* field)
+        {
+            if (array.empty())
+            {
+                return std::unexpected(fmt::format("'{}' must name at least one item", field));
+            }
+            if (array.size() > MaxBatchSize)
+            {
+                return std::unexpected(
+                    fmt::format("'{}' exceeds the batch limit of {} items", field, MaxBatchSize));
+            }
+            return {};
+        }
+
+        /// @brief Destroys one entity subtree, returning `{ id, destroyed }` or a located error.
+        ///
+        /// Counts the Hierarchy subtree before destroying it (DestroyEntity is recursive) and
+        /// routes through ApplyMutation exactly as the single-entity verb does. A null or dead
+        /// target is a located error — the single verb surfaces it as the whole-call error, the
+        /// batch verb as that item's result. Shared by entity.destroy and entity.destroy_many.
+        Result<Json> DestroyOne(const McpHost& host, Scene& scene, Entity target)
+        {
+            if (target.IsNull() || !scene.IsAlive(target))
+            {
+                return std::unexpected(string("target entity is not live"));
+            }
+
+            usize destroyed = 0;
+            const function<void(Entity)> countSubtree = [&](Entity entity)
+            {
+                ++destroyed;
+                scene.ForEachChild(entity, [&](Entity child) { countSubtree(child); });
+            };
+            countSubtree(target);
+
+            McpMutation mutation;
+            mutation.Kind = McpMutationKind::DestroyEntity;
+            mutation.Target = target;
+            if (!RouteMutation(host, mutation))
+            {
+                scene.DestroyEntity(target);
+            }
+            return Json{{"id", EntityId(target)}, {"destroyed", destroyed}};
+        }
+
+        /// @brief Removes one component from one entity, returning `{ id, removed }` or a located error.
+        ///
+        /// Rejects a dead target, the unremovable Hierarchy link, and an absent component as
+        /// located errors, then routes through ApplyMutation. The single verb surfaces a failure
+        /// as the whole-call error, the batch verb as that item's result. Shared by
+        /// entity.remove_component and entity.remove_component_many.
+        Result<Json> RemoveComponentOne(const McpHost& host, Scene& scene, Entity target,
+                                        TypeId type)
+        {
+            if (target.IsNull() || !scene.IsAlive(target))
+            {
+                return std::unexpected(string("target entity is not live"));
+            }
+            if (type == host.Types.IdOf<Hierarchy>())
+            {
+                return std::unexpected(string("the Hierarchy component is not removable"));
+            }
+            if (scene.TryGetComponent(target, type) == nullptr)
+            {
+                return std::unexpected(fmt::format("entity does not have component '{}'",
+                                                   host.Types.Info(type).QualifiedName));
+            }
+
+            McpMutation mutation;
+            mutation.Kind = McpMutationKind::RemoveComponent;
+            mutation.Target = target;
+            mutation.Component = type;
+            if (!RouteMutation(host, mutation))
+            {
+                scene.RemoveComponent(target, type);
+            }
+            return Json{{"id", EntityId(target)}, {"removed", host.Types.Info(type).QualifiedName}};
         }
     }
 
@@ -206,39 +298,86 @@ namespace Veng::Mcp
                     return std::unexpected(string("expected { id, component: <QualifiedName> }"));
                 }
 
-                const Entity target = ParseTarget(args);
-                if (target.IsNull() || !(*scene)->IsAlive(target))
-                {
-                    return std::unexpected(string("target entity is not live"));
-                }
-
                 const Result<TypeId> type =
                     ResolveComponent(args["component"].get<string>(), host.Types);
                 if (!type)
                 {
                     return std::unexpected(type.error());
                 }
-                if (*type == host.Types.IdOf<Hierarchy>())
+
+                const Result<Json> result =
+                    RemoveComponentOne(host, **scene, ParseTarget(args), *type);
+                if (!result)
                 {
-                    return std::unexpected(string("the Hierarchy component is not removable"));
+                    return std::unexpected(result.error());
                 }
-                if ((*scene)->TryGetComponent(target, *type) == nullptr)
+                return result->dump();
+            };
+            server.RegisterTool(std::move(tool));
+        }
+
+        // entity.remove_component_many — remove up to MaxBatchSize components across entities.
+        {
+            McpTool tool;
+            tool.Name = "entity.remove_component_many";
+            tool.Description =
+                "Removes up to 20 components across entities in one call. Argument: "
+                "{ items: [ { id: { index, generation }, component: <QualifiedName> }, … ] }. "
+                "Applies each independently and returns { results: [ { id, removed } | "
+                "{ id, error } ] } — a dead entity, an absent or unregistered component, or the "
+                "unremovable Hierarchy link fails that item without aborting the rest.";
+            tool.InputSchemaJson =
+                R"({"type":"object","required":["items"],"properties":{"items":{"type":"array",)"
+                R"("maxItems":20,"items":{"type":"object","required":["id","component"],)"
+                R"("properties":{"id":{"type":"object"},"component":{"type":"string"}}}}}})";
+            tool.Handler = [&host](string_view argsJson) -> Result<string>
+            {
+                const Json args = Json::parse(argsJson, nullptr, false);
+                const Result<Scene*> scene = ResolveScene(host);
+                if (!scene)
                 {
-                    return std::unexpected(fmt::format("entity does not have component '{}'",
-                                                       host.Types.Info(*type).QualifiedName));
+                    return std::unexpected(scene.error());
+                }
+                if (!args.is_object() || !args.contains("items") || !args["items"].is_array())
+                {
+                    return std::unexpected(
+                        string("expected { items: [ { id, component: <QualifiedName> }, … ] }"));
+                }
+                const Json& items = args["items"];
+                if (const VoidResult ok = ValidateBatch(items, "items"); !ok)
+                {
+                    return std::unexpected(ok.error());
+                }
+                for (const Json& item : items)
+                {
+                    if (!item.is_object() || !item.contains("component") ||
+                        !item["component"].is_string())
+                    {
+                        return std::unexpected(
+                            string("each item must be { id, component: <QualifiedName> }"));
+                    }
                 }
 
-                McpMutation mutation;
-                mutation.Kind = McpMutationKind::RemoveComponent;
-                mutation.Target = target;
-                mutation.Component = *type;
-                if (!RouteMutation(host, mutation))
+                Json results = Json::array();
+                for (const Json& item : items)
                 {
-                    (*scene)->RemoveComponent(target, *type);
+                    const Entity target = ParseTarget(item);
+                    const Result<TypeId> type =
+                        ResolveComponent(item["component"].get<string>(), host.Types);
+                    const Result<Json> outcome =
+                        type ? RemoveComponentOne(host, **scene, target, *type)
+                             : Result<Json>(std::unexpected(type.error()));
+                    if (outcome)
+                    {
+                        results.push_back(*outcome);
+                    }
+                    else
+                    {
+                        results.push_back(
+                            Json{{"id", EntityId(target)}, {"error", outcome.error()}});
+                    }
                 }
-                return Json{{"id", EntityId(target)},
-                            {"removed", host.Types.Info(*type).QualifiedName}}
-                    .dump();
+                return Json{{"results", std::move(results)}}.dump();
             };
             server.RegisterTool(std::move(tool));
         }
@@ -427,30 +566,66 @@ namespace Veng::Mcp
                     return std::unexpected(scene.error());
                 }
 
-                const Entity target = ParseTarget(args);
-                if (target.IsNull() || !(*scene)->IsAlive(target))
+                const Result<Json> result = DestroyOne(host, **scene, ParseTarget(args));
+                if (!result)
                 {
-                    return std::unexpected(string("target entity is not live"));
+                    return std::unexpected(result.error());
+                }
+                return result->dump();
+            };
+            server.RegisterTool(std::move(tool));
+        }
+
+        // entity.destroy_many — destroy up to MaxBatchSize entities (each with its subtree).
+        {
+            McpTool tool;
+            tool.Name = "entity.destroy_many";
+            tool.Description =
+                "Destroys up to 20 entities and their Hierarchy subtrees in one call. Argument: "
+                "{ ids: [ { index, generation }, … ] }. Applies each independently and returns "
+                "{ destroyed: <total>, results: [ { id, destroyed } | { id, error } ] } — a dead "
+                "or stale id (including one already taken by an earlier destroy in the same batch) "
+                "fails that item without aborting the rest.";
+            tool.InputSchemaJson =
+                R"({"type":"object","required":["ids"],"properties":{"ids":{"type":"array",)"
+                R"("maxItems":20,"items":{"type":"object"}}}})";
+            tool.Handler = [&host](string_view argsJson) -> Result<string>
+            {
+                const Json args = Json::parse(argsJson, nullptr, false);
+                const Result<Scene*> scene = ResolveScene(host);
+                if (!scene)
+                {
+                    return std::unexpected(scene.error());
+                }
+                if (!args.is_object() || !args.contains("ids") || !args["ids"].is_array())
+                {
+                    return std::unexpected(
+                        string("expected { ids: [ { index, generation }, … ] }"));
+                }
+                const Json& ids = args["ids"];
+                if (const VoidResult ok = ValidateBatch(ids, "ids"); !ok)
+                {
+                    return std::unexpected(ok.error());
                 }
 
-                // Count the subtree before destroying it — DestroyEntity is recursive over the
-                // Hierarchy links, so walk them the same way for the reported count.
-                usize destroyed = 0;
-                const function<void(Entity)> countSubtree = [&](Entity entity)
+                usize total = 0;
+                Json results = Json::array();
+                for (const Json& element : ids)
                 {
-                    ++destroyed;
-                    (*scene)->ForEachChild(entity, [&](Entity child) { countSubtree(child); });
-                };
-                countSubtree(target);
-
-                McpMutation mutation;
-                mutation.Kind = McpMutationKind::DestroyEntity;
-                mutation.Target = target;
-                if (!RouteMutation(host, mutation))
-                {
-                    (*scene)->DestroyEntity(target);
+                    const Entity target = ParseEntity(element);
+                    const Result<Json> outcome = DestroyOne(host, **scene, target);
+                    if (outcome)
+                    {
+                        total += (*outcome)["destroyed"].get<usize>();
+                        results.push_back(*outcome);
+                    }
+                    else
+                    {
+                        results.push_back(
+                            Json{{"id", EntityId(target)}, {"error", outcome.error()}});
+                    }
                 }
-                return Json{{"destroyed", destroyed}}.dump();
+                return Json{{"destroyed", total}, {"results", std::move(results)}}.dump();
             };
             server.RegisterTool(std::move(tool));
         }

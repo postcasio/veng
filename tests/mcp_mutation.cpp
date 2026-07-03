@@ -4,10 +4,12 @@
 // path), wires an McpHost over a small device-free Scene, drives Pump() on this (render) thread,
 // and over loopback exercises entity.spawn / entity.add_component / entity.get (round-trips
 // JsonToFields → FieldsToJson) / entity.set_field / entity.remove_component / entity.destroy —
-// asserting each edit took, that a stale handle errors, and that the spatial version moved. A
-// second server with AllowMutations = false asserts the mutation tools are absent from
-// tools/list. Pure logic + loopback, no GPU (the scene-only ops touch no Assets), so it runs in
-// the default band.
+// asserting each edit took, that a stale handle errors, and that the spatial version moved. It
+// then drives the batch verbs entity.remove_component_many / entity.destroy_many, asserting the
+// per-item result model (a good item applies while a stale entity or unregistered type fails only
+// its own item) and the whole-call over-limit / empty-batch errors. A second server with
+// AllowMutations = false asserts the mutation tools are absent from tools/list. Pure logic +
+// loopback, no GPU (the scene-only ops touch no Assets), so it runs in the default band.
 
 #include <Veng/Mcp/McpHost.h>
 #include <Veng/Mcp/McpServer.h>
@@ -133,13 +135,16 @@ int main()
         client.set_connection_timeout(5, 0);
         client.set_read_timeout(10, 0);
 
-        // tools/list surfaces the six mutation tools (AllowMutations is on).
+        // tools/list surfaces the eight mutation tools (AllowMutations is on).
         const std::set<std::string> names = ToolNames(client);
         Check(names.count("entity.add_component") == 1, "entity.add_component registered");
         Check(names.count("entity.remove_component") == 1, "entity.remove_component registered");
+        Check(names.count("entity.remove_component_many") == 1,
+              "entity.remove_component_many registered");
         Check(names.count("entity.set_field") == 1, "entity.set_field registered");
         Check(names.count("entity.spawn") == 1, "entity.spawn registered");
         Check(names.count("entity.destroy") == 1, "entity.destroy registered");
+        Check(names.count("entity.destroy_many") == 1, "entity.destroy_many registered");
         Check(names.count("world.load_prefab") == 1, "world.load_prefab registered");
 
         const u64 versionBefore = scene->GetSpatialVersion();
@@ -242,6 +247,61 @@ int main()
         // The now-stale parent handle is an isError, never a silent stale-handle access.
         const Json stale = CallTool(client, "entity.get", Json{{"id", spawnId}});
         Check(stale.value("isError", false) == true, "the destroyed handle now errors");
+
+        // Spawn a few Light-carrying entities to drive the batch verbs against.
+        const auto SpawnLit = [&](const char* label) -> Json
+        {
+            const Json created = Payload(
+                CallTool(client, "entity.spawn",
+                         Json{{"name", label}, {"components", {{"Veng::Light", Json::object()}}}}));
+            return Json{{"index", created["id"].value("index", 0u)},
+                        {"generation", created["id"].value("generation", 0u)}};
+        };
+        const Json a = SpawnLit("A");
+        const Json b = SpawnLit("B");
+        const Json c = SpawnLit("C");
+        Check(scene->EntityCount() == 3, "three entities spawned for the batch verbs");
+
+        // remove_component_many applies each item independently: A and B lose their Light while an
+        // unregistered type on C is a per-item error that does not abort the batch.
+        const Json batchRemove = Payload(CallTool(
+            client, "entity.remove_component_many",
+            Json{{"items", Json::array({Json{{"id", a}, {"component", "Veng::Light"}},
+                                        Json{{"id", b}, {"component", "Veng::Light"}},
+                                        Json{{"id", c}, {"component", "No::Such::Type"}}})}}));
+        Check(batchRemove["results"].size() == 3,
+              "remove_component_many returns a result per item");
+        Check(batchRemove["results"][0].value("removed", std::string{}) == "Veng::Light",
+              "batch removed A's Light");
+        Check(batchRemove["results"][2].contains("error"),
+              "an unregistered component is a per-item error, not a whole-batch failure");
+        const Json aAfter = Payload(CallTool(client, "entity.get", Json{{"id", a}}));
+        Check(!aAfter["components"].contains("Veng::Light"), "A's Light is gone after the batch");
+
+        // A batch over the 20-item limit is a whole-call isError.
+        Json overLimit = Json::array();
+        for (int i = 0; i < 21; ++i)
+        {
+            overLimit.push_back(Json{{"id", a}, {"component", "Veng::Light"}});
+        }
+        const Json tooMany =
+            CallTool(client, "entity.remove_component_many", Json{{"items", overLimit}});
+        Check(tooMany.value("isError", false) == true, "a batch over the limit is an isError");
+
+        // destroy_many destroys A, B, C and reports a per-item error for a stale handle, summing
+        // the destroyed count across the items that took.
+        const Json staleHandle = Json{{"index", 4242u}, {"generation", 9u}};
+        const Json batchDestroy = Payload(CallTool(
+            client, "entity.destroy_many", Json{{"ids", Json::array({a, b, c, staleHandle})}}));
+        Check(batchDestroy.value("destroyed", 0) == 3, "destroy_many reports the total destroyed");
+        Check(batchDestroy["results"].size() == 4, "destroy_many returns a result per id");
+        Check(batchDestroy["results"][3].contains("error"), "the stale id is a per-item error");
+        Check(scene->EntityCount() == 0, "the batch destroyed every live entity");
+
+        // An empty batch is a whole-call isError.
+        const Json emptyBatch =
+            CallTool(client, "entity.destroy_many", Json{{"ids", Json::array()}});
+        Check(emptyBatch.value("isError", false) == true, "an empty batch is an isError");
     }
 
     done.store(true);
@@ -278,6 +338,10 @@ int main()
             Check(names.count("entity.set_field") == 0,
                   "a read-only server omits entity.set_field");
             Check(names.count("entity.destroy") == 0, "a read-only server omits entity.destroy");
+            Check(names.count("entity.destroy_many") == 0,
+                  "a read-only server omits entity.destroy_many");
+            Check(names.count("entity.remove_component_many") == 0,
+                  "a read-only server omits entity.remove_component_many");
             Check(names.count("world.load_prefab") == 0,
                   "a read-only server omits world.load_prefab");
             // The read-only inspection tools stay present.
