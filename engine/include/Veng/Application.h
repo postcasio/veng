@@ -442,6 +442,16 @@ namespace Veng
         /// @param delta    Frame delta in seconds, forwarded to the renderer.
         void PushManagedViewportView(const ManagedViewport& managed, f32 delta);
 
+        /// @brief Resolves this frame's pointer owner + region-local position for the managed world.
+        ///
+        /// Reads the pointer's window point from the Input snapshot and, when the cursor is captured
+        /// (gameplay focus), routes it wholly to the world's single UsesKeyboardMouse seat; otherwise
+        /// hit-tests it against the router's associated Presented viewport regions. Returns an empty
+        /// routing (no owner) when there is no managed world. Fed into the simulation's SystemContext
+        /// so InputMappingSystem gates each seat's mouse arm on ownership.
+        /// @return The pointer routing for this frame.
+        [[nodiscard]] PointerRouting ComputePointerRouting() const;
+
         /// @brief Re-resolves every window-tracking managed viewport's region from its Layout.
         ///
         /// The swapchain-invalidation callback: recomputes each managed viewport's region as

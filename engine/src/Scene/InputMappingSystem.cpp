@@ -41,10 +41,11 @@ namespace Veng
                     }
                 }
 
-                // Each seat resolves against a view scoped to its own devices, so two seats with
-                // different assignments produce distinct PlayerInputs. Phase comes from last tick's
-                // resolved state, so the system holds no cross-tick state of its own.
-                const SeatInputView raw{context.Input, devices};
+                // Each seat resolves against a view scoped to its own devices and the shared
+                // pointer routing, so two seats with different assignments produce distinct
+                // PlayerInputs and only the pointer's current owner reads the mouse. Phase comes
+                // from last tick's resolved state, so the system holds no cross-tick state of its own.
+                const SeatInputView raw{context.Input, devices, context.Pointer, seat};
                 input.State = ResolveActions(active, raw, input.State);
             });
     }

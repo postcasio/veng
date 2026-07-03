@@ -15,6 +15,8 @@
 #include <Veng/Renderer/ImageView.h>
 
 #include <Veng/Scene/Camera.h>
+#include <Veng/Scene/Components.h>
+#include <Veng/Scene/Scene.h>
 #include <Veng/Scene/SceneSystem.h>
 #include <Veng/Scene/SceneViewport.h>
 
@@ -180,8 +182,13 @@ namespace Veng
 
     void Application::BuildManagedViewports(std::span<const ManagedViewportInfo> infos)
     {
-        // Drop the prior set first (each Unique self-unregisters from the drive-list), then build
-        // the new one in order so index 0 is the primary.
+        // Drop the prior set first (each Unique self-unregisters from the drive-list), clearing each
+        // one's pointer association so no stale pointer lingers in the router. Then build the new set
+        // in order so index 0 is the primary.
+        for (const ManagedViewport& managed : m_ManagedViewports)
+        {
+            m_InputRouter->ClearViewportSeat(*managed.Viewport);
+        }
         m_ManagedViewports.clear();
         m_ManagedViewports.reserve(infos.size());
 
@@ -206,6 +213,16 @@ namespace Veng
             }
 
             RegisterViewport(*viewport);
+
+            // A managed viewport bound to a seat feeds that seat's pointer input: associate it with
+            // the router in the same step it is registered, so a free cursor over its region routes
+            // to the seat with no dead frame. An unbound viewport (the default single-camera path)
+            // needs no association — under capture the pointer routes to the keyboard seat directly.
+            if (info.Viewer != Entity::Null)
+            {
+                m_InputRouter->AssociateViewportSeat(*viewport, info.Viewer);
+            }
+
             m_ManagedViewports.push_back({.Viewport = std::move(viewport), .Info = info});
         }
     }
@@ -247,6 +264,32 @@ namespace Veng
                            .value_or(DefaultCameraView(aspect));
         state.Delta = delta;
         viewport.SetViewState(state);
+    }
+
+    PointerRouting Application::ComputePointerRouting() const
+    {
+        if (!m_World)
+        {
+            return PointerRouting{};
+        }
+
+        // Under capture the router skips the region hit-test and hands the pointer to the single
+        // keyboard/mouse seat, so find it now (the first UsesKeyboardMouse seat; one is the split-
+        // screen shape). Only needed while captured, but resolved unconditionally — cheap, and the
+        // router ignores it when free.
+        Entity keyboardSeat = Entity::Null;
+        m_World->Each<Viewer, SeatInput>(
+            [&](const Entity seat, Viewer&, SeatInput& devices)
+            {
+                if (keyboardSeat == Entity::Null && devices.UsesKeyboardMouse)
+                {
+                    keyboardSeat = seat;
+                }
+            });
+
+        const vec2 pointer = m_Input->GetMousePosition();
+        return m_InputRouter->ResolvePointer(ivec2(pointer), m_InputRouter->IsGameplayFocused(),
+                                             keyboardSeat);
     }
 
     void Application::ReconfigureManagedViewports(std::span<const ManagedViewportInfo> viewports)
@@ -493,8 +536,11 @@ namespace Veng
         // or a game-controlled pause), so OnUpdate and the view push see this tick's finalized state.
         if (m_World && !m_WorldPaused)
         {
-            m_World->TickSimulation(delta,
-                                    SystemContext{.Assets = *m_AssetManager, .Input = *m_Input});
+            m_World->TickSimulation(delta, SystemContext{
+                                               .Assets = *m_AssetManager,
+                                               .Input = *m_Input,
+                                               .Pointer = ComputePointerRouting(),
+                                           });
         }
 
         OnUpdate(delta);

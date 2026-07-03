@@ -1,6 +1,7 @@
 #include <Veng/Input/RawInput.h>
 
 #include <Veng/Input.h>
+#include <Veng/InputRouter.h>
 #include <Veng/Scene/Components.h>
 
 namespace Veng
@@ -58,13 +59,21 @@ namespace Veng
         return connected.empty() ? GamepadId::None : connected.front();
     }
 
-    SeatInputView::SeatInputView(const Input& input, const SeatInput& seat)
-        : m_Input(input), m_UsesKeyboardMouse(seat.UsesKeyboardMouse), m_Gamepad(seat.Gamepad)
+    SeatInputView::SeatInputView(const Input& input, const SeatInput& seat,
+                                 const PointerRouting& pointer, Entity viewer)
+        : m_Input(input), m_Pointer(pointer), m_Viewer(viewer),
+          m_UsesKeyboardMouse(seat.UsesKeyboardMouse), m_Gamepad(seat.Gamepad)
     {
+    }
+
+    bool SeatInputView::OwnsPointer() const
+    {
+        return m_UsesKeyboardMouse && m_Pointer.OwnerThisFrame() == m_Viewer;
     }
 
     bool SeatInputView::IsKeyDown(u32 code) const
     {
+        // Keyboard is not region-gated: one keyboard, held by whichever seat sets UsesKeyboardMouse.
         if (!m_UsesKeyboardMouse)
         {
             return false;
@@ -76,7 +85,7 @@ namespace Veng
     {
         if (device == InputDeviceType::MouseButton)
         {
-            return m_UsesKeyboardMouse && m_Input.IsMouseButtonDown(static_cast<MouseButton>(code));
+            return OwnsPointer() && m_Input.IsMouseButtonDown(static_cast<MouseButton>(code));
         }
 
         if (device == InputDeviceType::GamepadButton)
@@ -91,10 +100,12 @@ namespace Veng
     {
         if (device == InputDeviceType::MouseAxis)
         {
-            if (!m_UsesKeyboardMouse)
+            if (!OwnsPointer())
             {
                 return 0.0f;
             }
+            // Look delta stays raw pixels (translation-invariant, so sensitivity-invariant across
+            // region size); position reports the pointer's region-local coordinate.
             const vec2 delta = m_Input.GetMouseDelta();
             switch (code)
             {
@@ -102,6 +113,10 @@ namespace Veng
                 return delta.x;
             case RawInput::MouseAxisY:
                 return delta.y;
+            case MousePositionX:
+                return m_Pointer.LocalPosition.x;
+            case MousePositionY:
+                return m_Pointer.LocalPosition.y;
             default:
                 return 0.0f;
             }

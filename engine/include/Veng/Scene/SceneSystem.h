@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Veng/Veng.h>
+#include <Veng/InputRouter.h>
 
 namespace Veng
 {
@@ -61,6 +62,12 @@ namespace Veng
         AssetManager& Assets;
         /// @brief The always-present frame-coherent input service; present-but-neutral (all zeros) in headless mode.
         const Input& Input;
+        /// @brief This frame's free-pointer owner + region-local position; default-empty when unrouted.
+        ///
+        /// The InputMappingSystem reads it to build each seat's region-gated pointer view. Its
+        /// default (Owner == Entity::Null) leaves every seat reading neutral mouse, so a headless or
+        /// pointer-free tick needs no guard.
+        PointerRouting Pointer;
     };
 
     /// @brief A unit of gameplay logic over a Scene, registered via the module host
