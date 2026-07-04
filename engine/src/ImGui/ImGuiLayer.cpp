@@ -63,6 +63,9 @@ namespace Veng
     {
         using namespace Renderer;
 
+        // The backend allocates separate SAMPLER and SAMPLED_IMAGE descriptors for its dynamic
+        // font atlas alongside the combined-image-sampler texture sets, so the pool must size
+        // every descriptor type it draws or vkAllocateDescriptorSets warns on the missing type.
         m_DescriptorPool = DescriptorPool::Create(
             m_Context, {.Name = "ImGui Descriptor Pool",
                         .MaxSets = 100000,
@@ -72,6 +75,14 @@ namespace Veng
                                       },
                                       {
                                           .type = vk::DescriptorType::eCombinedImageSampler,
+                                          .descriptorCount = 100000,
+                                      },
+                                      {
+                                          .type = vk::DescriptorType::eSampler,
+                                          .descriptorCount = 100000,
+                                      },
+                                      {
+                                          .type = vk::DescriptorType::eSampledImage,
                                           .descriptorCount = 100000,
                                       }},
                         .Flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet |
