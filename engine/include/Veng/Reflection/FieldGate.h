@@ -2,7 +2,7 @@
 
 #include <Veng/Reflection/FieldDescriptor.h>
 
-namespace VengEditor
+namespace Veng
 {
     /// @brief Whether a field's VisibleIf condition admits it for the given owning instance.
     ///
@@ -13,7 +13,7 @@ namespace VengEditor
     /// @param field      The field descriptor carrying the optional VisibleIf predicate.
     /// @param ownerBase  Base pointer of the immediately-enclosing reflected struct instance.
     /// @return True when the field should be shown.
-    [[nodiscard]] bool IsFieldVisible(const Veng::FieldDescriptor& field, const void* ownerBase);
+    [[nodiscard]] bool IsFieldVisible(const FieldDescriptor& field, const void* ownerBase);
 
     /// @brief Whether a field's EnabledIf condition admits editing for the given owning instance.
     ///
@@ -24,5 +24,5 @@ namespace VengEditor
     /// @param field      The field descriptor carrying the optional EnabledIf predicate.
     /// @param ownerBase  Base pointer of the immediately-enclosing reflected struct instance.
     /// @return True when the field should be editable (before composing ReadOnly).
-    [[nodiscard]] bool IsFieldEnabled(const Veng::FieldDescriptor& field, const void* ownerBase);
+    [[nodiscard]] bool IsFieldEnabled(const FieldDescriptor& field, const void* ownerBase);
 }

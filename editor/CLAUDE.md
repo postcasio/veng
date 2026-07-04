@@ -164,12 +164,19 @@ mismatch at load); hosting separately built modules is a future module-ABI/SDK f
   `Scene::ForEachComponent` walk (the `Hierarchy` component is hierarchy-panel-owned and offers
   neither). Each component's fields render in a two-column
   `UI::PropertyTable` via the shared `DrawFieldWidget` helper (`editor/src/FieldWidget.{h,cpp}`,
-  taking a `FieldWidgetContext { AssetManager&, const AssetSourceIndex&, const EditorRegistry& }`),
-  which draws a built-in widget per `FieldClass`
-  (Scalar/Vector/Quaternion/String/AssetHandle/Enum/Reference/Struct/Matrix/Variant), honors
-  `FieldDescriptor::ReadOnly`/`Hidden`/`Tooltip`, recurses nested structs as flattened indented
-  rows, makes enums editable (with a registered `LightType` combo), and turns `Reference`
-  fields into Entity drop targets. The **`Variant` widget** is a combo over the alternatives'
+  taking a `FieldWidgetContext { AssetManager&, const AssetSourceIndex&, const EditorRegistry& }`).
+  **The widget-drawing core lives in the engine** — `Veng::UI::DrawFields` / `DrawFieldWidget`
+  (`Veng/UI/Inspector.h`, in `libveng`) is the reflection inspector every consumer shares (a game
+  UI links only `libveng`, not the editor framework, for it). It draws a built-in widget per
+  `FieldClass` (Scalar/Vector/Quaternion/String/Enum/Matrix/Struct/Variant/Array), honors
+  `FieldDescriptor::ReadOnly`/`Hidden`/`Tooltip`/`Category`, recurses nested structs/arrays/variants
+  as flattened indented rows, and gates each field on VisibleIf/EnabledIf (the engine's
+  `Veng/Reflection/FieldGate.h`). The editor's `DrawFieldWidget` is now a **thin hook provider**: it
+  builds `Veng::UI::InspectorHooks` supplying the editor-only pieces the engine core can't resolve —
+  the `AssetHandle` asset chip, the `Reference` Entity drop target, and the `EditorRegistry`'s
+  per-`TypeId` custom widgets (the registered `LightType` combo) — and delegates to the engine walk.
+  A bare game passes no hooks, so AssetHandle/Reference fields draw the engine's read-only
+  fallbacks. The **`Variant` widget** is a combo over the alternatives'
   display names (plus "(none)") that `SetActive`s the chosen alternative on change and recurses
   the active member's fields as indented rows — so a `MeshRenderer`'s `Source` shape variant
   gives primitive-kind selection and per-shape parameter editing for free. `DrawFieldWidget`

@@ -1,9 +1,7 @@
-#include "FieldGate.h"
+#include <Veng/Reflection/FieldGate.h>
 
-namespace VengEditor
+namespace Veng
 {
-    using namespace Veng;
-
     bool IsFieldVisible(const FieldDescriptor& field, const void* ownerBase)
     {
         return !field.VisibleIf || field.VisibleIf(ownerBase);

@@ -4,12 +4,10 @@
 
 #include <doctest/doctest.h>
 
-#include "FieldWidgetDispatch.h"
-
+#include <Veng/Reflection/FieldDisplay.h>
 #include <Veng/Reflection/TypeId.h>
 
 using namespace Veng;
-using VengEditor::EffectiveWidget;
 
 TEST_CASE("Auto always passes through unchanged")
 {

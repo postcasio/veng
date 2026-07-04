@@ -7,14 +7,12 @@
 #include <doctest/doctest.h>
 
 #include <Veng/Reflection/FieldDescriptor.h>
+#include <Veng/Reflection/FieldGate.h>
 #include <Veng/Reflection/Reflect.h>
 #include <Veng/Reflection/TypeId.h>
 #include <Veng/Reflection/TypeRegistry.h>
 
-#include "../../editor/src/FieldGate.h"
-
 using namespace Veng;
-using namespace VengEditor;
 
 namespace
 {

@@ -39,8 +39,6 @@ add_library(veng_editor SHARED
         src/panels/SceneViewportPanel.cpp
         src/panels/TextureEditorPanel.cpp
         src/FieldWidget.cpp
-        src/FieldWidgetDispatch.cpp
-        src/FieldGate.cpp
         src/material/MaterialPreview.cpp
 )
 add_library(veng_editor::veng_editor ALIAS veng_editor)

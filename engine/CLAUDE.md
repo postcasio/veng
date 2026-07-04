@@ -701,6 +701,17 @@ surface; it does not link the editor framework for a debug slider.)
   for call-site consistency: only the knobs the engine wants UI authors to vary are exposed.
   The closed `FieldClass` set maps onto this closed overload set, so the reflection
   inspector's `Vector` dispatch is a single `Drag` call.
+- **The reflection inspector is an engine surface** (`Veng/UI/Inspector.h`): `DrawFields` /
+  `DrawFieldWidget` walk a reflected struct's `FieldDescriptor`s and draw a two-column
+  `PropertyTable` row per field — a built-in widget per `FieldClass`
+  (Scalar/Vector/Quaternion/String/Enum/Matrix/Struct/Variant/Array), with Category grouping and
+  VisibleIf/EnabledIf gating (`Veng/Reflection/FieldGate.h`). Field classes the engine can't
+  resolve on its own — `AssetHandle`, `Reference`, and per-`TypeId` custom widgets — route to
+  consumer-supplied `InspectorHooks`; an unset hook draws a read-only fallback. So a **game UI**
+  gets reflection-driven property editing linking only `libveng`, and the **editor** builds its
+  asset-chip / entity-drop / registry inspector on the same walk (see
+  [editor/CLAUDE.md](../editor/CLAUDE.md)) rather than duplicating it. Caller opens the
+  `PropertyTable`; the inspector fills the rows.
 - **Every editable widget returns `[[nodiscard]] bool`** ("changed"), keeping immediate-mode
   semantics.
 - **Text is preformatted `string_view`, not printf varargs** — a caller writes
