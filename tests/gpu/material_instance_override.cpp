@@ -13,6 +13,7 @@
 
 #include <cstring>
 #include <filesystem>
+#include "support/TempPath.h"
 #include <fstream>
 
 #include <doctest/doctest.h>
@@ -101,7 +102,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 {
     RegisterBuiltinTypes(Types);
 
-    const path dir = std::filesystem::temp_directory_path() / "veng_gpu_matinst_override";
+    const path dir = Veng::TestSupport::TempDir() / "veng_gpu_matinst_override";
     std::filesystem::remove_all(dir);
     std::filesystem::create_directories(dir);
 

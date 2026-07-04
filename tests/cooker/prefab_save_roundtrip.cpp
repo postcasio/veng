@@ -10,6 +10,7 @@
 
 #include <cstring>
 #include <filesystem>
+#include "support/TempPath.h"
 #include <fstream>
 #include <sstream>
 
@@ -124,7 +125,7 @@ namespace
     // Writes a one-asset prefab pack pointing at `prefabPath`, returning the pack path.
     path WritePack(const string& name, const path& prefabPath, AssetId id)
     {
-        const path packPath = std::filesystem::temp_directory_path() / (name + ".pack.json");
+        const path packPath = Veng::TestSupport::TempDir() / (name + ".pack.json");
         json pack;
         pack["version"] = 1;
         json asset;
@@ -145,7 +146,7 @@ namespace
         Cooker cooker;
         RegisterPrefabImporter(cooker);
 
-        const path outArchive = std::filesystem::temp_directory_path() / (name + ".vengpack");
+        const path outArchive = Veng::TestSupport::TempDir() / (name + ".vengpack");
         const VoidResult cooked = cooker.CookPack(packPath, outArchive, {}, &registry);
         if (!cooked.has_value())
         {
@@ -224,7 +225,7 @@ TEST_CASE("prefab save: every FieldClass round-trips through save → cook → d
     scene->Add<Name>(child) = Name{.Value = "Child"};
     scene->SetParent(child, root); // a Hierarchy.Parent Reference back to the root
 
-    const path prefabPath = std::filesystem::temp_directory_path() / "save_allfields.prefab.json";
+    const path prefabPath = Veng::TestSupport::TempDir() / "save_allfields.prefab.json";
     std::filesystem::remove(prefabPath);
 
     const VoidResult saved = VengEditor::PrefabSerialize::Save(*scene, registry, prefabPath);
@@ -286,7 +287,7 @@ TEST_CASE("prefab save: an AssetHandle field round-trips its hex-string id")
     const u64 meshId = 8001ULL;
     std::memcpy(static_cast<void*>(&all.Mesh), &meshId, sizeof(meshId));
 
-    const path prefabPath = std::filesystem::temp_directory_path() / "save_handle.prefab.json";
+    const path prefabPath = Veng::TestSupport::TempDir() / "save_handle.prefab.json";
     std::filesystem::remove(prefabPath);
 
     REQUIRE(VengEditor::PrefabSerialize::Save(*scene, registry, prefabPath).has_value());
@@ -317,7 +318,7 @@ TEST_CASE("prefab save: the Array arm emits a JSON array of its elements")
     const Entity entity = scene->CreateEntity();
     scene->Add<ArrayHolder>(entity) = ArrayHolder{.Values = {1.0f, 2.0f, 3.0f}};
 
-    const path prefabPath = std::filesystem::temp_directory_path() / "save_array.prefab.json";
+    const path prefabPath = Veng::TestSupport::TempDir() / "save_array.prefab.json";
     std::filesystem::remove(prefabPath);
 
     REQUIRE(VengEditor::PrefabSerialize::Save(*scene, registry, prefabPath).has_value());
@@ -343,7 +344,7 @@ TEST_CASE("prefab save: an unknown hand-authored key survives a save")
     const Entity entity = scene->CreateEntity();
     scene->Add<Name>(entity) = Name{.Value = "Kept"};
 
-    const path prefabPath = std::filesystem::temp_directory_path() / "save_unknown.prefab.json";
+    const path prefabPath = Veng::TestSupport::TempDir() / "save_unknown.prefab.json";
 
     // Seed a source whose single entity carries the stable id this entity will save under
     // (slot index 0), an entity-level extra key, and a components-level extra key — neither of
@@ -394,7 +395,7 @@ TEST_CASE("prefab save: deleting + reordering entities re-aligns by id, preservi
     scene->SetParent(b, parent);
     scene->SetParent(c, parent);
 
-    const path prefabPath = std::filesystem::temp_directory_path() / "save_realign.prefab.json";
+    const path prefabPath = Veng::TestSupport::TempDir() / "save_realign.prefab.json";
     std::filesystem::remove(prefabPath);
 
     // First save establishes the source: four entities keyed by id (slot index).

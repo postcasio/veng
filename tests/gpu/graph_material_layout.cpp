@@ -12,6 +12,7 @@
 
 #include <cstring>
 #include <filesystem>
+#include "support/TempPath.h"
 #include <fstream>
 
 #include <doctest/doctest.h>
@@ -127,7 +128,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     // --- Write a self-contained pack: canonical layout, surface vertex shader, the
     // graph-sourced fragment, and the material. ---
-    const path dir = std::filesystem::temp_directory_path() / "veng_gpu_graph_layout";
+    const path dir = Veng::TestSupport::TempDir() / "veng_gpu_graph_layout";
     std::filesystem::remove_all(dir);
     std::filesystem::create_directories(dir);
 

@@ -2,6 +2,7 @@
 // runtime-entrypoint writer/reader contract.
 
 #include <doctest/doctest.h>
+#include "support/TempPath.h"
 
 #include <cstring>
 #include <fstream>
@@ -17,8 +18,7 @@ namespace
     // A unique temp path so the round-trip never collides with a concurrent test run.
     path TempProjectPath(const char* tag)
     {
-        return std::filesystem::temp_directory_path() /
-               fmt::format("veng_cooked_project_{}.vengproj", tag);
+        return Veng::TestSupport::TempDir() / fmt::format("veng_cooked_project_{}.vengproj", tag);
     }
 }
 

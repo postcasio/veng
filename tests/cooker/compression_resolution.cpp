@@ -5,6 +5,7 @@
 
 #include <cstring>
 #include <filesystem>
+#include "support/TempPath.h"
 #include <random>
 
 #include <doctest/doctest.h>
@@ -30,7 +31,7 @@ namespace
         // Unique per call: ctest runs each case as its own process in parallel, and a
         // shared fixed name lets concurrent cases cook over and delete each other's archive.
         std::random_device rng;
-        const path outArchive = std::filesystem::temp_directory_path() /
+        const path outArchive = Veng::TestSupport::TempDir() /
                                 fmt::format("veng_cooker_role_resolution_{:08x}.vengpack", rng());
 
         Cooker cooker;

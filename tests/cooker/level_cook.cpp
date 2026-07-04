@@ -7,6 +7,7 @@
 
 #include <cstring>
 #include <filesystem>
+#include "support/TempPath.h"
 #include <fstream>
 #include <random>
 
@@ -57,8 +58,8 @@ namespace
         // Unique per call: ctest runs each case as its own process in parallel, and a
         // shared fixed name lets concurrent cases cook over and delete each other's archive.
         std::random_device rng;
-        const path outArchive = std::filesystem::temp_directory_path() /
-                                fmt::format("veng_cooker_level_{:08x}.vengpack", rng());
+        const path outArchive =
+            Veng::TestSupport::TempDir() / fmt::format("veng_cooker_level_{:08x}.vengpack", rng());
 
         const VoidResult cookResult =
             cooker.CookPack(packJson, outArchive, refs, &module.Types, &module.Systems);
@@ -88,7 +89,7 @@ namespace
     // Writes a level JSON + a one-entry level pack into a temp dir, returning the pack path.
     path WriteLevelPack(const string& name, const json& level)
     {
-        const path dir = std::filesystem::temp_directory_path();
+        const path dir = Veng::TestSupport::TempDir();
         const path levelPath = dir / (name + ".level.json");
         const path packPath = dir / (name + ".pack.json");
 
@@ -245,8 +246,7 @@ TEST_CASE("level cook: cooking a level with no --module is the requires-module e
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
 
-    const path outArchive =
-        std::filesystem::temp_directory_path() / "veng_cooker_level_nm.vengpack";
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_cooker_level_nm.vengpack";
     const VoidResult result = cooker.CookPack(packJson, outArchive);
     REQUIRE_FALSE(result.has_value());
     CHECK(result.error().find("level cooking requires --module") != string::npos);

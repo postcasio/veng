@@ -8,6 +8,7 @@
 
 #include <cstring>
 #include <filesystem>
+#include "support/TempPath.h"
 #include <fstream>
 
 #include <doctest/doctest.h>
@@ -82,7 +83,7 @@ namespace
     // pack path. The variant component is keyed by its registered name.
     path WriteVariantPrefab(const string& name, const json& componentFields)
     {
-        const path dir = std::filesystem::temp_directory_path();
+        const path dir = Veng::TestSupport::TempDir();
         const path prefabPath = dir / (name + ".prefab.json");
         const path packPath = dir / (name + ".pack.json");
 
@@ -120,7 +121,7 @@ namespace
         Cooker cooker;
         RegisterPrefabImporter(cooker);
 
-        const path outArchive = std::filesystem::temp_directory_path() / (name + ".vengpack");
+        const path outArchive = Veng::TestSupport::TempDir() / (name + ".vengpack");
 
         const VoidResult cooked = cooker.CookPack(packPath, outArchive, {}, &registry);
         if (!cooked.has_value())

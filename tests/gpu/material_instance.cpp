@@ -20,6 +20,7 @@
 
 #include <cstring>
 #include <filesystem>
+#include "support/TempPath.h"
 
 #include <doctest/doctest.h>
 
@@ -79,8 +80,7 @@ TEST_CASE_FIXTURE(
     "material instance: cooked override binds the parent pipeline with a distinct slot")
 {
     const path fixtureDir = path(GPU_GBUFFER_FIXTURE_DIR);
-    const path outArchive =
-        std::filesystem::temp_directory_path() / "veng_gpu_material_instance.vengpack";
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_material_instance.vengpack";
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
@@ -148,7 +148,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 {
     const path fixtureDir = path(GPU_GBUFFER_FIXTURE_DIR);
     const path outArchive =
-        std::filesystem::temp_directory_path() / "veng_gpu_material_instance_share.vengpack";
+        Veng::TestSupport::TempDir() / "veng_gpu_material_instance_share.vengpack";
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
@@ -181,7 +181,7 @@ TEST_CASE_FIXTURE(
 {
     const path fixtureDir = path(GPU_GBUFFER_FIXTURE_DIR);
     const path outArchive =
-        std::filesystem::temp_directory_path() / "veng_gpu_material_instance_mid.vengpack";
+        Veng::TestSupport::TempDir() / "veng_gpu_material_instance_mid.vengpack";
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);

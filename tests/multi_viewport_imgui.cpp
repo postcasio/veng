@@ -28,6 +28,7 @@
 
 #include <cstdio>
 #include <filesystem>
+#include "support/TempPath.h"
 
 #include <glm/gtc/packing.hpp>
 
@@ -291,8 +292,7 @@ int main()
         // Cook the white-plane fixture pack in-process (over the auto-mounted core
         // pack, which supplies the canonical layout and the lighting/composite shaders).
         const path fixtureDir = path(GPU_GBUFFER_FIXTURE_DIR);
-        const path outArchive =
-            std::filesystem::temp_directory_path() / "veng_multi_viewport_imgui.vengpack";
+        const path outArchive = Veng::TestSupport::TempDir() / "veng_multi_viewport_imgui.vengpack";
 
         Cook::Cooker cooker;
         Cook::RegisterBuiltinImporters(cooker);

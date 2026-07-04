@@ -10,6 +10,7 @@
 // validation gate to confirm no barrier/layout error crosses the boundary.
 
 #include <filesystem>
+#include "support/TempPath.h"
 #include <fstream>
 
 #include <doctest/doctest.h>
@@ -87,7 +88,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // entry. No new asset is minted into the tree — the second material is a build-time
     // pack the test writes and removes.
     const path fixtureDir = path(GPU_GBUFFER_FIXTURE_DIR);
-    const path tempDir = std::filesystem::temp_directory_path();
+    const path tempDir = Veng::TestSupport::TempDir();
     const path packJson = tempDir / "veng_gpu_viewport_feeds_pack.json";
     const path outArchive = tempDir / "veng_gpu_viewport_feeds.vengpack";
 

@@ -7,6 +7,7 @@
 
 #include <array>
 #include <filesystem>
+#include "support/TempPath.h"
 
 #include <doctest/doctest.h>
 
@@ -51,8 +52,7 @@ TEST_CASE("Cooker: a .vmat's defaultInstance id emits a companion MaterialInstan
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
 
-    const path outArchive =
-        std::filesystem::temp_directory_path() / "veng_cooker_default_instance.vengpack";
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_cooker_default_instance.vengpack";
     const VoidResult cooked =
         cooker.CookPack(FixtureDir / "mesh_pack.json", outArchive, {}, nullptr, nullptr, nullptr,
                         nullptr, {}, path(VENG_CORE_SHADER_DIR));

@@ -7,6 +7,7 @@
 
 #include <cstring>
 #include <filesystem>
+#include "support/TempPath.h"
 #include <fstream>
 #include <random>
 
@@ -42,7 +43,7 @@ namespace
         // Unique per call: ctest runs each case as its own process in parallel, and a
         // shared fixed name lets concurrent cases cook over and delete each other's archive.
         std::random_device rng;
-        const path outArchive = std::filesystem::temp_directory_path() /
+        const path outArchive = Veng::TestSupport::TempDir() /
                                 fmt::format("veng_cooker_inputmap_{:08x}.vengpack", rng());
 
         const VoidResult cookResult = cooker.CookPack(packJson, outArchive);
@@ -72,7 +73,7 @@ namespace
     // Writes an inputmap JSON + a one-entry pack into a temp dir, returning the pack path.
     path WriteInputMapPack(const string& name, const json& map)
     {
-        const path dir = std::filesystem::temp_directory_path();
+        const path dir = Veng::TestSupport::TempDir();
         const path mapPath = dir / (name + ".inputmap.json");
         const path packPath = dir / (name + ".pack.json");
 

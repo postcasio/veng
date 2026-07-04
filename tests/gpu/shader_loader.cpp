@@ -6,6 +6,7 @@
 // loads and carries the expected 4-element canonical layout.
 
 #include <filesystem>
+#include "support/TempPath.h"
 
 #include <doctest/doctest.h>
 
@@ -25,7 +26,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 {
     const path fixtureDir = path(GPU_COOKER_FIXTURE_DIR);
     const path packJson = fixtureDir / "shader_pack.json";
-    const path outArchive = std::filesystem::temp_directory_path() / "veng_gpu_shader.vengpack";
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_shader.vengpack";
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstring>
 #include <filesystem>
+#include "support/TempPath.h"
 
 #include <doctest/doctest.h>
 
@@ -21,7 +22,7 @@ TEST_CASE("Cooker: cooks a texture pack into a CookedTextureHeader + RGBA8 pixel
 {
     const path fixtureDir = path(VENG_COOKER_TEST_FIXTURE_DIR);
     const path packJson = fixtureDir / "texture_pack.json";
-    const path outArchive = std::filesystem::temp_directory_path() / "veng_cooker_texture.vengpack";
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_cooker_texture.vengpack";
 
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
@@ -74,8 +75,7 @@ TEST_CASE("Cooker: generates a full mip chain by default and packs it largest-fi
 {
     const path fixtureDir = path(VENG_COOKER_TEST_FIXTURE_DIR);
     const path packJson = fixtureDir / "texture_mipped_pack.json";
-    const path outArchive =
-        std::filesystem::temp_directory_path() / "veng_cooker_texture_mipped.vengpack";
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_cooker_texture_mipped.vengpack";
 
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
@@ -128,8 +128,7 @@ TEST_CASE("Cooker: cooks a BC7 texture to Format 21/22 with the expected per-lev
 {
     const path fixtureDir = path(VENG_COOKER_TEST_FIXTURE_DIR);
     const path packJson = fixtureDir / "texture_bc7_pack.json";
-    const path outArchive =
-        std::filesystem::temp_directory_path() / "veng_cooker_texture_bc7.vengpack";
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_cooker_texture_bc7.vengpack";
 
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
@@ -189,8 +188,7 @@ TEST_CASE("Cooker: cooks an ASTC texture to Format 23/24 with the expected per-l
 {
     const path fixtureDir = path(VENG_COOKER_TEST_FIXTURE_DIR);
     const path packJson = fixtureDir / "texture_astc_pack.json";
-    const path outArchive =
-        std::filesystem::temp_directory_path() / "veng_cooker_texture_astc.vengpack";
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_cooker_texture_astc.vengpack";
 
     Cooker cooker;
     RegisterBuiltinImporters(cooker);

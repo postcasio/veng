@@ -8,6 +8,7 @@
 
 #include <cstring>
 #include <filesystem>
+#include "support/TempPath.h"
 #include <fstream>
 #include <random>
 
@@ -63,8 +64,8 @@ namespace
         // Unique per call: ctest runs each case as its own process in parallel, and a
         // shared fixed name lets concurrent cases cook over and delete each other's archive.
         std::random_device rng;
-        const path outArchive = std::filesystem::temp_directory_path() /
-                                fmt::format("veng_cooker_prefab_{:08x}.vengpack", rng());
+        const path outArchive =
+            Veng::TestSupport::TempDir() / fmt::format("veng_cooker_prefab_{:08x}.vengpack", rng());
 
         const VoidResult cookResult = cooker.CookPack(packJson, outArchive, refs, types);
         if (!cookResult.has_value())
@@ -95,7 +96,7 @@ namespace
     // returning the pack path. The prefab references no external assets.
     path WriteInlinePrefab(const string& name, const json& components)
     {
-        const path dir = std::filesystem::temp_directory_path();
+        const path dir = Veng::TestSupport::TempDir();
         const path prefabPath = dir / (name + ".prefab.json");
         const path packPath = dir / (name + ".pack.json");
 
@@ -359,7 +360,7 @@ TEST_CASE("prefab cook: an AssetHandle id resolving to the wrong type is a locat
     json components;
     components["::Veng::MeshRenderer"] = renderer;
 
-    const path dir = std::filesystem::temp_directory_path();
+    const path dir = Veng::TestSupport::TempDir();
     const path prefabPath = dir / "prefab_handle_mismatch.prefab.json";
     json prefab;
     prefab["entities"] = json::array();

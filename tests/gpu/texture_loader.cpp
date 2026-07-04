@@ -5,6 +5,7 @@
 
 #include <array>
 #include <filesystem>
+#include "support/TempPath.h"
 
 #include <doctest/doctest.h>
 
@@ -74,7 +75,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     const path fixtureDir = path(GPU_COOKER_FIXTURE_DIR);
     const path packJson = fixtureDir / "texture_pack.json";
-    const path outArchive = std::filesystem::temp_directory_path() / "veng_gpu_texture.vengpack";
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_texture.vengpack";
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
@@ -169,8 +170,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 {
     const path fixtureDir = path(GPU_COOKER_FIXTURE_DIR);
     const path packJson = fixtureDir / "texture_mipped_pack.json";
-    const path outArchive =
-        std::filesystem::temp_directory_path() / "veng_gpu_texture_mipped.vengpack";
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_texture_mipped.vengpack";
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
@@ -204,8 +204,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     const path fixtureDir = path(GPU_COOKER_FIXTURE_DIR);
     const path packJson = fixtureDir / "texture_bc7_pack.json";
-    const path outArchive =
-        std::filesystem::temp_directory_path() / "veng_gpu_texture_bc7.vengpack";
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_texture_bc7.vengpack";
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
@@ -311,8 +310,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     const path fixtureDir = path(GPU_COOKER_FIXTURE_DIR);
     const path packJson = fixtureDir / "texture_bc5_pack.json";
-    const path outArchive =
-        std::filesystem::temp_directory_path() / "veng_gpu_texture_bc5.vengpack";
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_texture_bc5.vengpack";
 
     // A Normal role resolves to BC5 only through a build configuration's role table (BC5 has no raw
     // "compression" escape hatch), so the test drives the cook with an explicit Normal → BC5 config.
@@ -426,8 +424,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     const path fixtureDir = path(GPU_COOKER_FIXTURE_DIR);
     const path packJson = fixtureDir / "texture_astc_pack.json";
-    const path outArchive =
-        std::filesystem::temp_directory_path() / "veng_gpu_texture_astc.vengpack";
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_texture_astc.vengpack";
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
@@ -527,8 +524,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 {
     const path fixtureDir = path(GPU_COOKER_FIXTURE_DIR);
     const path packJson = fixtureDir / "texture_pack.json";
-    const path outArchive =
-        std::filesystem::temp_directory_path() / "veng_gpu_texture_async.vengpack";
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_texture_async.vengpack";
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);

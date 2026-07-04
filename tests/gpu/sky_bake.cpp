@@ -31,6 +31,7 @@
 #ifdef GPU_GBUFFER_FIXTURE_DIR
 
 #include <filesystem>
+#include "support/TempPath.h"
 
 #include <glm/gtc/packing.hpp>
 
@@ -144,8 +145,7 @@ namespace
     AssetHandle<MaterialInstance> CookAndLoadAnalyticSky(AssetManager& assets)
     {
         const path fixtureDir = path(GPU_GBUFFER_FIXTURE_DIR);
-        const path outArchive =
-            std::filesystem::temp_directory_path() / "veng_gpu_sky_bake.vengpack";
+        const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_sky_bake.vengpack";
 
         Cook::Cooker cooker;
         Cook::RegisterBuiltinImporters(cooker);

@@ -15,6 +15,7 @@
 #include <Veng/Scene/Components.h>
 
 #include <filesystem>
+#include "support/TempPath.h"
 #include <fstream>
 
 using namespace Veng;
@@ -113,16 +114,14 @@ TEST_CASE("generate-type-id: --module does not collide with a registered game id
 
 TEST_CASE("module reflect: cooking a prefab entry with no --module is a located error")
 {
-    const path packPath =
-        std::filesystem::temp_directory_path() / "veng_cooker_prefab_no_module_pack.json";
+    const path packPath = Veng::TestSupport::TempDir() / "veng_cooker_prefab_no_module_pack.json";
     {
         std::ofstream out(packPath, std::ios::binary);
         out << R"({ "version": 1, "assets": [ { "id": "0x0000000000001092", "type": "Prefab", "source": "x.prefab.json" } ] })";
     }
 
     const Cooker cooker;
-    const path outPath =
-        std::filesystem::temp_directory_path() / "veng_cooker_prefab_no_module.vengpack";
+    const path outPath = Veng::TestSupport::TempDir() / "veng_cooker_prefab_no_module.vengpack";
 
     // No TypeRegistry passed (the no --module case).
     const VoidResult result = cooker.CookPack(packPath, outPath);

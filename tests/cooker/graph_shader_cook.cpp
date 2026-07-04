@@ -13,6 +13,7 @@
 
 #include <cstring>
 #include <filesystem>
+#include "support/TempPath.h"
 #include <fstream>
 #include <string_view>
 
@@ -203,7 +204,7 @@ VSOutput vsMain()
     GraphFixture WritePack(const string& name, const string& graphDoc)
     {
         GraphFixture fx;
-        fx.Dir = std::filesystem::temp_directory_path() / fmt::format("veng_graph_cook_{}", name);
+        fx.Dir = Veng::TestSupport::TempDir() / fmt::format("veng_graph_cook_{}", name);
         std::filesystem::remove_all(fx.Dir);
         std::filesystem::create_directories(fx.Dir);
 

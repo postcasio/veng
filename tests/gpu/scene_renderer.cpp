@@ -887,6 +887,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 #ifdef GPU_GBUFFER_FIXTURE_DIR
 
 #include <filesystem>
+#include "support/TempPath.h"
 
 #include <glm/gtc/packing.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -940,7 +941,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // layout the brick vertex shader references and the lighting/blit shaders the
     // renderer loads.
     const path fixtureDir = path(GPU_GBUFFER_FIXTURE_DIR);
-    const path outArchive = std::filesystem::temp_directory_path() / "veng_gpu_gbuffer.vengpack";
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_gbuffer.vengpack";
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
@@ -1089,7 +1090,7 @@ namespace
     path CookAndMountBrick(AssetManager& assets, const char* archiveName)
     {
         const path fixtureDir = path(GPU_GBUFFER_FIXTURE_DIR);
-        const path outArchive = std::filesystem::temp_directory_path() / archiveName;
+        const path outArchive = Veng::TestSupport::TempDir() / archiveName;
 
         Cook::Cooker cooker;
         Cook::RegisterBuiltinImporters(cooker);
@@ -3133,8 +3134,7 @@ TEST_CASE_FIXTURE(
     "scene renderer: a PostProcess material samples an upstream target and writes it unchanged")
 {
     const path fixtureDir = path(GPU_POSTPROCESS_FIXTURE_DIR);
-    const path outArchive =
-        std::filesystem::temp_directory_path() / "veng_gpu_postprocess.vengpack";
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_postprocess.vengpack";
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);

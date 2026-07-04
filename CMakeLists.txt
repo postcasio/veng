@@ -533,8 +533,10 @@ if (VENG_BUILD_TESTS)
 
     # Some unit cases reach into engine internals under src/ (the backend
     # TypeMapping header below); that path is on the include search list so they
-    # compile. The public reflection serializer is on the include/ tree.
-    target_include_directories(veng_test_unit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/engine/src)
+    # compile. The public reflection serializer is on the include/ tree. The tests/
+    # dir carries support/TempPath.h (per-process scratch isolation).
+    target_include_directories(veng_test_unit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/engine/src
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 
     # The type-mapping (and barrier-decision, plan 04) cases include backend
     # headers (TypeMapping.h → Backend/Vulkan.h, which also pulls in GLFW + VMA),
@@ -792,7 +794,7 @@ if (VENG_BUILD_TESTS)
             doctest::doctest nlohmann_json::nlohmann_json)
     target_compile_definitions(veng_test_editor_unit PRIVATE JSON_NOEXCEPTION)
     target_include_directories(veng_test_editor_unit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/editor/src
-            ${VENG_EDITOR_MCP_INCLUDE})
+            ${VENG_EDITOR_MCP_INCLUDE} ${CMAKE_CURRENT_SOURCE_DIR}/tests)
     target_include_directories(veng_test_editor_unit SYSTEM PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/mcp/src/Vendor)
 
@@ -1121,7 +1123,8 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle)
     # libveng_editor in addition to libveng_cook (no cycle: the cooker is never linked
     # by the editor framework). editor/src is on the include path for its headers.
     target_link_libraries(veng_test_cooker PRIVATE veng::cook veng_editor::veng_editor doctest::doctest)
-    target_include_directories(veng_test_cooker PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/editor/src)
+    target_include_directories(veng_test_cooker PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/editor/src
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests)
     add_dependencies(veng_test_cooker hello_triangle veng_test_bad_version_module)
     target_compile_definitions(veng_test_cooker PRIVATE
             VENG_COOKER_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/cooker/fixtures"

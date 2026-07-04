@@ -13,6 +13,7 @@
 
 #include <cstring>
 #include <filesystem>
+#include "support/TempPath.h"
 #include <fstream>
 #include <string_view>
 
@@ -93,8 +94,7 @@ GBufferOutput fsMain(SurfaceFragmentInput input)
     // and returns its dir. The instance source is written by each test case.
     path WriteParentPack(const string& name)
     {
-        const path dir =
-            std::filesystem::temp_directory_path() / fmt::format("veng_matinst_cook_{}", name);
+        const path dir = Veng::TestSupport::TempDir() / fmt::format("veng_matinst_cook_{}", name);
         std::filesystem::remove_all(dir);
         std::filesystem::create_directories(dir);
 

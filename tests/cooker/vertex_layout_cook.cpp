@@ -5,6 +5,7 @@
 
 #include <cstring>
 #include <filesystem>
+#include "support/TempPath.h"
 #include <string_view>
 
 #include <doctest/doctest.h>
@@ -21,7 +22,7 @@ TEST_CASE("Cooker: cooks a vertex_layout asset and produces correct blob")
 {
     const path fixtureDir = path(VENG_COOKER_TEST_FIXTURE_DIR);
     const path packJson = fixtureDir / "shader_pack.json";
-    const path outArchive = std::filesystem::temp_directory_path() / "veng_cooker_vlayout.vengpack";
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_cooker_vlayout.vengpack";
 
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
@@ -71,8 +72,7 @@ TEST_CASE("Cooker: cooking a shader with mismatched vertex inputs fails")
     // mesh.vert.slang which reflects 4 inputs. The cooker must reject this.
     const path fixtureDir = path(VENG_COOKER_TEST_FIXTURE_DIR);
     const path packJson = fixtureDir / "shader_mismatch_pack.json";
-    const path outArchive =
-        std::filesystem::temp_directory_path() / "veng_cooker_mismatch.vengpack";
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_cooker_mismatch.vengpack";
 
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
@@ -98,8 +98,7 @@ TEST_CASE("Cooker: a shader resolves a vertex layout declared in a sibling pack"
     const path fixtureDir = path(VENG_COOKER_TEST_FIXTURE_DIR);
     const path shaderPack = fixtureDir / "crosspack_shader.json";
     const path layoutPack = fixtureDir / "crosspack_layout.json";
-    const path outArchive =
-        std::filesystem::temp_directory_path() / "veng_cooker_crosspack.vengpack";
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_cooker_crosspack.vengpack";
 
     Cooker cooker;
     RegisterBuiltinImporters(cooker);

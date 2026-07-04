@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include "support/TempPath.h"
 
 #include <glm/gtc/packing.hpp>
 
@@ -77,7 +78,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     // Cook the brick g-buffer fixture so the cube writes depth (the occlusion test reads it).
     const path fixtureDir = path(GPU_GBUFFER_FIXTURE_DIR);
-    const path outArchive = std::filesystem::temp_directory_path() / "veng_gpu_debugdraw.vengpack";
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_debugdraw.vengpack";
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);

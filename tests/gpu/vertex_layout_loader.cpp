@@ -3,6 +3,7 @@
 // the embedded core pack (containing the engine's built-in layouts) at init.
 
 #include <filesystem>
+#include "support/TempPath.h"
 
 #include <doctest/doctest.h>
 
@@ -22,7 +23,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 {
     const path fixtureDir = path(GPU_COOKER_FIXTURE_DIR);
     const path packJson = fixtureDir / "shader_pack.json";
-    const path outArchive = std::filesystem::temp_directory_path() / "veng_gpu_vlayout.vengpack";
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_vlayout.vengpack";
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);

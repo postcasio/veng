@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include "support/TempPath.h"
 
 #include <Veng/Asset/Archive.h>
 #include <Veng/Asset/AssetManager.h>
@@ -32,8 +33,7 @@ namespace
         writer.Add(AssetId{0x3EA}, AssetType::Texture, Bytes({0xAB}));
         writer.Add(AssetId{0x3EB}, AssetType::Raw, Bytes({9}));
 
-        const path archivePath =
-            std::filesystem::temp_directory_path() / "veng_asset_manager_unit.vengpack";
+        const path archivePath = Veng::TestSupport::TempDir() / "veng_asset_manager_unit.vengpack";
         const VoidResult written = writer.Write(archivePath);
         REQUIRE(written.has_value());
         return archivePath;

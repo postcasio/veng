@@ -5,6 +5,7 @@
 // mesh vertical slice.
 
 #include <filesystem>
+#include "support/TempPath.h"
 
 #include <doctest/doctest.h>
 
@@ -26,7 +27,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 {
     const path fixtureDir = path(GPU_COOKER_FIXTURE_DIR);
     const path packJson = fixtureDir / "mesh_pack.json";
-    const path outArchive = std::filesystem::temp_directory_path() / "veng_gpu_mesh.vengpack";
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_mesh.vengpack";
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);

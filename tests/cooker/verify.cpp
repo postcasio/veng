@@ -7,6 +7,7 @@
 
 #include <cstring>
 #include <filesystem>
+#include "support/TempPath.h"
 #include <fstream>
 #include <iterator>
 
@@ -75,7 +76,7 @@ namespace
 
 TEST_CASE("verify: a freshly cooked pack passes, every asset OK")
 {
-    const path archive = std::filesystem::temp_directory_path() / "veng_verify_clean.vengpack";
+    const path archive = Veng::TestSupport::TempDir() / "veng_verify_clean.vengpack";
     CookRawPack(archive);
 
     const VerifyReport report = VerifyArchive(archive);
@@ -93,7 +94,7 @@ TEST_CASE("verify: a freshly cooked pack passes, every asset OK")
 
 TEST_CASE("verify: a flipped blob byte fails, naming exactly the affected asset")
 {
-    const path archive = std::filesystem::temp_directory_path() / "veng_verify_blob_src.vengpack";
+    const path archive = Veng::TestSupport::TempDir() / "veng_verify_blob_src.vengpack";
     vector<u8> bytes = CookRawPack(archive);
 
     // The intact pack beside it still passes.
@@ -105,7 +106,7 @@ TEST_CASE("verify: a flipped blob byte fails, naming exactly the affected asset"
     // TOC is untouched, so the digest still matches.
     bytes.back() ^= 0xFF;
 
-    const path tampered = std::filesystem::temp_directory_path() / "veng_verify_blob.vengpack";
+    const path tampered = Veng::TestSupport::TempDir() / "veng_verify_blob.vengpack";
     WriteFile(tampered, bytes);
 
     const VerifyReport report = VerifyArchive(tampered);
@@ -124,7 +125,7 @@ TEST_CASE("verify: a flipped blob byte fails, naming exactly the affected asset"
 
 TEST_CASE("verify: tampering only the stored digest fails the digest, not the blobs")
 {
-    const path archive = std::filesystem::temp_directory_path() / "veng_verify_digest_src.vengpack";
+    const path archive = Veng::TestSupport::TempDir() / "veng_verify_digest_src.vengpack";
     vector<u8> bytes = CookRawPack(archive);
 
     // Flip a byte of the header's stored ArchiveDigest, leaving every blob and
@@ -132,7 +133,7 @@ TEST_CASE("verify: tampering only the stored digest fails the digest, not the bl
     // digest disagrees with the stored one.
     bytes[ArchiveDigestOffset] ^= 0xFF;
 
-    const path tampered = std::filesystem::temp_directory_path() / "veng_verify_digest.vengpack";
+    const path tampered = Veng::TestSupport::TempDir() / "veng_verify_digest.vengpack";
     WriteFile(tampered, bytes);
 
     const VerifyReport report = VerifyArchive(tampered);
@@ -151,7 +152,7 @@ TEST_CASE("verify: tampering only the stored digest fails the digest, not the bl
 
 TEST_CASE("verify: tampering a TOC entry field fails the digest")
 {
-    const path archive = std::filesystem::temp_directory_path() / "veng_verify_toc_src.vengpack";
+    const path archive = Veng::TestSupport::TempDir() / "veng_verify_toc_src.vengpack";
     vector<u8> bytes = CookRawPack(archive);
 
     // Flip a byte of the first TOC entry's stored per-blob Hash field — a TOC
@@ -160,7 +161,7 @@ TEST_CASE("verify: tampering a TOC entry field fails the digest")
     // disagrees, exercising the digest guard over the table of contents).
     bytes[HeaderSize + TocEntryHashOffset] ^= 0xFF;
 
-    const path tampered = std::filesystem::temp_directory_path() / "veng_verify_toc.vengpack";
+    const path tampered = Veng::TestSupport::TempDir() / "veng_verify_toc.vengpack";
     WriteFile(tampered, bytes);
 
     const VerifyReport report = VerifyArchive(tampered);
@@ -176,8 +177,7 @@ TEST_CASE("verify: tampering a TOC entry field fails the digest")
 
 TEST_CASE("verify: a wrong-version header is a VersionMismatch reported before hashing")
 {
-    const path archive =
-        std::filesystem::temp_directory_path() / "veng_verify_version_src.vengpack";
+    const path archive = Veng::TestSupport::TempDir() / "veng_verify_version_src.vengpack";
     vector<u8> bytes = CookRawPack(archive);
 
     // Bump the header version to one the reader rejects. Header layout: magic[8],
@@ -185,7 +185,7 @@ TEST_CASE("verify: a wrong-version header is a VersionMismatch reported before h
     const u32 badVersion = ArchiveFormatVersion + 1;
     std::memcpy(bytes.data() + 8, &badVersion, sizeof(badVersion));
 
-    const path tampered = std::filesystem::temp_directory_path() / "veng_verify_version.vengpack";
+    const path tampered = Veng::TestSupport::TempDir() / "veng_verify_version.vengpack";
     WriteFile(tampered, bytes);
 
     const VerifyReport report = VerifyArchive(tampered);

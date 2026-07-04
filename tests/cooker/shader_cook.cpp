@@ -11,6 +11,7 @@
 
 #include <cstring>
 #include <filesystem>
+#include "support/TempPath.h"
 #include <random>
 #include <string_view>
 
@@ -34,8 +35,8 @@ namespace
         // Unique per call: ctest runs each case as its own process in parallel, and a
         // shared fixed name lets concurrent cases cook over and delete each other's archive.
         std::random_device rng;
-        outArchive = std::filesystem::temp_directory_path() /
-                     fmt::format("veng_cooker_shader_{:08x}.vengpack", rng());
+        outArchive =
+            Veng::TestSupport::TempDir() / fmt::format("veng_cooker_shader_{:08x}.vengpack", rng());
 
         Cooker cooker;
         RegisterBuiltinImporters(cooker);

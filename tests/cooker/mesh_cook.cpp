@@ -5,6 +5,7 @@
 
 #include <cstring>
 #include <filesystem>
+#include "support/TempPath.h"
 
 #include <doctest/doctest.h>
 
@@ -20,7 +21,7 @@ TEST_CASE("Cooker: cooks a mesh pack into a CookedMeshHeader + buffers + submesh
 {
     const path fixtureDir = path(VENG_COOKER_TEST_FIXTURE_DIR);
     const path packJson = fixtureDir / "mesh_pack.json";
-    const path outArchive = std::filesystem::temp_directory_path() / "veng_cooker_mesh.vengpack";
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_cooker_mesh.vengpack";
 
     Cooker cooker;
     RegisterBuiltinImporters(cooker);

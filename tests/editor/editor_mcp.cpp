@@ -10,6 +10,7 @@
 // tests/editor/ device-free precedent.
 
 #include "EditorMcp.h"
+#include "support/TempPath.h"
 
 #include "AssetEditorPanel.h"
 #include "AssetSourceIndex.h"
@@ -351,7 +352,7 @@ namespace
 
     Veng::path WriteTempManifest()
     {
-        const Veng::path dir = std::filesystem::temp_directory_path();
+        const Veng::path dir = Veng::TestSupport::TempDir();
         const Veng::path manifest = dir / "veng_editor_mcp_host_tools.vengpack.json";
         std::ofstream out(manifest, std::ios::binary | std::ios::trunc);
         out << R"({

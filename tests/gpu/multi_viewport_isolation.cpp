@@ -8,6 +8,7 @@
 // away, registered last) shows background, which the shared-region bug would flip.
 
 #include <filesystem>
+#include "support/TempPath.h"
 #include <fstream>
 
 #include <doctest/doctest.h>
@@ -60,7 +61,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // Cook the brick g-buffer fixture in-process (a single material is enough; both viewports
     // draw the same green-tinted cube, differing only by camera).
     const path fixtureDir = path(GPU_GBUFFER_FIXTURE_DIR);
-    const path tempDir = std::filesystem::temp_directory_path();
+    const path tempDir = Veng::TestSupport::TempDir();
     const path packJson = tempDir / "veng_gpu_multi_viewport_pack.json";
     const path outArchive = tempDir / "veng_gpu_multi_viewport.vengpack";
 

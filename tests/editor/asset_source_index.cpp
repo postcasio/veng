@@ -3,6 +3,7 @@
 // manifest, parses it, and checks EntriesOfType filters by AssetType.
 
 #include <doctest/doctest.h>
+#include "support/TempPath.h"
 
 #include "AssetSourceIndex.h"
 
@@ -18,7 +19,7 @@ namespace
 {
     Veng::path WriteTempManifest()
     {
-        const Veng::path dir = std::filesystem::temp_directory_path();
+        const Veng::path dir = Veng::TestSupport::TempDir();
         const Veng::path manifest = dir / "veng_editor_source_index_test.vengpack.json";
 
         // Two textures, one material, one mesh — distinct ids per type.
