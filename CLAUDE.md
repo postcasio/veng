@@ -153,6 +153,16 @@ git config core.hooksPath .githooks
 The hook skips cleanly when `clang-format` is absent. To reformat staged changes
 the hook flagged, run `git clang-format --staged`, then re-stage and commit.
 
+**A pre-existing format or lint finding you surface is yours to fix — inline, as
+part of the same work.** When a `clang-format` or `clang-tidy` finding turns up on a
+file while you work — even one you didn't otherwise change, or one pulled in
+transitively through a header your change includes — just fix it mechanically:
+`git clang-format --staged`, `clang-format -i <file>`, or the one-line tidy fix.
+**Never** restructure code, split a header, reorder includes, or otherwise reshape
+the work to dodge the diff — the fix is mechanical and the tree's clean-format /
+clean-tidy invariant is exactly the point. Working around a trivial format/lint
+issue instead of fixing it is a defect, not a scope boundary.
+
 ### Linting (clang-tidy)
 
 clang-tidy is configured by the repo-root `.clang-tidy` as a **deliberately small
