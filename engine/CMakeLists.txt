@@ -57,6 +57,7 @@ add_library(veng SHARED
         src/UI/Query.cpp
         src/UI/DebugPanels.cpp
         src/UI/Inspector.cpp
+        src/UI/RenderSettings.cpp
         src/Reflection/FieldDisplay.cpp
         src/Reflection/FieldGate.cpp
         src/Reflection/Serialize.cpp
