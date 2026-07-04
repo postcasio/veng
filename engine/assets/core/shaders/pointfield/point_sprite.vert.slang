@@ -32,6 +32,7 @@ struct PushConstants
     float MaxIntensity;
     float ViewportWidth;
     float ViewportHeight;
+    float Opacity;
 };
 
 [[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;

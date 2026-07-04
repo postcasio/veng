@@ -49,6 +49,7 @@ namespace Veng::Renderer
             f32 MaxIntensity;
             f32 ViewportWidth;
             f32 ViewportHeight;
+            f32 Opacity;
         };
 
         // One GPU aggregate splat record (std430): world center + pixel size, then the cell's
@@ -358,6 +359,9 @@ namespace Veng::Renderer
                                 {
                                     color *= lod.MaxIntensity / peak;
                                 }
+                                // Opacity is a display fade applied last, after the flux
+                                // normalization and the intensity ceiling.
+                                color *= lod.Opacity;
                                 splats.push_back(GpuAggregateSplat{
                                     .CenterSize = vec4(cell.Centroid, splatPixels),
                                     .Color = vec4(color, 0.0f),
@@ -386,6 +390,7 @@ namespace Veng::Renderer
                             .MaxIntensity = lod.MaxIntensity,
                             .ViewportWidth = static_cast<f32>(renderExtent.x),
                             .ViewportHeight = static_cast<f32>(renderExtent.y),
+                            .Opacity = lod.Opacity,
                         };
 
                         // Resolved sprites: one non-instanced draw per surviving cell, the vertex

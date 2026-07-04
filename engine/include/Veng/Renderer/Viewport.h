@@ -50,8 +50,17 @@ namespace Veng::Renderer
         CameraView Camera;
         /// @brief Frame delta time in seconds, forwarded to the renderer.
         f32 Delta = 0.0f;
-        /// @brief Exposure scale applied before the tone curve.
+        /// @brief Exposure scale applied before the tone curve (a bias over the metered value when
+        /// the viewport's renderer has auto-exposure on).
         f32 Exposure = 1.0f;
+        /// @brief Auto-exposure target key (the mid-grey the adapted luminance maps to).
+        f32 AutoExposureKey = 0.18f;
+        /// @brief Auto-exposure lower clamp on the adapted average luminance.
+        f32 AutoExposureMinLuminance = 0.002f;
+        /// @brief Auto-exposure upper clamp on the adapted average luminance.
+        f32 AutoExposureMaxLuminance = 8.0f;
+        /// @brief Auto-exposure adaptation rate per second (0 freezes the current adaptation).
+        f32 AutoExposureSpeed = 2.5f;
         /// @brief Bloom bright-pass luminance knee.
         f32 BloomThreshold = 1.0f;
         /// @brief Bloom composite mix intensity.

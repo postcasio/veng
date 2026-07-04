@@ -128,6 +128,9 @@ namespace Veng::Renderer
         constexpr AssetId BloomUpCompId{0x4F28282A720BC9F2ULL};
         constexpr AssetId BloomCompositeCompId{0x533236398AB7654FULL};
 
+        // The auto-exposure metering compute shader (HDR → average log-luminance).
+        constexpr AssetId AutoExposureCompId{0x9BF9CB926D0595B1ULL};
+
         // The Dual Kawase variants of the down/up sweep.
         constexpr AssetId BloomDownKawaseCompId{0xCB1AA796A1E3BBEFULL};
         constexpr AssetId BloomUpKawaseCompId{0x0C269FA0D5F353D2ULL};
@@ -197,6 +200,18 @@ namespace Veng::Renderer
             vec2 SourceScaleUV;
             vec2 SourceMaxUV;
             f32 Intensity;
+        };
+
+        // The auto-exposure metering push block, matching auto_exposure.comp PushConstants: the
+        // dynamic-resolution sub-rect mapping, the per-sample log-luminance clamps, and the ring
+        // element this frame writes.
+        struct AutoExposurePush
+        {
+            vec2 SourceScaleUV;
+            vec2 SourceMaxUV;
+            f32 MinLogLum;
+            f32 MaxLogLum;
+            u32 ResultIndex;
         };
 
         // The SSR trace push block, matching ssr_trace.frag PushConstants: the scene-color
@@ -1675,6 +1690,7 @@ namespace Veng::Renderer
         CreateTaa();
         CreateBloom();
         CreateSsr();
+        CreateAutoExposure();
         CreatePicking();
         Rebuild();
     }
@@ -3092,6 +3108,89 @@ namespace Veng::Renderer
         m_BloomCompositeSet->Write(3, m_BloomResultView);
     }
 
+    void SceneRenderer::CreateAutoExposure()
+    {
+        const AssetResult<AssetHandle<Veng::Shader>> meterCs =
+            m_Assets.LoadSync<Veng::Shader>(AutoExposureCompId);
+        VE_ASSERT(meterCs.has_value(), "SceneRenderer: auto-exposure shader load failed: {}",
+                  meterCs.error().Detail);
+
+        // A host-mapped storage ring: one padded region per frame-in-flight. The metering pass
+        // writes the current frame's region; the renderer reads the region a completed frame wrote
+        // (framesInFlight ago), so a host read never races a device write still in flight.
+        m_AutoExposureStride = 256;
+        m_AutoExposureBuffer = Buffer::Create(
+            m_Context, {
+                           .Name = "SceneRenderer AutoExposure Readback",
+                           .Size = static_cast<u64>(m_AutoExposureStride) * m_FramesInFlight,
+                           .Usage = BufferUsage::Storage,
+                           .HostMapped = true,
+                       });
+        std::memset(m_AutoExposureBuffer->GetMappedData(), 0,
+                    static_cast<usize>(m_AutoExposureStride) * m_FramesInFlight);
+
+        m_AutoExposureSampler =
+            Sampler::Create(m_Context, {
+                                           .Name = "SceneRenderer AutoExposure Sampler",
+                                           .MagFilter = Filter::Linear,
+                                           .MinFilter = Filter::Linear,
+                                           .MipmapMode = MipmapMode::Nearest,
+                                           .AddressModeU = AddressMode::ClampToEdge,
+                                           .AddressModeV = AddressMode::ClampToEdge,
+                                           .AddressModeW = AddressMode::ClampToEdge,
+                                           .AnisotropyEnabled = false,
+                                       });
+
+        m_AutoExposureSetLayout = DescriptorSetLayout::Create(
+            m_Context, {
+                           .Name = "SceneRenderer AutoExposure Set Layout",
+                           .Bindings =
+                               {
+                                   {.Binding = 0,
+                                    .Type = DescriptorType::SampledImage,
+                                    .Count = 1,
+                                    .Stages = ShaderStage::Compute},
+                                   {.Binding = 1,
+                                    .Type = DescriptorType::Sampler,
+                                    .Count = 1,
+                                    .Stages = ShaderStage::Compute},
+                                   {.Binding = 2,
+                                    .Type = DescriptorType::StorageBuffer,
+                                    .Count = 1,
+                                    .Stages = ShaderStage::Compute},
+                               },
+                       });
+        m_AutoExposureLayout = PipelineLayout::Create(
+            m_Context, {
+                           .Name = "SceneRenderer AutoExposure Layout",
+                           .DescriptorSetLayouts = {m_AutoExposureSetLayout},
+                           .PushConstantRanges = {PushConstantRange::Of<AutoExposurePush>(
+                               ShaderStage::Compute)},
+                       });
+        m_AutoExposurePipeline = ComputePipeline::Create(
+            m_Context, {
+                           .Name = "SceneRenderer AutoExposure Pipeline",
+                           .PipelineLayout = m_AutoExposureLayout,
+                           .ShaderStage = {.Stage = ShaderStage::Compute,
+                                           .Module = meterCs.value().Get()->Module},
+                       });
+
+        m_AutoExposureSet =
+            DescriptorSet::Create(m_Context, {
+                                                 .Name = "SceneRenderer AutoExposure Set",
+                                                 .Layout = m_AutoExposureSetLayout,
+                                             });
+        m_AutoExposureSet->Write(1, m_AutoExposureSampler);
+        m_AutoExposureSet->Write(2, m_AutoExposureBuffer);
+        WriteAutoExposureHdrBinding();
+    }
+
+    void SceneRenderer::WriteAutoExposureHdrBinding()
+    {
+        // The HDR target is recreated on every Resize; rebind the metering source to the live view.
+        m_AutoExposureSet->Write(0, m_HdrView);
+    }
+
     uvec2 SceneRenderer::SsrRenderExtent() const
     {
         if (m_Settings.SsrResolutionScale == SceneRendererSettings::SsrResolution::Half)
@@ -3285,6 +3384,16 @@ namespace Veng::Renderer
             (m_Settings.Mode == DebugView::Final && m_Settings.Bloom) || debugBloom;
         m_BloomActive = bloomActive;
 
+        // Auto-exposure meters the lit HDR in the Final path only (a debug arm has no tonemap tail
+        // to drive). The enable edge re-snaps the adaptation so the image opens correctly exposed.
+        const bool autoExposureActive =
+            m_Settings.Mode == DebugView::Final && m_Settings.AutoExposure;
+        if (autoExposureActive && !m_AutoExposureActive)
+        {
+            m_AutoExposureReset = true;
+        }
+        m_AutoExposureActive = autoExposureActive;
+
         // TAA is a Final-only resolve: it inserts the resolve + history-copy passes between
         // lighting and the tonemap tail and routes lighting into a separate lit target.
         const bool taaActive = m_Settings.Mode == DebugView::Final && m_Settings.TAA;
@@ -3425,6 +3534,12 @@ namespace Veng::Renderer
             m_BloomChainId = graph.ImportImageMips("SceneRenderer Bloom Pyramid",
                                                    static_cast<u32>(m_BloomMips.size()));
             m_BloomResultId = graph.Import("SceneRenderer Bloom Result");
+        }
+
+        m_AutoExposureId = ResourceId{};
+        if (autoExposureActive)
+        {
+            m_AutoExposureId = graph.ImportBuffer("SceneRenderer AutoExposure");
         }
 
         TextureHandle ssaoHandle{};
@@ -3819,6 +3934,10 @@ namespace Veng::Renderer
                 {
                     DeclareBloom(graph);
                 }
+                if (autoExposureActive)
+                {
+                    DeclareAutoExposure(graph);
+                }
             }
 
             pass->Declare(graph, io);
@@ -4198,6 +4317,45 @@ namespace Veng::Renderer
                     cmd.Dispatch((r.ValidExtent.x + 7) / 8, (r.ValidExtent.y + 7) / 8, 1);
                 });
         }
+    }
+
+    void SceneRenderer::DeclareAutoExposure(RenderGraph& graph)
+    {
+        // One workgroup reduces the lit HDR to an average log-luminance. The StorageBufferWrite on
+        // the metering import schedules the pass (it has no image output) and orders it after the
+        // HDR write via the graph-derived barrier; the host reads the result a frame later.
+        RenderGraph::PassBuilder builder = graph.AddComputePass("Auto Exposure Metering");
+        builder.Sample(m_HdrId);
+        builder.StorageBufferWrite(m_AutoExposureId);
+
+        const Ref<ComputePipeline> pipeline = m_AutoExposurePipeline;
+        const Ref<DescriptorSet> set = m_AutoExposureSet;
+        const uvec2 allocExtent = m_Extent;
+        const u32 stride = m_AutoExposureStride;
+        builder.Execute(
+            [this, pipeline, set, allocExtent, stride](PassContext& inner)
+            {
+                const auto* view = static_cast<const SceneView*>(inner.UserData());
+                VE_ASSERT(view != nullptr, "Auto exposure pass: null SceneView");
+                // Map the [0,1] sample grid into the HDR's valid sub-rect (identity at full res).
+                const MipSubRect r = ComputeMipSubRect(view->RenderExtent, allocExtent, 0);
+                const u32 frameIndex = m_Context.GetCurrentFrameInFlight();
+                CommandBuffer& cmd = inner.Cmd();
+                cmd.BindPipeline(pipeline);
+                cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                    .Sets = {set},
+                    .FirstSet = 1,
+                    .PipelineBindPoint = PipelineBindPoint::Compute,
+                });
+                cmd.PushConstants(AutoExposurePush{
+                    .SourceScaleUV = r.ScaleUV,
+                    .SourceMaxUV = r.MaxUV,
+                    .MinLogLum = std::log2(std::max(view->AutoExposureMinLuminance, 1e-5f)),
+                    .MaxLogLum = std::log2(std::max(view->AutoExposureMaxLuminance, 1e-4f)),
+                    .ResultIndex = frameIndex * (stride / static_cast<u32>(sizeof(f32))),
+                });
+                cmd.Dispatch(1, 1, 1);
+            });
     }
 
     void SceneRenderer::DeclareSsr(RenderGraph& graph)
@@ -4819,6 +4977,10 @@ namespace Veng::Renderer
         CreateTaa();
         CreateBloom();
         CreateSsr();
+        // The HDR target moved; rebind the metering source and re-snap the adaptation so the
+        // resized frame is not mis-exposed off a stale ring value.
+        WriteAutoExposureHdrBinding();
+        m_AutoExposureReset = true;
         CreatePunctualShadowAtlas();
         CreatePicking();
         Rebuild();
@@ -4887,11 +5049,40 @@ namespace Veng::Renderer
         // Half-texel inset so a bilinear tap at the valid edge never reads past it.
         const vec2 maxValidUV = (vec2(validExtent) - 0.5f) / vec2(m_Extent);
 
+        // Auto-exposure: read the average log-luminance a completed frame metered (the current
+        // frame-in-flight's ring region, written framesInFlight ago and fenced), ease the internal
+        // adapted luminance toward it (eye adaptation), and resolve the exposure the tonemap uses.
+        // SceneView::Exposure biases the automatic result. With auto-exposure off, it is the
+        // exposure directly.
+        f32 exposure = view.Exposure;
+        if (m_AutoExposureActive)
+        {
+            const u32 frameIndex = m_Context.GetCurrentFrameInFlight();
+            const auto* region = reinterpret_cast<const f32*>(
+                static_cast<const u8*>(m_AutoExposureBuffer->GetMappedData()) +
+                static_cast<usize>(frameIndex) * m_AutoExposureStride);
+            const f32 meteredLuminance = std::exp2(region[0]);
+            if (m_AutoExposureReset)
+            {
+                m_AdaptedLuminance = meteredLuminance;
+                m_AutoExposureReset = false;
+            }
+            else
+            {
+                const f32 rate =
+                    1.0f - std::exp(-view.Delta * std::max(view.AutoExposureSpeed, 0.0f));
+                m_AdaptedLuminance = glm::mix(m_AdaptedLuminance, meteredLuminance, rate);
+            }
+            const f32 clamped = std::clamp(m_AdaptedLuminance, view.AutoExposureMinLuminance,
+                                           view.AutoExposureMaxLuminance);
+            exposure = (view.AutoExposureKey / std::max(clamped, 1e-5f)) * view.Exposure;
+        }
+
         // Per-frame param writes land in the ring-buffered block's current region (no stall).
         if (m_TonemapMaterial.IsLoaded())
         {
             auto& tonemap = const_cast<MaterialInstance&>(*m_TonemapMaterial.Get());
-            tonemap.SetParam("Exposure", view.Exposure);
+            tonemap.SetParam("Exposure", exposure);
             // The terminal tonemap reads the sub-rect HDR and upscales it to the full output.
             tonemap.SetParam("RenderScale", vec4(renderScaleUV, maxValidUV));
         }
@@ -5297,6 +5488,10 @@ namespace Veng::Renderer
                 bindings.push_back({m_BloomChainId.Level(level), m_BloomMips[level]});
             }
             bindings.push_back({m_BloomResultId, m_BloomResultView});
+        }
+        if (m_AutoExposureActive)
+        {
+            bindings.push_back({.Id = m_AutoExposureId, .Buffer = m_AutoExposureBuffer});
         }
         if (m_SsaoActive && m_SsaoPass != nullptr)
         {

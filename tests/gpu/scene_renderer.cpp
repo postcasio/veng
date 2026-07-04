@@ -884,6 +884,99 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(maxLuminance > 0.0);
 }
 
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "scene renderer: auto-exposure normalizes a scene's brightness across intensities")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const VoidResult mountResult = assets.Mount(path(TEST_SHADER_PACK));
+    REQUIRE(mountResult.has_value());
+
+    constexpr uvec2 extent{64, 64};
+
+    // A full-frame procedural atmosphere sky whose Intensity scales its radiance — clean metering
+    // input (no dark background to bias the average-log-luminance) that a scalar controls.
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity skyEntity = scene->CreateEntity();
+    Sky& sky = scene->Add<Sky>(skyEntity);
+    auto* source = static_cast<AtmosphereSky*>(sky.Source.SetActive(TypeIdOf<AtmosphereSky>()));
+    source->Mode = SkyMode::Direct;
+
+    const Entity sunEntity = scene->CreateEntity();
+    Light sun;
+    sun.Type = LightType::Directional;
+    sun.Direction = -glm::normalize(vec3(0.3f, 1.0f, 0.0f));
+    scene->Add<Light>(sunEntity, sun);
+
+    CameraView camera;
+    camera.SetPerspective(glm::radians(70.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f), vec3(0.0f, 1.0f, 0.0f), vec3(0.0f, 0.0f, -1.0f));
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = {.Mode = DebugView::Final,
+                     .Bloom = false,
+                     .Shadows = false,
+                     .AO = false,
+                     .AutoExposure = true},
+    });
+
+    // Renders enough frames for the eye adaptation to converge (the metered value is read a few
+    // frames-in-flight late), then returns the tonemapped frame's mean luminance.
+    const auto Converge = [&](f32 intensity) -> f64
+    {
+        sky.Intensity = intensity;
+        // Real frame boundaries (BeginFrame/EndFrame) advance the frame-in-flight ring the metering
+        // readback reads across, and reset the per-frame view budget so many frames can run.
+        for (u32 frame = 0; frame < 24; ++frame)
+        {
+            CommandBuffer& cmd = Context.BeginFrame();
+            renderer->Execute(cmd, Renderer::SceneView{
+                                       .World = *scene,
+                                       .Camera = camera,
+                                       .Delta = 1.0f,
+                                       .AutoExposureSpeed = 4.0f,
+                                   });
+            Context.EndFrame();
+            Context.WaitIdle();
+        }
+        const vector<u8> pixels = renderer->GetOutput()->GetImage()->Download();
+        REQUIRE(pixels.size() == static_cast<size_t>(extent.x) * extent.y * 8);
+        const auto* halves = reinterpret_cast<const u16*>(pixels.data());
+        f64 sum = 0.0;
+        const usize count = static_cast<usize>(extent.x) * extent.y;
+        for (usize i = 0; i < count; ++i)
+        {
+            const f32 r = glm::unpackHalf1x16(halves[i * 4 + 0]);
+            const f32 g = glm::unpackHalf1x16(halves[i * 4 + 1]);
+            const f32 b = glm::unpackHalf1x16(halves[i * 4 + 2]);
+            sum += static_cast<f64>(0.2126 * r + 0.7152 * g + 0.0722 * b);
+        }
+        return sum / static_cast<f64>(count);
+    };
+
+    const f64 dim = Converge(1.0f);
+    const f64 bright = Converge(4.0f);
+
+    // Both frames carry real radiance and neither is fully blown out — the exposure adapted to
+    // each scene rather than clipping the bright one.
+    CHECK(dim > 0.01);
+    CHECK(bright > 0.01);
+    CHECK(dim < 0.98);
+    CHECK(bright < 0.98);
+
+    // The core invariant: a 4x brighter scene lands at nearly the same tonemapped brightness — the
+    // auto-exposure cancelled the intensity change (a fixed exposure would differ ~4x or clip).
+    const f64 ratio = bright / dim;
+    CHECK(ratio > 0.6);
+    CHECK(ratio < 1.7);
+}
+
 #ifdef GPU_GBUFFER_FIXTURE_DIR
 
 #include <filesystem>

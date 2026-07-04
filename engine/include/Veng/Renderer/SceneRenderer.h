@@ -317,6 +317,18 @@ namespace Veng::Renderer
         /// (radius/intensity/bias) are fixed in the SSAO shader.
         bool AO = true;
 
+        /// @brief Whether automatic exposure metering drives the tonemap exposure.
+        ///
+        /// A topology change: it inserts a compute pass that reduces the lit HDR target to an
+        /// average log-luminance each frame, which the renderer reads a frame later and eases an
+        /// internal adapted exposure toward (temporal eye adaptation). With it on, the tonemap
+        /// exposure is the adapted value scaled by SceneView::Exposure (a manual bias over the
+        /// automatic result); with it off, SceneView::Exposure is used directly. Off by default,
+        /// so the shipping path is unchanged. AutoExposureKey / AutoExposureMinLuminance /
+        /// AutoExposureMaxLuminance / AutoExposureSpeed are per-frame SceneView values that tune it
+        /// without a recompile.
+        bool AutoExposure = false;
+
         /// @brief Whether the additive forward emissive pass runs.
         ///
         /// A topology change: it inserts/removes the EmissiveScenePass between deferred lighting
@@ -429,8 +441,36 @@ namespace Veng::Renderer
 
         /// @brief Exposure scale applied before the tone curve; written into the tonemap material's param block each Execute.
         ///
-        /// Read fresh every Execute, so tuning it never triggers a recompile.
+        /// Read fresh every Execute, so tuning it never triggers a recompile. With
+        /// SceneRendererSettings::AutoExposure on this is a manual bias multiplied onto the
+        /// metered/adapted exposure rather than the exposure itself.
         f32 Exposure = 1.0f;
+
+        /// @brief Auto-exposure target key: the mid-grey the adapted average luminance maps to.
+        ///
+        /// The exposure the metering resolves to is Key / adaptedLuminance, so a larger key
+        /// brightens the auto-exposed image. Ignored when SceneRendererSettings::AutoExposure is
+        /// off.
+        f32 AutoExposureKey = 0.18f;
+
+        /// @brief Auto-exposure lower clamp on the adapted average luminance, in cd-equivalent HDR units.
+        ///
+        /// Bounds how bright the metering can drive a very dark scene (a small value = a brighter
+        /// cap in the dark). Ignored when auto-exposure is off.
+        f32 AutoExposureMinLuminance = 0.002f;
+
+        /// @brief Auto-exposure upper clamp on the adapted average luminance.
+        ///
+        /// Bounds how dark the metering can drive a very bright scene. Ignored when auto-exposure
+        /// is off.
+        f32 AutoExposureMaxLuminance = 8.0f;
+
+        /// @brief Auto-exposure adaptation rate per second (the eye-adaptation speed).
+        ///
+        /// The internal adapted luminance eases toward each frame's metered luminance at this
+        /// exponential rate, so a larger value adapts faster (0 freezes the current adaptation).
+        /// Ignored when auto-exposure is off.
+        f32 AutoExposureSpeed = 2.5f;
 
         /// @brief Environment map for the skybox and image-based lighting; empty for none.
         ///
@@ -897,6 +937,20 @@ namespace Veng::Renderer
         /// Intensity / Radius ride the compute push, read from the SceneView at record time.
         /// @param graph  The renderer's internal graph being rebuilt.
         void DeclareBloom(RenderGraph& graph);
+        /// @brief Declares the auto-exposure metering compute pass into the graph ahead of tonemap.
+        ///
+        /// One workgroup samples the lit HDR target and writes this frame's average log-luminance
+        /// into the metering ring buffer (StorageBufferWrite, so the pass is scheduled and not
+        /// culled). Declared only while Settings.AutoExposure is set.
+        /// @param graph  The renderer's internal graph being rebuilt.
+        void DeclareAutoExposure(RenderGraph& graph);
+        /// @brief Creates the auto-exposure metering pipeline, buffer, sampler, and descriptor set.
+        ///
+        /// Called once at Create. The descriptor set's HDR binding is (re)written by
+        /// WriteAutoExposureHdrBinding whenever the HDR target is recreated.
+        void CreateAutoExposure();
+        /// @brief Rewrites the metering set's HDR-source binding after the HDR target is recreated.
+        void WriteAutoExposureHdrBinding();
         /// @brief Recreates the SSR scene-color intermediate, reflection mip chain, and min-Z pyramid.
         ///
         /// Allocates the targets and per-level descriptor sets when Settings.SSR is set; otherwise
@@ -1349,6 +1403,33 @@ namespace Veng::Renderer
         /// @brief Composite set: HDR + bloom mip 0 sampled inputs and the result storage dest.
         Ref<DescriptorSet> m_BloomCompositeSet;
 
+        /// @brief Auto-exposure metering compute pipeline (HDR → average log-luminance buffer).
+        Ref<class ComputePipeline> m_AutoExposurePipeline;
+        /// @brief Layout for the metering pipeline (its set + push block).
+        Ref<class PipelineLayout> m_AutoExposureLayout;
+        /// @brief Set-1 layout for metering: sampled HDR (0) + linear sampler (1) + result buffer (2).
+        Ref<DescriptorSetLayout> m_AutoExposureSetLayout;
+        /// @brief Metering set binding the HDR source, the linear sampler, and the readback buffer.
+        ///
+        /// The HDR binding is rewritten whenever the HDR target is recreated (Resize/Configure).
+        Ref<DescriptorSet> m_AutoExposureSet;
+        /// @brief Clamp-to-edge linear sampler the metering pass reads the HDR through.
+        Ref<Sampler> m_AutoExposureSampler;
+        /// @brief Host-mapped ring buffer (framesInFlight floats) the metering writes each frame.
+        ///
+        /// The renderer reads the region a completed frame wrote (framesInFlight ago), so no host
+        /// read races a device write in flight.
+        Ref<Buffer> m_AutoExposureBuffer;
+        /// @brief Byte stride between the metering buffer's per-frame ring regions.
+        u32 m_AutoExposureStride = 0;
+        /// @brief The internal adapted luminance the exposure derives from; eased toward the metered value.
+        f32 m_AdaptedLuminance = 0.18f;
+        /// @brief Whether the next adaptation snaps to the metered value rather than easing toward it.
+        ///
+        /// Set at Create and whenever the readback ring is stale (Resize/Configure/enable), so the
+        /// image opens correctly exposed instead of ramping up from the seed over the first seconds.
+        bool m_AutoExposureReset = true;
+
         /// @brief Debug blit for the albedo channel.
         Ref<class GraphicsPipeline> m_AlbedoBlitPipeline;
         Ref<class PipelineLayout> m_AlbedoBlitLayout;
@@ -1607,6 +1688,8 @@ namespace Veng::Renderer
         MipChainId m_BloomChainId;
         /// @brief Imported id for the bloom composite result.
         ResourceId m_BloomResultId;
+        /// @brief Imported buffer id for the auto-exposure metering readback buffer.
+        ResourceId m_AutoExposureId;
         /// @brief Imported id for the directional shadow atlas.
         ResourceId m_ShadowId;
         /// @brief Imported id for the SSAO target.
@@ -1628,6 +1711,12 @@ namespace Veng::Renderer
         ///
         /// Execute binds the bloom imports and writes the bloom params only when true.
         bool m_BloomActive = false;
+
+        /// @brief True when the last Rebuild wired the auto-exposure metering pass.
+        ///
+        /// Execute binds the metering buffer import, reads back the metered luminance, and drives
+        /// the adapted exposure only when true.
+        bool m_AutoExposureActive = false;
 
         /// @brief True when the last Rebuild wired the TAA passes (Final mode + Settings.TAA).
         ///

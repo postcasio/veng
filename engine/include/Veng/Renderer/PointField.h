@@ -93,6 +93,13 @@ namespace Veng::Renderer
         /// unbounded HDR values into the accumulation target — a dense cell saturates to the same
         /// ceiling on either LOD path.
         f32 MaxIntensity = 32.0f;
+
+        /// @brief Uniform multiplier on this field's emitted radiance, for both LOD paths.
+        ///
+        /// Scales the sprite and aggregate output color by a constant, so a consumer fades a field's
+        /// whole contribution in or out — down to invisible at 0 — without rebuilding it or touching
+        /// the resident points. Applied on top of every other photometric knob; 1 is unchanged.
+        f32 Opacity = 1.0f;
     };
 
     /// @brief Construction parameters for a PointField.

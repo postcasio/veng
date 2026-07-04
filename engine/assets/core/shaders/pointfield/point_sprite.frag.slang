@@ -19,6 +19,7 @@ struct PushConstants
     float MaxIntensity;
     float ViewportWidth;
     float ViewportHeight;
+    float Opacity;
 };
 
 [[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
@@ -47,7 +48,7 @@ float4 fsMain(VSOutput input) : SV_Target
         discard;
     }
 
-    float3 color = input.v_Color.rgb * input.v_Color.a * falloff;
+    float3 color = input.v_Color.rgb * input.v_Color.a * falloff * g_PC.Opacity;
 
     // Depth-aware occluded fade: sample the g-buffer depth at the dynamic-resolution sub-rect.
     float2 sampleUV = ScaledSampleUV(input.v_ScreenUV, vc.RenderScaleUV.xy, vc.MaxValidUV.xy);

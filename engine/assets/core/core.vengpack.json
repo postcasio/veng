@@ -147,6 +147,11 @@
       "source": "shaders/bloom_composite.comp.shader.json"
     },
     {
+      "id": "0x9BF9CB926D0595B1",
+      "type": "Shader",
+      "source": "shaders/auto_exposure.comp.shader.json"
+    },
+    {
       "id": "0xCB20C4EF8A20ADBC",
       "type": "Shader",
       "source": "shaders/hi_z_reduce.comp.shader.json"
