@@ -25,6 +25,21 @@
       "id": "0x000000000000232B",
       "type": "Material",
       "source": "materials/brick.vmat.json"
+    },
+    {
+      "id": "0x00000000000024A2",
+      "type": "Shader",
+      "source": "shaders/fullscreen.vert.shader.json"
+    },
+    {
+      "id": "0x00000000000024A0",
+      "type": "Shader",
+      "source": "shaders/analytic_sky.frag.shader.json"
+    },
+    {
+      "id": "0x00000000000024A3",
+      "type": "Material",
+      "source": "materials/analytic_sky.vmat.json"
     }
   ]
 }

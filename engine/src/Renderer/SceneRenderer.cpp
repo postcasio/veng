@@ -10,6 +10,7 @@
 #include "PunctualShadowScenePass.h"
 #include "Picking.h"
 #include "SkyboxScenePass.h"
+#include "SkyCubemapBake.h"
 #include "SsaoScenePass.h"
 
 #include <algorithm>
@@ -71,6 +72,10 @@ namespace Veng::Renderer
         constexpr AssetId DeferredLightingCascadesFragId{0x834ED7C05F336E01ULL};
         constexpr AssetId SkyboxFragId{0xFCA568CC3463618FULL};
         constexpr AssetId AtmosphereSkyFragId{0x7DC6D927B2DF7858ULL};
+
+        // Cube face edge length for the baked material sky. Mip 0 suffices for display; the
+        // roughness chain the IBL tier needs is convolved from this cube, not baked here.
+        constexpr u32 SkyBakeFaceSize = 512;
 
         // Field-wise equality of two Atmosphere parameter sets; gates the once-per-change LUT
         // regeneration. An exact compare is right — the LUTs are a pure function of these fields,
@@ -1686,6 +1691,11 @@ namespace Veng::Renderer
         // The atmosphere LUTs + their consumer set layout exist before the pipelines so the sky
         // layout can reserve the set (set 1).
         m_Atmosphere = AtmospherePrecompute::Create(m_Context, m_Assets);
+        // The sky-material bake owns its radiance cube + a consumer set matching the IBL radiance
+        // binding, so a baked material sky samples through the same skybox pipeline. The cube renders
+        // at HdrFormat (the scene-color format) so its radiance round-trips the skybox sampler.
+        m_SkyBake =
+            SkyCubemapBake::Create(m_Context, m_Ibl->GetSetLayout(), HdrFormat, SkyBakeFaceSize);
         CreatePipelines();
 
         CreateOutput();
@@ -3341,15 +3351,30 @@ namespace Veng::Renderer
         // each source kind wires its own fullscreen sky pass in the shared sky slot. The SH
         // skylight arm folds into the lighting pass when the resolved sky is an atmosphere lit
         // via SH; m_SkylightActive gates the per-frame projection in Execute.
+        //
+        // A baked material sky reuses the cubemap skybox path pointed at the bake target — a baked
+        // sky displays through the skybox pipeline with no shader change — so the skybox slot fires
+        // for an environment source or a baked material, and the direct SkyMaterialScenePass fires
+        // only for a direct material sky.
+        const bool bakedMaterialWanted = sceneComposited &&
+                                         m_ResolvedSkyKind == SkySourceKind::Material &&
+                                         m_ResolvedSkyMaterialBaked;
         const bool skyboxWanted =
-            sceneComposited && m_ResolvedSkyKind == SkySourceKind::Environment;
+            (sceneComposited && m_ResolvedSkyKind == SkySourceKind::Environment) ||
+            bakedMaterialWanted;
         const bool atmosphereWanted =
             sceneComposited && m_ResolvedSkyKind == SkySourceKind::Atmosphere;
-        const bool skyMaterialWanted =
-            sceneComposited && m_ResolvedSkyKind == SkySourceKind::Material;
+        const bool skyMaterialWanted = sceneComposited &&
+                                       m_ResolvedSkyKind == SkySourceKind::Material &&
+                                       !m_ResolvedSkyMaterialBaked;
         const bool skylightWanted = m_ResolvedSkyKind == SkySourceKind::Atmosphere &&
                                     m_ResolvedSkyLighting == SkyLighting::SH;
         m_SkylightActive = skylightWanted;
+
+        // The skybox pass samples the IBL radiance set for an environment sky, or the bake's
+        // consumer set (same radiance binding) for a baked material sky.
+        const Ref<DescriptorSet> skyboxSet =
+            bakedMaterialWanted ? m_SkyBake->GetSet() : m_Ibl->GetSet();
 
         // IBL lights the scene only when the resolved sky is an environment on the IBL tier; a
         // display-only environment (any other tier) shows its skybox without lighting from it.
@@ -3528,8 +3553,8 @@ namespace Veng::Renderer
             if (skyboxWanted)
             {
                 m_Passes.push_back(CreateUnique<SkyboxScenePass>(
-                    m_Context, m_SkyboxPipeline, m_Ibl->GetSet(), lightingTargetId, depthId,
-                    m_DepthHandle, m_SamplerHandle, m_Extent));
+                    m_Context, m_SkyboxPipeline, skyboxSet, lightingTargetId, depthId,
+                    m_DepthHandle, m_SamplerHandle, m_Extent, bakedMaterialWanted));
             }
             if (atmosphereWanted)
             {
@@ -3676,8 +3701,8 @@ namespace Veng::Renderer
             if (skyboxWanted)
             {
                 m_Passes.push_back(CreateUnique<SkyboxScenePass>(
-                    m_Context, m_SkyboxPipeline, m_Ibl->GetSet(), lightingTargetId, depthId,
-                    m_DepthHandle, m_SamplerHandle, m_Extent));
+                    m_Context, m_SkyboxPipeline, skyboxSet, lightingTargetId, depthId,
+                    m_DepthHandle, m_SamplerHandle, m_Extent, bakedMaterialWanted));
             }
             if (atmosphereWanted)
             {
@@ -3862,6 +3887,7 @@ namespace Veng::Renderer
 
         SkySourceKind kind = SkySourceKind::None;
         SkyLighting lighting = SkyLighting::None;
+        bool materialBaked = false;
 
         if (sky != nullptr && sky->Source.HasValue())
         {
@@ -3889,6 +3915,11 @@ namespace Veng::Renderer
                 const auto* material = static_cast<const MaterialSky*>(source);
                 view.SkyMaterial = material->Material;
                 kind = SkySourceKind::Material;
+                // Baked runs the material into a radiance cube the skybox path samples; direct runs
+                // it per pixel every frame. The two render the same sky; the author picks per the
+                // sky's dynamics and the renderer honors it (no silent switch).
+                materialBaked = material->Mode == SkyMode::Baked;
+                view.EnvironmentIntensity = sky->Intensity;
             }
         }
 
@@ -3912,12 +3943,17 @@ namespace Veng::Renderer
         // IBL, so a display-only environment shows its skybox without lighting the scene.
         const SkyLighting resolvedLighting = tierActive ? lighting : SkyLighting::None;
 
-        // Drive the internal recompile only on a resolved source-kind or tier change — the frame
-        // boundary the pass set flips at, reusing the imported output (identity preserved).
-        if (kind != m_ResolvedSkyKind || resolvedLighting != m_ResolvedSkyLighting)
+        // A material sky bakes only in Baked mode; the flag is meaningless for other kinds. Drive
+        // the internal recompile on a resolved source-kind, tier, or material-mode change — the
+        // frame boundary the pass set flips at, reusing the imported output (identity preserved).
+        // A direct↔baked flip is a resolved-source change: the same recompile a kind change drives.
+        const bool bakedMaterial = kind == SkySourceKind::Material && materialBaked;
+        if (kind != m_ResolvedSkyKind || resolvedLighting != m_ResolvedSkyLighting ||
+            bakedMaterial != m_ResolvedSkyMaterialBaked)
         {
             m_ResolvedSkyKind = kind;
             m_ResolvedSkyLighting = resolvedLighting;
+            m_ResolvedSkyMaterialBaked = bakedMaterial;
             Rebuild();
         }
     }
@@ -4901,6 +4937,28 @@ namespace Veng::Renderer
         }
 
         BindlessRegistry& registry = m_Context.GetBindlessRegistry();
+
+        // Bake a baked-mode material sky into its radiance cube on the sky dirty signal (the
+        // resolved material instance changed), so a static sky bakes once and the skybox pass
+        // samples the cube this frame. Recorded into cmd before the graph the skybox pass samples
+        // the cube through, and before the scene claims its own view slot below — the bake writes
+        // six face view-constants regions into distinct view slots, so it must run ahead of the
+        // frame's own BeginView. The material's params/handles were written by the game before
+        // Render; a direct or non-material sky bakes nothing.
+        if (m_ResolvedSkyKind == SkySourceKind::Material && m_ResolvedSkyMaterialBaked &&
+            resolvedView.SkyMaterial.IsLoaded())
+        {
+            const MaterialInstance* material = resolvedView.SkyMaterial.Get();
+            if (material != m_LastBakedSkyMaterial)
+            {
+                m_SkyBake->Bake(cmd, *material);
+                m_LastBakedSkyMaterial = material;
+            }
+        }
+        else
+        {
+            m_LastBakedSkyMaterial = nullptr;
+        }
 
         // Claim this Execute's view slot before any shared-buffer write below: the view-constants
         // and light buffers are shared across every viewport, so each render writes its own region

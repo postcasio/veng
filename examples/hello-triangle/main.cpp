@@ -693,11 +693,23 @@ private:
 
         // Author the sky onto the scene's one Sky component: a MaterialSky source with this
         // material. The renderer resolves it each Execute — no topology toggle or per-frame push.
-        const Entity skyEntity = world.CreateEntity();
-        Sky& skyComponent = world.Add<Sky>(skyEntity);
+        // The scene has one sky, so overwrite the existing Sky component (the level authors one)
+        // rather than adding a second the resolve would ignore; add one only if none exists.
+        Sky* skyComponent = world.TryGetFirst<Sky>();
+        if (skyComponent == nullptr)
+        {
+            skyComponent = &world.Add<Sky>(world.CreateEntity());
+        }
         auto* source =
-            static_cast<MaterialSky*>(skyComponent.Source.SetActive(TypeIdOf<MaterialSky>()));
+            static_cast<MaterialSky*>(skyComponent->Source.SetActive(TypeIdOf<MaterialSky>()));
         source->Material = m_SkyMaterial;
+        // Mode selects the direct per-pixel path or the baked-cube path; the two render the same
+        // sky. Baked is the default (bake once, sample a cube per frame); HT_SKY_DIRECT opts into
+        // the per-pixel path, so a run of each mode over the same material proves they agree.
+        source->Mode = std::getenv("HT_SKY_DIRECT") != nullptr ? SkyMode::Direct : SkyMode::Baked;
+        // The material sky lights nothing (only Baked can, activated later), so keep the tier at
+        // background-only regardless of what the level's sky authored.
+        skyComponent->Lighting = SkyLighting::None;
     }
 
     // Constructs the MCP server when HT_MCP=<port> is set (HT_MCP=0 picks an ephemeral port), so the

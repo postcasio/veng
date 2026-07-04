@@ -577,15 +577,34 @@ namespace Veng
         Renderer::Atmosphere Params;
     };
 
+    /// @brief How an authored material sky reaches the screen and whether it can light the scene.
+    ///
+    /// Keyed to how the sky changes over time. Direct runs the material's fragment per pixel every
+    /// frame — right for a sky that animates continuously — and cannot light the scene (a direct
+    /// material sky displays only). Baked renders the material into the six faces of a radiance
+    /// cubemap once per change and samples that cube per frame through the skybox path — right for
+    /// the common static-between-changes case — and is the mode that can light the scene. Integer
+    /// values are stable — persisted in prefabs.
+    enum class SkyMode : u8
+    {
+        /// @brief Run the material fragment per pixel every frame; display-only.
+        Direct = 0,
+        /// @brief Bake the material into a radiance cube on change and sample it; can light the scene.
+        Baked = 1,
+    };
+
     /// @brief Sky source: an authored Sky-domain material fills the background sky.
     ///
     /// One alternative of the SkySource variant. The material owns its own parameters and any
     /// buffers/textures it reads; the engine supplies the view ray and the g-buffer depth mask.
-    /// An empty Material is a no-op.
+    /// An empty Material is a no-op. Mode selects the direct per-pixel path or the baked-cube path;
+    /// the two render the same sky, and the author picks per the sky's dynamics.
     struct MaterialSky
     {
         /// @brief The Sky-domain material instance rendered as the background sky.
         AssetHandle<MaterialInstance> Material;
+        /// @brief Whether the material is composited per pixel (Direct) or baked to a cube (Baked).
+        SkyMode Mode = SkyMode::Baked;
     };
 
     /// @brief The active source of a Sky component: environment map, atmosphere, or material.
@@ -868,8 +887,14 @@ VE_REFLECT(::Veng::AtmosphereSky, 0x2091BE830E0AA76DULL)
 VE_FIELD(Params, .DisplayName = "Parameters")
 VE_REFLECT_END();
 
+VE_ENUM(::Veng::SkyMode, 0x9C2A0D5E7B1F4488ULL)
+VE_ENUMERATOR(Direct)
+VE_ENUMERATOR(Baked)
+VE_ENUM_END();
+
 VE_REFLECT(::Veng::MaterialSky, 0x278971B85ADDA928ULL)
 VE_FIELD(Material, .DisplayName = "Material")
+VE_FIELD(Mode, .DisplayName = "Mode")
 VE_REFLECT_END();
 
 VE_ENUM(::Veng::SkyLighting, 0xB2C6211BC808C7BDULL)
