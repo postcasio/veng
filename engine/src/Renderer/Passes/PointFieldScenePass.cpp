@@ -97,12 +97,12 @@ namespace Veng::Renderer
     }
 
     PointFieldScenePass::PointFieldScenePass(Context& context, AssetManager& assets,
-                                             const PointField* const* field,
+                                             const vector<const PointField*>* fields,
                                              const Format outputFormat,
                                              const SamplerHandle samplerHandle,
                                              const u32 framesInFlight, const uvec2 extent)
-        : m_Context(context), m_Field(field), m_OutputFormat(outputFormat),
-          m_SamplerHandle(samplerHandle), m_Extent(extent)
+        : m_Context(context), m_Fields(fields), m_FramesInFlight(framesInFlight),
+          m_OutputFormat(outputFormat), m_SamplerHandle(samplerHandle), m_Extent(extent)
     {
         const AssetHandle<Veng::Shader> spriteVs =
             LoadShader(assets, PointSpriteVertId, "point-sprite vertex");
@@ -160,25 +160,6 @@ namespace Veng::Renderer
                         {.Stage = ShaderStage::Fragment, .Module = aggregateFs.Get()->Module},
                     },
             });
-        m_Set = DescriptorSet::Create(m_Context, {
-                                                     .Name = "PointField Set",
-                                                     .Layout = m_SetLayout,
-                                                 });
-
-        // The aggregate draw's per-frame splat records ride their own host-mapped ring, one region
-        // per frame-in-flight, bound through a second set of the same layout.
-        m_AggregateSet = DescriptorSet::Create(m_Context, {
-                                                              .Name = "PointField Aggregate Set",
-                                                              .Layout = m_SetLayout,
-                                                          });
-        m_AggregateRegionStride = static_cast<u64>(MaxAggregateSplats) * sizeof(GpuAggregateSplat);
-        m_AggregateBuffer =
-            Buffer::Create(m_Context, {
-                                          .Name = "PointField Aggregate Buffer",
-                                          .Size = m_AggregateRegionStride * framesInFlight,
-                                          .Usage = BufferUsage::Storage,
-                                          .HostMapped = true,
-                                      });
     }
 
     PointFieldScenePass::~PointFieldScenePass() = default;
@@ -186,6 +167,36 @@ namespace Veng::Renderer
     void PointFieldScenePass::Resize(const uvec2 extent)
     {
         m_Extent = extent;
+    }
+
+    PointFieldScenePass::FieldState& PointFieldScenePass::StateFor(const PointField* const field)
+    {
+        FieldState& state = m_Fields_State[field];
+        if (state.SpriteSet == nullptr)
+        {
+            // First time this field is drawn: allocate its own sprite/aggregate sets and the
+            // host-mapped aggregate ring (one region per frame-in-flight) so its per-frame writes
+            // never collide with a sibling field's draws in the same command buffer.
+            state.SpriteSet = DescriptorSet::Create(m_Context, {
+                                                                   .Name = "PointField Set",
+                                                                   .Layout = m_SetLayout,
+                                                               });
+            state.AggregateSet =
+                DescriptorSet::Create(m_Context, {
+                                                     .Name = "PointField Aggregate Set",
+                                                     .Layout = m_SetLayout,
+                                                 });
+            state.AggregateRegionStride =
+                static_cast<u64>(MaxAggregateSplats) * sizeof(GpuAggregateSplat);
+            state.AggregateBuffer = Buffer::Create(
+                m_Context, {
+                               .Name = "PointField Aggregate Buffer",
+                               .Size = state.AggregateRegionStride * m_FramesInFlight,
+                               .Usage = BufferUsage::Storage,
+                               .HostMapped = true,
+                           });
+        }
+        return state;
     }
 
     void PointFieldScenePass::Declare(RenderGraph& graph, const PassIO& io)
@@ -208,8 +219,7 @@ namespace Veng::Renderer
                     const ScenePassContext ctx = Wrap(inner);
                     CommandBuffer& cmd = ctx.Cmd();
 
-                    const PointField* field = (m_Field != nullptr) ? *m_Field : nullptr;
-                    if (field == nullptr || field->GetPointCount() == 0)
+                    if (m_Fields == nullptr || m_Fields->empty())
                     {
                         return;
                     }
@@ -217,128 +227,156 @@ namespace Veng::Renderer
                     const SceneView& view = ctx.View();
                     const mat4 viewProj = view.Camera.ViewProjection();
                     const Frustum frustum = Frustum::FromViewProjection(viewProj);
-                    const PointFieldLod& lod = field->GetLod();
+                    const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
+                    const u32 region = m_Context.GetCurrentFrameInFlight();
 
-                    // Re-point the set at the field's resident buffer only when it changes (a
-                    // rebuilt or swapped field), never per frame for a static field.
-                    if (m_BoundBuffer != field->GetPointBuffer().get())
+                    // Draw each resolved field through its own descriptor sets and aggregate ring.
+                    for (const PointField* field : *m_Fields)
                     {
-                        m_Set->Write(0, field->GetPointBuffer(), 0,
-                                     field->GetPointBuffer()->GetSize());
-                        m_BoundBuffer = field->GetPointBuffer().get();
-                    }
-
-                    // The per-cell aggregating latch resets when the field changes, so a swapped
-                    // field starts resolving and settles into aggregation on its own densities.
-                    const vector<PointField::Cell>& cells = field->GetCells();
-                    if (m_LatchedField != field)
-                    {
-                        m_Aggregating.assign(cells.size(), false);
-                        m_LatchedField = field;
-                    }
-
-                    // Partition the frustum-surviving cells into resolved (sprite) and aggregate
-                    // (splat) sets by their on-screen density, hysteretic around the threshold: a
-                    // cell flips to aggregate only past the high gate and back only below the low
-                    // gate, so a cell hovering at the boundary does not pop frame to frame.
-                    const f32 lowGate = lod.AggregateThreshold * (1.0f - lod.Hysteresis);
-                    const f32 highGate = lod.AggregateThreshold * (1.0f + lod.Hysteresis);
-
-                    vector<const PointField::Cell*> resolved;
-                    vector<GpuAggregateSplat> splats;
-                    for (u32 c = 0; c < cells.size(); ++c)
-                    {
-                        const PointField::Cell& cell = cells[c];
-                        if (cell.PointCount == 0 || !Intersects(frustum, cell.Bounds))
+                        if (field == nullptr || field->GetPointCount() == 0)
                         {
                             continue;
                         }
-                        const f32 density = CellScreenDensity(cell, viewProj, m_Extent);
-                        bool aggregate = m_Aggregating[c];
-                        if (density >= highGate)
-                        {
-                            aggregate = true;
-                        }
-                        else if (density < lowGate)
-                        {
-                            aggregate = false;
-                        }
-                        m_Aggregating[c] = aggregate;
+                        FieldState& state = StateFor(field);
+                        state.Seen = true;
 
-                        if (aggregate && splats.size() < MaxAggregateSplats)
+                        const PointFieldLod& lod = field->GetLod();
+
+                        // Re-point the field's sprite set at its resident buffer only when the
+                        // buffer changes (a rebuilt field), never per frame for a static field.
+                        if (state.BoundBuffer != field->GetPointBuffer().get())
                         {
-                            splats.push_back(GpuAggregateSplat{
-                                .CenterSize = vec4(cell.Centroid, lod.AggregateSplatPixels),
-                                .Color = vec4(cell.SummedColor * lod.AggregateIntensity, 0.0f),
+                            state.SpriteSet->Write(0, field->GetPointBuffer(), 0,
+                                                   field->GetPointBuffer()->GetSize());
+                            state.BoundBuffer = field->GetPointBuffer().get();
+                        }
+
+                        // Size the per-cell aggregating latch to this field's cells (a rebuilt field
+                        // with a new cell count starts resolving and settles on its own densities).
+                        const vector<PointField::Cell>& cells = field->GetCells();
+                        if (state.Aggregating.size() != cells.size())
+                        {
+                            state.Aggregating.assign(cells.size(), false);
+                        }
+
+                        // Partition the frustum-surviving cells into resolved (sprite) and aggregate
+                        // (splat) sets by their on-screen density, hysteretic around the threshold: a
+                        // cell flips to aggregate only past the high gate and back only below the low
+                        // gate, so a cell hovering at the boundary does not pop frame to frame.
+                        const f32 lowGate = lod.AggregateThreshold * (1.0f - lod.Hysteresis);
+                        const f32 highGate = lod.AggregateThreshold * (1.0f + lod.Hysteresis);
+
+                        vector<const PointField::Cell*> resolved;
+                        vector<GpuAggregateSplat> splats;
+                        for (u32 c = 0; c < cells.size(); ++c)
+                        {
+                            const PointField::Cell& cell = cells[c];
+                            if (cell.PointCount == 0 || !Intersects(frustum, cell.Bounds))
+                            {
+                                continue;
+                            }
+                            const f32 density = CellScreenDensity(cell, viewProj, m_Extent);
+                            bool aggregate = state.Aggregating[c];
+                            if (density >= highGate)
+                            {
+                                aggregate = true;
+                            }
+                            else if (density < lowGate)
+                            {
+                                aggregate = false;
+                            }
+                            state.Aggregating[c] = aggregate;
+
+                            if (aggregate && splats.size() < MaxAggregateSplats)
+                            {
+                                splats.push_back(GpuAggregateSplat{
+                                    .CenterSize = vec4(cell.Centroid, lod.AggregateSplatPixels),
+                                    .Color = vec4(cell.SummedColor * lod.AggregateIntensity, 0.0f),
+                                });
+                            }
+                            else if (!aggregate)
+                            {
+                                resolved.push_back(&cell);
+                            }
+                        }
+
+                        if (resolved.empty() && splats.empty())
+                        {
+                            continue;
+                        }
+
+                        cmd.SetViewport({0, 0}, m_Extent);
+                        cmd.SetScissor({0, 0}, m_Extent);
+
+                        PointFieldPush push{
+                            .DepthTexture = depthHandle.Index,
+                            .Sampler = samplerHandle.Index,
+                            .ViewConstantsIndex = registry.GetCurrentViewConstantsIndex(),
+                            .AggregateIntensity = lod.AggregateIntensity,
+                            .ViewportWidth = static_cast<f32>(m_Extent.x),
+                            .ViewportHeight = static_cast<f32>(m_Extent.y),
+                        };
+
+                        // Resolved sprites: one non-instanced draw per surviving cell, the vertex
+                        // stage deriving point + corner from SV_VertexID over the cell's range.
+                        if (!resolved.empty())
+                        {
+                            cmd.BindPipeline(m_SpritePipeline);
+                            registry.Bind(cmd);
+                            cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                                .Sets = {state.SpriteSet},
+                                .FirstSet = 1,
+                                .PipelineBindPoint = PipelineBindPoint::Graphics,
                             });
+                            for (const PointField::Cell* cell : resolved)
+                            {
+                                push.FirstPoint = cell->FirstPoint;
+                                push.PointCount = cell->PointCount;
+                                cmd.PushConstants(push);
+                                cmd.Draw(QuadVertexCount * cell->PointCount, 1, 0, 0);
+                            }
                         }
-                        else if (!aggregate)
+
+                        // Aggregate splats: upload this frame's per-cell records into the field's
+                        // ring region and draw them all as additive quads in one call.
+                        if (!splats.empty())
                         {
-                            resolved.push_back(&cell);
-                        }
-                    }
+                            const u64 regionOffset =
+                                static_cast<u64>(region) * state.AggregateRegionStride;
+                            auto* base = static_cast<u8*>(state.AggregateBuffer->GetMappedData()) +
+                                         regionOffset;
+                            std::memcpy(base, splats.data(),
+                                        splats.size() * sizeof(GpuAggregateSplat));
+                            state.AggregateSet->Write(0, state.AggregateBuffer, regionOffset,
+                                                      state.AggregateRegionStride);
 
-                    if (resolved.empty() && splats.empty())
-                    {
-                        return;
-                    }
-
-                    const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
-                    cmd.SetViewport({0, 0}, m_Extent);
-                    cmd.SetScissor({0, 0}, m_Extent);
-
-                    PointFieldPush push{
-                        .DepthTexture = depthHandle.Index,
-                        .Sampler = samplerHandle.Index,
-                        .ViewConstantsIndex = registry.GetCurrentViewConstantsIndex(),
-                        .AggregateIntensity = lod.AggregateIntensity,
-                        .ViewportWidth = static_cast<f32>(m_Extent.x),
-                        .ViewportHeight = static_cast<f32>(m_Extent.y),
-                    };
-
-                    // Resolved sprites: one non-instanced draw per surviving cell, the vertex stage
-                    // deriving point + corner from SV_VertexID over [FirstPoint, FirstPoint+Count).
-                    if (!resolved.empty())
-                    {
-                        cmd.BindPipeline(m_SpritePipeline);
-                        registry.Bind(cmd);
-                        cmd.BindDescriptorSets(DescriptorSetBindInfo{
-                            .Sets = {m_Set},
-                            .FirstSet = 1,
-                            .PipelineBindPoint = PipelineBindPoint::Graphics,
-                        });
-                        for (const PointField::Cell* cell : resolved)
-                        {
-                            push.FirstPoint = cell->FirstPoint;
-                            push.PointCount = cell->PointCount;
+                            cmd.BindPipeline(m_AggregatePipeline);
+                            registry.Bind(cmd);
+                            cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                                .Sets = {state.AggregateSet},
+                                .FirstSet = 1,
+                                .PipelineBindPoint = PipelineBindPoint::Graphics,
+                            });
+                            push.FirstPoint = 0;
+                            push.PointCount = static_cast<u32>(splats.size());
                             cmd.PushConstants(push);
-                            cmd.Draw(QuadVertexCount * cell->PointCount, 1, 0, 0);
+                            cmd.Draw(QuadVertexCount * static_cast<u32>(splats.size()), 1, 0, 0);
                         }
                     }
 
-                    // Aggregate splats: upload this frame's per-cell records into the ring region
-                    // and draw them all as additive quads in one call.
-                    if (!splats.empty())
+                    // Prune cached state for fields no longer resolved (freeing their sets/rings);
+                    // clear Seen for the survivors ahead of the next Execute.
+                    for (auto it = m_Fields_State.begin(); it != m_Fields_State.end();)
                     {
-                        const u32 region = m_Context.GetCurrentFrameInFlight();
-                        const u64 regionOffset = static_cast<u64>(region) * m_AggregateRegionStride;
-                        auto* base =
-                            static_cast<u8*>(m_AggregateBuffer->GetMappedData()) + regionOffset;
-                        std::memcpy(base, splats.data(), splats.size() * sizeof(GpuAggregateSplat));
-                        m_AggregateSet->Write(0, m_AggregateBuffer, regionOffset,
-                                              m_AggregateRegionStride);
-
-                        cmd.BindPipeline(m_AggregatePipeline);
-                        registry.Bind(cmd);
-                        cmd.BindDescriptorSets(DescriptorSetBindInfo{
-                            .Sets = {m_AggregateSet},
-                            .FirstSet = 1,
-                            .PipelineBindPoint = PipelineBindPoint::Graphics,
-                        });
-                        push.FirstPoint = 0;
-                        push.PointCount = static_cast<u32>(splats.size());
-                        cmd.PushConstants(push);
-                        cmd.Draw(QuadVertexCount * static_cast<u32>(splats.size()), 1, 0, 0);
+                        if (!it->second.Seen)
+                        {
+                            it = m_Fields_State.erase(it);
+                        }
+                        else
+                        {
+                            it->second.Seen = false;
+                            ++it;
+                        }
                     }
                 });
     }

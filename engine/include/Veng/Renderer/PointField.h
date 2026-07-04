@@ -87,9 +87,10 @@ namespace Veng::Renderer
 
     /// @brief A large, GPU-resident set of positioned, colored, sized points with a distance LOD.
     ///
-    /// Built once from a point set and drawn many frames by a PointFieldScenePass (wired into a
-    /// SceneRenderer via SceneRendererSettings::PointField and SceneRenderer::SetPointField). The
-    /// pass frustum-culls the field's spatial cells against the camera, then per visible cell
+    /// Built once from a point set and drawn many frames by a PointFieldScenePass. A consumer
+    /// assigns the built field to a scene PointField component's Field; the SceneRenderer walks
+    /// those components each Execute and draws every live field. The pass frustum-culls the field's
+    /// spatial cells against the camera, then per visible cell
     /// draws either individual camera-facing sprites (the resolved LOD) or a single additive
     /// density splat (the aggregate LOD) selected by the on-screen point density — so the cost
     /// stays bounded when the whole field is in view.

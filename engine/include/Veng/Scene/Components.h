@@ -4,6 +4,7 @@
 #include <Veng/Input.h>
 #include <Veng/Input/Actions.h>
 #include <Veng/Renderer/Atmosphere.h>
+#include <Veng/Renderer/PointField.h>
 #include <Veng/Renderer/SunPosition.h>
 #include <Veng/Scene/Entity.h>
 #include <Veng/Reflection/Reflect.h>
@@ -647,6 +648,29 @@ namespace Veng
         Renderer::SunOrbit Orbit;
     };
 
+    /// @brief A scene-authored field of GPU-resident points the renderer draws.
+    ///
+    /// Resolved by the renderer via View<PointField> each Execute — the lights model: every
+    /// component with a live Field contributes one field to the point-field pass, whose presence
+    /// is driven by any live field existing (no consumer toggle). Lod and CellSize are authored
+    /// knobs (reflected, cooked, editable in the inspector); Field is the built GPU resource,
+    /// runtime-only and never serialized. A consumer builds a Renderer::PointField from its point
+    /// set and assigns it; a null Field draws nothing. The field's points are world-space (the
+    /// resource's contract) — the entity's Transform is not applied.
+    struct PointField
+    {
+        /// @brief Screen-density LOD knobs applied to this field's draw.
+        Renderer::PointFieldLod Lod;
+        /// @brief Cull-cell edge length in world units a consumer builds the field with.
+        f32 CellSize = 8.0f;
+        /// @brief The built GPU field this entity draws, or null for none.
+        ///
+        /// Runtime-only: carries no VE_FIELD, so reflection, the cooker, and the inspector never
+        /// see it — it serializes as absent and default-constructs to null on load. A consumer
+        /// (a system or app code) builds a Renderer::PointField from its point set and assigns it.
+        Ref<Renderer::PointField> Field;
+    };
+
     /// @brief Level-scoped post/pipeline render knobs.
     ///
     /// Carried on a Level and seeded into the renderer the app drives — a reflected,
@@ -892,6 +916,18 @@ VE_FIELD(Hours, .DisplayName = "Hours", .Tooltip = "Solar hours; 12 is noon",
 VE_FIELD(DayOfYear, .DisplayName = "Day of year",
          .Tooltip = "Days since the northern spring equinox", .Display = {.Min = 0.0})
 VE_FIELD(Orbit, .DisplayName = "Orbit")
+VE_REFLECT_END();
+
+VE_REFLECT(::Veng::Renderer::PointFieldLod, 0x9A3C1F6E4B2D08A7ULL)
+VE_FIELD(AggregateThreshold, .DisplayName = "Aggregate Threshold", .Display = {.Min = 0.0})
+VE_FIELD(Hysteresis, .DisplayName = "Hysteresis", .Display = {.Min = 0.0, .Max = 1.0})
+VE_FIELD(AggregateSplatPixels, .DisplayName = "Aggregate Splat Pixels", .Display = {.Min = 0.0})
+VE_FIELD(AggregateIntensity, .DisplayName = "Aggregate Intensity", .Display = {.Min = 0.0})
+VE_REFLECT_END();
+
+VE_REFLECT(::Veng::PointField, 0x1D7F4A0C6E5B8392ULL)
+VE_FIELD(Lod, .DisplayName = "LOD")
+VE_FIELD(CellSize, .DisplayName = "Cell Size", .Display = {.Min = 0.001})
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::LevelRenderSettings, 0x28E4618C66455E21ULL)
