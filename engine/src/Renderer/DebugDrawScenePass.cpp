@@ -136,10 +136,6 @@ namespace Veng::Renderer
                                },
                            .Topology = PrimitiveTopology::TriangleList,
                        });
-        m_LineSet = DescriptorSet::Create(m_Context, {
-                                                         .Name = "DebugDraw Line Set",
-                                                         .Layout = m_LineSetLayout,
-                                                     });
 
         // The billboard set: binding 0 the per-frame record SSBO (set 1, off bindless — a closed
         // per-frame producer→consumer buffer needs no global registration).
@@ -169,10 +165,6 @@ namespace Veng::Renderer
                         {.Stage = ShaderStage::Fragment, .Module = billboardFs.Get()->Module},
                     },
             });
-        m_BillboardSet = DescriptorSet::Create(m_Context, {
-                                                              .Name = "DebugDraw Billboard Set",
-                                                              .Layout = m_BillboardSetLayout,
-                                                          });
 
         // Host-mapped, ring-buffered line + billboard record buffers: one region per
         // frame-in-flight so the GPU never reads a region the host is rewriting.
@@ -192,6 +184,28 @@ namespace Veng::Renderer
                                           .Usage = BufferUsage::Storage,
                                           .HostMapped = true,
                                       });
+
+        // One descriptor set per frame-in-flight, each bound once to its own ring region for the
+        // buffer's lifetime. The draw binds the current frame's set instead of rewriting a shared
+        // one each frame — a descriptor update on a set still referenced by a pending command buffer
+        // is a validation error (the sets are not created with UPDATE_AFTER_BIND).
+        m_LineSets.reserve(m_FramesInFlight);
+        m_BillboardSets.reserve(m_FramesInFlight);
+        for (u32 frame = 0; frame < m_FramesInFlight; ++frame)
+        {
+            Ref<DescriptorSet> lineSet = DescriptorSet::Create(
+                m_Context, {.Name = "DebugDraw Line Set", .Layout = m_LineSetLayout});
+            lineSet->Write(0, m_LineBuffer, static_cast<u64>(frame) * m_LineRegionStride,
+                           m_LineRegionStride);
+            m_LineSets.push_back(std::move(lineSet));
+
+            Ref<DescriptorSet> billboardSet = DescriptorSet::Create(
+                m_Context, {.Name = "DebugDraw Billboard Set", .Layout = m_BillboardSetLayout});
+            billboardSet->Write(0, m_BillboardBuffer,
+                                static_cast<u64>(frame) * m_BillboardRegionStride,
+                                m_BillboardRegionStride);
+            m_BillboardSets.push_back(std::move(billboardSet));
+        }
     }
 
     DebugDrawScenePass::~DebugDrawScenePass() = default;
@@ -227,8 +241,8 @@ namespace Veng::Renderer
                         sizeof(GpuLineVertex));
         }
 
-        // Bind this frame's region as the whole SSBO range for the draw.
-        m_LineSet->Write(0, m_LineBuffer, regionOffset, m_LineRegionStride);
+        // The records land in this frame's region; the draw binds m_LineSets[region], already
+        // pointing at it, so no per-frame descriptor update is needed.
         return count;
     }
 
@@ -257,8 +271,7 @@ namespace Veng::Renderer
                         sizeof(GpuBillboard));
         }
 
-        // Bind this frame's region as the whole SSBO range for the draw.
-        m_BillboardSet->Write(0, m_BillboardBuffer, regionOffset, m_BillboardRegionStride);
+        // The records land in this frame's region; the draw binds m_BillboardSets[region].
         return count;
     }
 
@@ -291,6 +304,7 @@ namespace Veng::Renderer
                     const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
                     const u32 lineCount = UploadLines();
                     const u32 billboardCount = UploadBillboards();
+                    const u32 frame = m_Context.GetCurrentFrameInFlight();
 
                     const DebugPushConstants push{
                         .DepthTexture = depthHandle.Index,
@@ -310,7 +324,7 @@ namespace Veng::Renderer
                         cmd.BindPipeline(m_LinePipeline);
                         registry.Bind(cmd);
                         cmd.BindDescriptorSets(DescriptorSetBindInfo{
-                            .Sets = {m_LineSet},
+                            .Sets = {m_LineSets[frame]},
                             .FirstSet = 1,
                             .PipelineBindPoint = PipelineBindPoint::Graphics,
                         });
@@ -325,7 +339,7 @@ namespace Veng::Renderer
                         cmd.BindPipeline(m_BillboardPipeline);
                         registry.Bind(cmd);
                         cmd.BindDescriptorSets(DescriptorSetBindInfo{
-                            .Sets = {m_BillboardSet},
+                            .Sets = {m_BillboardSets[frame]},
                             .FirstSet = 1,
                             .PipelineBindPoint = PipelineBindPoint::Graphics,
                         });
@@ -410,10 +424,6 @@ namespace Veng::Renderer
                            .DepthWriteEnable = false,
                            .DepthCompareOp = CompareOp::LessOrEqual,
                        });
-        m_Set = DescriptorSet::Create(m_Context, {
-                                                     .Name = "BillboardPick Set",
-                                                     .Layout = m_SetLayout,
-                                                 });
 
         m_RegionStride = static_cast<u64>(MaxBillboards) * sizeof(GpuBillboardPick);
         m_Buffer = Buffer::Create(m_Context, {
@@ -422,6 +432,18 @@ namespace Veng::Renderer
                                                  .Usage = BufferUsage::Storage,
                                                  .HostMapped = true,
                                              });
+
+        // One descriptor set per frame-in-flight, each bound once to its own ring region; the draw
+        // binds the current frame's set rather than rewriting a shared one (updating a set a pending
+        // command buffer still references is a validation error).
+        m_Sets.reserve(m_FramesInFlight);
+        for (u32 frame = 0; frame < m_FramesInFlight; ++frame)
+        {
+            Ref<DescriptorSet> set = DescriptorSet::Create(
+                m_Context, {.Name = "BillboardPick Set", .Layout = m_SetLayout});
+            set->Write(0, m_Buffer, static_cast<u64>(frame) * m_RegionStride, m_RegionStride);
+            m_Sets.push_back(std::move(set));
+        }
     }
 
     BillboardPickScenePass::~BillboardPickScenePass() = default;
@@ -456,10 +478,8 @@ namespace Veng::Renderer
             ++count;
         }
 
-        if (count > 0)
-        {
-            m_Set->Write(0, m_Buffer, regionOffset, m_RegionStride);
-        }
+        // The records land in this frame's region; the draw binds m_Sets[region], already pointing
+        // at it, so no per-frame descriptor update is needed.
         return count;
     }
 
@@ -514,7 +534,7 @@ namespace Veng::Renderer
                     // so bind it even though this shader reads only the set-1 record SSBO + the push.
                     registry.Bind(cmd);
                     cmd.BindDescriptorSets(DescriptorSetBindInfo{
-                        .Sets = {m_Set},
+                        .Sets = {m_Sets[m_Context.GetCurrentFrameInFlight()]},
                         .FirstSet = 1,
                         .PipelineBindPoint = PipelineBindPoint::Graphics,
                     });

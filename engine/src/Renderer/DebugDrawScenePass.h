@@ -56,14 +56,17 @@ namespace Veng::Renderer
         void Declare(RenderGraph& graph, const PassIO& io) override;
 
     private:
-        /// @brief Uploads this frame's line segment records into the current ring region and writes the set.
+        /// @brief Uploads this frame's line segment records into the current ring region.
         ///
-        /// Returns the number of line endpoint vertices written, two per segment (0 when none).
+        /// Returns the number of line endpoint vertices written, two per segment (0 when none). The
+        /// caller binds the matching per-frame descriptor set; the records land in the region that
+        /// set points at.
         u32 UploadLines();
 
-        /// @brief Uploads this frame's billboard records into the current ring region and writes the set.
+        /// @brief Uploads this frame's billboard records into the current ring region.
         ///
-        /// Returns the number of billboard records written (0 when there are none).
+        /// Returns the number of billboard records written (0 when there are none). The caller binds
+        /// the matching per-frame descriptor set.
         u32 UploadBillboards();
 
         /// @brief The render context.
@@ -85,8 +88,12 @@ namespace Veng::Renderer
         Ref<PipelineLayout> m_LineLayout;
         /// @brief Set-1 layout for the line segment records (binding 0 storage buffer).
         Ref<DescriptorSetLayout> m_LineSetLayout;
-        /// @brief Descriptor set bound at set 1 for the line draw (whole-range, ringed by offset).
-        Ref<DescriptorSet> m_LineSet;
+        /// @brief One descriptor set per frame-in-flight, bound at set 1 for the line draw.
+        ///
+        /// Each set points at its own ring region for the buffer's lifetime, so the draw binds the
+        /// current frame's set rather than rewriting one shared set every frame — updating a set
+        /// still referenced by a pending command buffer is a validation error.
+        vector<Ref<DescriptorSet>> m_LineSets;
 
         /// @brief Billboard pipeline (instanced quad, alpha blend) and its layout.
         Ref<GraphicsPipeline> m_BillboardPipeline;
@@ -94,8 +101,11 @@ namespace Veng::Renderer
         Ref<PipelineLayout> m_BillboardLayout;
         /// @brief Set-1 layout for the billboard records (binding 0 storage buffer).
         Ref<DescriptorSetLayout> m_BillboardSetLayout;
-        /// @brief Descriptor set bound at set 1 for the billboard draw (whole-range, ringed by offset).
-        Ref<DescriptorSet> m_BillboardSet;
+        /// @brief One descriptor set per frame-in-flight, bound at set 1 for the billboard draw.
+        ///
+        /// Each set points at its own ring region for the buffer's lifetime; the draw binds the
+        /// current frame's set (see m_LineSets).
+        vector<Ref<DescriptorSet>> m_BillboardSets;
 
         /// @brief Host-mapped line segment-record SSBO, ring-buffered for frames-in-flight.
         Ref<Buffer> m_LineBuffer;
@@ -173,8 +183,12 @@ namespace Veng::Renderer
         Ref<PipelineLayout> m_Layout;
         /// @brief Set-1 layout for the billboard pick records (binding 0 storage buffer).
         Ref<DescriptorSetLayout> m_SetLayout;
-        /// @brief Descriptor set bound at set 1 for the draw (whole-range, ringed by offset).
-        Ref<DescriptorSet> m_Set;
+        /// @brief One descriptor set per frame-in-flight, bound at set 1 for the draw.
+        ///
+        /// Each set points at its own ring region for the buffer's lifetime; the draw binds the
+        /// current frame's set rather than rewriting one shared set every frame (updating a set a
+        /// pending command buffer still references is a validation error).
+        vector<Ref<DescriptorSet>> m_Sets;
 
         /// @brief Host-mapped billboard pick-record SSBO, ring-buffered for frames-in-flight.
         Ref<Buffer> m_Buffer;
