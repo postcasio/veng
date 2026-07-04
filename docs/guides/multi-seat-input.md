@@ -7,13 +7,12 @@ that guide turned raw device state into named actions *per seat*; this one turns
 "per seat" into **one device per seat** — a keyboard-and-mouse player beside a
 controller player, each driving its own pawn, each rendered into its own quadrant.
 
-The live reference is the [hello-triangle](../../examples/hello-triangle/) module's
-**split-screen mode** — an opt-in, windowed-only two-seat mode toggled with **F2**
-(or launched straight in via the `HT_SPLITSCREEN` environment variable). Its seat
-authoring is in
-[`player.prefab.json`](../../examples/hello-triangle/assets/prefabs/player.prefab.json),
-and the runtime reconfigure is `EnterSplitScreen` / `ExitSplitScreen` in
-[`main.cpp`](../../examples/hello-triangle/main.cpp). Open them beside this guide.
+The seat authoring is in hello-triangle's
+[`player.prefab.json`](../../examples/hello-triangle/assets/prefabs/player.prefab.json)
+— a `Viewer` seat carrying a `SeatInput`. The runtime reconfigure — spawning a second
+seat and reconfiguring the managed viewport list into quadrants — is exercised end to
+end by [`tests/gpu/splitscreen.cpp`](../../tests/gpu/splitscreen.cpp). Open them beside
+this guide.
 
 ---
 
@@ -212,9 +211,8 @@ never reconfigures pays nothing.
 
 A second seat is an ordinary spawn: instantiate a player prefab (which brings a
 `Viewer` + camera + pawn + `Possesses` + `InputContextStack` + `SeatInput`) into the
-running world, then retype its `SeatInput` for its device. hello-triangle's
-`EnterSplitScreen` spawns a copy of the player prefab and retypes the new seat to a
-pad-only guest:
+running world, then retype its `SeatInput` for its device — spawn the copy and retype
+the new seat to a pad-only guest:
 
 ```cpp
 world->Each<Viewer, SeatInput>(

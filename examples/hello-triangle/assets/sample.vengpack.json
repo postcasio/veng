@@ -62,46 +62,6 @@
       "source": "materials/ground.vmat.json"
     },
     {
-      "id": "0x1F9D4A9CB2036BFF",
-      "type": "Texture",
-      "source": "characters/nathan/nathan_dif.tex.json"
-    },
-    {
-      "id": "0x97A01F0D64BC5202",
-      "type": "Texture",
-      "source": "characters/nathan/nathan_norm.tex.json"
-    },
-    {
-      "id": "0x303A3BD91B7A0EE2",
-      "type": "Texture",
-      "source": "characters/nathan/nathan_gloss.tex.json"
-    },
-    {
-      "id": "0x00AB81961CE36B12",
-      "type": "Skeleton",
-      "source": "characters/nathan/nathan.skeleton.json"
-    },
-    {
-      "id": "0x44FDAA531F5328A3",
-      "type": "Animation",
-      "source": "characters/nathan/nathan.walk.animation.json"
-    },
-    {
-      "id": "0x8318BC630442D714",
-      "type": "Shader",
-      "source": "shaders/character.frag.shader.json"
-    },
-    {
-      "id": "0x0381D51EA2563CC1",
-      "type": "Material",
-      "source": "materials/character.vmat.json"
-    },
-    {
-      "id": "0x262E2557FD840496",
-      "type": "Mesh",
-      "source": "characters/nathan/nathan.mesh.json"
-    },
-    {
       "id": "0xBB419B2104D9FE71",
       "type": "Prefab",
       "source": "prefabs/player.prefab.json"
@@ -125,16 +85,6 @@
       "id": "0xE65128F84910FBB9",
       "type": "InputMap",
       "source": "input/gameplay.inputmap.json"
-    },
-    {
-      "id": "0x7CDE28720C89A71B",
-      "type": "Shader",
-      "source": "shaders/gradient_sky.frag.shader.json"
-    },
-    {
-      "id": "0xFE67988D945A948D",
-      "type": "Material",
-      "source": "materials/gradient_sky.vmat.json"
     }
   ]
 }

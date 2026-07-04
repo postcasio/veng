@@ -113,32 +113,35 @@
         "::Veng::Transform": {
           "Position": [
             0.0,
-            0.0,
+            0.9,
             0.0
           ],
           "Rotation": [
             0.0,
-            1.0,
             0.0,
-            0.0
+            0.0,
+            1.0
           ],
           "Scale": [
-            0.02,
-            0.02,
-            0.02
+            1.0,
+            1.0,
+            1.0
           ]
         },
         "::Veng::Hierarchy": {
           "Parent": 2
         },
         "::Veng::MeshRenderer": {
-          "Mesh": "0x262E2557FD840496"
-        },
-        "::Veng::Animator": {
-          "Clip": "0x44FDAA531F5328A3",
-          "Speed": 1.0,
-          "Loop": true,
-          "Playing": true
+          "Source": {
+            "type": "::Veng::CapsuleShape",
+            "value": {
+              "Radius": 0.4,
+              "Height": 1.0,
+              "Segments": 24,
+              "Rings": 8,
+              "Material": "0x0083F9DCA6D4FFE2"
+            }
+          }
         }
       }
     }

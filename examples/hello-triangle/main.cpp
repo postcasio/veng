@@ -4,12 +4,9 @@
 #include <Veng/Module/Module.h>
 
 #include <Veng/Asset/AssetManager.h>
-#include <Veng/Math/Random.h>
-#include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
-#include <Veng/Renderer/PointField.h>
 #include <Veng/Renderer/Sampler.h>
 #include <Veng/Renderer/Viewport.h>
 #include <Veng/ImGui/ImGuiLayer.h>
@@ -48,10 +45,8 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
-#include <array>
 #include <cstdlib>
 #include <fstream>
-#include <span>
 
 using namespace Veng;
 
@@ -296,18 +291,6 @@ protected:
             ApplyLevelRenderSettings(*render, m_SceneSettings, GetWorldViewState());
         }
 
-        // HT_SKY_MATERIAL opts in to the authored Sky-domain material demo (off by default so the
-        // smoke golden is untouched): an authored gradient sky reading a small point buffer through
-        // the storage-buffer material input, written onto the scene's one Sky component.
-        SetupSkyMaterialIfRequested(world);
-
-        // HT_SKY_ATMOSPHERE_BAKED opts the scene's procedural atmosphere into its baked mode (off by
-        // default, so the golden stays on the shipping direct-atmosphere path): the atmosphere bakes
-        // to a radiance cube once per sun/params change and can then light the scene — HT_SKY_LIGHTING
-        // ("sh"/"ibl") selects the tier, so a low sun lights a matte or glossy object through the same
-        // cube the sky displays through.
-        SetupBakedAtmosphereIfRequested(world);
-
         // SSR is off by default in the engine; the sample opts in to show reflections off the
         // gradient-roughness ground plane (at the engine-default half SSR resolution).
         m_SceneSettings.SSR = true;
@@ -323,27 +306,10 @@ protected:
             m_SceneSettings.Mode = static_cast<Renderer::DebugView>(std::atoi(dv));
         }
 
-        // HT_POINTFIELD opts into the point-field mode: a large culled, LOD'd field of random
-        // colored points drawn around the scene. Off by default so the golden/smoke path is
-        // untouched. Zoom the camera (mouse-wheel dolly in the windowed run) to watch individual
-        // stars resolve up close and collapse to an aggregate density glow far out; the frustum
-        // cull drops the off-screen cells.
-        if (std::getenv("HT_POINTFIELD"))
-        {
-            BuildPointField(world);
-        }
-
-        // Apply the sample's topology to the managed viewport; the engine already configured it
-        // from the level, so this layers the sample's extras on. Recreates the scene texture. The
-        // point-field pass inserts itself when the renderer resolves the authored field.
+        // Apply the sample's topology (SSR + any HT_DEBUG_VIEW override) to the managed viewport;
+        // the engine already configured it from the level, so this layers the sample's extras on.
+        // Recreates the scene texture.
         ReconfigureScene();
-
-        // HT_RENDER_SCALE pins a fixed render scale (the headless capture has no slider): it drives
-        // the dynamic-resolution sub-rect so a reduced-resolution render can be captured and diffed.
-        if (const char* scaleEnv = std::getenv("HT_RENDER_SCALE"))
-        {
-            GetPrimaryViewport()->SetRenderScale(std::strtof(scaleEnv, nullptr));
-        }
 
         if (m_SmokeOutput)
         {
@@ -359,11 +325,6 @@ protected:
             // mouse-look runs against a hidden, locked cursor (Escape frees it for the debug UI;
             // a click on the scene re-captures it).
             GetInputRouter().PushFocus(InputFocus::Gameplay);
-
-            // HT_SPLITSCREEN launches straight into the two-seat mode (equivalent to pressing F2
-            // once the world is up); the flush at the top of the first Update applies it. Off by
-            // default, so the ordinary run and the smoke path stay single-seat.
-            m_SplitScreenRequested = std::getenv("HT_SPLITSCREEN") != nullptr;
         }
     }
 
@@ -400,14 +361,6 @@ protected:
             }
             return;
         }
-
-        // F2 requests toggling the two-seat split-screen mode; the request is applied here, at the
-        // top-of-frame safe point outside any Scene iteration, so the seat spawn/despawn is legal.
-        if (GetInput().WasKeyPressed(Key::F2))
-        {
-            m_SplitScreenRequested = !m_SplitScreenRequested;
-        }
-        ApplySplitScreenRequest();
 
         // Escape frees the mouse to drive the debug UI; a left click on the scene (outside any
         // ImGui window) re-captures it and resumes mouse-look. ImGui's NewFrame already ran this
@@ -465,136 +418,6 @@ protected:
             });
     }
 
-    // Brings the live split-screen state in line with the requested state, at the top-of-frame
-    // safe point (called from OnUpdate, outside any Scene iteration) so the seat spawn/despawn and
-    // the managed-viewport reconfigure are legal structural changes. A no-op when already in sync.
-    void ApplySplitScreenRequest()
-    {
-        if (m_SplitScreenRequested == m_SplitScreenActive)
-        {
-            return;
-        }
-
-        if (m_SplitScreenRequested)
-        {
-            EnterSplitScreen();
-        }
-        else
-        {
-            ExitSplitScreen();
-        }
-        m_SplitScreenActive = m_SplitScreenRequested;
-    }
-
-    // Spawns seat B (a second player prefab: Viewer + camera + pawn + Possesses + InputContextStack
-    // + SeatInput) and reconfigures the managed viewport list to two quadrants — seat A on the left
-    // half, seat B on the right half bound to seat B's Viewer so the engine resolves + pushes its
-    // camera and associates its region with the router. Seat B is retyped pad-only (a controller
-    // guest) and its pawn nudged aside so the two players are visibly distinct; seat A keeps its
-    // authored keyboard/mouse SeatInput. Both drive through the unchanged action → intent → movement
-    // pipeline — no new gameplay system.
-    void EnterSplitScreen()
-    {
-        Scene* world = GetWorld();
-        const GameModeConfig* config =
-            world != nullptr ? world->TryGetFirst<GameModeConfig>() : nullptr;
-        if (world == nullptr || config == nullptr || !config->PlayerPrefab.IsLoaded())
-        {
-            // Nothing to split into (no world or the player prefab is not resident); leave the
-            // request satisfied by the single-seat view rather than half-applying.
-            m_SplitScreenRequested = false;
-            return;
-        }
-
-        m_SeatBRoots = config->PlayerPrefab.Get()->SpawnInto(*world, GetAssetManager()).Roots;
-
-        // Retype the spawned seat to a pad-only guest and offset its pawn so the two players do not
-        // overlap. The prefab's seat carries Viewer + SeatInput; its pawn carries Intent.
-        Entity seatB = Entity::Null;
-        world->Each<Viewer, SeatInput>(
-            [&](const Entity seat, Viewer&, SeatInput& devices)
-            {
-                if (!devices.UsesKeyboardMouse)
-                {
-                    return;
-                }
-                // The keyboard/mouse seats are seat A (authored) and the freshly-spawned copy; the
-                // copy is the one whose seat entity is in m_SeatBRoots' subtree. Match by root.
-                if (std::ranges::find(m_SeatBRoots, seat) != m_SeatBRoots.end())
-                {
-                    seatB = seat;
-                    devices.UsesKeyboardMouse = false;
-                    devices.Gamepad = GamepadId(0);
-                    devices.WantsGamepad = false;
-                }
-            });
-
-        if (seatB != Entity::Null)
-        {
-            if (const Possesses* possesses = world->TryGet<Possesses>(seatB);
-                possesses != nullptr && world->IsAlive(possesses->Pawn) &&
-                world->Has<Transform>(possesses->Pawn))
-            {
-                world->Get<Transform>(possesses->Pawn).Position += vec3(3.0f, 0.0f, 0.0f);
-            }
-            m_SeatBViewer = seatB;
-        }
-
-        ReconfigureSplitViewports();
-    }
-
-    // Despawns seat B and reconfigures the managed list back to one full-window viewport (dropping
-    // seat B's viewport, which self-clears its router association), restoring seat A full-window.
-    void ExitSplitScreen()
-    {
-        const ManagedViewportInfo single = SplitViewportInfo(ViewportLayout{}, Entity::Null);
-        ReconfigureManagedViewports(std::span{&single, 1});
-
-        Scene* world = GetWorld();
-        if (world != nullptr)
-        {
-            for (const Entity entity : m_SeatBRoots)
-            {
-                if (world->IsAlive(entity))
-                {
-                    world->DestroyEntity(entity);
-                }
-            }
-        }
-        m_SeatBRoots.clear();
-        m_SeatBViewer = Entity::Null;
-    }
-
-    // Reconfigures the managed list to two quadrant viewports: seat A's viewport narrows to the
-    // left half (unbound — the engine already pushes the primary seat's camera), seat B's is the
-    // right half bound to its Viewer so the engine resolves its camera and associates the region.
-    void ReconfigureSplitViewports()
-    {
-        const std::array quadrants{
-            SplitViewportInfo(ViewportLayout{.Offset = {0.0f, 0.0f}, .Extent = {0.5f, 1.0f}},
-                              Entity::Null),
-            SplitViewportInfo(ViewportLayout{.Offset = {0.5f, 0.0f}, .Extent = {0.5f, 1.0f}},
-                              m_SeatBViewer),
-        };
-        ReconfigureManagedViewports(quadrants);
-    }
-
-    // Builds a managed-viewport info at the given layout and bound seat, carrying the sample's
-    // current SceneRenderer topology (SSR + debug-view extras seeded in OnWorldLoaded) and the
-    // windowed adaptive-resolution opt-in, so a reconfigured viewport renders identically to the
-    // primary.
-    [[nodiscard]] ManagedViewportInfo SplitViewportInfo(const ViewportLayout layout,
-                                                        const Entity viewer) const
-    {
-        return ManagedViewportInfo{
-            .Settings = m_SceneSettings,
-            .MaxAllocationScale = 1.0f,
-            .DynamicResolution = Renderer::DynamicResolutionSettings{},
-            .Layout = layout,
-            .Viewer = viewer,
-        };
-    }
-
     void OnRender() override
     {
         if (GetImGuiLayer())
@@ -610,164 +433,9 @@ protected:
         m_McpServer.reset();
         m_SceneTexture.reset();
         m_SceneSampler.reset();
-
-        // The point field is owned by its scene PointField component and retires with the world; no
-        // consumer-side teardown ordering (the renderer only ever borrowed it per Execute).
-
-        // Release the sky point buffer's bindless slot (a no-op when the demo was off), then drop
-        // the buffer and the material handle so the Material asset retires before the asset manager
-        // and the device tear down. The scene's Sky component drops with the world.
-        GetRenderContext().GetBindlessRegistry().Release(m_SkyPointHandle);
-        m_SkyPointBuffer.reset();
-        m_SkyMaterial = {};
     }
 
 private:
-    // Loads the authored Sky material and binds a small game-supplied point buffer to it when
-    // HT_SKY_MATERIAL is set. This is the opt-in demo of the engine's Sky material domain + the
-    // storage-buffer material input: the game creates a storage Buffer of points, uploads them,
-    // registers the buffer with the bindless registry, and binds it to the material by handle via
-    // SetStorageBufferHandle — the sky shader reads the points typed from the set-0 g_Buffers[]
-    // array. Env-gated so the default smoke/golden path never enables the sky and stays untouched.
-    void SetupSkyMaterialIfRequested(Scene& world)
-    {
-        if (std::getenv("HT_SKY_MATERIAL") == nullptr)
-        {
-            return;
-        }
-
-        // The gradient Sky material's default instance (the .vmat's defaultInstance id).
-        constexpr AssetId SkyMaterialId{0x8F81DD9B40954C95ULL};
-        const AssetResult<AssetHandle<MaterialInstance>> sky =
-            GetAssetManager().LoadSync<MaterialInstance>(SkyMaterialId);
-        if (!sky)
-        {
-            Veng::Log::Warn("hello-triangle: sky material {} failed to load: {}",
-                            SkyMaterialId.Value, sky.error().Detail);
-            return;
-        }
-        m_SkyMaterial = *sky;
-
-        // A handful of bright points along fixed directions. Matches the shader's SkyPoint struct
-        // (float3 Direction, float Size, float3 Color, float Pad = 32 bytes).
-        struct SkyPoint
-        {
-            vec3 Direction;
-            f32 Size;
-            vec3 Color;
-            f32 Pad;
-        };
-        const vector<SkyPoint> points = {
-            {.Direction = glm::normalize(vec3{0.3f, 0.8f, 0.5f}),
-             .Size = 0.004f,
-             .Color = vec3{1.0f, 0.9f, 0.8f},
-             .Pad = 0.0f},
-            {.Direction = glm::normalize(vec3{-0.6f, 0.4f, -0.7f}),
-             .Size = 0.003f,
-             .Color = vec3{0.8f, 0.85f, 1.0f},
-             .Pad = 0.0f},
-            {.Direction = glm::normalize(vec3{0.1f, 0.6f, -0.9f}),
-             .Size = 0.005f,
-             .Color = vec3{1.0f, 0.7f, 0.6f},
-             .Pad = 0.0f},
-        };
-
-        m_SkyPointBuffer = Renderer::Buffer::Create(GetRenderContext(),
-                                                    {
-                                                        .Name = "Sky Points",
-                                                        .Size = points.size() * sizeof(SkyPoint),
-                                                        .Usage = Renderer::BufferUsage::Storage,
-                                                        .HostMapped = true,
-                                                    });
-        std::memcpy(m_SkyPointBuffer->GetMappedData(), points.data(),
-                    points.size() * sizeof(SkyPoint));
-
-        // Register the buffer to get its bindless handle, then bind it to the material. The write
-        // lands in the ring-buffered param block. PointCount is authored in the .vmat to match this
-        // fixed point set.
-        m_SkyPointHandle = GetRenderContext().GetBindlessRegistry().Register(m_SkyPointBuffer);
-        auto& material = const_cast<MaterialInstance&>(*m_SkyMaterial.Get());
-        material.SetStorageBufferHandle("Points", m_SkyPointHandle);
-
-        // Author the sky onto the scene's one Sky component: a MaterialSky source with this
-        // material. The renderer resolves it each Execute — no topology toggle or per-frame push.
-        // The scene has one sky, so overwrite the existing Sky component (the level authors one)
-        // rather than adding a second the resolve would ignore; add one only if none exists.
-        Sky* skyComponent = world.TryGetFirst<Sky>();
-        if (skyComponent == nullptr)
-        {
-            skyComponent = &world.Add<Sky>(world.CreateEntity());
-        }
-        auto* source =
-            static_cast<MaterialSky*>(skyComponent->Source.SetActive(TypeIdOf<MaterialSky>()));
-        source->Material = m_SkyMaterial;
-        // Mode selects the direct per-pixel path or the baked-cube path; the two render the same
-        // sky. Baked is the default (bake once, sample a cube per frame); HT_SKY_DIRECT opts into
-        // the per-pixel path, so a run of each mode over the same material proves they agree.
-        source->Mode = std::getenv("HT_SKY_DIRECT") != nullptr ? SkyMode::Direct : SkyMode::Baked;
-
-        // A baked sky can light the scene: HT_SKY_LIGHTING selects the tier — "sh" projects the
-        // baked cube to a spherical-harmonic ambient (a matte object picks up the sky's color),
-        // "ibl" convolves it into the full split-sum maps (a glossy object reflects it). The
-        // default (and any direct sky, which cannot light) stays background-only, so the smoke and
-        // golden paths — which never set the toggle — see no ambient and do not move.
-        SkyLighting tier = SkyLighting::None;
-        if (source->Mode == SkyMode::Baked)
-        {
-            if (const char* lighting = std::getenv("HT_SKY_LIGHTING"); lighting != nullptr)
-            {
-                const string_view request(lighting);
-                if (request == "ibl" || request == "IBL")
-                {
-                    tier = SkyLighting::IBL;
-                }
-                else if (request == "sh" || request == "SH")
-                {
-                    tier = SkyLighting::SH;
-                }
-            }
-        }
-        skyComponent->Lighting = tier;
-    }
-
-    // Flips the scene's procedural atmosphere into baked mode when HT_SKY_ATMOSPHERE_BAKED is set,
-    // so the atmosphere renders through the radiance-cube skybox path and can light the scene. Off by
-    // default (the golden scene keeps the direct atmosphere). HT_SKY_LIGHTING selects the tier the
-    // baked cube feeds: "sh" projects it to a spherical-harmonic ambient (a matte object picks up the
-    // sky's color), "ibl" convolves it into the full split-sum maps (a glossy object reflects it).
-    // A no-op unless the resolved sky is an AtmosphereSky; leaves the tier None when unset, so the
-    // baked atmosphere then only changes the display path.
-    void SetupBakedAtmosphereIfRequested(Scene& world)
-    {
-        if (std::getenv("HT_SKY_ATMOSPHERE_BAKED") == nullptr)
-        {
-            return;
-        }
-        Sky* skyComponent = world.TryGetFirst<Sky>();
-        if (skyComponent == nullptr || !skyComponent->Source.HasValue() ||
-            skyComponent->Source.ActiveType() != TypeIdOf<AtmosphereSky>())
-        {
-            return;
-        }
-        auto* atmosphere = static_cast<AtmosphereSky*>(skyComponent->Source.ActivePtr());
-        atmosphere->Mode = SkyMode::Baked;
-
-        SkyLighting tier = SkyLighting::None;
-        if (const char* lighting = std::getenv("HT_SKY_LIGHTING"); lighting != nullptr)
-        {
-            const string_view request(lighting);
-            if (request == "ibl" || request == "IBL")
-            {
-                tier = SkyLighting::IBL;
-            }
-            else if (request == "sh" || request == "SH")
-            {
-                tier = SkyLighting::SH;
-            }
-        }
-        skyComponent->Lighting = tier;
-    }
-
     // Constructs the MCP server when HT_MCP=<port> is set (HT_MCP=0 picks an ephemeral port), so the
     // sample exposes its live world/render surface to an agent. This is the ~10-line consumer recipe:
     // fill an McpHost from the app's systems, construct the server, and pump it once per frame
@@ -878,53 +546,6 @@ private:
         }
     }
 
-    // Builds the opt-in point field and authors it onto a scene entity's PointField component: a
-    // box of random colored points around the scene origin, deterministically seeded so the
-    // windowed and headless runs draw the same field. The scene owns the built field (a runtime-only
-    // component Ref), so the renderer walks it every Execute and it retires with the world — no
-    // consumer-side binding or teardown ordering. Sized well under PointField::MaxPoints — this is a
-    // demonstration field, not a stress test.
-    void BuildPointField(Scene& world)
-    {
-        constexpr u32 PointCount = 40000;
-        constexpr f32 HalfExtent = 60.0f;
-
-        vector<Renderer::FieldPoint> points;
-        points.reserve(PointCount);
-        Rng rng(0xF1E1DC0DEULL);
-        for (u32 i = 0; i < PointCount; ++i)
-        {
-            const vec3 position(rng.NextFloat(-HalfExtent, HalfExtent),
-                                rng.NextFloat(-HalfExtent, HalfExtent),
-                                rng.NextFloat(-HalfExtent, HalfExtent));
-            // Warm-to-cool random star colors, packed RGBA8 (R low byte).
-            const u32 r = static_cast<u32>(rng.NextFloat(120.0f, 255.0f));
-            const u32 g = static_cast<u32>(rng.NextFloat(120.0f, 255.0f));
-            const u32 b = static_cast<u32>(rng.NextFloat(160.0f, 255.0f));
-            const u32 color = r | (g << 8) | (b << 16) | (0xFFu << 24);
-            points.push_back(Renderer::FieldPoint{
-                .Position = position,
-                .ColorRgba8 = color,
-                .Size = rng.NextFloat(0.15f, 0.4f),
-            });
-        }
-
-        constexpr f32 CellSize = 12.0f;
-        auto field = Renderer::PointField::Create(GetRenderContext(),
-                                                  {
-                                                      .Name = "HelloTriangle Point Field",
-                                                      .Points = points,
-                                                      .CellSize = CellSize,
-                                                  });
-
-        // Author the field onto a scene entity's PointField component; the renderer resolves it
-        // each Execute. CellSize is recorded as the authored knob the build used.
-        const Entity fieldEntity = world.CreateEntity();
-        auto& component = world.Add<PointField>(fieldEntity);
-        component.CellSize = CellSize;
-        component.Field = std::move(field);
-    }
-
     void WriteSceneCapture(const char* outPath) const
     {
         const Ref<Renderer::Image> output = GetPrimaryViewport()->GetOutput()->GetImage();
@@ -959,15 +580,6 @@ private:
     // values ride the engine's managed-world ViewState (GetWorldViewState) instead.
     Renderer::SceneRendererSettings m_SceneSettings;
 
-    // The opt-in authored Sky material (HT_SKY_MATERIAL), off by default so the smoke golden is
-    // untouched. When enabled, the sample loads a gradient sky material, fills a small point buffer,
-    // registers it in the bindless registry, and binds it to the material by handle — exercising the
-    // Sky material domain and the storage-buffer material input. The buffer + its handle are owned
-    // here and released in OnDispose.
-    AssetHandle<MaterialInstance> m_SkyMaterial;
-    Ref<Renderer::Buffer> m_SkyPointBuffer;
-    Renderer::StorageBufferHandle m_SkyPointHandle;
-
     // Recreated when Configure invalidates the viewport's output image.
     Ref<Renderer::Sampler> m_SceneSampler;
     Ref<ImGuiTexture> m_SceneTexture;
@@ -995,18 +607,6 @@ private:
 
     // Pauses the managed world's simulation so the broadphase reads `static`; never set in smoke.
     bool m_PauseSpin = false;
-
-    // The opt-in two-seat split-screen mode, off by default. The requested state is toggled by F2
-    // (and seeded from HT_SPLITSCREEN); ApplySplitScreenRequest brings the live state (m_Split-
-    // ScreenActive) in line at the top-of-frame safe point. Windowed-only — the smoke path never
-    // enters it, so the golden runs single-seat.
-    bool m_SplitScreenRequested = false;
-    bool m_SplitScreenActive = false;
-
-    // Seat B's spawned root entities (empty when single-seat) and its Viewer seat, tracked so the
-    // mode can despawn the seat and bind its right-half viewport on reconfigure.
-    vector<Entity> m_SeatBRoots;
-    Entity m_SeatBViewer = Entity::Null;
 };
 
 // Factory captures the headless flag so the launcher stays game-agnostic.
