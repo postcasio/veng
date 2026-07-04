@@ -4455,10 +4455,12 @@
         "::Veng::Sky": {
           "Source": {
             "type": "::Veng::AtmosphereSky",
-            "value": {}
+            "value": {
+              "Mode": "Direct"
+            }
           },
           "Intensity": 2.0,
-          "Lighting": "SH"
+          "Lighting": "None"
         }
       }
     },

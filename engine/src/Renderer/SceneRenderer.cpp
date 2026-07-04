@@ -90,38 +90,6 @@ namespace Veng::Renderer
                    a.PlanetRadius == b.PlanetRadius && a.AtmosphereRadius == b.AtmosphereRadius &&
                    a.SunAngularRadius == b.SunAngularRadius && a.SunIrradiance == b.SunIrradiance;
         }
-        // Number of fixed directions the sky is sampled in to project it into SH. A uniform
-        // Fibonacci-sphere set; the order-2 projection is band-limited, so a few hundred
-        // samples capture it well below the cost of re-prefiltering a cubemap.
-        constexpr u32 SkyShSampleCount = 256;
-
-        // Projects the CPU sky-radiance eval into a cosine-convolved irradiance SH set. Samples
-        // AtmosphereSkyRadiance in a fixed uniform direction set (the device-free path — no GPU
-        // readback), accumulates a radiance SH, then convolves with the Lambertian cosine lobe.
-        // The result is the irradiance SH the lighting pass reconstructs per fragment.
-        Sh9 ProjectSkyToIrradiance(const Atmosphere& atmosphere, const vec3& sunDirection)
-        {
-            const vec3 sun = glm::length(sunDirection) > 1e-4f ? glm::normalize(sunDirection)
-                                                               : vec3(0.0f, 1.0f, 0.0f);
-            Sh9 radiance = Sh9::Zero();
-
-            // Uniform sphere sampling weight: 4*pi / N so the coefficients integrate.
-            const f32 weight = 4.0f * glm::pi<f32>() / static_cast<f32>(SkyShSampleCount);
-            const f32 goldenAngle = glm::pi<f32>() * (3.0f - std::sqrt(5.0f));
-            for (u32 i = 0; i < SkyShSampleCount; ++i)
-            {
-                // Fibonacci sphere: z stepped uniformly, azimuth by the golden angle.
-                const f32 z =
-                    1.0f - (2.0f * static_cast<f32>(i) + 1.0f) / static_cast<f32>(SkyShSampleCount);
-                const f32 r = std::sqrt(std::max(0.0f, 1.0f - z * z));
-                const f32 phi = goldenAngle * static_cast<f32>(i);
-                const vec3 direction(r * std::cos(phi), z, r * std::sin(phi));
-
-                const vec3 sky = AtmosphereSkyRadiance(atmosphere, direction, sun);
-                ProjectSample(radiance, direction, sky, weight);
-            }
-            return ConvolveCosine(radiance);
-        }
 
         // The additive forward emissive pass shaders: the dedicated vertex stage forwarding
         // the per-draw emissive color + texture handles, and the fragment writing only the
@@ -3349,47 +3317,39 @@ namespace Veng::Renderer
         m_SsaoPass = nullptr;
         m_SkyMaterialPass = nullptr;
 
-        // The sky pass topology is driven by the resolved Sky component, not a consumer toggle:
-        // each source kind wires its own fullscreen sky pass in the shared sky slot. The SH
-        // skylight arm folds into the lighting pass when the resolved sky is an atmosphere lit
-        // via SH; m_SkylightActive gates the per-frame projection in Execute.
-        //
-        // A baked material sky reuses the cubemap skybox path pointed at the bake target — a baked
-        // sky displays through the skybox pipeline with no shader change — so the skybox slot fires
-        // for an environment source or a baked material, and the direct SkyMaterialScenePass fires
-        // only for a direct material sky.
-        const bool bakedMaterialWanted = sceneComposited &&
-                                         m_ResolvedSkyKind == SkySourceKind::Material &&
-                                         m_ResolvedSkyMaterialBaked;
-        const bool skyboxWanted =
-            (sceneComposited && m_ResolvedSkyKind == SkySourceKind::Environment) ||
-            bakedMaterialWanted;
-        const bool atmosphereWanted =
-            sceneComposited && m_ResolvedSkyKind == SkySourceKind::Atmosphere;
-        const bool skyMaterialWanted = sceneComposited &&
-                                       m_ResolvedSkyKind == SkySourceKind::Material &&
-                                       !m_ResolvedSkyMaterialBaked;
-        // The SH skylight arm folds into the lighting pass for any cube-backed or atmosphere source
-        // on the SH tier: an atmosphere projects its CPU eval; an environment or baked material
-        // projects its radiance cube. Execute fills the SkyShCoeffs from whichever source is active.
-        const bool skylightWanted =
-            (m_ResolvedSkyKind == SkySourceKind::Atmosphere ||
-             m_ResolvedSkyKind == SkySourceKind::Environment || bakedMaterialWanted) &&
-            m_ResolvedSkyLighting == SkyLighting::SH;
+        // The sky pass topology is driven by the resolved Sky component, not a consumer toggle, and
+        // reduces to one rule: a source fills the radiance cube (static) or composites direct
+        // (dynamic), and the cube-backed sources share one display path. Every cube-backed source —
+        // an environment (its own radiance cube), or a baked material/atmosphere (the bake cube) —
+        // displays through the cubemap skybox pass; the two direct per-pixel passes
+        // (SkyMaterialScenePass for a direct material, SkyScenePass for a direct atmosphere) survive
+        // only as the authored dynamic modes. The SH skylight arm folds into the lighting pass for
+        // any cube-backed source on the SH tier; m_SkylightActive gates the per-frame upload in
+        // Execute.
+        const bool bakedSkyWanted = sceneComposited &&
+                                    (m_ResolvedSkyKind == SkySourceKind::Material ||
+                                     m_ResolvedSkyKind == SkySourceKind::Atmosphere) &&
+                                    m_ResolvedSkyBaked;
+        const bool cubeBacked =
+            (sceneComposited && m_ResolvedSkyKind == SkySourceKind::Environment) || bakedSkyWanted;
+        const bool skyboxWanted = cubeBacked;
+        const bool atmosphereWanted = sceneComposited &&
+                                      m_ResolvedSkyKind == SkySourceKind::Atmosphere &&
+                                      !m_ResolvedSkyBaked;
+        const bool skyMaterialWanted =
+            sceneComposited && m_ResolvedSkyKind == SkySourceKind::Material && !m_ResolvedSkyBaked;
+        const bool skylightWanted = cubeBacked && m_ResolvedSkyLighting == SkyLighting::SH;
         m_SkylightActive = skylightWanted;
 
         // The skybox pass samples the IBL radiance set for an environment sky, or the bake's
-        // consumer set (same radiance binding) for a baked material sky.
-        const Ref<DescriptorSet> skyboxSet =
-            bakedMaterialWanted ? m_SkyBake->GetSet() : m_Ibl->GetSet();
+        // consumer set (same radiance binding) for a baked material/atmosphere sky.
+        const Ref<DescriptorSet> skyboxSet = bakedSkyWanted ? m_SkyBake->GetSet() : m_Ibl->GetSet();
 
         // IBL lights the scene when the resolved sky is a cube-backed source on the IBL tier — an
-        // environment (convolved from its equirect cube) or a baked material sky (convolved from
-        // its bake cube). Either fills the IBL consumer set the lighting pass binds; a display-only
-        // source (any other tier) shows its sky without lighting from it.
-        const bool iblAllowed =
-            (m_ResolvedSkyKind == SkySourceKind::Environment || bakedMaterialWanted) &&
-            m_ResolvedSkyLighting == SkyLighting::IBL;
+        // environment (convolved from its equirect cube) or a baked material/atmosphere (convolved
+        // from its bake cube). Either fills the IBL consumer set the lighting pass binds; a
+        // display-only source (any other tier) shows its sky without lighting from it.
+        const bool iblAllowed = cubeBacked && m_ResolvedSkyLighting == SkyLighting::IBL;
 
         // SSR is a Final-only effect plus its own debug arm; the debug arm force-wires the
         // trace so the raw reflection target is visible regardless of the Settings.SSR toggle.
@@ -3564,7 +3524,7 @@ namespace Veng::Renderer
             {
                 m_Passes.push_back(CreateUnique<SkyboxScenePass>(
                     m_Context, m_SkyboxPipeline, skyboxSet, lightingTargetId, depthId,
-                    m_DepthHandle, m_SamplerHandle, m_Extent, bakedMaterialWanted));
+                    m_DepthHandle, m_SamplerHandle, m_Extent, bakedSkyWanted));
             }
             if (atmosphereWanted)
             {
@@ -3713,7 +3673,7 @@ namespace Veng::Renderer
             {
                 m_Passes.push_back(CreateUnique<SkyboxScenePass>(
                     m_Context, m_SkyboxPipeline, skyboxSet, lightingTargetId, depthId,
-                    m_DepthHandle, m_SamplerHandle, m_Extent, bakedMaterialWanted));
+                    m_DepthHandle, m_SamplerHandle, m_Extent, bakedSkyWanted));
             }
             if (atmosphereWanted)
             {
@@ -3898,7 +3858,7 @@ namespace Veng::Renderer
 
         SkySourceKind kind = SkySourceKind::None;
         SkyLighting lighting = SkyLighting::None;
-        bool materialBaked = false;
+        bool baked = false;
 
         if (sky != nullptr && sky->Source.HasValue())
         {
@@ -3920,6 +3880,10 @@ namespace Veng::Renderer
                 view.AtmosphereIntensity = sky->Intensity;
                 view.SkylightIntensity = sky->Intensity;
                 kind = SkySourceKind::Atmosphere;
+                // Baked renders the atmosphere into a radiance cube the skybox path samples; direct
+                // runs it per pixel every frame. The two render the same sky; the author picks per
+                // the sky's dynamics and the renderer honors it (no silent switch).
+                baked = atmosphere->Mode == SkyMode::Baked;
             }
             else if (active == TypeIdOf<MaterialSky>())
             {
@@ -3929,47 +3893,42 @@ namespace Veng::Renderer
                 // Baked runs the material into a radiance cube the skybox path samples; direct runs
                 // it per pixel every frame. The two render the same sky; the author picks per the
                 // sky's dynamics and the renderer honors it (no silent switch).
-                materialBaked = material->Mode == SkyMode::Baked;
+                baked = material->Mode == SkyMode::Baked;
                 view.EnvironmentIntensity = sky->Intensity;
             }
         }
 
-        // The source × tier resolution table. A cube-backed source (an environment map, or a
-        // material sky baked to a radiance cube) drives both lighting tiers: SH projects its cube
-        // to the diffuse skylight, IBL convolves it into the split-sum maps. A direct material sky
-        // has no cube (it composites per pixel), so it cannot light — its SH/IBL cells are rejected
-        // with a log and degrade to background-only; bake to light. An atmosphere lights via SH
-        // today (its IBL cell completes when the atmosphere becomes a cube producer). None is
-        // always display-only. Everything unsupported logs once and does nothing.
-        const bool bakedMaterialSource = kind == SkySourceKind::Material && materialBaked;
-        const bool tierActive = lighting == SkyLighting::None ||
-                                kind == SkySourceKind::Environment || bakedMaterialSource ||
-                                (kind == SkySourceKind::Atmosphere && lighting == SkyLighting::SH);
+        // The source × mode × tier resolution table, now in its final unified shape: every source is
+        // a radiance-cube producer, so a lighting tier is active exactly when the source fills a
+        // cube. An environment always does (its own radiance cube); a material or atmosphere does in
+        // Baked mode (the bake cube), and does not in Direct mode (it composites per pixel, no cube
+        // to light from). A direct source with a lighting tier therefore degrades to background-only
+        // — bake to light — logged once. None is always display-only.
+        const bool cubeBacked =
+            kind == SkySourceKind::Environment ||
+            ((kind == SkySourceKind::Material || kind == SkySourceKind::Atmosphere) && baked);
+        const bool tierActive = lighting == SkyLighting::None || cubeBacked;
         if (!tierActive && !m_UnsupportedTierWarned)
         {
-            Log::Warn("SceneRenderer: Sky lighting tier is not yet active for this source; "
-                      "displaying the sky without lighting the scene.");
+            Log::Warn("SceneRenderer: a direct sky cannot light the scene; displaying the sky "
+                      "without lighting it — bake the sky (SkyMode::Baked) to light.");
             m_UnsupportedTierWarned = true;
         }
 
-        // An unsupported tier degrades to no lighting (display-only); the source still shows. A
-        // cube-backed source keeps its cube generating (the skybox samples it, the convolution
-        // reads it); the lighting pass's iblAllowed/skylight flags — set from the resolved tier in
-        // Rebuild — gate whether the scene is actually lit, so a display-only source shows its sky
-        // without lighting the scene.
+        // A degraded tier resolves to no lighting (display-only); the source still shows. The
+        // lighting pass's iblAllowed/skylight flags — set from the resolved tier in Rebuild — gate
+        // whether the scene is actually lit.
         const SkyLighting resolvedLighting = tierActive ? lighting : SkyLighting::None;
 
-        // A material sky bakes only in Baked mode; the flag is meaningless for other kinds. Drive
-        // the internal recompile on a resolved source-kind, tier, or material-mode change — the
-        // frame boundary the pass set flips at, reusing the imported output (identity preserved).
-        // A direct↔baked flip is a resolved-source change: the same recompile a kind change drives.
-        const bool bakedMaterial = kind == SkySourceKind::Material && materialBaked;
+        // Drive the internal recompile on a resolved source-kind, tier, or bake-mode change — the
+        // frame boundary the pass set flips at, reusing the imported output (identity preserved). A
+        // direct↔baked flip is a resolved-source change: the same recompile a kind change drives.
         if (kind != m_ResolvedSkyKind || resolvedLighting != m_ResolvedSkyLighting ||
-            bakedMaterial != m_ResolvedSkyMaterialBaked)
+            baked != m_ResolvedSkyBaked)
         {
             m_ResolvedSkyKind = kind;
             m_ResolvedSkyLighting = resolvedLighting;
-            m_ResolvedSkyMaterialBaked = bakedMaterial;
+            m_ResolvedSkyBaked = baked;
             Rebuild();
         }
     }
@@ -4986,64 +4945,144 @@ namespace Veng::Renderer
 
         BindlessRegistry& registry = m_Context.GetBindlessRegistry();
 
-        // Bake a baked-mode material sky into its radiance cube on the sky dirty signal (the
-        // resolved material instance changed), so a static sky bakes once and the skybox pass
-        // samples the cube this frame. Recorded into cmd before the graph the skybox pass samples
-        // the cube through, and before the scene claims its own view slot below — the bake writes
-        // six face view-constants regions into distinct view slots, so it must run ahead of the
-        // frame's own BeginView. The material's params/handles were written by the game before
-        // Render; a direct or non-material sky bakes nothing.
-        if (m_ResolvedSkyKind == SkySourceKind::Material && m_ResolvedSkyMaterialBaked &&
-            resolvedView.SkyMaterial.IsLoaded())
+        // Procedural atmosphere: transition the LUTs to a sampled layout once, then regenerate them
+        // only when this frame's Atmosphere differs from the last generated set — the once-per-change
+        // contract (the sun direction is a runtime push, not a precompute input). Gated on the
+        // resolved sky being an atmosphere so the cost is absent on the shipping path. Recorded here,
+        // before the atmosphere bake below and before the graph the direct pass samples them
+        // through, so the LUTs are resident for either display mode. A baked atmosphere generates
+        // them through a self-contained immediate submit, so they are device-resident before the
+        // bake's own immediate-submit readback samples them (the frame command buffer has not been
+        // submitted at that point); a direct atmosphere records into the frame command buffer, which
+        // the direct sky pass samples through in-order later this frame.
+        m_AtmosphereRegeneratedLastFrame = false;
+        if (m_ResolvedSkyKind == SkySourceKind::Atmosphere)
         {
-            const MaterialInstance* material = resolvedView.SkyMaterial.Get();
-            if (material != m_LastBakedSkyMaterial)
+            const bool regenerate = !m_AtmosphereGenerated ||
+                                    !AtmosphereEquals(resolvedView.Atmosphere, m_LastAtmosphere);
+            if (m_ResolvedSkyBaked)
             {
-                m_SkyBake->Bake(cmd, *material);
+                m_Context.ImmediateCommands(
+                    [&](CommandBuffer& lutCmd)
+                    {
+                        m_Atmosphere->EnsureInitialized(lutCmd);
+                        if (regenerate)
+                        {
+                            m_Atmosphere->Generate(lutCmd, resolvedView.Atmosphere);
+                        }
+                    });
+            }
+            else
+            {
+                m_Atmosphere->EnsureInitialized(cmd);
+                if (regenerate)
+                {
+                    m_Atmosphere->Generate(cmd, resolvedView.Atmosphere);
+                }
+            }
+            if (regenerate)
+            {
+                m_LastAtmosphere = resolvedView.Atmosphere;
+                m_AtmosphereGenerated = true;
+                m_AtmosphereRegeneratedLastFrame = true;
+            }
+        }
+
+        // Bake a baked-mode sky into its radiance cube on the sky dirty signal, so a static sky
+        // bakes once and the skybox pass samples the cube this frame. Every baked source — an
+        // authored material or the procedural atmosphere — fills the same cube; display and any
+        // ambient tier then read that one cube, so they agree by construction. Recorded into cmd
+        // before the graph the skybox pass samples the cube through, and before the scene claims its
+        // own view slot below — the bake writes six face view-constants regions into distinct view
+        // slots, so it must run ahead of the frame's own BeginView. A direct or no-sky source bakes
+        // nothing.
+        const bool bakedMaterial = m_ResolvedSkyKind == SkySourceKind::Material &&
+                                   m_ResolvedSkyBaked && resolvedView.SkyMaterial.IsLoaded();
+        const bool bakedAtmosphere =
+            m_ResolvedSkyKind == SkySourceKind::Atmosphere && m_ResolvedSkyBaked;
+        if (bakedMaterial || bakedAtmosphere)
+        {
+            // The dirty signal: for a material, its resolved instance changing; for the atmosphere,
+            // its params or the sun direction changing (both feed the baked sky radiance + disc).
+            const MaterialInstance* material =
+                bakedMaterial ? resolvedView.SkyMaterial.Get() : nullptr;
+            bool bakeDirty = false;
+            if (bakedMaterial)
+            {
+                bakeDirty = material != m_LastBakedSkyMaterial;
+            }
+            else
+            {
+                bakeDirty = !m_BakedAtmosphereValid ||
+                            !AtmosphereEquals(resolvedView.Atmosphere, m_LastBakedAtmosphere) ||
+                            resolvedView.SunDirection != m_LastBakedAtmosphereSun;
+            }
+
+            // The SH tier's self-contained readback bake runs first, before the frame's display bake
+            // records into cmd: its immediate submit (bake + copy + download) records its barriers
+            // off the persistent image-layout tracker, so it must see the tracker as the display
+            // bake left it last frame, not as this frame's not-yet-submitted display bake would. It
+            // leaves the cube freshly baked in a sampled layout, which the display bake below then
+            // re-records over into cmd. Both ride the bake dirty signal, so a static sky pays once.
+            if (m_ResolvedSkyLighting == SkyLighting::SH)
+            {
+                if (bakeDirty || !m_SkyShValid)
+                {
+                    const vector<u8> faces =
+                        bakedMaterial
+                            ? m_SkyBake->BakeAndDownload(*material)
+                            : m_SkyBake->BakeAtmosphereAndDownload(
+                                  m_SkyPipeline, m_Atmosphere->GetSet(), resolvedView.Atmosphere,
+                                  resolvedView.SunDirection, resolvedView.AtmosphereIntensity);
+                    m_SkySh =
+                        EnvironmentIbl::ProjectCubeToIrradianceSh(faces, m_SkyBake->GetFaceSize());
+                    m_SkyShValid = true;
+                }
+            }
+
+            // The display bake into the frame command buffer, so the skybox pass samples the cube
+            // this frame. Recorded after the SH readback (above) and before the IBL convolution
+            // (below), which reads the cube this bake fills.
+            if (bakeDirty)
+            {
+                if (bakedMaterial)
+                {
+                    m_SkyBake->Bake(cmd, *material);
+                }
+                else
+                {
+                    m_SkyBake->BakeAtmosphere(cmd, m_SkyPipeline, m_Atmosphere->GetSet(),
+                                              resolvedView.Atmosphere, resolvedView.SunDirection,
+                                              resolvedView.AtmosphereIntensity);
+                    m_LastBakedAtmosphere = resolvedView.Atmosphere;
+                    m_LastBakedAtmosphereSun = resolvedView.SunDirection;
+                    m_BakedAtmosphereValid = true;
+                }
                 m_LastBakedSkyMaterial = material;
             }
 
-            // The baked cube lights the scene per the resolved tier — display and ambient read the
-            // same cube. IBL convolves the bake cube into the split-sum maps in this command buffer
-            // (the skybox already samples it); SH downloads the freshly-baked cube and projects it
-            // to the skylight coefficients Execute writes below. Both ride the bake dirty signal, so
-            // a static sky pays each once.
+            // IBL convolves the freshly-filled bake cube into the split-sum maps in this command
+            // buffer, on the same bake dirty signal, so a static sky pays it once.
             if (m_ResolvedSkyLighting == SkyLighting::IBL)
             {
-                if (material != m_LastConvolvedSkyMaterial)
+                if (bakeDirty || !m_SkyCubeConvolved)
                 {
                     m_Ibl->EnsureInitialized(cmd);
                     m_Ibl->GenerateFromCube(cmd, m_SkyBake->GetCubeView(),
                                             m_SkyBake->GetFaceSize());
-                    m_LastConvolvedSkyMaterial = material;
+                    m_SkyCubeConvolved = true;
                 }
             }
             else
             {
-                m_LastConvolvedSkyMaterial = nullptr;
-            }
-
-            if (m_ResolvedSkyLighting == SkyLighting::SH)
-            {
-                if (material != m_LastSkyShMaterial)
-                {
-                    const vector<u8> faces = m_SkyBake->BakeAndDownload(*material);
-                    m_SkySh =
-                        EnvironmentIbl::ProjectCubeToIrradianceSh(faces, m_SkyBake->GetFaceSize());
-                    m_SkyShValid = true;
-                    m_LastSkyShMaterial = material;
-                }
-            }
-            else
-            {
-                m_LastSkyShMaterial = nullptr;
+                m_SkyCubeConvolved = false;
             }
         }
         else
         {
             m_LastBakedSkyMaterial = nullptr;
-            m_LastConvolvedSkyMaterial = nullptr;
-            m_LastSkyShMaterial = nullptr;
+            m_SkyCubeConvolved = false;
+            m_BakedAtmosphereValid = false;
         }
 
         // An environment sky on the SH tier lights the diffuse term from its radiance cube — the
@@ -5089,25 +5128,11 @@ namespace Veng::Renderer
             renderProj[2][0] += 2.0f * jitterPixel.x / static_cast<f32>(validExtent.x);
             renderProj[2][1] += 2.0f * jitterPixel.y / static_cast<f32>(validExtent.y);
         }
-        // Dynamic skylight: project the sky into irradiance SH for the lighting pass's second
-        // ambient arm. An atmosphere source projects its CPU sky eval on the sun/atmosphere dirty
-        // signal (a static sky projects once; an animated sun re-projects every frame by design —
-        // the cheap path, far below re-prefiltering a cubemap). A cube-backed material source has
-        // already projected its baked cube into m_SkySh above, on the bake signal. Either way the
-        // coefficients ride the view-constants block below.
+        // SH skylight: the lighting pass's second ambient arm reads m_SkySh from the view-constants
+        // block below. Every SH-tier source projects the one radiance cube it fills — an environment
+        // its equirect cube, a baked material or baked atmosphere its bake cube — on that source's
+        // dirty signal above; the projection is a pure cube→SH read, so display and ambient agree.
         const bool skylightActive = m_SkylightActive;
-        if (skylightActive && m_ResolvedSkyKind == SkySourceKind::Atmosphere)
-        {
-            if (!m_SkyShValid || resolvedView.SunDirection != m_LastSkyShSunDirection ||
-                !AtmosphereEquals(resolvedView.Atmosphere, m_LastSkyShAtmosphere))
-            {
-                m_SkySh =
-                    ProjectSkyToIrradiance(resolvedView.Atmosphere, resolvedView.SunDirection);
-                m_LastSkyShSunDirection = resolvedView.SunDirection;
-                m_LastSkyShAtmosphere = resolvedView.Atmosphere;
-                m_SkyShValid = true;
-            }
-        }
 
         const mat4 renderViewProj = renderProj * view.Camera.View();
         ViewConstantsBlock viewConstants{
@@ -5297,23 +5322,8 @@ namespace Veng::Renderer
         }
         m_LastEnvironment = environment;
 
-        // Procedural atmosphere: transition the LUTs to a sampled layout once, then regenerate
-        // them only when this frame's Atmosphere differs from the last generated set — the
-        // once-per-change contract (the sun direction is a runtime push, not a precompute input).
-        // Gated on the resolved sky being an atmosphere so the cost is absent on the shipping path.
-        m_AtmosphereRegeneratedLastFrame = false;
-        if (m_ResolvedSkyKind == SkySourceKind::Atmosphere)
-        {
-            m_Atmosphere->EnsureInitialized(cmd);
-            if (!m_AtmosphereGenerated ||
-                !AtmosphereEquals(resolvedView.Atmosphere, m_LastAtmosphere))
-            {
-                m_Atmosphere->Generate(cmd, resolvedView.Atmosphere);
-                m_LastAtmosphere = resolvedView.Atmosphere;
-                m_AtmosphereGenerated = true;
-                m_AtmosphereRegeneratedLastFrame = true;
-            }
-        }
+        // The atmosphere LUTs were generated ahead of the atmosphere bake, before the frame's
+        // BeginView (a baked atmosphere reads them per face); nothing more to record here.
 
         m_Internal->Graph->Execute(cmd, bindings, &resolvedView);
 

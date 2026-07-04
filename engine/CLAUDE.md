@@ -63,9 +63,9 @@ the **cooked project** (`<name>.vengproj`) beside the executable (`ReadCookedPro
 each pack it names, loads its **startup level** (declared by the cooked project), spawns the world
 (`Level::LoadInto`, the `Scene` owning its `SceneSimulation`), seeds the managed viewport's topology
 + per-frame view from the spawned scene — the level's `LevelRenderSettings` post knobs
-(`ApplyLevelRenderSettings`) plus the author-opt-in sky/lighting components (`ApplySceneSky`:
-`Environment` / `Atmosphere` / `Skylight` / `TimeOfDay` + the directional sun — a `TimeOfDay`
-derives the sun direction from its hour + orbit and writes the directional light from it) — fires the
+(`ApplyLevelRenderSettings`) plus the scene's one author-opt-in `Sky` component (resolved by the
+renderer itself each `Execute`, the lights model) and a `TimeOfDay` (derives the sun direction from
+its hour + orbit and writes the directional light from it) — fires the
 `OnWorldLoaded(Scene&, ResidencyBatch&)` hook, then starts the simulation. Each `Frame` it
 ticks the world (`Scene::TickSimulation`, unless `SetWorldPaused`), calls `OnUpdate`, then
 **resolves the primary camera and pushes the `ViewState`** into the managed viewport
@@ -341,21 +341,36 @@ global registration). The lighting fragment replaces its flat hemispheric ambien
 irradiance · albedo` diffuse + `prefiltered · (F · brdf.x + brdf.y)` specular when an environment
 is bound. IBL is a **runtime push flag** (`IblEnabled`), not a pipeline variant: the set is always
 bound and valid (the maps are transitioned to a sampled layout at first `Execute` even before an
-environment arrives), so a scene **without** an environment falls back to the exact flat-ambient
-path and renders unchanged. The **skybox is a separate `SkyboxScenePass`** (a `SceneRendererSettings::Skybox`
-topology toggle) inserted between lighting and the bloom/SSR/tonemap tail: a fullscreen pass that
-composites the radiance cube over the cleared-depth background (sampling depth through bindless and
-`discard`ing foreground), writing the same scene-color target lighting wrote so the sky resolves,
-reflects, and tonemaps with the scene. Keeping it a separate pass leaves a clean seam for a future
-procedural sky model. Both passes run fullscreen and mask sky vs. geometry in-shader; a depth/stencil
-mask that skips lighting on sky pixels (and runs the sky only on background) is the named next
-refinement. `SceneView::EnvironmentIntensity` is a per-frame push value (no recompile); the
-environment itself rides `SceneView::Environment`, sourced from an **`Environment` scene component**
-(`AssetHandle<EnvironmentMap> Map` + `Intensity` + a `Skybox` toggle) the author adds to an entity —
-resolved onto the view by `ApplySceneSky` and loaded as an ordinary prefab dependency. The `Skybox`
-pass and IBL are driven by that component's presence, not by a level field. (The cooked
-`EnvironmentMap` asset — the radiance/irradiance/prefiltered/BRDF maps — is `AssetType::Environment`;
-the component is the scene-authoring front-end that references it.)
+environment arrives), so a scene **without** a lighting sky falls back to the exact flat-ambient
+path and renders unchanged.
+
+**The sky is one component, and every sky source is a radiance-cube producer.** The scene carries
+one author-opt-in **`Sky` component** (`Veng/Scene/Components.h`): a **source** (`SkySource`
+variant — `EnvironmentSky` an environment map, `AtmosphereSky` the procedural atmosphere,
+`MaterialSky` an authored Sky-domain material), an `Intensity`, and a **lighting tier**
+(`SkyLighting` — `None` display-only, `SH` a spherical-harmonic diffuse ambient, `IBL` the full
+split-sum). The renderer **resolves this component itself each `Execute`** (`ResolveSky`,
+`TryGetFirst<Sky>` — the lights model, no consumer mapping call or topology toggle) and recompiles
+its own pass set at the frame boundary when the resolved source-kind / tier / bake-mode changes.
+Every source produces the **same radiance cube** the skybox samples and the IBL convolution reads,
+so **what you see and what lights the scene agree by construction**: an environment is a cube
+(equirect→cube), a `MaterialSky` or `AtmosphereSky` in `SkyMode::Baked` bakes to a cube
+(`SkyCubemapBake`, six fullscreen face renders over a fixed per-face basis + a 1×1 far-plane
+stand-in depth, re-baked on the source's dirty signal), and both display through the one
+**`SkyboxScenePass`** (a fullscreen pass compositing the cube over the cleared-depth background,
+`discard`ing foreground, writing the same scene-color target lighting wrote so the sky resolves,
+reflects, and tonemaps with the scene). `SkyMode::Direct` keeps the per-pixel passes as the
+authored **dynamic** modes — `SkyScenePass` (procedural atmosphere) and `SkyMaterialScenePass`
+(authored material) — for a continuously-animating sky; a direct source **cannot light** (it has
+no cube), so a direct source with a lighting tier degrades to background-only with a one-time
+warning (bake to light). Both lighting tiers read the resolved source's one cube: `SH` projects it
+to the irradiance SH the lighting pass folds into its ambient arm (`EnvironmentIbl::ProjectCubeToIrradianceSh`,
+a device-free readback), `IBL` convolves it into the split-sum maps (`EnvironmentIbl::GenerateFromCube`)
+— one cube→SH / cube→IBL path for every source, no per-source special case.
+`SceneView::EnvironmentIntensity`/`AtmosphereIntensity` are per-frame push values (no recompile).
+(The cooked `EnvironmentMap` asset — the radiance/irradiance/prefiltered/BRDF maps — is
+`AssetType::Environment`; the `EnvironmentSky` source is the scene-authoring front-end that
+references it.)
 
 Per-view data rides a **ring-buffered view-constants buffer**, not push constants: the
 `InvViewProj`/`CameraPosition` (for world-position reconstruction), the view/projection,
@@ -1389,8 +1404,8 @@ asset (`AssetType::Level`, `Veng/Asset/Level.h`) does not embed world entities: 
 data — the ordered active `SystemId` set, the `GameModeConfig`, and a tolerant
 **`LevelRenderSettings`** subset (the view-wide post/pipeline knobs — exposure, bloom, shadow/AO
 toggles the app maps onto its `SceneRendererSettings`/`SceneView`). The sky/environment is **not** a
-level field: it is author-opt-in scene components (`Environment` / `Atmosphere` / `Skylight` /
-`TimeOfDay`) on the world prefab, resolved by `ApplySceneSky`. This resolves the prefab dual-purpose tension by
+level field: it is the scene's one author-opt-in `Sky` component (plus an optional `TimeOfDay`) on
+the world prefab, resolved by the renderer itself each `Execute`. This resolves the prefab dual-purpose tension by
 *reusing* prefab serialization, not embedding a second copy: a prefab is a reusable recipe
 again, the `Level` is the once-loaded playable unit (named `Level`, not `Scene`, to avoid
 colliding with the runtime `Scene`). It is CPU data with no GPU resource, loaded through the

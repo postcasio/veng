@@ -813,6 +813,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const Entity skyEntity = scene->CreateEntity();
     Sky& sky = scene->Add<Sky>(skyEntity);
     auto* source = static_cast<AtmosphereSky*>(sky.Source.SetActive(TypeIdOf<AtmosphereSky>()));
+    // This case exercises the direct per-pixel atmosphere pass + its LUT regeneration dirty gate,
+    // so it authors the direct mode explicitly (the component defaults to the baked cube path).
+    source->Mode = SkyMode::Direct;
 
     const Entity sunEntity = scene->CreateEntity();
     Light sun;

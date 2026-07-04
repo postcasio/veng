@@ -36,8 +36,8 @@ namespace Veng::Renderer
         /// @param samplerHandle The shared sampler bindless handle.
         /// @param extent        The render extent.
         /// @param forceEnabled  When true the pass draws unconditionally (the cube is always resident,
-        ///                      the baked-material case); when false it draws only while an environment
-        ///                      is bound (the environment case). Defaults false.
+        ///                      the baked-material/atmosphere case); when false it draws only while an
+        ///                      environment is bound (the environment case). Defaults false.
         SkyboxScenePass(Context& context, Ref<GraphicsPipeline> pipeline, Ref<DescriptorSet> iblSet,
                         ResourceId targetId, ResourceId depthId, TextureHandle depthHandle,
                         SamplerHandle samplerHandle, uvec2 extent, bool forceEnabled = false);
