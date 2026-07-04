@@ -287,21 +287,19 @@ protected:
     void OnWorldLoaded(Scene& world, ResidencyBatch& pending) override
     {
         // Seed the editable topology copy from the scene — the level's post knobs (a seeded
-        // LevelRenderSettings component) plus the author-opt-in sky/lighting components (the HDRI
-        // Environment, any Atmosphere/Skylight/TimeOfDay) and the directional sun — read by the
-        // same queries
-        // the engine used, so the debug RenderSettingsEditor starts in sync. The exposure, bloom,
-        // and environment already rode the engine's view push. Absent settings leave the defaults.
+        // LevelRenderSettings component) — read by the same query the engine used, so the debug
+        // RenderSettingsEditor starts in sync. The exposure and bloom already rode the engine's
+        // view push. The sky is the scene's Sky component, resolved by the renderer itself each
+        // Execute. Absent settings leave the defaults.
         if (const LevelRenderSettings* render = world.TryGetFirst<LevelRenderSettings>())
         {
             ApplyLevelRenderSettings(*render, m_SceneSettings, GetWorldViewState());
         }
-        ApplySceneSky(world, m_SceneSettings, GetWorldViewState());
 
         // HT_SKY_MATERIAL opts in to the authored Sky-domain material demo (off by default so the
         // smoke golden is untouched): an authored gradient sky reading a small point buffer through
-        // the storage-buffer material input.
-        SetupSkyMaterialIfRequested();
+        // the storage-buffer material input, written onto the scene's one Sky component.
+        SetupSkyMaterialIfRequested(world);
 
         // SSR is off by default in the engine; the sample opts in to show reflections off the
         // gradient-roughness ground plane (at the engine-default half SSR resolution).
@@ -619,11 +617,10 @@ protected:
         m_PointField.reset();
 
         // Release the sky point buffer's bindless slot (a no-op when the demo was off), then drop
-        // the buffer and the material handle — including the per-frame view's copy, so the Material
-        // asset retires before the asset manager and the device tear down.
+        // the buffer and the material handle so the Material asset retires before the asset manager
+        // and the device tear down. The scene's Sky component drops with the world.
         GetRenderContext().GetBindlessRegistry().Release(m_SkyPointHandle);
         m_SkyPointBuffer.reset();
-        GetWorldViewState().SkyMaterial = {};
         m_SkyMaterial = {};
     }
 
@@ -634,7 +631,7 @@ private:
     // registers the buffer with the bindless registry, and binds it to the material by handle via
     // SetStorageBufferHandle — the sky shader reads the points typed from the set-0 g_Buffers[]
     // array. Env-gated so the default smoke/golden path never enables the sky and stays untouched.
-    void SetupSkyMaterialIfRequested()
+    void SetupSkyMaterialIfRequested(Scene& world)
     {
         if (std::getenv("HT_SKY_MATERIAL") == nullptr)
         {
@@ -694,9 +691,13 @@ private:
         auto& material = const_cast<MaterialInstance&>(*m_SkyMaterial.Get());
         material.SetStorageBufferHandle("Points", m_SkyPointHandle);
 
-        // Enable the sky-material topology and push the material on the per-frame view.
-        m_SceneSettings.SkyMaterial = true;
-        GetWorldViewState().SkyMaterial = m_SkyMaterial;
+        // Author the sky onto the scene's one Sky component: a MaterialSky source with this
+        // material. The renderer resolves it each Execute — no topology toggle or per-frame push.
+        const Entity skyEntity = world.CreateEntity();
+        Sky& skyComponent = world.Add<Sky>(skyEntity);
+        auto* source =
+            static_cast<MaterialSky*>(skyComponent.Source.SetActive(TypeIdOf<MaterialSky>()));
+        source->Material = m_SkyMaterial;
     }
 
     // Constructs the MCP server when HT_MCP=<port> is set (HT_MCP=0 picks an ephemeral port), so the

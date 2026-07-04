@@ -57,12 +57,11 @@ namespace Veng
         // Level-scoped post/pipeline render knobs a Level carries and the app maps onto the renderer.
         registry.Register<LevelRenderSettings>();
 
-        // Author-opt-in sky/lighting components: presence drives the renderer's sky/IBL topology.
-        // Renderer::Atmosphere and Renderer::SunOrbit register transitively through the Atmosphere
-        // component's Params field and the TimeOfDay component's Orbit field.
-        registry.Register<Environment>();
-        registry.Register<Atmosphere>();
-        registry.Register<Skylight>();
+        // The scene's one authored sky, resolved by the renderer per Execute. SkySource and its
+        // alternatives (EnvironmentSky / AtmosphereSky / MaterialSky), SkyLighting, and
+        // Renderer::Atmosphere register transitively through the Sky component's fields; TimeOfDay's
+        // Renderer::SunOrbit registers through its Orbit field.
+        registry.Register<Sky>();
         registry.Register<TimeOfDay>();
     }
 }

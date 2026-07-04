@@ -52,26 +52,6 @@ namespace Veng::Renderer
         f32 Delta = 0.0f;
         /// @brief Exposure scale applied before the tone curve.
         f32 Exposure = 1.0f;
-        /// @brief Environment map driving image-based lighting and the skybox; empty for none.
-        AssetHandle<EnvironmentMap> Environment;
-        /// @brief Scales the IBL ambient + skybox radiance.
-        f32 EnvironmentIntensity = 1.0f;
-        /// @brief Scales the procedural atmosphere sky + sun disk.
-        f32 AtmosphereIntensity = 1.0f;
-        /// @brief Scales the dynamic SH skylight ambient (SceneRendererSettings::Skylight).
-        f32 SkylightIntensity = 1.0f;
-        /// @brief Whether the procedural atmosphere sky renders this frame.
-        bool AtmosphereEnabled = false;
-        /// @brief Normalized direction toward the sun for the procedural atmosphere (world up +Y).
-        vec3 SunDirection{0.0f, 1.0f, 0.0f};
-        /// @brief Procedural-atmosphere parameters; the renderer regenerates the LUTs on change.
-        Atmosphere Atmosphere;
-        /// @brief Authored Sky-domain material rendered as the background sky; empty for none.
-        ///
-        /// Effective only when SceneRendererSettings::SkyMaterial is on. The material owns its own
-        /// params and any buffers it reads (bound via MaterialInstance::SetStorageBufferHandle);
-        /// the engine supplies the view ray and the g-buffer depth mask. Fills the background only.
-        AssetHandle<MaterialInstance> SkyMaterial;
         /// @brief Bloom bright-pass luminance knee.
         f32 BloomThreshold = 1.0f;
         /// @brief Bloom composite mix intensity.

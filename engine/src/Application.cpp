@@ -145,15 +145,13 @@ namespace Veng
 
         // Seed the managed viewport's topology and the per-frame view knobs from the scene, starting
         // from the configured initial settings: the level's post knobs (a seeded LevelRenderSettings
-        // component) plus the author-opt-in sky/lighting components (Environment / Atmosphere /
-        // Skylight / TimeOfDay) and the directional light's sun. Seeded once here; the game owns
-        // later changes.
+        // component). The sky is the scene's Sky component, resolved by the renderer itself each
+        // Execute — no consumer seeding. Seeded once here; the game owns later changes.
         Renderer::SceneRendererSettings settings = m_ManagedViewports.front().Info.Settings;
         if (const LevelRenderSettings* render = m_World->TryGetFirst<LevelRenderSettings>())
         {
             ApplyLevelRenderSettings(*render, settings, m_WorldView);
         }
-        ApplySceneSky(*m_World, settings, m_WorldView);
         GetPrimaryViewport()->Configure(settings);
 
         // Hand the world to the subclass before the simulation starts, so a game can read its
@@ -448,10 +446,9 @@ namespace Veng
         OnDispose();
 
         // Drop the engine-managed world before the asset manager so its components' AssetHandles
-        // (and the per-frame view's environment + the level handle) retire through the deferred path.
+        // (the sky's environment/material, the level handle) retire through the deferred path.
         m_World.reset();
         m_WorldLevel = {};
-        m_WorldView.Environment = {};
 
         // Drop the engine-owned managed tail and managed viewports before the context: the gather
         // and composite hold GPU resources, and each managed viewport self-unregisters from the

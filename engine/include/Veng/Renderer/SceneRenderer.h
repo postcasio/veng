@@ -316,49 +316,6 @@ namespace Veng::Renderer
         /// (radius/intensity/bias) are fixed in the SSAO shader.
         bool AO = true;
 
-        /// @brief Whether the environment renders as the background skybox.
-        ///
-        /// A topology change: it inserts/removes the fullscreen SkyboxScenePass between
-        /// lighting and the bloom/tonemap tail. The pass is a per-frame no-op unless an
-        /// environment is bound (SceneView::EnvironmentMap); EnvironmentIntensity rides the
-        /// per-frame SceneView. Independent of image-based lighting, which is driven by the
-        /// presence of an environment regardless of this toggle.
-        bool Skybox = true;
-
-        /// @brief Whether the procedural atmosphere renders as the background sky.
-        ///
-        /// A topology change: it inserts/removes the fullscreen SkyScenePass in the same slot
-        /// as the cubemap skybox (after lighting, before the bloom/tonemap tail), sampling the
-        /// precomputed atmosphere LUTs along each view ray. The sun direction and Atmosphere
-        /// parameters ride the per-frame SceneView; the renderer regenerates the LUTs only when
-        /// the Atmosphere changes. Off by default, so the shipping path and smoke_golden are
-        /// untouched. An alternative sky source to the environment skybox, not a replacement for
-        /// image-based lighting (the EnvironmentMap IBL path is independent).
-        bool Atmosphere = false;
-
-        /// @brief Whether an authored Sky-domain material renders as the background sky.
-        ///
-        /// A topology change: it inserts/removes the fullscreen SkyMaterialScenePass in the same
-        /// slot as the cubemap skybox and the procedural atmosphere (after lighting, before the
-        /// bloom/tonemap tail). The pass runs the Sky material supplied per-frame on the
-        /// SceneView (SkyMaterial), reconstructing the view ray and discarding foreground; it is a
-        /// per-frame no-op unless a Sky material is bound. Off by default, so the shipping path and
-        /// smoke_golden are untouched. An authored sky source, peer to the environment skybox and
-        /// the procedural atmosphere; it fills the background only (it feeds no image-based lighting).
-        bool SkyMaterial = false;
-
-        /// @brief Whether the dynamic sky-projected SH ambient lights the scene's diffuse term.
-        ///
-        /// Gates the per-frame CPU project-and-upload: each Execute samples the Atmosphere sky
-        /// (the device-free CPU eval) in a fixed direction set, projects it to order-2 SH,
-        /// cosine-convolves it to irradiance, and uploads the 9 coefficients into the lighting
-        /// constants — re-projecting only when the sun/atmosphere changes (a static sky projects
-        /// once). The lighting pass's ambient branch becomes three-way: IBL when an environment
-        /// is bound, else this SH skylight when on, else the flat fallback. Off by default, so
-        /// the shipping path and smoke_golden are untouched. The diffuse half of a dynamic sky's
-        /// lighting; it does not touch the specular path or replace IBL.
-        bool Skylight = false;
-
         /// @brief Whether the additive forward emissive pass runs.
         ///
         /// A topology change: it inserts/removes the EmissiveScenePass between deferred lighting
@@ -484,58 +441,59 @@ namespace Veng::Renderer
         /// Read fresh every Execute, so tuning it never triggers a recompile.
         f32 Exposure = 1.0f;
 
-        /// @brief Environment map driving image-based lighting and the skybox; empty for none.
+        /// @brief Environment map for the skybox and image-based lighting; empty for none.
         ///
-        /// When resident, the renderer (re)generates its IBL maps on change and the lighting
-        /// pass replaces the flat ambient term with split-sum IBL. An unset/not-yet-loaded
-        /// handle falls back to the flat ambient (a scene without an environment is unchanged).
+        /// The renderer fills this from the resolved Sky component each Execute (its source is an
+        /// EnvironmentSky) — never pushed by a consumer. When resident, the renderer (re)generates
+        /// its IBL maps on change and the lighting pass replaces the flat ambient term with
+        /// split-sum IBL; empty falls back to the flat ambient.
         AssetHandle<EnvironmentMap> Environment;
 
-        /// @brief Scales the IBL ambient + skybox radiance; pushed to the lighting + skybox passes each Execute.
+        /// @brief Scales the IBL ambient + skybox radiance; read by the lighting + skybox passes each Execute.
         ///
-        /// Rides the per-frame push (no recompile). Ignored when no environment is bound.
+        /// Filled from the resolved Sky component's Intensity. Ignored when no environment is bound.
         f32 EnvironmentIntensity = 1.0f;
 
-        /// @brief Scales the procedural atmosphere sky + sun disk; pushed to the SkyScenePass each Execute.
+        /// @brief Scales the procedural atmosphere sky + sun disk; read by the SkyScenePass each Execute.
         ///
-        /// Rides the per-frame push (no recompile). Ignored when the atmosphere sky is off.
+        /// Filled from the resolved Sky component's Intensity. Ignored when the atmosphere sky is off.
         f32 AtmosphereIntensity = 1.0f;
 
-        /// @brief Scales the dynamic SH skylight ambient; pushed to the lighting pass each Execute.
+        /// @brief Scales the dynamic SH skylight ambient; read by the lighting pass each Execute.
         ///
-        /// Rides the per-frame push (no recompile). Effective only when SceneRendererSettings::Skylight
-        /// is on and no environment is bound (the SH skylight is the second ambient arm, below IBL).
+        /// Filled from the resolved Sky component's Intensity. Effective only when the resolved sky
+        /// lights the scene via SH and no environment is bound (the second ambient arm, below IBL).
         f32 SkylightIntensity = 1.0f;
 
         /// @brief Whether the procedural atmosphere sky renders this frame.
         ///
-        /// Rides the per-frame push: the SkyScenePass (present when SceneRendererSettings::Atmosphere
-        /// is on) discards every pixel when this is false, so the sky is a per-frame opt-in over
-        /// the topology toggle. A caller leaves it false to keep the cubemap skybox / flat fallback.
+        /// Set by the renderer when the resolved Sky component's source is an AtmosphereSky, so the
+        /// SkyScenePass (present in that topology) fills the background; else false. The sky pass
+        /// discards every pixel when this is false.
         bool AtmosphereEnabled = false;
 
         /// @brief Normalized direction toward the sun for the procedural atmosphere (world up +Y).
         ///
-        /// Drives the sky color and the sun-disk placement. A day/night cycle animates this with
-        /// no precompute — the sun direction is a runtime parameter into the LUT sample, never a
-        /// precompute input. Ignored when the atmosphere sky is off.
+        /// Derived by the renderer from the scene's first directional light. Drives the sky color
+        /// and the sun-disk placement; a day/night cycle animates it with no precompute (a runtime
+        /// LUT-sample parameter, never a precompute input). Ignored when the atmosphere sky is off.
         vec3 SunDirection{0.0f, 1.0f, 0.0f};
 
         /// @brief Procedural-atmosphere parameters; the LUTs regenerate when these change.
         ///
-        /// Compared field-for-field against the last-generated set each Execute; a change records
-        /// the (one-time) LUT regeneration before the graph. Ignored when the atmosphere sky is off.
+        /// Filled from the resolved Sky component's AtmosphereSky source. Compared field-for-field
+        /// against the last-generated set each Execute; a change records the (one-time) LUT
+        /// regeneration before the graph. Ignored when the atmosphere sky is off.
         Atmosphere Atmosphere;
 
         /// @brief Authored Sky-domain material rendered as the background sky; empty for none.
         ///
-        /// Effective only when SceneRendererSettings::SkyMaterial is on: the SkyMaterialScenePass
-        /// runs this material fullscreen in the sky slot, compositing its radiance over the lit
-        /// scene color. An unset (or not-yet-loaded) handle leaves the sky slot empty (the lit
-        /// color shows through), so a scene without an authored sky is unchanged. The material owns
-        /// its own params and any buffers/textures it reads (a game binds a storage buffer via
-        /// MaterialInstance::SetStorageBufferHandle); the engine supplies only the view ray and the
-        /// g-buffer depth mask. It fills the background only — it feeds no image-based lighting.
+        /// Filled from the resolved Sky component's MaterialSky source. The SkyMaterialScenePass
+        /// (present in that topology) runs it fullscreen in the sky slot, compositing its radiance
+        /// over the lit scene color; empty leaves the sky slot empty (the lit color shows through).
+        /// The material owns its own params and any buffers/textures it reads (a game binds a storage
+        /// buffer via MaterialInstance::SetStorageBufferHandle); the engine supplies only the view
+        /// ray and the g-buffer depth mask. It fills the background only — it feeds no lighting.
         AssetHandle<MaterialInstance> SkyMaterial;
 
         /// @brief Bloom bright-pass luminance knee; pushed to the downsample compute each Execute.
@@ -1028,6 +986,18 @@ namespace Veng::Renderer
         void WriteShadowAtlasBinding(const Ref<ImageView>& atlasView);
         /// @brief Rebuilds the pass set from Settings.Mode and recompiles the RenderGraph.
         void Rebuild();
+
+        /// @brief Resolves the scene's Sky component into the SceneView's sky fields for this Execute.
+        ///
+        /// Reads the first Sky component off view.World (warning once if several exist), fills the
+        /// renderer-owned sky fields (environment/atmosphere/material handles, intensity, and — from
+        /// the first directional light — the toward-sun direction) onto @p view, and returns the
+        /// resolved source kind and lighting tier so Execute can drive an internal Rebuild when
+        /// either changed. An absent or empty Sky resolves to None and clears the fields (the flat
+        /// fallback). A source × tier whose lighting is not yet active degrades to background-only,
+        /// logging once. The one internal reader of the scene the way the light walk is.
+        /// @param view  The internal SceneView whose sky fields this fills in place.
+        void ResolveSky(SceneView& view);
 
         /// @brief Sets m_ActiveCull from Settings.Cull and the device-support fallback.
         ///
@@ -1720,10 +1690,59 @@ namespace Veng::Renderer
         /// @brief Non-owning pointer into m_Passes to the SsaoScenePass; null when AO is off.
         class SsaoScenePass* m_SsaoPass = nullptr;
 
-        /// @brief Non-owning pointer into m_Passes to the SkyMaterialScenePass; null when SkyMaterial is off.
+        /// @brief Non-owning pointer into m_Passes to the SkyMaterialScenePass; null when the sky is not a material.
         ///
-        /// Execute forwards the per-frame SceneView::SkyMaterial to it before the graph runs.
+        /// Execute forwards the resolved SceneView::SkyMaterial to it before the graph runs.
         class SkyMaterialScenePass* m_SkyMaterialPass = nullptr;
+
+        /// @brief The kind of the sky source the renderer resolved from the scene's Sky component.
+        ///
+        /// Drives the sky pass topology in Rebuild: no sky, the cubemap skybox (environment source),
+        /// the procedural atmosphere, or an authored Sky-domain material. A resolved change to this
+        /// kind between Executes triggers an internal Rebuild — the lights model, driven by the
+        /// component rather than a consumer Configure.
+        enum class SkySourceKind : u8
+        {
+            /// @brief No Sky component (or an empty source): the flat fallback, no sky pass.
+            None,
+            /// @brief An EnvironmentSky source: the cubemap SkyboxScenePass samples its radiance cube.
+            Environment,
+            /// @brief An AtmosphereSky source: the procedural SkyScenePass fills the background.
+            Atmosphere,
+            /// @brief A MaterialSky source: the SkyMaterialScenePass runs the authored material.
+            Material,
+        };
+
+        /// @brief The resolved sky kind the current pass set was built for; gates the internal Rebuild.
+        ///
+        /// Compared against each Execute's freshly-resolved kind; a change recompiles the pass set at
+        /// the frame boundary (reusing the imported output, so GetOutput() stays valid). Initialized
+        /// to None so a first-frame environment/atmosphere/material sky triggers the initial wiring.
+        SkySourceKind m_ResolvedSkyKind = SkySourceKind::None;
+
+        /// @brief The resolved lighting tier the current pass set was built for; gates the internal Rebuild.
+        ///
+        /// A change to whether the resolved sky lights the scene via SH (the lighting pass's second
+        /// ambient arm) recompiles the pass set the same way a source-kind change does.
+        SkyLighting m_ResolvedSkyLighting = SkyLighting::None;
+
+        /// @brief Whether the last Rebuild wired the SH skylight ambient arm into the lighting pass.
+        ///
+        /// True when the resolved sky is an atmosphere lit via SH. Gates the per-frame CPU
+        /// project-and-upload in Execute, the way the retired Skylight toggle did.
+        bool m_SkylightActive = false;
+
+        /// @brief Whether the "multiple Sky components" ambiguity warning has already logged.
+        ///
+        /// The renderer resolves the first walked Sky and warns once; a persistent second component
+        /// does not re-log every frame.
+        bool m_MultipleSkyWarned = false;
+
+        /// @brief Whether the unsupported-tier degrade warning has already logged.
+        ///
+        /// A source × tier combination whose lighting machinery is not yet active degrades to
+        /// background-only and logs once, not every frame.
+        bool m_UnsupportedTierWarned = false;
 
         /// @brief True when the last Rebuild wired the SSR passes (Final mode + Settings.SSR, or the
         ///        Reflections debug arm). Execute binds the SSR imports only when true.

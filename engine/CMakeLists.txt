@@ -76,6 +76,7 @@ add_library(veng SHARED
         src/Scene/SceneSimulation.cpp
         src/Scene/SceneViewport.cpp
         src/Scene/SystemRegistry.cpp
+        src/Scene/TimeOfDay.cpp
         src/Scene/Transforms.cpp
         src/Scene/Visibility.cpp
         src/Renderer/SwapChainCompositePass.cpp

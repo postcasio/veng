@@ -82,8 +82,8 @@ namespace VengEditor
         /// Folds the topology toggles (Bloom/Shadows/AO) into the SceneRendererSettings, flagged for
         /// a Configure only when one actually changed, so a per-edit call never forces a needless
         /// recompile, and stores the per-frame Exposure / BloomIntensity the pushed ViewState carries
-        /// each frame. The sky/environment is not here — it is resolved from the scene's components
-        /// each frame in OnUI (ApplySceneSky). The level editor pushes its live settings here so an
+        /// each frame. The sky is not here — it is the scene's Sky component, resolved by the
+        /// renderer itself each Execute. The level editor pushes its live settings here so an
         /// edit shows in the viewport immediately, ahead of the recook.
         /// @param render  The level's post/pipeline render settings.
         void ApplyLevelRenderSettings(const Veng::LevelRenderSettings& render);

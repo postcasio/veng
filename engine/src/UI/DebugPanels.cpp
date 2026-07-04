@@ -271,35 +271,9 @@ namespace Veng::UI
         // the next push with no reconfigure.
         (void)UI::Drag("Exposure", view.Exposure, {.Speed = 0.01f, .Min = 0.0f, .Max = 16.0f});
 
-        // Skybox is a topology toggle (its own pass); environment intensity is a per-frame value.
-        changed |= UI::Checkbox("Skybox", settings.Skybox);
-        (void)UI::Drag("Env Intensity", view.EnvironmentIntensity,
-                       {.Speed = 0.01f, .Min = 0.0f, .Max = 8.0f});
-
-        // The procedural atmosphere is a topology toggle (its own sky pass); the per-frame enable
-        // and the sun direction ride the ViewState. The sun elevation/azimuth drag drives the
-        // day/night look with no precompute — only the LUT-affecting Atmosphere fields regenerate.
-        changed |= UI::Checkbox("Atmosphere", settings.Atmosphere);
-        {
-            auto atmosphereDisabled = UI::Disabled(!settings.Atmosphere);
-            (void)UI::Checkbox("Atmosphere sky", view.AtmosphereEnabled);
-            if (UI::Drag("Sun direction", view.SunDirection, {.Speed = 0.01f}))
-            {
-                const f32 length = glm::length(view.SunDirection);
-                view.SunDirection =
-                    length > 1e-4f ? view.SunDirection / length : vec3(0.0f, 1.0f, 0.0f);
-            }
-        }
-
-        // The dynamic SH skylight is a topology toggle (the lighting pass's three-way ambient
-        // branch); its intensity is a per-frame ViewState value. It projects the same Atmosphere
-        // sky into SH, so the sun direction above drives it too. The intensity greys out when off.
-        changed |= UI::Checkbox("Skylight", settings.Skylight);
-        {
-            auto skylightDisabled = UI::Disabled(!settings.Skylight);
-            (void)UI::Drag("Skylight intensity", view.SkylightIntensity,
-                           {.Speed = 0.01f, .Min = 0.0f, .Max = 8.0f});
-        }
+        // The sky is the scene's Sky component, resolved by the renderer itself — not a topology
+        // toggle or a per-frame ViewState value — so it is authored and edited in the inspector,
+        // not here.
 
         // Bloom on/off and the kernel are topology; threshold/intensity/radius are per-frame
         // ViewState values. The per-bloom knobs grey out when bloom is off.

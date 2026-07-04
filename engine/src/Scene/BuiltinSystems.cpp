@@ -8,6 +8,7 @@
 #include <Veng/Scene/Movement.h>
 #include <Veng/Scene/RootMotion.h>
 #include <Veng/Scene/SystemRegistry.h>
+#include <Veng/Scene/TimeOfDay.h>
 
 namespace Veng
 {
@@ -29,5 +30,9 @@ namespace Veng
         registry.Register<CameraRigSystem>();
         registry.Register<AnimationSystem>();
         registry.Register<ConstantMotionSystem>();
+
+        // Derives the sun from the scene's TimeOfDay and writes the first directional light,
+        // so the sun the sky and shadows read is real world state any system can also read.
+        registry.Register<TimeOfDaySystem>();
     }
 }

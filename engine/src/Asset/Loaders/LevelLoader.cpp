@@ -128,8 +128,9 @@ namespace Veng
         }
 
         // ── 5. Collect dependency cache entries (kept resident for the level) ─
-        // The environment map is no longer a level field: it rides an Environment component on the
-        // world prefab and resolves through the prefab's own dependency walk like any embedded handle.
+        // The environment map is no longer a level field: it rides an EnvironmentSky source on the
+        // world prefab's Sky component and resolves through the prefab's own dependency walk like
+        // any embedded handle.
         vector<Ref<Detail::AssetCacheEntry>> dependencies;
         dependencies.push_back(AssetManager::EntryOf(*world));
         if (playerId.IsValid())

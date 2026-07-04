@@ -1067,12 +1067,12 @@ namespace Veng::Renderer
                                       uvec2 extent, bool useSsao, Ref<DescriptorSet> shadowSet,
                                       u32 shadowRingStride, u32 punctualRingStride,
                                       Ref<DescriptorSet> iblSet, u32 prefilterMipCount,
-                                      bool skylight, bool writeToOutput = false)
+                                      bool skylight, bool iblAllowed, bool writeToOutput = false)
                 : m_Context(context), m_Pipeline(std::move(pipeline)), m_Extent(extent),
                   m_UseSsao(useSsao), m_ShadowSet(std::move(shadowSet)),
                   m_ShadowRingStride(shadowRingStride), m_PunctualRingStride(punctualRingStride),
                   m_IblSet(std::move(iblSet)), m_PrefilterMipCount(prefilterMipCount),
-                  m_Skylight(skylight), m_WriteToOutput(writeToOutput)
+                  m_Skylight(skylight), m_IblAllowed(iblAllowed), m_WriteToOutput(writeToOutput)
             {
             }
 
@@ -1088,6 +1088,7 @@ namespace Veng::Renderer
                 const SamplerHandle samplerHandle = io.SamplerHandle;
                 const bool useSsao = m_UseSsao;
                 const bool skylight = m_Skylight;
+                const bool iblAllowed = m_IblAllowed;
                 const Ref<DescriptorSet> shadowSet = m_ShadowSet;
                 const u32 shadowRingStride = m_ShadowRingStride;
                 const u32 punctualRingStride = m_PunctualRingStride;
@@ -1127,7 +1128,7 @@ namespace Veng::Renderer
                 const u32 prefilterMipCount = m_PrefilterMipCount;
                 builder.Execute(
                     [this, albedoHandle, normalHandle, ormHandle, depthHandle, ssaoHandle,
-                     samplerHandle, useSsao, skylight, shadowSet, shadowRingStride,
+                     samplerHandle, useSsao, skylight, iblAllowed, shadowSet, shadowRingStride,
                      punctualRingStride, iblSet, prefilterMipCount](PassContext& inner)
                     {
                         const ScenePassContext ctx = Wrap(inner);
@@ -1155,11 +1156,13 @@ namespace Veng::Renderer
                                                frameSlot * punctualRingStride},
                         });
 
-                        // IBL is active when the bound environment is resident; the renderer
-                        // generated its maps before the graph ran. EnvIntensity rides the
-                        // per-frame SceneView; the skybox is a separate pass.
+                        // IBL is active when the bound environment is resident AND the resolved sky
+                        // requests the IBL tier (iblAllowed); a display-only environment sky shows
+                        // its skybox but does not light the scene. EnvIntensity rides the per-frame
+                        // SceneView; the skybox is a separate pass.
                         const SceneView& view = ctx.View();
-                        const u32 iblEnabled = view.Environment.IsLoaded() ? 1u : 0u;
+                        const u32 iblEnabled =
+                            (iblAllowed && view.Environment.IsLoaded()) ? 1u : 0u;
                         // The SH skylight is the second ambient arm, below IBL: active only when
                         // its setting is on AND no environment is bound (IBL wins). The shader's
                         // three-way branch reads it after IblEnabled.
@@ -1217,6 +1220,7 @@ namespace Veng::Renderer
             Ref<DescriptorSet> m_IblSet;
             u32 m_PrefilterMipCount = 0;
             bool m_Skylight = false;
+            bool m_IblAllowed = true;
             bool m_WriteToOutput = false;
         };
 
@@ -3333,6 +3337,25 @@ namespace Veng::Renderer
         m_SsaoPass = nullptr;
         m_SkyMaterialPass = nullptr;
 
+        // The sky pass topology is driven by the resolved Sky component, not a consumer toggle:
+        // each source kind wires its own fullscreen sky pass in the shared sky slot. The SH
+        // skylight arm folds into the lighting pass when the resolved sky is an atmosphere lit
+        // via SH; m_SkylightActive gates the per-frame projection in Execute.
+        const bool skyboxWanted =
+            sceneComposited && m_ResolvedSkyKind == SkySourceKind::Environment;
+        const bool atmosphereWanted =
+            sceneComposited && m_ResolvedSkyKind == SkySourceKind::Atmosphere;
+        const bool skyMaterialWanted =
+            sceneComposited && m_ResolvedSkyKind == SkySourceKind::Material;
+        const bool skylightWanted = m_ResolvedSkyKind == SkySourceKind::Atmosphere &&
+                                    m_ResolvedSkyLighting == SkyLighting::SH;
+        m_SkylightActive = skylightWanted;
+
+        // IBL lights the scene only when the resolved sky is an environment on the IBL tier; a
+        // display-only environment (any other tier) shows its skybox without lighting from it.
+        const bool iblAllowed = m_ResolvedSkyKind == SkySourceKind::Environment &&
+                                m_ResolvedSkyLighting == SkyLighting::IBL;
+
         // SSR is a Final-only effect plus its own debug arm; the debug arm force-wires the
         // trace so the raw reflection target is visible regardless of the Settings.SSR toggle.
         const bool debugReflections = m_Settings.Mode == DebugView::Reflections;
@@ -3496,32 +3519,25 @@ namespace Veng::Renderer
             m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
                 m_Context, ssaoFold ? m_SsaoLightingPipeline : m_LightingPipeline, m_Extent,
                 ssaoFold, m_ShadowSet, m_ShadowRingStride, m_PunctualRingStride, m_Ibl->GetSet(),
-                m_Ibl->GetPrefilterMipCount(), m_Settings.Skylight));
+                m_Ibl->GetPrefilterMipCount(), skylightWanted, iblAllowed));
 
-            // Skybox composites the radiance cube over the lit scene color, before the
-            // TAA/SSR/bloom tail so the sky resolves, reflects, and tonemaps with the scene.
-            // Gated on the Skybox setting; per frame it is a no-op unless an environment is bound.
-            if (m_Settings.Skybox)
+            // The resolved sky source wires exactly one fullscreen sky pass in the shared sky slot,
+            // before the TAA/SSR/bloom tail so the sky resolves, reflects, and tonemaps with the
+            // scene. An environment source samples its radiance cube; an atmosphere source samples
+            // the procedural LUTs; a material source runs the authored Sky-domain material.
+            if (skyboxWanted)
             {
                 m_Passes.push_back(CreateUnique<SkyboxScenePass>(
                     m_Context, m_SkyboxPipeline, m_Ibl->GetSet(), lightingTargetId, depthId,
                     m_DepthHandle, m_SamplerHandle, m_Extent));
             }
-
-            // Procedural atmosphere sky composites in the same slot as the cubemap skybox; per
-            // frame it is a no-op unless SceneView::AtmosphereEnabled is pushed. Independent of the
-            // skybox toggle — a sample drives one or the other through the per-frame flag.
-            if (m_Settings.Atmosphere)
+            if (atmosphereWanted)
             {
                 m_Passes.push_back(CreateUnique<SkyScenePass>(
                     m_Context, m_SkyPipeline, m_Atmosphere->GetSet(), lightingTargetId, depthId,
                     m_DepthHandle, m_SamplerHandle, m_Extent));
             }
-
-            // An authored Sky-domain material composites in the same slot as the atmosphere/skybox;
-            // per frame it is a no-op unless SceneView::SkyMaterial is bound. The pass builds its
-            // pipeline from the material's fragment shader against HdrFormat (the lit target).
-            if (m_Settings.SkyMaterial)
+            if (skyMaterialWanted)
             {
                 auto skyMaterialPass = CreateUnique<SkyMaterialScenePass>(
                     m_Context, lightingTargetId, depthId, m_DepthHandle, m_SamplerHandle, HdrFormat,
@@ -3644,7 +3660,7 @@ namespace Veng::Renderer
             m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
                 m_Context, m_CascadeDebugPipeline, m_Extent, /*useSsao=*/false, m_ShadowSet,
                 m_ShadowRingStride, m_PunctualRingStride, m_Ibl->GetSet(),
-                m_Ibl->GetPrefilterMipCount(), m_Settings.Skylight, /*writeToOutput=*/true));
+                m_Ibl->GetPrefilterMipCount(), skylightWanted, iblAllowed, /*writeToOutput=*/true));
             break;
         case DebugView::Bloom:
             // Bloom samples the composited HDR, so the same contributors the Final arm folds into it
@@ -3656,20 +3672,20 @@ namespace Veng::Renderer
             m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
                 m_Context, ssaoFold ? m_SsaoLightingPipeline : m_LightingPipeline, m_Extent,
                 ssaoFold, m_ShadowSet, m_ShadowRingStride, m_PunctualRingStride, m_Ibl->GetSet(),
-                m_Ibl->GetPrefilterMipCount(), m_Settings.Skylight));
-            if (m_Settings.Skybox)
+                m_Ibl->GetPrefilterMipCount(), skylightWanted, iblAllowed));
+            if (skyboxWanted)
             {
                 m_Passes.push_back(CreateUnique<SkyboxScenePass>(
                     m_Context, m_SkyboxPipeline, m_Ibl->GetSet(), lightingTargetId, depthId,
                     m_DepthHandle, m_SamplerHandle, m_Extent));
             }
-            if (m_Settings.Atmosphere)
+            if (atmosphereWanted)
             {
                 m_Passes.push_back(CreateUnique<SkyScenePass>(
                     m_Context, m_SkyPipeline, m_Atmosphere->GetSet(), lightingTargetId, depthId,
                     m_DepthHandle, m_SamplerHandle, m_Extent));
             }
-            if (m_Settings.SkyMaterial)
+            if (skyMaterialWanted)
             {
                 auto skyMaterialPass = CreateUnique<SkyMaterialScenePass>(
                     m_Context, lightingTargetId, depthId, m_DepthHandle, m_SamplerHandle, HdrFormat,
@@ -3699,7 +3715,7 @@ namespace Veng::Renderer
             m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
                 m_Context, m_LightingPipeline, m_Extent, /*useSsao=*/false, m_ShadowSet,
                 m_ShadowRingStride, m_PunctualRingStride, m_Ibl->GetSet(),
-                m_Ibl->GetPrefilterMipCount(), m_Settings.Skylight));
+                m_Ibl->GetPrefilterMipCount(), skylightWanted, iblAllowed));
             m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
                 m_Context, m_AlbedoBlitPipeline, m_Extent,
                 FullscreenBlitScenePass::Source::Reflections));
@@ -3798,6 +3814,112 @@ namespace Veng::Renderer
         DeclareHiZReduction(graph);
 
         m_Internal->Graph = graph.Compile();
+    }
+
+    void SceneRenderer::ResolveSky(SceneView& view)
+    {
+        // Start from the no-sky fallback; the resolved source overrides what it drives.
+        view.Environment = {};
+        view.EnvironmentIntensity = 1.0f;
+        view.AtmosphereEnabled = false;
+        view.AtmosphereIntensity = 1.0f;
+        view.Atmosphere = Atmosphere{};
+        view.SkyMaterial = {};
+        view.SkylightIntensity = 1.0f;
+
+        // The toward-sun direction is derived from the scene's first directional light (a sun
+        // overhead travels down), so the sky and the direct lighting share one sun. No directional
+        // light leaves the default world-up sun.
+        view.SunDirection = vec3(0.0f, 1.0f, 0.0f);
+        for (auto [entity, light] : view.World.View<Light>())
+        {
+            if (light.Type == LightType::Directional)
+            {
+                const f32 length = glm::length(light.Direction);
+                if (length > 1e-4f)
+                {
+                    view.SunDirection = -light.Direction / length;
+                }
+                break;
+            }
+        }
+
+        // Resolve the scene's one Sky component; warn once if several exist (the first walked wins).
+        const Sky* sky = view.World.TryGetFirst<Sky>();
+        u32 skyCount = 0;
+        for ([[maybe_unused]] auto [entity, component] : view.World.View<Sky>())
+        {
+            ++skyCount;
+        }
+        if (skyCount > 1 && !m_MultipleSkyWarned)
+        {
+            Log::Warn(
+                "SceneRenderer: {} Sky components in the scene; resolving the first, ignoring "
+                "the rest.",
+                skyCount);
+            m_MultipleSkyWarned = true;
+        }
+
+        SkySourceKind kind = SkySourceKind::None;
+        SkyLighting lighting = SkyLighting::None;
+
+        if (sky != nullptr && sky->Source.HasValue())
+        {
+            lighting = sky->Lighting;
+            const TypeId active = sky->Source.ActiveType();
+            const void* source = sky->Source.ActivePtr();
+            if (active == TypeIdOf<EnvironmentSky>())
+            {
+                const auto* environment = static_cast<const EnvironmentSky*>(source);
+                view.Environment = environment->Map;
+                view.EnvironmentIntensity = sky->Intensity;
+                kind = SkySourceKind::Environment;
+            }
+            else if (active == TypeIdOf<AtmosphereSky>())
+            {
+                const auto* atmosphere = static_cast<const AtmosphereSky*>(source);
+                view.Atmosphere = atmosphere->Params;
+                view.AtmosphereEnabled = true;
+                view.AtmosphereIntensity = sky->Intensity;
+                view.SkylightIntensity = sky->Intensity;
+                kind = SkySourceKind::Atmosphere;
+            }
+            else if (active == TypeIdOf<MaterialSky>())
+            {
+                const auto* material = static_cast<const MaterialSky*>(source);
+                view.SkyMaterial = material->Material;
+                kind = SkySourceKind::Material;
+            }
+        }
+
+        // A source × tier combination whose lighting machinery is not yet active degrades to
+        // background-only (the source still displays; nothing lights from it). Active cells: IBL on
+        // an environment, SH on an atmosphere. Everything else logs once and does nothing.
+        const bool tierActive =
+            lighting == SkyLighting::None ||
+            (kind == SkySourceKind::Environment && lighting == SkyLighting::IBL) ||
+            (kind == SkySourceKind::Atmosphere && lighting == SkyLighting::SH);
+        if (!tierActive && !m_UnsupportedTierWarned)
+        {
+            Log::Warn("SceneRenderer: Sky lighting tier is not yet active for this source; "
+                      "displaying the sky without lighting the scene.");
+            m_UnsupportedTierWarned = true;
+        }
+
+        // An unsupported tier degrades to no lighting (display-only); the source still shows. The
+        // environment handle stays bound (the skybox samples it, the IBL cube generates from it),
+        // and the lighting pass's iblAllowed — set from the resolved tier in Rebuild — is what gates
+        // IBL, so a display-only environment shows its skybox without lighting the scene.
+        const SkyLighting resolvedLighting = tierActive ? lighting : SkyLighting::None;
+
+        // Drive the internal recompile only on a resolved source-kind or tier change — the frame
+        // boundary the pass set flips at, reusing the imported output (identity preserved).
+        if (kind != m_ResolvedSkyKind || resolvedLighting != m_ResolvedSkyLighting)
+        {
+            m_ResolvedSkyKind = kind;
+            m_ResolvedSkyLighting = resolvedLighting;
+            Rebuild();
+        }
     }
 
     void SceneRenderer::DeclareHiZReduction(RenderGraph& graph)
@@ -4715,14 +4837,6 @@ namespace Veng::Renderer
             tonemap.SetParam("RenderScale", vec4(renderScaleUV, maxValidUV));
         }
 
-        // Forward this frame's authored sky material to the sky-material pass (a no-op when the
-        // pass is absent or no material is bound). The game has already written the material's own
-        // params/handles (e.g. SetStorageBufferHandle) before Render.
-        if (m_SkyMaterialPass != nullptr)
-        {
-            m_SkyMaterialPass->SetMaterial(view.SkyMaterial);
-        }
-
         // Pack every Light entity into the GPU light layout: directional selection,
         // punctual shadow-slot assignment, and the std430 per-light records. The first
         // MaxShadowedPunctual point/spot lights are assigned a shadow slot (Cone.z carries
@@ -4772,6 +4886,20 @@ namespace Veng::Renderer
         resolvedView.Visible = m_Broadphase.GetCandidates();
         resolvedView.Broadphase = &m_Broadphase;
 
+        // Resolve the scene's one Sky component into this frame's sky fields — the lights model,
+        // the renderer reading the component off the scene the way it reads the lights. A resolved
+        // source-kind or lighting-tier change recompiles the pass set at this frame boundary,
+        // reusing the imported output so GetOutput() stays valid (only Resize/Configure recreate it).
+        ResolveSky(resolvedView);
+
+        // Forward the resolved authored sky material to the sky-material pass (a no-op when the pass
+        // is absent or no material is bound). The game has already written the material's own
+        // params/handles (e.g. SetStorageBufferHandle) before Render.
+        if (m_SkyMaterialPass != nullptr)
+        {
+            m_SkyMaterialPass->SetMaterial(resolvedView.SkyMaterial);
+        }
+
         BindlessRegistry& registry = m_Context.GetBindlessRegistry();
 
         // Claim this Execute's view slot before any shared-buffer write below: the view-constants
@@ -4801,15 +4929,16 @@ namespace Veng::Renderer
         // static sky projects once; an animated sun re-projects every frame by design (the cheap
         // path — a fixed-direction sky sample + a 9-coefficient projection, far below
         // re-prefiltering a cubemap). The coefficients ride the view-constants block below.
-        const bool skylightActive = m_Settings.Skylight;
+        const bool skylightActive = m_SkylightActive;
         if (skylightActive)
         {
-            if (!m_SkyShValid || view.SunDirection != m_LastSkyShSunDirection ||
-                !AtmosphereEquals(view.Atmosphere, m_LastSkyShAtmosphere))
+            if (!m_SkyShValid || resolvedView.SunDirection != m_LastSkyShSunDirection ||
+                !AtmosphereEquals(resolvedView.Atmosphere, m_LastSkyShAtmosphere))
             {
-                m_SkySh = ProjectSkyToIrradiance(view.Atmosphere, view.SunDirection);
-                m_LastSkyShSunDirection = view.SunDirection;
-                m_LastSkyShAtmosphere = view.Atmosphere;
+                m_SkySh =
+                    ProjectSkyToIrradiance(resolvedView.Atmosphere, resolvedView.SunDirection);
+                m_LastSkyShSunDirection = resolvedView.SunDirection;
+                m_LastSkyShAtmosphere = resolvedView.Atmosphere;
                 m_SkyShValid = true;
             }
         }
@@ -4995,7 +5124,7 @@ namespace Veng::Renderer
         // and in their sampled layout when the lighting pass runs.
         m_Ibl->EnsureInitialized(cmd);
         const EnvironmentMap* environment =
-            view.Environment.IsLoaded() ? view.Environment.Get() : nullptr;
+            resolvedView.Environment.IsLoaded() ? resolvedView.Environment.Get() : nullptr;
         if (environment != nullptr && environment != m_LastEnvironment)
         {
             m_Ibl->Generate(cmd, *environment);
@@ -5005,15 +5134,16 @@ namespace Veng::Renderer
         // Procedural atmosphere: transition the LUTs to a sampled layout once, then regenerate
         // them only when this frame's Atmosphere differs from the last generated set — the
         // once-per-change contract (the sun direction is a runtime push, not a precompute input).
-        // Gated on the sky pass being present so the cost is absent on the shipping path.
+        // Gated on the resolved sky being an atmosphere so the cost is absent on the shipping path.
         m_AtmosphereRegeneratedLastFrame = false;
-        if (m_Settings.Atmosphere)
+        if (m_ResolvedSkyKind == SkySourceKind::Atmosphere)
         {
             m_Atmosphere->EnsureInitialized(cmd);
-            if (!m_AtmosphereGenerated || !AtmosphereEquals(view.Atmosphere, m_LastAtmosphere))
+            if (!m_AtmosphereGenerated ||
+                !AtmosphereEquals(resolvedView.Atmosphere, m_LastAtmosphere))
             {
-                m_Atmosphere->Generate(cmd, view.Atmosphere);
-                m_LastAtmosphere = view.Atmosphere;
+                m_Atmosphere->Generate(cmd, resolvedView.Atmosphere);
+                m_LastAtmosphere = resolvedView.Atmosphere;
                 m_AtmosphereGenerated = true;
                 m_AtmosphereRegeneratedLastFrame = true;
             }

@@ -1,19 +1,17 @@
 // Time-of-day sun positioning: the SunOrbit solar math is pure glm — declination from the
-// day of year, the toward-sun direction from hour + latitude — and ApplySceneSky's
-// TimeOfDay resolution derives the view's sun and writes the directional light from it.
+// day of year, the toward-sun direction from hour + latitude — and TimeOfDaySystem derives
+// the sun from a TimeOfDay component and writes the directional light from it.
 // No Context, no Vulkan symbol touched.
 
 #include <doctest/doctest.h>
 
 #include <Veng/Reflection/JsonSerialize.h>
 #include <Veng/Reflection/TypeRegistry.h>
-#include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Renderer/SunPosition.h>
-#include <Veng/Renderer/Viewport.h>
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
-#include <Veng/Scene/SceneViewport.h>
+#include <Veng/Scene/TimeOfDay.h>
 
 using namespace Veng;
 using namespace Veng::Renderer;
@@ -24,6 +22,22 @@ namespace
     {
         return glm::all(glm::lessThan(glm::abs(a - b), vec3(eps)));
     }
+
+    // A SystemContext TimeOfDaySystem never reads: it touches neither the Input nor the
+    // AssetManager, so backing storage is never dereferenced.
+    struct ContextStorage
+    {
+        alignas(16) unsigned char InputBytes[64]{};
+        alignas(16) unsigned char AssetsBytes[64]{};
+
+        SystemContext Make()
+        {
+            return SystemContext{
+                .Assets = *reinterpret_cast<AssetManager*>(AssetsBytes),
+                .Input = *reinterpret_cast<Input*>(InputBytes),
+            };
+        }
+    };
 }
 
 TEST_CASE("Declination is zero at the equinoxes and peaks at the solstices")
@@ -164,7 +178,7 @@ TEST_CASE("TimeOfDay round-trips through the JSON reflection walker")
     CHECK(dst.Orbit.NorthHeading == src.Orbit.NorthHeading);
 }
 
-TEST_CASE("ApplySceneSky derives the sun from TimeOfDay and writes the directional light")
+TEST_CASE("TimeOfDaySystem derives the sun from TimeOfDay and writes the directional light")
 {
     TypeRegistry registry;
     RegisterBuiltinTypes(registry);
@@ -181,18 +195,17 @@ TEST_CASE("ApplySceneSky derives the sun from TimeOfDay and writes the direction
     time.DayOfYear = 40.0f;
     scene->Add<TimeOfDay>(scene->CreateEntity(), time);
 
-    SceneRendererSettings settings;
-    ViewState view;
-    ApplySceneSky(*scene, settings, view);
+    ContextStorage storage;
+    TimeOfDaySystem system;
+    system.OnUpdate(*scene, 0.016f, storage.Make());
 
     const vec3 expected = ComputeSunDirection(time.Orbit, time.Hours, time.DayOfYear);
-    CHECK(VecApprox(view.SunDirection, expected));
-    // The directional light's travel direction is written from the derived sun, so direct
-    // lighting and shadows track it.
+    // The directional light's travel direction is written from the derived sun (its negation),
+    // so direct lighting and shadows track it.
     CHECK(VecApprox(scene->Get<Light>(lightEntity).Direction, -expected));
 }
 
-TEST_CASE("ApplySceneSky without TimeOfDay keeps the light-authored sun")
+TEST_CASE("TimeOfDaySystem without TimeOfDay leaves the authored light untouched")
 {
     TypeRegistry registry;
     RegisterBuiltinTypes(registry);
@@ -204,14 +217,15 @@ TEST_CASE("ApplySceneSky without TimeOfDay keeps the light-authored sun")
     light.Direction = glm::normalize(vec3(1.0f, -1.0f, 0.0f));
     scene->Add<Light>(lightEntity, light);
 
-    SceneRendererSettings settings;
-    ViewState view;
-    ApplySceneSky(*scene, settings, view);
+    ContextStorage storage;
+    TimeOfDaySystem system;
+    system.OnUpdate(*scene, 0.016f, storage.Make());
 
-    CHECK(VecApprox(view.SunDirection, -scene->Get<Light>(lightEntity).Direction));
+    CHECK(VecApprox(scene->Get<Light>(lightEntity).Direction,
+                    glm::normalize(vec3(1.0f, -1.0f, 0.0f))));
 }
 
-TEST_CASE("ApplySceneSky writes the first directional light even behind other light types")
+TEST_CASE("TimeOfDaySystem writes the first directional light even behind other light types")
 {
     TypeRegistry registry;
     RegisterBuiltinTypes(registry);
@@ -235,16 +249,16 @@ TEST_CASE("ApplySceneSky writes the first directional light even behind other li
     time.Hours = 16.0f;
     scene->Add<TimeOfDay>(scene->CreateEntity(), time);
 
-    SceneRendererSettings settings;
-    ViewState view;
-    ApplySceneSky(*scene, settings, view);
+    ContextStorage storage;
+    TimeOfDaySystem system;
+    system.OnUpdate(*scene, 0.016f, storage.Make());
 
     const vec3 expected = ComputeSunDirection(time.Orbit, time.Hours, time.DayOfYear);
     CHECK(VecApprox(scene->Get<Light>(sunEntity).Direction, -expected));
     CHECK(VecApprox(scene->Get<Light>(pointEntity).Direction, vec3(0.0f, -1.0f, 0.0f)));
 }
 
-TEST_CASE("ApplySceneSky with TimeOfDay but no directional light still derives the view sun")
+TEST_CASE("TimeOfDaySystem with TimeOfDay but no directional light is a no-op")
 {
     TypeRegistry registry;
     RegisterBuiltinTypes(registry);
@@ -254,10 +268,10 @@ TEST_CASE("ApplySceneSky with TimeOfDay but no directional light still derives t
     time.Hours = 15.0f;
     scene->Add<TimeOfDay>(scene->CreateEntity(), time);
 
-    SceneRendererSettings settings;
-    ViewState view;
-    ApplySceneSky(*scene, settings, view);
+    // No directional light to write; the system must run without touching anything.
+    ContextStorage storage;
+    TimeOfDaySystem system;
+    system.OnUpdate(*scene, 0.016f, storage.Make());
 
-    CHECK(
-        VecApprox(view.SunDirection, ComputeSunDirection(time.Orbit, time.Hours, time.DayOfYear)));
+    CHECK(scene->TryGetFirst<Light>() == nullptr);
 }

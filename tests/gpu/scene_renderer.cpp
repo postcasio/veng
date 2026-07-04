@@ -788,12 +788,13 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
 // The procedural atmosphere render path under the validation gate: the SkyScenePass plus
 // the AtmospherePrecompute (transmittance 2D + scattering Type3D + irradiance 2D, the
-// multiple-scattering ping-pong over write-only 3D storage). It enables the atmosphere
-// topology toggle, pushes AtmosphereEnabled with a high sun, and renders an empty scene
-// (so the whole frame is background sky). It asserts the sky composites a non-black frame
-// and — crucially — that re-rendering an unchanged atmosphere records no second precompute
-// (the once-per-change contract), while changing it triggers regeneration. A 3D-storage
-// barrier slip or a multi-pass precompute hazard surfaces here under VE_DEBUG.
+// multiple-scattering ping-pong over write-only 3D storage). The scene authors a Sky
+// component with an AtmosphereSky source (the renderer resolves it) plus a directional light
+// for the sun, and renders otherwise-empty (so the whole frame is background sky). It asserts
+// the sky composites a non-black frame and — crucially — that re-rendering an unchanged
+// atmosphere records no second precompute (the once-per-change contract), while changing it
+// triggers regeneration. A 3D-storage barrier slip or a multi-pass precompute hazard surfaces
+// here under VE_DEBUG.
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                   "scene renderer: procedural atmosphere sky composites and regenerates on change")
 {
@@ -805,8 +806,18 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     constexpr uvec2 extent{96, 96};
 
-    // An empty scene: no geometry, so every pixel is cleared-depth background the sky fills.
+    // An empty scene apart from the sky and its sun: no geometry, so every pixel is
+    // cleared-depth background the sky fills.
     const Unique<Scene> scene = Scene::Create(Types);
+
+    const Entity skyEntity = scene->CreateEntity();
+    Sky& sky = scene->Add<Sky>(skyEntity);
+    auto* source = static_cast<AtmosphereSky*>(sky.Source.SetActive(TypeIdOf<AtmosphereSky>()));
+
+    const Entity sunEntity = scene->CreateEntity();
+    Light sun;
+    sun.Type = LightType::Directional;
+    scene->Add<Light>(sunEntity, sun);
 
     // Look up at the sky so the view rays sample the upper hemisphere.
     CameraView camera;
@@ -818,16 +829,16 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         .Assets = assets,
         .OutputFormat = Context.GetOutputFormat(),
         .Extent = extent,
-        .Settings = {.Mode = DebugView::Final,
-                     .Bloom = false,
-                     .Shadows = false,
-                     .AO = false,
-                     .Atmosphere = true},
+        .Settings = {.Mode = DebugView::Final, .Bloom = false, .Shadows = false, .AO = false},
     });
 
     Renderer::Atmosphere atmosphere;
     auto Render = [&](const Renderer::Atmosphere& atm, vec3 sunDir)
     {
+        // Author this frame's atmosphere onto the Sky source and the sun onto the directional
+        // light (the renderer derives the toward-sun direction from its negated travel direction).
+        source->Params = atm;
+        scene->Get<Light>(sunEntity).Direction = -sunDir;
         Context.ImmediateCommands(
             [&](CommandBuffer& cmd)
             {
@@ -835,10 +846,6 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                                            .World = *scene,
                                            .Camera = camera,
                                            .Delta = 0.0f,
-                                           .EnvironmentIntensity = 1.0f,
-                                           .AtmosphereEnabled = true,
-                                           .SunDirection = sunDir,
-                                           .Atmosphere = atm,
                                        });
             });
     };

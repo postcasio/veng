@@ -552,62 +552,91 @@ namespace Veng
         i32 ScoreToWin = 0;
     };
 
-    /// @brief Image-based environment lighting and optional skybox: the author's opt-in for IBL.
+    /// @brief Sky source: an environment map drives the background and image-based lighting.
     ///
-    /// An author adds this component to a scene entity to bind an environment map: its presence
-    /// drives split-sum image-based lighting (the ambient/specular arms), and Skybox additionally
-    /// renders the environment as the background. An empty Map is a no-op (the flat-ambient
-    /// fallback). The engine resolves the first such component onto the renderer's per-frame view
-    /// and the Skybox topology toggle; no transform is read (the environment is scene-global).
-    struct Environment
+    /// One alternative of the SkySource variant. The map's radiance cube is the visible sky, and
+    /// its convolved maps feed image-based lighting when the Sky component's lighting tier requests
+    /// it. An empty Map is a no-op.
+    struct EnvironmentSky
     {
-        /// @brief The environment map (radiance/irradiance/prefiltered/BRDF) for IBL and skybox.
+        /// @brief The environment map (radiance/irradiance/prefiltered/BRDF) for the sky and IBL.
         AssetHandle<EnvironmentMap> Map;
-        /// @brief Scales the IBL ambient + skybox radiance.
-        f32 Intensity = 1.0f;
-        /// @brief Whether the environment renders as the background skybox.
-        bool Skybox = true;
     };
 
-    /// @brief Procedural Bruneton atmosphere: the author's opt-in for a dynamic sky.
+    /// @brief Sky source: a procedural physically-based atmosphere fills the sky per pixel.
     ///
-    /// An author adds this component to a scene entity to render the procedural sky behind the
-    /// scene; its presence drives the SkyScenePass topology and the per-frame sky enable. The sun
-    /// direction is not stored here — it is the inverse of the scene's first directional Light's
-    /// travel direction (itself derivable from a TimeOfDay component), so the sky and the lighting
-    /// share one sun. An alternative sky source to the environment skybox, independent of
-    /// image-based lighting.
-    struct Atmosphere
+    /// One alternative of the SkySource variant. The atmosphere renders the background sky along
+    /// each view ray; the toward-sun direction is the inverse of the scene's first directional
+    /// Light's travel direction (itself derivable from a TimeOfDay component), so the sky and the
+    /// direct lighting share one sun.
+    struct AtmosphereSky
     {
-        /// @brief Scales the sky + sun-disk radiance.
-        f32 Intensity = 1.0f;
         /// @brief Physically-based atmosphere parameters; the renderer regenerates its LUTs on change.
         ///
         /// The defaults describe Earth at sea level.
         Renderer::Atmosphere Params;
     };
 
-    /// @brief Dynamic sky-projected SH ambient, authored on the directional light entity.
+    /// @brief Sky source: an authored Sky-domain material fills the background sky.
     ///
-    /// An author adds this component to the scene's directional Light to light the diffuse term
-    /// from the sky the same sun drives: its presence projects the atmosphere (the scene's
-    /// Atmosphere component, or the default sky) along the light's sun direction to order-2 SH
-    /// each time the sun or atmosphere changes. Effective only with no environment bound (the SH
-    /// skylight is the second ambient arm, below IBL); the diffuse half of a dynamic sky's lighting.
-    struct Skylight
+    /// One alternative of the SkySource variant. The material owns its own parameters and any
+    /// buffers/textures it reads; the engine supplies the view ray and the g-buffer depth mask.
+    /// An empty Material is a no-op.
+    struct MaterialSky
     {
-        /// @brief Scales the dynamic SH skylight ambient.
+        /// @brief The Sky-domain material instance rendered as the background sky.
+        AssetHandle<MaterialInstance> Material;
+    };
+
+    /// @brief The active source of a Sky component: environment map, atmosphere, or material.
+    ///
+    /// The active alternative selects the sky kind and carries that kind's parameters. Empty means
+    /// no sky (the flat-ambient fallback). The renderer resolves the active alternative per frame
+    /// and recompiles its own pass set when the source kind changes.
+    using SkySource = Variant<EnvironmentSky, AtmosphereSky, MaterialSky>;
+
+    /// @brief How the sky lights the scene, beyond displaying it.
+    ///
+    /// The lighting tier of a Sky component: None displays the sky without lighting the scene, SH
+    /// projects it to a spherical-harmonic ambient (the cheap diffuse arm), and IBL runs the full
+    /// split-sum image-based lighting. A tier is a request — the renderer activates it per source
+    /// as the machinery lands, degrading unsupported source×tier combinations to background-only.
+    enum class SkyLighting : u8
+    {
+        /// @brief Display the sky only; the scene keeps its flat ambient fallback.
+        None,
+        /// @brief Light the diffuse term from a spherical-harmonic projection of the sky.
+        SH,
+        /// @brief Light the scene with full split-sum image-based lighting from the sky.
+        IBL,
+    };
+
+    /// @brief The scene's one authored sky: a source, an intensity, and a lighting tier.
+    ///
+    /// One per scene, resolved by the renderer via TryGetFirst<Sky> each Execute — the lights
+    /// model. Source selects the sky kind (environment map / atmosphere / material) and carries its
+    /// parameters; an empty Source is no sky (the flat fallback). Intensity scales the background
+    /// and any ambient radiance the tier casts. Lighting requests how the sky lights the scene. If
+    /// several Sky components exist the first walked wins and a warning logs once. No transform is
+    /// read — the sky is scene-global.
+    struct Sky
+    {
+        /// @brief The active sky source, or empty for no sky.
+        SkySource Source;
+        /// @brief Scales the sky's background and ambient radiance.
         f32 Intensity = 1.0f;
+        /// @brief How the sky lights the scene, beyond displaying it.
+        SkyLighting Lighting = SkyLighting::None;
     };
 
     /// @brief Time-of-day sun drive: the author's opt-in to derive the sun from a clock time.
     ///
     /// An author adds this component to a scene entity to position the sun by time of day
-    /// instead of authoring a direction: the toward-sun direction is derived from Hours,
-    /// DayOfYear, and the orbital parameters, and the scene's first directional Light's
-    /// travel direction is written from it — so direct lighting, shadows, the procedural
-    /// sky, and the SH skylight all track the one derived sun. While present, the light's
-    /// authored Direction is overwritten; a game animates the cycle by advancing Hours.
+    /// instead of authoring a direction: TimeOfDaySystem derives the toward-sun direction from
+    /// Hours, DayOfYear, and the orbital parameters and writes the scene's first directional
+    /// Light's travel direction from it each tick — so direct lighting, shadows, and the sky all
+    /// track the one derived sun. While present, the light's authored Direction is overwritten;
+    /// a game animates the cycle by advancing Hours.
     struct TimeOfDay
     {
         /// @brief Time of day in solar hours; 12 is solar noon. Wraps over 24.
@@ -623,8 +652,8 @@ namespace Veng
     /// Carried on a Level and seeded into the renderer the app drives — a reflected,
     /// tolerantly-serialized struct, not a renderer type, so the renderer stays untouched
     /// and a new field does not invalidate existing level blobs. The sky/environment knobs
-    /// are not here: they are author-opt-in scene components (Environment / Atmosphere /
-    /// Skylight / TimeOfDay). This struct carries the view-wide post and pipeline toggles the app maps
+    /// are not here: they are the author-opt-in Sky and TimeOfDay scene components, resolved by
+    /// the renderer itself. This struct carries the view-wide post and pipeline toggles the app maps
     /// onto its SceneRendererSettings (Bloom / Shadows / AO) and its per-frame SceneView
     /// (Exposure, BloomIntensity).
     struct LevelRenderSettings
@@ -831,19 +860,30 @@ VE_FIELD(PlayerPrefab, .DisplayName = "Player Prefab")
 VE_FIELD(ScoreToWin, .DisplayName = "Score to Win", .Display = {.Min = 0})
 VE_REFLECT_END();
 
-VE_REFLECT(::Veng::Environment, 0xE5B8FB7C5423820FULL)
+VE_REFLECT(::Veng::EnvironmentSky, 0x51902800E072B6E9ULL)
 VE_FIELD(Map, .DisplayName = "Map")
-VE_FIELD(Intensity, .DisplayName = "Intensity", .Display = {.Min = 0.0})
-VE_FIELD(Skybox, .DisplayName = "Skybox")
 VE_REFLECT_END();
 
-VE_REFLECT(::Veng::Atmosphere, 0xC8B8A484BDA1D535ULL)
-VE_FIELD(Intensity, .DisplayName = "Intensity", .Display = {.Min = 0.0})
+VE_REFLECT(::Veng::AtmosphereSky, 0x2091BE830E0AA76DULL)
 VE_FIELD(Params, .DisplayName = "Parameters")
 VE_REFLECT_END();
 
-VE_REFLECT(::Veng::Skylight, 0x6430ED5BA1EE715BULL)
+VE_REFLECT(::Veng::MaterialSky, 0x278971B85ADDA928ULL)
+VE_FIELD(Material, .DisplayName = "Material")
+VE_REFLECT_END();
+
+VE_ENUM(::Veng::SkyLighting, 0xB2C6211BC808C7BDULL)
+VE_ENUMERATOR(None)
+VE_ENUMERATOR(SH)
+VE_ENUMERATOR(IBL)
+VE_ENUM_END();
+
+VE_VARIANT(::Veng::SkySource, 0x3638DADE35D35C41ULL);
+
+VE_REFLECT(::Veng::Sky, 0xC7D64305B199222CULL)
+VE_FIELD(Source, .DisplayName = "Source")
 VE_FIELD(Intensity, .DisplayName = "Intensity", .Display = {.Min = 0.0})
+VE_FIELD(Lighting, .DisplayName = "Lighting")
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::TimeOfDay, 0x3096812B98FEC8D2ULL)

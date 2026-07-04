@@ -412,10 +412,10 @@ namespace VengEditor
     void SceneViewportPanel::ApplyLevelRenderSettings(const LevelRenderSettings& render)
     {
         // Run the level's post/pipeline subset through the shared runtime mapping so the
-        // level→renderer wiring lives in one place; the sky/environment is resolved from the scene's
-        // components each frame (ApplySceneSky in OnUI). Start the topology half from the live
-        // settings so the editor-only bits (DebugDraw, the debug-view Mode, the toolbar toggles)
-        // survive, and seed the per-frame half into a scratch view we pull the level-owned values from.
+        // level→renderer wiring lives in one place; the sky is the scene's Sky component, resolved
+        // by the renderer itself each Execute. Start the topology half from the live settings so
+        // the editor-only bits (DebugDraw, the debug-view Mode, the toolbar toggles) survive, and
+        // seed the per-frame half into a scratch view we pull the level-owned values from.
         Renderer::SceneRendererSettings next = m_Settings;
         Renderer::ViewState scratch;
         Veng::ApplyLevelRenderSettings(render, next, scratch);
@@ -681,24 +681,9 @@ namespace VengEditor
             .BloomIntensity = m_BloomIntensity,
         };
 
-        // Resolve the scene's sky/lighting components (Environment / Atmosphere / Skylight /
-        // TimeOfDay) and its
-        // directional sun onto this frame's view and the sky topology — the same mapping the runtime
-        // uses, so adding a component in the editor lights the scene immediately. A sky topology
-        // change flags a Configure, applied next frame at the top of OnUI (one frame of latency, like
-        // the rest of the editor's settings edits).
-        if (m_Ctx.Scene != nullptr)
-        {
-            Renderer::SceneRendererSettings next = m_Settings;
-            Veng::ApplySceneSky(*m_Ctx.Scene, next, view);
-            if (next.Skybox != m_Settings.Skybox || next.Atmosphere != m_Settings.Atmosphere ||
-                next.Skylight != m_Settings.Skylight)
-            {
-                m_Settings = next;
-                m_SettingsDirty = true;
-            }
-        }
-
+        // The sky is the scene's Sky component, resolved by the renderer itself each Execute — so
+        // adding or editing the component in the inspector switches the sky live with no editor
+        // mapping code and no Configure.
         m_Viewport->SetViewState(view);
 
         // Mode keys select the gizmo mode, but only while not flying: the RMB fly-camera binds
