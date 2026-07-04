@@ -4,11 +4,12 @@
 // extent), so a dense/distant cell reads as one smooth additive glow rather than resolved points.
 #include "../view_constants.slang"
 
-// One aggregate splat record: world centroid + pixel size, then the scaled summed cell color.
+// One aggregate splat record: world centroid + pixel size, then the cell's flux-normalized
+// per-pixel color (the CPU spreads the cell's summed flux over the splat's pixel area).
 struct GpuAggregateSplat
 {
     float4 CenterSize; // xyz world centroid, w splat size in pixels
-    float4 Color;      // scaled summed cell color (rgb)
+    float4 Color;      // flux-normalized per-pixel color (rgb), HDR
 };
 
 [[vk::binding(0, 1)]] StructuredBuffer<GpuAggregateSplat> g_Splats;
@@ -20,7 +21,9 @@ struct PushConstants
     uint ViewConstantsIndex;
     uint FirstPoint;
     uint PointCount;
-    float AggregateIntensity;
+    float MinPixels;
+    float MaxPixels;
+    float MaxIntensity;
     float ViewportWidth;
     float ViewportHeight;
 };

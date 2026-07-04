@@ -3,6 +3,11 @@
 // vertices selected by SV_VertexID, the corners offset along the camera's right/up axes (the
 // View matrix's first two rows) scaled by the point's world size. The push FirstPoint offsets
 // into the resident buffer so a per-cell draw reads only that cell's contiguous point run.
+//
+// The sprite is a constant-surface-brightness disc: its projected pixel size is clamped to
+// [MinPixels, MaxPixels] and the vertex color is scaled by the flux-conserving square of the
+// clamp ratio (capped at MaxIntensity), so a receding point dims like a real emitter and a
+// near one concentrates into a small HDR-bright core instead of a huge disc.
 #include "../view_constants.slang"
 
 // One resident field point. Sixteen bytes, mirroring the CPU FieldPoint byte-for-byte.
@@ -22,7 +27,9 @@ struct PushConstants
     uint ViewConstantsIndex;
     uint FirstPoint;
     uint PointCount;
-    float AggregateIntensity;
+    float MinPixels;
+    float MaxPixels;
+    float MaxIntensity;
     float ViewportWidth;
     float ViewportHeight;
 };
@@ -71,13 +78,33 @@ VSOutput vsMain()
     float3 right = float3(view.View[0][0], view.View[0][1], view.View[0][2]);
     float3 up = float3(view.View[1][0], view.View[1][1], view.View[1][2]);
 
-    float3 worldPos = point.Position + point.Size * (corner.x * right + corner.y * up);
+    float4 clipCenter = mul(view.CurViewProj, float4(point.Position, 1.0));
+    float4 color = UnpackRgba8(point.ColorRgba8);
+
+    // Projected pixel size of the world-space disc at the point's depth: a world-space vertical
+    // extent S spans S*|Proj[1][1]|/w of NDC, i.e. S*|Proj[1][1]|*H/(2w) pixels (the projection
+    // is Y-flipped for Vulkan clip space, so the diagonal is negative).
+    float worldSize = point.Size;
+    if (clipCenter.w > 0.0 && point.Size > 0.0)
+    {
+        float projPixels = point.Size * abs(view.Proj[1][1]) * g_PC.ViewportHeight
+                           / (2.0 * clipCenter.w);
+        float drawnPixels = clamp(projPixels, g_PC.MinPixels, g_PC.MaxPixels);
+        // Conserve flux across the clamp: brightness scales by the area ratio, capped so a very
+        // near point cannot push unbounded HDR values into the accumulation target.
+        float gain = min((projPixels * projPixels) / (drawnPixels * drawnPixels),
+                         g_PC.MaxIntensity);
+        worldSize = point.Size * (drawnPixels / projPixels);
+        color.rgb *= gain;
+    }
+
+    float3 worldPos = point.Position + worldSize * (corner.x * right + corner.y * up);
     float4 clip = mul(view.CurViewProj, float4(worldPos, 1.0));
 
     VSOutput output;
     output.sv_position = clip;
     output.v_UV = corner;
-    output.v_Color = UnpackRgba8(point.ColorRgba8);
+    output.v_Color = color;
     output.v_ScreenUV = (clip.xy / clip.w) * 0.5 + 0.5;
     output.v_NdcDepth = clip.z / clip.w;
     return output;

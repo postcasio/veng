@@ -21,22 +21,26 @@ namespace Veng::Renderer
     class Buffer;
     class PointField;
 
-    /// @brief Draws the scene's point fields into the LDR scene color after tonemap, LOD-culled.
+    /// @brief Draws the scene's point fields into the linear HDR scene color, LOD-culled.
     ///
-    /// Runs at the full output extent, compositing over the tonemapped image with LoadOp::Load —
-    /// a point field is an unlit emissive primitive, so it draws after the deferred chain like the
-    /// DebugDraw pass, not through the g-buffer. Each Execute the pass draws every field the
-    /// renderer resolved this frame: per field it CPU-frustum-culls the field's spatial cells
-    /// against the camera, then per surviving cell estimates on-screen point density and routes the
-    /// cell to one of two draws: the resolved sprites (camera-facing quads expanded from the cell's
-    /// point range, additive-blended) below the density threshold, or a single additive density
-    /// splat above it. Both paths pull points from the field's resident SSBO (set 1 binding 0) by
-    /// SV_VertexID — no vertex input, no per-instance attribute — so the draw stays MoltenVK-clean
-    /// (no drawIndirectCount, no base-instance capability).
+    /// Runs ahead of bloom and tonemap, accumulating over the lit HDR image with LoadOp::Load —
+    /// a point field is an unlit emissive primitive whose additive radiance rolls off through the
+    /// tone curve (instead of clipping in LDR) and whose bright points bloom like any other HDR
+    /// emitter. Each Execute the pass draws every field the renderer resolved this frame: per
+    /// field it CPU-frustum-culls the field's spatial cells against the camera, then per surviving
+    /// cell estimates on-screen point density and routes the cell to one of two draws: the
+    /// resolved sprites (camera-facing quads expanded from the cell's point range, pixel-clamped
+    /// with flux-conserving brightness) below the density threshold, or a single additive density
+    /// splat (the cell's summed flux spread over its projected footprint) above it — the two paths
+    /// deliver the same integrated light, so the LOD transition holds brightness. Both pull points
+    /// from the field's resident SSBO (set 1 binding 0) by SV_VertexID — no vertex input, no
+    /// per-instance attribute — so the draw stays MoltenVK-clean (no drawIndirectCount, no
+    /// base-instance capability).
     ///
     /// The fields are borrowed from the scene's PointField components (the renderer refills the set
     /// each Execute); an empty set makes the pass a per-frame no-op. Inserted only while a live
-    /// field exists, so the shipping deferred path and the smoke golden are unchanged.
+    /// field exists, so the shipping deferred path and the smoke golden are unchanged. Renders into
+    /// the per-frame SceneView::RenderExtent sub-rect like every HDR pass, so it needs no Resize.
     class PointFieldScenePass final : public ScenePass
     {
     public:
@@ -44,19 +48,15 @@ namespace Veng::Renderer
         /// @param context        The render context.
         /// @param assets         Asset manager the point-field shaders load through (the core pack).
         /// @param fields         The renderer-owned live field set this Execute, refilled per frame.
-        /// @param outputFormat   Color format of the output target the pass writes.
+        /// @param outputFormat   Color format of the HDR target the pass accumulates into.
         /// @param samplerHandle  Shared sampler bindless handle for the depth sample.
         /// @param framesInFlight Number of frame-in-flight ring regions for the aggregate records.
-        /// @param extent         Initial output extent; updated via Resize.
         PointFieldScenePass(Context& context, AssetManager& assets,
                             const vector<const PointField*>* fields, Format outputFormat,
-                            SamplerHandle samplerHandle, u32 framesInFlight, uvec2 extent);
+                            SamplerHandle samplerHandle, u32 framesInFlight);
 
         /// @brief Destroys the pass's owned GPU resources.
         ~PointFieldScenePass() override;
-
-        /// @brief Updates the cached output extent.
-        void Resize(uvec2 extent) override;
 
         /// @brief Contributes the point-field pass into the graph.
         void Declare(RenderGraph& graph, const PassIO& io) override;
@@ -70,10 +70,16 @@ namespace Veng::Renderer
         /// when a field is no longer resolved.
         struct FieldState
         {
-            /// @brief Set-1 descriptor pointing at the field's resident point buffer (sprite draw).
-            Ref<DescriptorSet> SpriteSet;
-            /// @brief The buffer SpriteSet points at, so it is re-pointed only when the field rebuilds.
-            const Buffer* BoundBuffer = nullptr;
+            /// @brief One Set-1 point-buffer descriptor per frame-in-flight (sprite draw).
+            ///
+            /// Ringed like AggregateSets: when a field rebuilds its resident buffer, only the
+            /// current frame's set is rewritten (its fence has been waited, so no pending command
+            /// buffer references it); the other frames' sets re-point lazily as their turns come.
+            /// A single shared set would be rewritten while a prior frame's draws still reference
+            /// it — a validation error.
+            vector<Ref<DescriptorSet>> SpriteSets;
+            /// @brief Per-frame record of the buffer each SpriteSets entry points at.
+            vector<const Buffer*> BoundBuffers;
             /// @brief One Set-1 aggregate descriptor per frame-in-flight, each pointing at its own
             /// ring region for the buffer's lifetime.
             ///
@@ -103,12 +109,10 @@ namespace Veng::Renderer
         const vector<const PointField*>* m_Fields;
         /// @brief Number of frame-in-flight ring regions each field's aggregate buffer carries.
         u32 m_FramesInFlight;
-        /// @brief Output color format the pipelines target.
+        /// @brief HDR color format the pipelines target.
         Format m_OutputFormat;
         /// @brief Shared sampler bindless handle for the depth sample.
         SamplerHandle m_SamplerHandle;
-        /// @brief Current output extent.
-        uvec2 m_Extent;
 
         /// @brief Sprite pipeline (camera-facing quad expansion, additive blend) and its layout.
         Ref<GraphicsPipeline> m_SpritePipeline;

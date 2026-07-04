@@ -3434,6 +3434,11 @@ namespace Veng::Renderer
         }
 
         m_Passes.clear();
+        m_PointFieldPass.reset();
+
+        // The pass index the HDR tail (SSR composite, point fields, bloom sweep) is declared
+        // before: the tonemap in the Final arm (set below), else the terminal pass.
+        optional<usize> hdrTailAnchor;
 
         // The shadow pass runs first when active so the graph orders its write before
         // the lighting read.
@@ -3563,6 +3568,18 @@ namespace Veng::Renderer
                     m_VelocityHandle, &m_TaaHistoryReset, m_Extent));
             }
 
+            // The point-field pass accumulates the scene's live fields into the final HDR color
+            // as part of the HDR tail — after the TAA resolve and SSR composite, before the bloom
+            // sweep — so the fields' additive radiance rolls off through the tone curve and
+            // blooms. Declared at the tail anchor (not pushed here), since only the anchor point
+            // sits between the SSR composite and the bloom read of the final HDR target.
+            if (m_PointFieldActive)
+            {
+                m_PointFieldPass = CreateUnique<PointFieldScenePass>(
+                    m_Context, m_Assets, &m_PointFields, HdrFormat, m_SamplerHandle,
+                    m_Context.GetMaxFramesInFlight());
+            }
+
             // Tonemap source: bloom composite when bloom is on, raw HDR otherwise.
             ResourceId tonemapSourceId = m_HdrId;
             TextureHandle tonemapSourceHandle = m_HdrHandle;
@@ -3570,11 +3587,14 @@ namespace Veng::Renderer
             if (bloomActive)
             {
                 // The bloom down/up/composite compute sweep is declared into the graph by
-                // DeclareBloom (after the pass loop); here the tonemap just reads its result.
+                // the tail anchor in the pass loop; here the tonemap just reads its result.
                 tonemapSourceId = m_BloomResultId;
                 tonemapSourceHandle = m_BloomResultHandle;
             }
 
+            // The HDR tail declares just before the tonemap — never after it, even when a
+            // post-tonemap pass (DebugDraw) follows in the list.
+            hdrTailAnchor = m_Passes.size();
             m_Passes.push_back(
                 CreateUnique<PostProcessScenePass>(m_Context, m_TonemapMaterial,
                                                    PostProcessInput{
@@ -3596,16 +3616,6 @@ namespace Veng::Renderer
                     m_Context.GetMaxFramesInFlight(), m_Extent));
             }
 
-            // The point-field pass composites the scene's live fields over the tonemapped LDR
-            // color, after tonemap like DebugDraw — an unlit emissive primitive, frustum-culled
-            // with a screen-density LOD. Inserted only while a live field exists (m_PointFieldActive
-            // is driven by ResolvePointFields walking the scene's PointField components).
-            if (m_PointFieldActive)
-            {
-                m_Passes.push_back(CreateUnique<PointFieldScenePass>(
-                    m_Context, m_Assets, &m_PointFields, m_OutputFormat, m_SamplerHandle,
-                    m_Context.GetMaxFramesInFlight(), m_Extent));
-            }
             break;
         }
         case DebugView::Albedo:
@@ -3777,23 +3787,33 @@ namespace Veng::Renderer
             DeclareCullPass(graph);
         }
 
-        for (const Unique<ScenePass>& pass : m_Passes)
+        // The HDR tail — SSR composite, point fields, bloom sweep — is declared just before the
+        // pass that consumes the final HDR: the tonemap in the Final arm, the terminal blit in a
+        // debug arm. Anchoring on that pass (not the list's last) keeps the tail ahead of the
+        // tonemap even when a post-tonemap pass (DebugDraw) follows, since execution follows
+        // declaration order.
+        const usize tailAnchor = hdrTailAnchor.value_or(m_Passes.size() - 1);
+        for (usize i = 0; i < m_Passes.size(); ++i)
         {
+            const Unique<ScenePass>& pass = m_Passes[i];
             pass->Configure(m_Settings);
             pass->Resize(m_Extent);
 
-            // The bloom compute sweep reads the lit HDR and writes the result the tonemap
-            // samples, so it is declared between the lighting pass and the terminal tonemap
-            // pass. The tonemap is the last pass when bloom is active; declare bloom just
-            // before it so the graph orders down-sweep(HDR) after lighting and tonemap after
-            // the composite.
-            if (&pass == &m_Passes.back())
+            if (i == tailAnchor)
             {
-                // SSR composes the reflected scene color into the HDR target; the bloom sweep
-                // then reads that HDR. Both sit between lighting and the terminal pass, SSR first.
+                // SSR composes the reflected scene color into the HDR target; the point fields
+                // accumulate over that; the bloom sweep then reads the finished HDR.
                 if (ssrActive)
                 {
                     DeclareSsr(graph);
+                }
+                if (m_PointFieldPass != nullptr)
+                {
+                    // The fields write the final HDR target, not the pre-TAA/SSR lit target the
+                    // in-list passes see as io.Hdr.
+                    PassIO fieldIo = io;
+                    fieldIo.Hdr = m_HdrId;
+                    m_PointFieldPass->Declare(graph, fieldIo);
                 }
                 if (bloomActive)
                 {

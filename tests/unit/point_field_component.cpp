@@ -60,6 +60,9 @@ TEST_CASE("PointField authored knobs round-trip and the unregistered Field is ne
     src.Lod.Hysteresis = 0.1f;
     src.Lod.AggregateSplatPixels = 32.0f;
     src.Lod.AggregateIntensity = 2.0f;
+    src.Lod.MinPixels = 1.5f;
+    src.Lod.MaxPixels = 6.0f;
+    src.Lod.MaxIntensity = 12.0f;
     src.CellSize = 16.0f;
 
     const Json doc = JsonWriteFields(&src, info, registry, hooks);
@@ -75,6 +78,9 @@ TEST_CASE("PointField authored knobs round-trip and the unregistered Field is ne
     CHECK(dst.Lod.Hysteresis == doctest::Approx(0.1f));
     CHECK(dst.Lod.AggregateSplatPixels == doctest::Approx(32.0f));
     CHECK(dst.Lod.AggregateIntensity == doctest::Approx(2.0f));
+    CHECK(dst.Lod.MinPixels == doctest::Approx(1.5f));
+    CHECK(dst.Lod.MaxPixels == doctest::Approx(6.0f));
+    CHECK(dst.Lod.MaxIntensity == doctest::Approx(12.0f));
     CHECK(dst.CellSize == doctest::Approx(16.0f));
 
     // Field default-constructs to null on load and the walker never writes it — the runtime

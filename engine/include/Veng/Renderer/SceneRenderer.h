@@ -1447,6 +1447,13 @@ namespace Veng::Renderer
         /// The geometry pass is always first; Mode selects the tail.
         vector<Unique<ScenePass>> m_Passes;
 
+        /// @brief The point-field pass, held outside m_Passes and declared at the HDR tail anchor.
+        ///
+        /// The fields accumulate into the final HDR between the SSR composite and the bloom
+        /// sweep — a position only the tail anchor occupies, so the pass cannot ride the list.
+        /// Null unless the Final arm is built while a live field exists (m_PointFieldActive).
+        Unique<ScenePass> m_PointFieldPass;
+
         /// @brief BVH broadphase over resident draw candidates.
         ///
         /// Synced once at the top of Execute; its candidate span is pointed at by

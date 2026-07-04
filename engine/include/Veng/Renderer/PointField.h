@@ -27,13 +27,19 @@ namespace Veng::Renderer
         f32 Size;
     };
 
-    /// @brief Screen-density LOD knobs for a PointField draw.
+    /// @brief Screen-density LOD and photometric knobs for a PointField draw.
     ///
     /// The pass estimates each visible cell's on-screen point density (points per pixel of the
     /// cell's projected footprint) and switches the cell between the two draw paths on this
     /// threshold, with a hysteresis band so a cell hovering at the boundary does not flip every
     /// frame. The threshold is a knob, not a policy: the pass reports and switches on the bound
     /// the consumer configures, it does not decide when aggregation is desirable.
+    ///
+    /// Both paths render a point as a constant-surface-brightness disc whose emitted flux is
+    /// proportional to Color * Size^2, so a point's apparent brightness falls off with the square
+    /// of its distance and the two paths agree on total light: a sprite whose projected size is
+    /// clamped conserves its flux by scaling brightness, and a cell's aggregate splat spreads the
+    /// cell's summed flux over its projected footprint.
     struct PointFieldLod
     {
         /// @brief Points-per-pixel above which a cell draws as the aggregate density splat.
@@ -52,18 +58,41 @@ namespace Veng::Renderer
         /// per-cell sprite<->aggregate transition so it does not pop on a slow zoom.
         f32 Hysteresis = 0.2f;
 
-        /// @brief Screen-space size in pixels of a single aggregate cell's splat.
+        /// @brief Maximum screen-space size in pixels of an aggregate cell's splat.
         ///
-        /// The additive splat a density cell contributes is drawn at this pixel size around the
-        /// cell's projected center, so the field reads as a smooth glow rather than resolved
-        /// points. Independent of the per-point Size (which drives the resolved sprites).
-        f32 AggregateSplatPixels = 24.0f;
+        /// A density cell's splat covers the cell's projected screen footprint, clamped to
+        /// [MinPixels, this]; its brightness spreads the cell's summed flux over that area, so
+        /// the splat delivers the same integrated light the cell's resolved sprites would.
+        f32 AggregateSplatPixels = 96.0f;
 
         /// @brief Overall brightness scale applied to the aggregate splat.
         ///
-        /// The summed per-cell point color is scaled by this before the additive blend, so a
-        /// consumer tunes how bright a dense collapsed region glows without re-sizing the splat.
+        /// Applied on top of the flux-conserving normalization, so a consumer biases how bright
+        /// a collapsed region glows relative to its resolved sprites without re-sizing the splat.
         f32 AggregateIntensity = 1.0f;
+
+        /// @brief Smallest drawn sprite size in pixels.
+        ///
+        /// A sprite whose projected size falls below this draws at this size with its brightness
+        /// scaled by (projected/drawn)^2 — flux-conserving, so a receding point dims like a real
+        /// emitter instead of shrinking below a pixel and shimmering out.
+        f32 MinPixels = 1.25f;
+
+        /// @brief Largest drawn sprite size in pixels.
+        ///
+        /// A sprite whose projected size exceeds this draws at this size with its brightness
+        /// scaled up by the same flux-conserving square, capped by MaxIntensity — a very near or
+        /// very large emitter reads as a small, HDR-bright core (bloom supplies the glow) rather
+        /// than a huge dull disc.
+        f32 MaxPixels = 8.0f;
+
+        /// @brief Cap on any single sprite's or splat's peak drawn brightness.
+        ///
+        /// Bounds the (projected/drawn)^2 gain applied when MaxPixels clamps a sprite down, and
+        /// the aggregate splat's flux-normalized per-pixel color, so no point or cell can push
+        /// unbounded HDR values into the accumulation target — a dense cell saturates to the same
+        /// ceiling on either LOD path.
+        f32 MaxIntensity = 32.0f;
     };
 
     /// @brief Construction parameters for a PointField.
@@ -161,11 +190,13 @@ namespace Veng::Renderer
             AABB Bounds;
             /// @brief World-space centroid of the cell's points (the aggregate splat's center).
             vec3 Centroid;
-            /// @brief Sum of the cell's point colors as linear RGB (the aggregate splat's color source).
+            /// @brief Sum of the cell's point fluxes (linear RGB color * Size^2), the splat's light source.
             ///
             /// Summed at build so the aggregate draw never re-reads the point buffer per frame; the
-            /// pass scales it by the LOD intensity for the additive splat.
-            vec3 SummedColor;
+            /// pass spreads it over the cell's projected footprint for the additive splat, matching
+            /// the integrated light of the cell's resolved sprites. A zero-Size point contributes
+            /// no flux, so a field of point-sized specks has no aggregate representation.
+            vec3 SummedFlux;
             /// @brief Index of the cell's first point in the resident buffer.
             u32 FirstPoint;
             /// @brief Number of points in the cell.

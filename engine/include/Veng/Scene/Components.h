@@ -963,6 +963,9 @@ VE_FIELD(AggregateThreshold, .DisplayName = "Aggregate Threshold", .Display = {.
 VE_FIELD(Hysteresis, .DisplayName = "Hysteresis", .Display = {.Min = 0.0, .Max = 1.0})
 VE_FIELD(AggregateSplatPixels, .DisplayName = "Aggregate Splat Pixels", .Display = {.Min = 0.0})
 VE_FIELD(AggregateIntensity, .DisplayName = "Aggregate Intensity", .Display = {.Min = 0.0})
+VE_FIELD(MinPixels, .DisplayName = "Min Pixels", .Display = {.Min = 0.0})
+VE_FIELD(MaxPixels, .DisplayName = "Max Pixels", .Display = {.Min = 0.0})
+VE_FIELD(MaxIntensity, .DisplayName = "Max Intensity", .Display = {.Min = 0.0})
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::PointField, 0x1D7F4A0C6E5B8392ULL)

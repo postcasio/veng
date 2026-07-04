@@ -14,7 +14,9 @@ struct PushConstants
     uint ViewConstantsIndex;
     uint FirstPoint;
     uint PointCount;
-    float AggregateIntensity;
+    float MinPixels;
+    float MaxPixels;
+    float MaxIntensity;
     float ViewportWidth;
     float ViewportHeight;
 };

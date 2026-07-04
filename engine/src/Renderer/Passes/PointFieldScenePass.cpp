@@ -34,9 +34,9 @@ namespace Veng::Renderer
         constexpr u32 MaxAggregateSplats = 1u << 16;
 
         // Shared push block for both point-field pipelines (matches point_sprite/point_aggregate).
-        // The sprite draw reads FirstPoint/PointCount to index one cell's point range; the
-        // aggregate draw ignores them (it reads the splat record buffer). ViewportWidth/Height
-        // convert the aggregate's pixel size to clip.
+        // The sprite draw reads FirstPoint/PointCount to index one cell's point range and the
+        // Min/Max photometric clamps; the aggregate draw ignores them (it reads the splat record
+        // buffer). ViewportWidth/Height convert pixel sizes to clip.
         struct PointFieldPush
         {
             u32 DepthTexture;
@@ -44,20 +44,29 @@ namespace Veng::Renderer
             u32 ViewConstantsIndex;
             u32 FirstPoint;
             u32 PointCount;
-            f32 AggregateIntensity;
+            f32 MinPixels;
+            f32 MaxPixels;
+            f32 MaxIntensity;
             f32 ViewportWidth;
             f32 ViewportHeight;
         };
 
-        // One GPU aggregate splat record (std430): world center + pixel size, then summed color.
+        // One GPU aggregate splat record (std430): world center + pixel size, then the cell's
+        // flux-normalized per-pixel color (the summed flux spread over the splat's pixel area).
         struct GpuAggregateSplat
         {
             vec4 CenterSize; // xyz world centroid, w splat size in pixels
-            vec4 Color;      // scaled summed cell color (rgb), a unused
+            vec4 Color;      // flux-normalized per-pixel color (rgb), HDR; a unused
         };
 
         // An occluded point fades to this fraction rather than vanishing (matches the sprite frag).
         constexpr f32 OccludedFade = 0.35f;
+
+        // Aggregate splats draw this much larger than the cell's projected footprint. The radial
+        // kernel falls to zero at the quad edge, so a kernel that only just covers its cell leaves
+        // dark seams along the cull grid's planes; overlapping neighbors sum to smooth coverage.
+        // Flux is normalized over the inflated size, so the overlap adds no net light.
+        constexpr f32 SplatOverlap = 2.5f;
 
         AssetHandle<Veng::Shader> LoadShader(AssetManager& assets, AssetId id, const char* what)
         {
@@ -67,12 +76,21 @@ namespace Veng::Renderer
             return *shader;
         }
 
-        // Screen density of a cell: its visible points divided by its projected screen footprint
-        // in pixels. Projects the cell's world AABB corners to clip, takes the screen-space area of
-        // their bounding rect, and returns points/pixel (INFINITY for a degenerate zero-area
-        // footprint so a cell collapsed to a point always aggregates).
-        f32 CellScreenDensity(const PointField::Cell& cell, const mat4& viewProj,
-                              const uvec2 extent)
+        // A cell's projected screen measurements: the point density driving the LOD switch and the
+        // footprint the aggregate splat is sized from.
+        struct CellFootprint
+        {
+            // Visible points divided by the projected screen area in pixels (INFINITY for a
+            // degenerate zero-area footprint so a cell collapsed to a point always aggregates).
+            f32 Density = 0.0f;
+            // Largest projected screen dimension in pixels (the aggregate splat's raw size).
+            f32 Pixels = 0.0f;
+        };
+
+        // Projects the cell's world AABB corners to clip and measures the bounding rect. A corner
+        // behind the eye reports zero density (keep resolving — the footprint is unbounded).
+        CellFootprint MeasureCellFootprint(const PointField::Cell& cell, const mat4& viewProj,
+                                           const uvec2 extent)
         {
             const std::array<vec3, 8> corners = cell.Bounds.Corners();
             vec2 minScreen(std::numeric_limits<f32>::infinity());
@@ -82,8 +100,7 @@ namespace Veng::Renderer
                 const vec4 clip = viewProj * vec4(corner, 1.0f);
                 if (clip.w <= 0.0f)
                 {
-                    // A corner behind the eye: treat the footprint as unbounded (keep resolving).
-                    return 0.0f;
+                    return CellFootprint{};
                 }
                 const vec2 ndc = vec2(clip) / clip.w;
                 const vec2 screen = (ndc * 0.5f + 0.5f) * vec2(extent);
@@ -92,7 +109,10 @@ namespace Veng::Renderer
             }
             const vec2 size = maxScreen - minScreen;
             const f32 area = std::max(size.x, 1.0f) * std::max(size.y, 1.0f);
-            return static_cast<f32>(cell.PointCount) / area;
+            return CellFootprint{
+                .Density = static_cast<f32>(cell.PointCount) / area,
+                .Pixels = std::max(size.x, size.y),
+            };
         }
     }
 
@@ -100,9 +120,9 @@ namespace Veng::Renderer
                                              const vector<const PointField*>* fields,
                                              const Format outputFormat,
                                              const SamplerHandle samplerHandle,
-                                             const u32 framesInFlight, const uvec2 extent)
+                                             const u32 framesInFlight)
         : m_Context(context), m_Fields(fields), m_FramesInFlight(framesInFlight),
-          m_OutputFormat(outputFormat), m_SamplerHandle(samplerHandle), m_Extent(extent)
+          m_OutputFormat(outputFormat), m_SamplerHandle(samplerHandle)
     {
         const AssetHandle<Veng::Shader> spriteVs =
             LoadShader(assets, PointSpriteVertId, "point-sprite vertex");
@@ -116,8 +136,9 @@ namespace Veng::Renderer
         const PushConstantRange pushRange =
             PushConstantRange::Of<PointFieldPush>(ShaderStage::Vertex | ShaderStage::Fragment);
 
-        // Additive over the tonemapped scene color: emissive points accumulate, so a dense region
-        // reads brighter and the aggregate splat glows.
+        // Additive into the linear HDR scene color, ahead of bloom and tonemap: emissive points
+        // accumulate as radiance, dense regions roll off through the tone curve instead of
+        // clipping, and a bright point picks up bloom like any other HDR emitter.
         const PipelineAttachmentInfo additiveTarget{.Format = m_OutputFormat,
                                                     .Blend = BlendState::Additive()};
 
@@ -164,23 +185,24 @@ namespace Veng::Renderer
 
     PointFieldScenePass::~PointFieldScenePass() = default;
 
-    void PointFieldScenePass::Resize(const uvec2 extent)
-    {
-        m_Extent = extent;
-    }
-
     PointFieldScenePass::FieldState& PointFieldScenePass::StateFor(const PointField* const field)
     {
         FieldState& state = m_Fields_State[field];
-        if (state.SpriteSet == nullptr)
+        if (state.SpriteSets.empty())
         {
             // First time this field is drawn: allocate its own sprite/aggregate sets and the
             // host-mapped aggregate ring (one region per frame-in-flight) so its per-frame writes
             // never collide with a sibling field's draws in the same command buffer.
-            state.SpriteSet = DescriptorSet::Create(m_Context, {
-                                                                   .Name = "PointField Set",
-                                                                   .Layout = m_SetLayout,
-                                                               });
+            state.SpriteSets.reserve(m_FramesInFlight);
+            for (u32 frame = 0; frame < m_FramesInFlight; ++frame)
+            {
+                state.SpriteSets.push_back(
+                    DescriptorSet::Create(m_Context, {
+                                                         .Name = "PointField Set",
+                                                         .Layout = m_SetLayout,
+                                                     }));
+            }
+            state.BoundBuffers.assign(m_FramesInFlight, nullptr);
             state.AggregateRegionStride =
                 static_cast<u64>(MaxAggregateSplats) * sizeof(GpuAggregateSplat);
             state.AggregateBuffer = Buffer::Create(
@@ -210,7 +232,7 @@ namespace Veng::Renderer
 
     void PointFieldScenePass::Declare(RenderGraph& graph, const PassIO& io)
     {
-        const ResourceId outputId = io.Output;
+        const ResourceId outputId = io.Hdr;
         const ResourceId depthId = io.GBufferDepth;
         const TextureHandle depthHandle = io.DepthHandle;
         const SamplerHandle samplerHandle = m_SamplerHandle;
@@ -238,6 +260,11 @@ namespace Veng::Renderer
                     const Frustum frustum = Frustum::FromViewProjection(viewProj);
                     const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
                     const u32 region = m_Context.GetCurrentFrameInFlight();
+                    const uvec2 renderExtent = view.RenderExtent;
+                    // Pixels per world unit at depth w is |Proj[1][1]|*H/(2w) — the projection is
+                    // Y-flipped for Vulkan clip space, so the diagonal is negative.
+                    const f32 projScale = std::abs(view.Camera.Projection()[1][1]) *
+                                          static_cast<f32>(renderExtent.y) * 0.5f;
 
                     // Draw each resolved field through its own descriptor sets and aggregate ring.
                     for (const PointField* field : *m_Fields)
@@ -251,13 +278,15 @@ namespace Veng::Renderer
 
                         const PointFieldLod& lod = field->GetLod();
 
-                        // Re-point the field's sprite set at its resident buffer only when the
-                        // buffer changes (a rebuilt field), never per frame for a static field.
-                        if (state.BoundBuffer != field->GetPointBuffer().get())
+                        // Re-point this frame's sprite set at the resident buffer only when it
+                        // changed (a rebuilt field), never per frame for a static field. Only the
+                        // current frame's set is ever written — its fence has been waited, so no
+                        // pending command buffer references it.
+                        if (state.BoundBuffers[region] != field->GetPointBuffer().get())
                         {
-                            state.SpriteSet->Write(0, field->GetPointBuffer(), 0,
-                                                   field->GetPointBuffer()->GetSize());
-                            state.BoundBuffer = field->GetPointBuffer().get();
+                            state.SpriteSets[region]->Write(0, field->GetPointBuffer(), 0,
+                                                            field->GetPointBuffer()->GetSize());
+                            state.BoundBuffers[region] = field->GetPointBuffer().get();
                         }
 
                         // Size the per-cell aggregating latch to this field's cells (a rebuilt field
@@ -284,13 +313,14 @@ namespace Veng::Renderer
                             {
                                 continue;
                             }
-                            const f32 density = CellScreenDensity(cell, viewProj, m_Extent);
+                            const CellFootprint footprint =
+                                MeasureCellFootprint(cell, viewProj, renderExtent);
                             bool aggregate = state.Aggregating[c];
-                            if (density >= highGate)
+                            if (footprint.Density >= highGate)
                             {
                                 aggregate = true;
                             }
-                            else if (density < lowGate)
+                            else if (footprint.Density < lowGate)
                             {
                                 aggregate = false;
                             }
@@ -298,9 +328,39 @@ namespace Veng::Renderer
 
                             if (aggregate && splats.size() < MaxAggregateSplats)
                             {
+                                // The splat covers the cell's projected footprint (clamped) and
+                                // spreads the cell's summed flux over that pixel area, so it
+                                // delivers the same integrated light as the resolved sprites:
+                                // flux in pixels² is SummedFlux * (projScale/w)². When the clamp
+                                // shrinks an oversized footprint the color still normalizes by
+                                // the true footprint area — preserving surface brightness and
+                                // spilling the excess, never concentrating a large near cell's
+                                // whole flux into a small bright quad.
+                                const vec4 clipCentroid = viewProj * vec4(cell.Centroid, 1.0f);
+                                if (clipCentroid.w <= 0.0f)
+                                {
+                                    continue;
+                                }
+                                const f32 inflated = footprint.Pixels * SplatOverlap;
+                                const f32 splatPixels =
+                                    std::clamp(inflated, lod.MinPixels, lod.AggregateSplatPixels);
+                                const f32 normalizePixels = std::max(splatPixels, inflated);
+                                const f32 pixelsPerWorld = projScale / clipCentroid.w;
+                                const f32 normalize = (pixelsPerWorld * pixelsPerWorld) /
+                                                      (normalizePixels * normalizePixels);
+                                vec3 color = cell.SummedFlux * lod.AggregateIntensity * normalize;
+                                // MaxIntensity bounds the splat's peak brightness exactly as it
+                                // bounds a clamped sprite's gain, so a dense cell saturates to
+                                // the same ceiling on either LOD path instead of blooming into
+                                // an unbounded HDR blob.
+                                const f32 peak = std::max({color.r, color.g, color.b});
+                                if (peak > lod.MaxIntensity && peak > 0.0f)
+                                {
+                                    color *= lod.MaxIntensity / peak;
+                                }
                                 splats.push_back(GpuAggregateSplat{
-                                    .CenterSize = vec4(cell.Centroid, lod.AggregateSplatPixels),
-                                    .Color = vec4(cell.SummedColor * lod.AggregateIntensity, 0.0f),
+                                    .CenterSize = vec4(cell.Centroid, splatPixels),
+                                    .Color = vec4(color, 0.0f),
                                 });
                             }
                             else if (!aggregate)
@@ -314,16 +374,18 @@ namespace Veng::Renderer
                             continue;
                         }
 
-                        cmd.SetViewport({0, 0}, m_Extent);
-                        cmd.SetScissor({0, 0}, m_Extent);
+                        cmd.SetViewport({0, 0}, renderExtent);
+                        cmd.SetScissor({0, 0}, renderExtent);
 
                         PointFieldPush push{
                             .DepthTexture = depthHandle.Index,
                             .Sampler = samplerHandle.Index,
                             .ViewConstantsIndex = registry.GetCurrentViewConstantsIndex(),
-                            .AggregateIntensity = lod.AggregateIntensity,
-                            .ViewportWidth = static_cast<f32>(m_Extent.x),
-                            .ViewportHeight = static_cast<f32>(m_Extent.y),
+                            .MinPixels = lod.MinPixels,
+                            .MaxPixels = lod.MaxPixels,
+                            .MaxIntensity = lod.MaxIntensity,
+                            .ViewportWidth = static_cast<f32>(renderExtent.x),
+                            .ViewportHeight = static_cast<f32>(renderExtent.y),
                         };
 
                         // Resolved sprites: one non-instanced draw per surviving cell, the vertex
@@ -333,7 +395,7 @@ namespace Veng::Renderer
                             cmd.BindPipeline(m_SpritePipeline);
                             registry.Bind(cmd);
                             cmd.BindDescriptorSets(DescriptorSetBindInfo{
-                                .Sets = {state.SpriteSet},
+                                .Sets = {state.SpriteSets[region]},
                                 .FirstSet = 1,
                                 .PipelineBindPoint = PipelineBindPoint::Graphics,
                             });

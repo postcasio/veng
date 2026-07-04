@@ -107,7 +107,7 @@ namespace Veng::Renderer
         {
             AABB cellBounds = AABB::Empty();
             vec3 centroidSum(0.0f);
-            vec3 colorSum(0.0f);
+            vec3 fluxSum(0.0f);
             const u32 first = static_cast<u32>(sorted.size());
             for (const u32 index : indices)
             {
@@ -116,17 +116,19 @@ namespace Veng::Renderer
                 cellBounds.Expand(point.Position);
                 centroidSum += point.Position;
 
-                // Unpack RGBA8 (little-endian: R low byte) to linear [0,1] RGB for the aggregate sum.
+                // Unpack RGBA8 (little-endian: R low byte) to linear [0,1] RGB, then weight by the
+                // disc area (Size^2) — the constant-surface-brightness flux the aggregate spreads.
                 const f32 inv = 1.0f / 255.0f;
-                colorSum += vec3(static_cast<f32>(point.ColorRgba8 & 0xFFu) * inv,
+                const vec3 color(static_cast<f32>(point.ColorRgba8 & 0xFFu) * inv,
                                  static_cast<f32>((point.ColorRgba8 >> 8) & 0xFFu) * inv,
                                  static_cast<f32>((point.ColorRgba8 >> 16) & 0xFFu) * inv);
+                fluxSum += color * (point.Size * point.Size);
             }
             const f32 count = static_cast<f32>(indices.size());
             m_Cells.push_back(Cell{
                 .Bounds = cellBounds,
                 .Centroid = centroidSum / count,
-                .SummedColor = colorSum,
+                .SummedFlux = fluxSum,
                 .FirstPoint = first,
                 .PointCount = static_cast<u32>(indices.size()),
             });
