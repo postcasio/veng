@@ -516,6 +516,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/field_gate.cpp
             tests/unit/enum_reflection.cpp
             tests/unit/json_serialize.cpp
+            tests/unit/point_field_bucket.cpp
             tests/unit/point_field_component.cpp
             tests/unit/project_settings.cpp
             tests/unit/primitive_resolve.cpp

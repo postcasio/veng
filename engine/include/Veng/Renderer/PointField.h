@@ -114,6 +114,8 @@ namespace Veng::Renderer
         f32 CellSize = 8.0f;
     };
 
+    struct PointFieldBuildInfo;
+
     /// @brief A large, GPU-resident set of positioned, colored, sized points with a distance LOD.
     ///
     /// Built once from a point set and drawn many frames by a PointFieldScenePass. A consumer
@@ -139,14 +141,80 @@ namespace Veng::Renderer
         /// a larger set is a consumer error asserted at build.
         static constexpr u32 MaxPoints = 4u * 1024u * 1024u;
 
+        /// @brief One spatial cull cell: a world AABB over a contiguous run of the point buffer.
+        ///
+        /// The build sorts points into cells, so a cell's points are the buffer range
+        /// [FirstPoint, FirstPoint+PointCount). A pass frustum-tests Bounds, then draws that
+        /// range as sprites or, using the precomputed aggregate summary, as one density splat.
+        struct Cell
+        {
+            /// @brief World-space bounds of the cell's points.
+            AABB Bounds;
+            /// @brief World-space centroid of the cell's points (the aggregate splat's center).
+            vec3 Centroid;
+            /// @brief Sum of the cell's point fluxes (linear RGB color * Size^2), the splat's light source.
+            ///
+            /// Summed at build so the aggregate draw never re-reads the point buffer per frame; the
+            /// pass spreads it over the cell's projected footprint for the additive splat, matching
+            /// the integrated light of the cell's resolved sprites. A zero-Size point contributes
+            /// no flux, so a field of point-sized specks has no aggregate representation.
+            vec3 SummedFlux;
+            /// @brief Index of the cell's first point in the resident buffer.
+            u32 FirstPoint;
+            /// @brief Number of points in the cell.
+            u32 PointCount;
+        };
+
+        /// @brief A prebucketed field build: the cell-sorted points, their cull cells, and bounds.
+        ///
+        /// The product of Bucket — the CPU half of a field build. Points holds the set rewritten
+        /// in cell-sorted order (each Cell indexes a contiguous run of it), so building a field
+        /// from this is upload-only.
+        struct BuildData
+        {
+            /// @brief The point set in cell-sorted order (the order Cells index into).
+            vector<FieldPoint> Points;
+            /// @brief The spatial cull cells over Points.
+            vector<Cell> Cells;
+            /// @brief World-space bounds over every point.
+            AABB Bounds = AABB::Empty();
+        };
+
+        /// @brief Buckets a point set into the cell-sorted build a field uploads — device-free.
+        ///
+        /// The CPU half of a field build: groups the points into a uniform grid of cellSize
+        /// cells, rewrites them so each cell's points are contiguous, and precomputes each cell's
+        /// bounds, centroid, and summed flux. Touches no GPU resource or Context, so a consumer
+        /// may run it on a TaskSystem worker and hand the result to the prebucketed Create on the
+        /// render thread.
+        /// @param points    The points to bucket.
+        /// @param cellSize  Edge length in world units of one cull cell.
+        /// @return The cell-sorted build.
+        /// @pre cellSize > 0 (asserted).
+        [[nodiscard]] static BuildData Bucket(std::span<const FieldPoint> points, f32 cellSize);
+
         /// @brief Builds a GPU-resident point field from a point set.
         ///
-        /// Uploads the points into a device buffer and buckets them into a uniform cull grid.
+        /// Buckets the points into a uniform cull grid (Bucket, inline on the calling thread) and
+        /// uploads the cell-sorted set into a device buffer — the one-call convenience over the
+        /// Bucket + prebucketed-Create split.
         /// @param context  The render context the GPU resources are created on.
         /// @param info      The point set, cell size, and name.
         /// @return The built field.
         /// @pre info.Points.size() <= MaxPoints (asserted).
         static Unique<PointField> Create(Context& context, const PointFieldInfo& info);
+
+        /// @brief Builds a GPU-resident point field from a prebucketed build (see Bucket).
+        ///
+        /// The upload half of the split build: creates the resident buffer and uploads the
+        /// already-sorted points, adopting the build's cells and bounds. The CPU bucketing
+        /// happened in Bucket, so this is the whole render-thread cost of a field produced on a
+        /// worker.
+        /// @param context  The render context the GPU resources are created on.
+        /// @param info      The prebucketed build, cell size, and name.
+        /// @return The built field.
+        /// @pre info.Data.Points.size() <= MaxPoints (asserted).
+        static Unique<PointField> Create(Context& context, PointFieldBuildInfo info);
 
         /// @brief Destroys the field's GPU resources.
         ~PointField();
@@ -179,30 +247,6 @@ namespace Veng::Renderer
         /// @brief Returns the cull cell edge length in world units.
         [[nodiscard]] f32 GetCellSize() const { return m_CellSize; }
 
-        /// @brief One spatial cull cell: a world AABB over a contiguous run of the point buffer.
-        ///
-        /// The build sorts points into cells, so a cell's points are the buffer range
-        /// [FirstPoint, FirstPoint+PointCount). A pass frustum-tests Bounds, then draws that
-        /// range as sprites or, using the precomputed aggregate summary, as one density splat.
-        struct Cell
-        {
-            /// @brief World-space bounds of the cell's points.
-            AABB Bounds;
-            /// @brief World-space centroid of the cell's points (the aggregate splat's center).
-            vec3 Centroid;
-            /// @brief Sum of the cell's point fluxes (linear RGB color * Size^2), the splat's light source.
-            ///
-            /// Summed at build so the aggregate draw never re-reads the point buffer per frame; the
-            /// pass spreads it over the cell's projected footprint for the additive splat, matching
-            /// the integrated light of the cell's resolved sprites. A zero-Size point contributes
-            /// no flux, so a field of point-sized specks has no aggregate representation.
-            vec3 SummedFlux;
-            /// @brief Index of the cell's first point in the resident buffer.
-            u32 FirstPoint;
-            /// @brief Number of points in the cell.
-            u32 PointCount;
-        };
-
         /// @brief Returns the spatial cull cells, each a bounded contiguous point range.
         [[nodiscard]] const vector<Cell>& GetCells() const { return m_Cells; }
 
@@ -229,5 +273,18 @@ namespace Veng::Renderer
         vector<Cell> m_Cells;
         /// @brief This field's screen-density LOD knobs.
         PointFieldLod m_Lod;
+    };
+
+    /// @brief Construction parameters for a PointField from a prebucketed build.
+    ///
+    /// See PointField::Bucket for producing Data; CellSize is the size the bucketing ran at.
+    struct PointFieldBuildInfo
+    {
+        /// @brief Debug name for the field's GPU resources.
+        string Name = "PointField";
+        /// @brief Edge length in world units of one spatial cull cell (the size Data was bucketed at).
+        f32 CellSize = 8.0f;
+        /// @brief The prebucketed build to adopt: cell-sorted points, cull cells, and bounds.
+        PointField::BuildData Data;
     };
 }
