@@ -181,11 +181,6 @@ namespace Veng::Renderer
                                                                    .Name = "PointField Set",
                                                                    .Layout = m_SetLayout,
                                                                });
-            state.AggregateSet =
-                DescriptorSet::Create(m_Context, {
-                                                     .Name = "PointField Aggregate Set",
-                                                     .Layout = m_SetLayout,
-                                                 });
             state.AggregateRegionStride =
                 static_cast<u64>(MaxAggregateSplats) * sizeof(GpuAggregateSplat);
             state.AggregateBuffer = Buffer::Create(
@@ -195,6 +190,20 @@ namespace Veng::Renderer
                                .Usage = BufferUsage::Storage,
                                .HostMapped = true,
                            });
+
+            // One aggregate set per frame-in-flight, each written once to its own ring region; the
+            // draw binds the current frame's set rather than rewriting a shared one each frame (a
+            // descriptor update on a set a pending command buffer references is a validation error).
+            state.AggregateSets.reserve(m_FramesInFlight);
+            for (u32 frame = 0; frame < m_FramesInFlight; ++frame)
+            {
+                Ref<DescriptorSet> set = DescriptorSet::Create(
+                    m_Context, {.Name = "PointField Aggregate Set", .Layout = m_SetLayout});
+                set->Write(0, state.AggregateBuffer,
+                           static_cast<u64>(frame) * state.AggregateRegionStride,
+                           state.AggregateRegionStride);
+                state.AggregateSets.push_back(std::move(set));
+            }
         }
         return state;
     }
@@ -347,13 +356,13 @@ namespace Veng::Renderer
                                          regionOffset;
                             std::memcpy(base, splats.data(),
                                         splats.size() * sizeof(GpuAggregateSplat));
-                            state.AggregateSet->Write(0, state.AggregateBuffer, regionOffset,
-                                                      state.AggregateRegionStride);
 
                             cmd.BindPipeline(m_AggregatePipeline);
                             registry.Bind(cmd);
+                            // Bind this frame's aggregate set, already pointing at the region just
+                            // written — no per-frame descriptor update.
                             cmd.BindDescriptorSets(DescriptorSetBindInfo{
-                                .Sets = {state.AggregateSet},
+                                .Sets = {state.AggregateSets[region]},
                                 .FirstSet = 1,
                                 .PipelineBindPoint = PipelineBindPoint::Graphics,
                             });

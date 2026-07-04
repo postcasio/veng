@@ -74,8 +74,12 @@ namespace Veng::Renderer
             Ref<DescriptorSet> SpriteSet;
             /// @brief The buffer SpriteSet points at, so it is re-pointed only when the field rebuilds.
             const Buffer* BoundBuffer = nullptr;
-            /// @brief Set-1 descriptor for this field's aggregate draw (the per-frame splat records).
-            Ref<DescriptorSet> AggregateSet;
+            /// @brief One Set-1 aggregate descriptor per frame-in-flight, each pointing at its own
+            /// ring region for the buffer's lifetime.
+            ///
+            /// The draw binds the current frame's set rather than rewriting a shared one each frame —
+            /// updating a set a pending command buffer still references is a validation error.
+            vector<Ref<DescriptorSet>> AggregateSets;
             /// @brief Host-mapped per-frame aggregate splat-record SSBO, ringed for frames-in-flight.
             Ref<Buffer> AggregateBuffer;
             /// @brief Byte stride between this field's aggregate-buffer ring regions.
