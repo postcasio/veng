@@ -1370,7 +1370,6 @@ install(FILES
         ${CMAKE_CURRENT_SOURCE_DIR}/cmake/Game.cmake
         ${CMAKE_CURRENT_SOURCE_DIR}/cmake/Editor.cmake
         ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildConfig.cmake
-        ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PerConfigInvalidation.cmake
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/veng
 )
 
