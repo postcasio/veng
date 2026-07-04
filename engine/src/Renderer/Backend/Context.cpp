@@ -892,7 +892,19 @@ namespace Veng::Renderer
         auto commandBuffer = CommandBuffer::Create(const_cast<Context&>(*this));
         commandBuffer->Begin(CommandBufferUsage::OneTimeSubmit);
 
+        // A one-shot command buffer is not the driven frame's, so it never received the per-frame
+        // timestamp-query reset that BeginFrame records. Suppress GPU scope recording while its work
+        // records, so a RenderGraph executed here (a clear, a cube bake) writes no timestamps into
+        // un-reset queries — otherwise, when an ImmediateCommands runs mid-frame (a viewport created
+        // or reconfigured during rendering, so m_GpuScopeRecording is still true), each such scope
+        // trips VUID-vkCmdWriteTimestamp-None-00830. Restored after, so the frame's own scopes resume.
+        auto& self = const_cast<Context&>(*this);
+        const bool wasRecording = self.m_GpuScopeRecording;
+        self.m_GpuScopeRecording = false;
+
         function(*commandBuffer);
+
+        self.m_GpuScopeRecording = wasRecording;
 
         commandBuffer->End();
         SubmitImmediateCommands(*commandBuffer);
