@@ -354,16 +354,6 @@ namespace Veng::Renderer
         /// than hardware depth-testing. Off by default, so the default render is unchanged.
         bool DebugDraw = false;
 
-        /// @brief Whether the point-field pass runs (off by default).
-        ///
-        /// A topology change: it inserts the PointFieldScenePass after the terminal tonemap (Final
-        /// mode only), drawing the field set via SceneRenderer::SetPointField frustum-culled with a
-        /// screen-density LOD (individual sprites resolving to an aggregate density splat). The pass
-        /// samples the g-buffer depth for the sprites' occluded fade rather than hardware depth-
-        /// testing. A per-frame no-op unless a non-empty field is set. Off by default, so the default
-        /// render is unchanged.
-        bool PointField = false;
-
         /// @brief Whether the entity-id picking pass runs (off by default).
         ///
         /// A topology change: it allocates an R32Uint EntityId target plus a dedicated depth
@@ -814,18 +804,6 @@ namespace Veng::Renderer
         /// @return The renderer-owned DebugDraw accumulator.
         [[nodiscard]] DebugDraw& GetDebugDraw() const;
 
-        /// @brief Sets the point field the PointFieldScenePass draws, or null to draw none.
-        ///
-        /// The field is borrowed (not owned) and must outlive the renderer or be cleared before it
-        /// is destroyed. Effective only when SceneRendererSettings::PointField is set; a null field
-        /// (the default) makes the pass a per-frame no-op. Setting a new field takes effect the next
-        /// Execute with no reconfigure — only the pass's borrowed pointer changes, not the topology.
-        /// @param field  The field to draw, or nullptr for none.
-        void SetPointField(const PointField* field);
-
-        /// @brief Returns the point field currently set for the PointFieldScenePass, or null.
-        [[nodiscard]] const PointField* GetPointField() const;
-
         /// @brief Records a pending pick at a render-target texel, serviced by the next Execute(s).
         ///
         /// The next Execute that runs the picking pass copies the (2*Picking::SearchRadius+1)²
@@ -998,6 +976,16 @@ namespace Veng::Renderer
         /// logging once. The one internal reader of the scene the way the light walk is.
         /// @param view  The internal SceneView whose sky fields this fills in place.
         void ResolveSky(SceneView& view);
+
+        /// @brief Resolves the scene's PointField components into this Execute's live field set.
+        ///
+        /// Walks View<PointField> off @p view.World, applies each component's authored Lod to its
+        /// built field, and collects every live (non-null, non-empty) Renderer::PointField into
+        /// m_PointFields for the point-field pass to draw — the lights model. When whether any live
+        /// field exists changes between Executes, drives an internal Rebuild to insert or drop the
+        /// pass at the frame boundary (reusing the imported output, so GetOutput() stays valid).
+        /// @param view  The scene to resolve the point fields from.
+        void ResolvePointFields(const SceneView& view);
 
         /// @brief Sets m_ActiveCull from Settings.Cull and the device-support fallback.
         ///
@@ -1803,11 +1791,20 @@ namespace Veng::Renderer
         /// the start of every Execute.
         mutable DebugDraw m_DebugDraw;
 
-        /// @brief Borrowed point field the PointFieldScenePass draws, set via SetPointField; null for none.
+        /// @brief This Execute's live point fields, borrowed from the scene's PointField components.
         ///
-        /// Held by pointer-to-pointer in the pass so a SetPointField takes effect the next Execute
-        /// with no reconfigure. Not owned — the consumer owns the field's lifetime.
-        const PointField* m_PointField = nullptr;
+        /// Refilled every Execute by ResolvePointFields walking View<PointField>; the point-field
+        /// pass reads it by pointer and draws each field. A borrow only — the scene's components own
+        /// the fields' lifetimes, so a dropped field is simply absent next Execute (no teardown
+        /// ordering). Empty when no component carries a live field.
+        vector<const PointField*> m_PointFields;
+
+        /// @brief Whether the current pass set carries the point-field pass; gates the internal Rebuild.
+        ///
+        /// True once ResolvePointFields has seen a live field and wired the pass. Compared against
+        /// each Execute's presence so the pass inserts on the first live field and drops when the
+        /// last one goes, recompiling at the frame boundary (reusing the imported output).
+        bool m_PointFieldActive = false;
 
         /// @brief Entity-id picking target (R32Uint), allocated only when Settings.Picking is set.
         ///

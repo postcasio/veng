@@ -323,17 +323,13 @@ protected:
         // cull drops the off-screen cells.
         if (std::getenv("HT_POINTFIELD"))
         {
-            BuildPointField();
-            m_SceneSettings.PointField = true;
+            BuildPointField(world);
         }
 
         // Apply the sample's topology to the managed viewport; the engine already configured it
-        // from the level, so this layers the sample's extras on. Recreates the scene texture.
+        // from the level, so this layers the sample's extras on. Recreates the scene texture. The
+        // point-field pass inserts itself when the renderer resolves the authored field.
         ReconfigureScene();
-
-        // Hand the built field to the (reconfigured) renderer; the borrowed pointer takes effect
-        // the next Execute. A no-op when the point-field mode is off (m_PointField stays null).
-        GetPrimaryViewport()->GetRenderer().SetPointField(m_PointField.get());
 
         // HT_RENDER_SCALE pins a fixed render scale (the headless capture has no slider): it drives
         // the dynamic-resolution sub-rect so a reduced-resolution render can be captured and diffed.
@@ -608,13 +604,8 @@ protected:
         m_SceneTexture.reset();
         m_SceneSampler.reset();
 
-        // The renderer only borrows the field; clear its pointer before releasing the field so a
-        // final Execute never reads a freed buffer, then drop the field.
-        if (const Renderer::Viewport* const viewport = GetPrimaryViewport())
-        {
-            viewport->GetRenderer().SetPointField(nullptr);
-        }
-        m_PointField.reset();
+        // The point field is owned by its scene PointField component and retires with the world; no
+        // consumer-side teardown ordering (the renderer only ever borrowed it per Execute).
 
         // Release the sky point buffer's bindless slot (a no-op when the demo was off), then drop
         // the buffer and the material handle so the Material asset retires before the asset manager
@@ -810,10 +801,13 @@ private:
         }
     }
 
-    // Builds the opt-in point field: a box of random colored points around the scene origin,
-    // deterministically seeded so the windowed and headless runs draw the same field. Sized well
-    // under PointField::MaxPoints — this is a demonstration field, not a stress test.
-    void BuildPointField()
+    // Builds the opt-in point field and authors it onto a scene entity's PointField component: a
+    // box of random colored points around the scene origin, deterministically seeded so the
+    // windowed and headless runs draw the same field. The scene owns the built field (a runtime-only
+    // component Ref), so the renderer walks it every Execute and it retires with the world — no
+    // consumer-side binding or teardown ordering. Sized well under PointField::MaxPoints — this is a
+    // demonstration field, not a stress test.
+    void BuildPointField(Scene& world)
     {
         constexpr u32 PointCount = 40000;
         constexpr f32 HalfExtent = 60.0f;
@@ -838,12 +832,20 @@ private:
             });
         }
 
-        m_PointField = Renderer::PointField::Create(GetRenderContext(),
-                                                    {
-                                                        .Name = "HelloTriangle Point Field",
-                                                        .Points = points,
-                                                        .CellSize = 12.0f,
-                                                    });
+        constexpr f32 CellSize = 12.0f;
+        auto field = Renderer::PointField::Create(GetRenderContext(),
+                                                  {
+                                                      .Name = "HelloTriangle Point Field",
+                                                      .Points = points,
+                                                      .CellSize = CellSize,
+                                                  });
+
+        // Author the field onto a scene entity's PointField component; the renderer resolves it
+        // each Execute. CellSize is recorded as the authored knob the build used.
+        const Entity fieldEntity = world.CreateEntity();
+        auto& component = world.Add<PointField>(fieldEntity);
+        component.CellSize = CellSize;
+        component.Field = std::move(field);
     }
 
     void WriteSceneCapture(const char* outPath) const
@@ -879,11 +881,6 @@ private:
     // level (plus the sample's SSR/debug-view extras) in OnWorldLoaded. The per-frame tonemap/bloom
     // values ride the engine's managed-world ViewState (GetWorldViewState) instead.
     Renderer::SceneRendererSettings m_SceneSettings;
-
-    // The opt-in point field (HT_POINTFIELD), null when the mode is off. Built once in
-    // OnWorldLoaded and drawn by the renderer's PointFieldScenePass each frame; released before
-    // the renderer in OnDispose (the renderer only borrows it).
-    Unique<Renderer::PointField> m_PointField;
 
     // The opt-in authored Sky material (HT_SKY_MATERIAL), off by default so the smoke golden is
     // untouched. When enabled, the sample loads a gradient sky material, fills a small point buffer,

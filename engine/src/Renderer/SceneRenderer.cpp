@@ -3601,13 +3601,14 @@ namespace Veng::Renderer
                     m_Context.GetMaxFramesInFlight(), m_Extent));
             }
 
-            // The point-field pass composites the borrowed field over the tonemapped LDR color,
-            // after tonemap like DebugDraw — an unlit emissive primitive, frustum-culled with a
-            // screen-density LOD. A per-frame no-op unless a non-empty field is set.
-            if (m_Settings.PointField)
+            // The point-field pass composites the scene's live fields over the tonemapped LDR
+            // color, after tonemap like DebugDraw — an unlit emissive primitive, frustum-culled
+            // with a screen-density LOD. Inserted only while a live field exists (m_PointFieldActive
+            // is driven by ResolvePointFields walking the scene's PointField components).
+            if (m_PointFieldActive)
             {
                 m_Passes.push_back(CreateUnique<PointFieldScenePass>(
-                    m_Context, m_Assets, &m_PointField, m_OutputFormat, m_SamplerHandle,
+                    m_Context, m_Assets, &m_PointFields, m_OutputFormat, m_SamplerHandle,
                     m_Context.GetMaxFramesInFlight(), m_Extent));
             }
             break;
@@ -3918,6 +3919,34 @@ namespace Veng::Renderer
         {
             m_ResolvedSkyKind = kind;
             m_ResolvedSkyLighting = resolvedLighting;
+            Rebuild();
+        }
+    }
+
+    void SceneRenderer::ResolvePointFields(const SceneView& view)
+    {
+        // Refill this Execute's live field set from the scene's PointField components — the lights
+        // model. Each component's authored Lod rides its built field so the pass reads the authored
+        // knobs; a null or empty Field contributes nothing.
+        m_PointFields.clear();
+        for (auto [entity, field] : view.World.View<Veng::PointField>())
+        {
+            const Ref<Renderer::PointField>& built = field.Field;
+            if (built == nullptr || built->GetPointCount() == 0)
+            {
+                continue;
+            }
+            built->SetLod(field.Lod);
+            m_PointFields.push_back(built.get());
+        }
+
+        // Presence drives the pass: insert it the first frame a live field exists, drop it when the
+        // last one goes. The recompile happens at this frame boundary and reuses the imported output
+        // (identity preserved), so a cached GetOutput() ref stays valid.
+        const bool active = !m_PointFields.empty();
+        if (active != m_PointFieldActive)
+        {
+            m_PointFieldActive = active;
             Rebuild();
         }
     }
@@ -4892,6 +4921,10 @@ namespace Veng::Renderer
         // reusing the imported output so GetOutput() stays valid (only Resize/Configure recreate it).
         ResolveSky(resolvedView);
 
+        // Resolve the scene's point-field components into this Execute's live field set the same
+        // way — the pass inserts on the first live field and drops when the last one goes.
+        ResolvePointFields(resolvedView);
+
         // Forward the resolved authored sky material to the sky-material pass (a no-op when the pass
         // is absent or no material is bound). The game has already written the material's own
         // params/handles (e.g. SetStorageBufferHandle) before Render.
@@ -5337,16 +5370,6 @@ namespace Veng::Renderer
     DebugDraw& SceneRenderer::GetDebugDraw() const
     {
         return m_DebugDraw;
-    }
-
-    void SceneRenderer::SetPointField(const PointField* const field)
-    {
-        m_PointField = field;
-    }
-
-    const PointField* SceneRenderer::GetPointField() const
-    {
-        return m_PointField;
     }
 
     void SceneRenderer::RequestPick(const uvec2 texel)

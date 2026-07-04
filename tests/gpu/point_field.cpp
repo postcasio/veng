@@ -88,8 +88,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                           .Size = 0.5f});
     }
 
-    const Unique<PointField> field =
-        PointField::Create(Context, {.Name = "Cull Field", .Points = points, .CellSize = 50.0f});
+    const Unique<Renderer::PointField> field = Renderer::PointField::Create(
+        Context, {.Name = "Cull Field", .Points = points, .CellSize = 50.0f});
 
     // The clusters bucket into at least two cells (one on each side of the origin).
     REQUIRE(field->GetCells().size() >= 2);
@@ -103,7 +103,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     u32 leftIn = 0;
     u32 rightIn = 0;
-    for (const PointField::Cell& cell : field->GetCells())
+    for (const Renderer::PointField::Cell& cell : field->GetCells())
     {
         const bool in = Intersects(frustum, cell.Bounds);
         if (cell.Bounds.Center().x < 0.0f)
@@ -144,12 +144,20 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                           .Size = 0.5f});
     }
 
-    const Unique<PointField> field =
-        PointField::Create(Context, {.Name = "LOD Field", .Points = points, .CellSize = 100.0f});
+    auto field = Renderer::PointField::Create(
+        Context, {.Name = "LOD Field", .Points = points, .CellSize = 100.0f});
     // The tight cluster falls in a single cell, so the LOD choice is unambiguous.
     REQUIRE(field->GetCells().size() == 1);
 
+    // The scene component is looked up by TypeId when added and walked, so register it (the empty
+    // fixture registry carries no builtins).
+    Types.Register<Veng::PointField>();
     const Unique<Scene> scene = Scene::Create(Types);
+
+    // The point field is scene-authored: a PointField component carrying the built field, which the
+    // renderer walks each Execute and whose presence inserts the point-field pass.
+    const Entity fieldEntity = scene->CreateEntity();
+    scene->Add<Veng::PointField>(fieldEntity).Field = std::move(field);
 
     // The AssetManager auto-mounts the embedded core pack, so the PointFieldScenePass loads its
     // sprite/aggregate shaders through it with no external pack to mount.
@@ -160,9 +168,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         .Assets = assets,
         .OutputFormat = Context.GetOutputFormat(),
         .Extent = extent,
-        .Settings = {.Bloom = false, .Shadows = false, .AO = false, .PointField = true},
+        .Settings = {.Bloom = false, .Shadows = false, .AO = false},
     });
-    renderer->SetPointField(field.get());
 
     auto RenderFrom = [&](vec3 eye) -> vector<u8>
     {
@@ -192,4 +199,101 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // Zoomed out, the cell collapses to the compact aggregate splat: far less coverage than the
     // resolved sprites, proving the sprite→aggregate transition kept the cost bounded.
     CHECK(farBright < nearBright * 0.5f);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "point field: component presence drives the pass and multiple fields all draw")
+{
+    // Component presence, not a settings toggle, inserts and removes the point-field pass, and the
+    // renderer walks every PointField component: a scene with two field entities (a bright cluster
+    // on the left and one on the right of the frame) lights both sides; deleting a field's
+    // component removes it next frame with no consumer call and no teardown ordering.
+    constexpr uvec2 extent{200, 200};
+
+    auto MakeCluster = [this](vec3 center) -> Unique<Renderer::PointField>
+    {
+        vector<FieldPoint> points;
+        for (u32 i = 0; i < 2000; ++i)
+        {
+            const f32 a = static_cast<f32>(i) * 0.161f;
+            const f32 b = static_cast<f32>(i) * 0.379f;
+            points.push_back({.Position = center + vec3(std::sin(a) * 2.0f, std::cos(b) * 2.0f,
+                                                        std::sin(a + b) * 2.0f),
+                              .ColorRgba8 = PackRgba8(255, 240, 220, 255),
+                              .Size = 0.5f});
+        }
+        return Renderer::PointField::Create(
+            Context, {.Name = "Cluster", .Points = points, .CellSize = 20.0f});
+    };
+
+    const vec3 leftCenter(-6.0f, 0.0f, 0.0f);
+    const vec3 rightCenter(6.0f, 0.0f, 0.0f);
+
+    // The scene component is looked up by TypeId when added and walked, so register it.
+    Types.Register<Veng::PointField>();
+    const Unique<Scene> scene = Scene::Create(Types);
+    AssetManager assets(Context, Tasks, Types);
+
+    // No PointField component authored yet: the presence-driven pass is absent, and Execute still
+    // produces a valid output whose GetOutput() ref survives the later presence recompile.
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = {.Bloom = false, .Shadows = false, .AO = false},
+    });
+    const Ref<Renderer::ImageView> output = renderer->GetOutput();
+
+    CameraView camera;
+    camera.SetPerspective(glm::radians(50.0f), 1.0f, 0.1f, 2000.0f);
+    camera.SetView(vec3(0.0f, 0.0f, 40.0f), vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    auto Render = [&]() -> vector<u8>
+    {
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer->Execute(
+                    cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
+            });
+        return renderer->GetOutput()->GetImage()->Download();
+    };
+
+    // Empty scene: neither half of the frame lights (the pass is not even inserted).
+    {
+        const vector<u8> pixels = Render();
+        CHECK(BrightFraction(pixels, extent.x, 0, extent.x / 2, 0, extent.y) < 0.01f);
+        CHECK(BrightFraction(pixels, extent.x, extent.x / 2, extent.x, 0, extent.y) < 0.01f);
+    }
+
+    // Add two field entities: presence inserts the pass (an internal recompile that reuses the
+    // imported output, so the cached GetOutput() ref stays the same image) and both sides light.
+    const Entity leftEntity = scene->CreateEntity();
+    scene->Add<Veng::PointField>(leftEntity).Field = MakeCluster(leftCenter);
+    const Entity rightEntity = scene->CreateEntity();
+    scene->Add<Veng::PointField>(rightEntity).Field = MakeCluster(rightCenter);
+    {
+        const vector<u8> pixels = Render();
+        CHECK(BrightFraction(pixels, extent.x, 0, extent.x / 2, 0, extent.y) > 0.02f);
+        CHECK(BrightFraction(pixels, extent.x, extent.x / 2, extent.x, 0, extent.y) > 0.02f);
+    }
+    // The presence recompile preserved the output's identity (only Resize/Configure recreate it).
+    CHECK(renderer->GetOutput() == output);
+
+    // Drop the right field's component: the renderer walks one field next frame with no teardown
+    // ordering (the field retires with its component), so only the left half lights.
+    scene->Remove<Veng::PointField>(rightEntity);
+    {
+        const vector<u8> pixels = Render();
+        CHECK(BrightFraction(pixels, extent.x, 0, extent.x / 2, 0, extent.y) > 0.02f);
+        CHECK(BrightFraction(pixels, extent.x, extent.x / 2, extent.x, 0, extent.y) < 0.01f);
+    }
+
+    // Drop the last field too: presence removes the pass again and the frame goes dark, cleanly.
+    scene->Remove<Veng::PointField>(leftEntity);
+    {
+        const vector<u8> pixels = Render();
+        CHECK(BrightFraction(pixels, extent.x, 0, extent.x, 0, extent.y) < 0.01f);
+    }
 }
