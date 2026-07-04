@@ -3,11 +3,14 @@
 #include <algorithm>
 
 #include <fmt/format.h>
+#include <glm/gtc/packing.hpp>
 
+#include <Veng/Assert.h>
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Environment.h>
 #include <Veng/Asset/Shader.h>
 #include <Veng/Renderer/BindlessRegistry.h>
+#include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/ComputePipeline.h>
 #include <Veng/Renderer/Context.h>
@@ -15,6 +18,7 @@
 #include <Veng/Renderer/DescriptorSetLayout.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
+#include <Veng/Renderer/Native.h>
 #include <Veng/Renderer/PipelineLayout.h>
 #include <Veng/Renderer/Sampler.h>
 
@@ -93,14 +97,16 @@ namespace Veng::Renderer
             return result->Get()->Module;
         };
 
-        // Radiance cube (skybox source + prefilter source): six layers, single mip.
+        // Radiance cube (skybox source + prefilter source): six layers, single mip. TransferSrc so
+        // the environment SH projection reads it back off the device.
         m_RadianceImage =
             Image::Create(m_Context, {
                                          .Name = "IBL Radiance Cube",
                                          .Extent = {RadianceCubeSize, RadianceCubeSize, 1},
                                          .Layers = CubeFaces,
                                          .Format = Format::RGBA16Sfloat,
-                                         .Usage = ImageUsage::Sampled | ImageUsage::Storage,
+                                         .Usage = ImageUsage::Sampled | ImageUsage::Storage |
+                                                  ImageUsage::TransferSrc,
                                      });
         m_RadianceCubeView = ImageView::Create(m_Context, {
                                                               .Name = "IBL Radiance Cube View",
@@ -116,14 +122,15 @@ namespace Veng::Renderer
                                              .ArrayLayers = CubeFaces,
                                          });
 
-        // Irradiance cube (diffuse): tiny, single mip.
+        // Irradiance cube (diffuse): tiny, single mip. TransferSrc so tests read the convolved map.
         m_IrradianceImage =
             Image::Create(m_Context, {
                                          .Name = "IBL Irradiance Cube",
                                          .Extent = {IrradianceSize, IrradianceSize, 1},
                                          .Layers = CubeFaces,
                                          .Format = Format::RGBA16Sfloat,
-                                         .Usage = ImageUsage::Sampled | ImageUsage::Storage,
+                                         .Usage = ImageUsage::Sampled | ImageUsage::Storage |
+                                                  ImageUsage::TransferSrc,
                                      });
         m_IrradianceCubeView = ImageView::Create(m_Context, {
                                                                 .Name = "IBL Irradiance Cube View",
@@ -364,6 +371,11 @@ namespace Veng::Renderer
         return PrefilterMips;
     }
 
+    u32 EnvironmentIbl::GetIrradianceFaceSize()
+    {
+        return IrradianceSize;
+    }
+
     void EnvironmentIbl::EnsureInitialized(CommandBuffer& cmd)
     {
         if (m_Initialized)
@@ -392,7 +404,8 @@ namespace Veng::Renderer
         cmd.PrepareForAccess(m_PrefilterCubeView, AccessKind::Sample);
     }
 
-    void EnvironmentIbl::Generate(CommandBuffer& cmd, const Veng::EnvironmentMap& environment)
+    void EnvironmentIbl::RecordEquirectToCube(CommandBuffer& cmd,
+                                              const Veng::EnvironmentMap& environment)
     {
         // Equirect panorama -> radiance cube. The panorama is sampled through set-0 bindless.
         m_Context.GetBindlessRegistry().Bind(cmd, PipelineBindPoint::Compute);
@@ -410,6 +423,69 @@ namespace Veng::Renderer
         });
         cmd.Dispatch(Groups(RadianceCubeSize), Groups(RadianceCubeSize), CubeFaces);
         cmd.PrepareForAccess(m_RadianceCubeView, AccessKind::Sample);
+    }
+
+    void EnvironmentIbl::Generate(CommandBuffer& cmd, const Veng::EnvironmentMap& environment)
+    {
+        RecordEquirectToCube(cmd, environment);
+
+        // Convolve the owned radiance cube — the only equirect-specific work above is the entry.
+        GenerateFromCube(cmd, m_RadianceCubeView, RadianceCubeSize);
+    }
+
+    Sh9 EnvironmentIbl::ProjectEnvironmentToIrradianceSh(const Veng::EnvironmentMap& environment)
+    {
+        const usize faceBytes = static_cast<usize>(RadianceCubeSize) * RadianceCubeSize * 8;
+        const Ref<Buffer> staging =
+            Buffer::Create(m_Context, {
+                                          .Name = "IBL Environment SH Readback",
+                                          .Size = faceBytes * CubeFaces,
+                                          .Usage = BufferUsage::TransferDst,
+                                      });
+
+        // A self-contained submit: render the panorama into the owned radiance cube, copy all six
+        // layers into staging (layer-major), and restore the sampled layout — so display (the
+        // skybox) and this SH projection read the one cube. Blocks (immediate submit + readback),
+        // bounded by the caller's once-per-change gate.
+        m_Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                RecordEquirectToCube(cmd, environment);
+                cmd.PrepareForAccess(m_RadianceCubeView, AccessKind::TransferSrc);
+                const vk::BufferImageCopy region{
+                    .bufferOffset = 0,
+                    .bufferRowLength = 0,
+                    .bufferImageHeight = 0,
+                    .imageSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
+                                         .mipLevel = 0,
+                                         .baseArrayLayer = 0,
+                                         .layerCount = CubeFaces},
+                    .imageOffset = {.x = 0, .y = 0, .z = 0},
+                    .imageExtent = {.width = RadianceCubeSize,
+                                    .height = RadianceCubeSize,
+                                    .depth = 1},
+                };
+                GetVkCommandBuffer(cmd).copyImageToBuffer(GetVkImage(*m_RadianceImage),
+                                                          vk::ImageLayout::eTransferSrcOptimal,
+                                                          GetVkBuffer(*staging), 1, &region);
+                cmd.PrepareForAccess(m_RadianceCubeView, AccessKind::Sample);
+            });
+
+        const vector<u8> faces = staging->Download();
+        return ProjectCubeToIrradianceSh(faces, RadianceCubeSize);
+    }
+
+    void EnvironmentIbl::GenerateFromCube(CommandBuffer& cmd, const Ref<ImageView>& radianceCube,
+                                          const u32 sourceFaceSize)
+    {
+        // Point the convolution sets at the supplied radiance cube. The generation sets' sampled
+        // binding (0) is repointed each call — a supplied cube may be the owned equirect cube or a
+        // foreign bake target; either way the convolution reads it in place, never a copy.
+        m_IrradianceSet->Write(0, radianceCube);
+        for (const Ref<DescriptorSet>& set : m_PrefilterSets)
+        {
+            set->Write(0, radianceCube);
+        }
 
         // Radiance cube -> irradiance cube (diffuse convolution).
         cmd.PrepareForAccess(m_IrradianceStorageView, AccessKind::StorageWrite);
@@ -441,10 +517,84 @@ namespace Veng::Renderer
                 .FaceSize = faceSize,
                 .Roughness = roughness,
                 .SampleCount = PrefilterSamples,
-                .SourceSize = static_cast<f32>(RadianceCubeSize),
+                .SourceSize = static_cast<f32>(sourceFaceSize),
             });
             cmd.Dispatch(Groups(faceSize), Groups(faceSize), CubeFaces);
         }
         cmd.PrepareForAccess(m_PrefilterCubeView, AccessKind::Sample);
+    }
+
+    Sh9 EnvironmentIbl::ProjectCubeToIrradianceSh(const std::span<const u8> cubeTexels,
+                                                  const u32 faceSize)
+    {
+        VE_ASSERT(cubeTexels.size() ==
+                      static_cast<usize>(faceSize) * faceSize * CubeFaces * sizeof(u16) * 4,
+                  "ProjectCubeToIrradianceSh: cube snapshot size mismatches faceSize");
+
+        // The six faces' world-direction bases, matching ibl_equirect_to_cube's FaceDirection and
+        // the SkyCubemapBake InvViewProj layout — a texel's (face, uv) maps to its world direction.
+        // Column A scales st.x, B scales st.y, C is the face center; the direction is A·st.x +
+        // B·st.y + C, normalized.
+        struct FaceBasis
+        {
+            vec3 A;
+            vec3 B;
+            vec3 C;
+        };
+        constexpr std::array<FaceBasis, CubeFaces> faceBases = {{
+            {{0, 0, -1}, {0, -1, 0}, {1, 0, 0}},  // +X
+            {{0, 0, 1}, {0, -1, 0}, {-1, 0, 0}},  // -X
+            {{1, 0, 0}, {0, 0, 1}, {0, 1, 0}},    // +Y
+            {{1, 0, 0}, {0, 0, -1}, {0, -1, 0}},  // -Y
+            {{1, 0, 0}, {0, -1, 0}, {0, 0, 1}},   // +Z
+            {{-1, 0, 0}, {0, -1, 0}, {0, 0, -1}}, // -Z
+        }};
+
+        const auto* halves = reinterpret_cast<const u16*>(cubeTexels.data());
+        const f32 invFace = 1.0f / static_cast<f32>(faceSize);
+
+        Sh9 radiance = Sh9::Zero();
+        f32 solidAngleSum = 0.0f;
+        for (u32 face = 0; face < CubeFaces; ++face)
+        {
+            const FaceBasis& basis = faceBases[face];
+            for (u32 y = 0; y < faceSize; ++y)
+            {
+                for (u32 x = 0; x < faceSize; ++x)
+                {
+                    const f32 u = (static_cast<f32>(x) + 0.5f) * invFace;
+                    const f32 v = (static_cast<f32>(y) + 0.5f) * invFace;
+                    const f32 sx = u * 2.0f - 1.0f;
+                    const f32 sy = v * 2.0f - 1.0f;
+                    const vec3 raw = basis.A * sx + basis.B * sy + basis.C;
+                    const f32 rawLen = glm::length(raw);
+                    const vec3 direction = raw / rawLen;
+
+                    // The cube-texel solid-angle weight: a cube face maps to the sphere with the
+                    // (1 + sx² + sy²)^(-3/2) Jacobian, so each texel's fixed uv-area (2/faceSize per
+                    // axis) subtends this much solid angle. Weighting by it makes the projection a
+                    // proper spherical integral regardless of face resolution.
+                    const f32 texelUvArea = (2.0f * invFace) * (2.0f * invFace);
+                    const f32 solidAngle = texelUvArea / (rawLen * rawLen * rawLen);
+                    solidAngleSum += solidAngle;
+
+                    const usize base =
+                        ((static_cast<usize>(face) * faceSize + y) * faceSize + x) * 4;
+                    const vec3 color(glm::unpackHalf1x16(halves[base + 0]),
+                                     glm::unpackHalf1x16(halves[base + 1]),
+                                     glm::unpackHalf1x16(halves[base + 2]));
+                    ProjectSample(radiance, direction, color, solidAngle);
+                }
+            }
+        }
+
+        // Renormalize to the full 4*pi sphere: the summed per-texel solid angles approximate 4*pi,
+        // and dividing keeps the projection unbiased against the analytic weight ShBasis expects.
+        const f32 normalize = solidAngleSum > 0.0f ? (4.0f * glm::pi<f32>() / solidAngleSum) : 1.0f;
+        for (vec3& coefficient : radiance.Coefficients)
+        {
+            coefficient *= normalize;
+        }
+        return ConvolveCosine(radiance);
     }
 }

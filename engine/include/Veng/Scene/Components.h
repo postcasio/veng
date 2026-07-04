@@ -619,8 +619,18 @@ namespace Veng
     ///
     /// The lighting tier of a Sky component: None displays the sky without lighting the scene, SH
     /// projects it to a spherical-harmonic ambient (the cheap diffuse arm), and IBL runs the full
-    /// split-sum image-based lighting. A tier is a request — the renderer activates it per source
-    /// as the machinery lands, degrading unsupported source×tier combinations to background-only.
+    /// split-sum image-based lighting. A tier is a request — the renderer activates it per source:
+    /// a cube-backed source (an environment map, or a material sky in SkyMode::Baked) drives both
+    /// SH and IBL; a per-pixel source (a direct material sky) cannot light and degrades either to
+    /// background-only (bake to light).
+    ///
+    /// Cost is explicit and authored. None is free; SH pays a one-time projection of the sky's
+    /// radiance cube on the sky's dirty signal (the cheap tier — a faint, low-frequency glow); IBL
+    /// pays a full split-sum prefilter on that same signal (the expensive tier — justified for a
+    /// bright, directional sky). A near-black sky should stay None. The engine never rate-limits:
+    /// every committed dirty signal pays its tier's cost, so a live edit of a lit sky's params pays
+    /// a full re-convolution per commit — bounding that frequency (debouncing before commit) is the
+    /// consumer's responsibility.
     enum class SkyLighting : u8
     {
         /// @brief Display the sky only; the scene keeps its flat ambient fallback.

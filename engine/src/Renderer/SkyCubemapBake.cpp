@@ -7,6 +7,7 @@
 #include <Veng/Assert.h>
 #include <Veng/Asset/MaterialInstance.h>
 #include <Veng/Renderer/BindlessRegistry.h>
+#include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/DescriptorSet.h>
@@ -14,6 +15,7 @@
 #include <Veng/Renderer/GraphicsPipeline.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
+#include <Veng/Renderer/Native.h>
 #include <Veng/Renderer/PipelineLayout.h>
 #include <Veng/Renderer/Sampler.h>
 
@@ -258,5 +260,43 @@ namespace Veng::Renderer
 
         // Leave the whole cube in a sampled layout for the skybox pass that samples it this frame.
         cmd.PrepareForAccess(m_CubeView, AccessKind::Sample);
+    }
+
+    vector<u8> SkyCubemapBake::BakeAndDownload(const MaterialInstance& material)
+    {
+        const usize faceBytes = static_cast<usize>(m_FaceSize) * m_FaceSize * 8; // RGBA16F
+        const Ref<Buffer> staging = Buffer::Create(m_Context, {
+                                                                  .Name = "Sky Bake SH Readback",
+                                                                  .Size = faceBytes * CubeFaces,
+                                                                  .Usage = BufferUsage::TransferDst,
+                                                              });
+
+        // A self-contained submit: bake the six faces, transition the cube to TransferSrc, copy all
+        // six layers into the staging buffer (layer-major), and restore the sampled layout — so the
+        // download reads the radiance this submit just produced, independent of the frame command
+        // buffer. Blocks (ImmediateCommands submits + waits), bounded by the once-per-signal gate.
+        m_Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                Bake(cmd, material);
+                cmd.PrepareForAccess(m_CubeView, AccessKind::TransferSrc);
+                const vk::BufferImageCopy region{
+                    .bufferOffset = 0,
+                    .bufferRowLength = 0,
+                    .bufferImageHeight = 0,
+                    .imageSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
+                                         .mipLevel = 0,
+                                         .baseArrayLayer = 0,
+                                         .layerCount = CubeFaces},
+                    .imageOffset = {.x = 0, .y = 0, .z = 0},
+                    .imageExtent = {.width = m_FaceSize, .height = m_FaceSize, .depth = 1},
+                };
+                GetVkCommandBuffer(cmd).copyImageToBuffer(GetVkImage(*m_CubeImage),
+                                                          vk::ImageLayout::eTransferSrcOptimal,
+                                                          GetVkBuffer(*staging), 1, &region);
+                cmd.PrepareForAccess(m_CubeView, AccessKind::Sample);
+            });
+
+        return staging->Download();
     }
 }

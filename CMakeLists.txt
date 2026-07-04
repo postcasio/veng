@@ -492,6 +492,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/visibility.cpp
             tests/unit/frustum.cpp
             tests/unit/spherical_harmonics.cpp
+            tests/unit/ibl_cube_sh.cpp
             tests/unit/bvh.cpp
             tests/unit/math_random.cpp
             tests/unit/platform_userpaths.cpp
@@ -937,6 +938,7 @@ if (VENG_BUILD_TESTS)
             tests/gpu/prefab_spawn.cpp
             tests/gpu/level_loader.cpp
             tests/gpu/sh_consistency.cpp
+            tests/gpu/environment_ibl.cpp
     )
     target_link_libraries(veng_test_gpu PRIVATE veng::veng veng_test_support doctest::doctest)
     # transfer_retire.cpp reaches through Native.h (raw vk::/VMA handles via the
