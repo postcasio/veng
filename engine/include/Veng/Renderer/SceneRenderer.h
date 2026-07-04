@@ -1731,6 +1731,27 @@ namespace Veng::Renderer
         /// when the resolved sky is not a baked material.
         const MaterialInstance* m_LastBakedSkyMaterial = nullptr;
 
+        /// @brief The material a baked material sky last convolved into the IBL maps; gates re-convolution.
+        ///
+        /// Non-owning. On the same dirty signal as the bake, a baked material sky lit via IBL runs
+        /// GenerateFromCube over the bake cube; this gate keeps it once-per-change. Cleared when the
+        /// resolved sky is not a baked material lit via IBL.
+        const MaterialInstance* m_LastConvolvedSkyMaterial = nullptr;
+
+        /// @brief The material the cube-projected skylight SH was last built from; gates re-projection.
+        ///
+        /// Non-owning. On the same dirty signal as the bake, a baked material sky lit via SH bakes
+        /// and downloads the cube, then projects it to the skylight SH; this gate keeps it
+        /// once-per-change. Cleared when the resolved sky is not a baked material lit via SH.
+        const MaterialInstance* m_LastSkyShMaterial = nullptr;
+
+        /// @brief The environment the cube-projected skylight SH was last built from; gates re-projection.
+        ///
+        /// Non-owning. An environment sky lit via SH projects its radiance cube to the skylight SH
+        /// on the environment-change signal; this gate keeps it once-per-change. Cleared when the
+        /// resolved sky is not an environment lit via SH.
+        const EnvironmentMap* m_LastSkyShEnvironment = nullptr;
+
         /// @brief Whether the last Rebuild wired the SH skylight ambient arm into the lighting pass.
         ///
         /// True when the resolved sky is an atmosphere lit via SH. Gates the per-frame CPU

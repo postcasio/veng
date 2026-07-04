@@ -33,6 +33,7 @@
 #include <Veng/Asset/MaterialInstance.h>
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
+#include <Veng/Math/SphericalHarmonics.h>
 #include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
@@ -275,6 +276,43 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
             }
         }
     }
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "sky bake: the baked cube feeds the cube→SH ambient projection — display and "
+                  "ambient read the one cube")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+    const AssetHandle<MaterialInstance> material = CookAndLoadAnalyticSky(assets);
+
+    const Unique<EnvironmentIbl> ibl = EnvironmentIbl::Create(Context, assets);
+
+    constexpr u32 FaceSize = 64;
+    const Unique<SkyCubemapBake> bake =
+        SkyCubemapBake::Create(Context, ibl->GetSetLayout(), Format::RGBA16Sfloat, FaceSize);
+
+    // Bake into the one cube, then read it back and project it to the irradiance SH the cheap
+    // ambient arm evaluates — the same cube the skybox display path samples through GetSet().
+    Context.ImmediateCommands([&](CommandBuffer& cmd) { bake->Bake(cmd, *material.Get()); });
+    const vector<u8> faces = DownloadCube(Context, *bake);
+    const Sh9 sh = EnvironmentIbl::ProjectCubeToIrradianceSh(faces, bake->GetFaceSize());
+
+    // The material writes 0.5 + 0.5·dir, so the sky is brightest toward +dir on each axis. The
+    // convolved diffuse irradiance must therefore be greater facing +X than -X (the l=1 term the
+    // directional radiance carries) and strictly positive — a flat or zeroed projection would fail.
+    const vec3 plusX = EvalIrradiance(sh, vec3(1, 0, 0));
+    const vec3 minusX = EvalIrradiance(sh, vec3(-1, 0, 0));
+    CHECK(plusX.r > minusX.r);
+    CHECK(plusX.r > 0.0f);
+
+    // BakeAndDownload is the renderer's self-contained readback: it bakes the same cube and returns
+    // the same radiance the display bake produced, so its projection matches within the round-trip.
+    const vector<u8> selfContained = bake->BakeAndDownload(*material.Get());
+    const Sh9 shSelf =
+        EnvironmentIbl::ProjectCubeToIrradianceSh(selfContained, bake->GetFaceSize());
+    const vec3 plusXSelf = EvalIrradiance(shSelf, vec3(1, 0, 0));
+    CHECK(plusXSelf.r == doctest::Approx(plusX.r).epsilon(0.05));
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,

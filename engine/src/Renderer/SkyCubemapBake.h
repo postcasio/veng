@@ -74,6 +74,20 @@ namespace Veng::Renderer
         /// @pre material's domain is MaterialDomain::Sky and its param block is uploaded this frame.
         void Bake(CommandBuffer& cmd, const MaterialInstance& material);
 
+        /// @brief Bakes `material` and returns a host-side snapshot of the six radiance faces.
+        ///
+        /// The device-free path the cheap SH ambient arm reads from: bakes into the owned cube
+        /// through a self-contained immediate submit, copies all six layers into one tightly-packed
+        /// RGBA16F buffer (layer-major), and blocks until the download completes — so the returned
+        /// bytes are the freshly-baked radiance regardless of any frame command buffer's ordering.
+        /// Overwrites the cube in place, so a later Bake into the frame command buffer still points
+        /// the skybox at the current radiance. Called once on the sky dirty signal (a static sky
+        /// pays one readback), so the stall is bounded.
+        /// @param material The resident Sky-domain material to bake.
+        /// @return The six cube faces, layer-major, RGBA16F (`GetFaceSize()`² texels each).
+        /// @pre material's domain is MaterialDomain::Sky and its param block is uploaded this frame.
+        [[nodiscard]] vector<u8> BakeAndDownload(const MaterialInstance& material);
+
         /// @brief The consumer descriptor set the skybox pass binds to sample the baked cube.
         ///
         /// Matches the IBL consumer set's radiance binding (binding 0 the cube, binding 4 the

@@ -698,9 +698,29 @@ private:
         // sky. Baked is the default (bake once, sample a cube per frame); HT_SKY_DIRECT opts into
         // the per-pixel path, so a run of each mode over the same material proves they agree.
         source->Mode = std::getenv("HT_SKY_DIRECT") != nullptr ? SkyMode::Direct : SkyMode::Baked;
-        // The material sky lights nothing (only Baked can, activated later), so keep the tier at
-        // background-only regardless of what the level's sky authored.
-        skyComponent->Lighting = SkyLighting::None;
+
+        // A baked sky can light the scene: HT_SKY_LIGHTING selects the tier — "sh" projects the
+        // baked cube to a spherical-harmonic ambient (a matte object picks up the sky's color),
+        // "ibl" convolves it into the full split-sum maps (a glossy object reflects it). The
+        // default (and any direct sky, which cannot light) stays background-only, so the smoke and
+        // golden paths — which never set the toggle — see no ambient and do not move.
+        SkyLighting tier = SkyLighting::None;
+        if (source->Mode == SkyMode::Baked)
+        {
+            if (const char* lighting = std::getenv("HT_SKY_LIGHTING"); lighting != nullptr)
+            {
+                const string_view request(lighting);
+                if (request == "ibl" || request == "IBL")
+                {
+                    tier = SkyLighting::IBL;
+                }
+                else if (request == "sh" || request == "SH")
+                {
+                    tier = SkyLighting::SH;
+                }
+            }
+        }
+        skyComponent->Lighting = tier;
     }
 
     // Constructs the MCP server when HT_MCP=<port> is set (HT_MCP=0 picks an ephemeral port), so the
