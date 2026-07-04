@@ -1715,14 +1715,15 @@ namespace Veng::Renderer
         /// ambient arm) recompiles the pass set the same way a source-kind change does.
         SkyLighting m_ResolvedSkyLighting = SkyLighting::None;
 
-        /// @brief Whether the resolved material sky bakes to a radiance cube the skybox path samples.
+        /// @brief Whether the resolved sky bakes to a radiance cube the skybox path samples.
         ///
-        /// True for a MaterialSky source in SkyMode::Baked: the skybox pass is wired at the bake
-        /// target and the direct SkyMaterialScenePass is absent. False for a direct material sky
-        /// (the per-pixel pass) and for any non-material source. A resolved change recompiles the
-        /// pass set at the frame boundary, the same internal recompile a source-kind change drives —
-        /// the two modes render the same sky, so output identity is preserved.
-        bool m_ResolvedSkyMaterialBaked = false;
+        /// True for a MaterialSky or AtmosphereSky source in SkyMode::Baked: the skybox pass is
+        /// wired at the bake target and the direct per-pixel pass (SkyMaterialScenePass or
+        /// SkyScenePass) is absent. False for a direct sky (the per-pixel pass), an environment
+        /// (its own radiance cube), and no sky. A resolved change recompiles the pass set at the
+        /// frame boundary, the same internal recompile a source-kind change drives — the two modes
+        /// render the same sky, so output identity is preserved.
+        bool m_ResolvedSkyBaked = false;
 
         /// @brief The material a baked material sky last baked; gates the once-per-change re-bake.
         ///
@@ -1731,19 +1732,24 @@ namespace Veng::Renderer
         /// when the resolved sky is not a baked material.
         const MaterialInstance* m_LastBakedSkyMaterial = nullptr;
 
-        /// @brief The material a baked material sky last convolved into the IBL maps; gates re-convolution.
+        /// @brief Whether the current bake cube's IBL convolution is up to date; gates re-convolution.
         ///
-        /// Non-owning. On the same dirty signal as the bake, a baked material sky lit via IBL runs
-        /// GenerateFromCube over the bake cube; this gate keeps it once-per-change. Cleared when the
-        /// resolved sky is not a baked material lit via IBL.
-        const MaterialInstance* m_LastConvolvedSkyMaterial = nullptr;
+        /// On the same dirty signal as the bake, a baked source lit via IBL runs GenerateFromCube
+        /// over the bake cube; this flag keeps it once-per-change. Cleared when the resolved sky is
+        /// not a baked source lit via IBL, so re-entering the tier re-convolves.
+        bool m_SkyCubeConvolved = false;
 
-        /// @brief The material the cube-projected skylight SH was last built from; gates re-projection.
+        /// @brief The atmosphere params the baked atmosphere cube was last baked from; gates the re-bake.
         ///
-        /// Non-owning. On the same dirty signal as the bake, a baked material sky lit via SH bakes
-        /// and downloads the cube, then projects it to the skylight SH; this gate keeps it
-        /// once-per-change. Cleared when the resolved sky is not a baked material lit via SH.
-        const MaterialInstance* m_LastSkyShMaterial = nullptr;
+        /// A baked atmosphere re-bakes when this frame's params or sun direction differ (both feed
+        /// the baked sky radiance + disc), mirroring the direct atmosphere's LUT dirty gate.
+        Atmosphere m_LastBakedAtmosphere;
+
+        /// @brief The sun direction the baked atmosphere cube was last baked from; gates the re-bake.
+        vec3 m_LastBakedAtmosphereSun{0.0f, 1.0f, 0.0f};
+
+        /// @brief Whether m_LastBakedAtmosphere holds a baked set (false until the first bake).
+        bool m_BakedAtmosphereValid = false;
 
         /// @brief The environment the cube-projected skylight SH was last built from; gates re-projection.
         ///
@@ -1815,20 +1821,14 @@ namespace Veng::Renderer
 
         /// @brief The cosine-convolved sky irradiance SH uploaded to the lighting constants.
         ///
-        /// Projected from the CPU Atmosphere sky eval and cached; re-projected only when this
-        /// frame's sun direction or Atmosphere parameters differ from the last projection (a
-        /// static sky projects once, an animated sun every frame by design). Zeroed until the
-        /// first projection. Read every Execute the skylight is active to fill the SkyShCoeffs.
+        /// Projected from the resolved sky's one radiance cube (an environment's, or a baked
+        /// material/atmosphere's) and cached; re-projected on that source's dirty signal. Zeroed
+        /// until the first projection. Read every Execute the skylight is active to fill the
+        /// SkyShCoeffs.
         Sh9 m_SkySh = Sh9::Zero();
 
         /// @brief Whether m_SkySh holds a projected set (false until the first projection).
         bool m_SkyShValid = false;
-
-        /// @brief The sun direction m_SkySh was last projected from; gates re-projection.
-        vec3 m_LastSkyShSunDirection{0.0f, 1.0f, 0.0f};
-
-        /// @brief The Atmosphere m_SkySh was last projected from; gates re-projection (field-wise).
-        Atmosphere m_LastSkyShAtmosphere;
 
         /// @brief Immediate-mode debug-draw accumulator flushed by the DebugDrawScenePass.
         ///

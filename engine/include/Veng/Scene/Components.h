@@ -564,34 +564,38 @@ namespace Veng
         AssetHandle<EnvironmentMap> Map;
     };
 
-    /// @brief Sky source: a procedural physically-based atmosphere fills the sky per pixel.
+    /// @brief How a procedural or authored sky reaches the screen and whether it can light the scene.
+    ///
+    /// Keyed to how the sky changes over time. Direct evaluates the sky per pixel every frame —
+    /// right for a sky that animates continuously — and cannot light the scene (a direct sky
+    /// displays only). Baked renders the sky into the six faces of a radiance cubemap once per
+    /// change and samples that cube per frame through the skybox path — right for the common
+    /// static-between-changes case — and is the mode that can light the scene. Integer values are
+    /// stable — persisted in prefabs.
+    enum class SkyMode : u8
+    {
+        /// @brief Evaluate the sky per pixel every frame; display-only.
+        Direct = 0,
+        /// @brief Bake the sky into a radiance cube on change and sample it; can light the scene.
+        Baked = 1,
+    };
+
+    /// @brief Sky source: a procedural physically-based atmosphere fills the sky.
     ///
     /// One alternative of the SkySource variant. The atmosphere renders the background sky along
     /// each view ray; the toward-sun direction is the inverse of the scene's first directional
     /// Light's travel direction (itself derivable from a TimeOfDay component), so the sky and the
-    /// direct lighting share one sun.
+    /// direct lighting share one sun. Mode selects the direct per-pixel path (right for a
+    /// continuously-moving sun) or the baked-cube path (bake on the sun/params dirty signal, sample
+    /// a cube per frame); the two render the same sky, and only the baked path can light the scene.
     struct AtmosphereSky
     {
         /// @brief Physically-based atmosphere parameters; the renderer regenerates its LUTs on change.
         ///
         /// The defaults describe Earth at sea level.
         Renderer::Atmosphere Params;
-    };
-
-    /// @brief How an authored material sky reaches the screen and whether it can light the scene.
-    ///
-    /// Keyed to how the sky changes over time. Direct runs the material's fragment per pixel every
-    /// frame — right for a sky that animates continuously — and cannot light the scene (a direct
-    /// material sky displays only). Baked renders the material into the six faces of a radiance
-    /// cubemap once per change and samples that cube per frame through the skybox path — right for
-    /// the common static-between-changes case — and is the mode that can light the scene. Integer
-    /// values are stable — persisted in prefabs.
-    enum class SkyMode : u8
-    {
-        /// @brief Run the material fragment per pixel every frame; display-only.
-        Direct = 0,
-        /// @brief Bake the material into a radiance cube on change and sample it; can light the scene.
-        Baked = 1,
+        /// @brief Whether the atmosphere is composited per pixel (Direct) or baked to a cube (Baked).
+        SkyMode Mode = SkyMode::Baked;
     };
 
     /// @brief Sky source: an authored Sky-domain material fills the background sky.
@@ -917,14 +921,15 @@ VE_REFLECT(::Veng::EnvironmentSky, 0x51902800E072B6E9ULL)
 VE_FIELD(Map, .DisplayName = "Map")
 VE_REFLECT_END();
 
-VE_REFLECT(::Veng::AtmosphereSky, 0x2091BE830E0AA76DULL)
-VE_FIELD(Params, .DisplayName = "Parameters")
-VE_REFLECT_END();
-
 VE_ENUM(::Veng::SkyMode, 0x9C2A0D5E7B1F4488ULL)
 VE_ENUMERATOR(Direct)
 VE_ENUMERATOR(Baked)
 VE_ENUM_END();
+
+VE_REFLECT(::Veng::AtmosphereSky, 0x2091BE830E0AA76DULL)
+VE_FIELD(Params, .DisplayName = "Parameters")
+VE_FIELD(Mode, .DisplayName = "Mode")
+VE_REFLECT_END();
 
 VE_REFLECT(::Veng::MaterialSky, 0x278971B85ADDA928ULL)
 VE_FIELD(Material, .DisplayName = "Material")

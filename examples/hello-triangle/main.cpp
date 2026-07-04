@@ -301,6 +301,13 @@ protected:
         // the storage-buffer material input, written onto the scene's one Sky component.
         SetupSkyMaterialIfRequested(world);
 
+        // HT_SKY_ATMOSPHERE_BAKED opts the scene's procedural atmosphere into its baked mode (off by
+        // default, so the golden stays on the shipping direct-atmosphere path): the atmosphere bakes
+        // to a radiance cube once per sun/params change and can then light the scene — HT_SKY_LIGHTING
+        // ("sh"/"ibl") selects the tier, so a low sun lights a matte or glossy object through the same
+        // cube the sky displays through.
+        SetupBakedAtmosphereIfRequested(world);
+
         // SSR is off by default in the engine; the sample opts in to show reflections off the
         // gradient-roughness ground plane (at the engine-default half SSR resolution).
         m_SceneSettings.SSR = true;
@@ -718,6 +725,44 @@ private:
                 {
                     tier = SkyLighting::SH;
                 }
+            }
+        }
+        skyComponent->Lighting = tier;
+    }
+
+    // Flips the scene's procedural atmosphere into baked mode when HT_SKY_ATMOSPHERE_BAKED is set,
+    // so the atmosphere renders through the radiance-cube skybox path and can light the scene. Off by
+    // default (the golden scene keeps the direct atmosphere). HT_SKY_LIGHTING selects the tier the
+    // baked cube feeds: "sh" projects it to a spherical-harmonic ambient (a matte object picks up the
+    // sky's color), "ibl" convolves it into the full split-sum maps (a glossy object reflects it).
+    // A no-op unless the resolved sky is an AtmosphereSky; leaves the tier None when unset, so the
+    // baked atmosphere then only changes the display path.
+    void SetupBakedAtmosphereIfRequested(Scene& world)
+    {
+        if (std::getenv("HT_SKY_ATMOSPHERE_BAKED") == nullptr)
+        {
+            return;
+        }
+        Sky* skyComponent = world.TryGetFirst<Sky>();
+        if (skyComponent == nullptr || !skyComponent->Source.HasValue() ||
+            skyComponent->Source.ActiveType() != TypeIdOf<AtmosphereSky>())
+        {
+            return;
+        }
+        auto* atmosphere = static_cast<AtmosphereSky*>(skyComponent->Source.ActivePtr());
+        atmosphere->Mode = SkyMode::Baked;
+
+        SkyLighting tier = SkyLighting::None;
+        if (const char* lighting = std::getenv("HT_SKY_LIGHTING"); lighting != nullptr)
+        {
+            const string_view request(lighting);
+            if (request == "ibl" || request == "IBL")
+            {
+                tier = SkyLighting::IBL;
+            }
+            else if (request == "sh" || request == "SH")
+            {
+                tier = SkyLighting::SH;
             }
         }
         skyComponent->Lighting = tier;

@@ -43,6 +43,38 @@ namespace Veng::Renderer
             u32 ViewConstantsIndex;
         };
 
+        // The atmosphere sky fragment's push block (atmosphere_sky.frag.slang PushConstants): the
+        // depth handle + sampler, the view-constants region, an Enabled flag, then the sun direction
+        // + intensity and the AtmosphereParams block. Mirrors it byte-for-byte, including the
+        // trailing float3 pad, so the fragment binds and pushes exactly as in the direct path. The
+        // bake fills the depth slot with the far-plane stand-in, the view-constants region with the
+        // face basis, and Enabled with 1 (a baked sky always evaluates every face).
+        struct AtmosphereSkyPushConstants
+        {
+            u32 DepthTexture;
+            u32 Sampler;
+            u32 ViewConstantsIndex;
+            u32 Enabled;
+            vec3 SunDirection;
+            f32 Intensity;
+            vec3 RayleighScattering;
+            f32 RayleighHeight;
+            vec3 MieScattering;
+            f32 MieExtinction;
+            vec3 OzoneAbsorption;
+            f32 MieHeight;
+            f32 MieAnisotropy;
+            f32 OzoneCenter;
+            f32 OzoneWidth;
+            f32 PlanetRadius;
+            f32 AtmosphereRadius;
+            f32 SunAngularRadius;
+            f32 Pad0;
+            f32 Pad1;
+            vec3 SunIrradiance;
+            f32 Pad2;
+        };
+
         // A full view-constants region (set 0 binding 5), mirroring view_constants.slang byte-for-byte
         // so the material fragment's LoadViewConstants reads the face basis. Only InvViewProj +
         // CameraPosition + the sub-rect mapping matter to a sky; the rest is zero.
@@ -279,6 +311,117 @@ namespace Veng::Renderer
             [&](CommandBuffer& cmd)
             {
                 Bake(cmd, material);
+                cmd.PrepareForAccess(m_CubeView, AccessKind::TransferSrc);
+                const vk::BufferImageCopy region{
+                    .bufferOffset = 0,
+                    .bufferRowLength = 0,
+                    .bufferImageHeight = 0,
+                    .imageSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
+                                         .mipLevel = 0,
+                                         .baseArrayLayer = 0,
+                                         .layerCount = CubeFaces},
+                    .imageOffset = {.x = 0, .y = 0, .z = 0},
+                    .imageExtent = {.width = m_FaceSize, .height = m_FaceSize, .depth = 1},
+                };
+                GetVkCommandBuffer(cmd).copyImageToBuffer(GetVkImage(*m_CubeImage),
+                                                          vk::ImageLayout::eTransferSrcOptimal,
+                                                          GetVkBuffer(*staging), 1, &region);
+                cmd.PrepareForAccess(m_CubeView, AccessKind::Sample);
+            });
+
+        return staging->Download();
+    }
+
+    void SkyCubemapBake::BakeAtmosphere(CommandBuffer& cmd, const Ref<GraphicsPipeline>& pipeline,
+                                        const Ref<DescriptorSet>& atmosphereSet,
+                                        const Atmosphere& atmosphere, const vec3& sunDirection,
+                                        const f32 intensity)
+    {
+        BindlessRegistry& registry = m_Context.GetBindlessRegistry();
+
+        // Render each face into its single-layer view with the face's fixed basis in the view
+        // constants and the far-plane stand-in in the depth slot. Each face claims its own view slot
+        // (BeginView) so the six face constants coexist; the atmosphere fragment reconstructs the
+        // ray from the slot the face pushes and samples the LUT set bound at set 1.
+        for (u32 face = 0; face < CubeFaces; ++face)
+        {
+            registry.BeginView();
+            ViewConstantsRegion region{};
+            region.InvViewProj = m_FaceInvViewProj[face];
+            region.CameraPosition = vec4(0.0f);
+            region.RenderScaleUV = vec4(1.0f, 1.0f, 1.0f, 1.0f);
+            region.MaxValidUV = vec4(1.0f, 1.0f, 1.0f, 1.0f);
+            registry.WriteViewConstants(std::as_bytes(std::span(&region, 1)));
+            const u32 viewIndex = registry.GetCurrentViewConstantsIndex();
+
+            cmd.PrepareForAccess(m_FaceViews[face], AccessKind::ColorAttachment);
+            cmd.BeginRendering({
+                .Extent = {m_FaceSize, m_FaceSize},
+                .ColorAttachments = {{
+                    .ImageView = m_FaceViews[face],
+                    .LoadOp = LoadOp::Clear,
+                    .StoreOp = StoreOp::Store,
+                    .ClearValue = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
+                }},
+            });
+            cmd.BindPipeline(pipeline);
+            cmd.SetViewport({0, 0}, {m_FaceSize, m_FaceSize});
+            cmd.SetScissor({0, 0}, {m_FaceSize, m_FaceSize});
+            registry.Bind(cmd);
+            cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                .Sets = {atmosphereSet},
+                .FirstSet = 1,
+                .PipelineBindPoint = PipelineBindPoint::Graphics,
+            });
+            cmd.PushConstants(AtmosphereSkyPushConstants{
+                .DepthTexture = m_DepthHandle.Index,
+                .Sampler = m_DepthSamplerHandle.Index,
+                .ViewConstantsIndex = viewIndex,
+                .Enabled = 1u,
+                .SunDirection = sunDirection,
+                .Intensity = intensity,
+                .RayleighScattering = atmosphere.RayleighScattering,
+                .RayleighHeight = atmosphere.RayleighHeight,
+                .MieScattering = atmosphere.MieScattering,
+                .MieExtinction = atmosphere.MieExtinction,
+                .OzoneAbsorption = atmosphere.OzoneAbsorption,
+                .MieHeight = atmosphere.MieHeight,
+                .MieAnisotropy = atmosphere.MieAnisotropy,
+                .OzoneCenter = atmosphere.OzoneCenter,
+                .OzoneWidth = atmosphere.OzoneWidth,
+                .PlanetRadius = atmosphere.PlanetRadius,
+                .AtmosphereRadius = atmosphere.AtmosphereRadius,
+                .SunAngularRadius = atmosphere.SunAngularRadius,
+                .SunIrradiance = atmosphere.SunIrradiance,
+            });
+            cmd.DrawFullscreenTriangle();
+            cmd.EndRendering();
+        }
+
+        // Leave the whole cube in a sampled layout for the skybox pass that samples it this frame.
+        cmd.PrepareForAccess(m_CubeView, AccessKind::Sample);
+    }
+
+    vector<u8> SkyCubemapBake::BakeAtmosphereAndDownload(const Ref<GraphicsPipeline>& pipeline,
+                                                         const Ref<DescriptorSet>& atmosphereSet,
+                                                         const Atmosphere& atmosphere,
+                                                         const vec3& sunDirection,
+                                                         const f32 intensity)
+    {
+        const usize faceBytes = static_cast<usize>(m_FaceSize) * m_FaceSize * 8; // RGBA16F
+        const Ref<Buffer> staging = Buffer::Create(m_Context, {
+                                                                  .Name = "Sky Bake SH Readback",
+                                                                  .Size = faceBytes * CubeFaces,
+                                                                  .Usage = BufferUsage::TransferDst,
+                                                              });
+
+        // A self-contained submit mirroring BakeAndDownload's material path: bake the six atmosphere
+        // faces, transition the cube to TransferSrc, copy all six layers (layer-major), and restore
+        // the sampled layout — so the download reads the radiance this submit just produced.
+        m_Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                BakeAtmosphere(cmd, pipeline, atmosphereSet, atmosphere, sunDirection, intensity);
                 cmd.PrepareForAccess(m_CubeView, AccessKind::TransferSrc);
                 const vk::BufferImageCopy region{
                     .bufferOffset = 0,

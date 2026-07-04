@@ -13,7 +13,13 @@
 //      the SceneRenderer matches the same material rendered direct (the two modes agree), and the
 //      renderer flips direct↔baked with an internal recompile (output identity preserved).
 //
-// Gated on GPU_GBUFFER_FIXTURE_DIR (the in-process cook of the analytic Sky material).
+// The final cases cover the procedural atmosphere as a cubemap producer: a baked atmosphere
+// rendered through the SceneRenderer matches the same atmosphere rendered direct (the shared
+// bake basis + LUT sample), and its baked cube feeds both the SH and IBL lighting tiers — the
+// tiers a direct atmosphere could not reach.
+//
+// Gated on GPU_GBUFFER_FIXTURE_DIR (the in-process cook of the analytic Sky material; the
+// atmosphere cases are procedural and need no cook, but share the file's fixture wiring).
 
 #include <array>
 #include <cmath>
@@ -386,6 +392,137 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // The two modes agree to within the cube-resolution filtering tolerance (a low mean per-pixel
     // difference); a broken basis or a mis-sampled cube would diverge sharply.
     CHECK(diff / pixelCount < 0.06);
+}
+
+namespace
+{
+    // Builds a full-sky atmosphere scene (an AtmosphereSky plus a directional sun, whose inverse
+    // travel direction is the toward-sun direction the sky and any lighting share) and a renderer.
+    // The caller drives Mode/tier through the returned Render lambda; each Execute claims bake +
+    // frame view slots, so a case keeps its Execute count within one frame's view budget (16).
+    struct AtmosphereSceneFixture
+    {
+        Unique<Scene> World;
+        Sky* SkyComponent = nullptr;
+        AtmosphereSky* Source = nullptr;
+        CameraView Camera;
+        Unique<SceneRenderer> Renderer;
+        Context& Ctx;
+        uvec2 Extent;
+
+        AtmosphereSceneFixture(Context& context, AssetManager& assets, TypeRegistry& types,
+                               uvec2 extent)
+            : World(Scene::Create(types)), Ctx(context), Extent(extent)
+        {
+            const Entity skyEntity = World->CreateEntity();
+            SkyComponent = &World->Add<Sky>(skyEntity);
+            auto* source = static_cast<AtmosphereSky*>(
+                SkyComponent->Source.SetActive(TypeIdOf<AtmosphereSky>()));
+            Source = source;
+            SkyComponent->Intensity = 1.0f;
+
+            const Entity sunEntity = World->CreateEntity();
+            auto& sun = World->Add<Light>(sunEntity);
+            sun.Type = LightType::Directional;
+            sun.Direction = glm::normalize(vec3(0.3f, -0.4f, -0.6f)); // a low sun
+
+            Camera.SetPerspective(glm::radians(60.0f), 1.0f, 0.1f, 100.0f);
+            Camera.SetView(vec3(0.0f), vec3(0.2f, 0.1f, -1.0f), vec3(0.0f, 1.0f, 0.0f));
+
+            Renderer = SceneRenderer::Create({
+                .Context = context,
+                .Assets = assets,
+                .OutputFormat = context.GetOutputFormat(),
+                .Extent = extent,
+                .Settings =
+                    {.Mode = DebugView::Final, .Bloom = false, .Shadows = false, .AO = false},
+            });
+        }
+
+        vector<u8> Render(SkyMode mode, SkyLighting tier)
+        {
+            Source->Mode = mode;
+            SkyComponent->Lighting = tier;
+            Ctx.ImmediateCommands(
+                [&](CommandBuffer& cmd)
+                {
+                    Renderer->Execute(
+                        cmd, Renderer::SceneView{.World = *World, .Camera = Camera, .Delta = 0.0f});
+                });
+            vector<u8> pixels = Renderer->GetOutput()->GetImage()->Download();
+            REQUIRE(pixels.size() == static_cast<usize>(Extent.x) * Extent.y * 8);
+            return pixels;
+        }
+    };
+
+    f64 MeanLuma(const vector<u8>& px, uvec2 extent)
+    {
+        const auto* h = reinterpret_cast<const u16*>(px.data());
+        f64 luma = 0.0;
+        for (usize i = 0; i < static_cast<usize>(extent.x) * extent.y; ++i)
+        {
+            const vec3 c(glm::unpackHalf1x16(h[i * 4 + 0]), glm::unpackHalf1x16(h[i * 4 + 1]),
+                         glm::unpackHalf1x16(h[i * 4 + 2]));
+            luma += 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+        }
+        return luma / (static_cast<f64>(extent.x) * extent.y);
+    }
+}
+
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "atmosphere bake: a baked atmosphere renders through the skybox path, matches the "
+    "same atmosphere rendered direct, and lights via IBL")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+
+    constexpr uvec2 extent{96, 96};
+    AtmosphereSceneFixture fixture(Context, assets, Types, extent);
+
+    // Baked-vs-direct agreement: the baked cube samples the same LUT-derived radiance the direct
+    // pass composites per pixel, so the two frames agree bar the cube's bilinear filtering + face
+    // resolution. A broken face basis or a mis-sampled cube would diverge sharply.
+    const vector<u8> direct = fixture.Render(SkyMode::Direct, SkyLighting::None);
+    const vector<u8> baked = fixture.Render(SkyMode::Baked, SkyLighting::None);
+
+    const auto* dHalves = reinterpret_cast<const u16*>(direct.data());
+    const auto* bHalves = reinterpret_cast<const u16*>(baked.data());
+    f64 diff = 0.0;
+    for (usize i = 0; i < static_cast<usize>(extent.x) * extent.y; ++i)
+    {
+        const vec3 d(glm::unpackHalf1x16(dHalves[i * 4 + 0]),
+                     glm::unpackHalf1x16(dHalves[i * 4 + 1]),
+                     glm::unpackHalf1x16(dHalves[i * 4 + 2]));
+        const vec3 b(glm::unpackHalf1x16(bHalves[i * 4 + 0]),
+                     glm::unpackHalf1x16(bHalves[i * 4 + 1]),
+                     glm::unpackHalf1x16(bHalves[i * 4 + 2]));
+        diff += glm::length(d - b);
+    }
+    const f64 pixelCount = static_cast<f64>(extent.x) * extent.y;
+    CHECK(MeanLuma(direct, extent) > 0.0); // a non-black sky rendered
+    CHECK(diff / pixelCount < 0.08); // the two modes agree within the cube-resolution tolerance
+
+    // IBL, the cell that was impossible for an atmosphere before it became a cube producer, now
+    // runs (its baked cube convolves into the split-sum maps) and renders a plausible sky.
+    const vector<u8> bakedIbl = fixture.Render(SkyMode::Baked, SkyLighting::IBL);
+    CHECK(MeanLuma(bakedIbl, extent) > 0.0);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "atmosphere bake: a baked atmosphere lights via SH from its baked cube")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+
+    constexpr uvec2 extent{96, 96};
+    AtmosphereSceneFixture fixture(Context, assets, Types, extent);
+
+    // The SH tier, previously rejected-with-log on an atmosphere source, now projects the baked
+    // cube to the skylight SH (the same cube→SH path every source shares). A full-sky frame renders
+    // validation-clean and non-black — the tier path produces a plausible sky, not a zeroed frame.
+    const vector<u8> bakedSh = fixture.Render(SkyMode::Baked, SkyLighting::SH);
+    CHECK(MeanLuma(bakedSh, extent) > 0.0);
 }
 
 #endif
