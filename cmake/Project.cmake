@@ -110,16 +110,21 @@ function(veng_add_project TARGET_NAME)
                     "veng_add_project(${TARGET_NAME}): config '${CFG_ABS}' needs string name + outputSuffix")
         endif ()
 
-        # The per-config outputs: each pack (suffixed) plus the cooked project (suffixed).
-        set(CFG_OUTPUTS)
+        # The per-config outputs: the cooked project (suffixed) plus each pack (suffixed).
+        # The project file leads the OUTPUT list because it is the depfile's target
+        # (`--depfile ${PROJ_OUT}.d`). The Unix Makefiles generator attaches the cook recipe to
+        # the first output and turns the depfile's per-asset edges into a rule on the depfile's
+        # named target; if those are different outputs, editing a per-asset source (a prefab,
+        # texture, or shader) lands the edge on a recipe-less stub and never re-triggers the
+        # cook. Ninja groups all outputs of a statement, so it is unaffected either way.
+        set(PROJ_OUT ${ARG_OUTPUT_DIR}/${PROJECT_STEM}${CFG_SUFFIX}.vengproj)
+        set(CFG_OUTPUTS ${PROJ_OUT})
         set(CFG_PACK_OUTPUTS)
         foreach (PACK_STEM IN LISTS PACK_STEMS)
             set(PACK_OUT ${ARG_OUTPUT_DIR}/${PACK_STEM}${CFG_SUFFIX}.vengpack)
             list(APPEND CFG_OUTPUTS ${PACK_OUT})
             list(APPEND CFG_PACK_OUTPUTS ${PACK_OUT})
         endforeach ()
-        set(PROJ_OUT ${ARG_OUTPUT_DIR}/${PROJECT_STEM}${CFG_SUFFIX}.vengproj)
-        list(APPEND CFG_OUTPUTS ${PROJ_OUT})
 
         # The engine core shader dir is on every cook's Slang search path so a consumer
         # shader resolves `#include "Veng/surface.slang"`. A source-dir include still wins.

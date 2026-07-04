@@ -1289,6 +1289,7 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle_assets-macos
             -D VENG_WINDOWS_CONFIG=${CMAKE_CURRENT_SOURCE_DIR}/examples/hello-triangle/configs/windows.buildcfg
             -D VENG_MACOS_PACK=$<TARGET_PROPERTY:hello_triangle_assets-macos,VENG_PACK_OUTPUTS>
             -D VENG_WINDOWS_PACK=$<TARGET_PROPERTY:hello_triangle_assets-windows,VENG_PACK_OUTPUTS>
+            -D VENG_PREFAB_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/examples/hello-triangle/assets/prefabs/scene.prefab.json
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PerConfigInvalidation.cmake
     )
     # Serialized: it touches a config and rebuilds the cooked packs, so it must not race
