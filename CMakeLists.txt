@@ -948,6 +948,10 @@ if (VENG_BUILD_TESTS)
             glfw
             GPUOpen::VulkanMemoryAllocator
     )
+    # sky_bake.cpp exercises the renderer-internal SkyCubemapBake directly (reading back the
+    # baked cube faces for the seam-continuity oracle), so this target sees engine/src — the
+    # private renderer headers, whose symbols the shared lib exports by default visibility.
+    target_include_directories(veng_test_gpu PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/engine/src)
     # bindless_registry.cpp and texture_loader.cpp draw with the test shaders
     # (fullscreen.vert + bindless_sample.frag), loaded by id from the cooked pack.
     add_dependencies(veng_test_gpu veng_test_shaders)
@@ -981,6 +985,11 @@ if (VENG_BUILD_TESTS)
             # cameras in one frame each render through their own view, guarding the
             # per-view slotting of the shared view-constants buffer.
             tests/gpu/multi_viewport_isolation.cpp
+            # The sky cubemap bake: cooks an analytic Sky material, bakes it into the
+            # renderer-internal radiance cube, and asserts twelve-edge seam continuity,
+            # the per-direction analytic radiance, in-place re-bake, and the baked cube
+            # round-tripping the skybox display path (baked ≈ direct through the renderer).
+            tests/gpu/sky_bake.cpp
     )
     target_link_libraries(veng_test_gpu PRIVATE veng::cook)
     target_compile_definitions(veng_test_gpu PRIVATE

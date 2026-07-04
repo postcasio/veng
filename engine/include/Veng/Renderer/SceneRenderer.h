@@ -57,6 +57,7 @@ namespace Veng::Renderer
     class DescriptorSetLayout;
     class EnvironmentIbl;
     class AtmospherePrecompute;
+    class SkyCubemapBake;
     class PointField;
 
     /// @brief Maximum number of simultaneously shadowed point/spot lights.
@@ -1714,6 +1715,22 @@ namespace Veng::Renderer
         /// ambient arm) recompiles the pass set the same way a source-kind change does.
         SkyLighting m_ResolvedSkyLighting = SkyLighting::None;
 
+        /// @brief Whether the resolved material sky bakes to a radiance cube the skybox path samples.
+        ///
+        /// True for a MaterialSky source in SkyMode::Baked: the skybox pass is wired at the bake
+        /// target and the direct SkyMaterialScenePass is absent. False for a direct material sky
+        /// (the per-pixel pass) and for any non-material source. A resolved change recompiles the
+        /// pass set at the frame boundary, the same internal recompile a source-kind change drives —
+        /// the two modes render the same sky, so output identity is preserved.
+        bool m_ResolvedSkyMaterialBaked = false;
+
+        /// @brief The material a baked material sky last baked; gates the once-per-change re-bake.
+        ///
+        /// Non-owning — the resolved Sky component keeps the instance resident. The bake re-records
+        /// when this frame's material differs, mirroring the atmosphere LUTs' dirty gate. Cleared
+        /// when the resolved sky is not a baked material.
+        const MaterialInstance* m_LastBakedSkyMaterial = nullptr;
+
         /// @brief Whether the last Rebuild wired the SH skylight ambient arm into the lighting pass.
         ///
         /// True when the resolved sky is an atmosphere lit via SH. Gates the per-frame CPU
@@ -1742,6 +1759,14 @@ namespace Veng::Renderer
         /// (set 2) the lighting pass binds. The lighting layout reserves its set layout, so it
         /// exists before the pipelines.
         Unique<EnvironmentIbl> m_Ibl;
+
+        /// @brief Bakes a baked-mode material sky into a radiance cube the skybox path samples; created at Create.
+        ///
+        /// Owns one radiance cube (at a fixed face resolution), the 1×1 far-plane stand-in depth,
+        /// and a consumer set matching the IBL radiance binding. Bake records on the sky dirty
+        /// signal (material swapped/changed); the skybox pass binds GetSet() when the resolved sky
+        /// is a baked material.
+        Unique<SkyCubemapBake> m_SkyBake;
 
         /// @brief The environment the IBL maps were last generated from; gates regeneration.
         ///

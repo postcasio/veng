@@ -12,30 +12,35 @@ namespace Veng::Renderer
     class GraphicsPipeline;
     class DescriptorSet;
 
-    /// @brief Fullscreen skybox pass: fills the cleared-depth background with the environment
-    ///        radiance cube, compositing over the lit scene color.
+    /// @brief Fullscreen skybox pass: fills the cleared-depth background with a radiance cube,
+    ///        compositing over the lit scene color.
     ///
     /// Runs after deferred lighting (writing the same scene-color target, LoadOp::Load) and
     /// before the bloom/SSR/tonemap tail, so the sky tonemaps and reflects with the scene. It
     /// samples the g-buffer depth through bindless and discards foreground pixels, and reads the
-    /// radiance cube + linear sampler from the renderer's IBL set (bound at set 1). Topology is
-    /// gated by SceneRendererSettings::Skybox; per frame the draw is a no-op (everything
-    /// discarded) unless an environment is bound — the renderer pushes that as the Enabled flag.
+    /// radiance cube + linear sampler from a descriptor set bound at set 1 — the renderer's IBL set
+    /// for an environment sky, or the sky-bake consumer set for a baked material sky (same radiance
+    /// binding). Per frame the draw is a no-op (everything discarded) unless the cube is live: for
+    /// an environment source that is an environment being bound (the Enabled flag tracks residency);
+    /// for a baked material sky the cube is always resident once baked, so the pass forces Enabled.
     class SkyboxScenePass final : public ScenePass
     {
     public:
         /// @brief Constructs the pass.
         /// @param context       The render context.
         /// @param pipeline      The fullscreen skybox pipeline (reserves set 0 bindless + set 1 IBL).
-        /// @param iblSet        The renderer's IBL descriptor set (radiance cube at binding 0, sampler at 4).
+        /// @param iblSet        The radiance descriptor set (radiance cube at binding 0, sampler at 4).
         /// @param targetId      The scene-color target lighting wrote (this pass composites into it).
         /// @param depthId       The g-buffer depth resource, declared sampled for barrier derivation.
         /// @param depthHandle   The bindless handle for the depth target.
         /// @param samplerHandle The shared sampler bindless handle.
         /// @param extent        The render extent.
+        /// @param forceEnabled  When true the pass draws unconditionally (the cube is always resident,
+        ///                      the baked-material case); when false it draws only while an environment
+        ///                      is bound (the environment case). Defaults false.
         SkyboxScenePass(Context& context, Ref<GraphicsPipeline> pipeline, Ref<DescriptorSet> iblSet,
                         ResourceId targetId, ResourceId depthId, TextureHandle depthHandle,
-                        SamplerHandle samplerHandle, uvec2 extent);
+                        SamplerHandle samplerHandle, uvec2 extent, bool forceEnabled = false);
 
         /// @brief Updates the cached render extent.
         void Resize(uvec2 extent) override;
@@ -52,5 +57,6 @@ namespace Veng::Renderer
         TextureHandle m_DepthHandle;
         SamplerHandle m_SamplerHandle;
         uvec2 m_Extent;
+        bool m_ForceEnabled;
     };
 }

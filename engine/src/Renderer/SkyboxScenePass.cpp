@@ -29,10 +29,10 @@ namespace Veng::Renderer
     SkyboxScenePass::SkyboxScenePass(Context& context, Ref<GraphicsPipeline> pipeline,
                                      Ref<DescriptorSet> iblSet, ResourceId targetId,
                                      ResourceId depthId, TextureHandle depthHandle,
-                                     SamplerHandle samplerHandle, uvec2 extent)
+                                     SamplerHandle samplerHandle, uvec2 extent, bool forceEnabled)
         : m_Context(context), m_Pipeline(std::move(pipeline)), m_IblSet(std::move(iblSet)),
           m_TargetId(targetId), m_DepthId(depthId), m_DepthHandle(depthHandle),
-          m_SamplerHandle(samplerHandle), m_Extent(extent)
+          m_SamplerHandle(samplerHandle), m_Extent(extent), m_ForceEnabled(forceEnabled)
     {
     }
 
@@ -46,6 +46,7 @@ namespace Veng::Renderer
         const TextureHandle depthHandle = m_DepthHandle;
         const SamplerHandle samplerHandle = m_SamplerHandle;
         const Ref<DescriptorSet> iblSet = m_IblSet;
+        const bool forceEnabled = m_ForceEnabled;
 
         graph
             .AddPass("Skybox")
@@ -57,7 +58,7 @@ namespace Veng::Renderer
             })
             .Sample(m_DepthId)
             .Execute(
-                [this, depthHandle, samplerHandle, iblSet](PassContext& inner)
+                [this, depthHandle, samplerHandle, iblSet, forceEnabled](PassContext& inner)
                 {
                     const ScenePassContext ctx = Wrap(inner);
                     CommandBuffer& cmd = ctx.Cmd();
@@ -81,7 +82,7 @@ namespace Veng::Renderer
                         .DepthTexture = depthHandle.Index,
                         .Sampler = samplerHandle.Index,
                         .ViewConstantsIndex = registry.GetCurrentViewConstantsIndex(),
-                        .Enabled = view.Environment.IsLoaded() ? 1u : 0u,
+                        .Enabled = (forceEnabled || view.Environment.IsLoaded()) ? 1u : 0u,
                         .EnvIntensity = view.EnvironmentIntensity,
                     });
                     cmd.DrawFullscreenTriangle();

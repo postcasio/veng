@@ -151,7 +151,7 @@ namespace Veng::Renderer
         vk::ColorSpaceKHR m_ColorSpace;
         DisplayMode m_DisplayMode;
         DisplayColorSpace m_DisplayColorSpace;
-        vk::SwapchainKHR m_VkSwapChain{};
+        vk::SwapchainKHR m_VkSwapChain;
         vector<Ref<Image>> m_Images;
         vector<Ref<ImageView>> m_ImageViews;
         /// @brief One present-wait semaphore per swapchain image, indexed by image index.

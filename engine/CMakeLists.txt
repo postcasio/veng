@@ -96,6 +96,7 @@ add_library(veng SHARED
         src/Renderer/ShadowScenePass.cpp
         src/Renderer/PunctualShadowScenePass.cpp
         src/Renderer/SkyboxScenePass.cpp
+        src/Renderer/SkyCubemapBake.cpp
         src/Renderer/Passes/AtmospherePrecompute.cpp
         src/Renderer/Passes/SkyScenePass.cpp
         src/Renderer/SsaoScenePass.cpp
