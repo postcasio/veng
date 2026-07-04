@@ -184,20 +184,11 @@ namespace Veng::Renderer
 
     void SkyMaterialScenePass::Declare(RenderGraph& graph, const PassIO& /*io*/)
     {
-        // No material bound this frame → contribute nothing (the sky slot stays the lit color).
-        if (!m_Material.IsLoaded())
-        {
-            m_Pipeline.reset();
-            m_PipelineMaterialId = 0;
-            return;
-        }
-
-        // Rebuild when the bound material identity changes (a new sky authored/hot-reloaded).
-        if (!m_Pipeline || m_PipelineMaterialId != m_Material.Id().Value)
-        {
-            BuildPipeline();
-        }
-
+        // The pass is always contributed while the sky slot is enabled; the material is bound
+        // per frame by the renderer and may arrive after this graph compiled (the consuming app
+        // pushes it after world load), so the draw is gated in Execute, never the pass itself.
+        // Contributing unconditionally keeps the Load/Store composite a no-op until a material
+        // binds, rather than needing a recompile the moment one does.
         const TextureHandle depthHandle = m_DepthHandle;
         const SamplerHandle samplerHandle = m_SamplerHandle;
 
@@ -213,6 +204,20 @@ namespace Veng::Renderer
             .Execute(
                 [this, depthHandle, samplerHandle](PassContext& inner)
                 {
+                    // No material bound (yet) → contribute nothing; the Load/Store leaves the lit
+                    // color untouched.
+                    if (!m_Material.IsLoaded())
+                    {
+                        return;
+                    }
+                    // Build the scene-color-format pipeline on first use and when the bound
+                    // material identity changes (a new sky authored/hot-reloaded) — the material
+                    // may not have been resident when the graph compiled.
+                    if (!m_Pipeline || m_PipelineMaterialId != m_Material.Id().Value)
+                    {
+                        BuildPipeline();
+                    }
+
                     const ScenePassContext ctx = Wrap(inner);
                     CommandBuffer& cmd = ctx.Cmd();
                     const SceneView& view = ctx.View();
