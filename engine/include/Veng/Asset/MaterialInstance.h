@@ -139,6 +139,15 @@ namespace Veng
         /// @brief Returns the instance's slot index in the registry's per-material SSBO array.
         [[nodiscard]] u32 GetIndex() const { return m_Handle.Index; }
 
+        /// @brief Returns a revision that bumps on every parameter/handle write.
+        ///
+        /// A monotonic counter incremented whenever the instance's parameter block is rewritten
+        /// (any Set*, and the initial Finalize). A consumer that caches a derived result from the
+        /// instance's params — e.g. a baked sky cube — compares this against the revision it last
+        /// derived against to detect an in-place param change, since the instance pointer is
+        /// unchanged when only its contents are mutated.
+        [[nodiscard]] u32 GetRevision() const { return m_Revision; }
+
         /// @brief Returns the instance's debug name.
         [[nodiscard]] const string& GetName() const { return m_Name; }
 
@@ -235,6 +244,9 @@ namespace Veng
         vector<std::byte> m_Block;
         Renderer::MaterialHandle m_Handle;
         bool m_Registered = false;
+        /// @brief Bumped on every parameter-block write so a caching consumer detects an in-place
+        /// content change; mutable because UploadParams (the write chokepoint) is const.
+        mutable u32 m_Revision = 0;
     };
 
     /// @brief AssetTypeTrait specialization mapping MaterialInstance to AssetType::MaterialInstance.

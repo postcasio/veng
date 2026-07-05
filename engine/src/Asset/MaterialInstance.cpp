@@ -214,6 +214,7 @@ namespace Veng
 
     void MaterialInstance::UploadParams() const
     {
+        ++m_Revision;
         m_Context.GetBindlessRegistry().UpdateMaterial(m_Handle,
                                                        std::span<const std::byte>(m_Block));
     }
