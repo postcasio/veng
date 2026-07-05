@@ -134,6 +134,19 @@ namespace Veng::Renderer
         /// whole contribution in or out — down to invisible at 0 — without rebuilding it or touching
         /// the resident points. Applied on top of every other photometric knob; 1 is unchanged.
         f32 Opacity = 1.0f;
+
+        /// @brief Per-cell aggregate anchor jitter, as a fraction of the cull cell size (Cloud only).
+        ///
+        /// A filled cell's point centroid converges on its cull-cell center, so its aggregate splat
+        /// sits on the cull lattice; where such splats are drawn narrower than their cell, coverage
+        /// dips along the shared cell boundaries, and the boundary planes seen edge-on read as a
+        /// grid imprint on an otherwise smooth field. Offsetting each cell's splat anchor by a
+        /// deterministic hash of its lattice coordinates — up to this fraction of the cell size on
+        /// each axis — knocks the splats off the lattice so those coverage dips scatter into faint
+        /// grain instead of a coherent grid. The jitter is stable frame to frame and rebuild to
+        /// rebuild (it is a pure function of the cell's coordinates). Applies to the Cloud style
+        /// only — a Continuous cell already widens to tile the full cell — and 0 disables it.
+        f32 AnchorJitter = 0.0f;
     };
 
     /// @brief Construction parameters for a PointField.

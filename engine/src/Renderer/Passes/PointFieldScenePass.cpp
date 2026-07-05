@@ -92,6 +92,31 @@ namespace Veng::Renderer
         // core over the few stars it stands in for.
         constexpr f32 SplatSparseScale = 0.45f;
 
+        // Finalizer of a bit-mixing integer hash (Murmur3's), turning a seed into a well-scrambled
+        // u32 so nearby cell coordinates map to unrelated jitters.
+        u32 HashU32(u32 x)
+        {
+            x ^= x >> 16;
+            x *= 0x7feb352dU;
+            x ^= x >> 15;
+            x *= 0x846ca68bU;
+            x ^= x >> 16;
+            return x;
+        }
+
+        // A deterministic offset in [-1, 1]^3 from a cell's integer lattice coordinates. Pure in its
+        // input, so an aggregate splat's anchor jitter is stable frame to frame and rebuild to
+        // rebuild (no shimmering), and independent per cell so neighbors decorrelate.
+        vec3 CellJitter(const i32 cx, const i32 cy, const i32 cz)
+        {
+            const u32 seed = HashU32(HashU32(static_cast<u32>(cx)) + static_cast<u32>(cy)) +
+                             static_cast<u32>(cz);
+            const auto unit = [](const u32 h)
+            { return static_cast<f32>(h) * (2.0f / 4294967295.0f) - 1.0f; };
+            return vec3(unit(HashU32(seed + 1u)), unit(HashU32(seed + 2u)),
+                        unit(HashU32(seed + 3u)));
+        }
+
         AssetHandle<Veng::Shader> LoadShader(AssetManager& assets, AssetId id, const char* what)
         {
             const AssetResult<AssetHandle<Veng::Shader>> shader = assets.LoadSync<Veng::Shader>(id);
@@ -363,16 +388,34 @@ namespace Veng::Renderer
                                 // kernel footprint (times the shared sprite-kernel flux
                                 // fraction), so the splat delivers the same integrated light as
                                 // the cell's resolved sprites.
-                                const vec4 clipCenter = viewProj * vec4(cell.Centroid, 1.0f);
+                                const f32 cellSize = field->GetCellSize();
+                                const bool continuous =
+                                    lod.Style == PointFieldLod::AggregateStyle::Continuous;
+
+                                // A filled Cloud cell's centroid converges on its cell center,
+                                // seating the splat on the cull lattice; where the splat is drawn
+                                // narrower than the cell, its coverage dips along the shared cell
+                                // boundaries and the edge-on boundary planes read as a grid. Offset
+                                // the anchor off the lattice by a per-cell hash so those dips
+                                // scatter into grain rather than a coherent imprint. Continuous
+                                // tiles the full cell, so it is left unjittered.
+                                vec3 anchor = cell.Centroid;
+                                if (!continuous && lod.AnchorJitter > 0.0f)
+                                {
+                                    const vec3 lattice = glm::floor(cell.Centroid / cellSize);
+                                    anchor += CellJitter(static_cast<i32>(lattice.x),
+                                                         static_cast<i32>(lattice.y),
+                                                         static_cast<i32>(lattice.z)) *
+                                              (lod.AnchorJitter * cellSize);
+                                }
+
+                                const vec4 clipCenter = viewProj * vec4(anchor, 1.0f);
                                 if (clipCenter.w <= 0.0f)
                                 {
                                     continue;
                                 }
                                 const f32 pixelsPerWorld = projScale / clipCenter.w;
-                                const f32 cellSize = field->GetCellSize();
                                 const f32 cellPixels = cellSize * pixelsPerWorld;
-                                const bool continuous =
-                                    lod.Style == PointFieldLod::AggregateStyle::Continuous;
 
                                 // The kernel footprint. Cloud sizes it from occupancy (a sparse
                                 // cell tightens to its points' bounds, a filled cell grows to the
@@ -429,8 +472,7 @@ namespace Veng::Renderer
                                 // normalization and the intensity ceiling.
                                 color *= lod.Opacity;
                                 splats.push_back(GpuAggregateSplat{
-                                    .CenterSize =
-                                        vec4(cell.Centroid, drawnPixels * SplatSupportCells),
+                                    .CenterSize = vec4(anchor, drawnPixels * SplatSupportCells),
                                     .Color = vec4(color, 0.0f),
                                 });
                             }
