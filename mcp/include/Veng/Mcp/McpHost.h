@@ -10,6 +10,7 @@ namespace Veng
     class TypeRegistry;
     class AssetManager;
     class Scene;
+    class Event;
 
     namespace Renderer
     {
@@ -130,7 +131,20 @@ namespace Veng::Mcp
         /// The hook runs on the render thread during Pump(), outside any View/Each iteration, so
         /// it may freely mutate the scene. An editor host over a document scene must set it — a
         /// forgotten wiring silently produces un-undoable agent edits, which the editor host
-        /// guards against at construction (Plan 04a).
+        /// guards against at construction.
         function<bool(const McpMutation&)> ApplyMutation;
+
+        /// @brief Applies one synthetic input event to the app's input, or null when unsupported.
+        ///
+        /// The input-injection tools (input.send) build a Veng::Event per requested event and
+        /// hand each here so it folds into the running app's input exactly as a real window event
+        /// does — routed through the app's InputRouter, or applied to its Input snapshot. A game
+        /// fills it from GetInputRouter()/GetInput(); a host that leaves it null makes the input
+        /// tools report that injection is unavailable rather than no-op silently.
+        ///
+        /// The closure runs on the render thread during Pump(), at the mutation-safe pump point,
+        /// so the event lands before the frame's action resolution reads input. The event is
+        /// passed mutable because routing (InputRouter::Dispatch) may mark it handled.
+        function<void(Event&)> InjectInput;
     };
 }

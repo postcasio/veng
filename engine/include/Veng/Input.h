@@ -198,12 +198,17 @@ namespace Veng
         /// @pre Must run before the event drain so ApplyEvent writes into a fresh frame.
         void BeginFrame();
 
-        /// @brief Folds one routed input event into the current snapshot.
+        /// @brief Folds one input event into the current snapshot.
         ///
-        /// Engine-internal: the InputRouter calls this for each key/mouse event routed to
-        /// this snapshot. Non-input events are ignored. Out-of-range key/button codes are
-        /// guarded, never an out-of-bounds write.
+        /// The general event-injection entry point: the InputRouter calls it for each key/mouse
+        /// event routed to this snapshot, and it is equally the seam a synthetic-input driver
+        /// (a test harness, an automation tool) feeds fabricated events through, so an injected
+        /// event is indistinguishable from a routed one — the same key/button/delta state the
+        /// action layer then resolves against. Non-input events are ignored. Out-of-range
+        /// key/button codes are guarded, never an out-of-bounds write.
         /// @param event  The event to apply.
+        /// @pre Runs on the render thread, between BeginFrame and the frame's action resolution,
+        ///      so the event lands in the same frame the game reads.
         void ApplyEvent(const Event& event);
 
         /// @brief Returns true if the given key is currently held down.

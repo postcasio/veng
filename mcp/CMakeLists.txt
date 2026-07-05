@@ -21,6 +21,7 @@ add_library(veng_mcp SHARED
         src/RenderTools.cpp
         src/ViewportCapture.cpp
         src/MutationTools.cpp
+        src/InputTools.cpp
         src/Vendor/HttpLib.cpp
         src/Vendor/StbImageWrite.cpp
 )

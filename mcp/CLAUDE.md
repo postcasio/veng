@@ -248,6 +248,21 @@ family registers from the editor side.
   unremovable `Hierarchy` link — without aborting the rest. The cap mirrors the list tools'
   pagination limit: a context-volume convention for a single trusted local client, not a DoS
   defense.
+- **`input.*`** (`src/InputTools.cpp`, registered only when `AllowMutations` is set — injecting
+  input mutates app state, so it rides the same write gate as the mutation verbs) — `input.send`
+  applies an **ordered batch** of synthetic input events so an agent can drive a running app:
+  `key_down` / `key_up` (by engine `Key` enumerator name), `mouse_down` / `mouse_up` (`Left` /
+  `Right` / `Middle`), `mouse_move` (window-space `{ x, y }`), `scroll` (`{ dx, dy }`). Each
+  resolves to a `Veng::Event` and folds into the app's input through the `McpHost::InjectInput`
+  closure at the mutation-safe pump point — a game fills it from `GetInputRouter()::Dispatch` (or
+  `GetInput()::ApplyEvent`), so an injected event is **indistinguishable from a real window
+  event** and the action/mapping layer resolves it naturally on the next tick. It **validates the
+  batch shape up front** (a non-empty array within `MaxInputBatchSize` (64), each event
+  well-formed with a known type/key/button) and rejects a structural error as the whole call
+  before any event applies (the batch verbs' validate-then-apply discipline); a host that leaves
+  `InjectInput` null makes the tool report injection unavailable rather than no-op silently.
+  Injecting at the **raw device-event level** (not the resolved-action level) is deliberate: the
+  same events a window would produce, so mappings resolve exactly as they do for a human.
 - **`editor.*`** (`editor/src/EditorMcp.cpp`, registered by the `veng-editor` exe, not the
   library) — split by write posture exactly as the built-in tools are, so a read-only editor
   server honestly lists no write verbs. `RegisterEditorReadTools` (always) registers the
@@ -287,6 +302,7 @@ struct McpHost
     function<Renderer::Viewport*(string_view name)>   Viewport;      // resolve a viewport by name
     function<vector<string>()>                        ViewportNames;  // the viewport names to expose
     function<bool(const McpMutation&)>                ApplyMutation;  // optional editor routing hook
+    function<void(Event&)>                            InjectInput;   // optional synthetic-input sink
 };
 ```
 
@@ -302,6 +318,11 @@ struct McpHost
   undoable and marks the document dirty) and returns true; a return of false means the tool
   falls back to the raw path. The tools never branch on host kind — they consult the hook and
   fall back.
+- **`InjectInput`** is the optional synthetic-input sink the `input.*` tools feed. A game fills it
+  with `[this](Event& e){ GetInputRouter().Dispatch(e); }` so a fabricated event routes exactly as
+  a real window event (through the focus stack); an app that leaves it null makes `input.send`
+  report injection unavailable. It runs on the render thread at the pump point, so it may freely
+  touch the input service.
 
 An **`McpMutation`** is a resolved, validated description of one scene edit (its `Kind`,
 `Target`, `Component` `TypeId`, `Values`/`Components` JSON strings, `Asset`, `Name`). The
@@ -379,6 +400,10 @@ httplib stays PRIVATE and `veng-config` already carries `find_dependency(nlohman
   path).
 - **`mcp_mutation`** — the mutation tools behind `AllowMutations`, including the routed
   `ApplyMutation` hook and the batch delete verbs' per-item / over-limit result model.
+- **`mcp_input`** — `input.send` behind `AllowMutations` over a headless `Input`: key/button/move/
+  scroll events land in the snapshot through `InjectInput`, the batch shape-validation errors are
+  whole-call, a rejected batch applies nothing, a read-only server omits the tool, and a null
+  `InjectInput` host reports it unavailable.
 - **`mcp_client`** — the client transport smoke: stand a server up in-process, drive
   `McpClient::ListTools` + `CallTool ping` + both failure paths (protocol error, tool `isError`).
 - **`mcp_cli`** — `RunClientCli` in-process against an in-process server: the arg grammar,

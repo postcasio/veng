@@ -3,6 +3,7 @@
 #include <Veng/Assert.h>
 #include <Veng/Log.h>
 
+#include "InputTools.h"
 #include "MutationTools.h"
 #include "RenderTools.h"
 #include "WorldTools.h"
@@ -327,11 +328,13 @@ namespace Veng::Mcp
         RegisterWorldTools(*server, mcpHost);
         RegisterRenderTools(*server, mcpHost);
 
-        // Mutation tools are opt-in: a read-only server (the default) exposes none of them, so
-        // tools/list honestly reflects the server's write capability.
+        // Mutation and input-injection tools are opt-in: a read-only server (the default) exposes
+        // none of them, so tools/list honestly reflects the server's write capability. Injecting
+        // input mutates app state, so it rides the same AllowMutations gate.
         if (info.AllowMutations)
         {
             RegisterMutationTools(*server, mcpHost);
+            RegisterInputTools(*server, mcpHost);
         }
         return server;
     }

@@ -736,6 +736,22 @@ if (VENG_BUILD_TESTS)
     add_test(NAME mcp_mutation COMMAND veng_test_mcp_mutation)
     set_tests_properties(mcp_mutation PROPERTIES LABELS mcp)
 
+    # The input-injection proof: stand an McpServer up (AllowMutations, an InjectInput closure over a
+    # headless Veng::Input), pump it on a background thread that rolls Input::BeginFrame each frame,
+    # and drive input.send over loopback — key/mouse-button/move/scroll events land in the Input
+    # snapshot, the batch shape-validation errors are whole-call, a rejected batch applies nothing,
+    # a read-only server omits input.send, and a null-InjectInput host reports it unavailable.
+    # Device-free (a null-window Input, no Assets), so it runs in the default band.
+    add_executable(veng_test_mcp_input tests/mcp_input.cpp)
+    target_link_libraries(veng_test_mcp_input PRIVATE veng::mcp veng::veng
+            nlohmann_json::nlohmann_json)
+    target_compile_definitions(veng_test_mcp_input PRIVATE JSON_NOEXCEPTION)
+    target_include_directories(veng_test_mcp_input SYSTEM PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/mcp/src/Vendor)
+
+    add_test(NAME mcp_input COMMAND veng_test_mcp_input)
+    set_tests_properties(mcp_input PROPERTIES LABELS mcp)
+
     # The client proof: stand an McpServer up in-process (a ping tool + an always-failing
     # err tool), pump it on a background thread, and drive McpClient against it — ListTools,
     # CallTool ok, the tool-error shape (isError), the unknown-tool result, and a dead-port

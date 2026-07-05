@@ -122,6 +122,9 @@ the listener thread and closes the socket.
   resolves it; leaving `ViewportNames` unset makes `render.list_viewports` report none.
 - **`ApplyMutation`** — an optional editor routing hook (below); leave it null in a game and
   mutations apply raw to `CurrentWorld()`.
+- **`InjectInput`** — an optional synthetic-input sink the `input.send` tool feeds. Fill it in a
+  game with `[this](Event& e){ GetInputRouter().Dispatch(e); }` so an injected event routes
+  exactly as a real window event; leave it null and `input.send` reports injection unavailable.
 
 Every closure runs on the render thread during `Pump()`, so it may freely touch engine
 state.
@@ -146,6 +149,16 @@ MCP change. The two batch delete verbs take a list capped at 20 items (`entity.d
 `{ ids: […] }`, `entity.remove_component_many`'s `{ items: [ { id, component }, … ] }`), apply
 each edit independently, and return a per-item result — a stale entity or absent component
 fails only its own item, so one bad handle never sinks the whole call.
+
+The write family also includes **`input.send`** (a game reaches it by setting `InjectInput` on
+the host): an ordered batch of synthetic input events that drive the running app as if from
+the keyboard/mouse — `{ events: [ … ] }`, each `{ type: "key_down"|"key_up", key: <name> }`,
+`{ type: "mouse_down"|"mouse_up", button: "Left"|"Right"|"Middle" }`, `{ type: "mouse_move", x, y }`
+(window-space), or `{ type: "scroll", dx, dy }`. Key names are the engine `Key` enumerators (`"W"`,
+`"Space"`, `"LeftShift"`, `"F1"`). Events apply in order at the frame's input point, so the
+action/mapping layer resolves them exactly as it would a human's input. The batch is capped at 64
+events and its shape is validated up front — a malformed event rejects the whole call before any
+event lands.
 
 ## Connecting a client
 
