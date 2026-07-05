@@ -6,6 +6,7 @@ add_library(veng SHARED
         src/Application.cpp
         src/Assert.cpp
         src/Asset/AssetManager.cpp
+        src/Asset/DynamicMesh.cpp
         src/Asset/Level.cpp
         src/Asset/Material.cpp
         src/Asset/MaterialInstance.cpp
