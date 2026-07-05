@@ -319,9 +319,11 @@ namespace Veng::Renderer
 
         /// @brief Whether automatic exposure metering drives the tonemap exposure.
         ///
-        /// A topology change: it inserts a compute pass that reduces the lit HDR target to an
-        /// average log-luminance each frame, which the renderer reads a frame later and eases an
-        /// internal adapted exposure toward (temporal eye adaptation). With it on, the tonemap
+        /// A topology change: it inserts a compute pass that builds a log-luminance histogram of the
+        /// lit HDR target each frame, which the renderer averages a frame later (excluding the black
+        /// bin) and eases an internal adapted exposure toward (temporal eye adaptation). Metering on
+        /// the histogram's lit bins keeps a predominantly-black scene from collapsing exposure to the
+        /// floor. With it on, the tonemap
         /// exposure is the adapted value scaled by SceneView::Exposure (a manual bias over the
         /// automatic result); with it off, SceneView::Exposure is used directly. Off by default,
         /// so the shipping path is unchanged. AutoExposureKey / AutoExposureMinLuminance /
@@ -939,9 +941,9 @@ namespace Veng::Renderer
         void DeclareBloom(RenderGraph& graph);
         /// @brief Declares the auto-exposure metering compute pass into the graph ahead of tonemap.
         ///
-        /// One workgroup samples the lit HDR target and writes this frame's average log-luminance
-        /// into the metering ring buffer (StorageBufferWrite, so the pass is scheduled and not
-        /// culled). Declared only while Settings.AutoExposure is set.
+        /// One thread per lit-HDR texel scatters into this frame's log-luminance histogram ring
+        /// region (StorageBufferWrite, so the pass is scheduled and not culled). Declared only while
+        /// Settings.AutoExposure is set.
         /// @param graph  The renderer's internal graph being rebuilt.
         void DeclareAutoExposure(RenderGraph& graph);
         /// @brief Creates the auto-exposure metering pipeline, buffer, sampler, and descriptor set.
@@ -1408,24 +1410,24 @@ namespace Veng::Renderer
         /// @brief Composite set: HDR + bloom mip 0 sampled inputs and the result storage dest.
         Ref<DescriptorSet> m_BloomCompositeSet;
 
-        /// @brief Auto-exposure metering compute pipeline (HDR → average log-luminance buffer).
+        /// @brief Auto-exposure metering compute pipeline (HDR → log-luminance histogram buffer).
         Ref<class ComputePipeline> m_AutoExposurePipeline;
         /// @brief Layout for the metering pipeline (its set + push block).
         Ref<class PipelineLayout> m_AutoExposureLayout;
-        /// @brief Set-1 layout for metering: sampled HDR (0) + linear sampler (1) + result buffer (2).
+        /// @brief Set-1 layout for metering: sampled HDR (0) + linear sampler (1) + histogram buffer (2).
         Ref<DescriptorSetLayout> m_AutoExposureSetLayout;
-        /// @brief Metering set binding the HDR source, the linear sampler, and the readback buffer.
+        /// @brief Metering set binding the HDR source, the linear sampler, and the histogram buffer.
         ///
         /// The HDR binding is rewritten whenever the HDR target is recreated (Resize/Configure).
         Ref<DescriptorSet> m_AutoExposureSet;
         /// @brief Clamp-to-edge linear sampler the metering pass reads the HDR through.
         Ref<Sampler> m_AutoExposureSampler;
-        /// @brief Host-mapped ring buffer (framesInFlight floats) the metering writes each frame.
+        /// @brief Host-mapped ring buffer (framesInFlight histogram regions) the metering fills.
         ///
-        /// The renderer reads the region a completed frame wrote (framesInFlight ago), so no host
-        /// read races a device write in flight.
+        /// The renderer reads and re-zeroes the region a completed frame wrote (framesInFlight ago),
+        /// so no host read races a device write in flight.
         Ref<Buffer> m_AutoExposureBuffer;
-        /// @brief Byte stride between the metering buffer's per-frame ring regions.
+        /// @brief Byte stride between the histogram buffer's per-frame ring regions.
         u32 m_AutoExposureStride = 0;
         /// @brief The internal adapted luminance the exposure derives from; eased toward the metered value.
         f32 m_AdaptedLuminance = 0.18f;
@@ -1698,7 +1700,7 @@ namespace Veng::Renderer
         MipChainId m_BloomChainId;
         /// @brief Imported id for the bloom composite result.
         ResourceId m_BloomResultId;
-        /// @brief Imported buffer id for the auto-exposure metering readback buffer.
+        /// @brief Imported buffer id for the auto-exposure histogram buffer.
         ResourceId m_AutoExposureId;
         /// @brief Imported id for the directional shadow atlas.
         ResourceId m_ShadowId;
@@ -1724,7 +1726,7 @@ namespace Veng::Renderer
 
         /// @brief True when the last Rebuild wired the auto-exposure metering pass.
         ///
-        /// Execute binds the metering buffer import, reads back the metered luminance, and drives
+        /// Execute binds the histogram buffer import, averages the metered histogram, and drives
         /// the adapted exposure only when true.
         bool m_AutoExposureActive = false;
 
@@ -1837,6 +1839,13 @@ namespace Veng::Renderer
         /// when this frame's material differs, mirroring the atmosphere LUTs' dirty gate. Cleared
         /// when the resolved sky is not a baked material.
         const MaterialInstance* m_LastBakedSkyMaterial = nullptr;
+
+        /// @brief The revision of m_LastBakedSkyMaterial at the last bake; a change re-bakes.
+        ///
+        /// A material sky reused in place (its params/handles rewritten, the instance pointer
+        /// unchanged) advances its revision, so comparing it detects an in-place content change the
+        /// pointer compare misses — the material analogue of the atmosphere's param dirty gate.
+        u32 m_LastBakedSkyMaterialRevision = 0;
 
         /// @brief Whether the current bake cube's IBL convolution is up to date; gates re-convolution.
         ///

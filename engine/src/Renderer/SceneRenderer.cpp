@@ -131,7 +131,7 @@ namespace Veng::Renderer
         constexpr AssetId BloomUpCompId{0x4F28282A720BC9F2ULL};
         constexpr AssetId BloomCompositeCompId{0x533236398AB7654FULL};
 
-        // The auto-exposure metering compute shader (HDR → average log-luminance).
+        // The auto-exposure metering compute shader (HDR → log-luminance histogram).
         constexpr AssetId AutoExposureCompId{0x9BF9CB926D0595B1ULL};
 
         // The Dual Kawase variants of the down/up sweep.
@@ -206,16 +206,21 @@ namespace Veng::Renderer
         };
 
         // The auto-exposure metering push block, matching auto_exposure.comp PushConstants: the
-        // dynamic-resolution sub-rect mapping, the per-sample log-luminance clamps, and the ring
-        // element this frame writes.
+        // dynamic-resolution sub-rect mapping, the valid extent, the log-luminance histogram
+        // bounds, and the base element of the ring region this frame accumulates into.
         struct AutoExposurePush
         {
             vec2 SourceScaleUV;
             vec2 SourceMaxUV;
+            uvec2 ValidExtent;
             f32 MinLogLum;
             f32 MaxLogLum;
-            u32 ResultIndex;
+            u32 HistogramBase;
         };
+
+        // Log-luminance histogram resolution: bin 0 is the excluded black bin, bins 1..255 span
+        // [MinLogLum, MaxLogLum]. Matches BinCount in auto_exposure.comp.
+        constexpr u32 AutoExposureBinCount = 256;
 
         // The SSR trace push block, matching ssr_trace.frag PushConstants: the scene-color
         // and g-buffer bindless slots, the shared sampler, the view-constants region, the
@@ -3302,13 +3307,14 @@ namespace Veng::Renderer
         VE_ASSERT(meterCs.has_value(), "SceneRenderer: auto-exposure shader load failed: {}",
                   meterCs.error().Detail);
 
-        // A host-mapped storage ring: one padded region per frame-in-flight. The metering pass
-        // writes the current frame's region; the renderer reads the region a completed frame wrote
-        // (framesInFlight ago), so a host read never races a device write still in flight.
-        m_AutoExposureStride = 256;
+        // A host-mapped storage ring: one histogram region per frame-in-flight. The metering pass
+        // accumulates the current frame's region; the renderer reads the region a completed frame
+        // wrote (framesInFlight ago) and re-zeroes it before this frame's pass, so a host read
+        // never races a device write still in flight.
+        m_AutoExposureStride = AutoExposureBinCount * sizeof(u32);
         m_AutoExposureBuffer = Buffer::Create(
             m_Context, {
-                           .Name = "SceneRenderer AutoExposure Readback",
+                           .Name = "SceneRenderer AutoExposure Histogram",
                            .Size = static_cast<u64>(m_AutoExposureStride) * m_FramesInFlight,
                            .Usage = BufferUsage::Storage,
                            .HostMapped = true,
@@ -4524,9 +4530,10 @@ namespace Veng::Renderer
 
     void SceneRenderer::DeclareAutoExposure(RenderGraph& graph)
     {
-        // One workgroup reduces the lit HDR to an average log-luminance. The StorageBufferWrite on
-        // the metering import schedules the pass (it has no image output) and orders it after the
-        // HDR write via the graph-derived barrier; the host reads the result a frame later.
+        // One thread per lit-HDR texel scatters into a log-luminance histogram. The
+        // StorageBufferWrite on the histogram import schedules the pass (it has no image output)
+        // and orders it after the HDR write via the graph-derived barrier; the host reads and
+        // re-zeroes the histogram a frame later.
         RenderGraph::PassBuilder builder = graph.AddComputePass("Auto Exposure Metering");
         builder.Sample(m_HdrId);
         builder.StorageBufferWrite(m_AutoExposureId);
@@ -4540,7 +4547,7 @@ namespace Veng::Renderer
             {
                 const auto* view = static_cast<const SceneView*>(inner.UserData());
                 VE_ASSERT(view != nullptr, "Auto exposure pass: null SceneView");
-                // Map the [0,1] sample grid into the HDR's valid sub-rect (identity at full res).
+                // Map pixel-center UVs into the HDR's valid sub-rect (identity at full res).
                 const MipSubRect r = ComputeMipSubRect(view->RenderExtent, allocExtent, 0);
                 const u32 frameIndex = m_Context.GetCurrentFrameInFlight();
                 CommandBuffer& cmd = inner.Cmd();
@@ -4553,11 +4560,12 @@ namespace Veng::Renderer
                 cmd.PushConstants(AutoExposurePush{
                     .SourceScaleUV = r.ScaleUV,
                     .SourceMaxUV = r.MaxUV,
+                    .ValidExtent = r.ValidExtent,
                     .MinLogLum = std::log2(std::max(view->AutoExposureMinLuminance, 1e-5f)),
                     .MaxLogLum = std::log2(std::max(view->AutoExposureMaxLuminance, 1e-4f)),
-                    .ResultIndex = frameIndex * (stride / static_cast<u32>(sizeof(f32))),
+                    .HistogramBase = frameIndex * (stride / static_cast<u32>(sizeof(u32))),
                 });
-                cmd.Dispatch(1, 1, 1);
+                cmd.Dispatch((r.ValidExtent.x + 15) / 16, (r.ValidExtent.y + 15) / 16, 1);
             });
     }
 
@@ -5344,29 +5352,61 @@ namespace Veng::Renderer
         // Half-texel inset so a bilinear tap at the valid edge never reads past it.
         const vec2 maxValidUV = (vec2(validExtent) - 0.5f) / vec2(m_Extent);
 
-        // Auto-exposure: read the average log-luminance a completed frame metered (the current
-        // frame-in-flight's ring region, written framesInFlight ago and fenced), ease the internal
-        // adapted luminance toward it (eye adaptation), and resolve the exposure the tonemap uses.
+        // Auto-exposure: average the log-luminance histogram a completed frame metered (the
+        // current frame-in-flight's ring region, written framesInFlight ago and fenced), ease the
+        // internal adapted luminance toward it (eye adaptation), and resolve the exposure the
+        // tonemap uses. The average excludes bin 0 (the black bin), so a predominantly-black scene
+        // with sparse highlights meters on its lit content instead of collapsing to the floor.
         // SceneView::Exposure biases the automatic result. With auto-exposure off, it is the
         // exposure directly.
         f32 exposure = view.Exposure;
         if (m_AutoExposureActive)
         {
             const u32 frameIndex = m_Context.GetCurrentFrameInFlight();
-            const auto* region = reinterpret_cast<const f32*>(
-                static_cast<const u8*>(m_AutoExposureBuffer->GetMappedData()) +
-                static_cast<usize>(frameIndex) * m_AutoExposureStride);
-            const f32 meteredLuminance = std::exp2(region[0]);
-            if (m_AutoExposureReset)
+            auto* region =
+                reinterpret_cast<u32*>(static_cast<u8*>(m_AutoExposureBuffer->GetMappedData()) +
+                                       static_cast<usize>(frameIndex) * m_AutoExposureStride);
+
+            // Weighted average of bins 1..255 (bin centers in log2 space), skipping the black bin.
+            const f32 minLogLum = std::log2(std::max(view.AutoExposureMinLuminance, 1e-5f));
+            const f32 maxLogLum = std::log2(std::max(view.AutoExposureMaxLuminance, 1e-4f));
+            const f32 logRange = maxLogLum - minLogLum;
+            f64 weightedLog = 0.0;
+            u64 count = 0;
+            for (u32 bin = 1; bin < AutoExposureBinCount; ++bin)
             {
-                m_AdaptedLuminance = meteredLuminance;
-                m_AutoExposureReset = false;
+                const u32 binCount = region[bin];
+                if (binCount == 0)
+                {
+                    continue;
+                }
+                const f32 t =
+                    (static_cast<f32>(bin) - 0.5f) / static_cast<f32>(AutoExposureBinCount - 1);
+                weightedLog += static_cast<f64>(minLogLum + t * logRange) * binCount;
+                count += binCount;
             }
-            else
+
+            // Zero this slot before this frame's metering pass accumulates into it (host-coherent,
+            // recorded before the graph submit below).
+            std::memset(region, 0, AutoExposureBinCount * sizeof(u32));
+
+            // A frame with no lit content (count == 0) leaves the adaptation and reset pending
+            // untouched, so the exposure holds rather than blowing up on an empty meter.
+            if (count > 0)
             {
-                const f32 rate =
-                    1.0f - std::exp(-view.Delta * std::max(view.AutoExposureSpeed, 0.0f));
-                m_AdaptedLuminance = glm::mix(m_AdaptedLuminance, meteredLuminance, rate);
+                const f32 meteredLuminance =
+                    std::exp2(static_cast<f32>(weightedLog / static_cast<f64>(count)));
+                if (m_AutoExposureReset)
+                {
+                    m_AdaptedLuminance = meteredLuminance;
+                    m_AutoExposureReset = false;
+                }
+                else
+                {
+                    const f32 rate =
+                        1.0f - std::exp(-view.Delta * std::max(view.AutoExposureSpeed, 0.0f));
+                    m_AdaptedLuminance = glm::mix(m_AdaptedLuminance, meteredLuminance, rate);
+                }
             }
             const f32 clamped = std::clamp(m_AdaptedLuminance, view.AutoExposureMinLuminance,
                                            view.AutoExposureMaxLuminance);
@@ -5515,7 +5555,10 @@ namespace Veng::Renderer
             bool bakeDirty = false;
             if (bakedMaterial)
             {
-                bakeDirty = material != m_LastBakedSkyMaterial;
+                // The instance may be reused in place — its params/star buffer rewritten while the
+                // pointer stays the same — so a revision change re-bakes as a swap does.
+                bakeDirty = material != m_LastBakedSkyMaterial ||
+                            material->GetRevision() != m_LastBakedSkyMaterialRevision;
             }
             else
             {
@@ -5565,6 +5608,7 @@ namespace Veng::Renderer
                     m_BakedAtmosphereValid = true;
                 }
                 m_LastBakedSkyMaterial = material;
+                m_LastBakedSkyMaterialRevision = material != nullptr ? material->GetRevision() : 0;
             }
 
             // IBL convolves the freshly-filled bake cube into the split-sum maps in this command
