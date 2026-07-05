@@ -46,8 +46,8 @@ namespace Veng::Mcp
             tool.Description =
                 "Captures a viewport's rendered output as a PNG image (tonemapped 8-bit "
                 "scene color). Optional 'viewport' names the viewport (default the primary). "
-                "The base64 image can be large (a full-window PNG); pass a smaller viewport to "
-                "reduce it. Returns an image content block.";
+                "Returns an image content block; over the --connect CLI it requires --output "
+                "<file> to write the PNG (an image is never printed to stdout).";
             tool.InputSchemaJson =
                 R"({"type":"object","properties":{"viewport":{"type":"string"}}})";
             tool.ReturnsContentBlocks = true;

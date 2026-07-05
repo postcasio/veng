@@ -282,32 +282,34 @@ namespace Veng::Mcp
 
             if (call->Image)
             {
-                if (outputPath)
+                // An image content block is binary; it is never written to stdout (base64 or
+                // otherwise). --output is the only sink for it, so its absence is a usage error.
+                if (!outputPath)
                 {
-                    const optional<string> bytes = Base64Decode(call->Image->Base64Data);
-                    if (!bytes)
-                    {
-                        err << fmt::format("{}: {}: image content block was not valid base64\n",
-                                           label, tool);
-                        return static_cast<int>(ExitCode::ToolError);
-                    }
-                    std::ofstream file(*outputPath, std::ios::binary | std::ios::trunc);
-                    if (!file)
-                    {
-                        err << fmt::format("{}: {}: cannot open {} for writing\n", label, tool,
-                                           *outputPath);
-                        return static_cast<int>(ExitCode::ToolError);
-                    }
-                    file.write(bytes->data(), static_cast<std::streamsize>(bytes->size()));
-                    out << fmt::format("wrote {} bytes ({}) to {}\n", bytes->size(),
-                                       call->Image->MimeType, *outputPath);
+                    err << fmt::format(
+                        "{}: {}: returns an image content block — pass --output <file> to write "
+                        "it (an image is never printed to stdout)\n",
+                        label, tool);
+                    return static_cast<int>(ExitCode::Usage);
                 }
-                else
+
+                const optional<string> bytes = Base64Decode(call->Image->Base64Data);
+                if (!bytes)
                 {
-                    // No --output sink: never dump base64, summarize the block instead.
-                    out << fmt::format("[image {} — {} base64 bytes]\n", call->Image->MimeType,
-                                       call->Image->Base64Data.size());
+                    err << fmt::format("{}: {}: image content block was not valid base64\n", label,
+                                       tool);
+                    return static_cast<int>(ExitCode::ToolError);
                 }
+                std::ofstream file(*outputPath, std::ios::binary | std::ios::trunc);
+                if (!file)
+                {
+                    err << fmt::format("{}: {}: cannot open {} for writing\n", label, tool,
+                                       *outputPath);
+                    return static_cast<int>(ExitCode::ToolError);
+                }
+                file.write(bytes->data(), static_cast<std::streamsize>(bytes->size()));
+                out << fmt::format("wrote {} bytes ({}) to {}\n", bytes->size(),
+                                   call->Image->MimeType, *outputPath);
                 // A tool may return both text and an image; emit the text too when present.
                 if (!call->Content.empty())
                 {

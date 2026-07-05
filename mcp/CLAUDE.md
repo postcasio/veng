@@ -67,10 +67,14 @@ tool. Both halves live in the one library and share its vendored transport.
   tools listing), writes the tool payload to `out` / a human-readable error to `err`, and
   returns the process exit code. `label` is the invoking exe's name, so an error line is
   attributed to the exe the user ran. It lives here so both front ends share one arg grammar and
-  one exit-code map: **0** ok · **1** usage · **2** cannot reach the host · **3** JSON-RPC
-  protocol error · **4** tool result flagged `isError`. The grammar and the exit-code table are
-  the normative copy — [docs/guides/consuming-mcp.md](../docs/guides/consuming-mcp.md)'s "Driving
-  a running server from the shell" is the reader-facing view.
+  one exit-code map: **0** ok · **1** usage (including an image-returning tool called without
+  `--output`) · **2** cannot reach the host · **3** JSON-RPC protocol error · **4** tool result
+  flagged `isError`. An image content block is binary: it is written to the `--output <file>`
+  the client requires for it, **never** printed to stdout (no base64 in any form) — the file
+  write is a client-side concern, honoring "no MCP tool argument is ever a filesystem path"
+  (`--output` is a CLI argument, not a server tool argument). The grammar and the exit-code table
+  are the normative copy — [docs/guides/consuming-mcp.md](../docs/guides/consuming-mcp.md)'s
+  "Driving a running server from the shell" is the reader-facing view.
 
 **There is no standalone `veng-mcp` tool.** The client is a capability of the exes that already
 link `veng::mcp`: `veng-editor --connect` (behind `VENG_EDITOR_WITH_MCP`) and a game's
@@ -222,8 +226,9 @@ family registers from the editor side.
   `world.list_entities` (paginated), `entity.get` (a component dump via `FieldsToJson`),
   `world.query` (filter by component set, paginated), `scene.stats`. A null `CurrentWorld()`
   returns an empty result, never a null deref.
-- **`render.*`** (`src/RenderTools.cpp`) — `render.screenshot` (viewport `Download` → PNG →
-  base64 image content block, the smoke capture's `Download` path plus a PNG encode),
+- **`render.*`** (`src/RenderTools.cpp`) — `render.screenshot` (viewport `Download` → PNG → an
+  image content block, the smoke capture's `Download` path plus a PNG encode; the `--connect`
+  CLI requires `--output <file>` to write the PNG and never prints it to stdout),
   `render.list_viewports` (over `McpHost::ViewportNames`), `render.stats` (cull counts +
   `GetLastGpuFrameTimeMs`). The PNG encode uses stb_image_write, vendored PRIVATE into
   `src/Vendor/StbImageWrite.cpp` — never a public header. A null/unknown viewport reports "no

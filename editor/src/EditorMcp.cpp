@@ -397,7 +397,9 @@ namespace VengEditor
             tool.Description =
                 "Captures a named editor panel's rendered scene as a PNG image (tonemapped 8-bit "
                 "scene color). Argument: { panel: <title> }. Errors when the title names no open "
-                "panel or the panel renders no scene. Returns an image content block.";
+                "panel or the panel renders no scene. Returns an image content block; over the "
+                "--connect CLI it requires --output <file> to write the PNG (an image is never "
+                "printed to stdout).";
             tool.InputSchemaJson =
                 R"({"type":"object","required":["panel"],"properties":{"panel":{"type":"string"}}})";
             tool.ReturnsContentBlocks = true;

@@ -18,6 +18,9 @@
 //   - missing --connect / both --list and a tool / --json with a stray key=value -> 1 usage.
 //   - echo_args limit=2 name=foo                 -> limit is a JSON number, name a JSON string.
 //   - --json '{"a":1}' and a --json scalar        -> object forwarded / usage error.
+//   - make_image (an image content-block tool)   -> without --output a usage error (exit 1, no
+//                                                  base64 to any sink); with --output the decoded
+//                                                  image bytes land in the file.
 //
 // Pure logic + loopback, no GPU, so it runs in the default band.
 
@@ -31,9 +34,12 @@
 
 #include <nlohmann/json.hpp>
 
+#include <unistd.h>
+
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <fstream>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -120,6 +126,23 @@ int main()
     };
     server->RegisterTool(std::move(echoArgs));
 
+    // A content-block tool returning an image block (plus a text block), the shape
+    // render.screenshot produces — exercises the CLI's --output / no-output image path without a
+    // GPU. "AAECAw==" is base64 for the four bytes 0x00 0x01 0x02 0x03.
+    Mcp::McpTool image;
+    image.Name = "make_image";
+    image.Description = "Returns a tiny image content block (requires --output on the CLI).";
+    image.InputSchemaJson = R"({"type":"object"})";
+    image.ReturnsContentBlocks = true;
+    image.Handler = [](string_view) -> Result<string>
+    {
+        return Json::array(
+                   {Json{{"type", "image"}, {"data", "AAECAw=="}, {"mimeType", "image/png"}},
+                    Json{{"type", "text"}, {"text", R"({"note":"hi"})"}}})
+            .dump();
+    };
+    server->RegisterTool(std::move(image));
+
     const u16 port = server->GetPort();
     Check(port != 0, "GetPort resolved an ephemeral port");
     const std::string portStr = std::to_string(port);
@@ -199,6 +222,35 @@ int main()
         Check(raw.Code == 0, "--raw ping exited 0");
         Check(raw.Out.find("isError") != std::string::npos,
               "--raw output carried the result envelope");
+
+        // An image-returning tool without --output is a usage error (exit 1): an image is never
+        // printed to stdout, and no base64 leaks to either sink.
+        const RunResult noOutput = Run({"--connect=" + portStr, "make_image"});
+        Check(noOutput.Code == 1, "an image tool without --output is a usage error");
+        Check(noOutput.Out.empty(), "an image tool without --output wrote nothing to out");
+        Check(noOutput.Err.find("--output") != std::string::npos,
+              "the error names --output as the fix");
+        Check(noOutput.Out.find("AAECAw==") == std::string::npos &&
+                  noOutput.Err.find("AAECAw==") == std::string::npos,
+              "no base64 leaked to either sink");
+
+        // With --output the decoded image bytes are written to the file, out is a confirmation.
+        // A per-pid name in the CWD (the build dir) avoids a collision under parallel ctest and
+        // the deprecated tmpnam.
+        const std::string imagePath = "mcp_cli_image_" + std::to_string(::getpid()) + ".png";
+        const RunResult output = Run({"--connect=" + portStr, "make_image", "--output", imagePath});
+        Check(output.Code == 0, "an image tool with --output exited 0");
+        Check(output.Out.find("AAECAw==") == std::string::npos, "the confirmation is not base64");
+        {
+            std::ifstream file(imagePath, std::ios::binary);
+            const std::string bytes((std::istreambuf_iterator<char>(file)),
+                                    std::istreambuf_iterator<char>());
+            Check(bytes.size() == 4, "--output wrote the 4 decoded image bytes");
+            Check(bytes.size() == 4 && bytes[0] == '\x00' && bytes[1] == '\x01' &&
+                      bytes[2] == '\x02' && bytes[3] == '\x03',
+                  "--output wrote the correct decoded bytes");
+        }
+        std::remove(imagePath.c_str());
 
         // Dead port: exit 2 within the timeout, connection line on err.
         const RunResult dead = Run({"--connect=1", "ping"});

@@ -27,13 +27,16 @@ namespace Veng::Mcp
     ///   mutually exclusive with any `key=value` (and must parse as a JSON object).
     /// - `--raw` prints the full `result` object instead of the concatenated text payload;
     ///   `--output <file>` writes an image content block (base64-decoded) to the given path,
-    ///   overwriting it.
+    ///   overwriting it. A tool that returns an image content block (e.g. `render.screenshot`,
+    ///   `editor.screenshot_panel`) REQUIRES `--output`: an image is never printed to stdout, so
+    ///   calling such a tool without `--output` is a usage error. No base64 is ever emitted.
     ///
     /// The tool payload (or the tools listing) is written to @p out; any failure — connection
     /// refused, a JSON-RPC protocol error, or a tool result flagged isError — is written to
     /// @p err as one human-readable line prefixed with @p label. The exit codes are: 0 on
-    /// success, 1 for a usage/argument error, 2 for a connection failure (cannot reach the
-    /// host), 3 for a JSON-RPC protocol error, 4 for a tool result flagged isError.
+    /// success, 1 for a usage/argument error (including an image-returning tool called without
+    /// `--output`), 2 for a connection failure (cannot reach the host), 3 for a JSON-RPC protocol
+    /// error, 4 for a tool result flagged isError.
     /// @param args   The argument vector WITHOUT the program name (the front end strips argv[0]).
     /// @param out    Sink for the successful payload / tool listing.
     /// @param err    Sink for a single human-readable error line.

@@ -133,8 +133,9 @@ With `AllowMutations` off (the default), the server registers the read-only fami
 - **`world.list_entities`**, **`entity.get`**, **`world.query`**, **`scene.stats`** — list,
   inspect (a full component dump via reflection), filter, and summarize the world. The list
   tools are paginated: `{ limit?, cursor? }` in, `{ items…, nextCursor? }` out.
-- **`render.screenshot`** (a viewport captured to a base64 PNG image block),
-  **`render.list_viewports`**, **`render.stats`** (cull counts + last GPU frame time).
+- **`render.screenshot`** (a viewport captured to a PNG image content block; the `--connect`
+  CLI writes it to a `--output <file>` and never prints it), **`render.list_viewports`**,
+  **`render.stats`** (cull counts + last GPU frame time).
 
 Flip `AllowMutations` on and the write family appears: **`entity.add_component`**,
 **`entity.remove_component`**, **`entity.remove_component_many`**, **`entity.set_field`**,
@@ -195,8 +196,12 @@ veng-editor     --connect=<port|host:port> <tool-name> [key=value ...] [--json '
 - **`--list`** prints every advertised tool (`name` — `description`); **`--search <query>`**
   filters that list by a case-insensitive substring over name + description.
 - **`--raw`** prints the full `result` object (envelope included) instead of the concatenated
-  text payload; **`--output <file>`** writes an image content block (`render.screenshot`,
-  base64-decoded) to a file rather than summarizing it on stdout.
+  text payload; the envelope carries only an image block's mime type and byte count, never its
+  base64 data.
+- **`--output <file>`** writes an image content block (base64-decoded) to a file. A tool that
+  returns an image — **`render.screenshot`**, **`editor.screenshot_panel`** — **requires**
+  `--output`: an image is never printed to stdout in any form, so calling such a tool without
+  `--output` is a usage error (exit `1`).
 
 ### The exit-code contract
 
@@ -209,7 +214,7 @@ prefixed with the invoking exe's name (`<label>` below — `veng-editor`, `hello
 |---|---|---|---|
 | Tool call OK | the tool result payload (text content blocks, concatenated) | — | `0` |
 | `--list` / `--search` OK | the tool listing | — | `0` |
-| Usage / bad args | — | usage line | `1` |
+| Usage / bad args (incl. an image tool called without `--output`) | — | usage line | `1` |
 | Connection refused / no response / timeout | — | `<label>: cannot reach <host>:<port>: …` | `2` |
 | JSON-RPC protocol error (an `error` object) | — | `<label>: rpc error: <message>` | `3` |
 | Tool result `isError: true` (including an unknown tool name) | — | `<label>: <tool>: <error text>` | `4` |
@@ -227,6 +232,11 @@ veng-editor --connect=5124 --list
 
 veng-editor --connect=5124 render.stats | jq '.gpu_frame_time_ms'
 # 1.83
+
+# A screenshot is binary; it goes to a file, never stdout. --output is required.
+veng-editor --connect=5124 render.screenshot --output shot.png
+# wrote 248173 bytes (image/png) to shot.png
+veng-editor --connect=5124 render.screenshot        # exit 1: usage error, no --output
 ```
 
 The same commands work against a game whose launcher was built with `veng_add_game(... MCP)`,
