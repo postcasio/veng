@@ -40,6 +40,10 @@ namespace Veng
                 return delta.x;
             case MouseAxisY:
                 return delta.y;
+            case MouseScrollX:
+                return m_Input.GetScrollDelta().x;
+            case MouseScrollY:
+                return m_Input.GetScrollDelta().y;
             default:
                 return 0.0f;
             }
@@ -117,6 +121,10 @@ namespace Veng
                 return m_Pointer.LocalPosition.x;
             case MousePositionY:
                 return m_Pointer.LocalPosition.y;
+            case RawInput::MouseScrollX:
+                return m_Input.GetScrollDelta().x;
+            case RawInput::MouseScrollY:
+                return m_Input.GetScrollDelta().y;
             default:
                 return 0.0f;
             }

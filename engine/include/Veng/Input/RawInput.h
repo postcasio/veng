@@ -20,9 +20,10 @@ namespace Veng
     /// controller-drivable. Public so the editor's input-mapping preview reuses the identical
     /// read surface.
     ///
-    /// Mouse-axis Control codes are MouseAxisX / MouseAxisY (the pointer delta components);
-    /// keyboard/mouse-button codes are the raw Key / MouseButton values a binding stores; gamepad
-    /// Control codes are the GamepadButton / GamepadAxis indices.
+    /// Mouse-axis Control codes are MouseAxisX / MouseAxisY (the pointer delta components) and
+    /// MouseScrollX / MouseScrollY (the wheel delta components); keyboard/mouse-button codes are
+    /// the raw Key / MouseButton values a binding stores; gamepad Control codes are the
+    /// GamepadButton / GamepadAxis indices.
     class RawInput final : public RawInputView
     {
     public:
@@ -30,6 +31,13 @@ namespace Veng
         static constexpr u32 MouseAxisX = 0;
         /// @brief Control code selecting the mouse's vertical delta as an axis source.
         static constexpr u32 MouseAxisY = 1;
+        /// @brief Control code selecting the wheel's horizontal scroll delta as an axis source.
+        ///
+        /// Codes 2 and 3 are SeatInputView's pointer-position sources; the MouseAxis codes share
+        /// one numbering space across both views, so the scroll pair starts after them.
+        static constexpr u32 MouseScrollX = 4;
+        /// @brief Control code selecting the wheel's vertical scroll delta as an axis source.
+        static constexpr u32 MouseScrollY = 5;
 
         /// @brief Constructs the adapter over a borrowed input snapshot.
         /// @param input  The frame-coherent input service, borrowed for the resolve call.
@@ -77,8 +85,9 @@ namespace Veng
     /// delta is translation-invariant and keeping it raw makes look sensitivity-invariant across
     /// region size. A seat that does not own the pointer reads neutral mouse.
     ///
-    /// The keyboard / mouse-button / mouse-delta / gamepad Control codes match RawInput's mapping;
-    /// the pointer-position codes (MousePositionX / MousePositionY) are additional MouseAxis codes.
+    /// The keyboard / mouse-button / mouse-delta / scroll / gamepad Control codes match RawInput's
+    /// mapping; the pointer-position codes (MousePositionX / MousePositionY) are additional
+    /// MouseAxis codes.
     class SeatInputView final : public RawInputView
     {
     public:

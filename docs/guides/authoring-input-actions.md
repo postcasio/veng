@@ -102,8 +102,12 @@ at runtime by `AssetId`. hello-triangle's
 - **`device`** is `Keyboard` / `MouseButton` / `MouseAxis` (live now), or
   `GamepadButton` / `GamepadAxis` (see [Gamepad](#gamepad-sources-are-inert-for-now)).
   `control` is the code interpreted per device — a `Key` value for a keyboard
-  (`68` is `D`, `65` is `A`, `87` is `W`, `83` is `S`, `32` is `Space`), the mouse
-  delta axis for `MouseAxis` (`0` = horizontal, `1` = vertical).
+  (`68` is `D`, `65` is `A`, `87` is `W`, `83` is `S`, `32` is `Space`), or a
+  `MouseAxis` code: the pointer delta (`0` = horizontal, `1` = vertical), the
+  viewport-local pointer position (`2` / `3`, seat-resolved only), or the
+  scroll-wheel delta (`4` = horizontal, `5` = vertical). The named constants are
+  `RawInput::MouseAxisX/Y`, `SeatInputView::MousePositionX/Y`, and
+  `RawInput::MouseScrollX/Y`.
 - **`axis`** picks which component of a vector action a scalar source drives:
   `X`, `Y`, or `Whole` (a native axis or a button drives the action directly).
   Four scalar keyboard bindings — two on `X`, two on `Y` — combine into the one 2D

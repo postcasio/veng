@@ -391,6 +391,53 @@ TEST_CASE("A UsesKeyboardMouse=false seat reads neutral mouse even over its own 
     CHECK(state.GetValue(Move).x == doctest::Approx(0.0f));
 }
 
+TEST_CASE("Scroll axes read the wheel delta, region-gated like the other pointer arms")
+{
+    // Seed a wheel delta and park the cursor in seat B's quadrant.
+    Input input(nullptr);
+    input.BeginFrame();
+    input.ApplyEvent(MouseMovedEvent{vec2(700, 200)});
+    input.ApplyEvent(MouseScrolledEvent{vec2(0.5f, -2.0f)});
+
+    const std::array regions = QuadrantRegions();
+    const PointerRouting routing = SelectPointerOwner(regions, ivec2(700, 200));
+    REQUIRE(routing.Owner == SeatB);
+
+    const ResolvedContext context{
+        .Actions = {InputAction{.Id = Move, .Name = "Zoom", .Kind = ActionKind::Axis2D}},
+        .Bindings = {Binding{.Source = {.Device = InputDeviceType::MouseAxis,
+                                        .Control = RawInput::MouseScrollX},
+                             .Action = Move,
+                             .Axis = AxisComponent::X,
+                             .Scale = 1.0f},
+                     Binding{.Source = {.Device = InputDeviceType::MouseAxis,
+                                        .Control = RawInput::MouseScrollY},
+                             .Action = Move,
+                             .Axis = AxisComponent::Y,
+                             .Scale = 1.0f}}};
+    const std::array active{context};
+
+    // The shared adapter reads the wheel unconditionally.
+    const RawInput raw{input};
+    const ActionState shared = ResolveActions(active, raw, {});
+    CHECK(shared.GetValue(Move).x == doctest::Approx(0.5f));
+    CHECK(shared.GetValue(Move).y == doctest::Approx(-2.0f));
+
+    const SeatInput keyboardSeat{
+        .UsesKeyboardMouse = true, .Gamepad = GamepadId::None, .WantsGamepad = false};
+
+    // The pointer's owner reads the wheel; a seat that does not own the pointer reads neutral.
+    const SeatInputView ownerView{input, keyboardSeat, routing, SeatB};
+    const ActionState owner = ResolveActions(active, ownerView, {});
+    CHECK(owner.GetValue(Move).x == doctest::Approx(0.5f));
+    CHECK(owner.GetValue(Move).y == doctest::Approx(-2.0f));
+
+    const SeatInputView otherView{input, keyboardSeat, routing, SeatA};
+    const ActionState other = ResolveActions(active, otherView, {});
+    CHECK(other.GetValue(Move).x == doctest::Approx(0.0f));
+    CHECK(other.GetValue(Move).y == doctest::Approx(0.0f));
+}
+
 TEST_CASE("A captured cursor routes wholly to the single keyboard seat regardless of position")
 {
     // Under capture the router skips the region hit-test and marks the single keyboard/mouse seat
