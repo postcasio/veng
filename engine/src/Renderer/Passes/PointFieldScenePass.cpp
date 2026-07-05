@@ -81,6 +81,13 @@ namespace Veng::Renderer
         // the wide kernels are what makes neighboring cells sum flat.
         constexpr f32 SplatFillCount = 8.0f;
 
+        // The sparse end of the footprint blend draws at this fraction of the points' projected
+        // bounds. The B-spline kernel's half-peak core spans roughly its whole footprint — half
+        // again wider and flatter than the resolved sprite's falloff — so an unscaled sparse
+        // splat reads as haze; drawing it tighter than the bounds restores a compact, bright
+        // core over the few stars it stands in for.
+        constexpr f32 SplatSparseScale = 0.6f;
+
         AssetHandle<Veng::Shader> LoadShader(AssetManager& assets, AssetId id, const char* what)
         {
             const AssetResult<AssetHandle<Veng::Shader>> shader = assets.LoadSync<Veng::Shader>(id);
@@ -362,7 +369,7 @@ namespace Veng::Renderer
                                 const f32 fill = std::min(
                                     static_cast<f32>(cell.PointCount) / SplatFillCount, 1.0f);
                                 const f32 kernelPixels =
-                                    glm::mix(footprint.Pixels, cellPixels, fill);
+                                    glm::mix(footprint.Pixels * SplatSparseScale, cellPixels, fill);
                                 // The clamp keeps a subpixel kernel drawable (the floor puts the
                                 // whole quad at MinPixels) and bounds a large near cell's
                                 // overdraw; normalizing by the larger of the two spreads or
