@@ -86,6 +86,7 @@ namespace VengGraph
         {
         case Veng::MaterialDomain::PostProcess:
         case Veng::MaterialDomain::Sky:
+        case Veng::MaterialDomain::Translucent:
             return {
                 DomainOutputPin{.Name = OutputColorPin, .Type = ValuePin(TypeIdOf<Veng::vec4>())},
             };

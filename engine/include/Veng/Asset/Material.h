@@ -26,9 +26,11 @@ namespace Veng
     ///
     /// Surface writes the g-buffer and is drawn per submesh by the geometry pass; PostProcess writes a
     /// single final color and is invoked fullscreen by the post chain; Sky writes background radiance
-    /// and is invoked fullscreen in the sky slot (composited over the lit scene with LoadOp::Load). The
-    /// parameter schema, bindless handles, authoring, and editor inspector are shared across domains.
-    /// Surface is 0 so a zero-initialized header defaults to the Surface domain.
+    /// and is invoked fullscreen in the sky slot (composited over the lit scene with LoadOp::Load);
+    /// Translucent writes final HDR radiance and is drawn per submesh by the forward translucent pass
+    /// (alpha-blended into the lit scene color, after deferred lighting and the sky, before the
+    /// bloom/tonemap tail). The parameter schema, bindless handles, authoring, and editor inspector are
+    /// shared across domains. Surface is 0 so a zero-initialized header defaults to the Surface domain.
     enum class MaterialDomain : u32
     {
         /// @brief G-buffer MRT output; drawn per submesh by the geometry pass.
@@ -37,6 +39,8 @@ namespace Veng
         PostProcess = 1,
         /// @brief Background sky radiance; invoked fullscreen in the sky slot, composited over lit scene color.
         Sky = 2,
+        /// @brief Final HDR radiance + alpha; drawn per submesh by the forward translucent pass, alpha-blended into the lit scene color.
+        Translucent = 3,
     };
 
     /// @brief One reflected material parameter field, kept at runtime for name-based SetTexture/SetParam dispatch.
@@ -120,10 +124,10 @@ namespace Veng
         /// @brief Returns the material's debug name.
         [[nodiscard]] const string& GetName() const { return m_Name; }
 
-        /// @brief Returns the material's domain (Surface or PostProcess).
+        /// @brief Returns the material's domain (Surface, PostProcess, Sky, or Translucent).
         [[nodiscard]] MaterialDomain GetDomain() const { return m_Domain; }
 
-        /// @brief Returns the built graphics pipeline, or null for a PostProcess material.
+        /// @brief Returns the built graphics pipeline, or null for a pass-built domain (PostProcess, Sky, Translucent).
         [[nodiscard]] const Ref<Renderer::GraphicsPipeline>& GetPipeline() const
         {
             return m_Pipeline;
@@ -196,9 +200,10 @@ namespace Veng
         /// @brief Patches bindless indices into the default block and stores the pipeline + layout.
         ///
         /// Runs on the render thread. The layout and pipeline are supplied here because their GPU
-        /// build is also deferred render-thread work. A PostProcess material is finalized with a
-        /// null pipeline — its GraphicsPipeline is built later by the PostProcessScenePass against
-        /// the renderer's color format. No SSBO slot is allocated: a parent owns no per-draw slot.
+        /// build is also deferred render-thread work. A PostProcess, Sky, or Translucent material is
+        /// finalized with a null pipeline — its GraphicsPipeline is built later by the pass that
+        /// owns it (PostProcessScenePass / SkyMaterialScenePass / TranslucentScenePass), which alone
+        /// knows the renderer's color format. No SSBO slot is allocated: a parent owns no per-draw slot.
         /// @param layout   The reflected pipeline layout (set 0 reserved for bindless).
         /// @param pipeline The built graphics pipeline, or null for PostProcess materials.
         void Finalize(Ref<Renderer::PipelineLayout> layout,
@@ -235,4 +240,5 @@ VE_ENUM(::Veng::MaterialDomain, 0x34CF0B4F57300AF1ULL)
 VE_ENUMERATOR(Surface)
 VE_ENUMERATOR(PostProcess)
 VE_ENUMERATOR(Sky)
+VE_ENUMERATOR(Translucent)
 VE_ENUM_END();

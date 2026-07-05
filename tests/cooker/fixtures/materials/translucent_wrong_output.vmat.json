@@ -1,0 +1,24 @@
+{
+  "domain": "Translucent",
+  "shaders": {
+    "vertex": "0x0000000000001005",
+    "fragment": "0x0000000000001006"
+  },
+  "fields": [
+    {
+      "name": "Albedo",
+      "type": "texture",
+      "id": "0x00000000000007D1"
+    },
+    {
+      "name": "AlbedoSampler",
+      "type": "sampler",
+      "texture": "Albedo"
+    },
+    {
+      "name": "Factors",
+      "type": "vec4",
+      "value": [1.0, 1.0, 1.0, 1.0]
+    }
+  ]
+}

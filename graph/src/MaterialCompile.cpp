@@ -248,12 +248,19 @@ namespace VengGraph
 
         // --- Assemble the generated source ---
 
-        // A Surface graph reads the surface contract; a fullscreen (PostProcess/Sky) graph the
-        // postprocess contract — each domain's include declares its own fragment-input struct
-        // and push block.
-        const char* const domainInclude = domain == Veng::MaterialDomain::Surface
-                                              ? "Veng/surface.slang"
-                                              : "Veng/postprocess.slang";
+        // Each domain's include declares its own fragment-input struct and push block. Surface and
+        // Translucent both draw per-submesh through the canonical vertex stage and read the
+        // v_MaterialIndex interpolant (Veng/surface.slang, via Veng/translucent.slang for the
+        // forward domain); a fullscreen (PostProcess/Sky) graph reads the postprocess contract.
+        const char* domainInclude = "Veng/postprocess.slang";
+        if (domain == Veng::MaterialDomain::Surface)
+        {
+            domainInclude = "Veng/surface.slang";
+        }
+        else if (domain == Veng::MaterialDomain::Translucent)
+        {
+            domainInclude = "Veng/translucent.slang";
+        }
         Veng::string source = fmt::format("#include \"{}\"\n\n", domainInclude);
 
         // The generated MaterialParams struct, exactly the texture + exposed/engine-bound
@@ -299,6 +306,19 @@ namespace VengGraph
             source += "    o.ORM = float4(1, 1, 0, 0);\n";
             source += "    o.Velocity = ComputeMotionVector(input.v_CurClip, input.v_PrevClip);\n";
             source += "    return o;\n}\n";
+        }
+        else if (domain == Veng::MaterialDomain::Translucent)
+        {
+            // Translucent is a forward surface domain: it draws per-submesh through the canonical
+            // vertex stage (SurfaceFragmentInput, the v_MaterialIndex interpolant) but emits a
+            // single float4 SV_Target0 — final HDR color in rgb, coverage in a — alpha-blended
+            // into the lit scene by the forward translucent pass. A graph-authored translucent is
+            // unlit; its single color pin is the returned radiance.
+            source += "[shader(\"fragment\")]\n";
+            source += "float4 fsMain(SurfaceFragmentInput input) : SV_Target0\n{\n";
+            source += "    MaterialParams p = LoadMaterialParams(input.v_MaterialIndex);\n";
+            source += ctx.Body;
+            source += fmt::format("    return {};\n}}\n", sinkOr(0, "float4(0,0,0,1)"));
         }
         else
         {

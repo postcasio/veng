@@ -20,6 +20,7 @@
 #include <cstring>
 #include <span>
 #include <tuple>
+#include <unordered_map>
 #include <utility>
 
 #include <fmt/format.h>
@@ -526,6 +527,36 @@ namespace Veng::Renderer
             Ref<DescriptorSet> PaletteSet;
             vector<DrawSlot> SkinnedSlots;
             vector<DrawGroup> SkinnedGroups;
+        };
+
+        // One forward translucent draw, in back-to-front order. Unlike the opaque plan's
+        // pipeline-shared slots, each translucent draw binds its own material's pipeline (built
+        // per parent by the pass against the HDR format), because translucent fragment shaders
+        // differ. The draw reads its per-draw record (world/normal/material selector) from the
+        // shared DrawData SSBO by CandidateId, exactly like a static surface draw, so it reuses the
+        // renderer's DrawData / candidate-id buffers — its slots are allocated after the opaque and
+        // skinned ones. Material is borrowed: the mesh's resident AssetHandle keeps it alive for
+        // this frame. ViewDepth is the sort key (larger = farther), draw large-first.
+        struct TranslucentDraw
+        {
+            const MaterialInstance* Material;
+            const Mesh* SourceMesh;
+            u32 IndexCount;
+            u32 FirstIndex;
+            u32 CandidateId;
+            f32 ViewDepth;
+        };
+
+        // The per-frame forward translucent submission plan SceneRenderer fills before each graph
+        // replay and the translucent pass reads at record time. Held in SceneRenderer::Internal.
+        struct TranslucentDrawPlan
+        {
+            SurfacePush Push;
+            Ref<DescriptorSet> DrawDataSet;
+            Ref<Buffer> CandidateIdBuffer;
+            // Back-to-front by ViewDepth. Always CPU-direct (a DrawIndexed per entry) — translucent
+            // geometry never enters the GPU-driven cull path (it sorts per-submesh, not per group).
+            vector<TranslucentDraw> Draws;
         };
 
         class GBufferScenePass final : public ScenePass
@@ -1035,6 +1066,157 @@ namespace Veng::Renderer
             ResourceId m_TargetId;
             ResourceId m_DepthId;
             LoadOp m_ColorLoad = LoadOp::Load;
+        };
+
+        // The forward translucent pass. Draws the gathered translucent submeshes back-to-front into
+        // the lit HDR scene-color target after deferred lighting and the sky composite and before
+        // the bloom/tonemap tail, so translucents bloom and tonemap with the scene. Depth-TESTs
+        // against the opaque depth buffer with depth writes OFF, and STRAIGHT-alpha-blends each
+        // fragment's returned final HDR color. Each translucent material's pipeline is built per
+        // parent (against the HDR format, which the material loader does not know) and cached here;
+        // a draw binds its parent's pipeline, the set-0 bindless registry, and the shared set-1
+        // DrawData SSBO, then reads its per-draw record and material selector from DrawData by the
+        // instance-rate candidate id, exactly like a static surface draw.
+        class TranslucentScenePass final : public ScenePass
+        {
+        public:
+            TranslucentScenePass(Context& context, uvec2 extent, const TranslucentDrawPlan* plan,
+                                 ResourceId targetId, ResourceId depthId, Format targetFormat)
+                : m_Context(context), m_Extent(extent), m_Plan(plan), m_TargetId(targetId),
+                  m_DepthId(depthId), m_TargetFormat(targetFormat)
+            {
+            }
+
+            void Resize(const uvec2 extent) override { m_Extent = extent; }
+
+            void Declare(RenderGraph& graph, const PassIO& /*io*/) override
+            {
+                RenderGraph::PassBuilder builder = graph.AddPass("Scene Translucent");
+                builder
+                    .Color({
+                        // Alpha-blend into the lit scene color (blend enabled on the pipeline).
+                        .Resource = m_TargetId,
+                        .Load = LoadOp::Load,
+                        .Store = StoreOp::Store,
+                    })
+                    .Depth({
+                        // The opaque depth bound read-only (the pipeline disables depth writes):
+                        // translucents depth-test against the resolved opaque scene so they are
+                        // occluded correctly, without occluding one another.
+                        .Resource = m_DepthId,
+                        .Load = LoadOp::Load,
+                        .Store = StoreOp::Store,
+                    });
+                builder.Execute([this](PassContext& inner) { Record(Wrap(inner)); });
+            }
+
+        private:
+            // The alpha-blended, depth-tested/depth-write-off pipeline for one translucent parent
+            // material, built against the HDR target format and cached by parent. Every translucent
+            // material shares the canonical vertex layout + the surface push/DrawData plumbing, so
+            // only the fragment module (and thus the pipeline) differs per material.
+            const Ref<GraphicsPipeline>& PipelineFor(const MaterialInstance& material) const
+            {
+                const Material* parent = material.GetParent().Get();
+                const auto it = m_Pipelines.find(parent);
+                if (it != m_Pipelines.end())
+                {
+                    return it->second;
+                }
+
+                Ref<GraphicsPipeline> pipeline = GraphicsPipeline::Create(
+                    m_Context,
+                    {
+                        .Name = fmt::format("Translucent Pipeline ({})", material.GetName()),
+                        .ColorAttachments = {{.Format = m_TargetFormat,
+                                              .Blend = BlendState::AlphaBlend()}},
+                        .DepthAttachmentFormat = GBuffer::DepthFormat,
+                        .VertexBufferLayout = Mesh::CanonicalLayout(),
+                        // The surface vertex stage reads the per-draw candidate id as an
+                        // instance-rate attribute on binding 1 (fetched at firstInstance).
+                        .InstanceCandidateId = true,
+                        .PipelineLayout = material.GetPipelineLayout(),
+                        .ShaderStages =
+                            {
+                                {.Stage = ShaderStage::Vertex,
+                                 .Module = material.GetVertexModule()},
+                                {.Stage = ShaderStage::Fragment,
+                                 .Module = material.GetFragmentModule()},
+                            },
+                        // Back-face culling matches the opaque surface convention, so a translucent
+                        // material rasterizes the same faces a surface material would.
+                        .CullMode = CullMode::Back,
+                        .DepthTestEnable = true,
+                        .DepthWriteEnable = false,
+                        .DepthCompareOp = CompareOp::LessOrEqual,
+                    });
+
+                return m_Pipelines.emplace(parent, std::move(pipeline)).first->second;
+            }
+
+            void Record(const ScenePassContext& ctx) const
+            {
+                CommandBuffer& cmd = ctx.Cmd();
+                const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
+                const TranslucentDrawPlan& plan = *m_Plan;
+
+                const uvec2 renderExtent = ctx.View().RenderExtent;
+                cmd.SetViewport({0, 0}, renderExtent);
+                cmd.SetScissor({0, 0}, renderExtent);
+
+                if (plan.Draws.empty())
+                {
+                    return;
+                }
+
+                // The instance-rate candidate-id buffer (binding 1) is bound once; each draw's
+                // firstInstance selects the candidate id that indexes DrawData.
+                cmd.GetNative().CommandBuffer.bindVertexBuffers(
+                    1, GetVkBuffer(*plan.CandidateIdBuffer), {0});
+
+                // Back-to-front: bind each draw's material pipeline (rebound only on a change, since
+                // sorting interleaves materials by depth), the bindless registry, and the shared
+                // DrawData set, then the mesh buffers, then draw the submesh. The surface push is
+                // rebound with the pipeline (its layout is per-material). Translucent materials push
+                // no selector (they read it from DrawData), so Material::Bind only binds the
+                // pipeline; the selector rides each draw's DrawData record via the candidate id.
+                const GraphicsPipeline* lastPipeline = nullptr;
+                const Mesh* lastMesh = nullptr;
+                for (const TranslucentDraw& draw : plan.Draws)
+                {
+                    const Ref<GraphicsPipeline>& pipeline = PipelineFor(*draw.Material);
+                    if (pipeline.get() != lastPipeline)
+                    {
+                        cmd.BindPipeline(pipeline);
+                        registry.Bind(cmd);
+                        cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                            .Sets = {plan.DrawDataSet},
+                            .FirstSet = 1,
+                            .PipelineBindPoint = PipelineBindPoint::Graphics,
+                        });
+                        cmd.PushConstants(plan.Push);
+                        lastPipeline = pipeline.get();
+                        lastMesh = nullptr;
+                    }
+                    if (draw.SourceMesh != lastMesh)
+                    {
+                        cmd.BindVertexBuffer(draw.SourceMesh->GetVertexBuffer());
+                        cmd.BindIndexBuffer(draw.SourceMesh->GetIndexBuffer());
+                        lastMesh = draw.SourceMesh;
+                    }
+                    cmd.DrawIndexed(draw.IndexCount, 1, draw.FirstIndex, 0, draw.CandidateId);
+                }
+            }
+
+            Context& m_Context;
+            uvec2 m_Extent;
+            const TranslucentDrawPlan* m_Plan = nullptr;
+            ResourceId m_TargetId;
+            ResourceId m_DepthId;
+            Format m_TargetFormat;
+            // Per-parent pipeline cache; mutable so PipelineFor can lazily populate it from the
+            // const record callback.
+            mutable std::unordered_map<const Material*, Ref<GraphicsPipeline>> m_Pipelines;
         };
 
         // Declaring .Sample on each g-buffer id drives the graph-derived attachment →
@@ -1655,6 +1837,9 @@ namespace Veng::Renderer
         // The per-frame geometry submission plan PrepareDraws fills before each replay and
         // the geometry pass reads at record time (the pass holds a pointer to it).
         GBufferDrawPlan Plan;
+        // The per-frame forward translucent submission plan PrepareDraws fills (back-to-front) and
+        // the translucent pass reads at record time.
+        TranslucentDrawPlan TranslucentPlan;
     };
 
     Unique<SceneRenderer> SceneRenderer::Create(const SceneRendererInfo& info)
@@ -3671,6 +3856,15 @@ namespace Veng::Renderer
                     &m_EmissiveSkinnedPipeline, lightingTargetId, depthId));
             }
 
+            // Forward translucent draws alpha-blend into the lit scene color after the sky and
+            // emissive composites and before the TAA/bloom/tonemap tail, so translucents resolve,
+            // bloom, and tonemap with the scene. Depth-tested against the opaque depth, depth-write
+            // off, sorted back-to-front. Additive to the pipeline: no toggle — a scene with no
+            // translucent submesh records an empty pass.
+            m_Passes.push_back(CreateUnique<TranslucentScenePass>(
+                m_Context, m_Extent, &m_Internal->TranslucentPlan, lightingTargetId, depthId,
+                HdrFormat));
+
             // TAA resolves the lit target into the HDR target the tail samples, so it sits
             // between lighting and the bloom/tonemap tail.
             if (taaActive)
@@ -3820,6 +4014,11 @@ namespace Veng::Renderer
                     m_Context, m_Extent, &m_Internal->Plan, &m_EmissivePipeline,
                     &m_EmissiveSkinnedPipeline, lightingTargetId, depthId));
             }
+            // The same forward translucent composite the Final arm folds into the lit target, so
+            // the pyramid blooms the scene the Final view blooms.
+            m_Passes.push_back(CreateUnique<TranslucentScenePass>(
+                m_Context, m_Extent, &m_Internal->TranslucentPlan, lightingTargetId, depthId,
+                HdrFormat));
             m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
                 m_Context, m_AlbedoBlitPipeline, m_Extent, FullscreenBlitScenePass::Source::Bloom));
             break;
@@ -4650,6 +4849,11 @@ namespace Veng::Renderer
         plan.SkinnedGroups.clear();
         m_PaletteBaseByEntity.clear();
 
+        TranslucentDrawPlan& translucentPlan = m_Internal->TranslucentPlan;
+        translucentPlan.DrawDataSet = m_DrawDataSet;
+        translucentPlan.CandidateIdBuffer = m_CandidateIdBuffer;
+        translucentPlan.Draws.clear();
+
         // The DrawData / candidate / palette / indirect buffers are renderer-owned and
         // framesInFlight-deep, so they ring by the frame-in-flight index; only the shared
         // view-constants push (viewConstantsIndex) rings per viewport render.
@@ -4659,6 +4863,7 @@ namespace Veng::Renderer
         u32 paletteCursor = 0;
         auto* paletteData = static_cast<mat4*>(m_PaletteBuffer->GetMappedData());
         plan.Push = SurfacePush{.FrameBase = frameBase, .ViewConstantsIndex = viewConstantsIndex};
+        translucentPlan.Push = plan.Push;
         plan.IndirectRegionOffset =
             frameIndex * MaxCullCandidates * static_cast<u32>(sizeof(DrawIndexedIndirectCommand));
 
@@ -4714,6 +4919,10 @@ namespace Veng::Renderer
         // path after the static slots, which must stay contiguous from 0 for the GPU cull arrays).
         vector<u32> skinnedScratch;
 
+        // Translucent survivors are routed to the forward translucent plan, sorted back-to-front
+        // after the opaque/skinned slots are laid out (its DrawData slots follow theirs).
+        vector<u32> translucentScratch;
+
         // Fill one slot per survivor whose submesh has a loaded material (a materialless or
         // not-yet-resident submesh is skipped, matching the direct draw it replaces). The slot
         // index is the dense candidate id the instance attribute carries.
@@ -4728,6 +4937,16 @@ namespace Veng::Renderer
             if (subMesh.MaterialIndex == SubMesh::NoMaterial ||
                 !materials[subMesh.MaterialIndex].IsLoaded())
             {
+                continue;
+            }
+
+            // Translucent submeshes are excluded from the g-buffer/opaque draw list and collected
+            // into the forward translucent plan below (they output final color through the forward
+            // pass, not the g-buffer). The frustum-survivor set is shared — a translucent submesh is
+            // simply routed to a different draw list.
+            if (materials[subMesh.MaterialIndex].Get()->GetDomain() == MaterialDomain::Translucent)
+            {
+                translucentScratch.push_back(id);
                 continue;
             }
 
@@ -4939,6 +5158,78 @@ namespace Veng::Renderer
                 DrawGroup{.SourceMesh = mesh, .FirstSlot = s, .SlotCount = count});
             s += count;
         }
+
+        // Forward translucent gather: one DrawData slot per translucent survivor, allocated after
+        // the opaque static + skinned slots so those stay contiguous from 0 for the GPU cull
+        // arrays. Each draw reads its record from DrawData by the candidate id, exactly like a
+        // static surface draw; the translucent pass binds each material's own alpha-blended
+        // pipeline. The forward pass draws through the canonical (static) vertex layout, so a
+        // skinned mesh carrying a translucent material is not gathered here (opaque skinning,
+        // which uses the skinned vertex path, is unaffected).
+        const mat4 viewMatrix = view.Camera.View();
+        for (const u32 id : translucentScratch)
+        {
+            const SubMeshCandidate& candidate = candidates[id];
+            const VisibleMesh& item = view.Visible[candidate.MeshCandidate];
+            const Mesh& mesh = *item.Mesh;
+            if (mesh.IsSkinned())
+            {
+                continue;
+            }
+            const std::span<const AssetHandle<MaterialInstance>> materials = mesh.GetMaterials();
+            const SubMesh& subMesh = mesh.GetSubMeshes()[candidate.SubMeshIndex];
+
+            const u32 slot = static_cast<u32>(plan.Slots.size() + plan.SkinnedSlots.size() +
+                                              translucentPlan.Draws.size());
+            if (slot >= MaxCullCandidates)
+            {
+                break;
+            }
+
+            const MaterialInstance& material = *materials[subMesh.MaterialIndex].Get();
+
+            const mat3 normalMatrix = glm::inverseTranspose(mat3(item.World));
+            mat4 prevWorld = item.World;
+            {
+                const auto it = m_PreviousWorlds.find(PackEntity(item.Owner));
+                if (it != m_PreviousWorlds.end())
+                {
+                    prevWorld = it->second;
+                }
+            }
+            const MaterialInstance::EmissiveParams emissive = material.GetEmissive();
+            drawData[frameBase + slot] = GpuDrawData{
+                .World = item.World,
+                .NormalColumn0 = vec4(normalMatrix[0], 0.0f),
+                .NormalColumn1 = vec4(normalMatrix[1], 0.0f),
+                .NormalColumn2 = vec4(normalMatrix[2], 0.0f),
+                .MaterialIndex = material.GetMaterialSelector(),
+                .EntityIndex = item.Owner.Index,
+                .PrevWorld = prevWorld,
+                .EmissiveColor = vec4(emissive.Color, 0.0f),
+                .EmissiveTexture = emissive.Texture,
+                .EmissiveSampler = emissive.Sampler,
+            };
+
+            // Sort key: the submesh center in view space. The camera looks down -Z, so a farther
+            // submesh has a more negative z; sorting ascending by z draws farthest first.
+            const vec3 center = (item.WorldBounds.Min + item.WorldBounds.Max) * 0.5f;
+            const f32 viewDepth = (viewMatrix * vec4(center, 1.0f)).z;
+
+            translucentPlan.Draws.push_back(TranslucentDraw{
+                .Material = &material,
+                .SourceMesh = &mesh,
+                .IndexCount = subMesh.IndexCount,
+                .FirstIndex = subMesh.IndexOffset,
+                .CandidateId = slot,
+                .ViewDepth = viewDepth,
+            });
+        }
+
+        // Back-to-front: farthest (most negative view-space z) first.
+        std::ranges::sort(translucentPlan.Draws,
+                          [](const TranslucentDraw& a, const TranslucentDraw& b)
+                          { return a.ViewDepth < b.ViewDepth; });
 
         // The GPU cull dispatch reads the candidate region this frame; zero its survivor
         // count so the next-frame readback reflects only this dispatch. The push members the

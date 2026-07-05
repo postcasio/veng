@@ -446,6 +446,49 @@ TEST_CASE("Cooker: a sky material whose fragment writes the MRT is a located coo
     std::filesystem::remove(outArchive);
 }
 
+TEST_CASE("Cooker: a translucent material cooks with domain 3")
+{
+    // A Translucent material declares "domain": "Translucent" and its fragment writes a single
+    // float4 SV_Target0 (final HDR color + alpha). It cooks with domain 3 like any other material.
+    const path packJson = FixtureDir / "material_translucent_pack.json";
+    const path outArchive =
+        Veng::TestSupport::TempDir() / "veng_cooker_material_translucent.vengpack";
+
+    const Result<ArchiveReader> reader = CookMaterialPack(packJson, outArchive);
+    REQUIRE(reader.has_value());
+
+    const optional<ArchiveEntry> entry = reader->Find(AssetId{0xC86});
+    REQUIRE(entry.has_value());
+
+    CookedMaterialHeader header{};
+    std::memcpy(&header, entry->Blob.data(), sizeof(header));
+    CHECK(header.Version == CookedMaterialVersion);
+    CHECK(header.Domain == 3u);    // Translucent
+    CHECK(header.FieldCount == 1); // Color
+
+    std::filesystem::remove(outArchive);
+}
+
+TEST_CASE("Cooker: a translucent material whose fragment writes the MRT is a located cook error")
+{
+    // A Translucent material must write a single float4 SV_Target0 (HDR color + alpha), not the
+    // g-buffer MRT. Pointing it at a g-buffer fragment shader violates the single-target contract.
+    const path packJson = FixtureDir / "material_translucent_wrong_output_pack.json";
+    const path outArchive =
+        Veng::TestSupport::TempDir() / "veng_cooker_material_translucent_wrong.vengpack";
+
+    Cooker cooker;
+    RegisterBuiltinImporters(cooker);
+
+    const VoidResult result = cooker.CookPack(packJson, outArchive);
+
+    REQUIRE(!result.has_value());
+    CHECK(result.error().find("translucent material must write a single float4 SV_Target0") !=
+          string::npos);
+
+    std::filesystem::remove(outArchive);
+}
+
 TEST_CASE("Cooker: an unknown domain is a located cook error")
 {
     const path packJson = FixtureDir / "material_bad_domain_pack.json";

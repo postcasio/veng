@@ -88,7 +88,7 @@ namespace Veng::Cook
             {
                 return std::unexpected(
                     fmt::format("material importer: '{}': 'domain' must be a string "
-                                "(\"Surface\", \"PostProcess\", or \"Sky\")",
+                                "(\"Surface\", \"PostProcess\", \"Sky\", or \"Translucent\")",
                                 vmatPath.string()));
             }
             const string domainStr = vmat["domain"].get<string>();
@@ -97,7 +97,8 @@ namespace Veng::Cook
             {
                 return std::unexpected(
                     fmt::format("material importer: '{}': unknown domain '{}' "
-                                "(expected \"Surface\", \"PostProcess\", or \"Sky\")",
+                                "(expected \"Surface\", \"PostProcess\", \"Sky\", or "
+                                "\"Translucent\")",
                                 vmatPath.string(), domainStr));
             }
             domainValue = *parsed;
@@ -239,8 +240,9 @@ namespace Veng::Cook
 
         // Surface: float4 SV_Target0 (albedo) + SV_Target1 (normal) + SV_Target2 (ORM) +
         // float2 SV_Target3 (screen-space motion vector). PostProcess: single float4 SV_Target0.
-        // Sky: single float4 SV_Target0 (background radiance, not a g-buffer MRT). Mismatch is a
-        // located cook error.
+        // Sky: single float4 SV_Target0 (background radiance, not a g-buffer MRT). Translucent:
+        // single float4 SV_Target0 (final HDR color + alpha, forward-blended into the scene, not a
+        // g-buffer MRT). Mismatch is a located cook error.
         const Result<vector<ReflectedFragmentOutput>> outputs =
             ReflectFragmentOutputs(fragSource, fragEntry, context.ShaderIncludeDir);
         if (!outputs)
@@ -279,6 +281,22 @@ namespace Veng::Cook
                     "material importer: '{}': sky material must write a single float4 SV_Target0 "
                     "(background radiance) and no further targets — not the g-buffer MRT; its "
                     "fragment shader does not",
+                    vmatPath.string()));
+            }
+        }
+        else if (domainValue == MaterialDomain::Translucent)
+        {
+            // A Translucent material outputs final HDR color + alpha into the single scene-color
+            // target, forward-blended, not the g-buffer MRT — a single float4 SV_Target0. A
+            // fragment that writes the g-buffer set (or any further target) violates the contract.
+            const bool ok = outputs->size() == 1 && (*outputs)[0].TargetIndex == 0 &&
+                            (*outputs)[0].IsFloat && (*outputs)[0].ComponentCount == 4;
+            if (!ok)
+            {
+                return std::unexpected(fmt::format(
+                    "material importer: '{}': translucent material must write a single float4 "
+                    "SV_Target0 (HDR color + alpha) and no further targets — not the g-buffer MRT; "
+                    "its fragment shader does not",
                     vmatPath.string()));
             }
         }

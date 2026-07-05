@@ -4027,4 +4027,116 @@ TEST_CASE_FIXTURE(
     std::filesystem::remove(outArchive);
 }
 
+// The forward translucent proof. An opaque brick cube fills the view (lit red by a directional
+// light), and a Translucent-domain cube (Color = (0,0,1,0.5)) sits in front of it. The forward
+// translucent pass draws the translucent cube after deferred lighting, depth-tested against the
+// opaque depth (depth-write off) and straight-alpha-blended into the lit HDR scene color. The
+// center pixel must therefore carry BOTH the lit brick's red (showing through at ~0.5 coverage)
+// and the translucent blue — the alpha blend, the back-to-front draw over the opaque scene, and
+// the pass's per-material pipeline (built against the HDR format) all work. A second render with
+// the translucent cube removed leaves the bare lit-red brick, confirming the blue is the
+// translucent contribution.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: a translucent cube alpha-blends over the lit opaque scene")
+{
+    RegisterBuiltinTypes(Types);
+
+    const path fixtureDir = path(GPU_GBUFFER_FIXTURE_DIR);
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_translucent.vengpack";
+
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    // The brick + translucent shaders `#include` the engine core contracts; the core shader dir is
+    // on the cook's Slang search path so the cross-pack includes resolve.
+    const VoidResult cookResult =
+        cooker.CookPack(fixtureDir / "translucent_pack.json", outArchive, {}, nullptr, nullptr,
+                        nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR));
+    REQUIRE(cookResult.has_value());
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(outArchive).has_value());
+
+    // The translucent material loads: its layout is built at load, but its GraphicsPipeline is NOT
+    // (the forward translucent pass builds it against the HDR format), and its domain is Translucent.
+    const AssetResult<AssetHandle<MaterialInstance>> translucent =
+        assets.LoadSync<MaterialInstance>(AssetId{0x896001}); // the translucent default instance
+    REQUIRE(translucent.has_value());
+    REQUIRE(translucent->IsLoaded());
+    CHECK(translucent->Get()->GetDomain() == MaterialDomain::Translucent);
+    CHECK(translucent->Get()->GetPipeline() == nullptr);       // built by the pass
+    CHECK(translucent->Get()->GetPipelineLayout() != nullptr); // built by the loader
+
+    const AssetResult<AssetHandle<MaterialInstance>> brick =
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443}); // the opaque brick default instance
+    REQUIRE(brick.has_value());
+    REQUIRE(brick->IsLoaded());
+
+    constexpr uvec2 extent{128, 128};
+
+    // The opaque brick cube far back (world normal +Z toward the camera), lit red.
+    const Ref<Mesh> brickCube =
+        Mesh::BuildSync(Context, Primitives::Cube(1.4f, *brick), "Translucent Opaque Cube");
+    // The translucent cube nearer the camera, its single submesh the translucent material.
+    const Ref<Mesh> translucentCube =
+        Mesh::BuildSync(Context, Primitives::Cube(1.0f, *translucent), "Translucent Cube");
+
+    const Unique<Scene> scene = Scene::Create(Types);
+
+    const Entity opaqueEntity = scene->CreateEntity();
+    scene->Add<Transform>(opaqueEntity).Position = vec3(0.0f, 0.0f, -0.5f);
+    scene->Add<MeshRenderer>(opaqueEntity).Mesh = assets.Adopt(brickCube);
+
+    const Entity lightEntity = scene->CreateEntity();
+    scene->Add<Light>(lightEntity) = Light{
+        .Direction = vec3(0.0f, 0.0f, -1.0f), // straight at the front faces
+        .Color = vec3(1.0f, 1.0f, 1.0f),
+        .Intensity = 1.0f,
+    };
+
+    CameraView camera;
+    camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = {.Mode = DebugView::Final, .Bloom = false, .Shadows = false, .AO = false},
+    });
+
+    auto Render = [&]() -> vector<u8>
+    {
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer->Execute(
+                    cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
+            });
+        return renderer->GetOutput()->GetImage()->Download();
+    };
+
+    // Render the lit brick alone first: the center is red-dominant, blue near zero.
+    const vec3 opaqueCenter = DecodeTexel(Render(), extent.x, extent.x / 2, extent.y / 2);
+    CHECK(opaqueCenter.r > 0.3f);
+    CHECK(opaqueCenter.r > opaqueCenter.b);
+    CHECK(opaqueCenter.b < 0.15f);
+
+    // Add the translucent blue cube in front and re-render: the forward pass alpha-blends it over
+    // the lit brick, so the center now carries a strong blue contribution the opaque render lacked,
+    // while the brick's red still shows through at partial coverage.
+    const Entity translucentEntity = scene->CreateEntity();
+    scene->Add<Transform>(translucentEntity).Position = vec3(0.0f, 0.0f, 0.6f);
+    scene->Add<MeshRenderer>(translucentEntity).Mesh = assets.Adopt(translucentCube);
+
+    const vec3 blendedCenter = DecodeTexel(Render(), extent.x, extent.x / 2, extent.y / 2);
+
+    // The blend added blue (straight alpha over the lit scene).
+    CHECK(blendedCenter.b > opaqueCenter.b + 0.2f);
+    // The opaque brick's red still shows through the ~0.5-coverage translucent surface.
+    CHECK(blendedCenter.r > 0.1f);
+
+    std::filesystem::remove(outArchive);
+}
+
 #endif // GPU_GBUFFER_FIXTURE_DIR

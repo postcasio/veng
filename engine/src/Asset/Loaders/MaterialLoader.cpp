@@ -24,10 +24,11 @@ namespace Veng
     {
         // The push-constant offset of the per-draw materialIndex selector, keyed on
         // domain. A PostProcess or Sky shader pushes its selector at offset 0 — the
-        // first member of its fullscreen push block, a 4-byte push range. A Surface
-        // material reads its material index from the per-draw DrawData SSBO (indexed by
-        // the candidate id), not a push, so it carries the Material::NoSelectorPush
-        // sentinel and pushes nothing.
+        // first member of its fullscreen push block, a 4-byte push range. A Surface or
+        // Translucent material reads its material index from the per-draw DrawData SSBO
+        // (indexed by the candidate id), not a push — both are drawn per-submesh from the
+        // same gathered geometry through the canonical vertex stage — so it carries the
+        // Material::NoSelectorPush sentinel and pushes nothing.
         constexpr u32 FullscreenSelectorPushOffset = 0;
 
         u32 SelectorPushOffsetFor(MaterialDomain domain)
@@ -35,6 +36,7 @@ namespace Veng
             switch (domain)
             {
             case MaterialDomain::Surface:
+            case MaterialDomain::Translucent:
                 return Material::NoSelectorPush;
             case MaterialDomain::PostProcess:
             case MaterialDomain::Sky:
@@ -260,7 +262,7 @@ namespace Veng
 
         // Domain is stored as the underlying integer; the cook validates the fragment
         // outputs against the domain's contract, so the runtime asserts range and trusts it.
-        VE_ASSERT(header.Domain <= static_cast<u32>(MaterialDomain::Sky),
+        VE_ASSERT(header.Domain <= static_cast<u32>(MaterialDomain::Translucent),
                   "material: header Domain {} is out of range for MaterialDomain", header.Domain);
         const auto domain = static_cast<MaterialDomain>(header.Domain);
 

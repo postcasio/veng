@@ -1,0 +1,5 @@
+{
+  "source": "surface_full.vert.slang",
+  "entry": "vsMain",
+  "vertex_layout": "0x00000000000023F1"
+}

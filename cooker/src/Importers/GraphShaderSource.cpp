@@ -50,8 +50,9 @@ namespace Veng::Cook
         {
             if (!shaderJson["domain"].is_string())
             {
-                return std::unexpected("shader importer: graph 'domain' must be a string "
-                                       "(\"Surface\" or \"PostProcess\")");
+                return std::unexpected(
+                    "shader importer: graph 'domain' must be a string "
+                    "(\"Surface\", \"PostProcess\", \"Sky\", or \"Translucent\")");
             }
             const string domainStr = shaderJson["domain"].get<string>();
             const optional<MaterialDomain> parsed = ParseEnum<MaterialDomain>(domainStr);
@@ -59,7 +60,7 @@ namespace Veng::Cook
             {
                 return std::unexpected(
                     fmt::format("shader importer: unknown graph domain '{}' (expected "
-                                "\"Surface\" or \"PostProcess\")",
+                                "\"Surface\", \"PostProcess\", \"Sky\", or \"Translucent\")",
                                 domainStr));
             }
             domain = *parsed;
