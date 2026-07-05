@@ -75,8 +75,10 @@ namespace Veng::Renderer
         constexpr AssetId AtmosphereSkyFragId{0x7DC6D927B2DF7858ULL};
 
         // Cube face edge length for the baked material sky. Mip 0 suffices for display; the
-        // roughness chain the IBL tier needs is convolved from this cube, not baked here.
-        constexpr u32 SkyBakeFaceSize = 512;
+        // roughness chain the IBL tier needs is convolved from this cube, not baked here. Sized so
+        // a point feature a sky material bakes (a star) subtends only a few display pixels — at 512
+        // a single face texel already covers ~7 pixels of a 1440p view, reading as a blob.
+        constexpr u32 SkyBakeFaceSize = 1024;
 
         // Field-wise equality of two Atmosphere parameter sets; gates the once-per-change LUT
         // regeneration. An exact compare is right — the LUTs are a pure function of these fields,
