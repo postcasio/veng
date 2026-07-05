@@ -72,6 +72,10 @@ namespace Veng
         {
             resolved.Step = override_.Step;
         }
+        if (override_.Precision)
+        {
+            resolved.Precision = override_.Precision;
+        }
         if (override_.Collapsible)
         {
             resolved.Collapsible = override_.Collapsible;

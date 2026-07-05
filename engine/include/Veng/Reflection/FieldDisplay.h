@@ -26,6 +26,12 @@ namespace Veng
         optional<f64> Max;
         /// @brief Optional step size hint for a drag/slider widget.
         optional<f64> Step;
+        /// @brief Optional number of fractional digits a floating-point widget displays.
+        ///
+        /// Sets the drag/slider's printed precision (the format's decimal count); unset leaves the
+        /// widget's default. Lets a small-magnitude field show enough digits to read and edit its
+        /// value rather than rounding it to the default precision's last place.
+        optional<u32> Precision;
         /// @brief When set, whether a nested struct or category renders as a collapsible section.
         optional<bool> Collapsible;
         /// @brief When set, whether a collapsible section starts expanded.

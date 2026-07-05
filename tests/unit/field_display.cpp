@@ -75,6 +75,22 @@ TEST_CASE("A field override of one member keeps the rest of the inherited defaul
     CHECK(*resolved.Collapsible == true);
 }
 
+TEST_CASE("A field override of Precision resolves through to the widget hint")
+{
+    TypeRegistry registry;
+    registry.Register<StyledScalar>();
+
+    // The type default sets no Precision, so a field override is the only source of it.
+    const FieldDescriptor field = MakeField(TypeIdOf<StyledScalar>(), {.Precision = 8});
+    const FieldDisplay resolved = ResolveFieldDisplay(field, registry);
+
+    REQUIRE(resolved.Precision.has_value());
+    CHECK(*resolved.Precision == 8u);
+    // The unrelated inherited members are untouched by the Precision override.
+    CHECK(resolved.Widget == WidgetKind::Slider);
+    CHECK(resolved.Step == doctest::Approx(0.1));
+}
+
 TEST_CASE("A field override of the widget wins over the type default")
 {
     TypeRegistry registry;

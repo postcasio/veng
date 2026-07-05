@@ -14,6 +14,7 @@
 #include <fmt/format.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <unordered_set>
 
@@ -563,7 +564,24 @@ namespace Veng::UI
             // unclamped).
             const TypeRegistry& registry = *hooks.Registry;
             const FieldDisplay display = ResolveFieldDisplay(field, registry);
+
+            // A Precision hint builds the widget's printf float format; the buffer must outlive the
+            // Drag/Slider call below (both consume the pointer only during the call), so it lives in
+            // this scope. Unset leaves Format null, so the widget keeps its own default precision.
+            char precisionFormat[8] = {};
+            const char* floatFormat = nullptr;
+            if (display.Precision)
+            {
+                std::snprintf(precisionFormat, sizeof(precisionFormat), "%%.%uf",
+                              std::min<u32>(*display.Precision, 9u));
+                floatFormat = precisionFormat;
+            }
+
             UI::DragOptions drag;
+            if (floatFormat)
+            {
+                drag.Format = floatFormat;
+            }
             if (display.Step)
             {
                 drag.Speed = static_cast<f32>(*display.Step);
@@ -591,6 +609,10 @@ namespace Veng::UI
             // A Slider reads the resolved Min/Max; SliderOptions bounds are f32, so the
             // optional<f64> cascade values narrow at the call site.
             UI::SliderOptions slider;
+            if (floatFormat)
+            {
+                slider.Format = floatFormat;
+            }
             if (display.Min)
             {
                 slider.Min = static_cast<f32>(*display.Min);
