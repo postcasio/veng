@@ -996,8 +996,9 @@ namespace Veng::Renderer
 
         /// @brief Allocates the directional-shadow set-1 descriptor system once at Create.
         ///
-        /// Covers the comparison sampler, the set-1 layout, the descriptor set, the dummy atlas, and
-        /// the ShadowConstants ring buffer. All are long-lived past any Configure.
+        /// Covers the comparison sampler, the set-1 layout, the dummy atlas, and the
+        /// ShadowConstants ring buffer. All are long-lived past any Configure; the descriptor
+        /// sets themselves are per-rebuild (see CreateShadowSets).
         void CreateShadowSystem();
 
         /// @brief Clamps m_Settings shadow resolutions to the device-supported maxima.
@@ -1006,17 +1007,21 @@ namespace Veng::Renderer
         /// request degrades to the largest valid atlas rather than a fatal driver error.
         void ClampShadowResolutions();
 
-        /// @brief Recreates the punctual shadow atlas and writes it into set 1 binding 4.
+        /// @brief Recreates the punctual shadow atlas image and view.
         ///
         /// Sized at PunctualShadowResolution × (MaxShadowedPunctual·CubeFaceCount) tiles.
-        /// Called at Create and on every Resize/Configure.
+        /// Called at Create and on every Resize/Configure; the following Rebuild binds the
+        /// new view into the recreated shadow set (binding 4).
         void CreatePunctualShadowAtlas();
 
-        /// @brief Writes set 1's atlas binding (binding 0) and the debug-blit set's binding 0.
+        /// @brief Recreates the set-1 shadow set and the debug-blit set, writing every binding.
         ///
         /// Supplies either the wired shadow pass's atlas or the dummy when shadows are off.
-        /// Called from Rebuild after the pass set is chosen.
-        void WriteShadowAtlasBinding(const Ref<ImageView>& atlasView);
+        /// Called from Rebuild after the shadow passes are chosen: a rebuild can land while a
+        /// prior frame's command buffer still references the old sets, and the bindings carry
+        /// no update-after-bind flags, so the sets are replaced (the old ones retiring through
+        /// the per-frame bin) rather than updated in place.
+        void CreateShadowSets(const Ref<ImageView>& atlasView);
         /// @brief Rebuilds the pass set from Settings.Mode and recompiles the RenderGraph.
         void Rebuild();
 
@@ -1455,25 +1460,30 @@ namespace Veng::Renderer
         Ref<class GraphicsPipeline> m_ShadowBlitPipeline;
         Ref<class PipelineLayout> m_ShadowBlitLayout;
 
+        /// @brief Layout of the directional-shadow set-1 descriptor set. Long-lived past any Configure.
+        Ref<DescriptorSetLayout> m_ShadowSetLayout;
         /// @brief Directional-shadow set-1 descriptor set (both lighting pipelines).
         ///
         /// Binding 0: shadow atlas (sampled image). Binding 1: immutable comparison sampler
-        /// (hardware SampleCmp). Binding 2: ShadowConstants dynamic uniform. Long-lived past any
-        /// Configure — the layout, comparison sampler, dummy atlas, and dummy ShadowConstants must
-        /// exist whenever the layout does. Bindings 0–1 are written once per Create/Resize/Configure;
-        /// binding 2 rings per frame-in-flight, region selected by the dynamic offset at bind.
-        Ref<DescriptorSetLayout> m_ShadowSetLayout;
+        /// (hardware SampleCmp). Bindings 2–3: the ShadowConstants and PunctualShadowBlock dynamic
+        /// uniforms, ringed per frame-in-flight and region-selected by the dynamic offset at bind.
+        /// Binding 4: punctual shadow atlas. Recreated by every Rebuild (CreateShadowSets) — a
+        /// rebuild can land while an in-flight command buffer still references the prior set, so
+        /// the set is replaced, never updated in place.
         Ref<DescriptorSet> m_ShadowSet;
         /// @brief Immutable hardware comparison sampler for SampleCmp.
         Ref<Sampler> m_ComparisonSampler;
 
+        /// @brief Layout of the debug shadow-atlas blit set. Long-lived past any Configure.
+        Ref<DescriptorSetLayout> m_ShadowBlitSetLayout;
         /// @brief Debug shadow-atlas blit's dedicated descriptor set.
         ///
         /// Set 1 of the shadow-blit pipeline: binding 0 the atlas, binding 1 an ordinary sampler
         /// (raw depth read, not SampleCmp). Separate layout/set so DebugView::Shadows visualizes
-        /// stored depth values.
-        Ref<DescriptorSetLayout> m_ShadowBlitSetLayout;
+        /// stored depth values. Recreated by every Rebuild alongside m_ShadowSet.
         Ref<DescriptorSet> m_ShadowBlitSet;
+        /// @brief Ordinary clamp sampler for the debug blit's raw depth reads.
+        Ref<Sampler> m_ShadowBlitSampler;
 
         /// @brief 1×1 D32 dummy atlas cleared to depth = 1 (full visibility).
         ///

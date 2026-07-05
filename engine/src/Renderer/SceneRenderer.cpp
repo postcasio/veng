@@ -2394,10 +2394,6 @@ namespace Veng::Renderer
                                     .Stages = ShaderStage::Fragment},
                                },
                        });
-        m_ShadowSet = DescriptorSet::Create(m_Context, {
-                                                           .Name = "SceneRenderer Shadow Set",
-                                                           .Layout = m_ShadowSetLayout,
-                                                       });
 
         // Debug shadow-blit set: atlas (binding 0) + ordinary sampler (binding 1) for raw depth.
         m_ShadowBlitSetLayout = DescriptorSetLayout::Create(
@@ -2415,13 +2411,8 @@ namespace Veng::Renderer
                                     .Stages = ShaderStage::Fragment},
                                },
                        });
-        m_ShadowBlitSet =
-            DescriptorSet::Create(m_Context, {
-                                                 .Name = "SceneRenderer Shadow Blit Set",
-                                                 .Layout = m_ShadowBlitSetLayout,
-                                             });
-        // Ordinary clamp sampler for raw-depth debug reads; the descriptor set retains it.
-        const Ref<Sampler> blitSampler =
+        // Ordinary clamp sampler for raw-depth debug reads; rewritten into each rebuilt blit set.
+        m_ShadowBlitSampler =
             Sampler::Create(m_Context, {
                                            .Name = "SceneRenderer Shadow Blit Sampler",
                                            .MagFilter = Filter::Nearest,
@@ -2432,7 +2423,6 @@ namespace Veng::Renderer
                                            .AddressModeW = AddressMode::ClampToEdge,
                                            .AnisotropyEnabled = false,
                                        });
-        m_ShadowBlitSet->Write(1, blitSampler);
 
         // 1×1 D32 dummy atlas cleared to depth = 1 (full visibility), bound when no
         // shadow pass is wired so the layout is always satisfied. Transitioned to
@@ -2493,8 +2483,6 @@ namespace Veng::Renderer
         std::memset(m_ShadowConstantsBuffer->GetMappedData(), 0,
                     static_cast<usize>(m_ShadowRingStride) * m_FramesInFlight);
 
-        m_ShadowSet->Write(2, m_ShadowConstantsBuffer, 0, sizeof(ShadowConstantsBlock));
-
         // PunctualShadowBlock ring: same alignment and frame*stride dynamic offset as
         // the ShadowConstants ring.
         const u64 punctualBlockSize = sizeof(PunctualShadowBlock);
@@ -2517,12 +2505,7 @@ namespace Veng::Renderer
         std::memset(m_PunctualShadowBuffer->GetMappedData(), 0,
                     static_cast<usize>(m_PunctualRingStride) * m_FramesInFlight);
 
-        m_ShadowSet->Write(3, m_PunctualShadowBuffer, 0, sizeof(PunctualShadowBlock));
-
-        CreatePunctualShadowAtlas(); // allocates, clears, and writes binding 4
-
-        WriteShadowAtlasBinding(
-            m_DummyShadowView); // Rebuild overwrites binding 0 when shadows are on
+        CreatePunctualShadowAtlas();
     }
 
     void SceneRenderer::CreatePunctualShadowAtlas()
@@ -2564,14 +2547,31 @@ namespace Veng::Renderer
                 graph.Compile()->Execute(cmd, {&binding, 1});
                 cmd.PrepareForAccess(m_PunctualShadowView, AccessKind::Sample);
             });
-
-        m_ShadowSet->Write(4, m_PunctualShadowView);
     }
 
-    void SceneRenderer::WriteShadowAtlasBinding(const Ref<ImageView>& atlasView)
+    void SceneRenderer::CreateShadowSets(const Ref<ImageView>& atlasView)
     {
+        // Fresh sets every rebuild: the prior sets may still be referenced by an
+        // in-flight command buffer, and the bindings carry no update-after-bind flags
+        // (set 1 stays out of Metal argument buffers for the comparison sampler), so
+        // they are never updated in place. The old sets retire through the per-frame
+        // bin once their last frame's fence signals.
+        m_ShadowSet = DescriptorSet::Create(m_Context, {
+                                                           .Name = "SceneRenderer Shadow Set",
+                                                           .Layout = m_ShadowSetLayout,
+                                                       });
         m_ShadowSet->Write(0, atlasView);
+        m_ShadowSet->Write(2, m_ShadowConstantsBuffer, 0, sizeof(ShadowConstantsBlock));
+        m_ShadowSet->Write(3, m_PunctualShadowBuffer, 0, sizeof(PunctualShadowBlock));
+        m_ShadowSet->Write(4, m_PunctualShadowView);
+
+        m_ShadowBlitSet =
+            DescriptorSet::Create(m_Context, {
+                                                 .Name = "SceneRenderer Shadow Blit Set",
+                                                 .Layout = m_ShadowBlitSetLayout,
+                                             });
         m_ShadowBlitSet->Write(0, atlasView);
+        m_ShadowBlitSet->Write(1, m_ShadowBlitSampler);
     }
 
     void SceneRenderer::CreateOutput()
@@ -3762,8 +3762,9 @@ namespace Veng::Renderer
             m_Passes.push_back(std::move(punctualPass));
         }
 
-        // Update binding 0 to the wired atlas, or the dummy when shadows are off.
-        WriteShadowAtlasBinding(shadowActive ? shadowAtlasView : m_DummyShadowView);
+        // Recreate the shadow sets against the wired atlas, or the dummy when shadows
+        // are off, before the passes below copy their Refs.
+        CreateShadowSets(shadowActive ? shadowAtlasView : m_DummyShadowView);
 
         // The GPU cull arm imports the indirect command buffer so the cull compute pass
         // (StorageBufferWrite) and the geometry pass (IndirectRead) share it through the
@@ -4054,7 +4055,8 @@ namespace Veng::Renderer
         }
 
         // Point binding 0 at the punctual atlas for the debug blit (overwrites the
-        // cascade/dummy atlas written above).
+        // cascade/dummy atlas written above — valid in place, the set is fresh this
+        // rebuild and not yet bound).
         if (debugPunctual)
         {
             m_ShadowBlitSet->Write(0, m_PunctualShadowView);
