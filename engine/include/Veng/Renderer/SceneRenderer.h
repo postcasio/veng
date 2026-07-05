@@ -948,10 +948,15 @@ namespace Veng::Renderer
         void DeclareAutoExposure(RenderGraph& graph);
         /// @brief Creates the auto-exposure metering pipeline, buffer, sampler, and descriptor set.
         ///
-        /// Called once at Create. The descriptor set's HDR binding is (re)written by
-        /// WriteAutoExposureHdrBinding whenever the HDR target is recreated.
+        /// Called once at Create. The descriptor set is rebuilt by WriteAutoExposureHdrBinding
+        /// whenever the HDR target is recreated.
         void CreateAutoExposure();
-        /// @brief Rewrites the metering set's HDR-source binding after the HDR target is recreated.
+        /// @brief Rebuilds the metering descriptor set against the live HDR target.
+        ///
+        /// Allocates a fresh set rather than rewriting the old one, which an in-flight frame's
+        /// command buffer may still reference (the bindings are not update-after-bind); the
+        /// replaced set retires through the deferred-destruction path. Called from
+        /// CreateAutoExposure and every Resize, ahead of the Rebuild that recaptures the set.
         void WriteAutoExposureHdrBinding();
         /// @brief Recreates the SSR scene-color intermediate, reflection mip chain, and min-Z pyramid.
         ///

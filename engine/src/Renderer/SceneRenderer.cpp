@@ -3368,20 +3368,25 @@ namespace Veng::Renderer
                                            .Module = meterCs.value().Get()->Module},
                        });
 
-        m_AutoExposureSet =
-            DescriptorSet::Create(m_Context, {
-                                                 .Name = "SceneRenderer AutoExposure Set",
-                                                 .Layout = m_AutoExposureSetLayout,
-                                             });
-        m_AutoExposureSet->Write(1, m_AutoExposureSampler);
-        m_AutoExposureSet->Write(2, m_AutoExposureBuffer);
         WriteAutoExposureHdrBinding();
     }
 
     void SceneRenderer::WriteAutoExposureHdrBinding()
     {
-        // The HDR target is recreated on every Resize; rebind the metering source to the live view.
+        // The HDR target is recreated on every Resize, but the live set may still be referenced
+        // by an in-flight frame's command buffer, and its bindings are not update-after-bind —
+        // so bind the new view into a fresh set rather than writing the old one in place. The
+        // replaced set retires through the deferred-destruction path (the compiled graph's pass
+        // capture keeps it alive through its last recorded use), and the Rebuild that follows a
+        // Resize recaptures this member.
+        m_AutoExposureSet =
+            DescriptorSet::Create(m_Context, {
+                                                 .Name = "SceneRenderer AutoExposure Set",
+                                                 .Layout = m_AutoExposureSetLayout,
+                                             });
         m_AutoExposureSet->Write(0, m_HdrView);
+        m_AutoExposureSet->Write(1, m_AutoExposureSampler);
+        m_AutoExposureSet->Write(2, m_AutoExposureBuffer);
     }
 
     uvec2 SceneRenderer::SsrRenderExtent() const
