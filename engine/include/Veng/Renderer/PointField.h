@@ -60,11 +60,12 @@ namespace Veng::Renderer
 
         /// @brief Maximum drawn screen-space footprint in pixels of an aggregate cell's splat.
         ///
-        /// A density cell's splat is drawn at the cell's projected edge length, clamped to
-        /// [MinPixels, this] (the splat's soft kernel extends past the footprint to overlap its
-        /// neighbors, carrying no extra net light); its brightness spreads the cell's summed
-        /// flux over the footprint area, so the splat delivers the same integrated light the
-        /// cell's resolved sprites would.
+        /// A density cell's splat footprint follows its occupancy — the points' projected
+        /// bounds for a sparse cell, the projected cell edge for a filled one — capped at this
+        /// (the splat's soft kernel extends past the footprint to overlap its neighbors,
+        /// carrying no extra net light); its brightness spreads the cell's summed flux over
+        /// the footprint area, so the splat delivers the same integrated light the cell's
+        /// resolved sprites would.
         f32 AggregateSplatPixels = 96.0f;
 
         /// @brief Overall brightness scale applied to the aggregate splat.
