@@ -222,8 +222,11 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                               .ColorRgba8 = PackRgba8(255, 240, 220, 255),
                               .Size = 0.5f});
         }
+        // The cell size hugs the cluster: an aggregate splat's kernel spans a full cell edge
+        // anchored at the cell's point centroid, so a loose cell would draw a frame-scale
+        // kernel whose core crosses the frame midline the halves assertions split on.
         return Renderer::PointField::Create(
-            Context, {.Name = "Cluster", .Points = points, .CellSize = 20.0f});
+            Context, {.Name = "Cluster", .Points = points, .CellSize = 4.0f});
     };
 
     const vec3 leftCenter(-6.0f, 0.0f, 0.0f);
