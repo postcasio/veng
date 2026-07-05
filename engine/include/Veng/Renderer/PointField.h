@@ -159,8 +159,7 @@ namespace Veng::Renderer
         {
             /// @brief World-space bounds of the cell's points.
             AABB Bounds;
-            /// @brief World-space centroid of the cell's points; the aggregate splat derives its
-            ///        grid-cell center from it (any interior point recovers the cell coordinate).
+            /// @brief World-space centroid of the cell's points (the aggregate splat's anchor).
             vec3 Centroid;
             /// @brief Sum of the cell's point fluxes (linear RGB color * Size^2), the splat's light source.
             ///

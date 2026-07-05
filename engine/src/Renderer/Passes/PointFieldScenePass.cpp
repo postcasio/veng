@@ -56,7 +56,7 @@ namespace Veng::Renderer
         // flux-normalized per-pixel color (the summed flux spread over the splat's pixel area).
         struct GpuAggregateSplat
         {
-            vec4 CenterSize; // xyz world grid-cell center, w quad size in pixels (kernel support)
+            vec4 CenterSize; // xyz world point centroid, w quad size in pixels (kernel support)
             vec4 Color;      // flux-normalized per-pixel color (rgb), HDR; a unused
         };
 
@@ -321,23 +321,24 @@ namespace Veng::Renderer
 
                             if (aggregate && splats.size() < MaxAggregateSplats)
                             {
-                                // The splat sits on the cull lattice: centered on the cell's grid
-                                // center and sized from the projected cell edge — not the points'
-                                // bounds, whose underfill would shrink the kernel below the cell
-                                // spacing and break the partition-of-unity sum. The color spreads
+                                // The splat anchors at the cell's point centroid and sizes its
+                                // kernel from the projected cell edge — not the points' bounds,
+                                // whose underfill would shrink the kernel below the cell spacing
+                                // and leave seams. In a dense run the centroid converges on the
+                                // cell center, so neighboring kernels sum near-flat (the kernel's
+                                // partition-of-unity property); in a sparse cell the centroid is
+                                // the stars themselves, so an isolated star draws where it is
+                                // rather than snapped onto the cull lattice. The color spreads
                                 // the cell's summed flux over the projected cell area (times the
                                 // shared sprite-kernel flux fraction), so the splat delivers the
                                 // same integrated light as the cell's resolved sprites.
-                                const f32 cellSize = field->GetCellSize();
-                                const vec3 center =
-                                    (glm::floor(cell.Centroid / cellSize) + 0.5f) * cellSize;
-                                const vec4 clipCenter = viewProj * vec4(center, 1.0f);
+                                const vec4 clipCenter = viewProj * vec4(cell.Centroid, 1.0f);
                                 if (clipCenter.w <= 0.0f)
                                 {
                                     continue;
                                 }
                                 const f32 pixelsPerWorld = projScale / clipCenter.w;
-                                const f32 cellPixels = cellSize * pixelsPerWorld;
+                                const f32 cellPixels = field->GetCellSize() * pixelsPerWorld;
                                 // The clamp keeps a subpixel cell drawable and bounds a large near
                                 // cell's overdraw; normalizing by the larger of the two spreads or
                                 // preserves surface brightness across the clamp, never
@@ -362,7 +363,8 @@ namespace Veng::Renderer
                                 // normalization and the intensity ceiling.
                                 color *= lod.Opacity;
                                 splats.push_back(GpuAggregateSplat{
-                                    .CenterSize = vec4(center, drawnPixels * SplatSupportCells),
+                                    .CenterSize =
+                                        vec4(cell.Centroid, drawnPixels * SplatSupportCells),
                                     .Color = vec4(color, 0.0f),
                                 });
                             }

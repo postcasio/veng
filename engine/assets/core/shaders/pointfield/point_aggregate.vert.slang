@@ -1,15 +1,16 @@
 // Point-field aggregate-splat vertex stage. Expands each per-cell density record (a
 // GpuAggregateSplat in the per-frame SSBO at set 1 binding 0) into a screen-space quad centered
-// on the cell's projected grid center, sized in pixels (converted to clip via the pushed viewport
-// extent), so a dense/distant cell reads as one smooth additive glow rather than resolved points.
+// on the cell's projected point centroid, sized in pixels (converted to clip via the pushed
+// viewport extent), so a dense/distant cell reads as one smooth additive glow rather than
+// resolved points.
 #include "../view_constants.slang"
 
-// One aggregate splat record: world grid-cell center + quad size in pixels (the fragment
+// One aggregate splat record: world point centroid + quad size in pixels (the fragment
 // kernel's whole three-cell support), then the cell's flux-normalized per-pixel color (the CPU
 // spreads the cell's summed flux over its projected cell area).
 struct GpuAggregateSplat
 {
-    float4 CenterSize; // xyz world grid-cell center, w quad size in pixels
+    float4 CenterSize; // xyz world point centroid, w quad size in pixels
     float4 Color;      // flux-normalized per-pixel color (rgb), HDR
 };
 
