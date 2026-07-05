@@ -56,18 +56,24 @@ namespace Veng::Renderer
         // flux-normalized per-pixel color (the summed flux spread over the splat's pixel area).
         struct GpuAggregateSplat
         {
-            vec4 CenterSize; // xyz world centroid, w splat size in pixels
+            vec4 CenterSize; // xyz world grid-cell center, w quad size in pixels (kernel support)
             vec4 Color;      // flux-normalized per-pixel color (rgb), HDR; a unused
         };
 
         // An occluded point fades to this fraction rather than vanishing (matches the sprite frag).
         constexpr f32 OccludedFade = 0.35f;
 
-        // Aggregate splats draw this much larger than the cell's projected footprint. The radial
-        // kernel falls to zero at the quad edge, so a kernel that only just covers its cell leaves
-        // dark seams along the cull grid's planes; overlapping neighbors sum to smooth coverage.
-        // Flux is normalized over the inflated size, so the overlap adds no net light.
-        constexpr f32 SplatOverlap = 2.5f;
+        // The aggregate kernel is a separable quadratic B-spline whose support spans this many
+        // cull-cell widths. Its integer-offset translates sum to one everywhere (a partition of
+        // unity), so the splats of a uniformly dense run of cells sum to a flat field with no
+        // imprint of the cull grid — no seams or blobs pulsing at the cell frequency.
+        constexpr f32 SplatSupportCells = 3.0f;
+
+        // The sprite kernel's integrated flux as a fraction of its quad area (the (1-r)^2 radial
+        // falloff in point_sprite.frag integrates to pi/24 of the quad). The aggregate normalizes
+        // its per-pixel color by the same factor so a cell delivers identical integrated light on
+        // either LOD path and the sprite<->aggregate transition holds brightness.
+        constexpr f32 SpriteKernelFlux = 0.1309f;
 
         AssetHandle<Veng::Shader> LoadShader(AssetManager& assets, AssetId id, const char* what)
         {
@@ -77,21 +83,11 @@ namespace Veng::Renderer
             return *shader;
         }
 
-        // A cell's projected screen measurements: the point density driving the LOD switch and the
-        // footprint the aggregate splat is sized from.
-        struct CellFootprint
-        {
-            // Visible points divided by the projected screen area in pixels (INFINITY for a
-            // degenerate zero-area footprint so a cell collapsed to a point always aggregates).
-            f32 Density = 0.0f;
-            // Largest projected screen dimension in pixels (the aggregate splat's raw size).
-            f32 Pixels = 0.0f;
-        };
-
-        // Projects the cell's world AABB corners to clip and measures the bounding rect. A corner
-        // behind the eye reports zero density (keep resolving — the footprint is unbounded).
-        CellFootprint MeasureCellFootprint(const PointField::Cell& cell, const mat4& viewProj,
-                                           const uvec2 extent)
+        // Projects the cell's world AABB corners to clip and measures the on-screen point density
+        // (visible points per pixel of the projected bounding rect) driving the LOD switch. A
+        // corner behind the eye reports zero density (keep resolving — the footprint is unbounded).
+        f32 MeasureCellDensity(const PointField::Cell& cell, const mat4& viewProj,
+                               const uvec2 extent)
         {
             const std::array<vec3, 8> corners = cell.Bounds.Corners();
             vec2 minScreen(std::numeric_limits<f32>::infinity());
@@ -101,7 +97,7 @@ namespace Veng::Renderer
                 const vec4 clip = viewProj * vec4(corner, 1.0f);
                 if (clip.w <= 0.0f)
                 {
-                    return CellFootprint{};
+                    return 0.0f;
                 }
                 const vec2 ndc = vec2(clip) / clip.w;
                 const vec2 screen = (ndc * 0.5f + 0.5f) * vec2(extent);
@@ -110,10 +106,7 @@ namespace Veng::Renderer
             }
             const vec2 size = maxScreen - minScreen;
             const f32 area = std::max(size.x, 1.0f) * std::max(size.y, 1.0f);
-            return CellFootprint{
-                .Density = static_cast<f32>(cell.PointCount) / area,
-                .Pixels = std::max(size.x, size.y),
-            };
+            return static_cast<f32>(cell.PointCount) / area;
         }
     }
 
@@ -314,14 +307,13 @@ namespace Veng::Renderer
                             {
                                 continue;
                             }
-                            const CellFootprint footprint =
-                                MeasureCellFootprint(cell, viewProj, renderExtent);
+                            const f32 density = MeasureCellDensity(cell, viewProj, renderExtent);
                             bool aggregate = state.Aggregating[c];
-                            if (footprint.Density >= highGate)
+                            if (density >= highGate)
                             {
                                 aggregate = true;
                             }
-                            else if (footprint.Density < lowGate)
+                            else if (density < lowGate)
                             {
                                 aggregate = false;
                             }
@@ -329,25 +321,32 @@ namespace Veng::Renderer
 
                             if (aggregate && splats.size() < MaxAggregateSplats)
                             {
-                                // The splat covers the cell's projected footprint (clamped) and
-                                // spreads the cell's summed flux over that pixel area, so it
-                                // delivers the same integrated light as the resolved sprites:
-                                // flux in pixels² is SummedFlux * (projScale/w)². When the clamp
-                                // shrinks an oversized footprint the color still normalizes by
-                                // the true footprint area — preserving surface brightness and
-                                // spilling the excess, never concentrating a large near cell's
-                                // whole flux into a small bright quad.
-                                const vec4 clipCentroid = viewProj * vec4(cell.Centroid, 1.0f);
-                                if (clipCentroid.w <= 0.0f)
+                                // The splat sits on the cull lattice: centered on the cell's grid
+                                // center and sized from the projected cell edge — not the points'
+                                // bounds, whose underfill would shrink the kernel below the cell
+                                // spacing and break the partition-of-unity sum. The color spreads
+                                // the cell's summed flux over the projected cell area (times the
+                                // shared sprite-kernel flux fraction), so the splat delivers the
+                                // same integrated light as the cell's resolved sprites.
+                                const f32 cellSize = field->GetCellSize();
+                                const vec3 center =
+                                    (glm::floor(cell.Centroid / cellSize) + 0.5f) * cellSize;
+                                const vec4 clipCenter = viewProj * vec4(center, 1.0f);
+                                if (clipCenter.w <= 0.0f)
                                 {
                                     continue;
                                 }
-                                const f32 inflated = footprint.Pixels * SplatOverlap;
-                                const f32 splatPixels =
-                                    std::clamp(inflated, lod.MinPixels, lod.AggregateSplatPixels);
-                                const f32 normalizePixels = std::max(splatPixels, inflated);
-                                const f32 pixelsPerWorld = projScale / clipCentroid.w;
-                                const f32 normalize = (pixelsPerWorld * pixelsPerWorld) /
+                                const f32 pixelsPerWorld = projScale / clipCenter.w;
+                                const f32 cellPixels = cellSize * pixelsPerWorld;
+                                // The clamp keeps a subpixel cell drawable and bounds a large near
+                                // cell's overdraw; normalizing by the larger of the two spreads or
+                                // preserves surface brightness across the clamp, never
+                                // concentrating the cell's whole flux into a small bright quad.
+                                const f32 drawnPixels =
+                                    std::clamp(cellPixels, lod.MinPixels, lod.AggregateSplatPixels);
+                                const f32 normalizePixels = std::max(drawnPixels, cellPixels);
+                                const f32 normalize = SpriteKernelFlux *
+                                                      (pixelsPerWorld * pixelsPerWorld) /
                                                       (normalizePixels * normalizePixels);
                                 vec3 color = cell.SummedFlux * lod.AggregateIntensity * normalize;
                                 // MaxIntensity bounds the splat's peak brightness exactly as it
@@ -363,7 +362,7 @@ namespace Veng::Renderer
                                 // normalization and the intensity ceiling.
                                 color *= lod.Opacity;
                                 splats.push_back(GpuAggregateSplat{
-                                    .CenterSize = vec4(cell.Centroid, splatPixels),
+                                    .CenterSize = vec4(center, drawnPixels * SplatSupportCells),
                                     .Color = vec4(color, 0.0f),
                                 });
                             }

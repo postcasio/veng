@@ -58,11 +58,13 @@ namespace Veng::Renderer
         /// per-cell sprite<->aggregate transition so it does not pop on a slow zoom.
         f32 Hysteresis = 0.2f;
 
-        /// @brief Maximum screen-space size in pixels of an aggregate cell's splat.
+        /// @brief Maximum drawn screen-space footprint in pixels of an aggregate cell's splat.
         ///
-        /// A density cell's splat covers the cell's projected screen footprint, clamped to
-        /// [MinPixels, this]; its brightness spreads the cell's summed flux over that area, so
-        /// the splat delivers the same integrated light the cell's resolved sprites would.
+        /// A density cell's splat is drawn at the cell's projected edge length, clamped to
+        /// [MinPixels, this] (the splat's soft kernel extends past the footprint to overlap its
+        /// neighbors, carrying no extra net light); its brightness spreads the cell's summed
+        /// flux over the footprint area, so the splat delivers the same integrated light the
+        /// cell's resolved sprites would.
         f32 AggregateSplatPixels = 96.0f;
 
         /// @brief Overall brightness scale applied to the aggregate splat.
@@ -157,7 +159,8 @@ namespace Veng::Renderer
         {
             /// @brief World-space bounds of the cell's points.
             AABB Bounds;
-            /// @brief World-space centroid of the cell's points (the aggregate splat's center).
+            /// @brief World-space centroid of the cell's points; the aggregate splat derives its
+            ///        grid-cell center from it (any interior point recovers the cell coordinate).
             vec3 Centroid;
             /// @brief Sum of the cell's point fluxes (linear RGB color * Size^2), the splat's light source.
             ///
