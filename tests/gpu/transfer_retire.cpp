@@ -113,3 +113,60 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "AddFrameTransferWait folds into a hea
 
     Context.WaitIdle();
 }
+
+namespace
+{
+    // Total buffer handles across every per-slot retire bin (the pending bin excluded).
+    usize BinnedBufferCount(const Context::Native& native)
+    {
+        usize count = 0;
+        for (const auto& bin : native.RetireBins)
+        {
+            count += bin.Buffers.size();
+        }
+        return count;
+    }
+}
+
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "a buffer dropped between frames is protected by the next frame, not the acquire drain")
+{
+    // The bug this guards: the standard frame loop drops resources before BeginFrame (a
+    // per-frame update phase precedes it), when CurrentFrameInFlight already names the slot
+    // AcquireNextFrame is about to wait-and-drain. Binning such a drop directly into that slot
+    // lets the drain destroy it — even though it was last referenced by the previously submitted
+    // frame's command buffer, guarded by a strictly later fence. The buffer must instead survive
+    // until the frame about to record has itself completed.
+    const Context::Native& native = Context.GetNative();
+
+    // A frame the buffer is conceptually used by: record and submit it, then advance past it.
+    Context.BeginFrame();
+    Context.EndFrame();
+
+    // Between EndFrame and the next BeginFrame — exactly where the frame loop's update phase
+    // drops resources. FrameRecording is false here.
+    CHECK_FALSE(native.FrameRecording);
+    auto buffer = MakeScratch(Context);
+    buffer.reset();
+
+    // The drop must NOT land in the slot AcquireNextFrame will drain next; it parks pending.
+    CHECK(BinnedBufferCount(native) == 0);
+    CHECK(native.PendingRetire.Buffers.size() == 1);
+
+    // The next BeginFrame drains the acquired slot, then folds the pending drop into that slot's
+    // bin — so the buffer is now guarded by this recording frame's fence and survived the drain.
+    Context.BeginFrame();
+    CHECK(native.PendingRetire.Buffers.empty());
+    CHECK(BinnedBufferCount(native) == 1);
+    Context.EndFrame();
+
+    // Cycle every slot back around: the guarding fence signals and the drain reclaims the buffer.
+    for (u32 i = 0; i <= Context.GetMaxFramesInFlight(); ++i)
+    {
+        Context.BeginFrame();
+        Context.EndFrame();
+    }
+    Context.WaitIdle();
+    CHECK(BinnedBufferCount(native) == 0);
+}

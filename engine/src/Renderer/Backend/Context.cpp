@@ -682,6 +682,10 @@ namespace Veng::Renderer
     {
         auto& frame = AcquireNextFrame();
 
+        // AcquireNextFrame drained this slot's bin; fold in any handles retired since the last
+        // EndFrame so they are protected by this frame's fence rather than the one just waited.
+        m_Native->AdoptPendingRetires();
+
         // Headless has no swapchain image to acquire.
         if (!IsHeadless())
         {
@@ -825,6 +829,11 @@ namespace Veng::Renderer
         SubmitFrame(frame);
 
         PresentFrame();
+
+        // The frame's command buffer is submitted and the slot has advanced. Retires from here
+        // until the next BeginFrame park in PendingRetire, since CurrentFrameInFlight now names
+        // the slot AcquireNextFrame will drain.
+        m_Native->FrameRecording = false;
     }
 
     u32 Context::GetMaxFramesInFlight() const
@@ -1196,6 +1205,16 @@ namespace Veng::Renderer
     {
         VE_ASSERT(!Disposed,
                   "Context::Retire after teardown — a resource outlived the rendering context");
+
+        // Between EndFrame and the next BeginFrame's drain, CurrentFrameInFlight already names
+        // the slot about to be waited-and-drained, but the retired handle was last used by the
+        // previous frame's submitted command buffer (a later fence). Binning it directly would
+        // let that drain destroy it in-use, so park it in PendingRetire until BeginFrame folds
+        // it into the acquired slot's bin.
+        if (!FrameRecording)
+        {
+            return PendingRetire;
+        }
         return RetireBins[CurrentFrameInFlight];
     }
 
@@ -1324,6 +1343,28 @@ namespace Veng::Renderer
         {
             DrainRetireBin(bin);
         }
+        DrainRetireBin(PendingRetire);
+    }
+
+    void Context::Native::AdoptPendingRetires()
+    {
+        const std::scoped_lock lock(RetireMutex);
+        RetireBin& bin = RetireBins[CurrentFrameInFlight];
+        const auto move = [](auto& dst, auto& src)
+        {
+            dst.insert(dst.end(), std::make_move_iterator(src.begin()),
+                       std::make_move_iterator(src.end()));
+            src.clear();
+        };
+        move(bin.Buffers, PendingRetire.Buffers);
+        move(bin.Images, PendingRetire.Images);
+        move(bin.ImageViews, PendingRetire.ImageViews);
+        move(bin.Samplers, PendingRetire.Samplers);
+        move(bin.ShaderModules, PendingRetire.ShaderModules);
+        move(bin.Pipelines, PendingRetire.Pipelines);
+        move(bin.PipelineLayouts, PendingRetire.PipelineLayouts);
+        move(bin.DescriptorSets, PendingRetire.DescriptorSets);
+        FrameRecording = true;
     }
 
     void Context::AddFrameTransferWait(const TimelineSemaphore& timeline, const u64 value)

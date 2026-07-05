@@ -192,8 +192,14 @@ namespace Veng::Renderer
         ///
         /// A handle retired while frame i is recording goes into bin i and is protected
         /// by frame i's fence, destroyed when AcquireNextFrame next waits that fence.
-        /// Retirements outside a frame (init, post-WaitIdle) are caught by the shutdown
-        /// drain-all in DisposeResources/Dispose.
+        /// A handle retired outside a recording frame — between EndFrame and the next
+        /// BeginFrame, where CurrentFrameInFlight already names the slot AcquireNextFrame is
+        /// about to wait-and-drain — instead accumulates in PendingRetire, which the next
+        /// BeginFrame folds into the acquired slot's bin after the drain. Such a handle was
+        /// last referenced by the previously submitted frame's command buffer, so binning it
+        /// against the frame about to record (a strictly later fence) is what keeps it alive
+        /// long enough. Retirements outside any frame loop (init, post-WaitIdle) are caught by
+        /// the shutdown drain-all in DisposeResources/Dispose.
         struct RetireBin
         {
             vector<std::pair<vk::Buffer, VmaAllocation>> Buffers;
@@ -208,11 +214,20 @@ namespace Veng::Renderer
         };
 
         vector<RetireBin> RetireBins;
+        /// @brief Handles retired while no frame is recording; folded into the acquired slot's
+        /// bin by the next BeginFrame so they outlive the last submitted frame's command buffer.
+        RetireBin PendingRetire;
+        /// @brief True between BeginFrame and EndFrame, so Retire targets the recording slot's
+        /// bin; false otherwise, so Retire targets PendingRetire.
+        bool FrameRecording = false;
         bool Disposed = false;
 
         RetireBin& CurrentRetireBin();
         void DrainRetireBin(RetireBin& bin);
         void DrainAllRetireBins();
+        /// @brief Moves PendingRetire's handles into the acquired slot's bin (called by BeginFrame
+        /// after the drain), and marks the frame as recording so subsequent retires bin directly.
+        void AdoptPendingRetires();
 
         /// @brief Defers destruction of a handle into the current frame's retire bin.
         ///
