@@ -77,16 +77,20 @@ namespace Veng::Renderer
 
         // The point count at which a cell counts as space-filling for splat sizing. The kernel
         // footprint blends from the points' projected bounds (an isolated point stays a sharp
-        // dot at its own position) up to the full cell edge as occupancy approaches this, where
-        // the wide kernels are what makes neighboring cells sum flat.
-        constexpr f32 SplatFillCount = 8.0f;
+        // dot at its own position) up to the full cell edge as occupancy approaches this. The
+        // wide flat-summing kernel is only correct where a cell's centroid has converged on its
+        // cell center (the centroid of N uniform points scatters ~cellSize/sqrt(12N), so a
+        // low-count cell's tight splat sits at a well-jittered position and cannot read as a
+        // lattice row) — so the crossover sits high, keeping the grain of few-star cells and
+        // reserving the wide kernels for genuinely crowded cells.
+        constexpr f32 SplatFillCount = 32.0f;
 
         // The sparse end of the footprint blend draws at this fraction of the points' projected
         // bounds. The B-spline kernel's half-peak core spans roughly its whole footprint — half
         // again wider and flatter than the resolved sprite's falloff — so an unscaled sparse
         // splat reads as haze; drawing it tighter than the bounds restores a compact, bright
         // core over the few stars it stands in for.
-        constexpr f32 SplatSparseScale = 0.6f;
+        constexpr f32 SplatSparseScale = 0.45f;
 
         AssetHandle<Veng::Shader> LoadShader(AssetManager& assets, AssetId id, const char* what)
         {
