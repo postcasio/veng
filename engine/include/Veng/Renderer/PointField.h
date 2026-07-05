@@ -42,6 +42,37 @@ namespace Veng::Renderer
     /// cell's summed flux over its projected footprint.
     struct PointFieldLod
     {
+        /// @brief How an aggregated cell's density splat is sized and normalized across the cull cell.
+        ///
+        /// Selects the photometric model the aggregate LOD draws with, trading sharp isolated cores
+        /// against a seamless extended field. It changes only the aggregate path; the resolved
+        /// sprite path is identical for both styles.
+        enum class AggregateStyle : u8
+        {
+            /// @brief A collapsing point cloud: occupancy-adaptive splats, distance-dimmed.
+            ///
+            /// A cell's splat footprint follows its occupancy — the points' projected bounds for a
+            /// sparse cell (an isolated point stays a sharp dot at its own position), the projected
+            /// cell edge for a filled one — and its flux is conserved across the size clamp, so a
+            /// receding cell dims with the square of distance like the real emitters it stands in
+            /// for. The default; suits a field of resolvable points collapsing with distance.
+            Cloud,
+
+            /// @brief A seamless extended field: lattice-tiling splats, surface-brightness-preserving.
+            ///
+            /// A cell's splat widens to the full cell as its centroid centers within its grid cell
+            /// (so a dense run's splats tile to a partition of unity with no cull-grid imprint) and
+            /// tightens to the points' own bounds as the centroid drifts off-center (a sparse
+            /// cluster off the lattice). Its per-pixel color is normalized by that footprint rather
+            /// than a pixel floor, holding the field's surface brightness constant as the camera
+            /// recedes — an extended source does not dim per pixel with distance, so a receding cell
+            /// shrinks and tiles rather than fading out. Suits a smooth unresolved backdrop glow.
+            Continuous,
+        };
+
+        /// @brief The aggregate splat's photometric style (see AggregateStyle).
+        AggregateStyle Style = AggregateStyle::Cloud;
+
         /// @brief Points-per-pixel above which a cell draws as the aggregate density splat.
         ///
         /// A cell whose visible points, divided by its projected screen footprint in pixels,

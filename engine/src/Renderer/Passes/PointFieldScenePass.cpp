@@ -369,20 +369,49 @@ namespace Veng::Renderer
                                     continue;
                                 }
                                 const f32 pixelsPerWorld = projScale / clipCenter.w;
-                                const f32 cellPixels = field->GetCellSize() * pixelsPerWorld;
-                                const f32 fill = std::min(
-                                    static_cast<f32>(cell.PointCount) / SplatFillCount, 1.0f);
-                                const f32 kernelPixels =
-                                    glm::mix(footprint.Pixels * SplatSparseScale, cellPixels, fill);
+                                const f32 cellSize = field->GetCellSize();
+                                const f32 cellPixels = cellSize * pixelsPerWorld;
+                                const bool continuous =
+                                    lod.Style == PointFieldLod::AggregateStyle::Continuous;
+
+                                // The kernel footprint. Cloud sizes it from occupancy (a sparse
+                                // cell tightens to its points' bounds, a filled cell grows to the
+                                // cell edge). Continuous sizes it from the centroid's centering
+                                // within its grid cell — reconstructed from the centroid at the
+                                // bucketer's world-origin-0 alignment — so a centered (on-lattice)
+                                // centroid draws the full cell width its neighbors sum flat against,
+                                // and an off-center (sparse) one tightens to its points' bounds.
+                                f32 kernelPixels = 0.0f;
+                                if (continuous)
+                                {
+                                    const vec3 gridCenter =
+                                        (glm::floor(cell.Centroid / cellSize) + 0.5f) * cellSize;
+                                    const vec3 offset = glm::abs(cell.Centroid - gridCenter);
+                                    const f32 maxOffset = std::max({offset.x, offset.y, offset.z});
+                                    const f32 centered =
+                                        1.0f - std::clamp(2.0f * maxOffset / cellSize, 0.0f, 1.0f);
+                                    kernelPixels = glm::mix(footprint.Pixels, cellPixels, centered);
+                                }
+                                else
+                                {
+                                    const f32 fill = std::min(
+                                        static_cast<f32>(cell.PointCount) / SplatFillCount, 1.0f);
+                                    kernelPixels = glm::mix(footprint.Pixels * SplatSparseScale,
+                                                            cellPixels, fill);
+                                }
                                 // The clamp keeps a subpixel kernel drawable (the floor puts the
-                                // whole quad at MinPixels) and bounds a large near cell's
-                                // overdraw; normalizing by the larger of the two spreads or
-                                // preserves surface brightness across the clamp, never
-                                // concentrating the cell's whole flux into a small bright quad.
+                                // whole quad at MinPixels) and bounds a large near cell's overdraw.
                                 const f32 drawnPixels =
                                     std::clamp(kernelPixels, lod.MinPixels / SplatSupportCells,
                                                lod.AggregateSplatPixels);
-                                const f32 normalizePixels = std::max(drawnPixels, kernelPixels);
+                                // Cloud normalizes by the larger of drawn/kernel — flux-conserving
+                                // across the clamp, so a receding cell dims like a real emitter.
+                                // Continuous normalizes by the kernel footprint itself (never the
+                                // pixel floor), holding surface brightness constant as the camera
+                                // recedes so an extended field shrinks and tiles rather than fading.
+                                const f32 normalizePixels =
+                                    continuous ? std::max(kernelPixels, 1e-3f)
+                                               : std::max(drawnPixels, kernelPixels);
                                 const f32 normalize = SpriteKernelFlux *
                                                       (pixelsPerWorld * pixelsPerWorld) /
                                                       (normalizePixels * normalizePixels);
