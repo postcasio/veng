@@ -390,6 +390,19 @@ namespace Veng
         return m_Extent;
     }
 
+    vec2 Window::GetContentScale() const
+    {
+        int windowWidth = 0;
+        int windowHeight = 0;
+        glfwGetWindowSize(m_Handle, &windowWidth, &windowHeight);
+        if (windowWidth == 0 || windowHeight == 0)
+        {
+            return {1.0f, 1.0f};
+        }
+        return {static_cast<f32>(m_Extent.x) / static_cast<f32>(windowWidth),
+                static_cast<f32>(m_Extent.y) / static_cast<f32>(windowHeight)};
+    }
+
     u32 Window::GetWidth() const
     {
         return m_Extent.x;

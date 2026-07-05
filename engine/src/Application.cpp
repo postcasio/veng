@@ -285,7 +285,13 @@ namespace Veng
                 }
             });
 
-        const vec2 pointer = m_Input->GetMousePosition();
+        // GLFW reports the cursor in window coordinates (logical points), but the viewport
+        // regions hit-tested here live in framebuffer pixels (the swapchain extent), so on a
+        // HiDPI display the two differ by the window's content scale. Convert before routing so
+        // the pointer lands in the right region and its region-local position matches the window
+        // point a picking ray (Viewport::ScreenToWorldRay) later unprojects.
+        const vec2 scale = m_Window ? m_Window->GetContentScale() : vec2{1.0f, 1.0f};
+        const vec2 pointer = m_Input->GetMousePosition() * scale;
         return m_InputRouter->ResolvePointer(ivec2(pointer), m_InputRouter->IsGameplayFocused(),
                                              keyboardSeat);
     }

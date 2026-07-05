@@ -144,6 +144,15 @@ namespace Veng
         /// @brief Returns the current window extent in pixels.
         [[nodiscard]] uvec2 GetExtent() const;
 
+        /// @brief Returns the framebuffer-pixels-per-window-coordinate scale as (x, y).
+        ///
+        /// GLFW reports the cursor position and window size in window coordinates (logical
+        /// points), while the framebuffer extent (GetExtent) is in pixels; on a HiDPI display
+        /// the two differ by this ratio. Multiplying a window-coordinate point by this scale
+        /// converts it into framebuffer pixels — the space the swapchain and viewport regions
+        /// live in. It is (1, 1) on a 1:1 display and degenerate window sizes.
+        [[nodiscard]] vec2 GetContentScale() const;
+
         /// @brief Returns the current window width in pixels.
         [[nodiscard]] u32 GetWidth() const;
 
