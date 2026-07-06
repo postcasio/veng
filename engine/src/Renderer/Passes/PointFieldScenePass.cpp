@@ -326,6 +326,13 @@ namespace Veng::Renderer
                         state.Seen = true;
 
                         const PointFieldLod& lod = field->GetLod();
+                        // A fully faded field contributes nothing (Opacity multiplies every sprite
+                        // and splat), so skip its whole walk and draw — a consumer fading a layer
+                        // out pays nothing for keeping it resident.
+                        if (lod.Opacity <= 0.0f)
+                        {
+                            continue;
+                        }
 
                         // Re-point this frame's sprite set at the resident buffer only when it
                         // changed (a rebuilt field), never per frame for a static field. Only the
