@@ -317,6 +317,16 @@
       "source": "shaders/pointfield/point_aggregate.frag.shader.json"
     },
     {
+      "id": "0xF617689FC99BB623",
+      "type": "Shader",
+      "source": "shaders/pointfield/point_sprite_expand.comp.shader.json"
+    },
+    {
+      "id": "0x58A90BD4C0DE0376",
+      "type": "Shader",
+      "source": "shaders/pointfield/point_sprite_direct.vert.shader.json"
+    },
+    {
       "id": "0x68AD195790159A7E",
       "type": "Shader",
       "source": "shaders/emissive.vert.shader.json"

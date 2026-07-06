@@ -27,6 +27,24 @@ namespace Veng::Renderer
         f32 Size;
     };
 
+    /// @brief Which submission path drew a field's resolved sprites this Execute.
+    ///
+    /// A field's sprite path is selected per field, automatically: the compute expansion pipeline
+    /// when the device supports it and the field's record ring is sized to its point count, else
+    /// the direct per-run vertex-stage path (the fallback for a device without the required
+    /// features, the A/B verification reference, and the first frame after a field rebuild). The
+    /// point-field analogue of GetActiveCullMode()'s honest reporting: the pass reports the path
+    /// that actually drew, not the one requested.
+    enum class SpriteDrawSource : u8
+    {
+        /// @brief No resolved sprites drawn this Execute (every field aggregated or was empty).
+        None,
+        /// @brief The direct per-run path: the sprite vertex stage runs the per-point math per corner.
+        Direct,
+        /// @brief The compute expansion path: per-point work runs once, compacted, drawn indirect.
+        Compute,
+    };
+
     /// @brief Per-frame point-field draw statistics, aggregated across every field the last Execute.
     ///
     /// Refreshed by the point-field pass on every Execute and zeroed on a frame that draws no field,
@@ -48,10 +66,24 @@ namespace Veng::Renderer
         /// Zero when the field's threshold pins every cell to one path (a fixed-outcome fast
         /// path skips the density measure); otherwise the in-frustum cell count.
         u32 CellsMeasured = 0;
-        /// @brief Sprite draw calls issued (one per contiguous run of resolved cells).
+        /// @brief Sprite draw calls issued (one per contiguous run of resolved cells, or one indirect
+        ///        draw per field on the compute path).
         u32 ResolvedDraws = 0;
         /// @brief Points submitted through the sprite path (summed over the resolved cells).
+        ///
+        /// The pre-compaction point total: the count the direct path draws and the compute path's
+        /// dispatch covers. CompactedPoints is how many of these the compute pass dropped.
         u64 SpritePoints = 0;
+        /// @brief Points the compute expansion pass compacted out (behind-eye, sub-epsilon, offscreen).
+        ///
+        /// Zero on the direct path (it draws every submitted point). On the compute path this is
+        /// SpritePoints minus the survivors the indirect draw expanded — the zero-contribution
+        /// points that never cost a vertex invocation or a fragment. Read back one frame late (the
+        /// GPU writes the survivor count; the CPU reads the prior frame's), so it lags a view change
+        /// by a frame, exactly like GetLastGpuSurvivorCount.
+        u64 CompactedPoints = 0;
+        /// @brief Which path drew this Execute's resolved sprites (compute, direct, or none).
+        SpriteDrawSource DrawSource = SpriteDrawSource::None;
         /// @brief Aggregate splat records drawn (one per aggregated cell).
         u32 Splats = 0;
     };

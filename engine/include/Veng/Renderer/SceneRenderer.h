@@ -736,6 +736,15 @@ namespace Veng::Renderer
         /// @return The last Execute's point-field draw statistics.
         [[nodiscard]] PointFieldStats GetPointFieldStats() const;
 
+        /// @brief Forces the point-field pass onto the direct sprite path (A/B verification hook).
+        ///
+        /// Bypasses the per-point compute expansion so both paths can be captured and compared; a
+        /// no-op when no point-field pass is active or on a device without the compute path. The
+        /// compute and direct paths draw a surviving point bit-comparably (modulo record f16
+        /// quantization), so this is the reference the automatic selection is checked against.
+        /// @param force True to draw every field direct; false to restore automatic selection.
+        void SetPointFieldForceDirect(bool force);
+
         /// @brief Returns the topology/sizing settings in effect, as of the last Create/Configure.
         ///
         /// The requested settings (shadow resolutions clamped to the device caps at apply time);
@@ -1982,6 +1991,9 @@ namespace Veng::Renderer
         /// the fields' lifetimes, so a dropped field is simply absent next Execute (no teardown
         /// ordering). Empty when no component carries a live field.
         vector<const PointField*> m_PointFields;
+
+        /// @brief Persisted point-field force-direct hook, reapplied when the pass is rebuilt.
+        bool m_PointFieldForceDirect = false;
 
         /// @brief Whether the current pass set carries the point-field pass; gates the internal Rebuild.
         ///

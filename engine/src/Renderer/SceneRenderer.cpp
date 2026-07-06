@@ -3900,6 +3900,8 @@ namespace Veng::Renderer
                 m_PointFieldPass = CreateUnique<PointFieldScenePass>(
                     m_Context, m_Assets, &m_PointFields, HdrFormat, m_SamplerHandle,
                     m_Context.GetMaxFramesInFlight());
+                static_cast<PointFieldScenePass*>(m_PointFieldPass.get())
+                    ->SetForceDirect(m_PointFieldForceDirect);
             }
 
             // Tonemap source: bloom composite when bloom is on, raw HDR otherwise.
@@ -6008,6 +6010,18 @@ namespace Veng::Renderer
         }
         return static_cast<const PointFieldScenePass*>(m_PointFieldPass.get())->GetStats();
     }
+
+    void SceneRenderer::SetPointFieldForceDirect(const bool force)
+    {
+        // Persist the choice so a recompile that rebuilds the pass reapplies it, then apply to the
+        // live pass if one exists.
+        m_PointFieldForceDirect = force;
+        if (m_PointFieldPass != nullptr)
+        {
+            static_cast<PointFieldScenePass*>(m_PointFieldPass.get())->SetForceDirect(force);
+        }
+    }
+
     bool SceneRenderer::DidBroadphaseRebuildLastFrame() const
     {
         return m_Broadphase.DidRebuildLastSync();

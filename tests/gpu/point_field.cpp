@@ -421,3 +421,162 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                 " CellsMeasured=", stats.CellsMeasured, " Splats=", stats.Splats);
     }
 }
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "point field: the compute sprite path matches the direct path and compacts")
+{
+    // The compute expansion path runs the per-point sprite work once and compacts out
+    // zero-contribution points before they raster, drawing the survivors through one indirect draw.
+    // Two things are pinned: (1) for a field of visible points it produces a brightness-equivalent
+    // image to the direct path (the A/B reference forced via SetPointFieldForceDirect); (2) for a
+    // field placed wholly behind the eye it compacts every point out (survivors == 0), where the
+    // direct path draws each behind-eye point as a harmless degenerate quad. On a device without the
+    // compute path both arms draw direct, so the comparison is trivial and compaction soft-passes.
+    constexpr uvec2 extent{256, 256};
+
+    // A grid of resolvable points on a plane in front of the camera, all in one cull cell (CellSize
+    // covers the whole span). Placed at positive coordinates so the single-cell bucketing is
+    // unambiguous, and sized generously so each projects to several pixels (a robust brightness).
+    auto MakeGrid = [](f32 zPlane) -> vector<FieldPoint>
+    {
+        vector<FieldPoint> points;
+        for (i32 xi = -20; xi <= 20; ++xi)
+        {
+            for (i32 yi = -20; yi <= 20; ++yi)
+            {
+                points.push_back({.Position = vec3(100.0f + static_cast<f32>(xi) * 2.0f,
+                                                   100.0f + static_cast<f32>(yi) * 2.0f, zPlane),
+                                  .ColorRgba8 = PackRgba8(255, 255, 255, 255),
+                                  .Size = 2.0f});
+            }
+        }
+        return points;
+    };
+    const vector<FieldPoint> points = MakeGrid(0.0f); // a plane at z=0
+    const u32 totalPoints = static_cast<u32>(points.size());
+
+    auto field = Renderer::PointField::Create(
+        Context, {.Name = "AB Field", .Points = points, .CellSize = 4000.0f});
+    REQUIRE(field->GetCells().size() == 1);
+
+    Types.Register<Veng::PointField>();
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity fieldEntity = scene->CreateEntity();
+    auto& component = scene->Add<Veng::PointField>(fieldEntity);
+    // Never aggregate: every visible cell resolves into sprites (the compute path's subject).
+    component.Lod = Renderer::PointFieldLod{.AggregateThreshold = 1.0e6f};
+    component.Field = std::move(field);
+
+    AssetManager assets(Context, Tasks, Types);
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = {.Bloom = false, .Shadows = false, .AO = false},
+    });
+
+    // The camera sits at (100, 0, 100) looking toward the plane at z=0.
+    CameraView frontCamera;
+    frontCamera.SetPerspective(glm::radians(60.0f), 1.0f, 0.1f, 2000.0f);
+    frontCamera.SetView(vec3(100.0f, 100.0f, 100.0f), vec3(100.0f, 100.0f, 0.0f),
+                        vec3(0.0f, 1.0f, 0.0f));
+
+    auto Render = [&](const CameraView& cam) -> vector<u8>
+    {
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer->Execute(
+                    cmd, Renderer::SceneView{.World = *scene, .Camera = cam, .Delta = 0.0f});
+            });
+        return renderer->GetOutput()->GetImage()->Download();
+    };
+
+    // --- Brightness A/B on the visible field ---
+    // Compute path (automatic). Render twice so the one-frame-late CompactedPoints readback settles.
+    renderer->SetPointFieldForceDirect(false);
+    Render(frontCamera);
+    const vector<u8> computeImage = Render(frontCamera);
+    const Renderer::PointFieldStats computeStats = renderer->GetPointFieldStats();
+
+    // Forced-direct reference.
+    renderer->SetPointFieldForceDirect(true);
+    Render(frontCamera);
+    const vector<u8> directImage = Render(frontCamera);
+    const Renderer::PointFieldStats directStats = renderer->GetPointFieldStats();
+
+    const f32 computeBright = BrightFraction(computeImage, extent.x, 0, extent.x, 0, extent.y);
+    const f32 directBright = BrightFraction(directImage, extent.x, 0, extent.x, 0, extent.y);
+
+    // The direct reference lights the cluster and reports its honest path + submitted count.
+    CHECK(directBright > 0.02f);
+    CHECK(directStats.DrawSource == Renderer::SpriteDrawSource::Direct);
+    CHECK(directStats.SpritePoints == totalPoints);
+    CHECK(directStats.CompactedPoints == 0);
+
+    if (computeStats.DrawSource == Renderer::SpriteDrawSource::Compute)
+    {
+        // Same pre-compaction total submitted (nothing aggregated); brightness matches the direct
+        // reference within a coarse tolerance (well above the record's f16 quantization). No point
+        // of a wholly-visible field compacts, so survivors == submitted here.
+        CHECK(computeStats.SpritePoints == totalPoints);
+        CHECK(computeBright > 0.02f);
+        CHECK(std::abs(computeBright - directBright) < directBright * 0.35f);
+        CHECK(computeStats.CompactedPoints <= computeStats.SpritePoints);
+        MESSAGE("compute A/B (visible): submitted=", computeStats.SpritePoints,
+                " compacted=", computeStats.CompactedPoints, " computeBright=", computeBright,
+                " directBright=", directBright);
+
+        // --- Compaction of behind-eye points that reach the dispatch ---
+        // Replace the field with one whose single cull cell straddles the eye: a line of points from
+        // in front of the camera (z between camera and 0) to well behind it (z past the camera),
+        // packed in one huge cell so the cell survives the frustum cull and its whole range is
+        // submitted. The compute pass then compacts the behind-eye half per point (clipCenter.w <=
+        // 0), so survivors < submitted; the direct path draws them all (the behind ones degenerate).
+        vector<FieldPoint> straddle;
+        u32 behindCount = 0;
+        for (i32 zi = -30; zi <= 30; ++zi)
+        {
+            // Camera sits at z=100; z below 100 is in front, above is behind. Span z in [20, 380].
+            const f32 z = 200.0f + static_cast<f32>(zi) * 6.0f;
+            if (z > 100.0f)
+            {
+                ++behindCount;
+            }
+            straddle.push_back({.Position = vec3(100.0f, 100.0f, z),
+                                .ColorRgba8 = PackRgba8(255, 255, 255, 255),
+                                .Size = 2.0f});
+        }
+        const u32 straddleTotal = static_cast<u32>(straddle.size());
+        auto straddleField = Renderer::PointField::Create(
+            Context, {.Name = "Straddle", .Points = straddle, .CellSize = 4000.0f});
+        REQUIRE(straddleField->GetCells().size() == 1);
+        auto& sc = scene->Get<Veng::PointField>(fieldEntity);
+        sc.Field = std::move(straddleField);
+        sc.Lod = Renderer::PointFieldLod{.AggregateThreshold = 1.0e6f};
+
+        renderer->SetPointFieldForceDirect(false);
+        Render(frontCamera);
+        Render(frontCamera);
+        const Renderer::PointFieldStats straddleStats = renderer->GetPointFieldStats();
+
+        // The whole cell was submitted (front + behind), and the behind-eye points compacted out:
+        // survivors <= submitted, and at least the behind-eye set was compacted.
+        CHECK(straddleStats.SpritePoints == straddleTotal);
+        const u64 survivors = straddleStats.SpritePoints - straddleStats.CompactedPoints;
+        CHECK(survivors <= straddleStats.SpritePoints);
+        CHECK(straddleStats.CompactedPoints >= behindCount);
+        MESSAGE("compute compaction (straddle): submitted=", straddleStats.SpritePoints,
+                " compacted=", straddleStats.CompactedPoints, " survivors=", survivors,
+                " behindCount=", behindCount);
+    }
+    else
+    {
+        // No compute path on this device: both arms drew direct, so the comparison is trivial and
+        // there is nothing compute-compacted to assert.
+        CHECK(computeStats.DrawSource == Renderer::SpriteDrawSource::Direct);
+        CHECK(computeStats.CompactedPoints == 0);
+        MESSAGE("compute path unsupported on this device; direct-only A/B");
+    }
+}
