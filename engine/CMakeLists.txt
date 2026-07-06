@@ -89,6 +89,8 @@ add_library(veng SHARED
         src/Renderer/SwapChainCompositePass.cpp
         src/Renderer/GatherPass.cpp
         src/Gui/DrawList.cpp
+        src/Gui/Document.cpp
+        src/Gui/YogaTree.cpp
         src/Renderer/Passes/GuiScenePass.cpp
         src/Renderer/DebugDraw.cpp
         src/Renderer/DebugDrawScenePass.cpp
@@ -219,6 +221,7 @@ target_link_libraries(veng PRIVATE
         GPUOpen::VulkanMemoryAllocator
         nfd
         ZLIB::ZLIB
+        yogacore
         ${CMAKE_DL_LIBS}
 )
 

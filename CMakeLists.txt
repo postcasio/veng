@@ -226,6 +226,21 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(nlohmann_json)
 
+# Yoga — the flexbox layout solver behind Veng::Gui. Linked PRIVATE into libveng:
+# its <yoga/*.h> headers are confined to engine/src/Gui/, so no public header names
+# a Yoga type and the dependency stays out of veng's exported link interface (no
+# install/export forcing, unlike the PUBLIC deps above). EXCLUDE_FROM_ALL builds
+# only the `yogacore` target veng links, never Yoga's own tests/benchmarks, and
+# keeps its CMake out of the default build so its warnings never trip veng's -Werror.
+FetchContent_Declare(
+        yoga
+        GIT_REPOSITORY https://github.com/facebook/yoga.git
+        GIT_TAG v3.2.1
+        GIT_SHALLOW TRUE
+        EXCLUDE_FROM_ALL
+)
+FetchContent_MakeAvailable(yoga)
+
 # ---------------------------------------------------------------------------
 # clang-tidy (opt-in)
 # ---------------------------------------------------------------------------
@@ -531,6 +546,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/managed_viewports.cpp
             tests/unit/dynamic_resolution.cpp
             tests/unit/gui_draw_list.cpp
+            tests/unit/gui_layout.cpp
     )
     target_link_libraries(veng_test_unit PRIVATE veng::veng doctest::doctest)
 
