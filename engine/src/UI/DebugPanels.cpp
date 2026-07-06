@@ -167,6 +167,17 @@ namespace Veng::UI
         }
     }
 
+    bool DebugViewCombo(Renderer::DebugView& mode)
+    {
+        i32 index = static_cast<i32>(mode);
+        if (UI::Combo("View", index, Renderer::DebugViewNames))
+        {
+            mode = static_cast<Renderer::DebugView>(index);
+            return true;
+        }
+        return false;
+    }
+
     bool RenderSettingsEditor(SceneRendererSettings& settings, Renderer::ViewState& view,
                               Viewport& viewport)
     {
@@ -177,124 +188,177 @@ namespace Veng::UI
         // Accumulates whether any topology field changed; the caller reconfigures on a true return.
         bool changed = false;
 
-        i32 mode = static_cast<i32>(settings.Mode);
-        if (UI::Combo("View", mode, Renderer::DebugViewNames))
+        changed |= DebugViewCombo(settings.Mode);
+
+        if (auto section = UI::CollapsingHeader("Lighting & effects", TreeFlags::DefaultOpen))
         {
-            settings.Mode = static_cast<Renderer::DebugView>(mode);
-            changed = true;
+            changed |= UI::Checkbox("SSAO", settings.AO);
+            changed |= UI::Checkbox("TAA", settings.TAA);
+            changed |= UI::Checkbox("Emissive", settings.Emissive);
         }
 
-        changed |= UI::Checkbox("SSAO", settings.AO);
-        changed |= UI::Checkbox("TAA", settings.TAA);
-        changed |= UI::Checkbox("SSR", settings.SSR);
+        if (auto section = UI::CollapsingHeader("Bloom", TreeFlags::DefaultOpen))
         {
-            // The trace/min-Z/blur resolution sizes the SSR working set; the combo greys out
-            // when SSR is off.
+            // On/off and the kernel are topology; threshold/intensity/radius are per-frame
+            // ViewState values. The per-bloom knobs grey out when bloom is off.
+            changed |= UI::Checkbox("Enabled##bloom", settings.Bloom);
+            auto bloomDisabled = UI::Disabled(!settings.Bloom);
+
+            static constexpr std::array<string_view, 2> kernelNames{"COD (13-tap/tent)",
+                                                                    "Dual Kawase"};
+            i32 kernel = static_cast<i32>(settings.Kernel);
+            if (UI::Combo("Kernel", kernel, kernelNames))
+            {
+                settings.Kernel = static_cast<Renderer::BloomKernel>(kernel);
+                changed = true;
+            }
+
+            (void)UI::Drag("Threshold##bloom", view.BloomThreshold,
+                           {.Speed = 0.01f, .Min = 0.0f, .Max = 8.0f});
+            (void)UI::Drag("Intensity##bloom", view.BloomIntensity,
+                           {.Speed = 0.01f, .Min = 0.0f, .Max = 4.0f});
+            (void)UI::Drag("Radius##bloom", view.BloomRadius,
+                           {.Speed = 0.01f, .Min = 0.0f, .Max = 4.0f});
+        }
+
+        if (auto section = UI::CollapsingHeader("Screen-space reflections"))
+        {
+            // The toggle and the trace resolution are topology; the intensity/distance/thickness/
+            // roughness knobs are per-frame ViewState values. Everything greys out when SSR is off.
+            changed |= UI::Checkbox("Enabled##ssr", settings.SSR);
             auto ssrDisabled = UI::Disabled(!settings.SSR);
+
             static constexpr std::array<string_view, 3> ssrResolutionNames{"Full", "Half",
                                                                            "Quarter"};
             i32 ssrResolution = static_cast<i32>(settings.SsrResolutionScale);
-            if (UI::Combo("SSR resolution", ssrResolution, ssrResolutionNames))
+            if (UI::Combo("Trace resolution", ssrResolution, ssrResolutionNames))
             {
                 settings.SsrResolutionScale =
                     static_cast<SceneRendererSettings::SsrResolution>(ssrResolution);
                 changed = true;
             }
+
+            (void)UI::Drag("Intensity##ssr", view.SsrIntensity,
+                           {.Speed = 0.01f, .Min = 0.0f, .Max = 4.0f});
+            (void)UI::Drag("Max distance##ssr", view.SsrMaxDistance,
+                           {.Speed = 0.1f, .Min = 0.0f, .Max = 200.0f});
+            (void)UI::Drag("Thickness##ssr", view.SsrThickness,
+                           {.Speed = 0.01f, .Min = 0.0f, .Max = 4.0f});
+            (void)UI::Slider("Max roughness##ssr", view.SsrMaxRoughness,
+                             {.Min = 0.0f, .Max = 1.0f});
         }
 
-        changed |= UI::Checkbox("Shadows", settings.Shadows);
-
-        i32 cascadeCount = static_cast<i32>(settings.CascadeCount);
-        if (UI::Slider("Cascades##count", cascadeCount, 1, static_cast<i32>(Renderer::MaxCascades)))
+        if (auto section = UI::CollapsingHeader("Shadows", TreeFlags::DefaultOpen))
         {
-            settings.CascadeCount = static_cast<u32>(cascadeCount);
-            changed = true;
+            changed |= UI::Checkbox("Directional shadows", settings.Shadows);
+            {
+                auto shadowsDisabled = UI::Disabled(!settings.Shadows);
+
+                i32 cascadeCount = static_cast<i32>(settings.CascadeCount);
+                if (UI::Slider("Cascades##count", cascadeCount, 1,
+                               static_cast<i32>(Renderer::MaxCascades)))
+                {
+                    settings.CascadeCount = static_cast<u32>(cascadeCount);
+                    changed = true;
+                }
+
+                i32 shadowResolution = static_cast<i32>(settings.ShadowResolution);
+                if (UI::Drag("Resolution##shadow", shadowResolution,
+                             {.Speed = 16.0f,
+                              .Min = 256.0f,
+                              .Max = static_cast<f32>(renderer.GetMaxShadowResolution())}))
+                {
+                    settings.ShadowResolution = static_cast<u32>(shadowResolution);
+                    changed = true;
+                }
+
+                if (UI::Slider("Split lambda", settings.CascadeSplitLambda,
+                               {.Min = 0.0f, .Max = 1.0f}))
+                {
+                    changed = true;
+                }
+
+                if (UI::Drag("Max distance##shadow", settings.MaxShadowDistance,
+                             {.Speed = 1.0f, .Min = 0.0f, .Max = 10000.0f}))
+                {
+                    changed = true;
+                }
+            }
+
+            changed |= UI::Checkbox("Punctual shadows", settings.PunctualShadows);
+            {
+                auto punctualDisabled = UI::Disabled(!settings.PunctualShadows);
+
+                i32 punctualResolution = static_cast<i32>(settings.PunctualShadowResolution);
+                if (UI::Drag("Resolution##punctual", punctualResolution,
+                             {.Speed = 16.0f,
+                              .Min = 256.0f,
+                              .Max = static_cast<f32>(renderer.GetMaxPunctualShadowResolution())}))
+                {
+                    settings.PunctualShadowResolution = static_cast<u32>(punctualResolution);
+                    changed = true;
+                }
+            }
         }
 
-        i32 shadowResolution = static_cast<i32>(settings.ShadowResolution);
-        if (UI::Drag("Shadow resolution", shadowResolution,
-                     {.Speed = 16.0f,
-                      .Min = 256.0f,
-                      .Max = static_cast<f32>(renderer.GetMaxShadowResolution())}))
+        if (auto section = UI::CollapsingHeader("Exposure", TreeFlags::DefaultOpen))
         {
-            settings.ShadowResolution = static_cast<u32>(shadowResolution);
-            changed = true;
+            // Exposure and the auto-exposure tuning are per-frame ViewState values; the metering
+            // toggle is topology (it inserts the histogram compute pass). With metering on,
+            // Exposure biases the adapted value; the tuning knobs grey out with it off.
+            (void)UI::Drag("Exposure", view.Exposure, {.Speed = 0.01f, .Min = 0.0f, .Max = 16.0f});
+            changed |= UI::Checkbox("Auto exposure", settings.AutoExposure);
+            auto meteringDisabled = UI::Disabled(!settings.AutoExposure);
+            (void)UI::Drag("Key", view.AutoExposureKey,
+                           {.Speed = 0.005f, .Min = 0.01f, .Max = 1.0f});
+            (void)UI::Drag("Min luminance", view.AutoExposureMinLuminance,
+                           {.Speed = 0.001f, .Min = 0.0f, .Max = 8.0f, .Format = "%.4f"});
+            (void)UI::Drag("Max luminance", view.AutoExposureMaxLuminance,
+                           {.Speed = 1.0f, .Min = 0.01f, .Max = 10000.0f});
+            (void)UI::Drag("Adaptation speed", view.AutoExposureSpeed,
+                           {.Speed = 0.05f, .Min = 0.0f, .Max = 20.0f});
         }
-
-        if (UI::Slider("Split lambda", settings.CascadeSplitLambda, {.Min = 0.0f, .Max = 1.0f}))
-        {
-            changed = true;
-        }
-
-        if (UI::Drag("Max shadow distance", settings.MaxShadowDistance,
-                     {.Speed = 1.0f, .Min = 0.0f, .Max = 10000.0f}))
-        {
-            changed = true;
-        }
-
-        changed |= UI::Checkbox("Punctual shadows", settings.PunctualShadows);
-
-        i32 punctualResolution = static_cast<i32>(settings.PunctualShadowResolution);
-        if (UI::Drag("Punctual shadow resolution", punctualResolution,
-                     {.Speed = 16.0f,
-                      .Min = 256.0f,
-                      .Max = static_cast<f32>(renderer.GetMaxPunctualShadowResolution())}))
-        {
-            settings.PunctualShadowResolution = static_cast<u32>(punctualResolution);
-            changed = true;
-        }
-
-        changed |= UI::Checkbox("Frustum culling", settings.FrustumCull);
-
-        // The GPU arm is a different pass topology, so the selector and the occlusion toggle both
-        // drive a recompile. CullMode::GPU degrades to CPU on a device without multiDrawIndirect;
-        // the active-mode line in the stats panel shows the real path.
-        static constexpr std::array<string_view, 2> cullNames{"CPU", "GPU"};
-        i32 cull = static_cast<i32>(settings.Cull);
-        if (UI::Combo("Cull mode", cull, cullNames))
-        {
-            settings.Cull = static_cast<SceneRendererSettings::CullMode>(cull);
-            changed = true;
-        }
-
-        changed |= UI::Checkbox("GPU occlusion", settings.Occlusion);
-
-        // The immediate-mode debug-draw flush pass (lines + billboards), off by default.
-        changed |= UI::Checkbox("Debug draw", settings.DebugDraw);
-
-        // Adaptive resolution and the manual render-scale override drive the viewport
-        // imperatively — they recreate or resize renderer resources directly, not through the
-        // Configure recompile this function reports.
-        DrawResolutionControls(viewport, context);
-
-        // Tonemap exposure is a per-frame ViewState value; the drag edits it in place and rides
-        // the next push with no reconfigure.
-        (void)UI::Drag("Exposure", view.Exposure, {.Speed = 0.01f, .Min = 0.0f, .Max = 16.0f});
 
         // The sky is the scene's Sky component, resolved by the renderer itself — not a topology
         // toggle or a per-frame ViewState value — so it is authored and edited in the inspector,
         // not here.
 
-        // Bloom on/off and the kernel are topology; threshold/intensity/radius are per-frame
-        // ViewState values. The per-bloom knobs grey out when bloom is off.
-        changed |= UI::Checkbox("Bloom", settings.Bloom);
+        if (auto section = UI::CollapsingHeader("Culling"))
         {
-            auto bloomDisabled = UI::Disabled(!settings.Bloom);
-            (void)UI::Drag("Bloom threshold", view.BloomThreshold,
-                           {.Speed = 0.01f, .Min = 0.0f, .Max = 8.0f});
-            (void)UI::Drag("Bloom intensity", view.BloomIntensity,
-                           {.Speed = 0.01f, .Min = 0.0f, .Max = 4.0f});
-            (void)UI::Drag("Bloom radius", view.BloomRadius,
-                           {.Speed = 0.01f, .Min = 0.0f, .Max = 4.0f});
+            changed |= UI::Checkbox("Frustum culling", settings.FrustumCull);
 
-            static constexpr std::array<string_view, 2> kernelNames{"COD (13-tap/tent)",
-                                                                    "Dual Kawase"};
-            i32 kernel = static_cast<i32>(settings.Kernel);
-            if (UI::Combo("Bloom kernel", kernel, kernelNames))
+            // The GPU arm is a different pass topology, so the selector and the occlusion toggle
+            // both drive a recompile. The selector greys out where the device cannot honor GPU
+            // (it would silently degrade to CPU); the stats panel shows the active path.
             {
-                settings.Kernel = static_cast<Renderer::BloomKernel>(kernel);
-                changed = true;
+                auto gpuUnsupported = UI::Disabled(!context.IsGpuDrivenCullingSupported());
+                static constexpr std::array<string_view, 2> cullNames{"CPU", "GPU"};
+                i32 cull = static_cast<i32>(settings.Cull);
+                if (UI::Combo("Cull mode", cull, cullNames))
+                {
+                    settings.Cull = static_cast<SceneRendererSettings::CullMode>(cull);
+                    changed = true;
+                }
+
+                auto cpuPath = UI::Disabled(settings.Cull != SceneRendererSettings::CullMode::GPU);
+                changed |= UI::Checkbox("GPU occlusion", settings.Occlusion);
             }
+        }
+
+        if (auto section = UI::CollapsingHeader("Resolution"))
+        {
+            // Adaptive resolution and the manual render-scale override drive the viewport
+            // imperatively — they recreate or resize renderer resources directly, not through the
+            // Configure recompile this function reports.
+            DrawResolutionControls(viewport, context);
+        }
+
+        if (auto section = UI::CollapsingHeader("Authoring"))
+        {
+            // The immediate-mode debug-draw flush pass and the entity-id picking pass, both off
+            // by default — authoring aids a consumer enables for a viewport's lifetime.
+            changed |= UI::Checkbox("Debug draw", settings.DebugDraw);
+            changed |= UI::Checkbox("Picking", settings.Picking);
         }
 
         return changed;

@@ -223,6 +223,11 @@ namespace Veng::Renderer
         RefreshOutputHandle();
     }
 
+    const SceneRendererSettings& Viewport::GetSettings() const
+    {
+        return m_Renderer->GetSettings();
+    }
+
     void Viewport::Render(CommandBuffer& cmd)
     {
         // An on-demand viewport renders only on a frame its owner pushed a fresh ViewState. A hidden
@@ -270,6 +275,10 @@ namespace Veng::Renderer
             .BloomThreshold = m_ViewState.BloomThreshold,
             .BloomIntensity = m_ViewState.BloomIntensity,
             .BloomRadius = m_ViewState.BloomRadius,
+            .SsrIntensity = m_ViewState.SsrIntensity,
+            .SsrMaxDistance = m_ViewState.SsrMaxDistance,
+            .SsrThickness = m_ViewState.SsrThickness,
+            .SsrMaxRoughness = m_ViewState.SsrMaxRoughness,
         };
         m_Renderer->Execute(cmd, view);
 

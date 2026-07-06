@@ -67,6 +67,14 @@ namespace Veng::Renderer
         f32 BloomIntensity = 1.0f;
         /// @brief Bloom upsample spread.
         f32 BloomRadius = 1.0f;
+        /// @brief SSR reflection mix scale (ignored while the renderer's SSR pass is off).
+        f32 SsrIntensity = 1.0f;
+        /// @brief SSR maximum ray length in view-space units.
+        f32 SsrMaxDistance = 12.0f;
+        /// @brief SSR view-space depth thickness accepted as a ray hit.
+        f32 SsrThickness = 0.5f;
+        /// @brief SSR roughness cutoff; surfaces rougher than this trace no reflection ray.
+        f32 SsrMaxRoughness = 0.8f;
     };
 
     /// @brief Construction parameters for Viewport.
@@ -234,6 +242,12 @@ namespace Veng::Renderer
         /// re-fetch both after this call.
         /// @param settings  The new topology and sizing knobs.
         void Configure(const SceneRendererSettings& settings);
+
+        /// @brief Returns the owned renderer's settings in effect, as of the last Create/Configure.
+        ///
+        /// The read side of Configure: a settings editor starts from here and hands its edited
+        /// copy back to Configure, so no consumer mirrors the settings.
+        [[nodiscard]] const SceneRendererSettings& GetSettings() const;
 
         /// @brief Renders the bound view into the viewport's texture and makes it sampleable.
         ///

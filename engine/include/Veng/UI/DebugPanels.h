@@ -17,6 +17,7 @@ namespace Veng::Renderer
     class Viewport;
     struct SceneRendererSettings;
     struct ViewState;
+    enum class DebugView : u8;
 }
 
 namespace Veng::UI
@@ -77,15 +78,31 @@ namespace Veng::UI
         usize m_Count = 0;
     };
 
-    /// @brief Draws the renderer's topology toggles and per-frame view knobs in one panel.
+    /// @brief Draws the renderer debug-view selector as a combo over every DebugView arm.
     ///
-    /// Edits the `SceneRendererSettings` topology knobs (the debug-view mode, the SSAO / TAA /
-    /// SSR / shadow / punctual-shadow / skybox / bloom / frustum-cull / GPU-occlusion / debug-draw
-    /// toggles, the cascade / shadow-resolution / SSR-resolution / cull-mode controls) and the
-    /// per-frame `ViewState` knobs (exposure, environment intensity, bloom threshold / intensity /
-    /// radius). The viewport's adaptive-resolution controls (dynamic resolution, the allocation-tier
-    /// outer loop, and the manual render-scale override) drive the viewport imperatively, since they
-    /// recreate or resize renderer resources directly.
+    /// The reusable "View" dropdown `RenderSettingsEditor` embeds — equally placeable on its
+    /// own (a toolbar, a viewport header). Selecting an arm is a topology change: on a true
+    /// return the caller reconfigures the renderer with the edited settings, exactly as for
+    /// `RenderSettingsEditor`.
+    /// @param mode  The debug-view arm edited in place.
+    /// @return True the frame the selection changed (the caller should `Configure`).
+    [[nodiscard]] bool DebugViewCombo(Renderer::DebugView& mode);
+
+    /// @brief Draws the renderer's full settings surface: every topology toggle and per-frame
+    /// view knob, grouped into collapsible sections.
+    ///
+    /// Edits every exposable `SceneRendererSettings` topology knob (the debug-view mode; the
+    /// SSAO / TAA / SSR / emissive / shadow / punctual-shadow / bloom / auto-exposure /
+    /// frustum-cull / GPU-occlusion / debug-draw / picking toggles; the cascade,
+    /// shadow-resolution, SSR-resolution, bloom-kernel, and cull-mode controls) and the
+    /// per-frame `ViewState` knobs (exposure and the auto-exposure key/clamps/speed, the bloom
+    /// threshold / intensity / radius, the SSR intensity / distance / thickness / roughness
+    /// cutoff). A knob whose feature is off, or that the device cannot honor (GPU cull without
+    /// `IsGpuDrivenCullingSupported`, dynamic resolution without timestamps), draws disabled.
+    /// The viewport's adaptive-resolution controls (dynamic resolution and the manual
+    /// render-scale override) drive the viewport imperatively, since they recreate or resize
+    /// renderer resources directly. The sky is the scene's `Sky` component, resolved by the
+    /// renderer itself — authored in the inspector, not here.
     ///
     /// Returns whether a topology field of `settings` changed this frame, per the editable-widget
     /// idiom. The helper does **not** reconfigure: the caller decides whether to call
@@ -93,7 +110,8 @@ namespace Veng::UI
     /// `Configure` for the resource owner. The per-frame `ViewState` edits ride the next frame's
     /// push with no reconfigure.
     /// @param settings  The renderer topology/sizing knobs to edit in place.
-    /// @param view      The per-frame view knobs (exposure, environment, bloom) to edit in place.
+    /// @param view      The per-frame view knobs (exposure/auto-exposure, bloom, SSR) to edit in
+    ///                  place.
     /// @param viewport  The viewport whose adaptive-resolution controls this panel drives.
     /// @return True the frame a `settings` topology field changed (the caller should `Configure`).
     [[nodiscard]] bool RenderSettingsEditor(Renderer::SceneRendererSettings& settings,

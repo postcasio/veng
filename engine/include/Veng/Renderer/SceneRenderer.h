@@ -724,6 +724,12 @@ namespace Veng::Renderer
         /// commands). Zero before the first Execute.
         [[nodiscard]] u32 GetLastDrawnCount() const;
 
+        /// @brief Returns the topology/sizing settings in effect, as of the last Create/Configure.
+        ///
+        /// The requested settings (shadow resolutions clamped to the device caps at apply time);
+        /// a settings editor reads its starting state from here rather than mirroring a copy.
+        [[nodiscard]] const SceneRendererSettings& GetSettings() const { return m_Settings; }
+
         /// @brief Returns the cull mode actually in effect, after the device-support fallback.
         ///
         /// Equals Settings.Cull when CullMode::GPU is requested and
