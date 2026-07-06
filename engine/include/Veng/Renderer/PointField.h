@@ -134,6 +134,12 @@ namespace Veng::Renderer
         /// @brief The aggregate splat's photometric style (see AggregateStyle).
         AggregateStyle Style = AggregateStyle::Cloud;
 
+        /// @brief Whether sprites test the scene depth and fade when occluded (default on).
+        ///
+        /// Off skips the per-fragment depth sample entirely — right for a field composited over
+        /// background with no occluding geometry, where the fade can never trigger.
+        bool DepthFade = true;
+
         /// @brief Points-per-pixel above which a cell draws as the aggregate density splat.
         ///
         /// A cell whose visible points, divided by its projected screen footprint in pixels,

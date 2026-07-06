@@ -59,7 +59,7 @@ struct VSOutput
     float4 sv_position : SV_Position;
     float2 v_UV : TEXCOORD0;
     float4 v_Color : COLOR0;
-    float2 v_ScreenUV : TEXCOORD1;
+    float2 v_SampleUV : TEXCOORD1;
     float v_NdcDepth : TEXCOORD2;
 };
 
@@ -130,11 +130,17 @@ VSOutput vsMain()
     float4 clipUp = mul(view.CurViewProj, float4(up, 0.0));
     float4 clip = clipCenter + worldSize * (corner.x * clipRight + corner.y * clipUp);
 
+    // Hoist the dynamic-resolution sub-rect remap here: the depth-fade fragment samples the
+    // g-buffer depth at this interpolated sub-rect UV rather than re-fetching the view constants
+    // and remapping per fragment. The remap is affine, so interpolating it adds no new
+    // approximation over the already-linearly-interpolated screen UV.
+    float2 screenUV = (clip.xy / clip.w) * 0.5 + 0.5;
+
     VSOutput output;
     output.sv_position = clip;
     output.v_UV = corner;
     output.v_Color = color;
-    output.v_ScreenUV = (clip.xy / clip.w) * 0.5 + 0.5;
+    output.v_SampleUV = ScaledSampleUV(screenUV, view.RenderScaleUV.xy, view.MaxValidUV.xy);
     output.v_NdcDepth = clip.z / clip.w;
     return output;
 }

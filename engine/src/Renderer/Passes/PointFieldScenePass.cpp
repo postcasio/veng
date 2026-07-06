@@ -28,6 +28,7 @@ namespace Veng::Renderer
         constexpr AssetId PointSpriteVertId{0x21CF1A41D3AA8650ULL};
         constexpr AssetId PointSpriteDirectVertId{0x58A90BD4C0DE0376ULL};
         constexpr AssetId PointSpriteFragId{0x5C4D5DCE40951527ULL};
+        constexpr AssetId PointSpriteNoFadeFragId{0xD94E97718E481413ULL};
         constexpr AssetId PointAggregateVertId{0x7876DE17593B6A1CULL};
         constexpr AssetId PointAggregateFragId{0xA0E92CDBACECE971ULL};
         constexpr AssetId PointSpriteExpandId{0xF617689FC99BB623ULL};
@@ -219,6 +220,8 @@ namespace Veng::Renderer
             LoadShader(assets, PointSpriteDirectVertId, "point-sprite direct vertex");
         const AssetHandle<Veng::Shader> spriteFs =
             LoadShader(assets, PointSpriteFragId, "point-sprite fragment");
+        const AssetHandle<Veng::Shader> spriteNoFadeFs =
+            LoadShader(assets, PointSpriteNoFadeFragId, "point-sprite depth-fade-free fragment");
         const AssetHandle<Veng::Shader> aggregateVs =
             LoadShader(assets, PointAggregateVertId, "point-aggregate vertex");
         const AssetHandle<Veng::Shader> aggregateFs =
@@ -248,35 +251,42 @@ namespace Veng::Renderer
                                                          .DescriptorSetLayouts = {m_SetLayout},
                                                          .PushConstantRanges = {pushRange},
                                                      });
-        // The compute-path sprite pipeline: its vertex stage fetches a compacted record and applies
-        // one corner FMA (set 1 binding 0 = the record buffer).
-        m_SpritePipeline = GraphicsPipeline::Create(
-            m_Context,
-            {
-                .Name = "PointField Sprite Pipeline",
-                .ColorAttachments = {additiveTarget},
-                .PipelineLayout = m_Layout,
-                .ShaderStages =
-                    {
-                        {.Stage = ShaderStage::Vertex, .Module = spriteVs.Get()->Module},
-                        {.Stage = ShaderStage::Fragment, .Module = spriteFs.Get()->Module},
-                    },
-            });
-        // The direct-path sprite pipeline: its vertex stage reads the resident points (set 1 binding
+        // Each sprite pipeline pairs one vertex stage (compute-path record fetch or direct-path
+        // per-point expansion) with one fragment permutation (depth-fade or the trimmed one), all
+        // over the shared layout and additive target.
+        const auto makeSpritePipeline =
+            [&](const char* name, const Ref<ShaderModule>& vs, const Ref<ShaderModule>& fs)
+        {
+            return GraphicsPipeline::Create(
+                m_Context, {
+                               .Name = name,
+                               .ColorAttachments = {additiveTarget},
+                               .PipelineLayout = m_Layout,
+                               .ShaderStages =
+                                   {
+                                       {.Stage = ShaderStage::Vertex, .Module = vs},
+                                       {.Stage = ShaderStage::Fragment, .Module = fs},
+                                   },
+                           });
+        };
+
+        // The compute-path sprite pipelines: the vertex stage fetches a compacted record and applies
+        // one corner FMA (set 1 binding 0 = the record buffer). The depth-fade-free permutation drops
+        // the per-fragment g-buffer depth sample, selected per field by its LOD DepthFade knob.
+        m_SpritePipeline = makeSpritePipeline("PointField Sprite Pipeline", spriteVs.Get()->Module,
+                                              spriteFs.Get()->Module);
+        m_SpriteNoFadePipeline =
+            makeSpritePipeline("PointField Sprite No-Fade Pipeline", spriteVs.Get()->Module,
+                               spriteNoFadeFs.Get()->Module);
+        // The direct-path sprite pipelines: the vertex stage reads the resident points (set 1 binding
         // 0 = the point SSBO) and runs the per-point math per corner. The fallback for a device
         // without the compute path and the A/B verification reference.
-        m_SpriteDirectPipeline = GraphicsPipeline::Create(
-            m_Context,
-            {
-                .Name = "PointField Sprite Direct Pipeline",
-                .ColorAttachments = {additiveTarget},
-                .PipelineLayout = m_Layout,
-                .ShaderStages =
-                    {
-                        {.Stage = ShaderStage::Vertex, .Module = spriteDirectVs.Get()->Module},
-                        {.Stage = ShaderStage::Fragment, .Module = spriteFs.Get()->Module},
-                    },
-            });
+        m_SpriteDirectPipeline =
+            makeSpritePipeline("PointField Sprite Direct Pipeline", spriteDirectVs.Get()->Module,
+                               spriteFs.Get()->Module);
+        m_SpriteDirectNoFadePipeline =
+            makeSpritePipeline("PointField Sprite Direct No-Fade Pipeline",
+                               spriteDirectVs.Get()->Module, spriteNoFadeFs.Get()->Module);
         m_AggregatePipeline = GraphicsPipeline::Create(
             m_Context,
             {
@@ -977,7 +987,9 @@ namespace Veng::Renderer
                 PointFieldPush computePush = push;
                 computePush.Opacity = 1.0f;
 
-                cmd.BindPipeline(m_SpritePipeline);
+                // Select the fragment permutation by the field's DepthFade knob: the depth-fade
+                // pipeline (default) samples the g-buffer depth; the trimmed one drops it.
+                cmd.BindPipeline(lod.DepthFade ? m_SpritePipeline : m_SpriteNoFadePipeline);
                 registry.Bind(cmd);
                 cmd.BindDescriptorSets(DescriptorSetBindInfo{
                     .Sets = {state.RecordSets[region]},
@@ -1012,7 +1024,8 @@ namespace Veng::Renderer
                 }
                 EnsureQuadIndexBuffer(maxRunPoints);
 
-                cmd.BindPipeline(m_SpriteDirectPipeline);
+                cmd.BindPipeline(lod.DepthFade ? m_SpriteDirectPipeline
+                                               : m_SpriteDirectNoFadePipeline);
                 registry.Bind(cmd);
                 cmd.BindDescriptorSets(DescriptorSetBindInfo{
                     .Sets = {state.SpriteSets[region]},

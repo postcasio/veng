@@ -311,13 +311,20 @@ namespace Veng::Renderer
         /// @brief Shared sampler bindless handle for the depth sample.
         SamplerHandle m_SamplerHandle;
 
-        /// @brief Compute-path sprite pipeline: its vertex stage fetches a record and applies one FMA.
+        /// @brief Compute-path sprite pipeline (depth-fade fragment): fetches a record, applies one FMA.
         Ref<GraphicsPipeline> m_SpritePipeline;
-        /// @brief Direct-path sprite pipeline: its vertex stage reads the resident points per corner.
+        /// @brief Compute-path sprite pipeline (depth-fade-free fragment), for a field with DepthFade off.
+        ///
+        /// Its fragment drops the g-buffer depth sample, the sub-rect remap, and the occluded-fade
+        /// compare — selected per field over m_SpritePipeline by the field's LOD DepthFade knob.
+        Ref<GraphicsPipeline> m_SpriteNoFadePipeline;
+        /// @brief Direct-path sprite pipeline (depth-fade fragment): reads the resident points per corner.
         ///
         /// The fallback for a device without the compute path and the A/B verification reference; it
         /// draws from the resident point SSBO (SpriteSets) rather than the compacted record buffer.
         Ref<GraphicsPipeline> m_SpriteDirectPipeline;
+        /// @brief Direct-path sprite pipeline (depth-fade-free fragment), for a field with DepthFade off.
+        Ref<GraphicsPipeline> m_SpriteDirectNoFadePipeline;
         /// @brief Aggregate pipeline (per-cell additive density splat) and its layout.
         Ref<GraphicsPipeline> m_AggregatePipeline;
         /// @brief Shared layout for both pipelines (set 0 bindless + set 1 point SSBO + push block).

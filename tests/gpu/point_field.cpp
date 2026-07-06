@@ -423,6 +423,80 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "point field: DepthFade off matches on over an empty scene")
+{
+    // The depth-fade knob picks between two fragment permutations: the default (on) samples the
+    // g-buffer depth and dims an occluded sprite; the trimmed (off) drops that sample entirely.
+    // Over an empty scene nothing occludes, so the fade can never trigger and the two permutations
+    // must produce a pixel-identical image — the field a consumer composites over background gets
+    // the same picture whether or not it pays the per-fragment depth sample.
+    constexpr uvec2 extent{200, 200};
+
+    const vec3 clusterCenter(50.0f, 50.0f, 50.0f);
+    vector<FieldPoint> points;
+    for (u32 i = 0; i < 2000; ++i)
+    {
+        const f32 a = static_cast<f32>(i) * 0.161f;
+        const f32 b = static_cast<f32>(i) * 0.379f;
+        points.push_back({.Position = clusterCenter + vec3(std::sin(a) * 3.0f, std::cos(b) * 3.0f,
+                                                           std::sin(a + b) * 3.0f),
+                          .ColorRgba8 = PackRgba8(255, 240, 220, 255),
+                          .Size = 0.5f});
+    }
+
+    auto field = Renderer::PointField::Create(
+        Context, {.Name = "Fade Field", .Points = points, .CellSize = 100.0f});
+    REQUIRE(field->GetCells().size() == 1);
+
+    Types.Register<Veng::PointField>();
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity fieldEntity = scene->CreateEntity();
+    auto& component = scene->Add<Veng::PointField>(fieldEntity);
+    // Never aggregate: every visible cell resolves into sprites — the fragment path under test.
+    component.Lod = Renderer::PointFieldLod{.AggregateThreshold = 1.0e6f};
+    component.Field = std::move(field);
+
+    AssetManager assets(Context, Tasks, Types);
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = {.Bloom = false, .Shadows = false, .AO = false},
+    });
+
+    CameraView camera;
+    camera.SetPerspective(glm::radians(50.0f), 1.0f, 0.1f, 2000.0f);
+    camera.SetView(clusterCenter + vec3(0.0f, 0.0f, 12.0f), clusterCenter, vec3(0.0f, 1.0f, 0.0f));
+
+    auto Render = [&]() -> vector<u8>
+    {
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer->Execute(
+                    cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
+            });
+        return renderer->GetOutput()->GetImage()->Download();
+    };
+
+    component.Lod.DepthFade = true;
+    const vector<u8> onImage = Render();
+    component.Lod.DepthFade = false;
+    const vector<u8> offImage = Render();
+
+    const f32 onBright = BrightFraction(onImage, extent.x, 0, extent.x, 0, extent.y);
+    const f32 offBright = BrightFraction(offImage, extent.x, 0, extent.x, 0, extent.y);
+
+    // The field lights the frame under both permutations, and — nothing occluding, the fade can
+    // never trigger over the cleared far depth — with identical brightness (the trimmed permutation
+    // that skips the depth sample and the depth-fade one whose compare always fails agree; the two
+    // differ only in sub-f16-ULP fragment codegen at sprite edges, below the brightness threshold).
+    CHECK(onBright > 0.05f);
+    CHECK(offBright == onBright);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                   "point field: the compute sprite path matches the direct path and compacts")
 {
     // The compute expansion path runs the per-point sprite work once and compacts out
