@@ -352,6 +352,8 @@ namespace Veng::Mcp
         Log::Info("MCP server listening on {}:{}", Host, BoundPort);
     }
 
+    McpServer::McpServer() = default;
+
     McpServer::~McpServer()
     {
         if (!m_Native)

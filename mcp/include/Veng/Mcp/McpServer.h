@@ -69,7 +69,7 @@ namespace Veng::Mcp
         struct Native;
 
     private:
-        McpServer() = default;
+        McpServer();
 
         /// @brief Backend state, owned single-owner and torn down in the destructor.
         Unique<Native> m_Native;

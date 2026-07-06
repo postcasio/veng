@@ -51,6 +51,8 @@ namespace Veng::Mcp
         Native(const string& host, u16 port) : Http(host, port) {}
     };
 
+    McpClient::McpClient() = default;
+
     McpClient::~McpClient() = default;
 
     Result<Unique<McpClient>> McpClient::Create(const McpClientInfo& info)

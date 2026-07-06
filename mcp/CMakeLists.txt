@@ -83,10 +83,12 @@ target_compile_definitions(veng_mcp PRIVATE JSON_NOEXCEPTION)
 target_include_directories(veng_mcp PRIVATE ${stb_SOURCE_DIR})
 
 # stb_image_write's implementation calls the deprecated sprintf, which the VE_DEBUG build's
-# inherited -Werror would reject. Vendored code is not held to veng's warning bar, so the
-# vendor TU demotes that one warning — scoped to this TU, leaving veng's own code strict.
+# inherited warning-as-error (-Werror / MSVC /WX) would reject. Vendored code is not held to
+# veng's warning bar, so the vendor TU demotes that one warning — scoped to this TU, leaving
+# veng's own code strict. MSVC flags the deprecation as C4996, disabled here; other compilers
+# take the -W form.
 set_source_files_properties(src/Vendor/StbImageWrite.cpp PROPERTIES
-        COMPILE_OPTIONS -Wno-error=deprecated-declarations)
+        COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/wd4996,-Wno-error=deprecated-declarations>")
 
 # httplib needs threads and (on some platforms) the socket libraries; find_package
 # supplies the portable Threads::Threads target.
