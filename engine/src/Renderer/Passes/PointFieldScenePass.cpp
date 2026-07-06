@@ -299,8 +299,14 @@ namespace Veng::Renderer
                     const ScenePassContext ctx = Wrap(inner);
                     CommandBuffer& cmd = ctx.Cmd();
 
+                    // Accumulate into a local block over the whole walk, published to m_Stats once at
+                    // the end — so a reader never sees a partial frame, and a frame that draws no
+                    // field reads back zeroed.
+                    PointFieldStats stats;
+
                     if (m_Fields == nullptr || m_Fields->empty())
                     {
+                        m_Stats = stats;
                         return;
                     }
 
@@ -333,6 +339,7 @@ namespace Veng::Renderer
                         {
                             continue;
                         }
+                        ++stats.Fields;
 
                         // Re-point this frame's sprite set at the resident buffer only when it
                         // changed (a rebuilt field), never per frame for a static field. Only the
@@ -362,6 +369,7 @@ namespace Veng::Renderer
 
                         vector<const PointField::Cell*> resolved;
                         vector<GpuAggregateSplat> splats;
+                        stats.CellsTotal += static_cast<u32>(cells.size());
                         for (u32 c = 0; c < cells.size(); ++c)
                         {
                             const PointField::Cell& cell = cells[c];
@@ -369,8 +377,10 @@ namespace Veng::Renderer
                             {
                                 continue;
                             }
+                            ++stats.CellsInFrustum;
                             const CellFootprint footprint =
                                 MeasureCellFootprint(cell, viewProj, renderExtent);
+                            ++stats.CellsMeasured;
                             bool aggregate = state.Aggregating[c];
                             if (footprint.Density >= highGate)
                             {
@@ -526,6 +536,8 @@ namespace Veng::Renderer
                                 push.PointCount = cell->PointCount;
                                 cmd.PushConstants(push);
                                 cmd.Draw(QuadVertexCount * cell->PointCount, 1, 0, 0);
+                                ++stats.ResolvedDraws;
+                                stats.SpritePoints += cell->PointCount;
                             }
                         }
 
@@ -553,6 +565,7 @@ namespace Veng::Renderer
                             push.PointCount = static_cast<u32>(splats.size());
                             cmd.PushConstants(push);
                             cmd.Draw(QuadVertexCount * static_cast<u32>(splats.size()), 1, 0, 0);
+                            stats.Splats += static_cast<u32>(splats.size());
                         }
                     }
 
@@ -570,6 +583,8 @@ namespace Veng::Renderer
                             ++it;
                         }
                     }
+
+                    m_Stats = stats;
                 });
     }
 }

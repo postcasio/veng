@@ -2,6 +2,7 @@
 
 #include <Veng/Veng.h>
 #include <Veng/Renderer/BindlessRegistry.h>
+#include <Veng/Renderer/PointField.h>
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/ScenePass.h>
 #include <Veng/Renderer/Types.h>
@@ -19,7 +20,6 @@ namespace Veng::Renderer
     class DescriptorSet;
     class DescriptorSetLayout;
     class Buffer;
-    class PointField;
 
     /// @brief Draws the scene's point fields into the linear HDR scene color, LOD-culled.
     ///
@@ -60,6 +60,14 @@ namespace Veng::Renderer
 
         /// @brief Contributes the point-field pass into the graph.
         void Declare(RenderGraph& graph, const PassIO& io) override;
+
+        /// @brief Returns the aggregate draw statistics from the most recent Execute.
+        ///
+        /// Refreshed at the end of every Execute (zeroed on a frame with no field draw), so a
+        /// reader always sees a whole frame's counts. The pass fills a local block over the walk
+        /// and publishes it once at the end, never a partially-accumulated one.
+        /// @return The last Execute's point-field draw statistics.
+        [[nodiscard]] const PointFieldStats& GetStats() const { return m_Stats; }
 
     private:
         /// @brief Per-field GPU state and hysteresis latch, cached across frames per drawn field.
@@ -125,5 +133,8 @@ namespace Veng::Renderer
 
         /// @brief Per-field GPU state and latches, keyed by field pointer, pruned when unresolved.
         unordered_map<const PointField*, FieldState> m_Fields_State;
+
+        /// @brief Aggregate draw statistics from the most recent Execute; published at its end.
+        PointFieldStats m_Stats;
     };
 }

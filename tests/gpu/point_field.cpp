@@ -300,3 +300,112 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         CHECK(BrightFraction(pixels, extent.x, 0, extent.x, 0, extent.y) < 0.01f);
     }
 }
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "point field: a wide many-cell view records the pass's draw statistics")
+{
+    // The stress shape the point-field pass is built to bound: a wide, shallow field bucketed into
+    // hundreds of small cells, viewed whole so every cell is in-frustum at once. It pins two things
+    // — that the wide view still reads bright where the field is and dark where it is not, and the
+    // pass's per-frame counter shape today: with aggregation switched fully off, every in-frustum
+    // cell resolves into its own sprite draw (ResolvedDraws == CellsInFrustum) and every in-frustum
+    // cell is measured (CellsMeasured == CellsInFrustum); with it switched fully on, every
+    // in-frustum cell collapses to one splat (Splats == CellsInFrustum, no resolved draw). These
+    // counters are the baseline later draw-pipeline work is verified against.
+    constexpr uvec2 extent{600, 150};
+
+    // A grid of bright points filling a wide slab at z = 0: 151 columns 2 units apart on X and 91
+    // rows 2 units apart on Y, sized so its projection fills the wide target vertically and spans
+    // it horizontally. A small cull cell (4 units) buckets it into thousands of cells, each holding
+    // a handful of points — the many-cells-in-frustum shape under test.
+    vector<FieldPoint> points;
+    for (i32 xi = -75; xi <= 75; ++xi)
+    {
+        for (i32 yi = -45; yi <= 45; ++yi)
+        {
+            points.push_back(
+                {.Position = vec3(static_cast<f32>(xi) * 2.0f, static_cast<f32>(yi) * 2.0f, 0.0f),
+                 .ColorRgba8 = PackRgba8(255, 255, 255, 255),
+                 .Size = 2.0f});
+        }
+    }
+
+    auto field = Renderer::PointField::Create(
+        Context, {.Name = "Stress Field", .Points = points, .CellSize = 4.0f});
+    // Hundreds of cells is the shape under test — the whole point of the wide, small-cell field.
+    REQUIRE(field->GetCells().size() > 100);
+
+    Types.Register<Veng::PointField>();
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity fieldEntity = scene->CreateEntity();
+    auto& component = scene->Add<Veng::PointField>(fieldEntity);
+    component.Field = std::move(field);
+
+    AssetManager assets(Context, Tasks, Types);
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = {.Bloom = false, .Shadows = false, .AO = false},
+    });
+
+    // A camera looking down -Z at the slab from far enough that the whole X span is in view (the
+    // wide 4:1 target gives the horizontal reach); every cell is in-frustum and in front of the eye.
+    CameraView camera;
+    camera.SetPerspective(glm::radians(40.0f), static_cast<f32>(extent.x) / extent.y, 0.1f,
+                          2000.0f);
+    camera.SetView(vec3(0.0f, 0.0f, 250.0f), vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    auto Render = [&]() -> vector<u8>
+    {
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer->Execute(
+                    cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
+            });
+        return renderer->GetOutput()->GetImage()->Download();
+    };
+
+    // Resolved case: an aggregate threshold far above any cell's on-screen density pins every cell
+    // to the sprite path, so the whole field resolves.
+    {
+        component.Lod = Renderer::PointFieldLod{.AggregateThreshold = 1.0e6f};
+        const vector<u8> pixels = Render();
+
+        // Bright in the central band the field's sprites fill; dark in the left strip beyond its
+        // horizontal reach.
+        CHECK(BrightFraction(pixels, extent.x, extent.x * 2 / 5, extent.x * 3 / 5, extent.y * 2 / 5,
+                             extent.y * 3 / 5) > 0.05f);
+        CHECK(BrightFraction(pixels, extent.x, 0, extent.x / 6, 0, extent.y) < 0.01f);
+
+        const Renderer::PointFieldStats stats = renderer->GetPointFieldStats();
+        // One field walked, hundreds of cells in-frustum and all measured, all resolved as sprites.
+        CHECK(stats.Fields == 1);
+        CHECK(stats.CellsInFrustum > 100);
+        CHECK(stats.CellsMeasured == stats.CellsInFrustum);
+        CHECK(stats.ResolvedDraws == stats.CellsInFrustum);
+        CHECK(stats.SpritePoints == static_cast<u64>(points.size()));
+        CHECK(stats.Splats == 0);
+    }
+
+    // Inverse case: a zero threshold aggregates every cell, so nothing resolves and each in-frustum
+    // cell draws one splat.
+    {
+        component.Lod = Renderer::PointFieldLod{.AggregateThreshold = 0.0f};
+        const vector<u8> pixels = Render();
+
+        // The aggregate splats still light the central band the field fills.
+        CHECK(BrightFraction(pixels, extent.x, extent.x * 2 / 5, extent.x * 3 / 5, extent.y * 2 / 5,
+                             extent.y * 3 / 5) > 0.05f);
+
+        const Renderer::PointFieldStats stats = renderer->GetPointFieldStats();
+        CHECK(stats.Fields == 1);
+        CHECK(stats.CellsInFrustum > 100);
+        CHECK(stats.CellsMeasured == stats.CellsInFrustum);
+        CHECK(stats.ResolvedDraws == 0);
+        CHECK(stats.Splats == stats.CellsInFrustum);
+    }
+}

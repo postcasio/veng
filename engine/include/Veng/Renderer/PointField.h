@@ -27,6 +27,32 @@ namespace Veng::Renderer
         f32 Size;
     };
 
+    /// @brief Per-frame point-field draw statistics, aggregated across every field the last Execute.
+    ///
+    /// Refreshed by the point-field pass on every Execute and zeroed on a frame that draws no field,
+    /// so a mid-frame reader never sees a partial frame. The observability surface a consumer
+    /// profiling a heavy field reads instead of guessing the sprite/splat split from GPU timestamps;
+    /// reached through SceneRenderer::GetPointFieldStats(). CellsMeasured is tracked separately from
+    /// CellsInFrustum, and ResolvedDraws separately from SpritePoints, so the walk cost (footprint
+    /// measures) and the submission cost (draw calls vs. points submitted) each read out on their own.
+    struct PointFieldStats
+    {
+        /// @brief Fields walked this Execute (resolved component, nonzero points, opacity > 0).
+        u32 Fields = 0;
+        /// @brief Cells walked across those fields (every cell tested, in-frustum or not).
+        u32 CellsTotal = 0;
+        /// @brief Cells that survived the frustum test.
+        u32 CellsInFrustum = 0;
+        /// @brief Cells whose on-screen footprint was measured (the density estimate).
+        u32 CellsMeasured = 0;
+        /// @brief Sprite draw calls issued (one per resolved cell today).
+        u32 ResolvedDraws = 0;
+        /// @brief Points submitted through the sprite path (summed over the resolved cells).
+        u64 SpritePoints = 0;
+        /// @brief Aggregate splat records drawn (one per aggregated cell).
+        u32 Splats = 0;
+    };
+
     /// @brief Screen-density LOD and photometric knobs for a PointField draw.
     ///
     /// The pass estimates each visible cell's on-screen point density (points per pixel of the

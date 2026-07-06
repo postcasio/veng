@@ -9,6 +9,7 @@
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/HiZHistory.h>
+#include <Veng/Renderer/PointField.h>
 #include <Veng/Renderer/PunctualShadows.h>
 #include <Veng/Renderer/ShadowCascades.h>
 
@@ -723,6 +724,17 @@ namespace Veng::Renderer
         /// GetLastGpuSurvivorCount() (the device-side draws after the hi-Z test zeros occluded
         /// commands). Zero before the first Execute.
         [[nodiscard]] u32 GetLastDrawnCount() const;
+
+        /// @brief Returns the aggregate point-field draw statistics from the last Execute.
+        ///
+        /// The point-field pass's per-frame counters — fields walked, cells in-frustum / measured,
+        /// resolved sprite draws issued and points submitted, and aggregate splats drawn — summed
+        /// across every field. The point-field analogue of the mesh cull funnel
+        /// (GetLastVisibleCount / GetFrustumSurvivedCount / GetLastDrawnCount): a consumer profiling
+        /// a heavy field reads the sprite/splat split here instead of GPU timestamps. All zero when
+        /// no point-field pass is active or before the first Execute that drew a field.
+        /// @return The last Execute's point-field draw statistics.
+        [[nodiscard]] PointFieldStats GetPointFieldStats() const;
 
         /// @brief Returns the topology/sizing settings in effect, as of the last Create/Configure.
         ///

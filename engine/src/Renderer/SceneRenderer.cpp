@@ -5998,6 +5998,16 @@ namespace Veng::Renderer
     {
         return m_LastDrawnCount;
     }
+    PointFieldStats SceneRenderer::GetPointFieldStats() const
+    {
+        // No active point-field pass (no live field this frame) reads back as all-zero, matching
+        // the pass's own no-field-drawn frame.
+        if (m_PointFieldPass == nullptr)
+        {
+            return {};
+        }
+        return static_cast<const PointFieldScenePass*>(m_PointFieldPass.get())->GetStats();
+    }
     bool SceneRenderer::DidBroadphaseRebuildLastFrame() const
     {
         return m_Broadphase.DidRebuildLastSync();
