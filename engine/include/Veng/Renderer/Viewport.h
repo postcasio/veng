@@ -222,6 +222,12 @@ namespace Veng::Renderer
         /// @brief Returns whether automatic render-scale control is enabled.
         [[nodiscard]] bool IsDynamicResolutionEnabled() const;
 
+        /// @brief Returns the dynamic-resolution settings in effect, or nullopt while disabled.
+        ///
+        /// The read side of SetDynamicResolution: a settings editor starts from here and hands its
+        /// edited copy back, so no consumer mirrors the controller's tuning.
+        [[nodiscard]] const optional<DynamicResolutionSettings>& GetDynamicResolution() const;
+
         /// @brief Returns a counter bumped whenever the output view/handle is replaced.
         ///
         /// GetOutput()/GetOutputHandle() are invalidated by a resize (a region or render-scale

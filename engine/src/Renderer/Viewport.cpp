@@ -134,6 +134,11 @@ namespace Veng::Renderer
         return m_DynamicResolution.has_value();
     }
 
+    const optional<DynamicResolutionSettings>& Viewport::GetDynamicResolution() const
+    {
+        return m_DynamicResolution;
+    }
+
     u64 Viewport::GetOutputGeneration() const
     {
         return m_OutputGeneration;

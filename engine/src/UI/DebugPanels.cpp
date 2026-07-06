@@ -149,6 +149,29 @@ namespace Veng::UI
                 }
             }
 
+            // The controller's tuning: an edit re-applies through SetDynamicResolution, live on the
+            // next frame. Greyed out while dynamic resolution is off.
+            {
+                auto dynamicOff = UI::Disabled(!viewport.IsDynamicResolutionEnabled());
+                Renderer::DynamicResolutionSettings settings =
+                    viewport.GetDynamicResolution().value_or(Renderer::DynamicResolutionSettings{});
+                bool edited = false;
+                edited |= UI::Drag("Target frame time (ms)", settings.TargetFrameTimeMs,
+                                   {.Speed = 0.1f, .Min = 1.0f, .Max = 100.0f, .Format = "%.2f"});
+                edited |= UI::Drag("Min scale", settings.MinScale,
+                                   {.Speed = 0.01f, .Min = 0.1f, .Max = 1.0f, .Format = "%.2f"});
+                edited |= UI::Drag("Max scale", settings.MaxScale,
+                                   {.Speed = 0.01f, .Min = 0.25f, .Max = 2.0f, .Format = "%.2f"});
+                edited |= UI::Drag("Headroom", settings.Headroom,
+                                   {.Speed = 0.01f, .Min = 0.0f, .Max = 0.5f, .Format = "%.2f"});
+                edited |= UI::Drag("Max step", settings.MaxStep,
+                                   {.Speed = 0.01f, .Min = 0.01f, .Max = 1.0f, .Format = "%.2f"});
+                if (edited && viewport.IsDynamicResolutionEnabled())
+                {
+                    viewport.SetDynamicResolution(settings);
+                }
+            }
+
             // Render scale is a per-viewport property. While dynamic resolution is on it reads out
             // the live sub-rect scale; touching it is the manual override — it drops dynamic
             // resolution and holds the value, sizing the render target directly. Steps by 0.05 from
@@ -164,6 +187,13 @@ namespace Veng::UI
                 }
                 viewport.SetRenderScale(renderScale);
             }
+
+            // The fixed allocation the sub-rect renders inside — read-only facts; the allocation
+            // moves only on a region/window change or an explicit scale edit, never on frame-time
+            // pressure.
+            const uvec2 allocExtent = viewport.GetAllocationExtent();
+            UI::Text(fmt::format("Allocation: {:.2f} ({}x{})", viewport.GetAllocationScale(),
+                                 allocExtent.x, allocExtent.y));
         }
     }
 
@@ -305,8 +335,10 @@ namespace Veng::UI
         {
             // Exposure and the auto-exposure tuning are per-frame ViewState values; the metering
             // toggle is topology (it inserts the histogram compute pass). With metering on,
-            // Exposure biases the adapted value; the tuning knobs grey out with it off.
-            (void)UI::Drag("Exposure", view.Exposure, {.Speed = 0.01f, .Min = 0.0f, .Max = 16.0f});
+            // Exposure biases the adapted value; the tuning knobs grey out with it off. The drag's
+            // id is suffixed apart from the section header's (CollapsingHeader pushes no id scope).
+            (void)UI::Drag("Exposure##value", view.Exposure,
+                           {.Speed = 0.01f, .Min = 0.0f, .Max = 16.0f});
             changed |= UI::Checkbox("Auto exposure", settings.AutoExposure);
             auto meteringDisabled = UI::Disabled(!settings.AutoExposure);
             (void)UI::Drag("Key", view.AutoExposureKey,
