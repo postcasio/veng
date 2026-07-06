@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "0xFB6782CABF076640",
+      "type": "Font",
+      "source": "fonts/test.font.json"
+    }
+  ]
+}

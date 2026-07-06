@@ -23,6 +23,7 @@
 #include <Veng/Asset/AssetHandle.h>
 #include <Veng/Asset/AssetLoader.h>
 #include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/Font.h>
 #include <Veng/Asset/InputMappingContext.h>
 #include <Veng/Asset/Level.h>
 #include <Veng/Asset/Material.h>

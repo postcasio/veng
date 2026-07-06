@@ -94,6 +94,7 @@ namespace Veng
 
     private:
         friend class TextureLoader;
+        friend class FontLoader;
         friend Task<Detail::BuiltAsset<Texture>>
         Detail::SubmitAssetBuild(Renderer::Context& context, TaskSystem& tasks, TextureData data);
         friend Ref<Texture> Detail::BuildAssetSync(Renderer::Context& context,

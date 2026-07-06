@@ -38,6 +38,8 @@ namespace Veng
         MaterialInstance,
         /// @brief A named set of input-action declarations and raw-source bindings (see CookedInputMapHeader).
         InputMap,
+        /// @brief An MSDF glyph atlas plus per-glyph and kerning metrics (see CookedFontHeader).
+        Font,
     };
 
     /// @brief Canonical authoring/manifest name of an asset type ("texture", "material_instance", …).

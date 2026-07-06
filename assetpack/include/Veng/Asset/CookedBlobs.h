@@ -625,4 +625,99 @@ namespace Veng
         /// @brief Byte size of the reflection record following this header.
         u32 RecordBytes = 0;
     };
+
+    /// @brief The current font-format version.
+    ///
+    /// Bumped on any CookedFontHeader/CookedGlyph/CookedKernPair layout change; the loader
+    /// rejects a blob whose Version != this.
+    inline constexpr u32 CookedFontVersion = 1u;
+
+    /// @brief Cooked header for a font asset.
+    ///
+    /// A font is a multi-channel signed-distance-field (MSDF) glyph atlas plus the CPU metrics
+    /// needed to lay out and draw text: a per-glyph table (codepoint, advance, plane bounds, and
+    /// atlas rect) and a kerning table. The atlas is an ordinary RGBA8 image the runtime uploads
+    /// and samples bindlessly; the three colour channels carry the MSDF, so it is never block
+    /// compressed (a codec would corrupt the distance field). Every metric — advances, bounds,
+    /// line metrics — is normalized to em units (the em is one unit), so a runtime pixel size is a
+    /// single multiply.
+    ///
+    /// The blob is, in order:
+    ///   CookedFontHeader
+    ///   CookedGlyph[GlyphCount]
+    ///   CookedKernPair[KerningCount]
+    ///   atlas texels (AtlasWidth * AtlasHeight * 4 bytes, RGBA8, row-major top-to-bottom)
+    struct CookedFontHeader
+    {
+        /// @brief Must equal CookedFontVersion; the loader rejects mismatches.
+        u32 Version = 0;
+        /// @brief MSDF atlas width in pixels.
+        u32 AtlasWidth = 0;
+        /// @brief MSDF atlas height in pixels.
+        u32 AtlasHeight = 0;
+        /// @brief Atlas pixel format; underlying Renderer::Format integer (RGBA8Unorm — the MSDF is a colour image).
+        u32 AtlasFormat = 0;
+        /// @brief Distance range, in atlas pixels, baked into the SDF; the shader divides screen-space distance by it.
+        f32 DistanceRange = 0.0f;
+        /// @brief Font units per em the metrics are normalized against (1.0 — the metrics are em-normalized).
+        f32 EmSize = 0.0f;
+        /// @brief Baseline-to-baseline line height, in em units.
+        f32 LineHeight = 0.0f;
+        /// @brief Ascender height above the baseline, in em units.
+        f32 Ascender = 0.0f;
+        /// @brief Descender depth below the baseline, in em units (negative below the baseline).
+        f32 Descender = 0.0f;
+        /// @brief Number of CookedGlyph entries following this header.
+        u32 GlyphCount = 0;
+        /// @brief Number of CookedKernPair entries following the glyph table.
+        u32 KerningCount = 0;
+    };
+
+    /// @brief One glyph's metrics and atlas placement in a cooked font.
+    ///
+    /// Plane bounds are the glyph quad's offset and size relative to the pen origin on the
+    /// baseline, in em units (left/bottom is the lower-left corner, so the quad spans
+    /// [PlaneLeft, PlaneLeft + PlaneWidth] x [PlaneBottom, PlaneBottom + PlaneHeight]). Atlas
+    /// bounds are the glyph's texel rect in the MSDF atlas, in pixels, top-left origin. A
+    /// whitespace glyph has no geometry: its atlas rect and plane size are zero and only Advance
+    /// is meaningful.
+    struct CookedGlyph
+    {
+        /// @brief Unicode codepoint this glyph renders.
+        u32 Codepoint = 0;
+        /// @brief Horizontal advance from this glyph's origin to the next, in em units.
+        f32 Advance = 0.0f;
+        /// @brief Plane bounds left edge (quad offset from the pen origin), in em units.
+        f32 PlaneLeft = 0.0f;
+        /// @brief Plane bounds bottom edge (quad offset from the baseline), in em units.
+        f32 PlaneBottom = 0.0f;
+        /// @brief Plane bounds width (quad width), in em units.
+        f32 PlaneWidth = 0.0f;
+        /// @brief Plane bounds height (quad height), in em units.
+        f32 PlaneHeight = 0.0f;
+        /// @brief Atlas rect left edge, in atlas pixels.
+        f32 AtlasLeft = 0.0f;
+        /// @brief Atlas rect top edge, in atlas pixels.
+        f32 AtlasTop = 0.0f;
+        /// @brief Atlas rect width, in atlas pixels.
+        f32 AtlasWidth = 0.0f;
+        /// @brief Atlas rect height, in atlas pixels.
+        f32 AtlasHeight = 0.0f;
+    };
+
+    /// @brief One kerning pair in a cooked font: the extra advance between an ordered glyph pair.
+    ///
+    /// Left and Right are Unicode codepoints; Advance is the kerning adjustment added to Left's
+    /// advance when Right immediately follows it, in em units (usually negative — kerning tucks a
+    /// pair closer). A font that kerns only through OpenType GPOS cooks an empty kerning table,
+    /// since the cook reads the legacy `kern` table.
+    struct CookedKernPair
+    {
+        /// @brief Codepoint of the left glyph in the ordered pair.
+        u32 Left = 0;
+        /// @brief Codepoint of the right glyph in the ordered pair.
+        u32 Right = 0;
+        /// @brief Kerning adjustment added to Left's advance when Right follows, in em units.
+        f32 Advance = 0.0f;
+    };
 }

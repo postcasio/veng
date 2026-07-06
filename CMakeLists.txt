@@ -976,6 +976,9 @@ if (VENG_BUILD_TESTS)
     # the cooker library and the cooker fixtures' directory.
     target_sources(veng_test_gpu PRIVATE
             tests/gpu/texture_loader.cpp
+            # font_loader.cpp cooks the font fixture pack in-process (msdf-atlas-gen),
+            # LoadSyncs the Font, and asserts the atlas + metrics + ShapeRun contract.
+            tests/gpu/font_loader.cpp
             tests/gpu/mesh_loader.cpp
             tests/gpu/shader_loader.cpp
             tests/gpu/material_loader.cpp

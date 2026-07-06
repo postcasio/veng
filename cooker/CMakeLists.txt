@@ -81,6 +81,57 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(astc_encoder)
 
+# FreeType — font-outline loader for the FontImporter's MSDF generation, cooker-only (never linked
+# into libveng, which uploads the cooked atlas and decodes nothing). msdfgen finds it through the
+# Freetype::Freetype target, so it is fetched here before msdf-atlas-gen below and its target
+# aliased into the name msdfgen's find_package expects. Trim it to the core outline loader: no
+# HarfBuzz, Brotli, PNG, zlib, or bzip2 subsystems, none of which the outline path needs. Built
+# EXCLUDE_FROM_ALL so only the parts the cooker links compile.
+set(FT_DISABLE_HARFBUZZ ON CACHE INTERNAL "")
+set(FT_DISABLE_BROTLI ON CACHE INTERNAL "")
+set(FT_DISABLE_PNG ON CACHE INTERNAL "")
+set(FT_DISABLE_ZLIB ON CACHE INTERNAL "")
+set(FT_DISABLE_BZIP2 ON CACHE INTERNAL "")
+FetchContent_Declare(
+        freetype
+        GIT_REPOSITORY https://github.com/freetype/freetype.git
+        GIT_TAG VER-2-13-3
+        GIT_SHALLOW TRUE
+        EXCLUDE_FROM_ALL
+)
+FetchContent_MakeAvailable(freetype)
+if (NOT TARGET Freetype::Freetype)
+    add_library(Freetype::Freetype ALIAS freetype)
+endif ()
+
+# msdf-atlas-gen / msdfgen — the multi-channel signed-distance-field glyph atlas + geometry
+# generator behind the FontImporter, cooker-only (never linked into libveng, which decodes nothing
+# from the cooked atlas). Only the msdfgen submodule is needed; the artery-font export is disabled,
+# so its submodule is not fetched. Skia (a full renderer), vcpkg, PNG/SVG I/O, and the standalone
+# executables are all disabled — the cook drives the library API directly and stores its own RGBA8
+# atlas. The library uses the Freetype::Freetype target aliased above; it links no system package.
+set(MSDF_ATLAS_USE_VCPKG OFF CACHE INTERNAL "")
+set(MSDF_ATLAS_USE_SKIA OFF CACHE INTERNAL "")
+set(MSDF_ATLAS_BUILD_STANDALONE OFF CACHE INTERNAL "")
+set(MSDF_ATLAS_NO_ARTERY_FONT ON CACHE INTERNAL "")
+set(MSDF_ATLAS_INSTALL OFF CACHE INTERNAL "")
+set(MSDFGEN_DISABLE_PNG ON CACHE INTERNAL "")
+set(MSDFGEN_DISABLE_SVG ON CACHE INTERNAL "")
+set(MSDFGEN_USE_SKIA OFF CACHE INTERNAL "")
+set(MSDFGEN_USE_VCPKG OFF CACHE INTERNAL "")
+set(MSDFGEN_BUILD_STANDALONE OFF CACHE INTERNAL "")
+set(MSDFGEN_INSTALL OFF CACHE INTERNAL "")
+FetchContent_Declare(
+        msdf_atlas_gen
+        GIT_REPOSITORY https://github.com/Chlumsky/msdf-atlas-gen.git
+        GIT_TAG v1.3
+        GIT_SHALLOW TRUE
+        GIT_SUBMODULES msdfgen
+        GIT_SUBMODULES_RECURSE TRUE
+        EXCLUDE_FROM_ALL
+)
+FetchContent_MakeAvailable(msdf_atlas_gen)
+
 # The debug-optimize flag for the codec hot loops. MSVC's /O2 is rejected alongside the Debug
 # runtime checks (/RTC1) the default Debug flags carry, so the flag is emitted only for compilers
 # that accept optimization in a Debug build; under MSVC Debug the codecs stay unoptimized.
@@ -96,6 +147,9 @@ set_source_files_properties(
         ${bc7enc_rdo_SOURCE_DIR}/bc7enc.cpp
         ${bc7enc_rdo_SOURCE_DIR}/rgbcx.cpp
         src/Importers/TextureImporter.cpp
+        # The FontImporter drives the msdfgen MSDF render, another third-party hot loop the cook
+        # runs at wall-clock cost; optimize it in Debug for the same reason.
+        src/Importers/FontImporter.cpp
         PROPERTIES COMPILE_OPTIONS "${VENG_COOK_DEBUG_OPT}")
 
 # nlohmann/json — pack + per-asset JSON parsing. veng's root CMakeLists.txt makes
@@ -217,6 +271,7 @@ add_library(veng_cook_objs OBJECT
         src/Importers/AnimationImporter.cpp
         src/Importers/SkeletonSource.cpp
         src/Importers/EnvironmentImporter.cpp
+        src/Importers/FontImporter.cpp
         src/Vendor/StbImage.cpp
         src/Vendor/TinyExr.cpp
         src/Vendor/XxHash.cpp
@@ -255,11 +310,21 @@ set_source_files_properties(src/Vendor/TinyExr.cpp PROPERTIES
         COMPILE_DEFINITIONS TINYEXR_USE_EXCEPTIONS=0)
 
 # assimp/Slang headers are needed at compile time by MeshImporter/ShaderImporter
-# (their link is on the executables below).
+# (their link is on the executables below). msdf-atlas-gen (plus its msdfgen core/ext) headers back
+# the FontImporter's MSDF generation (its link is on the executables below, alongside its FreeType
+# transitive dep). msdfgen's headers guard an <msdfgen/msdfgen-config.h> include behind
+# MSDFGEN_PUBLIC and gate the ext font loader on MSDFGEN_EXTENSIONS — both defined here so the
+# include-dirs-only compile matches what a linking consumer of the static libraries would see (the
+# config header is only emitted on an install build, which this cook-only fetch is not).
 target_include_directories(veng_cook_objs PRIVATE
         $<TARGET_PROPERTY:assimp::assimp,INTERFACE_INCLUDE_DIRECTORIES>
         $<TARGET_PROPERTY:slang::slang,INTERFACE_INCLUDE_DIRECTORIES>
+        $<TARGET_PROPERTY:msdf-atlas-gen::msdf-atlas-gen,INTERFACE_INCLUDE_DIRECTORIES>
+        $<TARGET_PROPERTY:msdfgen::msdfgen-core,INTERFACE_INCLUDE_DIRECTORIES>
+        $<TARGET_PROPERTY:msdfgen::msdfgen-ext,INTERFACE_INCLUDE_DIRECTORIES>
 )
+set_source_files_properties(src/Importers/FontImporter.cpp PROPERTIES
+        COMPILE_DEFINITIONS "MSDFGEN_PUBLIC=;MSDFGEN_EXTENSIONS")
 
 # JSON_NOEXCEPTION: nlohmann/json's templates appear in the cooker's public
 # headers (Cook/Types.h), so every consumer TU must agree on this define
@@ -315,7 +380,8 @@ add_library(libveng_cook STATIC
 add_library(veng::cook ALIAS libveng_cook)
 target_link_libraries(libveng_cook PUBLIC veng_cook_objs veng::veng veng::assetpack veng::graph)
 target_link_libraries(libveng_cook PRIVATE
-        fmt::fmt assimp::assimp slang::slang ZLIB::ZLIB ${VENG_ASTCENC_TARGET})
+        fmt::fmt assimp::assimp slang::slang ZLIB::ZLIB ${VENG_ASTCENC_TARGET}
+        msdf-atlas-gen::msdf-atlas-gen)
 target_compile_options(libveng_cook PRIVATE -fno-exceptions)
 
 add_executable(vengc tool/main.cpp)
@@ -347,6 +413,6 @@ install(TARGETS vengc
 add_executable(veng_cook_bootstrap tool/bootstrap_main.cpp)
 target_link_libraries(veng_cook_bootstrap PRIVATE
         veng_cook_objs veng::assetpack fmt::fmt assimp::assimp slang::slang ZLIB::ZLIB
-        ${VENG_ASTCENC_TARGET})
+        ${VENG_ASTCENC_TARGET} msdf-atlas-gen::msdf-atlas-gen)
 target_compile_options(veng_cook_bootstrap PRIVATE -fno-exceptions)
 target_compile_options(vengc PRIVATE -fno-exceptions)

@@ -32,6 +32,8 @@ namespace Veng
             return "Environment";
         case AssetType::InputMap:
             return "InputMap";
+        case AssetType::Font:
+            return "Font";
         }
         return "unknown";
     }
@@ -89,6 +91,10 @@ namespace Veng
         if (name == "InputMap")
         {
             return AssetType::InputMap;
+        }
+        if (name == "Font")
+        {
+            return AssetType::Font;
         }
         return std::nullopt;
     }

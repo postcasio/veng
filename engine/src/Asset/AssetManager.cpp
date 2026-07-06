@@ -6,6 +6,7 @@
 
 #include "Loaders/AnimationLoader.h"
 #include "Loaders/EnvironmentLoader.h"
+#include "Loaders/FontLoader.h"
 #include "Loaders/InputMapLoader.h"
 #include "Loaders/LevelLoader.h"
 #include "Loaders/MaterialInstanceLoader.h"
@@ -44,6 +45,7 @@ namespace Veng
         RegisterLoader(CreateUnique<SkeletonLoader>());
         RegisterLoader(CreateUnique<AnimationLoader>());
         RegisterLoader(CreateUnique<EnvironmentLoader>());
+        RegisterLoader(CreateUnique<FontLoader>());
         RegisterLoader(CreateUnique<InputMapLoader>());
 
 #ifdef VENG_HAS_CORE_PACK

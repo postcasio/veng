@@ -45,6 +45,8 @@ namespace VengEditor
             return "EnvironmentMap";
         case AssetType::InputMap:
             return "InputMap";
+        case AssetType::Font:
+            return "Font";
         }
         return "Unknown";
     }
@@ -79,6 +81,8 @@ namespace VengEditor
             return "ENV";
         case AssetType::InputMap:
             return "INP";
+        case AssetType::Font:
+            return "FNT";
         }
         return "?";
     }
@@ -111,6 +115,8 @@ namespace VengEditor
             return {0.35f, 0.50f, 0.75f, 1.0f};
         case AssetType::InputMap:
             return {0.70f, 0.60f, 0.35f, 1.0f};
+        case AssetType::Font:
+            return {0.65f, 0.35f, 0.65f, 1.0f};
         case AssetType::Raw:
             return {0.50f, 0.50f, 0.50f, 1.0f};
         }
