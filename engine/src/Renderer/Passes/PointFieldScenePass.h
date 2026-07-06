@@ -21,6 +21,34 @@ namespace Veng::Renderer
     class DescriptorSetLayout;
     class Buffer;
 
+    /// @brief One GPU aggregate splat record (std430), matching the point_aggregate shader.
+    ///
+    /// A per-frame per-cell record consumed by the aggregate draw: the splat's world anchor plus
+    /// its pixel kernel support, then the cell's flux-normalized per-pixel color (the summed cell
+    /// flux spread over the splat's pixel area). Held in FieldState's reused staging vector.
+    struct GpuAggregateSplat
+    {
+        /// @brief World-space anchor centroid (xyz) and quad kernel support in pixels (w).
+        vec4 CenterSize;
+        /// @brief Flux-normalized per-pixel color (rgb, HDR); w unused.
+        vec4 Color;
+    };
+
+    /// @brief A contiguous resolved sprite draw: a buffer point range spanning one or more cells.
+    ///
+    /// Resolved cells tile the resident point buffer in ascending FirstPoint order (a Bucket
+    /// postcondition), so a run of adjacent surviving cells is one point range [FirstPoint,
+    /// FirstPoint+PointCount) drawn by a single sprite draw. A run breaks only where an
+    /// intervening cell was culled or aggregated, so a wide view of a never-aggregating field
+    /// collapses to one run over its whole in-frustum range.
+    struct DrawRun
+    {
+        /// @brief Index of the run's first point in the resident buffer.
+        u32 FirstPoint = 0;
+        /// @brief Number of points in the run (summed over the merged cells).
+        u32 PointCount = 0;
+    };
+
     /// @brief Draws the scene's point fields into the linear HDR scene color, LOD-culled.
     ///
     /// Runs ahead of bloom and tonemap, accumulating over the lit HDR image with LoadOp::Load —
@@ -104,6 +132,16 @@ namespace Veng::Renderer
             /// hysteretic: a resolving cell flips to aggregate only once its density passes the high
             /// gate, and back only once it falls below the low gate. Sized to the field's cell count.
             vector<bool> Aggregating;
+            /// @brief Merged contiguous sprite draw runs for this frame's walk.
+            ///
+            /// Cleared and refilled every Execute, reusing its capacity rather than reallocating
+            /// a function-local vector per field per frame.
+            vector<DrawRun> Runs;
+            /// @brief Aggregate splat records staged for this frame's upload.
+            ///
+            /// Cleared and refilled every Execute, reusing its capacity across frames; the upload
+            /// itself already rings correctly through AggregateBuffer.
+            vector<GpuAggregateSplat> Splats;
             /// @brief Whether this field was resolved this Execute; unseen entries are pruned.
             bool Seen = false;
         };

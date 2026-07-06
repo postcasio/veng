@@ -382,13 +382,20 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         CHECK(BrightFraction(pixels, extent.x, 0, extent.x / 6, 0, extent.y) < 0.01f);
 
         const Renderer::PointFieldStats stats = renderer->GetPointFieldStats();
-        // One field walked, hundreds of cells in-frustum and all measured, all resolved as sprites.
+        // One field walked, hundreds of cells in-frustum, all resolved as sprites. The threshold is
+        // unreachable, so the never-aggregate fast path skips the density measure entirely
+        // (CellsMeasured == 0) and the resolved cells merge into a handful of contiguous runs — the
+        // draw count collapses far below the cell count instead of one draw per cell.
         CHECK(stats.Fields == 1);
         CHECK(stats.CellsInFrustum > 100);
-        CHECK(stats.CellsMeasured == stats.CellsInFrustum);
-        CHECK(stats.ResolvedDraws == stats.CellsInFrustum);
+        CHECK(stats.CellsMeasured == 0);
+        CHECK(stats.ResolvedDraws > 0);
+        CHECK(stats.ResolvedDraws * 20 < stats.CellsInFrustum);
         CHECK(stats.SpritePoints == static_cast<u64>(points.size()));
         CHECK(stats.Splats == 0);
+        MESSAGE("never-aggregate: CellsInFrustum=", stats.CellsInFrustum,
+                " ResolvedDraws=", stats.ResolvedDraws, " CellsMeasured=", stats.CellsMeasured,
+                " SpritePoints=", stats.SpritePoints);
     }
 
     // Inverse case: a zero threshold aggregates every cell, so nothing resolves and each in-frustum
@@ -402,10 +409,15 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                              extent.y * 3 / 5) > 0.05f);
 
         const Renderer::PointFieldStats stats = renderer->GetPointFieldStats();
+        // Zero threshold aggregates every cell: nothing resolves, and each in-frustum cell draws one
+        // splat. The always-aggregate path still measures the footprint — the splat sizing reads its
+        // Pixels term — so CellsMeasured tracks CellsInFrustum here.
         CHECK(stats.Fields == 1);
         CHECK(stats.CellsInFrustum > 100);
         CHECK(stats.CellsMeasured == stats.CellsInFrustum);
         CHECK(stats.ResolvedDraws == 0);
         CHECK(stats.Splats == stats.CellsInFrustum);
+        MESSAGE("always-aggregate: CellsInFrustum=", stats.CellsInFrustum,
+                " CellsMeasured=", stats.CellsMeasured, " Splats=", stats.Splats);
     }
 }

@@ -52,14 +52,6 @@ namespace Veng::Renderer
             f32 Opacity;
         };
 
-        // One GPU aggregate splat record (std430): world center + pixel size, then the cell's
-        // flux-normalized per-pixel color (the summed flux spread over the splat's pixel area).
-        struct GpuAggregateSplat
-        {
-            vec4 CenterSize; // xyz world point centroid, w quad size in pixels (kernel support)
-            vec4 Color;      // flux-normalized per-pixel color (rgb), HDR; a unused
-        };
-
         // An occluded point fades to this fraction rather than vanishing (matches the sprite frag).
         constexpr f32 OccludedFade = 0.35f;
 
@@ -129,34 +121,33 @@ namespace Veng::Renderer
         // the point-bounds extent the sparse end of the splat sizing reads.
         struct CellFootprint
         {
-            // Visible points divided by the projected screen area in pixels (INFINITY for a
-            // degenerate zero-area footprint so a cell collapsed to a point always aggregates).
+            // Visible points divided by the projected screen area in pixels (the area floors at one
+            // pixel, so density is at most the cell's point count).
             f32 Density = 0.0f;
-            // Largest projected screen dimension in pixels of the points' bounds.
+            // Largest projected screen dimension in pixels of the cell's bounds.
             f32 Pixels = 0.0f;
         };
 
-        // Projects the cell's world AABB corners to clip and measures the bounding rect. A corner
-        // behind the eye reports zero density (keep resolving — the footprint is unbounded).
+        // Estimates a cell's screen footprint from two projections rather than all eight AABB
+        // corners: project the bounds center, derive pixels-per-world at that depth from the
+        // projection diagonal (projScale/w, the identity the splat sizing already uses), and take
+        // screen size as the world extents scaled by that factor. It ignores perspective skew
+        // across the cell — an error on the order of cellSize/distance, absorbed by the LOD
+        // hysteresis band. A center behind the eye reports zero density (keep resolving — the
+        // footprint is unbounded); the projected area floors at one pixel, so a cell collapsed to
+        // a point reads its point count as density and aggregates.
         CellFootprint MeasureCellFootprint(const PointField::Cell& cell, const mat4& viewProj,
-                                           const uvec2 extent)
+                                           const f32 projScale)
         {
-            const std::array<vec3, 8> corners = cell.Bounds.Corners();
-            vec2 minScreen(std::numeric_limits<f32>::infinity());
-            vec2 maxScreen(-std::numeric_limits<f32>::infinity());
-            for (const vec3 corner : corners)
+            const vec4 clipCenter = viewProj * vec4(cell.Bounds.Center(), 1.0f);
+            if (clipCenter.w <= 0.0f)
             {
-                const vec4 clip = viewProj * vec4(corner, 1.0f);
-                if (clip.w <= 0.0f)
-                {
-                    return CellFootprint{};
-                }
-                const vec2 ndc = vec2(clip) / clip.w;
-                const vec2 screen = (ndc * 0.5f + 0.5f) * vec2(extent);
-                minScreen = glm::min(minScreen, screen);
-                maxScreen = glm::max(maxScreen, screen);
+                return CellFootprint{};
             }
-            const vec2 size = maxScreen - minScreen;
+            const f32 pixelsPerWorld = projScale / clipCenter.w;
+            const vec3 extents = cell.Bounds.Extents();
+            const vec2 size =
+                vec2(std::max(extents.x, extents.z), extents.y) * (2.0f * pixelsPerWorld);
             const f32 area = std::max(size.x, 1.0f) * std::max(size.y, 1.0f);
             return CellFootprint{
                 .Density = static_cast<f32>(cell.PointCount) / area,
@@ -367,8 +358,28 @@ namespace Veng::Renderer
                         const f32 lowGate = lod.AggregateThreshold * (1.0f - lod.Hysteresis);
                         const f32 highGate = lod.AggregateThreshold * (1.0f + lod.Hysteresis);
 
-                        vector<const PointField::Cell*> resolved;
-                        vector<GpuAggregateSplat> splats;
+                        // Fixed-outcome fast paths. A cell's on-screen density is at most its point
+                        // count (the footprint area floors at one pixel), so if the low gate exceeds
+                        // every cell's point count no cell can ever reach the high gate and none
+                        // aggregates — the density measure is dead work, skipped entirely. Symmetric
+                        // at the other end: a zero high gate aggregates every cell (density is never
+                        // negative), so the measure only decides which cells resolve versus aggregate
+                        // when the threshold is a real, reachable bound.
+                        const bool alwaysAggregate = highGate <= 0.0f;
+                        u32 maxCellPoints = 0;
+                        for (const PointField::Cell& cell : cells)
+                        {
+                            maxCellPoints = std::max(maxCellPoints, cell.PointCount);
+                        }
+                        const bool neverAggregate =
+                            !alwaysAggregate && lowGate > static_cast<f32>(maxCellPoints);
+
+                        // The frame scratch reuses its capacity across frames rather than
+                        // reallocating a function-local vector per field per frame.
+                        vector<DrawRun>& runs = state.Runs;
+                        vector<GpuAggregateSplat>& splats = state.Splats;
+                        runs.clear();
+                        splats.clear();
                         stats.CellsTotal += static_cast<u32>(cells.size());
                         for (u32 c = 0; c < cells.size(); ++c)
                         {
@@ -378,19 +389,32 @@ namespace Veng::Renderer
                                 continue;
                             }
                             ++stats.CellsInFrustum;
-                            const CellFootprint footprint =
-                                MeasureCellFootprint(cell, viewProj, renderExtent);
-                            ++stats.CellsMeasured;
-                            bool aggregate = state.Aggregating[c];
-                            if (footprint.Density >= highGate)
+
+                            // Resolve the LOD outcome. The never-aggregate path skips the density
+                            // measure outright; otherwise the cheaper center-plus-extent estimate
+                            // feeds the hysteresis latch. Always-aggregate still measures because the
+                            // splat sizing reads the footprint's Pixels term.
+                            bool aggregate = false;
+                            CellFootprint footprint;
+                            if (neverAggregate)
                             {
-                                aggregate = true;
+                                state.Aggregating[c] = false;
                             }
-                            else if (footprint.Density < lowGate)
+                            else
                             {
-                                aggregate = false;
+                                footprint = MeasureCellFootprint(cell, viewProj, projScale);
+                                ++stats.CellsMeasured;
+                                aggregate = state.Aggregating[c];
+                                if (footprint.Density >= highGate)
+                                {
+                                    aggregate = true;
+                                }
+                                else if (footprint.Density < lowGate)
+                                {
+                                    aggregate = false;
+                                }
+                                state.Aggregating[c] = aggregate;
                             }
-                            state.Aggregating[c] = aggregate;
 
                             if (aggregate && splats.size() < MaxAggregateSplats)
                             {
@@ -495,11 +519,25 @@ namespace Veng::Renderer
                             }
                             else if (!aggregate)
                             {
-                                resolved.push_back(&cell);
+                                // Merge into the open run when this cell continues the buffer range;
+                                // else close it and open a new one. Adjacent resolved cells tile the
+                                // buffer in ascending FirstPoint order (a Bucket postcondition), so a
+                                // run breaks only where an intervening cell was culled or aggregated.
+                                if (!runs.empty() &&
+                                    runs.back().FirstPoint + runs.back().PointCount ==
+                                        cell.FirstPoint)
+                                {
+                                    runs.back().PointCount += cell.PointCount;
+                                }
+                                else
+                                {
+                                    runs.push_back(DrawRun{.FirstPoint = cell.FirstPoint,
+                                                           .PointCount = cell.PointCount});
+                                }
                             }
                         }
 
-                        if (resolved.empty() && splats.empty())
+                        if (runs.empty() && splats.empty())
                         {
                             continue;
                         }
@@ -519,9 +557,9 @@ namespace Veng::Renderer
                             .Opacity = lod.Opacity,
                         };
 
-                        // Resolved sprites: one non-instanced draw per surviving cell, the vertex
-                        // stage deriving point + corner from SV_VertexID over the cell's range.
-                        if (!resolved.empty())
+                        // Resolved sprites: one non-instanced draw per contiguous run, the vertex
+                        // stage deriving point + corner from SV_VertexID over the run's range.
+                        if (!runs.empty())
                         {
                             cmd.BindPipeline(m_SpritePipeline);
                             registry.Bind(cmd);
@@ -530,14 +568,14 @@ namespace Veng::Renderer
                                 .FirstSet = 1,
                                 .PipelineBindPoint = PipelineBindPoint::Graphics,
                             });
-                            for (const PointField::Cell* cell : resolved)
+                            for (const DrawRun& run : runs)
                             {
-                                push.FirstPoint = cell->FirstPoint;
-                                push.PointCount = cell->PointCount;
+                                push.FirstPoint = run.FirstPoint;
+                                push.PointCount = run.PointCount;
                                 cmd.PushConstants(push);
-                                cmd.Draw(QuadVertexCount * cell->PointCount, 1, 0, 0);
+                                cmd.Draw(QuadVertexCount * run.PointCount, 1, 0, 0);
                                 ++stats.ResolvedDraws;
-                                stats.SpritePoints += cell->PointCount;
+                                stats.SpritePoints += run.PointCount;
                             }
                         }
 

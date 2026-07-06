@@ -44,8 +44,11 @@ namespace Veng::Renderer
         /// @brief Cells that survived the frustum test.
         u32 CellsInFrustum = 0;
         /// @brief Cells whose on-screen footprint was measured (the density estimate).
+        ///
+        /// Zero when the field's threshold pins every cell to one path (a fixed-outcome fast
+        /// path skips the density measure); otherwise the in-frustum cell count.
         u32 CellsMeasured = 0;
-        /// @brief Sprite draw calls issued (one per resolved cell today).
+        /// @brief Sprite draw calls issued (one per contiguous run of resolved cells).
         u32 ResolvedDraws = 0;
         /// @brief Points submitted through the sprite path (summed over the resolved cells).
         u64 SpritePoints = 0;
