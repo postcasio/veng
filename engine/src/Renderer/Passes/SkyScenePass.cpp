@@ -221,7 +221,7 @@ namespace Veng::Renderer
                     const ScenePassContext ctx = Wrap(inner);
                     CommandBuffer& cmd = ctx.Cmd();
                     const SceneView& view = ctx.View();
-                    auto& material = const_cast<MaterialInstance&>(*m_Material.Get());
+                    MaterialInstance& material = *m_Material.Get();
                     const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
 
                     const uvec2 renderExtent = view.RenderExtent;

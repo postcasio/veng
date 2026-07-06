@@ -1811,8 +1811,7 @@ namespace Veng::Renderer
             [this, input, extra, hasExtra](PassContext& inner)
             {
                 CommandBuffer& cmd = inner.Cmd();
-                // AssetHandle::Get is const; cast away to write the per-frame handle fields.
-                auto& material = const_cast<MaterialInstance&>(*m_Material.Get());
+                MaterialInstance& material = *m_Material.Get();
 
                 // Write the live upstream bindless slots; must precede Material::Bind
                 // so the pushed selector reads this frame's region.
@@ -5421,7 +5420,7 @@ namespace Veng::Renderer
         // Per-frame param writes land in the ring-buffered block's current region (no stall).
         if (m_TonemapMaterial.IsLoaded())
         {
-            auto& tonemap = const_cast<MaterialInstance&>(*m_TonemapMaterial.Get());
+            MaterialInstance& tonemap = *m_TonemapMaterial.Get();
             tonemap.SetParam("Exposure", exposure);
             // The terminal tonemap reads the sub-rect HDR and upscales it to the full output.
             tonemap.SetParam("RenderScale", vec4(renderScaleUV, maxValidUV));

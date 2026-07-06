@@ -74,14 +74,19 @@ namespace Veng
         [[nodiscard]] AssetId Id() const { return m_Id; }
 
         /// @brief Returns the asset pointer, or nullptr when not yet resident.
-        [[nodiscard]] const T* Get() const
+        ///
+        /// Returns a mutable pointer from a const handle deliberately: the handle's constness
+        /// describes its own identity (which cache entry it names), never the asset behind it —
+        /// the same shallow-const semantics as Ref. A per-frame mutation path (a
+        /// MaterialInstance's SetParam/SetTextureHandle) is reached through the handle directly.
+        [[nodiscard]] T* Get() const
         {
-            return m_Entry ? static_cast<const T*>(m_Entry->Resource.get()) : nullptr;
+            return m_Entry ? static_cast<T*>(m_Entry->Resource.get()) : nullptr;
         }
 
         /// @brief Dereferences the handle.
         /// @pre IsLoaded() — asserts if the asset is not resident.
-        const T* operator->() const
+        T* operator->() const
         {
             VE_ASSERT(IsLoaded(), "AssetHandle::operator->: asset {} is not resident", m_Id.Value);
             return Get();
