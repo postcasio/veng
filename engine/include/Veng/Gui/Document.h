@@ -5,8 +5,16 @@
 #include <Veng/Gui/Element.h>
 #include <Veng/Gui/Style.h>
 
+namespace Veng
+{
+    template <class T>
+    class AssetHandle;
+}
+
 namespace Veng::Gui
 {
+    class UIDocument;
+
     /// @brief A retained tree of UI elements with flexbox layout, drawn through a DrawList.
     ///
     /// A Document single-owns a persistent tree rooted at Root(). It mirrors the tree into an
@@ -28,6 +36,19 @@ namespace Veng::Gui
         /// through SetTextMeasurer it overrides the font-driven measurement for every Text element.
         using TextMeasurer =
             function<vec2(string_view text, const Style& style, optional<f32> availableWidth)>;
+
+        /// @brief Materializes an independent live tree from a cooked UIDocument recipe.
+        ///
+        /// Builds a fresh Document whose element tree mirrors the recipe's structure, copying each
+        /// recipe element's kind, id, classes, text, inline-style declarations, bindings, and
+        /// handlers onto the corresponding live Element. The instantiated tree is independent of the
+        /// recipe and of any other instance of it — instantiating one UIDocument twice yields two
+        /// trees that mutate separately (the Prefab model). The referenced stylesheets are not yet
+        /// applied: matching their rules onto each element's resolved Style is the style-application
+        /// step. Inline-style declarations are stored on each Element as its authored overrides.
+        /// @param recipe  The cooked UI document to materialize; must be resident.
+        /// @return A newly constructed Document owning an independent copy of the recipe's tree.
+        [[nodiscard]] static Unique<Document> Instantiate(const UIDocument& recipe);
 
         /// @brief Constructs an empty document with a single Panel root.
         Document();

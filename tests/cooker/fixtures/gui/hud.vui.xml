@@ -1,0 +1,6 @@
+<Panel class="hud" stylesheets="0x5B33ACBEC98E1BD8" style="padding: 12px;">
+  <Text id="title" class="label" style="font: 0xFB6782CABF076640;">Status</Text>
+  <Text class="label" value="{player.name}"/>
+  <ProgressBar class="health" value="{player.health}" max="{player.healthMax}"/>
+  <Button class="primary" onClick="OpenMenu">Menu</Button>
+</Panel>

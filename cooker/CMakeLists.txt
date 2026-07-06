@@ -32,6 +32,29 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(xxhash)
 
+# pugixml — the XML parser behind the UIDocumentImporter's `*.vui.xml` markup parse, cooker-only
+# (never linked into libveng, which loads the binary element tree and parses no XML). A small,
+# self-contained library with no transitive deps; built EXCLUDE_FROM_ALL as a static lib so only
+# the parts the cooker links compile, and with exceptions off to match veng_cook_objs.
+set(PUGIXML_NO_EXCEPTIONS ON CACHE INTERNAL "")
+set(BUILD_SHARED_LIBS OFF CACHE INTERNAL "")
+FetchContent_Declare(
+        pugixml
+        GIT_REPOSITORY https://github.com/zeux/pugixml.git
+        GIT_TAG v1.14
+        GIT_SHALLOW TRUE
+        EXCLUDE_FROM_ALL
+)
+FetchContent_MakeAvailable(pugixml)
+
+# pugixml inherits the tree's CXX_STANDARD 26, which AppleClang cannot express as a compiler flag
+# (the same quirk the tree pins elsewhere). Pin its target back to C++17 — pugixml needs nothing
+# newer — so its configure does not demand an unavailable dialect flag.
+if (TARGET pugixml-static)
+    set_target_properties(pugixml-static PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED OFF
+            CXX_EXTENSIONS OFF)
+endif ()
+
 # bc7enc_rdo — BC7 block encoder for the TextureImporter, cooker-only (like
 # stb/assimp/Slang; never linked into libveng, which uploads the cooked blocks and
 # never encodes). The repo's CMakeLists builds a standalone
@@ -371,6 +394,14 @@ add_library(libveng_cook STATIC
         src/Importers/PrefabImporter.cpp
         src/Importers/LevelImporter.cpp
         src/Importers/InputMapImporter.cpp
+        # The UI-document + stylesheet importers reference libveng's Gui/ style vocabulary
+        # (ElementKind/StyleProperty and the flex enums), so they live here (links veng::veng)
+        # rather than in veng_cook_objs (kept veng-free for the core-pack bootstrap). pugixml (the
+        # XML parse) and the CSS tokenizer are cooker-only, confined to these TUs.
+        src/Importers/UIDocumentImporter.cpp
+        src/Importers/StyleSheetImporter.cpp
+        src/Importers/CssTokenizer.cpp
+        src/Importers/StyleParse.cpp
         # The graph-sourced shader resolver runs the veng::graph emit walk, so it lives
         # here (links graph + veng) rather than in veng_cook_objs (kept veng-free for the
         # core-pack bootstrap). RegisterBuiltinImporters installs it as the resolver hook
@@ -381,7 +412,7 @@ add_library(veng::cook ALIAS libveng_cook)
 target_link_libraries(libveng_cook PUBLIC veng_cook_objs veng::veng veng::assetpack veng::graph)
 target_link_libraries(libveng_cook PRIVATE
         fmt::fmt assimp::assimp slang::slang ZLIB::ZLIB ${VENG_ASTCENC_TARGET}
-        msdf-atlas-gen::msdf-atlas-gen)
+        msdf-atlas-gen::msdf-atlas-gen pugixml::pugixml)
 target_compile_options(libveng_cook PRIVATE -fno-exceptions)
 
 add_executable(vengc tool/main.cpp)

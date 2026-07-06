@@ -4,6 +4,8 @@
 
 #include <Veng/Assert.h>
 #include <Veng/Asset/Font.h>
+#include <Veng/Gui/StyleSheet.h>
+#include <Veng/Gui/UIDocument.h>
 
 #include <algorithm>
 
@@ -207,6 +209,67 @@ namespace Veng::Gui
     }
 
     Document::~Document() = default;
+
+    namespace
+    {
+        // Copies a recipe element's authored identity, text, inline style, bindings, and handlers
+        // onto a live element. Inline-style declarations are the always-applied element-local layer,
+        // so they are written straight onto the element's resolved style; stylesheet cascade layers
+        // under them. Bindings and handlers are stored on the element's Bindings map keyed by the
+        // bound attribute name and the event name respectively (an event name never collides with a
+        // bound attribute), unresolved for the binding/handler resolution step.
+        void PopulateElement(Element& element, const UIElementRecipe& recipe)
+        {
+            element.Id = recipe.Id;
+            element.Classes = recipe.Classes;
+            element.Text = recipe.Text;
+
+            for (const StyleDeclaration& declaration : recipe.InlineStyle)
+            {
+                ApplyDeclaration(element.ComputedStyle, declaration, {});
+            }
+
+            for (const UIBindingRecipe& binding : recipe.Bindings)
+            {
+                element.Bindings[binding.Property] = binding.Expression;
+            }
+            for (const UIHandlerRecipe& handler : recipe.Handlers)
+            {
+                element.Bindings[handler.Event] = handler.Handler;
+            }
+        }
+    }
+
+    Unique<Document> Document::Instantiate(const UIDocument& recipe)
+    {
+        auto document = CreateUnique<Document>();
+
+        const vector<UIElementRecipe>& elements = recipe.GetElements();
+        if (elements.empty())
+        {
+            return document;
+        }
+
+        // Element 0 is the authored root; it maps onto the document's pre-made root. The pre-order
+        // recipe carries an explicit child count per element, so a recursive walk over a shared
+        // cursor rebuilds the hierarchy in one linear pass. A recipe root of a non-Panel kind still
+        // populates the Panel root's fields — a document authors a Panel root in practice.
+        usize cursor = 0;
+        const auto build = [&](Element& live, auto&& self) -> void
+        {
+            const UIElementRecipe& node = elements[cursor];
+            ++cursor;
+            PopulateElement(live, node);
+            for (u32 i = 0; i < node.ChildCount; ++i)
+            {
+                Element& child = document->Add(live, elements[cursor].Kind);
+                self(child, self);
+            }
+        };
+        build(document->Root(), build);
+
+        return document;
+    }
 
     Element& Document::Root()
     {

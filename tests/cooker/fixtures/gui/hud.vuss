@@ -1,0 +1,26 @@
+/* A small HUD stylesheet exercising type/class/id selectors and pseudo-states. */
+
+.hud {
+    flex-direction: column;
+    background: #1a1a1acc;
+    padding: 8px;
+}
+
+.primary {
+    background: #3b82f6;
+    corner-radius: 4px;
+    color: #ffffff;
+}
+
+.primary:hover {
+    background: #60a5fa;
+}
+
+.primary:disabled {
+    opacity: 0.5;
+}
+
+Text#title {
+    font-size: 24px;
+    color: #eaeaeaff;
+}

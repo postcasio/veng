@@ -16,7 +16,9 @@
 #include "Loaders/RawAssetLoader.h"
 #include "Loaders/ShaderLoader.h"
 #include "Loaders/SkeletonLoader.h"
+#include "Loaders/StyleSheetLoader.h"
 #include "Loaders/TextureLoader.h"
+#include "Loaders/UIDocumentLoader.h"
 #include "Loaders/VertexLayoutLoader.h"
 
 #ifdef VENG_HAS_CORE_PACK
@@ -47,6 +49,8 @@ namespace Veng
         RegisterLoader(CreateUnique<EnvironmentLoader>());
         RegisterLoader(CreateUnique<FontLoader>());
         RegisterLoader(CreateUnique<InputMapLoader>());
+        RegisterLoader(CreateUnique<StyleSheetLoader>());
+        RegisterLoader(CreateUnique<UIDocumentLoader>());
 
 #ifdef VENG_HAS_CORE_PACK
         const VoidResult coreMount = MountBytes(

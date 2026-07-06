@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "0xFB6782CABF076640",
+      "type": "Font",
+      "source": "fonts/test.font.json"
+    },
+    {
+      "id": "0x5B33ACBEC98E1BD8",
+      "type": "StyleSheet",
+      "source": "gui/hud.vuss"
+    },
+    {
+      "id": "0x6DF03B87430D8A52",
+      "type": "UIDocument",
+      "source": "gui/hud.vui.xml"
+    }
+  ]
+}

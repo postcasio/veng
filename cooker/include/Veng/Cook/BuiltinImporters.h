@@ -49,4 +49,24 @@ namespace Veng::Cook
     /// individually for a cooker that wants the core set plus only this importer.
     /// @param cooker  The cooker to register into.
     void RegisterInputMapImporter(Cooker& cooker);
+
+    /// @brief Registers the stylesheet importer.
+    ///
+    /// References libveng's Gui/ style vocabulary (StyleProperty and the flex enums) and links a
+    /// cooker-only CSS tokenizer, so it is absent from the veng-free bootstrap cooker. Needs no game
+    /// module — a stylesheet references only the engine's style properties. Folded into
+    /// RegisterBuiltinImporters; exposed individually for a cooker that wants the core set plus only
+    /// this importer.
+    /// @param cooker  The cooker to register into.
+    void RegisterStyleSheetImporter(Cooker& cooker);
+
+    /// @brief Registers the UI-document importer.
+    ///
+    /// References libveng's Gui/ vocabulary (ElementKind/StyleProperty) and links cooker-only XML
+    /// and CSS parsers, so it is absent from the veng-free bootstrap cooker. Needs no game module —
+    /// a UI document references only the engine's element kinds and its font/texture/stylesheet
+    /// assets by id. Folded into RegisterBuiltinImporters; exposed individually for a cooker that
+    /// wants the core set plus only this importer.
+    /// @param cooker  The cooker to register into.
+    void RegisterUIDocumentImporter(Cooker& cooker);
 }

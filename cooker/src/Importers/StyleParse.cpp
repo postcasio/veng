@@ -1,0 +1,447 @@
+#include "StyleParse.h"
+
+#include <algorithm>
+#include <cctype>
+#include <charconv>
+#include <cmath>
+#include <cstring>
+
+#include <fmt/format.h>
+
+#include <Veng/Asset/HexId.h>
+#include <Veng/Gui/Element.h>
+#include <Veng/Gui/Style.h>
+
+namespace Veng::Cook
+{
+    using Gui::StyleProperty;
+
+    namespace
+    {
+        std::string_view Trim(std::string_view text)
+        {
+            usize begin = 0;
+            usize end = text.size();
+            while (begin < end && std::isspace(static_cast<unsigned char>(text[begin])) != 0)
+            {
+                ++begin;
+            }
+            while (end > begin && std::isspace(static_cast<unsigned char>(text[end - 1])) != 0)
+            {
+                --end;
+            }
+            return text.substr(begin, end - begin);
+        }
+
+        Result<f32> ParseFloat(std::string_view text, const string& located)
+        {
+            f32 value = 0.0f;
+            const std::from_chars_result result =
+                std::from_chars(text.data(), text.data() + text.size(), value);
+            if (result.ec != std::errc{})
+            {
+                return std::unexpected(
+                    fmt::format("{}: expected a number, got '{}'", located, text));
+            }
+            return value;
+        }
+
+        // A CSS hex color body (rrggbb or rrggbbaa) → a linear straight-alpha vec4. The RGB channels
+        // convert sRGB → linear (the draw-list contract); alpha stays a straight [0,1] value.
+        Result<vec4> ParseHexColor(std::string_view body, const string& located)
+        {
+            if (body.size() != 6 && body.size() != 8)
+            {
+                return std::unexpected(
+                    fmt::format("{}: color '#{}' must be 6 (rrggbb) or 8 (rrggbbaa) hex digits",
+                                located, body));
+            }
+            u32 channels[4] = {0, 0, 0, 255};
+            const usize count = body.size() / 2;
+            for (usize c = 0; c < count; ++c)
+            {
+                u32 v = 0;
+                for (usize d = 0; d < 2; ++d)
+                {
+                    const char h = body[c * 2 + d];
+                    u32 digit = 0;
+                    if (h >= '0' && h <= '9')
+                    {
+                        digit = static_cast<u32>(h - '0');
+                    }
+                    else if (h >= 'a' && h <= 'f')
+                    {
+                        digit = static_cast<u32>(h - 'a') + 10;
+                    }
+                    else if (h >= 'A' && h <= 'F')
+                    {
+                        digit = static_cast<u32>(h - 'A') + 10;
+                    }
+                    else
+                    {
+                        return std::unexpected(fmt::format(
+                            "{}: color '#{}' has a non-hex digit '{}'", located, body, h));
+                    }
+                    v = (v << 4) | digit;
+                }
+                channels[c] = v;
+            }
+
+            const auto toLinear = [](u32 srgb8) -> f32
+            {
+                const f32 c = static_cast<f32>(srgb8) / 255.0f;
+                return c <= 0.04045f ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f);
+            };
+            return vec4(toLinear(channels[0]), toLinear(channels[1]), toLinear(channels[2]),
+                        static_cast<f32>(channels[3]) / 255.0f);
+        }
+
+        // Parses one length token (auto / Npx / N% / a bare number treated as points) into the
+        // (Unit, value) pair a CookedStyleProperty carries for a Length.
+        Result<std::pair<u32, f32>> ParseLength(std::string_view text, const string& located)
+        {
+            const std::string_view t = Trim(text);
+            if (t == "auto")
+            {
+                return std::pair<u32, f32>{static_cast<u32>(Gui::LengthKind::Auto), 0.0f};
+            }
+            if (!t.empty() && t.back() == '%')
+            {
+                const Result<f32> v = ParseFloat(t.substr(0, t.size() - 1), located);
+                if (!v)
+                {
+                    return std::unexpected(v.error());
+                }
+                return std::pair<u32, f32>{static_cast<u32>(Gui::LengthKind::Percent), *v};
+            }
+            std::string_view number = t;
+            if (t.size() >= 2 && t.substr(t.size() - 2) == "px")
+            {
+                number = t.substr(0, t.size() - 2);
+            }
+            const Result<f32> v = ParseFloat(number, located);
+            if (!v)
+            {
+                return std::unexpected(v.error());
+            }
+            return std::pair<u32, f32>{static_cast<u32>(Gui::LengthKind::Points), *v};
+        }
+
+        // Parses a 1–4 length shorthand (margin/padding/inset/corner-radius) into four edge values.
+        // One value applies to all four; the CSS shorthand order is honored for two/three/four.
+        Result<vec4> ParseEdgeShorthand(std::string_view value, const string& located)
+        {
+            vector<f32> parts;
+            usize i = 0;
+            const usize n = value.size();
+            while (i < n)
+            {
+                while (i < n && std::isspace(static_cast<unsigned char>(value[i])) != 0)
+                {
+                    ++i;
+                }
+                const usize start = i;
+                while (i < n && std::isspace(static_cast<unsigned char>(value[i])) == 0)
+                {
+                    ++i;
+                }
+                if (i > start)
+                {
+                    const Result<std::pair<u32, f32>> len =
+                        ParseLength(value.substr(start, i - start), located);
+                    if (!len)
+                    {
+                        return std::unexpected(len.error());
+                    }
+                    parts.push_back(len->second);
+                }
+            }
+            if (parts.empty() || parts.size() > 4)
+            {
+                return std::unexpected(fmt::format(
+                    "{}: expected 1 to 4 space-separated lengths, got {}", located, parts.size()));
+            }
+            // Map to L/T/R/B for insets and TL/TR/BR/BL for radii — both are the CSS box order
+            // top/right/bottom/left, which the cooked payload stores in xyzw as authored.
+            switch (parts.size())
+            {
+            case 1:
+                return vec4(parts[0]);
+            case 2:
+                return vec4(parts[0], parts[1], parts[0], parts[1]);
+            case 3:
+                return vec4(parts[0], parts[1], parts[2], parts[1]);
+            default:
+                return vec4(parts[0], parts[1], parts[2], parts[3]);
+            }
+        }
+
+        optional<u32> ParseFlexDirection(std::string_view v)
+        {
+            if (v == "row")
+            {
+                return static_cast<u32>(Gui::FlexDirection::Row);
+            }
+            if (v == "row-reverse")
+            {
+                return static_cast<u32>(Gui::FlexDirection::RowReverse);
+            }
+            if (v == "column")
+            {
+                return static_cast<u32>(Gui::FlexDirection::Column);
+            }
+            if (v == "column-reverse")
+            {
+                return static_cast<u32>(Gui::FlexDirection::ColumnReverse);
+            }
+            return std::nullopt;
+        }
+
+        optional<u32> ParseJustify(std::string_view v)
+        {
+            if (v == "flex-start")
+            {
+                return static_cast<u32>(Gui::Justify::FlexStart);
+            }
+            if (v == "center")
+            {
+                return static_cast<u32>(Gui::Justify::Center);
+            }
+            if (v == "flex-end")
+            {
+                return static_cast<u32>(Gui::Justify::FlexEnd);
+            }
+            if (v == "space-between")
+            {
+                return static_cast<u32>(Gui::Justify::SpaceBetween);
+            }
+            if (v == "space-around")
+            {
+                return static_cast<u32>(Gui::Justify::SpaceAround);
+            }
+            if (v == "space-evenly")
+            {
+                return static_cast<u32>(Gui::Justify::SpaceEvenly);
+            }
+            return std::nullopt;
+        }
+
+        optional<u32> ParseAlign(std::string_view v)
+        {
+            if (v == "auto")
+            {
+                return static_cast<u32>(Gui::Align::Auto);
+            }
+            if (v == "flex-start")
+            {
+                return static_cast<u32>(Gui::Align::FlexStart);
+            }
+            if (v == "center")
+            {
+                return static_cast<u32>(Gui::Align::Center);
+            }
+            if (v == "flex-end")
+            {
+                return static_cast<u32>(Gui::Align::FlexEnd);
+            }
+            if (v == "stretch")
+            {
+                return static_cast<u32>(Gui::Align::Stretch);
+            }
+            return std::nullopt;
+        }
+
+        optional<u32> ParseWrap(std::string_view v)
+        {
+            if (v == "nowrap")
+            {
+                return static_cast<u32>(Gui::FlexWrap::NoWrap);
+            }
+            if (v == "wrap")
+            {
+                return static_cast<u32>(Gui::FlexWrap::Wrap);
+            }
+            if (v == "wrap-reverse")
+            {
+                return static_cast<u32>(Gui::FlexWrap::WrapReverse);
+            }
+            return std::nullopt;
+        }
+
+        optional<u32> ParsePosition(std::string_view v)
+        {
+            if (v == "relative")
+            {
+                return static_cast<u32>(Gui::PositionType::Relative);
+            }
+            if (v == "absolute")
+            {
+                return static_cast<u32>(Gui::PositionType::Absolute);
+            }
+            return std::nullopt;
+        }
+
+        // Builds a CookedStyleProperty for an enum-valued property, or a located error.
+        Result<CookedStyleProperty> EnumProperty(StyleProperty property, optional<u32> ordinal,
+                                                 std::string_view value, const string& located)
+        {
+            if (!ordinal)
+            {
+                return std::unexpected(fmt::format("{}: '{}' is not a valid value for '{}'",
+                                                   located, value, ToString(property)));
+            }
+            CookedStyleProperty cp{};
+            cp.Property = static_cast<u32>(property);
+            cp.Unit = *ordinal;
+            return cp;
+        }
+
+        Result<CookedStyleProperty> ScalarProperty(StyleProperty property, std::string_view value,
+                                                   const string& located)
+        {
+            const Result<f32> v = ParseFloat(value, located);
+            if (!v)
+            {
+                return std::unexpected(v.error());
+            }
+            CookedStyleProperty cp{};
+            cp.Property = static_cast<u32>(property);
+            cp.Values[0] = *v;
+            return cp;
+        }
+
+        Result<CookedStyleProperty> LengthProperty(StyleProperty property, std::string_view value,
+                                                   const string& located)
+        {
+            const Result<std::pair<u32, f32>> len = ParseLength(value, located);
+            if (!len)
+            {
+                return std::unexpected(len.error());
+            }
+            CookedStyleProperty cp{};
+            cp.Property = static_cast<u32>(property);
+            cp.Unit = len->first;
+            cp.Values[0] = len->second;
+            return cp;
+        }
+
+        Result<CookedStyleProperty> ColorProperty(StyleProperty property, std::string_view value,
+                                                  const string& located)
+        {
+            std::string_view body = value;
+            if (!body.empty() && body.front() == '#')
+            {
+                body = body.substr(1);
+            }
+            const Result<vec4> color = ParseHexColor(body, located);
+            if (!color)
+            {
+                return std::unexpected(color.error());
+            }
+            CookedStyleProperty cp{};
+            cp.Property = static_cast<u32>(property);
+            cp.Values[0] = color->r;
+            cp.Values[1] = color->g;
+            cp.Values[2] = color->b;
+            cp.Values[3] = color->a;
+            return cp;
+        }
+
+        Result<CookedStyleProperty> EdgeProperty(StyleProperty property, std::string_view value,
+                                                 const string& located)
+        {
+            const Result<vec4> edges = ParseEdgeShorthand(value, located);
+            if (!edges)
+            {
+                return std::unexpected(edges.error());
+            }
+            CookedStyleProperty cp{};
+            cp.Property = static_cast<u32>(property);
+            cp.Values[0] = edges->x;
+            cp.Values[1] = edges->y;
+            cp.Values[2] = edges->z;
+            cp.Values[3] = edges->w;
+            return cp;
+        }
+    }
+
+    Result<CookedStyleProperty> ParseStyleDeclaration(StyleProperty property,
+                                                      std::string_view value, const string& located)
+    {
+        const std::string_view v = Trim(value);
+        if (v.empty())
+        {
+            return std::unexpected(
+                fmt::format("{}: '{}' has an empty value", located, ToString(property)));
+        }
+
+        switch (property)
+        {
+        case StyleProperty::FlexDirection:
+            return EnumProperty(property, ParseFlexDirection(v), v, located);
+        case StyleProperty::JustifyContent:
+            return EnumProperty(property, ParseJustify(v), v, located);
+        case StyleProperty::AlignItems:
+        case StyleProperty::AlignSelf:
+            return EnumProperty(property, ParseAlign(v), v, located);
+        case StyleProperty::FlexWrap:
+            return EnumProperty(property, ParseWrap(v), v, located);
+        case StyleProperty::Position:
+            return EnumProperty(property, ParsePosition(v), v, located);
+
+        case StyleProperty::FlexGrow:
+        case StyleProperty::FlexShrink:
+        case StyleProperty::BorderWidth:
+        case StyleProperty::TextSize:
+        case StyleProperty::Opacity:
+            return ScalarProperty(property, v, located);
+
+        case StyleProperty::FlexBasis:
+        case StyleProperty::Width:
+        case StyleProperty::Height:
+        case StyleProperty::MinWidth:
+        case StyleProperty::MinHeight:
+        case StyleProperty::MaxWidth:
+        case StyleProperty::MaxHeight:
+            return LengthProperty(property, v, located);
+
+        case StyleProperty::Margin:
+        case StyleProperty::Padding:
+        case StyleProperty::Inset:
+        case StyleProperty::CornerRadius:
+            return EdgeProperty(property, v, located);
+
+        case StyleProperty::Background:
+        case StyleProperty::BorderColor:
+        case StyleProperty::TextColor:
+            return ColorProperty(property, v, located);
+
+        case StyleProperty::TextFont:
+        {
+            const optional<AssetId> id = ParseAssetId(v);
+            if (!id)
+            {
+                return std::unexpected(
+                    fmt::format("{}: 'font' must be a hex AssetId (0x…), got '{}'", located, v));
+            }
+            CookedStyleProperty cp{};
+            cp.Property = static_cast<u32>(property);
+            cp.Handle = id->Value;
+            return cp;
+        }
+
+        case StyleProperty::ClipContent:
+        {
+            // The `overflow` keyword: `hidden`/`clip` clips, `visible`/`scroll` does not.
+            const bool clips = v == "hidden" || v == "clip";
+            CookedStyleProperty cp{};
+            cp.Property = static_cast<u32>(property);
+            cp.Values[0] = clips ? 1.0f : 0.0f;
+            return cp;
+        }
+        }
+
+        return std::unexpected(
+            fmt::format("{}: unhandled style property '{}'", located, ToString(property)));
+    }
+}

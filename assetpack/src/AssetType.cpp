@@ -34,6 +34,10 @@ namespace Veng
             return "InputMap";
         case AssetType::Font:
             return "Font";
+        case AssetType::StyleSheet:
+            return "StyleSheet";
+        case AssetType::UIDocument:
+            return "UIDocument";
         }
         return "unknown";
     }
@@ -95,6 +99,14 @@ namespace Veng
         if (name == "Font")
         {
             return AssetType::Font;
+        }
+        if (name == "StyleSheet")
+        {
+            return AssetType::StyleSheet;
+        }
+        if (name == "UIDocument")
+        {
+            return AssetType::UIDocument;
         }
         return std::nullopt;
     }

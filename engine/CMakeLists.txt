@@ -23,6 +23,8 @@ add_library(veng SHARED
         src/Asset/Loaders/EnvironmentLoader.cpp
         src/Asset/Loaders/FontLoader.cpp
         src/Asset/Loaders/InputMapLoader.cpp
+        src/Asset/Loaders/StyleSheetLoader.cpp
+        src/Asset/Loaders/UIDocumentLoader.cpp
         src/Asset/Loaders/LevelLoader.cpp
         src/Asset/Loaders/MaterialLoader.cpp
         src/Asset/Loaders/MaterialInstanceLoader.cpp
@@ -90,6 +92,9 @@ add_library(veng SHARED
         src/Renderer/GatherPass.cpp
         src/Gui/DrawList.cpp
         src/Gui/Document.cpp
+        src/Gui/StyleProperty.cpp
+        src/Gui/StyleSheet.cpp
+        src/Gui/UIDocument.cpp
         src/Gui/YogaTree.cpp
         src/Renderer/Passes/GuiScenePass.cpp
         src/Renderer/DebugDraw.cpp

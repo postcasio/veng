@@ -47,6 +47,10 @@ namespace VengEditor
             return "InputMap";
         case AssetType::Font:
             return "Font";
+        case AssetType::StyleSheet:
+            return "StyleSheet";
+        case AssetType::UIDocument:
+            return "UIDocument";
         }
         return "Unknown";
     }
@@ -83,6 +87,10 @@ namespace VengEditor
             return "INP";
         case AssetType::Font:
             return "FNT";
+        case AssetType::StyleSheet:
+            return "USS";
+        case AssetType::UIDocument:
+            return "VUI";
         }
         return "?";
     }
@@ -117,6 +125,10 @@ namespace VengEditor
             return {0.70f, 0.60f, 0.35f, 1.0f};
         case AssetType::Font:
             return {0.65f, 0.35f, 0.65f, 1.0f};
+        case AssetType::StyleSheet:
+            return {0.40f, 0.60f, 0.75f, 1.0f};
+        case AssetType::UIDocument:
+            return {0.75f, 0.55f, 0.40f, 1.0f};
         case AssetType::Raw:
             return {0.50f, 0.50f, 0.50f, 1.0f};
         }

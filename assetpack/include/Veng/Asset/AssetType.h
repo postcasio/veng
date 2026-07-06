@@ -40,6 +40,10 @@ namespace Veng
         InputMap,
         /// @brief An MSDF glyph atlas plus per-glyph and kerning metrics (see CookedFontHeader).
         Font,
+        /// @brief A flattened, resolved set of USS-like style rules keyed by selector and state (see CookedStyleSheetHeader).
+        StyleSheet,
+        /// @brief A binary UI element tree referencing its fonts, textures, and stylesheets (see CookedUIDocumentHeader).
+        UIDocument,
     };
 
     /// @brief Canonical authoring/manifest name of an asset type ("texture", "material_instance", …).

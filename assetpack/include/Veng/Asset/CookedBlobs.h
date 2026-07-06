@@ -720,4 +720,213 @@ namespace Veng
         /// @brief Kerning adjustment added to Left's advance when Right follows, in em units.
         f32 Advance = 0.0f;
     };
+
+    /// @brief The current stylesheet-format version.
+    ///
+    /// Bumped on any CookedStyleSheetHeader/CookedStyleRule/CookedStyleProperty/CookedStyleProperty
+    /// layout change; the loader rejects a blob whose Version != this.
+    inline constexpr u32 CookedStyleSheetVersion = 1u;
+
+    /// @brief Maximum byte length (including nul terminator) for a selector's class/id/type name.
+    ///
+    /// A USS selector token (a class name, an id, an element type name) is truncated at
+    /// StyleSelectorNameCapacity - 1 bytes.
+    inline constexpr usize StyleSelectorNameCapacity = 64;
+
+    /// @brief Cooked header for a stylesheet asset.
+    ///
+    /// A stylesheet is a flattened, resolved set of USS-like rules: each rule is a selector
+    /// (an element type / class / id, optionally scoped to one pseudo-state) paired with the
+    /// property declarations it sets. The cooker parses `*.vuss` selectors offline; the runtime
+    /// never runs a selector engine — it matches an element's tags against these rules at load
+    /// and cascades the survivors onto the element's resolved style. A stylesheet is a standalone,
+    /// reusable asset: one stylesheet feeds many documents.
+    ///
+    /// The blob is, in order:
+    ///   CookedStyleSheetHeader
+    ///   CookedStyleRule[RuleCount]           — one entry per USS rule, in source order
+    ///   CookedStyleProperty[PropertyCount]   — every rule's declarations, contiguous per rule
+    ///
+    /// A rule's declarations are the PropertyCount-slice [FirstProperty, FirstProperty + PropertyCount)
+    /// of the property table. Rules are stored in source order so a later rule of equal specificity
+    /// wins the cascade, matching CSS source-order precedence.
+    struct CookedStyleSheetHeader
+    {
+        /// @brief Must equal CookedStyleSheetVersion; the loader rejects mismatches.
+        u32 Version = 0;
+        /// @brief Number of CookedStyleRule entries following this header.
+        u32 RuleCount = 0;
+        /// @brief Total number of CookedStyleProperty entries following the rule table.
+        u32 PropertyCount = 0;
+    };
+
+    /// @brief One flattened USS rule: a selector, a pseudo-state, and its declaration range.
+    ///
+    /// The selector matches an element by its element type (Type), one class tag (Class), and/or
+    /// one id (Id) — an empty field is a wildcard on that axis, so an empty Type/Class/Id matches
+    /// any element (a `.class` rule sets only Class; a `Type.class#id` rule sets all three). State
+    /// is the underlying Gui::ElementState integer the rule applies in (0 = the base state; a
+    /// single set bit for a pseudo-state like `:hover`). The runtime cascades base rules onto the
+    /// element's resolved style and keeps the state-scoped rules as variants keyed by State.
+    struct CookedStyleRule
+    {
+        /// @brief Nul-terminated element type name the selector requires ("Button"), or empty for any type.
+        char Type[StyleSelectorNameCapacity] = {};
+        /// @brief Nul-terminated class tag the selector requires ("primary"), or empty for no class constraint.
+        char Class[StyleSelectorNameCapacity] = {};
+        /// @brief Nul-terminated id the selector requires ("start-button"), or empty for no id constraint.
+        char Id[StyleSelectorNameCapacity] = {};
+        /// @brief Underlying Gui::ElementState integer the rule applies in (0 = base, a single bit for a pseudo-state).
+        u32 State = 0;
+        /// @brief Index of this rule's first declaration in the property table.
+        u32 FirstProperty = 0;
+        /// @brief Number of declarations this rule sets.
+        u32 PropertyCount = 0;
+    };
+
+    /// @brief One resolved style declaration within a cooked rule: a property id and its value.
+    ///
+    /// Property is the underlying Gui::StyleProperty integer naming which Style field the
+    /// declaration sets. The value rides a uniform payload the loader interprets by property:
+    /// Unit carries a Length's LengthKind ordinal or an enum property's enumerator ordinal;
+    /// Values holds the numeric payload (a Length's value in [0], a vec4/CornerRadii/Insets in
+    /// [0..3], a single f32 in [0]); Handle carries a font property's AssetId (else 0). Colors are
+    /// resolved to linear straight-alpha floats at cook time (authored sRGB `#rrggbbaa`), matching
+    /// the draw-list contract.
+    struct CookedStyleProperty
+    {
+        /// @brief Underlying Gui::StyleProperty integer naming the Style field this declaration sets.
+        u32 Property = 0;
+        /// @brief A Length's LengthKind ordinal or an enum property's enumerator ordinal; 0 otherwise.
+        u32 Unit = 0;
+        /// @brief Numeric payload: a Length value ([0]), a vec4/CornerRadii/Insets ([0..3]), or a scalar ([0]).
+        f32 Values[4] = {};
+        /// @brief AssetId for a font property (resolved as a load-time dependency); 0 otherwise.
+        u64 Handle = 0;
+    };
+
+    /// @brief The current UI-document-format version.
+    ///
+    /// Bumped on any CookedUIDocumentHeader/CookedUIElement/inline-property/blob-region layout
+    /// change; the loader rejects a blob whose Version != this.
+    inline constexpr u32 CookedUIDocumentVersion = 1u;
+
+    /// @brief Cooked header for a UI-document asset.
+    ///
+    /// A UI document is a binary element tree: a flat, pre-order array of elements (each carrying
+    /// its kind, id, class tags, text, `{binding}` expression strings, handler names, and inline
+    /// style overrides), the stylesheets it references, and its font/texture dependencies. The
+    /// cooker parses the `*.vui.xml` markup offline; the runtime materializes an independent live
+    /// element tree from this immutable recipe (the Prefab model — two instances over one blob).
+    ///
+    /// The blob is, in order:
+    ///   CookedUIDocumentHeader
+    ///   u64[StyleSheetCount]                 — referenced StyleSheet AssetIds (load-time dependencies)
+    ///   CookedUIElement[ElementCount]        — the element tree, pre-order
+    ///   CookedUIStringSpan[ClassCount]       — every element's class tags, contiguous per element
+    ///   CookedUIBinding[BindingCount]        — every element's bindings, contiguous per element
+    ///   CookedUIHandler[HandlerCount]        — every element's handlers, contiguous per element
+    ///   CookedStyleProperty[InlinePropertyCount] — every element's inline-style declarations, contiguous per element
+    ///   string region (StringBytes)          — UTF-8 strings the elements index by byte offset
+    ///
+    /// Each element addresses its strings (id, text, class list, binding expressions, handler names)
+    /// by a (offset, length) pair into the string region, so a name appears once and an element is a
+    /// fixed-size record. The tree is pre-order with an explicit child count per element, so the
+    /// loader reconstructs the hierarchy in one linear pass.
+    struct CookedUIDocumentHeader
+    {
+        /// @brief Must equal CookedUIDocumentVersion; the loader rejects mismatches.
+        u32 Version = 0;
+        /// @brief Number of referenced StyleSheet AssetIds following this header.
+        u32 StyleSheetCount = 0;
+        /// @brief Number of CookedUIElement entries following the stylesheet id array.
+        u32 ElementCount = 0;
+        /// @brief Total number of CookedUIStringSpan class-tag entries following the element array.
+        u32 ClassCount = 0;
+        /// @brief Total number of CookedUIBinding entries following the class-tag table.
+        u32 BindingCount = 0;
+        /// @brief Total number of CookedUIHandler entries following the binding table.
+        u32 HandlerCount = 0;
+        /// @brief Total number of CookedStyleProperty inline-style entries following the handler table.
+        u32 InlinePropertyCount = 0;
+        /// @brief Byte size of the trailing string region.
+        u32 StringBytes = 0;
+    };
+
+    /// @brief A byte range into a cooked UI document's string region.
+    ///
+    /// Offset is a byte offset into the string region; Length is the byte length of the UTF-8
+    /// string there. A zero-length span is the empty string. Every string an element carries (id,
+    /// text, one class tag, one binding key/expression, one handler name) is addressed this way, so
+    /// the element record stays fixed-size and a repeated name is deduplicated in the region.
+    struct CookedUIStringSpan
+    {
+        /// @brief Byte offset of the string within the document's string region.
+        u32 Offset = 0;
+        /// @brief Byte length of the string; 0 for the empty string.
+        u32 Length = 0;
+    };
+
+    /// @brief One element in a cooked UI document's pre-order element tree.
+    ///
+    /// Kind is the underlying Gui::ElementKind integer. Id and Text are single string spans; the
+    /// class tags, binding expressions, and handler names are contiguous runs in their respective
+    /// side tables (Classes/Bindings/Handlers), each element naming its run's first index and count.
+    /// FirstInlineProperty/InlinePropertyCount slice the inline-style property table. ChildCount is
+    /// the number of immediately-following elements (recursively) that are this element's direct
+    /// children — the pre-order layout lets the loader rebuild the hierarchy in one pass.
+    struct CookedUIElement
+    {
+        /// @brief Underlying Gui::ElementKind integer this element instantiates.
+        u32 Kind = 0;
+        /// @brief The element's id string span (empty when untagged).
+        CookedUIStringSpan Id;
+        /// @brief The Text element's content string span (empty for non-text kinds and untexted elements).
+        CookedUIStringSpan Text;
+        /// @brief Index of this element's first class tag in the class-span table.
+        u32 FirstClass = 0;
+        /// @brief Number of class tags this element carries.
+        u32 ClassCount = 0;
+        /// @brief Index of this element's first binding in the binding table.
+        u32 FirstBinding = 0;
+        /// @brief Number of `{binding}` expressions this element carries.
+        u32 BindingCount = 0;
+        /// @brief Index of this element's first handler in the handler table.
+        u32 FirstHandler = 0;
+        /// @brief Number of named event handlers this element carries.
+        u32 HandlerCount = 0;
+        /// @brief Index of this element's first inline-style declaration in the inline-property table.
+        u32 FirstInlineProperty = 0;
+        /// @brief Number of inline-style declarations this element sets.
+        u32 InlinePropertyCount = 0;
+        /// @brief Number of direct children of this element (they follow in pre-order).
+        u32 ChildCount = 0;
+    };
+
+    /// @brief One binding on a cooked UI element: the target property name and its expression.
+    ///
+    /// Property is the bound attribute name (e.g. "value"); Expression is the unresolved
+    /// `{obj.field}` expression string with the braces stripped (e.g. "player.health"). Both are
+    /// string spans into the document's string region. Binding expressions are stored unresolved;
+    /// the runtime resolves them against a bound context.
+    struct CookedUIBinding
+    {
+        /// @brief The bound attribute name string span (e.g. "value").
+        CookedUIStringSpan Property;
+        /// @brief The unresolved binding expression string span (braces stripped, e.g. "player.health").
+        CookedUIStringSpan Expression;
+    };
+
+    /// @brief One named event handler on a cooked UI element: the event name and the handler name.
+    ///
+    /// Event is the event attribute name (e.g. "onClick"); Handler is the C++ handler name the
+    /// attribute names (e.g. "OpenMenu"). Both are string spans into the document's string region.
+    /// Handler names are stored unresolved; the runtime resolves them against a bound context.
+    struct CookedUIHandler
+    {
+        /// @brief The event attribute name string span (e.g. "onClick").
+        CookedUIStringSpan Event;
+        /// @brief The unresolved handler name string span (e.g. "OpenMenu").
+        CookedUIStringSpan Handler;
+    };
 }
