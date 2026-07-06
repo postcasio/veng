@@ -235,6 +235,14 @@ namespace Veng::Renderer
 
     void Viewport::Render(CommandBuffer& cmd)
     {
+        // A disabled viewport skips its whole render, keeping the prior output — the owner knows
+        // it is fully occluded (a fullscreen screen presented over it) and pays nothing for it.
+        if (!m_Enabled)
+        {
+            m_ViewStateFresh = false;
+            return;
+        }
+
         // An on-demand viewport renders only on a frame its owner pushed a fresh ViewState. A hidden
         // editor panel does not draw, so it pushes none and this skips its render — the viewport
         // keeps its prior output but stops re-rendering (and writing the shared bindless targets)

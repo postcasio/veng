@@ -222,6 +222,18 @@ namespace Veng::Renderer
         /// @brief Returns whether automatic render-scale control is enabled.
         [[nodiscard]] bool IsDynamicResolutionEnabled() const;
 
+        /// @brief Enables or disables this viewport's rendering.
+        ///
+        /// Disabled, Render is a whole no-op: the prior output stays resident and sampleable (the
+        /// compositor may keep placing it) but nothing re-renders. For an owner that knows the
+        /// viewport is fully occluded — a fullscreen screen presented over it — so its whole render
+        /// cost is reclaimed while covered. Enabled by default.
+        /// @param enabled  False to skip rendering; true to resume.
+        void SetEnabled(bool enabled) { m_Enabled = enabled; }
+
+        /// @brief Returns whether this viewport renders (see SetEnabled).
+        [[nodiscard]] bool IsEnabled() const { return m_Enabled; }
+
         /// @brief Returns the dynamic-resolution settings in effect, or nullopt while disabled.
         ///
         /// The read side of SetDynamicResolution: a settings editor starts from here and hands its
@@ -439,6 +451,8 @@ namespace Veng::Renderer
         /// Only read when m_RenderOnDemand is set, where it skips a render for a frame whose owner
         /// pushed no source (a hidden editor panel that did not draw).
         bool m_ViewStateFresh = false;
+        /// @brief Whether Render renders at all (see SetEnabled); the output persists while off.
+        bool m_Enabled = true;
 
         /// @brief The bound per-frame render source.
         ViewState m_ViewState;
