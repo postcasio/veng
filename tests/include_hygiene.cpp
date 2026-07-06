@@ -69,6 +69,8 @@
 #include <Veng/UI/Query.h>
 #include <Veng/UI/DebugPanels.h>
 
+#include <Veng/Gui/DrawList.h>
+
 #include <Veng/Module/ApplicationRegistry.h>
 #include <Veng/Module/Module.h>
 #include <Veng/Module/ModuleLoader.h>

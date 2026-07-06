@@ -88,6 +88,8 @@ add_library(veng SHARED
         src/Scene/Visibility.cpp
         src/Renderer/SwapChainCompositePass.cpp
         src/Renderer/GatherPass.cpp
+        src/Gui/DrawList.cpp
+        src/Renderer/Passes/GuiScenePass.cpp
         src/Renderer/DebugDraw.cpp
         src/Renderer/DebugDrawScenePass.cpp
         src/Renderer/PointField.cpp

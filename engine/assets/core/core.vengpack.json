@@ -27,9 +27,29 @@
       "source": "layouts/debugline.vlayout.json"
     },
     {
+      "id": "0x87399C509177A8C2",
+      "type": "VertexLayout",
+      "source": "layouts/gui.vlayout.json"
+    },
+    {
       "id": "0xF46DD3C6F2AE0628",
       "type": "Shader",
       "source": "shaders/fullscreen.vert.shader.json"
+    },
+    {
+      "id": "0x23896E307C8108E6",
+      "type": "Shader",
+      "source": "shaders/gui.vert.shader.json"
+    },
+    {
+      "id": "0x65A3CA937C34B0C3",
+      "type": "Shader",
+      "source": "shaders/gui_shape.frag.shader.json"
+    },
+    {
+      "id": "0x3F9BA093ED47FCEA",
+      "type": "Shader",
+      "source": "shaders/gui_msdf.frag.shader.json"
     },
     {
       "id": "0x69BE03796E97148D",

@@ -530,6 +530,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/viewport_mapping.cpp
             tests/unit/managed_viewports.cpp
             tests/unit/dynamic_resolution.cpp
+            tests/unit/gui_draw_list.cpp
     )
     target_link_libraries(veng_test_unit PRIVATE veng::veng doctest::doctest)
 
@@ -984,6 +985,11 @@ if (VENG_BUILD_TESTS)
             # font_loader.cpp cooks the font fixture pack in-process (msdf-atlas-gen),
             # LoadSyncs the Font, and asserts the atlas + metrics + ShapeRun contract.
             tests/gpu/font_loader.cpp
+            # gui_golden.cpp cooks the font fixture pack, builds a hand-authored DrawList,
+            # renders it through GuiScenePass over a solid scene output, and fuzzy-compares
+            # the composite to the committed golden PNG (the Gui image floor). It loads the
+            # golden via stb_image (whose implementation is already linked from veng::cook).
+            tests/gpu/gui_golden.cpp
             tests/gpu/mesh_loader.cpp
             tests/gpu/shader_loader.cpp
             tests/gpu/material_loader.cpp
@@ -1027,7 +1033,11 @@ if (VENG_BUILD_TESTS)
             # The gbuffer fixture's brick shaders `#include "Veng/surface.slang"`,
             # so the in-process cook adds the engine core shader dir to its search path.
             VENG_CORE_SHADER_DIR="${VENG_CORE_SHADER_DIR}"
+            # gui_golden.cpp reads its committed golden PNG from the source tree.
+            GUI_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/golden"
     )
+    # gui_golden.cpp loads its golden PNG through stb_image.
+    target_include_directories(veng_test_gpu PRIVATE ${stb_SOURCE_DIR})
 
     add_test(NAME veng_test_gpu COMMAND veng_test_gpu)
     set_tests_properties(veng_test_gpu PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)

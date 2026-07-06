@@ -1,0 +1,451 @@
+#include "GuiScenePass.h"
+
+#include <cstring>
+
+#include <Veng/Assert.h>
+#include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/Shader.h>
+#include <Veng/Asset/VertexLayout.h>
+#include <Veng/Gui/DrawList.h>
+#include <Veng/Renderer/BindlessRegistry.h>
+#include <Veng/Renderer/Buffer.h>
+#include <Veng/Renderer/CommandBuffer.h>
+#include <Veng/Renderer/Context.h>
+#include <Veng/Renderer/GraphicsPipeline.h>
+#include <Veng/Renderer/Image.h>
+#include <Veng/Renderer/ImageView.h>
+#include <Veng/Renderer/PipelineLayout.h>
+#include <Veng/Renderer/RenderGraph.h>
+#include <Veng/Renderer/Sampler.h>
+
+namespace Veng::Renderer
+{
+    namespace
+    {
+        constexpr AssetId FullscreenVertId{0xF46DD3C6F2AE0628ULL};
+        constexpr AssetId GatherFragId{0x657ADCF9558CA6B9ULL};
+        constexpr AssetId GuiVertId{0x23896E307C8108E6ULL};
+        constexpr AssetId GuiShapeFragId{0x65A3CA937C34B0C3ULL};
+        constexpr AssetId GuiMsdfFragId{0x3F9BA093ED47FCEAULL};
+
+        // Linear premultiplied-alpha "over": the fragments already output rgb premultiplied by
+        // alpha, so the source color factor is One (not SrcAlpha) and both color and alpha
+        // accumulate against OneMinusSrcAlpha.
+        BlendState PremultipliedOver()
+        {
+            return {
+                .Enable = true,
+                .SrcColorFactor = BlendFactor::One,
+                .DstColorFactor = BlendFactor::OneMinusSrcAlpha,
+                .ColorOp = BlendOp::Add,
+                .SrcAlphaFactor = BlendFactor::One,
+                .DstAlphaFactor = BlendFactor::OneMinusSrcAlpha,
+                .AlphaOp = BlendOp::Add,
+            };
+        }
+
+        // Push block for the gui vertex stage: the reciprocal of the UI image extent, mapping a
+        // framebuffer-pixel position to clip space.
+        struct GuiPushConstants
+        {
+            vec2 InvScreenSize;
+            vec2 Pad0;
+        };
+
+        // Push block for the fullscreen composite/blit fragment (gather.frag): the bindless slots
+        // of the sampled source and the sampler.
+        struct BlitPushConstants
+        {
+            u32 Texture;
+            u32 Sampler;
+        };
+    }
+
+    struct GuiScenePass::Impl
+    {
+        Renderer::Context& Context;
+        uvec2 Extent;
+        Format OutputFormat;
+
+        // Resident shaders keep the modules alive for the pipelines' lifetime.
+        AssetHandle<Veng::Shader> FullscreenVs;
+        AssetHandle<Veng::Shader> GatherFs;
+        AssetHandle<Veng::Shader> GuiVs;
+        AssetHandle<Veng::Shader> ShapeFs;
+        AssetHandle<Veng::Shader> MsdfFs;
+
+        Ref<PipelineLayout> GuiLayout;
+        Ref<GraphicsPipeline> ShapePipeline;
+        Ref<GraphicsPipeline> MsdfPipeline;
+
+        Ref<PipelineLayout> BlitLayout;
+        Ref<GraphicsPipeline> ScenePipeline;   // opaque scene copy into the composite
+        Ref<GraphicsPipeline> OverlayPipeline; // premultiplied-over UI blit into the composite
+
+        Ref<Sampler> Sampler;
+        SamplerHandle SamplerSlot;
+
+        // The offscreen UI image (linear premultiplied alpha) and the composite target.
+        Ref<Image> UiImage;
+        Ref<ImageView> UiView;
+        Ref<Image> CompositeImage;
+        Ref<ImageView> CompositeView;
+
+        // Ring-buffered geometry: one region per frame-in-flight, host-mapped for direct writes.
+        Ref<Buffer> VertexBuffer;
+        Ref<Buffer> IndexBuffer;
+        u32 FramesInFlight = 0;
+        u64 VertexRegionBytes = 0;
+        u64 IndexRegionBytes = 0;
+
+        // The cached draw-list geometry bases + runs for the next Render, in the current region.
+        // The whole ring is bound at offset 0, so each run's draw applies VertexBase as the index's
+        // vertex offset and IndexBase as its first-index offset to reach this frame's region.
+        i32 VertexBase = 0;
+        u32 IndexBase = 0;
+        vector<Gui::DrawRun> Runs;
+
+        explicit Impl(const GuiScenePassInfo& info)
+            : Context(info.Context), Extent(info.Extent), OutputFormat(info.OutputFormat)
+        {
+        }
+
+        void CreateImages()
+        {
+            UiImage =
+                Image::Create(Context, {
+                                           .Name = "Gui UI Image",
+                                           .Extent = {Extent.x, Extent.y, 1},
+                                           .Format = OutputFormat,
+                                           .Usage = ImageUsage::ColorAttachment |
+                                                    ImageUsage::Sampled | ImageUsage::TransferSrc,
+                                       });
+            UiView = ImageView::Create(Context, {.Name = "Gui UI View", .Image = UiImage});
+
+            CompositeImage =
+                Image::Create(Context, {
+                                           .Name = "Gui Composite Image",
+                                           .Extent = {Extent.x, Extent.y, 1},
+                                           .Format = OutputFormat,
+                                           .Usage = ImageUsage::ColorAttachment |
+                                                    ImageUsage::Sampled | ImageUsage::TransferSrc,
+                                       });
+            CompositeView =
+                ImageView::Create(Context, {.Name = "Gui Composite View", .Image = CompositeImage});
+        }
+    };
+
+    Unique<GuiScenePass> GuiScenePass::Create(const GuiScenePassInfo& info)
+    {
+        return Unique<GuiScenePass>(new GuiScenePass(info));
+    }
+
+    GuiScenePass::GuiScenePass(const GuiScenePassInfo& info) : m_Impl(CreateUnique<Impl>(info))
+    {
+        Context& context = info.Context;
+        AssetManager& assets = info.Assets;
+
+        auto load = [&](AssetId id) -> AssetHandle<Veng::Shader>
+        {
+            const AssetResult<AssetHandle<Veng::Shader>> result = assets.LoadSync<Veng::Shader>(id);
+            VE_ASSERT(result.has_value(), "GuiScenePass: shader load failed: {}",
+                      result.error().Detail);
+            return *result;
+        };
+
+        m_Impl->FullscreenVs = load(FullscreenVertId);
+        m_Impl->GatherFs = load(GatherFragId);
+        m_Impl->GuiVs = load(GuiVertId);
+        m_Impl->ShapeFs = load(GuiShapeFragId);
+        m_Impl->MsdfFs = load(GuiMsdfFragId);
+
+        // The gui vertex layout comes from the gui vertex shader's reflected layout id.
+        optional<VertexBufferLayout> guiLayout;
+        const ShaderInterface& guiVsInterface = m_Impl->GuiVs.Get()->Interface;
+        if (guiVsInterface.VertexLayoutId.has_value())
+        {
+            const AssetResult<AssetHandle<Veng::VertexLayout>> layoutResult =
+                assets.LoadSync<Veng::VertexLayout>(*guiVsInterface.VertexLayoutId);
+            VE_ASSERT(layoutResult.has_value(), "GuiScenePass: gui vertex layout load failed: {}",
+                      layoutResult.error().Detail);
+            guiLayout = layoutResult->Get()->GetLayout();
+        }
+
+        m_Impl->GuiLayout = PipelineLayout::Create(
+            context, {
+                         .Name = "GuiScenePass Gui Layout",
+                         .PushConstantRanges = {PushConstantRange::Of<GuiPushConstants>(
+                             ShaderStage::Vertex)},
+                     });
+
+        auto buildGuiPipeline = [&](string_view name, const AssetHandle<Veng::Shader>& fs)
+        {
+            return GraphicsPipeline::Create(
+                context,
+                {
+                    .Name = string(name),
+                    .ColorAttachments = {{.Format = m_Impl->OutputFormat,
+                                          .Blend = PremultipliedOver()}},
+                    .VertexBufferLayout = guiLayout,
+                    .PipelineLayout = m_Impl->GuiLayout,
+                    .ShaderStages =
+                        {
+                            {.Stage = ShaderStage::Vertex, .Module = m_Impl->GuiVs.Get()->Module},
+                            {.Stage = ShaderStage::Fragment, .Module = fs.Get()->Module},
+                        },
+                });
+        };
+        m_Impl->ShapePipeline = buildGuiPipeline("GuiScenePass Shape Pipeline", m_Impl->ShapeFs);
+        m_Impl->MsdfPipeline = buildGuiPipeline("GuiScenePass Msdf Pipeline", m_Impl->MsdfFs);
+
+        // The composite passes are fullscreen gather.frag blits: an opaque scene copy, then a
+        // premultiplied-over UI blit on top.
+        m_Impl->BlitLayout = PipelineLayout::Create(
+            context, {
+                         .Name = "GuiScenePass Blit Layout",
+                         .PushConstantRanges = {PushConstantRange::Of<BlitPushConstants>(
+                             ShaderStage::Fragment)},
+                     });
+
+        auto buildBlitPipeline = [&](string_view name, BlendState blend)
+        {
+            return GraphicsPipeline::Create(
+                context, {
+                             .Name = string(name),
+                             .ColorAttachments = {{.Format = m_Impl->OutputFormat, .Blend = blend}},
+                             .PipelineLayout = m_Impl->BlitLayout,
+                             .ShaderStages =
+                                 {
+                                     {.Stage = ShaderStage::Vertex,
+                                      .Module = m_Impl->FullscreenVs.Get()->Module},
+                                     {.Stage = ShaderStage::Fragment,
+                                      .Module = m_Impl->GatherFs.Get()->Module},
+                                 },
+                         });
+        };
+        m_Impl->ScenePipeline =
+            buildBlitPipeline("GuiScenePass Scene Copy Pipeline", BlendState::Opaque());
+        m_Impl->OverlayPipeline =
+            buildBlitPipeline("GuiScenePass Overlay Pipeline", PremultipliedOver());
+
+        m_Impl->Sampler = Sampler::Create(context, {
+                                                       .Name = "GuiScenePass Sampler",
+                                                       .MagFilter = Filter::Linear,
+                                                       .MinFilter = Filter::Linear,
+                                                       .AddressModeU = AddressMode::ClampToEdge,
+                                                       .AddressModeV = AddressMode::ClampToEdge,
+                                                       .AddressModeW = AddressMode::ClampToEdge,
+                                                   });
+        m_Impl->SamplerSlot = context.GetBindlessRegistry().Register(m_Impl->Sampler);
+
+        // Ring the geometry per frame-in-flight, sized to a generous UI budget.
+        constexpr u32 MaxVertices = 1u << 16;
+        constexpr u32 MaxIndices = 1u << 17;
+        m_Impl->FramesInFlight = context.GetMaxFramesInFlight();
+        m_Impl->VertexRegionBytes = static_cast<u64>(MaxVertices) * sizeof(Gui::GuiVertex);
+        m_Impl->IndexRegionBytes = static_cast<u64>(MaxIndices) * sizeof(u32);
+
+        m_Impl->VertexBuffer =
+            Buffer::Create(context, {
+                                        .Name = "GuiScenePass Vertices",
+                                        .Size = m_Impl->VertexRegionBytes * m_Impl->FramesInFlight,
+                                        .Usage = BufferUsage::Vertex,
+                                        .HostMapped = true,
+                                    });
+        m_Impl->IndexBuffer =
+            Buffer::Create(context, {
+                                        .Name = "GuiScenePass Indices",
+                                        .Size = m_Impl->IndexRegionBytes * m_Impl->FramesInFlight,
+                                        .Usage = BufferUsage::Index,
+                                        .HostMapped = true,
+                                    });
+
+        m_Impl->CreateImages();
+    }
+
+    GuiScenePass::~GuiScenePass()
+    {
+        m_Impl->Context.GetBindlessRegistry().Release(m_Impl->SamplerSlot);
+    }
+
+    void GuiScenePass::SetDrawList(const Gui::DrawList& drawList)
+    {
+        const u32 frame = m_Impl->Context.GetCurrentFrameInFlight();
+
+        const auto& vertices = drawList.GetVertices();
+        const auto& indices = drawList.GetIndices();
+
+        const u64 vertexBytes = vertices.size() * sizeof(Gui::GuiVertex);
+        const u64 indexBytes = indices.size() * sizeof(u32);
+        VE_ASSERT(vertexBytes <= m_Impl->VertexRegionBytes,
+                  "GuiScenePass draw list exceeds the vertex ring capacity ({} > {})", vertexBytes,
+                  m_Impl->VertexRegionBytes);
+        VE_ASSERT(indexBytes <= m_Impl->IndexRegionBytes,
+                  "GuiScenePass draw list exceeds the index ring capacity ({} > {})", indexBytes,
+                  m_Impl->IndexRegionBytes);
+
+        const u64 vertexByteBase = static_cast<u64>(frame) * m_Impl->VertexRegionBytes;
+        m_Impl->VertexBase = static_cast<i32>(vertexByteBase / sizeof(Gui::GuiVertex));
+        const u64 indexByteBase = static_cast<u64>(frame) * m_Impl->IndexRegionBytes;
+        m_Impl->IndexBase = static_cast<u32>(indexByteBase / sizeof(u32));
+
+        if (vertexBytes > 0)
+        {
+            auto* vertexDst = static_cast<u8*>(m_Impl->VertexBuffer->GetMappedData());
+            std::memcpy(vertexDst + vertexByteBase, vertices.data(), vertexBytes);
+        }
+        if (indexBytes > 0)
+        {
+            auto* indexDst = static_cast<u8*>(m_Impl->IndexBuffer->GetMappedData());
+            std::memcpy(indexDst + indexByteBase, indices.data(), indexBytes);
+        }
+
+        m_Impl->Runs = drawList.GetRuns();
+    }
+
+    void GuiScenePass::Resize(uvec2 extent)
+    {
+        if (extent == m_Impl->Extent || extent.x == 0 || extent.y == 0)
+        {
+            return;
+        }
+        m_Impl->Extent = extent;
+        m_Impl->CreateImages();
+    }
+
+    void GuiScenePass::Render(CommandBuffer& cmd, const Ref<ImageView>& sceneOutput)
+    {
+        Impl& impl = *m_Impl;
+        BindlessRegistry& bindless = impl.Context.GetBindlessRegistry();
+
+        // The scene output and the UI image are both sampled by the composite pass, out of any
+        // single graph, so bind their bindless slots for this frame and release them after.
+        const TextureHandle sceneSlot = bindless.Register(sceneOutput);
+        const TextureHandle uiSlot = bindless.Register(impl.UiView);
+
+        RenderGraph graph(impl.Context);
+        const ResourceId uiId = graph.Import("Gui UI");
+        const ResourceId sceneId = graph.Import("Gui Scene");
+        const ResourceId compositeId = graph.Import("Gui Composite");
+
+        // Pass 1 — record the draw list into the UI image (cleared to transparent).
+        graph.AddPass("Gui UI")
+            .Color({
+                .Resource = uiId,
+                .Load = LoadOp::Clear,
+                .Store = StoreOp::Store,
+                .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 0.0f},
+            })
+            .Execute(
+                [&](PassContext& ctx)
+                {
+                    CommandBuffer& passCmd = ctx.Cmd();
+                    passCmd.SetViewport({0, 0}, impl.Extent);
+                    passCmd.BindVertexBuffer(impl.VertexBuffer);
+                    passCmd.BindIndexBuffer(impl.IndexBuffer, IndexType::U32);
+
+                    const GuiPushConstants push{
+                        .InvScreenSize = vec2(1.0f / static_cast<f32>(impl.Extent.x),
+                                              1.0f / static_cast<f32>(impl.Extent.y)),
+                        .Pad0 = vec2(0.0f),
+                    };
+
+                    optional<Gui::GuiPipeline> boundPipeline;
+
+                    for (const Gui::DrawRun& run : impl.Runs)
+                    {
+                        if (run.IndexCount == 0)
+                        {
+                            continue;
+                        }
+
+                        if (boundPipeline != run.Pipeline)
+                        {
+                            passCmd.BindPipeline(run.Pipeline == Gui::GuiPipeline::Msdf
+                                                     ? impl.MsdfPipeline
+                                                     : impl.ShapePipeline);
+                            // Set 0 is bound after the pipeline so the layout is established.
+                            bindless.Bind(passCmd);
+                            passCmd.PushConstants(push);
+                            boundPipeline = run.Pipeline;
+                        }
+
+                        // The run's clip is already an absolute rectangle; unclipped runs scissor
+                        // the whole surface.
+                        if (run.HasClip)
+                        {
+                            const ivec2 offset{static_cast<i32>(run.Clip.Min.x),
+                                               static_cast<i32>(run.Clip.Min.y)};
+                            const uvec2 extent{static_cast<u32>(run.Clip.Size.x),
+                                               static_cast<u32>(run.Clip.Size.y)};
+                            passCmd.SetScissor(offset, extent);
+                        }
+                        else
+                        {
+                            passCmd.SetScissor({0, 0}, impl.Extent);
+                        }
+
+                        passCmd.DrawIndexed(run.IndexCount, 1, impl.IndexBase + run.FirstIndex,
+                                            impl.VertexBase, 0);
+                    }
+                });
+
+        // Pass 2 — composite: copy the scene output, then blend the UI over it.
+        graph.AddPass("Gui Composite")
+            .Color({
+                .Resource = compositeId,
+                .Load = LoadOp::Clear,
+                .Store = StoreOp::Store,
+                .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
+            })
+            .Sample(sceneId)
+            .Sample(uiId)
+            .Execute(
+                [&](PassContext& ctx)
+                {
+                    CommandBuffer& passCmd = ctx.Cmd();
+                    passCmd.SetViewport({0, 0}, impl.Extent);
+                    passCmd.SetScissor({0, 0}, impl.Extent);
+
+                    passCmd.BindPipeline(impl.ScenePipeline);
+                    bindless.Bind(passCmd);
+                    passCmd.PushConstants(BlitPushConstants{
+                        .Texture = sceneSlot.Index,
+                        .Sampler = impl.SamplerSlot.Index,
+                    });
+                    passCmd.DrawFullscreenTriangle();
+
+                    passCmd.BindPipeline(impl.OverlayPipeline);
+                    bindless.Bind(passCmd);
+                    passCmd.PushConstants(BlitPushConstants{
+                        .Texture = uiSlot.Index,
+                        .Sampler = impl.SamplerSlot.Index,
+                    });
+                    passCmd.DrawFullscreenTriangle();
+                });
+
+        // The scene output arrives already in a sampleable layout (the viewport transitioned it);
+        // ensure it regardless, since a test may hand a freshly written target.
+        cmd.PrepareForAccess(sceneOutput, AccessKind::Sample);
+
+        const RenderGraph::ImportBinding bindings[] = {
+            {.Id = uiId, .View = impl.UiView},
+            {.Id = sceneId, .View = sceneOutput},
+            {.Id = compositeId, .View = impl.CompositeView},
+        };
+        graph.Compile()->Execute(cmd, bindings);
+
+        bindless.Release(sceneSlot);
+        bindless.Release(uiSlot);
+    }
+
+    const Ref<ImageView>& GuiScenePass::GetOutput() const
+    {
+        return m_Impl->CompositeView;
+    }
+
+    const Ref<ImageView>& GuiScenePass::GetUiImage() const
+    {
+        return m_Impl->UiView;
+    }
+}

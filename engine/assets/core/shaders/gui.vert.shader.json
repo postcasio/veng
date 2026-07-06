@@ -1,0 +1,5 @@
+{
+  "source": "gui.vert.slang",
+  "entry": "vsMain",
+  "vertex_layout": "0x87399C509177A8C2"
+}
