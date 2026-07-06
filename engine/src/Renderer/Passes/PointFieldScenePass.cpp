@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <span>
 
 namespace Veng::Renderer
 {
@@ -26,8 +27,10 @@ namespace Veng::Renderer
         constexpr AssetId PointAggregateVertId{0x7876DE17593B6A1CULL};
         constexpr AssetId PointAggregateFragId{0xA0E92CDBACECE971ULL};
 
-        // Six vertices (two triangles) per expanded quad — a sprite or an aggregate splat.
-        constexpr u32 QuadVertexCount = 6;
+        // Four unique vertices per expanded quad — a sprite or an aggregate splat — indexed into
+        // two triangles by six indices. The two shared corners hit the post-transform cache.
+        constexpr u32 QuadVertexCount = 4;
+        constexpr u32 QuadIndexCount = 6;
 
         // A per-frame ring cap on aggregate splat records (one per aggregated visible cell). One
         // record is 32 bytes, so the ring costs a few MiB across frames-in-flight.
@@ -268,6 +271,40 @@ namespace Veng::Renderer
             }
         }
         return state;
+    }
+
+    void PointFieldScenePass::EnsureQuadIndexBuffer(const u32 quads)
+    {
+        if (quads <= m_QuadIndexCapacity)
+        {
+            return;
+        }
+
+        // Build the whole index run on the host (six per quad: two triangles sharing the diagonal,
+        // 0,1,2, 1,3,2 offset by 4*q), then hand it to a fresh buffer. Assigning m_QuadIndexBuffer
+        // retires the previous one through the per-frame deferred-destruction path, so a draw still
+        // referencing the old buffer this frame completes before it is destroyed.
+        vector<u32> indices(static_cast<usize>(quads) * QuadIndexCount);
+        for (u32 q = 0; q < quads; ++q)
+        {
+            const u32 base = q * QuadVertexCount;
+            u32* out = &indices[static_cast<usize>(q) * QuadIndexCount];
+            out[0] = base + 0;
+            out[1] = base + 1;
+            out[2] = base + 2;
+            out[3] = base + 1;
+            out[4] = base + 3;
+            out[5] = base + 2;
+        }
+
+        m_QuadIndexBuffer = Buffer::Create(m_Context, {
+                                                          .Name = "PointField Quad Index Buffer",
+                                                          .Size = indices.size() * sizeof(u32),
+                                                          .Usage = BufferUsage::Index,
+                                                      });
+        m_QuadIndexBuffer->UploadSync(
+            std::span(reinterpret_cast<const u8*>(indices.data()), indices.size() * sizeof(u32)));
+        m_QuadIndexCapacity = quads;
     }
 
     void PointFieldScenePass::Declare(RenderGraph& graph, const PassIO& io)
@@ -557,10 +594,18 @@ namespace Veng::Renderer
                             .Opacity = lod.Opacity,
                         };
 
-                        // Resolved sprites: one non-instanced draw per contiguous run, the vertex
-                        // stage deriving point + corner from SV_VertexID over the run's range.
+                        // Resolved sprites: one indexed draw per contiguous run over the run's four
+                        // vertices per point, the vertex stage deriving point + corner from the
+                        // index value. Grow the shared quad index buffer to the largest run first.
                         if (!runs.empty())
                         {
+                            u32 maxRunPoints = 0;
+                            for (const DrawRun& run : runs)
+                            {
+                                maxRunPoints = std::max(maxRunPoints, run.PointCount);
+                            }
+                            EnsureQuadIndexBuffer(maxRunPoints);
+
                             cmd.BindPipeline(m_SpritePipeline);
                             registry.Bind(cmd);
                             cmd.BindDescriptorSets(DescriptorSetBindInfo{
@@ -568,12 +613,13 @@ namespace Veng::Renderer
                                 .FirstSet = 1,
                                 .PipelineBindPoint = PipelineBindPoint::Graphics,
                             });
+                            cmd.BindIndexBuffer(m_QuadIndexBuffer);
                             for (const DrawRun& run : runs)
                             {
                                 push.FirstPoint = run.FirstPoint;
                                 push.PointCount = run.PointCount;
                                 cmd.PushConstants(push);
-                                cmd.Draw(QuadVertexCount * run.PointCount, 1, 0, 0);
+                                cmd.DrawIndexed(QuadIndexCount * run.PointCount, 1, 0, 0, 0);
                                 ++stats.ResolvedDraws;
                                 stats.SpritePoints += run.PointCount;
                             }
@@ -590,6 +636,9 @@ namespace Veng::Renderer
                             std::memcpy(base, splats.data(),
                                         splats.size() * sizeof(GpuAggregateSplat));
 
+                            const auto splatCount = static_cast<u32>(splats.size());
+                            EnsureQuadIndexBuffer(splatCount);
+
                             cmd.BindPipeline(m_AggregatePipeline);
                             registry.Bind(cmd);
                             // Bind this frame's aggregate set, already pointing at the region just
@@ -599,11 +648,12 @@ namespace Veng::Renderer
                                 .FirstSet = 1,
                                 .PipelineBindPoint = PipelineBindPoint::Graphics,
                             });
+                            cmd.BindIndexBuffer(m_QuadIndexBuffer);
                             push.FirstPoint = 0;
-                            push.PointCount = static_cast<u32>(splats.size());
+                            push.PointCount = splatCount;
                             cmd.PushConstants(push);
-                            cmd.Draw(QuadVertexCount * static_cast<u32>(splats.size()), 1, 0, 0);
-                            stats.Splats += static_cast<u32>(splats.size());
+                            cmd.DrawIndexed(QuadIndexCount * splatCount, 1, 0, 0, 0);
+                            stats.Splats += splatCount;
                         }
                     }
 

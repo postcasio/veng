@@ -2,7 +2,8 @@
 // GpuAggregateSplat in the per-frame SSBO at set 1 binding 0) into a screen-space quad centered
 // on the cell's projected point centroid, sized in pixels (converted to clip via the pushed
 // viewport extent), so a dense/distant cell reads as one smooth additive glow rather than
-// resolved points.
+// resolved points. Four unique vertices per splat, indexed into two triangles by the pass's
+// shared quad index buffer.
 #include "../view_constants.slang"
 
 // One aggregate splat record: world point centroid + quad size in pixels (the fragment
@@ -43,16 +44,21 @@ struct VSOutput
 [shader("vertex")]
 VSOutput vsMain()
 {
+    // The indexed draw sets firstIndex=0 and vertexOffset=0, so the VertexIndex builtin equals the
+    // index buffer's value: 4 unique vertices per splat (vertex id = 4*splat + corner), expanded
+    // into two triangles by the shared index buffer so the two shared corners hit the cache.
     uint vertexId = uint(spirv_asm { result:$$int = OpLoad builtin(VertexIndex:int); });
-    uint localId = vertexId / 6;
-    uint cornerId = vertexId % 6;
+    uint localId = vertexId / 4;
+    uint cornerId = vertexId & 3;
 
     GpuAggregateSplat splat = g_Splats[localId];
     ViewConstants view = LoadViewConstants(g_PC.ViewConstantsIndex);
 
-    static const float2 corners[6] = {
-        float2(-0.5, -0.5), float2(0.5, -0.5), float2(-0.5, 0.5),
-        float2(0.5, -0.5),  float2(0.5, 0.5),  float2(-0.5, 0.5),
+    static const float2 corners[4] = {
+        float2(-0.5, -0.5),
+        float2(0.5, -0.5),
+        float2(-0.5, 0.5),
+        float2(0.5, 0.5),
     };
     float2 corner = corners[cornerId];
 

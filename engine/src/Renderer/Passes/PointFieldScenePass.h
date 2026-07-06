@@ -149,6 +149,15 @@ namespace Veng::Renderer
         /// @brief Ensures a FieldState exists for @p field, allocating its sets and ring on first use.
         FieldState& StateFor(const PointField* field);
 
+        /// @brief Ensures the shared quad index buffer holds at least @p quads quads' worth of indices.
+        ///
+        /// Both draw paths expand each point/splat into a quad through this one pass-owned index
+        /// buffer (six indices per quad: 0,1,2, 1,3,2 offset by 4*q, u32). It grows on demand to
+        /// the largest quad count any draw has needed and is rebuilt only on growth, retiring the
+        /// old buffer through the per-frame deferred-destruction path so a pending draw is safe.
+        /// @param quads Number of quads (points or splats) the next draw expands.
+        void EnsureQuadIndexBuffer(u32 quads);
+
         /// @brief The render context.
         Context& m_Context;
         /// @brief Borrowed pointer to the renderer's live field set, refilled each Execute (may be empty).
@@ -168,6 +177,14 @@ namespace Veng::Renderer
         Ref<PipelineLayout> m_Layout;
         /// @brief Set-1 layout for the resident point SSBO (binding 0 storage buffer).
         Ref<DescriptorSetLayout> m_SetLayout;
+
+        /// @brief Shared quad index buffer both draw paths index their point/splat quads through.
+        ///
+        /// Six u32 indices per quad (0,1,2, 1,3,2 offset by 4*q), grown on demand to the largest
+        /// quad count any draw has needed and rebuilt only on growth. Null until the first draw.
+        Ref<Buffer> m_QuadIndexBuffer;
+        /// @brief Quad capacity the shared index buffer currently holds.
+        u32 m_QuadIndexCapacity = 0;
 
         /// @brief Per-field GPU state and latches, keyed by field pointer, pruned when unresolved.
         unordered_map<const PointField*, FieldState> m_Fields_State;
