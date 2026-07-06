@@ -547,6 +547,64 @@ directional and punctual shadow maps) have no
 authorable surface; a PostProcess material is for *tunable effects with exposed
 parameters*, not plumbing.
 
+**The point-field draw pipeline batches submission and runs per-point work once.** A
+`PointField` (`Veng/Renderer/PointField.h`) is a large, GPU-resident set of positioned,
+colored, sized points with a screen-density LOD; `PointFieldScenePass` accumulates every
+scene field into the linear HDR scene color ahead of bloom/tonemap. Per field it
+CPU-frustum-culls the field's spatial cells against the camera, then per surviving cell
+routes to one of two draws by on-screen point density: individual camera-facing sprites
+(the resolved LOD) below the `PointFieldLod::AggregateThreshold`, or one additive density
+splat (the aggregate LOD) above it — the two paths deliver the same integrated light, so
+the LOD transition holds brightness.
+
+- **The pass reports a per-frame cull/draw funnel.** `SceneRenderer::GetPointFieldStats()`
+  returns a `PointFieldStats` block — fields walked, cells total / in-frustum / measured,
+  resolved sprite draws issued, sprite points submitted, points the compute pass compacted
+  out, the draw source, and aggregate splats drawn — summed across every field. It sits
+  beside the mesh cull-funnel getters (`GetLastVisibleCount` / `GetFrustumSurvivedCount` /
+  `GetLastDrawnCount`): a consumer profiling a heavy field reads the sprite/splat split here
+  instead of GPU timestamps. `CellsMeasured` is tracked apart from `CellsInFrustum` (a
+  fixed-outcome threshold skips the density measure), and `ResolvedDraws` apart from
+  `SpritePoints` (the run-merge collapses draws without changing the point total).
+- **Submission batches by buffer contiguity.** A cell's points are a contiguous run of the
+  resident buffer, and `Bucket` tiles cells in ascending `FirstPoint` order, so the walk
+  merges adjacent resolved cells into `{FirstPoint, PointCount}` draw runs: a run extends
+  while the range continues and breaks only where a cell was culled or aggregated. A wide
+  view of a never-aggregating field collapses from one draw per cell to a single run over
+  its whole in-frustum range. No sorting or spatial hierarchy — the batching is buffer
+  contiguity alone.
+- **The resolved sprites take one of two per-field paths, and the pass reports which drew.**
+  The **compute** path runs a per-frame expansion dispatch over the run table that does the
+  per-point work once — project, pixel-clamp, flux-gain, opacity-fold — writing one compact
+  `GpuSpriteRecord` per point into a ring-buffered record buffer through an atomic append
+  cursor, **compacting out zero-contribution points** (behind the eye, sub-epsilon folded
+  color, fully offscreen) and finalizing an indirect draw command; the resolved sprites then
+  draw through **one `DrawIndexedIndirect` per field**, the sprite vertex stage a record
+  fetch plus a corner FMA. The **direct** path is the fallback: it expands every point in the
+  vertex stage from the resident point SSBO, issued as one indexed draw per run. It is
+  selected automatically when the compute pipeline's device features are absent, and is also
+  the A/B verification reference and the first-frame-after-rebuild path. Selection is
+  per-field and honestly reported through `PointFieldStats::DrawSource`
+  (`Compute`/`Direct`/`None`), mirroring `GetActiveCullMode()`; `SetPointFieldForceDirect`
+  forces the direct path for the A/B comparison.
+- **`PointFieldLod::DepthFade` gates the per-fragment occluded fade** (default on). On, a
+  sprite fragment samples the g-buffer depth and dims an occluded point; off skips that
+  sample, the sub-rect remap, and the compare entirely — right for a field composited over
+  background with no occluding geometry (a sky-scale backdrop, a map), where the fade can
+  never trigger. Two sprite fragment permutations are built once and selected per field by
+  the knob. The point-field fragments index the depth texture/sampler **uniformly** (the
+  indices are per-draw push constants, uniform by construction).
+- **Both draw paths index quads through one pass-owned index buffer.** A sprite or splat
+  expands to a quad of **4 unique vertices** (indexed `0,1,2, 1,3,2`, `SV_VertexID`-driven —
+  no vertex input, no per-instance attribute, no base-instance capability); the shared `u32`
+  index buffer grows on demand to the largest quad count any draw has needed and rebuilds
+  only on growth, retiring the old buffer through the per-frame deferred-destruction path.
+
+The pass is inserted only while a live field exists, so the shipping deferred path and the
+smoke golden are unchanged; no example consumes a `PointField`, and the GPU suite
+(`tests/gpu/point_field.cpp`) is the conformance surface — it runs the cull, the LOD switch,
+and both sprite paths (compute and forced-direct) against the same brightness assertions.
+
 ## Viewport: a region + a renderer + a role
 
 A `Viewport` (`Veng/Renderer/Viewport.h`) is *"a renderable view into a world"*
