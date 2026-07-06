@@ -1,7 +1,8 @@
 #include <Veng/InputRouter.h>
 
-#include <Veng/ImGui/ImGuiLayer.h>
+#include <Veng/Assert.h>
 #include <Veng/Input.h>
+#include <Veng/Input/InputConsumer.h>
 #include <Veng/InputEvents.h>
 #include <Veng/Renderer/Viewport.h>
 #include <Veng/Window.h>
@@ -33,34 +34,77 @@ namespace Veng
         }
     }
 
-    InputRouter::InputRouter(Window* window, Input& input, ImGuiLayer* imgui)
-        : m_Window(window), m_Input(input), m_ImGui(imgui)
+    InputRouter::InputRouter(Window* window, Input& input) : m_Window(window), m_Input(input) {}
+
+    void InputRouter::RegisterConsumer(InputConsumer& consumer)
     {
+        m_Consumers.push_back(&consumer);
     }
 
-    void InputRouter::PushFocus(InputFocus focus)
+    void InputRouter::SetCursorSeat(Entity seat)
     {
-        m_Stack.push_back(focus);
-        SyncFocusState();
+        m_CursorSeat = seat;
+        SyncCursorState();
+    }
+
+    FocusToken InputRouter::PushFocus(Entity seat, InputFocus focus)
+    {
+        const FocusToken token{.Value = m_NextToken++};
+        m_Stacks[seat].push_back(FocusEntry{.Token = token, .Focus = focus});
+        if (seat == m_CursorSeat)
+        {
+            SyncCursorState();
+        }
+        return token;
+    }
+
+    void InputRouter::PopFocus(FocusToken token)
+    {
+        VE_ASSERT(token.IsValid(), "PopFocus given an invalid (default) focus token");
+
+        // The token names one entry in exactly one seat's stack; find and remove it. A token that
+        // names no live entry is a mispaired or double pop — fatal, never a silent no-op.
+        for (auto& [seat, stack] : m_Stacks)
+        {
+            const auto entry = std::ranges::find(stack, token, &FocusEntry::Token);
+            if (entry != stack.end())
+            {
+                stack.erase(entry);
+                if (seat == m_CursorSeat)
+                {
+                    SyncCursorState();
+                }
+                return;
+            }
+        }
+
+        VE_ASSERT(false,
+                  "PopFocus given a token naming no live focus entry (mispaired or double pop)");
     }
 
     void InputRouter::PopFocus()
     {
-        if (!m_Stack.empty())
+        const auto stack = m_Stacks.find(m_CursorSeat);
+        if (stack != m_Stacks.end() && !stack->second.empty())
         {
-            m_Stack.pop_back();
+            stack->second.pop_back();
         }
-        SyncFocusState();
+        SyncCursorState();
     }
 
-    InputFocus InputRouter::GetFocus() const
+    InputFocus InputRouter::GetFocus(Entity seat) const
     {
-        return m_Stack.empty() ? InputFocus::UI : m_Stack.back();
+        const auto stack = m_Stacks.find(seat);
+        if (stack == m_Stacks.end() || stack->second.empty())
+        {
+            return InputFocus::UI;
+        }
+        return stack->second.back().Focus;
     }
 
-    void InputRouter::SyncFocusState()
+    void InputRouter::SyncCursorState()
     {
-        const bool gameplay = GetFocus() == InputFocus::Gameplay;
+        const bool gameplay = CursorFocus() == InputFocus::Gameplay;
 
         if (m_Window != nullptr)
         {
@@ -74,11 +118,25 @@ namespace Veng
             }
         }
 
-        // The GLFW backend polls the disabled cursor in NewFrame, so swallowing mouse events
-        // is not enough to stop hover drift; disable ImGui's mouse handling while captured.
-        if (m_ImGui != nullptr)
+        // A polling consumer (the GLFW-backed overlay) reads the disabled cursor in its own frame
+        // start, so swallowing mouse events is not enough to stop hover drift; signal the capture
+        // so it can suspend that poll.
+        for (InputConsumer* consumer : m_Consumers)
         {
-            m_ImGui->SetMouseInputEnabled(!gameplay);
+            consumer->OnCursorCaptured(gameplay);
+        }
+    }
+
+    void InputRouter::OfferConsumers(const Event& event)
+    {
+        // Offer the event to the consumers in priority order; the first to accept it stops the
+        // fall-through so a later consumer never sees an already-handled event.
+        for (InputConsumer* consumer : m_Consumers)
+        {
+            if (consumer->ForwardEvent(event))
+            {
+                return;
+            }
         }
     }
 
@@ -86,33 +144,29 @@ namespace Veng
     {
         const EventType type = event.GetEventType();
 
-        // Window-focus loss frees a held gameplay capture, so alt-tab releases the cursor.
+        // Window-focus loss frees a held gameplay capture on the cursor seat, so alt-tab releases
+        // the cursor.
         if (type == EventType::WindowFocus)
         {
             if (!static_cast<WindowFocusEvent&>(event).IsFocused() && IsGameplayFocused())
             {
                 PopFocus();
             }
-            if (m_ImGui != nullptr)
-            {
-                m_ImGui->ForwardEvent(event);
-            }
+            OfferConsumers(event);
             return;
         }
 
-        // Window/system events are not owned by a focus layer; ImGui always sees them.
+        // Window/system events are not owned by a focus layer; the consumers always see them.
         if (!IsInputEvent(type))
         {
-            if (m_ImGui != nullptr)
-            {
-                m_ImGui->ForwardEvent(event);
-            }
+            OfferConsumers(event);
             return;
         }
 
         if (IsGameplayFocused())
         {
-            // Shift+Esc releases gameplay focus and is consumed here, never delivered to the game.
+            // Shift+Esc releases the cursor seat's gameplay focus and is consumed here, never
+            // delivered to the game.
             if (type == EventType::KeyPressed)
             {
                 const Key key = static_cast<KeyPressedEvent&>(event).GetKey();
@@ -125,17 +179,14 @@ namespace Veng
                 }
             }
 
-            // Exclusive: only the gameplay snapshot sees the event; ImGui is starved.
+            // Exclusive: only the gameplay snapshot sees the event; the consumers are starved.
             m_Input.ApplyEvent(event);
             return;
         }
 
-        // UI focus: ImGui consumes input and the snapshot mirrors it for the editor camera.
+        // UI focus: the consumers see the input and the snapshot mirrors it for the editor camera.
         m_Input.ApplyEvent(event);
-        if (m_ImGui != nullptr)
-        {
-            m_ImGui->ForwardEvent(event);
-        }
+        OfferConsumers(event);
     }
 
     void InputRouter::AssociateViewportSeat(const Renderer::Viewport& viewport, Entity viewer)

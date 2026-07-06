@@ -31,6 +31,8 @@
 #include <string_view>
 
 #include <Veng/Assert.h>
+#include <Veng/Input.h>
+#include <Veng/InputRouter.h>
 #include <Veng/Log.h>
 
 #include <Veng/Renderer/Buffer.h>
@@ -270,6 +272,17 @@ namespace
         (void)Renderer::ComputePointShadowView(vec3(0.0f), -1.0f);
     }
 
+    void RunFocusDoublePop()
+    {
+        // A token popped twice names no live entry on the second pop — the mispaired-pop assert,
+        // proving a double pop is loud rather than a silent no-op. Headless: no window, no consumers.
+        Input input(nullptr);
+        InputRouter router(nullptr, input);
+        const FocusToken token = router.PushFocus(InputFocus::Gameplay);
+        router.PopFocus(token);
+        router.PopFocus(token);
+    }
+
     // -- GPU-coupled death cases (need a headless Context) -------------------
 
     // Bring up a headless Context, run `body` (which is expected to abort), and
@@ -453,6 +466,10 @@ int main(int argc, char** argv)
     else if (name == "point_shadow_range_nonpositive")
     {
         RunPointShadowRangeNonPositive();
+    }
+    else if (name == "focus_double_pop")
+    {
+        RunFocusDoublePop();
     }
     else if (name == "shader_set_zero_reserved")
     {

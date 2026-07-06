@@ -15,7 +15,7 @@ using namespace Veng;
 TEST_CASE("InputRouter: defaults to UI focus")
 {
     Input input(nullptr);
-    const InputRouter router(nullptr, input, nullptr);
+    const InputRouter router(nullptr, input);
 
     CHECK(router.GetFocus() == InputFocus::UI);
     CHECK_FALSE(router.IsGameplayFocused());
@@ -24,7 +24,7 @@ TEST_CASE("InputRouter: defaults to UI focus")
 TEST_CASE("InputRouter: under UI focus an input event folds into the snapshot")
 {
     Input input(nullptr);
-    InputRouter router(nullptr, input, nullptr);
+    InputRouter router(nullptr, input);
 
     input.BeginFrame();
     KeyPressedEvent press(Key::W, 0, 0);
@@ -37,7 +37,7 @@ TEST_CASE("InputRouter: under UI focus an input event folds into the snapshot")
 TEST_CASE("InputRouter: pushing and popping gameplay focus moves the stack top")
 {
     Input input(nullptr);
-    InputRouter router(nullptr, input, nullptr);
+    InputRouter router(nullptr, input);
 
     router.PushFocus(InputFocus::Gameplay);
     CHECK(router.IsGameplayFocused());
@@ -53,7 +53,7 @@ TEST_CASE("InputRouter: pushing and popping gameplay focus moves the stack top")
 TEST_CASE("InputRouter: under gameplay focus the game still receives input through the snapshot")
 {
     Input input(nullptr);
-    InputRouter router(nullptr, input, nullptr);
+    InputRouter router(nullptr, input);
 
     router.PushFocus(InputFocus::Gameplay);
 
@@ -68,7 +68,7 @@ TEST_CASE("InputRouter: under gameplay focus the game still receives input throu
 TEST_CASE("InputRouter: Shift+Esc releases gameplay focus and is not delivered to the game")
 {
     Input input(nullptr);
-    InputRouter router(nullptr, input, nullptr);
+    InputRouter router(nullptr, input);
 
     router.PushFocus(InputFocus::Gameplay);
 
@@ -89,7 +89,7 @@ TEST_CASE("InputRouter: Shift+Esc releases gameplay focus and is not delivered t
 TEST_CASE("InputRouter: a bare Escape without Shift is delivered, not a release")
 {
     Input input(nullptr);
-    InputRouter router(nullptr, input, nullptr);
+    InputRouter router(nullptr, input);
 
     router.PushFocus(InputFocus::Gameplay);
 
@@ -105,7 +105,7 @@ TEST_CASE("InputRouter: a bare Escape without Shift is delivered, not a release"
 TEST_CASE("InputRouter: window-focus loss pops a held gameplay focus")
 {
     Input input(nullptr);
-    InputRouter router(nullptr, input, nullptr);
+    InputRouter router(nullptr, input);
 
     router.PushFocus(InputFocus::Gameplay);
 

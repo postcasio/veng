@@ -2,6 +2,7 @@
 
 #include <Veng/Veng.h>
 #include <Veng/ImGui/ImGuiTexture.h>
+#include <Veng/Input/InputConsumer.h>
 
 namespace Veng
 {
@@ -36,7 +37,11 @@ namespace Veng
     ///
     /// The application opts in by setting `ApplicationInfo::ImGui`; headless and non-UI consumers
     /// never construct one and pay nothing for ImGui at runtime.
-    class ImGuiLayer
+    ///
+    /// It is an `InputConsumer` the app registers first with the `InputRouter`, so it is offered
+    /// every UI-owned event ahead of any later consumer and reads the cursor-capture signal to
+    /// suspend its cursor poll while the cursor is captured.
+    class ImGuiLayer : public InputConsumer
     {
     public:
         /// @brief Creates an `ImGuiLayer`, initializing ImGui and the Vulkan backend.
@@ -47,7 +52,7 @@ namespace Veng
                                          Window& window);
 
         /// @brief Destroys the ImGui layer, shutting down ImGui and the Vulkan backend.
-        ~ImGuiLayer();
+        ~ImGuiLayer() override;
 
         ImGuiLayer(const ImGuiLayer&) = delete;
         ImGuiLayer& operator=(const ImGuiLayer&) = delete;
@@ -63,18 +68,21 @@ namespace Veng
         /// The engine owns the GLFW callbacks (the backend is initialized with callbacks off),
         /// so the InputRouter calls this to hand ImGui the events routed to the UI layer — and
         /// withholds the ones gameplay focus swallows. Translates the engine event to the
-        /// backend's chain-callback so keymap/mods/char handling stay the backend's job.
+        /// backend's chain-callback so keymap/mods/char handling stay the backend's job. The
+        /// overlay is cooperative: it always returns false so a later consumer still sees the
+        /// event and the router's snapshot fold is unaffected.
         /// @param event  The event to forward; non-input events relevant to ImGui (focus) included.
-        void ForwardEvent(const Event& event);
+        /// @return False always: the overlay does not stop the event's fall-through.
+        bool ForwardEvent(const Event& event) override;
 
-        /// @brief Enables or disables ImGui's mouse handling (hover, clicks, the drawn cursor).
+        /// @brief Suspends or resumes ImGui's mouse handling from the router's capture signal.
         ///
-        /// The router disables it while gameplay focus owns the cursor: the GLFW backend still
-        /// polls the (disabled, virtual) cursor position in NewFrame, which would otherwise drift
-        /// ImGui hover states even though no mouse events are forwarded. Toggles
-        /// `ImGuiConfigFlags_NoMouse`.
-        /// @param enabled  True to let ImGui process the mouse, false to make it ignore the mouse.
-        void SetMouseInputEnabled(bool enabled);
+        /// While the cursor is captured the GLFW backend still polls the (disabled, virtual)
+        /// cursor position in NewFrame, which would otherwise drift ImGui hover states even though
+        /// no mouse events are forwarded; disabling the mouse while captured stops that.
+        /// Toggles `ImGuiConfigFlags_NoMouse`.
+        /// @param captured  True while the OS cursor is captured (disables ImGui's mouse).
+        void OnCursorCaptured(bool captured) override;
 
         /// @brief Renders the built UI into the output image, leaving it sampleable for compositing.
         /// @param cmd  Command buffer the render pass is recorded into.

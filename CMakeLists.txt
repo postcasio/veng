@@ -479,6 +479,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/gamepad_adapter.cpp
             tests/unit/seat_routing.cpp
             tests/unit/seat_routing_integration.cpp
+            tests/unit/seat_focus.cpp
             tests/unit/light_packing.cpp
             tests/unit/shader_interface.cpp
             tests/unit/transient_allocation.cpp
@@ -637,6 +638,10 @@ if (VENG_BUILD_TESTS)
     add_test(NAME death.point_shadow_range_nonpositive COMMAND veng_test_death point_shadow_range_nonpositive)
     set_tests_properties(death.point_shadow_range_nonpositive PROPERTIES LABELS death
             PASS_REGULAR_EXPRESSION "ComputePointShadowView needs range > 0")
+
+    add_test(NAME death.focus_double_pop COMMAND veng_test_death focus_double_pop)
+    set_tests_properties(death.focus_double_pop PROPERTIES LABELS death
+            PASS_REGULAR_EXPRESSION "mispaired or double pop")
 
     add_test(NAME death.shader_set_zero_reserved COMMAND veng_test_death shader_set_zero_reserved)
     set_tests_properties(death.shader_set_zero_reserved PROPERTIES LABELS death

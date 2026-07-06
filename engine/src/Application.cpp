@@ -66,9 +66,15 @@ namespace Veng
             m_ImGuiLayer = ImGuiLayer::Create(*m_Info.ImGui, m_RenderContext, *m_Window);
         }
 
-        // Routes the window's events to ImGui and the Input snapshot by focus. Borrows all
-        // three; the ImGui layer is nullable (UI-free) and the window is nullable (headless).
-        m_InputRouter = CreateUnique<InputRouter>(m_Window.get(), *m_Input, m_ImGuiLayer.get());
+        // Routes the window's events to the consumer registry and the Input snapshot by focus.
+        // Borrows the window (nullable headless) and the Input snapshot. The ImGui overlay, when
+        // present, registers as the first consumer so it is offered every UI-owned event and reads
+        // the cursor-capture signal.
+        m_InputRouter = CreateUnique<InputRouter>(m_Window.get(), *m_Input);
+        if (m_ImGuiLayer)
+        {
+            m_InputRouter->RegisterConsumer(*m_ImGuiLayer);
+        }
 
         // The opt-in managed viewport set: Presented viewports owned and driven by the engine so a
         // game pushes only a ViewState (or names a Viewer). Built before OnInitialize so a subclass

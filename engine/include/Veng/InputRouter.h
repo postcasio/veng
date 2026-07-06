@@ -10,7 +10,7 @@ namespace Veng
 {
     class Window;
     class Input;
-    class ImGuiLayer;
+    class InputConsumer;
     class Event;
 }
 
@@ -21,13 +21,33 @@ namespace Veng::Renderer
 
 namespace Veng
 {
-    /// @brief The layer that owns input this frame.
+    /// @brief The layer that owns a seat's input this frame.
     enum class InputFocus
     {
-        /// @brief Editor/HUD UI owns input: events reach ImGui and the Input snapshot both.
+        /// @brief UI owns the seat's input: events reach the consumer registry and the Input
+        ///        snapshot both.
         UI,
-        /// @brief The running game owns input exclusively: events reach the Input snapshot only.
+        /// @brief The running game owns the seat's input exclusively: events reach the Input
+        ///        snapshot only.
         Gameplay,
+    };
+
+    /// @brief An opaque handle to one pushed focus entry, returned by PushFocus.
+    ///
+    /// Popping is by token (PopFocus), so an entry is removed wherever it sits in its seat's
+    /// stack rather than by an anonymous count decrement — an interleaved second scope cannot
+    /// pop the wrong entry, and a mispaired or double pop is caught rather than silently
+    /// corrupting the mode. A default-constructed token is invalid and names no entry.
+    struct FocusToken
+    {
+        /// @brief The token's identity; zero is the invalid, names-no-entry token.
+        u64 Value = 0;
+
+        /// @brief Whether this token names a real pushed entry.
+        [[nodiscard]] bool IsValid() const { return Value != 0; }
+
+        /// @brief Member-wise equality on the identity value.
+        bool operator==(const FocusToken&) const = default;
     };
 
     /// @brief The seat the free pointer belongs to this frame, and its viewport-local position.
@@ -81,46 +101,110 @@ namespace Veng
     [[nodiscard]] VE_API PointerRouting
     SelectPointerOwner(std::span<const PointerRegionSeat> regions, ivec2 pointerWindowPoint);
 
-    /// @brief Routes window events to consumers by a focus stack, so input has a single owner.
+    /// @brief Routes window events by per-seat focus stacks, so each seat's input has one owner.
     ///
     /// Each frame the application drains the Window's event queue through Dispatch. The router
-    /// holds a focus stack whose top decides routing: under UI focus an input event is
-    /// forwarded to ImGui *and* folded into the Input snapshot (so the editor camera reads
-    /// it); under Gameplay focus the event is folded into the Input snapshot only and
-    /// **swallowed** — ImGui never sees it, so input is exclusive to the running game.
-    /// Window/system events (resize, close, focus) always reach ImGui regardless of the stack.
+    /// holds one focus stack per seat, keyed by the seat's Viewer entity, whose top decides that
+    /// seat's routing. The cursor seat — the single keyboard/mouse seat — is the one whose focus
+    /// top gates the drained window events and drives the OS cursor capture: under UI focus an
+    /// input event is offered to the consumer registry *and* folded into the Input snapshot (so
+    /// the editor camera reads it); under Gameplay focus the event is folded into the Input
+    /// snapshot only and **swallowed** — the consumers never see it, so input is exclusive to the
+    /// running game. Window/system events (resize, close, focus) always reach the consumers
+    /// regardless of any focus. Registered consumers are offered every UI-owned event in priority
+    /// order until one accepts it.
     ///
-    /// Gameplay focus pairs with the OS cursor capture: pushing it hides+locks the cursor,
-    /// popping it (the release chord, or window-focus loss) restores it. The release chord is
-    /// Shift+Esc, checked here and not delivered to the game.
+    /// Gameplay focus pairs with the OS cursor capture: pushing it on the cursor seat hides+locks
+    /// the cursor, popping it (the release chord, or window-focus loss) restores it. The release
+    /// chord is Shift+Esc, checked here and not delivered to the game.
+    ///
+    /// A seat's focus stack decides where that seat's own devices route: split-screen seat A can
+    /// hold UI focus (routing A's events to the consumers) while seat B stays in gameplay. A
+    /// single-seat app is one stack — its behavior matches a single global stack exactly.
     class InputRouter
     {
     public:
         /// @brief Constructs the router over the borrowed services.
-        /// @param window  Window whose cursor capture follows gameplay focus; nullptr headless.
+        /// @param window  Window whose cursor capture follows the cursor seat's focus; nullptr headless.
         /// @param input   The frame-coherent Input snapshot routed events fold into.
-        /// @param imgui   The ImGui layer events forward to under UI focus; nullptr if UI-free.
-        InputRouter(Window* window, Input& input, ImGuiLayer* imgui);
+        InputRouter(Window* window, Input& input);
 
-        /// @brief Pushes a focus layer; the top of the stack owns input.
+        /// @brief Registers a consumer at the tail of the priority-ordered consumer list.
         ///
-        /// Pushing Gameplay captures the OS cursor; the cursor state is recomputed from the
-        /// new top.
+        /// Each UI-owned event is offered to the registered consumers in registration order until
+        /// one accepts it (the first registered has the highest priority). The dev/editor overlay
+        /// registers first, so it is offered every UI-owned event ahead of any later consumer. The
+        /// router borrows the consumer; the caller keeps it alive for the router's lifetime and
+        /// registers it once.
+        /// @param consumer  The consumer to append; must outlive the router.
+        void RegisterConsumer(InputConsumer& consumer);
+
+        /// @brief Sets the seat whose focus top gates window events and drives the cursor capture.
+        ///
+        /// There is one OS cursor and one keyboard/mouse seat, so the drained window events route by
+        /// that seat's focus and the cursor capture derives from it. The app sets it to its
+        /// keyboard/mouse seat's Viewer entity; the default (Entity::Null) is the implicit single
+        /// seat of a keyboardless or one-seat app. Recomputes the cursor capture from the new seat's
+        /// focus top.
+        /// @param seat  The keyboard/mouse seat's Viewer entity, or Entity::Null for the implicit seat.
+        void SetCursorSeat(Entity seat);
+
+        /// @brief Returns the seat whose focus gates window events and drives the cursor capture.
+        [[nodiscard]] Entity GetCursorSeat() const { return m_CursorSeat; }
+
+        /// @brief Pushes a focus layer onto a seat's stack and returns its token.
+        ///
+        /// The token identifies this exact entry for a later PopFocus, so an interleaved scope pops
+        /// its own entry wherever it sits. Pushing Gameplay onto the cursor seat captures the OS
+        /// cursor; the cursor state is recomputed from the cursor seat's new top.
+        /// @param seat   The seat whose stack the layer is pushed onto.
         /// @param focus  The layer to push.
-        void PushFocus(InputFocus focus);
+        /// @return The token naming the pushed entry.
+        FocusToken PushFocus(Entity seat, InputFocus focus);
 
-        /// @brief Pops the top focus layer, restoring the one beneath (UI when the stack empties).
+        /// @brief Pushes a focus layer onto the cursor seat's stack and returns its token.
         ///
-        /// Recomputes the OS cursor capture from the new top, so leaving Gameplay frees the cursor.
+        /// The one-seat convenience over PushFocus(GetCursorSeat(), focus).
+        /// @param focus  The layer to push.
+        /// @return The token naming the pushed entry.
+        FocusToken PushFocus(InputFocus focus) { return PushFocus(m_CursorSeat, focus); }
+
+        /// @brief Pops the focus entry the token names, wherever it sits in its seat's stack.
+        ///
+        /// The entry is removed and its seat's owning top recomputed. A token that names no live
+        /// entry — a mispaired or double pop — is a fatal assert, not a silent no-op. If the popped
+        /// entry belonged to the cursor seat, the OS cursor capture is recomputed from its new top.
+        /// @param token  The token a PushFocus returned; must name a live entry.
+        void PopFocus(FocusToken token);
+
+        /// @brief Pops the top focus entry of the cursor seat, restoring the one beneath.
+        ///
+        /// The one-seat convenience: pops the cursor seat's top (UI when it empties) and recomputes
+        /// the cursor capture. Popping an already-empty cursor-seat stack is a no-op, never an
+        /// underflow.
         void PopFocus();
 
-        /// @brief Returns the focus layer currently owning input (UI when the stack is empty).
-        [[nodiscard]] InputFocus GetFocus() const;
+        /// @brief Returns the focus layer owning a seat's input (UI when its stack is empty).
+        /// @param seat  The seat whose focus top to read.
+        [[nodiscard]] InputFocus GetFocus(Entity seat) const;
 
-        /// @brief Returns true if the running game currently owns input exclusively.
-        [[nodiscard]] bool IsGameplayFocused() const { return GetFocus() == InputFocus::Gameplay; }
+        /// @brief Returns the focus layer owning the cursor seat's input (UI when empty).
+        [[nodiscard]] InputFocus GetFocus() const { return GetFocus(m_CursorSeat); }
 
-        /// @brief Routes one drained window event to ImGui and/or the Input snapshot by focus.
+        /// @brief Returns true if the running game owns a seat's input exclusively.
+        /// @param seat  The seat to test.
+        [[nodiscard]] bool IsGameplayFocused(Entity seat) const
+        {
+            return GetFocus(seat) == InputFocus::Gameplay;
+        }
+
+        /// @brief Returns true if the running game owns the cursor seat's input exclusively.
+        [[nodiscard]] bool IsGameplayFocused() const
+        {
+            return GetFocus(m_CursorSeat) == InputFocus::Gameplay;
+        }
+
+        /// @brief Routes one drained window event to the consumers and/or the Input snapshot by focus.
         /// @param event  The event to route.
         void Dispatch(Event& event);
 
@@ -161,20 +245,41 @@ namespace Veng
                                                     Entity captureOwner) const;
 
     private:
-        /// @brief Matches the OS cursor capture and ImGui mouse handling to the current focus top.
+        /// @brief Matches the OS cursor capture and the consumers to the cursor seat's focus top.
         ///
-        /// Gameplay focus captures the cursor and disables ImGui's mouse (so its NewFrame cursor
-        /// poll cannot drift hover); any other focus releases the cursor and re-enables it.
-        void SyncFocusState();
+        /// Gameplay focus on the cursor seat captures the cursor and signals the consumers the
+        /// cursor is captured (so a polling consumer can suspend its cursor poll); any other focus
+        /// releases the cursor and clears the signal.
+        void SyncCursorState();
 
-        /// @brief Borrowed window; nullptr headless. Its cursor capture follows gameplay focus.
+        /// @brief The cursor seat's current focus owner (UI when its stack is empty).
+        [[nodiscard]] InputFocus CursorFocus() const { return GetFocus(m_CursorSeat); }
+
+        /// @brief Offers one UI-owned event to the consumers, stopping at the first that accepts it.
+        /// @param event  The event to offer.
+        void OfferConsumers(const Event& event);
+
+        /// @brief One pushed focus entry: its identifying token and the layer it owns.
+        struct FocusEntry
+        {
+            /// @brief The token PushFocus returned for this entry.
+            FocusToken Token;
+            /// @brief The focus layer this entry owns.
+            InputFocus Focus = InputFocus::UI;
+        };
+
+        /// @brief Borrowed window; nullptr headless. Its cursor capture follows the cursor seat.
         Window* m_Window;
         /// @brief The Input snapshot routed key/mouse events fold into.
         Input& m_Input;
-        /// @brief Borrowed ImGui layer; nullptr when the app is UI-free.
-        ImGuiLayer* m_ImGui;
-        /// @brief Focus layers above the implicit UI base; the back is the current owner.
-        vector<InputFocus> m_Stack;
+        /// @brief Consumers offered each UI-owned event, in priority (registration) order.
+        vector<InputConsumer*> m_Consumers;
+        /// @brief Per-seat focus stacks; a seat's back is its current owner, absent/empty is UI.
+        unordered_map<Entity, vector<FocusEntry>> m_Stacks;
+        /// @brief The seat whose focus gates window events and drives the cursor capture.
+        Entity m_CursorSeat = Entity::Null;
+        /// @brief Monotonic source of focus-token identities; never reuses a value, 0 stays invalid.
+        u64 m_NextToken = 1;
 
         /// @brief A Presented viewport paired with the seat its region routes pointer input to.
         struct ViewportAssociation

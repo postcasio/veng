@@ -398,7 +398,7 @@ namespace Veng
         ImGui::NewFrame();
     }
 
-    void ImGuiLayer::ForwardEvent(const Event& event)
+    bool ImGuiLayer::ForwardEvent(const Event& event)
     {
         GLFWwindow* handle = GetGlfwWindow(m_Window);
         switch (event.GetEventType())
@@ -460,12 +460,16 @@ namespace Veng
         default:
             break;
         }
+
+        // Cooperative: never stop the event's fall-through, so a later consumer still sees it and
+        // the router's snapshot fold is unaffected.
+        return false;
     }
 
-    void ImGuiLayer::SetMouseInputEnabled(bool enabled)
+    void ImGuiLayer::OnCursorCaptured(bool captured)
     {
         ImGuiIO& io = ImGui::GetIO();
-        if (enabled)
+        if (!captured)
         {
             io.ConfigFlags &= ~ImGuiConfigFlags_NoMouse;
         }
