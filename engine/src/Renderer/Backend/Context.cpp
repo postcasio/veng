@@ -1154,11 +1154,19 @@ namespace Veng::Renderer
         VE_ASSERT(supportedVulkan12Features.timelineSemaphore,
                   "Physical device does not support timeline semaphores!");
 
+        // Several core shaders (the point-field sprite expansion + vertex stage, bloom
+        // downsample, the BRDF-LUT and debug-line shaders) declare the SPIR-V Float16
+        // capability, which vkCreateShaderModule requires be enabled — not merely supported —
+        // or every one is a validation error. Enable it when the device advertises it; MoltenVK
+        // exposes it on Apple GPUs, and a device lacking it cannot run those shaders.
+        const bool shaderFloat16Supported = supportedVulkan12Features.shaderFloat16;
+
         // Designators must be in declaration order (MSVC enforces the C++ rule; clang is
-        // lenient). timelineSemaphore is declared late in PhysicalDeviceVulkan12Features,
-        // after the descriptor-indexing block and before bufferDeviceAddress.
+        // lenient). shaderFloat16 is declared early (before the descriptor-indexing block);
+        // timelineSemaphore is declared late, after that block and before bufferDeviceAddress.
         vk::PhysicalDeviceVulkan12Features vulkan12Features{
             .pNext = &features2,
+            .shaderFloat16 = shaderFloat16Supported ? vk::True : vk::False,
             .shaderUniformBufferArrayNonUniformIndexing = vk::True,
             .shaderSampledImageArrayNonUniformIndexing = vk::True,
             .shaderStorageBufferArrayNonUniformIndexing = vk::True,
