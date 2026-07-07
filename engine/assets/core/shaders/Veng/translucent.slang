@@ -20,7 +20,59 @@
 // shading, and the engine runs no forward light loop for it; the set-0 view block (camera/view
 // state) is available for a fragment that shades itself.
 //
+// Refraction: when the renderer's Refraction setting is on, the lit opaque scene color
+// (lighting + sky + emissive) is copied ahead of the translucent pass and reaches a fragment
+// through the view block's SceneColor handles — so a translucent material can sample the
+// scene behind itself at a perturbed screen UV (glass, water, heat haze, a lens). The copy
+// predates the translucent pass, so one translucent surface never refracts another; the
+// helpers below are the supported read path, and SceneColorAvailable gates the sample (the
+// handles are unpopulated with the setting off).
+//
 // The Surface, PostProcess, and Sky domains have their own contracts in Veng/surface.slang,
 // Veng/postprocess.slang, and Veng/sky.slang.
 
 #include "Veng/surface.slang"
+
+// True when the pre-translucent scene-color copy is populated this frame (the renderer's
+// Refraction setting is on); SampleSceneColor returns black otherwise.
+bool SceneColorAvailable(ViewConstants vc)
+{
+    return vc.SceneColor.z != 0;
+}
+
+// A fragment's logical [0,1] screen UV from its SV_Position: the viewport covers the valid
+// (rendered sub-rect) extent, so the divide is by ExtentParams.xy. Perturb this UV and pass
+// it to SampleSceneColor to read the scene behind the fragment.
+float2 SceneScreenUV(ViewConstants vc, float4 svPosition)
+{
+    return svPosition.xy / vc.ExtentParams.xy;
+}
+
+// Samples the pre-translucent scene color at a logical [0,1] screen UV, mapping through the
+// dynamic-resolution sub-rect (ScaledSampleUV clamps to the valid region, so a distorted UV
+// never bleeds past the rendered edge). Returns black when the copy is unavailable.
+float3 SampleSceneColor(ViewConstants vc, float2 logicalUV)
+{
+    if (!SceneColorAvailable(vc))
+    {
+        return float3(0.0, 0.0, 0.0);
+    }
+    const float2 uv = ScaledSampleUV(saturate(logicalUV), vc.RenderScaleUV.xy, vc.MaxValidUV.xy);
+    return g_Textures[vc.SceneColor.x].SampleLevel(g_Samplers[vc.SceneColor.y], uv, 0.0).rgb;
+}
+
+// Samples the pre-translucent opaque depth at a logical [0,1] screen UV — raw [0,1], smaller
+// nearer, copied beside the scene color. A refracting material depth-gates a distorted
+// sample against its own sv_position.z: a sampled depth nearer than the fragment belongs to
+// geometry in front of the refractor, whose light never passed through it, so the sample is
+// foreground contamination to reject. Point fields write no depth, so they cannot be gated.
+// Returns the far plane (1) when the copy is unavailable.
+float SampleSceneDepth(ViewConstants vc, float2 logicalUV)
+{
+    if (!SceneColorAvailable(vc))
+    {
+        return 1.0;
+    }
+    const float2 uv = ScaledSampleUV(saturate(logicalUV), vc.RenderScaleUV.xy, vc.MaxValidUV.xy);
+    return g_Textures[vc.SceneColor.w].SampleLevel(g_Samplers[vc.SceneColor.y], uv, 0.0).r;
+}

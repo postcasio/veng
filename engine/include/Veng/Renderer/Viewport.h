@@ -129,6 +129,9 @@ namespace Veng::Renderer
         /// per-frame SetViewState, did not run) stops driving the renderer rather than re-rendering
         /// stale content into the shared bindless targets behind the visible panels.
         bool RenderOnDemand = false;
+
+        /// @brief Scale attached Gui documents lay out and draw at (see Viewport::SetUiScale).
+        f32 UiScale = 1.0f;
     };
 
     /// @brief A region of the window, a renderer, and a role: a renderable view into a world.
@@ -327,6 +330,20 @@ namespace Veng::Renderer
         /// @brief Returns the seat a hosted document inherits (Entity::Null for the default).
         [[nodiscard]] Entity GetSeat() const { return m_Seat; }
 
+        /// @brief Sets the scale attached Gui documents lay out and draw at.
+        ///
+        /// Documents solve at the region extent divided by this scale — so authored px sizes are
+        /// logical points — and their geometry is magnified back up by it at draw (MSDF text stays
+        /// crisp at any scale). An app makes its UI HiDPI-aware by setting the window's content
+        /// scale times its own size factor; 1 (the default) keeps authored px 1:1 with framebuffer
+        /// pixels. Every document-space coordinate — SetPlacement, HitTest, pointer routing — is in
+        /// logical points under this scale; the engine's own pointer mapping divides by it.
+        /// @param scale  The UI scale factor; must be positive (a fatal assert otherwise).
+        void SetUiScale(f32 scale);
+
+        /// @brief Returns the scale attached Gui documents lay out and draw at (1 by default).
+        [[nodiscard]] f32 GetUiScale() const { return m_UiScale; }
+
         /// @brief Returns the sampleable view of the rendered result.
         ///
         /// With documents attached this is the composite (scene with the UI layers blended over it);
@@ -514,6 +531,9 @@ namespace Veng::Renderer
 
         /// @brief Whether Render is gated on a fresh per-frame ViewState (see ViewportInfo).
         bool m_RenderOnDemand = false;
+
+        /// @brief The scale attached Gui documents lay out and draw at (see SetUiScale).
+        f32 m_UiScale = 1.0f;
 
         /// @brief Set by SetViewState, cleared by Render: a ViewState landed since the last render.
         ///

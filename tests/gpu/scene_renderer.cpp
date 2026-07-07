@@ -4139,4 +4139,107 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     std::filesystem::remove(outArchive);
 }
 
+// The refraction grab-pass proof. The same lit brick scene, but the cube in front carries a
+// full-coverage Translucent material that returns only SampleSceneColor — the pre-translucent
+// scene color behind the fragment. With Settings.Refraction on, the copy pass fills the
+// intermediate and the view block's SceneColor handles reach the fragment, so the brick's red
+// shows through an opaque-coverage surface — impossible without the grab. Reconfiguring with
+// Refraction off leaves the handles unpopulated, SampleSceneColor returns black, and the same
+// surface renders black — the availability gate.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: a translucent material samples the scene behind it")
+{
+    RegisterBuiltinTypes(Types);
+
+    const path fixtureDir = path(GPU_GBUFFER_FIXTURE_DIR);
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_refraction.vengpack";
+
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    const VoidResult cookResult =
+        cooker.CookPack(fixtureDir / "translucent_pack.json", outArchive, {}, nullptr, nullptr,
+                        nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR));
+    REQUIRE(cookResult.has_value());
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(outArchive).has_value());
+
+    const AssetResult<AssetHandle<MaterialInstance>> refractive =
+        assets.LoadSync<MaterialInstance>(AssetId{0x896002}); // the refractive default instance
+    REQUIRE(refractive.has_value());
+    REQUIRE(refractive->IsLoaded());
+    CHECK(refractive->Get()->GetDomain() == MaterialDomain::Translucent);
+
+    const AssetResult<AssetHandle<MaterialInstance>> brick =
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443}); // the opaque brick default instance
+    REQUIRE(brick.has_value());
+    REQUIRE(brick->IsLoaded());
+
+    constexpr uvec2 extent{128, 128};
+
+    const Ref<Mesh> brickCube =
+        Mesh::BuildSync(Context, Primitives::Cube(1.4f, *brick), "Refraction Opaque Cube");
+    const Ref<Mesh> refractiveCube =
+        Mesh::BuildSync(Context, Primitives::Cube(1.0f, *refractive), "Refractive Cube");
+
+    const Unique<Scene> scene = Scene::Create(Types);
+
+    const Entity opaqueEntity = scene->CreateEntity();
+    scene->Add<Transform>(opaqueEntity).Position = vec3(0.0f, 0.0f, -0.5f);
+    scene->Add<MeshRenderer>(opaqueEntity).Mesh = assets.Adopt(brickCube);
+
+    const Entity lightEntity = scene->CreateEntity();
+    scene->Add<Light>(lightEntity) = Light{
+        .Direction = vec3(0.0f, 0.0f, -1.0f),
+        .Color = vec3(1.0f, 1.0f, 1.0f),
+        .Intensity = 1.0f,
+    };
+
+    const Entity refractiveEntity = scene->CreateEntity();
+    scene->Add<Transform>(refractiveEntity).Position = vec3(0.0f, 0.0f, 0.6f);
+    scene->Add<MeshRenderer>(refractiveEntity).Mesh = assets.Adopt(refractiveCube);
+
+    CameraView camera;
+    camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    const SceneRendererSettings refractionOn{
+        .Mode = DebugView::Final, .Bloom = false, .Shadows = false, .Refraction = true, .AO = false};
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = refractionOn,
+    });
+
+    auto Render = [&]() -> vector<u8>
+    {
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer->Execute(
+                    cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
+            });
+        return renderer->GetOutput()->GetImage()->Download();
+    };
+
+    // Refraction on: the full-coverage surface shows the lit brick behind it — the grab pass
+    // populated the intermediate and the fragment sampled it at its own screen UV.
+    const vec3 grabbedCenter = DecodeTexel(Render(), extent.x, extent.x / 2, extent.y / 2);
+    CHECK(grabbedCenter.r > 0.3f);
+    CHECK(grabbedCenter.r > grabbedCenter.b);
+
+    // Refraction off: the same surface goes black — SampleSceneColor's availability gate.
+    SceneRendererSettings refractionOff = refractionOn;
+    refractionOff.Refraction = false;
+    renderer->Configure(refractionOff);
+    const vec3 gatedCenter = DecodeTexel(Render(), extent.x, extent.x / 2, extent.y / 2);
+    CHECK(gatedCenter.r < 0.05f);
+    CHECK(gatedCenter.g < 0.05f);
+    CHECK(gatedCenter.b < 0.05f);
+
+    std::filesystem::remove(outArchive);
+}
+
 #endif // GPU_GBUFFER_FIXTURE_DIR

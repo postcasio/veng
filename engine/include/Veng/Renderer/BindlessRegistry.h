@@ -304,10 +304,10 @@ namespace Veng::Renderer
         /// the ViewConstantsBinding ByteAddressBuffer.
         ///
         /// One stride per frame-in-flight; a pass reads at index * ViewConstantsStride.
-        /// The ViewConstants block (InvViewProj + CameraPosition + the directional
-        /// light-space matrix + shadow params + the SSAO view/projection matrices)
-        /// is 288 bytes, within the stride.
-        static constexpr u32 ViewConstantsStride = 512;
+        /// Mirrors the shader-side constant in view_constants.slang; the ViewConstants
+        /// block (the camera/view matrices, the sub-rect mapping, the sky SH, the frame
+        /// clock, and the scene-color grab handles) is 560 bytes, within the stride.
+        static constexpr u32 ViewConstantsStride = 576;
 
         /// @brief The fixed byte stride of one GpuLight entry in the LightBinding
         /// ByteAddressBuffer.

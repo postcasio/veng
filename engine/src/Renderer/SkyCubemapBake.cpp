@@ -89,6 +89,12 @@ namespace Veng::Renderer
             vec4 RenderScaleUV;
             vec4 MaxValidUV;
             std::array<vec4, 9> SkyShCoeffs;
+            // Zeroed: a baked source is static (no frame clock) and has no scene behind it. The
+            // fields still belong in the write so a bake face's ring slot never inherits a scene
+            // view's stale handles.
+            vec4 TimeParams;
+            vec4 ExtentParams;
+            uvec4 SceneColor;
         };
 
         static_assert(sizeof(ViewConstantsRegion) <= BindlessRegistry::ViewConstantsStride,

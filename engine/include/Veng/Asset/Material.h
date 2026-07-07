@@ -86,6 +86,13 @@ namespace Veng
         /// the loader for Surface, the owning pass for a pass-built domain.
         Renderer::CullMode CullMode = Renderer::CullMode::Back;
 
+        /// @brief Authored translucent draw-order priority (default 0).
+        ///
+        /// Translucent draws sort back-to-front within ascending priority groups, so a
+        /// higher-priority material draws after — over — every lower-priority one regardless
+        /// of depth (an overlay plane, a reticle). Ignored outside the Translucent domain.
+        i32 SortPriority = 0;
+
         /// @brief Null for PostProcess materials (built by the pass).
         Ref<Renderer::GraphicsPipeline> Pipeline;
 
@@ -139,6 +146,12 @@ namespace Veng
         /// A pass building its own pipeline for this material (Translucent) applies this
         /// instead of assuming the opaque Back convention.
         [[nodiscard]] Renderer::CullMode GetCullMode() const { return m_CullMode; }
+
+        /// @brief Returns the authored translucent draw-order priority (0 when unauthored).
+        ///
+        /// The translucent pass sorts its draws back-to-front within ascending priority
+        /// groups, so a higher-priority material draws over every lower-priority one.
+        [[nodiscard]] i32 GetSortPriority() const { return m_SortPriority; }
 
         /// @brief Returns the built graphics pipeline, or null for a pass-built domain (PostProcess, Sky, Translucent).
         [[nodiscard]] const Ref<Renderer::GraphicsPipeline>& GetPipeline() const
@@ -228,6 +241,7 @@ namespace Veng
         string m_Name;
         MaterialDomain m_Domain = MaterialDomain::Surface;
         Renderer::CullMode m_CullMode = Renderer::CullMode::Back;
+        i32 m_SortPriority = 0;
         Ref<Renderer::GraphicsPipeline> m_Pipeline;
         Ref<Renderer::PipelineLayout> m_PipelineLayout;
 

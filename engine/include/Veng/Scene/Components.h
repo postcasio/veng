@@ -696,6 +696,12 @@ namespace Veng
         Renderer::PointFieldLod Lod;
         /// @brief Cull-cell edge length in world units a consumer builds the field with.
         f32 CellSize = 8.0f;
+        /// @brief Where in the frame the field accumulates (see Renderer::PointFieldPlacement).
+        ///
+        /// HdrTail (the default) rides the post-TAA/SSR tail; SceneColor draws into the lit scene
+        /// color ahead of the translucent pass, so translucents blend over the field and a
+        /// refractive material's scene-color grab includes it.
+        Renderer::PointFieldPlacement Placement = Renderer::PointFieldPlacement::HdrTail;
         /// @brief The built GPU field this entity draws, or null for none.
         ///
         /// Runtime-only: carries no VE_FIELD, so reflection, the cooker, and the inspector never
@@ -968,9 +974,16 @@ VE_FIELD(MaxPixels, .DisplayName = "Max Pixels", .Display = {.Min = 0.0})
 VE_FIELD(MaxIntensity, .DisplayName = "Max Intensity", .Display = {.Min = 0.0})
 VE_REFLECT_END();
 
+VE_ENUM(::Veng::Renderer::PointFieldPlacement, 0xB0D259EFB3B7BF16ULL)
+VE_ENUMERATOR(HdrTail)
+VE_ENUMERATOR(SceneColor)
+VE_ENUM_END();
+
 VE_REFLECT(::Veng::PointField, 0x1D7F4A0C6E5B8392ULL)
 VE_FIELD(Lod, .DisplayName = "LOD")
 VE_FIELD(CellSize, .DisplayName = "Cell Size", .Display = {.Min = 0.001})
+VE_FIELD(Placement, .DisplayName = "Placement",
+         .Tooltip = "HDR tail (post-TAA, pre-bloom) or lit scene color (ahead of translucents)")
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::LevelRenderSettings, 0x28E4618C66455E21ULL)

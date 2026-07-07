@@ -478,6 +478,7 @@ namespace Veng
             .Context = &context,
             .Domain = domain,
             .CullMode = cullMode,
+            .SortPriority = header.SortPriority,
             .Pipeline = nullptr,
             .VertexShader = vsHandle,
             .FragmentShader = fsHandle,

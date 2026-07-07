@@ -1,5 +1,6 @@
 #include "GuiScenePass.h"
 
+#include <cmath>
 #include <cstring>
 
 #include <Veng/Assert.h>
@@ -65,6 +66,9 @@ namespace Veng::Renderer
     {
         Renderer::Context& Context;
         uvec2 Extent;
+        // The draw-list-points → UI-image-pixels magnification (see SetUiScale); positions
+        // scale through the vertex-stage clip transform, clip rects through the scissor.
+        f32 UiScale = 1.0f;
         Format OutputFormat;
 
         // Resident shaders keep the modules alive for the pipelines' lifetime.
@@ -175,9 +179,11 @@ namespace Veng::Renderer
                         passCmd.BindVertexBuffer(VertexBuffer);
                         passCmd.BindIndexBuffer(IndexBuffer, IndexType::U32);
 
+                        // The clip transform folds the UI scale in: positions are logical points
+                        // over extent / UiScale, so points-per-image-extent is UiScale / Extent.
                         const GuiPushConstants push{
-                            .InvScreenSize = vec2(1.0f / static_cast<f32>(Extent.x),
-                                                  1.0f / static_cast<f32>(Extent.y)),
+                            .InvScreenSize = vec2(UiScale / static_cast<f32>(Extent.x),
+                                                  UiScale / static_cast<f32>(Extent.y)),
                             .Pad0 = vec2(0.0f),
                         };
 
@@ -201,14 +207,18 @@ namespace Veng::Renderer
                                 boundPipeline = run.Pipeline;
                             }
 
-                            // The run's clip is already an absolute rectangle; unclipped runs
+                            // The run's clip is already an absolute rectangle in logical points;
+                            // the scissor scales it onto the physical UI image (the vertex stage
+                            // scales positions, but a scissor is raw pixels). Unclipped runs
                             // scissor the whole surface.
                             if (run.HasClip)
                             {
-                                const ivec2 offset{static_cast<i32>(run.Clip.Min.x),
-                                                   static_cast<i32>(run.Clip.Min.y)};
-                                const uvec2 extent{static_cast<u32>(run.Clip.Size.x),
-                                                   static_cast<u32>(run.Clip.Size.y)};
+                                const vec2 clipMin = run.Clip.Min * UiScale;
+                                const vec2 clipSize = run.Clip.Size * UiScale;
+                                const ivec2 offset{static_cast<i32>(clipMin.x),
+                                                   static_cast<i32>(clipMin.y)};
+                                const uvec2 extent{static_cast<u32>(std::ceil(clipSize.x)),
+                                                   static_cast<u32>(std::ceil(clipSize.y))};
                                 passCmd.SetScissor(offset, extent);
                             }
                             else
@@ -427,6 +437,12 @@ namespace Veng::Renderer
         }
 
         m_Impl->Runs = drawList.GetRuns();
+    }
+
+    void GuiScenePass::SetUiScale(const f32 scale)
+    {
+        VE_ASSERT(scale > 0.0f, "GuiScenePass::SetUiScale: scale {} must be positive", scale);
+        m_Impl->UiScale = scale;
     }
 
     void GuiScenePass::Resize(uvec2 extent)

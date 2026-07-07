@@ -251,7 +251,7 @@ namespace Veng
     /// @brief The current material-format version.
     ///
     /// Bumped on any layout change; the loader rejects a blob whose Version != this.
-    inline constexpr u32 CookedMaterialVersion = 5u;
+    inline constexpr u32 CookedMaterialVersion = 6u;
 
     /// @brief Cooked header for a material asset.
     ///
@@ -294,6 +294,12 @@ namespace Veng
         /// The material's authored face-culling mode; a material with no "cull" key cooks
         /// as Back (2), the engine's default for geometry pipelines.
         u32 CullMode = 2;
+        /// @brief Authored translucent draw-order priority (the "sortPriority" key; default 0).
+        ///
+        /// Translucent draws sort back-to-front within ascending priority groups, so a
+        /// higher-priority material draws after — over — every lower-priority one regardless
+        /// of depth (an overlay plane, a reticle). Ignored outside the Translucent domain.
+        i32 SortPriority = 0;
         /// @brief Number of CookedMaterialField entries following this header.
         u32 FieldCount = 0;
         /// @brief Byte size of the single parameter block; <= the per-material param stride.

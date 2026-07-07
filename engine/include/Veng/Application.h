@@ -9,6 +9,7 @@
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Level.h>
 #include <Veng/Renderer/Context.h>
+#include <Veng/Renderer/SceneCapture.h>
 #include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Renderer/Viewport.h>
 #include <Veng/Renderer/GatherPass.h>
@@ -278,6 +279,16 @@ namespace Veng
         /// @param viewport  The viewport to drive; its lifetime stays with the caller.
         void RegisterViewport(Renderer::Viewport& viewport);
 
+        /// @brief Registers a scene capture into the engine drive-list rendered each frame.
+        ///
+        /// Captures render ahead of every viewport, so a material sampling a capture's output
+        /// reads this frame's result — the capture-side analogue of the viewport
+        /// registration-order RTT contract. The same ownership model as RegisterViewport: the
+        /// caller keeps the owning Unique from SceneCapture::Create, and dropping it
+        /// self-unregisters. Double-registering a capture is a fatal assert.
+        /// @param capture  The capture to drive; its lifetime stays with the caller.
+        void RegisterCapture(Renderer::SceneCapture& capture);
+
         /// @brief Returns the number of engine-owned managed viewports.
         ///
         /// Zero when ApplicationInfo::ManagedViewport / ManagedViewports is unset; one for the
@@ -523,6 +534,12 @@ namespace Veng
         /// a back-reference and erases itself on destruction (order-preserving). A subclass's
         /// panel-owned viewports destruct before this base member, so the back-reference is live.
         vector<Renderer::Viewport*> m_Viewports;
+
+        /// @brief Non-owning, ordered list of scene captures rendered ahead of the viewports.
+        ///
+        /// The viewport drive-list's capture sibling: raw pointers, registration order, each
+        /// capture self-unregistering on destruction through its back-reference.
+        vector<Renderer::SceneCapture*> m_Captures;
 
         /// @brief The engine-owned managed viewport set; empty when no managed viewport is configured.
         ///

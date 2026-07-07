@@ -27,6 +27,24 @@ namespace Veng::Renderer
         f32 Size;
     };
 
+    /// @brief Where in the frame a point field's additive radiance accumulates.
+    ///
+    /// HdrTail (the default) draws the field into the final HDR color after the TAA resolve and
+    /// the SSR composite, ahead of bloom — the field's sub-pixel sprites skip the temporal
+    /// resolve, and its radiance still rolls off through the tone curve and blooms. SceneColor
+    /// draws the field into the lit scene color instead, before the translucent pass: the field
+    /// then behaves as part of the opaque scene — a translucent surface draws over it and blends
+    /// against it, a refractive material's scene-color grab includes it, SSR reflects it, and TAA
+    /// (when on) resolves it (sub-pixel sprites pick up the temporal filter, a sharpness trade
+    /// the placement opts into).
+    enum class PointFieldPlacement : u8
+    {
+        /// @brief Accumulate into the final HDR at the tail (post-TAA/SSR, pre-bloom). The default.
+        HdrTail,
+        /// @brief Accumulate into the lit scene color, ahead of the translucent pass.
+        SceneColor,
+    };
+
     /// @brief Which submission path drew a field's resolved sprites this Execute.
     ///
     /// A field's sprite path is selected per field, automatically: the compute expansion pipeline

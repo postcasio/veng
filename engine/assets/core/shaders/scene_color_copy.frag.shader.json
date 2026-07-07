@@ -1,0 +1,4 @@
+{
+  "source": "scene_color_copy.frag.slang",
+  "entry": "fsMain"
+}

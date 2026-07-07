@@ -197,6 +197,16 @@
       "source": "shaders/taa_history_copy.frag.shader.json"
     },
     {
+      "id": "0xBE7002B7B8E9BE5A",
+      "type": "Shader",
+      "source": "shaders/scene_color_copy.frag.shader.json"
+    },
+    {
+      "id": "0xF79D3A3F132A0D2D",
+      "type": "Shader",
+      "source": "shaders/capture_octahedral.frag.shader.json"
+    },
+    {
       "id": "0xCCD40C76935382FD",
       "type": "Shader",
       "source": "shaders/motion_blit.frag.shader.json"

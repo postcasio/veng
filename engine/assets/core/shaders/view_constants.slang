@@ -34,9 +34,32 @@ struct ViewConstants
     // shader read share one 16-byte stride and cannot drift. Valid only when the lighting
     // push SkylightOn is set; zeroed otherwise.
     float4 SkyShCoeffs[9];
+
+    // The frame clock: x is wall-clock seconds since engine start (frame-locked — every view
+    // and material in a frame reads one consistent value), y is the view's frame delta in
+    // seconds, zw unused. An animating material (a scrolling texture, a pulsing emissive)
+    // reads x rather than accumulating its own time. Zero in an offline context (the sky
+    // cubemap bake) — a baked source is static by definition.
+    float4 TimeParams;
+
+    // The view's pixel extents: xy the valid (rendered sub-rect) extent, zw the allocation
+    // extent. A per-submesh fragment derives its logical [0,1] screen UV as
+    // sv_position.xy / ExtentParams.xy (the viewport covers the valid sub-rect), then maps
+    // it to a physical sample UV through ScaledSampleUV — the screen-space read path a
+    // fullscreen pass gets from its triangle UV.
+    float4 ExtentParams;
+
+    // The pre-translucent scene grab: x the bindless texture index of the lit opaque scene
+    // color (lighting + sky + emissive, copied ahead of the translucent pass), y its sampler
+    // index, z 1 when the copy ran this frame (the renderer's Refraction setting is on) and
+    // 0 otherwise — a shader must gate on z before sampling x or w — and w the copied opaque
+    // depth (raw [0,1], smaller nearer), so a refracting material can reject a distorted
+    // sample whose geometry is in front of it. This is what lets a Translucent material
+    // refract or distort the scene behind it; see Veng/translucent.slang for the helpers.
+    uint4 SceneColor;
 };
 
-static const uint ViewConstantsStride = 512;
+static const uint ViewConstantsStride = 576;
 
 [[vk::binding(5, 0)]] ByteAddressBuffer g_ViewConstants;
 

@@ -132,6 +132,22 @@ namespace Veng::Cook
         }
         const u32 cull = static_cast<u32>(cullValue);
 
+        // --- 1d. Parse the optional translucent sort priority (default 0) ---
+
+        // Draw-order priority for Translucent materials (back-to-front within ascending
+        // priority groups). Accepted on any domain but read only by the translucent pass.
+        i32 sortPriority = 0;
+        if (vmat.contains("sortPriority"))
+        {
+            if (!vmat["sortPriority"].is_number_integer())
+            {
+                return std::unexpected(
+                    fmt::format("material importer: '{}': 'sortPriority' must be an integer",
+                                vmatPath.string()));
+            }
+            sortPriority = vmat["sortPriority"].get<i32>();
+        }
+
         // --- 2. Validate and resolve shader references ---
 
         if (!vmat.contains("shaders") || !vmat["shaders"].is_object())
@@ -702,6 +718,7 @@ namespace Veng::Cook
         header.Version = CookedMaterialVersion;
         header.Domain = domain;
         header.CullMode = cull;
+        header.SortPriority = sortPriority;
         header.FieldCount = static_cast<u32>(fields.size());
         header.BlockBytes = blockReflected->Size;
 

@@ -46,6 +46,7 @@
 #include <Veng/Renderer/Sampler.h>
 #include <Veng/Renderer/ShadowCascades.h>
 #include <Veng/Renderer/TaaJitter.h>
+#include <Veng/Time.h>
 
 #include <Veng/Math/AABB.h>
 #include <Veng/Math/Frustum.h>
@@ -119,6 +120,9 @@ namespace Veng::Renderer
         // The TAA resolve and history-copy fragment shaders.
         constexpr AssetId TaaResolveFragId{0xF277BB65AEDAC33EULL};
         constexpr AssetId TaaHistoryCopyFragId{0x07F31C1EC98A29BFULL};
+
+        // The refraction scene-color copy fragment shader.
+        constexpr AssetId SceneColorCopyFragId{0xBE7002B7B8E9BE5AULL};
 
         // The hi-Z max-Z reduction compute shader.
         constexpr AssetId HiZReduceCompId{0xCB20C4EF8A20ADBCULL};
@@ -295,6 +299,20 @@ namespace Veng::Renderer
             u32 Sampler;
         };
 
+        // The refraction scene-color copy push block, matching scene_color_copy.frag
+        // PushConstants: the lit source and opaque depth slots, the shared sampler, and the
+        // frame's dynamic-resolution sub-rect mapping (sources and destinations share one
+        // allocation extent, so one mapping serves the sample and the clamp).
+        struct SceneColorCopyPush
+        {
+            u32 SourceTexture;
+            u32 DepthTexture;
+            u32 Sampler;
+            u32 Pad0;
+            vec2 ScaleUV;
+            vec2 MaxUV;
+        };
+
         // The surface push block (vertex stage), matching surface.slang PushConstants:
         // FrameBase folds the ring-buffered DrawData region into the candidate id; the
         // view-constants index selects the per-frame set-0 view block the vertex stage
@@ -430,6 +448,11 @@ namespace Veng::Renderer
             // Cosine-convolved sky irradiance SH (9 RGB coefficients, .xyz per element, .w pad).
             // vec4[9] (not vec3[9]) to share one 16-byte std140 stride with the shader.
             std::array<vec4, ShCoefficientCount> SkyShCoeffs;
+            vec4 TimeParams;   // x seconds since engine start (frame-locked), y frame delta
+            vec4 ExtentParams; // xy valid (sub-rect) extent px, zw allocation extent px
+            // x refraction scene-color texture handle, y sampler handle, z 1 when the copy
+            // pass runs this frame (Settings.Refraction), w unused.
+            uvec4 SceneColor;
         };
 
         static_assert(sizeof(ViewConstantsBlock) <= BindlessRegistry::ViewConstantsStride,
@@ -552,6 +575,9 @@ namespace Veng::Renderer
             u32 FirstIndex;
             u32 CandidateId;
             f32 ViewDepth;
+            // The parent material's authored draw-order priority: draws sort back-to-front
+            // within ascending priority groups, so a higher priority draws over a lower one.
+            i32 SortPriority;
         };
 
         // The per-frame forward translucent submission plan SceneRenderer fills before each graph
@@ -1087,10 +1113,15 @@ namespace Veng::Renderer
         class TranslucentScenePass final : public ScenePass
         {
         public:
+            // sceneColorId / sceneDepthId are the refraction intermediates the copy pass fills,
+            // or invalid when Settings.Refraction is off; a valid id is declared sampled so the
+            // graph orders the copy's writes before this pass's bindless reads of them.
             TranslucentScenePass(Context& context, uvec2 extent, const TranslucentDrawPlan* plan,
-                                 ResourceId targetId, ResourceId depthId, Format targetFormat)
+                                 ResourceId targetId, ResourceId depthId, ResourceId sceneColorId,
+                                 ResourceId sceneDepthId, Format targetFormat)
                 : m_Context(context), m_Extent(extent), m_Plan(plan), m_TargetId(targetId),
-                  m_DepthId(depthId), m_TargetFormat(targetFormat)
+                  m_DepthId(depthId), m_SceneColorId(sceneColorId), m_SceneDepthId(sceneDepthId),
+                  m_TargetFormat(targetFormat)
             {
             }
 
@@ -1114,6 +1145,14 @@ namespace Veng::Renderer
                         .Load = LoadOp::Load,
                         .Store = StoreOp::Store,
                     });
+                if (m_SceneColorId.IsValid())
+                {
+                    builder.Sample(m_SceneColorId);
+                }
+                if (m_SceneDepthId.IsValid())
+                {
+                    builder.Sample(m_SceneDepthId);
+                }
                 builder.Execute([this](PassContext& inner) { Record(Wrap(inner)); });
             }
 
@@ -1220,10 +1259,91 @@ namespace Veng::Renderer
             const TranslucentDrawPlan* m_Plan = nullptr;
             ResourceId m_TargetId;
             ResourceId m_DepthId;
+            ResourceId m_SceneColorId;
+            ResourceId m_SceneDepthId;
             Format m_TargetFormat;
             // Per-parent pipeline cache; mutable so PipelineFor can lazily populate it from the
             // const record callback.
             mutable std::unordered_map<const Material*, Ref<GraphicsPipeline>> m_Pipelines;
+        };
+
+        // Copies the lit scene color and the opaque depth into the refraction intermediates
+        // ahead of the translucent pass, so a translucent fragment can sample the opaque scene
+        // behind itself — and depth-test its distorted samples — through the view block's
+        // SceneColor handles. A fullscreen MRT draw (not a transfer): the sources are sampled
+        // through their sub-rect mapping, so the copy is correct under dynamic resolution.
+        class SceneColorCopyScenePass final : public ScenePass
+        {
+        public:
+            SceneColorCopyScenePass(Context& context, Ref<GraphicsPipeline> pipeline,
+                                    ResourceId sourceId, TextureHandle sourceHandle,
+                                    ResourceId depthId, TextureHandle depthHandle,
+                                    ResourceId copyId, ResourceId depthCopyId,
+                                    SamplerHandle sampler, uvec2 extent)
+                : m_Context(context), m_Pipeline(std::move(pipeline)), m_SourceId(sourceId),
+                  m_SourceHandle(sourceHandle), m_DepthId(depthId), m_DepthHandle(depthHandle),
+                  m_CopyId(copyId), m_DepthCopyId(depthCopyId), m_Sampler(sampler),
+                  m_Extent(extent)
+            {
+            }
+
+            void Resize(const uvec2 extent) override { m_Extent = extent; }
+
+            void Declare(RenderGraph& graph, const PassIO& /*io*/) override
+            {
+                graph.AddPass("Scene Color Copy")
+                    .Color({
+                        .Resource = m_CopyId,
+                        .Load = LoadOp::Clear,
+                        .Store = StoreOp::Store,
+                        .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
+                    })
+                    .Color({
+                        // The depth copy clears to the far plane so an unwritten texel reads
+                        // as background, never as a phantom occluder.
+                        .Resource = m_DepthCopyId,
+                        .Load = LoadOp::Clear,
+                        .Store = StoreOp::Store,
+                        .Clear = ClearColor{.R = 1.0f, .G = 1.0f, .B = 1.0f, .A = 1.0f},
+                    })
+                    .Sample(m_SourceId)
+                    .Sample(m_DepthId)
+                    .Execute(
+                        [this](PassContext& inner)
+                        {
+                            CommandBuffer& cmd = inner.Cmd();
+                            cmd.BindPipeline(m_Pipeline);
+                            const uvec2 renderExtent = Wrap(inner).View().RenderExtent;
+                            cmd.SetViewport({0, 0}, renderExtent);
+                            cmd.SetScissor({0, 0}, renderExtent);
+                            m_Context.GetBindlessRegistry().Bind(cmd);
+                            // Sources and destinations share the allocation extent, so this
+                            // frame's sub-rect mapping serves both the sample and the clamp.
+                            const vec2 alloc = vec2(m_Extent);
+                            const vec2 valid = vec2(renderExtent);
+                            cmd.PushConstants(SceneColorCopyPush{
+                                .SourceTexture = m_SourceHandle.Index,
+                                .DepthTexture = m_DepthHandle.Index,
+                                .Sampler = m_Sampler.Index,
+                                .Pad0 = 0,
+                                .ScaleUV = valid / alloc,
+                                .MaxUV = (valid - 0.5f) / alloc,
+                            });
+                            cmd.DrawFullscreenTriangle();
+                        });
+            }
+
+        private:
+            Context& m_Context;
+            Ref<GraphicsPipeline> m_Pipeline;
+            ResourceId m_SourceId;
+            TextureHandle m_SourceHandle;
+            ResourceId m_DepthId;
+            TextureHandle m_DepthHandle;
+            ResourceId m_CopyId;
+            ResourceId m_DepthCopyId;
+            SamplerHandle m_Sampler;
+            uvec2 m_Extent;
         };
 
         // Declaring .Sample on each g-buffer id drives the graph-derived attachment →
@@ -1881,6 +2001,7 @@ namespace Veng::Renderer
         CreateTaa();
         CreateBloom();
         CreateSsr();
+        CreateRefraction();
         CreateAutoExposure();
         CreatePicking();
         Rebuild();
@@ -1905,6 +2026,8 @@ namespace Veng::Renderer
         bindless.Release(m_SsrReflectionSampleHandle);
         bindless.Release(m_SsrReflectionSamplerHandle);
         bindless.Release(m_SsrHiZSampleHandle);
+        bindless.Release(m_RefractionSceneHandle);
+        bindless.Release(m_RefractionDepthHandle);
         bindless.Release(m_SamplerHandle);
     }
 
@@ -2053,6 +2176,30 @@ namespace Veng::Renderer
             });
         m_TaaCopyPipeline = MakePipeline("SceneRenderer TAA History Copy Pipeline", m_TaaCopyLayout,
                                          taaCopyFs, HdrFormat);
+
+        // The refraction scene-color copy writes the intermediate translucent materials sample.
+        const AssetHandle<Veng::Shader> sceneColorCopyFs =
+            LoadShader(SceneColorCopyFragId, "scene-color copy fragment");
+        m_SceneColorCopyLayout = PipelineLayout::Create(
+            m_Context, {
+                           .Name = "SceneRenderer Scene Color Copy Layout",
+                           .PushConstantRanges = {PushConstantRange::Of<SceneColorCopyPush>(
+                               ShaderStage::Fragment)},
+                       });
+        // Two attachments (the scene-color grab + the depth copy), so the single-format
+        // MakePipeline convenience does not apply.
+        m_SceneColorCopyPipeline = GraphicsPipeline::Create(
+            m_Context,
+            {
+                .Name = "SceneRenderer Scene Color Copy Pipeline",
+                .ColorAttachments = {{.Format = HdrFormat}, {.Format = Format::R32Sfloat}},
+                .PipelineLayout = m_SceneColorCopyLayout,
+                .ShaderStages =
+                    {
+                        {.Stage = ShaderStage::Vertex, .Module = vs.Get()->Module},
+                        {.Stage = ShaderStage::Fragment, .Module = sceneColorCopyFs.Get()->Module},
+                    },
+            });
 
         // Loaded resident so the PostProcessScenePass builds its pipeline against the output format.
         // The tonemap material's cooked zero-override default instance — its parent supplies the
@@ -3412,6 +3559,50 @@ namespace Veng::Renderer
         return m_Extent;
     }
 
+    void SceneRenderer::CreateRefraction()
+    {
+        BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
+        bindless.Release(m_RefractionSceneHandle);
+        bindless.Release(m_RefractionDepthHandle);
+        m_RefractionSceneHandle = {};
+        m_RefractionDepthHandle = {};
+
+        if (!m_Settings.Refraction)
+        {
+            m_RefractionSceneImage.reset();
+            m_RefractionSceneView.reset();
+            m_RefractionDepthImage.reset();
+            m_RefractionDepthView.reset();
+            return;
+        }
+
+        // The pre-translucent scene color and opaque depth the copy pass fills each frame;
+        // translucent materials sample them through the view block's SceneColor handles.
+        m_RefractionSceneImage =
+            Image::Create(m_Context, {
+                                         .Name = "SceneRenderer Refraction Scene",
+                                         .Extent = {m_Extent.x, m_Extent.y, 1},
+                                         .Format = HdrFormat,
+                                         .Usage = HdrUsage,
+                                     });
+        m_RefractionSceneView =
+            ImageView::Create(m_Context, {.Name = "SceneRenderer Refraction Scene View",
+                                          .Image = m_RefractionSceneImage});
+        m_RefractionSceneHandle = bindless.Register(m_RefractionSceneView);
+
+        m_RefractionDepthImage =
+            Image::Create(m_Context, {
+                                         .Name = "SceneRenderer Refraction Depth",
+                                         .Extent = {m_Extent.x, m_Extent.y, 1},
+                                         .Format = Format::R32Sfloat,
+                                         .Usage = HdrUsage,
+                                     });
+        m_RefractionDepthView =
+            ImageView::Create(m_Context, {.Name = "SceneRenderer Refraction Depth View",
+                                          .Image = m_RefractionDepthImage});
+        m_RefractionDepthHandle = bindless.Register(m_RefractionDepthView);
+    }
+
     void SceneRenderer::CreateSsr()
     {
         BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
@@ -3675,6 +3866,11 @@ namespace Veng::Renderer
             (m_Settings.Mode == DebugView::Final && m_Settings.SSR) || debugReflections;
         m_SsrActive = ssrActive;
 
+        // The scene-color copy runs wherever the translucent composite does (the Final view and
+        // the Bloom debug arm), so a refractive material behaves identically in both.
+        const bool refractionActive = sceneComposited && m_Settings.Refraction;
+        m_RefractionActive = refractionActive;
+
         RenderGraph graph(m_Context);
         const ResourceId albedoId = graph.Import("SceneRenderer GBuffer Albedo");
         const ResourceId normalId = graph.Import("SceneRenderer GBuffer Normal");
@@ -3721,6 +3917,18 @@ namespace Veng::Renderer
         const ResourceId sceneColorId = ssrActive ? m_SsrSceneId : hdrId;
         const ResourceId lightingTargetId = taaActive ? litId : sceneColorId;
 
+        // The refraction copy reads the same target the translucent pass blends over, whichever
+        // intermediate the TAA/SSR routing picked; the handle is the bindless side of that id.
+        m_RefractionSceneId = ResourceId{};
+        m_RefractionDepthId = ResourceId{};
+        if (refractionActive)
+        {
+            m_RefractionSceneId = graph.Import("SceneRenderer Refraction Scene");
+            m_RefractionDepthId = graph.Import("SceneRenderer Refraction Depth");
+        }
+        const TextureHandle lightingTargetHandle =
+            taaActive ? m_LitHandle : (ssrActive ? m_SsrSceneHandle : m_HdrHandle);
+
         ResourceId shadowId{};
         if (shadowActive)
         {
@@ -3758,6 +3966,7 @@ namespace Veng::Renderer
 
         m_Passes.clear();
         m_PointFieldPass.reset();
+        m_ScenePointFieldPass = nullptr;
 
         // The pass index the HDR tail (SSR composite, point fields, bloom sweep) is declared
         // before: the tonemap in the Final arm (set below), else the terminal pass.
@@ -3880,14 +4089,36 @@ namespace Veng::Renderer
                     &m_EmissiveSkinnedPipeline, lightingTargetId, depthId));
             }
 
+            // SceneColor-placed point fields accumulate into the lit scene color here — after the
+            // sky and emissive composites, ahead of the refraction copy and the translucent pass —
+            // so translucents blend over the fields and a refractive material's grab includes them.
+            // The in-list io.Hdr is exactly the lit target this position writes.
+            if (m_ScenePointFieldActive)
+            {
+                auto scenePointFields = CreateUnique<PointFieldScenePass>(
+                    m_Context, m_Assets, &m_ScenePointFields, HdrFormat, m_SamplerHandle,
+                    m_Context.GetMaxFramesInFlight());
+                scenePointFields->SetForceDirect(m_PointFieldForceDirect);
+                m_ScenePointFieldPass = scenePointFields.get();
+                m_Passes.push_back(std::move(scenePointFields));
+            }
+
             // Forward translucent draws alpha-blend into the lit scene color after the sky and
             // emissive composites and before the TAA/bloom/tonemap tail, so translucents resolve,
             // bloom, and tonemap with the scene. Depth-tested against the opaque depth, depth-write
             // off, sorted back-to-front. Additive to the pipeline: no toggle — a scene with no
-            // translucent submesh records an empty pass.
+            // translucent submesh records an empty pass. With Refraction on, the copy pass grabs
+            // the lit scene color first so a translucent fragment can sample the scene behind it.
+            if (refractionActive)
+            {
+                m_Passes.push_back(CreateUnique<SceneColorCopyScenePass>(
+                    m_Context, m_SceneColorCopyPipeline, lightingTargetId, lightingTargetHandle,
+                    depthId, m_DepthHandle, m_RefractionSceneId, m_RefractionDepthId,
+                    m_SamplerHandle, m_Extent));
+            }
             m_Passes.push_back(CreateUnique<TranslucentScenePass>(
                 m_Context, m_Extent, &m_Internal->TranslucentPlan, lightingTargetId, depthId,
-                HdrFormat));
+                m_RefractionSceneId, m_RefractionDepthId, HdrFormat));
 
             // TAA resolves the lit target into the HDR target the tail samples, so it sits
             // between lighting and the bloom/tonemap tail.
@@ -4041,10 +4272,17 @@ namespace Veng::Renderer
                     &m_EmissiveSkinnedPipeline, lightingTargetId, depthId));
             }
             // The same forward translucent composite the Final arm folds into the lit target, so
-            // the pyramid blooms the scene the Final view blooms.
+            // the pyramid blooms the scene the Final view blooms — including the refraction grab.
+            if (refractionActive)
+            {
+                m_Passes.push_back(CreateUnique<SceneColorCopyScenePass>(
+                    m_Context, m_SceneColorCopyPipeline, lightingTargetId, lightingTargetHandle,
+                    depthId, m_DepthHandle, m_RefractionSceneId, m_RefractionDepthId,
+                    m_SamplerHandle, m_Extent));
+            }
             m_Passes.push_back(CreateUnique<TranslucentScenePass>(
                 m_Context, m_Extent, &m_Internal->TranslucentPlan, lightingTargetId, depthId,
-                HdrFormat));
+                m_RefractionSceneId, m_RefractionDepthId, HdrFormat));
             m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
                 m_Context, m_AlbedoBlitPipeline, m_Extent, FullscreenBlitScenePass::Source::Bloom));
             break;
@@ -4300,10 +4538,12 @@ namespace Veng::Renderer
 
     void SceneRenderer::ResolvePointFields(const SceneView& view)
     {
-        // Refill this Execute's live field set from the scene's PointField components — the lights
-        // model. Each component's authored Lod rides its built field so the pass reads the authored
-        // knobs; a null or empty Field contributes nothing.
+        // Refill this Execute's live field sets from the scene's PointField components — the lights
+        // model, split by each component's authored Placement. Each component's authored Lod rides
+        // its built field so the pass reads the authored knobs; a null or empty Field contributes
+        // nothing.
         m_PointFields.clear();
+        m_ScenePointFields.clear();
         for (auto [entity, field] : view.World.View<Veng::PointField>())
         {
             const Ref<Renderer::PointField>& built = field.Field;
@@ -4312,16 +4552,26 @@ namespace Veng::Renderer
                 continue;
             }
             built->SetLod(field.Lod);
-            m_PointFields.push_back(built.get());
+            if (field.Placement == Renderer::PointFieldPlacement::SceneColor)
+            {
+                m_ScenePointFields.push_back(built.get());
+            }
+            else
+            {
+                m_PointFields.push_back(built.get());
+            }
         }
 
-        // Presence drives the pass: insert it the first frame a live field exists, drop it when the
-        // last one goes. The recompile happens at this frame boundary and reuses the imported output
-        // (identity preserved), so a cached GetOutput() ref stays valid.
+        // Presence drives each pass: insert it the first frame a live field exists in its
+        // placement, drop it when the last one goes. The recompile happens at this frame boundary
+        // and reuses the imported output (identity preserved), so a cached GetOutput() ref stays
+        // valid.
         const bool active = !m_PointFields.empty();
-        if (active != m_PointFieldActive)
+        const bool sceneActive = !m_ScenePointFields.empty();
+        if (active != m_PointFieldActive || sceneActive != m_ScenePointFieldActive)
         {
             m_PointFieldActive = active;
+            m_ScenePointFieldActive = sceneActive;
             Rebuild();
         }
     }
@@ -5252,13 +5502,22 @@ namespace Veng::Renderer
                 .FirstIndex = subMesh.IndexOffset,
                 .CandidateId = slot,
                 .ViewDepth = viewDepth,
+                .SortPriority = material.GetParent().Get()->GetSortPriority(),
             });
         }
 
-        // Back-to-front: farthest (most negative view-space z) first.
+        // Ascending priority groups, back-to-front (most negative view-space z first) within
+        // each: a higher-priority material (an overlay) draws over every lower-priority draw
+        // regardless of depth.
         std::ranges::sort(translucentPlan.Draws,
                           [](const TranslucentDraw& a, const TranslucentDraw& b)
-                          { return a.ViewDepth < b.ViewDepth; });
+                          {
+                              if (a.SortPriority != b.SortPriority)
+                              {
+                                  return a.SortPriority < b.SortPriority;
+                              }
+                              return a.ViewDepth < b.ViewDepth;
+                          });
 
         // The GPU cull dispatch reads the candidate region this frame; zero its survivor
         // count so the next-frame readback reflects only this dispatch. The push members the
@@ -5297,6 +5556,7 @@ namespace Veng::Renderer
         CreateTaa();
         CreateBloom();
         CreateSsr();
+        CreateRefraction();
         // The HDR target moved; rebind the metering source and re-snap the adaptation so the
         // resized frame is not mis-exposed off a stale ring value.
         WriteAutoExposureHdrBinding();
@@ -5338,6 +5598,7 @@ namespace Veng::Renderer
         ResolveActiveCullMode();
         CreateTaa();
         CreateSsr();
+        CreateRefraction();
         CreatePunctualShadowAtlas();
         CreatePicking();
         Rebuild();
@@ -5711,6 +5972,12 @@ namespace Veng::Renderer
             .CurViewProj = viewProj,
             .RenderScaleUV = vec4(renderScaleUV, m_PreviousRenderScaleUV),
             .MaxValidUV = vec4(maxValidUV, m_PreviousMaxValidUV),
+            // The frame clock is engine-global (Time), frame-locked so every view and material
+            // reads one consistent value; the delta is this view's.
+            .TimeParams = vec4(Time::GetFrameTime(), view.Delta, 0.0f, 0.0f),
+            .ExtentParams = vec4(vec2(validExtent), vec2(m_Extent)),
+            .SceneColor = uvec4(m_RefractionSceneHandle.Index, m_SamplerHandle.Index,
+                                m_RefractionActive ? 1u : 0u, m_RefractionDepthHandle.Index),
         };
         for (u32 i = 0; i < ShCoefficientCount; ++i)
         {
@@ -5852,6 +6119,11 @@ namespace Veng::Renderer
         if (m_SsaoActive && m_SsaoPass != nullptr)
         {
             bindings.push_back({m_SsaoId, m_SsaoPass->GetAoView()});
+        }
+        if (m_RefractionActive)
+        {
+            bindings.push_back({m_RefractionSceneId, m_RefractionSceneView});
+            bindings.push_back({m_RefractionDepthId, m_RefractionDepthView});
         }
         if (m_SsrActive)
         {
@@ -6013,23 +6285,47 @@ namespace Veng::Renderer
     }
     PointFieldStats SceneRenderer::GetPointFieldStats() const
     {
-        // No active point-field pass (no live field this frame) reads back as all-zero, matching
-        // the pass's own no-field-drawn frame.
-        if (m_PointFieldPass == nullptr)
+        // Sum the tail and scene-color passes into one funnel; no active pass (no live field this
+        // frame) reads back as all-zero, matching the passes' own no-field-drawn frames.
+        PointFieldStats stats{};
+        auto fold = [&stats](const PointFieldStats& s)
         {
-            return {};
+            stats.Fields += s.Fields;
+            stats.CellsTotal += s.CellsTotal;
+            stats.CellsInFrustum += s.CellsInFrustum;
+            stats.CellsMeasured += s.CellsMeasured;
+            stats.ResolvedDraws += s.ResolvedDraws;
+            stats.SpritePoints += s.SpritePoints;
+            stats.CompactedPoints += s.CompactedPoints;
+            stats.Splats += s.Splats;
+            if (s.DrawSource != SpriteDrawSource::None)
+            {
+                stats.DrawSource = s.DrawSource;
+            }
+        };
+        if (m_PointFieldPass != nullptr)
+        {
+            fold(static_cast<const PointFieldScenePass*>(m_PointFieldPass.get())->GetStats());
         }
-        return static_cast<const PointFieldScenePass*>(m_PointFieldPass.get())->GetStats();
+        if (m_ScenePointFieldPass != nullptr)
+        {
+            fold(static_cast<const PointFieldScenePass*>(m_ScenePointFieldPass)->GetStats());
+        }
+        return stats;
     }
 
     void SceneRenderer::SetPointFieldForceDirect(const bool force)
     {
-        // Persist the choice so a recompile that rebuilds the pass reapplies it, then apply to the
-        // live pass if one exists.
+        // Persist the choice so a recompile that rebuilds the passes reapplies it, then apply to
+        // the live passes if any exist.
         m_PointFieldForceDirect = force;
         if (m_PointFieldPass != nullptr)
         {
             static_cast<PointFieldScenePass*>(m_PointFieldPass.get())->SetForceDirect(force);
+        }
+        if (m_ScenePointFieldPass != nullptr)
+        {
+            static_cast<PointFieldScenePass*>(m_ScenePointFieldPass)->SetForceDirect(force);
         }
     }
 

@@ -381,6 +381,15 @@ namespace Veng
         viewport.AttachToDriveList(m_Viewports);
     }
 
+    void Application::RegisterCapture(Renderer::SceneCapture& capture)
+    {
+        VE_ASSERT(std::ranges::find(m_Captures, &capture) == m_Captures.end(),
+                  "SceneCapture is already registered to this Application's drive-list");
+
+        m_Captures.emplace_back(&capture);
+        capture.AttachToDriveList(m_Captures);
+    }
+
     void Application::RenderManagedTail(Renderer::CommandBuffer& cmd)
     {
         if (!m_Gather)
@@ -578,10 +587,17 @@ namespace Veng
 
         Renderer::CommandBuffer& cmd = m_RenderContext.GetCurrentCommandBuffer();
 
-        // The engine render phase, uniform for every app and not overridable: render every
-        // registered viewport in registration order (each does its own Execute + Sample barrier),
-        // so viewport outputs are in Sample layout before OnRender builds the ImGui draw data that
-        // may sample them.
+        // The engine render phase, uniform for every app and not overridable. Scene captures
+        // render first, so a material sampling a capture's output reads this frame's result
+        // during the viewport renders that follow.
+        for (Renderer::SceneCapture* capture : m_Captures)
+        {
+            capture->Render(cmd);
+        }
+
+        // Then every registered viewport in registration order (each does its own Execute +
+        // Sample barrier), so viewport outputs are in Sample layout before OnRender builds the
+        // ImGui draw data that may sample them.
         for (Renderer::Viewport* viewport : m_Viewports)
         {
             viewport->Render(cmd);

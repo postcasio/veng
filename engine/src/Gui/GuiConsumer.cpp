@@ -103,7 +103,10 @@ namespace Veng::Gui
                     continue;
                 }
 
-                const vec2 docPoint = *normalized * vec2(viewport->GetRegion().Extent);
+                // Document space is logical points under the viewport's UI scale (the document
+                // solved at extent / scale), so the physical-pixel point divides by it.
+                const vec2 docPoint =
+                    *normalized * vec2(viewport->GetRegion().Extent) / viewport->GetUiScale();
 
                 PointerEvent pointer;
                 pointer.Position = docPoint;

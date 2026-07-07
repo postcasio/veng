@@ -45,7 +45,11 @@ float4 fsMain(VSOutput input) : SV_Target
     uint atlasHeight;
     atlas.GetDimensions(atlasWidth, atlasHeight);
     float2 texelsPerPixel = fwidth(input.v_Uv) * float2(atlasWidth, atlasHeight);
-    float screenPxRange = distanceRange / max(length(texelsPerPixel), 1e-4);
+    // Clamped to one screen pixel: under minification (a glyph drawn below its baked atlas
+    // scale) the projected range shrinks under a pixel, and unclamped the coverage would
+    // never reach zero across the quad — every glyph ghosts inside a faint box. One pixel
+    // is the narrowest transition a fragment grid can resolve anyway.
+    float screenPxRange = max(distanceRange / max(length(texelsPerPixel), 1e-4), 1.0);
 
     float screenPxDistance = screenPxRange * (sd - 0.5);
     float coverage = clamp(screenPxDistance + 0.5, 0.0, 1.0);

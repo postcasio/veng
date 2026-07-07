@@ -24,10 +24,11 @@ namespace Veng::Renderer
     Viewport::Viewport(const ViewportInfo& info)
         : m_Context(info.Context), m_Assets(info.Assets), m_Region(info.Region),
           m_RenderScale(info.RenderScale), m_MaxAllocationScale(info.MaxAllocationScale),
-          m_Role(info.Role), m_RenderOnDemand(info.RenderOnDemand)
+          m_Role(info.Role), m_RenderOnDemand(info.RenderOnDemand), m_UiScale(info.UiScale)
     {
         VE_ASSERT(info.RenderScale > 0.0f, "Viewport RenderScale must be > 0 (got {})",
                   info.RenderScale);
+        VE_ASSERT(info.UiScale > 0.0f, "Viewport UiScale must be > 0 (got {})", info.UiScale);
         VE_ASSERT(info.MaxAllocationScale > 0.0f,
                   "Viewport MaxAllocationScale must be > 0 (got {})", info.MaxAllocationScale);
 
@@ -140,6 +141,12 @@ namespace Veng::Renderer
         bindless.Release(m_OutputHandle);
         m_OutputHandle = bindless.Register(m_Renderer->GetOutput());
         ++m_OutputGeneration;
+    }
+
+    void Viewport::SetUiScale(const f32 scale)
+    {
+        VE_ASSERT(scale > 0.0f, "Viewport::SetUiScale: scale {} must be positive", scale);
+        m_UiScale = scale;
     }
 
     void Viewport::SetRegion(const ViewportRegion& region)
@@ -383,10 +390,11 @@ namespace Veng::Renderer
             return;
         }
 
-        // The documents lay out and draw at the region's native output extent — the sharp,
-        // full-resolution surface, not the render-scale sub-rect the scene renders into. A region
-        // extent change re-sizes the UI image and composite target to match before the layers solve.
-        const vec2 available = vec2(m_Region.Extent);
+        // The documents lay out at the region's native output extent divided by the UI scale —
+        // logical points, the sharp full-resolution surface (never the render-scale sub-rect the
+        // scene renders into), magnified back up by the scale at draw. A region extent change
+        // re-sizes the UI image and composite target to match before the layers solve.
+        const vec2 available = vec2(m_Region.Extent) / m_UiScale;
         const f32 delta = m_ViewState.Delta;
 
         if (m_GuiPassExtent != m_Region.Extent)
@@ -394,6 +402,7 @@ namespace Veng::Renderer
             m_GuiPass->Resize(m_Region.Extent);
             m_GuiPassExtent = m_Region.Extent;
         }
+        m_GuiPass->SetUiScale(m_UiScale);
 
         // Walk bottom → top, driving each document's per-frame pipeline and appending its geometry
         // into the one shared draw list, so the layers composite in a single GuiScenePass record.

@@ -76,6 +76,15 @@ namespace Veng::Renderer
         /// @param extent  The new native output extent, in pixels.
         void Resize(uvec2 extent);
 
+        /// @brief Sets the scale the recorded geometry is magnified by at draw.
+        ///
+        /// The draw list's positions and clip rects are logical points (the document solved at
+        /// extent / scale); the record maps them onto the physical UI image through this factor —
+        /// positions via the vertex-stage clip transform, clips via the scissor. 1 (the default)
+        /// draws logical points 1:1 with pixels.
+        /// @param scale  The UI scale factor; must be positive.
+        void SetUiScale(f32 scale);
+
         /// @brief Records the UI into its image and blends it over the scene output.
         ///
         /// Clears the UI image to transparent, replays each cached run (scissor + pipeline) into it,

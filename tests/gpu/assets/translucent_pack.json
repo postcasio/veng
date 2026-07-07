@@ -40,6 +40,16 @@
       "id": "0x0000000000002402",
       "type": "Material",
       "source": "materials/translucent.vmat.json"
+    },
+    {
+      "id": "0x0000000000002403",
+      "type": "Shader",
+      "source": "shaders/refractive.frag.shader.json"
+    },
+    {
+      "id": "0x0000000000002404",
+      "type": "Material",
+      "source": "materials/refractive.vmat.json"
     }
   ]
 }

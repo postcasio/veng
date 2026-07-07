@@ -310,6 +310,18 @@ namespace Veng::Renderer
         /// when SSR is inactive.
         SsrResolution SsrResolutionScale = SsrResolution::Half;
 
+        /// @brief Whether translucent materials can sample the scene color behind them.
+        ///
+        /// A topology change: it allocates a full-resolution scene-color intermediate and inserts
+        /// a copy of the lit scene color (lighting + sky + emissive) ahead of the translucent
+        /// pass, exposing it to translucent fragments through the view block's SceneColor handles
+        /// (see Veng/translucent.slang) — the grab pass a refractive or distorting material
+        /// (glass, water, heat haze, a lens) samples the scene behind itself through. The copy
+        /// predates the translucent pass, so one translucent surface never refracts another. Off
+        /// by default: the copy costs a full-resolution pass per frame whether or not any material
+        /// samples it.
+        bool Refraction = false;
+
         /// @brief Whether the screen-space ambient occlusion pass runs.
         ///
         /// A topology change: it inserts/removes the fullscreen SsaoScenePass and
@@ -991,6 +1003,12 @@ namespace Veng::Renderer
         /// releases any previously-created ones. Mirrors CreateBloom (the reflection blur chain) and
         /// CreateHiZ (the min-Z pyramid). Called from Create and every Resize/Configure.
         void CreateSsr();
+        /// @brief Recreates the refraction scene-color intermediate translucent materials sample.
+        ///
+        /// Allocates the full-resolution HdrFormat target and registers it into bindless when
+        /// Settings.Refraction is set; otherwise releases any previously-created one. Called from
+        /// Create and every Resize/Configure.
+        void CreateRefraction();
         /// @brief Declares the SSR min-Z reduction, trace, blur, and composite passes into the graph.
         ///
         /// Reduces this frame's depth to a min-Z pyramid, traces reflections against it into the
@@ -1312,6 +1330,30 @@ namespace Veng::Renderer
         /// @brief SSR min-Z reduction compute pipeline (reuses the hi-Z reduce layout/set layout).
         Ref<class ComputePipeline> m_SsrHiZReducePipeline;
 
+        /// @brief Refraction scene-color intermediate translucent materials sample.
+        ///
+        /// The lit scene color (lighting + sky + emissive) copied ahead of the translucent pass,
+        /// reached by a translucent fragment through the view block's SceneColor handles. Null
+        /// when Settings.Refraction is off. HdrFormat, full allocation extent, recreated on
+        /// Resize/Configure.
+        Ref<Image> m_RefractionSceneImage;
+        /// @brief View over m_RefractionSceneImage.
+        Ref<ImageView> m_RefractionSceneView;
+        /// @brief Bindless handle of m_RefractionSceneView, written into the view-constants block.
+        TextureHandle m_RefractionSceneHandle;
+        /// @brief Refraction scene-depth intermediate: the opaque depth copied beside the scene
+        /// color, so a translucent material depth-tests its distorted samples against the
+        /// geometry that produced them. R32Sfloat; null when Settings.Refraction is off.
+        Ref<Image> m_RefractionDepthImage;
+        /// @brief View over m_RefractionDepthImage.
+        Ref<ImageView> m_RefractionDepthView;
+        /// @brief Bindless handle of m_RefractionDepthView, written into the view-constants block.
+        TextureHandle m_RefractionDepthHandle;
+        /// @brief Scene-color copy pipeline (sub-rect-mapped passthrough), writing HdrFormat.
+        Ref<class GraphicsPipeline> m_SceneColorCopyPipeline;
+        /// @brief Layout for m_SceneColorCopyPipeline: a texture + sampler + sub-rect push block.
+        Ref<class PipelineLayout> m_SceneColorCopyLayout;
+
         /// @brief Shared sampler fullscreen passes use to sample the g-buffer and HDR target.
         Ref<Sampler> m_Sampler;
 
@@ -1576,8 +1618,18 @@ namespace Veng::Renderer
         ///
         /// The fields accumulate into the final HDR between the SSR composite and the bloom
         /// sweep — a position only the tail anchor occupies, so the pass cannot ride the list.
-        /// Null unless the Final arm is built while a live field exists (m_PointFieldActive).
+        /// Null unless the Final arm is built while a live HdrTail-placed field exists
+        /// (m_PointFieldActive).
         Unique<ScenePass> m_PointFieldPass;
+
+        /// @brief The scene-color point-field pass, for fields placed in the lit scene color.
+        ///
+        /// Rides m_Passes (it writes the in-list io.Hdr lit target), inserted ahead of the
+        /// refraction copy and the translucent pass so translucents blend over the fields and the
+        /// scene-color grab includes them. A non-owning observer for the stats/force-direct
+        /// accessors; null unless the Final arm is built while a live SceneColor-placed field
+        /// exists (m_ScenePointFieldActive).
+        ScenePass* m_ScenePointFieldPass = nullptr;
 
         /// @brief BVH broadphase over resident draw candidates.
         ///
@@ -1740,6 +1792,10 @@ namespace Veng::Renderer
         ResourceId m_SsaoId;
         /// @brief Imported id for the SSR lit scene-color intermediate.
         ResourceId m_SsrSceneId;
+        /// @brief Imported id for the refraction scene-color intermediate.
+        ResourceId m_RefractionSceneId;
+        /// @brief Imported id for the refraction scene-depth intermediate.
+        ResourceId m_RefractionDepthId;
         /// @brief Per-mip subresource handle for the SSR reflection pyramid (trace + blur).
         MipChainId m_SsrReflectionChainId;
         /// @brief Per-mip subresource handle for the SSR min-Z pyramid (reduction + trace).
@@ -1927,6 +1983,11 @@ namespace Veng::Renderer
         ///        Reflections debug arm). Execute binds the SSR imports only when true.
         bool m_SsrActive = false;
 
+        /// @brief True when the last Rebuild wired the scene-color copy pass (a scene-composited
+        ///        mode + Settings.Refraction). Execute binds the refraction import and populates
+        ///        the view block's SceneColor handles only when true.
+        bool m_RefractionActive = false;
+
         /// @brief Image-based-lighting maps + their generation pipelines; created at Create.
         ///
         /// Owns the radiance/irradiance/prefilter cubemaps, the BRDF LUT, and the consumer set
@@ -1984,7 +2045,8 @@ namespace Veng::Renderer
         /// the start of every Execute.
         mutable DebugDraw m_DebugDraw;
 
-        /// @brief This Execute's live point fields, borrowed from the scene's PointField components.
+        /// @brief This Execute's live HdrTail-placed point fields, borrowed from the scene's
+        /// PointField components.
         ///
         /// Refilled every Execute by ResolvePointFields walking View<PointField>; the point-field
         /// pass reads it by pointer and draws each field. A borrow only — the scene's components own
@@ -1992,15 +2054,22 @@ namespace Veng::Renderer
         /// ordering). Empty when no component carries a live field.
         vector<const PointField*> m_PointFields;
 
-        /// @brief Persisted point-field force-direct hook, reapplied when the pass is rebuilt.
+        /// @brief This Execute's live SceneColor-placed point fields; m_ScenePointFieldPass's set.
+        vector<const PointField*> m_ScenePointFields;
+
+        /// @brief Persisted point-field force-direct hook, reapplied when the passes are rebuilt.
         bool m_PointFieldForceDirect = false;
 
-        /// @brief Whether the current pass set carries the point-field pass; gates the internal Rebuild.
+        /// @brief Whether the current pass set carries the tail point-field pass; gates the
+        /// internal Rebuild.
         ///
         /// True once ResolvePointFields has seen a live field and wired the pass. Compared against
         /// each Execute's presence so the pass inserts on the first live field and drops when the
         /// last one goes, recompiling at the frame boundary (reusing the imported output).
         bool m_PointFieldActive = false;
+
+        /// @brief Whether the current pass set carries the scene-color point-field pass.
+        bool m_ScenePointFieldActive = false;
 
         /// @brief Entity-id picking target (R32Uint), allocated only when Settings.Picking is set.
         ///
