@@ -13,6 +13,7 @@
 #include <fmt/format.h>
 
 #include <algorithm>
+#include <charconv>
 
 namespace Veng::Gui
 {
@@ -175,6 +176,46 @@ namespace Veng::Gui
             }
 
             return codepoints;
+        }
+
+        // Appends one Unicode codepoint to a UTF-8 string, the inverse of DecodeUtf8; an
+        // out-of-range codepoint is emitted as U+FFFD so a round-trip stays well-formed.
+        void AppendUtf8(string& out, u32 codepoint)
+        {
+            if (codepoint > 0x10FFFF || (codepoint >= 0xD800 && codepoint <= 0xDFFF))
+            {
+                codepoint = 0xFFFD;
+            }
+            if (codepoint < 0x80)
+            {
+                out.push_back(static_cast<char>(codepoint));
+            }
+            else if (codepoint < 0x800)
+            {
+                out.push_back(static_cast<char>(0xC0 | (codepoint >> 6)));
+                out.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+            }
+            else if (codepoint < 0x10000)
+            {
+                out.push_back(static_cast<char>(0xE0 | (codepoint >> 12)));
+                out.push_back(static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F)));
+                out.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+            }
+            else
+            {
+                out.push_back(static_cast<char>(0xF0 | (codepoint >> 18)));
+                out.push_back(static_cast<char>(0x80 | ((codepoint >> 12) & 0x3F)));
+                out.push_back(static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F)));
+                out.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+            }
+        }
+
+        // Adds or removes a single interaction-state bit from a mask.
+        ElementState WithBit(ElementState mask, ElementState bit, bool set)
+        {
+            const u32 m = static_cast<u32>(mask);
+            const u32 b = static_cast<u32>(bit);
+            return static_cast<ElementState>(set ? (m | b) : (m & ~b));
         }
 
         void ApplyEdgeInsets(YGNodeRef node, const Insets& insets,
@@ -453,6 +494,65 @@ namespace Veng::Gui
             }
             return std::nullopt;
         }
+
+        // One resolved field: the storage pointer at the leaf and the descriptor describing it.
+        struct ResolvedField
+        {
+            void* Ptr = nullptr;
+            const FieldDescriptor* Field = nullptr;
+        };
+
+        // Walks a dotted field path and returns the leaf field's storage pointer and descriptor,
+        // rather than its formatted text — the array-field variant of ResolvePath a List binds
+        // through. nullopt when a segment is missing or an intermediate is not a struct.
+        optional<ResolvedField> ResolveFieldPtr(const TypeRegistry& registry, void* base,
+                                                TypeId type, string_view path)
+        {
+            void* cursor = base;
+            TypeId cursorType = type;
+
+            usize start = 0;
+            while (start <= path.size())
+            {
+                const usize dot = path.find('.', start);
+                const string_view segment =
+                    path.substr(start, dot == string_view::npos ? string_view::npos : dot - start);
+                if (segment.empty() || !registry.IsRegistered(cursorType))
+                {
+                    return std::nullopt;
+                }
+
+                const TypeInfo& owner = registry.Info(cursorType);
+                const FieldDescriptor* field = nullptr;
+                for (const FieldDescriptor& candidate : owner.Fields)
+                {
+                    if (candidate.Name == segment)
+                    {
+                        field = &candidate;
+                        break;
+                    }
+                }
+                if (field == nullptr)
+                {
+                    return std::nullopt;
+                }
+
+                void* fieldPtr = static_cast<u8*>(cursor) + field->Offset;
+                const bool last = dot == string_view::npos;
+                if (last)
+                {
+                    return ResolvedField{.Ptr = fieldPtr, .Field = field};
+                }
+                if (field->Class != FieldClass::Struct)
+                {
+                    return std::nullopt;
+                }
+                cursor = fieldPtr;
+                cursorType = field->Type;
+                start = dot + 1;
+            }
+            return std::nullopt;
+        }
     }
 
     Unique<Document> Document::Instantiate(const UIDocument& recipe, const FontResolver& fonts)
@@ -487,6 +587,7 @@ namespace Veng::Gui
             ++cursor;
             PopulateElement(live, node);
             ResolveElementStyle(live, node, sheets, fonts);
+            document->InitWidget(live);
             for (u32 i = 0; i < node.ChildCount; ++i)
             {
                 Element& child = document->Add(live, elements[cursor].Kind);
@@ -1033,6 +1134,295 @@ namespace Veng::Gui
         return shaped.Size;
     }
 
+    namespace
+    {
+        // Whether an element kind is a focusable, interactive control — the widget layer sets
+        // Element::Focusable on these so directional/Tab navigation and Confirm reach them, and a
+        // plain Panel/Text/Image stays a non-stop.
+        bool IsFocusableWidget(ElementKind kind)
+        {
+            switch (kind)
+            {
+            case ElementKind::Button:
+            case ElementKind::Checkbox:
+            case ElementKind::Slider:
+            case ElementKind::TextInput:
+            case ElementKind::ScrollView:
+                return true;
+            case ElementKind::Panel:
+            case ElementKind::Text:
+            case ElementKind::Image:
+            case ElementKind::ProgressBar:
+            case ElementKind::List:
+                return false;
+            }
+            return false;
+        }
+
+        // Clamps `value` to [min, max] and snaps it to the nearest `step` multiple above min when the
+        // step is positive — the Slider/Checkbox value normalization.
+        f32 ClampStep(f32 value, f32 min, f32 max, f32 step)
+        {
+            const f32 lo = std::min(min, max);
+            const f32 hi = std::max(min, max);
+            f32 clamped = std::clamp(value, lo, hi);
+            if (step > 0.0f)
+            {
+                clamped = lo + std::round((clamped - lo) / step) * step;
+                clamped = std::clamp(clamped, lo, hi);
+            }
+            return clamped;
+        }
+
+        // Reads a widget-config attribute a control carries in its Bindings map as a literal number,
+        // returning the fallback when it is absent or unparseable. Uses from_chars — the engine
+        // builds -fno-exceptions, so the throwing stof/stod are off-limits.
+        f32 ReadConfigScalar(const Element& element, string_view name, f32 fallback)
+        {
+            const auto it = element.Bindings.find(string{name});
+            if (it == element.Bindings.end())
+            {
+                return fallback;
+            }
+            const string& text = it->second;
+            f32 value = fallback;
+            const auto [ptr, ec] = std::from_chars(text.data(), text.data() + text.size(), value);
+            if (ec != std::errc{})
+            {
+                return fallback;
+            }
+            return value;
+        }
+    }
+
+    void Document::SetWidgetValue(Element& element, f32 value)
+    {
+        if (element.Kind != ElementKind::Slider && element.Kind != ElementKind::Checkbox &&
+            element.Kind != ElementKind::ProgressBar)
+        {
+            return;
+        }
+
+        const f32 clamped =
+            element.Kind == ElementKind::Checkbox
+                ? (value != 0.0f ? 1.0f : 0.0f)
+                : ClampStep(value, element.Widget.Min, element.Widget.Max, element.Widget.Step);
+        const bool changed = clamped != element.Widget.Value;
+        element.Widget.Value = clamped;
+
+        // A Checkbox reflects its value into the Checked state bit so the `:checked` variant resolves.
+        if (element.Kind == ElementKind::Checkbox)
+        {
+            SetState(element, WithBit(element.State, ElementState::Checked, clamped != 0.0f));
+        }
+
+        if (changed && element.Kind != ElementKind::ProgressBar)
+        {
+            static_cast<void>(FireHandler(element, "onChange"));
+        }
+    }
+
+    void Document::ScrollBy(Element& element, vec2 delta)
+    {
+        if (element.Kind != ElementKind::ScrollView)
+        {
+            return;
+        }
+
+        // The scrollable extent is how far the content overflows the viewport; clamp so the offset
+        // never scrolls the content past its own bounds.
+        vec2 content(0.0f);
+        for (const Element* child : element.Children)
+        {
+            content = glm::max(content, child->Layout.Max() - element.Layout.Min);
+        }
+        const vec2 overflow = glm::max(content - element.Layout.Size, vec2(0.0f));
+
+        const vec2 next = glm::clamp(element.Widget.ScrollOffset + delta, vec2(0.0f), overflow);
+        if (next != element.Widget.ScrollOffset)
+        {
+            element.Widget.ScrollOffset = next;
+            m_Dirty = true;
+        }
+    }
+
+    void Document::ApplyWidgetFocusability(Element& element)
+    {
+        if (IsFocusableWidget(element.Kind))
+        {
+            element.Focusable = true;
+        }
+    }
+
+    void Document::InitWidget(Element& element)
+    {
+        ApplyWidgetFocusability(element);
+
+        if (element.Kind == ElementKind::Slider)
+        {
+            element.Widget.Min = ReadConfigScalar(element, "min", 0.0f);
+            element.Widget.Max = ReadConfigScalar(element, "max", 1.0f);
+            element.Widget.Step = ReadConfigScalar(element, "step", 0.0f);
+            element.Widget.Value =
+                ClampStep(ReadConfigScalar(element, "value", element.Widget.Min),
+                          element.Widget.Min, element.Widget.Max, element.Widget.Step);
+        }
+        else if (element.Kind == ElementKind::ProgressBar)
+        {
+            element.Widget.Min = 0.0f;
+            element.Widget.Max = 1.0f;
+            element.Widget.Value = std::clamp(ReadConfigScalar(element, "value", 0.0f), 0.0f, 1.0f);
+        }
+        else if (element.Kind == ElementKind::Checkbox)
+        {
+            const bool checked = ReadConfigScalar(element, "value", 0.0f) != 0.0f ||
+                                 (element.Bindings.count("checked") != 0 &&
+                                  element.Bindings.at("checked") == "true");
+            element.Widget.Value = checked ? 1.0f : 0.0f;
+            if (checked)
+            {
+                element.State = element.State | ElementState::Checked;
+            }
+        }
+        else if (element.Kind == ElementKind::TextInput)
+        {
+            element.Widget.Caret = static_cast<u32>(DecodeUtf8(element.Text).size());
+        }
+    }
+
+    bool Document::DriveWidgetPointer(Element& element, const PointerEvent& event)
+    {
+        if (element.Kind == ElementKind::Slider)
+        {
+            // A press or drag over the track sets the value from the pointer's fraction along the
+            // slider's width — the pointer maps linearly from Min at the left edge to Max at the right.
+            if (event.Kind != PointerEventKind::Down && event.Kind != PointerEventKind::Move)
+            {
+                return false;
+            }
+            if (event.Kind == PointerEventKind::Move && m_PressTarget != &element)
+            {
+                return false;
+            }
+            const f32 width = element.Layout.Size.x;
+            if (width <= 0.0f)
+            {
+                return false;
+            }
+            const f32 fraction =
+                std::clamp((event.Position.x - element.Layout.Min.x) / width, 0.0f, 1.0f);
+            SetWidgetValue(element, element.Widget.Min +
+                                        fraction * (element.Widget.Max - element.Widget.Min));
+            return true;
+        }
+
+        if (element.Kind == ElementKind::ScrollView)
+        {
+            // A drag with the press captured on the scroll view pans its content by the pointer delta.
+            if (event.Kind != PointerEventKind::Move || m_PressTarget != &element)
+            {
+                return false;
+            }
+            const vec2 delta = m_LastScrollPointer - event.Position;
+            m_LastScrollPointer = event.Position;
+            ScrollBy(element, delta);
+            return true;
+        }
+
+        return false;
+    }
+
+    bool Document::DriveWidgetNavigation(Element& element, NavAction action)
+    {
+        if (element.Kind == ElementKind::Slider)
+        {
+            const f32 step = element.Widget.Step > 0.0f
+                                 ? element.Widget.Step
+                                 : (element.Widget.Max - element.Widget.Min) * 0.05f;
+            if (action == NavAction::MoveLeft)
+            {
+                SetWidgetValue(element, element.Widget.Value - step);
+                return true;
+            }
+            if (action == NavAction::MoveRight)
+            {
+                SetWidgetValue(element, element.Widget.Value + step);
+                return true;
+            }
+            return false;
+        }
+
+        if (element.Kind == ElementKind::ScrollView)
+        {
+            const f32 line =
+                element.ComputedStyle.TextSize > 0.0f ? element.ComputedStyle.TextSize : 16.0f;
+            switch (action)
+            {
+            case NavAction::MoveUp:
+                ScrollBy(element, vec2(0.0f, -line));
+                return true;
+            case NavAction::MoveDown:
+                ScrollBy(element, vec2(0.0f, line));
+                return true;
+            default:
+                return false;
+            }
+        }
+
+        return false;
+    }
+
+    bool Document::DriveWidgetText(Element& element, u32 codepoint)
+    {
+        if (element.Kind != ElementKind::TextInput)
+        {
+            return false;
+        }
+
+        // The caret indexes codepoints; decode, edit, and re-encode so a multi-byte glyph is one edit
+        // unit. A backspace (U+0008) deletes the codepoint before the caret; U+007F (delete) the one
+        // after; every other codepoint inserts at the caret.
+        vector<u32> codepoints = DecodeUtf8(element.Text);
+        u32 caret = std::min(element.Widget.Caret, static_cast<u32>(codepoints.size()));
+
+        if (codepoint == 0x08)
+        {
+            if (caret == 0)
+            {
+                return false;
+            }
+            codepoints.erase(codepoints.begin() + (caret - 1));
+            --caret;
+        }
+        else if (codepoint == 0x7F)
+        {
+            if (caret >= codepoints.size())
+            {
+                return false;
+            }
+            codepoints.erase(codepoints.begin() + caret);
+        }
+        else if (codepoint >= 0x20)
+        {
+            codepoints.insert(codepoints.begin() + caret, codepoint);
+            ++caret;
+        }
+        else
+        {
+            return false;
+        }
+
+        string edited;
+        for (const u32 cp : codepoints)
+        {
+            AppendUtf8(edited, cp);
+        }
+        element.Widget.Caret = caret;
+        SetText(element, edited);
+        static_cast<void>(FireHandler(element, "onChange"));
+        return true;
+    }
+
     void Document::ApplyStyle(Element& element)
     {
         const YGNodeRef node = m_Yoga->Get(element);
@@ -1115,9 +1505,15 @@ namespace Veng::Gui
             .Size = vec2(YGNodeLayoutGetWidth(node), YGNodeLayoutGetHeight(node)),
         };
 
+        // A ScrollView shifts its children by its scroll offset, so the child origin is the view's
+        // top-left minus the offset — the content slides under the clip the ScrollView paints with.
+        const vec2 childOrigin = element.Kind == ElementKind::ScrollView
+                                     ? absoluteMin - element.Widget.ScrollOffset
+                                     : absoluteMin;
+
         for (Element* child : element.Children)
         {
-            ReadLayout(*child, absoluteMin);
+            ReadLayout(*child, childOrigin);
         }
     }
 
@@ -1161,10 +1557,17 @@ namespace Veng::Gui
             }
         }
 
-        if (style.ClipContent)
+        // A ScrollView always clips its content to its box (the overflow it scrolls through), whether
+        // or not the style requested it; every other kind clips only when styled to.
+        const bool clip = style.ClipContent || element.Kind == ElementKind::ScrollView;
+        if (clip)
         {
             list.PushClip(rect);
         }
+
+        // A control paints its own parts (a Slider's track and thumb, a ProgressBar's fill) between
+        // its background and its children.
+        BuildWidget(element, list);
 
         if (element.Kind == ElementKind::Text && !element.Text.empty() && style.TextFont.IsLoaded())
         {
@@ -1177,9 +1580,49 @@ namespace Veng::Gui
             BuildElement(*child, list);
         }
 
-        if (style.ClipContent)
+        if (clip)
         {
             list.PopClip();
+        }
+    }
+
+    void Document::BuildWidget(const Element& element, DrawList& list) const
+    {
+        const Style& style = element.ComputedStyle;
+        const Rect& rect = element.Layout;
+
+        if (element.Kind == ElementKind::ProgressBar)
+        {
+            // The fill is the [0,1] value across the bar's width, drawn in the text color over the
+            // background track. A bar with no explicit value renders empty.
+            const f32 fraction = std::clamp(element.Widget.Value, 0.0f, 1.0f);
+            if (fraction > 0.0f)
+            {
+                const Rect fill{.Min = rect.Min, .Size = vec2(rect.Size.x * fraction, rect.Size.y)};
+                list.Quad(fill, style.TextColor, style.Radii);
+            }
+            return;
+        }
+
+        if (element.Kind == ElementKind::Slider)
+        {
+            const f32 range = element.Widget.Max - element.Widget.Min;
+            const f32 fraction =
+                range != 0.0f
+                    ? std::clamp((element.Widget.Value - element.Widget.Min) / range, 0.0f, 1.0f)
+                    : 0.0f;
+            // The filled portion of the track shows the value; a square thumb marks the position.
+            const Rect track{.Min = rect.Min, .Size = vec2(rect.Size.x * fraction, rect.Size.y)};
+            if (fraction > 0.0f)
+            {
+                list.Quad(track, style.TextColor, style.Radii);
+            }
+            const f32 thumb = rect.Size.y;
+            const f32 thumbX = rect.Min.x + fraction * std::max(rect.Size.x - thumb, 0.0f);
+            list.Quad(Rect{.Min = vec2(thumbX, rect.Min.y), .Size = vec2(thumb, thumb)},
+                      style.BorderStyle.Color.a > 0.0f ? style.BorderStyle.Color : style.TextColor,
+                      style.Radii);
+            return;
         }
     }
 
@@ -1195,14 +1638,6 @@ namespace Veng::Gui
         {
             return point.x >= rect.Min.x && point.y >= rect.Min.y && point.x < rect.Max().x &&
                    point.y < rect.Max().y;
-        }
-
-        // Adds or removes a single interaction-state bit from a mask.
-        ElementState WithBit(ElementState mask, ElementState bit, bool set)
-        {
-            const u32 m = static_cast<u32>(mask);
-            const u32 b = static_cast<u32>(bit);
-            return static_cast<ElementState>(set ? (m | b) : (m & ~b));
         }
     }
 
@@ -1258,12 +1693,24 @@ namespace Veng::Gui
         m_BoundVersion = 0;
     }
 
+    namespace
+    {
+        // A `value` binding on a value-bearing control (Slider/Checkbox/ProgressBar) writes the
+        // resolved scalar into the widget state; on any other kind it writes the element's text.
+        bool IsValueWidget(ElementKind kind)
+        {
+            return kind == ElementKind::Slider || kind == ElementKind::Checkbox ||
+                   kind == ElementKind::ProgressBar;
+        }
+    }
+
     void Document::ResolveElementBindings(Element& element)
     {
         for (const auto& [property, expression] : element.Bindings)
         {
             // Only `{obj.field}` value bindings resolve here; a handler entry (onClick, …) is keyed
-            // by an event name and fired by the event path, not written as a value.
+            // by an event name and fired by the event path, not written as a value. The min/max/step
+            // widget config carries a literal (not a path) and is read at instantiate time, not here.
             if (property != "text" && property != "value" && property != "visible")
             {
                 continue;
@@ -1279,6 +1726,41 @@ namespace Veng::Gui
             if (property == "visible")
             {
                 SetVisible(element, *resolved == "true" || *resolved == "1");
+            }
+            else if (property == "value" && IsValueWidget(element.Kind))
+            {
+                // A control's value binding is one-way: reflect the model into the widget without
+                // firing onChange (the change came from the model, not the user). SetWidgetValue
+                // fires onChange, so write the widget state directly here.
+                f32 value = 0.0f;
+                const string& text = *resolved;
+                if (text == "true")
+                {
+                    value = 1.0f;
+                }
+                else if (text != "false")
+                {
+                    static_cast<void>(
+                        std::from_chars(text.data(), text.data() + text.size(), value));
+                }
+                if (element.Kind == ElementKind::Checkbox)
+                {
+                    element.Widget.Value = value != 0.0f ? 1.0f : 0.0f;
+                    SetState(element, WithBit(element.State, ElementState::Checked, value != 0.0f));
+                }
+                else
+                {
+                    element.Widget.Value = ClampStep(value, element.Widget.Min, element.Widget.Max,
+                                                     element.Widget.Step);
+                }
+            }
+            else if (property == "value" && element.Kind == ElementKind::TextInput)
+            {
+                if (*resolved != element.Text)
+                {
+                    element.Widget.Caret = 0;
+                    SetText(element, *resolved);
+                }
             }
             else
             {
@@ -1299,12 +1781,235 @@ namespace Veng::Gui
         }
         m_BoundVersion = m_Context->GetVersion();
 
+        // Re-materialize each List's item children against its bound array first — this may add or
+        // remove elements, so it runs before the flat binding walk over m_Elements below and its
+        // freshly-created items already carry their per-item resolved values.
+        SyncLists();
+
+        // Resolve every non-List-item element's bindings against the main context. A List item's own
+        // bindings resolve against its array element inside SyncList, so they are skipped here.
         for (const Unique<Element>& element : m_Elements)
         {
-            if (!element->Bindings.empty())
+            if (!element->Bindings.empty() && !IsListItem(*element))
             {
                 ResolveElementBindings(*element);
             }
+        }
+    }
+
+    bool Document::IsListItem(const Element& element) const
+    {
+        for (const Element* e = element.Parent; e != nullptr; e = e->Parent)
+        {
+            if (e->Kind == ElementKind::List)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void Document::SyncLists()
+    {
+        // Collect the Lists first: SyncList mutates m_Elements (adding/removing item clones), so the
+        // walk cannot iterate m_Elements directly.
+        vector<Element*> lists;
+        for (const Unique<Element>& element : m_Elements)
+        {
+            if (element->Kind == ElementKind::List)
+            {
+                lists.push_back(element.get());
+            }
+        }
+        for (Element* list : lists)
+        {
+            SyncList(*list);
+        }
+    }
+
+    void Document::SyncList(Element& list)
+    {
+        const auto binding = list.Bindings.find("items");
+        if (binding == list.Bindings.end())
+        {
+            return;
+        }
+
+        // On first sync, lift the authored children out of the live tree into the template store —
+        // they are the item template, cloned per array element, never laid out or drawn themselves.
+        if (m_ListTemplates.find(&list) == m_ListTemplates.end())
+        {
+            ListTemplate captured;
+            const vector<Element*> authored = list.Children;
+            const YGNodeRef listNode = m_Yoga->Get(list);
+            for (Element* child : authored)
+            {
+                // Unlink the authored child from the list's layout node before detaching its subtree
+                // (DetachTemplate frees the child nodes), so the list node never references a freed
+                // node.
+                if (listNode != nullptr)
+                {
+                    if (const YGNodeRef childNode = m_Yoga->Get(*child); childNode != nullptr)
+                    {
+                        YGNodeRemoveChild(listNode, childNode);
+                    }
+                }
+                captured.Roots.push_back(DetachTemplate(*child, captured.Owned));
+            }
+            list.Children.clear();
+            m_ListTemplates.emplace(&list, std::move(captured));
+        }
+
+        const optional<ResolvedField> field = ResolveFieldPtr(
+            *m_Registry, m_Context->GetData(), m_Context->GetDataType(), binding->second);
+        if (!field || field->Field->Class != FieldClass::Array ||
+            field->Field->ArraySize == nullptr)
+        {
+            return;
+        }
+
+        const usize count = field->Field->ArraySize(field->Ptr);
+        const vector<Element*>& roots = m_ListTemplates.at(&list).Roots;
+        const usize perItem = roots.size();
+        const usize haveItems = perItem == 0 ? 0 : list.Children.size() / perItem;
+
+        // Grow: append a fresh clone of each template root per new array element.
+        for (usize i = haveItems; i < count; ++i)
+        {
+            for (const Element* node : roots)
+            {
+                static_cast<void>(CloneTemplate(list, *node));
+            }
+        }
+        // Shrink: remove the trailing item clones for the elements that went away.
+        for (usize i = count; i < haveItems; ++i)
+        {
+            for (usize k = 0; k < perItem; ++k)
+            {
+                Remove(*list.Children.back());
+            }
+        }
+
+        // Resolve each item's per-item bindings against its array element.
+        for (usize i = 0; i < count && perItem != 0; ++i)
+        {
+            void* itemPtr = field->Field->ArrayElement(field->Ptr, i);
+            for (usize k = 0; k < perItem; ++k)
+            {
+                Element& itemRoot = *list.Children[i * perItem + k];
+                ResolveItemBindings(itemRoot, itemPtr, field->Field->ElementType);
+            }
+        }
+    }
+
+    Element* Document::DetachTemplate(Element& element, vector<Unique<Element>>& owned)
+    {
+        // Copy the element into a standalone template node held by `owned`, then recurse so the whole
+        // subtree is captured; a template is inert data, never solved or drawn. The live element's
+        // Yoga node and live storage are released here; the caller has already unlinked the root from
+        // its parent node.
+        auto node = CreateUnique<Element>();
+        node->Kind = element.Kind;
+        node->Id = element.Id;
+        node->Classes = element.Classes;
+        node->Text = element.Text;
+        node->Bindings = element.Bindings;
+        node->BaseStyle = element.BaseStyle;
+        node->ComputedStyle = element.ComputedStyle;
+        node->Variants = element.Variants;
+        node->Transitions = element.Transitions;
+        node->Focusable = element.Focusable;
+        node->Visible = element.Visible;
+
+        Element* result = node.get();
+        owned.push_back(std::move(node));
+
+        const YGNodeRef selfNode = m_Yoga->Get(element);
+        const vector<Element*> children = element.Children;
+        for (Element* child : children)
+        {
+            // Unlink the child from this node before its subtree's nodes are freed, so this node
+            // never lists a freed child.
+            if (selfNode != nullptr)
+            {
+                if (const YGNodeRef childNode = m_Yoga->Get(*child); childNode != nullptr)
+                {
+                    YGNodeRemoveChild(selfNode, childNode);
+                }
+            }
+            Element* childNode = DetachTemplate(*child, owned);
+            childNode->Parent = result;
+            result->Children.push_back(childNode);
+        }
+
+        // Free the live element's Yoga node (already unlinked from its parent) and drop it from live
+        // storage. Children were unlinked and freed above, so this node has no live children.
+        m_Yoga->Destroy(element);
+        const auto it = std::ranges::find_if(m_Elements, [&](const Unique<Element>& e)
+                                             { return e.get() == &element; });
+        if (it != m_Elements.end())
+        {
+            m_Elements.erase(it);
+        }
+        return result;
+    }
+
+    Element& Document::CloneTemplate(Element& parent, const Element& node)
+    {
+        Element& live = Add(parent, node.Kind);
+        live.Id = node.Id;
+        live.Classes = node.Classes;
+        live.Text = node.Text;
+        live.Bindings = node.Bindings;
+        live.BaseStyle = node.BaseStyle;
+        live.ComputedStyle = node.ComputedStyle;
+        live.Variants = node.Variants;
+        live.Transitions = node.Transitions;
+        live.Focusable = node.Focusable;
+        live.Visible = node.Visible;
+        InitWidget(live);
+        for (const Element* child : node.Children)
+        {
+            static_cast<void>(CloneTemplate(live, *child));
+        }
+        return live;
+    }
+
+    void Document::ResolveItemBindings(Element& element, void* itemBase, TypeId itemType)
+    {
+        for (const auto& [property, expression] : element.Bindings)
+        {
+            if (property != "text" && property != "value" && property != "visible")
+            {
+                continue;
+            }
+            const optional<string> resolved =
+                ResolvePath(*m_Registry, itemBase, itemType, expression);
+            if (!resolved)
+            {
+                continue;
+            }
+            if (property == "visible")
+            {
+                SetVisible(element, *resolved == "true" || *resolved == "1");
+            }
+            else if (property == "value" && IsValueWidget(element.Kind))
+            {
+                f32 value = 0.0f;
+                static_cast<void>(
+                    std::from_chars(resolved->data(), resolved->data() + resolved->size(), value));
+                element.Widget.Value = element.Kind == ElementKind::ProgressBar
+                                           ? std::clamp(value, 0.0f, 1.0f)
+                                           : value;
+            }
+            else
+            {
+                SetText(element, *resolved);
+            }
+        }
+        for (Element* child : element.Children)
+        {
+            ResolveItemBindings(*child, itemBase, itemType);
         }
     }
 
@@ -1401,12 +2106,38 @@ namespace Veng::Gui
 
         if (event.Kind == PointerEventKind::Down && target != nullptr)
         {
-            m_PressTarget = target;
-            SetState(*target, WithBit(target->State, ElementState::Active, true));
-            if (target->Focusable)
+            // A ScrollView claims a press that lands on one of its children — the first-handler-wins
+            // capture that lets a drag started over a list item pan the view rather than the item.
+            Element* pressTarget = target;
+            for (Element* e = target; e != nullptr; e = e->Parent)
             {
-                SetFocus(target);
+                if (e->Kind == ElementKind::ScrollView)
+                {
+                    pressTarget = e;
+                    break;
+                }
+                if (e->Kind == ElementKind::Slider)
+                {
+                    pressTarget = e;
+                    break;
+                }
             }
+
+            m_PressTarget = pressTarget;
+            m_LastScrollPointer = event.Position;
+            SetState(*pressTarget, WithBit(pressTarget->State, ElementState::Active, true));
+            if (pressTarget->Focusable)
+            {
+                SetFocus(pressTarget);
+            }
+            // A press on a Slider sets its value from where the pointer landed.
+            static_cast<void>(DriveWidgetPointer(*pressTarget, event));
+        }
+
+        // A drag over a captured Slider/ScrollView updates its value/offset before the routing below.
+        if (event.Kind == PointerEventKind::Move && m_PressTarget != nullptr)
+        {
+            static_cast<void>(DriveWidgetPointer(*m_PressTarget, event));
         }
 
         // A Move only retargets hover (above); the discrete press/release/click transitions route
@@ -1432,9 +2163,17 @@ namespace Veng::Gui
                                    .Position = event.Position,
                                    .Target = target};
                 RoutePointerPath(click);
-                // A completed click is consumed whether or not a handler was registered — the press
-                // was already claimed by this document on the Down.
-                static_cast<void>(FireHandler(*target, "onClick"));
+                // A Checkbox click toggles its bound value (which fires onChange); every other kind
+                // fires onClick. A completed click is consumed whether or not a handler was
+                // registered — the press was already claimed by this document on the Down.
+                if (target->Kind == ElementKind::Checkbox)
+                {
+                    SetWidgetValue(*target, target->Widget.Value != 0.0f ? 0.0f : 1.0f);
+                }
+                else
+                {
+                    static_cast<void>(FireHandler(*target, "onClick"));
+                }
                 consumed = true;
             }
             m_PressTarget = nullptr;
@@ -1498,6 +2237,12 @@ namespace Veng::Gui
             {
                 return false;
             }
+            // A Checkbox Confirm toggles its bound value the same way a click does — one path.
+            if (m_Focused->Kind == ElementKind::Checkbox)
+            {
+                SetWidgetValue(*m_Focused, m_Focused->Widget.Value != 0.0f ? 0.0f : 1.0f);
+                return true;
+            }
             // Confirm activates the focused element the same way a click does — one handler path.
             SetState(*m_Focused, WithBit(m_Focused->State, ElementState::Active, true));
             const bool fired = FireHandler(*m_Focused, "onClick");
@@ -1507,6 +2252,17 @@ namespace Veng::Gui
         if (action == NavAction::Cancel)
         {
             return m_Focused != nullptr && FireHandler(*m_Focused, "onCancel");
+        }
+
+        // A directional action on a focused Slider nudges its value, and on a ScrollView scrolls it,
+        // rather than moving focus off it.
+        if (m_Focused != nullptr &&
+            (m_Focused->Kind == ElementKind::Slider || m_Focused->Kind == ElementKind::ScrollView))
+        {
+            if (DriveWidgetNavigation(*m_Focused, action))
+            {
+                return true;
+            }
         }
 
         vector<Element*> focusables;
@@ -1598,7 +2354,19 @@ namespace Veng::Gui
 
     bool Document::DispatchText(u32 codepoint)
     {
-        if (!m_Interactive || m_Focused == nullptr || m_Context == nullptr)
+        if (!m_Interactive || m_Focused == nullptr)
+        {
+            return false;
+        }
+
+        // A focused TextInput edits its own text (insert/backspace/delete) and needs no game handler;
+        // it fires onChange so a two-way binding writes back.
+        if (m_Focused->Kind == ElementKind::TextInput)
+        {
+            return DriveWidgetText(*m_Focused, codepoint);
+        }
+
+        if (m_Context == nullptr)
         {
             return false;
         }

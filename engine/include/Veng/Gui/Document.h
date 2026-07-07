@@ -295,6 +295,46 @@ namespace Veng::Gui
         [[nodiscard]] vec2 MeasureElementText(const Element& element,
                                               optional<f32> availableWidth) const;
 
+        /// @brief Sets a Slider's or Checkbox's scalar value, clamping, stepping, and notifying.
+        ///
+        /// Clamps the value to the control's `[Min, Max]` range and snaps it to Step when the step is
+        /// positive, writes it into the element's WidgetState, and — when the value actually changed
+        /// — fires the element's `onChange` handler so a two-way control writes back through the
+        /// bound handler path. A Checkbox additionally reflects the value into its Checked state bit
+        /// (a non-zero value is checked), driving the `:checked` style variant. A no-op on an element
+        /// that is not a value-bearing control.
+        /// @param element  The control element whose value to set.
+        /// @param value    The new value, before clamping/stepping.
+        void SetWidgetValue(Element& element, f32 value);
+
+        /// @brief Returns a control element's current scalar value from its WidgetState.
+        /// @param element  The control element.
+        /// @return The value the widget layer holds for it.
+        [[nodiscard]] f32 GetWidgetValue(const Element& element) const
+        {
+            return element.Widget.Value;
+        }
+
+        /// @brief Scrolls a ScrollView by a pixel delta, clamped to its content extent.
+        ///
+        /// Adds the delta to the ScrollView's offset and clamps it so the content stays within its
+        /// scrollable range (never scrolling past the last child). The offset shifts the laid-out
+        /// children on the next Solve. A no-op on an element that is not a ScrollView.
+        /// @param element  The ScrollView element to scroll.
+        /// @param delta    The scroll delta, in pixels (positive scrolls content up/left).
+        void ScrollBy(Element& element, vec2 delta);
+
+        /// @brief Initializes a control's widget state from its authored config and kind.
+        ///
+        /// Reads the control's config attributes off its Bindings map — a Slider's `min`/`max`/
+        /// `step`/`value`, a ProgressBar's initial `value`, a Checkbox's initial checked state — into
+        /// its WidgetState, and marks the interactive kinds (Button/Checkbox/Slider/TextInput/
+        /// ScrollView) focusable. Instantiate calls this per element; an imperative tree calls it on a
+        /// control after setting its Bindings and before the first frame. A no-op on a plain
+        /// Panel/Text/Image.
+        /// @param element  The control element to initialize.
+        void InitWidget(Element& element);
+
     private:
         // Viewport::AttachDocument / DetachDocument set and clear m_HostViewport, so the destructor
         // self-detaches through it — the sole writer of the back-reference.
@@ -325,6 +365,43 @@ namespace Veng::Gui
 
         /// @brief Resolves and writes one element's bindings against the bound data object.
         void ResolveElementBindings(Element& element);
+
+        /// @brief Re-syncs every List's item children against its bound array's current size.
+        void SyncLists();
+
+        /// @brief Instantiates or removes a List's item children to match the bound array size.
+        void SyncList(Element& list);
+
+        /// @brief Returns whether an element sits under a List (an instantiated item subtree).
+        [[nodiscard]] bool IsListItem(const Element& element) const;
+
+        /// @brief Lifts an authored subtree out of the live tree into standalone template nodes.
+        ///
+        /// Moves the element and every descendant into `owned` (which takes their storage) and
+        /// returns the detached root; the live Yoga nodes are freed and the elements dropped from
+        /// live storage.
+        Element* DetachTemplate(Element& element, vector<Unique<Element>>& owned);
+
+        /// @brief Instantiates a live copy of a template subtree as a child of a parent element.
+        Element& CloneTemplate(Element& parent, const Element& node);
+
+        /// @brief Resolves a List item subtree's bindings against one array element's fields.
+        void ResolveItemBindings(Element& element, void* itemBase, TypeId itemType);
+
+        /// @brief Sets whether an element takes focus by kind, marking the interactive controls.
+        void ApplyWidgetFocusability(Element& element);
+
+        /// @brief Applies a pointer press/drag to a Slider or ScrollView, updating its value/offset.
+        bool DriveWidgetPointer(Element& element, const PointerEvent& event);
+
+        /// @brief Applies a directional nudge to the focused Slider, or a scroll to a ScrollView.
+        bool DriveWidgetNavigation(Element& element, NavAction action);
+
+        /// @brief Inserts or backspaces a codepoint into the focused TextInput's bound text.
+        bool DriveWidgetText(Element& element, u32 codepoint);
+
+        /// @brief Emits a control's own painted parts (a Slider track/thumb, a ProgressBar fill).
+        void BuildWidget(const Element& element, DrawList& list) const;
 
         /// @brief Collects every focusable, visible element into m_FocusOrder in tree order.
         void GatherFocusables(Element& element, vector<Element*>& out) const;
@@ -377,11 +454,32 @@ namespace Veng::Gui
         /// @brief The focused element, or nullptr when nothing holds focus.
         Element* m_Focused = nullptr;
 
+        /// @brief One List's detached item template: the authored subtree cloned per array element.
+        ///
+        /// A List's authored children are its item template. On first sync the template subtree is
+        /// detached from the live tree into this store (so it never lays out or draws), and each
+        /// bound-array element instantiates a clone of it as a live child of the List. Owned holds
+        /// every template node (roots and descendants) so the whole subtree stays alive; Roots names
+        /// the top-level template nodes cloned once per array element.
+        struct ListTemplate
+        {
+            /// @brief Every node of the template subtree, owning the tree's storage.
+            vector<Unique<Element>> Owned;
+            /// @brief The top-level template roots, one clone of each per array element.
+            vector<Element*> Roots;
+        };
+
+        /// @brief Per-List detached item templates, keyed by the List element.
+        map<Element*, ListTemplate> m_ListTemplates;
+
         /// @brief The element a pointer press landed on, awaiting a release to complete a click.
         Element* m_PressTarget = nullptr;
 
         /// @brief The element the pointer last hovered, tracked so a move emits Enter/Leave.
         Element* m_HoverTarget = nullptr;
+
+        /// @brief The pointer position the last ScrollView drag sampled, for a per-move pan delta.
+        vec2 m_LastScrollPointer{0.0f};
 
         /// @brief Whether the document routes input (hit-tests, takes focus) or is display-only.
         bool m_Interactive = false;

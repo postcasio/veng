@@ -2,5 +2,6 @@
   <Text id="title" class="label" style="font: 0xFB6782CABF076640;">Status</Text>
   <Text class="label" value="{player.name}"/>
   <ProgressBar class="health" value="{player.health}" max="{player.healthMax}"/>
+  <Slider class="volume" min="0" max="10" step="1" value="{player.volume}"/>
   <Button class="primary" onClick="OpenMenu">Menu</Button>
 </Panel>

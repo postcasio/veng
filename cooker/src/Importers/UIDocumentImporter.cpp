@@ -279,9 +279,22 @@ namespace Veng::Cook
                     continue;
                 }
 
+                // A closed set of widget-config attributes carries a literal (not a `{binding}`):
+                // a control's range/step and its initial value. They are stored on the element's
+                // binding table verbatim; the runtime widget layer reads them at instantiate time.
+                if (name == "min" || name == "max" || name == "step" || name == "value" ||
+                    name == "checked" || name == "items")
+                {
+                    CookedUIBinding binding{};
+                    binding.Property = build.Strings.Add(name);
+                    binding.Expression = build.Strings.Add(value);
+                    build.Bindings.push_back(binding);
+                    continue;
+                }
+
                 return std::unexpected(fmt::format("{}: unrecognized attribute '{}' (expected "
-                                                   "id/class/style, a {{binding}}, or an "
-                                                   "on* handler)",
+                                                   "id/class/style, a widget-config attribute, a "
+                                                   "{{binding}}, or an on* handler)",
                                                    located, name));
             }
 

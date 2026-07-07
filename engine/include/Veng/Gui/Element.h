@@ -110,6 +110,32 @@ namespace Veng::Gui
 
     class Document;
 
+    /// @brief The per-element runtime state the widget layer maintains behind a control's kind.
+    ///
+    /// A control element carries a scalar Value plus the range and step the widget interprets it
+    /// against, a scroll offset, and a text caret — the mutable state its behavior reads and writes
+    /// each frame. Which fields are live depends on the element's kind: a Slider reads Value against
+    /// Min/Max/Step, a ProgressBar reads Value as a `[0,1]` fill, a Checkbox holds Value 0 or 1, a
+    /// TextInput tracks Caret over the element's Text, and a ScrollView holds ScrollOffset. It is
+    /// default-constructed on every element and left untouched on a plain Panel/Text/Image.
+    struct WidgetState
+    {
+        /// @brief The control's scalar value: a Slider's position, a ProgressBar's fill, a Checkbox's 0/1.
+        f32 Value = 0.0f;
+        /// @brief The lower bound of a Slider's value range.
+        f32 Min = 0.0f;
+        /// @brief The upper bound of a Slider's value range.
+        f32 Max = 1.0f;
+        /// @brief The Slider's discrete step; a non-positive step is continuous.
+        f32 Step = 0.0f;
+        /// @brief The ScrollView's content offset, in pixels (subtracted from child positions).
+        vec2 ScrollOffset{0.0f};
+        /// @brief The TextInput caret position, as a codepoint index into the element's Text.
+        u32 Caret = 0;
+        /// @brief The bound-array context version a List last synced its item children against.
+        u64 SyncVersion = 0;
+    };
+
     /// @brief One node of a retained document tree: a kind, a resolved style, and a computed rect.
     ///
     /// An element owns its children, held by the enclosing Document (which single-owns the whole
@@ -179,6 +205,9 @@ namespace Veng::Gui
 
         /// @brief Named bound-value slots a binding layer resolves against a context.
         map<string, string> Bindings;
+
+        /// @brief The widget-layer runtime state a control's behavior reads and writes.
+        WidgetState Widget;
 
         /// @brief The element's children, in flow order (owned by the Document).
         vector<Element*> Children;

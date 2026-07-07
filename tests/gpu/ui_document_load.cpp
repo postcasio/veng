@@ -84,23 +84,55 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     const Gui::UIDocument& recipe = *handle->Get();
 
-    // (a) The recipe tree matches the markup: Panel > (Text#title, Text, ProgressBar, Button).
+    // (a) The recipe tree matches the markup: Panel > (Text#title, Text, ProgressBar, Slider,
+    // Button).
     const vector<Gui::UIElementRecipe>& elements = recipe.GetElements();
-    REQUIRE(elements.size() == 5);
+    REQUIRE(elements.size() == 6);
     CHECK(elements[0].Kind == Gui::ElementKind::Panel);
-    CHECK(elements[0].ChildCount == 4);
+    CHECK(elements[0].ChildCount == 5);
     CHECK(elements[1].Kind == Gui::ElementKind::Text);
     CHECK(elements[1].Id == "title");
     CHECK(elements[1].Text == "Status");
     CHECK(elements[2].Kind == Gui::ElementKind::Text);
     CHECK(elements[3].Kind == Gui::ElementKind::ProgressBar);
-    CHECK(elements[4].Kind == Gui::ElementKind::Button);
+    CHECK(elements[4].Kind == Gui::ElementKind::Slider);
+    CHECK(elements[5].Kind == Gui::ElementKind::Button);
 
     // The class tags survive.
     REQUIRE(elements[0].Classes.size() == 1);
     CHECK(elements[0].Classes[0] == "hud");
-    REQUIRE(elements[4].Classes.size() == 1);
-    CHECK(elements[4].Classes[0] == "primary");
+    REQUIRE(elements[5].Classes.size() == 1);
+    CHECK(elements[5].Classes[0] == "primary");
+
+    // The Slider's widget-config attributes (min/max/step literals plus a {value} binding) all store
+    // as recipe bindings — the closed literal-attribute set the widget layer reads at instantiate.
+    string sliderMin;
+    string sliderMax;
+    string sliderStep;
+    string sliderValue;
+    for (const Gui::UIBindingRecipe& binding : elements[4].Bindings)
+    {
+        if (binding.Property == "min")
+        {
+            sliderMin = binding.Expression;
+        }
+        if (binding.Property == "max")
+        {
+            sliderMax = binding.Expression;
+        }
+        if (binding.Property == "step")
+        {
+            sliderStep = binding.Expression;
+        }
+        if (binding.Property == "value")
+        {
+            sliderValue = binding.Expression;
+        }
+    }
+    CHECK(sliderMin == "0");
+    CHECK(sliderMax == "10");
+    CHECK(sliderStep == "1");
+    CHECK(sliderValue == "player.volume");
 
     // The {binding} attributes are stored unresolved on the ProgressBar.
     REQUIRE(elements[3].Bindings.size() == 2);
@@ -123,9 +155,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(sawMax);
 
     // The onClick handler is stored unresolved on the Button.
-    REQUIRE(elements[4].Handlers.size() == 1);
-    CHECK(elements[4].Handlers[0].Event == "onClick");
-    CHECK(elements[4].Handlers[0].Handler == "OpenMenu");
+    REQUIRE(elements[5].Handlers.size() == 1);
+    CHECK(elements[5].Handlers[0].Event == "onClick");
+    CHECK(elements[5].Handlers[0].Handler == "OpenMenu");
 
     // (c) The document referenced exactly one stylesheet, resolved live.
     REQUIRE(recipe.GetStyleSheets().size() == 1);
@@ -177,13 +209,21 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(a != nullptr);
     REQUIRE(b != nullptr);
 
-    // The instantiated tree mirrors the markup: a Panel root with four children.
-    CHECK(a->Root().Children.size() == 4);
-    CHECK(b->Root().Children.size() == 4);
+    // The instantiated tree mirrors the markup: a Panel root with five children.
+    CHECK(a->Root().Children.size() == 5);
+    CHECK(b->Root().Children.size() == 5);
     CHECK(a->Root().Children[0]->Kind == Gui::ElementKind::Text);
     CHECK(a->Root().Children[0]->Id == "title");
     CHECK(a->Root().Children[0]->Text == "Status");
-    CHECK(a->Root().Children[3]->Kind == Gui::ElementKind::Button);
+    CHECK(a->Root().Children[4]->Kind == Gui::ElementKind::Button);
+
+    // The Slider instance parsed its min/max/step literals into its widget state, and is focusable.
+    const Gui::Element& sliderInstance = *a->Root().Children[3];
+    CHECK(sliderInstance.Kind == Gui::ElementKind::Slider);
+    CHECK(sliderInstance.Focusable);
+    CHECK(sliderInstance.Widget.Min == doctest::Approx(0.0f));
+    CHECK(sliderInstance.Widget.Max == doctest::Approx(10.0f));
+    CHECK(sliderInstance.Widget.Step == doctest::Approx(1.0f));
 
     // The inline `padding: 12px` on the root materialized onto the instance's resolved style.
     CHECK(a->Root().ComputedStyle.Padding.Left == doctest::Approx(12.0f));
