@@ -251,7 +251,7 @@ namespace Veng
     /// @brief The current material-format version.
     ///
     /// Bumped on any layout change; the loader rejects a blob whose Version != this.
-    inline constexpr u32 CookedMaterialVersion = 4u;
+    inline constexpr u32 CookedMaterialVersion = 5u;
 
     /// @brief Cooked header for a material asset.
     ///
@@ -277,7 +277,8 @@ namespace Veng
     /// Domain is the underlying integer of Veng::MaterialDomain (cycle-avoidance rule above):
     /// 0 = Surface (the default — a material with no "domain" key cooks as Surface),
     /// 1 = PostProcess, 2 = Sky. The loader casts it to the engine enum, guarded by a VE_ASSERT
-    /// on an out-of-range value.
+    /// on an out-of-range value. CullMode is the underlying integer of Renderer::CullMode,
+    /// carried the same way.
     struct CookedMaterialHeader
     {
         /// @brief AssetId of the vertex-stage Shader asset.
@@ -288,6 +289,11 @@ namespace Veng
         u32 Version = 0;
         /// @brief Underlying MaterialDomain integer (0 = Surface, 1 = PostProcess).
         u32 Domain = 0;
+        /// @brief Underlying Renderer::CullMode integer (0 = None, 1 = Front, 2 = Back).
+        ///
+        /// The material's authored face-culling mode; a material with no "cull" key cooks
+        /// as Back (2), the engine's default for geometry pipelines.
+        u32 CullMode = 2;
         /// @brief Number of CookedMaterialField entries following this header.
         u32 FieldCount = 0;
         /// @brief Byte size of the single parameter block; <= the per-material param stride.

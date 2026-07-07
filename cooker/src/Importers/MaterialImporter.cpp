@@ -105,6 +105,33 @@ namespace Veng::Cook
         }
         const u32 domain = static_cast<u32>(domainValue);
 
+        // --- 1c. Parse the optional cull mode (default Back) ---
+
+        // Absent → Back, the engine's geometry-pipeline convention; unknown value is a
+        // located cook error. FrontAndBack rasterizes nothing, so it is not authorable.
+        Renderer::CullMode cullValue = Renderer::CullMode::Back;
+        if (vmat.contains("cull"))
+        {
+            if (!vmat["cull"].is_string())
+            {
+                return std::unexpected(
+                    fmt::format("material importer: '{}': 'cull' must be a string "
+                                "(\"Back\", \"Front\", or \"None\")",
+                                vmatPath.string()));
+            }
+            const string cullStr = vmat["cull"].get<string>();
+            const optional<Renderer::CullMode> parsed = ParseEnum<Renderer::CullMode>(cullStr);
+            if (!parsed || *parsed == Renderer::CullMode::FrontAndBack)
+            {
+                return std::unexpected(
+                    fmt::format("material importer: '{}': unknown cull mode '{}' "
+                                "(expected \"Back\", \"Front\", or \"None\")",
+                                vmatPath.string(), cullStr));
+            }
+            cullValue = *parsed;
+        }
+        const u32 cull = static_cast<u32>(cullValue);
+
         // --- 2. Validate and resolve shader references ---
 
         if (!vmat.contains("shaders") || !vmat["shaders"].is_object())
@@ -674,6 +701,7 @@ namespace Veng::Cook
         header.FragmentShaderId = fragmentShaderId;
         header.Version = CookedMaterialVersion;
         header.Domain = domain;
+        header.CullMode = cull;
         header.FieldCount = static_cast<u32>(fields.size());
         header.BlockBytes = blockReflected->Size;
 

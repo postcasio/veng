@@ -179,7 +179,8 @@ namespace Veng
         Result<Ref<Renderer::GraphicsPipeline>>
         BuildSurfacePipeline(AssetManager& manager, Renderer::Context& context, AssetId id,
                              const Ref<Renderer::PipelineLayout>& layout,
-                             const Veng::Shader& vsAsset, const Veng::Shader& fsAsset)
+                             const Veng::Shader& vsAsset, const Veng::Shader& fsAsset,
+                             Renderer::CullMode cullMode)
         {
             const Renderer::ShaderInterface& vsInterface = vsAsset.Interface;
 
@@ -225,7 +226,7 @@ namespace Veng
                             {.Stage = Renderer::ShaderStage::Vertex, .Module = vsAsset.Module},
                             {.Stage = Renderer::ShaderStage::Fragment, .Module = fsAsset.Module},
                         },
-                    .CullMode = Renderer::CullMode::Back,
+                    .CullMode = cullMode,
                     .DepthTestEnable = true,
                     .DepthWriteEnable = true,
                 });
@@ -265,6 +266,12 @@ namespace Veng
         VE_ASSERT(header.Domain <= static_cast<u32>(MaterialDomain::Translucent),
                   "material: header Domain {} is out of range for MaterialDomain", header.Domain);
         const auto domain = static_cast<MaterialDomain>(header.Domain);
+
+        // CullMode rides the header the same way: cook-validated, range-asserted here.
+        VE_ASSERT(header.CullMode <= static_cast<u32>(Renderer::CullMode::FrontAndBack),
+                  "material: header CullMode {} is out of range for Renderer::CullMode",
+                  header.CullMode);
+        const auto cullMode = static_cast<Renderer::CullMode>(header.CullMode);
 
         // The single block must fit the registry's per-material param stride.
         if (header.BlockBytes > Renderer::BindlessRegistry::MaterialParamStride)
@@ -470,6 +477,7 @@ namespace Veng
             .Name = fmt::format("Material {}", id.Value),
             .Context = &context,
             .Domain = domain,
+            .CullMode = cullMode,
             .Pipeline = nullptr,
             .VertexShader = vsHandle,
             .FragmentShader = fsHandle,
@@ -485,7 +493,7 @@ namespace Veng
         return Detail::LoadJob{
             .Resource = Detail::RefAny(material),
             .Dependencies = std::move(dependencies),
-            .Finalize = [&manager, &context, id, domain, vsHandle, fsHandle,
+            .Finalize = [&manager, &context, id, domain, cullMode, vsHandle, fsHandle,
                          material]() -> VoidResult
             {
                 Result<Ref<Renderer::PipelineLayout>> layout =
@@ -499,7 +507,7 @@ namespace Veng
                 if (domain == MaterialDomain::Surface)
                 {
                     Result<Ref<Renderer::GraphicsPipeline>> built = BuildSurfacePipeline(
-                        manager, context, id, *layout, *vsHandle.Get(), *fsHandle.Get());
+                        manager, context, id, *layout, *vsHandle.Get(), *fsHandle.Get(), cullMode);
                     if (!built)
                     {
                         return std::unexpected(built.error());

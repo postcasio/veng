@@ -79,6 +79,13 @@ namespace Veng
         /// @brief Output contract and pipeline shape.
         MaterialDomain Domain = MaterialDomain::Surface;
 
+        /// @brief Authored face-culling mode for the material's geometry pipeline.
+        ///
+        /// Back (the default) matches the engine's opaque convention; None renders both
+        /// faces (a two-sided surface). Applied by whichever side builds the pipeline —
+        /// the loader for Surface, the owning pass for a pass-built domain.
+        Renderer::CullMode CullMode = Renderer::CullMode::Back;
+
         /// @brief Null for PostProcess materials (built by the pass).
         Ref<Renderer::GraphicsPipeline> Pipeline;
 
@@ -126,6 +133,12 @@ namespace Veng
 
         /// @brief Returns the material's domain (Surface, PostProcess, Sky, or Translucent).
         [[nodiscard]] MaterialDomain GetDomain() const { return m_Domain; }
+
+        /// @brief Returns the material's authored face-culling mode (Back when unauthored).
+        ///
+        /// A pass building its own pipeline for this material (Translucent) applies this
+        /// instead of assuming the opaque Back convention.
+        [[nodiscard]] Renderer::CullMode GetCullMode() const { return m_CullMode; }
 
         /// @brief Returns the built graphics pipeline, or null for a pass-built domain (PostProcess, Sky, Translucent).
         [[nodiscard]] const Ref<Renderer::GraphicsPipeline>& GetPipeline() const
@@ -214,6 +227,7 @@ namespace Veng
         Renderer::Context& m_Context;
         string m_Name;
         MaterialDomain m_Domain = MaterialDomain::Surface;
+        Renderer::CullMode m_CullMode = Renderer::CullMode::Back;
         Ref<Renderer::GraphicsPipeline> m_Pipeline;
         Ref<Renderer::PipelineLayout> m_PipelineLayout;
 
@@ -241,4 +255,14 @@ VE_ENUMERATOR(Surface)
 VE_ENUMERATOR(PostProcess)
 VE_ENUMERATOR(Sky)
 VE_ENUMERATOR(Translucent)
+VE_ENUM_END();
+
+// The cull-mode name table lives beside MaterialDomain's: material sources are the one
+// place a CullMode is serialized by enumerator name, and Renderer/Types.h carries no
+// reflection dependency.
+VE_ENUM(::Veng::Renderer::CullMode, 0xA9FD0C3F45DF165AULL)
+VE_ENUMERATOR(None)
+VE_ENUMERATOR(Front)
+VE_ENUMERATOR(Back)
+VE_ENUMERATOR(FrontAndBack)
 VE_ENUM_END();

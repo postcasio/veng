@@ -358,7 +358,8 @@ TEST_CASE("Cooker: a material with no domain key cooks as Surface (domain 0)")
     CookedMaterialHeader header{};
     std::memcpy(&header, entry->Blob.data(), sizeof(header));
     CHECK(header.Version == CookedMaterialVersion);
-    CHECK(header.Domain == 0u); // Surface
+    CHECK(header.Domain == 0u);   // Surface
+    CHECK(header.CullMode == 2u); // Back — the default for a material with no "cull" key
 
     std::filesystem::remove(outArchive);
 }
@@ -464,7 +465,27 @@ TEST_CASE("Cooker: a translucent material cooks with domain 3")
     std::memcpy(&header, entry->Blob.data(), sizeof(header));
     CHECK(header.Version == CookedMaterialVersion);
     CHECK(header.Domain == 3u);    // Translucent
+    CHECK(header.CullMode == 0u);  // None — the fixture authors "cull": "None"
     CHECK(header.FieldCount == 1); // Color
+
+    std::filesystem::remove(outArchive);
+}
+
+TEST_CASE("Cooker: an unknown cull mode is a located cook error")
+{
+    // Cull modes are serialized by enumerator name ("Back"/"Front"/"None"); a
+    // lowercase or unknown value is rejected at cook time, not silently defaulted.
+    const path packJson = FixtureDir / "material_bad_cull_pack.json";
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_cooker_material_bad_cull.vengpack";
+
+    Cooker cooker;
+    RegisterBuiltinImporters(cooker);
+
+    const VoidResult result = cooker.CookPack(packJson, outArchive);
+
+    REQUIRE(!result.has_value());
+    CHECK(result.error().find("unknown cull mode") != string::npos);
+    CHECK(result.error().find("none") != string::npos);
 
     std::filesystem::remove(outArchive);
 }

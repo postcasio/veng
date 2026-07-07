@@ -1,5 +1,6 @@
 {
   "domain": "Translucent",
+  "cull": "None",
   "shaders": {
     "vertex": "0x0000000000001005",
     "fragment": "0x00000000000010D1"

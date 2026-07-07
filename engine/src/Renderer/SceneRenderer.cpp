@@ -1150,9 +1150,9 @@ namespace Veng::Renderer
                                 {.Stage = ShaderStage::Fragment,
                                  .Module = material.GetFragmentModule()},
                             },
-                        // Back-face culling matches the opaque surface convention, so a translucent
-                        // material rasterizes the same faces a surface material would.
-                        .CullMode = CullMode::Back,
+                        // The material's authored cull mode (Back when unauthored, the opaque
+                        // surface convention) — a two-sided translucent surface authors None.
+                        .CullMode = parent->GetCullMode(),
                         .DepthTestEnable = true,
                         .DepthWriteEnable = false,
                         .DepthCompareOp = CompareOp::LessOrEqual,
