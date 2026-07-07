@@ -261,6 +261,19 @@ if (VENG_ENABLE_CLANG_TIDY)
 endif ()
 
 # ---------------------------------------------------------------------------
+# Source encoding
+# ---------------------------------------------------------------------------
+
+# veng sources are BOM-less UTF-8. MSVC decodes narrow source files by the host
+# codepage unless told otherwise, mangling the non-ASCII characters comments and
+# test-name literals carry; /utf-8 pins both the source and execution charsets.
+# Added at the same boundary as the warnings below so only veng's own targets
+# inherit it.
+if (MSVC)
+    add_compile_options(/utf-8)
+endif ()
+
+# ---------------------------------------------------------------------------
 # Warnings-as-errors under the debug build
 # ---------------------------------------------------------------------------
 

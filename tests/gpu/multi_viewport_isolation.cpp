@@ -1,8 +1,8 @@
-﻿// Multi-viewport isolation: two Offscreen viewports rendering the SAME scene through
+// Multi-viewport isolation: two Offscreen viewports rendering the SAME scene through
 // DIFFERENT cameras in one frame must each reflect their own camera. The view-constants
 // (and light) buffer is shared across every viewport on the Context; if it rings only by
 // frame-in-flight, the second viewport's Execute overwrites the region the first's draws
-// still read at submit, so both render through the last camera â€” a material preview bleeding
+// still read at submit, so both render through the last camera — a material preview bleeding
 // into the level viewport. BindlessRegistry::BeginView gives each render its own region;
 // this asserts the near viewport shows the cube (its camera) while the away viewport (looking
 // away, registered last) shows background, which the shared-region bug would flip.
@@ -120,7 +120,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     nearCamera.SetPerspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
     nearCamera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
 
-    // The "away" camera sits at the same eye but looks in +Z, away from the cube â€” its center
+    // The "away" camera sits at the same eye but looks in +Z, away from the cube — its center
     // is cleared background. It is registered LAST, so a shared per-frame view region would hold
     // its camera at submit and drag the near viewport's draws onto it (the bleed under test).
     CameraView awayCamera;
@@ -170,7 +170,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
             }
         });
 
-    // The near viewport's center is the green cube â€” this is what fails under the shared-region
+    // The near viewport's center is the green cube — this is what fails under the shared-region
     // bug (it would render through the away camera and show cleared background instead).
     const vector<u8> nearPixels = nearView->GetOutput()->GetImage()->Download();
     REQUIRE(nearPixels.size() == static_cast<size_t>(extent.x) * extent.y * 8);

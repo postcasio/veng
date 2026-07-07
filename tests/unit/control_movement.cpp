@@ -1,9 +1,9 @@
-﻿// Input â†’ Intent â†’ Movement: the engine movement integration (Intent â†’ Transform via
-// Mover) and the control-mapping uniformity it buys. Pure CPU â€” no Context, no Vulkan
+// Input → Intent → Movement: the engine movement integration (Intent → Transform via
+// Mover) and the control-mapping uniformity it buys. Pure CPU — no Context, no Vulkan
 // symbol touched; builds a real Scene over a TypeRegistry and drives the real
 // MovementSystem.
 //
-// The control mapping itself (PlayerInput â†’ Intent) is game policy living in the example,
+// The control mapping itself (PlayerInput → Intent) is game policy living in the example,
 // so this suite exercises the engine half and the abstract-producer uniformity: a control
 // system, an AI system, and a raw Intent write all drive the same movement result. The
 // always-present headless Input (Input(nullptr), all-zeros) is constructed directly to
@@ -69,7 +69,7 @@ namespace
     constexpr ActionId Look{0xB2};
     constexpr ActionId Jump{0xC3};
 
-    // Builds a resolved PlayerInput carrying the given action values â€” the shape the engine's
+    // Builds a resolved PlayerInput carrying the given action values — the shape the engine's
     // InputMappingSystem produces from a seat's contexts, hand-built here so the mapping is
     // testable without the resolver.
     PlayerInput MakeInput(const vec2 move, const vec2 look, const bool jump)
@@ -84,7 +84,7 @@ namespace
         return input;
     }
 
-    // The control mapping under test mirrors the example's PlayerInput â†’ Intent policy,
+    // The control mapping under test mirrors the example's PlayerInput → Intent policy,
     // reading actions by name, so this suite asserts the produced Intent without the game
     // module. Move.x strafes, Move.y advances (mapped to -Z, the pawn's forward); only the
     // yaw drives the pawn (pitch tilts the follow camera).
@@ -118,7 +118,7 @@ namespace
         [[nodiscard]] f32 GetAxis(InputDeviceType, u32) const override { return 0.0f; }
     };
 
-    // A WASD â†’ 2D Move + Jump context mirroring the example's gameplay bindings.
+    // A WASD → 2D Move + Jump context mirroring the example's gameplay bindings.
     ResolvedContext GameplayContext()
     {
         return ResolvedContext{
@@ -263,7 +263,7 @@ TEST_CASE("Control mapping turns a resolved PlayerInput into the expected Intent
 TEST_CASE("A neutral resolved PlayerInput produces a zero Intent and nothing moves")
 {
     // In headless the InputMappingSystem resolves every action to None over the neutral
-    // snapshot, so the seat's PlayerInput carries no active actions â€” an empty ActionState.
+    // snapshot, so the seat's PlayerInput carries no active actions — an empty ActionState.
     const PlayerInput neutral;
 
     const Intent intent = MapInputToIntent(neutral);
@@ -287,7 +287,7 @@ TEST_CASE("A neutral resolved PlayerInput produces a zero Intent and nothing mov
 namespace
 {
     // An AI producer: writes an Intent directly, with no PlayerInput, no Possesses, no
-    // player at all â€” proving the movement system is agnostic to who produced the Intent.
+    // player at all — proving the movement system is agnostic to who produced the Intent.
     class AiSystem final : public SceneSystem
     {
     public:
@@ -325,7 +325,7 @@ TEST_CASE("Moving a possessed pawn does not change a Viewer's resolved camera")
     const Unique<Scene> scene = Scene::Create(registry);
 
     // A camera entity at a fixed pose, and a separate seat that both views through it and
-    // possesses a movable pawn â€” possession and view are independent references.
+    // possesses a movable pawn — possession and view are independent references.
     const Entity camera = scene->CreateEntity();
     Transform cameraTransform;
     cameraTransform.Position = vec3(0.0f, 5.0f, 10.0f);
@@ -391,7 +391,7 @@ TEST_CASE("InputMappingSystem resolves each seat's PlayerInput; a neutral snapsh
 {
     // The system wiring itself, driven with a real headless Input (all-zeros). The seat carries
     // a Viewer + InputContextStack + PlayerInput; the neutral snapshot resolves every declared
-    // action to a None sample with zero value â€” the headless contract with no guard.
+    // action to a None sample with zero value — the headless contract with no guard.
     TypeRegistry registry = MakeRegistry();
     const Unique<Scene> scene = Scene::Create(registry);
 
@@ -418,7 +418,7 @@ TEST_CASE(
 {
     const TypeRegistry registry = MakeRegistry();
 
-    // A resolved PlayerInput carrying a Move axis and a triggered Jump â€” the shape a prefab
+    // A resolved PlayerInput carrying a Move axis and a triggered Jump — the shape a prefab
     // persists and a net layer replicates.
     PlayerInput src;
     src.State.Actions = {

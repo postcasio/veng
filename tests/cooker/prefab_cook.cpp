@@ -1,4 +1,4 @@
-﻿// Prefab cook test: cooks a *.prefab.json through the PrefabImporter against the
+// Prefab cook test: cooks a *.prefab.json through the PrefabImporter against the
 // reflected hello-triangle registry (loaded module: builtins + Spinner) and
 // checks the CookedPrefabHeader, the entity/component tables, each component's
 // TypeId, and that the record tail round-trips back through ReadFields to the
@@ -123,7 +123,7 @@ namespace
     }
 }
 
-TEST_CASE("prefab cook: happy path â€” header, component TypeIds, record round-trip")
+TEST_CASE("prefab cook: happy path — header, component TypeIds, record round-trip")
 {
     const LoadedModuleTypes module = LoadRegistry();
     const TypeRegistry& types = module.Types;
@@ -190,7 +190,7 @@ TEST_CASE("prefab cook: happy path â€” header, component TypeIds, record ro
                &decodedTransform, types.Info(TypeIdOf<Transform>()), types);
     CHECK(decodedTransform.Position == vec3(1, 2, 3));
     // The quat JSON array is storage order [x,y,z,w]; [0,0,0,1] is the identity.
-    CHECK(decodedTransform.Rotation == quat(1, 0, 0, 0)); // glm quat(w,x,y,z) â€” identity
+    CHECK(decodedTransform.Rotation == quat(1, 0, 0, 0)); // glm quat(w,x,y,z) — identity
     CHECK(decodedTransform.Scale == vec3(1, 1, 1));
 
     // --- Round-trip MeshRenderer's AssetHandle id (offset 0 = AssetId) ---
@@ -419,7 +419,7 @@ TEST_CASE("prefab cook: an InputContextStack AssetHandle array round-trips its c
     const LoadedModuleTypes module = LoadRegistry();
     const TypeRegistry& types = module.Types;
 
-    // The seat component carries a reflected vector<AssetHandle<InputMappingContext>> â€” the
+    // The seat component carries a reflected vector<AssetHandle<InputMappingContext>> — the
     // array-of-handle field cooked through the prefab importer. The ids are runtime residency
     // concerns; the cook accepts non-resident ids as-is, so this pins the array serialization.
     constexpr u64 ContextA = 999999000000000001ULL;

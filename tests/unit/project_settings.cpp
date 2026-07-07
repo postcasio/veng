@@ -1,7 +1,7 @@
-﻿// Project-settings data-model cases: the reflected ProjectSettings /
+// Project-settings data-model cases: the reflected ProjectSettings /
 // BuildConfiguration round-trip through the generic serializer (exercising the
 // new FieldClass::Array support), and the CompressionRole / CompressionFormat
-// enumâ‡„name tables. Pure CPU â€” no Context, no Vulkan symbol touched, no nlohmann.
+// enum⇄name tables. Pure CPU — no Context, no Vulkan symbol touched, no nlohmann.
 
 #include <doctest/doctest.h>
 
@@ -17,7 +17,7 @@ using namespace Veng;
 namespace
 {
     // A macOS/ASTC and a Windows/BC7 configuration, the two-target shape the plan
-    // names â€” enough to exercise the array case with more than one element and two
+    // names — enough to exercise the array case with more than one element and two
     // distinct codec policies.
     ProjectSettings MakeSettings()
     {
@@ -58,7 +58,7 @@ namespace
     }
 }
 
-// ---- Enumâ‡„name tables ------------------------------------------------------
+// ---- Enum⇄name tables ------------------------------------------------------
 
 TEST_CASE("CompressionRole names round-trip through ToString/Parse")
 {

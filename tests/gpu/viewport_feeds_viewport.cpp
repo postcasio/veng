@@ -1,8 +1,8 @@
-﻿// Viewport-feeds-viewport: the render-to-texture-into-a-material proof. A producer
+// Viewport-feeds-viewport: the render-to-texture-into-a-material proof. A producer
 // Offscreen viewport renders scene A; a consumer viewport renders scene B whose
 // material binds the producer's GetOutputHandle() via Material::SetTextureHandle.
 // Both viewports are appended to one drive-list (producer first), then Render is
-// driven for each in registration order within a single command buffer â€” the engine
+// driven for each in registration order within a single command buffer — the engine
 // render phase, where registration order is render order. The consumer's output must
 // reflect the producer's content, proving the producer rendered first and its output
 // was sampleable when the consumer ran. The handoff records on the single graphics
@@ -45,7 +45,7 @@ using namespace Veng::Renderer;
 
 namespace
 {
-    // One RGBA16F output texel decoded to a linear vec3 â€” the viewport output is
+    // One RGBA16F output texel decoded to a linear vec3 — the viewport output is
     // RGBA16Sfloat (the viewports below request that format explicitly).
     vec3 DecodeTexel(const vector<u8>& rgba16f, u32 width, u32 x, u32 y)
     {
@@ -70,10 +70,10 @@ namespace
 // (BaseColorFactor), so its Albedo output is a distinctively green-dominant frame.
 // That output is bound as the consumer cube's BaseColor through
 // Material::SetTextureHandle, and the consumer renders in Albedo too, so its g-buffer
-// color is exactly the producer texel Ã— the consumer's (white) BaseColorFactor.
+// color is exactly the producer texel × the consumer's (white) BaseColorFactor.
 // Registering the producer first and driving the drive-list in order makes the
 // producer's Sample transition reach the consumer's read without a ring or cross-queue
-// semaphore â€” the consumer center reads green-dominant, which the consumer's own
+// semaphore — the consumer center reads green-dominant, which the consumer's own
 // red-dominant brick (its untinted BaseColorFactor) never would, so the producer's
 // output is what colored it.
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
@@ -85,7 +85,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // Cook the brick g-buffer fixture in-process. A small generated pack adds a second
     // brick material (a distinct id) reusing the same fixture sources, so the producer
     // and consumer hold independent Material instances rather than the one cached
-    // entry. No new asset is minted into the tree â€” the second material is a build-time
+    // entry. No new asset is minted into the tree — the second material is a build-time
     // pack the test writes and removes.
     const path fixtureDir = path(GPU_GBUFFER_FIXTURE_DIR);
     const path tempDir = Veng::TestSupport::TempDir();
@@ -127,7 +127,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     constexpr uvec2 extent{96, 96};
 
-    // â”€â”€ Producer scene A: a brick cube tinted green â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Producer scene A: a brick cube tinted green ───────────────────────────────
     const AssetResult<AssetHandle<MaterialInstance>> producerMaterial =
         assets.LoadSync<MaterialInstance>(AssetId{9000003}); // brick default instance (over 9003)
     REQUIRE(producerMaterial.has_value());
@@ -161,7 +161,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     });
     producer->SetViewState({.World = sceneA.get(), .Camera = FrontCamera(extent), .Delta = 0.0f});
 
-    // â”€â”€ Consumer scene B: a brick cube whose BaseColor is the producer's output â”€â”€â”€
+    // ── Consumer scene B: a brick cube whose BaseColor is the producer's output ───
     const AssetResult<AssetHandle<MaterialInstance>> consumerMaterial =
         assets.LoadSync<MaterialInstance>(
             AssetId{9009013}); // second brick default instance (over 9013)
@@ -169,7 +169,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(consumerMaterial->IsLoaded());
 
     // The loaded handle hands out a const Material; SetTextureHandle mutates the
-    // ring-buffered block in place â€” the const_cast the runtime-bind path uses.
+    // ring-buffered block in place — the const_cast the runtime-bind path uses.
     const_cast<MaterialInstance&>(*consumerMaterial->Get())
         .SetTextureHandle("BaseColor", producer->GetOutputHandle());
 
@@ -193,10 +193,10 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     });
     consumer->SetViewState({.World = sceneB.get(), .Camera = FrontCamera(extent), .Delta = 0.0f});
 
-    // â”€â”€ The drive-list: producer first, consumer second â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── The drive-list: producer first, consumer second ──────────────────────────
     // Registration order is render order. The engine render phase walks the list and
     // calls Render on each into one command buffer; mirror it here so the producer's
-    // output is in Sample layout before the consumer samples it â€” same frame, single
+    // output is in Sample layout before the consumer samples it — same frame, single
     // graphics queue, no ring, no semaphore.
     driveList.emplace_back(producer.get());
     producer->AttachToDriveList(driveList);
@@ -219,8 +219,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(producerCenter.g > 0.1f);
     CHECK(producerCenter.g > producerCenter.r);
 
-    // The consumer's albedo center is the sampled producer texel Ã— its BaseColorFactor
-    // â€” green-dominant, proving the producer rendered first and its output fed the
+    // The consumer's albedo center is the sampled producer texel × its BaseColorFactor
+    // — green-dominant, proving the producer rendered first and its output fed the
     // consumer's material this same frame.
     const vector<u8> consumerPixels = consumer->GetOutput()->GetImage()->Download();
     REQUIRE(consumerPixels.size() == static_cast<size_t>(extent.x) * extent.y * 8);

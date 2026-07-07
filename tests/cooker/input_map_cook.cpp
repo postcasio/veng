@@ -1,7 +1,7 @@
-﻿// Input-map cook test: cooks a *.inputmap.json through the InputMapImporter and checks the
+// Input-map cook test: cooks a *.inputmap.json through the InputMapImporter and checks the
 // CookedInputMapHeader plus that the { actions, bindings } record round-trips back through
 // ReadFields into the resolver-ready form InputMappingContext exposes. Also covers each
-// validation failure â€” an unknown-action binding, a Button/axis kind mismatch, a null id, a
+// validation failure — an unknown-action binding, a Button/axis kind mismatch, a null id, a
 // duplicate id, an unknown enum name. An input map needs no --module (it references only engine
 // builtins), so the cook runs with a builtin-only registry and no module load.
 
@@ -118,7 +118,7 @@ namespace
     }
 }
 
-TEST_CASE("input map cook: happy path â€” header + resolved context round-trip")
+TEST_CASE("input map cook: happy path — header + resolved context round-trip")
 {
     const path packJson = WriteInputMapPack("inputmap_happy", SampleMap());
 
