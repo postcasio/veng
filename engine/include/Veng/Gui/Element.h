@@ -3,9 +3,11 @@
 #include <Veng/Veng.h>
 #include <Veng/Gui/DrawList.h>
 #include <Veng/Gui/Style.h>
+#include <Veng/Gui/StyleProperty.h>
 
 namespace Veng::Gui
 {
+    struct StyleDeclaration;
     /// @brief The closed set of element kinds a document tree can hold.
     ///
     /// The whole set is enumerated so a document can carry any authored tag. Panel, Text,
@@ -76,6 +78,36 @@ namespace Veng::Gui
         return static_cast<ElementState>(static_cast<u32>(a) & static_cast<u32>(b));
     }
 
+    /// @brief One state-scoped style variant: a pseudo-state and the declarations it applies.
+    ///
+    /// The resolved declarations a stylesheet cascade kept for a single interaction state
+    /// (`:hover`/`:active`/`:focus`/`:disabled`/`:checked`). State is exactly one pseudo-state
+    /// bit; Declarations are in cascade source order (later entries win). Variant selection folds
+    /// the variants whose State bit is set in the element's live interaction mask over its base
+    /// style, so the runtime never runs a selector engine — matching happened once at resolve time.
+    struct StyleVariant
+    {
+        /// @brief The single pseudo-state bit this variant applies in.
+        ElementState State = ElementState::None;
+        /// @brief The declarations to apply when the state is active, in cascade source order.
+        vector<StyleDeclaration> Declarations;
+    };
+
+    /// @brief A per-property time-based transition: which property eases and over how long.
+    ///
+    /// When the target value of Property changes as the active style switches, the live value
+    /// eases from its old value to the new one over Duration seconds rather than snapping. A
+    /// property with no transition entry snaps. Only animatable properties (colors, opacity,
+    /// scalar sizes, and length/inset payloads) interpolate; a non-animatable property is set to
+    /// its target immediately even with a transition entry.
+    struct StyleTransition
+    {
+        /// @brief The style property this transition eases.
+        StyleProperty Property = StyleProperty::Background;
+        /// @brief The ease duration, in seconds; a non-positive duration snaps.
+        f32 Duration = 0.0f;
+    };
+
     class Document;
 
     /// @brief One node of a retained document tree: a kind, a resolved style, and a computed rect.
@@ -86,14 +118,43 @@ namespace Veng::Gui
     /// binding layer writes. Layout is the rect Document::Solve computes in document space; it is
     /// meaningful only after a Solve. Mutate structure and style through the Document so the layout
     /// is marked dirty and the mirrored layout node stays in sync.
+    /// @brief One in-flight property tween: the property, its source value, and elapsed time.
+    ///
+    /// Records a property transitioning toward its resolved target. From holds the value the
+    /// property held when the target last changed; Elapsed advances by the per-frame delta up to
+    /// the transition duration, and the live value is the interpolation of From toward the target
+    /// at Elapsed/Duration. Internal state Document::Update maintains; not authored.
+    struct StyleTween
+    {
+        /// @brief The property being eased.
+        StyleProperty Property = StyleProperty::Background;
+        /// @brief The value the property held when its target last changed (the ease start).
+        vec4 From{0.0f};
+        /// @brief The target value being eased toward (the ease end).
+        vec4 To{0.0f};
+        /// @brief Seconds elapsed since the target changed.
+        f32 Elapsed = 0.0f;
+        /// @brief The ease duration in seconds, copied from the matching transition.
+        f32 Duration = 0.0f;
+    };
+
     struct Element
     {
         /// @brief The element's kind, fixed at construction.
         ElementKind Kind = ElementKind::Panel;
-        /// @brief The resolved style: the layout inputs Solve reads and the paint inputs Build reads.
+        /// @brief The live resolved style: the layout inputs Solve reads and the paint inputs Build reads.
         Style ComputedStyle;
+        /// @brief The base resolved style — inline + None-state cascade, before any active variant.
+        Style BaseStyle;
         /// @brief The computed rect in document space, filled by Document::Solve.
         Rect Layout;
+
+        /// @brief The state-scoped style variants, in cascade source order.
+        vector<StyleVariant> Variants;
+        /// @brief The per-property transitions that ease a target change over time.
+        vector<StyleTransition> Transitions;
+        /// @brief The in-flight property tweens Document::Update maintains.
+        vector<StyleTween> Tweens;
 
         /// @brief The interaction-state mask a styling/event layer sets and reads.
         ElementState State = ElementState::None;

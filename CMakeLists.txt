@@ -547,6 +547,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/dynamic_resolution.cpp
             tests/unit/gui_draw_list.cpp
             tests/unit/gui_layout.cpp
+            tests/unit/gui_style_states.cpp
     )
     target_link_libraries(veng_test_unit PRIVATE veng::veng doctest::doctest)
 

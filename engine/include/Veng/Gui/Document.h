@@ -4,12 +4,7 @@
 #include <Veng/Gui/DrawList.h>
 #include <Veng/Gui/Element.h>
 #include <Veng/Gui/Style.h>
-
-namespace Veng
-{
-    template <class T>
-    class AssetHandle;
-}
+#include <Veng/Gui/StyleSheet.h>
 
 namespace Veng::Gui
 {
@@ -40,15 +35,20 @@ namespace Veng::Gui
         /// @brief Materializes an independent live tree from a cooked UIDocument recipe.
         ///
         /// Builds a fresh Document whose element tree mirrors the recipe's structure, copying each
-        /// recipe element's kind, id, classes, text, inline-style declarations, bindings, and
-        /// handlers onto the corresponding live Element. The instantiated tree is independent of the
-        /// recipe and of any other instance of it — instantiating one UIDocument twice yields two
-        /// trees that mutate separately (the Prefab model). The referenced stylesheets are not yet
-        /// applied: matching their rules onto each element's resolved Style is the style-application
-        /// step. Inline-style declarations are stored on each Element as its authored overrides.
+        /// recipe element's kind, id, classes, text, bindings, and handlers onto the corresponding
+        /// live Element, then cascades the referenced stylesheets onto each element. Cascade
+        /// precedence, lowest to highest: a matching rule's None-state declarations in stylesheet
+        /// reference order and rule source order, then the element's inline-style declarations —
+        /// inline always wins. The result is each element's BaseStyle (and initial ComputedStyle).
+        /// State-scoped rule survivors (`:hover`/`:active`/…) are kept as the element's Variants,
+        /// selected against its interaction state by Update. The instantiated tree is independent of
+        /// the recipe and of any other instance of it — instantiating one UIDocument twice yields two
+        /// trees that mutate separately (the Prefab model).
         /// @param recipe  The cooked UI document to materialize; must be resident.
+        /// @param fonts   Resolver a font declaration's AssetId resolves through; may be empty.
         /// @return A newly constructed Document owning an independent copy of the recipe's tree.
-        [[nodiscard]] static Unique<Document> Instantiate(const UIDocument& recipe);
+        [[nodiscard]] static Unique<Document> Instantiate(const UIDocument& recipe,
+                                                          const FontResolver& fonts = {});
 
         /// @brief Constructs an empty document with a single Panel root.
         Document();
@@ -92,9 +92,47 @@ namespace Veng::Gui
         void SetVisible(Element& element, bool visible);
 
         /// @brief Replaces an element's resolved style and marks layout dirty.
+        ///
+        /// Sets both the element's live ComputedStyle and its BaseStyle, so a later variant/
+        /// transition resolve folds active variants over this new base. Marks layout dirty.
         /// @param element  The element whose style to set.
         /// @param style    The new resolved style.
         void SetStyle(Element& element, const Style& style);
+
+        /// @brief Sets an element's interaction-state mask, re-resolving its live style.
+        ///
+        /// Selects the variants active in the new mask and folds them over the element's base
+        /// style, starting a transition on any transition-able property whose target moved. A
+        /// change to a layout input re-dirties the layout; a paint-only change does not. This is
+        /// the entry point an interaction layer drives a hover/press/focus change through.
+        /// @param element  The element whose state to set.
+        /// @param state    The new interaction-state mask.
+        void SetState(Element& element, ElementState state);
+
+        /// @brief Replaces an element's per-property transition list.
+        ///
+        /// Each entry names a property and an ease duration; a property with no entry snaps on a
+        /// target change. In-flight tweens for a dropped property are cleared (its value snaps to
+        /// the current target on the next resolve).
+        /// @param element      The element whose transitions to set.
+        /// @param transitions  The transition list, one entry per eased property.
+        void SetTransitions(Element& element, vector<StyleTransition> transitions);
+
+        /// @brief Advances the style pipeline one frame: variant resolve then transition step.
+        ///
+        /// For every element it re-selects the active variants over the base style and advances any
+        /// in-flight property tween by delta, writing the interpolated value into ComputedStyle. A
+        /// resolved or transitioned change to a layout input re-dirties the layout so the following
+        /// Solve re-runs; a pure paint change (color/opacity) does not force a re-solve. Call this
+        /// once per frame before Solve. A delta of zero resolves variants without advancing tweens.
+        /// @param delta  The frame time step, in seconds.
+        void Update(f32 delta);
+
+        /// @brief Returns whether any element has an in-flight transition still animating.
+        ///
+        /// True while at least one tween has not reached its duration, so a driver knows to keep
+        /// calling Update (and re-Building) until the UI settles.
+        [[nodiscard]] bool IsAnimating() const;
 
         /// @brief Installs a text-measurement function overriding font-driven Text sizing.
         ///
@@ -144,6 +182,9 @@ namespace Veng::Gui
         /// @brief Destroys an element and its subtree, releasing their layout nodes.
         void DestroySubtree(Element& element);
 
+        /// @brief Re-selects active variants over the base and advances one element's tweens.
+        void UpdateElement(Element& element, f32 delta);
+
         /// @brief Pushes one element's style layout inputs into its mirrored layout node.
         void ApplyStyle(Element& element);
 
@@ -164,6 +205,9 @@ namespace Veng::Gui
 
         /// @brief The optional measurement override; unset uses the style's font.
         TextMeasurer m_Measurer;
+
+        /// @brief Resolver a variant's font declaration resolves through during state resolution.
+        FontResolver m_FontResolver;
 
         /// @brief Whether structure or style changed since the last Solve.
         bool m_Dirty = true;

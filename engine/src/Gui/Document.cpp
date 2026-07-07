@@ -212,22 +212,106 @@ namespace Veng::Gui
 
     namespace
     {
-        // Copies a recipe element's authored identity, text, inline style, bindings, and handlers
-        // onto a live element. Inline-style declarations are the always-applied element-local layer,
-        // so they are written straight onto the element's resolved style; stylesheet cascade layers
-        // under them. Bindings and handlers are stored on the element's Bindings map keyed by the
-        // bound attribute name and the event name respectively (an event name never collides with a
-        // bound attribute), unresolved for the binding/handler resolution step.
+        // The selector type-name of an element kind — the same tag the markup authors and the
+        // cooked StyleRule::Type stores, so a runtime match against a resolved rule is by name.
+        const char* ElementKindName(ElementKind kind)
+        {
+            switch (kind)
+            {
+            case ElementKind::Panel:
+                return "Panel";
+            case ElementKind::Text:
+                return "Text";
+            case ElementKind::Image:
+                return "Image";
+            case ElementKind::Button:
+                return "Button";
+            case ElementKind::Checkbox:
+                return "Checkbox";
+            case ElementKind::Slider:
+                return "Slider";
+            case ElementKind::ProgressBar:
+                return "ProgressBar";
+            case ElementKind::TextInput:
+                return "TextInput";
+            case ElementKind::ScrollView:
+                return "ScrollView";
+            case ElementKind::List:
+                return "List";
+            }
+            return "Panel";
+        }
+
+        // A rule's selector matches an element when each constrained axis (type/class/id) agrees
+        // and an unconstrained (empty) axis is a wildcard. A class constraint matches if the tag
+        // is among the element's classes.
+        bool RuleMatches(const StyleRule& rule, const Element& element)
+        {
+            if (!rule.Type.empty() && rule.Type != ElementKindName(element.Kind))
+            {
+                return false;
+            }
+            if (!rule.Id.empty() && rule.Id != element.Id)
+            {
+                return false;
+            }
+            if (!rule.Class.empty() &&
+                std::ranges::find(element.Classes, rule.Class) == element.Classes.end())
+            {
+                return false;
+            }
+            return true;
+        }
+
+        // Cascades the None-state rule survivors of every referenced sheet onto the element's base
+        // style (sheet reference order, then rule source order), then the inline overrides last, and
+        // keeps each state-scoped survivor as a variant in the same source order. Inline always wins.
+        void ResolveElementStyle(Element& element, const UIElementRecipe& recipe,
+                                 const vector<const StyleSheet*>& sheets, const FontResolver& fonts)
+        {
+            element.Variants.clear();
+
+            for (const StyleSheet* sheet : sheets)
+            {
+                for (const StyleRule& rule : sheet->GetRules())
+                {
+                    if (!RuleMatches(rule, element))
+                    {
+                        continue;
+                    }
+                    if (rule.State == ElementState::None)
+                    {
+                        for (const StyleDeclaration& declaration : rule.Declarations)
+                        {
+                            ApplyDeclaration(element.BaseStyle, declaration, fonts);
+                        }
+                    }
+                    else
+                    {
+                        element.Variants.push_back(
+                            StyleVariant{.State = rule.State, .Declarations = rule.Declarations});
+                    }
+                }
+            }
+
+            for (const StyleDeclaration& declaration : recipe.InlineStyle)
+            {
+                ApplyDeclaration(element.BaseStyle, declaration, fonts);
+            }
+
+            element.ComputedStyle = element.BaseStyle;
+        }
+
+        // Copies a recipe element's authored identity, text, bindings, and handlers onto a live
+        // element. Bindings and handlers are stored on the element's Bindings map keyed by the bound
+        // attribute name and the event name respectively (an event name never collides with a bound
+        // attribute), unresolved for the binding/handler resolution step. Style resolution is a
+        // separate step (ResolveElementStyle), run once the element's classes/id are in place.
         void PopulateElement(Element& element, const UIElementRecipe& recipe)
         {
             element.Id = recipe.Id;
             element.Classes = recipe.Classes;
             element.Text = recipe.Text;
-
-            for (const StyleDeclaration& declaration : recipe.InlineStyle)
-            {
-                ApplyDeclaration(element.ComputedStyle, declaration, {});
-            }
 
             for (const UIBindingRecipe& binding : recipe.Bindings)
             {
@@ -240,14 +324,25 @@ namespace Veng::Gui
         }
     }
 
-    Unique<Document> Document::Instantiate(const UIDocument& recipe)
+    Unique<Document> Document::Instantiate(const UIDocument& recipe, const FontResolver& fonts)
     {
         auto document = CreateUnique<Document>();
+        document->m_FontResolver = fonts;
 
         const vector<UIElementRecipe>& elements = recipe.GetElements();
         if (elements.empty())
         {
             return document;
+        }
+
+        vector<const StyleSheet*> sheets;
+        sheets.reserve(recipe.GetStyleSheets().size());
+        for (const AssetHandle<StyleSheet>& handle : recipe.GetStyleSheets())
+        {
+            if (handle.IsLoaded())
+            {
+                sheets.push_back(handle.Get());
+            }
         }
 
         // Element 0 is the authored root; it maps onto the document's pre-made root. The pre-order
@@ -260,6 +355,7 @@ namespace Veng::Gui
             const UIElementRecipe& node = elements[cursor];
             ++cursor;
             PopulateElement(live, node);
+            ResolveElementStyle(live, node, sheets, fonts);
             for (u32 i = 0; i < node.ChildCount; ++i)
             {
                 Element& child = document->Add(live, elements[cursor].Kind);
@@ -268,6 +364,8 @@ namespace Veng::Gui
         };
         build(document->Root(), build);
 
+        // The cascaded base includes layout inputs, so the tree must re-solve.
+        document->m_Dirty = true;
         return document;
     }
 
@@ -374,13 +472,398 @@ namespace Veng::Gui
 
     void Document::SetStyle(Element& element, const Style& style)
     {
+        element.BaseStyle = style;
         element.ComputedStyle = style;
+        element.Tweens.clear();
         if (const YGNodeRef node = m_Yoga->Get(element);
             node != nullptr && YGNodeHasMeasureFunc(node))
         {
             YGNodeMarkDirty(node);
         }
         m_Dirty = true;
+    }
+
+    namespace
+    {
+        // Whether a property feeds the flexbox solve (or the text measure that feeds it) — a change
+        // to one re-dirties the layout, where a pure paint change (color/opacity/radius) does not.
+        bool IsLayoutProperty(StyleProperty property)
+        {
+            switch (property)
+            {
+            case StyleProperty::FlexDirection:
+            case StyleProperty::JustifyContent:
+            case StyleProperty::AlignItems:
+            case StyleProperty::AlignSelf:
+            case StyleProperty::FlexWrap:
+            case StyleProperty::FlexGrow:
+            case StyleProperty::FlexShrink:
+            case StyleProperty::FlexBasis:
+            case StyleProperty::Width:
+            case StyleProperty::Height:
+            case StyleProperty::MinWidth:
+            case StyleProperty::MinHeight:
+            case StyleProperty::MaxWidth:
+            case StyleProperty::MaxHeight:
+            case StyleProperty::Margin:
+            case StyleProperty::Padding:
+            case StyleProperty::Position:
+            case StyleProperty::Inset:
+            case StyleProperty::TextSize:
+            case StyleProperty::TextFont:
+                return true;
+            case StyleProperty::Background:
+            case StyleProperty::CornerRadius:
+            case StyleProperty::BorderWidth:
+            case StyleProperty::BorderColor:
+            case StyleProperty::TextColor:
+            case StyleProperty::Opacity:
+            case StyleProperty::ClipContent:
+                return false;
+            }
+            return false;
+        }
+
+        // Whether a property's value type interpolates continuously: colors, scalars, corner radii,
+        // edge insets, and same-kind lengths. Enums, fonts, and the clip flag snap.
+        bool IsAnimatableProperty(StyleProperty property)
+        {
+            switch (property)
+            {
+            case StyleProperty::FlexGrow:
+            case StyleProperty::FlexShrink:
+            case StyleProperty::FlexBasis:
+            case StyleProperty::Width:
+            case StyleProperty::Height:
+            case StyleProperty::MinWidth:
+            case StyleProperty::MinHeight:
+            case StyleProperty::MaxWidth:
+            case StyleProperty::MaxHeight:
+            case StyleProperty::Margin:
+            case StyleProperty::Padding:
+            case StyleProperty::Inset:
+            case StyleProperty::Background:
+            case StyleProperty::CornerRadius:
+            case StyleProperty::BorderWidth:
+            case StyleProperty::BorderColor:
+            case StyleProperty::TextColor:
+            case StyleProperty::TextSize:
+            case StyleProperty::Opacity:
+                return true;
+            case StyleProperty::FlexDirection:
+            case StyleProperty::JustifyContent:
+            case StyleProperty::AlignItems:
+            case StyleProperty::AlignSelf:
+            case StyleProperty::FlexWrap:
+            case StyleProperty::Position:
+            case StyleProperty::TextFont:
+            case StyleProperty::ClipContent:
+                return false;
+            }
+            return false;
+        }
+
+        // Whether a property's payload is a Length (value + kind ordinal), whose ease is valid only
+        // within one kind — a Points→Percent change snaps rather than interpolating a mixed unit.
+        bool IsLengthProperty(StyleProperty property)
+        {
+            switch (property)
+            {
+            case StyleProperty::FlexBasis:
+            case StyleProperty::Width:
+            case StyleProperty::Height:
+            case StyleProperty::MinWidth:
+            case StyleProperty::MinHeight:
+            case StyleProperty::MaxWidth:
+            case StyleProperty::MaxHeight:
+                return true;
+            default:
+                return false;
+            }
+        }
+
+        // Reads a property's numeric payload as a vec4. A Length rides {value, kind ordinal, 0, 0}
+        // so a kind mismatch between source and target is detectable (kinds must agree to ease).
+        vec4 ReadProperty(const Style& style, StyleProperty property)
+        {
+            const auto lengthVec = [](Length length)
+            { return vec4(length.Value, static_cast<f32>(length.Kind), 0.0f, 0.0f); };
+
+            switch (property)
+            {
+            case StyleProperty::FlexGrow:
+                return vec4(style.FlexGrow, 0.0f, 0.0f, 0.0f);
+            case StyleProperty::FlexShrink:
+                return vec4(style.FlexShrink, 0.0f, 0.0f, 0.0f);
+            case StyleProperty::FlexBasis:
+                return lengthVec(style.FlexBasis);
+            case StyleProperty::Width:
+                return lengthVec(style.Width);
+            case StyleProperty::Height:
+                return lengthVec(style.Height);
+            case StyleProperty::MinWidth:
+                return lengthVec(style.MinWidth);
+            case StyleProperty::MinHeight:
+                return lengthVec(style.MinHeight);
+            case StyleProperty::MaxWidth:
+                return lengthVec(style.MaxWidth);
+            case StyleProperty::MaxHeight:
+                return lengthVec(style.MaxHeight);
+            case StyleProperty::Margin:
+                return vec4(style.Margin.Left, style.Margin.Top, style.Margin.Right,
+                            style.Margin.Bottom);
+            case StyleProperty::Padding:
+                return vec4(style.Padding.Left, style.Padding.Top, style.Padding.Right,
+                            style.Padding.Bottom);
+            case StyleProperty::Inset:
+                return vec4(style.Inset.Left, style.Inset.Top, style.Inset.Right,
+                            style.Inset.Bottom);
+            case StyleProperty::Background:
+                return style.Background;
+            case StyleProperty::CornerRadius:
+                return vec4(style.Radii.TopLeft, style.Radii.TopRight, style.Radii.BottomRight,
+                            style.Radii.BottomLeft);
+            case StyleProperty::BorderWidth:
+                return vec4(style.BorderStyle.Width, 0.0f, 0.0f, 0.0f);
+            case StyleProperty::BorderColor:
+                return style.BorderStyle.Color;
+            case StyleProperty::TextColor:
+                return style.TextColor;
+            case StyleProperty::TextSize:
+                return vec4(style.TextSize, 0.0f, 0.0f, 0.0f);
+            case StyleProperty::Opacity:
+                return vec4(style.Opacity, 0.0f, 0.0f, 0.0f);
+            default:
+                return vec4(0.0f);
+            }
+        }
+
+        // Writes an interpolated vec4 back onto the style's field, inverting ReadProperty. A Length's
+        // kind rides component y.
+        void WriteProperty(Style& style, StyleProperty property, vec4 value)
+        {
+            const auto toLength = [](vec4 v)
+            {
+                return Length{.Kind = static_cast<LengthKind>(static_cast<i32>(v.y)), .Value = v.x};
+            };
+
+            switch (property)
+            {
+            case StyleProperty::FlexGrow:
+                style.FlexGrow = value.x;
+                return;
+            case StyleProperty::FlexShrink:
+                style.FlexShrink = value.x;
+                return;
+            case StyleProperty::FlexBasis:
+                style.FlexBasis = toLength(value);
+                return;
+            case StyleProperty::Width:
+                style.Width = toLength(value);
+                return;
+            case StyleProperty::Height:
+                style.Height = toLength(value);
+                return;
+            case StyleProperty::MinWidth:
+                style.MinWidth = toLength(value);
+                return;
+            case StyleProperty::MinHeight:
+                style.MinHeight = toLength(value);
+                return;
+            case StyleProperty::MaxWidth:
+                style.MaxWidth = toLength(value);
+                return;
+            case StyleProperty::MaxHeight:
+                style.MaxHeight = toLength(value);
+                return;
+            case StyleProperty::Margin:
+                style.Margin = {
+                    .Left = value.x, .Top = value.y, .Right = value.z, .Bottom = value.w};
+                return;
+            case StyleProperty::Padding:
+                style.Padding = {
+                    .Left = value.x, .Top = value.y, .Right = value.z, .Bottom = value.w};
+                return;
+            case StyleProperty::Inset:
+                style.Inset = {
+                    .Left = value.x, .Top = value.y, .Right = value.z, .Bottom = value.w};
+                return;
+            case StyleProperty::Background:
+                style.Background = value;
+                return;
+            case StyleProperty::CornerRadius:
+                style.Radii = {.TopLeft = value.x,
+                               .TopRight = value.y,
+                               .BottomRight = value.z,
+                               .BottomLeft = value.w};
+                return;
+            case StyleProperty::BorderWidth:
+                style.BorderStyle.Width = value.x;
+                return;
+            case StyleProperty::BorderColor:
+                style.BorderStyle.Color = value;
+                return;
+            case StyleProperty::TextColor:
+                style.TextColor = value;
+                return;
+            case StyleProperty::TextSize:
+                style.TextSize = value.x;
+                return;
+            case StyleProperty::Opacity:
+                style.Opacity = value.x;
+                return;
+            default:
+                return;
+            }
+        }
+
+        // Folds the variants whose state bit is set in `state` over the base style, in stored source
+        // order (later-listed states win — the USS order), producing the resolved target style.
+        Style ResolveTarget(const Element& element, const FontResolver& fonts)
+        {
+            Style target = element.BaseStyle;
+            for (const StyleVariant& variant : element.Variants)
+            {
+                if ((element.State & variant.State) == ElementState::None)
+                {
+                    continue;
+                }
+                for (const StyleDeclaration& declaration : variant.Declarations)
+                {
+                    ApplyDeclaration(target, declaration, fonts);
+                }
+            }
+            return target;
+        }
+    }
+
+    void Document::SetState(Element& element, ElementState state)
+    {
+        element.State = state;
+        UpdateElement(element, 0.0f);
+    }
+
+    void Document::SetTransitions(Element& element, vector<StyleTransition> transitions)
+    {
+        element.Transitions = std::move(transitions);
+        element.Tweens.clear();
+    }
+
+    void Document::UpdateElement(Element& element, f32 delta)
+    {
+        const Style target = ResolveTarget(element, m_FontResolver);
+
+        bool layoutMoved = false;
+        Style live = target;
+
+        // A property with a positive-duration transition eases; every other property snaps to the
+        // target. A tween starts when the target moves away from where the tween was heading (or from
+        // the current live value when none is in flight); an animatable property whose target is
+        // unchanged keeps advancing its existing tween.
+        for (const StyleTransition& transition : element.Transitions)
+        {
+            if (transition.Duration <= 0.0f || !IsAnimatableProperty(transition.Property))
+            {
+                continue;
+            }
+
+            const StyleProperty property = transition.Property;
+            const vec4 targetValue = ReadProperty(target, property);
+
+            const auto existing = std::ranges::find_if(element.Tweens, [&](const StyleTween& t)
+                                                       { return t.Property == property; });
+
+            if (existing == element.Tweens.end())
+            {
+                const vec4 currentValue = ReadProperty(element.ComputedStyle, property);
+                if (currentValue != targetValue)
+                {
+                    element.Tweens.push_back(StyleTween{.Property = property,
+                                                        .From = currentValue,
+                                                        .To = targetValue,
+                                                        .Elapsed = 0.0f,
+                                                        .Duration = transition.Duration});
+                }
+            }
+            else if (existing->To != targetValue)
+            {
+                existing->From = ReadProperty(element.ComputedStyle, property);
+                existing->To = targetValue;
+                existing->Elapsed = 0.0f;
+                existing->Duration = transition.Duration;
+            }
+        }
+
+        // Advance and apply every in-flight tween; a length only eases within one kind, else it
+        // snaps to the target (the target value already sits in `live`).
+        for (auto it = element.Tweens.begin(); it != element.Tweens.end();)
+        {
+            StyleTween& tween = *it;
+            tween.Elapsed = std::min(tween.Elapsed + delta, tween.Duration);
+            const f32 t = tween.Duration > 0.0f ? tween.Elapsed / tween.Duration : 1.0f;
+
+            // A length only eases within one kind (its ordinal rides component y); a Points→Percent
+            // change snaps. Non-length payloads (colors, insets, scalars) always interpolate.
+            const bool kindMismatch =
+                IsLengthProperty(tween.Property) && tween.From.y != tween.To.y;
+            const vec4 eased = kindMismatch ? tween.To : glm::mix(tween.From, tween.To, t);
+            WriteProperty(live, tween.Property, eased);
+
+            if (tween.Elapsed >= tween.Duration)
+            {
+                it = element.Tweens.erase(it);
+            }
+            else
+            {
+                ++it;
+            }
+        }
+
+        // Detect a layout-input move against the currently-applied style before overwriting it.
+        for (u32 p = 0; p <= static_cast<u32>(StyleProperty::ClipContent); ++p)
+        {
+            const auto property = static_cast<StyleProperty>(p);
+            if (!IsLayoutProperty(property))
+            {
+                continue;
+            }
+            if (ReadProperty(element.ComputedStyle, property) != ReadProperty(live, property))
+            {
+                layoutMoved = true;
+                break;
+            }
+        }
+        // A font swap is a layout move ReadProperty does not see (a font has no numeric payload).
+        if (element.ComputedStyle.TextFont.Id().Value != live.TextFont.Id().Value)
+        {
+            layoutMoved = true;
+        }
+
+        element.ComputedStyle = live;
+
+        if (layoutMoved)
+        {
+            m_Dirty = true;
+            if (const YGNodeRef node = m_Yoga->Get(element);
+                node != nullptr && YGNodeHasMeasureFunc(node))
+            {
+                YGNodeMarkDirty(node);
+            }
+        }
+    }
+
+    void Document::Update(f32 delta)
+    {
+        for (const Unique<Element>& owned : m_Elements)
+        {
+            UpdateElement(*owned, delta);
+        }
+    }
+
+    bool Document::IsAnimating() const
+    {
+        return std::ranges::any_of(m_Elements, [](const Unique<Element>& owned)
+                                   { return !owned->Tweens.empty(); });
     }
 
     void Document::SetTextMeasurer(TextMeasurer measurer)
