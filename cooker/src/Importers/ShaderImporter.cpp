@@ -53,6 +53,7 @@ namespace Veng::Cook
         constexpr u32 FormatRGB32Sfloat = static_cast<u32>(Renderer::Format::RGB32Sfloat);
         constexpr u32 FormatRGBA32Sfloat = static_cast<u32>(Renderer::Format::RGBA32Sfloat);
         constexpr u32 FormatRGBA16Uint = static_cast<u32>(Renderer::Format::RGBA16Uint);
+        constexpr u32 FormatR32Uint = static_cast<u32>(Renderer::Format::R32Uint);
 
         // Cooked names are fixed-size, nul-terminated char arrays (CookedBlobs.h);
         // truncate rather than fail on an over-long identifier.
@@ -156,15 +157,20 @@ namespace Veng::Cook
                 return std::unexpected(
                     fmt::format("shader importer: '{}': entry point '{}': vertex input '{}' has "
                                 "unsupported type "
-                                "(only float/float2/float3/float4 and uint4 are supported)",
+                                "(only float/float2/float3/float4, uint, and uint4 are supported)",
                                 sourcePath.string(), entryName, name));
             };
 
             const slang::TypeReflection::ScalarType scalar = type->getScalarType();
 
-            // A uint4 bone-index attribute: the only integer vertex input veng uses.
+            // Integer vertex inputs: a uint4 bone-index attribute (16-bit on disk, widened to a
+            // 32-bit uint4), or a scalar uint index attribute.
             if (scalar == slang::TypeReflection::ScalarType::UInt32)
             {
+                if (type->getKind() == slang::TypeReflection::Kind::Scalar)
+                {
+                    return FormatR32Uint;
+                }
                 if (type->getKind() == slang::TypeReflection::Kind::Vector &&
                     type->getColumnCount() == 4)
                 {

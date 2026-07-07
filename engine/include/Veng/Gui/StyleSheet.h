@@ -45,14 +45,18 @@ namespace Veng::Gui
     /// A `background-gradient` declaration references a gradient by index (StyleDeclaration::Unit).
     /// The multi-stop color is baked at cook time into a Width×1 RGBA8 ramp (linear straight-alpha);
     /// the instantiate-time resolve uploads it to a texture (through the borrowed AssetManager) and
-    /// materializes a ResolvedGradient onto the element's Style. Geometry is packed per Kind in the
-    /// element's normalized box space (see Gui::GradientFill).
+    /// materializes a ResolvedGradient onto the element's Style. Geometry is in the element's
+    /// normalized box space and interpreted per Kind (see Gui::GradientFill).
     struct StyleGradient
     {
         /// @brief The gradient shape (Linear / Radial / Conic).
         GradientKind Kind = GradientKind::Linear;
-        /// @brief Geometry packed per Kind, in the element's normalized box space.
-        vec4 Geometry{0.0f};
+        /// @brief Linear start point / radial + conic center, in normalized box space.
+        vec2 P0{0.0f};
+        /// @brief Linear end point / radial (x, y) radii, in normalized box space.
+        vec2 P1{0.0f};
+        /// @brief Conic start turn in [0, 1); unused by the other kinds.
+        f32 AngleOffset = 0.0f;
         /// @brief The ramp's texel count (a Width×1 RGBA8 image; Ramp holds Width * 4 bytes).
         u32 Width = 0;
         /// @brief The baked ramp pixels, linear straight-alpha RGBA8, largest offset t last.

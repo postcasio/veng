@@ -45,12 +45,15 @@ namespace Veng::Renderer
             };
         }
 
-        // Push block for the gui vertex stage: the reciprocal of the UI image extent, mapping a
-        // framebuffer-pixel position to clip space.
+        // Push block shared by the gui vertex and shape-fragment stages: the reciprocal of the UI
+        // image extent (vertex, maps a framebuffer-pixel position to clip space) plus the gradient
+        // record buffer's bindless slot and the current frame-in-flight's record base (fragment,
+        // to load a vertex-selected gradient record).
         struct GuiPushConstants
         {
             vec2 InvScreenSize;
-            vec2 Pad0;
+            u32 GradientBuffer;
+            u32 GradientBase;
         };
 
         // Push block for the fullscreen composite/blit fragment (gather.frag): the bindless slots
@@ -101,6 +104,13 @@ namespace Veng::Renderer
         u32 FramesInFlight = 0;
         u64 VertexRegionBytes = 0;
         u64 IndexRegionBytes = 0;
+
+        // Ring-buffered gradient records, registered once into set-0 bindless as a byte-address
+        // buffer the shape fragment loads from. GradientBase is this frame's record-index offset.
+        Ref<Buffer> GradientBuffer;
+        StorageBufferHandle GradientSlot;
+        u64 GradientRegionBytes = 0;
+        u32 GradientBase = 0;
 
         // The cached draw-list geometry bases + runs for the next Render, in the current region.
         // The whole ring is bound at offset 0, so each run's draw applies VertexBase as the index's
@@ -184,7 +194,8 @@ namespace Veng::Renderer
                         const GuiPushConstants push{
                             .InvScreenSize = vec2(UiScale / static_cast<f32>(Extent.x),
                                                   UiScale / static_cast<f32>(Extent.y)),
-                            .Pad0 = vec2(0.0f),
+                            .GradientBuffer = GradientSlot.Index,
+                            .GradientBase = GradientBase,
                         };
 
                         optional<Gui::GuiPipeline> boundPipeline;
@@ -310,7 +321,7 @@ namespace Veng::Renderer
             context, {
                          .Name = "GuiScenePass Gui Layout",
                          .PushConstantRanges = {PushConstantRange::Of<GuiPushConstants>(
-                             ShaderStage::Vertex)},
+                             ShaderStage::Vertex | ShaderStage::Fragment)},
                      });
 
         auto buildGuiPipeline = [&](string_view name, const AssetHandle<Veng::Shader>& fs)
@@ -376,9 +387,11 @@ namespace Veng::Renderer
         // Ring the geometry per frame-in-flight, sized to a generous UI budget.
         constexpr u32 MaxVertices = 1u << 16;
         constexpr u32 MaxIndices = 1u << 17;
+        constexpr u32 MaxGradients = 1u << 12;
         m_Impl->FramesInFlight = context.GetMaxFramesInFlight();
         m_Impl->VertexRegionBytes = static_cast<u64>(MaxVertices) * sizeof(Gui::GuiVertex);
         m_Impl->IndexRegionBytes = static_cast<u64>(MaxIndices) * sizeof(u32);
+        m_Impl->GradientRegionBytes = static_cast<u64>(MaxGradients) * sizeof(Gui::GpuGradient);
 
         m_Impl->VertexBuffer =
             Buffer::Create(context, {
@@ -394,6 +407,14 @@ namespace Veng::Renderer
                                         .Usage = BufferUsage::Index,
                                         .HostMapped = true,
                                     });
+        m_Impl->GradientBuffer = Buffer::Create(
+            context, {
+                         .Name = "GuiScenePass Gradients",
+                         .Size = m_Impl->GradientRegionBytes * m_Impl->FramesInFlight,
+                         .Usage = BufferUsage::Storage,
+                         .HostMapped = true,
+                     });
+        m_Impl->GradientSlot = context.GetBindlessRegistry().Register(m_Impl->GradientBuffer);
 
         m_Impl->CreateImages();
         m_Impl->CompileGraph();
@@ -402,6 +423,7 @@ namespace Veng::Renderer
     GuiScenePass::~GuiScenePass()
     {
         m_Impl->Context.GetBindlessRegistry().Release(m_Impl->SamplerSlot);
+        m_Impl->Context.GetBindlessRegistry().Release(m_Impl->GradientSlot);
     }
 
     void GuiScenePass::SetDrawList(const Gui::DrawList& drawList)
@@ -410,20 +432,27 @@ namespace Veng::Renderer
 
         const auto& vertices = drawList.GetVertices();
         const auto& indices = drawList.GetIndices();
+        const auto& gradients = drawList.GetGradients();
 
         const u64 vertexBytes = vertices.size() * sizeof(Gui::GuiVertex);
         const u64 indexBytes = indices.size() * sizeof(u32);
+        const u64 gradientBytes = gradients.size() * sizeof(Gui::GpuGradient);
         VE_ASSERT(vertexBytes <= m_Impl->VertexRegionBytes,
                   "GuiScenePass draw list exceeds the vertex ring capacity ({} > {})", vertexBytes,
                   m_Impl->VertexRegionBytes);
         VE_ASSERT(indexBytes <= m_Impl->IndexRegionBytes,
                   "GuiScenePass draw list exceeds the index ring capacity ({} > {})", indexBytes,
                   m_Impl->IndexRegionBytes);
+        VE_ASSERT(gradientBytes <= m_Impl->GradientRegionBytes,
+                  "GuiScenePass draw list exceeds the gradient ring capacity ({} > {})",
+                  gradientBytes, m_Impl->GradientRegionBytes);
 
         const u64 vertexByteBase = static_cast<u64>(frame) * m_Impl->VertexRegionBytes;
         m_Impl->VertexBase = static_cast<i32>(vertexByteBase / sizeof(Gui::GuiVertex));
         const u64 indexByteBase = static_cast<u64>(frame) * m_Impl->IndexRegionBytes;
         m_Impl->IndexBase = static_cast<u32>(indexByteBase / sizeof(u32));
+        const u64 gradientByteBase = static_cast<u64>(frame) * m_Impl->GradientRegionBytes;
+        m_Impl->GradientBase = static_cast<u32>(gradientByteBase / sizeof(Gui::GpuGradient));
 
         if (vertexBytes > 0)
         {
@@ -434,6 +463,11 @@ namespace Veng::Renderer
         {
             auto* indexDst = static_cast<u8*>(m_Impl->IndexBuffer->GetMappedData());
             std::memcpy(indexDst + indexByteBase, indices.data(), indexBytes);
+        }
+        if (gradientBytes > 0)
+        {
+            auto* gradientDst = static_cast<u8*>(m_Impl->GradientBuffer->GetMappedData());
+            std::memcpy(gradientDst + gradientByteBase, gradients.data(), gradientBytes);
         }
 
         m_Impl->Runs = drawList.GetRuns();

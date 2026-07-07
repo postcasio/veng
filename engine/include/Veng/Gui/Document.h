@@ -145,6 +145,17 @@ namespace Veng::Gui
         /// @param color    The fill color, linear straight-alpha RGBA.
         void SetBackground(Element& element, vec4 color);
 
+        /// @brief Sets (or clears) an element's gradient background — a paint-only write.
+        ///
+        /// Writes the element's base and live style directly, so the gradient survives the next
+        /// Update and re-uploads each frame. Mutating a gradient's P0/P1/AngleOffset and re-setting
+        /// it per frame (reusing its ramp handle) animates the gradient — moving a linear axis,
+        /// growing a radial, or spinning a conic — with no re-solve. Pass nullopt to remove the
+        /// gradient fill and fall back to the flat background color.
+        /// @param element   The element whose gradient to set.
+        /// @param gradient  The resolved gradient, or nullopt to clear.
+        void SetBackgroundGradient(Element& element, optional<ResolvedGradient> gradient);
+
         /// @brief Sets an element's text fill color — a paint-only write, no layout re-solve.
         /// @param element  The element whose text color to set.
         /// @param color    The text color, linear straight-alpha RGBA.

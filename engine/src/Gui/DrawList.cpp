@@ -90,6 +90,7 @@ namespace Veng::Gui
         m_Vertices.clear();
         m_Indices.clear();
         m_Runs.clear();
+        m_Gradients.clear();
         m_ClipStack.clear();
     }
 
@@ -134,7 +135,7 @@ namespace Veng::Gui
     }
 
     void DrawList::PushQuad(const std::array<vec2, 4>& corners, const std::array<vec2, 4>& uvs,
-                            vec4 color, vec2 rectHalf, vec2 center, vec4 params, vec4 grad)
+                            vec4 color, vec2 rectHalf, vec2 center, vec4 params, u32 selector)
     {
         const u32 base = static_cast<u32>(m_Vertices.size());
         for (usize i = 0; i < 4; ++i)
@@ -146,7 +147,7 @@ namespace Veng::Gui
                 .RectHalf = rectHalf,
                 .RectCoord = corners[i] - center,
                 .Params = params,
-                .Grad = grad,
+                .GradientSelector = selector,
             });
         }
 
@@ -199,8 +200,9 @@ namespace Veng::Gui
         VE_ASSERT(fill.Ramp.IsValid(), "DrawList gradient requires a valid ramp texture handle");
         VE_ASSERT(fill.Sampler.IsValid(), "DrawList gradient requires a valid ramp sampler handle");
 
-        // The ramp keys the run exactly as a modulating texture does, so distinct ramps split runs.
-        EnsureRun(GuiPipeline::Shape, fill.Ramp.Index);
+        // A gradient's ramp rides its record (loaded bindlessly in the fragment), so no texture keys
+        // the run — an untextured shape run, mergeable with solids and with other gradients.
+        EnsureRun(GuiPipeline::Shape, Renderer::TextureHandle::Invalid);
 
         const vec2 min = rect.Min;
         const vec2 max = rect.Max();
@@ -212,14 +214,22 @@ namespace Veng::Gui
         const vec2 half = rect.Size * 0.5f;
         const vec2 center = rect.Center();
         const f32 radius = std::min(radii.TopLeft, std::min(half.x, half.y));
-        // Params bind the ramp through the same texture/sampler slots a modulating texture uses; the
-        // fragment routes them to a ramp sample because Grad.w (the kind ordinal plus one) is nonzero.
-        const vec4 params{radius, border.Width, static_cast<f32>(fill.Ramp.Index),
-                          static_cast<f32>(fill.Sampler.Index)};
-        const vec4 grad{fill.Geometry.x, fill.Geometry.y, fill.Geometry.z,
-                        static_cast<f32>(static_cast<u32>(fill.Kind) + 1)};
+        // The shape params carry only the SDF corner radius and border width; the fill (untextured)
+        // leaves the texture/sampler slots negative, so the fragment takes the gradient path.
+        const vec4 params{radius, border.Width, UntexturedIndex, UntexturedIndex};
 
-        PushQuad(corners, uvs, tint, half, center, params, grad);
+        // Append the gradient record and select it by index-plus-one on every vertex of the quad.
+        m_Gradients.push_back(GpuGradient{
+            .Kind = static_cast<u32>(fill.Kind),
+            .RampTexture = fill.Ramp.Index,
+            .RampSampler = fill.Sampler.Index,
+            .P0 = fill.P0,
+            .P1 = fill.P1,
+            .AngleOffset = fill.AngleOffset,
+        });
+        const u32 selector = static_cast<u32>(m_Gradients.size());
+
+        PushQuad(corners, uvs, tint, half, center, params, selector);
     }
 
     void DrawList::EmitTexturedQuad(const Rect& rect, Renderer::TextureHandle texture,

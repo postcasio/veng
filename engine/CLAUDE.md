@@ -835,7 +835,11 @@ cook-on-demand hot-reload serves UI with no new machinery. The parsing side is i
   cooked stylesheet — **resolved** rules (type/class/id selectors matched at cook time) plus their
   `:hover`/`:active`/`:focus`/`:disabled`/`:checked` state variants, colors resolved sRGB→linear,
   and a **gradient table** (each `background-gradient` baked at cook time to a shape + box-space
-  geometry + an N×1 ramp LUT the instantiate resolve uploads through the borrowed AssetManager).
+  geometry — linear endpoints `P0`/`P1`, elliptical radial radii, conic center + turn — plus an N×1
+  ramp LUT the instantiate resolve uploads through the borrowed AssetManager). At draw the gradient
+  geometry rides a per-frame **`GpuGradient` storage buffer** (`GuiScenePass` rings it and binds it
+  bindless); the vertex carries only the record index, so many gradients batch into one run and a
+  game animates a gradient by mutating its geometry per frame (`Document::SetBackgroundGradient`).
   `AssetType::UIDocument` (`Veng/Gui/UIDocument.h`) is the cooked markup: a **pre-order recipe
   element tree** (each element carrying its kind, id, classes, text, inline style, unresolved
   `{obj.field}` bindings, and named handlers) plus the `StyleSheet` handles it references and its

@@ -21,13 +21,18 @@ namespace Veng::Cook
             dest[n] = '\0';
         }
 
-        // The four float formats plus the RGBA16Uint bone-index format are the valid
-        // vertex-layout formats; the cooked element stores the Renderer::Format ordinal.
+        // The four float formats, the RGBA16Uint bone-index format, and the R32Uint scalar-index
+        // format are the valid vertex-layout formats; the cooked element stores the Renderer::Format
+        // ordinal.
         optional<u32> ParseFormatString(const string& name)
         {
             if (name == "R32Sfloat")
             {
                 return static_cast<u32>(Renderer::Format::R32Sfloat);
+            }
+            if (name == "R32Uint")
+            {
+                return static_cast<u32>(Renderer::Format::R32Uint);
             }
             if (name == "RG32Sfloat")
             {

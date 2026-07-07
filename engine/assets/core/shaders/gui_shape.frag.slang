@@ -18,13 +18,42 @@ struct VSOutput
     float2 v_RectHalf : TEXCOORD1;
     float2 v_RectCoord : TEXCOORD2;
     nointerpolation float4 v_Params : TEXCOORD3;
-    nointerpolation float4 v_Grad : TEXCOORD4;
+    nointerpolation uint v_GradientSelector : TEXCOORD4;
+};
+
+// Must match GuiScenePass's push block and the vertex stage: the gradient-record buffer's bindless
+// slot and the current frame-in-flight's record base.
+struct PushConstants
+{
+    float2 InvScreenSize;
+    uint GradientBuffer;
+    uint GradientBase;
+};
+
+[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+
+// The GPU gradient record, matching Gui::GpuGradient byte-for-byte (48 bytes, scalar layout). Loaded
+// from the byte-address gradient buffer by index; geometry is in normalized box space.
+struct GpuGradient
+{
+    uint Kind; // 0 linear, 1 radial, 2 conic
+    uint RampTexture;
+    uint RampSampler;
+    uint Pad0;
+    float2 P0; // linear start / radial + conic center
+    float2 P1; // linear end / radial radii
+    float AngleOffset;
+    float Pad1;
+    float Pad2;
+    float Pad3;
 };
 
 static const float InvTau = 0.15915494309189535; // 1 / (2*pi)
+static const uint GradientStride = 48;
 
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
 [[vk::binding(1, 0)]] SamplerState g_Samplers[];
+[[vk::binding(3, 0)]] ByteAddressBuffer g_Buffers[];
 
 // Signed distance to a rounded rectangle centered at the origin, half-extent b,
 // corner radius r (subtracted from the box so the corners round inward).
@@ -42,29 +71,32 @@ float4 fsMain(VSOutput input) : SV_Target
     int textureIndex = int(input.v_Params.z);
     int samplerIndex = int(input.v_Params.w);
 
-    // v_Grad.w is 0 for no gradient, else the GradientKind ordinal plus one (1 Linear, 2 Radial,
-    // 3 Conic). A gradient reduces the fragment's normalized box position to a ramp offset t and
-    // samples the ramp bound through the texture/sampler slots; a plain textured quad samples by UV.
-    int gradKind = int(input.v_Grad.w);
+    // v_GradientSelector is 0 for no gradient, else the record index plus one. A gradient loads its
+    // record from the byte-address gradient buffer, reduces the fragment's normalized box position to
+    // a ramp offset t, and samples the record's ramp; a plain textured quad samples by UV instead.
+    uint selector = input.v_GradientSelector;
     float4 color = input.v_Color;
-    if (gradKind > 0)
+    if (selector > 0)
     {
+        GpuGradient grad = g_Buffers[NonUniformResourceIndex(g_PC.GradientBuffer)]
+                               .Load<GpuGradient>((g_PC.GradientBase + selector - 1) * GradientStride);
         float2 p = input.v_RectCoord / max(input.v_RectHalf, float2(1e-4, 1e-4));
         float t;
-        if (gradKind == 1)
+        if (grad.Kind == 0)
         {
-            t = dot(p, input.v_Grad.xy) + 0.5;
+            float2 axis = grad.P1 - grad.P0;
+            t = dot(p - grad.P0, axis) / max(dot(axis, axis), 1e-6);
         }
-        else if (gradKind == 2)
+        else if (grad.Kind == 1)
         {
-            t = length((p - input.v_Grad.xy) * input.v_Grad.z);
+            t = length((p - grad.P0) / max(grad.P1, float2(1e-6, 1e-6)));
         }
         else
         {
-            t = frac(atan2(p.y - input.v_Grad.y, p.x - input.v_Grad.x) * InvTau - input.v_Grad.z);
+            t = frac(atan2(p.y - grad.P0.y, p.x - grad.P0.x) * InvTau - grad.AngleOffset);
         }
-        float4 ramp = g_Textures[NonUniformResourceIndex(textureIndex)].Sample(
-            g_Samplers[NonUniformResourceIndex(samplerIndex)], float2(saturate(t), 0.5));
+        float4 ramp = g_Textures[NonUniformResourceIndex(grad.RampTexture)].Sample(
+            g_Samplers[NonUniformResourceIndex(grad.RampSampler)], float2(saturate(t), 0.5));
         color *= ramp;
     }
     else if (textureIndex >= 0)

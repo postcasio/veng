@@ -690,7 +690,9 @@ namespace Veng::Gui
                                           .AddressModeW = Renderer::AddressMode::ClampToEdge},
             };
             ResolvedGradient resolved{.Kind = source.Kind,
-                                      .Geometry = source.Geometry,
+                                      .P0 = source.P0,
+                                      .P1 = source.P1,
+                                      .AngleOffset = source.AngleOffset,
                                       .Ramp = assets.BuildSync<Texture>(data)};
             gradientCache.emplace(&source, resolved);
             return resolved;
@@ -892,6 +894,12 @@ namespace Veng::Gui
     {
         element.BaseStyle.Background = color;
         element.ComputedStyle.Background = color;
+    }
+
+    void Document::SetBackgroundGradient(Element& element, optional<ResolvedGradient> gradient)
+    {
+        element.BaseStyle.BackgroundGradient = gradient;
+        element.ComputedStyle.BackgroundGradient = std::move(gradient);
     }
 
     void Document::SetTextColor(Element& element, const vec4 color)
@@ -1946,7 +1954,9 @@ namespace Veng::Gui
             const Texture& ramp = *gradient.Ramp.Get();
             list.Gradient(rect,
                           GradientFill{.Kind = gradient.Kind,
-                                       .Geometry = gradient.Geometry,
+                                       .P0 = gradient.P0,
+                                       .P1 = gradient.P1,
+                                       .AngleOffset = gradient.AngleOffset,
                                        .Ramp = ramp.GetHandle(),
                                        .Sampler = ramp.GetSamplerHandle()},
                           style.Radii);

@@ -403,40 +403,83 @@ namespace Veng::Cook
                     fmt::format("{}: 'background-gradient' is missing its kind", located));
             }
 
+            // A percentage token maps to a normalized box coordinate: 0% → -1, 100% → +1.
+            const auto boxCoord = [&](const string& token) -> Result<f32>
+            {
+                const Result<f32> fraction = ParsePercent(token, located);
+                if (!fraction)
+                {
+                    return std::unexpected(fraction.error());
+                }
+                return *fraction * 2.0f - 1.0f;
+            };
+
             Gui::GradientKind kind = Gui::GradientKind::Linear;
-            vec4 geometry(0.0f);
+            vec2 p0(0.0f);
+            vec2 p1(0.0f);
+            f32 angleOffset = 0.0f;
             const string& kindName = header[0];
             if (kindName == "linear")
             {
                 kind = Gui::GradientKind::Linear;
-                f32 degrees = 180.0f;
-                if (header.size() >= 2)
+                if (header.size() >= 2 && header[1] == "from")
                 {
-                    const Result<f32> angle = ParseAngle(header[1], located);
-                    if (!angle)
+                    // Explicit endpoints: linear from <x%> <y%> to <x%> <y%>, in box space.
+                    if (header.size() != 7 || header[4] != "to")
                     {
-                        return std::unexpected(angle.error());
+                        return std::unexpected(fmt::format(
+                            "{}: linear 'from' expects 'from <x%> <y%> to <x%> <y%>', got '{}'",
+                            located, parts[0]));
                     }
-                    degrees = *angle;
+                    const Result<f32> x0 = boxCoord(header[2]);
+                    const Result<f32> y0 = boxCoord(header[3]);
+                    const Result<f32> x1 = boxCoord(header[5]);
+                    const Result<f32> y1 = boxCoord(header[6]);
+                    for (const Result<f32>* v : {&x0, &y0, &x1, &y1})
+                    {
+                        if (!*v)
+                        {
+                            return std::unexpected(v->error());
+                        }
+                    }
+                    p0 = vec2(*x0, *y0);
+                    p1 = vec2(*x1, *y1);
                 }
-                if (header.size() > 2)
+                else
                 {
-                    return std::unexpected(
-                        fmt::format("{}: a linear gradient takes at most one angle, got '{}'",
-                                    located, parts[0]));
+                    f32 degrees = 180.0f;
+                    if (header.size() >= 2)
+                    {
+                        const Result<f32> angle = ParseAngle(header[1], located);
+                        if (!angle)
+                        {
+                            return std::unexpected(angle.error());
+                        }
+                        degrees = *angle;
+                    }
+                    if (header.size() > 2)
+                    {
+                        return std::unexpected(fmt::format(
+                            "{}: a linear gradient takes one angle or explicit endpoints, got '{}'",
+                            located, parts[0]));
+                    }
+                    // CSS angle: 0deg points to the top, growing clockwise; box y is down. The
+                    // box-fit endpoints span the box's projection onto the direction, so t runs 0→1
+                    // across the whole box along the axis.
+                    const f32 radians = degrees * (Pi / 180.0f);
+                    const vec2 direction(std::sin(radians), -std::cos(radians));
+                    const f32 span = std::abs(direction.x) + std::abs(direction.y);
+                    const f32 halfSpan = span > 1e-6f ? span : 1.0f;
+                    p0 = -halfSpan * direction;
+                    p1 = halfSpan * direction;
                 }
-                // CSS angle: 0deg points to the top, growing clockwise; box y is down.
-                const f32 radians = degrees * (Pi / 180.0f);
-                const vec2 direction(std::sin(radians), -std::cos(radians));
-                const f32 span = std::abs(direction.x) + std::abs(direction.y);
-                const vec2 axis = direction / (2.0f * (span > 1e-6f ? span : 1.0f));
-                geometry = vec4(axis.x, axis.y, 0.0f, 0.0f);
             }
             else if (kindName == "radial" || kindName == "conic")
             {
                 f32 centerX = 0.5f;
                 f32 centerY = 0.5f;
                 f32 fromDegrees = 0.0f;
+                optional<vec2> radii;
                 usize k = 1;
                 if (kindName == "conic" && k < header.size() && header[k] == "from")
                 {
@@ -475,6 +518,34 @@ namespace Veng::Cook
                     centerY = *y;
                     k += 3;
                 }
+                if (kindName == "radial" && k < header.size() && header[k] == "radius")
+                {
+                    // radius <r%> (circular) or radius <rx%> <ry%> (ellipse), as a fraction of the
+                    // box half-extent (100% reaches the box edge along that axis).
+                    const usize count = header.size() - (k + 1);
+                    if (count != 1 && count != 2)
+                    {
+                        return std::unexpected(fmt::format(
+                            "{}: gradient 'radius' needs one or two percentages", located));
+                    }
+                    const Result<f32> rx = ParsePercent(header[k + 1], located);
+                    if (!rx)
+                    {
+                        return std::unexpected(rx.error());
+                    }
+                    f32 ry = *rx;
+                    if (count == 2)
+                    {
+                        const Result<f32> parsed = ParsePercent(header[k + 2], located);
+                        if (!parsed)
+                        {
+                            return std::unexpected(parsed.error());
+                        }
+                        ry = *parsed;
+                    }
+                    radii = vec2(*rx, ry);
+                    k += count + 1;
+                }
                 if (k < header.size())
                 {
                     return std::unexpected(
@@ -483,26 +554,34 @@ namespace Veng::Cook
                 }
 
                 const vec2 center(centerX * 2.0f - 1.0f, centerY * 2.0f - 1.0f);
+                p0 = center;
                 if (kindName == "radial")
                 {
                     kind = Gui::GradientKind::Radial;
-                    // Farthest-corner fit (the CSS default): t reaches 1 at the box corner most
-                    // distant from the center, so the whole box is covered.
-                    f32 radius = 0.0f;
-                    for (const f32 cornerX : {-1.0f, 1.0f})
+                    if (radii)
                     {
-                        for (const f32 cornerY : {-1.0f, 1.0f})
-                        {
-                            radius = std::max(radius, glm::length(vec2(cornerX, cornerY) - center));
-                        }
+                        p1 = *radii;
                     }
-                    const f32 invRadius = radius > 1e-6f ? 1.0f / radius : 1.0f;
-                    geometry = vec4(center.x, center.y, invRadius, 0.0f);
+                    else
+                    {
+                        // Farthest-corner circular fit (the CSS default): t reaches 1 at the box
+                        // corner most distant from the center, so the whole box is covered.
+                        f32 radius = 0.0f;
+                        for (const f32 cornerX : {-1.0f, 1.0f})
+                        {
+                            for (const f32 cornerY : {-1.0f, 1.0f})
+                            {
+                                radius =
+                                    std::max(radius, glm::length(vec2(cornerX, cornerY) - center));
+                            }
+                        }
+                        p1 = vec2(radius, radius);
+                    }
                 }
                 else
                 {
                     kind = Gui::GradientKind::Conic;
-                    geometry = vec4(center.x, center.y, fromDegrees / 360.0f, 0.0f);
+                    angleOffset = fromDegrees / 360.0f;
                 }
             }
             else
@@ -565,10 +644,11 @@ namespace Veng::Cook
             const vector<u8> ramp = BakeGradientRamp(stops);
             CookedStyleGradient cooked{};
             cooked.Kind = static_cast<u32>(kind);
-            cooked.Geometry[0] = geometry.x;
-            cooked.Geometry[1] = geometry.y;
-            cooked.Geometry[2] = geometry.z;
-            cooked.Geometry[3] = geometry.w;
+            cooked.P0[0] = p0.x;
+            cooked.P0[1] = p0.y;
+            cooked.P1[0] = p1.x;
+            cooked.P1[1] = p1.y;
+            cooked.AngleOffset = angleOffset;
             cooked.RampOffset = static_cast<u32>(rampBytes.size());
             cooked.RampTexels = static_cast<u32>(ramp.size() / 4);
 

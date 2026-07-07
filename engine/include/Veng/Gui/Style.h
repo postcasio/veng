@@ -24,16 +24,21 @@ namespace Veng::Gui
     /// @brief A gradient background resolved onto a Style: its shape, geometry, and resident ramp.
     ///
     /// The cook bakes a gradient's multi-stop color into an N×1 ramp LUT and stores its shape +
-    /// packed box-space geometry; the instantiate-time resolve uploads the ramp to a texture and
-    /// keeps the handle here (resident for the Style's lifetime, like TextFont). The paint path
-    /// reads Kind/Geometry and the ramp's bindless handle/sampler into a Gui::GradientFill. Geometry
-    /// is packed per Kind in normalized box space — see Gui::GradientFill.
+    /// box-space geometry; the instantiate-time resolve uploads the ramp to a texture and keeps the
+    /// handle here (resident for the Style's lifetime, like TextFont). The paint path copies the
+    /// shape + geometry and the ramp's bindless handle/sampler into a Gui::GradientFill. Geometry is
+    /// in the element's normalized box space and interpreted per Kind — see Gui::GradientFill. The
+    /// fields are plain values, so a game can animate a gradient by mutating them per frame.
     struct ResolvedGradient
     {
         /// @brief The gradient shape (Linear / Radial / Conic).
         GradientKind Kind = GradientKind::Linear;
-        /// @brief Geometry packed per Kind, in the element's normalized box space.
-        vec4 Geometry{0.0f};
+        /// @brief Linear start point / radial + conic center, in normalized box space.
+        vec2 P0{0.0f};
+        /// @brief Linear end point / radial (x, y) radii, in normalized box space.
+        vec2 P1{0.0f};
+        /// @brief Conic start turn in [0, 1); unused by the other kinds.
+        f32 AngleOffset = 0.0f;
         /// @brief The resident N×1 ramp LUT (linear straight-alpha); its handle + sampler paint the fill.
         AssetHandle<Texture> Ramp;
     };

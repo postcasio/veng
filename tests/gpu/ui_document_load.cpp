@@ -234,13 +234,15 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(clip.Keyframes[1].Declarations[0].Values.x == doctest::Approx(1.0f));
 
     // The `.hud` rule's `background-gradient` baked one gradient into the sheet's table: a vertical
-    // (180deg) linear ramp from red to blue. Geometry is the pre-scaled box-space axis (t = 0.5·p.y
-    // + 0.5), and the multi-stop color is baked into the ramp — red at t=0, blue at t=1.
+    // (180deg) linear ramp from red to blue. The box-fit endpoints run top (P0) to bottom (P1), and
+    // the multi-stop color is baked into the ramp — red at t=0, blue at t=1.
     REQUIRE(sheet.GetGradients().size() == 1);
     const Gui::StyleGradient& gradient = sheet.GetGradients()[0];
     CHECK(gradient.Kind == Gui::GradientKind::Linear);
-    CHECK(gradient.Geometry.x == doctest::Approx(0.0f));
-    CHECK(gradient.Geometry.y == doctest::Approx(0.5f));
+    CHECK(gradient.P0.x == doctest::Approx(0.0f));
+    CHECK(gradient.P0.y == doctest::Approx(-1.0f));
+    CHECK(gradient.P1.x == doctest::Approx(0.0f));
+    CHECK(gradient.P1.y == doctest::Approx(1.0f));
     REQUIRE(gradient.Width == 256);
     REQUIRE(gradient.Ramp.size() == 256u * 4u);
     // First texel red, last texel blue (linear straight-alpha RGBA8).

@@ -89,15 +89,26 @@ TEST_CASE("gui document: paint-only setters change the live style without a layo
     doc.SetOpacity(panel, 0.25f);
     doc.SetBackground(panel, vec4(0.0f, 1.0f, 0.0f, 1.0f));
     doc.SetTextColor(panel, vec4(0.0f, 0.0f, 1.0f, 1.0f));
+    doc.SetBackgroundGradient(
+        panel, ResolvedGradient{.Kind = GradientKind::Linear, .P0 = vec2(0.0f, -1.0f)});
 
     CHECK(!doc.IsDirty());
     CHECK(panel.ComputedStyle.Opacity == doctest::Approx(0.25f));
     CHECK(panel.ComputedStyle.Background.g == doctest::Approx(1.0f));
     CHECK(panel.ComputedStyle.TextColor.b == doctest::Approx(1.0f));
+    REQUIRE(panel.ComputedStyle.BackgroundGradient.has_value());
+    CHECK(panel.ComputedStyle.BackgroundGradient->P0.y == doctest::Approx(-1.0f));
 
-    // The write landed on the base too, so a variant re-resolve keeps it.
+    // The write landed on the base too, so a variant re-resolve keeps it — the seam a game animates
+    // through, mutating a gradient's endpoints and re-setting it each frame.
     doc.Update(0.0f);
     CHECK(panel.ComputedStyle.Opacity == doctest::Approx(0.25f));
+    REQUIRE(panel.ComputedStyle.BackgroundGradient.has_value());
+    CHECK(panel.ComputedStyle.BackgroundGradient->P0.y == doctest::Approx(-1.0f));
+
+    // Clearing falls back to the flat background.
+    doc.SetBackgroundGradient(panel, std::nullopt);
+    CHECK(!panel.ComputedStyle.BackgroundGradient.has_value());
 }
 
 TEST_CASE("gui document: pointer-events none makes an element and its subtree hit-transparent")

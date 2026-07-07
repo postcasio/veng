@@ -25,6 +25,8 @@ namespace Veng
             {
             case static_cast<u32>(Renderer::Format::R32Sfloat):
                 return Renderer::Format::R32Sfloat;
+            case static_cast<u32>(Renderer::Format::R32Uint):
+                return Renderer::Format::R32Uint;
             case static_cast<u32>(Renderer::Format::RG32Sfloat):
                 return Renderer::Format::RG32Sfloat;
             case static_cast<u32>(Renderer::Format::RGB32Sfloat):

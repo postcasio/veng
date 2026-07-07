@@ -193,8 +193,9 @@ namespace Veng
                 }
                 Gui::StyleGradient gradient;
                 gradient.Kind = static_cast<Gui::GradientKind>(cookedGradient.Kind);
-                gradient.Geometry = {cookedGradient.Geometry[0], cookedGradient.Geometry[1],
-                                     cookedGradient.Geometry[2], cookedGradient.Geometry[3]};
+                gradient.P0 = {cookedGradient.P0[0], cookedGradient.P0[1]};
+                gradient.P1 = {cookedGradient.P1[0], cookedGradient.P1[1]};
+                gradient.AngleOffset = cookedGradient.AngleOffset;
                 gradient.Width = cookedGradient.RampTexels;
                 gradient.Ramp.assign(rampRegion + cookedGradient.RampOffset,
                                      rampRegion + cookedGradient.RampOffset + length);

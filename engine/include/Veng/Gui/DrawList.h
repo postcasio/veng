@@ -118,34 +118,73 @@ namespace Veng::Gui
     ///
     /// Every kind reduces the fragment's normalized box coordinate (RectCoord / RectHalf, in [-1, 1])
     /// to a single t in [0, 1] that samples the 1D ramp LUT; only the reduction differs. Multi-stop
-    /// color is baked into the ramp, so the runtime evaluates one t per fragment and samples.
+    /// color is baked into the ramp, so the runtime evaluates one t per fragment and samples. The
+    /// geometry that drives each reduction rides a GpuGradient record (P0/P1/AngleOffset), so a
+    /// gradient carries explicit endpoints and elliptical radii rather than a box-fit approximation.
     enum class GradientKind : u8
     {
-        /// @brief Axis-projected fill: t = dot(p, axis) + 0.5, the axis pre-scaled to span the box.
+        /// @brief Linear fill between two points: t = saturate(dot(p - P0, P1 - P0) / |P1 - P0|²).
         Linear,
-        /// @brief Centered radial fill: t = length((p - center) * invRadius).
+        /// @brief Elliptical radial fill: t = length((p - P0) / P1), P0 the center, P1 the radii.
         Radial,
-        /// @brief Angular sweep: t = frac(atan2(p - center) / TAU - startTurns).
+        /// @brief Angular sweep about P0: t = frac(atan2(p - P0) / TAU - AngleOffset).
         Conic,
     };
 
-    /// @brief A resolved gradient fill: its shape, packed geometry, and the ramp LUT to sample.
+    /// @brief A resolved gradient fill: its shape, geometry, and the ramp LUT to sample.
     ///
     /// Device-free: the ramp is a bindless texture/sampler slot pair (a runtime-built N×1 ramp),
-    /// never an asset handle. Geometry is packed per Kind, all in the element's normalized box space
-    /// (p = RectCoord / RectHalf, in [-1, 1]): Linear uses xy as the pre-scaled axis; Radial uses xy
-    /// as the center and z as the inverse radius; Conic uses xy as the center and z as the start turn.
+    /// never an asset handle. Geometry is in the element's normalized box space (p = RectCoord /
+    /// RectHalf, in [-1, 1]) and interpreted per Kind: Linear takes P0/P1 as the start/end points,
+    /// Radial takes P0 as the center and P1 as the (x, y) radii, Conic takes P0 as the center and
+    /// AngleOffset as the start turn. A Gui::DrawList packs this into a GpuGradient record the pass
+    /// uploads to a storage buffer, and the vertex carries only the record's index.
     struct GradientFill
     {
         /// @brief Which reduction maps box position to the ramp offset t.
         GradientKind Kind = GradientKind::Linear;
-        /// @brief Geometry packed per Kind, in normalized box space (see the struct brief).
-        vec4 Geometry{0.0f};
+        /// @brief Linear start point / radial + conic center, in normalized box space.
+        vec2 P0{0.0f};
+        /// @brief Linear end point / radial (x, y) radii, in normalized box space.
+        vec2 P1{0.0f};
+        /// @brief Conic start turn in [0, 1); unused by the other kinds.
+        f32 AngleOffset = 0.0f;
         /// @brief Bindless slot of the 1D ramp LUT (linear straight-alpha), sampled at (t, 0.5).
         Renderer::TextureHandle Ramp;
         /// @brief Bindless slot of the ramp's sampler (clamp-to-edge, linear).
         Renderer::SamplerHandle Sampler;
     };
+
+    /// @brief The GPU-side gradient record: one per gradient fill, indexed from the vertex.
+    ///
+    /// A tightly-packed 48-byte record the draw list accumulates and the pass uploads to a
+    /// byte-address storage buffer; the fragment loads it by index and evaluates the ramp offset t.
+    /// The layout is scalar and matches the shader's GpuGradient one-to-one — every field is 4 bytes,
+    /// so there are no alignment gaps. Geometry is in normalized box space (see GradientFill).
+    struct GpuGradient
+    {
+        /// @brief The GradientKind ordinal (0 Linear, 1 Radial, 2 Conic).
+        u32 Kind = 0;
+        /// @brief Bindless slot of the ramp LUT texture.
+        u32 RampTexture = 0;
+        /// @brief Bindless slot of the ramp sampler.
+        u32 RampSampler = 0;
+        /// @brief Padding to keep the following vec2 pair at an 8-byte-aligned offset.
+        u32 Pad0 = 0;
+        /// @brief Linear start point / radial + conic center.
+        vec2 P0{0.0f};
+        /// @brief Linear end point / radial radii.
+        vec2 P1{0.0f};
+        /// @brief Conic start turn; unused otherwise.
+        f32 AngleOffset = 0.0f;
+        /// @brief Padding to a 48-byte record.
+        f32 Pad1 = 0.0f;
+        /// @brief Padding to a 48-byte record.
+        f32 Pad2 = 0.0f;
+        /// @brief Padding to a 48-byte record.
+        f32 Pad3 = 0.0f;
+    };
+    static_assert(sizeof(GpuGradient) == 48, "GpuGradient must match the shader's 48-byte record");
 
     /// @brief Selects which fragment path a run replays.
     enum class GuiPipeline : u8
@@ -179,12 +218,12 @@ namespace Veng::Gui
         vec2 RectCoord{0.0f};
         /// @brief Packed fragment params (see the struct brief).
         vec4 Params{0.0f};
-        /// @brief Gradient fill: xyz is GradientFill::Geometry, w is the GradientKind ordinal plus one.
+        /// @brief Gradient record selector: 0 means no gradient, else the record index plus one.
         ///
-        /// A w of 0 (the default) means no gradient — the fill is the solid color or the modulating
-        /// texture; a positive w selects a gradient shape (1 = Linear, 2 = Radial, 3 = Conic) and the
-        /// fragment samples the ramp bound through Params instead of using Color / the UV texture.
-        vec4 Grad{0.0f};
+        /// A zero (the default) means the fill is the solid color or the modulating texture; a
+        /// positive value selects the GpuGradient record at (value - 1) in the draw list's gradient
+        /// table, and the fragment loads it from the storage buffer to evaluate the ramp offset.
+        u32 GradientSelector = 0;
     };
 
     /// @brief A contiguous slice of the index stream sharing one pipeline, clip, and texture.
@@ -234,7 +273,8 @@ namespace Veng::Gui
         ///
         /// Shares the rounded-rect SDF and border of Quad, so a gradient composes with corner radius
         /// and a border ring; the fill color comes from the gradient's ramp instead of a flat color.
-        /// The run is keyed by the ramp texture, so distinct ramps sit in distinct runs.
+        /// The fill is appended to the draw list's gradient table (GetGradients) and the vertex
+        /// carries only the record index, so many gradients batch into one run regardless of ramp.
         /// @param rect    The rectangle, in framebuffer pixels.
         /// @param fill    The gradient shape, geometry, and ramp/sampler slots.
         /// @param radii   Per-corner radius; the shape path uses the uniform radius.
@@ -303,6 +343,9 @@ namespace Veng::Gui
         /// @brief Returns the run table partitioning the index stream.
         [[nodiscard]] const vector<DrawRun>& GetRuns() const { return m_Runs; }
 
+        /// @brief Returns the gradient records, indexed by a vertex's GradientSelector minus one.
+        [[nodiscard]] const vector<GpuGradient>& GetGradients() const { return m_Gradients; }
+
         /// @brief Returns whether the draw list has no geometry.
         [[nodiscard]] bool IsEmpty() const { return m_Runs.empty(); }
 
@@ -327,9 +370,9 @@ namespace Veng::Gui
         /// @param rectHalf   Shape half-extent for the SDF (zero for text/texture).
         /// @param center     Rect center in pixels, for the per-vertex RectCoord (shape path).
         /// @param params     Packed fragment params written to every vertex.
-        /// @param grad       Packed gradient fill (Geometry, kind+1 in w); zero for a non-gradient quad.
+        /// @param selector   Gradient record selector (record index plus one); zero for no gradient.
         void PushQuad(const std::array<vec2, 4>& corners, const std::array<vec2, 4>& uvs,
-                      vec4 color, vec2 rectHalf, vec2 center, vec4 params, vec4 grad = vec4(0.0f));
+                      vec4 color, vec2 rectHalf, vec2 center, vec4 params, u32 selector = 0);
 
         /// @brief Emits one textured quad, opening a Shape run keyed by its texture.
         void EmitTexturedQuad(const Rect& rect, Renderer::TextureHandle texture,
@@ -341,6 +384,8 @@ namespace Veng::Gui
         vector<u32> m_Indices;
         /// @brief The run table over the index stream.
         vector<DrawRun> m_Runs;
+        /// @brief The gradient records a Gradient() appends to, indexed by a vertex's selector minus one.
+        vector<GpuGradient> m_Gradients;
         /// @brief The active clip stack; each entry is already intersected with the one below it.
         vector<Rect> m_ClipStack;
         /// @brief Bindless texture index keying the trailing run (Invalid for an untextured shape run).

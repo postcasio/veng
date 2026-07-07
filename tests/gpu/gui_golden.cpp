@@ -193,11 +193,12 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                                  });
     const SamplerHandle samplerHandle = Context.GetBindlessRegistry().Register(sampler);
 
-    // A vertical (180deg) linear gradient: geometry is the pre-scaled box axis so t = 0.5·p.y + 0.5.
+    // A vertical linear gradient from the box top (P0) to the bottom (P1): t = (p.y + 1) / 2.
     const Gui::Rect rect{.Min = {20.0f, 20.0f}, .Size = {120.0f, 120.0f}};
     Gui::DrawList list;
     list.Gradient(rect, Gui::GradientFill{.Kind = Gui::GradientKind::Linear,
-                                          .Geometry = vec4(0.0f, 0.5f, 0.0f, 0.0f),
+                                          .P0 = vec2(0.0f, -1.0f),
+                                          .P1 = vec2(0.0f, 1.0f),
                                           .Ramp = rampHandle,
                                           .Sampler = samplerHandle});
 

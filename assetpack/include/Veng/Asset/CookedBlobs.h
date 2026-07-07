@@ -738,8 +738,9 @@ namespace Veng
     /// Bumped on any CookedStyleSheetHeader/CookedStyleRule/CookedStyleProperty/
     /// CookedStyleAnimation/CookedStyleKeyframe/CookedStyleGradient layout change; the loader rejects
     /// a blob whose Version != this. v2 added the @keyframes animation tables; v3 added the gradient
-    /// table and its baked ramp region.
-    inline constexpr u32 CookedStyleSheetVersion = 3u;
+    /// table and its baked ramp region; v4 widened a gradient's geometry to explicit endpoints
+    /// (P0/P1) and an elliptical radial radius.
+    inline constexpr u32 CookedStyleSheetVersion = 4u;
 
     /// @brief Maximum byte length (including nul terminator) for a selector's class/id/type name.
     ///
@@ -859,15 +860,19 @@ namespace Veng
     /// A `background-gradient` declaration references one of these by its index in the gradient
     /// table. The multi-stop color is baked at cook time into an N×1 RGBA8 ramp (linear
     /// straight-alpha) stored in the ramp region at [RampOffset, RampOffset + RampTexels * 4).
-    /// Kind is the Gui::GradientKind ordinal; Geometry is packed per Kind in the element's
-    /// normalized box space (Linear: pre-scaled axis in [0..1]; Radial: center in [0..1] + inverse
-    /// radius in [2]; Conic: center in [0..1] + start turn in [2]).
+    /// Kind is the Gui::GradientKind ordinal; the geometry is in the element's normalized box space
+    /// and interpreted per Kind (Linear: P0 start, P1 end; Radial: P0 center, P1 (x, y) radii;
+    /// Conic: P0 center, AngleOffset start turn).
     struct CookedStyleGradient
     {
         /// @brief The Gui::GradientKind ordinal (0 Linear, 1 Radial, 2 Conic).
         u32 Kind = 0;
-        /// @brief Geometry packed per Kind, in the element's normalized box space.
-        f32 Geometry[4] = {};
+        /// @brief Linear start point / radial + conic center, in normalized box space.
+        f32 P0[2] = {};
+        /// @brief Linear end point / radial (x, y) radii, in normalized box space.
+        f32 P1[2] = {};
+        /// @brief Conic start turn in [0, 1); unused otherwise.
+        f32 AngleOffset = 0.0f;
         /// @brief Byte offset of this gradient's ramp in the ramp region.
         u32 RampOffset = 0;
         /// @brief Number of RGBA8 texels in the ramp (its byte length is RampTexels * 4).

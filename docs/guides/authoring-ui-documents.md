@@ -108,15 +108,22 @@ of three, each spanning the element's box:
 ```css
 /* linear: an angle (CSS convention — 0deg to the top, 90deg to the right) then stops */
 .panel  { background-gradient: linear 135deg, #1a2b3c 0%, #4a5b6c 40%, #ff0080 100%; }
+/* linear with explicit endpoints, as percentages of the box (0%,0% top-left → 100%,100% bottom-right) */
+.streak { background-gradient: linear from 0% 0% to 100% 40%, #000 0%, #fff 100%; }
 /* radial: an optional `at <x>% <y>%` center (default 50% 50%), farthest-corner fit */
 .orb    { background-gradient: radial at 30% 30%, #ffffff 0%, #202080 100%; }
+/* radial with an explicit radius — one value is circular, two make an ellipse (% of the half-box) */
+.oval   { background-gradient: radial at 50% 50% radius 80% 40%, #fff 0%, #206 100%; }
 /* conic: an optional `from <angle>` and `at <center>` */
 .dial   { background-gradient: conic from 90deg at 50% 50%, #000000 0%, #ffffff 100%; }
 ```
 
 Stop positions (`40%`) are optional — omitted stops distribute evenly. A gradient is
-authorable **only in a stylesheet rule** (like `animation`), and is applied from the
-base (non-pseudo-state) rules; it is not currently variant-swappable or transition-eased.
+authorable **only in a stylesheet rule** (like `animation`), applied from the base
+(non-pseudo-state) rules. It is not yet variant-swappable or transition-eased, but a
+gradient **can be animated from C++**: `Document::SetBackgroundGradient(element, …)`
+sets a resolved gradient whose `P0`/`P1`/`AngleOffset` you mutate per frame — moving a
+linear axis, growing a radial, or spinning a conic — a paint-only write with no re-solve.
 
 A state variant is the selector plus a pseudo-state — a `:hover` rule contributes a
 variant the runtime folds over the base style when the element is hovered, easing any

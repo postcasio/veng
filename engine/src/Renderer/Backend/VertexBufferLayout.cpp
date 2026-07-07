@@ -27,6 +27,8 @@ namespace Veng::Renderer
             return 4 * 4;
         case Format::RGBA16Uint:
             return 2 * 4;
+        case Format::R32Uint:
+            return 4;
         default:
             VE_ASSERT(false, "Unknown vertex element Format");
         }
@@ -47,6 +49,8 @@ namespace Veng::Renderer
             return 4;
         case Format::RGBA16Uint:
             return 4;
+        case Format::R32Uint:
+            return 1;
         default:
             VE_ASSERT(false, "Unknown vertex element Format");
         }
