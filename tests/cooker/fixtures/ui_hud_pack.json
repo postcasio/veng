@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "0x9798719E9255E3C9",
+      "type": "StyleSheet",
+      "source": "gui/hud_bound.vuss"
+    },
+    {
+      "id": "0xA09AA8B60AEAA8BE",
+      "type": "UIDocument",
+      "source": "gui/hud_bound.vui.xml"
+    }
+  ]
+}

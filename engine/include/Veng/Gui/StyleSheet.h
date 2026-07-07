@@ -12,7 +12,7 @@ namespace Veng::Gui
 {
     /// @brief One resolved style declaration: a property and the value to write onto Style.
     ///
-    /// The value rides a uniform payload the style application (plan 04) interprets by Property:
+    /// The value rides a uniform payload the style application interprets by Property:
     /// Unit carries a Length's LengthKind ordinal or an enum property's enumerator ordinal; Values
     /// holds the numeric payload (a Length value in x, a vec4/CornerRadii/Insets in xyzw, a scalar
     /// in x); Font carries a font property's AssetId (else invalid). Colors are already linear
@@ -34,8 +34,8 @@ namespace Veng::Gui
     /// The selector matches an element by its element type (Type), one class tag (Class), and/or
     /// one id (Id); an empty field is a wildcard on that axis. State is the interaction state the
     /// rule applies in (None for the base rule; a single pseudo-state bit like Hovered). The style
-    /// application (plan 04) matches an element's tags against the rules, cascades the base
-    /// survivors onto its resolved Style, and keeps the state-scoped survivors as variants.
+    /// application matches an element's tags against the rules, cascades the base survivors onto
+    /// its resolved Style, and keeps the state-scoped survivors as variants.
     struct StyleRule
     {
         /// @brief The element type the selector requires ("Button"), or empty for any type.

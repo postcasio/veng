@@ -33,6 +33,7 @@
 #include "panels/PrefabEditorPanel.h"
 #include "panels/ProjectSettingsPanel.h"
 #include "panels/TextureEditorPanel.h"
+#include "panels/UIDocumentEditorPanel.h"
 
 #include <Veng/Project/CompressionFormat.h>
 #include <Veng/Project/CompressionRole.h>
@@ -376,6 +377,41 @@ namespace VengEditor
             VengEditor::CookDriver m_Cook;
         };
 
+        // Resolves a UIDocument AssetId to its .vui.xml source through the manifest index, then
+        // opens a UIDocumentEditorPanel wired to the host's engine refs.
+        class UIDocumentEditorFactory final : public AssetEditorFactory
+        {
+        public:
+            UIDocumentEditorFactory(const AssetSourceIndex& index, Application& app,
+                                    AssetManager& assets, ImGuiLayer& imgui,
+                                    VengEditor::CookDriver cook)
+                : m_Index(index), m_App(app), m_Assets(assets), m_ImGui(imgui),
+                  m_Cook(std::move(cook))
+            {
+            }
+
+            [[nodiscard]] Unique<EditorPanel> OpenEditor(AssetId id) override
+            {
+                const AssetSourceIndex::Entry* entry = m_Index.Find(id);
+                if (!entry)
+                {
+                    Log::Error("UI document editor: no source manifest entry for asset 0x{:X}",
+                               id.Value);
+                    return nullptr;
+                }
+
+                return CreateUnique<UIDocumentEditorPanel>(id, entry->Source, m_App, m_Assets,
+                                                           m_ImGui, m_Cook);
+            }
+
+        private:
+            const AssetSourceIndex& m_Index;
+            Application& m_App;
+            AssetManager& m_Assets;
+            ImGuiLayer& m_ImGui;
+            VengEditor::CookDriver m_Cook;
+        };
+
         // Opens a PrefabEditorPanel that spawns the prefab into a live Scene for editing.
         // Needs no manifest source: the prefab is edited in-scene, not recooked.
         class PrefabEditorFactory final : public AssetEditorFactory
@@ -702,6 +738,11 @@ namespace VengEditor
                 AssetType::InputMap,
                 CreateUnique<InputMapEditorFactory>(*m_Sources, GetAssetManager(),
                                                     m_Registries->Editor, GetInput(), cookFor()));
+
+            m_Registries->Editor.RegisterAssetEditor(
+                AssetType::UIDocument,
+                CreateUnique<UIDocumentEditorFactory>(*m_Sources, *this, GetAssetManager(),
+                                                      *GetImGuiLayer(), cookFor()));
         }
 
         // The asset browser reads the first mounted pack (cooked in the build dir under the source

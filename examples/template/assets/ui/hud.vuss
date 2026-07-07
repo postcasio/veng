@@ -1,0 +1,26 @@
+/* Minimal HUD stylesheet: a translucent panel pinned to a corner, a title, and a value bar. */
+
+.hud {
+    flex-direction: column;
+    background: #12141acc;
+    corner-radius: 6px;
+    padding: 12px;
+}
+
+.title {
+    font-size: 22px;
+    color: #f2f4f8ff;
+}
+
+.caption {
+    font-size: 14px;
+    color: #9aa3b2ff;
+    margin: 4px;
+}
+
+.bar {
+    height: 8px;
+    margin: 6px;
+    background: #2a6df4;
+    corner-radius: 3px;
+}

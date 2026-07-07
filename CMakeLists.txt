@@ -1014,6 +1014,11 @@ if (VENG_BUILD_TESTS)
             # the document (pulling its stylesheet + font as dependencies), asserts the recipe tree
             # + resolved rule variants + resolved deps, and Instantiates two independent trees.
             tests/gpu/ui_document_load.cpp
+            # ui_document_hud.cpp ties the whole HUD path together: cooks the UI fixture pack,
+            # LoadSyncs + Instantiates the document with a font resolver, binds a reflected
+            # view-model, attaches it to an Offscreen viewport, and asserts the composited output
+            # tracks a changed bound value — plus the editor's cook-on-demand MountMemory hot-swap.
+            tests/gpu/ui_document_hud.cpp
             tests/gpu/mesh_loader.cpp
             tests/gpu/shader_loader.cpp
             tests/gpu/material_loader.cpp

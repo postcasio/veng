@@ -40,7 +40,7 @@ namespace Veng::Gui
     /// bindings and handlers, and its inline-style declarations. ChildCount is the number of the
     /// immediately-following recipe elements (recursively) that are this element's direct children,
     /// so the pre-order array reconstructs the hierarchy in one pass. Instantiate materializes one
-    /// live plan-02 Element per recipe element.
+    /// live Element per recipe element.
     struct UIElementRecipe
     {
         /// @brief The element's kind.
@@ -66,8 +66,8 @@ namespace Veng::Gui
     /// A UI document holds the element tree the cooker parsed from `*.vui.xml` markup — pre-order,
     /// each element carrying its identity, inline style, bindings, and handlers — plus the
     /// stylesheets it references and its font/texture dependencies (kept resident). It is a recipe,
-    /// not a live tree: Gui::Document::Instantiate materializes an independent plan-02 Document from
-    /// it, so instantiating twice yields two independent trees over one blob (the Prefab model).
+    /// not a live tree: Gui::Document::Instantiate materializes an independent Document from it, so
+    /// instantiating twice yields two independent trees over one blob (the Prefab model).
     ///
     /// UIDocument is CPU data with no GPU resource. Load it through AssetManager::Load like any
     /// other asset, then Gui::Document::Instantiate it.

@@ -136,14 +136,6 @@ namespace Veng::Gui
         u64 SyncVersion = 0;
     };
 
-    /// @brief One node of a retained document tree: a kind, a resolved style, and a computed rect.
-    ///
-    /// An element owns its children, held by the enclosing Document (which single-owns the whole
-    /// tree). It carries its resolved Style, the interaction state a styling/event layer drives,
-    /// its id and class tags for selector matching, its Text content, and bound-value slots a
-    /// binding layer writes. Layout is the rect Document::Solve computes in document space; it is
-    /// meaningful only after a Solve. Mutate structure and style through the Document so the layout
-    /// is marked dirty and the mirrored layout node stays in sync.
     /// @brief One in-flight property tween: the property, its source value, and elapsed time.
     ///
     /// Records a property transitioning toward its resolved target. From holds the value the
@@ -164,6 +156,14 @@ namespace Veng::Gui
         f32 Duration = 0.0f;
     };
 
+    /// @brief One node of a retained document tree: a kind, a resolved style, and a computed rect.
+    ///
+    /// An element owns its children, held by the enclosing Document (which single-owns the whole
+    /// tree). It carries its resolved Style, the interaction state a styling/event layer drives,
+    /// its id and class tags for selector matching, its Text content, and bound-value slots a
+    /// binding layer writes. Layout is the rect Document::Solve computes in document space; it is
+    /// meaningful only after a Solve. Mutate structure and style through the Document so the layout
+    /// is marked dirty and the mirrored layout node stays in sync.
     struct Element
     {
         /// @brief The element's kind, fixed at construction.

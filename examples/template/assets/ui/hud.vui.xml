@@ -1,0 +1,5 @@
+<Panel class="hud" stylesheets="0x9199FE52C60D7DF8" style="font: 0x9A6A7CD94A6DDBD7; width: 240px;">
+  <Text class="title">veng</Text>
+  <Text class="caption" value="{Caption}"/>
+  <ProgressBar class="bar" value="{Level}"/>
+</Panel>

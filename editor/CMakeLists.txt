@@ -38,6 +38,7 @@ add_library(veng_editor SHARED
         src/panels/ProjectSettingsPanel.cpp
         src/panels/SceneViewportPanel.cpp
         src/panels/TextureEditorPanel.cpp
+        src/panels/UIDocumentEditorPanel.cpp
         src/FieldWidget.cpp
         src/material/MaterialPreview.cpp
 )

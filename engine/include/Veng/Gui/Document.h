@@ -413,8 +413,6 @@ namespace Veng::Gui
         bool RoutePointerPath(PointerEvent& event);
 
         /// @brief The layout mirror wrapping the flexbox node tree and the Element↔node map.
-
-        /// @brief The layout mirror wrapping the flexbox node tree and the Element↔node map.
         Unique<YogaTree> m_Yoga;
 
         /// @brief Stable storage of every element; entries are never relocated.

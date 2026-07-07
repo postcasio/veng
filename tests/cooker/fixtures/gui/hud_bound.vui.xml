@@ -1,0 +1,3 @@
+<Panel class="screen" stylesheets="0x9798719E9255E3C9">
+  <ProgressBar id="meter" value="{player.health}"/>
+</Panel>

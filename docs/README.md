@@ -30,6 +30,12 @@ symbol: build the Doxygen reference with `cmake --build build --target docs`
   reconfiguring the managed viewport list into quadrants with
   `ReconfigureManagedViewports`, and spawning a second seat — with the boundary that
   routing stops at `PlayerInput`.
+- **[Authoring a UI document](guides/authoring-ui-documents.md)** — the `Veng::Gui`
+  game UI layer: authoring a `*.vui.xml` HUD + a `*.vuss` stylesheet + a font,
+  cooking them into assets, instantiating a `Gui::Document` and binding it a
+  reflected view-model, attaching it to a viewport, resolving its bindings each
+  frame, and opening a `SeatFocusScope` to make a menu interactive — plus the
+  boundary against `Veng::UI` (the editor/debug ImGui vocabulary).
 - **[Consuming veng](guides/consuming-veng.md)** — discovering veng from a game
   project with `find_package(veng)`: the three consumption modes (in-tree, build
   tree, install prefix), the `veng_ROOT` / `CMAKE_PREFIX_PATH` /

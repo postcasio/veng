@@ -1,0 +1,14 @@
+/* A full-region HUD with one bound, sized, saturated meter — a measurable binding->render oracle. */
+
+.screen {
+    width: 100%;
+    height: 100%;
+    padding: 8px;
+}
+
+ProgressBar#meter {
+    width: 100%;
+    height: 100%;
+    background: #101010ff;
+    color: #00ff00ff;
+}

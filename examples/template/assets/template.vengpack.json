@@ -20,6 +20,21 @@
       "id": "0x899BF5DA01D2DBF3",
       "type": "Level",
       "source": "levels/scene.level.json"
+    },
+    {
+      "id": "0x9A6A7CD94A6DDBD7",
+      "type": "Font",
+      "source": "fonts/ui.font.json"
+    },
+    {
+      "id": "0x9199FE52C60D7DF8",
+      "type": "StyleSheet",
+      "source": "ui/hud.vuss"
+    },
+    {
+      "id": "0x5F30E0E78A88D61D",
+      "type": "UIDocument",
+      "source": "ui/hud.vui.xml"
     }
   ]
 }
