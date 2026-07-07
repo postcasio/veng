@@ -15,6 +15,7 @@
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/SwapChainCompositePass.h>
 #include <Veng/ImGui/ImGuiLayer.h>
+#include <Veng/Gui/GuiConsumer.h>
 #include <Veng/Task/TaskSystem.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/Scene.h>
@@ -257,6 +258,14 @@ namespace Veng
 
         /// @brief Returns the ImGui layer, or nullptr if the app opted out.
         [[nodiscard]] ImGuiLayer* GetImGuiLayer() const { return m_ImGuiLayer.get(); }
+
+        /// @brief Returns the Gui router consumer that routes UI input into attached documents.
+        ///
+        /// Registered second in the router registry (behind ImGui) and always present. It walks the
+        /// engine's registered viewports for a hosted, interactive document under the pointer or the
+        /// focused seat; a document is display-only until the game makes it interactive
+        /// (Gui::Document::SetInteractive) while holding its seat.
+        [[nodiscard]] Gui::GuiConsumer& GetGuiConsumer() const { return *m_GuiConsumer; }
 
         /// @brief Registers a viewport into the engine drive-list rendered each frame.
         ///
@@ -502,6 +511,11 @@ namespace Veng
         Unique<AssetManager> m_AssetManager;
 
         Unique<ImGuiLayer> m_ImGuiLayer;
+
+        /// @brief The Gui router consumer, registered second (behind ImGui) so attached documents
+        ///        receive UI-owned input. Borrows the router/input/window/m_Viewports, so it is
+        ///        declared after them (destroyed before them, since it is registered on the router).
+        Unique<Gui::GuiConsumer> m_GuiConsumer;
 
         /// @brief Non-owning, ordered list of viewports the engine renders each frame.
         ///

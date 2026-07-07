@@ -2,6 +2,7 @@
 
 #include <Veng/Assert.h>
 #include <Veng/Asset/CookedProject.h>
+#include <Veng/Gui/GuiConsumer.h>
 #include <Veng/Log.h>
 #include <Veng/Time.h>
 
@@ -75,6 +76,13 @@ namespace Veng
         {
             m_InputRouter->RegisterConsumer(*m_ImGuiLayer);
         }
+
+        // The Gui document consumer registers second, behind ImGui: an event ImGui consumes never
+        // reaches it, an event it passes is offered to the interactive documents on the engine's
+        // viewports. It walks the drive-list (which self-cleans on a viewport's destruction).
+        m_GuiConsumer =
+            CreateUnique<Gui::GuiConsumer>(*m_InputRouter, *m_Input, m_Window.get(), m_Viewports);
+        m_InputRouter->RegisterConsumer(*m_GuiConsumer);
 
         // The opt-in managed viewport set: Presented viewports owned and driven by the engine so a
         // game pushes only a ViewState (or names a Viewer). Built before OnInitialize so a subclass

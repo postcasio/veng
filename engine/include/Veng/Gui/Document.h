@@ -1,10 +1,18 @@
 #pragma once
 
 #include <Veng/Veng.h>
+#include <Veng/Gui/BindingContext.h>
 #include <Veng/Gui/DrawList.h>
 #include <Veng/Gui/Element.h>
+#include <Veng/Gui/InputEvent.h>
 #include <Veng/Gui/Style.h>
 #include <Veng/Gui/StyleSheet.h>
+#include <Veng/Reflection/TypeId.h>
+
+namespace Veng
+{
+    class TypeRegistry;
+}
 
 namespace Veng::Renderer
 {
@@ -167,6 +175,108 @@ namespace Veng::Gui
         /// @brief Returns whether the tree needs a Solve (structure or style changed since the last).
         [[nodiscard]] bool IsDirty() const { return m_Dirty; }
 
+        /// @brief Returns the topmost visible element whose box contains a document-space point.
+        ///
+        /// Walks the laid-out tree front-to-back — a later child paints over an earlier one, so the
+        /// last child under the point wins — descending only into a subtree whose ancestor clip
+        /// rectangles all contain the point (a clipping element hides the parts of its children it
+        /// clips away, so those parts do not hit-test). Runs against Element::Layout, so a Solve
+        /// must have filled the rects. Returns nullptr when no visible element covers the point.
+        /// @param point  The point to test, in document-space pixels (Element::Layout's space).
+        /// @return The topmost element under the point, or nullptr on a miss.
+        [[nodiscard]] Element* HitTest(vec2 point);
+
+        /// @brief Binds the reflection/handler context every binding and named handler resolves against.
+        ///
+        /// A `{obj.field}` binding resolves its field path against the context's data object through
+        /// the given TypeRegistry, and an `onClick`-style handler name resolves against the
+        /// context's handler table. The document borrows both the context and the registry; they
+        /// must outlive the binding. Binding a context marks every binding for a re-read on the next
+        /// UpdateBindings. Passing a null context clears the binding (handlers stop firing, bound
+        /// values stop updating).
+        /// @param context   The game-owned binding context, or nullptr to clear.
+        /// @param registry  The type registry the field paths are resolved through; must be non-null
+        ///                  when context is non-null.
+        void BindContext(BindingContext* context, const TypeRegistry* registry);
+
+        /// @brief Re-resolves every `{path}` binding whose context changed and writes the elements.
+        ///
+        /// Compares the bound context's version against the one last resolved; on a move it walks
+        /// each bound element, resolves each binding's field path against the data object through
+        /// reflection, and writes the resolved value into the target attribute (text/visibility),
+        /// dirtying layout where the write changes a layout input. A no-op when no context is bound
+        /// or its version is unchanged since the last resolve. Call once per frame before Solve.
+        void UpdateBindings();
+
+        /// @brief Routes a pointer event into the tree with capture → target → bubble propagation.
+        ///
+        /// Hit-tests the event position to a target, drives the hover/active interaction state as
+        /// the pointer enters/leaves and presses/releases (through SetState, so a styling layer
+        /// reacts), and dispatches the event down the ancestor path (root→target) then up
+        /// (target→root). A press followed by a release on the same element synthesizes a Click,
+        /// which fires the element's `onClick` handler. An element's handler consumes the event by
+        /// setting PointerEvent::Handled, stopping further propagation.
+        /// @param event  The pointer event; its Position is in document-space pixels.
+        /// @return True when the event was consumed by some element (or drove an interaction).
+        bool DispatchPointer(PointerEvent& event);
+
+        /// @brief Routes a navigation action: moves focus, or activates/cancels the focused element.
+        ///
+        /// A Move*/Next/Previous action moves focus to the resolved focusable and updates the
+        /// focused interaction state (the focus ring is a `:focus` variant a styling layer draws).
+        /// Confirm synthesizes a primary click on the focused element (so a button fires the same
+        /// `onClick` whether clicked or confirmed); Cancel fires the focused element's `onCancel`
+        /// handler if present. Directional moves pick the nearest focusable in the pressed direction
+        /// by laid-out geometry; Next/Previous walk tree order.
+        /// @param action  The navigation action to apply.
+        /// @return True when the action moved focus or fired a handler.
+        bool Navigate(NavAction action);
+
+        /// @brief Delivers a typed Unicode codepoint to the focused element.
+        ///
+        /// Routes the codepoint to the focused element's `onText` handler when one is registered;
+        /// the widget layer's text input reads it through GetPendingCodepoint while the handler
+        /// runs. A no-op when nothing is focused or the focused element registers no text handler.
+        /// @param codepoint  The Unicode codepoint produced by text input.
+        /// @return True when the codepoint was delivered to a handler.
+        bool DispatchText(u32 codepoint);
+
+        /// @brief Returns the codepoint being delivered while an `onText` handler runs, else zero.
+        ///
+        /// DispatchText sets this for the duration of the handler call so a bare EventHandler (which
+        /// carries only the element) reads the character a text-input widget consumes; it is zero
+        /// outside a text dispatch.
+        [[nodiscard]] u32 GetPendingCodepoint() const { return m_PendingCodepoint; }
+
+        /// @brief Sets which element holds focus, updating the focused interaction state.
+        ///
+        /// Clears the Focused bit on the previously-focused element and sets it on the new one
+        /// (through SetState, so the `:focus` variant resolves). Passing nullptr blurs without a new
+        /// focus. An element that is not focusable is rejected (focus is unchanged).
+        /// @param element  The element to focus, or nullptr to blur.
+        void SetFocus(Element* element);
+
+        /// @brief Returns the focused element, or nullptr when nothing holds focus.
+        [[nodiscard]] Element* GetFocused() const { return m_Focused; }
+
+        /// @brief Returns whether the viewport (context) treats this document as display-only.
+        ///
+        /// A document is **display-only by default**: its bindings update and it draws, but it
+        /// hit-tests and takes no focus until the game opens interactivity on it. The input layer
+        /// (the router consumer) skips a display-only document. This reflects the flag SetInteractive
+        /// set; it is not itself an input takeover (the game opens a SeatFocusScope on the
+        /// document's seat for that).
+        [[nodiscard]] bool IsInteractive() const { return m_Interactive; }
+
+        /// @brief Marks the document interactive (hit-testable, focusable) or display-only.
+        ///
+        /// The game flips this on while it holds the document's seat (a SeatFocusScope) so the input
+        /// consumer routes pointer/focus into it, and off when it releases the seat. Off — the
+        /// default — the document draws and its bindings update but it consumes no input. Clearing
+        /// it blurs any focused element.
+        /// @param interactive  True to route input into the document, false for display-only.
+        void SetInteractive(bool interactive);
+
         /// @brief Returns the viewport this document is attached to, or nullptr when detached.
         ///
         /// A document attaches to at most one viewport at a time (Viewport::AttachDocument). The
@@ -210,6 +320,23 @@ namespace Veng::Gui
         /// @brief Emits one element's primitives, then recurses into its children.
         void BuildElement(const Element& element, DrawList& list) const;
 
+        /// @brief Recursive front-to-back hit-test honoring the ancestor clip chain.
+        [[nodiscard]] Element* HitTestElement(Element& element, vec2 point, optional<Rect> clip);
+
+        /// @brief Resolves and writes one element's bindings against the bound data object.
+        void ResolveElementBindings(Element& element);
+
+        /// @brief Collects every focusable, visible element into m_FocusOrder in tree order.
+        void GatherFocusables(Element& element, vector<Element*>& out) const;
+
+        /// @brief Fires the named handler an element carries for an event, if the context has it.
+        [[nodiscard]] bool FireHandler(Element& element, string_view event);
+
+        /// @brief Dispatches a pointer event down (capture) then up (bubble) the target's ancestor path.
+        bool RoutePointerPath(PointerEvent& event);
+
+        /// @brief The layout mirror wrapping the flexbox node tree and the Element↔node map.
+
         /// @brief The layout mirror wrapping the flexbox node tree and the Element↔node map.
         Unique<YogaTree> m_Yoga;
 
@@ -237,5 +364,29 @@ namespace Veng::Gui
         /// through it so dropping the owning Unique removes the document from its viewport's layer
         /// stack with no dangling pointer.
         Renderer::Viewport* m_HostViewport = nullptr;
+
+        /// @brief The bound reflection/handler context, or nullptr when none is bound.
+        BindingContext* m_Context = nullptr;
+
+        /// @brief The type registry binding field paths resolve through; null when no context.
+        const TypeRegistry* m_Registry = nullptr;
+
+        /// @brief The context version the last binding resolve read; a move re-reads bindings.
+        u64 m_BoundVersion = 0;
+
+        /// @brief The focused element, or nullptr when nothing holds focus.
+        Element* m_Focused = nullptr;
+
+        /// @brief The element a pointer press landed on, awaiting a release to complete a click.
+        Element* m_PressTarget = nullptr;
+
+        /// @brief The element the pointer last hovered, tracked so a move emits Enter/Leave.
+        Element* m_HoverTarget = nullptr;
+
+        /// @brief Whether the document routes input (hit-tests, takes focus) or is display-only.
+        bool m_Interactive = false;
+
+        /// @brief The codepoint DispatchText exposes while an onText handler runs; zero otherwise.
+        u32 m_PendingCodepoint = 0;
     };
 }

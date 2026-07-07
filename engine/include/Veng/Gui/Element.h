@@ -161,6 +161,14 @@ namespace Veng::Gui
         /// @brief Whether the element (and its subtree) is laid out and drawn.
         bool Visible = true;
 
+        /// @brief Whether the element can hold input focus and take part in focus navigation.
+        ///
+        /// A focusable element is a stop for keyboard/gamepad directional and Tab navigation and
+        /// receives Confirm/Cancel while focused. The widget layer sets this on the controls that
+        /// take focus (a button, a text input); a plain Panel/Text leaves it false, so it never
+        /// steals focus from the controls inside it.
+        bool Focusable = false;
+
         /// @brief The element's id tag for id-selector matching; empty when untagged.
         string Id;
         /// @brief The element's class tags for class-selector matching.

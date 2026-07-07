@@ -6,7 +6,11 @@
 #include <Veng/Asset/Font.h>
 #include <Veng/Gui/StyleSheet.h>
 #include <Veng/Gui/UIDocument.h>
+#include <Veng/Reflection/EnumName.h>
+#include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Renderer/Viewport.h>
+
+#include <fmt/format.h>
 
 #include <algorithm>
 
@@ -330,6 +334,124 @@ namespace Veng::Gui
             {
                 element.Bindings[handler.Event] = handler.Handler;
             }
+        }
+
+        // Formats a leaf field value at `fieldPtr` (of registered type `info`) as display text. A
+        // scalar prints its number, a string prints itself, an enum prints its enumerator name, a
+        // vector prints its components space-separated. Scalars are keyed by their leaf TypeId (not
+        // a name string), so the read matches the exact backing type. A field class with no scalar
+        // text form (Struct/Variant/Array/Matrix/Reference/AssetHandle) yields nullopt, so a binding
+        // onto one is a no-op rather than a garbage write.
+        optional<string> FormatLeaf(const void* fieldPtr, const TypeInfo& info)
+        {
+            switch (info.Class)
+            {
+            case FieldClass::Scalar:
+            {
+                if (info.Id == TypeIdOf<bool>())
+                {
+                    return *static_cast<const bool*>(fieldPtr) ? string{"true"} : string{"false"};
+                }
+                if (info.Id == TypeIdOf<f32>())
+                {
+                    return fmt::format("{}", *static_cast<const f32*>(fieldPtr));
+                }
+                if (info.Id == TypeIdOf<i32>())
+                {
+                    return fmt::format("{}", *static_cast<const i32*>(fieldPtr));
+                }
+                if (info.Id == TypeIdOf<u32>())
+                {
+                    return fmt::format("{}", *static_cast<const u32*>(fieldPtr));
+                }
+                if (info.Id == TypeIdOf<u64>())
+                {
+                    return fmt::format("{}", *static_cast<const u64*>(fieldPtr));
+                }
+                return std::nullopt;
+            }
+            case FieldClass::String:
+                return *static_cast<const string*>(fieldPtr);
+            case FieldClass::Enum:
+                return EnumeratorName(info, LoadEnumBits(fieldPtr, info));
+            case FieldClass::Vector:
+            {
+                // A glm vector is a run of f32s; the byte width gives the component count.
+                const usize count = info.Size / sizeof(f32);
+                const auto* comps = static_cast<const f32*>(fieldPtr);
+                string out;
+                for (usize i = 0; i < count; ++i)
+                {
+                    if (i != 0)
+                    {
+                        out.push_back(' ');
+                    }
+                    out += fmt::format("{}", comps[i]);
+                }
+                return out;
+            }
+            default:
+                return std::nullopt;
+            }
+        }
+
+        // Walks a dotted field path ("a.b.c") from a struct base pointer through reflection, and
+        // returns the leaf value formatted as text — nullopt when a segment is missing, an
+        // intermediate segment is not a struct, or the leaf has no text form. Every segment but the
+        // last must be a Struct-class field; the final segment is a formattable leaf.
+        optional<string> ResolvePath(const TypeRegistry& registry, void* base, TypeId type,
+                                     string_view path)
+        {
+            void* cursor = base;
+            TypeId cursorType = type;
+
+            usize start = 0;
+            while (start <= path.size())
+            {
+                const usize dot = path.find('.', start);
+                const string_view segment =
+                    path.substr(start, dot == string_view::npos ? string_view::npos : dot - start);
+                if (segment.empty() || !registry.IsRegistered(cursorType))
+                {
+                    return std::nullopt;
+                }
+
+                const TypeInfo& owner = registry.Info(cursorType);
+                const FieldDescriptor* field = nullptr;
+                for (const FieldDescriptor& candidate : owner.Fields)
+                {
+                    if (candidate.Name == segment)
+                    {
+                        field = &candidate;
+                        break;
+                    }
+                }
+                if (field == nullptr)
+                {
+                    return std::nullopt;
+                }
+
+                void* fieldPtr = static_cast<u8*>(cursor) + field->Offset;
+                const bool last = dot == string_view::npos;
+                if (last)
+                {
+                    if (!registry.IsRegistered(field->Type))
+                    {
+                        return std::nullopt;
+                    }
+                    return FormatLeaf(fieldPtr, registry.Info(field->Type));
+                }
+
+                // A non-terminal segment must be a struct to descend into.
+                if (field->Class != FieldClass::Struct)
+                {
+                    return std::nullopt;
+                }
+                cursor = fieldPtr;
+                cursorType = field->Type;
+                start = dot + 1;
+            }
+            return std::nullopt;
         }
     }
 
@@ -1064,5 +1186,453 @@ namespace Veng::Gui
     void Document::Build(DrawList& list) const
     {
         BuildElement(*m_Root, list);
+    }
+
+    namespace
+    {
+        // Returns whether a point lies inside a rect (inclusive of the min edge, exclusive of max).
+        bool Contains(const Rect& rect, vec2 point)
+        {
+            return point.x >= rect.Min.x && point.y >= rect.Min.y && point.x < rect.Max().x &&
+                   point.y < rect.Max().y;
+        }
+
+        // Adds or removes a single interaction-state bit from a mask.
+        ElementState WithBit(ElementState mask, ElementState bit, bool set)
+        {
+            const u32 m = static_cast<u32>(mask);
+            const u32 b = static_cast<u32>(bit);
+            return static_cast<ElementState>(set ? (m | b) : (m & ~b));
+        }
+    }
+
+    Element* Document::HitTestElement(Element& element, vec2 point, optional<Rect> clip)
+    {
+        if (!element.Visible)
+        {
+            return nullptr;
+        }
+
+        // A clipping element hides the parts of its subtree outside its box; a point outside the
+        // active clip cannot hit this element or its descendants.
+        if (clip && !Contains(*clip, point))
+        {
+            return nullptr;
+        }
+
+        optional<Rect> childClip = clip;
+        if (element.ComputedStyle.ClipContent)
+        {
+            childClip = clip ? clip->Intersect(element.Layout) : element.Layout;
+        }
+
+        // Children paint over the parent (and later children over earlier ones), so the last child
+        // under the point is the topmost — walk children back-to-front for front-to-back hit order.
+        for (auto it = element.Children.rbegin(); it != element.Children.rend(); ++it)
+        {
+            if (Element* hit = HitTestElement(**it, point, childClip))
+            {
+                return hit;
+            }
+        }
+
+        if (Contains(element.Layout, point))
+        {
+            return &element;
+        }
+        return nullptr;
+    }
+
+    Element* Document::HitTest(vec2 point)
+    {
+        return HitTestElement(*m_Root, point, std::nullopt);
+    }
+
+    void Document::BindContext(BindingContext* context, const TypeRegistry* registry)
+    {
+        VE_ASSERT(context == nullptr || registry != nullptr,
+                  "BindContext requires a TypeRegistry when a context is bound");
+        m_Context = context;
+        m_Registry = registry;
+        // Force a re-read on the next UpdateBindings by resetting the resolved-version watermark.
+        m_BoundVersion = 0;
+    }
+
+    void Document::ResolveElementBindings(Element& element)
+    {
+        for (const auto& [property, expression] : element.Bindings)
+        {
+            // Only `{obj.field}` value bindings resolve here; a handler entry (onClick, …) is keyed
+            // by an event name and fired by the event path, not written as a value.
+            if (property != "text" && property != "value" && property != "visible")
+            {
+                continue;
+            }
+
+            const optional<string> resolved = ResolvePath(*m_Registry, m_Context->GetData(),
+                                                          m_Context->GetDataType(), expression);
+            if (!resolved)
+            {
+                continue;
+            }
+
+            if (property == "visible")
+            {
+                SetVisible(element, *resolved == "true" || *resolved == "1");
+            }
+            else
+            {
+                SetText(element, *resolved);
+            }
+        }
+    }
+
+    void Document::UpdateBindings()
+    {
+        if (m_Context == nullptr || m_Context->GetData() == nullptr || m_Registry == nullptr)
+        {
+            return;
+        }
+        if (m_Context->GetVersion() == m_BoundVersion)
+        {
+            return;
+        }
+        m_BoundVersion = m_Context->GetVersion();
+
+        for (const Unique<Element>& element : m_Elements)
+        {
+            if (!element->Bindings.empty())
+            {
+                ResolveElementBindings(*element);
+            }
+        }
+    }
+
+    bool Document::FireHandler(Element& element, string_view event)
+    {
+        if (m_Context == nullptr)
+        {
+            return false;
+        }
+        const auto it = element.Bindings.find(string{event});
+        if (it == element.Bindings.end())
+        {
+            return false;
+        }
+        const EventHandler* handler = m_Context->FindHandler(it->second);
+        if (handler == nullptr || !*handler)
+        {
+            return false;
+        }
+        (*handler)(element);
+        return true;
+    }
+
+    void Document::SetFocus(Element* element)
+    {
+        if (element != nullptr && !element->Focusable)
+        {
+            return;
+        }
+        if (element == m_Focused)
+        {
+            return;
+        }
+        if (m_Focused != nullptr)
+        {
+            SetState(*m_Focused, WithBit(m_Focused->State, ElementState::Focused, false));
+        }
+        m_Focused = element;
+        if (m_Focused != nullptr)
+        {
+            SetState(*m_Focused, WithBit(m_Focused->State, ElementState::Focused, true));
+        }
+    }
+
+    void Document::SetInteractive(bool interactive)
+    {
+        m_Interactive = interactive;
+        if (!interactive)
+        {
+            // Display-only documents hold no hover/press/focus state; drop any live interaction.
+            if (m_HoverTarget != nullptr)
+            {
+                SetState(*m_HoverTarget,
+                         WithBit(m_HoverTarget->State, ElementState::Hovered, false));
+                m_HoverTarget = nullptr;
+            }
+            if (m_PressTarget != nullptr)
+            {
+                SetState(*m_PressTarget,
+                         WithBit(m_PressTarget->State, ElementState::Active, false));
+                m_PressTarget = nullptr;
+            }
+            SetFocus(nullptr);
+        }
+    }
+
+    bool Document::DispatchPointer(PointerEvent& event)
+    {
+        if (!m_Interactive)
+        {
+            return false;
+        }
+
+        Element* target = HitTest(event.Position);
+
+        // Hover transitions: a move onto a new element leaves the old and enters the new, driving
+        // the Hovered state a styling layer reads.
+        if (target != m_HoverTarget)
+        {
+            if (m_HoverTarget != nullptr)
+            {
+                SetState(*m_HoverTarget,
+                         WithBit(m_HoverTarget->State, ElementState::Hovered, false));
+            }
+            m_HoverTarget = target;
+            if (m_HoverTarget != nullptr)
+            {
+                SetState(*m_HoverTarget,
+                         WithBit(m_HoverTarget->State, ElementState::Hovered, true));
+            }
+        }
+
+        event.Target = target;
+
+        if (event.Kind == PointerEventKind::Down && target != nullptr)
+        {
+            m_PressTarget = target;
+            SetState(*target, WithBit(target->State, ElementState::Active, true));
+            if (target->Focusable)
+            {
+                SetFocus(target);
+            }
+        }
+
+        // A Move only retargets hover (above); the discrete press/release/click transitions route
+        // through the capture/bubble path where handlers fire and consume.
+        bool consumed = false;
+        if (event.Kind != PointerEventKind::Move)
+        {
+            consumed = RoutePointerPath(event);
+        }
+
+        if (event.Kind == PointerEventKind::Up)
+        {
+            if (m_PressTarget != nullptr)
+            {
+                SetState(*m_PressTarget,
+                         WithBit(m_PressTarget->State, ElementState::Active, false));
+            }
+            // A press and its release on the same element is a click.
+            if (m_PressTarget != nullptr && m_PressTarget == target)
+            {
+                PointerEvent click{.Kind = PointerEventKind::Click,
+                                   .Button = event.Button,
+                                   .Position = event.Position,
+                                   .Target = target};
+                RoutePointerPath(click);
+                // A completed click is consumed whether or not a handler was registered — the press
+                // was already claimed by this document on the Down.
+                static_cast<void>(FireHandler(*target, "onClick"));
+                consumed = true;
+            }
+            m_PressTarget = nullptr;
+        }
+
+        return consumed || target != nullptr;
+    }
+
+    bool Document::RoutePointerPath(PointerEvent& event)
+    {
+        if (event.Target == nullptr)
+        {
+            return false;
+        }
+
+        // The ancestor path root→target; capture walks it forward, bubble reverse.
+        vector<Element*> path;
+        for (Element* e = event.Target; e != nullptr; e = e->Parent)
+        {
+            path.push_back(e);
+        }
+        std::ranges::reverse(path);
+
+        for (Element* e : path)
+        {
+            event.Target = e;
+            if (FireHandler(*e, "onPointerCapture"))
+            {
+                event.Handled = true;
+            }
+            if (event.Handled)
+            {
+                return true;
+            }
+        }
+        for (auto it = path.rbegin(); it != path.rend(); ++it)
+        {
+            event.Target = *it;
+            if (FireHandler(**it, "onPointer"))
+            {
+                event.Handled = true;
+            }
+            if (event.Handled)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool Document::Navigate(NavAction action)
+    {
+        if (!m_Interactive)
+        {
+            return false;
+        }
+
+        if (action == NavAction::Confirm)
+        {
+            if (m_Focused == nullptr)
+            {
+                return false;
+            }
+            // Confirm activates the focused element the same way a click does — one handler path.
+            SetState(*m_Focused, WithBit(m_Focused->State, ElementState::Active, true));
+            const bool fired = FireHandler(*m_Focused, "onClick");
+            SetState(*m_Focused, WithBit(m_Focused->State, ElementState::Active, false));
+            return fired;
+        }
+        if (action == NavAction::Cancel)
+        {
+            return m_Focused != nullptr && FireHandler(*m_Focused, "onCancel");
+        }
+
+        vector<Element*> focusables;
+        GatherFocusables(*m_Root, focusables);
+        if (focusables.empty())
+        {
+            return false;
+        }
+
+        // With nothing focused, any navigation lands on the first focusable.
+        if (m_Focused == nullptr)
+        {
+            SetFocus(focusables.front());
+            return true;
+        }
+
+        if (action == NavAction::Next || action == NavAction::Previous)
+        {
+            const auto it = std::ranges::find(focusables, m_Focused);
+            const usize index = it == focusables.end() ? 0 : usize(it - focusables.begin());
+            const usize count = focusables.size();
+            const usize next =
+                action == NavAction::Next ? (index + 1) % count : (index + count - 1) % count;
+            SetFocus(focusables[next]);
+            return true;
+        }
+
+        // Directional: pick the nearest focusable whose center lies in the pressed direction.
+        const vec2 from = m_Focused->Layout.Center();
+        Element* best = nullptr;
+        f32 bestScore = 0.0f;
+        for (Element* candidate : focusables)
+        {
+            if (candidate == m_Focused)
+            {
+                continue;
+            }
+            const vec2 to = candidate->Layout.Center();
+            const vec2 delta = to - from;
+
+            bool inDirection = false;
+            f32 primary = 0.0f;
+            f32 secondary = 0.0f;
+            switch (action)
+            {
+            case NavAction::MoveUp:
+                inDirection = delta.y < 0.0f;
+                primary = -delta.y;
+                secondary = std::abs(delta.x);
+                break;
+            case NavAction::MoveDown:
+                inDirection = delta.y > 0.0f;
+                primary = delta.y;
+                secondary = std::abs(delta.x);
+                break;
+            case NavAction::MoveLeft:
+                inDirection = delta.x < 0.0f;
+                primary = -delta.x;
+                secondary = std::abs(delta.y);
+                break;
+            case NavAction::MoveRight:
+                inDirection = delta.x > 0.0f;
+                primary = delta.x;
+                secondary = std::abs(delta.y);
+                break;
+            default:
+                break;
+            }
+            if (!inDirection)
+            {
+                continue;
+            }
+            // Prefer the smallest travel along the axis, penalizing off-axis spread so a candidate
+            // roughly in line wins over a nearer but far-to-the-side one.
+            const f32 score = primary + secondary * 2.0f;
+            if (best == nullptr || score < bestScore)
+            {
+                best = candidate;
+                bestScore = score;
+            }
+        }
+        if (best == nullptr)
+        {
+            return false;
+        }
+        SetFocus(best);
+        return true;
+    }
+
+    bool Document::DispatchText(u32 codepoint)
+    {
+        if (!m_Interactive || m_Focused == nullptr || m_Context == nullptr)
+        {
+            return false;
+        }
+        const auto it = m_Focused->Bindings.find("onText");
+        if (it == m_Focused->Bindings.end())
+        {
+            return false;
+        }
+        const EventHandler* handler = m_Context->FindHandler(it->second);
+        if (handler == nullptr || !*handler)
+        {
+            return false;
+        }
+        // The widget layer's text handler reads the codepoint off the document; a bare EventHandler
+        // carries only the element, so the codepoint rides a transient field the handler reads.
+        m_PendingCodepoint = codepoint;
+        (*handler)(*m_Focused);
+        m_PendingCodepoint = 0;
+        return true;
+    }
+
+    void Document::GatherFocusables(Element& element, vector<Element*>& out) const
+    {
+        if (!element.Visible)
+        {
+            return;
+        }
+        if (element.Focusable)
+        {
+            out.push_back(&element);
+        }
+        for (Element* child : element.Children)
+        {
+            GatherFocusables(*child, out);
+        }
     }
 }

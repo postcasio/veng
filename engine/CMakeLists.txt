@@ -90,8 +90,10 @@ add_library(veng SHARED
         src/Scene/Visibility.cpp
         src/Renderer/SwapChainCompositePass.cpp
         src/Renderer/GatherPass.cpp
+        src/Gui/BindingContext.cpp
         src/Gui/DrawList.cpp
         src/Gui/Document.cpp
+        src/Gui/GuiConsumer.cpp
         src/Gui/StyleProperty.cpp
         src/Gui/StyleSheet.cpp
         src/Gui/UIDocument.cpp
