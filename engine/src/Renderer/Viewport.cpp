@@ -1,12 +1,15 @@
 #include <Veng/Renderer/Viewport.h>
 
 #include <Veng/Assert.h>
+#include <Veng/Gui/Document.h>
+#include <Veng/Gui/DrawList.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
 
 #include <Veng/Scene/Scene.h>
 
+#include "Passes/GuiScenePass.h"
 #include "Picking.h"
 
 #include <algorithm>
@@ -19,9 +22,9 @@ namespace Veng::Renderer
     }
 
     Viewport::Viewport(const ViewportInfo& info)
-        : m_Context(info.Context), m_Region(info.Region), m_RenderScale(info.RenderScale),
-          m_MaxAllocationScale(info.MaxAllocationScale), m_Role(info.Role),
-          m_RenderOnDemand(info.RenderOnDemand)
+        : m_Context(info.Context), m_Assets(info.Assets), m_Region(info.Region),
+          m_RenderScale(info.RenderScale), m_MaxAllocationScale(info.MaxAllocationScale),
+          m_Role(info.Role), m_RenderOnDemand(info.RenderOnDemand)
     {
         VE_ASSERT(info.RenderScale > 0.0f, "Viewport RenderScale must be > 0 (got {})",
                   info.RenderScale);
@@ -47,6 +50,13 @@ namespace Veng::Renderer
 
     Viewport::~Viewport()
     {
+        // Clear each attached document's back-reference so a surviving document does not later
+        // detach through a destroyed viewport. The documents are non-owning; the owner keeps them.
+        for (const AttachedDocument& attached : m_Documents)
+        {
+            attached.Document->m_HostViewport = nullptr;
+        }
+
         // Order-preserving erase from the drive-list (registration order is render order, so a
         // swap-and-pop would scramble it). Unregistered viewports leave m_DriveList null.
         if (m_DriveList != nullptr)
@@ -56,12 +66,72 @@ namespace Veng::Renderer
         }
 
         m_Context.GetBindlessRegistry().Release(m_OutputHandle);
+        m_Context.GetBindlessRegistry().Release(m_CompositeHandle);
     }
 
     void Viewport::AttachToDriveList(vector<Viewport*>& driveList)
     {
         VE_ASSERT(m_DriveList == nullptr, "Viewport is already registered to a drive-list");
         m_DriveList = &driveList;
+    }
+
+    void Viewport::AttachDocument(Gui::Document& document, i32 layer)
+    {
+        VE_ASSERT(document.GetHostViewport() == nullptr,
+                  "Gui::Document is already attached to a viewport; detach it first");
+
+        // The GuiScenePass and the shared draw list are created on the first attach, so a viewport
+        // that never hosts a document allocates no UI resources. The pass composites at the region's
+        // native output extent, not the render-scale sub-rect, so text stays sharp.
+        if (!m_GuiPass)
+        {
+            m_GuiPass = GuiScenePass::Create({
+                .Context = m_Context,
+                .Assets = m_Assets,
+                .Extent = m_Region.Extent,
+                .OutputFormat = m_Renderer->GetOutput()->GetImage()->GetFormat(),
+            });
+            m_DrawList = CreateUnique<Gui::DrawList>();
+            m_GuiPassExtent = m_Region.Extent;
+        }
+
+        document.m_HostViewport = this;
+
+        // Insert keeping the stack sorted by layer with ties in attach order: find the first entry
+        // whose layer exceeds the new one and insert before it, so an equal-layer document lands
+        // after the ones already at that layer.
+        const auto insertAt = std::ranges::find_if(
+            m_Documents, [layer](const AttachedDocument& entry) { return entry.Layer > layer; });
+        m_Documents.insert(insertAt, {.Document = &document, .Layer = layer});
+
+        RebuildDocumentPointers();
+    }
+
+    void Viewport::DetachDocument(Gui::Document& document)
+    {
+        const auto found =
+            std::ranges::find_if(m_Documents, [&document](const AttachedDocument& entry)
+                                 { return entry.Document == &document; });
+        VE_ASSERT(found != m_Documents.end(), "Gui::Document is not attached to this viewport");
+
+        document.m_HostViewport = nullptr;
+        m_Documents.erase(found);
+        RebuildDocumentPointers();
+    }
+
+    void Viewport::RebuildDocumentPointers()
+    {
+        m_DocumentPointers.clear();
+        m_DocumentPointers.reserve(m_Documents.size());
+        for (const AttachedDocument& attached : m_Documents)
+        {
+            m_DocumentPointers.push_back(attached.Document);
+        }
+    }
+
+    std::span<Gui::Document* const> Viewport::GetAttachedDocuments() const
+    {
+        return m_DocumentPointers;
     }
 
     void Viewport::RefreshOutputHandle()
@@ -299,7 +369,53 @@ namespace Veng::Renderer
         // panel, a material), so transition it to a sampleable layout here.
         cmd.PrepareForAccess(m_Renderer->GetOutput(), AccessKind::Sample);
 
+        // Drive the attached documents and blend their layers over the scene output. A viewport with
+        // no documents skips this entirely — its output stays the scene output, byte-identical.
+        RenderDocuments(cmd);
+
         ServicePendingPick();
+    }
+
+    void Viewport::RenderDocuments(CommandBuffer& cmd)
+    {
+        if (m_Documents.empty())
+        {
+            return;
+        }
+
+        // The documents lay out and draw at the region's native output extent — the sharp,
+        // full-resolution surface, not the render-scale sub-rect the scene renders into. A region
+        // extent change re-sizes the UI image and composite target to match before the layers solve.
+        const vec2 available = vec2(m_Region.Extent);
+        const f32 delta = m_ViewState.Delta;
+
+        if (m_GuiPassExtent != m_Region.Extent)
+        {
+            m_GuiPass->Resize(m_Region.Extent);
+            m_GuiPassExtent = m_Region.Extent;
+        }
+
+        // Walk bottom → top, driving each document's per-frame pipeline and appending its geometry
+        // into the one shared draw list, so the layers composite in a single GuiScenePass record.
+        m_DrawList->Clear();
+        for (const AttachedDocument& attached : m_Documents)
+        {
+            Gui::Document& document = *attached.Document;
+            document.Update(delta);
+            document.Solve(available);
+            document.Build(*m_DrawList);
+        }
+
+        m_GuiPass->SetDrawList(*m_DrawList);
+        m_GuiPass->Render(cmd, m_Renderer->GetOutput());
+
+        // The composite is sampled outside the pass's graph (the compositor, a material, an ImGui
+        // panel), so transition it to a sampleable layout — the same handoff the scene output gets.
+        cmd.PrepareForAccess(m_GuiPass->GetOutput(), AccessKind::Sample);
+
+        // Register the composite view into bindless (once, and again whenever a resize replaced it)
+        // so GetOutputHandle names the composited result.
+        RefreshCompositeHandle();
     }
 
     void Viewport::ServicePendingPick()
@@ -361,13 +477,38 @@ namespace Veng::Renderer
         }
     }
 
+    void Viewport::RefreshCompositeHandle()
+    {
+        const Ref<ImageView>& composite = m_GuiPass->GetOutput();
+        if (composite == m_RegisteredCompositeView)
+        {
+            return;
+        }
+
+        BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
+        bindless.Release(m_CompositeHandle);
+        m_CompositeHandle = bindless.Register(composite);
+        m_RegisteredCompositeView = composite;
+        ++m_OutputGeneration;
+    }
+
     Ref<ImageView> Viewport::GetOutput() const
     {
+        // With documents attached the presented result is the UI-composited image; with none it is
+        // the raw scene output, byte-identical to a viewport that never hosted a document.
+        if (!m_Documents.empty())
+        {
+            return m_GuiPass->GetOutput();
+        }
         return m_Renderer->GetOutput();
     }
 
     TextureHandle Viewport::GetOutputHandle() const
     {
+        if (!m_Documents.empty())
+        {
+            return m_CompositeHandle;
+        }
         return m_OutputHandle;
     }
 

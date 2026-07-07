@@ -6,6 +6,7 @@
 #include <Veng/Asset/Font.h>
 #include <Veng/Gui/StyleSheet.h>
 #include <Veng/Gui/UIDocument.h>
+#include <Veng/Renderer/Viewport.h>
 
 #include <algorithm>
 
@@ -208,7 +209,15 @@ namespace Veng::Gui
         m_Root = &CreateElement(ElementKind::Panel);
     }
 
-    Document::~Document() = default;
+    Document::~Document()
+    {
+        // Self-detach from the hosting viewport's layer stack through the stored back-reference, so
+        // dropping the owning Unique is the whole of cleanup with no dangling pointer left behind.
+        if (m_HostViewport != nullptr)
+        {
+            m_HostViewport->DetachDocument(*this);
+        }
+    }
 
     namespace
     {

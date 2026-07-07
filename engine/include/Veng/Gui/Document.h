@@ -6,6 +6,11 @@
 #include <Veng/Gui/Style.h>
 #include <Veng/Gui/StyleSheet.h>
 
+namespace Veng::Renderer
+{
+    class Viewport;
+}
+
 namespace Veng::Gui
 {
     class UIDocument;
@@ -162,6 +167,13 @@ namespace Veng::Gui
         /// @brief Returns whether the tree needs a Solve (structure or style changed since the last).
         [[nodiscard]] bool IsDirty() const { return m_Dirty; }
 
+        /// @brief Returns the viewport this document is attached to, or nullptr when detached.
+        ///
+        /// A document attaches to at most one viewport at a time (Viewport::AttachDocument). The
+        /// back-reference the destructor self-detaches through, and the document's input identity:
+        /// its inherited seat is the host viewport's associated seat (Viewport::GetSeat).
+        [[nodiscard]] Renderer::Viewport* GetHostViewport() const { return m_HostViewport; }
+
         /// @brief Measures a Text element's intrinsic size for a given available width.
         ///
         /// Uses the installed text measurer when one is set, otherwise shapes the element's text
@@ -174,6 +186,10 @@ namespace Veng::Gui
                                               optional<f32> availableWidth) const;
 
     private:
+        // Viewport::AttachDocument / DetachDocument set and clear m_HostViewport, so the destructor
+        // self-detaches through it — the sole writer of the back-reference.
+        friend class Renderer::Viewport;
+
         struct YogaTree;
 
         /// @brief Allocates a new element in the arena and mirrors it into the layout tree.
@@ -214,5 +230,12 @@ namespace Veng::Gui
 
         /// @brief The available size the last Solve ran against; a change re-runs Solve.
         vec2 m_LastAvailable{-1.0f};
+
+        /// @brief The viewport hosting this document, or nullptr when detached.
+        ///
+        /// Set by Viewport::AttachDocument and cleared by DetachDocument; the destructor detaches
+        /// through it so dropping the owning Unique removes the document from its viewport's layer
+        /// stack with no dangling pointer.
+        Renderer::Viewport* m_HostViewport = nullptr;
     };
 }

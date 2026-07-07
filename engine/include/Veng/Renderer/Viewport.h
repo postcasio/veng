@@ -12,16 +12,25 @@
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Entity.h>
 
+#include <span>
+
 namespace Veng
 {
     class Scene;
     class AssetManager;
 }
 
+namespace Veng::Gui
+{
+    class Document;
+    class DrawList;
+}
+
 namespace Veng::Renderer
 {
     class Context;
     class CommandBuffer;
+    class GuiScenePass;
 
     /// @brief Selects whether the engine compositor places a viewport's texture into the window.
     ///
@@ -276,14 +285,60 @@ namespace Veng::Renderer
         /// @param cmd  The command buffer to record into.
         void Render(CommandBuffer& cmd);
 
+        /// @brief Attaches a UI document to this viewport's ordered layer stack.
+        ///
+        /// The viewport holds a non-owning, layer-ordered list of documents; the caller keeps the
+        /// owning Unique<Gui::Document> and dropping it self-detaches (the document's destructor
+        /// removes itself through a stored back-reference). Layers draw bottom → top (a lower @p
+        /// layer composites first, a higher one over it — a HUD below a menu below notifications);
+        /// documents at the same layer draw in attach order. Each attached document is driven every
+        /// Render (Update → Solve at the region extent → Build) and composited over the scene output
+        /// through the viewport's GuiScenePass, created on the first attach. A document already
+        /// attached to a viewport must be detached first — a document hosts on one viewport at a time.
+        /// @param document  The document to attach; must not already be attached to a viewport.
+        /// @param layer     The composite layer; lower draws below higher, ties in attach order.
+        void AttachDocument(Gui::Document& document, i32 layer = 0);
+
+        /// @brief Detaches a document from this viewport's layer stack.
+        ///
+        /// Removes the document from the ordered list and clears its back-reference. Detaching a
+        /// document not attached to this viewport is a fatal assert. The GuiScenePass is retained
+        /// once created; a viewport whose stack empties composites its scene output unchanged again.
+        /// @param document  The document to detach; must be attached to this viewport.
+        void DetachDocument(Gui::Document& document);
+
+        /// @brief Returns the attached documents in composite order, bottom layer → top.
+        ///
+        /// The layer stack in draw order — index 0 the bottom-most, back() the top-most. An input
+        /// layer walks it top-most first (reverse) scoped to GetSeat(); the render walks it in order.
+        /// The span is valid until the next AttachDocument/DetachDocument.
+        /// @return The ordered attached documents, empty when none are attached.
+        [[nodiscard]] std::span<Gui::Document* const> GetAttachedDocuments() const;
+
+        /// @brief Sets the seat a hosted document inherits as its input identity.
+        ///
+        /// A document attached to this viewport inherits this seat (its Viewer entity); an input
+        /// layer routes the document's input by that seat's devices. Entity::Null — the default —
+        /// is the single-player seat that reads every device. This records the identity only; the
+        /// documents drive no input until a later layer opens their interactivity.
+        /// @param seat  The seat's Viewer entity, or Entity::Null for the all-devices default.
+        void SetSeat(Entity seat) { m_Seat = seat; }
+
+        /// @brief Returns the seat a hosted document inherits (Entity::Null for the default).
+        [[nodiscard]] Entity GetSeat() const { return m_Seat; }
+
         /// @brief Returns the sampleable view of the rendered result.
         ///
-        /// Invalidated by an extent change applied in Render and by Configure; re-fetch after.
+        /// With documents attached this is the composite (scene with the UI layers blended over it);
+        /// with none it is the scene output directly, byte-identical to a viewport that never hosted
+        /// a document. Invalidated by an extent change applied in Render and by Configure; re-fetch
+        /// after.
         [[nodiscard]] Ref<ImageView> GetOutput() const;
 
         /// @brief Returns the bindless slot naming the rendered result.
         ///
-        /// For the compositor, ImGuiLayer::CreateTexture, and Material::SetTextureHandle.
+        /// For the compositor, ImGuiLayer::CreateTexture, and Material::SetTextureHandle. With
+        /// documents attached this names the UI composite; with none it names the scene output.
         /// Invalidated alongside GetOutput() by an extent change and by Configure; re-fetch after.
         /// @warning A consumer viewport sampling this handle (e.g. a material bound through
         ///          Material::SetTextureHandle) must be registered after the producer:
@@ -430,6 +485,8 @@ namespace Veng::Renderer
 
         /// @brief The Vulkan context, for bindless registration.
         Context& m_Context;
+        /// @brief The asset manager the owned GuiScenePass loads its gui shaders through.
+        AssetManager& m_Assets;
         /// @brief The owned deferred renderer.
         Unique<SceneRenderer> m_Renderer;
         /// @brief The viewport's window placement rectangle.
@@ -500,5 +557,69 @@ namespace Veng::Renderer
         ///
         /// Set by AttachToDriveList; ~Viewport erases this viewport's pointer from it.
         vector<Viewport*>* m_DriveList = nullptr;
+
+        /// @brief Drives every attached document and composites the layers over the scene output.
+        ///
+        /// Per attached document, bottom → top: Update(delta) → Solve(region extent) → Build into
+        /// m_DrawList; the pass records the combined list into the one UI image and blends it over
+        /// the scene output. A no-op when no document is attached.
+        /// @param cmd  The command buffer to record the UI composite into.
+        void RenderDocuments(CommandBuffer& cmd);
+
+        /// @brief Rebuilds m_DocumentPointers from m_Documents after an attach or detach.
+        void RebuildDocumentPointers();
+
+        /// @brief Re-registers the GuiScenePass composite view into bindless when it changed.
+        ///
+        /// Compares the pass's current output view against the one m_CompositeHandle names and
+        /// re-registers only on a change (a resize replacing the composite image), so a steady frame
+        /// issues no bindless churn. Bumps m_OutputGeneration so a consumer re-fetches the handle.
+        void RefreshCompositeHandle();
+
+        /// @brief One document on the layer stack: its pointer and its composite layer.
+        struct AttachedDocument
+        {
+            /// @brief The non-owning document; the owner keeps the Unique and self-detaches on drop.
+            Gui::Document* Document = nullptr;
+            /// @brief The composite layer; lower draws below higher, ties in attach order.
+            i32 Layer = 0;
+        };
+
+        /// @brief The attached documents in composite order (bottom → top), stable-sorted by layer.
+        vector<AttachedDocument> m_Documents;
+
+        /// @brief The attached documents' pointers in composite order, rebuilt on attach/detach.
+        ///
+        /// The span GetAttachedDocuments returns, kept parallel to m_Documents so the accessor hands
+        /// out a contiguous Document* view without exposing the layer records.
+        vector<Gui::Document*> m_DocumentPointers;
+
+        /// @brief The seat a hosted document inherits as its input identity; Null reads every device.
+        Entity m_Seat = Entity::Null;
+
+        /// @brief The UI overlay pass, created lazily on the first document attach; null until then.
+        ///
+        /// Owns the UI image and the composite target. Created when the first document attaches and
+        /// retained after, so a viewport that never hosts a document allocates no UI resources and
+        /// composites its scene output unchanged.
+        Unique<GuiScenePass> m_GuiPass;
+
+        /// @brief The per-viewport draw list the attached documents Build into each Render.
+        ///
+        /// Held across frames and cleared before each rebuild, so the layer walk appends into one
+        /// combined list the GuiScenePass records in one pass.
+        Unique<Gui::DrawList> m_DrawList;
+
+        /// @brief The native output extent the GuiScenePass is sized to; a region change re-sizes it.
+        uvec2 m_GuiPassExtent = {};
+
+        /// @brief Bindless slot naming the GuiScenePass composite; unset until a document attaches.
+        ///
+        /// GetOutputHandle returns this while documents are attached, so a material or the compositor
+        /// samples the composited (scene + UI) result rather than the raw scene output.
+        TextureHandle m_CompositeHandle;
+
+        /// @brief The composite view m_CompositeHandle names; compared to re-register only on change.
+        Ref<ImageView> m_RegisteredCompositeView;
     };
 }

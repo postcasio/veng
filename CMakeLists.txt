@@ -965,6 +965,7 @@ if (VENG_BUILD_TESTS)
             tests/gpu/debug_draw.cpp
             tests/gpu/point_field.cpp
             tests/gpu/viewport.cpp
+            tests/gpu/viewport_documents.cpp
             tests/gpu/splitscreen.cpp
             tests/gpu/hi_z_pyramid.cpp
             tests/gpu/volume_texture_3d.cpp
