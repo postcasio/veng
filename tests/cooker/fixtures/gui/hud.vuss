@@ -3,6 +3,7 @@
 .hud {
     flex-direction: column;
     background: #1a1a1acc;
+    background-gradient: linear 180deg, #ff0000 0%, #0000ff 100%;
     padding: 8px;
 }
 

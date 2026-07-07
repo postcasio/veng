@@ -150,21 +150,28 @@ namespace Veng::Gui
         case StyleProperty::Origin:
             style.Origin = vec2(declaration.Values.x, declaration.Values.y);
             return;
+        case StyleProperty::BackgroundGradient:
+            // A gradient references the sheet's gradient table and needs the borrowed AssetManager to
+            // upload its ramp, so the instantiate-time cascade resolves it where the sheet is in hand
+            // (ResolveElementStyle); it is not resolvable from a declaration alone here.
+            return;
         }
     }
 
     Ref<StyleSheet> StyleSheet::Create(vector<StyleRule> rules,
                                        vector<StyleAnimationClip> animations,
+                                       vector<StyleGradient> gradients,
                                        vector<Ref<Detail::AssetCacheEntry>> dependencies)
     {
-        return Ref<StyleSheet>(
-            new StyleSheet(std::move(rules), std::move(animations), std::move(dependencies)));
+        return Ref<StyleSheet>(new StyleSheet(std::move(rules), std::move(animations),
+                                              std::move(gradients), std::move(dependencies)));
     }
 
     StyleSheet::StyleSheet(vector<StyleRule> rules, vector<StyleAnimationClip> animations,
+                           vector<StyleGradient> gradients,
                            vector<Ref<Detail::AssetCacheEntry>> dependencies)
         : m_Rules(std::move(rules)), m_Animations(std::move(animations)),
-          m_Dependencies(std::move(dependencies))
+          m_Gradients(std::move(gradients)), m_Dependencies(std::move(dependencies))
     {
     }
 }

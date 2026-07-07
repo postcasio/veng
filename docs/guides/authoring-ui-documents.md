@@ -95,10 +95,28 @@ selector engine.
 
 Layout is **flexbox** (Yoga): `flex-direction`, `justify-content`, `align-items`,
 `flex-grow`/`flex-shrink`/`flex-basis`, `width`/`height` (`px` or `%`), `margin`,
-`padding`, `position`/`inset`. Paint is `background`, `color` (text / widget fill),
-`corner-radius`, `border-width`/`border-color`, `opacity`. Colors are hex `#rrggbb` or
-`#rrggbbaa`, resolved sRGB→linear at cook time. Register the stylesheet in the pack as
-type `StyleSheet`.
+`padding`, `position`/`inset`. Paint is `background`, `background-gradient`, `color`
+(text / widget fill), `corner-radius`, `border-width`/`border-color`, `opacity`. Colors
+are hex `#rrggbb` or `#rrggbbaa`, resolved sRGB→linear at cook time. Register the
+stylesheet in the pack as type `StyleSheet`.
+
+A `background-gradient` fills the element with a multi-stop gradient instead of a flat
+color (it wins over `background` when both are set, and composes with `corner-radius`
+and a border). The multi-stop color is baked into a ramp at cook time; the shape is one
+of three, each spanning the element's box:
+
+```css
+/* linear: an angle (CSS convention — 0deg to the top, 90deg to the right) then stops */
+.panel  { background-gradient: linear 135deg, #1a2b3c 0%, #4a5b6c 40%, #ff0080 100%; }
+/* radial: an optional `at <x>% <y>%` center (default 50% 50%), farthest-corner fit */
+.orb    { background-gradient: radial at 30% 30%, #ffffff 0%, #202080 100%; }
+/* conic: an optional `from <angle>` and `at <center>` */
+.dial   { background-gradient: conic from 90deg at 50% 50%, #000000 0%, #ffffff 100%; }
+```
+
+Stop positions (`40%`) are optional — omitted stops distribute evenly. A gradient is
+authorable **only in a stylesheet rule** (like `animation`), and is applied from the
+base (non-pseudo-state) rules; it is not currently variant-swappable or transition-eased.
 
 A state variant is the selector plus a pseudo-state — a `:hover` rule contributes a
 variant the runtime folds over the base style when the element is hovered, easing any

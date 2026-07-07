@@ -40,6 +40,25 @@ namespace Veng::Gui
         vector<StyleKeyframe> Keyframes;
     };
 
+    /// @brief One cooked gradient fill: its shape, packed geometry, and its baked ramp pixels.
+    ///
+    /// A `background-gradient` declaration references a gradient by index (StyleDeclaration::Unit).
+    /// The multi-stop color is baked at cook time into a Width×1 RGBA8 ramp (linear straight-alpha);
+    /// the instantiate-time resolve uploads it to a texture (through the borrowed AssetManager) and
+    /// materializes a ResolvedGradient onto the element's Style. Geometry is packed per Kind in the
+    /// element's normalized box space (see Gui::GradientFill).
+    struct StyleGradient
+    {
+        /// @brief The gradient shape (Linear / Radial / Conic).
+        GradientKind Kind = GradientKind::Linear;
+        /// @brief Geometry packed per Kind, in the element's normalized box space.
+        vec4 Geometry{0.0f};
+        /// @brief The ramp's texel count (a Width×1 RGBA8 image; Ramp holds Width * 4 bytes).
+        u32 Width = 0;
+        /// @brief The baked ramp pixels, linear straight-alpha RGBA8, largest offset t last.
+        vector<u8> Ramp;
+    };
+
     /// @brief One resolved USS rule: a selector, a pseudo-state, and its declarations.
     ///
     /// The selector matches an element by its element type (Type), one class tag (Class), and/or
@@ -96,13 +115,15 @@ namespace Veng::Gui
     class StyleSheet
     {
     public:
-        /// @brief Creates a StyleSheet from its resolved rules, clips, and dependency entries.
+        /// @brief Creates a StyleSheet from its resolved rules, clips, gradients, and dependencies.
         /// @param rules         The flattened, resolved rules, in source order.
         /// @param animations    The cooked @keyframes clips, indexed by `animation` declarations.
+        /// @param gradients     The cooked gradients, indexed by `background-gradient` declarations.
         /// @param dependencies  The resolved font dependency cache entries, kept resident.
         /// @return A shared StyleSheet.
         static Ref<StyleSheet> Create(vector<StyleRule> rules,
                                       vector<StyleAnimationClip> animations,
+                                      vector<StyleGradient> gradients,
                                       vector<Ref<Detail::AssetCacheEntry>> dependencies);
 
         /// @brief Returns the sheet's resolved rules, in source order.
@@ -114,13 +135,19 @@ namespace Veng::Gui
             return m_Animations;
         }
 
+        /// @brief Returns the sheet's gradients, in the index order `background-gradient` references.
+        [[nodiscard]] const vector<StyleGradient>& GetGradients() const { return m_Gradients; }
+
     private:
         StyleSheet(vector<StyleRule> rules, vector<StyleAnimationClip> animations,
+                   vector<StyleGradient> gradients,
                    vector<Ref<Detail::AssetCacheEntry>> dependencies);
 
         vector<StyleRule> m_Rules;
         /// @brief The cooked @keyframes clips, indexed by an `animation` declaration's Unit.
         vector<StyleAnimationClip> m_Animations;
+        /// @brief The cooked gradients, indexed by a `background-gradient` declaration's Unit.
+        vector<StyleGradient> m_Gradients;
         /// @brief Resolved font dependency entries, kept resident so a declaration's font stays loaded.
         vector<Ref<Detail::AssetCacheEntry>> m_Dependencies;
     };

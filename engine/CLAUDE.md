@@ -833,7 +833,9 @@ cook-on-demand hot-reload serves UI with no new machinery. The parsing side is i
   `*.font.json` naming a TTF/OTF; the runtime decodes nothing and shapes crisp text at any scale
   from the one small atlas. `AssetType::StyleSheet` (`Veng/Gui/StyleSheet.h`) is a reusable
   cooked stylesheet — **resolved** rules (type/class/id selectors matched at cook time) plus their
-  `:hover`/`:active`/`:focus`/`:disabled`/`:checked` state variants, colors resolved sRGB→linear.
+  `:hover`/`:active`/`:focus`/`:disabled`/`:checked` state variants, colors resolved sRGB→linear,
+  and a **gradient table** (each `background-gradient` baked at cook time to a shape + box-space
+  geometry + an N×1 ramp LUT the instantiate resolve uploads through the borrowed AssetManager).
   `AssetType::UIDocument` (`Veng/Gui/UIDocument.h`) is the cooked markup: a **pre-order recipe
   element tree** (each element carrying its kind, id, classes, text, inline style, unresolved
   `{obj.field}` bindings, and named handlers) plus the `StyleSheet` handles it references and its
@@ -842,12 +844,15 @@ cook-on-demand hot-reload serves UI with no new machinery. The parsing side is i
   dependencies exactly as a `Material` eager-loads its textures.
 
 - **A `UIDocument` is a recipe; a `Gui::Document` is an instance — the `Prefab` model.**
-  `Gui::Document::Instantiate(const UIDocument&, const FontResolver&)` materializes an
+  `Gui::Document::Instantiate(const UIDocument&, AssetManager&)` materializes an
   **independent** live tree from the cooked recipe (cascading the referenced stylesheets onto each
   element, inline style winning), so instantiating one recipe twice yields two trees that mutate
-  separately — two split-screen HUDs are two instances over one cooked blob. The `FontResolver`
-  (`function<AssetHandle<Font>(AssetId)>`) is how a font declaration's `AssetId` resolves to a
-  loaded atlas; a game builds it over its `AssetManager` (`LoadSync<Font>`). A `Document` can also
+  separately — two split-screen HUDs are two instances over one cooked blob. The document resolves
+  its asset declarations through the borrowed `AssetManager` — a font declaration's `AssetId` loads
+  to an atlas via `LoadSync<Font>`, and it re-runs on later style resolves, so the manager must
+  outlive the document. (Internally that resolution is a `FontResolver`,
+  `function<AssetHandle<Font>(AssetId)>`, the document builds from the manager; the seam a later
+  texture-backed element resolves its own dependencies through.) A `Document` can also
   be built and mutated **imperatively** in C++ (`Add`/`Remove`/`SetText`/`SetStyle`/…) — the same
   retained tree, two authoring modes (the settled binding decision).
 

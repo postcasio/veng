@@ -9,6 +9,7 @@
 namespace Veng
 {
     class Font;
+    class Texture;
 }
 
 /// @brief The resolved per-element style: flex layout inputs plus paint inputs.
@@ -20,6 +21,23 @@ namespace Veng
 /// font, opacity) feed the draw list. All spatial values are in framebuffer pixels.
 namespace Veng::Gui
 {
+    /// @brief A gradient background resolved onto a Style: its shape, geometry, and resident ramp.
+    ///
+    /// The cook bakes a gradient's multi-stop color into an N×1 ramp LUT and stores its shape +
+    /// packed box-space geometry; the instantiate-time resolve uploads the ramp to a texture and
+    /// keeps the handle here (resident for the Style's lifetime, like TextFont). The paint path
+    /// reads Kind/Geometry and the ramp's bindless handle/sampler into a Gui::GradientFill. Geometry
+    /// is packed per Kind in normalized box space — see Gui::GradientFill.
+    struct ResolvedGradient
+    {
+        /// @brief The gradient shape (Linear / Radial / Conic).
+        GradientKind Kind = GradientKind::Linear;
+        /// @brief Geometry packed per Kind, in the element's normalized box space.
+        vec4 Geometry{0.0f};
+        /// @brief The resident N×1 ramp LUT (linear straight-alpha); its handle + sampler paint the fill.
+        AssetHandle<Texture> Ramp;
+    };
+
     /// @brief How a sizing value (width, height, flex basis) is expressed.
     enum class LengthKind : u8
     {
@@ -219,6 +237,8 @@ namespace Veng::Gui
 
         /// @brief Background fill color, linear straight-alpha RGBA; a zero alpha draws nothing.
         vec4 Background{0.0f};
+        /// @brief A gradient background fill; when set it paints instead of the flat Background color.
+        optional<ResolvedGradient> BackgroundGradient;
         /// @brief Per-corner background/border radius, in pixels.
         CornerRadii Radii;
         /// @brief Border width and color; a zero width draws no border.

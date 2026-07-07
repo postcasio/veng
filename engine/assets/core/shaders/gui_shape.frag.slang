@@ -1,12 +1,14 @@
 // GUI shape fragment path: a rounded-rectangle signed-distance field with
-// screen-derivative anti-aliased edges and an optional inner border, optionally
-// modulated by a bindless texture (a plain textured quad or one 9-slice tile is a
-// zero-radius rect with a bound texture). The interpolated per-fragment local
-// coordinate and the rect half-extent reconstruct the SDF: negative inside, zero
-// on the edge. Corner radius and border width ride the params; the texture and
-// sampler indices are bindless set-0 slots, with a negative texture index meaning
-// untextured. Output is premultiplied linear RGBA so the pass blends it "over" the
-// scene in linear space.
+// screen-derivative anti-aliased edges and an optional inner border, its fill one of
+// three sources — a flat vertex color, a bindless texture modulating the color (a
+// plain textured quad or one 9-slice tile is a zero-radius rect with a bound texture),
+// or a gradient that reduces the fragment's normalized box position to an offset into a
+// 1D ramp LUT (multi-stop color baked into the ramp). The interpolated per-fragment
+// local coordinate and the rect half-extent reconstruct the SDF: negative inside, zero
+// on the edge. Corner radius and border width ride the params; the texture and sampler
+// indices are bindless set-0 slots, with a negative texture index meaning untextured.
+// Output is premultiplied linear RGBA so the pass blends it "over" the scene in linear
+// space.
 
 struct VSOutput
 {
@@ -16,7 +18,10 @@ struct VSOutput
     float2 v_RectHalf : TEXCOORD1;
     float2 v_RectCoord : TEXCOORD2;
     nointerpolation float4 v_Params : TEXCOORD3;
+    nointerpolation float4 v_Grad : TEXCOORD4;
 };
+
+static const float InvTau = 0.15915494309189535; // 1 / (2*pi)
 
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
 [[vk::binding(1, 0)]] SamplerState g_Samplers[];
@@ -37,8 +42,32 @@ float4 fsMain(VSOutput input) : SV_Target
     int textureIndex = int(input.v_Params.z);
     int samplerIndex = int(input.v_Params.w);
 
+    // v_Grad.w is 0 for no gradient, else the GradientKind ordinal plus one (1 Linear, 2 Radial,
+    // 3 Conic). A gradient reduces the fragment's normalized box position to a ramp offset t and
+    // samples the ramp bound through the texture/sampler slots; a plain textured quad samples by UV.
+    int gradKind = int(input.v_Grad.w);
     float4 color = input.v_Color;
-    if (textureIndex >= 0)
+    if (gradKind > 0)
+    {
+        float2 p = input.v_RectCoord / max(input.v_RectHalf, float2(1e-4, 1e-4));
+        float t;
+        if (gradKind == 1)
+        {
+            t = dot(p, input.v_Grad.xy) + 0.5;
+        }
+        else if (gradKind == 2)
+        {
+            t = length((p - input.v_Grad.xy) * input.v_Grad.z);
+        }
+        else
+        {
+            t = frac(atan2(p.y - input.v_Grad.y, p.x - input.v_Grad.x) * InvTau - input.v_Grad.z);
+        }
+        float4 ramp = g_Textures[NonUniformResourceIndex(textureIndex)].Sample(
+            g_Samplers[NonUniformResourceIndex(samplerIndex)], float2(saturate(t), 0.5));
+        color *= ramp;
+    }
+    else if (textureIndex >= 0)
     {
         float4 texel = g_Textures[NonUniformResourceIndex(textureIndex)].Sample(
             g_Samplers[NonUniformResourceIndex(samplerIndex)], input.v_Uv);

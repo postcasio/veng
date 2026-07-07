@@ -41,6 +41,44 @@ TEST_CASE("gui draw list: consecutive shapes with matching key merge into one ru
     CHECK_FALSE(list.GetRuns()[0].HasClip);
 }
 
+TEST_CASE(
+    "gui draw list: a gradient packs its shape, geometry, and ramp, keyed by the ramp texture")
+{
+    DrawList list;
+    const GradientFill fill{.Kind = GradientKind::Radial,
+                            .Geometry = vec4(0.25f, -0.5f, 0.8f, 0.0f),
+                            .Ramp = Texture(5),
+                            .Sampler = Sampler(2)};
+    list.Gradient(UnitRect, fill, CornerRadii::All(6.0f));
+
+    REQUIRE(list.GetRuns().size() == 1);
+    CHECK(list.GetRuns()[0].Pipeline == GuiPipeline::Shape);
+    REQUIRE(list.GetVertices().size() == 4);
+    const GuiVertex& vertex = list.GetVertices()[0];
+    // The ramp rides the texture/sampler param slots (so the run keys on it, exactly as a modulating
+    // texture does), the corner radius rides Params.x, and Grad carries the geometry + kind-plus-one.
+    CHECK(vertex.Params.z == doctest::Approx(5.0f));
+    CHECK(vertex.Params.w == doctest::Approx(2.0f));
+    CHECK(vertex.Params.x == doctest::Approx(6.0f));
+    CHECK(vertex.Grad.x == doctest::Approx(0.25f));
+    CHECK(vertex.Grad.y == doctest::Approx(-0.5f));
+    CHECK(vertex.Grad.z == doctest::Approx(0.8f));
+    CHECK(vertex.Grad.w == doctest::Approx(static_cast<f32>(GradientKind::Radial) + 1.0f));
+
+    // A second gradient with the same ramp merges; a different ramp opens a new run.
+    list.Gradient({.Min = {60.0f, 10.0f}, .Size = {40.0f, 40.0f}}, fill);
+    CHECK(list.GetRuns().size() == 1);
+    GradientFill other = fill;
+    other.Ramp = Texture(9);
+    list.Gradient({.Min = {110.0f, 10.0f}, .Size = {40.0f, 40.0f}}, other);
+    CHECK(list.GetRuns().size() == 2);
+
+    // A plain solid quad leaves Grad zero, so the fragment takes the non-gradient path.
+    DrawList solid;
+    solid.Quad(UnitRect, vec4(1.0f));
+    CHECK(solid.GetVertices()[0].Grad == vec4(0.0f));
+}
+
 TEST_CASE("gui draw list: a distinct texture opens a distinct run")
 {
     DrawList list;

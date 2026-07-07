@@ -378,6 +378,16 @@ namespace Veng::Cook
         }
     }
 
+    Result<vec4> ParseStyleColor(std::string_view value, const string& located)
+    {
+        std::string_view body = Trim(value);
+        if (!body.empty() && body.front() == '#')
+        {
+            body = body.substr(1);
+        }
+        return ParseHexColor(body, located);
+    }
+
     Result<CookedStyleProperty> ParseStyleDeclaration(StyleProperty property,
                                                       std::string_view value, const string& located)
     {
@@ -465,6 +475,13 @@ namespace Veng::Cook
             // style, a keyframe block) it has no clip table to resolve into.
             return std::unexpected(
                 fmt::format("{}: 'animation' is only authorable in a stylesheet rule", located));
+
+        case StyleProperty::BackgroundGradient:
+            // A gradient bakes a ramp into the stylesheet's own gradient table, so only the
+            // stylesheet importer's rule parse can cook it; an inline style or keyframe block has
+            // no gradient table to append to.
+            return std::unexpected(fmt::format(
+                "{}: 'background-gradient' is only authorable in a stylesheet rule", located));
 
         case StyleProperty::Origin:
         {

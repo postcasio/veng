@@ -1,7 +1,6 @@
 #include "UIDocumentEditorPanel.h"
 
 #include <Veng/Application.h>
-#include <Veng/Asset/Font.h>
 #include <Veng/Gui/Element.h>
 #include <Veng/ImGui/ImGuiLayer.h>
 #include <Veng/ImGui/ImGuiTexture.h>
@@ -172,9 +171,7 @@ namespace VengEditor
         m_Selected = static_cast<usize>(-1);
         m_SelectedElement = nullptr;
 
-        m_Document = Gui::Document::Instantiate(
-            *m_Handle.Get(), [this](AssetId id)
-            { return m_Assets.LoadSync<Font>(id).value_or(AssetHandle<Font>{}); });
+        m_Document = Gui::Document::Instantiate(*m_Handle.Get(), m_Assets);
         m_Viewport->AttachDocument(*m_Document);
     }
 

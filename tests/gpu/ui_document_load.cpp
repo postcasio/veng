@@ -233,11 +233,34 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(clip.Keyframes[1].Declarations[0].Property == Gui::StyleProperty::Opacity);
     CHECK(clip.Keyframes[1].Declarations[0].Values.x == doctest::Approx(1.0f));
 
+    // The `.hud` rule's `background-gradient` baked one gradient into the sheet's table: a vertical
+    // (180deg) linear ramp from red to blue. Geometry is the pre-scaled box-space axis (t = 0.5·p.y
+    // + 0.5), and the multi-stop color is baked into the ramp — red at t=0, blue at t=1.
+    REQUIRE(sheet.GetGradients().size() == 1);
+    const Gui::StyleGradient& gradient = sheet.GetGradients()[0];
+    CHECK(gradient.Kind == Gui::GradientKind::Linear);
+    CHECK(gradient.Geometry.x == doctest::Approx(0.0f));
+    CHECK(gradient.Geometry.y == doctest::Approx(0.5f));
+    REQUIRE(gradient.Width == 256);
+    REQUIRE(gradient.Ramp.size() == 256u * 4u);
+    // First texel red, last texel blue (linear straight-alpha RGBA8).
+    CHECK(gradient.Ramp[0] > 250);
+    CHECK(gradient.Ramp[1] < 5);
+    CHECK(gradient.Ramp[2] < 5);
+    CHECK(gradient.Ramp[255 * 4 + 0] < 5);
+    CHECK(gradient.Ramp[255 * 4 + 2] > 250);
+
     // (d) Two instantiations are independent trees over one recipe.
-    Unique<Gui::Document> a = Gui::Document::Instantiate(recipe);
-    Unique<Gui::Document> b = Gui::Document::Instantiate(recipe);
+    Unique<Gui::Document> a = Gui::Document::Instantiate(recipe, assets);
+    Unique<Gui::Document> b = Gui::Document::Instantiate(recipe, assets);
     REQUIRE(a != nullptr);
     REQUIRE(b != nullptr);
+
+    // The gradient resolved onto the `.hud` root: its ramp uploaded to a resident texture through
+    // the borrowed AssetManager, ready for the paint path to sample.
+    REQUIRE(a->Root().ComputedStyle.BackgroundGradient.has_value());
+    CHECK(a->Root().ComputedStyle.BackgroundGradient->Kind == Gui::GradientKind::Linear);
+    CHECK(a->Root().ComputedStyle.BackgroundGradient->Ramp.IsLoaded());
 
     // The instantiated tree mirrors the markup: a Panel root with five children.
     CHECK(a->Root().Children.size() == 5);

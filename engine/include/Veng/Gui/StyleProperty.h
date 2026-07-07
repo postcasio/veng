@@ -89,12 +89,16 @@ namespace Veng::Gui
         Animation,
         /// @brief The element's normalized self-anchor (Style::Origin); value is a vec2.
         Origin,
+        /// @brief A gradient background fill (Style::BackgroundGradient), not a plain color: Unit is
+        /// the sheet's gradient-table index the resolve materializes into a ResolvedGradient.
+        BackgroundGradient,
     };
 
     /// @brief The number of StyleProperty enumerators — keep in step when appending one.
     ///
     /// The runtime's whole-style property sweeps iterate `[0, StylePropertyCount)`.
-    inline constexpr u32 StylePropertyCount = static_cast<u32>(StyleProperty::Origin) + 1;
+    inline constexpr u32 StylePropertyCount =
+        static_cast<u32>(StyleProperty::BackgroundGradient) + 1;
 
     /// @brief Canonical USS declaration name of a style property ("flex-direction", "background", …).
     ///

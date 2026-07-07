@@ -114,6 +114,39 @@ namespace Veng::Gui
         }
     };
 
+    /// @brief The shape of a gradient fill: how a fragment's box-local position maps to a ramp offset.
+    ///
+    /// Every kind reduces the fragment's normalized box coordinate (RectCoord / RectHalf, in [-1, 1])
+    /// to a single t in [0, 1] that samples the 1D ramp LUT; only the reduction differs. Multi-stop
+    /// color is baked into the ramp, so the runtime evaluates one t per fragment and samples.
+    enum class GradientKind : u8
+    {
+        /// @brief Axis-projected fill: t = dot(p, axis) + 0.5, the axis pre-scaled to span the box.
+        Linear,
+        /// @brief Centered radial fill: t = length((p - center) * invRadius).
+        Radial,
+        /// @brief Angular sweep: t = frac(atan2(p - center) / TAU - startTurns).
+        Conic,
+    };
+
+    /// @brief A resolved gradient fill: its shape, packed geometry, and the ramp LUT to sample.
+    ///
+    /// Device-free: the ramp is a bindless texture/sampler slot pair (a runtime-built N×1 ramp),
+    /// never an asset handle. Geometry is packed per Kind, all in the element's normalized box space
+    /// (p = RectCoord / RectHalf, in [-1, 1]): Linear uses xy as the pre-scaled axis; Radial uses xy
+    /// as the center and z as the inverse radius; Conic uses xy as the center and z as the start turn.
+    struct GradientFill
+    {
+        /// @brief Which reduction maps box position to the ramp offset t.
+        GradientKind Kind = GradientKind::Linear;
+        /// @brief Geometry packed per Kind, in normalized box space (see the struct brief).
+        vec4 Geometry{0.0f};
+        /// @brief Bindless slot of the 1D ramp LUT (linear straight-alpha), sampled at (t, 0.5).
+        Renderer::TextureHandle Ramp;
+        /// @brief Bindless slot of the ramp's sampler (clamp-to-edge, linear).
+        Renderer::SamplerHandle Sampler;
+    };
+
     /// @brief Selects which fragment path a run replays.
     enum class GuiPipeline : u8
     {
@@ -146,6 +179,12 @@ namespace Veng::Gui
         vec2 RectCoord{0.0f};
         /// @brief Packed fragment params (see the struct brief).
         vec4 Params{0.0f};
+        /// @brief Gradient fill: xyz is GradientFill::Geometry, w is the GradientKind ordinal plus one.
+        ///
+        /// A w of 0 (the default) means no gradient — the fill is the solid color or the modulating
+        /// texture; a positive w selects a gradient shape (1 = Linear, 2 = Radial, 3 = Conic) and the
+        /// fragment samples the ramp bound through Params instead of using Color / the UV texture.
+        vec4 Grad{0.0f};
     };
 
     /// @brief A contiguous slice of the index stream sharing one pipeline, clip, and texture.
@@ -190,6 +229,19 @@ namespace Veng::Gui
         /// @param border   Optional border; a positive width draws a ring in the border color.
         void Quad(const Rect& rect, vec4 color, const CornerRadii& radii = {},
                   const Border& border = {});
+
+        /// @brief Appends a rounded rectangle filled by a gradient sampled from a ramp LUT.
+        ///
+        /// Shares the rounded-rect SDF and border of Quad, so a gradient composes with corner radius
+        /// and a border ring; the fill color comes from the gradient's ramp instead of a flat color.
+        /// The run is keyed by the ramp texture, so distinct ramps sit in distinct runs.
+        /// @param rect    The rectangle, in framebuffer pixels.
+        /// @param fill    The gradient shape, geometry, and ramp/sampler slots.
+        /// @param radii   Per-corner radius; the shape path uses the uniform radius.
+        /// @param border  Optional border; a positive width draws a ring in the border color.
+        /// @param tint    Multiplied over the sampled ramp texel, linear straight-alpha RGBA.
+        void Gradient(const Rect& rect, const GradientFill& fill, const CornerRadii& radii = {},
+                      const Border& border = {}, vec4 tint = vec4(1.0f));
 
         /// @brief Appends a textured quad modulated by a tint.
         /// @param rect     The rectangle, in framebuffer pixels.
@@ -275,8 +327,9 @@ namespace Veng::Gui
         /// @param rectHalf   Shape half-extent for the SDF (zero for text/texture).
         /// @param center     Rect center in pixels, for the per-vertex RectCoord (shape path).
         /// @param params     Packed fragment params written to every vertex.
+        /// @param grad       Packed gradient fill (Geometry, kind+1 in w); zero for a non-gradient quad.
         void PushQuad(const std::array<vec2, 4>& corners, const std::array<vec2, 4>& uvs,
-                      vec4 color, vec2 rectHalf, vec2 center, vec4 params);
+                      vec4 color, vec2 rectHalf, vec2 center, vec4 params, vec4 grad = vec4(0.0f));
 
         /// @brief Emits one textured quad, opening a Shape run keyed by its texture.
         void EmitTexturedQuad(const Rect& rect, Renderer::TextureHandle texture,

@@ -25,4 +25,14 @@ namespace Veng::Cook
     [[nodiscard]] Result<CookedStyleProperty> ParseStyleDeclaration(Gui::StyleProperty property,
                                                                     std::string_view value,
                                                                     const string& located);
+
+    /// @brief Parses a CSS hex color (`#rrggbb` / `#rrggbbaa`, or the same without `#`) to linear.
+    ///
+    /// The shared color parse both a `background`/`color` declaration and a gradient stop resolve
+    /// through, so a color reads identically wherever it is authored: the RGB channels convert
+    /// sRGB → linear (the draw-list contract) and alpha stays a straight [0, 1] value.
+    /// @param value    The color text, with or without a leading `#`.
+    /// @param located  The located-error prefix (file + selector/element context).
+    /// @return The linear straight-alpha color, or a located error.
+    [[nodiscard]] Result<vec4> ParseStyleColor(std::string_view value, const string& located);
 }

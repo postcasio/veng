@@ -2,7 +2,6 @@
 #include <Veng/Module/Module.h>
 
 #include <Veng/Asset/AssetManager.h>
-#include <Veng/Asset/Font.h>
 #include <Veng/Gui/BindingContext.h>
 #include <Veng/Gui/Document.h>
 #include <Veng/Gui/UIDocument.h>
@@ -58,9 +57,7 @@ private:
             return;
         }
 
-        m_Hud = Gui::Document::Instantiate(
-            *recipe->Get(), [&assets](AssetId id)
-            { return assets.LoadSync<Font>(id).value_or(AssetHandle<Font>{}); });
+        m_Hud = Gui::Document::Instantiate(*recipe->Get(), assets);
         m_Context.SetData(m_Model);
         m_Hud->BindContext(&m_Context, &GetTypeRegistry());
         GetPrimaryViewport()->AttachDocument(*m_Hud);

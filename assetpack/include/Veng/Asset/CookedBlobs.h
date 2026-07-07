@@ -736,9 +736,10 @@ namespace Veng
     /// @brief The current stylesheet-format version.
     ///
     /// Bumped on any CookedStyleSheetHeader/CookedStyleRule/CookedStyleProperty/
-    /// CookedStyleAnimation/CookedStyleKeyframe layout change; the loader rejects a blob whose
-    /// Version != this. v2 added the @keyframes animation tables.
-    inline constexpr u32 CookedStyleSheetVersion = 2u;
+    /// CookedStyleAnimation/CookedStyleKeyframe/CookedStyleGradient layout change; the loader rejects
+    /// a blob whose Version != this. v2 added the @keyframes animation tables; v3 added the gradient
+    /// table and its baked ramp region.
+    inline constexpr u32 CookedStyleSheetVersion = 3u;
 
     /// @brief Maximum byte length (including nul terminator) for a selector's class/id/type name.
     ///
@@ -761,12 +762,15 @@ namespace Veng
     ///   CookedStyleProperty[PropertyCount]     — every rule's and keyframe's declarations
     ///   CookedStyleAnimation[AnimationCount]   — one entry per @keyframes clip, in source order
     ///   CookedStyleKeyframe[KeyframeCount]     — every clip's keyframes, contiguous per clip
+    ///   CookedStyleGradient[GradientCount]     — one entry per `background-gradient`, in source order
+    ///   u8[RampByteCount]                      — every gradient's baked N×1 RGBA8 ramp, contiguous
     ///
     /// A rule's declarations are the PropertyCount-slice [FirstProperty, FirstProperty + PropertyCount)
     /// of the property table; a keyframe's declarations slice the same table. Rules are stored in
     /// source order so a later rule of equal specificity wins the cascade, matching CSS
     /// source-order precedence. An `animation` declaration references a clip by its index in the
-    /// animation table (resolved from the authored name at cook time — the name is not stored).
+    /// animation table (resolved from the authored name at cook time — the name is not stored). A
+    /// `background-gradient` declaration references a gradient by its index in the gradient table.
     struct CookedStyleSheetHeader
     {
         /// @brief Must equal CookedStyleSheetVersion; the loader rejects mismatches.
@@ -779,6 +783,10 @@ namespace Veng
         u32 AnimationCount = 0;
         /// @brief Total number of CookedStyleKeyframe entries following the animation table.
         u32 KeyframeCount = 0;
+        /// @brief Number of CookedStyleGradient entries following the keyframe table.
+        u32 GradientCount = 0;
+        /// @brief Total bytes in the ramp region following the gradient table.
+        u32 RampByteCount = 0;
     };
 
     /// @brief One flattened USS rule: a selector, a pseudo-state, and its declaration range.
@@ -844,6 +852,26 @@ namespace Veng
         u32 FirstProperty = 0;
         /// @brief Number of declarations the keyframe holds.
         u32 PropertyCount = 0;
+    };
+
+    /// @brief One cooked gradient fill: its shape, packed box-space geometry, and its baked ramp.
+    ///
+    /// A `background-gradient` declaration references one of these by its index in the gradient
+    /// table. The multi-stop color is baked at cook time into an N×1 RGBA8 ramp (linear
+    /// straight-alpha) stored in the ramp region at [RampOffset, RampOffset + RampTexels * 4).
+    /// Kind is the Gui::GradientKind ordinal; Geometry is packed per Kind in the element's
+    /// normalized box space (Linear: pre-scaled axis in [0..1]; Radial: center in [0..1] + inverse
+    /// radius in [2]; Conic: center in [0..1] + start turn in [2]).
+    struct CookedStyleGradient
+    {
+        /// @brief The Gui::GradientKind ordinal (0 Linear, 1 Radial, 2 Conic).
+        u32 Kind = 0;
+        /// @brief Geometry packed per Kind, in the element's normalized box space.
+        f32 Geometry[4] = {};
+        /// @brief Byte offset of this gradient's ramp in the ramp region.
+        u32 RampOffset = 0;
+        /// @brief Number of RGBA8 texels in the ramp (its byte length is RampTexels * 4).
+        u32 RampTexels = 0;
     };
 
     /// @brief The current UI-document-format version.

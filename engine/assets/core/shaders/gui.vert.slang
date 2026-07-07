@@ -23,6 +23,7 @@ struct VSInput
     float2 a_RectHalf : TEXCOORD1;
     float2 a_RectCoord : TEXCOORD2;
     float4 a_Params : TEXCOORD3;
+    float4 a_Grad : TEXCOORD4;
 };
 
 struct VSOutput
@@ -33,6 +34,7 @@ struct VSOutput
     float2 v_RectHalf : TEXCOORD1;
     float2 v_RectCoord : TEXCOORD2;
     nointerpolation float4 v_Params : TEXCOORD3;
+    nointerpolation float4 v_Grad : TEXCOORD4;
 };
 
 [shader("vertex")]
@@ -46,5 +48,6 @@ VSOutput vsMain(VSInput input)
     output.v_RectHalf = input.a_RectHalf;
     output.v_RectCoord = input.a_RectCoord;
     output.v_Params = input.a_Params;
+    output.v_Grad = input.a_Grad;
     return output;
 }

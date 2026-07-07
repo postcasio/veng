@@ -36,6 +36,8 @@ namespace Veng
             vector<Gui::StyleRule> Rules;
             /// @brief The @keyframes clips, in the index order `animation` declarations reference.
             vector<Gui::StyleAnimationClip> Animations;
+            /// @brief The gradients, in the index order `background-gradient` declarations reference.
+            vector<Gui::StyleGradient> Gradients;
             /// @brief The deduplicated font AssetIds every declaration references (load-time dependencies).
             vector<AssetId> FontIds;
         };

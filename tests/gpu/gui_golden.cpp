@@ -143,6 +143,100 @@ namespace
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "gui gradient: a linear ramp fill renders red at the top and blue at the bottom")
+{
+    AssetManager assets(Context, Tasks, Types);
+
+    // A solid scene output to composite the gradient over.
+    const Ref<Image> sceneImage =
+        Image::Create(Context, {
+                                   .Name = "Gui Gradient Scene",
+                                   .Extent = {Extent.x, Extent.y, 1},
+                                   .Format = Format::RGBA16Sfloat,
+                                   .Usage = ImageUsage::ColorAttachment | ImageUsage::Sampled |
+                                            ImageUsage::TransferSrc,
+                               });
+    const Ref<ImageView> sceneView =
+        ImageView::Create(Context, {.Name = "Gui Gradient Scene View", .Image = sceneImage});
+    ClearImage(Context, sceneView, ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f});
+
+    // A 256×1 red→blue ramp LUT (linear straight-alpha), the shape the cook bakes.
+    constexpr u32 rampWidth = 256;
+    std::array<u8, rampWidth * 4> rampPixels{};
+    for (u32 x = 0; x < rampWidth; ++x)
+    {
+        const f32 t = static_cast<f32>(x) / static_cast<f32>(rampWidth - 1);
+        rampPixels[x * 4 + 0] = static_cast<u8>((1.0f - t) * 255.0f + 0.5f);
+        rampPixels[x * 4 + 1] = 0;
+        rampPixels[x * 4 + 2] = static_cast<u8>(t * 255.0f + 0.5f);
+        rampPixels[x * 4 + 3] = 255;
+    }
+    const Ref<Image> rampImage =
+        Image::Create(Context, {
+                                   .Name = "Gui Gradient Ramp",
+                                   .Extent = {rampWidth, 1, 1},
+                                   .Format = Format::RGBA8Unorm,
+                                   .Usage = ImageUsage::Sampled | ImageUsage::TransferDst,
+                               });
+    rampImage->UploadSync(std::span<const u8>(rampPixels.data(), rampPixels.size()));
+    const Ref<ImageView> rampView =
+        ImageView::Create(Context, {.Name = "Gui Gradient Ramp View", .Image = rampImage});
+    const TextureHandle rampHandle = Context.GetBindlessRegistry().Register(rampView);
+    const Ref<Sampler> sampler =
+        Sampler::Create(Context, {
+                                     .Name = "Gui Gradient Sampler",
+                                     .MagFilter = Filter::Linear,
+                                     .MinFilter = Filter::Linear,
+                                     .AddressModeU = AddressMode::ClampToEdge,
+                                     .AddressModeV = AddressMode::ClampToEdge,
+                                     .AddressModeW = AddressMode::ClampToEdge,
+                                 });
+    const SamplerHandle samplerHandle = Context.GetBindlessRegistry().Register(sampler);
+
+    // A vertical (180deg) linear gradient: geometry is the pre-scaled box axis so t = 0.5·p.y + 0.5.
+    const Gui::Rect rect{.Min = {20.0f, 20.0f}, .Size = {120.0f, 120.0f}};
+    Gui::DrawList list;
+    list.Gradient(rect, Gui::GradientFill{.Kind = Gui::GradientKind::Linear,
+                                          .Geometry = vec4(0.0f, 0.5f, 0.0f, 0.0f),
+                                          .Ramp = rampHandle,
+                                          .Sampler = samplerHandle});
+
+    const Unique<GuiScenePass> pass = GuiScenePass::Create({
+        .Context = Context,
+        .Assets = assets,
+        .Extent = Extent,
+        .OutputFormat = Format::RGBA16Sfloat,
+    });
+    pass->SetDrawList(list);
+    Context.ImmediateCommands([&](CommandBuffer& cmd) { pass->Render(cmd, sceneView); });
+
+    const vector<u8> raw = pass->GetOutput()->GetImage()->Download();
+    REQUIRE(raw.size() == static_cast<usize>(Extent.x) * Extent.y * 8);
+    const vector<u8> rgb = DecodeHalfRgb(raw, Extent);
+
+    Context.GetBindlessRegistry().Release(samplerHandle);
+    Context.GetBindlessRegistry().Release(rampHandle);
+
+    const auto sampleRgb = [&](u32 x, u32 y)
+    {
+        const usize i = (static_cast<usize>(y) * Extent.x + x) * 3;
+        return uvec3(rgb[i], rgb[i + 1], rgb[i + 2]);
+    };
+    // Top of the rect is red, the bottom is blue, the middle is a mix of both (a real gradient, not
+    // a flat fill). Colors are linear (the frag outputs linear premultiplied), so red/blue read high.
+    const u32 midX = static_cast<u32>(rect.Center().x);
+    const uvec3 top = sampleRgb(midX, static_cast<u32>(rect.Min.y) + 6);
+    const uvec3 middle = sampleRgb(midX, static_cast<u32>(rect.Center().y));
+    const uvec3 bottom = sampleRgb(midX, static_cast<u32>(rect.Max().y) - 6);
+    CHECK(top.r > 180);
+    CHECK(top.b < 60);
+    CHECK(bottom.b > 180);
+    CHECK(bottom.r < 60);
+    CHECK(middle.r > 40);
+    CHECK(middle.b > 40);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                   "gui golden: a hand-built draw list renders and matches the committed golden")
 {
     const path fixtureDir = path(GPU_COOKER_FIXTURE_DIR);

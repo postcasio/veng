@@ -5,6 +5,7 @@
 #include <Veng/Assert.h>
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Font.h>
+#include <Veng/Asset/Texture.h>
 #include <Veng/Gui/StyleSheet.h>
 #include <Veng/Gui/UIDocument.h>
 #include <Veng/Reflection/EnumName.h>
@@ -16,6 +17,7 @@
 #include <algorithm>
 #include <charconv>
 #include <cmath>
+#include <unordered_map>
 
 namespace Veng::Gui
 {
@@ -325,8 +327,10 @@ namespace Veng::Gui
         // An `animation` declaration is element state, not a Style field: it copies the referenced
         // sheet clip's keyframes onto the element (a later declaration replaces an earlier one, the
         // cascade's last-wins), so the live document never borrows the sheet.
-        void ResolveElementStyle(Element& element, const UIElementRecipe& recipe,
-                                 const vector<const StyleSheet*>& sheets, const FontResolver& fonts)
+        void ResolveElementStyle(
+            Element& element, const UIElementRecipe& recipe,
+            const vector<const StyleSheet*>& sheets, const FontResolver& fonts,
+            const function<optional<ResolvedGradient>(const StyleSheet&, u32)>& resolveGradient)
         {
             element.Variants.clear();
             element.Animations.clear();
@@ -353,6 +357,18 @@ namespace Veng::Gui
                                         .Duration = declaration.Values.x,
                                         .Mode = static_cast<AnimationLoopMode>(
                                             static_cast<u32>(declaration.Values.y))}});
+                                }
+                                continue;
+                            }
+                            if (declaration.Property == StyleProperty::BackgroundGradient)
+                            {
+                                // A gradient references the sheet's gradient table and uploads its
+                                // ramp; resolve it here where the sheet is in hand (variants and
+                                // inline styles, which reapply without a sheet, do not carry it).
+                                if (optional<ResolvedGradient> resolved =
+                                        resolveGradient(*sheet, declaration.Unit))
+                                {
+                                    element.BaseStyle.BackgroundGradient = std::move(resolved);
                                 }
                                 continue;
                             }
@@ -621,10 +637,12 @@ namespace Veng::Gui
         }
     }
 
-    Unique<Document> Document::Instantiate(const UIDocument& recipe, const FontResolver& fonts)
+    Unique<Document> Document::Instantiate(const UIDocument& recipe, AssetManager& assets)
     {
         auto document = CreateUnique<Document>();
-        document->m_FontResolver = fonts;
+        document->m_FontResolver = [&assets](const AssetId id)
+        { return assets.LoadSync<Font>(id).value_or(AssetHandle<Font>{}); };
+        const FontResolver& fonts = document->m_FontResolver;
 
         const vector<UIElementRecipe>& elements = recipe.GetElements();
         if (elements.empty())
@@ -642,6 +660,42 @@ namespace Veng::Gui
             }
         }
 
+        // A gradient declaration's ramp uploads through the borrowed manager into a small ramp
+        // texture, cached per (sheet, gradient) so elements sharing one gradient share one texture.
+        // The AssetHandle kept on each element's Style keeps the texture resident for its lifetime.
+        std::unordered_map<const StyleGradient*, ResolvedGradient> gradientCache;
+        const function<optional<ResolvedGradient>(const StyleSheet&, u32)> resolveGradient =
+            [&assets, &gradientCache](const StyleSheet& sheet,
+                                      const u32 index) -> optional<ResolvedGradient>
+        {
+            const vector<StyleGradient>& gradients = sheet.GetGradients();
+            if (index >= gradients.size())
+            {
+                return std::nullopt;
+            }
+            const StyleGradient& source = gradients[index];
+            if (const auto it = gradientCache.find(&source); it != gradientCache.end())
+            {
+                return it->second;
+            }
+            const TextureData data{
+                .Name = "gui-gradient-ramp",
+                .Extent = uvec2(source.Width, 1),
+                .Format = Renderer::Format::RGBA8Unorm,
+                .MipLevels = 1,
+                .Pixels = source.Ramp,
+                .Sampler =
+                    Renderer::SamplerInfo{.AddressModeU = Renderer::AddressMode::ClampToEdge,
+                                          .AddressModeV = Renderer::AddressMode::ClampToEdge,
+                                          .AddressModeW = Renderer::AddressMode::ClampToEdge},
+            };
+            ResolvedGradient resolved{.Kind = source.Kind,
+                                      .Geometry = source.Geometry,
+                                      .Ramp = assets.BuildSync<Texture>(data)};
+            gradientCache.emplace(&source, resolved);
+            return resolved;
+        };
+
         // Element 0 is the authored root; it maps onto the document's pre-made root. The pre-order
         // recipe carries an explicit child count per element, so a recursive walk over a shared
         // cursor rebuilds the hierarchy in one linear pass. A recipe root of a non-Panel kind still
@@ -652,7 +706,7 @@ namespace Veng::Gui
             const UIElementRecipe& node = elements[cursor];
             ++cursor;
             PopulateElement(live, node);
-            ResolveElementStyle(live, node, sheets, fonts);
+            ResolveElementStyle(live, node, sheets, fonts, resolveGradient);
             document->InitWidget(live);
             for (u32 i = 0; i < node.ChildCount; ++i)
             {
@@ -665,12 +719,6 @@ namespace Veng::Gui
         // The cascaded base includes layout inputs, so the tree must re-solve.
         document->m_Dirty = true;
         return document;
-    }
-
-    Unique<Document> Document::Instantiate(const UIDocument& recipe, AssetManager& assets)
-    {
-        return Instantiate(recipe, [&assets](const AssetId id)
-                           { return assets.LoadSync<Font>(id).value_or(AssetHandle<Font>{}); });
     }
 
     namespace
@@ -918,6 +966,7 @@ namespace Veng::Gui
             case StyleProperty::TextFont:
                 return true;
             case StyleProperty::Background:
+            case StyleProperty::BackgroundGradient:
             case StyleProperty::CornerRadius:
             case StyleProperty::BorderWidth:
             case StyleProperty::BorderColor:
@@ -972,6 +1021,7 @@ namespace Veng::Gui
             case StyleProperty::ClipContent:
             case StyleProperty::PointerEvents:
             case StyleProperty::Animation:
+            case StyleProperty::BackgroundGradient:
                 return false;
             }
             return false;
@@ -1889,16 +1939,25 @@ namespace Veng::Gui
         const Style& style = element.ComputedStyle;
         const Rect& rect = element.Layout;
 
-        if (style.Background.a > 0.0f || style.BorderStyle.Width > 0.0f)
+        // A gradient background paints in place of the flat color; the border is drawn over either.
+        if (style.BackgroundGradient.has_value() && style.BackgroundGradient->Ramp.IsLoaded())
         {
-            if (style.Background.a > 0.0f)
-            {
-                list.Quad(rect, style.Background, style.Radii);
-            }
-            if (style.BorderStyle.Width > 0.0f)
-            {
-                list.Quad(rect, style.BorderStyle.Color, style.Radii, style.BorderStyle);
-            }
+            const ResolvedGradient& gradient = *style.BackgroundGradient;
+            const Texture& ramp = *gradient.Ramp.Get();
+            list.Gradient(rect,
+                          GradientFill{.Kind = gradient.Kind,
+                                       .Geometry = gradient.Geometry,
+                                       .Ramp = ramp.GetHandle(),
+                                       .Sampler = ramp.GetSamplerHandle()},
+                          style.Radii);
+        }
+        else if (style.Background.a > 0.0f)
+        {
+            list.Quad(rect, style.Background, style.Radii);
+        }
+        if (style.BorderStyle.Width > 0.0f)
+        {
+            list.Quad(rect, style.BorderStyle.Color, style.Radii, style.BorderStyle);
         }
 
         // A ScrollView always clips its content to its box (the overflow it scrolls through), whether

@@ -134,7 +134,7 @@ namespace Veng::Gui
     }
 
     void DrawList::PushQuad(const std::array<vec2, 4>& corners, const std::array<vec2, 4>& uvs,
-                            vec4 color, vec2 rectHalf, vec2 center, vec4 params)
+                            vec4 color, vec2 rectHalf, vec2 center, vec4 params, vec4 grad)
     {
         const u32 base = static_cast<u32>(m_Vertices.size());
         for (usize i = 0; i < 4; ++i)
@@ -146,6 +146,7 @@ namespace Veng::Gui
                 .RectHalf = rectHalf,
                 .RectCoord = corners[i] - center,
                 .Params = params,
+                .Grad = grad,
             });
         }
 
@@ -185,6 +186,40 @@ namespace Veng::Gui
         const vec4 params{radius, border.Width, UntexturedIndex, UntexturedIndex};
 
         PushQuad(corners, uvs, fill, half, center, params);
+    }
+
+    void DrawList::Gradient(const Rect& rect, const GradientFill& fill, const CornerRadii& radii,
+                            const Border& border, vec4 tint)
+    {
+        if (rect.IsEmpty())
+        {
+            return;
+        }
+
+        VE_ASSERT(fill.Ramp.IsValid(), "DrawList gradient requires a valid ramp texture handle");
+        VE_ASSERT(fill.Sampler.IsValid(), "DrawList gradient requires a valid ramp sampler handle");
+
+        // The ramp keys the run exactly as a modulating texture does, so distinct ramps split runs.
+        EnsureRun(GuiPipeline::Shape, fill.Ramp.Index);
+
+        const vec2 min = rect.Min;
+        const vec2 max = rect.Max();
+        const std::array<vec2, 4> corners = {min, vec2(max.x, min.y), max, vec2(min.x, max.y)};
+        // The gradient reads no UV; a unit UV keeps the vertices well-formed.
+        const std::array<vec2, 4> uvs = {vec2(0.0f, 0.0f), vec2(1.0f, 0.0f), vec2(1.0f, 1.0f),
+                                         vec2(0.0f, 1.0f)};
+
+        const vec2 half = rect.Size * 0.5f;
+        const vec2 center = rect.Center();
+        const f32 radius = std::min(radii.TopLeft, std::min(half.x, half.y));
+        // Params bind the ramp through the same texture/sampler slots a modulating texture uses; the
+        // fragment routes them to a ramp sample because Grad.w (the kind ordinal plus one) is nonzero.
+        const vec4 params{radius, border.Width, static_cast<f32>(fill.Ramp.Index),
+                          static_cast<f32>(fill.Sampler.Index)};
+        const vec4 grad{fill.Geometry.x, fill.Geometry.y, fill.Geometry.z,
+                        static_cast<f32>(static_cast<u32>(fill.Kind) + 1)};
+
+        PushQuad(corners, uvs, tint, half, center, params, grad);
     }
 
     void DrawList::EmitTexturedQuad(const Rect& rect, Renderer::TextureHandle texture,

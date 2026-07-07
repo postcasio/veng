@@ -58,20 +58,13 @@ namespace Veng::Gui
         /// selected against its interaction state by Update. The instantiated tree is independent of
         /// the recipe and of any other instance of it — instantiating one UIDocument twice yields two
         /// trees that mutate separately (the Prefab model).
-        /// @param recipe  The cooked UI document to materialize; must be resident.
-        /// @param fonts   Resolver a font declaration's AssetId resolves through; may be empty.
-        /// @return A newly constructed Document owning an independent copy of the recipe's tree.
-        [[nodiscard]] static Unique<Document> Instantiate(const UIDocument& recipe,
-                                                          const FontResolver& fonts = {});
-
-        /// @brief Materializes a live tree from a recipe, resolving fonts through an AssetManager.
         ///
-        /// The convenience overload of Instantiate above: font declarations resolve through a
-        /// blocking LoadSync<Font> against the given manager, which every game-side instantiate
-        /// otherwise hand-rolls. The document borrows the manager for its whole life (the resolver
-        /// re-runs on later style resolves), so the manager must outlive the document.
+        /// The document resolves its asset declarations through the given manager — a font
+        /// declaration's AssetId loads via a blocking LoadSync<Font>. The document borrows the
+        /// manager for its whole life (the resolve re-runs on later style resolves), so the manager
+        /// must outlive the document.
         /// @param recipe  The cooked UI document to materialize; must be resident.
-        /// @param assets  The asset manager font declarations load through; borrowed.
+        /// @param assets  The asset manager the document's asset declarations load through; borrowed.
         /// @return A newly constructed Document owning an independent copy of the recipe's tree.
         [[nodiscard]] static Unique<Document> Instantiate(const UIDocument& recipe,
                                                           AssetManager& assets);

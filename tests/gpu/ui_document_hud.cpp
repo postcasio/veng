@@ -117,7 +117,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(recipe.has_value());
     REQUIRE(recipe->IsLoaded());
 
-    Unique<Gui::Document> document = Gui::Document::Instantiate(*recipe->Get());
+    Unique<Gui::Document> document = Gui::Document::Instantiate(*recipe->Get(), assets);
     REQUIRE(document != nullptr);
 
     HudModel model;
@@ -184,7 +184,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         assets.LoadSync<Gui::UIDocument>(UIDocumentId);
     REQUIRE(handle.has_value());
     {
-        const Unique<Gui::Document> before = Gui::Document::Instantiate(*handle->Get());
+        const Unique<Gui::Document> before = Gui::Document::Instantiate(*handle->Get(), assets);
         REQUIRE(before != nullptr);
         CHECK(before->Root().Children.size() == 1);
     }
@@ -206,7 +206,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         handle = assets.LoadSync<Gui::UIDocument>(UIDocumentId);
         REQUIRE(handle.has_value());
         CHECK(handle->Id().Value == UIDocumentId.Value);
-        const Unique<Gui::Document> after = Gui::Document::Instantiate(*handle->Get());
+        const Unique<Gui::Document> after = Gui::Document::Instantiate(*handle->Get(), assets);
         REQUIRE(after != nullptr);
         CHECK(after->Root().Children.size() == 1);
     }

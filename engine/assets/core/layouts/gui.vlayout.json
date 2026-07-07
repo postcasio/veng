@@ -5,6 +5,7 @@
     { "format": "RGBA32Sfloat", "name": "a_Color" },
     { "format": "RG32Sfloat",   "name": "a_RectHalf" },
     { "format": "RG32Sfloat",   "name": "a_RectCoord" },
-    { "format": "RGBA32Sfloat", "name": "a_Params" }
+    { "format": "RGBA32Sfloat", "name": "a_Params" },
+    { "format": "RGBA32Sfloat", "name": "a_Grad" }
   ]
 }

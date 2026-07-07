@@ -74,6 +74,8 @@ namespace Veng::Gui
             return "animation";
         case StyleProperty::Origin:
             return "origin";
+        case StyleProperty::BackgroundGradient:
+            return "background-gradient";
         }
         return "unknown";
     }
@@ -215,6 +217,10 @@ namespace Veng::Gui
         if (name == "origin")
         {
             return StyleProperty::Origin;
+        }
+        if (name == "background-gradient")
+        {
+            return StyleProperty::BackgroundGradient;
         }
         return std::nullopt;
     }

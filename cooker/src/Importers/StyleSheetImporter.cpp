@@ -8,6 +8,8 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cctype>
+#include <cmath>
 #include <cstring>
 #include <fstream>
 #include <sstream>
@@ -16,6 +18,7 @@
 
 #include <Veng/Asset/CookedBlobs.h>
 #include <Veng/Gui/Element.h>
+#include <Veng/Gui/Style.h>
 #include <Veng/Gui/StyleProperty.h>
 
 namespace Veng::Cook
@@ -238,12 +241,355 @@ namespace Veng::Cook
             return cp;
         }
 
+        // Splits a string on `delim`, trimming surrounding whitespace from each part.
+        vector<string> SplitTrim(std::string_view text, char delim)
+        {
+            vector<string> out;
+            usize start = 0;
+            while (true)
+            {
+                const usize pos = text.find(delim, start);
+                const std::string_view part = text.substr(
+                    start, pos == std::string_view::npos ? std::string_view::npos : pos - start);
+                usize b = 0;
+                usize e = part.size();
+                while (b < e && std::isspace(static_cast<unsigned char>(part[b])) != 0)
+                {
+                    ++b;
+                }
+                while (e > b && std::isspace(static_cast<unsigned char>(part[e - 1])) != 0)
+                {
+                    --e;
+                }
+                out.emplace_back(part.substr(b, e - b));
+                if (pos == std::string_view::npos)
+                {
+                    break;
+                }
+                start = pos + 1;
+            }
+            return out;
+        }
+
+        // Splits a string on runs of whitespace into non-empty tokens.
+        vector<string> WhitespaceTokens(std::string_view text)
+        {
+            vector<string> out;
+            usize i = 0;
+            while (i < text.size())
+            {
+                while (i < text.size() && std::isspace(static_cast<unsigned char>(text[i])) != 0)
+                {
+                    ++i;
+                }
+                const usize start = i;
+                while (i < text.size() && std::isspace(static_cast<unsigned char>(text[i])) == 0)
+                {
+                    ++i;
+                }
+                if (i > start)
+                {
+                    out.emplace_back(text.substr(start, i - start));
+                }
+            }
+            return out;
+        }
+
+        // Parses a bare number with an optional `deg` suffix into degrees.
+        Result<f32> ParseAngle(std::string_view token, const string& located)
+        {
+            std::string_view t = token;
+            if (t.size() >= 3 && t.substr(t.size() - 3) == "deg")
+            {
+                t = t.substr(0, t.size() - 3);
+            }
+            f32 value = 0.0f;
+            const auto [ptr, ec] = std::from_chars(t.data(), t.data() + t.size(), value);
+            if (ec != std::errc{} || ptr != t.data() + t.size())
+            {
+                return std::unexpected(
+                    fmt::format("{}: expected an angle like '135deg', got '{}'", located, token));
+            }
+            return value;
+        }
+
+        // Parses an `N%` token into a [0, 1] fraction.
+        Result<f32> ParsePercent(std::string_view token, const string& located)
+        {
+            std::string_view t = token;
+            if (!t.empty() && t.back() == '%')
+            {
+                t = t.substr(0, t.size() - 1);
+            }
+            f32 value = 0.0f;
+            const auto [ptr, ec] = std::from_chars(t.data(), t.data() + t.size(), value);
+            if (ec != std::errc{} || ptr != t.data() + t.size())
+            {
+                return std::unexpected(
+                    fmt::format("{}: expected a percentage, got '{}'", located, token));
+            }
+            return value / 100.0f;
+        }
+
+        // One authored gradient stop: a linear straight-alpha color at a normalized position, with a
+        // negative position meaning "unspecified" (assigned by even distribution before baking).
+        struct GradientStop
+        {
+            vec4 Color{0.0f};
+            f32 Pos = -1.0f;
+        };
+
+        // Bakes a stop list (positions assigned + clamped non-decreasing) into an N×1 RGBA8 ramp,
+        // interpolating between bracketing stops in linear space (the colors are already linear).
+        vector<u8> BakeGradientRamp(const vector<GradientStop>& stops)
+        {
+            constexpr u32 RampTexels = 256;
+            vector<u8> ramp(static_cast<usize>(RampTexels) * 4);
+            const auto toU8 = [](f32 v)
+            { return static_cast<u8>(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f)); };
+            for (u32 i = 0; i < RampTexels; ++i)
+            {
+                const f32 t = static_cast<f32>(i) / static_cast<f32>(RampTexels - 1);
+                vec4 color = stops.back().Color;
+                if (t <= stops.front().Pos)
+                {
+                    color = stops.front().Color;
+                }
+                else if (t < stops.back().Pos)
+                {
+                    for (usize s = 1; s < stops.size(); ++s)
+                    {
+                        if (t <= stops[s].Pos)
+                        {
+                            const f32 span = stops[s].Pos - stops[s - 1].Pos;
+                            const f32 u = span > 0.0f ? (t - stops[s - 1].Pos) / span : 0.0f;
+                            color = glm::mix(stops[s - 1].Color, stops[s].Color, u);
+                            break;
+                        }
+                    }
+                }
+                ramp[i * 4 + 0] = toU8(color.r);
+                ramp[i * 4 + 1] = toU8(color.g);
+                ramp[i * 4 + 2] = toU8(color.b);
+                ramp[i * 4 + 3] = toU8(color.a);
+            }
+            return ramp;
+        }
+
+        // Parses a `background-gradient: <kind> [geometry], <color> [pos%], …` value: it resolves the
+        // shape + box-space geometry, bakes the multi-stop color into a ramp appended to `rampBytes`,
+        // records a CookedStyleGradient in `gradients`, and returns a declaration referencing it by
+        // index. Geometry is packed in the element's normalized box space ([-1, 1]); positions along
+        // a gradient are baked into the ramp, so the runtime evaluates one t per fragment and samples.
+        Result<CookedStyleProperty> ParseGradientDeclaration(const string& value,
+                                                             const string& located,
+                                                             vector<CookedStyleGradient>& gradients,
+                                                             vector<u8>& rampBytes)
+        {
+            constexpr f32 Pi = 3.14159265358979323846f;
+            const vector<string> parts = SplitTrim(value, ',');
+            if (parts.size() < 3)
+            {
+                return std::unexpected(fmt::format(
+                    "{}: 'background-gradient' expects '<kind> [geometry], <color> [pos%], "
+                    "<color> [pos%] …' (at least two stops), got '{}'",
+                    located, value));
+            }
+
+            const vector<string> header = WhitespaceTokens(parts[0]);
+            if (header.empty())
+            {
+                return std::unexpected(
+                    fmt::format("{}: 'background-gradient' is missing its kind", located));
+            }
+
+            Gui::GradientKind kind = Gui::GradientKind::Linear;
+            vec4 geometry(0.0f);
+            const string& kindName = header[0];
+            if (kindName == "linear")
+            {
+                kind = Gui::GradientKind::Linear;
+                f32 degrees = 180.0f;
+                if (header.size() >= 2)
+                {
+                    const Result<f32> angle = ParseAngle(header[1], located);
+                    if (!angle)
+                    {
+                        return std::unexpected(angle.error());
+                    }
+                    degrees = *angle;
+                }
+                if (header.size() > 2)
+                {
+                    return std::unexpected(
+                        fmt::format("{}: a linear gradient takes at most one angle, got '{}'",
+                                    located, parts[0]));
+                }
+                // CSS angle: 0deg points to the top, growing clockwise; box y is down.
+                const f32 radians = degrees * (Pi / 180.0f);
+                const vec2 direction(std::sin(radians), -std::cos(radians));
+                const f32 span = std::abs(direction.x) + std::abs(direction.y);
+                const vec2 axis = direction / (2.0f * (span > 1e-6f ? span : 1.0f));
+                geometry = vec4(axis.x, axis.y, 0.0f, 0.0f);
+            }
+            else if (kindName == "radial" || kindName == "conic")
+            {
+                f32 centerX = 0.5f;
+                f32 centerY = 0.5f;
+                f32 fromDegrees = 0.0f;
+                usize k = 1;
+                if (kindName == "conic" && k < header.size() && header[k] == "from")
+                {
+                    if (k + 1 >= header.size())
+                    {
+                        return std::unexpected(fmt::format(
+                            "{}: conic 'from' needs an angle (e.g. 'from 90deg')", located));
+                    }
+                    const Result<f32> angle = ParseAngle(header[k + 1], located);
+                    if (!angle)
+                    {
+                        return std::unexpected(angle.error());
+                    }
+                    fromDegrees = *angle;
+                    k += 2;
+                }
+                if (k < header.size() && header[k] == "at")
+                {
+                    if (k + 2 >= header.size())
+                    {
+                        return std::unexpected(fmt::format(
+                            "{}: gradient 'at' needs two percentages (e.g. 'at 50% 50%')",
+                            located));
+                    }
+                    const Result<f32> x = ParsePercent(header[k + 1], located);
+                    const Result<f32> y = ParsePercent(header[k + 2], located);
+                    if (!x)
+                    {
+                        return std::unexpected(x.error());
+                    }
+                    if (!y)
+                    {
+                        return std::unexpected(y.error());
+                    }
+                    centerX = *x;
+                    centerY = *y;
+                    k += 3;
+                }
+                if (k < header.size())
+                {
+                    return std::unexpected(
+                        fmt::format("{}: unexpected '{}' in {} gradient geometry", located,
+                                    header[k], kindName));
+                }
+
+                const vec2 center(centerX * 2.0f - 1.0f, centerY * 2.0f - 1.0f);
+                if (kindName == "radial")
+                {
+                    kind = Gui::GradientKind::Radial;
+                    // Farthest-corner fit (the CSS default): t reaches 1 at the box corner most
+                    // distant from the center, so the whole box is covered.
+                    f32 radius = 0.0f;
+                    for (const f32 cornerX : {-1.0f, 1.0f})
+                    {
+                        for (const f32 cornerY : {-1.0f, 1.0f})
+                        {
+                            radius = std::max(radius, glm::length(vec2(cornerX, cornerY) - center));
+                        }
+                    }
+                    const f32 invRadius = radius > 1e-6f ? 1.0f / radius : 1.0f;
+                    geometry = vec4(center.x, center.y, invRadius, 0.0f);
+                }
+                else
+                {
+                    kind = Gui::GradientKind::Conic;
+                    geometry = vec4(center.x, center.y, fromDegrees / 360.0f, 0.0f);
+                }
+            }
+            else
+            {
+                return std::unexpected(
+                    fmt::format("{}: unknown gradient kind '{}' (expected linear/radial/conic)",
+                                located, kindName));
+            }
+
+            vector<GradientStop> stops;
+            for (usize s = 1; s < parts.size(); ++s)
+            {
+                const vector<string> tokens = WhitespaceTokens(parts[s]);
+                if (tokens.empty())
+                {
+                    return std::unexpected(
+                        fmt::format("{}: empty gradient stop in '{}'", located, value));
+                }
+                const Result<vec4> color = ParseStyleColor(tokens[0], located);
+                if (!color)
+                {
+                    return std::unexpected(color.error());
+                }
+                GradientStop stop{.Color = *color, .Pos = -1.0f};
+                if (tokens.size() >= 2)
+                {
+                    const Result<f32> pos = ParsePercent(tokens[1], located);
+                    if (!pos)
+                    {
+                        return std::unexpected(pos.error());
+                    }
+                    stop.Pos = *pos;
+                }
+                if (tokens.size() > 2)
+                {
+                    return std::unexpected(fmt::format(
+                        "{}: a gradient stop is '<color> [<pos>%]', got '{}'", located, parts[s]));
+                }
+                stops.push_back(stop);
+            }
+
+            // Assign each unspecified position by even distribution, then clamp to [0, 1] and force a
+            // non-decreasing sequence (a stop never precedes the one before it — the CSS fixup).
+            const usize count = stops.size();
+            for (usize s = 0; s < count; ++s)
+            {
+                if (stops[s].Pos < 0.0f)
+                {
+                    stops[s].Pos =
+                        count == 1 ? 0.0f : static_cast<f32>(s) / static_cast<f32>(count - 1);
+                }
+            }
+            f32 previous = 0.0f;
+            for (GradientStop& stop : stops)
+            {
+                stop.Pos = std::max(std::clamp(stop.Pos, 0.0f, 1.0f), previous);
+                previous = stop.Pos;
+            }
+
+            const vector<u8> ramp = BakeGradientRamp(stops);
+            CookedStyleGradient cooked{};
+            cooked.Kind = static_cast<u32>(kind);
+            cooked.Geometry[0] = geometry.x;
+            cooked.Geometry[1] = geometry.y;
+            cooked.Geometry[2] = geometry.z;
+            cooked.Geometry[3] = geometry.w;
+            cooked.RampOffset = static_cast<u32>(rampBytes.size());
+            cooked.RampTexels = static_cast<u32>(ramp.size() / 4);
+
+            CookedStyleProperty cp{};
+            cp.Property = static_cast<u32>(Gui::StyleProperty::BackgroundGradient);
+            cp.Unit = static_cast<u32>(gradients.size());
+            gradients.push_back(cooked);
+            rampBytes.insert(rampBytes.end(), ramp.begin(), ramp.end());
+            return cp;
+        }
+
         // Parses a declaration block (the tokens between `{` and `}`) into cooked properties.
         // `animationNames` is the sheet's @keyframes table an `animation` declaration resolves
-        // against; nullptr where an animation reference is not authorable (a keyframe block).
+        // against; `gradients`/`rampBytes` are the sheet's gradient tables a `background-gradient`
+        // appends to. All three are nullptr where those references are not authorable (a keyframe
+        // block), so they fall through to ParseStyleDeclaration's located error.
         Result<vector<CookedStyleProperty>> ParseBlock(const std::vector<CssToken>& tokens,
                                                        usize& i, const string& located,
-                                                       const vector<string>* animationNames)
+                                                       const vector<string>* animationNames,
+                                                       vector<CookedStyleGradient>* gradients,
+                                                       vector<u8>* rampBytes)
         {
             vector<CookedStyleProperty> properties;
 
@@ -287,6 +633,11 @@ namespace Veng::Cook
                     case CssTokenKind::Dot:
                         value += '.';
                         break;
+                    case CssTokenKind::Comma:
+                        // Commas separate list values (a gradient's kind/geometry and its stops); the
+                        // consumer splits on them.
+                        value += ',';
+                        break;
                     default:
                         return std::unexpected(fmt::format(
                             "{}: unexpected token in the value of '{}'", located, propertyName));
@@ -312,6 +663,21 @@ namespace Veng::Cook
                 {
                     const Result<CookedStyleProperty> cooked =
                         ParseAnimationDeclaration(value, *animationNames, located);
+                    if (!cooked)
+                    {
+                        return std::unexpected(cooked.error());
+                    }
+                    properties.push_back(*cooked);
+                    continue;
+                }
+
+                // A gradient bakes into the sheet's gradient table here; with no table (a keyframe
+                // block) it falls through to ParseStyleDeclaration's located error.
+                if (*property == Gui::StyleProperty::BackgroundGradient && gradients != nullptr &&
+                    rampBytes != nullptr)
+                {
+                    const Result<CookedStyleProperty> cooked =
+                        ParseGradientDeclaration(value, located, *gradients, *rampBytes);
                     if (!cooked)
                     {
                         return std::unexpected(cooked.error());
@@ -461,7 +827,7 @@ namespace Veng::Cook
                 ++i;
 
                 const Result<vector<CookedStyleProperty>> block =
-                    ParseBlock(tokens, i, located, nullptr);
+                    ParseBlock(tokens, i, located, nullptr, nullptr, nullptr);
                 if (!block)
                 {
                     return std::unexpected(block.error());
@@ -530,6 +896,8 @@ namespace Veng::Cook
         vector<CookedStyleProperty> properties;
         vector<CookedStyleAnimation> animations;
         vector<CookedStyleKeyframe> keyframes;
+        vector<CookedStyleGradient> gradients;
+        vector<u8> rampBytes;
         vector<string> animationNames;
 
         // Pass 1: cook every @keyframes clip first, so a rule may reference a clip declared
@@ -590,7 +958,7 @@ namespace Veng::Cook
             ++i; // consume '{'
 
             const Result<vector<CookedStyleProperty>> block =
-                ParseBlock(tokens, i, located, &animationNames);
+                ParseBlock(tokens, i, located, &animationNames, &gradients, &rampBytes);
             if (!block)
             {
                 return std::unexpected(block.error());
@@ -618,12 +986,15 @@ namespace Veng::Cook
         header.PropertyCount = static_cast<u32>(properties.size());
         header.AnimationCount = static_cast<u32>(animations.size());
         header.KeyframeCount = static_cast<u32>(keyframes.size());
+        header.GradientCount = static_cast<u32>(gradients.size());
+        header.RampByteCount = static_cast<u32>(rampBytes.size());
 
         vector<u8> blob;
         blob.reserve(sizeof(header) + rules.size() * sizeof(CookedStyleRule) +
                      properties.size() * sizeof(CookedStyleProperty) +
                      animations.size() * sizeof(CookedStyleAnimation) +
-                     keyframes.size() * sizeof(CookedStyleKeyframe));
+                     keyframes.size() * sizeof(CookedStyleKeyframe) +
+                     gradients.size() * sizeof(CookedStyleGradient) + rampBytes.size());
         Append(blob, header);
         for (const CookedStyleRule& rule : rules)
         {
@@ -641,6 +1012,11 @@ namespace Veng::Cook
         {
             Append(blob, keyframe);
         }
+        for (const CookedStyleGradient& gradient : gradients)
+        {
+            Append(blob, gradient);
+        }
+        blob.insert(blob.end(), rampBytes.begin(), rampBytes.end());
 
         return blob;
     }

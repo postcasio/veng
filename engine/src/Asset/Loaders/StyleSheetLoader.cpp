@@ -58,9 +58,13 @@ namespace Veng
                 static_cast<usize>(header.AnimationCount) * sizeof(CookedStyleAnimation);
             const usize keyframeBytes =
                 static_cast<usize>(header.KeyframeCount) * sizeof(CookedStyleKeyframe);
+            const usize gradientBytes =
+                static_cast<usize>(header.GradientCount) * sizeof(CookedStyleGradient);
+            const usize rampBytes = static_cast<usize>(header.RampByteCount);
 
             usize cursor = sizeof(CookedStyleSheetHeader);
-            if (cooked.size() < cursor + ruleBytes + propertyBytes + animationBytes + keyframeBytes)
+            if (cooked.size() < cursor + ruleBytes + propertyBytes + animationBytes +
+                                    keyframeBytes + gradientBytes + rampBytes)
             {
                 return std::unexpected(Corrupt(id, "stylesheet: cooked blob truncated"));
             }
@@ -91,6 +95,16 @@ namespace Veng
             {
                 std::memcpy(cookedKeyframes.data(), cooked.data() + cursor, keyframeBytes);
             }
+            cursor += keyframeBytes;
+
+            vector<CookedStyleGradient> cookedGradients(header.GradientCount);
+            if (gradientBytes > 0)
+            {
+                std::memcpy(cookedGradients.data(), cooked.data() + cursor, gradientBytes);
+            }
+            cursor += gradientBytes;
+
+            const u8* const rampRegion = cooked.data() + cursor;
 
             DecodedStyleSheet decoded;
             decoded.Rules.reserve(header.RuleCount);
@@ -168,6 +182,25 @@ namespace Veng
                 decoded.Animations.push_back(std::move(clip));
             }
 
+            decoded.Gradients.reserve(header.GradientCount);
+            for (const CookedStyleGradient& cookedGradient : cookedGradients)
+            {
+                const usize length = static_cast<usize>(cookedGradient.RampTexels) * 4;
+                if (static_cast<usize>(cookedGradient.RampOffset) + length > rampBytes)
+                {
+                    return std::unexpected(
+                        Corrupt(id, "stylesheet: gradient ramp range out of bounds"));
+                }
+                Gui::StyleGradient gradient;
+                gradient.Kind = static_cast<Gui::GradientKind>(cookedGradient.Kind);
+                gradient.Geometry = {cookedGradient.Geometry[0], cookedGradient.Geometry[1],
+                                     cookedGradient.Geometry[2], cookedGradient.Geometry[3]};
+                gradient.Width = cookedGradient.RampTexels;
+                gradient.Ramp.assign(rampRegion + cookedGradient.RampOffset,
+                                     rampRegion + cookedGradient.RampOffset + length);
+                decoded.Gradients.push_back(std::move(gradient));
+            }
+
             // Deduplicate the surfaced font ids so a font referenced by many rules loads once.
             vector<AssetId> unique;
             for (const AssetId fontId : decoded.FontIds)
@@ -231,8 +264,9 @@ namespace Veng
             }
         }
 
-        const Ref<Gui::StyleSheet> sheet = Gui::StyleSheet::Create(
-            std::move(decoded->Rules), std::move(decoded->Animations), dependencies);
+        const Ref<Gui::StyleSheet> sheet =
+            Gui::StyleSheet::Create(std::move(decoded->Rules), std::move(decoded->Animations),
+                                    std::move(decoded->Gradients), dependencies);
 
         return Detail::LoadJob{
             .Resource = Detail::RefAny(sheet),
