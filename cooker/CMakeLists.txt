@@ -133,6 +133,12 @@ endif ()
 # so its submodule is not fetched. Skia (a full renderer), vcpkg, PNG/SVG I/O, and the standalone
 # executables are all disabled — the cook drives the library API directly and stores its own RGBA8
 # atlas. The library uses the Freetype::Freetype target aliased above; it links no system package.
+#
+# On MSVC both libraries default to the static CRT (/MT[d]); veng and every other dependency use
+# the dynamic CRT (/MD[d]), so their own DYNAMIC_RUNTIME opt-in is turned on to keep the runtime
+# uniform — otherwise linking the cooker fails with LNK2038 RuntimeLibrary mismatches.
+set(MSDFGEN_DYNAMIC_RUNTIME ON CACHE INTERNAL "")
+set(MSDF_ATLAS_DYNAMIC_RUNTIME ON CACHE INTERNAL "")
 set(MSDF_ATLAS_USE_VCPKG OFF CACHE INTERNAL "")
 set(MSDF_ATLAS_USE_SKIA OFF CACHE INTERNAL "")
 set(MSDF_ATLAS_BUILD_STANDALONE OFF CACHE INTERNAL "")
