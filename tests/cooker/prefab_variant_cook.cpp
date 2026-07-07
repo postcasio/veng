@@ -1,9 +1,9 @@
-// Cooker variant-binding test: cooks a *.prefab.json that authors a variant
+﻿// Cooker variant-binding test: cooks a *.prefab.json that authors a variant
 // field as { "type", "value" } through the PrefabImporter against a hand-built
 // TypeRegistry holding a variant-bearing component. Covers the valid path (the
 // blob round-trips through the engine ReadFields to the chosen alternative +
 // value), the bad-tag located error, a nested-field located error, the omitted
-// form, and the explicit-empty form (byte-identical to omission). Pure CPU — no
+// form, and the explicit-empty form (byte-identical to omission). Pure CPU â€” no
 // Context, no Vulkan symbol touched.
 
 #include <cstring>

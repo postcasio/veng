@@ -1,8 +1,8 @@
-// Multi-viewport isolation: two Offscreen viewports rendering the SAME scene through
+﻿// Multi-viewport isolation: two Offscreen viewports rendering the SAME scene through
 // DIFFERENT cameras in one frame must each reflect their own camera. The view-constants
 // (and light) buffer is shared across every viewport on the Context; if it rings only by
 // frame-in-flight, the second viewport's Execute overwrites the region the first's draws
-// still read at submit, so both render through the last camera — a material preview bleeding
+// still read at submit, so both render through the last camera â€” a material preview bleeding
 // into the level viewport. BindlessRegistry::BeginView gives each render its own region;
 // this asserts the near viewport shows the cube (its camera) while the away viewport (looking
 // away, registered last) shows background, which the shared-region bug would flip.
@@ -71,15 +71,15 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
   "version": 1,
   "assets": [
     { "id": "0x00000000000023F1", "type": "VertexLayout", "source": ")"
-            << (fixtureDir / "layouts/canonical.vlayout.json").string() << R"(" },
+            << (fixtureDir / "layouts/canonical.vlayout.json").generic_string() << R"(" },
     { "id": "0x0000000000002329", "type": "Texture",  "source": ")"
-            << (fixtureDir / "textures/brick.tex.json").string() << R"(" },
+            << (fixtureDir / "textures/brick.tex.json").generic_string() << R"(" },
     { "id": "0x000000000000238D", "type": "Shader",   "source": ")"
-            << (fixtureDir / "shaders/brick.vert.shader.json").string() << R"(" },
+            << (fixtureDir / "shaders/brick.vert.shader.json").generic_string() << R"(" },
     { "id": "0x000000000000238E", "type": "Shader",   "source": ")"
-            << (fixtureDir / "shaders/brick.frag.shader.json").string() << R"(" },
+            << (fixtureDir / "shaders/brick.frag.shader.json").generic_string() << R"(" },
     { "id": "0x000000000000232B", "type": "Material", "source": ")"
-            << (fixtureDir / "materials/brick.vmat.json").string() << R"(" }
+            << (fixtureDir / "materials/brick.vmat.json").generic_string() << R"(" }
   ]
 })";
     }
@@ -120,12 +120,20 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     nearCamera.SetPerspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
     nearCamera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
 
-    // The "away" camera sits at the same eye but looks in +Z, away from the cube — its center
+    // The "away" camera sits at the same eye but looks in +Z, away from the cube â€” its center
     // is cleared background. It is registered LAST, so a shared per-frame view region would hold
     // its camera at submit and drag the near viewport's draws onto it (the bleed under test).
     CameraView awayCamera;
     awayCamera.SetPerspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
     awayCamera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f, 0.0f, 6.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    // Declared before the viewports so it outlives them: a viewport's destructor erases its
+    // own pointer from the drive-list through the back-reference AttachToDriveList stores, so
+    // the list must still be alive when the Unique<Viewport>s below destruct (reverse
+    // declaration order). A drive-list declared after them would already be gone — a
+    // dangling erase the engine avoids by having Application (which outlives its viewports)
+    // own the list.
+    vector<Viewport*> driveList;
 
     const Unique<Viewport> nearView = Viewport::Create({
         .Context = Context,
@@ -148,7 +156,6 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     awayView->SetViewState({.World = scene.get(), .Camera = awayCamera, .Delta = 0.0f});
 
     // Drive-list order = render order: the near viewport first, the away viewport last.
-    vector<Viewport*> driveList;
     driveList.emplace_back(nearView.get());
     nearView->AttachToDriveList(driveList);
     driveList.emplace_back(awayView.get());
@@ -163,7 +170,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
             }
         });
 
-    // The near viewport's center is the green cube — this is what fails under the shared-region
+    // The near viewport's center is the green cube â€” this is what fails under the shared-region
     // bug (it would render through the away camera and show cleared background instead).
     const vector<u8> nearPixels = nearView->GetOutput()->GetImage()->Download();
     REQUIRE(nearPixels.size() == static_cast<size_t>(extent.x) * extent.y * 8);

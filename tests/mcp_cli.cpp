@@ -34,7 +34,11 @@
 
 #include <nlohmann/json.hpp>
 
+#if defined(_WIN32)
+#include <process.h>
+#else
 #include <unistd.h>
+#endif
 
 #include <atomic>
 #include <chrono>
@@ -237,7 +241,11 @@ int main()
         // With --output the decoded image bytes are written to the file, out is a confirmation.
         // A per-pid name in the CWD (the build dir) avoids a collision under parallel ctest and
         // the deprecated tmpnam.
+#if defined(_WIN32)
+        const std::string imagePath = "mcp_cli_image_" + std::to_string(::_getpid()) + ".png";
+#else
         const std::string imagePath = "mcp_cli_image_" + std::to_string(::getpid()) + ".png";
+#endif
         const RunResult output = Run({"--connect=" + portStr, "make_image", "--output", imagePath});
         Check(output.Code == 0, "an image tool with --output exited 0");
         Check(output.Out.find("AAECAw==") == std::string::npos, "the confirmation is not base64");

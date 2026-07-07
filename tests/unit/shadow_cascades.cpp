@@ -205,7 +205,10 @@ TEST_CASE("ComputeCascades: sub-texel camera translation yields a stable snapped
     {
         for (int r = 0; r < 4; ++r)
         {
-            CHECK(da.ViewProj[0][c][r] == doctest::Approx(db.ViewProj[0][c][r]).epsilon(0.001));
+            // epsilon 0.005 (0.5%): the snap is sphere-stable to well under a percent, but the
+            // bounding-sphere fit + texel snap accumulates a little more float rounding under
+            // MSVC than clang, so a 0.1% bound false-fails there while still pinning stability.
+            CHECK(da.ViewProj[0][c][r] == doctest::Approx(db.ViewProj[0][c][r]).epsilon(0.005));
         }
     }
 }

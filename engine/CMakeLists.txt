@@ -149,7 +149,6 @@ add_library(veng SHARED
         src/Renderer/Backend/Utils.cpp
         src/Renderer/Backend/VertexBufferLayout.cpp
         src/Vendor/ImGui.cpp
-        src/Vendor/StbImage.cpp
         src/Vendor/TinyExr.cpp
 )
 add_library(veng::veng ALIAS veng)
@@ -243,6 +242,5 @@ target_precompile_headers(veng PRIVATE include/Veng/Veng.h)
 # generated embed TUs are bare byte arrays that gain nothing from it.
 set_source_files_properties(
         src/Vendor/ImGui.cpp
-        src/Vendor/StbImage.cpp
         src/Vendor/TinyExr.cpp
         PROPERTIES SKIP_PRECOMPILE_HEADERS ON)

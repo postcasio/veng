@@ -326,6 +326,12 @@ int main()
         // shape. Each renders its own scene through its own overhead camera.
         constexpr uvec2 viewportExtent{300, 460};
 
+        // Declared before the viewports so it outlives them: a viewport's destructor erases
+        // its own pointer from the drive-list through AttachToDriveList's back-reference, so
+        // the list must still be alive when the Unique<Viewport>s destruct (reverse
+        // declaration order).
+        vector<Viewport*> driveList;
+
         const Unique<Viewport> redView = Viewport::Create({
             .Context = context,
             .Assets = assets,
@@ -348,7 +354,6 @@ int main()
         greenView->SetViewState(
             {.World = greenScene.get(), .Camera = OverheadCamera(viewportExtent), .Delta = 0.0f});
 
-        vector<Viewport*> driveList;
         driveList.emplace_back(redView.get());
         redView->AttachToDriveList(driveList);
         driveList.emplace_back(greenView.get());

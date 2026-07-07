@@ -14,6 +14,7 @@
 
 #include <cstring>
 #include <filesystem>
+#include <system_error>
 #include <fstream>
 #include <iterator>
 
@@ -221,6 +222,10 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         assets.LoadSync<Gui::UIDocument>(UIDocumentId);
     REQUIRE(revealed.has_value());
 
-    std::filesystem::remove(first);
-    std::filesystem::remove(second);
+    // The on-disk base mount is still live on `assets` here, so the archive files are open;
+    // Windows refuses to delete an open file (POSIX unlinks it). The scratch files are
+    // transient OS-temp entries, so a failed cleanup is ignored rather than thrown.
+    std::error_code ec;
+    std::filesystem::remove(first, ec);
+    std::filesystem::remove(second, ec);
 }

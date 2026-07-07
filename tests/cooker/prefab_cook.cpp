@@ -1,4 +1,4 @@
-// Prefab cook test: cooks a *.prefab.json through the PrefabImporter against the
+﻿// Prefab cook test: cooks a *.prefab.json through the PrefabImporter against the
 // reflected hello-triangle registry (loaded module: builtins + Spinner) and
 // checks the CookedPrefabHeader, the entity/component tables, each component's
 // TypeId, and that the record tail round-trips back through ReadFields to the
@@ -123,7 +123,7 @@ namespace
     }
 }
 
-TEST_CASE("prefab cook: happy path — header, component TypeIds, record round-trip")
+TEST_CASE("prefab cook: happy path â€” header, component TypeIds, record round-trip")
 {
     const LoadedModuleTypes module = LoadRegistry();
     const TypeRegistry& types = module.Types;
@@ -186,22 +186,22 @@ TEST_CASE("prefab cook: happy path — header, component TypeIds, record round-t
 
     // --- Round-trip Transform via ReadFields ---
     Transform decodedTransform;
-    ReadFields(std::span<const u8>(records + transform->RecordOffset, transform->RecordSize),
+    (void)ReadFields(std::span<const u8>(records + transform->RecordOffset, transform->RecordSize),
                &decodedTransform, types.Info(TypeIdOf<Transform>()), types);
     CHECK(decodedTransform.Position == vec3(1, 2, 3));
     // The quat JSON array is storage order [x,y,z,w]; [0,0,0,1] is the identity.
-    CHECK(decodedTransform.Rotation == quat(1, 0, 0, 0)); // glm quat(w,x,y,z) — identity
+    CHECK(decodedTransform.Rotation == quat(1, 0, 0, 0)); // glm quat(w,x,y,z) â€” identity
     CHECK(decodedTransform.Scale == vec3(1, 1, 1));
 
     // --- Round-trip MeshRenderer's AssetHandle id (offset 0 = AssetId) ---
     MeshRenderer decodedRenderer;
-    ReadFields(std::span<const u8>(records + meshRenderer->RecordOffset, meshRenderer->RecordSize),
+    (void)ReadFields(std::span<const u8>(records + meshRenderer->RecordOffset, meshRenderer->RecordSize),
                &decodedRenderer, types.Info(TypeIdOf<MeshRenderer>()), types);
     CHECK(decodedRenderer.Mesh.Id().Value == 8001ULL);
 
     // --- Round-trip Spinner via a mirror (the cooker has no compile-time type) ---
     SpinnerMirror decodedSpinner;
-    ReadFields(std::span<const u8>(records + spinner->RecordOffset, spinner->RecordSize),
+    (void)ReadFields(std::span<const u8>(records + spinner->RecordOffset, spinner->RecordSize),
                &decodedSpinner, types.Info(SpinnerTypeId), types);
     CHECK(decodedSpinner.SpeedRadiansPerSec == doctest::Approx(1.5f));
     CHECK(decodedSpinner.Axis == vec3(0, 0, 1));
@@ -211,7 +211,7 @@ TEST_CASE("prefab cook: happy path — header, component TypeIds, record round-t
         entityTable[1].FirstComponent, entityTable[1].ComponentCount, TypeIdOf<Hierarchy>());
     REQUIRE(hierarchy != nullptr);
     Hierarchy decodedHierarchy;
-    ReadFields(std::span<const u8>(records + hierarchy->RecordOffset, hierarchy->RecordSize),
+    (void)ReadFields(std::span<const u8>(records + hierarchy->RecordOffset, hierarchy->RecordSize),
                &decodedHierarchy, types.Info(TypeIdOf<Hierarchy>()), types);
     CHECK(decodedHierarchy.Parent.Index == 0u);
     CHECK(decodedHierarchy.Parent.Generation == 0u);
@@ -303,7 +303,7 @@ TEST_CASE("prefab cook: an omitted field keeps its default value")
                         sizeof(CookedPrefabComponent);
 
     Transform decoded;
-    ReadFields(std::span<const u8>(records + component->RecordOffset, component->RecordSize),
+    (void)ReadFields(std::span<const u8>(records + component->RecordOffset, component->RecordSize),
                &decoded, types.Info(TypeIdOf<Transform>()), types);
     CHECK(decoded.Position == vec3(5, 6, 7));
     CHECK(decoded.Scale == vec3(1, 1, 1)); // the default survived
@@ -344,7 +344,7 @@ TEST_CASE("prefab cook: a null entity reference stays Entity::Null")
                         sizeof(CookedPrefabComponent);
 
     Hierarchy decoded;
-    ReadFields(std::span<const u8>(records + component->RecordOffset, component->RecordSize),
+    (void)ReadFields(std::span<const u8>(records + component->RecordOffset, component->RecordSize),
                &decoded, types.Info(TypeIdOf<Hierarchy>()), types);
     CHECK(decoded.Parent == Entity::Null);
 }
@@ -419,7 +419,7 @@ TEST_CASE("prefab cook: an InputContextStack AssetHandle array round-trips its c
     const LoadedModuleTypes module = LoadRegistry();
     const TypeRegistry& types = module.Types;
 
-    // The seat component carries a reflected vector<AssetHandle<InputMappingContext>> — the
+    // The seat component carries a reflected vector<AssetHandle<InputMappingContext>> â€” the
     // array-of-handle field cooked through the prefab importer. The ids are runtime residency
     // concerns; the cook accepts non-resident ids as-is, so this pins the array serialization.
     constexpr u64 ContextA = 999999000000000001ULL;
