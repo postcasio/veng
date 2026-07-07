@@ -105,6 +105,19 @@ namespace Veng::Renderer
         u32 IndexBase = 0;
         vector<Gui::DrawRun> Runs;
 
+        // The compiled UI + composite graph, held across frames and re-Compile()d only on Resize.
+        // Its topology is invariant (record the draw list, then blend it over the scene), so the
+        // per-frame variation — the run table, the extent, and the composite's sampled scene/UI
+        // slots — is read live from these members inside the pass callbacks, never baked at compile.
+        Unique<CompiledGraph> Graph;
+        ResourceId UiId;
+        ResourceId SceneId;
+        ResourceId CompositeId;
+        // The scene-output and UI-image bindless slots for the current frame, sampled by the
+        // composite pass; refreshed each Render before the graph replays.
+        TextureHandle SceneSlot;
+        TextureHandle UiSlot;
+
         explicit Impl(const GuiScenePassInfo& info)
             : Context(info.Context), Extent(info.Extent), OutputFormat(info.OutputFormat)
         {
@@ -132,6 +145,118 @@ namespace Veng::Renderer
                                        });
             CompositeView =
                 ImageView::Create(Context, {.Name = "Gui Composite View", .Image = CompositeImage});
+        }
+
+        // Builds the two-pass UI + composite graph and bakes its schedule once. The callbacks read
+        // every per-frame input (Runs, Extent, the composite's SceneSlot/UiSlot) from this Impl at
+        // record time, so the same compiled graph replays each frame against fresh geometry and
+        // bindings; only a Resize (which changes the imported extent) re-Compile()s it.
+        void CompileGraph()
+        {
+            RenderGraph graph(Context);
+            UiId = graph.Import("Gui UI");
+            SceneId = graph.Import("Gui Scene");
+            CompositeId = graph.Import("Gui Composite");
+
+            // Pass 1 — record the draw list into the UI image (cleared to transparent).
+            graph.AddPass("Gui UI")
+                .Color({
+                    .Resource = UiId,
+                    .Load = LoadOp::Clear,
+                    .Store = StoreOp::Store,
+                    .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 0.0f},
+                })
+                .Execute(
+                    [this](PassContext& ctx)
+                    {
+                        BindlessRegistry& bindless = Context.GetBindlessRegistry();
+                        CommandBuffer& passCmd = ctx.Cmd();
+                        passCmd.SetViewport({0, 0}, Extent);
+                        passCmd.BindVertexBuffer(VertexBuffer);
+                        passCmd.BindIndexBuffer(IndexBuffer, IndexType::U32);
+
+                        const GuiPushConstants push{
+                            .InvScreenSize = vec2(1.0f / static_cast<f32>(Extent.x),
+                                                  1.0f / static_cast<f32>(Extent.y)),
+                            .Pad0 = vec2(0.0f),
+                        };
+
+                        optional<Gui::GuiPipeline> boundPipeline;
+
+                        for (const Gui::DrawRun& run : Runs)
+                        {
+                            if (run.IndexCount == 0)
+                            {
+                                continue;
+                            }
+
+                            if (boundPipeline != run.Pipeline)
+                            {
+                                passCmd.BindPipeline(run.Pipeline == Gui::GuiPipeline::Msdf
+                                                         ? MsdfPipeline
+                                                         : ShapePipeline);
+                                // Set 0 is bound after the pipeline so the layout is established.
+                                bindless.Bind(passCmd);
+                                passCmd.PushConstants(push);
+                                boundPipeline = run.Pipeline;
+                            }
+
+                            // The run's clip is already an absolute rectangle; unclipped runs
+                            // scissor the whole surface.
+                            if (run.HasClip)
+                            {
+                                const ivec2 offset{static_cast<i32>(run.Clip.Min.x),
+                                                   static_cast<i32>(run.Clip.Min.y)};
+                                const uvec2 extent{static_cast<u32>(run.Clip.Size.x),
+                                                   static_cast<u32>(run.Clip.Size.y)};
+                                passCmd.SetScissor(offset, extent);
+                            }
+                            else
+                            {
+                                passCmd.SetScissor({0, 0}, Extent);
+                            }
+
+                            passCmd.DrawIndexed(run.IndexCount, 1, IndexBase + run.FirstIndex,
+                                                VertexBase, 0);
+                        }
+                    });
+
+            // Pass 2 — composite: copy the scene output, then blend the UI over it.
+            graph.AddPass("Gui Composite")
+                .Color({
+                    .Resource = CompositeId,
+                    .Load = LoadOp::Clear,
+                    .Store = StoreOp::Store,
+                    .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
+                })
+                .Sample(SceneId)
+                .Sample(UiId)
+                .Execute(
+                    [this](PassContext& ctx)
+                    {
+                        BindlessRegistry& bindless = Context.GetBindlessRegistry();
+                        CommandBuffer& passCmd = ctx.Cmd();
+                        passCmd.SetViewport({0, 0}, Extent);
+                        passCmd.SetScissor({0, 0}, Extent);
+
+                        passCmd.BindPipeline(ScenePipeline);
+                        bindless.Bind(passCmd);
+                        passCmd.PushConstants(BlitPushConstants{
+                            .Texture = SceneSlot.Index,
+                            .Sampler = SamplerSlot.Index,
+                        });
+                        passCmd.DrawFullscreenTriangle();
+
+                        passCmd.BindPipeline(OverlayPipeline);
+                        bindless.Bind(passCmd);
+                        passCmd.PushConstants(BlitPushConstants{
+                            .Texture = UiSlot.Index,
+                            .Sampler = SamplerSlot.Index,
+                        });
+                        passCmd.DrawFullscreenTriangle();
+                    });
+
+            Graph = graph.Compile();
         }
     };
 
@@ -261,6 +386,7 @@ namespace Veng::Renderer
                                     });
 
         m_Impl->CreateImages();
+        m_Impl->CompileGraph();
     }
 
     GuiScenePass::~GuiScenePass()
@@ -311,6 +437,7 @@ namespace Veng::Renderer
         }
         m_Impl->Extent = extent;
         m_Impl->CreateImages();
+        m_Impl->CompileGraph();
     }
 
     void GuiScenePass::Render(CommandBuffer& cmd, const Ref<ImageView>& sceneOutput)
@@ -318,125 +445,27 @@ namespace Veng::Renderer
         Impl& impl = *m_Impl;
         BindlessRegistry& bindless = impl.Context.GetBindlessRegistry();
 
-        // The scene output and the UI image are both sampled by the composite pass, out of any
-        // single graph, so bind their bindless slots for this frame and release them after.
-        const TextureHandle sceneSlot = bindless.Register(sceneOutput);
-        const TextureHandle uiSlot = bindless.Register(impl.UiView);
-
-        RenderGraph graph(impl.Context);
-        const ResourceId uiId = graph.Import("Gui UI");
-        const ResourceId sceneId = graph.Import("Gui Scene");
-        const ResourceId compositeId = graph.Import("Gui Composite");
-
-        // Pass 1 — record the draw list into the UI image (cleared to transparent).
-        graph.AddPass("Gui UI")
-            .Color({
-                .Resource = uiId,
-                .Load = LoadOp::Clear,
-                .Store = StoreOp::Store,
-                .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 0.0f},
-            })
-            .Execute(
-                [&](PassContext& ctx)
-                {
-                    CommandBuffer& passCmd = ctx.Cmd();
-                    passCmd.SetViewport({0, 0}, impl.Extent);
-                    passCmd.BindVertexBuffer(impl.VertexBuffer);
-                    passCmd.BindIndexBuffer(impl.IndexBuffer, IndexType::U32);
-
-                    const GuiPushConstants push{
-                        .InvScreenSize = vec2(1.0f / static_cast<f32>(impl.Extent.x),
-                                              1.0f / static_cast<f32>(impl.Extent.y)),
-                        .Pad0 = vec2(0.0f),
-                    };
-
-                    optional<Gui::GuiPipeline> boundPipeline;
-
-                    for (const Gui::DrawRun& run : impl.Runs)
-                    {
-                        if (run.IndexCount == 0)
-                        {
-                            continue;
-                        }
-
-                        if (boundPipeline != run.Pipeline)
-                        {
-                            passCmd.BindPipeline(run.Pipeline == Gui::GuiPipeline::Msdf
-                                                     ? impl.MsdfPipeline
-                                                     : impl.ShapePipeline);
-                            // Set 0 is bound after the pipeline so the layout is established.
-                            bindless.Bind(passCmd);
-                            passCmd.PushConstants(push);
-                            boundPipeline = run.Pipeline;
-                        }
-
-                        // The run's clip is already an absolute rectangle; unclipped runs scissor
-                        // the whole surface.
-                        if (run.HasClip)
-                        {
-                            const ivec2 offset{static_cast<i32>(run.Clip.Min.x),
-                                               static_cast<i32>(run.Clip.Min.y)};
-                            const uvec2 extent{static_cast<u32>(run.Clip.Size.x),
-                                               static_cast<u32>(run.Clip.Size.y)};
-                            passCmd.SetScissor(offset, extent);
-                        }
-                        else
-                        {
-                            passCmd.SetScissor({0, 0}, impl.Extent);
-                        }
-
-                        passCmd.DrawIndexed(run.IndexCount, 1, impl.IndexBase + run.FirstIndex,
-                                            impl.VertexBase, 0);
-                    }
-                });
-
-        // Pass 2 — composite: copy the scene output, then blend the UI over it.
-        graph.AddPass("Gui Composite")
-            .Color({
-                .Resource = compositeId,
-                .Load = LoadOp::Clear,
-                .Store = StoreOp::Store,
-                .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
-            })
-            .Sample(sceneId)
-            .Sample(uiId)
-            .Execute(
-                [&](PassContext& ctx)
-                {
-                    CommandBuffer& passCmd = ctx.Cmd();
-                    passCmd.SetViewport({0, 0}, impl.Extent);
-                    passCmd.SetScissor({0, 0}, impl.Extent);
-
-                    passCmd.BindPipeline(impl.ScenePipeline);
-                    bindless.Bind(passCmd);
-                    passCmd.PushConstants(BlitPushConstants{
-                        .Texture = sceneSlot.Index,
-                        .Sampler = impl.SamplerSlot.Index,
-                    });
-                    passCmd.DrawFullscreenTriangle();
-
-                    passCmd.BindPipeline(impl.OverlayPipeline);
-                    bindless.Bind(passCmd);
-                    passCmd.PushConstants(BlitPushConstants{
-                        .Texture = uiSlot.Index,
-                        .Sampler = impl.SamplerSlot.Index,
-                    });
-                    passCmd.DrawFullscreenTriangle();
-                });
+        // The scene output and the UI image are both sampled by the composite pass, out of the
+        // graph, so bind their bindless slots for this frame and release them after; the composite
+        // callback reads them back through impl.SceneSlot/UiSlot at record time.
+        impl.SceneSlot = bindless.Register(sceneOutput);
+        impl.UiSlot = bindless.Register(impl.UiView);
 
         // The scene output arrives already in a sampleable layout (the viewport transitioned it);
         // ensure it regardless, since a test may hand a freshly written target.
         cmd.PrepareForAccess(sceneOutput, AccessKind::Sample);
 
+        // Replay the graph baked at construction/Resize against this frame's geometry and imports —
+        // the topology is invariant, so no per-frame recompile.
         const RenderGraph::ImportBinding bindings[] = {
-            {.Id = uiId, .View = impl.UiView},
-            {.Id = sceneId, .View = sceneOutput},
-            {.Id = compositeId, .View = impl.CompositeView},
+            {.Id = impl.UiId, .View = impl.UiView},
+            {.Id = impl.SceneId, .View = sceneOutput},
+            {.Id = impl.CompositeId, .View = impl.CompositeView},
         };
-        graph.Compile()->Execute(cmd, bindings);
+        impl.Graph->Execute(cmd, bindings);
 
-        bindless.Release(sceneSlot);
-        bindless.Release(uiSlot);
+        bindless.Release(impl.SceneSlot);
+        bindless.Release(impl.UiSlot);
     }
 
     const Ref<ImageView>& GuiScenePass::GetOutput() const
