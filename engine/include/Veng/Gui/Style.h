@@ -207,6 +207,15 @@ namespace Veng::Gui
         PositionType Position = PositionType::Relative;
         /// @brief Absolute per-edge insets, applied when Position is Absolute; unset edges free.
         PositionInsets Inset;
+        /// @brief The element's self-anchor, as normalized fractions of its own laid-out size.
+        ///
+        /// After layout, the element (with its whole subtree) shifts by -Origin · size, so its
+        /// position names where the anchor point sits rather than the top-left corner — an
+        /// absolute element with `origin: 0.5 0.5` pins its center at its Left/Top insets, and a
+        /// size change (a pulse animation) grows around the anchor instead of the corner. The
+        /// default (0, 0) anchors the top-left, today's behavior. A pure post-layout offset: it
+        /// never moves siblings or affects the flex solve.
+        vec2 Origin{0.0f};
 
         /// @brief Background fill color, linear straight-alpha RGBA; a zero alpha draws nothing.
         vec4 Background{0.0f};

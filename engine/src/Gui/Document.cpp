@@ -913,6 +913,7 @@ namespace Veng::Gui
             case StyleProperty::InsetTop:
             case StyleProperty::InsetRight:
             case StyleProperty::InsetBottom:
+            case StyleProperty::Origin:
             case StyleProperty::TextSize:
             case StyleProperty::TextFont:
                 return true;
@@ -952,6 +953,7 @@ namespace Veng::Gui
             case StyleProperty::InsetTop:
             case StyleProperty::InsetRight:
             case StyleProperty::InsetBottom:
+            case StyleProperty::Origin:
             case StyleProperty::Background:
             case StyleProperty::CornerRadius:
             case StyleProperty::BorderWidth:
@@ -1053,6 +1055,8 @@ namespace Veng::Gui
                 return vec4(style.Inset.Right, 0.0f, 0.0f, 0.0f);
             case StyleProperty::InsetBottom:
                 return vec4(style.Inset.Bottom, 0.0f, 0.0f, 0.0f);
+            case StyleProperty::Origin:
+                return vec4(style.Origin.x, style.Origin.y, 0.0f, 0.0f);
             default:
                 return vec4(0.0f);
             }
@@ -1143,6 +1147,9 @@ namespace Veng::Gui
                 return;
             case StyleProperty::InsetBottom:
                 style.Inset.Bottom = value.x;
+                return;
+            case StyleProperty::Origin:
+                style.Origin = vec2(value.x, value.y);
                 return;
             default:
                 return;
@@ -1833,10 +1840,13 @@ namespace Veng::Gui
         }
 
         const vec2 localMin(YGNodeLayoutGetLeft(node), YGNodeLayoutGetTop(node));
-        const vec2 absoluteMin = origin + localMin;
+        const vec2 size(YGNodeLayoutGetWidth(node), YGNodeLayoutGetHeight(node));
+        // The self-anchor: shift by -Origin · size so the solved position names the anchor point
+        // rather than the top-left. Children recurse from the shifted min, so the subtree rides.
+        const vec2 absoluteMin = origin + localMin - element.ComputedStyle.Origin * size;
         element.Layout = Rect{
             .Min = absoluteMin,
-            .Size = vec2(YGNodeLayoutGetWidth(node), YGNodeLayoutGetHeight(node)),
+            .Size = size,
         };
 
         // A ScrollView shifts its children by its scroll offset, so the child origin is the view's

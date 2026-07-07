@@ -465,6 +465,44 @@ namespace Veng::Cook
             // style, a keyframe block) it has no clip table to resolve into.
             return std::unexpected(
                 fmt::format("{}: 'animation' is only authorable in a stylesheet rule", located));
+
+        case StyleProperty::Origin:
+        {
+            // One or two bare normalized fractions; one value applies to both axes.
+            vector<f32> parts;
+            usize i = 0;
+            while (i < v.size())
+            {
+                while (i < v.size() && std::isspace(static_cast<unsigned char>(v[i])) != 0)
+                {
+                    ++i;
+                }
+                const usize start = i;
+                while (i < v.size() && std::isspace(static_cast<unsigned char>(v[i])) == 0)
+                {
+                    ++i;
+                }
+                if (i > start)
+                {
+                    const Result<f32> part = ParseFloat(v.substr(start, i - start), located);
+                    if (!part)
+                    {
+                        return std::unexpected(part.error());
+                    }
+                    parts.push_back(*part);
+                }
+            }
+            if (parts.empty() || parts.size() > 2)
+            {
+                return std::unexpected(fmt::format(
+                    "{}: 'origin' expects one or two normalized fractions, got '{}'", located, v));
+            }
+            CookedStyleProperty cp{};
+            cp.Property = static_cast<u32>(property);
+            cp.Values[0] = parts[0];
+            cp.Values[1] = parts.size() == 2 ? parts[1] : parts[0];
+            return cp;
+        }
         }
 
         return std::unexpected(

@@ -257,3 +257,32 @@ TEST_CASE("gui binding: a paint style property binds to a reflected model field"
     CHECK(swatch.ComputedStyle.Background.g == doctest::Approx(1.0f));
     CHECK(swatch.ComputedStyle.Opacity == doctest::Approx(1.0f));
 }
+
+TEST_CASE("gui layout: origin anchors an element at its anchor point, growing around it")
+{
+    Document doc;
+    Element& ring = doc.Add(doc.Root(), ElementKind::Panel);
+
+    // A centered anchor: the placement names where the center sits, not the top-left.
+    Style style;
+    style.Origin = vec2(0.5f);
+    doc.SetStyle(ring, style);
+    doc.SetPlacement(ring, vec2(100.0f, 80.0f), vec2(40.0f, 40.0f));
+
+    doc.Solve(vec2(200.0f, 200.0f));
+    CheckRect(ring.Layout, 80.0f, 60.0f, 40.0f, 40.0f);
+
+    // Growing the element keeps the anchor fixed — the pulse case.
+    doc.SetPlacement(ring, vec2(100.0f, 80.0f), vec2(60.0f, 60.0f));
+    doc.Solve(vec2(200.0f, 200.0f));
+    CheckRect(ring.Layout, 70.0f, 50.0f, 60.0f, 60.0f);
+}
+
+TEST_CASE("gui draw: an oversized corner radius clamps to half the box (a circle)")
+{
+    DrawList list;
+    list.Quad(Rect{.Min = vec2(0.0f), .Size = vec2(40.0f, 40.0f)}, vec4(1.0f, 1.0f, 1.0f, 1.0f),
+              CornerRadii::All(999.0f));
+    REQUIRE(list.GetVertices().size() == 4);
+    CHECK(list.GetVertices()[0].Params.x == doctest::Approx(20.0f));
+}

@@ -147,6 +147,9 @@ namespace Veng::Gui
             // An animation reference is element state, not a Style field; the instantiate-time
             // style resolve routes it onto the element's animation list.
             return;
+        case StyleProperty::Origin:
+            style.Origin = vec2(declaration.Values.x, declaration.Values.y);
+            return;
         }
     }
 

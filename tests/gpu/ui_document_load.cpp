@@ -213,6 +213,10 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const Gui::StyleDeclaration* pointer = FindDecl(*tag, Gui::StyleProperty::PointerEvents);
     REQUIRE(pointer != nullptr);
     CHECK(pointer->Unit == static_cast<u32>(Gui::PointerEvents::None));
+    const Gui::StyleDeclaration* origin = FindDecl(*tag, Gui::StyleProperty::Origin);
+    REQUIRE(origin != nullptr);
+    CHECK(origin->Values.x == doctest::Approx(0.5f));
+    CHECK(origin->Values.y == doctest::Approx(0.5f));
     const Gui::StyleDeclaration* animationRef = FindDecl(*tag, Gui::StyleProperty::Animation);
     REQUIRE(animationRef != nullptr);
     CHECK(animationRef->Values.x == doctest::Approx(2.0f));

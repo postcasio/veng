@@ -87,12 +87,14 @@ namespace Veng::Gui
         /// @brief A stylesheet animation reference (not a Style field): Unit is the sheet's clip
         /// index, Values are the duration in seconds (x) and an AnimationLoopMode ordinal (y).
         Animation,
+        /// @brief The element's normalized self-anchor (Style::Origin); value is a vec2.
+        Origin,
     };
 
     /// @brief The number of StyleProperty enumerators — keep in step when appending one.
     ///
     /// The runtime's whole-style property sweeps iterate `[0, StylePropertyCount)`.
-    inline constexpr u32 StylePropertyCount = static_cast<u32>(StyleProperty::Animation) + 1;
+    inline constexpr u32 StylePropertyCount = static_cast<u32>(StyleProperty::Origin) + 1;
 
     /// @brief Canonical USS declaration name of a style property ("flex-direction", "background", …).
     ///

@@ -179,7 +179,10 @@ namespace Veng::Gui
         const vec2 half = rect.Size * 0.5f;
         const vec2 center = rect.Center();
         const vec4 fill = border.Width > 0.0f ? border.Color : color;
-        const vec4 params{radii.TopLeft, border.Width, UntexturedIndex, UntexturedIndex};
+        // A radius past half the box clamps to the largest the box supports (the CSS behavior),
+        // so an oversized authored radius reads as a circle/capsule, not an SDF artifact.
+        const f32 radius = std::min(radii.TopLeft, std::min(half.x, half.y));
+        const vec4 params{radius, border.Width, UntexturedIndex, UntexturedIndex};
 
         PushQuad(corners, uvs, fill, half, center, params);
     }

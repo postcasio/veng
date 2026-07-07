@@ -2943,12 +2943,23 @@ namespace Veng::Renderer
         // skip occlusion rather than test against an undefined/stale chain.
         m_HiZHistoryReset = true;
 
-        // The cull set samples the pyramid through binding 0; rewrite it whenever the
-        // pyramid is recreated (Resize/Configure). Skipped on the first CreateHiZ, before
-        // CreateCullResources has made the set.
+        // The cull set samples the pyramid through binding 0, and the pyramid is recreated on
+        // Resize/Configure — but the live set may still be referenced by an in-flight frame's
+        // command buffer and its bindings are not update-after-bind, so bind the new view into
+        // a fresh set rather than writing the old one in place (the WriteAutoExposureHdrBinding
+        // pattern; the replaced set retires through the deferred-destruction path, and the cull
+        // pass reads the member at record time). Skipped on the first CreateHiZ, before
+        // CreateCullResources has made the set and the buffers it binds.
         if (m_CullSet)
         {
+            m_CullSet = DescriptorSet::Create(m_Context, {
+                                                             .Name = "SceneRenderer Cull Set",
+                                                             .Layout = m_CullSetLayout,
+                                                         });
             m_CullSet->Write(0, m_HiZSampleView);
+            m_CullSet->Write(1, m_CullCandidateBuffer);
+            m_CullSet->Write(2, m_IndirectBuffer);
+            m_CullSet->Write(3, m_CullCountBuffer);
         }
     }
 

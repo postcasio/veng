@@ -72,6 +72,8 @@ namespace Veng::Gui
             return "pointer-events";
         case StyleProperty::Animation:
             return "animation";
+        case StyleProperty::Origin:
+            return "origin";
         }
         return "unknown";
     }
@@ -209,6 +211,10 @@ namespace Veng::Gui
         if (name == "animation")
         {
             return StyleProperty::Animation;
+        }
+        if (name == "origin")
+        {
+            return StyleProperty::Origin;
         }
         return std::nullopt;
     }
