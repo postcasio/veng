@@ -24,3 +24,18 @@ Text#title {
     font-size: 24px;
     color: #eaeaeaff;
 }
+
+/* A cursor-following tag: hit-transparent, anchored from the bottom-right, pulsing. */
+@keyframes tag-pulse {
+    from { opacity: 0.2; }
+    50% { opacity: 1.0; }
+    to { opacity: 0.2; }
+}
+
+.tag {
+    position: absolute;
+    inset-right: 12;
+    inset-bottom: 8;
+    pointer-events: none;
+    animation: tag-pulse 2s ping-pong;
+}

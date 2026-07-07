@@ -93,6 +93,7 @@ add_library(veng SHARED
         src/Gui/BindingContext.cpp
         src/Gui/DrawList.cpp
         src/Gui/Document.cpp
+        src/Gui/DocumentHost.cpp
         src/Gui/GuiConsumer.cpp
         src/Gui/StyleProperty.cpp
         src/Gui/StyleSheet.cpp

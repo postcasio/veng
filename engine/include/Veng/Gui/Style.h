@@ -1,5 +1,7 @@
 #pragma once
 
+#include <limits>
+
 #include <Veng/Veng.h>
 #include <Veng/Asset/AssetHandle.h>
 #include <Veng/Gui/DrawList.h>
@@ -124,6 +126,44 @@ namespace Veng::Gui
         Absolute,
     };
 
+    /// @brief Whether an element (and its subtree) participates in pointer hit-testing.
+    enum class PointerEvents : u8
+    {
+        /// @brief The element hit-tests normally (the default).
+        Auto,
+        /// @brief The element and its whole subtree are transparent to hit-testing.
+        ///
+        /// A display-only overlay piece (a cursor-following label) styled None never occludes
+        /// the content underneath it: Document::HitTest and the pointer event path pass through.
+        None,
+    };
+
+    /// @brief The absolute-position insets: per-edge offsets from the parent's edges, each optional.
+    ///
+    /// An edge holds a pixel offset or the Unset sentinel. Only set edges constrain the element:
+    /// a Left-only pin places the element at that offset with its own (styled or content) size, a
+    /// Right/Bottom pin anchors it to the far corner, and opposing set edges with an Auto size
+    /// stretch the element between them. All edges default Unset, so an absolute element with no
+    /// insets sits at its static position at content size.
+    struct PositionInsets
+    {
+        /// @brief The sentinel an unconstrained edge holds.
+        static constexpr f32 Unset = std::numeric_limits<f32>::infinity();
+
+        /// @brief Offset from the parent's left edge, in pixels; Unset for unconstrained.
+        f32 Left = Unset;
+        /// @brief Offset from the parent's top edge, in pixels; Unset for unconstrained.
+        f32 Top = Unset;
+        /// @brief Offset from the parent's right edge, in pixels; Unset for unconstrained.
+        f32 Right = Unset;
+        /// @brief Offset from the parent's bottom edge, in pixels; Unset for unconstrained.
+        f32 Bottom = Unset;
+
+        /// @brief Returns whether an edge value constrains its edge (is not the Unset sentinel).
+        /// @param edge  The edge value to test.
+        [[nodiscard]] static bool IsSet(f32 edge) { return edge != Unset; }
+    };
+
     /// @brief The resolved style of one element: its flex layout inputs and its paint inputs.
     struct Style
     {
@@ -165,8 +205,8 @@ namespace Veng::Gui
 
         /// @brief Whether the element flows normally or is absolutely positioned.
         PositionType Position = PositionType::Relative;
-        /// @brief Absolute insets from the parent's edges, applied when Position is Absolute.
-        Insets Inset;
+        /// @brief Absolute per-edge insets, applied when Position is Absolute; unset edges free.
+        PositionInsets Inset;
 
         /// @brief Background fill color, linear straight-alpha RGBA; a zero alpha draws nothing.
         vec4 Background{0.0f};
@@ -187,5 +227,8 @@ namespace Veng::Gui
 
         /// @brief Whether content outside the element's box is clipped to it.
         bool ClipContent = false;
+
+        /// @brief Whether the element (and its subtree) takes part in pointer hit-testing.
+        PointerEvents Pointer = PointerEvents::Auto;
     };
 }

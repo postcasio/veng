@@ -154,3 +154,27 @@ TEST_CASE("MakeCameraView composes a Camera component, aspect, and world matrix"
     CHECK(made.GetNear() == doctest::Approx(component.Near));
     CHECK(made.GetFar() == doctest::Approx(component.Far));
 }
+
+TEST_CASE("ProjectToScreen maps world points to top-left-origin pixels and rejects behind-camera")
+{
+    // Looking down -Z from the origin: world center projects to the extent's center, a point
+    // above center lands in the upper half (top-left origin), and a point behind returns nullopt.
+    CameraView camera;
+    camera.SetPerspective(glm::radians(90.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f), vec3(0.0f, 0.0f, -1.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    const vec2 extent(200.0f, 200.0f);
+
+    const optional<vec2> center = ProjectToScreen(camera, vec3(0.0f, 0.0f, -10.0f), extent);
+    REQUIRE(center.has_value());
+    CHECK(center->x == doctest::Approx(100.0f));
+    CHECK(center->y == doctest::Approx(100.0f));
+
+    // At fovY 90° and distance 10, a point 10 up sits exactly on the top edge (y = 0).
+    const optional<vec2> above = ProjectToScreen(camera, vec3(0.0f, 10.0f, -10.0f), extent);
+    REQUIRE(above.has_value());
+    CHECK(above->x == doctest::Approx(100.0f));
+    CHECK(above->y == doctest::Approx(0.0f));
+
+    CHECK(!ProjectToScreen(camera, vec3(0.0f, 0.0f, 10.0f), extent).has_value());
+}

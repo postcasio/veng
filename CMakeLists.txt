@@ -550,6 +550,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/gui_style_states.cpp
             tests/unit/gui_input.cpp
             tests/unit/gui_widgets.cpp
+            tests/unit/gui_document_api.cpp
     )
     target_link_libraries(veng_test_unit PRIVATE veng::veng doctest::doctest)
 

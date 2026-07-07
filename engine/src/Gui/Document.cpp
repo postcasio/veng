@@ -3,6 +3,7 @@
 #include "YogaTree.h"
 
 #include <Veng/Assert.h>
+#include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Font.h>
 #include <Veng/Gui/StyleSheet.h>
 #include <Veng/Gui/UIDocument.h>
@@ -14,6 +15,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cmath>
 
 namespace Veng::Gui
 {
@@ -320,10 +322,14 @@ namespace Veng::Gui
         // Cascades the None-state rule survivors of every referenced sheet onto the element's base
         // style (sheet reference order, then rule source order), then the inline overrides last, and
         // keeps each state-scoped survivor as a variant in the same source order. Inline always wins.
+        // An `animation` declaration is element state, not a Style field: it copies the referenced
+        // sheet clip's keyframes onto the element (a later declaration replaces an earlier one, the
+        // cascade's last-wins), so the live document never borrows the sheet.
         void ResolveElementStyle(Element& element, const UIElementRecipe& recipe,
                                  const vector<const StyleSheet*>& sheets, const FontResolver& fonts)
         {
             element.Variants.clear();
+            element.Animations.clear();
 
             for (const StyleSheet* sheet : sheets)
             {
@@ -337,6 +343,19 @@ namespace Veng::Gui
                     {
                         for (const StyleDeclaration& declaration : rule.Declarations)
                         {
+                            if (declaration.Property == StyleProperty::Animation)
+                            {
+                                const vector<StyleAnimationClip>& clips = sheet->GetAnimations();
+                                if (declaration.Unit < clips.size())
+                                {
+                                    element.Animations.assign({StyleAnimation{
+                                        .Keyframes = clips[declaration.Unit].Keyframes,
+                                        .Duration = declaration.Values.x,
+                                        .Mode = static_cast<AnimationLoopMode>(
+                                            static_cast<u32>(declaration.Values.y))}});
+                                }
+                                continue;
+                            }
                             ApplyDeclaration(element.BaseStyle, declaration, fonts);
                         }
                     }
@@ -553,6 +572,53 @@ namespace Veng::Gui
             }
             return std::nullopt;
         }
+
+        // Whether a style property may be the target of a `{path}` binding: the paint properties
+        // a model plausibly drives per frame. All are paint inputs, so a bound write never
+        // re-dirties layout.
+        bool IsBindableStyleProperty(StyleProperty property)
+        {
+            switch (property)
+            {
+            case StyleProperty::Background:
+            case StyleProperty::BorderColor:
+            case StyleProperty::TextColor:
+            case StyleProperty::Opacity:
+                return true;
+            default:
+                return false;
+            }
+        }
+
+        // Reads a bound leaf field as a numeric style payload: an f32 in x, a glm vector in its
+        // components (a vec3 color promotes alpha 1). Nullopt for any other leaf shape. Colors are
+        // taken as authored — linear straight-alpha, the draw-list contract.
+        optional<vec4> ResolveNumericLeaf(const TypeRegistry& registry, void* base, TypeId type,
+                                          string_view path)
+        {
+            const optional<ResolvedField> field = ResolveFieldPtr(registry, base, type, path);
+            if (!field || !registry.IsRegistered(field->Field->Type))
+            {
+                return std::nullopt;
+            }
+            const TypeInfo& info = registry.Info(field->Field->Type);
+            if (info.Class == FieldClass::Scalar && info.Id == TypeIdOf<f32>())
+            {
+                return vec4(*static_cast<const f32*>(field->Ptr), 0.0f, 0.0f, 0.0f);
+            }
+            if (info.Class == FieldClass::Vector)
+            {
+                const usize count = std::min<usize>(info.Size / sizeof(f32), 4);
+                const auto* comps = static_cast<const f32*>(field->Ptr);
+                vec4 value(0.0f, 0.0f, 0.0f, 1.0f);
+                for (usize i = 0; i < count; ++i)
+                {
+                    value[static_cast<i32>(i)] = comps[i];
+                }
+                return value;
+            }
+            return std::nullopt;
+        }
     }
 
     Unique<Document> Document::Instantiate(const UIDocument& recipe, const FontResolver& fonts)
@@ -599,6 +665,49 @@ namespace Veng::Gui
         // The cascaded base includes layout inputs, so the tree must re-solve.
         document->m_Dirty = true;
         return document;
+    }
+
+    Unique<Document> Document::Instantiate(const UIDocument& recipe, AssetManager& assets)
+    {
+        return Instantiate(recipe, [&assets](const AssetId id)
+                           { return assets.LoadSync<Font>(id).value_or(AssetHandle<Font>{}); });
+    }
+
+    namespace
+    {
+        Element* FindByIdRecursive(Element& element, const string_view id)
+        {
+            if (element.Id == id)
+            {
+                return &element;
+            }
+            for (Element* child : element.Children)
+            {
+                if (Element* const found = FindByIdRecursive(*child, id); found != nullptr)
+                {
+                    return found;
+                }
+            }
+            return nullptr;
+        }
+    }
+
+    Element* Document::FindById(const string_view id)
+    {
+        if (id.empty())
+        {
+            return nullptr;
+        }
+        return FindByIdRecursive(*m_Root, id);
+    }
+
+    const Element* Document::FindById(const string_view id) const
+    {
+        if (id.empty())
+        {
+            return nullptr;
+        }
+        return FindByIdRecursive(*m_Root, id);
     }
 
     Element& Document::Root()
@@ -725,6 +834,55 @@ namespace Veng::Gui
         m_Dirty = true;
     }
 
+    void Document::SetOpacity(Element& element, const f32 opacity)
+    {
+        element.BaseStyle.Opacity = opacity;
+        element.ComputedStyle.Opacity = opacity;
+    }
+
+    void Document::SetBackground(Element& element, const vec4 color)
+    {
+        element.BaseStyle.Background = color;
+        element.ComputedStyle.Background = color;
+    }
+
+    void Document::SetTextColor(Element& element, const vec4 color)
+    {
+        element.BaseStyle.TextColor = color;
+        element.ComputedStyle.TextColor = color;
+    }
+
+    void Document::SetPlacement(Element& element, const vec2 topLeft, const vec2 size)
+    {
+        Style& base = element.BaseStyle;
+        const bool unchanged =
+            base.Position == PositionType::Absolute && base.Inset.Left == topLeft.x &&
+            base.Inset.Top == topLeft.y && !PositionInsets::IsSet(base.Inset.Right) &&
+            !PositionInsets::IsSet(base.Inset.Bottom) && base.Width.Kind == LengthKind::Points &&
+            base.Width.Value == size.x && base.Height.Kind == LengthKind::Points &&
+            base.Height.Value == size.y;
+        if (unchanged)
+        {
+            return;
+        }
+
+        const auto place = [&](Style& style)
+        {
+            style.Position = PositionType::Absolute;
+            style.Inset = {.Left = topLeft.x, .Top = topLeft.y};
+            style.Width = Length::Points(size.x);
+            style.Height = Length::Points(size.y);
+        };
+        place(element.BaseStyle);
+        place(element.ComputedStyle);
+        m_Dirty = true;
+    }
+
+    void Document::SetAnimations(Element& element, vector<StyleAnimation> animations)
+    {
+        element.Animations = std::move(animations);
+    }
+
     namespace
     {
         // Whether a property feeds the flexbox solve (or the text measure that feeds it) — a change
@@ -751,6 +909,10 @@ namespace Veng::Gui
             case StyleProperty::Padding:
             case StyleProperty::Position:
             case StyleProperty::Inset:
+            case StyleProperty::InsetLeft:
+            case StyleProperty::InsetTop:
+            case StyleProperty::InsetRight:
+            case StyleProperty::InsetBottom:
             case StyleProperty::TextSize:
             case StyleProperty::TextFont:
                 return true;
@@ -761,6 +923,8 @@ namespace Veng::Gui
             case StyleProperty::TextColor:
             case StyleProperty::Opacity:
             case StyleProperty::ClipContent:
+            case StyleProperty::PointerEvents:
+            case StyleProperty::Animation:
                 return false;
             }
             return false;
@@ -784,6 +948,10 @@ namespace Veng::Gui
             case StyleProperty::Margin:
             case StyleProperty::Padding:
             case StyleProperty::Inset:
+            case StyleProperty::InsetLeft:
+            case StyleProperty::InsetTop:
+            case StyleProperty::InsetRight:
+            case StyleProperty::InsetBottom:
             case StyleProperty::Background:
             case StyleProperty::CornerRadius:
             case StyleProperty::BorderWidth:
@@ -800,6 +968,8 @@ namespace Veng::Gui
             case StyleProperty::Position:
             case StyleProperty::TextFont:
             case StyleProperty::ClipContent:
+            case StyleProperty::PointerEvents:
+            case StyleProperty::Animation:
                 return false;
             }
             return false;
@@ -875,6 +1045,14 @@ namespace Veng::Gui
                 return vec4(style.TextSize, 0.0f, 0.0f, 0.0f);
             case StyleProperty::Opacity:
                 return vec4(style.Opacity, 0.0f, 0.0f, 0.0f);
+            case StyleProperty::InsetLeft:
+                return vec4(style.Inset.Left, 0.0f, 0.0f, 0.0f);
+            case StyleProperty::InsetTop:
+                return vec4(style.Inset.Top, 0.0f, 0.0f, 0.0f);
+            case StyleProperty::InsetRight:
+                return vec4(style.Inset.Right, 0.0f, 0.0f, 0.0f);
+            case StyleProperty::InsetBottom:
+                return vec4(style.Inset.Bottom, 0.0f, 0.0f, 0.0f);
             default:
                 return vec4(0.0f);
             }
@@ -954,6 +1132,18 @@ namespace Veng::Gui
             case StyleProperty::Opacity:
                 style.Opacity = value.x;
                 return;
+            case StyleProperty::InsetLeft:
+                style.Inset.Left = value.x;
+                return;
+            case StyleProperty::InsetTop:
+                style.Inset.Top = value.x;
+                return;
+            case StyleProperty::InsetRight:
+                style.Inset.Right = value.x;
+                return;
+            case StyleProperty::InsetBottom:
+                style.Inset.Bottom = value.x;
+                return;
             default:
                 return;
             }
@@ -976,6 +1166,104 @@ namespace Veng::Gui
                 }
             }
             return target;
+        }
+
+        // Maps an animation's clock onto its clip as a normalized [0, 1] phase per its loop mode.
+        f32 AnimationPhase(const StyleAnimation& animation)
+        {
+            if (animation.Duration <= 0.0f)
+            {
+                return 1.0f;
+            }
+            const f32 cycles = animation.Time / animation.Duration;
+            switch (animation.Mode)
+            {
+            case AnimationLoopMode::Loop:
+                return cycles - std::floor(cycles);
+            case AnimationLoopMode::PingPong:
+            {
+                const f32 wrapped = cycles - 2.0f * std::floor(cycles * 0.5f);
+                return wrapped < 1.0f ? wrapped : 2.0f - wrapped;
+            }
+            case AnimationLoopMode::Once:
+                return std::min(cycles, 1.0f);
+            }
+            return 1.0f;
+        }
+
+        // Writes one animated property at `phase` onto the live style: the value interpolates
+        // between the bracketing keyframes that declare the property; a property declared on one
+        // side only — or a non-animatable / unit-mismatched pair — snaps to the nearer declared
+        // keyframe (the earlier one between brackets, so a discrete value flips at its next key).
+        void ApplyAnimatedProperty(Style& live, const StyleAnimation& animation,
+                                   const StyleProperty property, const f32 phase,
+                                   const FontResolver& fonts)
+        {
+            const StyleDeclaration* before = nullptr;
+            const StyleDeclaration* after = nullptr;
+            f32 beforeOffset = 0.0f;
+            f32 afterOffset = 1.0f;
+            for (const StyleKeyframe& key : animation.Keyframes)
+            {
+                for (const StyleDeclaration& declaration : key.Declarations)
+                {
+                    if (declaration.Property != property)
+                    {
+                        continue;
+                    }
+                    if (key.Offset <= phase)
+                    {
+                        before = &declaration;
+                        beforeOffset = key.Offset;
+                    }
+                    else if (after == nullptr)
+                    {
+                        after = &declaration;
+                        afterOffset = key.Offset;
+                    }
+                }
+            }
+
+            if (before == nullptr && after == nullptr)
+            {
+                return;
+            }
+            if (before == nullptr || after == nullptr)
+            {
+                ApplyDeclaration(live, before != nullptr ? *before : *after, fonts);
+                return;
+            }
+            if (!IsAnimatableProperty(property) || before->Unit != after->Unit)
+            {
+                ApplyDeclaration(live, *before, fonts);
+                return;
+            }
+
+            const f32 span = afterOffset - beforeOffset;
+            const f32 u = span > 0.0f ? (phase - beforeOffset) / span : 1.0f;
+            StyleDeclaration blended = *before;
+            blended.Values = glm::mix(before->Values, after->Values, u);
+            ApplyDeclaration(live, blended, fonts);
+        }
+
+        // Applies one animation's keyframes at its current phase onto the live style, resolving
+        // each declared property once across the whole clip.
+        void ApplyAnimation(Style& live, const StyleAnimation& animation, const FontResolver& fonts)
+        {
+            const f32 phase = AnimationPhase(animation);
+            vector<StyleProperty> resolved;
+            for (const StyleKeyframe& key : animation.Keyframes)
+            {
+                for (const StyleDeclaration& declaration : key.Declarations)
+                {
+                    if (std::ranges::find(resolved, declaration.Property) != resolved.end())
+                    {
+                        continue;
+                    }
+                    resolved.push_back(declaration.Property);
+                    ApplyAnimatedProperty(live, animation, declaration.Property, phase, fonts);
+                }
+            }
         }
     }
 
@@ -1045,10 +1333,15 @@ namespace Veng::Gui
             const f32 t = tween.Duration > 0.0f ? tween.Elapsed / tween.Duration : 1.0f;
 
             // A length only eases within one kind (its ordinal rides component y); a Points→Percent
-            // change snaps. Non-length payloads (colors, insets, scalars) always interpolate.
+            // change snaps. Non-length payloads (colors, insets, scalars) always interpolate — but
+            // a non-finite endpoint (an Unset inset edge appearing or vanishing) snaps too, since
+            // mixing across the sentinel yields NaN.
             const bool kindMismatch =
                 IsLengthProperty(tween.Property) && tween.From.y != tween.To.y;
-            const vec4 eased = kindMismatch ? tween.To : glm::mix(tween.From, tween.To, t);
+            const bool nonFinite =
+                glm::any(glm::isinf(tween.From)) || glm::any(glm::isinf(tween.To));
+            const vec4 eased =
+                kindMismatch || nonFinite ? tween.To : glm::mix(tween.From, tween.To, t);
             WriteProperty(live, tween.Property, eased);
 
             if (tween.Elapsed >= tween.Duration)
@@ -1061,8 +1354,15 @@ namespace Veng::Gui
             }
         }
 
+        // Animations write over the variant-resolved (and tweened) style at the advanced clock.
+        for (StyleAnimation& animation : element.Animations)
+        {
+            animation.Time += delta;
+            ApplyAnimation(live, animation, m_FontResolver);
+        }
+
         // Detect a layout-input move against the currently-applied style before overwriting it.
-        for (u32 p = 0; p <= static_cast<u32>(StyleProperty::ClipContent); ++p)
+        for (u32 p = 0; p < StylePropertyCount; ++p)
         {
             const auto property = static_cast<StyleProperty>(p);
             if (!IsLayoutProperty(property))
@@ -1104,8 +1404,22 @@ namespace Veng::Gui
 
     bool Document::IsAnimating() const
     {
-        return std::ranges::any_of(m_Elements, [](const Unique<Element>& owned)
-                                   { return !owned->Tweens.empty(); });
+        return std::ranges::any_of(m_Elements,
+                                   [](const Unique<Element>& owned)
+                                   {
+                                       if (!owned->Tweens.empty())
+                                       {
+                                           return true;
+                                       }
+                                       // A looping animation never settles; a play-once one settles at its last key.
+                                       return std::ranges::any_of(
+                                           owned->Animations,
+                                           [](const StyleAnimation& animation)
+                                           {
+                                               return animation.Mode != AnimationLoopMode::Once ||
+                                                      animation.Time < animation.Duration;
+                                           });
+                                   });
     }
 
     void Document::SetTextMeasurer(TextMeasurer measurer)
@@ -1488,7 +1802,17 @@ namespace Veng::Gui
                                              : YGPositionTypeRelative);
         if (style.Position == PositionType::Absolute)
         {
-            ApplyEdgeInsets(node, style.Inset, &YGNodeStyleSetPosition);
+            // Only set edges constrain; an Unset edge pushes YGUndefined so an anchored element
+            // keeps its own (styled or content) size instead of stretching between zero insets.
+            const auto applyEdge = [&](YGEdge edge, f32 value)
+            {
+                YGNodeStyleSetPosition(node, edge,
+                                       PositionInsets::IsSet(value) ? value : YGUndefined);
+            };
+            applyEdge(YGEdgeLeft, style.Inset.Left);
+            applyEdge(YGEdgeTop, style.Inset.Top);
+            applyEdge(YGEdgeRight, style.Inset.Right);
+            applyEdge(YGEdgeBottom, style.Inset.Bottom);
         }
 
         // A hidden subtree is removed from layout: its node measures as a zero box.
@@ -1667,6 +1991,13 @@ namespace Veng::Gui
             return nullptr;
         }
 
+        // A pointer-events:none element is transparent to hit-testing, subtree included, so a
+        // display-only overlay piece never occludes what drives it.
+        if (element.ComputedStyle.Pointer == PointerEvents::None)
+        {
+            return nullptr;
+        }
+
         // A clipping element hides the parts of its subtree outside its box; a point outside the
         // active clip cannot hit this element or its descendants.
         if (clip && !Contains(*clip, point))
@@ -1732,6 +2063,21 @@ namespace Veng::Gui
             // widget config carries a literal (not a path) and is read at instantiate time, not here.
             if (property != "text" && property != "value" && property != "visible")
             {
+                // A binding may instead target a bindable paint property ("background", "color",
+                // "border-color", "opacity"): the resolved numeric field writes the element's
+                // base style directly — paint-only, so no layout re-solve.
+                if (const optional<StyleProperty> styleProperty = ParseStyleProperty(property);
+                    styleProperty.has_value() && IsBindableStyleProperty(*styleProperty))
+                {
+                    if (const optional<vec4> value =
+                            ResolveNumericLeaf(*m_Registry, m_Context->GetData(),
+                                               m_Context->GetDataType(), expression);
+                        value.has_value())
+                    {
+                        WriteProperty(element.BaseStyle, *styleProperty, *value);
+                        WriteProperty(element.ComputedStyle, *styleProperty, *value);
+                    }
+                }
                 continue;
             }
 
@@ -2000,6 +2346,19 @@ namespace Veng::Gui
         {
             if (property != "text" && property != "value" && property != "visible")
             {
+                // Per-item paint bindings (a row tint, a swatch) resolve against the array
+                // element, mirroring the main-context style-binding path.
+                if (const optional<StyleProperty> styleProperty = ParseStyleProperty(property);
+                    styleProperty.has_value() && IsBindableStyleProperty(*styleProperty))
+                {
+                    if (const optional<vec4> value =
+                            ResolveNumericLeaf(*m_Registry, itemBase, itemType, expression);
+                        value.has_value())
+                    {
+                        WriteProperty(element.BaseStyle, *styleProperty, *value);
+                        WriteProperty(element.ComputedStyle, *styleProperty, *value);
+                    }
+                }
                 continue;
             }
             const optional<string> resolved =

@@ -29,11 +29,13 @@ namespace Veng
 
     namespace Detail
     {
-        /// @brief The decoded form of a cooked stylesheet blob: its rules and its font dependency ids.
+        /// @brief The decoded form of a cooked stylesheet blob: rules, clips, and font dependency ids.
         struct DecodedStyleSheet
         {
             /// @brief The flattened, resolved rules, in source order.
             vector<Gui::StyleRule> Rules;
+            /// @brief The @keyframes clips, in the index order `animation` declarations reference.
+            vector<Gui::StyleAnimationClip> Animations;
             /// @brief The deduplicated font AssetIds every declaration references (load-time dependencies).
             vector<AssetId> FontIds;
         };

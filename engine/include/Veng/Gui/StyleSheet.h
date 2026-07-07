@@ -29,6 +29,17 @@ namespace Veng::Gui
         AssetId Font;
     };
 
+    /// @brief One cooked @keyframes clip: its keyframes, ascending by offset.
+    ///
+    /// A rule's `animation` declaration references a clip by index (StyleDeclaration::Unit); the
+    /// instantiate-time style resolve copies the referenced clip's keyframes onto the element as
+    /// a live StyleAnimation, so a document never borrows the sheet across frames.
+    struct StyleAnimationClip
+    {
+        /// @brief The clip's keyframes, ascending by Offset.
+        vector<StyleKeyframe> Keyframes;
+    };
+
     /// @brief One resolved USS rule: a selector, a pseudo-state, and its declarations.
     ///
     /// The selector matches an element by its element type (Type), one class tag (Class), and/or
@@ -85,20 +96,31 @@ namespace Veng::Gui
     class StyleSheet
     {
     public:
-        /// @brief Creates a StyleSheet from its resolved rules and its resolved dependency entries.
+        /// @brief Creates a StyleSheet from its resolved rules, clips, and dependency entries.
         /// @param rules         The flattened, resolved rules, in source order.
+        /// @param animations    The cooked @keyframes clips, indexed by `animation` declarations.
         /// @param dependencies  The resolved font dependency cache entries, kept resident.
         /// @return A shared StyleSheet.
         static Ref<StyleSheet> Create(vector<StyleRule> rules,
+                                      vector<StyleAnimationClip> animations,
                                       vector<Ref<Detail::AssetCacheEntry>> dependencies);
 
         /// @brief Returns the sheet's resolved rules, in source order.
         [[nodiscard]] const vector<StyleRule>& GetRules() const { return m_Rules; }
 
+        /// @brief Returns the sheet's @keyframes clips, in the index order declarations reference.
+        [[nodiscard]] const vector<StyleAnimationClip>& GetAnimations() const
+        {
+            return m_Animations;
+        }
+
     private:
-        StyleSheet(vector<StyleRule> rules, vector<Ref<Detail::AssetCacheEntry>> dependencies);
+        StyleSheet(vector<StyleRule> rules, vector<StyleAnimationClip> animations,
+                   vector<Ref<Detail::AssetCacheEntry>> dependencies);
 
         vector<StyleRule> m_Rules;
+        /// @brief The cooked @keyframes clips, indexed by an `animation` declaration's Unit.
+        vector<StyleAnimationClip> m_Animations;
         /// @brief Resolved font dependency entries, kept resident so a declaration's font stays loaded.
         vector<Ref<Detail::AssetCacheEntry>> m_Dependencies;
     };

@@ -203,6 +203,32 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(title != nullptr);
     CHECK(FindDecl(*title, Gui::StyleProperty::TextSize) != nullptr);
 
+    // The .tag rule round-trips the per-edge insets, pointer-events, and the animation
+    // reference; the @keyframes clip round-trips as an indexed animation table.
+    const Gui::StyleRule* tag = FindRule(sheet, "", "tag", "", Gui::ElementState::None);
+    REQUIRE(tag != nullptr);
+    const Gui::StyleDeclaration* insetRight = FindDecl(*tag, Gui::StyleProperty::InsetRight);
+    REQUIRE(insetRight != nullptr);
+    CHECK(insetRight->Values.x == doctest::Approx(12.0f));
+    const Gui::StyleDeclaration* pointer = FindDecl(*tag, Gui::StyleProperty::PointerEvents);
+    REQUIRE(pointer != nullptr);
+    CHECK(pointer->Unit == static_cast<u32>(Gui::PointerEvents::None));
+    const Gui::StyleDeclaration* animationRef = FindDecl(*tag, Gui::StyleProperty::Animation);
+    REQUIRE(animationRef != nullptr);
+    CHECK(animationRef->Values.x == doctest::Approx(2.0f));
+    CHECK(animationRef->Values.y ==
+          doctest::Approx(static_cast<f32>(Gui::AnimationLoopMode::PingPong)));
+    REQUIRE(sheet.GetAnimations().size() == 1);
+    REQUIRE(animationRef->Unit == 0);
+    const Gui::StyleAnimationClip& clip = sheet.GetAnimations()[0];
+    REQUIRE(clip.Keyframes.size() == 3);
+    CHECK(clip.Keyframes[0].Offset == doctest::Approx(0.0f));
+    CHECK(clip.Keyframes[1].Offset == doctest::Approx(0.5f));
+    CHECK(clip.Keyframes[2].Offset == doctest::Approx(1.0f));
+    REQUIRE(clip.Keyframes[1].Declarations.size() == 1);
+    CHECK(clip.Keyframes[1].Declarations[0].Property == Gui::StyleProperty::Opacity);
+    CHECK(clip.Keyframes[1].Declarations[0].Values.x == doctest::Approx(1.0f));
+
     // (d) Two instantiations are independent trees over one recipe.
     Unique<Gui::Document> a = Gui::Document::Instantiate(recipe);
     Unique<Gui::Document> b = Gui::Document::Instantiate(recipe);

@@ -383,6 +383,18 @@ namespace Veng::Renderer
         ///         the region or no ViewState has been set yet.
         [[nodiscard]] optional<Ray> ScreenToWorldRay(ivec2 windowPoint) const;
 
+        /// @brief Projects a world-space point into region-local pixels through the retained camera.
+        ///
+        /// The inverse direction of ScreenToWorldRay: composes ProjectToScreen (Scene/Camera.h)
+        /// with the camera retained from the last SetViewState and the region's extent, so an
+        /// overlay pinning UI to a world position (a nameplate, a marker) needs no external
+        /// CameraView. (0,0) is the region's top-left. A point outside the region still projects
+        /// — the caller owns clamping or rejecting an off-screen result.
+        /// @param world  The world-space point to project.
+        /// @return The region-local pixel position, or nullopt when the point is behind the
+        ///         camera or no ViewState has been set yet.
+        [[nodiscard]] optional<vec2> WorldToRegion(vec3 world) const;
+
         /// @brief Resolves the entity under a window point through the id-buffer picking pass.
         ///
         /// Hit-tests @p windowPoint against the region (WindowToViewport); on a miss the callback

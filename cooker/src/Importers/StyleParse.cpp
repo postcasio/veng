@@ -281,6 +281,19 @@ namespace Veng::Cook
             return std::nullopt;
         }
 
+        optional<u32> ParsePointerEvents(std::string_view v)
+        {
+            if (v == "auto")
+            {
+                return static_cast<u32>(Gui::PointerEvents::Auto);
+            }
+            if (v == "none")
+            {
+                return static_cast<u32>(Gui::PointerEvents::None);
+            }
+            return std::nullopt;
+        }
+
         // Builds a CookedStyleProperty for an enum-valued property, or a located error.
         Result<CookedStyleProperty> EnumProperty(StyleProperty property, optional<u32> ordinal,
                                                  std::string_view value, const string& located)
@@ -388,12 +401,18 @@ namespace Veng::Cook
             return EnumProperty(property, ParseWrap(v), v, located);
         case StyleProperty::Position:
             return EnumProperty(property, ParsePosition(v), v, located);
+        case StyleProperty::PointerEvents:
+            return EnumProperty(property, ParsePointerEvents(v), v, located);
 
         case StyleProperty::FlexGrow:
         case StyleProperty::FlexShrink:
         case StyleProperty::BorderWidth:
         case StyleProperty::TextSize:
         case StyleProperty::Opacity:
+        case StyleProperty::InsetLeft:
+        case StyleProperty::InsetTop:
+        case StyleProperty::InsetRight:
+        case StyleProperty::InsetBottom:
             return ScalarProperty(property, v, located);
 
         case StyleProperty::FlexBasis:
@@ -439,6 +458,13 @@ namespace Veng::Cook
             cp.Values[0] = clips ? 1.0f : 0.0f;
             return cp;
         }
+
+        case StyleProperty::Animation:
+            // An animation reference resolves against a stylesheet's own @keyframes table, so
+            // only the stylesheet importer's rule parse can cook it; anywhere else (an inline
+            // style, a keyframe block) it has no clip table to resolve into.
+            return std::unexpected(
+                fmt::format("{}: 'animation' is only authorable in a stylesheet rule", located));
         }
 
         return std::unexpected(

@@ -114,6 +114,30 @@ namespace Veng
         return result;
     }
 
+    /// @brief Projects a world-space point through a view into top-left-origin screen pixels.
+    ///
+    /// The inverse direction of an unproject: clip → NDC → pixels over the given extent. The
+    /// engine projection bakes the Vulkan Y flip, so NDC maps to a top-left-origin pixel rect
+    /// directly — (0,0) is the extent's top-left. A point behind the camera (clip w <= 0)
+    /// returns nullopt; a point outside the extent still projects (the caller owns clamping or
+    /// rejecting an off-screen result). What the pixels mean — a window, a viewport region, a
+    /// UI document — is the caller's extent.
+    /// @param camera  The view to project through.
+    /// @param world   The world-space point.
+    /// @param extent  The target pixel extent NDC maps onto.
+    /// @return The projected pixel position, or nullopt behind the camera.
+    [[nodiscard]] inline optional<vec2> ProjectToScreen(const CameraView& camera, const vec3 world,
+                                                        const vec2 extent)
+    {
+        const vec4 clip = camera.ViewProjection() * vec4(world, 1.0f);
+        if (clip.w <= 0.0f)
+        {
+            return std::nullopt;
+        }
+        const vec2 ndc = vec2(clip) / clip.w;
+        return (ndc * 0.5f + 0.5f) * extent;
+    }
+
     /// @brief Seat-to-camera selection: names the camera entity a seat renders through.
     ///
     /// A seat — a local player, a render target, the editor — carries a Viewer naming

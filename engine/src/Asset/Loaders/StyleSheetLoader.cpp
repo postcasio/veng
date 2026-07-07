@@ -54,9 +54,13 @@ namespace Veng
             const usize ruleBytes = static_cast<usize>(header.RuleCount) * sizeof(CookedStyleRule);
             const usize propertyBytes =
                 static_cast<usize>(header.PropertyCount) * sizeof(CookedStyleProperty);
+            const usize animationBytes =
+                static_cast<usize>(header.AnimationCount) * sizeof(CookedStyleAnimation);
+            const usize keyframeBytes =
+                static_cast<usize>(header.KeyframeCount) * sizeof(CookedStyleKeyframe);
 
             usize cursor = sizeof(CookedStyleSheetHeader);
-            if (cooked.size() < cursor + ruleBytes + propertyBytes)
+            if (cooked.size() < cursor + ruleBytes + propertyBytes + animationBytes + keyframeBytes)
             {
                 return std::unexpected(Corrupt(id, "stylesheet: cooked blob truncated"));
             }
@@ -73,29 +77,36 @@ namespace Veng
             {
                 std::memcpy(cookedProperties.data(), cooked.data() + cursor, propertyBytes);
             }
+            cursor += propertyBytes;
+
+            vector<CookedStyleAnimation> cookedAnimations(header.AnimationCount);
+            if (animationBytes > 0)
+            {
+                std::memcpy(cookedAnimations.data(), cooked.data() + cursor, animationBytes);
+            }
+            cursor += animationBytes;
+
+            vector<CookedStyleKeyframe> cookedKeyframes(header.KeyframeCount);
+            if (keyframeBytes > 0)
+            {
+                std::memcpy(cookedKeyframes.data(), cooked.data() + cursor, keyframeBytes);
+            }
 
             DecodedStyleSheet decoded;
             decoded.Rules.reserve(header.RuleCount);
 
-            for (const CookedStyleRule& cookedRule : cookedRules)
+            // The shared property-slice decode both a rule and a keyframe read through.
+            const auto readDeclarations =
+                [&](u32 first, u32 count, vector<Gui::StyleDeclaration>& out) -> optional<string>
             {
-                if (static_cast<usize>(cookedRule.FirstProperty) + cookedRule.PropertyCount >
-                    header.PropertyCount)
+                if (static_cast<usize>(first) + count > header.PropertyCount)
                 {
-                    return std::unexpected(
-                        Corrupt(id, "stylesheet: rule declaration range out of bounds"));
+                    return string{"declaration range out of bounds"};
                 }
-
-                Gui::StyleRule rule;
-                rule.Type = ReadName(cookedRule.Type, StyleSelectorNameCapacity);
-                rule.Class = ReadName(cookedRule.Class, StyleSelectorNameCapacity);
-                rule.Id = ReadName(cookedRule.Id, StyleSelectorNameCapacity);
-                rule.State = static_cast<Gui::ElementState>(cookedRule.State);
-                rule.Declarations.reserve(cookedRule.PropertyCount);
-
-                for (u32 i = 0; i < cookedRule.PropertyCount; ++i)
+                out.reserve(count);
+                for (u32 i = 0; i < count; ++i)
                 {
-                    const CookedStyleProperty& cp = cookedProperties[cookedRule.FirstProperty + i];
+                    const CookedStyleProperty& cp = cookedProperties[first + i];
                     Gui::StyleDeclaration declaration;
                     declaration.Property = static_cast<Gui::StyleProperty>(cp.Property);
                     declaration.Unit = cp.Unit;
@@ -105,10 +116,56 @@ namespace Veng
                     {
                         decoded.FontIds.push_back(AssetId{cp.Handle});
                     }
-                    rule.Declarations.push_back(declaration);
+                    out.push_back(declaration);
                 }
+                return std::nullopt;
+            };
 
+            for (const CookedStyleRule& cookedRule : cookedRules)
+            {
+                Gui::StyleRule rule;
+                rule.Type = ReadName(cookedRule.Type, StyleSelectorNameCapacity);
+                rule.Class = ReadName(cookedRule.Class, StyleSelectorNameCapacity);
+                rule.Id = ReadName(cookedRule.Id, StyleSelectorNameCapacity);
+                rule.State = static_cast<Gui::ElementState>(cookedRule.State);
+                if (readDeclarations(cookedRule.FirstProperty, cookedRule.PropertyCount,
+                                     rule.Declarations)
+                        .has_value())
+                {
+                    return std::unexpected(
+                        Corrupt(id, "stylesheet: rule declaration range out of bounds"));
+                }
                 decoded.Rules.push_back(std::move(rule));
+            }
+
+            decoded.Animations.reserve(header.AnimationCount);
+            for (const CookedStyleAnimation& cookedAnimation : cookedAnimations)
+            {
+                if (static_cast<usize>(cookedAnimation.FirstKeyframe) +
+                        cookedAnimation.KeyframeCount >
+                    header.KeyframeCount)
+                {
+                    return std::unexpected(
+                        Corrupt(id, "stylesheet: animation keyframe range out of bounds"));
+                }
+                Gui::StyleAnimationClip clip;
+                clip.Keyframes.reserve(cookedAnimation.KeyframeCount);
+                for (u32 k = 0; k < cookedAnimation.KeyframeCount; ++k)
+                {
+                    const CookedStyleKeyframe& cookedKey =
+                        cookedKeyframes[cookedAnimation.FirstKeyframe + k];
+                    Gui::StyleKeyframe key;
+                    key.Offset = cookedKey.Offset;
+                    if (readDeclarations(cookedKey.FirstProperty, cookedKey.PropertyCount,
+                                         key.Declarations)
+                            .has_value())
+                    {
+                        return std::unexpected(
+                            Corrupt(id, "stylesheet: keyframe declaration range out of bounds"));
+                    }
+                    clip.Keyframes.push_back(std::move(key));
+                }
+                decoded.Animations.push_back(std::move(clip));
             }
 
             // Deduplicate the surfaced font ids so a font referenced by many rules loads once.
@@ -174,8 +231,8 @@ namespace Veng
             }
         }
 
-        const Ref<Gui::StyleSheet> sheet =
-            Gui::StyleSheet::Create(std::move(decoded->Rules), dependencies);
+        const Ref<Gui::StyleSheet> sheet = Gui::StyleSheet::Create(
+            std::move(decoded->Rules), std::move(decoded->Animations), dependencies);
 
         return Detail::LoadJob{
             .Resource = Detail::RefAny(sheet),

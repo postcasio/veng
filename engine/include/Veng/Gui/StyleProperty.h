@@ -74,7 +74,25 @@ namespace Veng::Gui
         Opacity,
         /// @brief Whether content is clipped to the element's box (Style::ClipContent); value is a boolean scalar.
         ClipContent,
+        /// @brief The absolute left inset alone (Style::Inset.Left); value is a scalar.
+        InsetLeft,
+        /// @brief The absolute top inset alone (Style::Inset.Top); value is a scalar.
+        InsetTop,
+        /// @brief The absolute right inset alone (Style::Inset.Right); value is a scalar.
+        InsetRight,
+        /// @brief The absolute bottom inset alone (Style::Inset.Bottom); value is a scalar.
+        InsetBottom,
+        /// @brief Whether the element hit-tests (Style::Pointer); value is a PointerEvents ordinal.
+        PointerEvents,
+        /// @brief A stylesheet animation reference (not a Style field): Unit is the sheet's clip
+        /// index, Values are the duration in seconds (x) and an AnimationLoopMode ordinal (y).
+        Animation,
     };
+
+    /// @brief The number of StyleProperty enumerators — keep in step when appending one.
+    ///
+    /// The runtime's whole-style property sweeps iterate `[0, StylePropertyCount)`.
+    inline constexpr u32 StylePropertyCount = static_cast<u32>(StyleProperty::Animation) + 1;
 
     /// @brief Canonical USS declaration name of a style property ("flex-direction", "background", …).
     ///

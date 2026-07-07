@@ -729,9 +729,10 @@ namespace Veng
 
     /// @brief The current stylesheet-format version.
     ///
-    /// Bumped on any CookedStyleSheetHeader/CookedStyleRule/CookedStyleProperty/CookedStyleProperty
-    /// layout change; the loader rejects a blob whose Version != this.
-    inline constexpr u32 CookedStyleSheetVersion = 1u;
+    /// Bumped on any CookedStyleSheetHeader/CookedStyleRule/CookedStyleProperty/
+    /// CookedStyleAnimation/CookedStyleKeyframe layout change; the loader rejects a blob whose
+    /// Version != this. v2 added the @keyframes animation tables.
+    inline constexpr u32 CookedStyleSheetVersion = 2u;
 
     /// @brief Maximum byte length (including nul terminator) for a selector's class/id/type name.
     ///
@@ -750,12 +751,16 @@ namespace Veng
     ///
     /// The blob is, in order:
     ///   CookedStyleSheetHeader
-    ///   CookedStyleRule[RuleCount]           — one entry per USS rule, in source order
-    ///   CookedStyleProperty[PropertyCount]   — every rule's declarations, contiguous per rule
+    ///   CookedStyleRule[RuleCount]             — one entry per USS rule, in source order
+    ///   CookedStyleProperty[PropertyCount]     — every rule's and keyframe's declarations
+    ///   CookedStyleAnimation[AnimationCount]   — one entry per @keyframes clip, in source order
+    ///   CookedStyleKeyframe[KeyframeCount]     — every clip's keyframes, contiguous per clip
     ///
     /// A rule's declarations are the PropertyCount-slice [FirstProperty, FirstProperty + PropertyCount)
-    /// of the property table. Rules are stored in source order so a later rule of equal specificity
-    /// wins the cascade, matching CSS source-order precedence.
+    /// of the property table; a keyframe's declarations slice the same table. Rules are stored in
+    /// source order so a later rule of equal specificity wins the cascade, matching CSS
+    /// source-order precedence. An `animation` declaration references a clip by its index in the
+    /// animation table (resolved from the authored name at cook time — the name is not stored).
     struct CookedStyleSheetHeader
     {
         /// @brief Must equal CookedStyleSheetVersion; the loader rejects mismatches.
@@ -764,6 +769,10 @@ namespace Veng
         u32 RuleCount = 0;
         /// @brief Total number of CookedStyleProperty entries following the rule table.
         u32 PropertyCount = 0;
+        /// @brief Number of CookedStyleAnimation entries following the property table.
+        u32 AnimationCount = 0;
+        /// @brief Total number of CookedStyleKeyframe entries following the animation table.
+        u32 KeyframeCount = 0;
     };
 
     /// @brief One flattened USS rule: a selector, a pseudo-state, and its declaration range.
@@ -809,6 +818,26 @@ namespace Veng
         f32 Values[4] = {};
         /// @brief AssetId for a font property (resolved as a load-time dependency); 0 otherwise.
         u64 Handle = 0;
+    };
+
+    /// @brief One cooked @keyframes clip: its keyframe range in the keyframe table.
+    struct CookedStyleAnimation
+    {
+        /// @brief Index of the clip's first keyframe in the keyframe table.
+        u32 FirstKeyframe = 0;
+        /// @brief Number of keyframes in the clip.
+        u32 KeyframeCount = 0;
+    };
+
+    /// @brief One cooked keyframe: its normalized offset and its declaration range.
+    struct CookedStyleKeyframe
+    {
+        /// @brief The keyframe's position along the clip, normalized to [0, 1].
+        f32 Offset = 0.0f;
+        /// @brief Index of the keyframe's first declaration in the property table.
+        u32 FirstProperty = 0;
+        /// @brief Number of declarations the keyframe holds.
+        u32 PropertyCount = 0;
     };
 
     /// @brief The current UI-document-format version.

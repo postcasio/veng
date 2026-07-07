@@ -615,6 +615,17 @@ namespace Veng::Renderer
         };
     }
 
+    optional<vec2> Viewport::WorldToRegion(const vec3 world) const
+    {
+        // Before any ViewState the retained camera is the default view; projecting through it
+        // would fabricate a position, so the contract returns nullopt instead.
+        if (!m_HasViewState)
+        {
+            return std::nullopt;
+        }
+        return ProjectToScreen(m_ViewState.Camera, world, vec2(GetRegion().Extent));
+    }
+
     SceneRenderer& Viewport::GetRenderer() const
     {
         return *m_Renderer;

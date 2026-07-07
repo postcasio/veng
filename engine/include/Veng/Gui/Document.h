@@ -11,6 +11,7 @@
 
 namespace Veng
 {
+    class AssetManager;
     class TypeRegistry;
 }
 
@@ -63,6 +64,18 @@ namespace Veng::Gui
         [[nodiscard]] static Unique<Document> Instantiate(const UIDocument& recipe,
                                                           const FontResolver& fonts = {});
 
+        /// @brief Materializes a live tree from a recipe, resolving fonts through an AssetManager.
+        ///
+        /// The convenience overload of Instantiate above: font declarations resolve through a
+        /// blocking LoadSync<Font> against the given manager, which every game-side instantiate
+        /// otherwise hand-rolls. The document borrows the manager for its whole life (the resolver
+        /// re-runs on later style resolves), so the manager must outlive the document.
+        /// @param recipe  The cooked UI document to materialize; must be resident.
+        /// @param assets  The asset manager font declarations load through; borrowed.
+        /// @return A newly constructed Document owning an independent copy of the recipe's tree.
+        [[nodiscard]] static Unique<Document> Instantiate(const UIDocument& recipe,
+                                                          AssetManager& assets);
+
         /// @brief Constructs an empty document with a single Panel root.
         Document();
 
@@ -77,6 +90,19 @@ namespace Veng::Gui
 
         /// @brief Returns the root element (const).
         [[nodiscard]] const Element& Root() const;
+
+        /// @brief Returns the first element carrying an authored id, or nullptr when none does.
+        ///
+        /// A depth-first walk from the root in tree order, matching Element::Id exactly. An
+        /// empty id matches nothing. Ids are not enforced unique; with duplicates the first in
+        /// tree order wins.
+        /// @param id  The authored id to find (the markup `id="…"` tag).
+        /// @return The first matching element, or nullptr on a miss.
+        [[nodiscard]] Element* FindById(string_view id);
+
+        /// @brief Returns the first element carrying an authored id (const), or nullptr.
+        /// @param id  The authored id to find.
+        [[nodiscard]] const Element* FindById(string_view id) const;
 
         /// @brief Adds a new child element of the given kind under a parent.
         ///
@@ -112,6 +138,36 @@ namespace Veng::Gui
         /// @param style    The new resolved style.
         void SetStyle(Element& element, const Style& style);
 
+        /// @brief Sets an element's opacity multiplier — a paint-only write, no layout re-solve.
+        ///
+        /// Writes the element's base (and live) style directly, so a per-frame fade never
+        /// re-runs the flexbox solve the way a whole-style SetStyle does. An active variant or
+        /// in-flight transition on the same property still resolves over the new base.
+        /// @param element  The element whose opacity to set.
+        /// @param opacity  The opacity multiplier, in 0..1.
+        void SetOpacity(Element& element, f32 opacity);
+
+        /// @brief Sets an element's background fill — a paint-only write, no layout re-solve.
+        /// @param element  The element whose background to set.
+        /// @param color    The fill color, linear straight-alpha RGBA.
+        void SetBackground(Element& element, vec4 color);
+
+        /// @brief Sets an element's text fill color — a paint-only write, no layout re-solve.
+        /// @param element  The element whose text color to set.
+        /// @param color    The text color, linear straight-alpha RGBA.
+        void SetTextColor(Element& element, vec4 color);
+
+        /// @brief Pins an element absolutely at a rect, dirtying layout only on a real change.
+        ///
+        /// The one-call form of the pin-at-rect idiom: absolute position, Left/Top insets at
+        /// topLeft (Right/Bottom left unset), and a fixed pixel size. Layout is marked dirty
+        /// only when the placement actually moved, so re-pinning an unchanged rect each frame
+        /// costs no re-solve.
+        /// @param element  The element to pin; its position type becomes Absolute.
+        /// @param topLeft  The element's top-left corner, in parent-space pixels.
+        /// @param size     The element's fixed size, in pixels.
+        void SetPlacement(Element& element, vec2 topLeft, vec2 size);
+
         /// @brief Sets an element's interaction-state mask, re-resolving its live style.
         ///
         /// Selects the variants active in the new mask and folds them over the element's base
@@ -131,13 +187,24 @@ namespace Veng::Gui
         /// @param transitions  The transition list, one entry per eased property.
         void SetTransitions(Element& element, vector<StyleTransition> transitions);
 
-        /// @brief Advances the style pipeline one frame: variant resolve then transition step.
+        /// @brief Replaces an element's live style-animation list.
         ///
-        /// For every element it re-selects the active variants over the base style and advances any
-        /// in-flight property tween by delta, writing the interpolated value into ComputedStyle. A
-        /// resolved or transitioned change to a layout input re-dirties the layout so the following
-        /// Solve re-runs; a pure paint change (color/opacity) does not force a re-solve. Call this
-        /// once per frame before Solve. A delta of zero resolves variants without advancing tweens.
+        /// The imperative sibling of a stylesheet `animation` declaration: each entry's
+        /// keyframes are applied over the element's resolved style every Update, its clock
+        /// starting at the entry's Time. Passing an empty list stops all animation.
+        /// @param element     The element whose animations to set.
+        /// @param animations  The animation list; keyframes must be ascending by Offset.
+        void SetAnimations(Element& element, vector<StyleAnimation> animations);
+
+        /// @brief Advances the style pipeline one frame: variants, transitions, then animations.
+        ///
+        /// For every element it re-selects the active variants over the base style, advances any
+        /// in-flight property tween by delta, and applies each live style animation at its
+        /// advanced clock, writing the resolved values into ComputedStyle. A resolved,
+        /// transitioned, or animated change to a layout input re-dirties the layout so the
+        /// following Solve re-runs; a pure paint change (color/opacity) does not force a
+        /// re-solve. Call this once per frame before Solve. A delta of zero resolves variants
+        /// without advancing tweens or animation clocks.
         /// @param delta  The frame time step, in seconds.
         void Update(f32 delta);
 
@@ -180,7 +247,8 @@ namespace Veng::Gui
         /// Walks the laid-out tree front-to-back — a later child paints over an earlier one, so the
         /// last child under the point wins — descending only into a subtree whose ancestor clip
         /// rectangles all contain the point (a clipping element hides the parts of its children it
-        /// clips away, so those parts do not hit-test). Runs against Element::Layout, so a Solve
+        /// clips away, so those parts do not hit-test). An element styled `pointer-events: none`
+        /// is skipped along with its whole subtree. Runs against Element::Layout, so a Solve
         /// must have filled the rects. Returns nullptr when no visible element covers the point.
         /// @param point  The point to test, in document-space pixels (Element::Layout's space).
         /// @return The topmost element under the point, or nullptr on a miss.

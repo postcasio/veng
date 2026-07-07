@@ -21,6 +21,15 @@ namespace Veng::Gui
                           .Right = declaration.Values.z,
                           .Bottom = declaration.Values.w};
         }
+
+        // Reads a declaration's four-edge payload into a PositionInsets, all edges set.
+        PositionInsets PositionInsetsFrom(const StyleDeclaration& declaration)
+        {
+            return PositionInsets{.Left = declaration.Values.x,
+                                  .Top = declaration.Values.y,
+                                  .Right = declaration.Values.z,
+                                  .Bottom = declaration.Values.w};
+        }
     }
 
     void ApplyDeclaration(Style& style, const StyleDeclaration& declaration,
@@ -80,7 +89,7 @@ namespace Veng::Gui
             style.Position = static_cast<PositionType>(declaration.Unit);
             return;
         case StyleProperty::Inset:
-            style.Inset = InsetsFrom(declaration);
+            style.Inset = PositionInsetsFrom(declaration);
             return;
         case StyleProperty::Background:
             style.Background = declaration.Values;
@@ -119,18 +128,40 @@ namespace Veng::Gui
         case StyleProperty::ClipContent:
             style.ClipContent = declaration.Values.x != 0.0f;
             return;
+        case StyleProperty::InsetLeft:
+            style.Inset.Left = declaration.Values.x;
+            return;
+        case StyleProperty::InsetTop:
+            style.Inset.Top = declaration.Values.x;
+            return;
+        case StyleProperty::InsetRight:
+            style.Inset.Right = declaration.Values.x;
+            return;
+        case StyleProperty::InsetBottom:
+            style.Inset.Bottom = declaration.Values.x;
+            return;
+        case StyleProperty::PointerEvents:
+            style.Pointer = static_cast<PointerEvents>(declaration.Unit);
+            return;
+        case StyleProperty::Animation:
+            // An animation reference is element state, not a Style field; the instantiate-time
+            // style resolve routes it onto the element's animation list.
+            return;
         }
     }
 
     Ref<StyleSheet> StyleSheet::Create(vector<StyleRule> rules,
+                                       vector<StyleAnimationClip> animations,
                                        vector<Ref<Detail::AssetCacheEntry>> dependencies)
     {
-        return Ref<StyleSheet>(new StyleSheet(std::move(rules), std::move(dependencies)));
+        return Ref<StyleSheet>(
+            new StyleSheet(std::move(rules), std::move(animations), std::move(dependencies)));
     }
 
-    StyleSheet::StyleSheet(vector<StyleRule> rules,
+    StyleSheet::StyleSheet(vector<StyleRule> rules, vector<StyleAnimationClip> animations,
                            vector<Ref<Detail::AssetCacheEntry>> dependencies)
-        : m_Rules(std::move(rules)), m_Dependencies(std::move(dependencies))
+        : m_Rules(std::move(rules)), m_Animations(std::move(animations)),
+          m_Dependencies(std::move(dependencies))
     {
     }
 }

@@ -60,6 +60,18 @@ namespace Veng::Gui
             return "opacity";
         case StyleProperty::ClipContent:
             return "overflow";
+        case StyleProperty::InsetLeft:
+            return "inset-left";
+        case StyleProperty::InsetTop:
+            return "inset-top";
+        case StyleProperty::InsetRight:
+            return "inset-right";
+        case StyleProperty::InsetBottom:
+            return "inset-bottom";
+        case StyleProperty::PointerEvents:
+            return "pointer-events";
+        case StyleProperty::Animation:
+            return "animation";
         }
         return "unknown";
     }
@@ -173,6 +185,30 @@ namespace Veng::Gui
         if (name == "overflow")
         {
             return StyleProperty::ClipContent;
+        }
+        if (name == "inset-left")
+        {
+            return StyleProperty::InsetLeft;
+        }
+        if (name == "inset-top")
+        {
+            return StyleProperty::InsetTop;
+        }
+        if (name == "inset-right")
+        {
+            return StyleProperty::InsetRight;
+        }
+        if (name == "inset-bottom")
+        {
+            return StyleProperty::InsetBottom;
+        }
+        if (name == "pointer-events")
+        {
+            return StyleProperty::PointerEvents;
+        }
+        if (name == "animation")
+        {
+            return StyleProperty::Animation;
         }
         return std::nullopt;
     }

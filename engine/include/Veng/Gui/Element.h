@@ -108,6 +108,44 @@ namespace Veng::Gui
         f32 Duration = 0.0f;
     };
 
+    /// @brief One keyframe of a style animation: a normalized time offset and its declarations.
+    struct StyleKeyframe
+    {
+        /// @brief The keyframe's position along the clip, normalized to [0, 1].
+        f32 Offset = 0.0f;
+        /// @brief The property values this keyframe holds, in source order.
+        vector<StyleDeclaration> Declarations;
+    };
+
+    /// @brief How a style animation's clock maps onto its clip once the first pass completes.
+    enum class AnimationLoopMode : u8
+    {
+        /// @brief Wraps back to the start each cycle.
+        Loop,
+        /// @brief Plays forward then backward, mirroring each alternate cycle.
+        PingPong,
+        /// @brief Plays once and holds the final keyframe.
+        Once,
+    };
+
+    /// @brief One live style animation on an element: the clip's keyframes, timing, and clock.
+    ///
+    /// The keyframes are held by value (copied from the stylesheet's clip at instantiate, or
+    /// authored imperatively), in ascending Offset order. Document::Update advances Time and
+    /// writes each animated property's interpolated value into the element's live style each
+    /// frame — over the variant-resolved target, under any in-flight transition tween.
+    struct StyleAnimation
+    {
+        /// @brief The clip's keyframes, ascending by Offset.
+        vector<StyleKeyframe> Keyframes;
+        /// @brief One clip cycle's length, in seconds.
+        f32 Duration = 1.0f;
+        /// @brief How the clock maps onto the clip after the first cycle.
+        AnimationLoopMode Mode = AnimationLoopMode::Loop;
+        /// @brief The running clock, in seconds; advanced by Document::Update.
+        f32 Time = 0.0f;
+    };
+
     class Document;
 
     /// @brief The per-element runtime state the widget layer maintains behind a control's kind.
@@ -181,6 +219,8 @@ namespace Veng::Gui
         vector<StyleTransition> Transitions;
         /// @brief The in-flight property tweens Document::Update maintains.
         vector<StyleTween> Tweens;
+        /// @brief The live style animations Document::Update advances and applies each frame.
+        vector<StyleAnimation> Animations;
 
         /// @brief The interaction-state mask a styling/event layer sets and reads.
         ElementState State = ElementState::None;
