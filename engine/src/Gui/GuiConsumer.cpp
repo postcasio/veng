@@ -76,14 +76,19 @@ namespace Veng::Gui
         const EventType type = event.GetEventType();
 
         // Pointer events route to the viewport under the pointer, into its interactive documents
-        // top-first; the first document that consumes stops the fall-through.
+        // top-first; the first document that consumes stops the fall-through. The drive list is
+        // walked in reverse because registration order is composite order — when regions overlap
+        // (a fullscreen game screen registered over the primary viewport), the last-registered
+        // viewport is drawn on top, so it owns the pointer.
         if (type == EventType::MouseMoved || type == EventType::MouseButtonPressed ||
             type == EventType::MouseButtonReleased)
         {
             const ivec2 pixels = PointerPixels();
 
-            for (Renderer::Viewport* viewport : m_Viewports)
+            for (auto viewportIt = m_Viewports.rbegin(); viewportIt != m_Viewports.rend();
+                 ++viewportIt)
             {
+                Renderer::Viewport* const viewport = *viewportIt;
                 const optional<vec2> normalized = viewport->WindowToViewport(pixels);
                 if (!normalized)
                 {

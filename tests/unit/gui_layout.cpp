@@ -172,6 +172,31 @@ TEST_CASE("gui layout: a text leaf reflows to a taller box under a width constra
     CheckRect(label.Layout, 0.0f, 0.0f, 50.0f, 40.0f);
 }
 
+TEST_CASE("gui layout: a button sizes to its label plus padding, like a text leaf")
+{
+    Document doc;
+
+    // The same deterministic measurer as the text-leaf case: 10px/char, 20px/line.
+    doc.SetTextMeasurer([](string_view text, const Style&, optional<f32>) -> vec2
+                        { return vec2(static_cast<f32>(text.size()) * 10.0f, 20.0f); });
+
+    Style column;
+    column.Direction = FlexDirection::Column;
+    column.AlignItems = Align::FlexStart;
+    doc.SetStyle(doc.Root(), column);
+
+    Element& button = doc.Add(doc.Root(), ElementKind::Button);
+    doc.SetText(button, "GO"); // 2 chars -> 20px content.
+
+    Style padded;
+    padded.Padding = Insets::All(6.0f);
+    doc.SetStyle(button, padded);
+
+    // The measured label is the content box; padding grows the border box around it.
+    doc.Solve(vec2(200.0f, 200.0f));
+    CheckRect(button.Layout, 0.0f, 0.0f, 32.0f, 32.0f);
+}
+
 TEST_CASE("gui layout: dirty tracking makes a clean re-solve at the same size a no-op")
 {
     Document doc;

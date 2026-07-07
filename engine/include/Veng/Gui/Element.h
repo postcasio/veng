@@ -23,7 +23,7 @@ namespace Veng::Gui
         Text,
         /// @brief A textured box drawing an image.
         Image,
-        /// @brief A clickable command control.
+        /// @brief A clickable command control: a label leaf sized by and drawing its Text, centered.
         Button,
         /// @brief A two-state toggle control.
         Checkbox,

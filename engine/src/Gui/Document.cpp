@@ -619,7 +619,9 @@ namespace Veng::Gui
         m_Elements.push_back(std::move(owned));
 
         const YGNodeRef node = m_Yoga->Create(element);
-        if (kind == ElementKind::Text)
+        // Text and Button are label leaves: their intrinsic size is their shaped text, so both
+        // carry the text measure. (A measured node cannot take children — Yoga asserts loudly.)
+        if (kind == ElementKind::Text || kind == ElementKind::Button)
         {
             YGNodeSetMeasureFunc(node, &MeasureText);
         }
@@ -636,6 +638,14 @@ namespace Veng::Gui
         const YGNodeRef childNode = m_Yoga->Get(child);
         VE_ASSERT(parentNode != nullptr && childNode != nullptr,
                   "Gui::Document::Add: parent element does not belong to this document");
+
+        // A Button is a label leaf (text-measured) until it takes a child, at which point it
+        // becomes a container sized by its children like a Panel — a measured Yoga node cannot
+        // hold children. Text stays a hard leaf.
+        if (parent.Kind == ElementKind::Button && YGNodeHasMeasureFunc(parentNode))
+        {
+            YGNodeSetMeasureFunc(parentNode, nullptr);
+        }
         YGNodeInsertChild(parentNode, childNode, YGNodeGetChildCount(parentNode));
 
         m_Dirty = true;
@@ -1569,10 +1579,19 @@ namespace Veng::Gui
         // its background and its children.
         BuildWidget(element, list);
 
-        if (element.Kind == ElementKind::Text && !element.Text.empty() && style.TextFont.IsLoaded())
+        if (!element.Text.empty() && style.TextFont.IsLoaded() &&
+            (element.Kind == ElementKind::Text || element.Kind == ElementKind::Button))
         {
-            list.Text(rect.Min, *style.TextFont.Get(), element.Text, style.TextSize,
-                      style.TextColor);
+            // A Text leaf draws at its content-box origin (inside the border and padding, the box
+            // the measure sized); a Button centers its label in its box.
+            vec2 origin = rect.Min + vec2(style.BorderStyle.Width + style.Padding.Left,
+                                          style.BorderStyle.Width + style.Padding.Top);
+            if (element.Kind == ElementKind::Button)
+            {
+                const vec2 label = MeasureElementText(element, std::nullopt);
+                origin = rect.Min + (rect.Size - label) * 0.5f;
+            }
+            list.Text(origin, *style.TextFont.Get(), element.Text, style.TextSize, style.TextColor);
         }
 
         for (const Element* child : element.Children)
