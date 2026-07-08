@@ -1,0 +1,57 @@
+/* The hello-triangle status HUD: an accent token shared between the stylesheet and the app,
+   a conic-gradient loading spinner spun by a rotation keyframe, and a fixed strip of numbered
+   ticks the app resolves by class and lights per frame. */
+
+--panel: #12141ad8;
+--accent: #4fa3ff;
+--text: #eef2f8ff;
+--tick-idle: #43506688;
+
+.hud {
+    flex-direction: column;
+    background: var(--panel);
+    corner-radius: 8px;
+    padding: 14px;
+    width: 220px;
+}
+
+.header {
+    flex-direction: row;
+    align-items: center;
+}
+
+.title {
+    font-size: 20px;
+    color: var(--text);
+    margin: 10px 0 0 0; /* edge shorthand is left/top/right/bottom */
+}
+
+/* A conic ramp from the accent to transparent, painted on a circular box and spun about its
+   center by the `spin` keyframe — the rotation turns the whole subtree rigidly, so the gradient
+   sweeps like a classic loading arc. */
+.spinner {
+    width: 22px;
+    height: 22px;
+    corner-radius: 11px;
+    origin: 0.5 0.5;
+    background-gradient: conic from 0deg at 50% 50%, var(--accent) 0%, #12141a00 100%;
+    animation: spin 1s loop;
+}
+
+@keyframes spin {
+    from { rotation: 0; }
+    to { rotation: 360; }
+}
+
+.ticks {
+    flex-direction: row;
+    margin: 0 12px 0 0; /* edge shorthand is left/top/right/bottom */
+}
+
+/* One numbered tick; `count` replicates it, `${n:02}` fills the label 01..08. The app resolves
+   the whole pool by class and drives each tick's color, so the markup carries no ids. */
+.tick {
+    font-size: 13px;
+    color: var(--tick-idle);
+    margin: 0 0 6px 0; /* edge shorthand is left/top/right/bottom */
+}

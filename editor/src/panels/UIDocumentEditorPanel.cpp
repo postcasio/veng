@@ -373,6 +373,7 @@ namespace VengEditor
             UI::Text(fmt::format("Font size: {:.1f}px", style.TextSize));
         }
         UI::Text(fmt::format("Opacity: {:.2f}", style.Opacity));
+        UI::Text(fmt::format("Rotation: {:.1f} deg", style.Rotation));
         UI::Text(fmt::format("Corner radius: {:.1f}", style.Radii.TopLeft));
         UI::Text(fmt::format("Padding: {:.0f} {:.0f} {:.0f} {:.0f}", style.Padding.Left,
                              style.Padding.Top, style.Padding.Right, style.Padding.Bottom));

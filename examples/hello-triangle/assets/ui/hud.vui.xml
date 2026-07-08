@@ -1,0 +1,9 @@
+<Panel class="hud" stylesheets="0x94B0F44BE80ADA35" style="font: 0x54520EB3FD0E80EF;">
+  <Panel class="header">
+    <Panel class="spinner"/>
+    <Text class="title">status</Text>
+  </Panel>
+  <Panel class="ticks">
+    <Text class="tick" count="8">${n:02}</Text>
+  </Panel>
+</Panel>

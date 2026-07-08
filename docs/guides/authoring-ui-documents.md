@@ -135,6 +135,78 @@ transition-able property:
 .primary:disabled { opacity: 0.5; }
 ```
 
+### Variables and `@use`
+
+A palette or a shared metric drifts when it is a hex literal restated in every rule (and,
+worse, restated again as a C++ `vec4`). A **file-scope variable** hoists it to one token: a
+`--name: value;` declaration at the top level of the sheet (never inside a rule — these are
+theme tokens, not per-element custom properties, so there is no inheritance and no runtime
+cost), and `var(--name)` substitutes its token sequence anywhere in a declaration value —
+including a gradient stop list:
+
+```css
+--panel:  #12141acc;
+--accent: #2a6df4;
+
+.hud { background: var(--panel); }
+.bar { background: var(--accent); }
+.spinner { background-gradient: conic from 0deg at 50% 50%, var(--accent) 0%, #12141a00 100%; }
+```
+
+Substitution runs at cook time, so the runtime never sees a `var()`. The rules:
+
+- **Define before use.** A `var(--x)` with no prior `--x: …;` is a located cook error.
+- **Redefinition is last-wins** in processing order — define a token, cook rules against it,
+  then redefine it lower in the file to override a theme for the rules that follow.
+- **Inline `style="…"` does not see variables** — the document cook has no sheet in scope, so
+  a token-driven property belongs in a class, not an inline style.
+
+Two sheets share **variables** through `@use`, and share **rules** through the document's
+`stylesheets` list — one mechanism per axis, no overlap. `@use "theme.vuss";` at the top of a
+sheet imports **only** that sheet's top-level `--` variables (its rules are ignored by the
+read; it may still cook as a sheet in its own right). The path is resolved relative to the
+using sheet and recorded as a cook dependency, so editing the theme re-cooks every sheet that
+`@use`s it:
+
+```css
+@use "theme.vuss";           /* pulls in theme.vuss's --tokens, not its rules */
+--accent-strong: var(--accent);   /* a variable may build on a used one */
+```
+
+Imperative code reads the same palette the rules were flattened from, so the C++ side needs no
+duplicated `vec4` table: a loaded `StyleSheet` answers `FindVariableColor("accent")` and
+`FindVariableScalar("gap")` (the name **without** the leading `--`). Only the sheet's **own**
+top-level variables whose value parses as a single color or a single number are queryable — a
+multi-token variable and an `@use`d one are cook-time-only (an `@use`d variable is queried on
+the theme sheet that owns it). The `template` HUD hoists its palette this way; `hello-triangle`
+reads its `--accent` back through `FindVariableColor` to tint a HUD element from the one source.
+
+### Rotation
+
+`rotation` is a scalar style property — degrees, clockwise in the y-down document space, `0` by
+default — that turns an element's whole subtree rigidly at paint time. Like any scalar property
+it eases through a transition and animates through a keyframe clip, so a continuously-spinning
+element is a stylesheet `@keyframes` on `rotation` with no per-frame C++:
+
+```css
+@keyframes spin { from { rotation: 0; } to { rotation: 360; } }
+
+.spinner {
+    origin: 0.5 0.5;                 /* pivot at the element's center */
+    animation: spin 1s loop;         /* clip, duration, and loop|ping-pong|once */
+}
+```
+
+The rotation pivots the element's **`Origin`** anchor (`origin: <x> <y>`, normalized 0..1 of the
+box, `0 0` — the top-left corner — by default, so `origin: 0.5 0.5` spins about the center) and
+turns the element's own primitives **and** its children together —
+rotating a container spins its text, borders, gradients, and child images with it, composing
+with `corner-radius`, borders, and MSDF glyphs by construction. It is **paint only**: the
+element keeps its unrotated flex box, hit-testing stays axis-aligned against the unrotated layout
+rect, and content clips stay axis-aligned scissors. For a per-frame angle from C++ (a needle
+tracking a value), `Document::SetRotation(element, degrees)` writes it paint-only, with no layout
+re-solve. `hello-triangle`'s HUD spins a conic-gradient loading arc this way.
+
 ## 3. Author the document
 
 A `*.vui.xml` is a tree of elements. The **root** element carries a `stylesheets`
@@ -161,6 +233,38 @@ A `{obj.field}` value is a **binding** resolved against a bound view-model throu
 reflection; a literal (`min="0"`) is read once at instantiate. A binding path is a dotted
 field path — `{player.health}` resolves `health` on the `player` field of the bound
 object; a single segment (`{Level}`) resolves a field on the bound object directly.
+
+### Repetition: `count` and `${}`
+
+A fixed pool of identical elements — a strip of ticks, a row of ability slots, a set of
+waypoint markers — is authored once and replicated at cook time with a `count` attribute.
+`count="N"` (1–1024) on any non-root element unrolls that element **and its whole subtree** N
+times, and `${…}` forms substitute the replica index into every attribute value and text of the
+repeated subtree:
+
+```xml
+<Panel class="ticks">
+  <Text class="tick" count="8">${n:02}</Text>   <!-- eight Texts: 01, 02, … 08 -->
+</Panel>
+```
+
+- `${i}` is the **0-based** index, `${n}` the **1-based** index (`n = i + 1`).
+- `${i:0W}` / `${n:0W}` **zero-pad** to width `W` (`${n:02}` → `01`, `02`, …).
+- `$${` escapes a literal `${` where the text genuinely needs one.
+
+Unrolling happens after the XML parse and before attribute interpretation, so by the time the
+runtime loads the document the pool is just N ordinary sibling elements — the outline, the
+layout, and the inspector see siblings, not a repeater. Nesting one `count` inside another, or a
+`count` outside 1–1024, is a located cook error.
+
+**`count` is for a fixed, imperatively-driven pool; `List` is for a runtime-varying array.**
+Draw the line by where the length comes from: if the number of items is a bound array whose size
+changes at runtime, use `List` (its single child is the item template, cloned per array
+element, bound per row). If the number is fixed at author time and the game drives each element
+by hand — lighting up the active tick, filling the charged slots — use `count`. The pool needs no
+ids: `Document::FindAllByClass("tick")` returns every element carrying the class in tree order,
+so the game resolves the whole pool once and drives it by index. `hello-triangle`'s HUD authors
+its numbered tick strip this way.
 
 ### `Image` — a textured box
 
@@ -250,6 +354,68 @@ Release the document in `OnDispose` (`m_Hud.reset()`) before the context tears d
 > document only when the viewport has a scene to render over, so a viewport with no game
 > world pushes an empty `Scene` (a cleared target). The template's managed viewport
 > already renders the game world, so its HUD composites over the cube with no extra wiring.
+
+## Driving a HUD
+
+The four sections above cover the static shape. A live HUD adds a per-frame drive loop, and a
+handful of small utilities absorb the boilerplate every first consumer otherwise hand-rolls.
+They are **utilities, not a framework** — device-free value types you compose, never a system the
+engine runs behind your back.
+
+**`DocumentHost` owns the lifecycle.** Rather than hand-wiring load → instantiate → bind →
+attach and re-attach on a viewport recreation, hold a `Gui::DocumentHost` (`Veng/Gui/DocumentHost.h`):
+construct it with the asset manager, the type registry, and the document id; `Attach(viewport)`
+once per frame loads lazily on the first call, keeps the tree attached, and re-attaches
+transparently if the viewport is recreated. `SetContext(&context)` binds the view-model,
+`SetInteractive(true)` opens input.
+
+**`SetOnInstantiate` resolves your element pointers once.** The one-time "find the elements I
+drive" step belongs in a callback the host runs after every (re)instantiate, so cached pointers
+stay correct even when the document is rebuilt:
+
+```cpp
+m_Host->SetOnInstantiate([this](Gui::Document& doc) {
+    m_Ticks = doc.FindAllByClass("tick");   // resolve the count-pool once; cache the vector
+    m_Needle = doc.FindById("needle");
+});
+```
+
+`FindAllByClass` and `FindById` are unindexed tree walks — resolve here and cache, never per
+frame. Then each frame, drive the cached elements with the paint-only setters — `SetText`
+(a no-op on unchanged text, so a naive per-frame write costs nothing), `SetRotation`,
+`SetTextColor`, `SetBackground`, `SetImageUv` (an atlas flipbook) — none of which re-run layout.
+
+**`Presence` eases an open/close.** `Gui::Presence` (`Veng/Gui/Presence.h`) chases a boolean goal
+with a frame-rate-independent ease (`Math::ExpApproach`): `Update(open, delta)`, then apply
+`GetAlpha()` as an opacity and `GetSlide(travel)` as a slide-in offset. `IsHidden()` reports when
+the alpha has decayed far enough to stop laying the element out. The presence never touches a
+document — you apply the alpha and slide yourself (`SetOpacity`, `SetVisible`, a placement
+offset), so placement stays yours. `Gui::KeyedPresence<Key>` wraps it for a panel that shows one
+of several interchangeable subjects: set the desired key each frame, and it closes over the stale
+content, adopts the new key only once fully hidden, then reopens — the open animation replays with
+fresh content instead of cross-fading. Refresh the bound content only while `GetShown()` equals
+the desired key.
+
+**`WorldToDocument` bridges a world point into HUD space.** A marker pinned to a world position
+projects through the viewport. `Viewport::WorldToDocument(worldPos)` returns the point in
+**document logical points** — the space your HUD lays out in — or `nullopt` when it is behind the
+camera or off-region; `Viewport::GetDocumentExtent()` is the HUD's size in the same space. The
+conversion is region framebuffer pixels ÷ the UI scale, the one HiDPI trap this bridge removes
+(project in pixels, lay out in points, and a marker drifts on a Retina display). Place the marker
+with the device-free helpers in `Veng/Gui/Placement.h`: `ClampIntoBounds(pos, size, bounds, margin)`
+slides a rect the minimum amount to keep it fully on screen, and `AnchorBeside(anchor, size, offset,
+bounds, margin)` offsets a card beside a point and clamps it in one call:
+
+```cpp
+if (const auto p = GetPrimaryViewport()->WorldToDocument(targetWorldPos)) {
+    const vec2 pos = Gui::AnchorBeside(*p, cardSize, {12, -8},
+                                       GetPrimaryViewport()->GetDocumentExtent(), 8.0f);
+    doc->SetPlacement(*card, pos, cardSize);
+}
+```
+
+The engine owns the coordinate bridge and the clamp; the projection policy (which world point,
+what rejection margin) stays yours.
 
 ## 5. Make it interactive
 

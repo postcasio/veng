@@ -840,6 +840,13 @@ cook-on-demand hot-reload serves UI with no new machinery. The parsing side is i
   geometry rides a per-frame **`GpuGradient` storage buffer** (`GuiScenePass` rings it and binds it
   bindless); the vertex carries only the record index, so many gradients batch into one run and a
   game animates a gradient by mutating its geometry per frame (`Document::SetBackgroundGradient`).
+  A cooked sheet also carries a **typed variable table** — the sheet's own file-scope `--name`
+  tokens whose value flattens to a color or a single number — queried at runtime by
+  `StyleSheet::FindVariableColor` / `FindVariableScalar` (names stored without the leading `--`),
+  so imperative code reads the same palette the rules were flattened from rather than restating it.
+  Token substitution itself (`var(--name)`, `@use "sheet.vuss"` variable import, last-wins
+  redefinition, define-before-use) is a pure cook-time transform ahead of the flatten — the runtime
+  sees no `var()`; see [cooker/CLAUDE.md](../cooker/CLAUDE.md).
   `AssetType::UIDocument` (`Veng/Gui/UIDocument.h`) is the cooked markup: a **pre-order recipe
   element tree** (each element carrying its kind, id, classes, text, inline style, unresolved
   `{obj.field}` bindings, and named handlers) plus the `StyleSheet` handles it references and its
@@ -890,8 +897,16 @@ cook-on-demand hot-reload serves UI with no new machinery. The parsing side is i
   rounded-rect / border SDF, 9-slice, tint/opacity, and MSDF text runs — that `Document::Build`
   appends into. A `GuiScenePass` records the draw list into an offscreen image blended over the
   viewport's scene output (its Slang shaders, `gui.slang` + the MSDF text shader, are core-pack
-  shaders — a game reuses them, never authors a UI shader). The image goldens (`gui_overlay`) are
-  the render floor every later change holds pixel-stable against.
+  shaders — a game reuses them, never authors a UI shader). The image goldens (`gui_overlay`,
+  `gui_rotated`) are the render floor every later change holds pixel-stable against.
+  `DrawList` carries a composing **transform stack** (`PushTransform(pivot, angle)` / `PopTransform`)
+  applied to vertex positions at quad emission while `RectCoord`/`RectHalf`/UV stay in unrotated
+  local space, so a `rotation` style property (scalar degrees, clockwise in the y-down document
+  space, animatable by transitions and keyframes) turns an element's whole subtree rigidly about its
+  `Origin` anchor — the SDF, borders, gradients, textures, and MSDF glyphs rotate with it and
+  batching is unaffected. Rotation is **paint-only**: hit-testing stays axis-aligned against the
+  unrotated `Layout` rect and scissor clips stay axis-aligned; `Document::SetRotation` writes it
+  per frame with no layout re-solve.
 
 - **A document is content a `Viewport` hosts, in layers, engine-driven.** `Viewport::AttachDocument(doc,
   layer)` hosts an ordered, **non-owning** layer stack of `Gui::Document` instances (bottom→top: HUD,
@@ -943,6 +958,32 @@ cook-on-demand hot-reload serves UI with no new machinery. The parsing side is i
   Each is an `ElementKind` the cooker recognizes and the widget layer gives behavior; a control's
   literal config attributes (`min`/`max`/`step`/`value`/`checked`) are read at `Instantiate` and its
   `{value}` binding is one-way (the model drives the widget without firing `onChange`).
+
+- **`List` is the runtime-varying repeater; `count` is the fixed authored pool.** `count="N"` on a
+  markup element is a **cook-time** unroll — it replicates the element's subtree N times with
+  `${i}`/`${n}`/`${n:0W}` substituted into every attribute and text (the runtime loads N ordinary
+  siblings, so the format is unchanged), for a fixed pool the game drives by hand. `List` stays the
+  data-bound repeater for arrays whose length varies at runtime. A `count` pool needs no ids:
+  `Document::FindAllByClass(name)` returns every element carrying the class in tree order, resolved
+  once and cached like `FindById`.
+
+- **Consumer-drive utilities, not a framework.** A HUD's per-frame drive is boilerplate the engine
+  owns as small **device-free value types** a game composes: `DocumentHost` (`Veng/Gui/DocumentHost.h`)
+  owns the lazy load → instantiate → bind → attach lifecycle and re-attaches across a viewport
+  recreation, with `SetOnInstantiate` running a resolve-elements-once callback after every
+  (re)instantiate (invoked immediately if the document is already live). `Gui::Presence`
+  (`Veng/Gui/Presence.h`) eases a boolean open/close goal to an alpha through the frame-rate-
+  independent `Math::ExpApproach` (`Veng/Math/Ease.h`), reporting a hidden threshold and a signed
+  slide offset; `Gui::KeyedPresence<Key>` wraps it as the close-over-stale / adopt-once-hidden swap a
+  keyed panel needs. Neither touches a document — the caller applies the alpha/slide (`SetOpacity`,
+  `SetVisible`, `SetPlacement`), so placement stays caller-owned; a **declarative enter/exit-transition
+  system is deliberately not built** (an exit animation needs keep-visible-until-settled sequencing the
+  utility owns). `Viewport::WorldToDocument` (`WorldToRegion` ÷ the UI scale — the logical-point space a
+  document lays out in) and `Viewport::GetDocumentExtent` bridge a projected world point into HUD space,
+  and the device-free `Gui::Placement` helpers (`ClampIntoBounds`, `AnchorBeside`, `Veng/Gui/Placement.h`)
+  clamp a card/label into bounds; the projection policy and rejection margins stay the game's. Three drive
+  fixes support them: `SetText` early-outs on unchanged text, `SetImageUv` is a paint-only atlas-flipbook
+  setter, and `SetRotation` a paint-only per-frame angle.
 
 - **Scope: screen-space overlay.** The delivered surface is a screen-space document composited
   per-viewport over the scene. World-space UI (a document mapped onto an in-world quad — the diegetic

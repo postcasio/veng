@@ -19,6 +19,11 @@
 #include <Veng/UI/UI.h>
 #include <Veng/UI/DebugPanels.h>
 
+#include <Veng/Gui/Document.h>
+#include <Veng/Gui/DocumentHost.h>
+#include <Veng/Gui/Element.h>
+#include <Veng/Gui/StyleSheet.h>
+
 #include <Veng/Mcp/McpHost.h>
 #include <Veng/Mcp/McpServer.h>
 #include <Veng/Mcp/McpServerInfo.h>
@@ -98,6 +103,11 @@ namespace Actions
     // Jump button.
     constexpr ActionId Jump{0xB64A2DFE34C4E523ULL};
 }
+
+// The cooked HUD assets: the document instantiated over the primary viewport, and its stylesheet
+// (loaded to read the shared `--accent` token straight off the sheet the rules flatten from).
+constexpr AssetId HudDocumentId{0xB51B7421AFE8CD18ULL};
+constexpr AssetId HudStyleSheetId{0x94B0F44BE80ADA35ULL};
 
 // Maps a resolved PlayerInput to an abstract Intent — the game-specific control policy,
 // reading actions by name. Pure: the same action state always yields the same Intent,
@@ -325,10 +335,36 @@ protected:
             // mouse-look runs against a hidden, locked cursor (Escape frees it for the debug UI;
             // a click on the scene re-captures it).
             GetInputRouter().PushFocus(InputFocus::Gameplay);
+
+            SetupHud();
         }
     }
 
-    void OnUpdate(const f32) override
+    // Builds the status HUD: reads the accent color the stylesheet defines so the tick highlight
+    // and the spinner arc share one source, then constructs a DocumentHost and hands it the
+    // resolve-once hook that caches the `count`-repeated tick pool by class. The smoke path skips
+    // all of this — the golden capture is the 3D scene only.
+    void SetupHud()
+    {
+        AssetManager& assets = GetAssetManager();
+        if (const auto sheet = assets.LoadSync<Gui::StyleSheet>(HudStyleSheetId))
+        {
+            if (const auto accent = sheet->Get()->FindVariableColor("accent"))
+            {
+                m_HudAccent = *accent;
+            }
+            if (const auto idle = sheet->Get()->FindVariableColor("tick-idle"))
+            {
+                m_HudIdle = *idle;
+            }
+        }
+
+        m_HudHost = std::make_unique<Gui::DocumentHost>(assets, GetTypeRegistry(), HudDocumentId);
+        m_HudHost->SetOnInstantiate([this](Gui::Document& document)
+                                    { m_HudTicks = document.FindAllByClass("tick"); });
+    }
+
+    void OnUpdate(const f32 delta) override
     {
         // The engine ticks the managed world's simulation (control, movement, spinners) and pushes
         // the resolved camera into the viewport each frame; the sample handles only smoke capture,
@@ -383,6 +419,33 @@ protected:
         // pawn and follow camera stay still). This replaces the old raw-capture gate. The seat is
         // spawned by the game-mode rule, so this runs each frame outside any iteration.
         SyncGameplayContext(GetInputRouter().IsGameplayFocused());
+
+        UpdateHud(delta);
+    }
+
+    // Attaches the HUD (a no-op after the first frame) and sweeps a highlight across the tick pool
+    // resolved by SetOnInstantiate — one tick lit in the accent color, the rest idle. The spinner's
+    // rotation runs from its stylesheet keyframe, so it needs no per-frame drive here.
+    void UpdateHud(const f32 delta)
+    {
+        if (!m_HudHost)
+        {
+            return;
+        }
+
+        Gui::Document* document = m_HudHost->Attach(*GetPrimaryViewport());
+        if (document == nullptr || m_HudTicks.empty())
+        {
+            return;
+        }
+
+        m_HudPhase += delta;
+        const usize active =
+            static_cast<usize>(m_HudPhase * 3.0f) % m_HudTicks.size(); // three ticks per second
+        for (usize i = 0; i < m_HudTicks.size(); i++)
+        {
+            document->SetTextColor(*m_HudTicks[i], i == active ? m_HudAccent : m_HudIdle);
+        }
     }
 
     // Gates the seat's authored input contexts on gameplay focus. On losing focus it saves each
@@ -431,6 +494,7 @@ protected:
         // Drop the server first: its destructor stops the listener thread and closes the socket, so
         // no in-flight tool handler can touch engine state while the rest of the app tears down.
         m_McpServer.reset();
+        m_HudHost.reset();
         m_SceneTexture.reset();
         m_SceneSampler.reset();
     }
@@ -608,6 +672,18 @@ private:
 
     // Pauses the managed world's simulation so the broadphase reads `static`; never set in smoke.
     bool m_PauseSpin = false;
+
+    // The windowed status HUD. The host owns the live document (lazy load, instantiate, attach);
+    // m_HudTicks caches the `count`-repeated tick pool the SetOnInstantiate hook resolves by class,
+    // refreshed by construction on any re-instantiate. Never constructed on the smoke path.
+    Unique<Gui::DocumentHost> m_HudHost;
+    vector<Gui::Element*> m_HudTicks;
+
+    // The highlight-sweep phase, in seconds, and the two tick colors read off the stylesheet's
+    // `--accent` / `--tick-idle` tokens (the fallbacks apply only if the sheet fails to load).
+    f32 m_HudPhase = 0.0f;
+    vec4 m_HudAccent{0.08f, 0.37f, 1.0f, 1.0f};
+    vec4 m_HudIdle{0.06f, 0.08f, 0.13f, 0.53f};
 };
 
 // Factory captures the headless flag so the launcher stays game-agnostic.

@@ -1,8 +1,16 @@
-/* Minimal HUD stylesheet: a translucent panel pinned to a corner, a title, and a value bar. */
+/* Minimal HUD stylesheet: a small palette hoisted to file-scope variables, then a translucent
+   panel, a framed badge, a title, and a value bar drawing every color from those tokens. The
+   accent is defined once and read by two rules — edit it here and both the badge frame and the
+   value bar move together. */
+
+--panel: #12141acc;
+--accent: #2a6df4;
+--text: #f2f4f8ff;
+--text-dim: #9aa3b2ff;
 
 .hud {
     flex-direction: column;
-    background: #12141acc;
+    background: var(--panel);
     corner-radius: 6px;
     padding: 12px;
 }
@@ -14,24 +22,24 @@
     height: 48px;
     corner-radius: 10px;
     border-width: 2px;
-    border-color: #2a6df4ff;
+    border-color: var(--accent);
     margin: 2px;
 }
 
 .title {
     font-size: 22px;
-    color: #f2f4f8ff;
+    color: var(--text);
 }
 
 .caption {
     font-size: 14px;
-    color: #9aa3b2ff;
+    color: var(--text-dim);
     margin: 4px;
 }
 
 .bar {
     height: 8px;
     margin: 6px;
-    background: #2a6df4;
+    background: var(--accent);
     corner-radius: 3px;
 }
