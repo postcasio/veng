@@ -400,8 +400,8 @@ namespace VengEditor
                     return nullptr;
                 }
 
-                return CreateUnique<UIDocumentEditorPanel>(id, entry->Source, m_App, m_Assets,
-                                                           m_ImGui, m_Cook);
+                return CreateUnique<UIDocumentEditorPanel>(id, entry->Source, m_Index, m_App,
+                                                           m_Assets, m_ImGui, m_Cook);
             }
 
         private:

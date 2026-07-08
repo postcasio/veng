@@ -1,6 +1,9 @@
 #include "UIDocumentEditorPanel.h"
 
+#include "AssetChip.h"
+
 #include <Veng/Application.h>
+#include <Veng/Asset/HexId.h>
 #include <Veng/Gui/Element.h>
 #include <Veng/ImGui/ImGuiLayer.h>
 #include <Veng/ImGui/ImGuiTexture.h>
@@ -14,6 +17,11 @@
 #include <Veng/Scene/Scene.h>
 #include <Veng/Time.h>
 #include <Veng/UI/UI.h>
+
+#include "AssetSourceIndex.h"
+
+#include <fstream>
+#include <sstream>
 
 namespace VengEditor
 {
@@ -65,12 +73,96 @@ namespace VengEditor
             }
             return label;
         }
+
+        // Pre-order index of `target` among the tree's Image elements, or nullopt when it is not
+        // an Image in the tree. The live tree mirrors the markup's pre-order element order, so this
+        // ordinal selects the matching `<Image>` start tag in the source text with no XML parser.
+        optional<usize> ImageOrdinal(const Gui::Element& root, const Gui::Element* target)
+        {
+            usize seen = 0;
+            optional<usize> result;
+            const auto walk = [&](const Gui::Element& element, auto&& self) -> void
+            {
+                if (result)
+                {
+                    return;
+                }
+                if (element.Kind == Gui::ElementKind::Image)
+                {
+                    if (&element == target)
+                    {
+                        result = seen;
+                        return;
+                    }
+                    ++seen;
+                }
+                for (const Gui::Element* child : element.Children)
+                {
+                    self(*child, self);
+                }
+            };
+            walk(root, walk);
+            return result;
+        }
+
+        // Sets the `src` attribute of the `n`-th `<Image>` start tag (pre-order) to `idHex`,
+        // inserting the attribute when the tag has none. Returns nullopt when the tag or its
+        // start-tag terminator cannot be located — the mutation is abandoned rather than guessed.
+        optional<string> SetNthImageSrc(string text, usize n, const string& idHex)
+        {
+            usize pos = text.find("<Image");
+            for (usize i = 0; i < n && pos != string::npos; ++i)
+            {
+                pos = text.find("<Image", pos + 6);
+            }
+            if (pos == string::npos)
+            {
+                return std::nullopt;
+            }
+            const usize tagEnd = text.find('>', pos);
+            if (tagEnd == string::npos)
+            {
+                return std::nullopt;
+            }
+            const usize srcPos = text.find("src=\"", pos);
+            if (srcPos != string::npos && srcPos < tagEnd)
+            {
+                const usize valStart = srcPos + 5;
+                const usize valEnd = text.find('"', valStart);
+                if (valEnd == string::npos || valEnd > tagEnd)
+                {
+                    return std::nullopt;
+                }
+                text.replace(valStart, valEnd - valStart, idHex);
+            }
+            else
+            {
+                text.insert(pos + 6, fmt::format(" src=\"{}\"", idHex));
+            }
+            return text;
+        }
+
+        // Appends a new `<Image>` as the document root's last child by inserting it before the
+        // final closing tag (the outermost element closes last). Returns nullopt when no closing
+        // tag is present.
+        optional<string> AppendImage(string text)
+        {
+            const usize close = text.rfind("</");
+            if (close == string::npos)
+            {
+                return std::nullopt;
+            }
+            text.insert(close,
+                        "  <Image style=\"width: 48px; height: 48px; background: #33445588;\"/>\n");
+            return text;
+        }
     }
 
-    UIDocumentEditorPanel::UIDocumentEditorPanel(AssetId id, path sourcePath, Application& app,
+    UIDocumentEditorPanel::UIDocumentEditorPanel(AssetId id, path sourcePath,
+                                                 const AssetSourceIndex& sources, Application& app,
                                                  AssetManager& assets, ImGuiLayer& imgui,
                                                  CookDriver cook)
-        : m_Id(id), m_SourcePath(std::move(sourcePath)), m_App(app),
+        : m_Id(id), m_SourcePath(std::move(sourcePath)), m_Sources(sources), m_App(app),
           m_Context(app.GetRenderContext()), m_Assets(assets), m_ImGui(imgui),
           m_Cook(std::move(cook))
     {
@@ -175,6 +267,41 @@ namespace VengEditor
         m_Viewport->AttachDocument(*m_Document);
     }
 
+    void UIDocumentEditorPanel::EditSource(const function<optional<string>(const string&)>& edit)
+    {
+        std::ifstream in(m_SourcePath, std::ios::binary);
+        if (!in)
+        {
+            Log::Error("UI document editor: cannot read source {}", m_SourcePath.string());
+            return;
+        }
+        std::ostringstream buffer;
+        buffer << in.rdbuf();
+        in.close();
+
+        const optional<string> edited = edit(buffer.str());
+        if (!edited)
+        {
+            return;
+        }
+
+        std::ofstream out(m_SourcePath, std::ios::binary | std::ios::trunc);
+        if (!out)
+        {
+            Log::Error("UI document editor: cannot write source {}", m_SourcePath.string());
+            return;
+        }
+        out << *edited;
+        out.close();
+
+        TriggerCook();
+    }
+
+    void UIDocumentEditorPanel::AddImageElement()
+    {
+        EditSource([](const string& text) { return AppendImage(text); });
+    }
+
     void UIDocumentEditorPanel::DrawOutline(Gui::Element& element, u32& index)
     {
         const usize self = index;
@@ -251,6 +378,30 @@ namespace VengEditor
                              style.Padding.Top, style.Padding.Right, style.Padding.Bottom));
         UI::Text(fmt::format("Margin: {:.0f} {:.0f} {:.0f} {:.0f}", style.Margin.Left,
                              style.Margin.Top, style.Margin.Right, style.Margin.Bottom));
+
+        // An Image element edits its source texture through a drop-target asset chip: dropping or
+        // picking a texture repoints the `src` in the markup and recooks behind the stable handle.
+        if (element.Kind == Gui::ElementKind::Image && m_Document != nullptr)
+        {
+            UI::Separator();
+            UI::TextDisabled("Image source");
+            const AssetChipInfo chip{
+                .Id = element.Image.Id(),
+                .Type = AssetType::Texture,
+                .IdScope = "uidocimagesrc",
+                .DropTarget = true,
+            };
+            if (const optional<AssetId> picked = DrawAssetChip(chip, m_Sources))
+            {
+                if (const optional<usize> ordinal =
+                        ImageOrdinal(m_Document->Root(), m_SelectedElement))
+                {
+                    const string idHex = FormatAssetId(*picked);
+                    EditSource([n = *ordinal, idHex](const string& text)
+                               { return SetNthImageSrc(text, n, idHex); });
+                }
+            }
+        }
     }
 
     void UIDocumentEditorPanel::OnUI()
@@ -296,6 +447,13 @@ namespace VengEditor
             TriggerCook();
         }
         UI::Tooltip("Re-cook the source and hot-reload the document behind its stable handle");
+
+        UI::SameLine();
+        if (UI::Button("Add Image"))
+        {
+            AddImageElement();
+        }
+        UI::Tooltip("Append a new <Image> under the document root, then assign its texture below");
 
         UI::SeparatorText("Outline");
         if (m_Document)

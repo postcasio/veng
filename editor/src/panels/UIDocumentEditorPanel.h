@@ -36,6 +36,8 @@ namespace Veng
 
 namespace VengEditor
 {
+    class AssetSourceIndex;
+
     /// @brief Docked authoring panel for a `*.vui.xml` UIDocument source.
     ///
     /// Hosts a WYSIWYG canvas — an Offscreen Veng::Renderer::Viewport rendering the live
@@ -52,11 +54,13 @@ namespace VengEditor
         ///
         /// @param id          The UIDocument asset id, addressable behind the cook-on-demand mount.
         /// @param sourcePath  Absolute path to the `*.vui.xml` source.
+        /// @param sources     Manifest source index backing the texture asset-chip picker.
         /// @param app         Application the canvas's Offscreen viewport is registered into.
-        /// @param assets      Asset manager the recipe and its font dependency load through.
+        /// @param assets      Asset manager the recipe and its font/texture dependencies load through.
         /// @param imgui       ImGui layer the canvas output texture registers into.
         /// @param cook        Off-thread cook driver bound to the host's RequestCook.
-        UIDocumentEditorPanel(Veng::AssetId id, Veng::path sourcePath, Veng::Application& app,
+        UIDocumentEditorPanel(Veng::AssetId id, Veng::path sourcePath,
+                              const AssetSourceIndex& sources, Veng::Application& app,
                               Veng::AssetManager& assets, Veng::ImGuiLayer& imgui, CookDriver cook);
         ~UIDocumentEditorPanel() override;
 
@@ -78,11 +82,30 @@ namespace VengEditor
         void DrawOutline(Veng::Gui::Element& element, Veng::u32& index);
 
         /// @brief Draws the selected element's resolved style through Veng::UI (read-only).
+        ///
+        /// For a selected Image element it also draws an editable texture asset-chip over the
+        /// element's `src`, so a dropped or picked texture repoints the image and recooks.
         void DrawStyleInspector();
+
+        /// @brief Rewrites the `*.vui.xml` source in place and recooks behind the stable handle.
+        ///
+        /// Reads the on-disk source, applies @p edit to its text, writes it back, and triggers a
+        /// cook — the authoring mutation the source-of-truth model routes every change through. A
+        /// no-op (with a logged error) when the source cannot be read or written.
+        /// @param edit  Transforms the source text; returns nullopt to abandon the edit unchanged.
+        void
+        EditSource(const Veng::function<Veng::optional<Veng::string>(const Veng::string&)>& edit);
+
+        /// @brief Appends a new `<Image>` child under the document root and recooks.
+        ///
+        /// The authored image starts un-sourced (a styled box); its texture is assigned through the
+        /// inspector's asset-chip. This is the "create an Image in the tree" authoring entry.
+        void AddImageElement();
 
         Veng::AssetId m_Id;
         Veng::path m_SourcePath;
         Veng::string m_Title;
+        const AssetSourceIndex& m_Sources;
 
         Veng::Application& m_App;
         Veng::Renderer::Context& m_Context;

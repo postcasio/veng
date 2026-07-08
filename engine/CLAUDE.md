@@ -852,11 +852,13 @@ cook-on-demand hot-reload serves UI with no new machinery. The parsing side is i
   **independent** live tree from the cooked recipe (cascading the referenced stylesheets onto each
   element, inline style winning), so instantiating one recipe twice yields two trees that mutate
   separately — two split-screen HUDs are two instances over one cooked blob. The document resolves
-  its asset declarations through the borrowed `AssetManager` — a font declaration's `AssetId` loads
-  to an atlas via `LoadSync<Font>`, and it re-runs on later style resolves, so the manager must
-  outlive the document. (Internally that resolution is a `FontResolver`,
-  `function<AssetHandle<Font>(AssetId)>`, the document builds from the manager; the seam a later
-  texture-backed element resolves its own dependencies through.) A `Document` can also
+  its asset declarations through the borrowed `AssetManager` **directly** — a font declaration's
+  `AssetId` loads to an atlas via `LoadSync<Font>`, and an `Image`'s `src` `AssetId` to its texture,
+  each a cache lookup on the already-resident dependency; the resolve re-runs on later style
+  resolves, so the manager must outlive the document. (The id→handle resolution is a plain
+  `AssetManager*` threaded where a `FontResolver` `function` wrapper once sat — the wrapper had no
+  non-manager implementation and is gone; gradients keep their internal `Instantiate` resolution.)
+  A `Document` can also
   be built and mutated **imperatively** in C++ (`Add`/`Remove`/`SetText`/`SetStyle`/…) — the same
   retained tree, two authoring modes (the settled binding decision).
 
@@ -930,7 +932,10 @@ cook-on-demand hot-reload serves UI with no new machinery. The parsing side is i
   hand-rolls is one engine seam.
 
 - **The widget library.** The built-in, markup-authorable, styleable, focusable controls on the
-  primitives: `Panel` (a styled flex box), `Text` (a shaped MSDF leaf), `Image` (a textured box),
+  primitives: `Panel` (a styled flex box), `Text` (a shaped MSDF leaf), `Image` (a textured box —
+  a `src` texture with an optional `tint`/`uv`, sized by style and composing with
+  `corner-radius`/border on the delivered `DrawList::Texture` path; 9-slice and texture-intrinsic
+  sizing are noted follow-ons),
   `Button` (`onClick`), `Checkbox` (`value`/`checked`/`onChange`, driving the `:checked` variant),
   `Slider` (`min`/`max`/`step`/`value`/`onChange`), `ProgressBar` (a `[0,1]` fill), `TextInput`
   (`value`/`onChange`), `ScrollView` (a clipped, scrollable region), and `List` (a data-bound

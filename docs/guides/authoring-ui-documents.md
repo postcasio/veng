@@ -162,6 +162,30 @@ reflection; a literal (`min="0"`) is read once at instantiate. A binding path is
 field path — `{player.health}` resolves `health` on the `player` field of the bound
 object; a single segment (`{Level}`) resolves a field on the bound object directly.
 
+### `Image` — a textured box
+
+An `<Image>` draws a cooked texture. It takes a `src` — the texture's asset id — plus two
+optional literals: a `tint` (a `#rrggbbaa` color multiplied into the texels, the style
+opacity folding into its alpha) and a `uv` (four space-separated numbers `minX minY sizeX
+sizeY` selecting a sub-rect of the texture, for an atlas; the whole texture by default):
+
+```xml
+<Image class="badge" src="0x502E61AE5D720E64" tint="#ffffffff" uv="0 0 1 1"/>
+```
+
+The `src` texture is a document dependency the loader keeps resident, resolved to a live
+handle at instantiate time through the same `AssetManager` path a font uses. An image is
+**sized by style** — `width`/`height`/flex, like any element — and it **composes with
+`corner-radius` and a border**, so a rounded, framed thumbnail is `corner-radius` +
+`border-width`/`border-color` on the `<Image>` with no extra markup. An image with no
+resolved texture paints its styled box only (its background/border), so a missing texture
+degrades rather than crashes.
+
+> `Image` v1 is a plain textured box. **9-slice** (a border-stable stretch for panels and
+> frames) and **texture-intrinsic sizing** (an image measuring to its texture's pixel
+> dimensions the way `Text` measures its run) are natural follow-ons on the same element,
+> not yet authored.
+
 ## 4. Instantiate, bind, and attach
 
 The one thing the engine cannot do from data alone is wire the document to *this game's*
@@ -192,18 +216,17 @@ void OnWorldLoaded(Scene&, ResidencyBatch&) override
     const auto recipe = assets.LoadSync<Gui::UIDocument>(HudDocumentId);
     if (!recipe) { return; }
 
-    m_Hud = Gui::Document::Instantiate(
-        *recipe->Get(),
-        [&assets](AssetId id) { return assets.LoadSync<Font>(id).value_or(AssetHandle<Font>{}); });
+    m_Hud = Gui::Document::Instantiate(*recipe->Get(), assets);
     m_Context.SetData(m_Model);
     m_Hud->BindContext(&m_Context, &GetTypeRegistry());
     GetPrimaryViewport()->AttachDocument(*m_Hud);
 }
 ```
 
-The `FontResolver` lambda maps a font declaration's asset id to a loaded atlas — the
-document keeps its font resident as a dependency, so `LoadSync<Font>` resolves inline.
-`Instantiate` copies the recipe into an **independent** tree (instantiate twice for two
+`Instantiate` borrows the `AssetManager` and resolves the document's asset-backed
+declarations through it directly — a font declaration's id loads to its atlas, and an
+`<Image>`'s `src` to its texture, as ordinary resident dependencies (so the manager must
+outlive the document). It copies the recipe into an **independent** tree (instantiate twice for two
 split-screen HUDs over one cooked blob — the `Prefab` model). Attaching hands the viewport
 a non-owning pointer; you keep the `Unique<Gui::Document>`, and dropping it self-detaches.
 
@@ -258,6 +281,12 @@ outline, and a resolved-style inspector. Editing the `*.vui.xml`/`*.vuss` source
 off the render thread and hot-reloads the document behind its stable handle, so the canvas
 reflects the change — the same cook-on-demand loop the texture and material editors ride.
 The document is the source of truth.
+
+The panel also authors an `<Image>` directly: **Add Image** appends one under the document
+root, and selecting an image in the outline shows its `src` as a **texture asset-chip** in
+the inspector — drop a texture from the asset browser onto it (or click to pick one) to
+repoint the image, which rewrites the `src` in the markup and recooks behind the stable
+handle.
 
 ---
 

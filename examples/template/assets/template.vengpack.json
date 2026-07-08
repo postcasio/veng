@@ -27,6 +27,11 @@
       "source": "fonts/ui.font.json"
     },
     {
+      "id": "0x502E61AE5D720E64",
+      "type": "Texture",
+      "source": "textures/badge.tex.json"
+    },
+    {
       "id": "0x9199FE52C60D7DF8",
       "type": "StyleSheet",
       "source": "ui/hud.vuss"

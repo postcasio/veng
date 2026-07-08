@@ -7,6 +7,17 @@
     padding: 12px;
 }
 
+/* Logo badge: a cooked UI texture, framed by a rounded border to show Image composing with
+   corner-radius and a border like any styled box. */
+.badge {
+    width: 48px;
+    height: 48px;
+    corner-radius: 10px;
+    border-width: 2px;
+    border-color: #2a6df4ff;
+    margin: 2px;
+}
+
 .title {
     font-size: 22px;
     color: #f2f4f8ff;
