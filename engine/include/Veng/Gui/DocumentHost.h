@@ -59,6 +59,16 @@ namespace Veng::Gui
         /// @param interactive  True to route input into the document, false for display-only.
         void SetInteractive(bool interactive);
 
+        /// @brief Sets a callback run after the document is instantiated and bound.
+        ///
+        /// Invoked once inside the lazy load — after instantiate and bind, before the first attach —
+        /// and invoked immediately if the document is already live when set, so the ordering of this
+        /// call against the first Attach is a non-issue. This is where a consumer resolves element
+        /// pointers and does one-time setup; it re-runs on any future re-instantiate, so cached
+        /// pointers stay correct by construction. Passing an empty function clears the callback.
+        /// @param callback  The callback receiving the live document, or an empty function to clear.
+        void SetOnInstantiate(function<void(Document&)> callback);
+
         /// @brief Ensures the document is loaded, bound, and attached to the given viewport.
         ///
         /// Loads and instantiates on first call (nullptr thereafter when the load failed), moves
@@ -90,6 +100,8 @@ namespace Veng::Gui
         Unique<Document> m_Document;
         /// @brief The bound context, or nullptr; borrowed.
         BindingContext* m_Context = nullptr;
+        /// @brief The callback run after (re)instantiate, or empty; the resolve-elements-once hook.
+        function<void(Document&)> m_OnInstantiate;
         /// @brief Whether the document load was attempted (latched so a miss is not retried).
         bool m_LoadAttempted = false;
         /// @brief The interactive flag applied on attach (and live changes).

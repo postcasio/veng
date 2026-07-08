@@ -386,3 +386,54 @@ TEST_CASE("gui draw: style opacity composites down the subtree at build")
     doc.Build(empty);
     CHECK(empty.GetVertices().empty());
 }
+
+TEST_CASE("gui document: SetText to the current value does not re-dirty layout")
+{
+    Document doc;
+    Element& text = doc.Add(doc.Root(), ElementKind::Text);
+    doc.SetText(text, "hello");
+    doc.Solve(vec2(200.0f, 200.0f));
+    CHECK_FALSE(doc.IsDirty());
+
+    // Re-writing the identical text is a no-op — no re-dirty, no re-solve.
+    doc.SetText(text, "hello");
+    CHECK_FALSE(doc.IsDirty());
+
+    // A real change re-dirties so the following Solve re-runs.
+    doc.SetText(text, "world");
+    CHECK(doc.IsDirty());
+}
+
+TEST_CASE("gui document: SetImageUv is a paint-only write of the sampled sub-rect")
+{
+    Document doc;
+    Element& image = doc.Add(doc.Root(), ElementKind::Image);
+    image.ImageTexture = Renderer::TextureHandle{.Index = 0};
+    image.ImageSampler = Renderer::SamplerHandle{.Index = 0};
+    doc.SetStyle(image,
+                 []
+                 {
+                     Style style;
+                     style.Width = Length::Points(32.0f);
+                     style.Height = Length::Points(32.0f);
+                     return style;
+                 }());
+    doc.Solve(vec2(200.0f, 200.0f));
+    CHECK_FALSE(doc.IsDirty());
+
+    // The UV write is paint-only: no layout re-dirty, so no re-solve before the next Build.
+    const Rect uv{.Min = {0.25f, 0.5f}, .Size = {0.25f, 0.5f}};
+    doc.SetImageUv(image, uv);
+    CHECK_FALSE(doc.IsDirty());
+
+    DrawList list;
+    doc.Build(list);
+
+    // The textured quad's four corners carry the sub-rect UVs (TL, TR, BR, BL); the max corner is
+    // Min + Size.
+    REQUIRE(list.GetVertices().size() == 4);
+    CHECK(list.GetVertices()[0].Uv.x == doctest::Approx(0.25f));
+    CHECK(list.GetVertices()[0].Uv.y == doctest::Approx(0.5f));
+    CHECK(list.GetVertices()[2].Uv.x == doctest::Approx(0.5f));
+    CHECK(list.GetVertices()[2].Uv.y == doctest::Approx(1.0f));
+}

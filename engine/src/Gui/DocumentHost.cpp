@@ -1,5 +1,7 @@
 #include <Veng/Gui/DocumentHost.h>
 
+#include <utility>
+
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Gui/UIDocument.h>
 #include <Veng/Log.h>
@@ -31,6 +33,15 @@ namespace Veng::Gui
         }
     }
 
+    void DocumentHost::SetOnInstantiate(function<void(Document&)> callback)
+    {
+        m_OnInstantiate = std::move(callback);
+        if (m_Document != nullptr && m_OnInstantiate)
+        {
+            m_OnInstantiate(*m_Document);
+        }
+    }
+
     bool DocumentHost::EnsureDocument()
     {
         if (m_Document != nullptr)
@@ -57,6 +68,10 @@ namespace Veng::Gui
         if (m_Context != nullptr)
         {
             m_Document->BindContext(m_Context, &m_Types);
+        }
+        if (m_OnInstantiate)
+        {
+            m_OnInstantiate(*m_Document);
         }
         return true;
     }

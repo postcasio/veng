@@ -127,7 +127,10 @@ namespace Veng::Gui
         /// @param element  The element to remove; must belong to this document and not be the root.
         void Remove(Element& element);
 
-        /// @brief Sets a Text element's content and marks layout dirty.
+        /// @brief Sets a Text element's content, marking layout dirty on a real change.
+        ///
+        /// Setting the text to its current value is a no-op — no layout dirty, no re-measure — so a
+        /// naive per-frame write of unchanged text costs nothing and needs no caller-side guard.
         /// @param element  The element whose text to set.
         /// @param text     The new UTF-8 text content.
         void SetText(Element& element, string_view text);
@@ -176,6 +179,15 @@ namespace Veng::Gui
         /// @param element  The element whose text color to set.
         /// @param color    The text color, linear straight-alpha RGBA.
         void SetTextColor(Element& element, vec4 color);
+
+        /// @brief Sets an Image element's sampled UV sub-rect — a paint-only write, no layout re-solve.
+        ///
+        /// Writes the element's UV rectangle directly, so re-pointing an Image at a different atlas
+        /// region each frame animates a flipbook with no flexbox re-solve; the change takes effect
+        /// on the next Build. The UV is unused off an Image element, so setting it there is inert.
+        /// @param element  The element whose sampled UV rect to set.
+        /// @param uv       The UV sub-rect to sample, in normalized 0..1 texture coordinates.
+        void SetImageUv(Element& element, const Rect& uv);
 
         /// @brief Pins an element absolutely at a rect, dirtying layout only on a real change.
         ///

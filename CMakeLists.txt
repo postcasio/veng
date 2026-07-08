@@ -524,6 +524,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/ibl_cube_sh.cpp
             tests/unit/bvh.cpp
             tests/unit/math_random.cpp
+            tests/unit/math_ease.cpp
             tests/unit/platform_userpaths.cpp
             tests/unit/shadow_cascades.cpp
             tests/unit/punctual_shadows.cpp
@@ -564,6 +565,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/gui_input.cpp
             tests/unit/gui_widgets.cpp
             tests/unit/gui_document_api.cpp
+            tests/unit/gui_presence.cpp
     )
     target_link_libraries(veng_test_unit PRIVATE veng::veng doctest::doctest)
 
@@ -1037,6 +1039,10 @@ if (VENG_BUILD_TESTS)
             # ${n} substitution, LoadSyncs + Instantiates it, and asserts Document::FindAllByClass
             # resolves the unrolled pool in tree order with each element's substituted id + text.
             tests/gpu/ui_document_repeat.cpp
+            # document_host.cpp cooks the UI fixture pack and drives DocumentHost's lazy load:
+            # SetOnInstantiate fires once when Attach instantiates the document, and immediately
+            # when set on an already-live document.
+            tests/gpu/document_host.cpp
             tests/gpu/mesh_loader.cpp
             tests/gpu/shader_loader.cpp
             tests/gpu/material_loader.cpp

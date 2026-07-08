@@ -921,6 +921,10 @@ namespace Veng::Gui
 
     void Document::SetText(Element& element, string_view text)
     {
+        if (element.Text == text)
+        {
+            return;
+        }
         element.Text.assign(text);
         if (const YGNodeRef node = m_Yoga->Get(element);
             node != nullptr && YGNodeHasMeasureFunc(node))
@@ -971,6 +975,11 @@ namespace Veng::Gui
     {
         element.BaseStyle.TextColor = color;
         element.ComputedStyle.TextColor = color;
+    }
+
+    void Document::SetImageUv(Element& element, const Rect& uv)
+    {
+        element.ImageUv = uv;
     }
 
     void Document::SetPlacement(Element& element, const vec2 topLeft, const vec2 size)

@@ -49,6 +49,7 @@
 #include <Veng/Time.h>
 
 #include <Veng/Math/AABB.h>
+#include <Veng/Math/Ease.h>
 #include <Veng/Math/Frustum.h>
 
 #include <Veng/Asset/AssetManager.h>
@@ -1282,8 +1283,7 @@ namespace Veng::Renderer
                                     SamplerHandle sampler, uvec2 extent)
                 : m_Context(context), m_Pipeline(std::move(pipeline)), m_SourceId(sourceId),
                   m_SourceHandle(sourceHandle), m_DepthId(depthId), m_DepthHandle(depthHandle),
-                  m_CopyId(copyId), m_DepthCopyId(depthCopyId), m_Sampler(sampler),
-                  m_Extent(extent)
+                  m_CopyId(copyId), m_DepthCopyId(depthCopyId), m_Sampler(sampler), m_Extent(extent)
             {
             }
 
@@ -5681,9 +5681,9 @@ namespace Veng::Renderer
                 }
                 else
                 {
-                    const f32 rate =
-                        1.0f - std::exp(-view.Delta * std::max(view.AutoExposureSpeed, 0.0f));
-                    m_AdaptedLuminance = glm::mix(m_AdaptedLuminance, meteredLuminance, rate);
+                    m_AdaptedLuminance =
+                        ExpApproach(m_AdaptedLuminance, meteredLuminance, view.Delta,
+                                    std::max(view.AutoExposureSpeed, 0.0f));
                 }
             }
             const f32 clamped = std::clamp(m_AdaptedLuminance, view.AutoExposureMinLuminance,
