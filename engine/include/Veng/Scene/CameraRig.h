@@ -7,6 +7,7 @@ namespace Veng
 {
     struct Transform;
     struct CameraFollow;
+    struct CameraLook;
 
     /// @brief Computes the camera Transform that trails a target by a follow relationship.
     ///
@@ -27,21 +28,33 @@ namespace Veng
     [[nodiscard]] Transform FollowCamera(const Transform& current, const mat4& targetWorld,
                                          const CameraFollow& follow, f32 delta);
 
-    /// @brief View-phase system that trails each follow camera behind its target.
+    /// @brief Computes the first-person rotation a look heading resolves to.
+    ///
+    /// Yaw about world up composed with pitch about the yawed right axis, the pitch
+    /// clamped into ±PitchLimit — so the camera never crosses the poles. Pure math with
+    /// no scene or device, the deterministic core both the camera-rig system and the
+    /// unit tests drive.
+    /// @param look The yaw/pitch heading and its pitch limit.
+    /// @return The world-space rotation facing along the heading.
+    [[nodiscard]] quat LookRotation(const CameraLook& look);
+
+    /// @brief View-phase system that resolves each rigged camera's pose.
     ///
     /// Runs in the View phase, so it reads pawn state the Sim phase finalized this tick.
     /// For every entity with (Transform, CameraFollow) whose Target is a live entity with a
-    /// Transform, it writes the camera entity's Transform through FollowCamera, through the
-    /// scene accessor so the spatial-version bookkeeping is correct. The produced camera pose
-    /// is purely local — never authoritative, never on the wire.
+    /// Transform, it writes the camera entity's Transform through FollowCamera; for every
+    /// entity with (Transform, CameraLook) it clamps the look pitch and writes the entity's
+    /// rotation through LookRotation. Both go through the scene accessor so the
+    /// spatial-version bookkeeping is correct. The produced camera pose is purely local —
+    /// never authoritative, never on the wire.
     class CameraRigSystem final : public SceneSystem
     {
     public:
         /// @brief Returns Phase::View — the rig derives view state after the Sim phase.
         [[nodiscard]] Phase GetPhase() const override { return Phase::View; }
 
-        /// @brief Trails each (Transform, CameraFollow) camera behind its Target.
-        /// @param scene    The scene whose follow cameras are updated.
+        /// @brief Resolves each follow camera behind its Target and each look camera's rotation.
+        /// @param scene    The scene whose rigged cameras are updated.
         /// @param delta    Time in seconds since the previous tick.
         /// @param context  Per-tick services (unused).
         void OnUpdate(Scene& scene, f32 delta, const SystemContext& context) override;

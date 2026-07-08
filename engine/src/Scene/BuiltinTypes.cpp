@@ -43,11 +43,12 @@ namespace Veng
         // integrates. MotionSpace registers transitively through ConstantMotion.
         registry.Register<ConstantMotion>();
 
-        // Net-anticipation seam: the ownership annotation and the camera-rig follow
-        // relationship the View-phase rig reads.
+        // Net-anticipation seam: the ownership annotation and the camera-rig relationships
+        // (third-person follow, first-person look) the View-phase rig reads.
         registry.Register<Tier>();
         registry.Register<Authority>();
         registry.Register<CameraFollow>();
+        registry.Register<CameraLook>();
 
         // Game mode as data: the replicated Session state and the per-scene config a
         // spawn rule reads. SessionPhase registers transitively through Session.

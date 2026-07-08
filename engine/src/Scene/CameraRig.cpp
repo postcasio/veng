@@ -51,6 +51,14 @@ namespace Veng
         return result;
     }
 
+    quat LookRotation(const CameraLook& look)
+    {
+        const f32 limit = glm::max(look.PitchLimit, 0.0f);
+        const f32 pitch = glm::clamp(look.Pitch, -limit, limit);
+        return glm::angleAxis(look.Yaw, vec3(0.0f, 1.0f, 0.0f)) *
+               glm::angleAxis(pitch, vec3(1.0f, 0.0f, 0.0f));
+    }
+
     void CameraRigSystem::OnUpdate(Scene& scene, const f32 delta, const SystemContext&)
     {
         scene.Each<Transform, CameraFollow>(
@@ -64,6 +72,15 @@ namespace Veng
 
                 const mat4 targetWorld = WorldMatrix(scene, follow.Target);
                 transform = FollowCamera(transform, targetWorld, follow, delta);
+            });
+
+        scene.Each<Transform, CameraLook>(
+            [](const Entity entity, Transform& transform, CameraLook& look)
+            {
+                // Store the clamp back so accumulated look input never winds past the limit.
+                look.Pitch = glm::clamp(look.Pitch, -glm::max(look.PitchLimit, 0.0f),
+                                        glm::max(look.PitchLimit, 0.0f));
+                transform.Rotation = LookRotation(look);
             });
     }
 }

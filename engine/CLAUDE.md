@@ -1567,7 +1567,8 @@ headless Sim tick is a pure function of state + intents (the `SystemContext.Inpu
 is always present, reporting the neutral all-zeros state in headless, so an input-reading
 system needs no guard). **View** is client-local presentation derived from finalized Sim
 state — the `CameraRigSystem` (`Veng/Scene/CameraRig.h`) trails a possessed pawn via a
-`CameraFollow` component, never authoritative and never on the wire. An **`Authority {
+`CameraFollow` component and resolves a first-person `CameraLook` (a clamped yaw/pitch
+heading written as the entity's rotation), never authoritative and never on the wire. An **`Authority {
 Tier, Owner }`** component (`Tier { Server, Local }`) marks who simulates an entity;
 authored entities default `Server`, client-local view entities `Local`. Nothing in the
 runtime reads it — its consumer is the future net layer — but threading ownership now is

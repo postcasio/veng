@@ -507,6 +507,26 @@ namespace Veng
         f32 Pitch = 0.0f;
     };
 
+    /// @brief Camera-rig first-person look: a yaw/pitch heading the rig writes as the
+    /// entity's rotation.
+    ///
+    /// Read by the View-phase camera rig: each tick it clamps Pitch into ±PitchLimit and
+    /// writes the entity's Transform rotation as yaw about world up composed with pitch
+    /// about the yawed right axis. The entity's position is untouched — the camera sits
+    /// where it is placed (or parented). A game's control system drives Yaw/Pitch from its
+    /// look action with its own sensitivity, the way it drives CameraFollow::Pitch; the
+    /// authored values are the spawn-time facing. Because the rig runs in the View phase,
+    /// the produced rotation is purely local — never authoritative, never on the wire.
+    struct CameraLook
+    {
+        /// @brief Heading about world up, in radians; positive turns left.
+        f32 Yaw = 0.0f;
+        /// @brief Elevation about the yawed right axis, in radians; positive looks up.
+        f32 Pitch = 0.0f;
+        /// @brief Maximum |Pitch| in radians; the rig clamps Pitch into this range each tick.
+        f32 PitchLimit = 1.5f;
+    };
+
     /// @brief Lifecycle phase of a game-mode Session.
     ///
     /// A rule system reads the phase to decide when to act (spawn the player on
@@ -904,6 +924,14 @@ VE_REFLECT(::Veng::CameraFollow, 0xF8BD924F0A0F9DB0ULL)
 VE_FIELD(Target, .DisplayName = "Target")
 VE_FIELD(Offset, .DisplayName = "Offset")
 VE_FIELD(Damping, .DisplayName = "Damping", .Display = {.Min = 0.0})
+VE_REFLECT_END();
+
+VE_REFLECT(::Veng::CameraLook, 0x08B30475EB8C5788ULL)
+VE_FIELD(Yaw, .DisplayName = "Yaw",
+         .Tooltip = "Heading about world up, radians; positive turns left")
+VE_FIELD(Pitch, .DisplayName = "Pitch", .Tooltip = "Elevation, radians; positive looks up")
+VE_FIELD(PitchLimit, .DisplayName = "Pitch Limit", .Tooltip = "Maximum |Pitch| in radians",
+         .Display = {.Min = 0.0})
 VE_REFLECT_END();
 
 VE_ENUM(::Veng::SessionPhase, 0x6DF15084654B59E7ULL)

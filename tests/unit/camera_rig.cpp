@@ -186,3 +186,56 @@ TEST_CASE("The rig leaves a camera with an unwired follow target untouched")
 
     CHECK(VecApprox(scene->Get<Transform>(camera).Position, vec3(1.0f, 2.0f, 3.0f)));
 }
+
+TEST_CASE("LookRotation with a positive yaw turns the forward axis left")
+{
+    const CameraLook look{.Yaw = glm::radians(90.0f)};
+
+    const vec3 forward = LookRotation(look) * vec3(0.0f, 0.0f, -1.0f);
+
+    // Positive yaw about world up rotates -Z toward -X.
+    CHECK(VecApprox(forward, vec3(-1.0f, 0.0f, 0.0f)));
+}
+
+TEST_CASE("LookRotation with a positive pitch looks up")
+{
+    const CameraLook look{.Pitch = glm::radians(45.0f)};
+
+    const vec3 forward = LookRotation(look) * vec3(0.0f, 0.0f, -1.0f);
+
+    CHECK(forward.y == doctest::Approx(glm::sin(glm::radians(45.0f))).epsilon(1e-4f));
+    CHECK(forward.z < 0.0f);
+}
+
+TEST_CASE("LookRotation clamps the pitch to the limit")
+{
+    const CameraLook look{.Pitch = 3.0f, .PitchLimit = 1.0f};
+
+    const vec3 forward = LookRotation(look) * vec3(0.0f, 0.0f, -1.0f);
+
+    // Clamped to one radian of elevation, not the requested three.
+    CHECK(forward.y == doctest::Approx(glm::sin(1.0f)).epsilon(1e-4f));
+}
+
+TEST_CASE("The rig writes a look camera's rotation and clamps its stored pitch")
+{
+    TypeRegistry registry = MakeRegistry();
+    const Unique<Scene> scene = Scene::Create(registry);
+
+    const Entity camera = scene->CreateEntity();
+    Transform pose;
+    pose.Position = vec3(1.0f, 2.0f, 3.0f);
+    scene->Add<Transform>(camera, pose);
+    scene->Add<CameraLook>(
+        camera, CameraLook{.Yaw = glm::radians(90.0f), .Pitch = 5.0f, .PitchLimit = 1.2f});
+
+    CameraRigSystem rig;
+    ContextStorage storage;
+    rig.OnUpdate(*scene, 0.016f, storage.Make());
+
+    // Position untouched; rotation faces the yawed heading; the wound-up pitch stored clamped.
+    CHECK(VecApprox(scene->Get<Transform>(camera).Position, vec3(1.0f, 2.0f, 3.0f)));
+    const vec3 forward = scene->Get<Transform>(camera).Rotation * vec3(0.0f, 0.0f, -1.0f);
+    CHECK(forward.x < -0.3f);
+    CHECK(scene->Get<CameraLook>(camera).Pitch == doctest::Approx(1.2f));
+}

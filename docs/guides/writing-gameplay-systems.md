@@ -488,8 +488,11 @@ This example reuses the real shipped pieces:
   lifecycle in full: it spawns the configured player prefab at `OnStart` and tears
   it down at `OnStop`, reading the game-mode `Session` state.
 - **`CameraRigSystem`** in [`CameraRig.h`](../../engine/include/Veng/Scene/CameraRig.h)
-  is the `Phase::View` counterpart — it trails the moved pawn after the Sim phase
-  finalizes, deriving a purely local camera pose.
+  is the `Phase::View` counterpart — it resolves each rigged camera after the Sim phase
+  finalizes, deriving a purely local camera pose: a `CameraFollow` trails its target
+  (third person), a `CameraLook` writes its yaw/pitch heading as the entity's rotation
+  (first person). A control system drives both from the look action with its own
+  sensitivity.
 
 ---
 
