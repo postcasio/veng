@@ -166,6 +166,25 @@ TEST_CASE("gui style: a paint-only variant does not re-dirty layout, a layout va
     CHECK(panel.Layout.Size.x == doctest::Approx(80.0f));
 }
 
+TEST_CASE("gui style: a font declaration resolves to nothing with no asset manager")
+{
+    // An imperatively-built document borrows no AssetManager (m_Assets is null), the device-free
+    // path. A TextFont declaration is guarded on the manager, so resolving it leaves the style's
+    // font unchanged rather than dereferencing null — the tree still builds and updates.
+    Document doc;
+    Element& label = doc.Add(doc.Root(), ElementKind::Text);
+    CHECK(doc.Root().Children.size() == 1);
+
+    StyleDeclaration font;
+    font.Property = StyleProperty::TextFont;
+    font.Font = AssetId{0x0123456789ABCDEFULL};
+    label.Variants = {StyleVariant{.State = ElementState::Hovered, .Declarations = {font}}};
+
+    // Activating the variant runs the font declaration through the guarded, manager-less path.
+    doc.SetState(label, ElementState::Hovered);
+    CHECK_FALSE(label.ComputedStyle.TextFont.Id().IsValid());
+}
+
 TEST_CASE("gui style: an animating width transition re-dirties layout each step")
 {
     Document doc;

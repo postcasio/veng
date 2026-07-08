@@ -329,7 +329,7 @@ namespace Veng::Gui
         // cascade's last-wins), so the live document never borrows the sheet.
         void ResolveElementStyle(
             Element& element, const UIElementRecipe& recipe,
-            const vector<const StyleSheet*>& sheets, const FontResolver& fonts,
+            const vector<const StyleSheet*>& sheets, AssetManager* assets,
             const function<optional<ResolvedGradient>(const StyleSheet&, u32)>& resolveGradient)
         {
             element.Variants.clear();
@@ -372,7 +372,7 @@ namespace Veng::Gui
                                 }
                                 continue;
                             }
-                            ApplyDeclaration(element.BaseStyle, declaration, fonts);
+                            ApplyDeclaration(element.BaseStyle, declaration, assets);
                         }
                     }
                     else
@@ -385,7 +385,7 @@ namespace Veng::Gui
 
             for (const StyleDeclaration& declaration : recipe.InlineStyle)
             {
-                ApplyDeclaration(element.BaseStyle, declaration, fonts);
+                ApplyDeclaration(element.BaseStyle, declaration, assets);
             }
 
             element.ComputedStyle = element.BaseStyle;
@@ -640,9 +640,7 @@ namespace Veng::Gui
     Unique<Document> Document::Instantiate(const UIDocument& recipe, AssetManager& assets)
     {
         auto document = CreateUnique<Document>();
-        document->m_FontResolver = [&assets](const AssetId id)
-        { return assets.LoadSync<Font>(id).value_or(AssetHandle<Font>{}); };
-        const FontResolver& fonts = document->m_FontResolver;
+        document->m_Assets = &assets;
 
         const vector<UIElementRecipe>& elements = recipe.GetElements();
         if (elements.empty())
@@ -708,7 +706,7 @@ namespace Veng::Gui
             const UIElementRecipe& node = elements[cursor];
             ++cursor;
             PopulateElement(live, node);
-            ResolveElementStyle(live, node, sheets, fonts, resolveGradient);
+            ResolveElementStyle(live, node, sheets, &assets, resolveGradient);
             document->InitWidget(live);
             for (u32 i = 0; i < node.ChildCount; ++i)
             {
@@ -1216,7 +1214,7 @@ namespace Veng::Gui
 
         // Folds the variants whose state bit is set in `state` over the base style, in stored source
         // order (later-listed states win — the USS order), producing the resolved target style.
-        Style ResolveTarget(const Element& element, const FontResolver& fonts)
+        Style ResolveTarget(const Element& element, AssetManager* assets)
         {
             Style target = element.BaseStyle;
             for (const StyleVariant& variant : element.Variants)
@@ -1227,7 +1225,7 @@ namespace Veng::Gui
                 }
                 for (const StyleDeclaration& declaration : variant.Declarations)
                 {
-                    ApplyDeclaration(target, declaration, fonts);
+                    ApplyDeclaration(target, declaration, assets);
                 }
             }
             return target;
@@ -1262,7 +1260,7 @@ namespace Veng::Gui
         // keyframe (the earlier one between brackets, so a discrete value flips at its next key).
         void ApplyAnimatedProperty(Style& live, const StyleAnimation& animation,
                                    const StyleProperty property, const f32 phase,
-                                   const FontResolver& fonts)
+                                   AssetManager* assets)
         {
             const StyleDeclaration* before = nullptr;
             const StyleDeclaration* after = nullptr;
@@ -1295,12 +1293,12 @@ namespace Veng::Gui
             }
             if (before == nullptr || after == nullptr)
             {
-                ApplyDeclaration(live, before != nullptr ? *before : *after, fonts);
+                ApplyDeclaration(live, before != nullptr ? *before : *after, assets);
                 return;
             }
             if (!IsAnimatableProperty(property) || before->Unit != after->Unit)
             {
-                ApplyDeclaration(live, *before, fonts);
+                ApplyDeclaration(live, *before, assets);
                 return;
             }
 
@@ -1308,12 +1306,12 @@ namespace Veng::Gui
             const f32 u = span > 0.0f ? (phase - beforeOffset) / span : 1.0f;
             StyleDeclaration blended = *before;
             blended.Values = glm::mix(before->Values, after->Values, u);
-            ApplyDeclaration(live, blended, fonts);
+            ApplyDeclaration(live, blended, assets);
         }
 
         // Applies one animation's keyframes at its current phase onto the live style, resolving
         // each declared property once across the whole clip.
-        void ApplyAnimation(Style& live, const StyleAnimation& animation, const FontResolver& fonts)
+        void ApplyAnimation(Style& live, const StyleAnimation& animation, AssetManager* assets)
         {
             const f32 phase = AnimationPhase(animation);
             vector<StyleProperty> resolved;
@@ -1326,7 +1324,7 @@ namespace Veng::Gui
                         continue;
                     }
                     resolved.push_back(declaration.Property);
-                    ApplyAnimatedProperty(live, animation, declaration.Property, phase, fonts);
+                    ApplyAnimatedProperty(live, animation, declaration.Property, phase, assets);
                 }
             }
         }
@@ -1346,7 +1344,7 @@ namespace Veng::Gui
 
     void Document::UpdateElement(Element& element, f32 delta)
     {
-        const Style target = ResolveTarget(element, m_FontResolver);
+        const Style target = ResolveTarget(element, m_Assets);
 
         bool layoutMoved = false;
         Style live = target;
@@ -1423,7 +1421,7 @@ namespace Veng::Gui
         for (StyleAnimation& animation : element.Animations)
         {
             animation.Time += delta;
-            ApplyAnimation(live, animation, m_FontResolver);
+            ApplyAnimation(live, animation, m_Assets);
         }
 
         // Detect a layout-input move against the currently-applied style before overwriting it.

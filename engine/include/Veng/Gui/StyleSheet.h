@@ -8,6 +8,11 @@
 #include <Veng/Gui/Style.h>
 #include <Veng/Gui/StyleProperty.h>
 
+namespace Veng
+{
+    class AssetManager;
+}
+
 namespace Veng::Gui
 {
     /// @brief One resolved style declaration: a property and the value to write onto Style.
@@ -84,26 +89,21 @@ namespace Veng::Gui
         vector<StyleDeclaration> Declarations;
     };
 
-    /// @brief Resolves a font AssetId to a resident handle, for applying a font declaration.
-    ///
-    /// The style application resolves a StyleDeclaration whose Property is TextFont through this,
-    /// turning the declaration's AssetId into the live AssetHandle<Font> written onto Style. An
-    /// empty function (or one returning an invalid handle) leaves the style's font unchanged.
-    using FontResolver = function<AssetHandle<Font>(AssetId)>;
-
     /// @brief Applies one resolved declaration onto a Style, overwriting the property it sets.
     ///
     /// Writes the declaration's value onto the matching Style field per its Property, interpreting
     /// the uniform payload (Unit as a LengthKind/enumerator ordinal, Values as the numeric payload).
-    /// A TextFont declaration resolves its AssetId through `fonts` when set; every other property is
-    /// resolved data written directly. This is the single write path both inline-style
-    /// materialization and stylesheet cascade share, so an inline override and a rule set a property
-    /// identically.
+    /// A TextFont declaration resolves its AssetId to a resident AssetHandle<Font> through `assets`
+    /// (a cache lookup: the font is already resident as a load-time dependency) when `assets` is
+    /// non-null and the declaration's font is valid; every other property is resolved data written
+    /// directly. This is the single write path both inline-style materialization and stylesheet
+    /// cascade share, so an inline override and a rule set a property identically.
     /// @param style        The style to write onto.
     /// @param declaration  The declaration to apply.
-    /// @param fonts        Resolver for a TextFont declaration's AssetId; may be empty.
-    void ApplyDeclaration(Style& style, const StyleDeclaration& declaration,
-                          const FontResolver& fonts);
+    /// @param assets       The asset manager a TextFont declaration's AssetId resolves through;
+    ///                     borrowed, and may be null (leaving the style's font unchanged, the
+    ///                     device-free path).
+    void ApplyDeclaration(Style& style, const StyleDeclaration& declaration, AssetManager* assets);
 
     /// @brief A cached, reusable stylesheet asset: a flattened, resolved set of USS-like rules.
     ///

@@ -496,8 +496,12 @@ namespace Veng::Gui
         /// @brief The optional measurement override; unset uses the style's font.
         TextMeasurer m_Measurer;
 
-        /// @brief Resolver a variant's font declaration resolves through during state resolution.
-        FontResolver m_FontResolver;
+        /// @brief The asset manager a font declaration resolves through; null on the device-free path.
+        ///
+        /// Borrowed from Instantiate and kept for the document's life, since a state resolve re-runs
+        /// the font binding. Null (an imperatively-built or test document with no manager) leaves a
+        /// font declaration unresolved, exactly as an empty resolver did.
+        AssetManager* m_Assets = nullptr;
 
         /// @brief Whether structure or style changed since the last Solve.
         bool m_Dirty = true;

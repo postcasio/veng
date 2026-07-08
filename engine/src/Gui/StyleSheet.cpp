@@ -1,5 +1,6 @@
 #include <Veng/Gui/StyleSheet.h>
 
+#include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Font.h>
 
 namespace Veng::Gui
@@ -32,8 +33,7 @@ namespace Veng::Gui
         }
     }
 
-    void ApplyDeclaration(Style& style, const StyleDeclaration& declaration,
-                          const FontResolver& fonts)
+    void ApplyDeclaration(Style& style, const StyleDeclaration& declaration, AssetManager* assets)
     {
         switch (declaration.Property)
         {
@@ -113,9 +113,10 @@ namespace Veng::Gui
             style.TextSize = declaration.Values.x;
             return;
         case StyleProperty::TextFont:
-            if (fonts && declaration.Font.IsValid())
+            if (assets != nullptr && declaration.Font.IsValid())
             {
-                AssetHandle<Font> font = fonts(declaration.Font);
+                AssetHandle<Font> font =
+                    assets->LoadSync<Font>(declaration.Font).value_or(AssetHandle<Font>{});
                 if (font.Id().IsValid())
                 {
                     style.TextFont = std::move(font);
