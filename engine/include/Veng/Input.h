@@ -252,6 +252,18 @@ namespace Veng
         /// @brief Returns true if the mouse cursor is currently captured.
         [[nodiscard]] bool IsMouseCaptured() const;
 
+        /// @brief Shows or hides the free (uncaptured) OS cursor.
+        ///
+        /// Hidden, the cursor still moves and reports positions normally — it just is
+        /// not drawn, so an app can render its own software cursor. Independent of
+        /// capture (a captured cursor is always hidden); set while captured, it takes
+        /// effect on release. Delegates to the window; no-ops with no window.
+        /// @param visible  True to draw the OS cursor when free, false to hide it.
+        void SetCursorVisible(bool visible);
+
+        /// @brief Returns whether the free (uncaptured) OS cursor is drawn.
+        [[nodiscard]] bool IsCursorVisible() const;
+
         /// @brief Replaces this frame's polled gamepad state for every slot.
         ///
         /// The window layer polls each present joystick once per frame and hands the full

@@ -249,12 +249,34 @@ namespace Veng
         {
             glfwSetInputMode(m_Handle, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
         }
-        glfwSetInputMode(m_Handle, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+        glfwSetInputMode(m_Handle, GLFW_CURSOR,
+                         m_CursorVisible ? GLFW_CURSOR_NORMAL : GLFW_CURSOR_HIDDEN);
     }
 
     bool Window::IsMouseCaptured() const
     {
         return m_MouseCaptured;
+    }
+
+    void Window::SetCursorVisible(const bool visible)
+    {
+        if (m_CursorVisible == visible)
+        {
+            return;
+        }
+        m_CursorVisible = visible;
+
+        // A captured cursor is already hidden and locked; the flag applies on release.
+        if (!m_MouseCaptured)
+        {
+            glfwSetInputMode(m_Handle, GLFW_CURSOR,
+                             visible ? GLFW_CURSOR_NORMAL : GLFW_CURSOR_HIDDEN);
+        }
+    }
+
+    bool Window::IsCursorVisible() const
+    {
+        return m_CursorVisible;
     }
 
     void Window::Update()

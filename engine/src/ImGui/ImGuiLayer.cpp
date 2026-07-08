@@ -396,6 +396,16 @@ namespace Veng
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
+
+        // The GLFW backend re-applies the OS cursor shape each NewFrame for a free cursor,
+        // which would undo Window::SetCursorVisible(false); defaulting this frame's cursor to
+        // None makes the backend apply the hidden mode instead. A widget that sets a shape
+        // later in the frame still wins, so ImGui's own cursors work whenever the app shows
+        // the cursor.
+        if (!m_Window.IsMouseCaptured() && !m_Window.IsCursorVisible())
+        {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_None);
+        }
     }
 
     bool ImGuiLayer::ForwardEvent(const Event& event)

@@ -96,9 +96,23 @@ namespace Veng
         /// @brief Captures the mouse cursor, hiding it and locking it to this window.
         void CaptureMouse();
         /// @brief Releases a previously captured mouse cursor.
+        ///
+        /// The freed cursor honors the visibility set by SetCursorVisible: released while
+        /// hidden, the cursor moves freely but is not drawn.
         void ReleaseMouse();
         /// @brief Returns true if the mouse cursor is currently captured.
         [[nodiscard]] bool IsMouseCaptured() const;
+
+        /// @brief Shows or hides the free (uncaptured) mouse cursor over this window.
+        ///
+        /// Hidden, the cursor still moves and reports positions normally — it just is not
+        /// drawn while over the window, so an app can render its own software cursor. The
+        /// flag is independent of capture (a captured cursor is always hidden and locked):
+        /// set while captured, it takes effect when the capture releases.
+        /// @param visible  True to draw the OS cursor when free, false to hide it.
+        void SetCursorVisible(bool visible);
+        /// @brief Returns whether the free (uncaptured) cursor is drawn over this window.
+        [[nodiscard]] bool IsCursorVisible() const;
 
         /// @brief Polls OS events, enqueuing each as a typed Event for this frame.
         ///
@@ -188,6 +202,8 @@ namespace Veng
         bool m_Resizable;
         string m_Title;
         bool m_MouseCaptured;
+        /// @brief Whether the free cursor is drawn; applied on release while captured.
+        bool m_CursorVisible = true;
         GLFWwindow* m_Handle = nullptr;
         vec2 m_MousePosition = {0, 0};
         vec2 m_ScrollDelta = {0, 0};

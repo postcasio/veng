@@ -166,6 +166,19 @@ namespace Veng
         return m_Window != nullptr && m_Window->IsMouseCaptured();
     }
 
+    void Input::SetCursorVisible(const bool visible)
+    {
+        if (m_Window != nullptr)
+        {
+            m_Window->SetCursorVisible(visible);
+        }
+    }
+
+    bool Input::IsCursorVisible() const
+    {
+        return m_Window == nullptr || m_Window->IsCursorVisible();
+    }
+
     void Input::IngestGamepadStates(const std::span<const GamepadState> states)
     {
         m_ConnectedGamepads.clear();
