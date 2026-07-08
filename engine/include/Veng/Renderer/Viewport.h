@@ -412,6 +412,34 @@ namespace Veng::Renderer
         ///         camera or no ViewState has been set yet.
         [[nodiscard]] optional<vec2> WorldToRegion(vec3 world) const;
 
+        /// @brief Projects a world-space point into document logical points through the retained
+        /// camera.
+        ///
+        /// Three coordinate spaces meet at this call: a window point (window framebuffer pixels)
+        /// maps through WindowToViewport into a region point (region framebuffer pixels, what
+        /// WorldToRegion returns); dividing that by GetUiScale() lands in document logical
+        /// points, the space a hosted Gui::Document solves and hit-tests in (SetUiScale). This
+        /// method is that last step composed onto WorldToRegion, so a consumer pinning a document
+        /// element to a world position never hand-writes the divide. Same nullopt domain as
+        /// WorldToRegion; deliberately performs no in-region rejection — a point outside
+        /// [0, GetDocumentExtent()] still returns a value, and hiding, clamping, or drawing an
+        /// edge indicator for it is caller policy (see Gui::ClampIntoBounds/AnchorBeside).
+        /// @param world  The world-space point to project.
+        /// @return The document-space position, or nullopt when the point is behind the camera or
+        ///         no ViewState has been set yet.
+        /// @see WorldToRegion, SetUiScale, GetDocumentExtent
+        [[nodiscard]] optional<vec2> WorldToDocument(vec3 world) const;
+
+        /// @brief Returns the region's extent in document logical points.
+        ///
+        /// GetRegion().Extent is region framebuffer pixels; this is that divided by GetUiScale()
+        /// — the same conversion WorldToDocument applies to a projected point, so the two compose
+        /// into the bounds every placement or off-region check runs against (a WorldToDocument
+        /// result at or beyond this extent lies off the region).
+        /// @return The region extent in document logical points.
+        /// @see WorldToDocument, SetUiScale
+        [[nodiscard]] vec2 GetDocumentExtent() const;
+
         /// @brief Resolves the entity under a window point through the id-buffer picking pass.
         ///
         /// Hit-tests @p windowPoint against the region (WindowToViewport); on a miss the callback

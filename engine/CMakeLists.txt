@@ -95,6 +95,7 @@ add_library(veng SHARED
         src/Gui/Document.cpp
         src/Gui/DocumentHost.cpp
         src/Gui/GuiConsumer.cpp
+        src/Gui/Placement.cpp
         src/Gui/StyleProperty.cpp
         src/Gui/StyleSheet.cpp
         src/Gui/UIDocument.cpp

@@ -365,3 +365,42 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(viewport->GetRenderScale() >= 0.5f);
     CHECK(viewport->GetRenderScale() <= 1.0f);
 }
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "viewport: WorldToDocument and GetDocumentExtent divide WorldToRegion/Region "
+                  "extent by a non-unit UI scale")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(path(TEST_SHADER_PACK)).has_value());
+
+    constexpr uvec2 region{64, 48};
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Ref<Mesh> cube = PopulateCubeScene(Context, assets, *scene);
+
+    const Unique<Viewport> viewport = Viewport::Create({
+        .Context = Context,
+        .Assets = assets,
+        .Region = {.Offset = {0, 0}, .Extent = region},
+        .Role = ViewportRole::Offscreen,
+    });
+    viewport->SetUiScale(2.0f);
+
+    // Before any ViewState, WorldToDocument shares WorldToRegion's nullopt domain.
+    CHECK_FALSE(viewport->WorldToDocument(vec3(0.0f)).has_value());
+
+    viewport->SetViewState({.World = scene.get(), .Camera = FrontCamera(region), .Delta = 0.0f});
+
+    const vec3 world(0.2f, -0.1f, 0.0f);
+    const optional<vec2> regionPoint = viewport->WorldToRegion(world);
+    const optional<vec2> documentPoint = viewport->WorldToDocument(world);
+    REQUIRE(regionPoint.has_value());
+    REQUIRE(documentPoint.has_value());
+    CHECK(documentPoint->x == doctest::Approx(regionPoint->x / 2.0f));
+    CHECK(documentPoint->y == doctest::Approx(regionPoint->y / 2.0f));
+
+    const vec2 extent = viewport->GetDocumentExtent();
+    CHECK(extent.x == doctest::Approx(static_cast<f32>(region.x) / 2.0f));
+    CHECK(extent.y == doctest::Approx(static_cast<f32>(region.y) / 2.0f));
+}

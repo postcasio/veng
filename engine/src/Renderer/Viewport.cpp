@@ -635,6 +635,21 @@ namespace Veng::Renderer
         return ProjectToScreen(m_ViewState.Camera, world, vec2(GetRegion().Extent));
     }
 
+    optional<vec2> Viewport::WorldToDocument(const vec3 world) const
+    {
+        const optional<vec2> region = WorldToRegion(world);
+        if (!region.has_value())
+        {
+            return std::nullopt;
+        }
+        return *region / GetUiScale();
+    }
+
+    vec2 Viewport::GetDocumentExtent() const
+    {
+        return vec2(GetRegion().Extent) / GetUiScale();
+    }
+
     SceneRenderer& Viewport::GetRenderer() const
     {
         return *m_Renderer;
