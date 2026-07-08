@@ -390,8 +390,9 @@ TEST_CASE("End to end: scripted raw input resolves into PlayerInput and maps to 
 TEST_CASE("InputMappingSystem resolves each seat's PlayerInput; a neutral snapshot yields all-None")
 {
     // The system wiring itself, driven with a real headless Input (all-zeros). The seat carries
-    // a Viewer + InputContextStack + PlayerInput; the neutral snapshot resolves every declared
-    // action to a None sample with zero value — the headless contract with no guard.
+    // a Viewer + InputContextStack + PlayerInput + SeatInput; the neutral snapshot resolves every
+    // declared action to a None sample with zero value — the headless contract with no guard. The
+    // SeatInput is what marks the seat as reading local devices, so InputMappingSystem resolves it.
     TypeRegistry registry = MakeRegistry();
     const Unique<Scene> scene = Scene::Create(registry);
 
@@ -400,6 +401,7 @@ TEST_CASE("InputMappingSystem resolves each seat's PlayerInput; a neutral snapsh
     scene->Add<PlayerInput>(seat, PlayerInput{});
     scene->Add<InputContextStack>(
         seat, InputContextStack{.Active = {MakeResidentContext(GameplayContext())}});
+    scene->Add<SeatInput>(seat, SeatInput{});
 
     InputMappingSystem mapping;
     ContextStorage storage;
