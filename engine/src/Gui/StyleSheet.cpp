@@ -162,17 +162,44 @@ namespace Veng::Gui
     Ref<StyleSheet> StyleSheet::Create(vector<StyleRule> rules,
                                        vector<StyleAnimationClip> animations,
                                        vector<StyleGradient> gradients,
+                                       vector<StyleVariable> variables,
                                        vector<Ref<Detail::AssetCacheEntry>> dependencies)
     {
         return Ref<StyleSheet>(new StyleSheet(std::move(rules), std::move(animations),
-                                              std::move(gradients), std::move(dependencies)));
+                                              std::move(gradients), std::move(variables),
+                                              std::move(dependencies)));
     }
 
     StyleSheet::StyleSheet(vector<StyleRule> rules, vector<StyleAnimationClip> animations,
-                           vector<StyleGradient> gradients,
+                           vector<StyleGradient> gradients, vector<StyleVariable> variables,
                            vector<Ref<Detail::AssetCacheEntry>> dependencies)
         : m_Rules(std::move(rules)), m_Animations(std::move(animations)),
-          m_Gradients(std::move(gradients)), m_Dependencies(std::move(dependencies))
+          m_Gradients(std::move(gradients)), m_Variables(std::move(variables)),
+          m_Dependencies(std::move(dependencies))
     {
+    }
+
+    optional<vec4> StyleSheet::FindVariableColor(string_view name) const
+    {
+        for (const StyleVariable& variable : m_Variables)
+        {
+            if (variable.Kind == StyleVariableKind::Color && variable.Name == name)
+            {
+                return variable.Payload;
+            }
+        }
+        return std::nullopt;
+    }
+
+    optional<f32> StyleSheet::FindVariableScalar(string_view name) const
+    {
+        for (const StyleVariable& variable : m_Variables)
+        {
+            if (variable.Kind == StyleVariableKind::Scalar && variable.Name == name)
+            {
+                return variable.Payload.x;
+            }
+        }
+        return std::nullopt;
     }
 }

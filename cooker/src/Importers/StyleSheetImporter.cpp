@@ -11,7 +11,9 @@
 #include <cctype>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
+#include <set>
 #include <sstream>
 
 #include <fmt/format.h>
@@ -948,6 +950,267 @@ namespace Veng::Cook
             animationNames.push_back(name);
             return {};
         }
+
+        // The file-scope variable table: a variable name (with its leading `--`) mapped to its
+        // fully resolved token sequence (any nested var() already expanded at definition time, so a
+        // use-site splice is a straight copy and cycles cannot form).
+        using StyleVariableTable = unordered_map<string, vector<CssToken>>;
+
+        // Rejoins a variable's token sequence into a declaration value string, matching the value
+        // assembly a rule declaration uses (a `#` + hex recombines, other tokens stay
+        // space-separated), so the resolved value reads identically to an inline literal.
+        string AssembleValue(const vector<CssToken>& tokens)
+        {
+            string value;
+            for (const CssToken& token : tokens)
+            {
+                switch (token.Kind)
+                {
+                case CssTokenKind::Hash:
+                    value += '#';
+                    break;
+                case CssTokenKind::Ident:
+                case CssTokenKind::Value:
+                    if (!value.empty() && value.back() != '#')
+                    {
+                        value += ' ';
+                    }
+                    value += token.Text;
+                    break;
+                case CssTokenKind::Dot:
+                    value += '.';
+                    break;
+                case CssTokenKind::Comma:
+                    value += ',';
+                    break;
+                default:
+                    break;
+                }
+            }
+            return value;
+        }
+
+        // Expands every `var(--name)` in a token run against `table`, returning the flattened run.
+        // An undefined variable (define-before-use) or a malformed `var(...)` is a located error.
+        Result<vector<CssToken>> SubstituteVars(const vector<CssToken>& tokens,
+                                                const StyleVariableTable& table,
+                                                const string& located)
+        {
+            vector<CssToken> out;
+            usize i = 0;
+            while (i < tokens.size())
+            {
+                if (tokens[i].Kind == CssTokenKind::Ident && tokens[i].Text == "var" &&
+                    i + 1 < tokens.size() && tokens[i + 1].Kind == CssTokenKind::LParen)
+                {
+                    if (i + 3 >= tokens.size() || tokens[i + 2].Kind != CssTokenKind::Ident ||
+                        tokens[i + 3].Kind != CssTokenKind::RParen)
+                    {
+                        return std::unexpected(
+                            fmt::format("{}: malformed var(...); expected 'var(--name)'", located));
+                    }
+                    const string& name = tokens[i + 2].Text;
+                    const auto found = table.find(name);
+                    if (found == table.end())
+                    {
+                        return std::unexpected(
+                            fmt::format("{}: use of undefined variable '{}'", located, name));
+                    }
+                    out.insert(out.end(), found->second.begin(), found->second.end());
+                    i += 4;
+                    continue;
+                }
+                out.push_back(tokens[i]);
+                ++i;
+            }
+            return out;
+        }
+
+        VoidResult PreprocessSheet(const vector<CssToken>& tokens, const path& file,
+                                   const CookContext& context, StyleVariableTable& table,
+                                   vector<string>* ownNames, vector<CssToken>* substituted,
+                                   std::set<string>& visited);
+
+        // Reads a `@use`d sheet and merges its top-level variables (recursively honoring its own
+        // `@use`s) into `table`, last-wins in encounter order. Rules are ignored — `@use` shares
+        // variables only. The file is recorded as a build dependency so a theme edit re-cooks every
+        // dependent sheet, and `visited` breaks an `@use` cycle (each file contributes once).
+        VoidResult ProcessUse(const path& usedPath, const CookContext& context,
+                              StyleVariableTable& table, std::set<string>& visited)
+        {
+            std::error_code ec;
+            const path canonical = std::filesystem::weakly_canonical(usedPath, ec);
+            const string key = (ec ? usedPath : canonical).string();
+            if (visited.contains(key))
+            {
+                return {};
+            }
+            visited.insert(key);
+
+            const std::ifstream in(usedPath, std::ios::binary);
+            if (!in)
+            {
+                return std::unexpected(fmt::format(
+                    "stylesheet importer: '{}': @use target cannot be opened", usedPath.string()));
+            }
+            std::stringstream buffer;
+            buffer << in.rdbuf();
+            const string source = buffer.str();
+
+            context.RecordDependency(usedPath);
+
+            const vector<CssToken> used = TokenizeCss(source);
+            return PreprocessSheet(used, usedPath, context, table, nullptr, nullptr, visited);
+        }
+
+        // Linear top-down pass over a sheet's tokens: it resolves `@use` imports, collects file-scope
+        // `--name: <tokens>;` variable declarations (define-before-use, last-wins), and — for the
+        // sheet being cooked (`substituted` non-null) — emits every rule/`@keyframes` token with its
+        // `var(--name)` uses expanded against the table state at each use site. `ownNames` (non-null
+        // only for the sheet being cooked) records this file's own variable names for the runtime
+        // table. A `@use` after a rule, a `--` inside a rule, an undefined variable, and a missing
+        // `@use` target are located cook errors.
+        VoidResult PreprocessSheet(const vector<CssToken>& tokens, const path& file,
+                                   const CookContext& context, StyleVariableTable& table,
+                                   vector<string>* ownNames, vector<CssToken>* substituted,
+                                   std::set<string>& visited)
+        {
+            const string located = fmt::format("stylesheet importer: '{}'", file.string());
+
+            // Whether the token at `idx` opens a `--name:` declaration (a variable at file scope, or
+            // the file-scope-only error inside a rule).
+            const auto isVariableDecl = [&](usize idx)
+            {
+                return tokens[idx].Kind == CssTokenKind::Ident && tokens[idx].Text.size() >= 2 &&
+                       tokens[idx].Text[0] == '-' && tokens[idx].Text[1] == '-' &&
+                       idx + 1 < tokens.size() && tokens[idx + 1].Kind == CssTokenKind::Colon;
+            };
+
+            usize depth = 0;
+            bool seenRule = false;
+            usize i = 0;
+            while (i < tokens.size())
+            {
+                const CssToken& token = tokens[i];
+
+                if (depth == 0)
+                {
+                    if (token.Kind == CssTokenKind::Value && token.Text == "@use")
+                    {
+                        if (seenRule)
+                        {
+                            return std::unexpected(
+                                fmt::format("{}: '@use' must precede every rule", located));
+                        }
+                        ++i;
+                        if (i >= tokens.size() || tokens[i].Kind != CssTokenKind::String)
+                        {
+                            return std::unexpected(fmt::format(
+                                "{}: '@use' expects a quoted path, e.g. '@use \"theme.vuss\";'",
+                                located));
+                        }
+                        const path usedPath = file.parent_path() / path(tokens[i].Text);
+                        ++i;
+                        if (i >= tokens.size() || tokens[i].Kind != CssTokenKind::Semicolon)
+                        {
+                            return std::unexpected(
+                                fmt::format("{}: '@use' must end with ';'", located));
+                        }
+                        ++i;
+                        const VoidResult used = ProcessUse(usedPath, context, table, visited);
+                        if (!used)
+                        {
+                            return used;
+                        }
+                        continue;
+                    }
+
+                    if (isVariableDecl(i))
+                    {
+                        const string name = token.Text;
+                        i += 2; // past the name and the ':'
+                        vector<CssToken> valueTokens;
+                        while (i < tokens.size() && tokens[i].Kind != CssTokenKind::Semicolon &&
+                               tokens[i].Kind != CssTokenKind::RBrace)
+                        {
+                            valueTokens.push_back(tokens[i]);
+                            ++i;
+                        }
+                        if (i < tokens.size() && tokens[i].Kind == CssTokenKind::Semicolon)
+                        {
+                            ++i;
+                        }
+                        // Resolve the value against the table as it stands now, so a variable
+                        // referencing another sees the definition that precedes it.
+                        const Result<vector<CssToken>> resolved =
+                            SubstituteVars(valueTokens, table, located);
+                        if (!resolved)
+                        {
+                            return std::unexpected(resolved.error());
+                        }
+                        table[name] = *resolved;
+                        if (ownNames != nullptr &&
+                            std::ranges::find(*ownNames, name) == ownNames->end())
+                        {
+                            ownNames->push_back(name);
+                        }
+                        continue;
+                    }
+                }
+                else if (isVariableDecl(i))
+                {
+                    return std::unexpected(fmt::format(
+                        "{}: variables are file-scope; '{}' cannot be declared inside a rule",
+                        located, token.Text));
+                }
+
+                // A rule or `@keyframes` statement begins (or continues) here.
+                if (depth == 0)
+                {
+                    seenRule = true;
+                }
+
+                // Expand a `var(--name)` use into the emitted stream, at the table's use-site state.
+                if (substituted != nullptr && token.Kind == CssTokenKind::Ident &&
+                    token.Text == "var" && i + 1 < tokens.size() &&
+                    tokens[i + 1].Kind == CssTokenKind::LParen)
+                {
+                    if (i + 3 >= tokens.size() || tokens[i + 2].Kind != CssTokenKind::Ident ||
+                        tokens[i + 3].Kind != CssTokenKind::RParen)
+                    {
+                        return std::unexpected(
+                            fmt::format("{}: malformed var(...); expected 'var(--name)'", located));
+                    }
+                    const string& name = tokens[i + 2].Text;
+                    const auto found = table.find(name);
+                    if (found == table.end())
+                    {
+                        return std::unexpected(
+                            fmt::format("{}: use of undefined variable '{}'", located, name));
+                    }
+                    substituted->insert(substituted->end(), found->second.begin(),
+                                        found->second.end());
+                    i += 4;
+                    continue;
+                }
+
+                if (token.Kind == CssTokenKind::LBrace)
+                {
+                    ++depth;
+                }
+                else if (token.Kind == CssTokenKind::RBrace && depth > 0)
+                {
+                    --depth;
+                }
+
+                if (substituted != nullptr)
+                {
+                    substituted->push_back(token);
+                }
+                ++i;
+            }
+            return {};
+        }
     }
 
     Result<vector<u8>> StyleSheetImporter::Cook(const CookContext& context, const json& entry) const
@@ -970,7 +1233,27 @@ namespace Veng::Cook
         buffer << in.rdbuf();
         const string source = buffer.str();
 
-        const std::vector<CssToken> tokens = TokenizeCss(source);
+        const std::vector<CssToken> rawTokens = TokenizeCss(source);
+
+        // Resolve `@use` imports and file-scope variables, and substitute every `var(--name)` use
+        // into the token stream the two-pass rule parse below consumes. `ownVariableNames` records
+        // this sheet's own variables for the runtime table; `variableTable` holds their resolved
+        // token values.
+        StyleVariableTable variableTable;
+        vector<string> ownVariableNames;
+        std::vector<CssToken> tokens;
+        std::set<string> visited;
+        {
+            std::error_code ec;
+            const path canonical = std::filesystem::weakly_canonical(sourcePath, ec);
+            visited.insert((ec ? sourcePath : canonical).string());
+        }
+        const VoidResult preprocessed = PreprocessSheet(
+            rawTokens, sourcePath, context, variableTable, &ownVariableNames, &tokens, visited);
+        if (!preprocessed)
+        {
+            return std::unexpected(preprocessed.error());
+        }
 
         vector<CookedStyleRule> rules;
         vector<CookedStyleProperty> properties;
@@ -1060,6 +1343,46 @@ namespace Veng::Cook
             }
         }
 
+        // The runtime variable table: this sheet's own top-level variables whose full value resolves
+        // to a color or a single number. A multi-token variable is cook-time-only and gets no entry.
+        vector<CookedStyleVariable> variables;
+        for (const string& name : ownVariableNames)
+        {
+            const auto found = variableTable.find(name);
+            if (found == variableTable.end())
+            {
+                continue;
+            }
+            const string value = AssembleValue(found->second);
+
+            CookedStyleVariable variable{};
+            // The name is queried without its leading `--`.
+            CopyName(variable.Name, StyleSelectorNameCapacity,
+                     name.size() >= 2 ? name.substr(2) : name);
+
+            f32 scalar = 0.0f;
+            const auto [ptr, ec] =
+                std::from_chars(value.data(), value.data() + value.size(), scalar);
+            if (!value.empty() && ec == std::errc{} && ptr == value.data() + value.size())
+            {
+                variable.Kind = 1; // scalar
+                variable.Payload[0] = scalar;
+                variables.push_back(variable);
+                continue;
+            }
+
+            const Result<vec4> color = ParseStyleColor(value, file);
+            if (color)
+            {
+                variable.Kind = 0; // color
+                variable.Payload[0] = color->r;
+                variable.Payload[1] = color->g;
+                variable.Payload[2] = color->b;
+                variable.Payload[3] = color->a;
+                variables.push_back(variable);
+            }
+        }
+
         CookedStyleSheetHeader header{};
         header.Version = CookedStyleSheetVersion;
         header.RuleCount = static_cast<u32>(rules.size());
@@ -1067,6 +1390,7 @@ namespace Veng::Cook
         header.AnimationCount = static_cast<u32>(animations.size());
         header.KeyframeCount = static_cast<u32>(keyframes.size());
         header.GradientCount = static_cast<u32>(gradients.size());
+        header.VariableCount = static_cast<u32>(variables.size());
         header.RampByteCount = static_cast<u32>(rampBytes.size());
 
         vector<u8> blob;
@@ -1074,7 +1398,8 @@ namespace Veng::Cook
                      properties.size() * sizeof(CookedStyleProperty) +
                      animations.size() * sizeof(CookedStyleAnimation) +
                      keyframes.size() * sizeof(CookedStyleKeyframe) +
-                     gradients.size() * sizeof(CookedStyleGradient) + rampBytes.size());
+                     gradients.size() * sizeof(CookedStyleGradient) +
+                     variables.size() * sizeof(CookedStyleVariable) + rampBytes.size());
         Append(blob, header);
         for (const CookedStyleRule& rule : rules)
         {
@@ -1095,6 +1420,10 @@ namespace Veng::Cook
         for (const CookedStyleGradient& gradient : gradients)
         {
             Append(blob, gradient);
+        }
+        for (const CookedStyleVariable& variable : variables)
+        {
+            Append(blob, variable);
         }
         blob.insert(blob.end(), rampBytes.begin(), rampBytes.end());
 

@@ -68,6 +68,31 @@ namespace Veng::Gui
         vector<u8> Ramp;
     };
 
+    /// @brief The value kind of a queryable stylesheet variable.
+    enum class StyleVariableKind : u32
+    {
+        /// @brief A color value, read from all four Payload channels (linear straight-alpha).
+        Color = 0,
+        /// @brief A single scalar value, read from Payload.x.
+        Scalar = 1,
+    };
+
+    /// @brief One queryable stylesheet variable: its name, value kind, and resolved payload.
+    ///
+    /// A sheet carries only its own top-level `--` variables whose value resolves to a color or a
+    /// single number; a multi-token variable is cook-time-only and absent. Name is the authored
+    /// variable name without the leading `--` (`--accent` is queried as "accent"). Payload holds a
+    /// linear straight-alpha color (all four channels) for a Color, or a scalar in Payload.x.
+    struct StyleVariable
+    {
+        /// @brief The variable name without its leading `--`.
+        string Name;
+        /// @brief Whether the value is a color (all four Payload channels) or a scalar (Payload.x).
+        StyleVariableKind Kind = StyleVariableKind::Color;
+        /// @brief The resolved value: a linear straight-alpha color, or a scalar in x.
+        vec4 Payload{0.0f};
+    };
+
     /// @brief One resolved USS rule: a selector, a pseudo-state, and its declarations.
     ///
     /// The selector matches an element by its element type (Type), one class tag (Class), and/or
@@ -123,11 +148,13 @@ namespace Veng::Gui
         /// @param rules         The flattened, resolved rules, in source order.
         /// @param animations    The cooked @keyframes clips, indexed by `animation` declarations.
         /// @param gradients     The cooked gradients, indexed by `background-gradient` declarations.
+        /// @param variables     The sheet's own queryable variables (colors and scalars).
         /// @param dependencies  The resolved font dependency cache entries, kept resident.
         /// @return A shared StyleSheet.
         static Ref<StyleSheet> Create(vector<StyleRule> rules,
                                       vector<StyleAnimationClip> animations,
                                       vector<StyleGradient> gradients,
+                                      vector<StyleVariable> variables,
                                       vector<Ref<Detail::AssetCacheEntry>> dependencies);
 
         /// @brief Returns the sheet's resolved rules, in source order.
@@ -142,9 +169,29 @@ namespace Veng::Gui
         /// @brief Returns the sheet's gradients, in the index order `background-gradient` references.
         [[nodiscard]] const vector<StyleGradient>& GetGradients() const { return m_Gradients; }
 
+        /// @brief Returns the sheet's own queryable variables (colors and scalars).
+        [[nodiscard]] const vector<StyleVariable>& GetVariables() const { return m_Variables; }
+
+        /// @brief Looks up a color variable this sheet owns, by its name without the leading `--`.
+        ///
+        /// Only the sheet's own top-level `--` variables whose value resolved to a color are found;
+        /// a scalar variable, a multi-token variable, and an `@use`d variable are all absent (an
+        /// `@use`d variable is queried on the theme sheet that owns it).
+        /// @param name  The variable name without its leading `--` (`--accent` is queried as "accent").
+        /// @return The linear straight-alpha color, or nullopt if no color variable of that name exists.
+        [[nodiscard]] optional<vec4> FindVariableColor(string_view name) const;
+
+        /// @brief Looks up a scalar variable this sheet owns, by its name without the leading `--`.
+        ///
+        /// Only the sheet's own top-level `--` variables whose value resolved to a single number are
+        /// found; a color variable, a multi-token variable, and an `@use`d variable are all absent.
+        /// @param name  The variable name without its leading `--` (`--gap` is queried as "gap").
+        /// @return The scalar value, or nullopt if no scalar variable of that name exists.
+        [[nodiscard]] optional<f32> FindVariableScalar(string_view name) const;
+
     private:
         StyleSheet(vector<StyleRule> rules, vector<StyleAnimationClip> animations,
-                   vector<StyleGradient> gradients,
+                   vector<StyleGradient> gradients, vector<StyleVariable> variables,
                    vector<Ref<Detail::AssetCacheEntry>> dependencies);
 
         vector<StyleRule> m_Rules;
@@ -152,6 +199,8 @@ namespace Veng::Gui
         vector<StyleAnimationClip> m_Animations;
         /// @brief The cooked gradients, indexed by a `background-gradient` declaration's Unit.
         vector<StyleGradient> m_Gradients;
+        /// @brief The sheet's own queryable variables (colors and scalars), in source order.
+        vector<StyleVariable> m_Variables;
         /// @brief Resolved font dependency entries, kept resident so a declaration's font stays loaded.
         vector<Ref<Detail::AssetCacheEntry>> m_Dependencies;
     };

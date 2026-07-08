@@ -29,6 +29,9 @@ namespace Veng::Cook
             case ';':
             case '{':
             case '}':
+            case '(':
+            case ')':
+            case '"':
                 return false;
             default:
                 return std::isspace(static_cast<unsigned char>(c)) == 0;
@@ -61,6 +64,25 @@ namespace Veng::Cook
                     ++i;
                 }
                 i = i + 2 < n ? i + 2 : n;
+                continue;
+            }
+
+            // A double-quoted string literal (an `@use "path"` target); Text holds the content
+            // between the quotes. An unterminated string runs to EOF.
+            if (c == '"')
+            {
+                ++i;
+                const usize start = i;
+                while (i < n && source[i] != '"')
+                {
+                    ++i;
+                }
+                tokens.push_back({.Kind = CssTokenKind::String,
+                                  .Text = string(source.substr(start, i - start))});
+                if (i < n)
+                {
+                    ++i;
+                }
                 continue;
             }
 
@@ -110,6 +132,14 @@ namespace Veng::Cook
                 continue;
             case '}':
                 tokens.push_back({.Kind = CssTokenKind::RBrace});
+                ++i;
+                continue;
+            case '(':
+                tokens.push_back({.Kind = CssTokenKind::LParen});
+                ++i;
+                continue;
+            case ')':
+                tokens.push_back({.Kind = CssTokenKind::RParen});
                 ++i;
                 continue;
             default:

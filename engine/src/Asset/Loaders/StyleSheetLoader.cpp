@@ -60,11 +60,13 @@ namespace Veng
                 static_cast<usize>(header.KeyframeCount) * sizeof(CookedStyleKeyframe);
             const usize gradientBytes =
                 static_cast<usize>(header.GradientCount) * sizeof(CookedStyleGradient);
+            const usize variableBytes =
+                static_cast<usize>(header.VariableCount) * sizeof(CookedStyleVariable);
             const usize rampBytes = static_cast<usize>(header.RampByteCount);
 
             usize cursor = sizeof(CookedStyleSheetHeader);
             if (cooked.size() < cursor + ruleBytes + propertyBytes + animationBytes +
-                                    keyframeBytes + gradientBytes + rampBytes)
+                                    keyframeBytes + gradientBytes + variableBytes + rampBytes)
             {
                 return std::unexpected(Corrupt(id, "stylesheet: cooked blob truncated"));
             }
@@ -103,6 +105,13 @@ namespace Veng
                 std::memcpy(cookedGradients.data(), cooked.data() + cursor, gradientBytes);
             }
             cursor += gradientBytes;
+
+            vector<CookedStyleVariable> cookedVariables(header.VariableCount);
+            if (variableBytes > 0)
+            {
+                std::memcpy(cookedVariables.data(), cooked.data() + cursor, variableBytes);
+            }
+            cursor += variableBytes;
 
             const u8* const rampRegion = cooked.data() + cursor;
 
@@ -202,6 +211,17 @@ namespace Veng
                 decoded.Gradients.push_back(std::move(gradient));
             }
 
+            decoded.Variables.reserve(header.VariableCount);
+            for (const CookedStyleVariable& cookedVariable : cookedVariables)
+            {
+                Gui::StyleVariable variable;
+                variable.Name = ReadName(cookedVariable.Name, StyleSelectorNameCapacity);
+                variable.Kind = static_cast<Gui::StyleVariableKind>(cookedVariable.Kind);
+                variable.Payload = {cookedVariable.Payload[0], cookedVariable.Payload[1],
+                                    cookedVariable.Payload[2], cookedVariable.Payload[3]};
+                decoded.Variables.push_back(std::move(variable));
+            }
+
             // Deduplicate the surfaced font ids so a font referenced by many rules loads once.
             vector<AssetId> unique;
             for (const AssetId fontId : decoded.FontIds)
@@ -265,9 +285,9 @@ namespace Veng
             }
         }
 
-        const Ref<Gui::StyleSheet> sheet =
-            Gui::StyleSheet::Create(std::move(decoded->Rules), std::move(decoded->Animations),
-                                    std::move(decoded->Gradients), dependencies);
+        const Ref<Gui::StyleSheet> sheet = Gui::StyleSheet::Create(
+            std::move(decoded->Rules), std::move(decoded->Animations),
+            std::move(decoded->Gradients), std::move(decoded->Variables), dependencies);
 
         return Detail::LoadJob{
             .Resource = Detail::RefAny(sheet),

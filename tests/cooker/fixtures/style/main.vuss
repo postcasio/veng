@@ -1,0 +1,34 @@
+/* Exercises @use, var() substitution (rules, gradient stops, @keyframes), last-wins
+   redefinition, a variable referencing another variable, and the runtime variable table. */
+
+@use "theme.vuss";
+
+--accent-strong: var(--accent);
+--panel: #10203a;
+--half: 0.5;
+--stops: #ff0000 0%, #0000ff 100%;
+
+/* Control rules holding the same literals the var() uses resolve to, so a test can compare a
+   substituted declaration against a literal one without recomputing sRGB → linear. */
+.control-panel { background: #10203a; }
+.control-late { background: #204080; }
+.control-accent { color: #3b82f6; }
+
+.panel {
+    background: var(--panel);
+    color: var(--accent);
+    opacity: var(--half);
+    background-gradient: linear 180deg, var(--stops);
+}
+
+@keyframes fade {
+    from { opacity: var(--half); }
+    to { opacity: 1.0; }
+}
+
+/* Redefinition: a later use sees the new value; the runtime table keeps the final value. */
+--panel: #204080;
+
+.panel-late {
+    background: var(--panel);
+}

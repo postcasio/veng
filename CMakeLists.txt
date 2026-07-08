@@ -1198,12 +1198,17 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle)
             tests/cooker/input_map_cook.cpp
             tests/cooker/cook_source.cpp
             tests/cooker/ui_document_cook.cpp
+            tests/cooker/stylesheet_cook.cpp
     )
     # prefab_save_roundtrip.cpp uses VengEditor::PrefabSerialize, so the suite links
     # libveng_editor in addition to libveng_cook (no cycle: the cooker is never linked
     # by the editor framework). editor/src is on the include path for its headers.
     target_link_libraries(veng_test_cooker PRIVATE veng::cook veng_editor::veng_editor doctest::doctest)
+    # engine/src is on the include path so the stylesheet cook test can reach the private
+    # StyleSheetLoader.h decode entry point (DecodeStyleSheet), exercising the runtime variable
+    # table end-to-end from a cooked blob; veng::cook already links veng::veng transitively.
     target_include_directories(veng_test_cooker PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/editor/src
+            ${CMAKE_CURRENT_SOURCE_DIR}/engine/src
             ${CMAKE_CURRENT_SOURCE_DIR}/tests)
     add_dependencies(veng_test_cooker hello_triangle veng_test_bad_version_module)
     target_compile_definitions(veng_test_cooker PRIVATE

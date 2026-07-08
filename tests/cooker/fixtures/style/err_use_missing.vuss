@@ -1,0 +1,5 @@
+@use "does-not-exist.vuss";
+
+.x {
+    color: #ffffff;
+}

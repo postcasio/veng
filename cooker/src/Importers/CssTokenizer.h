@@ -10,9 +10,10 @@ namespace Veng::Cook
     /// @brief The kind of one lexed USS token.
     ///
     /// A deliberately small set for the USS subset: the selector punctuation (`.` `#` `:` `,`),
-    /// the block delimiters (`{` `}`), the declaration delimiters (`;` `:`), and the two content
-    /// tokens (an identifier, and any other run of value characters). Whitespace and `/* */`
-    /// comments are skipped by the tokenizer and never emitted.
+    /// the block delimiters (`{` `}`), the declaration delimiters (`;` `:`), the `var(...)`
+    /// parentheses, a quoted string, and the two content tokens (an identifier, and any other run
+    /// of value characters). Whitespace and `/* */` comments are skipped by the tokenizer and never
+    /// emitted.
     enum class CssTokenKind : u8
     {
         /// @brief A `.` introducing a class selector.
@@ -33,6 +34,12 @@ namespace Veng::Cook
         Ident,
         /// @brief Any other value run (a `#rrggbb` color, a number, a `12px` length) up to a delimiter.
         Value,
+        /// @brief A `(` opening a `var(...)` reference.
+        LParen,
+        /// @brief A `)` closing a `var(...)` reference.
+        RParen,
+        /// @brief A double-quoted string literal; Text holds the content between the quotes.
+        String,
     };
 
     /// @brief One lexed USS token: its kind and its source text.

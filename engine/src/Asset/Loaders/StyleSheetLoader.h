@@ -38,6 +38,8 @@ namespace Veng
             vector<Gui::StyleAnimationClip> Animations;
             /// @brief The gradients, in the index order `background-gradient` declarations reference.
             vector<Gui::StyleGradient> Gradients;
+            /// @brief The sheet's own queryable variables (colors and scalars), in source order.
+            vector<Gui::StyleVariable> Variables;
             /// @brief The deduplicated font AssetIds every declaration references (load-time dependencies).
             vector<AssetId> FontIds;
         };

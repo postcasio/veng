@@ -736,11 +736,12 @@ namespace Veng
     /// @brief The current stylesheet-format version.
     ///
     /// Bumped on any CookedStyleSheetHeader/CookedStyleRule/CookedStyleProperty/
-    /// CookedStyleAnimation/CookedStyleKeyframe/CookedStyleGradient layout change; the loader rejects
-    /// a blob whose Version != this. v2 added the @keyframes animation tables; v3 added the gradient
-    /// table and its baked ramp region; v4 widened a gradient's geometry to explicit endpoints
-    /// (P0/P1) and an elliptical radial radius.
-    inline constexpr u32 CookedStyleSheetVersion = 4u;
+    /// CookedStyleAnimation/CookedStyleKeyframe/CookedStyleGradient/CookedStyleVariable layout change;
+    /// the loader rejects a blob whose Version != this. v2 added the @keyframes animation tables; v3
+    /// added the gradient table and its baked ramp region; v4 widened a gradient's geometry to
+    /// explicit endpoints (P0/P1) and an elliptical radial radius; v5 added the queryable variable
+    /// table.
+    inline constexpr u32 CookedStyleSheetVersion = 5u;
 
     /// @brief Maximum byte length (including nul terminator) for a selector's class/id/type name.
     ///
@@ -764,6 +765,7 @@ namespace Veng
     ///   CookedStyleAnimation[AnimationCount]   — one entry per @keyframes clip, in source order
     ///   CookedStyleKeyframe[KeyframeCount]     — every clip's keyframes, contiguous per clip
     ///   CookedStyleGradient[GradientCount]     — one entry per `background-gradient`, in source order
+    ///   CookedStyleVariable[VariableCount]     — the sheet's own queryable variables, in source order
     ///   u8[RampByteCount]                      — every gradient's baked N×1 RGBA8 ramp, contiguous
     ///
     /// A rule's declarations are the PropertyCount-slice [FirstProperty, FirstProperty + PropertyCount)
@@ -772,6 +774,9 @@ namespace Veng
     /// source-order precedence. An `animation` declaration references a clip by its index in the
     /// animation table (resolved from the authored name at cook time — the name is not stored). A
     /// `background-gradient` declaration references a gradient by its index in the gradient table.
+    /// The variable table carries only the sheet's own top-level `--` variables whose value resolves
+    /// to a color or a single number, for runtime query; multi-token variables are cook-time-only and
+    /// absent.
     struct CookedStyleSheetHeader
     {
         /// @brief Must equal CookedStyleSheetVersion; the loader rejects mismatches.
@@ -786,7 +791,9 @@ namespace Veng
         u32 KeyframeCount = 0;
         /// @brief Number of CookedStyleGradient entries following the keyframe table.
         u32 GradientCount = 0;
-        /// @brief Total bytes in the ramp region following the gradient table.
+        /// @brief Number of CookedStyleVariable entries following the gradient table.
+        u32 VariableCount = 0;
+        /// @brief Total bytes in the ramp region following the variable table.
         u32 RampByteCount = 0;
     };
 
@@ -877,6 +884,24 @@ namespace Veng
         u32 RampOffset = 0;
         /// @brief Number of RGBA8 texels in the ramp (its byte length is RampTexels * 4).
         u32 RampTexels = 0;
+    };
+
+    /// @brief One queryable stylesheet variable: a name, its value kind, and the resolved payload.
+    ///
+    /// Only a sheet's own top-level `--` variable whose full value resolves to a color or a single
+    /// number carries an entry; a multi-token variable is cook-time-only and never stored. Name is
+    /// the authored variable name without the leading `--` (`--accent` is stored as "accent"). Kind
+    /// selects how Payload is read: a color (0) fills all four channels (linear straight-alpha,
+    /// matching the draw-list contract); a scalar (1) fills only Payload[0]. A stylesheet's `@use`d
+    /// variables are never stored here — a consumer queries the theme sheet that owns them.
+    struct CookedStyleVariable
+    {
+        /// @brief Nul-terminated variable name without the leading `--`, at most StyleSelectorNameCapacity - 1 bytes.
+        char Name[StyleSelectorNameCapacity] = {};
+        /// @brief Value kind: 0 = color (Payload xyzw), 1 = scalar (Payload[0]).
+        u32 Kind = 0;
+        /// @brief Resolved value: a linear straight-alpha color (all four), or a scalar in [0].
+        f32 Payload[4] = {};
     };
 
     /// @brief The current UI-document-format version.

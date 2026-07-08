@@ -1,0 +1,8 @@
+/* A theme sheet shared through @use: its variables are imported, its rules are not. */
+
+--accent: #3b82f6;
+--gap: 8;
+
+.theme-ignored {
+    color: #ff0000;
+}
