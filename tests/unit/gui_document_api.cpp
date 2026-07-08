@@ -297,3 +297,49 @@ TEST_CASE("gui draw: an oversized corner radius clamps to half the box (a circle
     REQUIRE(list.GetVertices().size() == 4);
     CHECK(list.GetVertices()[0].Params.x == doctest::Approx(20.0f));
 }
+
+TEST_CASE("gui image: Build emits a textured quad for a resident Image, nothing when unresolved")
+{
+    Document doc;
+    Element& image = doc.Add(doc.Root(), ElementKind::Image);
+
+    Style style;
+    style.Width = Length::Points(64.0f);
+    style.Height = Length::Points(48.0f);
+    doc.SetStyle(image, style);
+    doc.Solve(vec2(200.0f, 200.0f));
+
+    // Unresolved: no texture slot set, and the box has no background/border, so the Image paints
+    // nothing at all — no textured run.
+    {
+        DrawList list;
+        doc.Build(list);
+        CHECK(list.IsEmpty());
+    }
+
+    // Resident (stub): set the bindless slots, a UV sub-rect, and a tint directly — the state the
+    // instantiate-time resolve fills from a resident texture, without a device.
+    image.ImageTexture = Renderer::TextureHandle{.Index = 7};
+    image.ImageSampler = Renderer::SamplerHandle{.Index = 3};
+    image.ImageUv = Rect{.Min = {0.25f, 0.5f}, .Size = {0.5f, 0.25f}};
+    image.ImageTint = vec4(1.0f, 0.5f, 0.25f, 0.8f);
+
+    DrawList list;
+    doc.Build(list);
+
+    // Exactly one Shape run keyed by the texture; its quad carries the element's rect corner, the
+    // UV sub-rect, and the tint (whose alpha folds the style opacity, 1.0 here).
+    REQUIRE(list.GetRuns().size() == 1);
+    CHECK(list.GetRuns()[0].Pipeline == GuiPipeline::Shape);
+    REQUIRE(list.GetVertices().size() == 4);
+    const GuiVertex& topLeft = list.GetVertices()[0];
+    CHECK(topLeft.Params.z == doctest::Approx(7.0f));
+    CHECK(topLeft.Params.w == doctest::Approx(3.0f));
+    CHECK(topLeft.Position.x == doctest::Approx(image.Layout.Min.x));
+    CHECK(topLeft.Position.y == doctest::Approx(image.Layout.Min.y));
+    CHECK(topLeft.Uv.x == doctest::Approx(0.25f));
+    CHECK(topLeft.Uv.y == doctest::Approx(0.5f));
+    CHECK(topLeft.Color.r == doctest::Approx(1.0f));
+    CHECK(topLeft.Color.g == doctest::Approx(0.5f));
+    CHECK(topLeft.Color.a == doctest::Approx(0.8f));
+}

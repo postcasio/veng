@@ -412,6 +412,34 @@ namespace Veng::Gui
             }
         }
 
+        // Resolves an Image element's source texture: its recipe tint and UV fold onto the element,
+        // and its `src` AssetId resolves to a resident AssetHandle<Texture> through the borrowed
+        // manager (a cache lookup — the texture is already resident as a load-time dependency), whose
+        // bindless slots the paint samples. A missing or unresolved texture leaves the element
+        // un-textured (its box paints, no crash), the same tolerance a missing font gets.
+        void ResolveElementImage(Element& element, const UIElementRecipe& recipe,
+                                 AssetManager& assets)
+        {
+            if (element.Kind != ElementKind::Image)
+            {
+                return;
+            }
+            element.ImageTint = recipe.Tint;
+            element.ImageUv = recipe.Uv;
+            if (!recipe.Src.IsValid())
+            {
+                return;
+            }
+            AssetHandle<Texture> texture =
+                assets.LoadSync<Texture>(recipe.Src).value_or(AssetHandle<Texture>{});
+            if (texture.IsLoaded())
+            {
+                element.ImageTexture = texture.Get()->GetHandle();
+                element.ImageSampler = texture.Get()->GetSamplerHandle();
+                element.Image = std::move(texture);
+            }
+        }
+
         // Formats a leaf field value at `fieldPtr` (of registered type `info`) as display text. A
         // scalar prints its number, a string prints itself, an enum prints its enumerator name, a
         // vector prints its components space-separated. Scalars are keyed by their leaf TypeId (not
@@ -707,6 +735,7 @@ namespace Veng::Gui
             ++cursor;
             PopulateElement(live, node);
             ResolveElementStyle(live, node, sheets, &assets, resolveGradient);
+            ResolveElementImage(live, node, assets);
             document->InitWidget(live);
             for (u32 i = 0; i < node.ChildCount; ++i)
             {
@@ -1962,6 +1991,18 @@ namespace Veng::Gui
         else if (style.Background.a > 0.0f)
         {
             list.Quad(rect, style.Background, style.Radii);
+        }
+        // An Image paints its resident texture as a rounded quad filling the element's box, over any
+        // background and under the border. It composes with corner-radius through the shape SDF the
+        // same way a Panel background does; the border below draws over it as a frame. The tint folds
+        // in the style opacity, so a faded Image fades its texture too.
+        if (element.Kind == ElementKind::Image && element.ImageTexture.IsValid() &&
+            element.ImageSampler.IsValid())
+        {
+            vec4 tint = element.ImageTint;
+            tint.a *= style.Opacity;
+            list.Texture(rect, element.ImageTexture, element.ImageSampler, element.ImageUv, tint,
+                         style.Radii);
         }
         if (style.BorderStyle.Width > 0.0f)
         {

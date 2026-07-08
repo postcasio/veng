@@ -883,7 +883,7 @@ namespace Veng
     ///
     /// Bumped on any CookedUIDocumentHeader/CookedUIElement/inline-property/blob-region layout
     /// change; the loader rejects a blob whose Version != this.
-    inline constexpr u32 CookedUIDocumentVersion = 1u;
+    inline constexpr u32 CookedUIDocumentVersion = 2u;
 
     /// @brief Cooked header for a UI-document asset.
     ///
@@ -975,6 +975,12 @@ namespace Veng
         u32 InlinePropertyCount = 0;
         /// @brief Number of direct children of this element (they follow in pre-order).
         u32 ChildCount = 0;
+        /// @brief An Image element's source texture AssetId (a load-time texture dependency); 0 when none.
+        u64 Src = 0;
+        /// @brief An Image element's tint, linear straight-alpha RGBA; opaque white (1,1,1,1) by default.
+        f32 Tint[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+        /// @brief An Image element's UV sub-rect {minX, minY, sizeX, sizeY}; the whole texture (0,0,1,1) by default.
+        f32 Uv[4] = {0.0f, 0.0f, 1.0f, 1.0f};
     };
 
     /// @brief One binding on a cooked UI element: the target property name and its expression.

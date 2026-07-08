@@ -39,6 +39,8 @@ namespace Veng
             vector<AssetId> StyleSheetIds;
             /// @brief The deduplicated font AssetIds the inline styles reference (load-time dependencies).
             vector<AssetId> FontIds;
+            /// @brief The deduplicated texture AssetIds the Image elements source (load-time dependencies).
+            vector<AssetId> TextureIds;
         };
 
         /// @brief Decodes a cooked UI-document blob into its recipe tree and dependency ids.

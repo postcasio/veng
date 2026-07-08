@@ -5,6 +5,8 @@
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
 
+#include <array>
+#include <charconv>
 #include <cstring>
 #include <map>
 
@@ -131,6 +133,33 @@ namespace Veng::Cook
                 }
             }
             return parts;
+        }
+
+        // Parses an Image `uv` attribute — four space-separated floats {minX, minY, sizeX, sizeY},
+        // the UV sub-rect the element samples — into that order. A wrong count or a non-numeric
+        // component is a located error. Uses from_chars: the cooker builds -fno-exceptions.
+        Result<std::array<f32, 4>> ParseUvRect(std::string_view value, const string& located)
+        {
+            const vector<string> parts = SplitWhitespace(value);
+            if (parts.size() != 4)
+            {
+                return std::unexpected(fmt::format("{}: 'uv' expects four space-separated numbers "
+                                                   "{{minX minY sizeX sizeY}}, got '{}'",
+                                                   located, value));
+            }
+            std::array<f32, 4> uv{};
+            for (usize i = 0; i < 4; ++i)
+            {
+                const string& part = parts[i];
+                const auto [ptr, ec] =
+                    std::from_chars(part.data(), part.data() + part.size(), uv[i]);
+                if (ec != std::errc{} || ptr != part.data() + part.size())
+                {
+                    return std::unexpected(
+                        fmt::format("{}: 'uv' component '{}' is not a number", located, part));
+                }
+            }
+            return uv;
         }
 
         // Parses an inline `style="prop: value; …"` attribute into cooked declarations.
@@ -289,6 +318,51 @@ namespace Veng::Cook
                     binding.Property = build.Strings.Add(name);
                     binding.Expression = build.Strings.Add(value);
                     build.Bindings.push_back(binding);
+                    continue;
+                }
+
+                // An Image carries a source texture (`src`), an optional tint, and an optional UV
+                // sub-rect as literal attributes. The `src` id is written onto the element and
+                // becomes a document texture dependency (the loader eager-loads it, resident, as it
+                // does a stylesheet's fonts); the tint/uv fold onto the element with the defaults
+                // (opaque white / the whole texture) when absent.
+                if (*kind == Gui::ElementKind::Image &&
+                    (name == "src" || name == "tint" || name == "uv"))
+                {
+                    if (name == "src")
+                    {
+                        const optional<AssetId> texId = ParseAssetId(value);
+                        if (!texId)
+                        {
+                            return std::unexpected(fmt::format(
+                                "{}: 'src' value '{}' is not a hex AssetId", located, value));
+                        }
+                        element.Src = texId->Value;
+                    }
+                    else if (name == "tint")
+                    {
+                        const Result<vec4> tint = ParseStyleColor(value, located);
+                        if (!tint)
+                        {
+                            return std::unexpected(tint.error());
+                        }
+                        element.Tint[0] = tint->r;
+                        element.Tint[1] = tint->g;
+                        element.Tint[2] = tint->b;
+                        element.Tint[3] = tint->a;
+                    }
+                    else
+                    {
+                        const Result<std::array<f32, 4>> uv = ParseUvRect(value, located);
+                        if (!uv)
+                        {
+                            return std::unexpected(uv.error());
+                        }
+                        element.Uv[0] = (*uv)[0];
+                        element.Uv[1] = (*uv)[1];
+                        element.Uv[2] = (*uv)[2];
+                        element.Uv[3] = (*uv)[3];
+                    }
                     continue;
                 }
 

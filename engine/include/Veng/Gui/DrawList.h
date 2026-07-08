@@ -283,16 +283,21 @@ namespace Veng::Gui
         void Gradient(const Rect& rect, const GradientFill& fill, const CornerRadii& radii = {},
                       const Border& border = {}, vec4 tint = vec4(1.0f));
 
-        /// @brief Appends a textured quad modulated by a tint.
+        /// @brief Appends a textured quad modulated by a tint, optionally rounded.
+        ///
+        /// Shares the rounded-rect SDF of Quad, so a positive radius rounds the textured box's
+        /// corners exactly as a Panel background rounds — the textured-quad path runs through the
+        /// same shape fragment. The default (zero) radius is the plain square textured quad.
         /// @param rect     The rectangle, in framebuffer pixels.
         /// @param texture  Bindless texture slot to sample.
         /// @param sampler  Bindless sampler slot to sample with.
         /// @param uv       UV rectangle to sample (defaults to the whole texture).
         /// @param tint     Multiplied over the sampled texel, linear straight-alpha RGBA.
+        /// @param radii    Per-corner radius; the shape path uses the uniform radius (zero for square).
         void Texture(const Rect& rect, Renderer::TextureHandle texture,
                      Renderer::SamplerHandle sampler,
                      const Rect& uv = {.Min = {0.0f, 0.0f}, .Size = {1.0f, 1.0f}},
-                     vec4 tint = vec4(1.0f));
+                     vec4 tint = vec4(1.0f), const CornerRadii& radii = {});
 
         /// @brief Appends a nine-slice frame: a texture split into corners, edges, and center.
         ///
@@ -375,8 +380,10 @@ namespace Veng::Gui
                       vec4 color, vec2 rectHalf, vec2 center, vec4 params, u32 selector = 0);
 
         /// @brief Emits one textured quad, opening a Shape run keyed by its texture.
+        /// @param radii  Per-corner radius; the shape path uses the uniform radius (zero for square).
         void EmitTexturedQuad(const Rect& rect, Renderer::TextureHandle texture,
-                              Renderer::SamplerHandle sampler, const Rect& uv, vec4 tint);
+                              Renderer::SamplerHandle sampler, const Rect& uv, vec4 tint,
+                              const CornerRadii& radii = {});
 
         /// @brief The interleaved vertex stream.
         vector<GuiVertex> m_Vertices;

@@ -243,6 +243,23 @@ namespace Veng::Gui
         /// @brief The Text element's string content; unused by other kinds.
         string Text;
 
+        /// @brief An Image element's resident source texture; empty leaves the element un-textured.
+        ///
+        /// Instantiate resolves the recipe's `src` AssetId through the borrowed AssetManager and
+        /// stores the handle here so the texture stays loaded for the document's lifetime, exactly
+        /// as Style::TextFont keeps a font resident. The paint reads the bindless slots
+        /// ImageTexture/ImageSampler, which the resolve fills from this handle; an imperative author
+        /// may instead set those slots directly to a runtime texture with no cache entry.
+        AssetHandle<Texture> Image;
+        /// @brief The bindless texture slot an Image paints from; invalid leaves the element un-textured.
+        Renderer::TextureHandle ImageTexture;
+        /// @brief The bindless sampler slot an Image paints with.
+        Renderer::SamplerHandle ImageSampler;
+        /// @brief An Image element's tint, linear straight-alpha RGBA; the style opacity folds into the alpha at paint.
+        vec4 ImageTint{1.0f};
+        /// @brief The UV sub-rect an Image samples (an atlas region); the whole texture by default.
+        Rect ImageUv{.Min = vec2(0.0f), .Size = vec2(1.0f)};
+
         /// @brief Named bound-value slots a binding layer resolves against a context.
         map<string, string> Bindings;
 

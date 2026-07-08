@@ -59,6 +59,15 @@ namespace Veng::Gui
         vector<StyleDeclaration> InlineStyle;
         /// @brief Number of direct children of this element (they follow in pre-order).
         u32 ChildCount = 0;
+        /// @brief An Image element's source texture AssetId; invalid for a non-image or un-sourced element.
+        ///
+        /// Resolved at Instantiate to a resident AssetHandle<Texture> on the live element and kept
+        /// resident as a document texture dependency, the same shape a font declaration's AssetId takes.
+        AssetId Src;
+        /// @brief An Image element's tint, linear straight-alpha RGBA; opaque white by default (folds the style opacity at paint).
+        vec4 Tint{1.0f};
+        /// @brief An Image element's UV sub-rect (an atlas region); the whole texture by default.
+        Rect Uv{.Min = vec2(0.0f), .Size = vec2(1.0f)};
     };
 
     /// @brief A cached, immutable cooked-UI-document asset: a recipe for a live element tree.

@@ -1197,6 +1197,7 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle)
             tests/cooker/level_cook.cpp
             tests/cooker/input_map_cook.cpp
             tests/cooker/cook_source.cpp
+            tests/cooker/ui_document_cook.cpp
     )
     # prefab_save_roundtrip.cpp uses VengEditor::PrefabSerialize, so the suite links
     # libveng_editor in addition to libveng_cook (no cycle: the cooker is never linked

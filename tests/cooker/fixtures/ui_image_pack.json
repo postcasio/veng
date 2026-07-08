@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "0x4DE87D318251BC1E",
+      "type": "Texture",
+      "source": "textures/texture.tex.json"
+    },
+    {
+      "id": "0x2D5E729A12F26978",
+      "type": "UIDocument",
+      "source": "gui/image.vui.xml"
+    }
+  ]
+}

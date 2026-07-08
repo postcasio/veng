@@ -233,7 +233,8 @@ namespace Veng::Gui
     }
 
     void DrawList::EmitTexturedQuad(const Rect& rect, Renderer::TextureHandle texture,
-                                    Renderer::SamplerHandle sampler, const Rect& uv, vec4 tint)
+                                    Renderer::SamplerHandle sampler, const Rect& uv, vec4 tint,
+                                    const CornerRadii& radii)
     {
         if (rect.IsEmpty())
         {
@@ -254,18 +255,21 @@ namespace Veng::Gui
         const std::array<vec2, 4> uvs = {uvMin, vec2(uvMax.x, uvMin.y), uvMax,
                                          vec2(uvMin.x, uvMax.y)};
 
-        // Zero radius and zero border: a textured quad is a square-cornered filled shape whose SDF
-        // coverage is 1 across the whole rect (the half-extent must be the real size so the box has
-        // an interior), so the tinted texture shows through unmasked.
-        const vec4 params{0.0f, 0.0f, static_cast<f32>(texture.Index),
+        // The half-extent must be the real size so the box has an interior the tinted texture shows
+        // through; the corner radius clamps to half the box (the CSS behavior, like Quad). Zero
+        // border, so the fill covers the whole rounded shape rather than only a ring.
+        const vec2 half = rect.Size * 0.5f;
+        const f32 radius = std::min(radii.TopLeft, std::min(half.x, half.y));
+        const vec4 params{radius, 0.0f, static_cast<f32>(texture.Index),
                           static_cast<f32>(sampler.Index)};
-        PushQuad(corners, uvs, tint, rect.Size * 0.5f, rect.Center(), params);
+        PushQuad(corners, uvs, tint, half, rect.Center(), params);
     }
 
     void DrawList::Texture(const Rect& rect, Renderer::TextureHandle texture,
-                           Renderer::SamplerHandle sampler, const Rect& uv, vec4 tint)
+                           Renderer::SamplerHandle sampler, const Rect& uv, vec4 tint,
+                           const CornerRadii& radii)
     {
-        EmitTexturedQuad(rect, texture, sampler, uv, tint);
+        EmitTexturedQuad(rect, texture, sampler, uv, tint, radii);
     }
 
     void DrawList::NineSlice(const Rect& rect, Renderer::TextureHandle texture,

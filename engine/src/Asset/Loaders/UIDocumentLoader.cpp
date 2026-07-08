@@ -7,6 +7,7 @@
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/CookedBlobs.h>
 #include <Veng/Asset/Font.h>
+#include <Veng/Asset/Texture.h>
 #include <Veng/Gui/StyleSheet.h>
 
 namespace Veng
@@ -157,6 +158,13 @@ namespace Veng
                 Gui::UIElementRecipe recipe;
                 recipe.Kind = static_cast<Gui::ElementKind>(ce.Kind);
                 recipe.ChildCount = ce.ChildCount;
+                recipe.Src = AssetId{ce.Src};
+                recipe.Tint = {ce.Tint[0], ce.Tint[1], ce.Tint[2], ce.Tint[3]};
+                recipe.Uv = Gui::Rect{.Min = {ce.Uv[0], ce.Uv[1]}, .Size = {ce.Uv[2], ce.Uv[3]}};
+                if (ce.Src != 0)
+                {
+                    AddUnique(decoded.TextureIds, AssetId{ce.Src});
+                }
 
                 if (const AssetResult<void> r = readString(ce.Id, recipe.Id); !r)
                 {
@@ -301,6 +309,36 @@ namespace Veng
             else
             {
                 const AssetResult<AssetHandle<Font>> handle = manager.LoadSync<Font>(fontId);
+                if (!handle)
+                {
+                    return std::unexpected(handle.error());
+                }
+                dependencies.push_back(AssetManager::EntryOf(*handle));
+            }
+        }
+
+        // An Image element's source texture is an ordinary load-time dependency, kept resident so
+        // the instantiate-time resolve is a cache hit and the texture stays loaded like a font.
+        for (const AssetId textureId : decoded->TextureIds)
+        {
+            if (async)
+            {
+                const AssetHandle<Texture> handle = manager.Load<Texture>(textureId);
+                if (!AssetManager::EntryOf(handle))
+                {
+                    return std::unexpected(AssetLoadError{
+                        .Kind = AssetError::MissingDependency,
+                        .Id = textureId,
+                        .Detail =
+                            fmt::format("ui document {}: texture dependency {} did not resolve",
+                                        id.Value, textureId.Value)});
+                }
+                dependencies.push_back(AssetManager::EntryOf(handle));
+            }
+            else
+            {
+                const AssetResult<AssetHandle<Texture>> handle =
+                    manager.LoadSync<Texture>(textureId);
                 if (!handle)
                 {
                     return std::unexpected(handle.error());
