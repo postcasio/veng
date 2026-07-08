@@ -263,6 +263,17 @@ namespace Veng::Gui
         /// background, border, text, widget parts, and children as one.
         f32 Opacity = 1.0f;
 
+        /// @brief Rigid rotation of the element's subtree at paint, in degrees clockwise.
+        ///
+        /// Positive turns clockwise in the y-down document space. The whole subtree rotates
+        /// rigidly about the element's Origin anchor point (Layout.Min + Origin * Layout.Size),
+        /// so a rotated container carries its children, text, borders, gradients, and textures
+        /// with it and nested rotations compose. The default 0 is the unrotated box.
+        /// @warning Paint only: layout is unaffected (the element keeps its unrotated flex box),
+        ///          hit-testing stays axis-aligned against the unrotated Layout rect, and content
+        ///          clips remain axis-aligned scissors.
+        f32 Rotation = 0.0f;
+
         /// @brief Whether content outside the element's box is clipped to it.
         bool ClipContent = false;
 

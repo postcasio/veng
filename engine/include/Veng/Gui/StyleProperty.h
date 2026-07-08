@@ -92,13 +92,14 @@ namespace Veng::Gui
         /// @brief A gradient background fill (Style::BackgroundGradient), not a plain color: Unit is
         /// the sheet's gradient-table index the resolve materializes into a ResolvedGradient.
         BackgroundGradient,
+        /// @brief The element's paint rotation in degrees (Style::Rotation); value is a scalar.
+        Rotation,
     };
 
     /// @brief The number of StyleProperty enumerators — keep in step when appending one.
     ///
     /// The runtime's whole-style property sweeps iterate `[0, StylePropertyCount)`.
-    inline constexpr u32 StylePropertyCount =
-        static_cast<u32>(StyleProperty::BackgroundGradient) + 1;
+    inline constexpr u32 StylePropertyCount = static_cast<u32>(StyleProperty::Rotation) + 1;
 
     /// @brief Canonical USS declaration name of a style property ("flex-direction", "background", …).
     ///

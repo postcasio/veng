@@ -3,6 +3,8 @@
 // CPU data, so this needs no GPU context. Text is exercised by the GPU golden (it needs a
 // resident font atlas); this pins the geometry/run bookkeeping the pass replays.
 
+#include <cmath>
+
 #include <doctest/doctest.h>
 
 #include <Veng/Gui/DrawList.h>
@@ -22,6 +24,22 @@ namespace
     }
 
     constexpr Rect UnitRect{.Min = {10.0f, 10.0f}, .Size = {40.0f, 40.0f}};
+
+    // Rotates a point about a pivot, clockwise-positive in the y-down space (the transform-stack
+    // convention). The reference the vertex-position cases compare the draw list's output against.
+    vec2 RotateAbout(vec2 point, vec2 pivot, f32 radians)
+    {
+        const f32 c = std::cos(radians);
+        const f32 s = std::sin(radians);
+        const vec2 d = point - pivot;
+        return pivot + vec2(c * d.x - s * d.y, s * d.x + c * d.y);
+    }
+
+    void CheckVec2(vec2 actual, vec2 expected)
+    {
+        CHECK(actual.x == doctest::Approx(expected.x));
+        CHECK(actual.y == doctest::Approx(expected.y));
+    }
 }
 
 TEST_CASE("gui draw list: consecutive shapes with matching key merge into one run")
@@ -180,4 +198,110 @@ TEST_CASE("gui draw list: an empty rect emits nothing")
     list.Quad({.Min = {0.0f, 0.0f}, .Size = {0.0f, 20.0f}}, vec4(1.0f));
     list.Texture({.Min = {0.0f, 0.0f}, .Size = {20.0f, 0.0f}}, Texture(1), Sampler(0));
     CHECK(list.IsEmpty());
+}
+
+TEST_CASE("gui draw list: a transform rotates vertex positions but leaves the shape SDF space")
+{
+    const Rect rect{.Min = {20.0f, 30.0f}, .Size = {60.0f, 40.0f}};
+    const vec2 pivot = rect.Center();
+    const f32 angle = glm::radians(90.0f);
+
+    // The same bordered rounded quad, once unrotated and once under a 90° transform about its center.
+    DrawList plain;
+    plain.Quad(rect, vec4(0.3f, 0.4f, 0.5f, 1.0f), CornerRadii::All(8.0f),
+               Border{.Width = 2.0f, .Color = vec4(1.0f)});
+
+    DrawList rotated;
+    rotated.PushTransform(pivot, angle);
+    rotated.Quad(rect, vec4(0.3f, 0.4f, 0.5f, 1.0f), CornerRadii::All(8.0f),
+                 Border{.Width = 2.0f, .Color = vec4(1.0f)});
+    rotated.PopTransform();
+
+    REQUIRE(plain.GetVertices().size() == 4);
+    REQUIRE(rotated.GetVertices().size() == 4);
+
+    for (usize i = 0; i < 4; ++i)
+    {
+        const GuiVertex& before = plain.GetVertices()[i];
+        const GuiVertex& after = rotated.GetVertices()[i];
+
+        // The position is the rotation of the unrotated corner about the pivot.
+        CheckVec2(after.Position, RotateAbout(before.Position, pivot, angle));
+
+        // The SDF's local box space, the UV, the color, and the packed params are untouched — that
+        // is what makes the rounded corners, border, and any texture rotate rigidly.
+        CheckVec2(after.RectHalf, before.RectHalf);
+        CheckVec2(after.RectCoord, before.RectCoord);
+        CheckVec2(after.Uv, before.Uv);
+        CHECK(after.Params.x == doctest::Approx(before.Params.x)); // corner radius
+        CHECK(after.Params.y == doctest::Approx(before.Params.y)); // border width
+    }
+}
+
+TEST_CASE("gui draw list: nested transforms compose inner-within-outer")
+{
+    const Rect rect{.Min = {0.0f, 0.0f}, .Size = {20.0f, 20.0f}};
+    const vec2 outerPivot{100.0f, 100.0f};
+    const vec2 innerPivot{10.0f, 10.0f};
+    const f32 outer = glm::radians(30.0f);
+    const f32 inner = glm::radians(45.0f);
+
+    DrawList list;
+    list.PushTransform(outerPivot, outer);
+    list.PushTransform(innerPivot, inner);
+    list.Quad(rect, vec4(1.0f));
+    list.PopTransform();
+    list.PopTransform();
+
+    DrawList reference;
+    reference.Quad(rect, vec4(1.0f));
+
+    REQUIRE(list.GetVertices().size() == 4);
+    for (usize i = 0; i < 4; ++i)
+    {
+        // The inner push turns within the outer frame: a corner maps through the inner rotation
+        // first, then the outer one.
+        const vec2 corner = reference.GetVertices()[i].Position;
+        const vec2 expected =
+            RotateAbout(RotateAbout(corner, innerPivot, inner), outerPivot, outer);
+        CheckVec2(list.GetVertices()[i].Position, expected);
+    }
+}
+
+TEST_CASE("gui draw list: popping the transform stack restores the enclosing frame")
+{
+    const Rect rect{.Min = {0.0f, 0.0f}, .Size = {20.0f, 20.0f}};
+
+    DrawList list;
+    list.PushTransform(vec2(50.0f, 50.0f), glm::radians(90.0f));
+    list.Quad(rect, vec4(1.0f)); // rotated
+    list.PopTransform();
+    list.Quad({.Min = {40.0f, 40.0f}, .Size = {20.0f, 20.0f}}, vec4(1.0f)); // identity again
+
+    DrawList reference;
+    reference.Quad({.Min = {40.0f, 40.0f}, .Size = {20.0f, 20.0f}}, vec4(1.0f));
+
+    REQUIRE(list.GetVertices().size() == 8);
+    for (usize i = 0; i < 4; ++i)
+    {
+        // The four vertices emitted after the pop match the unrotated reference exactly.
+        CheckVec2(list.GetVertices()[4 + i].Position, reference.GetVertices()[i].Position);
+    }
+}
+
+TEST_CASE("gui draw list: Clear resets the transform stack")
+{
+    DrawList list;
+    list.PushTransform(vec2(50.0f, 50.0f), glm::radians(90.0f));
+    list.Clear();
+
+    // A fresh quad after Clear is unrotated — the transform stack cleared with everything else.
+    list.Quad(UnitRect, vec4(1.0f));
+    DrawList reference;
+    reference.Quad(UnitRect, vec4(1.0f));
+    REQUIRE(list.GetVertices().size() == 4);
+    for (usize i = 0; i < 4; ++i)
+    {
+        CheckVec2(list.GetVertices()[i].Position, reference.GetVertices()[i].Position);
+    }
 }

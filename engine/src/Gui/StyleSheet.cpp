@@ -126,6 +126,9 @@ namespace Veng::Gui
         case StyleProperty::Opacity:
             style.Opacity = declaration.Values.x;
             return;
+        case StyleProperty::Rotation:
+            style.Rotation = declaration.Values.x;
+            return;
         case StyleProperty::ClipContent:
             style.ClipContent = declaration.Values.x != 0.0f;
             return;

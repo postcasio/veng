@@ -959,6 +959,12 @@ namespace Veng::Gui
         element.ComputedStyle.Opacity = opacity;
     }
 
+    void Document::SetRotation(Element& element, const f32 degrees)
+    {
+        element.BaseStyle.Rotation = degrees;
+        element.ComputedStyle.Rotation = degrees;
+    }
+
     void Document::SetBackground(Element& element, const vec4 color)
     {
         element.BaseStyle.Background = color;
@@ -1054,6 +1060,7 @@ namespace Veng::Gui
             case StyleProperty::BorderColor:
             case StyleProperty::TextColor:
             case StyleProperty::Opacity:
+            case StyleProperty::Rotation:
             case StyleProperty::ClipContent:
             case StyleProperty::PointerEvents:
             case StyleProperty::Animation:
@@ -1092,6 +1099,7 @@ namespace Veng::Gui
             case StyleProperty::TextColor:
             case StyleProperty::TextSize:
             case StyleProperty::Opacity:
+            case StyleProperty::Rotation:
                 return true;
             case StyleProperty::FlexDirection:
             case StyleProperty::JustifyContent:
@@ -1179,6 +1187,8 @@ namespace Veng::Gui
                 return vec4(style.TextSize, 0.0f, 0.0f, 0.0f);
             case StyleProperty::Opacity:
                 return vec4(style.Opacity, 0.0f, 0.0f, 0.0f);
+            case StyleProperty::Rotation:
+                return vec4(style.Rotation, 0.0f, 0.0f, 0.0f);
             case StyleProperty::InsetLeft:
                 return vec4(style.Inset.Left, 0.0f, 0.0f, 0.0f);
             case StyleProperty::InsetTop:
@@ -1267,6 +1277,9 @@ namespace Veng::Gui
                 return;
             case StyleProperty::Opacity:
                 style.Opacity = value.x;
+                return;
+            case StyleProperty::Rotation:
+                style.Rotation = value.x;
                 return;
             case StyleProperty::InsetLeft:
                 style.Inset.Left = value.x;
@@ -2030,6 +2043,18 @@ namespace Veng::Gui
             return;
         }
 
+        // A rotation rigidly turns the element's whole subtree about its Origin anchor at paint: push
+        // the transform before the element's own primitives, keep it through the children, and pop
+        // after. A zero rotation pushes nothing, so the identity path is exactly the unrotated
+        // geometry. Layout, hit-testing, and clips are unaffected — this only rotates emitted
+        // positions.
+        const bool rotated = style.Rotation != 0.0f;
+        if (rotated)
+        {
+            const vec2 pivot = rect.Min + style.Origin * rect.Size;
+            list.PushTransform(pivot, glm::radians(style.Rotation));
+        }
+
         // A gradient background paints in place of the flat color; the border is drawn over either.
         if (style.BackgroundGradient.has_value() && style.BackgroundGradient->Ramp.IsLoaded())
         {
@@ -2106,6 +2131,11 @@ namespace Veng::Gui
         if (clip)
         {
             list.PopClip();
+        }
+
+        if (rotated)
+        {
+            list.PopTransform();
         }
     }
 

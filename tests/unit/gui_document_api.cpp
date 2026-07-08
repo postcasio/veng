@@ -3,6 +3,8 @@
 // positioning through unset inset edges, style animations, and style-property bindings.
 // Device-free — panels only, no font resource.
 
+#include <cmath>
+
 #include <doctest/doctest.h>
 
 #include <Veng/Gui/Document.h>
@@ -436,4 +438,122 @@ TEST_CASE("gui document: SetImageUv is a paint-only write of the sampled sub-rec
     CHECK(list.GetVertices()[0].Uv.y == doctest::Approx(0.5f));
     CHECK(list.GetVertices()[2].Uv.x == doctest::Approx(0.5f));
     CHECK(list.GetVertices()[2].Uv.y == doctest::Approx(1.0f));
+}
+
+TEST_CASE("gui rotation: a rotated parent rigidly rotates its child's emitted positions")
+{
+    Document doc;
+    Element& panel = doc.Add(doc.Root(), ElementKind::Panel);
+    Element& child = doc.Add(panel, ElementKind::Panel);
+
+    doc.SetStyle(panel,
+                 []
+                 {
+                     Style style;
+                     style.Background = vec4(0.2f, 0.2f, 0.3f, 1.0f);
+                     style.Width = Length::Points(120.0f);
+                     style.Height = Length::Points(80.0f);
+                     style.Padding = Insets::All(10.0f);
+                     return style;
+                 }());
+    doc.SetStyle(child,
+                 []
+                 {
+                     Style style;
+                     style.Background = vec4(0.0f, 1.0f, 0.0f, 1.0f);
+                     style.Width = Length::Points(40.0f);
+                     style.Height = Length::Points(30.0f);
+                     return style;
+                 }());
+    doc.Solve(vec2(200.0f, 200.0f));
+
+    // The unrotated geometry: the panel's background quad, then the child's.
+    DrawList plain;
+    doc.Build(plain);
+    REQUIRE(plain.GetVertices().size() == 8);
+
+    // Rotate the parent 90° clockwise about its top-left (the default Origin anchor).
+    const f32 angle = glm::radians(90.0f);
+    doc.SetRotation(panel, 90.0f);
+    DrawList rotated;
+    doc.Build(rotated);
+    REQUIRE(rotated.GetVertices().size() == 8);
+
+    const vec2 pivot = panel.Layout.Min + panel.ComputedStyle.Origin * panel.Layout.Size;
+    const auto rotateAbout = [&](vec2 point)
+    {
+        const f32 c = std::cos(angle);
+        const f32 s = std::sin(angle);
+        const vec2 d = point - pivot;
+        return pivot + vec2(c * d.x - s * d.y, s * d.x + c * d.y);
+    };
+
+    // Every emitted position — the panel's own quad and the child's — is the rotation of its
+    // unrotated position about the parent's pivot: the whole subtree turns rigidly.
+    for (usize i = 0; i < 8; ++i)
+    {
+        const vec2 expected = rotateAbout(plain.GetVertices()[i].Position);
+        CHECK(rotated.GetVertices()[i].Position.x == doctest::Approx(expected.x));
+        CHECK(rotated.GetVertices()[i].Position.y == doctest::Approx(expected.y));
+        // The child keeps its unrotated box space, so its fill/corners rotate rigidly.
+        CHECK(rotated.GetVertices()[i].RectCoord.x ==
+              doctest::Approx(plain.GetVertices()[i].RectCoord.x));
+        CHECK(rotated.GetVertices()[i].RectCoord.y ==
+              doctest::Approx(plain.GetVertices()[i].RectCoord.y));
+    }
+}
+
+TEST_CASE("gui rotation: a keyframe clip drives the rotation property")
+{
+    Document doc;
+    Element& spinner = doc.Add(doc.Root(), ElementKind::Panel);
+
+    // The runtime shape a stylesheet @keyframes clip resolves into: a rotation sweep 0°→360°.
+    doc.SetAnimations(spinner,
+                      {StyleAnimation{.Keyframes = {KeyframeAt(0.0f, StyleProperty::Rotation,
+                                                               vec4(0.0f, 0.0f, 0.0f, 0.0f)),
+                                                    KeyframeAt(1.0f, StyleProperty::Rotation,
+                                                               vec4(360.0f, 0.0f, 0.0f, 0.0f))},
+                                      .Duration = 4.0f,
+                                      .Mode = AnimationLoopMode::Loop}});
+
+    // A quarter through the clip reads a quarter of the sweep.
+    doc.Update(1.0f);
+    CHECK(spinner.ComputedStyle.Rotation == doctest::Approx(90.0f));
+
+    // A rotation clip is paint-only — it never dirties layout.
+    doc.Solve(vec2(100.0f, 100.0f));
+    CHECK(!doc.IsDirty());
+    doc.Update(1.0f);
+    CHECK(!doc.IsDirty());
+    CHECK(spinner.ComputedStyle.Rotation == doctest::Approx(180.0f));
+    CHECK(doc.IsAnimating());
+}
+
+TEST_CASE("gui rotation: SetRotation is paint-only and never dirties layout")
+{
+    Document doc;
+    Element& panel = doc.Add(doc.Root(), ElementKind::Panel);
+    doc.SetStyle(panel,
+                 []
+                 {
+                     Style style;
+                     style.Background = vec4(0.2f, 0.2f, 0.3f, 1.0f);
+                     style.Width = Length::Points(60.0f);
+                     style.Height = Length::Points(60.0f);
+                     return style;
+                 }());
+
+    doc.Solve(vec2(200.0f, 200.0f));
+    REQUIRE_FALSE(doc.IsDirty());
+
+    // A pure rotation write touches only paint state, so the layout stays clean — no re-solve.
+    doc.SetRotation(panel, 45.0f);
+    CHECK_FALSE(doc.IsDirty());
+    CHECK(panel.ComputedStyle.Rotation == doctest::Approx(45.0f));
+    CHECK(panel.BaseStyle.Rotation == doctest::Approx(45.0f));
+
+    // The element still occupies its unrotated flex box — rotation never fed the solver.
+    CHECK(panel.Layout.Size.x == doctest::Approx(60.0f));
+    CHECK(panel.Layout.Size.y == doctest::Approx(60.0f));
 }

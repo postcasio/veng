@@ -339,6 +339,23 @@ namespace Veng::Gui
         /// @pre A matching PushClip was issued — popping an empty stack is a fatal assert.
         void PopClip();
 
+        /// @brief Pushes a rotation about a pivot onto the transform stack.
+        ///
+        /// Every subsequently emitted primitive has its corner positions rotated by this angle
+        /// about the pivot until the matching PopTransform. The new transform composes onto the
+        /// current top (like PushClip intersects), so a rotation pushed under another rotation
+        /// rotates within the enclosing frame — nested rotations accumulate. Only vertex positions
+        /// transform; the shape SDF's local box coordinate (RectHalf / RectCoord) and every UV are
+        /// left in their unrotated space, so rounded corners, borders, gradients, textures, and MSDF
+        /// glyphs rotate rigidly with no shader change, and run batching is unaffected.
+        /// @param pivot    The center of rotation, in framebuffer pixels.
+        /// @param radians  The rotation angle in radians, clockwise-positive in the y-down space.
+        void PushTransform(vec2 pivot, f32 radians);
+
+        /// @brief Pops the top transform off the transform stack.
+        /// @pre A matching PushTransform was issued — popping an empty stack is a fatal assert.
+        void PopTransform();
+
         /// @brief Returns the interleaved vertex stream.
         [[nodiscard]] const vector<GuiVertex>& GetVertices() const { return m_Vertices; }
 
@@ -355,8 +372,26 @@ namespace Veng::Gui
         [[nodiscard]] bool IsEmpty() const { return m_Runs.empty(); }
 
     private:
+        /// @brief An affine transform applied to vertex positions: a linear part and a translation.
+        ///
+        /// Maps a position p to Linear * p + Translation. A push builds a rotation-about-pivot and
+        /// composes it onto the enclosing transform, so the stack top is always the full local→output
+        /// map every emitted position runs through.
+        struct AffineTransform
+        {
+            /// @brief The 2×2 linear part (a rotation).
+            mat2 Linear{1.0f};
+            /// @brief The translation added after the linear part.
+            vec2 Translation{0.0f};
+        };
+
         /// @brief Returns the current effective clip (top of the stack), or nullopt when unclipped.
         [[nodiscard]] optional<Rect> CurrentClip() const;
+
+        /// @brief Applies the top transform to a position, or returns it unchanged when the stack is empty.
+        /// @param point  A position in framebuffer pixels.
+        /// @return The transformed position, or the input when no transform is active.
+        [[nodiscard]] vec2 ApplyTransform(vec2 point) const;
 
         /// @brief Ensures the trailing run matches the key, opening a new run when it differs.
         ///
@@ -395,6 +430,8 @@ namespace Veng::Gui
         vector<GpuGradient> m_Gradients;
         /// @brief The active clip stack; each entry is already intersected with the one below it.
         vector<Rect> m_ClipStack;
+        /// @brief The active transform stack; each entry is already composed with the one below it.
+        vector<AffineTransform> m_TransformStack;
         /// @brief Bindless texture index keying the trailing run (Invalid for an untextured shape run).
         ///
         /// The run table stores no texture, so the merge test in EnsureRun compares this against the

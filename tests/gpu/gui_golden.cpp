@@ -363,6 +363,159 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     std::filesystem::remove(outArchive);
 }
 
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "gui rotation golden: a rotated subtree renders rigidly and matches its golden")
+{
+    // A rotated subtree — a rounded bordered panel, a gradient inset, a tinted texture, and a text
+    // run — all under a single 30° transform about the composition's center. The rounded-rect SDF,
+    // gradient, texture, and MSDF glyphs rotate rigidly by construction (only positions transform),
+    // which this pins at the pixel level.
+    const path fixtureDir = path(GPU_COOKER_FIXTURE_DIR);
+    const path packJson = fixtureDir / "font_pack.json";
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_gui_rotated.vengpack";
+
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    REQUIRE(cooker.CookPack(packJson, outArchive).has_value());
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(outArchive).has_value());
+
+    const AssetResult<AssetHandle<Font>> fontHandle = assets.LoadSync<Font>(FontId);
+    REQUIRE(fontHandle.has_value());
+    const Font& font = *fontHandle->Get();
+
+    const Ref<Image> sceneImage =
+        Image::Create(Context, {
+                                   .Name = "Gui Rotated Scene",
+                                   .Extent = {Extent.x, Extent.y, 1},
+                                   .Format = Format::RGBA16Sfloat,
+                                   .Usage = ImageUsage::ColorAttachment | ImageUsage::Sampled |
+                                            ImageUsage::TransferSrc,
+                               });
+    const Ref<ImageView> sceneView =
+        ImageView::Create(Context, {.Name = "Gui Rotated Scene View", .Image = sceneImage});
+    ClearImage(Context, sceneView, ClearColor{.R = 0.10f, .G = 0.12f, .B = 0.16f, .A = 1.0f});
+
+    const CheckerTexture checker = MakeChecker(Context);
+    const Ref<Sampler> sampler =
+        Sampler::Create(Context, {
+                                     .Name = "Gui Rotated Sampler",
+                                     .MagFilter = Filter::Linear,
+                                     .MinFilter = Filter::Linear,
+                                     .AddressModeU = AddressMode::ClampToEdge,
+                                     .AddressModeV = AddressMode::ClampToEdge,
+                                     .AddressModeW = AddressMode::ClampToEdge,
+                                 });
+    const SamplerHandle samplerHandle = Context.GetBindlessRegistry().Register(sampler);
+
+    // A 256×1 green→magenta ramp for the gradient inset.
+    constexpr u32 rampWidth = 256;
+    std::array<u8, rampWidth * 4> rampPixels{};
+    for (u32 x = 0; x < rampWidth; ++x)
+    {
+        const f32 t = static_cast<f32>(x) / static_cast<f32>(rampWidth - 1);
+        rampPixels[x * 4 + 0] = static_cast<u8>(t * 255.0f + 0.5f);
+        rampPixels[x * 4 + 1] = static_cast<u8>((1.0f - t) * 255.0f + 0.5f);
+        rampPixels[x * 4 + 2] = static_cast<u8>(t * 255.0f + 0.5f);
+        rampPixels[x * 4 + 3] = 255;
+    }
+    const Ref<Image> rampImage =
+        Image::Create(Context, {
+                                   .Name = "Gui Rotated Ramp",
+                                   .Extent = {rampWidth, 1, 1},
+                                   .Format = Format::RGBA8Unorm,
+                                   .Usage = ImageUsage::Sampled | ImageUsage::TransferDst,
+                               });
+    rampImage->UploadSync(std::span<const u8>(rampPixels.data(), rampPixels.size()));
+    const Ref<ImageView> rampView =
+        ImageView::Create(Context, {.Name = "Gui Rotated Ramp View", .Image = rampImage});
+    const TextureHandle rampHandle = Context.GetBindlessRegistry().Register(rampView);
+
+    // The subtree, authored unrotated, then wrapped in a single 30° transform about the center.
+    const Gui::Rect panel{.Min = {53.0f, 46.0f}, .Size = {150.0f, 100.0f}};
+    Gui::DrawList list;
+    list.PushTransform(panel.Center(), glm::radians(30.0f));
+    list.Quad(panel, vec4(0.20f, 0.22f, 0.30f, 0.95f), Gui::CornerRadii::All(14.0f));
+    list.Quad(panel, vec4(0.0f), Gui::CornerRadii::All(14.0f),
+              Gui::Border{.Width = 3.0f, .Color = vec4(0.55f, 0.75f, 1.0f, 1.0f)});
+    list.Gradient({.Min = {66.0f, 60.0f}, .Size = {80.0f, 30.0f}},
+                  Gui::GradientFill{.Kind = Gui::GradientKind::Linear,
+                                    .P0 = vec2(-1.0f, 0.0f),
+                                    .P1 = vec2(1.0f, 0.0f),
+                                    .Ramp = rampHandle,
+                                    .Sampler = samplerHandle},
+                  Gui::CornerRadii::All(6.0f));
+    list.Texture({.Min = {156.0f, 96.0f}, .Size = {36.0f, 36.0f}}, checker.Handle, samplerHandle,
+                 {.Min = {0.0f, 0.0f}, .Size = {1.0f, 1.0f}}, vec4(1.0f, 0.85f, 0.55f, 1.0f),
+                 Gui::CornerRadii::All(6.0f));
+    list.Text({66.0f, 118.0f}, font, "AVA", 30.0f, vec4(0.95f, 0.95f, 0.98f, 1.0f));
+    list.PopTransform();
+
+    const Unique<GuiScenePass> pass = GuiScenePass::Create({
+        .Context = Context,
+        .Assets = assets,
+        .Extent = Extent,
+        .OutputFormat = Format::RGBA16Sfloat,
+    });
+    pass->SetDrawList(list);
+    Context.ImmediateCommands([&](CommandBuffer& cmd) { pass->Render(cmd, sceneView); });
+
+    const vector<u8> raw = pass->GetOutput()->GetImage()->Download();
+    REQUIRE(raw.size() == static_cast<usize>(Extent.x) * Extent.y * 8);
+    const vector<u8> actual = DecodeHalfRgb(raw, Extent);
+
+    Context.GetBindlessRegistry().Release(samplerHandle);
+    Context.GetBindlessRegistry().Release(rampHandle);
+    Context.GetBindlessRegistry().Release(checker.Handle);
+
+    if (const char* dump = std::getenv("VENG_GUI_ROTATED_GOLDEN_DUMP"))
+    {
+        WritePpm(path(dump), actual, Extent);
+        MESSAGE("gui rotation golden: wrote capture to ", dump);
+        std::filesystem::remove(outArchive);
+        return;
+    }
+
+    const path golden = path(GUI_GOLDEN_DIR) / "gui_rotated.png";
+    int gw = 0;
+    int gh = 0;
+    int gc = 0;
+    u8* goldenPixels = stbi_load(golden.string().c_str(), &gw, &gh, &gc, 3);
+    REQUIRE_MESSAGE(goldenPixels != nullptr, "gui rotation golden: failed to load ",
+                    golden.string());
+    REQUIRE(static_cast<u32>(gw) == Extent.x);
+    REQUIRE(static_cast<u32>(gh) == Extent.y);
+
+    const long pixelCount = static_cast<long>(Extent.x) * Extent.y;
+    long mismatched = 0;
+    int worst = 0;
+    for (long i = 0; i < pixelCount; ++i)
+    {
+        int pixelDelta = 0;
+        for (int c = 0; c < 3; ++c)
+        {
+            const int a = actual[i * 3 + c];
+            const int g = goldenPixels[i * 3 + c];
+            const int d = a > g ? a - g : g - a;
+            pixelDelta = d > pixelDelta ? d : pixelDelta;
+        }
+        worst = pixelDelta > worst ? pixelDelta : worst;
+        if (pixelDelta > MaxChannelDelta)
+        {
+            ++mismatched;
+        }
+    }
+    stbi_image_free(goldenPixels);
+
+    const double fraction = static_cast<double>(mismatched) / static_cast<double>(pixelCount);
+    MESSAGE("gui rotation golden: ", mismatched, "/", pixelCount, " pixels exceed delta ",
+            MaxChannelDelta, " (worst ", worst, ")");
+    CHECK(fraction <= MaxMismatchFraction);
+
+    std::filesystem::remove(outArchive);
+}
+
 TEST_CASE_FIXTURE(
     Veng::Test::GpuFixture,
     "gui image golden: an authored <Image> renders its cooked texture with corner-radius + border")

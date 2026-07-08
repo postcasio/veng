@@ -76,6 +76,8 @@ namespace Veng::Gui
             return "origin";
         case StyleProperty::BackgroundGradient:
             return "background-gradient";
+        case StyleProperty::Rotation:
+            return "rotation";
         }
         return "unknown";
     }
@@ -221,6 +223,10 @@ namespace Veng::Gui
         if (name == "background-gradient")
         {
             return StyleProperty::BackgroundGradient;
+        }
+        if (name == "rotation")
+        {
+            return StyleProperty::Rotation;
         }
         return std::nullopt;
     }

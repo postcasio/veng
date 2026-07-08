@@ -1,5 +1,7 @@
 #include <Veng/Gui/DrawList.h>
 
+#include <cmath>
+
 #include <Veng/Assert.h>
 #include <Veng/Asset/Font.h>
 
@@ -92,6 +94,17 @@ namespace Veng::Gui
         m_Runs.clear();
         m_Gradients.clear();
         m_ClipStack.clear();
+        m_TransformStack.clear();
+    }
+
+    vec2 DrawList::ApplyTransform(vec2 point) const
+    {
+        if (m_TransformStack.empty())
+        {
+            return point;
+        }
+        const AffineTransform& transform = m_TransformStack.back();
+        return transform.Linear * point + transform.Translation;
     }
 
     optional<Rect> DrawList::CurrentClip() const
@@ -140,8 +153,11 @@ namespace Veng::Gui
         const u32 base = static_cast<u32>(m_Vertices.size());
         for (usize i = 0; i < 4; ++i)
         {
+            // The active transform rotates the vertex position, but the shape SDF's local box
+            // coordinate stays in the unrotated frame (corner minus the unrotated center), so the
+            // rounded-rect SDF, border, and gradient evaluate exactly as unrotated — a rigid turn.
             m_Vertices.push_back(GuiVertex{
-                .Position = corners[i],
+                .Position = ApplyTransform(corners[i]),
                 .Uv = uvs[i],
                 .Color = color,
                 .RectHalf = rectHalf,
@@ -378,5 +394,34 @@ namespace Veng::Gui
     {
         VE_ASSERT(!m_ClipStack.empty(), "DrawList::PopClip on an empty clip stack");
         m_ClipStack.pop_back();
+    }
+
+    void DrawList::PushTransform(vec2 pivot, f32 radians)
+    {
+        const f32 c = std::cos(radians);
+        const f32 s = std::sin(radians);
+        // Columns (c, s), (-s, c): rotating (1, 0) toward (c, s) turns clockwise in the y-down
+        // document space, matching the rotation property's sign convention.
+        const mat2 rotation(c, s, -s, c);
+        // Rotate about the pivot: p' = R * (p - pivot) + pivot = R * p + (pivot - R * pivot).
+        AffineTransform pushed{.Linear = rotation, .Translation = pivot - rotation * pivot};
+
+        // A nested transform composes within the enclosing one: newTop(p) = curTop(pushed(p)), so a
+        // rotation under another rotation turns within the parent's already-rotated frame.
+        if (!m_TransformStack.empty())
+        {
+            const AffineTransform& current = m_TransformStack.back();
+            pushed = AffineTransform{
+                .Linear = current.Linear * pushed.Linear,
+                .Translation = current.Linear * pushed.Translation + current.Translation,
+            };
+        }
+        m_TransformStack.push_back(pushed);
+    }
+
+    void DrawList::PopTransform()
+    {
+        VE_ASSERT(!m_TransformStack.empty(), "DrawList::PopTransform on an empty transform stack");
+        m_TransformStack.pop_back();
     }
 }

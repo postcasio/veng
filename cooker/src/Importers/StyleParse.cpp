@@ -419,6 +419,7 @@ namespace Veng::Cook
         case StyleProperty::BorderWidth:
         case StyleProperty::TextSize:
         case StyleProperty::Opacity:
+        case StyleProperty::Rotation:
         case StyleProperty::InsetLeft:
         case StyleProperty::InsetTop:
         case StyleProperty::InsetRight:

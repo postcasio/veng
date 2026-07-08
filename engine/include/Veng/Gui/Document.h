@@ -159,6 +159,20 @@ namespace Veng::Gui
         /// @param opacity  The opacity multiplier, in 0..1.
         void SetOpacity(Element& element, f32 opacity);
 
+        /// @brief Sets an element's paint rotation — a paint-only write, no layout re-solve.
+        ///
+        /// Writes the element's base (and live) style directly, so spinning a needle each frame
+        /// never re-runs the flexbox solve. An active variant or in-flight transition on the same
+        /// property still resolves over the new base. The whole subtree rotates rigidly about the
+        /// element's Origin anchor at draw, so rotating a container turns its children, text, and
+        /// borders with it.
+        /// @param element  The element whose rotation to set.
+        /// @param degrees  The rotation in degrees, clockwise-positive in the y-down document space.
+        /// @warning Paint only: the element keeps its unrotated flex box, hit-testing stays
+        ///          axis-aligned against the unrotated Layout rect, and content clips stay
+        ///          axis-aligned scissors.
+        void SetRotation(Element& element, f32 degrees);
+
         /// @brief Sets an element's background fill — a paint-only write, no layout re-solve.
         /// @param element  The element whose background to set.
         /// @param color    The fill color, linear straight-alpha RGBA.
@@ -284,6 +298,9 @@ namespace Veng::Gui
         /// must have filled the rects. Returns nullptr when no visible element covers the point.
         /// @param point  The point to test, in document-space pixels (Element::Layout's space).
         /// @return The topmost element under the point, or nullptr on a miss.
+        /// @warning Hit-testing is axis-aligned: a `rotation`-styled element is tested against its
+        ///          unrotated Layout rect, so a rotated element hit-tests as if unrotated. Rotated
+        ///          decor is styled `pointer-events: none` in practice.
         [[nodiscard]] Element* HitTest(vec2 point);
 
         /// @brief Binds the reflection/handler context every binding and named handler resolves against.

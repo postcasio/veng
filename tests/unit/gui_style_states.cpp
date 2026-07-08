@@ -109,6 +109,44 @@ TEST_CASE("gui style: a transition eases a paint property and reaches the target
     CHECK_FALSE(doc.IsAnimating());
 }
 
+TEST_CASE("gui style: a transition eases the scalar rotation property to its target")
+{
+    Document doc;
+    Element& needle = doc.Add(doc.Root(), ElementKind::Panel);
+
+    Style base;
+    base.Rotation = 0.0f;
+    doc.SetStyle(needle, base);
+
+    StyleDeclaration hoverRotation;
+    hoverRotation.Property = StyleProperty::Rotation;
+    hoverRotation.Values = vec4(90.0f, 0.0f, 0.0f, 0.0f);
+    needle.Variants = {
+        StyleVariant{.State = ElementState::Hovered, .Declarations = {hoverRotation}}};
+    doc.SetTransitions(needle,
+                       {StyleTransition{.Property = StyleProperty::Rotation, .Duration = 1.0f}});
+
+    // Entering hover starts the tween from 0° toward 90°; the value has not jumped.
+    doc.SetState(needle, ElementState::Hovered);
+    CHECK(needle.ComputedStyle.Rotation == doctest::Approx(0.0f));
+    CHECK(doc.IsAnimating());
+
+    // Halfway through the duration the angle is the linear midpoint.
+    doc.Update(0.5f);
+    CHECK(needle.ComputedStyle.Rotation == doctest::Approx(45.0f));
+
+    // A pure rotation tween is paint-only — it never dirties layout.
+    doc.Solve(vec2(100.0f, 100.0f));
+    CHECK_FALSE(doc.IsDirty());
+    doc.Update(0.25f);
+    CHECK_FALSE(doc.IsDirty());
+
+    // Reaching the duration lands exactly on the target and the tween completes.
+    doc.Update(0.25f);
+    CHECK(needle.ComputedStyle.Rotation == doctest::Approx(90.0f));
+    CHECK_FALSE(doc.IsAnimating());
+}
+
 TEST_CASE("gui style: a non-transitioned property snaps on a state change")
 {
     Document doc;
