@@ -1033,6 +1033,10 @@ if (VENG_BUILD_TESTS)
             # view-model, attaches it to an Offscreen viewport, and asserts the composited output
             # tracks a changed bound value — plus the editor's cook-on-demand MountMemory hot-swap.
             tests/gpu/ui_document_hud.cpp
+            # ui_document_repeat.cpp cooks a document whose classed child carries a count="4" with
+            # ${n} substitution, LoadSyncs + Instantiates it, and asserts Document::FindAllByClass
+            # resolves the unrolled pool in tree order with each element's substituted id + text.
+            tests/gpu/ui_document_repeat.cpp
             tests/gpu/mesh_loader.cpp
             tests/gpu/shader_loader.cpp
             tests/gpu/material_loader.cpp
@@ -1199,6 +1203,7 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle)
             tests/cooker/cook_source.cpp
             tests/cooker/ui_document_cook.cpp
             tests/cooker/stylesheet_cook.cpp
+            tests/cooker/ui_document_repeat.cpp
     )
     # prefab_save_roundtrip.cpp uses VengEditor::PrefabSerialize, so the suite links
     # libveng_editor in addition to libveng_cook (no cycle: the cooker is never linked

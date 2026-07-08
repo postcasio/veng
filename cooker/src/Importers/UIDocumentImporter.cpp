@@ -135,6 +135,143 @@ namespace Veng::Cook
             return parts;
         }
 
+        // The active markup-repetition context threaded through the element cook: whether the
+        // element sits inside a `count` subtree and, if so, its 0-based repeat index. `${}`
+        // substitution is enabled only while Active, and a `count` seen while Active is a nested
+        // repeat (a located error).
+        struct RepeatContext
+        {
+            bool Active = false;
+            u32 Index = 0;
+        };
+
+        // Evaluates one `${…}` body against the repeat index: `i` (0-based), `n` (1-based), each
+        // optionally with a `:0W` zero-pad spec (W a single digit 1–9). An unknown name or a
+        // malformed pad spec is a located error.
+        Result<string> EvalSubstitution(std::string_view body, u32 index, const string& located)
+        {
+            const usize colon = body.find(':');
+            const std::string_view name = body.substr(0, colon);
+
+            u32 value = 0;
+            if (name == "i")
+            {
+                value = index;
+            }
+            else if (name == "n")
+            {
+                value = index + 1;
+            }
+            else
+            {
+                return std::unexpected(fmt::format(
+                    "{}: '${{{}}}' names an unknown index (expected 'i' or 'n')", located, body));
+            }
+
+            if (colon == std::string_view::npos)
+            {
+                return fmt::format("{}", value);
+            }
+
+            const std::string_view spec = body.substr(colon + 1);
+            if (spec.size() != 2 || spec[0] != '0' || spec[1] < '1' || spec[1] > '9')
+            {
+                return std::unexpected(
+                    fmt::format("{}: '${{{}}}' has a malformed pad spec (expected ':0W', W a digit "
+                                "1–9, e.g. ':02')",
+                                located, body));
+            }
+            const int width = spec[1] - '0';
+            return fmt::format("{:0{}}", value, width);
+        }
+
+        // Applies `${}` index substitution to one attribute value or text run. Runs on every value
+        // after XML parse and before attribute interpretation. `$${` emits a literal `${`; a `$`
+        // not opening `${` passes through. A `${…}` form substitutes the repeat index while
+        // `ctx.Active`; encountered outside a repeat subtree it is a located error (a typo-catch),
+        // as is an unterminated `${`.
+        Result<string> Substitute(std::string_view value, const RepeatContext& ctx,
+                                  const string& located)
+        {
+            string out;
+            usize i = 0;
+            const usize n = value.size();
+            while (i < n)
+            {
+                if (value[i] != '$')
+                {
+                    out.push_back(value[i]);
+                    ++i;
+                    continue;
+                }
+                if (i + 2 < n && value[i + 1] == '$' && value[i + 2] == '{')
+                {
+                    out += "${";
+                    i += 3;
+                    continue;
+                }
+                if (i + 1 < n && value[i + 1] == '{')
+                {
+                    if (!ctx.Active)
+                    {
+                        return std::unexpected(fmt::format("{}: index substitution '${{' appears "
+                                                           "outside a 'count' subtree in '{}'",
+                                                           located, value));
+                    }
+                    const usize close = value.find('}', i + 2);
+                    if (close == std::string_view::npos)
+                    {
+                        return std::unexpected(
+                            fmt::format("{}: unterminated '${{' in '{}'", located, value));
+                    }
+                    const Result<string> replaced =
+                        EvalSubstitution(value.substr(i + 2, close - (i + 2)), ctx.Index, located);
+                    if (!replaced)
+                    {
+                        return std::unexpected(replaced.error());
+                    }
+                    out += *replaced;
+                    i = close + 1;
+                    continue;
+                }
+                out.push_back('$');
+                ++i;
+            }
+            return out;
+        }
+
+        // Parses a `count` attribute value: a plain integer in [1, 1024] (the ceiling is a
+        // copy-paste guard, not a budget). A non-integer value or one out of range is a located
+        // error.
+        Result<u32> ParseCount(std::string_view value, const string& located)
+        {
+            std::string_view trimmed = value;
+            while (!trimmed.empty() &&
+                   std::isspace(static_cast<unsigned char>(trimmed.front())) != 0)
+            {
+                trimmed.remove_prefix(1);
+            }
+            while (!trimmed.empty() &&
+                   std::isspace(static_cast<unsigned char>(trimmed.back())) != 0)
+            {
+                trimmed.remove_suffix(1);
+            }
+            long parsed = 0;
+            const auto [ptr, ec] =
+                std::from_chars(trimmed.data(), trimmed.data() + trimmed.size(), parsed);
+            if (ec != std::errc{} || ptr != trimmed.data() + trimmed.size())
+            {
+                return std::unexpected(
+                    fmt::format("{}: 'count' value '{}' is not an integer", located, value));
+            }
+            if (parsed < 1 || parsed > 1024)
+            {
+                return std::unexpected(
+                    fmt::format("{}: 'count' value {} is out of range [1, 1024]", located, parsed));
+            }
+            return static_cast<u32>(parsed);
+        }
+
         // Parses an Image `uv` attribute — four space-separated floats {minX, minY, sizeX, sizeY},
         // the UV sub-rect the element samples — into that order. A wrong count or a non-numeric
         // component is a located error. Uses from_chars: the cooker builds -fno-exceptions.
@@ -234,8 +371,11 @@ namespace Veng::Cook
 
         // Recursively cooks one XML element into the flat tables, returning its recursive subtree
         // node count (so a parent counts only its direct children). The element's own record is
-        // appended first (pre-order), then its children follow.
-        Result<u32> CookElement(const pugi::xml_node& node, Build& build, const string& file)
+        // appended first (pre-order), then its children follow. `subst` carries the active
+        // repetition context: while Active, every attribute value and text run has `${}` index
+        // substitution applied, and a child bearing `count` (a nested repeat) is a located error.
+        Result<u32> CookElement(const pugi::xml_node& node, Build& build, const string& file,
+                                const RepeatContext& subst)
         {
             const string tag = node.name();
             const optional<Gui::ElementKind> kind = ParseElementKind(tag);
@@ -258,7 +398,22 @@ namespace Veng::Cook
             for (const pugi::xml_attribute& attr : node.attributes())
             {
                 const string name = attr.name();
-                const string value = attr.value();
+
+                // `count` is consumed by the caller's repetition handling; it is never an element
+                // attribute and never emitted.
+                if (name == "count")
+                {
+                    continue;
+                }
+
+                // Index substitution runs on the raw value before any attribute interpretation, so
+                // a substituted id/class/style/binding is then processed exactly as if hand-typed.
+                const Result<string> substituted = Substitute(attr.value(), subst, located);
+                if (!substituted)
+                {
+                    return std::unexpected(substituted.error());
+                }
+                const string value = *substituted;
 
                 if (name == "id")
                 {
@@ -393,7 +548,13 @@ namespace Veng::Cook
                 {
                     --end;
                 }
-                element.Text = build.Strings.Add(text.substr(begin, end - begin));
+                const Result<string> substituted =
+                    Substitute(text.substr(begin, end - begin), subst, located);
+                if (!substituted)
+                {
+                    return std::unexpected(substituted.error());
+                }
+                element.Text = build.Strings.Add(*substituted);
             }
             else
             {
@@ -418,7 +579,13 @@ namespace Veng::Cook
                 }
                 if (end > begin)
                 {
-                    element.Text = build.Strings.Add(text.substr(begin, end - begin));
+                    const Result<string> substituted =
+                        Substitute(text.substr(begin, end - begin), subst, located);
+                    if (!substituted)
+                    {
+                        return std::unexpected(substituted.error());
+                    }
+                    element.Text = build.Strings.Add(*substituted);
                 }
             }
 
@@ -439,7 +606,40 @@ namespace Veng::Cook
                 {
                     continue;
                 }
-                const Result<u32> subtree = CookElement(child, build, file);
+
+                // A `count` child unrolls in place: the same subtree cook is run N times, each
+                // with its own repeat index. Absent, the child inherits this element's repeat
+                // context (so an element inside a repeated subtree keeps that subtree's index).
+                if (const pugi::xml_attribute countAttr = child.attribute("count"))
+                {
+                    const string childLocated =
+                        fmt::format("ui document importer: '{}': <{}>", file, child.name());
+                    if (subst.Active)
+                    {
+                        return std::unexpected(fmt::format(
+                            "{}: nested 'count' — an element with 'count' already sits inside a "
+                            "repeated subtree",
+                            childLocated));
+                    }
+                    const Result<u32> repeats = ParseCount(countAttr.value(), childLocated);
+                    if (!repeats)
+                    {
+                        return std::unexpected(repeats.error());
+                    }
+                    for (u32 index = 0; index < *repeats; ++index)
+                    {
+                        const Result<u32> subtree = CookElement(
+                            child, build, file, RepeatContext{.Active = true, .Index = index});
+                        if (!subtree)
+                        {
+                            return std::unexpected(subtree.error());
+                        }
+                        ++childCount;
+                    }
+                    continue;
+                }
+
+                const Result<u32> subtree = CookElement(child, build, file, subst);
                 if (!subtree)
                 {
                     return std::unexpected(subtree.error());
@@ -499,8 +699,16 @@ namespace Veng::Cook
             root.remove_attribute("stylesheets");
         }
 
+        // `count` on the root has no in-place sibling context to unroll into, and would make the
+        // whole document its own repeated subtree — a located error, not a silent no-op.
+        if (root.attribute("count"))
+        {
+            return std::unexpected(fmt::format(
+                "ui document importer: '{}': 'count' is not allowed on the root element", file));
+        }
+
         Build build;
-        const Result<u32> rootResult = CookElement(root, build, file);
+        const Result<u32> rootResult = CookElement(root, build, file, RepeatContext{});
         if (!rootResult)
         {
             return std::unexpected(rootResult.error());

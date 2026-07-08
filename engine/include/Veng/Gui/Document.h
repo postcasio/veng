@@ -97,6 +97,20 @@ namespace Veng::Gui
         /// @param id  The authored id to find.
         [[nodiscard]] const Element* FindById(string_view id) const;
 
+        /// @brief Returns every element carrying the class, in depth-first tree order.
+        ///
+        /// A depth-first pre-order walk from the root, matching any of Element::Classes exactly. An
+        /// empty name matches nothing. Like FindById this is an unindexed O(tree) walk — resolve a
+        /// pool once and cache the returned vector rather than calling it per frame.
+        /// @param name  The class to match (a markup `class="…"` tag).
+        /// @return Every matching element in tree order, or an empty vector on a miss.
+        [[nodiscard]] vector<Element*> FindAllByClass(string_view name);
+
+        /// @brief Returns every element carrying the class, in tree order (const).
+        /// @param name  The class to match.
+        /// @return Every matching element in tree order, or an empty vector on a miss.
+        [[nodiscard]] vector<const Element*> FindAllByClass(string_view name) const;
+
         /// @brief Adds a new child element of the given kind under a parent.
         ///
         /// The child is appended after the parent's existing children and mirrored into the layout

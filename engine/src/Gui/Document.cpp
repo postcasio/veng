@@ -787,6 +787,44 @@ namespace Veng::Gui
         return FindByIdRecursive(*m_Root, id);
     }
 
+    namespace
+    {
+        template <class ElementT, class OutT>
+        void FindAllByClassRecursive(ElementT& element, const string_view name, vector<OutT>& out)
+        {
+            if (std::ranges::find(element.Classes, name) != element.Classes.end())
+            {
+                out.push_back(&element);
+            }
+            for (auto* child : element.Children)
+            {
+                FindAllByClassRecursive(*child, name, out);
+            }
+        }
+    }
+
+    vector<Element*> Document::FindAllByClass(const string_view name)
+    {
+        vector<Element*> found;
+        if (name.empty())
+        {
+            return found;
+        }
+        FindAllByClassRecursive(*m_Root, name, found);
+        return found;
+    }
+
+    vector<const Element*> Document::FindAllByClass(const string_view name) const
+    {
+        vector<const Element*> found;
+        if (name.empty())
+        {
+            return found;
+        }
+        FindAllByClassRecursive(*m_Root, name, found);
+        return found;
+    }
+
     Element& Document::Root()
     {
         return *m_Root;
