@@ -257,6 +257,10 @@ namespace Veng::Gui
         AssetHandle<Font> TextFont;
 
         /// @brief Multiplier applied to the element's alpha, in 0..1.
+        ///
+        /// Composites over the subtree at draw: descendants multiply their ancestors'
+        /// opacities into every primitive they emit, so fading an element fades its
+        /// background, border, text, widget parts, and children as one.
         f32 Opacity = 1.0f;
 
         /// @brief Whether content outside the element's box is clipped to it.

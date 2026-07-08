@@ -343,3 +343,46 @@ TEST_CASE("gui image: Build emits a textured quad for a resident Image, nothing 
     CHECK(topLeft.Color.g == doctest::Approx(0.5f));
     CHECK(topLeft.Color.a == doctest::Approx(0.8f));
 }
+
+TEST_CASE("gui draw: style opacity composites down the subtree at build")
+{
+    Document doc;
+    Element& panel = doc.Add(doc.Root(), ElementKind::Panel);
+    Element& child = doc.Add(panel, ElementKind::Panel);
+    doc.SetStyle(panel,
+                 []
+                 {
+                     Style style;
+                     style.Background = vec4(1.0f, 1.0f, 1.0f, 1.0f);
+                     style.Width = Length::Points(100.0f);
+                     style.Height = Length::Points(100.0f);
+                     return style;
+                 }());
+    doc.SetStyle(child,
+                 []
+                 {
+                     Style style;
+                     style.Background = vec4(0.0f, 1.0f, 0.0f, 0.8f);
+                     style.Width = Length::Points(50.0f);
+                     style.Height = Length::Points(50.0f);
+                     return style;
+                 }());
+    doc.SetOpacity(panel, 0.5f);
+    doc.SetOpacity(child, 0.5f);
+    doc.Solve(vec2(200.0f, 200.0f));
+
+    DrawList list;
+    doc.Build(list);
+
+    // Two quads: the panel's background at its own opacity, the child's at the ancestor
+    // product folded into its authored alpha (0.5 * 0.5 * 0.8).
+    REQUIRE(list.GetVertices().size() == 8);
+    CHECK(list.GetVertices()[0].Color.a == doctest::Approx(0.5f));
+    CHECK(list.GetVertices()[4].Color.a == doctest::Approx(0.2f));
+
+    // A zero ancestor product emits nothing for the subtree.
+    doc.SetOpacity(panel, 0.0f);
+    DrawList empty;
+    doc.Build(empty);
+    CHECK(empty.GetVertices().empty());
+}

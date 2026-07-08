@@ -1964,7 +1964,7 @@ namespace Veng::Gui
         m_LastAvailable = available;
     }
 
-    void Document::BuildElement(const Element& element, DrawList& list) const
+    void Document::BuildElement(const Element& element, DrawList& list, const f32 inherited) const
     {
         if (!element.Visible)
         {
@@ -1973,6 +1973,15 @@ namespace Veng::Gui
 
         const Style& style = element.ComputedStyle;
         const Rect& rect = element.Layout;
+
+        // The style opacity composites over the subtree: every primitive this element and its
+        // descendants emit folds the inherited product into its alpha, so fading a panel fades
+        // its text, widgets, and children as one. A fully faded subtree emits nothing.
+        const f32 opacity = inherited * style.Opacity;
+        if (opacity <= 0.0f)
+        {
+            return;
+        }
 
         // A gradient background paints in place of the flat color; the border is drawn over either.
         if (style.BackgroundGradient.has_value() && style.BackgroundGradient->Ramp.IsLoaded())
@@ -1986,27 +1995,31 @@ namespace Veng::Gui
                                        .AngleOffset = gradient.AngleOffset,
                                        .Ramp = ramp.GetHandle(),
                                        .Sampler = ramp.GetSamplerHandle()},
-                          style.Radii);
+                          style.Radii, {}, vec4(1.0f, 1.0f, 1.0f, opacity));
         }
         else if (style.Background.a > 0.0f)
         {
-            list.Quad(rect, style.Background, style.Radii);
+            vec4 background = style.Background;
+            background.a *= opacity;
+            list.Quad(rect, background, style.Radii);
         }
         // An Image paints its resident texture as a rounded quad filling the element's box, over any
         // background and under the border. It composes with corner-radius through the shape SDF the
         // same way a Panel background does; the border below draws over it as a frame. The tint folds
-        // in the style opacity, so a faded Image fades its texture too.
+        // in the composited opacity, so a faded Image fades its texture too.
         if (element.Kind == ElementKind::Image && element.ImageTexture.IsValid() &&
             element.ImageSampler.IsValid())
         {
             vec4 tint = element.ImageTint;
-            tint.a *= style.Opacity;
+            tint.a *= opacity;
             list.Texture(rect, element.ImageTexture, element.ImageSampler, element.ImageUv, tint,
                          style.Radii);
         }
         if (style.BorderStyle.Width > 0.0f)
         {
-            list.Quad(rect, style.BorderStyle.Color, style.Radii, style.BorderStyle);
+            Border border = style.BorderStyle;
+            border.Color.a *= opacity;
+            list.Quad(rect, border.Color, style.Radii, border);
         }
 
         // A ScrollView always clips its content to its box (the overflow it scrolls through), whether
@@ -2019,7 +2032,7 @@ namespace Veng::Gui
 
         // A control paints its own parts (a Slider's track and thumb, a ProgressBar's fill) between
         // its background and its children.
-        BuildWidget(element, list);
+        BuildWidget(element, list, opacity);
 
         if (!element.Text.empty() && style.TextFont.IsLoaded() &&
             (element.Kind == ElementKind::Text || element.Kind == ElementKind::Button))
@@ -2033,12 +2046,14 @@ namespace Veng::Gui
                 const vec2 label = MeasureElementText(element, std::nullopt);
                 origin = rect.Min + (rect.Size - label) * 0.5f;
             }
-            list.Text(origin, *style.TextFont.Get(), element.Text, style.TextSize, style.TextColor);
+            vec4 textColor = style.TextColor;
+            textColor.a *= opacity;
+            list.Text(origin, *style.TextFont.Get(), element.Text, style.TextSize, textColor);
         }
 
         for (const Element* child : element.Children)
         {
-            BuildElement(*child, list);
+            BuildElement(*child, list, opacity);
         }
 
         if (clip)
@@ -2047,10 +2062,15 @@ namespace Veng::Gui
         }
     }
 
-    void Document::BuildWidget(const Element& element, DrawList& list) const
+    void Document::BuildWidget(const Element& element, DrawList& list, const f32 opacity) const
     {
         const Style& style = element.ComputedStyle;
         const Rect& rect = element.Layout;
+        const auto faded = [opacity](vec4 color)
+        {
+            color.a *= opacity;
+            return color;
+        };
 
         if (element.Kind == ElementKind::ProgressBar)
         {
@@ -2060,7 +2080,7 @@ namespace Veng::Gui
             if (fraction > 0.0f)
             {
                 const Rect fill{.Min = rect.Min, .Size = vec2(rect.Size.x * fraction, rect.Size.y)};
-                list.Quad(fill, style.TextColor, style.Radii);
+                list.Quad(fill, faded(style.TextColor), style.Radii);
             }
             return;
         }
@@ -2076,20 +2096,21 @@ namespace Veng::Gui
             const Rect track{.Min = rect.Min, .Size = vec2(rect.Size.x * fraction, rect.Size.y)};
             if (fraction > 0.0f)
             {
-                list.Quad(track, style.TextColor, style.Radii);
+                list.Quad(track, faded(style.TextColor), style.Radii);
             }
             const f32 thumb = rect.Size.y;
             const f32 thumbX = rect.Min.x + fraction * std::max(rect.Size.x - thumb, 0.0f);
-            list.Quad(Rect{.Min = vec2(thumbX, rect.Min.y), .Size = vec2(thumb, thumb)},
-                      style.BorderStyle.Color.a > 0.0f ? style.BorderStyle.Color : style.TextColor,
-                      style.Radii);
+            list.Quad(
+                Rect{.Min = vec2(thumbX, rect.Min.y), .Size = vec2(thumb, thumb)},
+                faded(style.BorderStyle.Color.a > 0.0f ? style.BorderStyle.Color : style.TextColor),
+                style.Radii);
             return;
         }
     }
 
     void Document::Build(DrawList& list) const
     {
-        BuildElement(*m_Root, list);
+        BuildElement(*m_Root, list, 1.0f);
     }
 
     namespace

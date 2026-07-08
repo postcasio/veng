@@ -135,7 +135,9 @@ namespace Veng::Gui
         ///
         /// Writes the element's base (and live) style directly, so a per-frame fade never
         /// re-runs the flexbox solve the way a whole-style SetStyle does. An active variant or
-        /// in-flight transition on the same property still resolves over the new base.
+        /// in-flight transition on the same property still resolves over the new base. The
+        /// opacity composites over the whole subtree at draw, so fading a panel fades its
+        /// text, widgets, and children with it.
         /// @param element  The element whose opacity to set.
         /// @param opacity  The opacity multiplier, in 0..1.
         void SetOpacity(Element& element, f32 opacity);
@@ -430,7 +432,11 @@ namespace Veng::Gui
         void ReadLayout(Element& element, vec2 origin);
 
         /// @brief Emits one element's primitives, then recurses into its children.
-        void BuildElement(const Element& element, DrawList& list) const;
+        ///
+        /// The inherited opacity is the product of every ancestor's style opacity; it folds
+        /// into each primitive's alpha and multiplies down the subtree, so an element's
+        /// opacity fades its whole subtree as one. A zero product skips the subtree entirely.
+        void BuildElement(const Element& element, DrawList& list, f32 inherited) const;
 
         /// @brief Recursive front-to-back hit-test honoring the ancestor clip chain.
         [[nodiscard]] Element* HitTestElement(Element& element, vec2 point, optional<Rect> clip);
@@ -473,7 +479,9 @@ namespace Veng::Gui
         bool DriveWidgetText(Element& element, u32 codepoint);
 
         /// @brief Emits a control's own painted parts (a Slider track/thumb, a ProgressBar fill).
-        void BuildWidget(const Element& element, DrawList& list) const;
+        ///
+        /// The opacity is the element's composited subtree opacity, folded into each part's alpha.
+        void BuildWidget(const Element& element, DrawList& list, f32 opacity) const;
 
         /// @brief Collects every focusable, visible element into m_FocusOrder in tree order.
         void GatherFocusables(Element& element, vector<Element*>& out) const;
