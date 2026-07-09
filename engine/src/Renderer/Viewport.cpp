@@ -409,10 +409,7 @@ namespace Veng::Renderer
         m_DrawList->Clear();
         for (const AttachedDocument& attached : m_Documents)
         {
-            Gui::Document& document = *attached.Document;
-            document.Update(delta);
-            document.Solve(available);
-            document.Build(*m_DrawList);
+            attached.Document->Drive(available, delta, *m_DrawList);
         }
 
         m_GuiPass->SetDrawList(*m_DrawList);

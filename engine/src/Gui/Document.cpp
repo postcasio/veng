@@ -2190,6 +2190,13 @@ namespace Veng::Gui
         BuildElement(*m_Root, list, 1.0f);
     }
 
+    void Document::Drive(vec2 available, f32 delta, DrawList& out)
+    {
+        Update(delta);
+        Solve(available);
+        Build(out);
+    }
+
     namespace
     {
         // Returns whether a point lies inside a rect (inclusive of the min edge, exclusive of max).

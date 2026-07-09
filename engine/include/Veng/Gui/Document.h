@@ -285,6 +285,20 @@ namespace Veng::Gui
         /// @pre Solve has run since the last structural or style change.
         void Build(DrawList& list) const;
 
+        /// @brief Drives the document's per-frame pipeline into a draw list in one call.
+        ///
+        /// Runs the three per-frame stages in order — Update(delta) to re-select style variants
+        /// and advance transitions and animations, Solve(available) to lay the tree out at the
+        /// target extent, then Build(out) to emit its draw primitives — so a host recording the
+        /// result into any sink (a viewport composite, a persistent render target) drives a document
+        /// through one shared pipeline rather than re-sequencing the stages at each call site. Any
+        /// data-binding refresh (UpdateBindings) is the caller's, ahead of this call.
+        /// @param available  The available layout region, in the document's layout space (the target
+        ///                   extent) — framebuffer pixels at UI scale 1, logical points otherwise.
+        /// @param delta      The frame time step, in seconds, forwarded to Update.
+        /// @param out        The draw list the built primitives are appended into.
+        void Drive(vec2 available, f32 delta, DrawList& out);
+
         /// @brief Returns whether the tree needs a Solve (structure or style changed since the last).
         [[nodiscard]] bool IsDirty() const { return m_Dirty; }
 

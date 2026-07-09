@@ -557,3 +557,47 @@ TEST_CASE("gui rotation: SetRotation is paint-only and never dirties layout")
     CHECK(panel.Layout.Size.x == doctest::Approx(60.0f));
     CHECK(panel.Layout.Size.y == doctest::Approx(60.0f));
 }
+
+TEST_CASE("gui drive: one call runs Update -> Solve -> Build at the target extent")
+{
+    Document doc;
+    Element& root = doc.Root();
+    doc.SetStyle(root,
+                 []
+                 {
+                     Style style;
+                     style.Width = Length::Percent(100.0f);
+                     style.Height = Length::Percent(100.0f);
+                     style.Background = vec4(0.2f, 0.3f, 0.4f, 1.0f);
+                     return style;
+                 }());
+
+    // An in-flight animation proves Drive advances the Update stage by its delta.
+    doc.SetAnimations(root,
+                      {StyleAnimation{.Keyframes = {KeyframeAt(0.0f, StyleProperty::Rotation,
+                                                               vec4(0.0f, 0.0f, 0.0f, 0.0f)),
+                                                    KeyframeAt(1.0f, StyleProperty::Rotation,
+                                                               vec4(360.0f, 0.0f, 0.0f, 0.0f))},
+                                      .Duration = 4.0f,
+                                      .Mode = AnimationLoopMode::Loop}});
+
+    DrawList list;
+    doc.Drive(vec2(120.0f, 80.0f), 1.0f, list);
+
+    // Update advanced the animation a quarter through the four-second sweep.
+    CHECK(root.ComputedStyle.Rotation == doctest::Approx(90.0f));
+    // Solve laid the percent-sized root out to fill the target extent.
+    CHECK(root.Layout.Size.x == doctest::Approx(120.0f));
+    CHECK(root.Layout.Size.y == doctest::Approx(80.0f));
+    // Build emitted the root's background quad into the supplied list.
+    CHECK_FALSE(list.IsEmpty());
+
+    // A second Drive advances the animation another step and appends geometry again into the
+    // (uncleared) list — the same result the three stages produce called individually. The extra
+    // quad merges into the existing run (matching key), so the vertex count grows while the run
+    // count need not.
+    const usize firstVertices = list.GetVertices().size();
+    doc.Drive(vec2(120.0f, 80.0f), 1.0f, list);
+    CHECK(root.ComputedStyle.Rotation == doctest::Approx(180.0f));
+    CHECK(list.GetVertices().size() > firstVertices);
+}
