@@ -1048,10 +1048,14 @@ if (VENG_BUILD_TESTS)
             # ${n} substitution, LoadSyncs + Instantiates it, and asserts Document::FindAllByClass
             # resolves the unrolled pool in tree order with each element's substituted id + text.
             tests/gpu/ui_document_repeat.cpp
-            # document_host.cpp cooks the UI fixture pack and drives DocumentHost's lazy load:
-            # SetOnInstantiate fires once when Attach instantiates the document, and immediately
-            # when set on an already-live document.
+            # document_host.cpp cooks the UI fixture pack and drives the split document lifecycle:
+            # DocumentHost's lazy instantiate / SetOnInstantiate / Recreate / SetContext-bind, and
+            # DocumentLayer's attach -> present -> detach, re-attach on recreation, interactive flag.
             tests/gpu/document_host.cpp
+            # document_texture.cpp drives an imperative document through DocumentTexture into its
+            # owned HDR target: render-to-target, dirty-gate skip with a stable handle, and a
+            # resolution-change re-allocation + re-render.
+            tests/gpu/document_texture.cpp
             tests/gpu/mesh_loader.cpp
             tests/gpu/shader_loader.cpp
             tests/gpu/material_loader.cpp

@@ -5,13 +5,17 @@
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Gui/UIDocument.h>
 #include <Veng/Log.h>
-#include <Veng/Renderer/Viewport.h>
 
 namespace Veng::Gui
 {
     DocumentHost::DocumentHost(AssetManager& assets, const TypeRegistry& types,
                                const AssetId documentId)
         : m_Assets(assets), m_Types(types), m_DocumentId(documentId)
+    {
+    }
+
+    DocumentHost::DocumentHost(AssetManager& assets, const TypeRegistry& types)
+        : m_Assets(assets), m_Types(types)
     {
     }
 
@@ -24,19 +28,39 @@ namespace Veng::Gui
         }
     }
 
-    void DocumentHost::SetInteractive(const bool interactive)
-    {
-        m_Interactive = interactive;
-        if (m_Document != nullptr)
-        {
-            m_Document->SetInteractive(interactive);
-        }
-    }
-
     void DocumentHost::SetOnInstantiate(function<void(Document&)> callback)
     {
         m_OnInstantiate = std::move(callback);
         if (m_Document != nullptr && m_OnInstantiate)
+        {
+            m_OnInstantiate(*m_Document);
+        }
+    }
+
+    void DocumentHost::SetDocument(Unique<Document> document)
+    {
+        if (document == nullptr)
+        {
+            m_Document.reset();
+            return;
+        }
+        AdoptDocument(std::move(document));
+    }
+
+    void DocumentHost::Recreate()
+    {
+        m_Document.reset();
+        m_LoadAttempted = false;
+    }
+
+    void DocumentHost::AdoptDocument(Unique<Document> document)
+    {
+        m_Document = std::move(document);
+        if (m_Context != nullptr)
+        {
+            m_Document->BindContext(m_Context, &m_Types);
+        }
+        if (m_OnInstantiate)
         {
             m_OnInstantiate(*m_Document);
         }
@@ -48,7 +72,8 @@ namespace Veng::Gui
         {
             return true;
         }
-        if (m_LoadAttempted)
+        // An injection-only host has no recipe id to load — it stays empty until SetDocument feeds it.
+        if (!m_DocumentId.IsValid() || m_LoadAttempted)
         {
             return false;
         }
@@ -64,36 +89,17 @@ namespace Veng::Gui
         }
         m_Recipe = *recipe;
 
-        m_Document = Document::Instantiate(*m_Recipe.Get(), m_Assets);
-        if (m_Context != nullptr)
-        {
-            m_Document->BindContext(m_Context, &m_Types);
-        }
-        if (m_OnInstantiate)
-        {
-            m_OnInstantiate(*m_Document);
-        }
+        AdoptDocument(Document::Instantiate(*m_Recipe.Get(), m_Assets));
         return true;
     }
 
-    Document* DocumentHost::Attach(Renderer::Viewport& viewport, const i32 layer)
+    Document* DocumentHost::Drive()
     {
         if (!EnsureDocument())
         {
             return nullptr;
         }
-
-        if (m_Document->GetHostViewport() != &viewport)
-        {
-            // A destroyed viewport already cleared the back-reference; an attach elsewhere must
-            // release the old host first (a document attaches to at most one viewport).
-            if (m_Document->GetHostViewport() != nullptr)
-            {
-                m_Document->GetHostViewport()->DetachDocument(*m_Document);
-            }
-            viewport.AttachDocument(*m_Document, layer);
-            m_Document->SetInteractive(m_Interactive);
-        }
+        m_Document->UpdateBindings();
         return m_Document.get();
     }
 }

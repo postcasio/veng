@@ -4,34 +4,21 @@
 #include <Veng/Asset/Material.h>
 #include <Veng/Asset/MaterialInstance.h>
 #include <Veng/Gui/Document.h>
-#include <Veng/Gui/DrawList.h>
-#include <Veng/Gui/RenderTarget.h>
+#include <Veng/Gui/DocumentHost.h>
+#include <Veng/Gui/DocumentTexture.h>
 #include <Veng/Gui/UIDocument.h>
-#include <Veng/Renderer/CommandBuffer.h>
-#include <Veng/Renderer/Context.h>
-
-#include "../Renderer/Passes/GuiScenePass.h"
 
 namespace Veng
 {
-    /// @brief The GPU state and live document a GuiSurface materializes on its first Drive.
+    /// @brief The document core and its render-to-texture presenter a GuiSurface materializes on Drive.
     struct GuiSurfaceRuntime
     {
-        /// @brief The live document driven each frame; instantiated from a recipe or injected.
-        Unique<Gui::Document> Instance;
-        /// @brief The persistent HDR target the document records into and the material samples.
-        Unique<Gui::RenderTarget> Target;
-        /// @brief The owned pass recording the document into the target; per-surface so its per-frame
-        ///        geometry ring is never shared with another surface's record in the same frame.
-        Unique<Renderer::GuiScenePass> Pass;
-        /// @brief The reusable draw-list buffer the document builds into each render.
-        Gui::DrawList Draws;
-        /// @brief The resolution the target was last sized to; a change re-sizes and re-renders.
-        uvec2 TargetExtent{0, 0};
-        /// @brief Whether any document render has happened yet (the first is unconditional).
-        bool EverRendered = false;
-        /// @brief Whether the most recent Drive re-recorded the document.
-        bool RenderedLastDrive = false;
+        /// @brief The live/bound document core; constructed on the first Drive (needs the asset manager).
+        Unique<Gui::DocumentHost> Host;
+        /// @brief The render-to-texture presenter: the owned HDR target and the pass that fills it.
+        Gui::DocumentTexture Texture;
+        /// @brief A document injected through SetDocument before the host exists, adopted on first Drive.
+        Unique<Gui::Document> Pending;
         /// @brief Whether the emissive material's white default has been applied once.
         bool EmissiveSeeded = false;
     };
@@ -102,22 +89,35 @@ namespace Veng
         {
             Runtime = CreateUnique<GuiSurfaceRuntime>();
         }
-        Runtime->Instance = std::move(document);
+        // The host is built lazily on the first Drive (it needs the asset manager), so before then an
+        // injected document waits in Pending; after, it is adopted straight into the host.
+        if (Runtime->Host)
+        {
+            Runtime->Host->SetDocument(std::move(document));
+        }
+        else
+        {
+            Runtime->Pending = std::move(document);
+        }
     }
 
     Gui::Document* GuiSurface::GetDocument() const
     {
-        return Runtime ? Runtime->Instance.get() : nullptr;
+        if (!Runtime)
+        {
+            return nullptr;
+        }
+        return Runtime->Host ? Runtime->Host->Get() : Runtime->Pending.get();
     }
 
     Gui::RenderTarget* GuiSurface::GetTarget() const
     {
-        return Runtime ? Runtime->Target.get() : nullptr;
+        return Runtime ? Runtime->Texture.GetTarget() : nullptr;
     }
 
     bool GuiSurface::WasRenderedLastDrive() const
     {
-        return Runtime && Runtime->RenderedLastDrive;
+        return Runtime && Runtime->Texture.WasRenderedLastDrive();
     }
 
     bool GuiSurface::Drive(Renderer::Context& context, AssetManager& assets,
@@ -133,15 +133,24 @@ namespace Veng
             Runtime = CreateUnique<GuiSurfaceRuntime>();
         }
         GuiSurfaceRuntime& runtime = *Runtime;
-        runtime.RenderedLastDrive = false;
+
+        // Build the document core on first use, adopting any document injected before the host existed.
+        if (!runtime.Host)
+        {
+            runtime.Host = CreateUnique<Gui::DocumentHost>(assets, assets.GetTypeRegistry());
+            if (runtime.Pending)
+            {
+                runtime.Host->SetDocument(std::move(runtime.Pending));
+            }
+        }
 
         // Instantiate a cooked recipe on first use; an imperative document is injected through
         // SetDocument. With neither available yet (a recipe still loading), there is nothing to draw.
-        if (!runtime.Instance)
+        if (runtime.Host->Get() == nullptr)
         {
             if (Document.IsLoaded())
             {
-                runtime.Instance = Gui::Document::Instantiate(*Document.Get(), assets);
+                runtime.Host->SetDocument(Gui::Document::Instantiate(*Document.Get(), assets));
             }
             else
             {
@@ -149,63 +158,23 @@ namespace Veng
             }
         }
 
-        // Allocate or resize the HDR target to the requested resolution. The pass records at the
-        // target's extent, so it needs no resize of its own.
-        bool resolutionChanged = false;
-        if (!runtime.Target)
+        // Drive the core (refresh bindings, expose the live tree), then render it into the HDR target
+        // dirty-gated. UpdateBindings precedes the texture's dirty check, so a moved binding re-renders.
+        Gui::Document* const document = runtime.Host->Drive();
+        if (document == nullptr)
         {
-            runtime.Target = Gui::RenderTarget::Create({
-                .Context = context,
-                .Extent = Resolution,
-                .Name = "GuiSurface Target",
-            });
-            runtime.TargetExtent = Resolution;
-            resolutionChanged = true;
+            return false;
         }
-        else if (runtime.TargetExtent != Resolution)
-        {
-            runtime.Target->Resize(Resolution);
-            runtime.TargetExtent = Resolution;
-            resolutionChanged = true;
-        }
-        if (!runtime.Pass)
-        {
-            runtime.Pass = Renderer::GuiScenePass::Create({
-                .Context = context,
-                .Assets = assets,
-                .Extent = Resolution,
-                .OutputFormat = Gui::RenderTarget::ColorFormat,
-            });
-        }
-
-        Gui::Document& document = *runtime.Instance;
-
-        // The data-binding refresh precedes the dirty check: a moved binding dirties the layout, so
-        // it is reflected in the gate below (no per-frame game code for a data-bound panel).
-        document.UpdateBindings();
-
-        // Dirty-gate: re-render only when the layout changed, a transition is animating, or the
-        // resolution moved. A static panel keeps its persistent target content and re-records nothing.
-        const bool needsRender = !runtime.EverRendered || resolutionChanged || document.IsDirty() ||
-                                 document.IsAnimating();
-        if (needsRender)
-        {
-            const vec2 available(static_cast<f32>(Resolution.x), static_cast<f32>(Resolution.y));
-            runtime.Draws.Clear();
-            document.Drive(available, delta, runtime.Draws);
-            runtime.Pass->SetDrawList(runtime.Draws);
-            runtime.Pass->RenderToTarget(cmd, *runtime.Target);
-            runtime.EverRendered = true;
-            runtime.RenderedLastDrive = true;
-        }
+        const bool rendered =
+            runtime.Texture.RenderToTarget(context, assets, cmd, *document, Resolution, delta);
 
         // Bind the target handle onto the surface material every frame: SetTextureHandle writes the
         // current frame-in-flight region, so the handle must land regardless of the dirty-gate.
         if (material != nullptr)
         {
-            BindMaterial(runtime, Domain, *material, runtime.Target->GetOutputHandle(), sampler);
+            BindMaterial(runtime, Domain, *material, runtime.Texture.GetOutputHandle(), sampler);
         }
 
-        return runtime.RenderedLastDrive;
+        return rendered;
     }
 }

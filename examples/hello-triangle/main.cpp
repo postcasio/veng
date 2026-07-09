@@ -21,6 +21,7 @@
 
 #include <Veng/Gui/Document.h>
 #include <Veng/Gui/DocumentHost.h>
+#include <Veng/Gui/DocumentLayer.h>
 #include <Veng/Gui/Element.h>
 #include <Veng/Gui/StyleSheet.h>
 
@@ -341,9 +342,10 @@ protected:
     }
 
     // Builds the status HUD: reads the accent color the stylesheet defines so the tick highlight
-    // and the spinner arc share one source, then constructs a DocumentHost and hands it the
-    // resolve-once hook that caches the `count`-repeated tick pool by class. The smoke path skips
-    // all of this — the golden capture is the 3D scene only.
+    // and the spinner arc share one source, then constructs a DocumentHost, hands it the
+    // resolve-once hook that caches the `count`-repeated tick pool by class, and wraps it in a
+    // DocumentLayer presenting it on the primary viewport's screen-space layer stack. The smoke path
+    // skips all of this — the golden capture is the 3D scene only.
     void SetupHud()
     {
         AssetManager& assets = GetAssetManager();
@@ -362,6 +364,7 @@ protected:
         m_HudHost = std::make_unique<Gui::DocumentHost>(assets, GetTypeRegistry(), HudDocumentId);
         m_HudHost->SetOnInstantiate([this](Gui::Document& document)
                                     { m_HudTicks = document.FindAllByClass("tick"); });
+        m_HudLayer = std::make_unique<Gui::DocumentLayer>(*m_HudHost);
     }
 
     void OnUpdate(const f32 delta) override
@@ -428,12 +431,12 @@ protected:
     // rotation runs from its stylesheet keyframe, so it needs no per-frame drive here.
     void UpdateHud(const f32 delta)
     {
-        if (!m_HudHost)
+        if (!m_HudLayer)
         {
             return;
         }
 
-        Gui::Document* document = m_HudHost->Attach(*GetPrimaryViewport());
+        Gui::Document* document = m_HudLayer->Present(*GetPrimaryViewport());
         if (document == nullptr || m_HudTicks.empty())
         {
             return;
@@ -673,10 +676,12 @@ private:
     // Pauses the managed world's simulation so the broadphase reads `static`; never set in smoke.
     bool m_PauseSpin = false;
 
-    // The windowed status HUD. The host owns the live document (lazy load, instantiate, attach);
-    // m_HudTicks caches the `count`-repeated tick pool the SetOnInstantiate hook resolves by class,
-    // refreshed by construction on any re-instantiate. Never constructed on the smoke path.
+    // The windowed status HUD. The host owns the live document (lazy load, instantiate, bind) and
+    // the layer presents it on the primary viewport's screen-space stack; m_HudTicks caches the
+    // `count`-repeated tick pool the SetOnInstantiate hook resolves by class, refreshed by
+    // construction on any re-instantiate. Neither is constructed on the smoke path.
     Unique<Gui::DocumentHost> m_HudHost;
+    Unique<Gui::DocumentLayer> m_HudLayer;
     vector<Gui::Element*> m_HudTicks;
 
     // The highlight-sweep phase, in seconds, and the two tick colors read off the stylesheet's
