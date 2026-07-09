@@ -7,10 +7,12 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
 #include <span>
 #include "support/TempPath.h"
 
 #include <doctest/doctest.h>
+#include <glm/gtc/packing.hpp>
 
 #include <Veng/Asset/Archive.h>
 #include <Veng/Asset/CookedBlobs.h>
@@ -21,6 +23,7 @@
 #include <Veng/Gui/StyleSheet.h>
 
 #include "Asset/Loaders/StyleSheetLoader.h"
+#include "Importers/StyleParse.h"
 
 using namespace Veng;
 using namespace Veng::Cook;
@@ -229,4 +232,131 @@ TEST_CASE("Cooker: an @use naming a missing file is a located error")
     const Result<vector<u8>> bytes = cooker.CookSource(source, AssetId{0x1}, AssetType::StyleSheet);
     REQUIRE_FALSE(bytes.has_value());
     CHECK(bytes.error().find("cannot be opened") != string::npos);
+}
+
+TEST_CASE("Cooker: rgb()/rgba() author unclamped linear colors, distinct from hex")
+{
+    const string located = "loc";
+
+    // rgb() takes three linear components; alpha defaults to 1; a component may exceed 1 (HDR).
+    const Result<CookedStyleProperty> cyan =
+        ParseStyleDeclaration(Gui::StyleProperty::TextColor, "rgb(0, 4, 4)", located);
+    REQUIRE(cyan.has_value());
+    CHECK(cyan->Values[0] == doctest::Approx(0.0f));
+    CHECK(cyan->Values[1] == doctest::Approx(4.0f));
+    CHECK(cyan->Values[2] == doctest::Approx(4.0f));
+    CHECK(cyan->Values[3] == doctest::Approx(1.0f));
+
+    // rgba() takes an explicit alpha; surrounding whitespace is tolerated.
+    const Result<CookedStyleProperty> bright =
+        ParseStyleDeclaration(Gui::StyleProperty::Background, "rgba( 8 , 8 , 8 , 0.5 )", located);
+    REQUIRE(bright.has_value());
+    CHECK(bright->Values[0] == doctest::Approx(8.0f));
+    CHECK(bright->Values[1] == doctest::Approx(8.0f));
+    CHECK(bright->Values[2] == doctest::Approx(8.0f));
+    CHECK(bright->Values[3] == doctest::Approx(0.5f));
+
+    // A linear rgb() grey is taken directly, distinct from the same-looking sRGB hex (~0.216 linear).
+    const Result<CookedStyleProperty> linearGrey =
+        ParseStyleDeclaration(Gui::StyleProperty::TextColor, "rgb(0.5, 0.5, 0.5)", located);
+    const Result<CookedStyleProperty> hexGrey =
+        ParseStyleDeclaration(Gui::StyleProperty::TextColor, "#808080", located);
+    REQUIRE(linearGrey.has_value());
+    REQUIRE(hexGrey.has_value());
+    CHECK(linearGrey->Values[0] == doctest::Approx(0.5f));
+    CHECK(hexGrey->Values[0] == doctest::Approx(0.2158605f).epsilon(0.001));
+    CHECK(linearGrey->Values[0] != doctest::Approx(hexGrey->Values[0]));
+
+    // The standalone color entry (gradient-stop path) accepts the same syntax.
+    const Result<vec4> stop = ParseStyleColor("rgb(2, 0, 0)", located);
+    REQUIRE(stop.has_value());
+    CHECK(stop->r == doctest::Approx(2.0f));
+    CHECK(stop->a == doctest::Approx(1.0f));
+}
+
+TEST_CASE("Cooker: malformed rgb()/rgba() colors are located errors")
+{
+    const string located = "loc";
+
+    // Wrong arity — rgb() needs exactly three components.
+    const Result<CookedStyleProperty> few =
+        ParseStyleDeclaration(Gui::StyleProperty::TextColor, "rgb(1, 2)", located);
+    REQUIRE_FALSE(few.has_value());
+    CHECK(few.error().find("loc") != string::npos);
+
+    // Too many components for rgba().
+    const Result<CookedStyleProperty> many =
+        ParseStyleDeclaration(Gui::StyleProperty::Background, "rgba(1, 2, 3, 4, 5)", located);
+    REQUIRE_FALSE(many.has_value());
+    CHECK(many.error().find("loc") != string::npos);
+
+    // A non-numeric component.
+    const Result<CookedStyleProperty> notNumber =
+        ParseStyleDeclaration(Gui::StyleProperty::TextColor, "rgb(1, x, 3)", located);
+    REQUIRE_FALSE(notNumber.has_value());
+    CHECK(notNumber.error().find("loc") != string::npos);
+
+    // A negative component is rejected.
+    const Result<CookedStyleProperty> negative =
+        ParseStyleDeclaration(Gui::StyleProperty::TextColor, "rgb(1, -2, 3)", located);
+    REQUIRE_FALSE(negative.has_value());
+    CHECK(negative.error().find(">= 0") != string::npos);
+}
+
+TEST_CASE("Cooker: an rgb() gradient bakes an HDR ramp preserving >1 stops")
+{
+    // A gradient whose stops are authored with rgb() > 1 bakes into the RGBA16Sfloat ramp; the
+    // half-float texels preserve the emissive magnitude a clamped RGBA8 ramp could not hold.
+    const path source = Veng::TestSupport::TempDir() / "veng_hdr_gradient.vuss";
+    {
+        std::ofstream out(source);
+        out << ".glow {\n"
+               "  background-gradient: linear, rgb(0, 4, 4) 0%, rgb(8, 8, 8) 100%;\n"
+               "}\n";
+    }
+
+    Cooker cooker;
+    RegisterBuiltinImporters(cooker);
+    const AssetId sheetId{0x1};
+    const Result<vector<u8>> bytes = cooker.CookSource(source, sheetId, AssetType::StyleSheet);
+    REQUIRE(bytes.has_value());
+
+    // CookSource yields an in-memory archive; unwrap the sheet entry's cooked blob to decode.
+    const Result<ArchiveReader> reader = ArchiveReader::FromBytes(*bytes);
+    REQUIRE(reader.has_value());
+    const optional<ArchiveEntry> sheetEntry = reader->Find(sheetId);
+    REQUIRE(sheetEntry.has_value());
+
+    CookedStyleSheetHeader sheetHeader{};
+    std::memcpy(&sheetHeader, sheetEntry->Blob.data(), sizeof(sheetHeader));
+    CHECK(sheetHeader.Version == CookedStyleSheetVersion);
+
+    const AssetResult<Detail::DecodedStyleSheet> decoded =
+        Detail::DecodeStyleSheet(sheetId, sheetEntry->Blob);
+    REQUIRE(decoded.has_value());
+    REQUIRE(decoded->Gradients.size() == 1);
+
+    const Gui::StyleGradient& gradient = decoded->Gradients.front();
+    REQUIRE(gradient.Width >= 2);
+    REQUIRE(gradient.Ramp.size() == static_cast<usize>(gradient.Width) * 4 * sizeof(u16));
+
+    const auto texel = [&gradient](u32 index) -> vec4
+    {
+        u16 halves[4] = {};
+        std::memcpy(halves, gradient.Ramp.data() + static_cast<usize>(index) * 4 * sizeof(u16),
+                    sizeof(halves));
+        return vec4(glm::unpackHalf1x16(halves[0]), glm::unpackHalf1x16(halves[1]),
+                    glm::unpackHalf1x16(halves[2]), glm::unpackHalf1x16(halves[3]));
+    };
+
+    // The first texel is the 0% stop rgb(0, 4, 4); the last is the 100% stop rgb(8, 8, 8). Both
+    // exceed 1.0, which the widened ramp preserves (half-float precision, so a small tolerance).
+    const vec4 first = texel(0);
+    const vec4 last = texel(gradient.Width - 1);
+    CHECK(first.g == doctest::Approx(4.0f).epsilon(0.01));
+    CHECK(first.b == doctest::Approx(4.0f).epsilon(0.01));
+    CHECK(last.r == doctest::Approx(8.0f).epsilon(0.01));
+    CHECK(last.g == doctest::Approx(8.0f).epsilon(0.01));
+
+    std::filesystem::remove(source);
 }

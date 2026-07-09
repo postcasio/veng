@@ -740,8 +740,9 @@ namespace Veng
     /// the loader rejects a blob whose Version != this. v2 added the @keyframes animation tables; v3
     /// added the gradient table and its baked ramp region; v4 widened a gradient's geometry to
     /// explicit endpoints (P0/P1) and an elliptical radial radius; v5 added the queryable variable
-    /// table.
-    inline constexpr u32 CookedStyleSheetVersion = 5u;
+    /// table; v6 widened the gradient ramp from RGBA8 to RGBA16Sfloat half-float texels so a stop can
+    /// hold an HDR (> 1) color.
+    inline constexpr u32 CookedStyleSheetVersion = 6u;
 
     /// @brief Maximum byte length (including nul terminator) for a selector's class/id/type name.
     ///
@@ -766,7 +767,7 @@ namespace Veng
     ///   CookedStyleKeyframe[KeyframeCount]     — every clip's keyframes, contiguous per clip
     ///   CookedStyleGradient[GradientCount]     — one entry per `background-gradient`, in source order
     ///   CookedStyleVariable[VariableCount]     — the sheet's own queryable variables, in source order
-    ///   u8[RampByteCount]                      — every gradient's baked N×1 RGBA8 ramp, contiguous
+    ///   u8[RampByteCount]                      — every gradient's baked N×1 RGBA16Sfloat ramp, contiguous
     ///
     /// A rule's declarations are the PropertyCount-slice [FirstProperty, FirstProperty + PropertyCount)
     /// of the property table; a keyframe's declarations slice the same table. Rules are stored in
@@ -828,8 +829,8 @@ namespace Veng
     /// Unit carries a Length's LengthKind ordinal or an enum property's enumerator ordinal;
     /// Values holds the numeric payload (a Length's value in [0], a vec4/CornerRadii/Insets in
     /// [0..3], a single f32 in [0]); Handle carries a font property's AssetId (else 0). Colors are
-    /// resolved to linear straight-alpha floats at cook time (authored sRGB `#rrggbbaa`), matching
-    /// the draw-list contract.
+    /// resolved to linear straight-alpha floats at cook time (authored as sRGB `#rrggbbaa` decoded to
+    /// linear, or as unclamped-linear `rgb()`/`rgba()`), matching the draw-list contract.
     struct CookedStyleProperty
     {
         /// @brief Underlying Gui::StyleProperty integer naming the Style field this declaration sets.
@@ -865,8 +866,9 @@ namespace Veng
     /// @brief One cooked gradient fill: its shape, packed box-space geometry, and its baked ramp.
     ///
     /// A `background-gradient` declaration references one of these by its index in the gradient
-    /// table. The multi-stop color is baked at cook time into an N×1 RGBA8 ramp (linear
-    /// straight-alpha) stored in the ramp region at [RampOffset, RampOffset + RampTexels * 4).
+    /// table. The multi-stop color is baked at cook time into an N×1 RGBA16Sfloat ramp (linear
+    /// straight-alpha half-floats, HDR-capable) stored in the ramp region at
+    /// [RampOffset, RampOffset + RampTexels * 8).
     /// Kind is the Gui::GradientKind ordinal; the geometry is in the element's normalized box space
     /// and interpreted per Kind (Linear: P0 start, P1 end; Radial: P0 center, P1 (x, y) radii;
     /// Conic: P0 center, AngleOffset start turn).
@@ -882,7 +884,7 @@ namespace Veng
         f32 AngleOffset = 0.0f;
         /// @brief Byte offset of this gradient's ramp in the ramp region.
         u32 RampOffset = 0;
-        /// @brief Number of RGBA8 texels in the ramp (its byte length is RampTexels * 4).
+        /// @brief Number of RGBA16Sfloat texels in the ramp (its byte length is RampTexels * 8).
         u32 RampTexels = 0;
     };
 
