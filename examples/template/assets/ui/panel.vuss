@@ -1,0 +1,27 @@
+/* A glowing diegetic panel stylesheet. Its colors are authored with rgb()/rgba(), the LINEAR
+   float color syntax: a component may exceed 1.0, so the readout is a genuine HDR emitter. Placed
+   on a GuiSurface in the world, the panel's bright text blooms through the scene's own bloom with
+   no dedicated GUI bloom pass. (rgb() is linear, unlike sRGB hex — rgb(0.4, 6, 7) is not a hue any
+   #rrggbb can name.) A saturated hot value reads white-hot at its core through the scene tonemapper
+   with a colored bloom halo, the physically-expected look of a bright emitter. */
+
+.panel {
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    background: rgba(0.01, 0.03, 0.05, 0.82);
+    corner-radius: 10px;
+    padding: 24px;
+    width: 512px;
+    height: 288px;
+}
+
+.label {
+    font-size: 34px;
+    color: rgb(0, 3, 4);
+}
+
+.value {
+    font-size: 96px;
+    color: rgb(0.4, 6, 7);
+}

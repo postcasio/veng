@@ -16,6 +16,7 @@
 #include <Veng/Asset/Material.h>
 #include <Veng/Asset/Texture.h>
 #include <Veng/Cook/JsonFile.h>
+#include <Veng/Gui/UIDocument.h>
 #include <Veng/Reflection/JsonSerialize.h>
 #include <Veng/Reflection/Serialize.h>
 #include <Veng/Reflection/TypeId.h>
@@ -53,6 +54,10 @@ namespace Veng::Cook
             if (fieldType == TypeIdOf<AssetHandle<EnvironmentMap>>())
             {
                 return AssetType::Environment;
+            }
+            if (fieldType == TypeIdOf<AssetHandle<Gui::UIDocument>>())
+            {
+                return AssetType::UIDocument;
             }
             return std::nullopt;
         }

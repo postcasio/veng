@@ -985,9 +985,31 @@ cook-on-demand hot-reload serves UI with no new machinery. The parsing side is i
   fixes support them: `SetText` early-outs on unchanged text, `SetImageUv` is a paint-only atlas-flipbook
   setter, and `SetRotation` a paint-only per-frame angle.
 
-- **Scope: screen-space overlay.** The delivered surface is a screen-space document composited
-  per-viewport over the scene. World-space UI (a document mapped onto an in-world quad — the diegetic
-  panel) is a natural follow-on over the same document + render primitives and is **not** built here.
+- **Two placements: the screen-space overlay and the world-space surface.** A document composited
+  per-viewport over the scene is a **screen-space overlay** (above): it composites **after** tonemap,
+  stays **LDR**, and therefore does **not** glow — a bright overlay color clamps at white. A document
+  mapped onto a world mesh is a **`GuiSurface`** (`Veng/Gui/Surface.h`) — a reflected scene component
+  owning a live `Gui::Document`, a **persistent HDR (`RGBA16Sfloat`) render target** the document
+  records into each frame (`Gui::RenderTarget`, the `Offscreen`-viewport `GetOutputHandle` contract),
+  and a **material domain** (`GuiSurfaceDomain`) that turns that target into scene light. Both domains
+  composite into the lit HDR scene color **before** bloom + tonemap, so a document color above 1.0
+  blooms through the scene's **own** bloom with **no dedicated GUI bloom pass**:
+  - **`Translucent` (default):** the panel material returns the document texel as its radiance,
+    transparent regions show the scene behind, and the surface writes no depth (a hologram / floating
+    readout / see-through display).
+  - **`OpaqueEmissive`:** the document handle drives an opaque lit surface's emissive term, so the
+    panel occludes what is behind it and can carry a lit bezel (a solid monitor / sign).
+
+  Glow is therefore a property of GUI **in the world**, exactly as a real display emits its own
+  pixels; a screen-space overlay is honest, un-glowing UI drawn after the scene's tone mapping. The
+  HDR color a `GuiSurface` needs is authored with the cooker's **`rgb()` / `rgba()` linear-float**
+  syntax (a component may exceed 1.0, distinct from sRGB hex) and the HDR gradient ramp. The engine
+  drives every `GuiSurface` in a viewport's bound scene into its target ahead of the scene render, so
+  a panel authored as prefab data needs no per-frame game code; its document data-binds like any other
+  (`{obj.field}`). Because a bright emissive core desaturates through the scene tonemapper, a saturated
+  hot value (e.g. `rgb(0, 8, 8)`) reads white-hot at its center with a colored bloom halo — the
+  physically-expected hot-emitter look. Authoring a glowing panel end to end is
+  [docs/guides/diegetic-ui.md](../docs/guides/diegetic-ui.md).
 
 The editor's `UIDocumentEditorPanel` authors a `*.vui.xml` through the cook-on-demand loop (a WYSIWYG
 canvas over an `Offscreen` viewport hosting the live document, an element-tree outline, and a

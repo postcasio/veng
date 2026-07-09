@@ -1,0 +1,21 @@
+{
+  "defaultInstance": "0xACABA69BE180E281",
+  "domain": "Translucent",
+  "cull": "None",
+  "shaders": {
+    "vertex": "0x69BE03796E97148D",
+    "fragment": "0xD464FF0203CF7570"
+  },
+  "fields": [
+    {
+      "name": "Texture",
+      "type": "texture",
+      "id": "0x502E61AE5D720E64"
+    },
+    {
+      "name": "Sampler",
+      "type": "sampler",
+      "texture": "Texture"
+    }
+  ]
+}

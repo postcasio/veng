@@ -12,6 +12,26 @@
       "source": "materials/cube.vmat.json"
     },
     {
+      "id": "0xD464FF0203CF7570",
+      "type": "Shader",
+      "source": "shaders/panel.frag.shader.json"
+    },
+    {
+      "id": "0xAB72CAB1AF02DBFC",
+      "type": "Material",
+      "source": "materials/panel.vmat.json"
+    },
+    {
+      "id": "0xFFB033A8590DEFDE",
+      "type": "StyleSheet",
+      "source": "ui/panel.vuss"
+    },
+    {
+      "id": "0x4ABFB583D55A84A0",
+      "type": "UIDocument",
+      "source": "ui/panel.vui.xml"
+    },
+    {
       "id": "0xE5B54C65A4A62A31",
       "type": "Prefab",
       "source": "prefabs/scene.prefab.json"

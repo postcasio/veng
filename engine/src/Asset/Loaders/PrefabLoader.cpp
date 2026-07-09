@@ -13,6 +13,7 @@
 #include <Veng/Asset/MaterialInstance.h>
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Asset/Texture.h>
+#include <Veng/Gui/UIDocument.h>
 #include <Veng/Reflection/Serialize.h>
 #include <Veng/Reflection/TypeId.h>
 #include <Veng/Reflection/TypeRegistry.h>
@@ -62,6 +63,10 @@ namespace Veng
             if (fieldType == TypeIdOf<AssetHandle<InputMappingContext>>())
             {
                 return AssetType::InputMap;
+            }
+            if (fieldType == TypeIdOf<AssetHandle<Gui::UIDocument>>())
+            {
+                return AssetType::UIDocument;
             }
             return std::nullopt;
         }
@@ -113,6 +118,8 @@ namespace Veng
                 return load.operator()<EnvironmentMap>();
             case AssetType::InputMap:
                 return load.operator()<InputMappingContext>();
+            case AssetType::UIDocument:
+                return load.operator()<Gui::UIDocument>();
             default:
                 return std::unexpected(Corrupt(
                     parentId,

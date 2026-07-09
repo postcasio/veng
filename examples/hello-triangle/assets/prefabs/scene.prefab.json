@@ -4512,6 +4512,51 @@
           "Parent": 101
         }
       }
+    },
+    {
+      "components": {
+        "::Veng::Name": {
+          "Value": "Diegetic Panel"
+        },
+        "::Veng::Transform": {
+          "Position": [
+            0.0,
+            -0.7,
+            0.0
+          ],
+          "Rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::MeshRenderer": {
+          "Source": {
+            "type": "::Veng::PlaneShape",
+            "value": {
+              "Size": [
+                1.2,
+                0.7
+              ],
+              "Material": "0x3E31DBF56A80F138"
+            }
+          }
+        },
+        "::Veng::GuiSurface": {
+          "Document": "0xB51B7421AFE8CD18",
+          "Resolution": [
+            512,
+            288
+          ],
+          "Domain": "Translucent"
+        }
+      }
     }
   ]
 }

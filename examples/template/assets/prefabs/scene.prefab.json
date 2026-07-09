@@ -110,6 +110,51 @@
           }
         }
       }
+    },
+    {
+      "components": {
+        "::Veng::Name": {
+          "Value": "Panel"
+        },
+        "::Veng::Transform": {
+          "Position": [
+            1.9,
+            0.75,
+            0.0
+          ],
+          "Rotation": [
+            0.7071068,
+            0.0,
+            0.0,
+            0.7071068
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::MeshRenderer": {
+          "Source": {
+            "type": "::Veng::PlaneShape",
+            "value": {
+              "Size": [
+                1.7,
+                0.96
+              ],
+              "Material": "0xACABA69BE180E281"
+            }
+          }
+        },
+        "::Veng::GuiSurface": {
+          "Document": "0x4ABFB583D55A84A0",
+          "Resolution": [
+            512,
+            288
+          ],
+          "Domain": "Translucent"
+        }
+      }
     }
   ]
 }

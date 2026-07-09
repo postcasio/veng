@@ -14,6 +14,7 @@
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Asset/Prefab.h>
 #include <Veng/Asset/Texture.h>
+#include <Veng/Gui/UIDocument.h>
 #include <Veng/Reflection/TypeId.h>
 #include <Veng/Scene/Entity.h>
 #include <Veng/UI/Inspector.h>
@@ -55,6 +56,10 @@ namespace VengEditor
         if (type == TypeIdOf<AssetHandle<EnvironmentMap>>())
         {
             return AssetType::Environment;
+        }
+        if (type == TypeIdOf<AssetHandle<Gui::UIDocument>>())
+        {
+            return AssetType::UIDocument;
         }
         return std::nullopt;
     }

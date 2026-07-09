@@ -3,7 +3,7 @@
   "systems": ["0x98C368063567AB92"],
   "render": {
     "Exposure": 1.0,
-    "Bloom": false,
+    "Bloom": true,
     "Shadows": false,
     "AO": false
   }

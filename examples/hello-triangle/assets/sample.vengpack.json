@@ -62,6 +62,16 @@
       "source": "materials/ground.vmat.json"
     },
     {
+      "id": "0x3B4E99019E22AB3C",
+      "type": "Shader",
+      "source": "shaders/panel.frag.shader.json"
+    },
+    {
+      "id": "0x2F219DBC521B2C21",
+      "type": "Material",
+      "source": "materials/panel.vmat.json"
+    },
+    {
       "id": "0xBB419B2104D9FE71",
       "type": "Prefab",
       "source": "prefabs/player.prefab.json"

@@ -36,6 +36,11 @@ symbol: build the Doxygen reference with `cmake --build build --target docs`
   reflected view-model, attaching it to a viewport, resolving its bindings each
   frame, and opening a `SeatFocusScope` to make a menu interactive — plus the
   boundary against `Veng::UI` (the editor/debug ImGui vocabulary).
+- **[Diegetic and glowing UI](guides/diegetic-ui.md)** — putting a `Veng::Gui`
+  document in the world with a `GuiSurface`: the HDR render target, the translucent
+  and opaque-emissive material domains, the `rgb()` linear-float colors that let a
+  color exceed 1.0 and bloom through the scene's own bloom, why a screen-space
+  overlay stays LDR and does not glow, and the hot-core desaturation gotcha.
 - **[Consuming veng](guides/consuming-veng.md)** — discovering veng from a game
   project with `find_package(veng)`: the three consumption modes (in-tree, build
   tree, install prefix), the `veng_ROOT` / `CMAKE_PREFIX_PATH` /
