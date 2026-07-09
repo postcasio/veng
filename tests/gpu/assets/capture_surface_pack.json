@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "0x00000000000023F1",
+      "type": "VertexLayout",
+      "source": "layouts/canonical.vlayout.json"
+    },
+    {
+      "id": "0x0000000000002329",
+      "type": "Texture",
+      "source": "textures/brick.tex.json"
+    },
+    {
+      "id": "0x0000000000002400",
+      "type": "Shader",
+      "source": "shaders/surface_full.vert.shader.json"
+    },
+    {
+      "id": "0x0000000000002401",
+      "type": "Shader",
+      "source": "shaders/translucent.frag.shader.json"
+    },
+    {
+      "id": "0x0000000000002440",
+      "type": "Shader",
+      "source": "shaders/capture_probe.frag.shader.json"
+    },
+    {
+      "id": "0x0000000000002441",
+      "type": "Material",
+      "source": "materials/capture_probe.vmat.json"
+    },
+    {
+      "id": "0x0000000000002442",
+      "type": "Material",
+      "source": "materials/capture_backdrop.vmat.json"
+    }
+  ]
+}

@@ -6,6 +6,9 @@
 #include <Veng/Log.h>
 #include <Veng/Time.h>
 
+#include <Veng/Asset/Mesh.h>
+#include <Veng/Asset/MaterialInstance.h>
+#include <Veng/Renderer/CaptureSurface.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/GatherPass.h>
 #include <Veng/Renderer/RenderGraph.h>
@@ -18,6 +21,7 @@
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
+#include <Veng/Scene/Transforms.h>
 #include <Veng/Scene/SceneSystem.h>
 #include <Veng/Scene/SceneViewport.h>
 
@@ -390,6 +394,47 @@ namespace Veng
         capture.AttachToDriveList(m_Captures);
     }
 
+    void Application::DriveCaptureSurfaces()
+    {
+        if (!m_World)
+        {
+            return;
+        }
+
+        const Scene& world = *m_World;
+        for (auto [entity, surface] : world.View<Renderer::CaptureSurface>())
+        {
+            // The capture renders from the entity's world position (a probe centered on it, a mirror
+            // placed at it). The surface's material is the sibling MeshRenderer's first material.
+            const vec3 position = vec3(WorldMatrix(world, entity)[3]);
+
+            MaterialInstance* material = nullptr;
+            if (const MeshRenderer* mesh = world.TryGet<MeshRenderer>(entity); mesh != nullptr)
+            {
+                if (mesh->Mesh.IsLoaded())
+                {
+                    const std::span<const AssetHandle<MaterialInstance>> materials =
+                        mesh->Mesh.Get()->GetMaterials();
+                    if (!materials.empty() && materials[0].IsLoaded())
+                    {
+                        material = materials[0].Get();
+                    }
+                }
+            }
+
+            // Register the capture on the drive-list the first time it materializes; the SceneCapture
+            // erases its own pointer on destruction, so removing the component/entity/scene unregisters
+            // it with no bookkeeping here.
+            const bool hadCapture = surface.GetCapture() != nullptr;
+            Renderer::SceneCapture* capture =
+                surface.Drive(m_RenderContext, *m_AssetManager, world, position, material);
+            if (capture != nullptr && !hadCapture)
+            {
+                RegisterCapture(*capture);
+            }
+        }
+    }
+
     void Application::RenderManagedTail(Renderer::CommandBuffer& cmd)
     {
         if (!m_Gather)
@@ -586,6 +631,10 @@ namespace Veng
         m_RenderContext.BeginFrame();
 
         Renderer::CommandBuffer& cmd = m_RenderContext.GetCurrentCommandBuffer();
+
+        // Build, register, and push this frame's source into the world's authored capture surfaces,
+        // so a scene-declared capture joins the drive-list beside any imperatively-registered ones.
+        DriveCaptureSurfaces();
 
         // The engine render phase, uniform for every app and not overridable. Scene captures
         // render first, so a material sampling a capture's output reads this frame's result

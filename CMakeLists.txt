@@ -569,6 +569,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/gui_presence.cpp
             tests/unit/gui_placement.cpp
             tests/unit/gui_overlay_component.cpp
+            tests/unit/capture_surface_component.cpp
     )
     target_link_libraries(veng_test_unit PRIVATE veng::veng doctest::doctest)
 
@@ -996,6 +997,12 @@ if (VENG_BUILD_TESTS)
             tests/gpu/sh_consistency.cpp
             tests/gpu/environment_ibl.cpp
             tests/gpu/gui_surface.cpp
+            # capture_surface.cpp cooks a capture fixture pack and drives the CaptureSurface
+            # component end to end: the entity's material samples the scene captured from the
+            # entity (a backdrop out of the camera's direct view), the refresh policy (on-demand
+            # settles then re-arms, every-frame never idles), and teardown unregistering the
+            # capture from the drive-list on component/entity/scene destruction.
+            tests/gpu/capture_surface.cpp
     )
     target_link_libraries(veng_test_gpu PRIVATE veng::veng veng_test_support doctest::doctest)
     # transfer_retire.cpp reaches through Native.h (raw vk::/VMA handles via the

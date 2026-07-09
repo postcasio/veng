@@ -114,6 +114,7 @@ add_library(veng SHARED
         src/Renderer/EnvironmentIbl.cpp
         src/Renderer/RenderGraph.cpp
         src/Renderer/SceneCapture.cpp
+        src/Renderer/CaptureSurface.cpp
         src/Renderer/SceneRenderer.cpp
         src/Renderer/Viewport.cpp
         src/Renderer/LightPacking.cpp

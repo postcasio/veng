@@ -159,6 +159,48 @@
     {
       "components": {
         "::Veng::Name": {
+          "Value": "Mirror"
+        },
+        "::Veng::Transform": {
+          "Position": [
+            -1.9,
+            0.75,
+            0.0
+          ],
+          "Rotation": [
+            0.0,
+            0.7071068,
+            0.0,
+            0.7071068
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::MeshRenderer": {
+          "Source": {
+            "type": "::Veng::PlaneShape",
+            "value": {
+              "Size": [
+                1.7,
+                0.96
+              ],
+              "Material": "0x0CA7000000000003"
+            }
+          }
+        },
+        "::Veng::Renderer::CaptureSurface": {
+          "Shape": "PlanarReflection",
+          "Resolution": 256,
+          "Refresh": "EveryFrame"
+        }
+      }
+    },
+    {
+      "components": {
+        "::Veng::Name": {
           "Value": "HUD"
         },
         "::Veng::GuiOverlay": {

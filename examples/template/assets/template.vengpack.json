@@ -22,6 +22,16 @@
       "source": "materials/panel.vmat.json"
     },
     {
+      "id": "0x0CA7000000000001",
+      "type": "Shader",
+      "source": "shaders/mirror.frag.shader.json"
+    },
+    {
+      "id": "0x0CA7000000000002",
+      "type": "Material",
+      "source": "materials/mirror.vmat.json"
+    },
+    {
       "id": "0xFFB033A8590DEFDE",
       "type": "StyleSheet",
       "source": "ui/panel.vuss"

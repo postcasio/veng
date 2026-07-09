@@ -5,6 +5,7 @@
 #include <Veng/Gui/Surface.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Renderer/Atmosphere.h>
+#include <Veng/Renderer/CaptureSurface.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Camera.h>
 
@@ -81,5 +82,10 @@ namespace Veng
         // driven by the Viewport. The AssetHandle<Gui::UIDocument> recipe leaf and the Entity seat
         // reference register transitively through its fields.
         registry.Register<GuiOverlay>();
+
+        // A render-to-texture capture declared on an entity, discovered and driven by the engine, its
+        // output sampled by the entity's material. Renderer::CaptureShape and CaptureRefresh register
+        // transitively through its fields; the runtime-only Unique carries no reflected field.
+        registry.Register<Renderer::CaptureSurface>();
     }
 }

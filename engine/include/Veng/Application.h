@@ -493,6 +493,16 @@ namespace Veng
         /// @param cmd  The command buffer to record into.
         void RenderManagedTail(Renderer::CommandBuffer& cmd);
 
+        /// @brief Discovers and drives the managed world's CaptureSurface components.
+        ///
+        /// Iterates the managed world's Renderer::CaptureSurface components, materializing each one's
+        /// SceneCapture on first sight and registering it on the capture drive-list (so it renders with
+        /// the imperatively-registered captures), pushing this frame's capture source from the entity's
+        /// world position per the component's refresh policy, and binding the capture output onto the
+        /// sibling MeshRenderer's material. The capture self-unregisters when its component/entity/scene
+        /// is destroyed. Called from Frame ahead of the capture render loop. No-op without a world.
+        void DriveCaptureSurfaces();
+
         ApplicationInfo m_Info;
 
         /// @brief Command-line arguments parsed once in Run, before Initialize.
