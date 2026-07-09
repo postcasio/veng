@@ -19,27 +19,38 @@ namespace Veng::Renderer
 
 namespace Veng
 {
-    /// @brief A locally-owned seat resolved from a scene: its Viewer entity and mutable components.
+    /// @brief A locally-owned seat resolved from a scene: its Viewer entity and owning scene.
     ///
     /// The result of ResolveInputSeat — the first locally-owned seat with the full
-    /// (Viewer, InputContextStack, PlayerInput) trio. The two mutable component pointers are
-    /// borrowed from the scene's storage, valid until a structural change to the scene; a UI
-    /// takeover reads and swaps them through this handle without re-querying.
+    /// (Viewer, InputContextStack, PlayerInput) trio. It stores the stable (World, Viewer)
+    /// identity and re-resolves the seat's InputContextStack on demand (ResolveContexts) rather
+    /// than caching a borrowed pointer: a structural change to the scene reallocates the component
+    /// pools, so a cached pointer would dangle. A UI takeover holding a seat across a live scene's
+    /// structural change reads and swaps the contexts through a fresh resolve each time it writes.
     struct InputSeat
     {
         /// @brief The seat's Viewer entity, the key its focus stack and pointer association use.
         Entity Viewer = Entity::Null;
-        /// @brief The seat's active input contexts, swapped while a UI surface holds it.
-        InputContextStack* Contexts = nullptr;
+        /// @brief The scene the seat lives in, re-queried for its contexts; null for an empty seat.
+        Scene* World = nullptr;
+
+        /// @brief Re-resolves the seat's active input contexts from the scene at the call site.
+        ///
+        /// Queries the scene for the seat's InputContextStack the moment a caller writes it, so a
+        /// structural change that moved the component pool is followed rather than dangled. A
+        /// destroyed seat entity (or an empty seat) yields nullptr — a correct no-op for a writer.
+        /// @return The seat's live InputContextStack, or nullptr when the seat resolves none.
+        [[nodiscard]] InputContextStack* ResolveContexts() const;
     };
 
     /// @brief Resolves the first locally-owned input seat in a scene, null-safe before the world exists.
     ///
     /// Walks the scene for the first entity holding (Viewer, InputContextStack, PlayerInput) that is
-    /// locally owned — the seat a single-seat consumer drives — and returns it with a borrowed
-    /// pointer to its InputContextStack. A null scene, a scene with no such seat, or a seat that is
-    /// not locally owned yields an empty seat (Viewer == Entity::Null, Contexts == nullptr), so a
-    /// consumer resolving before its world spawns gets a safe empty result rather than a crash.
+    /// locally owned — the seat a single-seat consumer drives — and returns it carrying the scene it
+    /// was found in (for the on-demand context re-resolve). A null scene, a scene with no such seat,
+    /// or a seat that is not locally owned yields an empty seat (Viewer == Entity::Null, World ==
+    /// nullptr), so a consumer resolving before its world spawns gets a safe empty result rather
+    /// than a crash.
     /// @param scene  The scene to resolve a seat from, or nullptr before the world exists.
     /// @return The first locally-owned seat, or an empty InputSeat when none resolves.
     [[nodiscard]] VE_API InputSeat ResolveInputSeat(Scene* scene);

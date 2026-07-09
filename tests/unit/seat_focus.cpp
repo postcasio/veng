@@ -258,7 +258,8 @@ TEST_CASE("ResolveInputSeat returns the first locally-owned seat, null-safe befo
     // A null scene resolves an empty seat.
     const InputSeat none = ResolveInputSeat(nullptr);
     CHECK(none.Viewer == Entity::Null);
-    CHECK(none.Contexts == nullptr);
+    CHECK(none.World == nullptr);
+    CHECK(none.ResolveContexts() == nullptr);
 
     TypeRegistry registry = MakeRegistry();
     const Unique<Scene> scene = Scene::Create(registry);
@@ -274,7 +275,8 @@ TEST_CASE("ResolveInputSeat returns the first locally-owned seat, null-safe befo
 
     const InputSeat resolved = ResolveInputSeat(scene.get());
     CHECK(resolved.Viewer == seat);
-    CHECK(resolved.Contexts == &scene->Get<InputContextStack>(seat));
+    CHECK(resolved.World == scene.get());
+    CHECK(resolved.ResolveContexts() == &scene->Get<InputContextStack>(seat));
 }
 
 TEST_CASE("SeatFocusScope round-trips push + swap + associate, restoring in inverse order")
@@ -367,7 +369,7 @@ TEST_CASE("A SeatFocusScope suspends its seat's gameplay resolution, the other s
     {
         // Open a UI takeover on seat A with no swap-in context: the scope pushes UI focus and
         // suspends A's gameplay contexts, so A resolves to neutral while B is unaffected.
-        const InputSeat seat{.Viewer = seatA, .Contexts = &scene->Get<InputContextStack>(seatA)};
+        const InputSeat seat{.Viewer = seatA, .World = scene.get()};
         const SeatFocusScope scope(router, seat, nullptr, MakeContext(0xD001));
 
         input.BeginFrame();
@@ -385,4 +387,51 @@ TEST_CASE("A SeatFocusScope suspends its seat's gameplay resolution, the other s
     input.ApplyEvent(KeyPressedEvent{Key::W, 0, 0});
     mapping.OnUpdate(*scene, 0.016f, storage.Make());
     CHECK(scene->Get<PlayerInput>(seatA).GetValue(Move).y == doctest::Approx(1.0f));
+}
+
+TEST_CASE("A SeatFocusScope restores through a re-resolve after a structural change moved the pool")
+{
+    // The re-resolve guard: a scope suspends a seat's contexts, then the scene undergoes a
+    // structural change that reallocates the InputContextStack pool while the scope is open. A
+    // cached borrowed pointer would dangle; re-resolving through the (World, Viewer) identity at
+    // restore time finds the live pool and swaps the gameplay context back correctly.
+    Input input(nullptr);
+    InputRouter router(nullptr, input);
+
+    TypeRegistry registry = MakeRegistry();
+    const Unique<Scene> scene = Scene::Create(registry);
+
+    const Entity seatEntity = scene->CreateEntity();
+    scene->Add<Viewer>(seatEntity);
+    scene->Add<PlayerInput>(seatEntity);
+    auto& stack = scene->Add<InputContextStack>(seatEntity);
+    stack.Active.push_back(MakeContext(0xAA11));
+
+    const InputSeat seat = ResolveInputSeat(scene.get());
+    REQUIRE(seat.Viewer == seatEntity);
+
+    {
+        const SeatFocusScope scope(router, seat, nullptr, MakeContext(0xBB22));
+
+        // While the scope holds the seat, grow the InputContextStack pool with many more
+        // components — a structural change that reallocates the dense storage the seat's stack
+        // lived in, so a raw pointer captured at open would now dangle.
+        for (int i = 0; i < 64; ++i)
+        {
+            const Entity other = scene->CreateEntity();
+            scene->Add<InputContextStack>(other);
+        }
+
+        // The suspended seat still reads the UI context through a fresh resolve.
+        const InputContextStack* live = seat.ResolveContexts();
+        REQUIRE(live != nullptr);
+        REQUIRE(live->Active.size() == 1);
+        CHECK(live->Active[0].Id().Value == 0xBB22);
+    }
+
+    // The scope closed after the pool moved: the gameplay context is restored into the live pool,
+    // proving the restore re-resolved rather than writing through a stale pointer.
+    const InputContextStack& restored = scene->Get<InputContextStack>(seatEntity);
+    REQUIRE(restored.Active.size() == 1);
+    CHECK(restored.Active[0].Id().Value == 0xAA11);
 }

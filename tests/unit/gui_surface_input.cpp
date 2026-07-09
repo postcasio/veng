@@ -176,7 +176,7 @@ TEST_CASE("gui surface seat gate: a panel is display-only until a seat + SeatFoc
     // Opening a SeatFocusScope flips the seat's focus top to UI — the panel becomes interactive and
     // the same ray now delivers its click.
     {
-        const SeatFocusScope scope(router, InputSeat{.Viewer = seat, .Contexts = nullptr}, nullptr);
+        const SeatFocusScope scope(router, InputSeat{.Viewer = seat, .World = nullptr}, nullptr);
         press();
         CHECK(panel.Clicks == 1);
     }

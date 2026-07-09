@@ -41,6 +41,7 @@ add_library(veng SHARED
         src/Input/RawInput.cpp
         src/Input/SeatFocusScope.cpp
         src/InputRouter.cpp
+        src/LevelOverlay.cpp
         src/LaunchArguments.cpp
         src/Log.cpp
         src/Math/AABB.cpp

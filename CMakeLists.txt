@@ -1003,6 +1003,10 @@ if (VENG_BUILD_TESTS)
             # settles then re-arms, every-frame never idles), and teardown unregistering the
             # capture from the drive-list on component/entity/scene destruction.
             tests/gpu/capture_surface.cpp
+            # level_overlay.cpp drives a headless Application through Run(), opening/closing
+            # LevelOverlay handles from OnUpdate and asserting the router/scene/pause state (it needs
+            # a Context for the overlay's viewport, so it rides the gpu band though it pins no pixels).
+            tests/gpu/level_overlay.cpp
     )
     target_link_libraries(veng_test_gpu PRIVATE veng::veng veng_test_support doctest::doctest)
     # transfer_retire.cpp reaches through Native.h (raw vk::/VMA handles via the
