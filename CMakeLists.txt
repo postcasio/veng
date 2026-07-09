@@ -1225,8 +1225,10 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle)
     # engine/src is on the include path so the stylesheet cook test can reach the private
     # StyleSheetLoader.h decode entry point (DecodeStyleSheet), exercising the runtime variable
     # table end-to-end from a cooked blob; veng::cook already links veng::veng transitively.
+    # cooker/src reaches the internal StyleParse.h so the color-value parser is unit-tested directly.
     target_include_directories(veng_test_cooker PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/editor/src
             ${CMAKE_CURRENT_SOURCE_DIR}/engine/src
+            ${CMAKE_CURRENT_SOURCE_DIR}/cooker/src
             ${CMAKE_CURRENT_SOURCE_DIR}/tests)
     add_dependencies(veng_test_cooker hello_triangle veng_test_bad_version_module)
     target_compile_definitions(veng_test_cooker PRIVATE

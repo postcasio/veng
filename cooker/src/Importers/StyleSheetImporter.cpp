@@ -17,6 +17,7 @@
 #include <sstream>
 
 #include <fmt/format.h>
+#include <glm/gtc/packing.hpp>
 
 #include <Veng/Asset/CookedBlobs.h>
 #include <Veng/Gui/Element.h>
@@ -243,16 +244,17 @@ namespace Veng::Cook
             return cp;
         }
 
-        // Splits a string on `delim`, trimming surrounding whitespace from each part.
+        // Splits a string on `delim` at parenthesis depth zero, trimming surrounding whitespace from
+        // each part. A `delim` nested inside parentheses (an rgb()/rgba() color's component commas)
+        // stays within its part, so a functional color survives as one stop.
         vector<string> SplitTrim(std::string_view text, char delim)
         {
             vector<string> out;
+            usize depth = 0;
             usize start = 0;
-            while (true)
+            const auto emit = [&](usize end)
             {
-                const usize pos = text.find(delim, start);
-                const std::string_view part = text.substr(
-                    start, pos == std::string_view::npos ? std::string_view::npos : pos - start);
+                const std::string_view part = text.substr(start, end - start);
                 usize b = 0;
                 usize e = part.size();
                 while (b < e && std::isspace(static_cast<unsigned char>(part[b])) != 0)
@@ -264,20 +266,35 @@ namespace Veng::Cook
                     --e;
                 }
                 out.emplace_back(part.substr(b, e - b));
-                if (pos == std::string_view::npos)
+            };
+            for (usize i = 0; i < text.size(); ++i)
+            {
+                const char c = text[i];
+                if (c == '(')
                 {
-                    break;
+                    ++depth;
                 }
-                start = pos + 1;
+                else if (c == ')' && depth > 0)
+                {
+                    --depth;
+                }
+                else if (c == delim && depth == 0)
+                {
+                    emit(i);
+                    start = i + 1;
+                }
             }
+            emit(text.size());
             return out;
         }
 
-        // Splits a string on runs of whitespace into non-empty tokens.
+        // Splits a string on runs of whitespace into non-empty tokens, treating a parenthesized
+        // span (an rgb()/rgba() color, whose commas and spaces are internal) as one token.
         vector<string> WhitespaceTokens(std::string_view text)
         {
             vector<string> out;
             usize i = 0;
+            usize depth = 0;
             while (i < text.size())
             {
                 while (i < text.size() && std::isspace(static_cast<unsigned char>(text[i])) != 0)
@@ -285,8 +302,18 @@ namespace Veng::Cook
                     ++i;
                 }
                 const usize start = i;
-                while (i < text.size() && std::isspace(static_cast<unsigned char>(text[i])) == 0)
+                while (i < text.size() &&
+                       (depth > 0 || std::isspace(static_cast<unsigned char>(text[i])) == 0))
                 {
+                    const char c = text[i];
+                    if (c == '(')
+                    {
+                        ++depth;
+                    }
+                    else if (c == ')' && depth > 0)
+                    {
+                        --depth;
+                    }
                     ++i;
                 }
                 if (i > start)
@@ -341,14 +368,15 @@ namespace Veng::Cook
             f32 Pos = -1.0f;
         };
 
-        // Bakes a stop list (positions assigned + clamped non-decreasing) into an N×1 RGBA8 ramp,
-        // interpolating between bracketing stops in linear space (the colors are already linear).
+        // Bakes a stop list (positions assigned + clamped non-decreasing) into an N×1 RGBA16Sfloat
+        // ramp (four half-floats per texel), interpolating between bracketing stops in linear space
+        // (the colors are already linear). No brightness clamp — an HDR (> 1) stop is preserved so a
+        // gradient can glow across its extent.
         vector<u8> BakeGradientRamp(const vector<GradientStop>& stops)
         {
             constexpr u32 RampTexels = 256;
-            vector<u8> ramp(static_cast<usize>(RampTexels) * 4);
-            const auto toU8 = [](f32 v)
-            { return static_cast<u8>(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f)); };
+            constexpr usize BytesPerTexel = 4 * sizeof(u16);
+            vector<u8> ramp(static_cast<usize>(RampTexels) * BytesPerTexel);
             for (u32 i = 0; i < RampTexels; ++i)
             {
                 const f32 t = static_cast<f32>(i) / static_cast<f32>(RampTexels - 1);
@@ -370,10 +398,14 @@ namespace Veng::Cook
                         }
                     }
                 }
-                ramp[i * 4 + 0] = toU8(color.r);
-                ramp[i * 4 + 1] = toU8(color.g);
-                ramp[i * 4 + 2] = toU8(color.b);
-                ramp[i * 4 + 3] = toU8(color.a);
+                const u16 halves[4] = {
+                    static_cast<u16>(glm::packHalf1x16(color.r)),
+                    static_cast<u16>(glm::packHalf1x16(color.g)),
+                    static_cast<u16>(glm::packHalf1x16(color.b)),
+                    static_cast<u16>(glm::packHalf1x16(color.a)),
+                };
+                std::memcpy(ramp.data() + static_cast<usize>(i) * BytesPerTexel, halves,
+                            sizeof(halves));
             }
             return ramp;
         }
@@ -652,7 +684,7 @@ namespace Veng::Cook
             cooked.P1[1] = p1.y;
             cooked.AngleOffset = angleOffset;
             cooked.RampOffset = static_cast<u32>(rampBytes.size());
-            cooked.RampTexels = static_cast<u32>(ramp.size() / 4);
+            cooked.RampTexels = static_cast<u32>(ramp.size() / (4 * sizeof(u16)));
 
             CookedStyleProperty cp{};
             cp.Property = static_cast<u32>(Gui::StyleProperty::BackgroundGradient);
@@ -706,7 +738,7 @@ namespace Veng::Cook
                         break;
                     case CssTokenKind::Ident:
                     case CssTokenKind::Value:
-                        if (!value.empty() && value.back() != '#')
+                        if (!value.empty() && value.back() != '#' && value.back() != '(')
                         {
                             value += ' ';
                         }
@@ -716,9 +748,17 @@ namespace Veng::Cook
                         value += '.';
                         break;
                     case CssTokenKind::Comma:
-                        // Commas separate list values (a gradient's kind/geometry and its stops); the
-                        // consumer splits on them.
+                        // Commas separate list values (a gradient's kind/geometry and its stops, an
+                        // rgb()/rgba() color's components); the consumer splits on them.
                         value += ',';
+                        break;
+                    case CssTokenKind::LParen:
+                        // Parentheses wrap a functional color's component list (rgb()/rgba()); the
+                        // color parser reads them and splits the inner commas.
+                        value += '(';
+                        break;
+                    case CssTokenKind::RParen:
+                        value += ')';
                         break;
                     default:
                         return std::unexpected(fmt::format(

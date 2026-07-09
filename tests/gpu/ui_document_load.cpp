@@ -11,6 +11,7 @@
 #include "support/TempPath.h"
 
 #include <doctest/doctest.h>
+#include <glm/gtc/packing.hpp>
 
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/CookedBlobs.h>
@@ -244,13 +245,23 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(gradient.P1.x == doctest::Approx(0.0f));
     CHECK(gradient.P1.y == doctest::Approx(1.0f));
     REQUIRE(gradient.Width == 256);
-    REQUIRE(gradient.Ramp.size() == 256u * 4u);
-    // First texel red, last texel blue (linear straight-alpha RGBA8).
-    CHECK(gradient.Ramp[0] > 250);
-    CHECK(gradient.Ramp[1] < 5);
-    CHECK(gradient.Ramp[2] < 5);
-    CHECK(gradient.Ramp[255 * 4 + 0] < 5);
-    CHECK(gradient.Ramp[255 * 4 + 2] > 250);
+    REQUIRE(gradient.Ramp.size() == 256u * 4u * sizeof(u16));
+    // First texel red, last texel blue (linear straight-alpha RGBA16Sfloat half-floats).
+    const auto rampTexel = [&gradient](u32 index) -> vec4
+    {
+        u16 halves[4] = {};
+        std::memcpy(halves, gradient.Ramp.data() + static_cast<usize>(index) * 4 * sizeof(u16),
+                    sizeof(halves));
+        return vec4(glm::unpackHalf1x16(halves[0]), glm::unpackHalf1x16(halves[1]),
+                    glm::unpackHalf1x16(halves[2]), glm::unpackHalf1x16(halves[3]));
+    };
+    const vec4 firstTexel = rampTexel(0);
+    const vec4 lastTexel = rampTexel(255);
+    CHECK(firstTexel.r > 0.98f);
+    CHECK(firstTexel.g < 0.02f);
+    CHECK(firstTexel.b < 0.02f);
+    CHECK(lastTexel.r < 0.02f);
+    CHECK(lastTexel.b > 0.98f);
 
     // (d) Two instantiations are independent trees over one recipe.
     Unique<Gui::Document> a = Gui::Document::Instantiate(recipe, assets);

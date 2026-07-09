@@ -707,7 +707,7 @@ namespace Veng::Gui
             const TextureData data{
                 .Name = "gui-gradient-ramp",
                 .Extent = uvec2(source.Width, 1),
-                .Format = Renderer::Format::RGBA8Unorm,
+                .Format = Renderer::Format::RGBA16Sfloat,
                 .MipLevels = 1,
                 .Pixels = source.Ramp,
                 .Sampler =

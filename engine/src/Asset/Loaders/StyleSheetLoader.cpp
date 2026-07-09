@@ -194,7 +194,8 @@ namespace Veng
             decoded.Gradients.reserve(header.GradientCount);
             for (const CookedStyleGradient& cookedGradient : cookedGradients)
             {
-                const usize length = static_cast<usize>(cookedGradient.RampTexels) * 4;
+                const usize length =
+                    static_cast<usize>(cookedGradient.RampTexels) * 4 * sizeof(u16);
                 if (static_cast<usize>(cookedGradient.RampOffset) + length > rampBytes)
                 {
                     return std::unexpected(

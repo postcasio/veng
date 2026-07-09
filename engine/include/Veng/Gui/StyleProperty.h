@@ -18,6 +18,13 @@ namespace Veng::Gui
     /// Multi-field CSS properties are split to one enumerator per numeric payload: a border is
     /// BorderWidth (a scalar) plus BorderColor (a vec4), so every declaration fits the uniform
     /// CookedStyleProperty payload.
+    ///
+    /// A color property's value is a linear-space vec4. It authors two ways: hex `#rrggbb`/`#rrggbbaa`
+    /// is an sRGB hue decoded to a linear color clamped to [0, 1] (the familiar LDR path), while
+    /// `rgb(x, y, z)` / `rgba(x, y, z, a)` are unclamped linear floats taken directly (no sRGB decode),
+    /// so a component may exceed 1 to author an emissive color that glows on a world surface. So
+    /// `rgb(0.5, 0.5, 0.5)` is a linear 0.5 grey, distinct from `#808080`, which decodes to ~0.216
+    /// linear.
     enum class StyleProperty : u32
     {
         /// @brief The flex main-axis direction (Style::Direction); value is a FlexDirection ordinal.

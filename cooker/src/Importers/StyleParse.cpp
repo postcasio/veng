@@ -96,6 +96,77 @@ namespace Veng::Cook
                         static_cast<f32>(channels[3]) / 255.0f);
         }
 
+        // An rgb()/rgba() functional color → a linear straight-alpha vec4. Components are unclamped
+        // linear floats where >= 0 (a value > 1 is an emissive/HDR color); no sRGB decode is applied,
+        // so the parsed vec4 is the draw-list's linear color directly. rgb() takes three components
+        // and defaults alpha to 1; rgba() takes four. `value` is trimmed and begins with "rgb".
+        Result<vec4> ParseRgbFunction(std::string_view value, const string& located)
+        {
+            const bool hasAlpha = value.substr(0, 4) == "rgba";
+            const usize prefix = hasAlpha ? 4 : 3;
+            const usize expected = hasAlpha ? 4 : 3;
+            const char* name = hasAlpha ? "rgba" : "rgb";
+            const std::string_view rest = Trim(value.substr(prefix));
+            if (rest.size() < 2 || rest.front() != '(' || rest.back() != ')')
+            {
+                return std::unexpected(
+                    fmt::format("{}: color '{}' must be '{}(...)'", located, value, name));
+            }
+            const std::string_view inner = rest.substr(1, rest.size() - 2);
+
+            f32 components[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+            usize count = 0;
+            usize begin = 0;
+            for (usize i = 0; i <= inner.size(); ++i)
+            {
+                if (i != inner.size() && inner[i] != ',')
+                {
+                    continue;
+                }
+                if (count >= expected)
+                {
+                    return std::unexpected(fmt::format("{}: color '{}' takes {} components",
+                                                       located, value, expected));
+                }
+                const std::string_view token = Trim(inner.substr(begin, i - begin));
+                const Result<f32> component = ParseFloat(token, located);
+                if (!component)
+                {
+                    return std::unexpected(component.error());
+                }
+                if (*component < 0.0f)
+                {
+                    return std::unexpected(fmt::format("{}: color '{}' component '{}' must be >= 0",
+                                                       located, value, token));
+                }
+                components[count++] = *component;
+                begin = i + 1;
+            }
+            if (count != expected)
+            {
+                return std::unexpected(fmt::format("{}: color '{}' takes {} components, got {}",
+                                                   located, value, expected, count));
+            }
+            return vec4(components[0], components[1], components[2], components[3]);
+        }
+
+        // Resolves a color value to a linear straight-alpha vec4: an rgb()/rgba() functional color
+        // (linear floats, HDR-capable) or a hex color (`#rrggbb`/`#rrggbbaa`, sRGB decoded to linear).
+        Result<vec4> ParseColorValue(std::string_view value, const string& located)
+        {
+            const std::string_view trimmed = Trim(value);
+            if (trimmed.substr(0, 3) == "rgb")
+            {
+                return ParseRgbFunction(trimmed, located);
+            }
+            std::string_view body = trimmed;
+            if (!body.empty() && body.front() == '#')
+            {
+                body = body.substr(1);
+            }
+            return ParseHexColor(body, located);
+        }
+
         // Parses one length token (auto / Npx / N% / a bare number treated as points) into the
         // (Unit, value) pair a CookedStyleProperty carries for a Length.
         Result<std::pair<u32, f32>> ParseLength(std::string_view text, const string& located)
@@ -341,12 +412,7 @@ namespace Veng::Cook
         Result<CookedStyleProperty> ColorProperty(StyleProperty property, std::string_view value,
                                                   const string& located)
         {
-            std::string_view body = value;
-            if (!body.empty() && body.front() == '#')
-            {
-                body = body.substr(1);
-            }
-            const Result<vec4> color = ParseHexColor(body, located);
+            const Result<vec4> color = ParseColorValue(value, located);
             if (!color)
             {
                 return std::unexpected(color.error());
@@ -380,12 +446,7 @@ namespace Veng::Cook
 
     Result<vec4> ParseStyleColor(std::string_view value, const string& located)
     {
-        std::string_view body = Trim(value);
-        if (!body.empty() && body.front() == '#')
-        {
-            body = body.substr(1);
-        }
-        return ParseHexColor(body, located);
+        return ParseColorValue(value, located);
     }
 
     Result<CookedStyleProperty> ParseStyleDeclaration(StyleProperty property,

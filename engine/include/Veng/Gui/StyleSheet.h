@@ -48,10 +48,11 @@ namespace Veng::Gui
     /// @brief One cooked gradient fill: its shape, packed geometry, and its baked ramp pixels.
     ///
     /// A `background-gradient` declaration references a gradient by index (StyleDeclaration::Unit).
-    /// The multi-stop color is baked at cook time into a Width×1 RGBA8 ramp (linear straight-alpha);
-    /// the instantiate-time resolve uploads it to a texture (through the borrowed AssetManager) and
-    /// materializes a ResolvedGradient onto the element's Style. Geometry is in the element's
-    /// normalized box space and interpreted per Kind (see Gui::GradientFill).
+    /// The multi-stop color is baked at cook time into a Width×1 RGBA16Sfloat ramp (linear
+    /// straight-alpha half-floats, HDR-capable); the instantiate-time resolve uploads it to a texture
+    /// (through the borrowed AssetManager) and materializes a ResolvedGradient onto the element's
+    /// Style. Geometry is in the element's normalized box space and interpreted per Kind (see
+    /// Gui::GradientFill).
     struct StyleGradient
     {
         /// @brief The gradient shape (Linear / Radial / Conic).
@@ -62,9 +63,9 @@ namespace Veng::Gui
         vec2 P1{0.0f};
         /// @brief Conic start turn in [0, 1); unused by the other kinds.
         f32 AngleOffset = 0.0f;
-        /// @brief The ramp's texel count (a Width×1 RGBA8 image; Ramp holds Width * 4 bytes).
+        /// @brief The ramp's texel count (a Width×1 RGBA16Sfloat image; Ramp holds Width * 8 bytes).
         u32 Width = 0;
-        /// @brief The baked ramp pixels, linear straight-alpha RGBA8, largest offset t last.
+        /// @brief The baked ramp pixels, linear straight-alpha RGBA16Sfloat, largest offset t last.
         vector<u8> Ramp;
     };
 
