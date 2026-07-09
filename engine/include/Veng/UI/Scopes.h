@@ -16,6 +16,29 @@
 
 namespace Veng::UI
 {
+    /// @brief Persistent hover-fade state a caller holds across frames for a hover-fade scope.
+    ///
+    /// A `HoverFade` scope — or the fade-aware `MainMenuBar(HoverFadeState&)` overload — reads
+    /// `Alpha` to fade the widgets it wraps, then eases it toward full opacity while the pointer is
+    /// over them and toward `InactiveAlpha` while it is not, so idle UI chrome recedes and returns
+    /// under the cursor. The caller owns one of these per faded region and passes it to the scope
+    /// each frame. Only `InactiveAlpha` and `Speed` are tunables; `Alpha` and `Primed` are
+    /// scope-managed and must not be written directly.
+    struct HoverFadeState
+    {
+        /// @brief Alpha multiplier applied to the wrapped content while it is not hovered.
+        f32 InactiveAlpha = 0.3f;
+
+        /// @brief Ease rate toward the target alpha, in alpha per second; 0 snaps with no fade.
+        f32 Speed = 12.0f;
+
+        /// @brief Eased alpha applied this frame. Scope-managed; do not set directly.
+        f32 Alpha = 1.0f;
+
+        /// @brief False until the first update seeds `Alpha`, which then snaps to the target once.
+        bool Primed = false;
+    };
+
     /// @brief Scope guard for `ImGui::Begin`/`End`.
     ///
     /// `End` must run even when the window is collapsed, so the destructor calls it
@@ -217,14 +240,23 @@ namespace Veng::UI
         /// @param open  Whether the menu bar is visible.
         explicit ScopedMenuBar(bool open) : m_Open(open) {}
 
-        /// @brief Calls `ImGui::EndMainMenuBar` when the bar opened.
+        /// @brief Constructs a hover-fade guard that also settles the fade and pops alpha on close.
+        ///
+        /// The `MainMenuBar(HoverFadeState&)` factory pushes the alpha style var before
+        /// `BeginMainMenuBar`; this guard measures the bar's hover while it is current and pops that
+        /// alpha on destruction.
+        /// @param open  Whether the menu bar is visible.
+        /// @param fade  Caller-owned fade state, read for this frame's alpha and updated on close.
+        ScopedMenuBar(bool open, HoverFadeState& fade) : m_Open(open), m_Fade(&fade) {}
+
+        /// @brief Calls `ImGui::EndMainMenuBar` when the bar opened, and settles/pops any fade.
         ~ScopedMenuBar();
 
         ScopedMenuBar(const ScopedMenuBar&) = delete;
         ScopedMenuBar& operator=(const ScopedMenuBar&) = delete;
 
         /// @brief Move constructor; invalidates the source so its destructor is a no-op.
-        ScopedMenuBar(ScopedMenuBar&& other) noexcept : m_Open(other.m_Open)
+        ScopedMenuBar(ScopedMenuBar&& other) noexcept : m_Open(other.m_Open), m_Fade(other.m_Fade)
         {
             other.m_Live = false;
         }
@@ -236,6 +268,8 @@ namespace Veng::UI
     private:
         /// @brief Whether the menu bar is visible.
         bool m_Open;
+        /// @brief Optional caller-owned fade; non-null means alpha was pushed and must be popped.
+        HoverFadeState* m_Fade = nullptr;
         /// @brief False after a move; suppresses the destructor call.
         bool m_Live = true;
     };
@@ -487,6 +521,45 @@ namespace Veng::UI
         bool m_Live = true;
     };
 
+    /// @brief Scope guard that fades the widgets it wraps until the pointer hovers them.
+    ///
+    /// Pushes `ImGuiStyleVar_Alpha` from the caller's `HoverFadeState` and opens an ImGui group, so
+    /// every widget drawn inside the scope renders at the eased alpha and shares one hover rect. On
+    /// destruction it closes the group, eases the state toward full opacity when the group is
+    /// hovered (else toward `InactiveAlpha`), and pops the alpha. The body always draws — the fade
+    /// never hides content — so `operator bool` is always true; the guard exists for the RAII close,
+    /// not a visibility gate. The wrapped widgets must sit inside a window (the group needs one);
+    /// the top-of-screen main menu bar is faded through `MainMenuBar(HoverFadeState&)` instead.
+    class [[nodiscard]] ScopedHoverFade
+    {
+    public:
+        /// @brief Constructs the guard over the caller's fade state.
+        /// @param state  Caller-owned fade state, read for this frame's alpha and updated on close.
+        explicit ScopedHoverFade(HoverFadeState& state) : m_State(&state) {}
+
+        /// @brief Ends the group, eases the fade toward the group's hover state, and pops the alpha.
+        ~ScopedHoverFade();
+
+        ScopedHoverFade(const ScopedHoverFade&) = delete;
+        ScopedHoverFade& operator=(const ScopedHoverFade&) = delete;
+
+        /// @brief Move constructor; invalidates the source so its destructor is a no-op.
+        ScopedHoverFade(ScopedHoverFade&& other) noexcept : m_State(other.m_State)
+        {
+            other.m_Live = false;
+        }
+        ScopedHoverFade& operator=(ScopedHoverFade&&) = delete;
+
+        /// @brief Always true; the wrapped content is unconditionally drawn.
+        explicit operator bool() const { return true; }
+
+    private:
+        /// @brief Caller-owned fade state driven each frame.
+        HoverFadeState* m_State;
+        /// @brief False after a move; suppresses the destructor call.
+        bool m_Live = true;
+    };
+
     /// @brief Opens a window and returns a scope guard whose destructor calls `End` unconditionally.
     /// @param title  Window title and ImGui id.
     /// @param open   Optional pointer toggled when the close button is clicked.
@@ -551,6 +624,18 @@ namespace Veng::UI
     [[nodiscard]] ScopedWindow ViewportOverlay(string_view id, OverlayAnchor anchor,
                                                vec2 padding = {8, 8});
 
+    /// @brief Fades the widgets drawn inside the returned scope until the pointer hovers them.
+    ///
+    /// Wrap a group of widgets — a HUD toolbar, an overlay panel, a row of gizmo buttons — so they
+    /// sit at a reduced alpha while idle and ease back to full opacity while the pointer is over
+    /// them: `if (auto fade = UI::HoverFade(m_ChromeFade)) { ...widgets... }`. The caller holds one
+    /// `HoverFadeState` per faded region across frames. The wrapped widgets must be inside a window
+    /// (the scope opens an ImGui group); fade the top-of-screen main menu bar with the
+    /// `MainMenuBar(HoverFadeState&)` overload instead.
+    /// @param state  Caller-owned fade state, held across frames (see `HoverFadeState`).
+    /// @return A scope guard whose body is always drawn.
+    [[nodiscard]] ScopedHoverFade HoverFade(HoverFadeState& state);
+
     /// @brief Opens a tree node and returns a scope guard that calls `TreePop` when the node is open.
     /// @param label  Display label and ImGui id.
     /// @param flags  Tree display flags.
@@ -596,6 +681,15 @@ namespace Veng::UI
 
     /// @brief Opens the main menu bar and returns a scope guard that calls `EndMainMenuBar` when opened.
     [[nodiscard]] ScopedMenuBar MainMenuBar();
+
+    /// @brief Opens the main menu bar with a hover fade and returns a scope guard.
+    ///
+    /// Identical to `MainMenuBar()`, but the whole bar renders at `fade`'s eased alpha and fades
+    /// back to full opacity while the pointer is over it — a bar that stays out of the way over the
+    /// scene until the user reaches for it. The returned guard settles the fade and pops the pushed
+    /// alpha on close.
+    /// @param fade  Caller-owned fade state, held across frames (see `HoverFadeState`).
+    [[nodiscard]] ScopedMenuBar MainMenuBar(HoverFadeState& fade);
 
     /// @brief Opens a menu and returns a scope guard that calls `EndMenu` when opened.
     /// @param label  Menu label and ImGui id.

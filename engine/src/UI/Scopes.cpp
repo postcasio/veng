@@ -7,6 +7,8 @@
 
 #include <imgui.h>
 
+#include <algorithm>
+
 namespace Veng::UI
 {
     namespace
@@ -15,6 +17,22 @@ namespace Veng::UI
         string AsCStr(string_view s)
         {
             return string(s);
+        }
+
+        // Eases the fade state toward full opacity when hovered, else toward its inactive alpha, at
+        // Speed alpha/sec over the ImGui frame delta. The first update snaps (no fade-in from the
+        // default), and a zero Speed disables easing so the alpha tracks the target instantly.
+        void EaseHoverFade(HoverFadeState& state, bool hovered)
+        {
+            const f32 target = hovered ? 1.0f : state.InactiveAlpha;
+            if (!state.Primed || state.Speed <= 0.0f)
+            {
+                state.Alpha = target;
+                state.Primed = true;
+                return;
+            }
+            const f32 step = std::min(1.0f, state.Speed * ImGui::GetIO().DeltaTime);
+            state.Alpha += (target - state.Alpha) * step;
         }
 
         ImGuiWindowFlags ToImGui(WindowFlags flags)
@@ -140,9 +158,28 @@ namespace Veng::UI
 
     ScopedMenuBar::~ScopedMenuBar()
     {
-        if (m_Live && m_Open)
+        if (!m_Live)
         {
+            return;
+        }
+        if (m_Open)
+        {
+            if (m_Fade != nullptr)
+            {
+                // Measured while the bar window is still current, before EndMainMenuBar. Hovering
+                // stays true across an open menu popup so the bar does not fade mid-interaction.
+                EaseHoverFade(*m_Fade,
+                              ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup));
+            }
             ImGui::EndMainMenuBar();
+        }
+        else if (m_Fade != nullptr)
+        {
+            EaseHoverFade(*m_Fade, false);
+        }
+        if (m_Fade != nullptr)
+        {
+            ImGui::PopStyleVar();
         }
     }
 
@@ -233,6 +270,17 @@ namespace Veng::UI
         if (m_Live)
         {
             JoinedEnd();
+        }
+    }
+
+    ScopedHoverFade::~ScopedHoverFade()
+    {
+        if (m_Live)
+        {
+            ImGui::EndGroup();
+            EaseHoverFade(*m_State,
+                          ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup));
+            ImGui::PopStyleVar();
         }
     }
 
@@ -334,6 +382,13 @@ namespace Veng::UI
         return ScopedWindow(open);
     }
 
+    ScopedHoverFade HoverFade(HoverFadeState& state)
+    {
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha, state.Alpha);
+        ImGui::BeginGroup();
+        return ScopedHoverFade(state);
+    }
+
     ScopedTree TreeNode(string_view label, TreeFlags flags)
     {
         const string id = AsCStr(label);
@@ -409,6 +464,14 @@ namespace Veng::UI
     ScopedMenuBar MainMenuBar()
     {
         return ScopedMenuBar(ImGui::BeginMainMenuBar());
+    }
+
+    ScopedMenuBar MainMenuBar(HoverFadeState& fade)
+    {
+        // Push the eased alpha before BeginMainMenuBar so the bar's own background fades with its
+        // contents; the guard pops it (and settles the fade) on close.
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha, fade.Alpha);
+        return ScopedMenuBar(ImGui::BeginMainMenuBar(), fade);
     }
 
     ScopedMenu Menu(string_view label)
