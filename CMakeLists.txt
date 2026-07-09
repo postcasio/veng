@@ -563,6 +563,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/gui_layout.cpp
             tests/unit/gui_style_states.cpp
             tests/unit/gui_input.cpp
+            tests/unit/gui_surface_input.cpp
             tests/unit/gui_widgets.cpp
             tests/unit/gui_document_api.cpp
             tests/unit/gui_presence.cpp

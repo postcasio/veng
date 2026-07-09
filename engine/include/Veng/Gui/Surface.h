@@ -5,6 +5,7 @@
 #include <Veng/Gui/UIDocument.h>
 #include <Veng/Reflection/Reflect.h>
 #include <Veng/Renderer/BindlessRegistry.h>
+#include <Veng/Scene/Entity.h>
 
 namespace Veng
 {
@@ -86,6 +87,16 @@ namespace Veng
         /// @brief Which material path turns the document's HDR texture into scene light.
         GuiSurfaceDomain Domain = GuiSurfaceDomain::Translucent;
 
+        /// @brief The Viewer entity whose devices drive this panel when it is interactive.
+        ///
+        /// A world panel has no host viewport to inherit a seat from, so the game names one
+        /// explicitly. Entity::Null (the default) leaves the surface display-only: the world-space
+        /// input adapter is never consulted for it, so a scene of non-interactive holograms and
+        /// monitors costs no input work. A non-null seat lets the game route that seat's pointer into
+        /// the document (under a SeatFocusScope) through the world-space input adapter. The reference
+        /// remaps on prefab spawn like any intra-prefab Entity reference.
+        Entity Seat = Entity::Null;
+
         /// @brief Runtime GPU state, materialized on the first Drive; empty until then.
         mutable Unique<GuiSurfaceRuntime> Runtime;
 
@@ -135,4 +146,5 @@ VE_REFLECT(::Veng::GuiSurface, 0x8D6C050074173888ULL)
 VE_FIELD(Document, .DisplayName = "Document")
 VE_FIELD(Resolution, .DisplayName = "Resolution", .Display = {.Min = 1})
 VE_FIELD(Domain, .DisplayName = "Domain")
+VE_FIELD(Seat, .DisplayName = "Seat")
 VE_REFLECT_END();
