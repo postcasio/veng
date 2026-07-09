@@ -10,6 +10,7 @@ namespace Veng
     namespace Gui
     {
         class DrawList;
+        class RenderTarget;
     }
 }
 
@@ -35,18 +36,26 @@ namespace Veng::Renderer
         Format OutputFormat = Format::RGBA16Sfloat;
     };
 
-    /// @brief Records a Gui::DrawList into an offscreen UI image and blends it over a scene output.
+    /// @brief Records a Gui::DrawList into an offscreen UI image, over a scene output or an HDR target.
     ///
-    /// The per-viewport UI overlay stage, modeled on the managed gather + composite tail's shape
-    /// (not mounted into it). Each frame the pass uploads a draw list's vertex/index stream into
-    /// per-frame ring storage, records one draw per run — with the run's scissor and pipeline
-    /// (rounded-rect SDF or MSDF text) — into an owned linear premultiplied-alpha UI image, then
-    /// blends that image over the viewport's scene output into an owned composite target. All
-    /// draw-list colors are linear by contract and the blend runs in linear space, so the UI
-    /// composites correctly ahead of the display-transfer encode.
+    /// The per-viewport UI stage, modeled on the managed gather + composite tail's shape (not
+    /// mounted into it). Each frame the pass uploads a draw list's vertex/index stream into
+    /// per-frame ring storage, then records one draw per run — with the run's scissor and pipeline
+    /// (rounded-rect SDF or MSDF text) — into a target. It offers two sinks that share the geometry
+    /// upload and pipelines:
+    ///
+    /// - Render blends the recorded UI over a scene output into an owned composite target — the
+    ///   screen-space overlay path.
+    /// - RenderToTarget records the UI into a supplied persistent Gui::RenderTarget and leaves it
+    ///   shader-readable — the render-to-texture path a downstream material samples.
+    ///
+    /// All draw-list colors are linear by contract and both sinks record in linear space with no
+    /// brightness clamp; a color above 1.0 survives into a half-float RenderTarget, and is flattened
+    /// only when the composite target holds a lower-precision format.
     ///
     /// Single-owner (Unique); Create is the factory. Owns the UI image, the composite target, the
-    /// ring-buffered geometry, and the two gui pipelines.
+    /// ring-buffered geometry, and the two gui pipelines. OutputFormat fixes the pipelines' color
+    /// format, so a RenderToTarget target must carry that same format.
     class GuiScenePass
     {
     public:
@@ -93,6 +102,17 @@ namespace Veng::Renderer
         /// @param cmd          Command buffer to record into.
         /// @param sceneOutput  The viewport's rendered scene output to blend the UI over.
         void Render(CommandBuffer& cmd, const Ref<ImageView>& sceneOutput);
+
+        /// @brief Records the UI into a supplied HDR target and leaves it shader-readable.
+        ///
+        /// Clears the target to transparent, replays each cached run into it at the target's extent,
+        /// then transitions it to a sampleable layout for a later sampler in the frame — the
+        /// producer-before-consumer handoff a downstream material's SetTextureHandle consumer reads
+        /// across. Distinct from Render: no scene output, no composite, the supplied target is the
+        /// whole result. The target's format must match this pass's OutputFormat.
+        /// @param cmd     Command buffer to record into.
+        /// @param target  The persistent target to record the UI into; left in a shader-read layout.
+        void RenderToTarget(CommandBuffer& cmd, Gui::RenderTarget& target);
 
         /// @brief Returns the composited output view (scene with the UI blended over it).
         ///

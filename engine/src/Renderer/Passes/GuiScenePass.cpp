@@ -8,6 +8,7 @@
 #include <Veng/Asset/Shader.h>
 #include <Veng/Asset/VertexLayout.h>
 #include <Veng/Gui/DrawList.h>
+#include <Veng/Gui/RenderTarget.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/CommandBuffer.h>
@@ -132,6 +133,14 @@ namespace Veng::Renderer
         TextureHandle SceneSlot;
         TextureHandle UiSlot;
 
+        // The render-to-texture sink graph, built lazily on the first RenderToTarget. One pass —
+        // clear the target transparent, replay the runs into it — whose imported target view is
+        // bound live at Execute, so the same compiled graph records into any supplied target. Its
+        // extent varies per target, read live from SinkExtent inside the callback.
+        Unique<CompiledGraph> SinkGraph;
+        ResourceId SinkTargetId;
+        uvec2 SinkExtent{0};
+
         explicit Impl(const GuiScenePassInfo& info)
             : Context(info.Context), Extent(info.Extent), OutputFormat(info.OutputFormat)
         {
@@ -161,6 +170,85 @@ namespace Veng::Renderer
                 ImageView::Create(Context, {.Name = "Gui Composite View", .Image = CompositeImage});
         }
 
+        // Replays the cached run table into the bound color target at the given extent: binds the
+        // ring geometry, and per run its pipeline (rounded-rect SDF or MSDF text), set 0, push
+        // block, and scissor. Shared by the overlay UI pass and the render-to-texture sink, so both
+        // sinks record identical geometry into their respective targets.
+        void RecordRuns(CommandBuffer& passCmd, uvec2 extent)
+        {
+            BindlessRegistry& bindless = Context.GetBindlessRegistry();
+            passCmd.SetViewport({0, 0}, extent);
+            passCmd.BindVertexBuffer(VertexBuffer);
+            passCmd.BindIndexBuffer(IndexBuffer, IndexType::U32);
+
+            // The clip transform folds the UI scale in: positions are logical points over
+            // extent / UiScale, so points-per-image-extent is UiScale / extent.
+            const GuiPushConstants push{
+                .InvScreenSize = vec2(UiScale / static_cast<f32>(extent.x),
+                                      UiScale / static_cast<f32>(extent.y)),
+                .GradientBuffer = GradientSlot.Index,
+                .GradientBase = GradientBase,
+            };
+
+            optional<Gui::GuiPipeline> boundPipeline;
+
+            for (const Gui::DrawRun& run : Runs)
+            {
+                if (run.IndexCount == 0)
+                {
+                    continue;
+                }
+
+                if (boundPipeline != run.Pipeline)
+                {
+                    passCmd.BindPipeline(run.Pipeline == Gui::GuiPipeline::Msdf ? MsdfPipeline
+                                                                                : ShapePipeline);
+                    // Set 0 is bound after the pipeline so the layout is established.
+                    bindless.Bind(passCmd);
+                    passCmd.PushConstants(push);
+                    boundPipeline = run.Pipeline;
+                }
+
+                // The run's clip is already an absolute rectangle in logical points; the scissor
+                // scales it onto the physical target (the vertex stage scales positions, but a
+                // scissor is raw pixels). Unclipped runs scissor the whole surface.
+                if (run.HasClip)
+                {
+                    const vec2 clipMin = run.Clip.Min * UiScale;
+                    const vec2 clipSize = run.Clip.Size * UiScale;
+                    const ivec2 offset{static_cast<i32>(clipMin.x), static_cast<i32>(clipMin.y)};
+                    const uvec2 clipExtent{static_cast<u32>(std::ceil(clipSize.x)),
+                                           static_cast<u32>(std::ceil(clipSize.y))};
+                    passCmd.SetScissor(offset, clipExtent);
+                }
+                else
+                {
+                    passCmd.SetScissor({0, 0}, extent);
+                }
+
+                passCmd.DrawIndexed(run.IndexCount, 1, IndexBase + run.FirstIndex, VertexBase, 0);
+            }
+        }
+
+        // Builds the one-pass render-to-texture sink graph and bakes its schedule once. The pass
+        // clears its imported target transparent and replays the runs into it at SinkExtent; the
+        // target view is supplied live at Execute, so the same compiled graph records into any
+        // target of the pass's OutputFormat.
+        void CompileSinkGraph()
+        {
+            RenderGraph graph(Context);
+            SinkTargetId = graph.Import("Gui Sink Target");
+            graph.AddPass("Gui Sink")
+                .Color({
+                    .Resource = SinkTargetId,
+                    .Load = LoadOp::Clear,
+                    .Store = StoreOp::Store,
+                    .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 0.0f},
+                })
+                .Execute([this](PassContext& ctx) { RecordRuns(ctx.Cmd(), SinkExtent); });
+            SinkGraph = graph.Compile();
+        }
+
         // Builds the two-pass UI + composite graph and bakes its schedule once. The callbacks read
         // every per-frame input (Runs, Extent, the composite's SceneSlot/UiSlot) from this Impl at
         // record time, so the same compiled graph replays each frame against fresh geometry and
@@ -180,67 +268,7 @@ namespace Veng::Renderer
                     .Store = StoreOp::Store,
                     .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 0.0f},
                 })
-                .Execute(
-                    [this](PassContext& ctx)
-                    {
-                        BindlessRegistry& bindless = Context.GetBindlessRegistry();
-                        CommandBuffer& passCmd = ctx.Cmd();
-                        passCmd.SetViewport({0, 0}, Extent);
-                        passCmd.BindVertexBuffer(VertexBuffer);
-                        passCmd.BindIndexBuffer(IndexBuffer, IndexType::U32);
-
-                        // The clip transform folds the UI scale in: positions are logical points
-                        // over extent / UiScale, so points-per-image-extent is UiScale / Extent.
-                        const GuiPushConstants push{
-                            .InvScreenSize = vec2(UiScale / static_cast<f32>(Extent.x),
-                                                  UiScale / static_cast<f32>(Extent.y)),
-                            .GradientBuffer = GradientSlot.Index,
-                            .GradientBase = GradientBase,
-                        };
-
-                        optional<Gui::GuiPipeline> boundPipeline;
-
-                        for (const Gui::DrawRun& run : Runs)
-                        {
-                            if (run.IndexCount == 0)
-                            {
-                                continue;
-                            }
-
-                            if (boundPipeline != run.Pipeline)
-                            {
-                                passCmd.BindPipeline(run.Pipeline == Gui::GuiPipeline::Msdf
-                                                         ? MsdfPipeline
-                                                         : ShapePipeline);
-                                // Set 0 is bound after the pipeline so the layout is established.
-                                bindless.Bind(passCmd);
-                                passCmd.PushConstants(push);
-                                boundPipeline = run.Pipeline;
-                            }
-
-                            // The run's clip is already an absolute rectangle in logical points;
-                            // the scissor scales it onto the physical UI image (the vertex stage
-                            // scales positions, but a scissor is raw pixels). Unclipped runs
-                            // scissor the whole surface.
-                            if (run.HasClip)
-                            {
-                                const vec2 clipMin = run.Clip.Min * UiScale;
-                                const vec2 clipSize = run.Clip.Size * UiScale;
-                                const ivec2 offset{static_cast<i32>(clipMin.x),
-                                                   static_cast<i32>(clipMin.y)};
-                                const uvec2 extent{static_cast<u32>(std::ceil(clipSize.x)),
-                                                   static_cast<u32>(std::ceil(clipSize.y))};
-                                passCmd.SetScissor(offset, extent);
-                            }
-                            else
-                            {
-                                passCmd.SetScissor({0, 0}, Extent);
-                            }
-
-                            passCmd.DrawIndexed(run.IndexCount, 1, IndexBase + run.FirstIndex,
-                                                VertexBase, 0);
-                        }
-                    });
+                .Execute([this](PassContext& ctx) { RecordRuns(ctx.Cmd(), Extent); });
 
             // Pass 2 — composite: copy the scene output, then blend the UI over it.
             graph.AddPass("Gui Composite")
@@ -516,6 +544,27 @@ namespace Veng::Renderer
 
         bindless.Release(impl.SceneSlot);
         bindless.Release(impl.UiSlot);
+    }
+
+    void GuiScenePass::RenderToTarget(CommandBuffer& cmd, Gui::RenderTarget& target)
+    {
+        Impl& impl = *m_Impl;
+        VE_ASSERT(target.GetFormat() == impl.OutputFormat,
+                  "GuiScenePass::RenderToTarget: target format must match the pass OutputFormat");
+
+        impl.SinkExtent = target.GetExtent();
+        if (!impl.SinkGraph)
+        {
+            impl.CompileSinkGraph();
+        }
+
+        const RenderGraph::ImportBinding binding{.Id = impl.SinkTargetId,
+                                                 .View = target.GetOutput()};
+        impl.SinkGraph->Execute(cmd, {&binding, 1});
+
+        // Leave the target in a sampleable layout for a later sampler in the frame — the
+        // producer-before-consumer handoff a downstream material reads across.
+        cmd.PrepareForAccess(target.GetOutput(), AccessKind::Sample);
     }
 
     const Ref<ImageView>& GuiScenePass::GetOutput() const

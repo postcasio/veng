@@ -1027,6 +1027,12 @@ if (VENG_BUILD_TESTS)
             # the composite to the committed golden PNG (the Gui image floor). It loads the
             # golden via stb_image (whose implementation is already linked from veng::cook).
             tests/gpu/gui_golden.cpp
+            # gui_hdr_target.cpp builds an imperative document with a >1.0 background, drives it
+            # through the GuiScenePass render-to-texture sink into a persistent RGBA16Sfloat
+            # Gui::RenderTarget, and samples that target's GetOutputHandle downstream — asserting
+            # the emissive texel round-trips above 1.0 and the producer's barrier leaves it
+            # shader-read before the sample. Uses the test shader pack's bindless sampler.
+            tests/gpu/gui_hdr_target.cpp
             # ui_document_load.cpp cooks a UIDocument + StyleSheet + Font fixture pack, LoadSyncs
             # the document (pulling its stylesheet + font as dependencies), asserts the recipe tree
             # + resolved rule variants + resolved deps, and Instantiates two independent trees.
