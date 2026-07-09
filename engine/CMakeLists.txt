@@ -97,6 +97,7 @@ add_library(veng SHARED
         src/Gui/DocumentLayer.cpp
         src/Gui/DocumentTexture.cpp
         src/Gui/GuiConsumer.cpp
+        src/Gui/Overlay.cpp
         src/Gui/Placement.cpp
         src/Gui/RenderTarget.cpp
         src/Gui/Surface.cpp

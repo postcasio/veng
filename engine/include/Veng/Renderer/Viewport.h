@@ -18,6 +18,7 @@ namespace Veng
 {
     class Scene;
     class AssetManager;
+    struct GuiOverlay;
 }
 
 namespace Veng::Gui
@@ -639,6 +640,36 @@ namespace Veng::Renderer
         /// scene holds no GuiSurface. Lazily creates the surface pass and sampler on first use.
         /// @param cmd  The command buffer the document renders record into.
         void RenderSurfaces(CommandBuffer& cmd);
+
+        /// @brief Drives the GuiOverlay components this viewport claims onto its layer stack.
+        ///
+        /// Walks the bound ViewState World for GuiOverlay components and drives each one this
+        /// viewport claims (ClaimsOverlay) — materializing its document host and attaching the live
+        /// document to this viewport's layer stack at the component's Layer. Recorded before the
+        /// layer composite (RenderDocuments) so a fresh attach composites the same frame. A no-op
+        /// when the scene holds no claimed GuiOverlay.
+        void DriveOverlays();
+
+        /// @brief Whether this viewport claims @p overlay, deciding the presenting viewport by seat.
+        ///
+        /// The overlay's target seat is its own entity when that entity carries a Viewer, else its
+        /// TargetSeat, else unbound. A bound overlay is claimed by the viewport whose GetSeat matches;
+        /// an unbound one by the sole/primary presenter (IsPrimaryPresenterOf).
+        /// @param world    The scene the overlay entity lives in.
+        /// @param entity   The entity carrying the overlay.
+        /// @param overlay  The overlay to test.
+        /// @return True when this viewport should drive the overlay this frame.
+        [[nodiscard]] bool ClaimsOverlay(const Scene& world, Entity entity,
+                                         const GuiOverlay& overlay) const;
+
+        /// @brief Whether this viewport is the sole (or primary) presenter of @p world.
+        ///
+        /// True for a viewport driven directly (no drive-list), else true only for the first
+        /// viewport in registration order whose bound scene is @p world — so exactly one of several
+        /// viewports presenting a shared scene claims an unbound overlay.
+        /// @param world  The scene to test presentation of.
+        /// @return True when this viewport is the primary presenter of the scene.
+        [[nodiscard]] bool IsPrimaryPresenterOf(const Scene& world) const;
 
         /// @brief Re-registers the GuiScenePass composite view into bindless when it changed.
         ///

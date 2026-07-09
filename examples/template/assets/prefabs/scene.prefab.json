@@ -155,6 +155,18 @@
           "Domain": "Translucent"
         }
       }
+    },
+    {
+      "components": {
+        "::Veng::Name": {
+          "Value": "HUD"
+        },
+        "::Veng::GuiOverlay": {
+          "Document": "0x5F30E0E78A88D61D",
+          "Layer": 0,
+          "Interactive": false
+        }
+      }
     }
   ]
 }

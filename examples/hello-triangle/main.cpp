@@ -20,9 +20,8 @@
 #include <Veng/UI/DebugPanels.h>
 
 #include <Veng/Gui/Document.h>
-#include <Veng/Gui/DocumentHost.h>
-#include <Veng/Gui/DocumentLayer.h>
 #include <Veng/Gui/Element.h>
+#include <Veng/Gui/Overlay.h>
 #include <Veng/Gui/StyleSheet.h>
 
 #include <Veng/Mcp/McpHost.h>
@@ -337,16 +336,17 @@ protected:
             // a click on the scene re-captures it).
             GetInputRouter().PushFocus(InputFocus::Gameplay);
 
-            SetupHud();
+            SetupHud(world);
         }
     }
 
-    // Builds the status HUD: reads the accent color the stylesheet defines so the tick highlight
-    // and the spinner arc share one source, then constructs a DocumentHost, hands it the
-    // resolve-once hook that caches the `count`-repeated tick pool by class, and wraps it in a
-    // DocumentLayer presenting it on the primary viewport's screen-space layer stack. The smoke path
-    // skips all of this — the golden capture is the 3D scene only.
-    void SetupHud()
+    // Builds the status HUD as a scene component: reads the accent color the stylesheet defines so
+    // the tick highlight and the spinner arc share one source, spawns a HUD entity carrying a
+    // GuiOverlay referencing the cooked document, and hands the overlay the resolve-once hook that
+    // caches the `count`-repeated tick pool by class. The Viewport then owns the load, instantiate,
+    // and attach; UpdateHud only sweeps the highlight. The smoke path adds no overlay — the golden
+    // capture is the 3D scene only.
+    void SetupHud(Scene& world)
     {
         AssetManager& assets = GetAssetManager();
         if (const auto sheet = assets.LoadSync<Gui::StyleSheet>(HudStyleSheetId))
@@ -361,10 +361,19 @@ protected:
             }
         }
 
-        m_HudHost = std::make_unique<Gui::DocumentHost>(assets, GetTypeRegistry(), HudDocumentId);
-        m_HudHost->SetOnInstantiate([this](Gui::Document& document)
-                                    { m_HudTicks = document.FindAllByClass("tick"); });
-        m_HudLayer = std::make_unique<Gui::DocumentLayer>(*m_HudHost);
+        const AssetResult<AssetHandle<Gui::UIDocument>> recipe =
+            assets.LoadSync<Gui::UIDocument>(HudDocumentId);
+        if (!recipe)
+        {
+            return;
+        }
+
+        m_HudEntity = world.CreateEntity();
+        world.Add<Name>(m_HudEntity).Value = "HUD";
+        auto& overlay = world.Add<GuiOverlay>(m_HudEntity);
+        overlay.Document = *recipe;
+        overlay.SetOnInstantiate([this](Gui::Document& document)
+                                 { m_HudTicks = document.FindAllByClass("tick"); });
     }
 
     void OnUpdate(const f32 delta) override
@@ -426,17 +435,19 @@ protected:
         UpdateHud(delta);
     }
 
-    // Attaches the HUD (a no-op after the first frame) and sweeps a highlight across the tick pool
-    // resolved by SetOnInstantiate — one tick lit in the accent color, the rest idle. The spinner's
-    // rotation runs from its stylesheet keyframe, so it needs no per-frame drive here.
+    // Sweeps a highlight across the tick pool resolved by SetOnInstantiate — one tick lit in the
+    // accent color, the rest idle. The Viewport drives the overlay's load / instantiate / attach, so
+    // this reads the live document off the component; it is null until the first drive instantiates
+    // it. The spinner's rotation runs from its stylesheet keyframe, so it needs no per-frame drive.
     void UpdateHud(const f32 delta)
     {
-        if (!m_HudLayer)
+        if (m_HudEntity.IsNull())
         {
             return;
         }
 
-        Gui::Document* document = m_HudLayer->Present(*GetPrimaryViewport());
+        const GuiOverlay* const overlay = GetWorld()->TryGet<GuiOverlay>(m_HudEntity);
+        Gui::Document* const document = overlay != nullptr ? overlay->GetDocument() : nullptr;
         if (document == nullptr || m_HudTicks.empty())
         {
             return;
@@ -497,7 +508,6 @@ protected:
         // Drop the server first: its destructor stops the listener thread and closes the socket, so
         // no in-flight tool handler can touch engine state while the rest of the app tears down.
         m_McpServer.reset();
-        m_HudHost.reset();
         m_SceneTexture.reset();
         m_SceneSampler.reset();
     }
@@ -676,12 +686,11 @@ private:
     // Pauses the managed world's simulation so the broadphase reads `static`; never set in smoke.
     bool m_PauseSpin = false;
 
-    // The windowed status HUD. The host owns the live document (lazy load, instantiate, bind) and
-    // the layer presents it on the primary viewport's screen-space stack; m_HudTicks caches the
-    // `count`-repeated tick pool the SetOnInstantiate hook resolves by class, refreshed by
-    // construction on any re-instantiate. Neither is constructed on the smoke path.
-    Unique<Gui::DocumentHost> m_HudHost;
-    Unique<Gui::DocumentLayer> m_HudLayer;
+    // The windowed status HUD, authored as a GuiOverlay component on this entity: the Viewport owns
+    // its load / instantiate / attach, and m_HudTicks caches the `count`-repeated tick pool the
+    // SetOnInstantiate hook resolves by class, refreshed on any re-instantiate. The entity is spawned
+    // only off the smoke path, so the golden capture stays scene-only.
+    Entity m_HudEntity = Entity::Null;
     vector<Gui::Element*> m_HudTicks;
 
     // The highlight-sweep phase, in seconds, and the two tick colors read off the stylesheet's

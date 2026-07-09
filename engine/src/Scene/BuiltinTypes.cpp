@@ -1,6 +1,7 @@
 #include <Veng/Scene/BuiltinTypes.h>
 
 #include <Veng/Asset/InputMappingContext.h>
+#include <Veng/Gui/Overlay.h>
 #include <Veng/Gui/Surface.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Renderer/Atmosphere.h>
@@ -75,5 +76,10 @@ namespace Veng
         // scene's bloom. GuiSurfaceDomain and the AssetHandle<Gui::UIDocument> recipe leaf register
         // transitively through its fields.
         registry.Register<GuiSurface>();
+
+        // A document presented on the presenting viewport's screen-space layer stack, discovered and
+        // driven by the Viewport. The AssetHandle<Gui::UIDocument> recipe leaf and the Entity seat
+        // reference register transitively through its fields.
+        registry.Register<GuiOverlay>();
     }
 }

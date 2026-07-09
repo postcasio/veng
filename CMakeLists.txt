@@ -568,6 +568,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/gui_document_api.cpp
             tests/unit/gui_presence.cpp
             tests/unit/gui_placement.cpp
+            tests/unit/gui_overlay_component.cpp
     )
     target_link_libraries(veng_test_unit PRIVATE veng::veng doctest::doctest)
 
@@ -1056,6 +1057,12 @@ if (VENG_BUILD_TESTS)
             # owned HDR target: render-to-target, dirty-gate skip with a stable handle, and a
             # resolution-change re-allocation + re-render.
             tests/gpu/document_texture.cpp
+            # gui_overlay.cpp cooks the UI HUD fixture pack and drives the GuiOverlay component the
+            # Viewport discovers: the component-driven composite is byte-identical to the hand-wired
+            # DocumentHost + DocumentLayer path, a runtime-removed component detaches, two seated
+            # viewports each claim only their seat's overlay (unbound → the primary), and a failed
+            # load surfaces null rather than aborting.
+            tests/gpu/gui_overlay.cpp
             tests/gpu/mesh_loader.cpp
             tests/gpu/shader_loader.cpp
             tests/gpu/material_loader.cpp

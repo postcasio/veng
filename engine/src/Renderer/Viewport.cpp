@@ -4,6 +4,7 @@
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Gui/Document.h>
 #include <Veng/Gui/DrawList.h>
+#include <Veng/Gui/Overlay.h>
 #include <Veng/Gui/RenderTarget.h>
 #include <Veng/Gui/Surface.h>
 #include <Veng/Renderer/BindlessRegistry.h>
@@ -11,6 +12,7 @@
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/Sampler.h>
 
+#include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
 
@@ -389,6 +391,10 @@ namespace Veng::Renderer
         // panel, a material), so transition it to a sampleable layout here.
         cmd.PrepareForAccess(m_Renderer->GetOutput(), AccessKind::Sample);
 
+        // Drive the GuiOverlay components this viewport claims onto its layer stack, so a
+        // component-declared HUD attaches (or re-attaches) before the layers are composited below.
+        DriveOverlays();
+
         // Drive the attached documents and blend their layers over the scene output. A viewport with
         // no documents skips this entirely — its output stays the scene output, byte-identical.
         RenderDocuments(cmd);
@@ -480,6 +486,56 @@ namespace Veng::Renderer
 
             surface.Drive(m_Context, m_Assets, cmd, m_SurfaceSamplerHandle, material,
                           m_ViewState.Delta);
+        }
+    }
+
+    bool Viewport::IsPrimaryPresenterOf(const Scene& world) const
+    {
+        // An unregistered viewport driven directly is the sole presenter by definition. Otherwise the
+        // primary presenter is the first viewport in registration order whose bound scene is this one
+        // — so among the viewports presenting a shared scene exactly one claims an unbound overlay.
+        if (m_DriveList == nullptr)
+        {
+            return true;
+        }
+        for (const Viewport* const viewport : *m_DriveList)
+        {
+            if (viewport->m_ViewState.World == &world)
+            {
+                return viewport == this;
+            }
+        }
+        return true;
+    }
+
+    bool Viewport::ClaimsOverlay(const Scene& world, const Entity entity,
+                                 const GuiOverlay& overlay) const
+    {
+        // The overlay's target seat is its own entity when that entity is a seat (a Viewer), else its
+        // authored TargetSeat, else unbound. A bound overlay is claimed by the viewport on its seat;
+        // an unbound one by the sole/primary presenter, so a single-viewport HUD attaches unchanged.
+        const Entity target = world.Has<Viewer>(entity) ? entity : overlay.TargetSeat;
+        if (!target.IsNull())
+        {
+            return target == m_Seat;
+        }
+        return IsPrimaryPresenterOf(world);
+    }
+
+    void Viewport::DriveOverlays()
+    {
+        if (m_ViewState.World == nullptr)
+        {
+            return;
+        }
+
+        const Scene& world = *m_ViewState.World;
+        for (auto [entity, overlay] : world.View<GuiOverlay>())
+        {
+            if (ClaimsOverlay(world, entity, overlay))
+            {
+                overlay.Drive(*this, m_Assets);
+            }
         }
     }
 
