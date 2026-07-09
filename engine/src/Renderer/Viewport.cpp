@@ -1,12 +1,17 @@
 #include <Veng/Renderer/Viewport.h>
 
 #include <Veng/Assert.h>
+#include <Veng/Asset/Mesh.h>
 #include <Veng/Gui/Document.h>
 #include <Veng/Gui/DrawList.h>
+#include <Veng/Gui/RenderTarget.h>
+#include <Veng/Gui/Surface.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
+#include <Veng/Renderer/Sampler.h>
 
+#include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
 
 #include "Passes/GuiScenePass.h"
@@ -68,6 +73,10 @@ namespace Veng::Renderer
 
         m_Context.GetBindlessRegistry().Release(m_OutputHandle);
         m_Context.GetBindlessRegistry().Release(m_CompositeHandle);
+        if (m_SurfaceSamplerHandle.IsValid())
+        {
+            m_Context.GetBindlessRegistry().Release(m_SurfaceSamplerHandle);
+        }
     }
 
     void Viewport::AttachToDriveList(vector<Viewport*>& driveList)
@@ -370,6 +379,10 @@ namespace Veng::Renderer
             .SsrThickness = m_ViewState.SsrThickness,
             .SsrMaxRoughness = m_ViewState.SsrMaxRoughness,
         };
+        // Drive any GuiSurface panels in the scene into their HDR targets before the scene render,
+        // so a translucent/emissive panel material samples a shader-readable target the same frame.
+        RenderSurfaces(cmd);
+
         m_Renderer->Execute(cmd, view);
 
         // The output is sampled outside the renderer's graph (the compositor, an ImGui
@@ -422,6 +435,52 @@ namespace Veng::Renderer
         // Register the composite view into bindless (once, and again whenever a resize replaced it)
         // so GetOutputHandle names the composited result.
         RefreshCompositeHandle();
+    }
+
+    void Viewport::RenderSurfaces(CommandBuffer& cmd)
+    {
+        if (m_ViewState.World == nullptr)
+        {
+            return;
+        }
+
+        const Scene& world = *m_ViewState.World;
+        for (auto [entity, surface] : world.View<GuiSurface>())
+        {
+            // Lazily create the shared document sampler on the first surface encountered, so a scene
+            // without any GuiSurface allocates nothing. Each surface owns its own pass and target.
+            if (!m_SurfaceSampler)
+            {
+                m_SurfaceSampler =
+                    Sampler::Create(m_Context, {
+                                                   .Name = "GuiSurface Sampler",
+                                                   .MagFilter = Filter::Linear,
+                                                   .MinFilter = Filter::Linear,
+                                                   .AddressModeU = AddressMode::ClampToEdge,
+                                                   .AddressModeV = AddressMode::ClampToEdge,
+                                                   .AddressModeW = AddressMode::ClampToEdge,
+                                               });
+                m_SurfaceSamplerHandle = m_Context.GetBindlessRegistry().Register(m_SurfaceSampler);
+            }
+
+            // The panel binds onto its sibling MeshRenderer's first material (the mesh it draws onto).
+            MaterialInstance* material = nullptr;
+            if (const MeshRenderer* mesh = world.TryGet<MeshRenderer>(entity); mesh != nullptr)
+            {
+                if (mesh->Mesh.IsLoaded())
+                {
+                    const std::span<const AssetHandle<MaterialInstance>> materials =
+                        mesh->Mesh.Get()->GetMaterials();
+                    if (!materials.empty() && materials[0].IsLoaded())
+                    {
+                        material = materials[0].Get();
+                    }
+                }
+            }
+
+            surface.Drive(m_Context, m_Assets, cmd, m_SurfaceSamplerHandle, material,
+                          m_ViewState.Delta);
+        }
     }
 
     void Viewport::ServicePendingPick()

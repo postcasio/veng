@@ -18,6 +18,10 @@ namespace Veng
     struct Animation;
     class EnvironmentMap;
     class InputMappingContext;
+    namespace Gui
+    {
+        class UIDocument;
+    }
     class TypeRegistry;
 
     /// @brief Identity trait for every reflected type.
@@ -116,6 +120,8 @@ VE_LEAF(::Veng::AssetHandle<::Veng::Animation>, 0xED6B03478BD050CEULL,
 VE_LEAF(::Veng::AssetHandle<::Veng::EnvironmentMap>, 0x4E2499935571083DULL,
         ::Veng::FieldClass::AssetHandle);
 VE_LEAF(::Veng::AssetHandle<::Veng::InputMappingContext>, 0xA6CA03617AA27317ULL,
+        ::Veng::FieldClass::AssetHandle);
+VE_LEAF(::Veng::AssetHandle<::Veng::Gui::UIDocument>, 0xC591D0D0452797E1ULL,
         ::Veng::FieldClass::AssetHandle);
 
 // Entity is an intra-scene reference, not a value leaf — the prefab loader

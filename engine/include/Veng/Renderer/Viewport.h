@@ -31,6 +31,7 @@ namespace Veng::Renderer
     class Context;
     class CommandBuffer;
     class GuiScenePass;
+    class Sampler;
 
     /// @brief Selects whether the engine compositor places a viewport's texture into the window.
     ///
@@ -629,6 +630,16 @@ namespace Veng::Renderer
         /// @brief Rebuilds m_DocumentPointers from m_Documents after an attach or detach.
         void RebuildDocumentPointers();
 
+        /// @brief Drives every GuiSurface in the bound scene into its HDR target ahead of the render.
+        ///
+        /// Walks the bound ViewState World for GuiSurface components, drives each one's document into
+        /// its persistent HDR target, and binds the target handle onto the surface's sibling
+        /// MeshRenderer material — recorded before the owned SceneRenderer's Execute, so the panel
+        /// texture is shader-readable when the translucent/emissive pass samples it. A no-op when the
+        /// scene holds no GuiSurface. Lazily creates the surface pass and sampler on first use.
+        /// @param cmd  The command buffer the document renders record into.
+        void RenderSurfaces(CommandBuffer& cmd);
+
         /// @brief Re-registers the GuiScenePass composite view into bindless when it changed.
         ///
         /// Compares the pass's current output view against the one m_CompositeHandle names and
@@ -681,5 +692,14 @@ namespace Veng::Renderer
 
         /// @brief The composite view m_CompositeHandle names; compared to re-register only on change.
         Ref<ImageView> m_RegisteredCompositeView;
+
+        /// @brief The linear clamp sampler bound alongside a GuiSurface document handle.
+        ///
+        /// Shared across the scene's surfaces (a read-only sampler); each surface owns its own pass
+        /// and HDR target. Created on the first frame the scene holds a GuiSurface; null until then.
+        Ref<Sampler> m_SurfaceSampler;
+
+        /// @brief Bindless slot naming m_SurfaceSampler; allocated with the sampler.
+        SamplerHandle m_SurfaceSamplerHandle;
     };
 }

@@ -97,6 +97,7 @@ add_library(veng SHARED
         src/Gui/GuiConsumer.cpp
         src/Gui/Placement.cpp
         src/Gui/RenderTarget.cpp
+        src/Gui/Surface.cpp
         src/Gui/StyleProperty.cpp
         src/Gui/StyleSheet.cpp
         src/Gui/UIDocument.cpp

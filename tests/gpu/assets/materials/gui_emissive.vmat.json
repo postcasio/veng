@@ -1,0 +1,25 @@
+{
+  "defaultInstance": "0x0000000000002416",
+  "domain": "Surface",
+  "shaders": {
+    "vertex": "0x000000000000238D",
+    "fragment": "0x0000000000002410"
+  },
+  "fields": [
+    {
+      "name": "EmissiveColor",
+      "type": "vec4",
+      "value": [0.0, 0.0, 0.0, 0.0]
+    },
+    {
+      "name": "EmissiveTexture",
+      "type": "texture",
+      "id": "0x0000000000002329"
+    },
+    {
+      "name": "EmissiveSampler",
+      "type": "sampler",
+      "texture": "EmissiveTexture"
+    }
+  ]
+}

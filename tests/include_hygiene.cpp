@@ -75,6 +75,7 @@
 #include <Veng/Gui/Document.h>
 #include <Veng/Gui/Placement.h>
 #include <Veng/Gui/RenderTarget.h>
+#include <Veng/Gui/Surface.h>
 
 #include <Veng/Module/ApplicationRegistry.h>
 #include <Veng/Module/Module.h>

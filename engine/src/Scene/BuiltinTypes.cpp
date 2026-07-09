@@ -1,6 +1,7 @@
 #include <Veng/Scene/BuiltinTypes.h>
 
 #include <Veng/Asset/InputMappingContext.h>
+#include <Veng/Gui/Surface.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Renderer/Atmosphere.h>
 #include <Veng/Scene/Components.h>
@@ -69,5 +70,10 @@ namespace Veng
         // (Renderer::PointFieldLod) and CellSize register transitively; the runtime-only Field
         // carries no reflected field, so it neither registers Renderer::PointField nor serializes.
         registry.Register<PointField>();
+
+        // A document mapped onto a world mesh, driven into an HDR target and glowing through the
+        // scene's bloom. GuiSurfaceDomain and the AssetHandle<Gui::UIDocument> recipe leaf register
+        // transitively through its fields.
+        registry.Register<GuiSurface>();
     }
 }

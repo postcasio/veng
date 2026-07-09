@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "0x00000000000023F1",
+      "type": "VertexLayout",
+      "source": "layouts/canonical.vlayout.json"
+    },
+    {
+      "id": "0x0000000000002329",
+      "type": "Texture",
+      "source": "textures/brick.tex.json"
+    },
+    {
+      "id": "0x000000000000238D",
+      "type": "Shader",
+      "source": "shaders/brick.vert.shader.json"
+    },
+    {
+      "id": "0x0000000000002400",
+      "type": "Shader",
+      "source": "shaders/surface_full.vert.shader.json"
+    },
+    {
+      "id": "0x000000000000238E",
+      "type": "Shader",
+      "source": "shaders/brick.frag.shader.json"
+    },
+    {
+      "id": "0x000000000000232B",
+      "type": "Material",
+      "source": "materials/brick.vmat.json"
+    },
+    {
+      "id": "0x0000000000002410",
+      "type": "Shader",
+      "source": "shaders/gui_emissive.frag.shader.json"
+    },
+    {
+      "id": "0x0000000000002411",
+      "type": "Material",
+      "source": "materials/gui_emissive.vmat.json"
+    },
+    {
+      "id": "0x0000000000002413",
+      "type": "Shader",
+      "source": "shaders/gui_translucent.frag.shader.json"
+    },
+    {
+      "id": "0x0000000000002414",
+      "type": "Material",
+      "source": "materials/gui_translucent.vmat.json"
+    }
+  ]
+}
