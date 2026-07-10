@@ -87,6 +87,7 @@ add_library(veng SHARED
         src/Scene/InputMappingSystem.cpp
         src/Scene/Motion.cpp
         src/Scene/Movement.cpp
+        src/Scene/RemoteInterpolationSystem.cpp
         src/Scene/Resolve.cpp
         src/Scene/RootMotion.cpp
         src/Scene/Scene.cpp

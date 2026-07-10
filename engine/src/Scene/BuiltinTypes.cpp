@@ -8,6 +8,7 @@
 #include <Veng/Renderer/CaptureSurface.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Camera.h>
+#include <Veng/Scene/RemoteInterpolationSystem.h>
 
 namespace Veng
 {
@@ -56,6 +57,11 @@ namespace Veng
         // The wire identity of a replicated entity (server-assigned, runtime-only). Reflected so the
         // inspector can surface the assigned id; the net layer keys snapshots by it.
         registry.Register<NetIdentity>();
+
+        // The client-side pose-sample buffer a replicated entity carries, filled by snapshots and read
+        // by the View-phase RemoteInterpolationSystem. Runtime-only: it carries no reflected field, so
+        // it never serializes and never rides the wire.
+        registry.Register<RemoteInterpolation>();
 
         // Game mode as data: the replicated Session state and the per-scene config a
         // spawn rule reads. SessionPhase registers transitively through Session.

@@ -6,6 +6,7 @@
 #include <Veng/Scene/InputMappingSystem.h>
 #include <Veng/Scene/Motion.h>
 #include <Veng/Scene/Movement.h>
+#include <Veng/Scene/RemoteInterpolationSystem.h>
 #include <Veng/Scene/RootMotion.h>
 #include <Veng/Scene/SystemRegistry.h>
 #include <Veng/Scene/TimeOfDay.h>
@@ -30,6 +31,10 @@ namespace Veng
         registry.Register<CameraRigSystem>();
         registry.Register<AnimationSystem>();
         registry.Register<ConstantMotionSystem>();
+
+        // Writes each Remote-tier entity's displayed Transform from its snapshot buffer, in the past.
+        // View-phase — presentation only. Idles with no remote entities, so single-player is untouched.
+        registry.Register<RemoteInterpolationSystem>();
 
         // Derives the sun from the scene's TimeOfDay and writes the first directional light,
         // so the sun the sky and shadows read is real world state any system can also read.

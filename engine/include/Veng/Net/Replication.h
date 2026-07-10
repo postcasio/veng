@@ -1,6 +1,9 @@
 #pragma once
 
 #include <Veng/Veng.h>
+#include <Veng/Asset/AssetId.h>
+#include <Veng/Net/Connection.h>
+#include <Veng/Net/NetEvents.h>
 #include <Veng/Scene/Entity.h>
 
 #include <span>
@@ -8,6 +11,8 @@
 namespace Veng
 {
     class Scene;
+    class Prefab;
+    class AssetManager;
 
     /// @brief The wire identity of a replicated entity — a server-assigned id the two ends agree on.
     ///
@@ -136,4 +141,158 @@ namespace Veng
     /// @return A summary of what applied (see SnapshotApplyResult).
     VE_API SnapshotApplyResult ApplySnapshot(std::span<const u8> packet, Scene& scene,
                                              const NetIdMap& map);
+
+    /// @brief One replication message to send a connection: the channel it rides and its bytes.
+    ///
+    /// The replication layer produces these; the app (Plan 07's wiring) Sends each on its channel of
+    /// the connection. Keeping the transport out of the layer makes the whole flow drivable device-free
+    /// over two in-process scenes, exactly the two-world test fixture.
+    struct ReplicationMessage
+    {
+        /// @brief The delivery discipline this message rides: reliable for spawn/despawn, unreliable for snapshots.
+        Net::Channel Channel = Net::Channel::UnreliableSequenced;
+        /// @brief The encoded message bytes to Send on Channel.
+        vector<u8> Bytes;
+    };
+
+    /// @brief The server end of state replication: per-connection spawn/despawn + dirty snapshots.
+    ///
+    /// Tracks, per connection, which replicated entities it has already spawned and the highest tick it
+    /// has acked. Generate() diffs the server scene against that per-connection state and returns the
+    /// messages to send this tick: a reliable Spawn for each newly-replicated entity (carrying its
+    /// prefab AssetId when one is associated, else its full component state), a reliable Despawn for
+    /// each entity that has gone, and — on a snapshot-interval tick — the dirty state as one or more
+    /// MTU-sized unreliable snapshot packets. It owns no transport and no NetId allocation (the caller
+    /// runs AssignServerNetIds); it is pure per-connection bookkeeping over the codec above.
+    class VE_API ReplicationServer
+    {
+    public:
+        /// @brief Server-side replication cadence.
+        struct Settings
+        {
+            /// @brief Emit a snapshot every this many ticks (2 ⇒ 30 Hz at a 60 Hz sim).
+            u64 SnapshotInterval = 2;
+        };
+
+        /// @brief Constructs a replication server with the default cadence.
+        ReplicationServer() = default;
+
+        /// @brief Constructs a replication server with the given cadence.
+        /// @param settings  The snapshot cadence.
+        explicit ReplicationServer(const Settings& settings) : m_Settings(settings) {}
+
+        /// @brief Registers a connection to replicate to, with a fresh (empty) baseline.
+        ///
+        /// Its first Generate streams every current replicated entity as a Spawn (the baseline spawn
+        /// stream) and, thereafter, only the diffs. A no-op if the connection is already tracked.
+        /// @param id  The connection to begin replicating to.
+        void AddConnection(Net::ConnectionId id);
+
+        /// @brief Stops tracking a connection and drops its per-connection state.
+        /// @param id  The connection that has gone.
+        void RemoveConnection(Net::ConnectionId id);
+
+        /// @brief Associates a replicated entity's originating prefab, so its Spawn rides as an AssetId.
+        ///
+        /// Keyed by the entity's NetId (assigned by AssignServerNetIds). Without an association a
+        /// Spawn carries the entity's full component state (the runtime-constructed arm). Setting the
+        /// invalid AssetId clears the association.
+        /// @param id      The replicated entity's NetId.
+        /// @param prefab  The prefab the entity was spawned from, or the invalid id to clear.
+        void SetEntityPrefab(NetId id, AssetId prefab);
+
+        /// @brief Advances a connection's acked tick, gating which state its snapshots still carry.
+        ///
+        /// A component enters a connection's snapshot only while its change tick exceeds this — the
+        /// send-until-acked rule. Acks arrive from the client (Plan 05's piggyback, or a standalone ack
+        /// message); until one does, a connection's baseline stays at zero and every snapshot carries
+        /// full state (idempotent, just more bandwidth).
+        /// @param id    The connection acknowledging.
+        /// @param tick  The highest server tick it has applied.
+        void Acknowledge(Net::ConnectionId id, u64 tick);
+
+        /// @brief Diffs the scene against a connection's state, returning this tick's messages to send.
+        ///
+        /// Emits a reliable Spawn for each replicated entity new to the connection, a reliable Despawn
+        /// for each it had that is now gone, and — when @p tick is a snapshot-interval tick — the dirty
+        /// state (since the connection's acked tick) as MTU-sized unreliable snapshot packets. Updates
+        /// the connection's spawned set. A no-op returning empty for an untracked connection.
+        /// @param id     The connection to generate for (must be AddConnection'd).
+        /// @param scene  The authoritative server scene.
+        /// @param tick   The current server tick.
+        /// @return The messages to Send on this connection, each tagged with its channel.
+        [[nodiscard]] vector<ReplicationMessage> Generate(Net::ConnectionId id, const Scene& scene,
+                                                          u64 tick);
+
+    private:
+        /// @brief Per-connection replication bookkeeping.
+        struct ConnectionState
+        {
+            /// @brief NetIds already spawned to this connection.
+            set<NetId> Spawned;
+            /// @brief Highest tick this connection has acked; snapshots gate against it.
+            u64 AckedTick = 0;
+        };
+
+        Settings m_Settings;
+        unordered_map<Net::ConnectionId, ConnectionState> m_Connections;
+        unordered_map<NetId, AssetId> m_EntityPrefabs;
+    };
+
+    /// @brief The client end of state replication: applies spawn/despawn and latest-wins snapshots.
+    ///
+    /// Owns the client's NetId → Entity map. A reliable Spawn instantiates the entity — through the
+    /// ordinary prefab path when the message names a prefab, or as a bare entity with its full
+    /// component state otherwise — then stamps NetIdentity, binds the map, and marks it
+    /// Authority{ Tier::Remote }. A reliable Despawn destroys it. An unreliable snapshot applies
+    /// latest-wins: non-spatial replicated state writes straight onto the components, while each
+    /// Transform record appends a tick-keyed sample to the entity's RemoteInterpolation buffer (the
+    /// View-phase RemoteInterpolationSystem renders it in the past) rather than snapping the live pose.
+    /// An unknown NetId drops its record — the next snapshot is idempotent.
+    class VE_API ReplicationClient
+    {
+    public:
+        /// @brief The outcome of applying one reliable message, for the caller and for tests.
+        struct ReliableApplyResult
+        {
+            /// @brief True when the message was a Spawn that instantiated an entity.
+            bool Spawned = false;
+            /// @brief True when the message was a Despawn that destroyed an entity.
+            bool Despawned = false;
+            /// @brief The NetId the message concerned (0 when the message was malformed).
+            NetId Id = InvalidNetId;
+            /// @brief The local entity spawned or despawned (null when none / already gone).
+            Entity Entity = Entity::Null;
+        };
+
+        /// @brief Constructs a replication client resolving prefab spawns through @p resolvePrefab.
+        /// @param resolvePrefab  Maps a prefab AssetId to a resident Prefab (the app's LoadSync; a
+        ///                       null return falls the spawn back to the component-state arm).
+        explicit ReplicationClient(function<Ref<Prefab>(AssetId)> resolvePrefab);
+
+        /// @brief Returns the NetId → Entity map, rebuilt as spawns and despawns arrive.
+        [[nodiscard]] const NetIdMap& Map() const { return m_Map; }
+
+        /// @brief Applies one reliable Spawn or Despawn message into @p scene.
+        /// @param message  The reliable message bytes (a leading type byte + payload).
+        /// @param scene    The client scene to spawn into or despawn from.
+        /// @param assets   The asset manager the prefab-arm spawn resolves through.
+        /// @return What the message did (see ReliableApplyResult).
+        ReliableApplyResult ApplyReliable(std::span<const u8> message, Scene& scene,
+                                          AssetManager& assets);
+
+        /// @brief Applies one unreliable snapshot packet latest-wins into @p scene.
+        ///
+        /// Non-Transform components write straight onto the resolved entity; each Transform record
+        /// appends a sample (keyed by the packet's server tick) to the entity's RemoteInterpolation
+        /// buffer. An unbound NetId drops its record.
+        /// @param packet  The snapshot packet bytes.
+        /// @param scene   The client scene to apply into.
+        /// @return A summary of what applied (see SnapshotApplyResult).
+        SnapshotApplyResult ApplySnapshot(std::span<const u8> packet, Scene& scene);
+
+    private:
+        NetIdMap m_Map;
+        function<Ref<Prefab>(AssetId)> m_ResolvePrefab;
+    };
 }

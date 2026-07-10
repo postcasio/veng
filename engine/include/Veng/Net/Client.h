@@ -6,6 +6,8 @@
 #include <Veng/Result.h>
 #include <Veng/Veng.h>
 
+#include <span>
+
 // Veng/Net/Client.h — the connect/handshake side of the connection lifecycle.
 //
 // A Client opens a transport to one server, sends a ConnectRequest carrying its
@@ -69,6 +71,14 @@ namespace Veng::Net
 
         /// @brief The underlying connection to the server (valid once Connected).
         [[nodiscard]] Connection& Server();
+
+        /// @brief The app (non-handshake) reliable messages received during the most recent Pump.
+        ///
+        /// The handshake owns the reliable channel's control messages; every other reliable message —
+        /// the replication layer's spawn/despawn stream — is surfaced here rather than dropped, so the
+        /// app drains them after each Pump. Refilled every Pump, so the view is valid until the next one.
+        /// @return A view of this Pump's app reliable messages, valid until the next Pump.
+        [[nodiscard]] std::span<const vector<u8>> ReliableAppMessages() const;
 
         /// @brief Closes the connection gracefully, sending a best-effort Disconnect to the server.
         ///

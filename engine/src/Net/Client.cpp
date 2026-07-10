@@ -16,6 +16,7 @@ namespace Veng::Net
         ClientState State = ClientState::Connecting;
         ConnectionId AssignedId = ServerConnectionId;
         optional<DenyReason> Deny;
+        vector<vector<u8>> AppReliable; // non-handshake reliable messages from the most recent Pump
     };
 
     Client::Client(Unique<Impl> impl) : m_Impl(std::move(impl)) {}
@@ -62,6 +63,7 @@ namespace Veng::Net
     void Client::Pump(f64 now)
     {
         Impl& s = *m_Impl;
+        s.AppReliable.clear();
         s.Conn->Update(now);
 
         while (const optional<vector<u8>> message = s.Conn->Receive(Channel::ReliableOrdered))
@@ -69,7 +71,10 @@ namespace Veng::Net
             const optional<ControlMessageType> type = PeekControlType(*message);
             if (!type.has_value())
             {
-                continue; // an unknown or app message — later plans dispatch these
+                // A non-handshake reliable message (the replication spawn/despawn stream): surface it
+                // to the app rather than dropping it.
+                s.AppReliable.push_back(*message);
+                continue;
             }
             switch (*type)
             {
@@ -129,6 +134,11 @@ namespace Veng::Net
     Connection& Client::Server()
     {
         return *m_Impl->Conn;
+    }
+
+    std::span<const vector<u8>> Client::ReliableAppMessages() const
+    {
+        return m_Impl->AppReliable;
     }
 
     void Client::Disconnect()
