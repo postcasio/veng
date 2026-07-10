@@ -130,6 +130,15 @@ namespace Veng::Net
         out.push_back(static_cast<u8>((value >> 24) & 0xFFu));
     }
 
+    /// @brief Appends a little-endian u64 to a byte buffer.
+    inline void WriteU64LE(vector<u8>& out, u64 value)
+    {
+        for (u32 i = 0; i < 8; ++i)
+        {
+            out.push_back(static_cast<u8>((value >> (i * 8)) & 0xFFu));
+        }
+    }
+
     /// @brief Reads a little-endian u16 from a byte view at an offset.
     [[nodiscard]] inline u16 ReadU16LE(std::span<const u8> bytes, usize offset)
     {
@@ -143,6 +152,17 @@ namespace Veng::Net
         return static_cast<u32>(bytes[offset]) | (static_cast<u32>(bytes[offset + 1]) << 8) |
                (static_cast<u32>(bytes[offset + 2]) << 16) |
                (static_cast<u32>(bytes[offset + 3]) << 24);
+    }
+
+    /// @brief Reads a little-endian u64 from a byte view at an offset.
+    [[nodiscard]] inline u64 ReadU64LE(std::span<const u8> bytes, usize offset)
+    {
+        u64 value = 0;
+        for (u32 i = 0; i < 8; ++i)
+        {
+            value |= static_cast<u64>(bytes[offset + i]) << (i * 8);
+        }
+        return value;
     }
 
     /// @brief Serializes a packet header field-by-field to a byte buffer.
