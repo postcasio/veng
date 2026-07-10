@@ -53,6 +53,10 @@ namespace Veng
         registry.Register<CameraFollow>();
         registry.Register<CameraLook>();
 
+        // The wire identity of a replicated entity (server-assigned, runtime-only). Reflected so the
+        // inspector can surface the assigned id; the net layer keys snapshots by it.
+        registry.Register<NetIdentity>();
+
         // Game mode as data: the replicated Session state and the per-scene config a
         // spawn rule reads. SessionPhase registers transitively through Session.
         registry.Register<Session>();

@@ -22,6 +22,20 @@ namespace Veng
         concept HasEnumerators = requires { VengReflect<T>::Enumerators(); };
     }
 
+    /// @brief Primary template authoring whether a type replicates over the wire; false unless VE_REPLICATED marks it.
+    ///
+    /// TypeRegistry::Register<T>() reads VengReplication<T>::Replicated into TypeInfo::Replicated.
+    /// A separate specialisation point from VengReflect<T> (like VengDisplay<T>), so the mark
+    /// composes with every reflection macro without touching them: a type opts a whole struct into
+    /// snapshot encoding with a VE_REPLICATED tag beside its describe block.
+    /// @tparam T  The type whose replication default is authored.
+    template <class T>
+    struct VengReplication
+    {
+        /// @brief Whether the type replicates; false for the primary template.
+        static constexpr bool Replicated = false;
+    };
+
     /// @brief The recorded description of a registered type.
     ///
     /// Carries the name, layout, construct/destruct/move thunks a type-erased
@@ -56,6 +70,12 @@ namespace Veng
         TypeId Id = InvalidTypeId;
         /// @brief The meta-kind — Struct for components, others for leaves.
         FieldClass Class = FieldClass::Struct;
+        /// @brief Whether the type replicates over the wire, authored via VE_REPLICATED.
+        ///
+        /// The net layer's snapshot encoder walks only the pools of Replicated types; a type
+        /// replicates whole (v1 has no per-field filtering — a type with a client-local field
+        /// splits it out). False for every unmarked type. Set from VengReplication<T>::Replicated.
+        bool Replicated = false;
         /// @brief Field descriptors for Struct-class types; empty for leaves.
         vector<FieldDescriptor> Fields;
         /// @brief The type's default presentation, authored via VE_DISPLAY; the type-default arm of the cascade.
@@ -210,6 +230,7 @@ namespace Veng
             info.Class = cls;
             info.Fields = std::move(fields);
             info.Display = VengDisplay<T>::Get();
+            info.Replicated = VengReplication<T>::Replicated;
 
             // An enum authored with VE_ENUM carries its {name, value} table; record it for
             // the editor's named combo. A bare VE_LEAF(…, Enum) has no accessor and stays empty.

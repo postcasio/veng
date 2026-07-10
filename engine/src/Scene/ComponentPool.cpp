@@ -35,6 +35,7 @@ namespace Veng
         m_Sparse[entity.Index] = dense;
         m_Dense.push_back(entity);
         m_Data.resize(m_Data.size() + m_Info.Size);
+        m_ChangeTicks.push_back(0);
 
         void* slot = DataAt(dense);
         m_Info.DefaultConstruct(slot);
@@ -63,6 +64,7 @@ namespace Veng
             const Entity moved = m_Dense[last];
             m_Dense[dense] = moved;
             m_Sparse[moved.Index] = dense;
+            m_ChangeTicks[dense] = m_ChangeTicks[last];
 
             m_Info.Destruct(tail);
         }
@@ -74,6 +76,25 @@ namespace Veng
         m_Sparse[entity.Index] = Tombstone;
         m_Dense.pop_back();
         m_Data.resize(m_Data.size() - m_Info.Size);
+        m_ChangeTicks.pop_back();
+    }
+
+    void Scene::ComponentPool::Stamp(Entity entity, u64 tick)
+    {
+        if (!Contains(entity))
+        {
+            return;
+        }
+        m_ChangeTicks[m_Sparse[entity.Index]] = tick;
+    }
+
+    u64 Scene::ComponentPool::ChangeTick(Entity entity) const
+    {
+        if (!Contains(entity))
+        {
+            return 0;
+        }
+        return m_ChangeTicks[m_Sparse[entity.Index]];
     }
 
     bool Scene::ComponentPool::Contains(Entity entity) const
