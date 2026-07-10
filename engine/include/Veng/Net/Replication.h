@@ -2,8 +2,10 @@
 
 #include <Veng/Veng.h>
 #include <Veng/Asset/AssetId.h>
+#include <Veng/Input/Actions.h>
 #include <Veng/Net/Connection.h>
 #include <Veng/Net/NetEvents.h>
+#include <Veng/Result.h>
 #include <Veng/Scene/Entity.h>
 
 #include <span>
@@ -13,6 +15,7 @@ namespace Veng
     class Scene;
     class Prefab;
     class AssetManager;
+    class TypeRegistry;
 
     /// @brief The wire identity of a replicated entity — a server-assigned id the two ends agree on.
     ///
@@ -294,5 +297,171 @@ namespace Veng
     private:
         NetIdMap m_Map;
         function<Ref<Prefab>(AssetId)> m_ResolvePrefab;
+    };
+
+    // ---- Input replication (client → server) ------------------------------------------------------
+    //
+    // The other direction of the flow: a client stamps its seat's resolved PlayerInput per sim tick
+    // and sends the last N ticks redundantly over the unreliable channel; the server buffers them per
+    // connection in a jitter buffer and feeds the seat's PlayerInput at the matching tick, from which
+    // the control system re-derives Intent unchanged. The ActionState is encoded through the reflection
+    // serializer (its name-keyed FieldClass::Array form) — the v1 input wire format, no bespoke codec.
+
+    /// @brief One seat input sample keyed by the client sim tick it was resolved on.
+    struct TickedInput
+    {
+        /// @brief The client sim tick this input was stamped on.
+        u64 ClientTick = 0;
+        /// @brief The resolved action state for that tick (the PlayerInput wire payload).
+        ActionState State;
+    };
+
+    /// @brief A decoded input packet: the piggybacked snapshot ack plus the client-tick-keyed input run.
+    struct InputPacket
+    {
+        /// @brief The highest server snapshot tick the sender has applied; feeds ReplicationServer::Acknowledge.
+        u64 AckedServerTick = 0;
+        /// @brief The decoded inputs in ascending client-tick order; a per-record decode failure drops that record.
+        vector<TickedInput> Inputs;
+    };
+
+    /// @brief Decays a duplicated input's edge phases so a coasted (underrun) tick repeats no edges.
+    ///
+    /// Started decays to Ongoing and Completed to None; Ongoing and None are unchanged. So a held
+    /// button stays held across a duplicated tick while a trigger never re-fires — the edge semantics
+    /// the jitter buffer preserves when it duplicates the last input on underrun.
+    /// @param state  The input state to decay a copy of.
+    /// @return The state with its edge phases decayed.
+    [[nodiscard]] VE_API ActionState DecayInputPhases(const ActionState& state);
+
+    /// @brief Encodes an input packet: the piggybacked ack + a redundant run of recent input ticks.
+    ///
+    /// The records cover the contiguous client ticks [firstClientTick, firstClientTick + records.size()),
+    /// each the reflection encoding (WriteFields) of that tick's ActionState. Sending the last N ticks
+    /// every packet makes the stream loss-tolerant without retransmission: a lost packet's ticks ride
+    /// the next packet's overlap. An empty run encodes a header-only packet, so an input-idle client
+    /// still carries its ack.
+    ///
+    /// Packet layout (framing little-endian; each record payload is the WriteFields bytes):
+    ///
+    ///     InputPacket := AckedServerTick:u64  FirstClientTick:u64  Count:u32  Record*
+    ///     Record      := ByteLength:u32  WriteFields(ActionState)
+    ///
+    /// @param ackedServerTick  The highest server snapshot tick to acknowledge.
+    /// @param firstClientTick  The client tick of the first record.
+    /// @param records          The input states for the contiguous tick run, oldest first.
+    /// @param registry         The type registry the ActionState encodes through.
+    /// @return The encoded packet bytes.
+    [[nodiscard]] VE_API vector<u8> EncodeInputPacket(u64 ackedServerTick, u64 firstClientTick,
+                                                      std::span<const ActionState> records,
+                                                      const TypeRegistry& registry);
+
+    /// @brief Decodes an input packet, recoverable on malformed input.
+    ///
+    /// Reads the header, then each record by its length prefix. A record whose ActionState fails to
+    /// decode is dropped (its tick skipped) while the surrounding records still apply; a truncated
+    /// trailing record stops the walk. A packet too short to carry the header is the one hard failure —
+    /// so a hostile packet drops input rather than asserting the server.
+    /// @param packet    The encoded packet bytes.
+    /// @param registry  The type registry the ActionState decodes through.
+    /// @return The decoded packet, or an error string when the header is truncated.
+    [[nodiscard]] VE_API Result<InputPacket> DecodeInputPacket(std::span<const u8> packet,
+                                                               const TypeRegistry& registry);
+
+    /// @brief The client's per-seat input send window: stamps each sim tick and encodes the last N redundantly.
+    ///
+    /// Each client sim tick, after InputMappingSystem resolves the local seat, Stamp records that tick's
+    /// resolved input; the buffer retains only the last Redundancy ticks. Encode packs the retained
+    /// window into one unreliable packet carrying the piggybacked snapshot ack — the loss-tolerant,
+    /// no-retransmission input-redundancy scheme. It owns no transport; the app sends the bytes on the
+    /// connection's unreliable channel.
+    class VE_API InputSendBuffer
+    {
+    public:
+        /// @brief Send-window sizing.
+        struct Settings
+        {
+            /// @brief How many recent ticks each packet carries redundantly (the loss window).
+            u32 Redundancy = 3;
+        };
+
+        /// @brief Constructs a send buffer with the default redundancy.
+        InputSendBuffer() = default;
+
+        /// @brief Constructs a send buffer with the given redundancy.
+        /// @param settings  The send-window sizing.
+        explicit InputSendBuffer(const Settings& settings) : m_Settings(settings) {}
+
+        /// @brief Records this tick's resolved input, evicting the oldest beyond the redundancy window.
+        /// @param clientTick  The client sim tick being stamped (monotonic, +1 per tick).
+        /// @param state       The seat's resolved ActionState for this tick.
+        void Stamp(u64 clientTick, const ActionState& state);
+
+        /// @brief Encodes the retained window into a packet acknowledging @p ackedServerTick.
+        ///
+        /// Header-only (no records) before the first Stamp, so the ack still flows on an input-idle tick.
+        /// @param ackedServerTick  The highest server snapshot tick to acknowledge.
+        /// @param registry         The type registry the ActionState encodes through.
+        /// @return The encoded packet bytes to send on the unreliable channel.
+        [[nodiscard]] vector<u8> Encode(u64 ackedServerTick, const TypeRegistry& registry) const;
+
+        /// @brief The number of ticks currently retained (at most Redundancy).
+        [[nodiscard]] usize Size() const { return m_Window.size(); }
+
+    private:
+        Settings m_Settings;
+        vector<TickedInput> m_Window;
+    };
+
+    /// @brief The server's per-connection input jitter buffer: buffers client ticks and feeds one per server tick.
+    ///
+    /// Ingest keys each packet's inputs by client tick (redundant duplicates collapse for free, inputs
+    /// at or before the last consumed tick drop). Consume, called once per server tick, returns the next
+    /// input in client-tick order and slews toward TargetDepth to absorb jitter: it drops the oldest
+    /// buffered ticks on overrun (bounding latency) and duplicates the last input with its edge phases
+    /// decayed on underrun (a held action persists, an edge never repeats). The consumed ActionState is
+    /// written into the connection's seat PlayerInput before the Sim systems run, and the control system
+    /// re-derives Intent from it unchanged.
+    class VE_API InputJitterBuffer
+    {
+    public:
+        /// @brief Buffer-depth tuning.
+        struct Settings
+        {
+            /// @brief Target buffered depth Consume slews toward — the jitter the buffer absorbs.
+            u32 TargetDepth = 2;
+        };
+
+        /// @brief Constructs a jitter buffer with the default target depth.
+        InputJitterBuffer() = default;
+
+        /// @brief Constructs a jitter buffer with the given target depth.
+        /// @param settings  The depth tuning.
+        explicit InputJitterBuffer(const Settings& settings) : m_Settings(settings) {}
+
+        /// @brief Buffers a decoded packet's inputs, collapsing duplicates and dropping already-consumed ticks.
+        /// @param packet  The decoded input packet.
+        void Ingest(const InputPacket& packet);
+
+        /// @brief Consumes the next input for this server tick, slewing toward the target depth.
+        ///
+        /// Drops the oldest buffered ticks when the depth exceeds the target (overrun), then pops the
+        /// oldest remaining tick; when nothing is buffered (underrun) it duplicates the last consumed
+        /// input with edge phases decayed. nullopt only before any input has ever arrived.
+        /// @return The input to feed the seat this tick, or nullopt before the first input arrives.
+        [[nodiscard]] optional<ActionState> Consume();
+
+        /// @brief The number of client ticks currently buffered.
+        [[nodiscard]] usize Depth() const { return m_Buffer.size(); }
+
+        /// @brief The highest client tick consumed or dropped so far (0 before the first Consume).
+        [[nodiscard]] u64 LastConsumedTick() const { return m_LastConsumedTick; }
+
+    private:
+        Settings m_Settings;
+        map<u64, ActionState> m_Buffer;
+        optional<ActionState> m_Last;
+        u64 m_LastConsumedTick = 0;
+        bool m_Started = false;
     };
 }

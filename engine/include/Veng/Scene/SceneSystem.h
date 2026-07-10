@@ -5,6 +5,7 @@
 #include <Veng/Math/Ray.h>
 #include <Veng/Renderer/ViewportRegion.h>
 #include <Veng/Scene/Camera.h>
+#include <Veng/Scene/Entity.h>
 
 namespace Veng
 {
@@ -249,6 +250,24 @@ namespace Veng
     {
         return vec2(view.Region.Extent) / view.UiScale;
     }
+
+    /// @brief Whether this peer simulates @p entity under the running tick's authority.
+    ///
+    /// The authority filter the builtin Sim systems that advance Authority::Server state
+    /// (MovementSystem, the motion systems) consult before touching an entity: a Server-tier entity is
+    /// simulated only by a Server-role peer, a Local-tier entity is always simulated locally (a
+    /// client-local view/UI entity), and a Remote-tier entity is never simulated (it is the client-side
+    /// mirror the interpolation system displays). An entity with no Authority component defaults to
+    /// Server-tier. On a standalone or server peer (Role::Server) every Server-tier entity passes, so
+    /// single-player behaviour is unchanged; on a client the peer skips Server/Remote-tier entities so
+    /// its Sim phase never fights the snapshot stream, while an AI or server-authoritative Intent
+    /// producer still advances the state it owns.
+    /// @param context  The per-tick services carrying this peer's NetRole.
+    /// @param scene    The scene @p entity lives in.
+    /// @param entity   The entity whose simulation authority is queried (must be alive).
+    /// @return True when this peer advances @p entity's simulation this tick.
+    [[nodiscard]] VE_API bool HasAuthority(const SystemContext& context, const Scene& scene,
+                                           Entity entity);
 
     /// @brief A unit of gameplay logic over a Scene, registered via the module host
     /// and ticked by a SceneSimulation.

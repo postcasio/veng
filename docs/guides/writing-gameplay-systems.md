@@ -126,6 +126,43 @@ A View system must also be **safe to run (or skip) in the pinned smoke frame**:
 the smoke path renders one fixed pose and never ticks `Update`, so a View system
 that would move the camera simply does not run there.
 
+### The authority filter
+
+A Sim system that **advances authoritative state** — moves a pawn, integrates a
+prop, resolves a game rule — should act only on the entities **this peer owns**.
+`HasAuthority(context, scene, entity)` is the one-line query that decides it:
+
+```cpp
+scene.Each<Transform, Intent>(
+    [&](Entity entity, Transform& transform, Intent& intent)
+    {
+        if (!HasAuthority(context, scene, entity)) { return; }
+        // ... advance the entity's state ...
+    });
+```
+
+It reads the entity's `Authority` tier against the tick's `NetRole` (on
+`SystemContext`): a `Server`-tier entity is simulated only by a `Server`-role peer,
+a `Local`-tier entity is always simulated locally (client-local view/UI state), and
+a `Remote`-tier entity — the client-side mirror of a server-owned entity — is never
+simulated (the interpolation system displays it). An entity with no `Authority`
+component defaults to `Server`-tier.
+
+- **Standalone and the server are unchanged.** A standalone or listen/dedicated
+  server runs as `Role::Server`, where every `Server`-tier entity passes — so
+  single-player behaviour is identical whether or not a system consults the filter.
+- **A client stops fighting the snapshot stream.** On `Role::Client` the filter
+  skips the `Server`/`Remote`-tier pawns whose truth arrives over the wire, so the
+  client's Sim phase never overwrites a snapshot. Its `Local`-tier entities keep
+  simulating.
+- **AI and server producers are unaffected.** An AI or server-authoritative system
+  that writes `Intent` directly still runs and still advances the state it owns —
+  the filter gates the *advancing* systems, not the `Intent` producers.
+
+The builtin `MovementSystem` and the motion systems (`ConstantMotionSystem`,
+`RootMotionDriveSystem`) consult it; a game's own authoritative Sim systems adopt
+the same line.
+
 ---
 
 ## 3. The Input → Intent → Movement pattern

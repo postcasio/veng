@@ -25,14 +25,20 @@ namespace Veng
         transform.Rotation = glm::normalize(yaw * transform.Rotation * pitch);
     }
 
-    void MovementSystem::OnUpdate(Scene& scene, const f32 delta, const SystemContext&)
+    void MovementSystem::OnUpdate(Scene& scene, const f32 delta, const SystemContext& context)
     {
         // A pawn without a Mover moves at the component's defaults.
         static constexpr Mover DefaultMover{};
 
         scene.Each<Transform, Intent>(
-            [&scene, delta](const Entity entity, Transform& transform, Intent& intent)
+            [&scene, &context, delta](const Entity entity, Transform& transform, Intent& intent)
             {
+                // Advance only pawns this peer simulates — a client's Sim phase never fights the
+                // snapshot stream for a Server/Remote-tier pawn.
+                if (!HasAuthority(context, scene, entity))
+                {
+                    return;
+                }
                 const Mover* mover = scene.TryGet<Mover>(entity);
                 IntegrateMovement(transform, intent, mover != nullptr ? *mover : DefaultMover,
                                   delta);

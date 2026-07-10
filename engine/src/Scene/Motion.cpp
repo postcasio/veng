@@ -31,10 +31,19 @@ namespace Veng
         }
     }
 
-    void ConstantMotionSystem::OnUpdate(Scene& scene, const f32 delta, const SystemContext&)
+    void ConstantMotionSystem::OnUpdate(Scene& scene, const f32 delta, const SystemContext& context)
     {
         scene.Each<Transform, ConstantMotion>(
-            [delta](const Entity, Transform& transform, ConstantMotion& motion)
-            { IntegrateConstantMotion(transform, motion, delta); });
+            [&scene, &context, delta](const Entity entity, Transform& transform,
+                                      ConstantMotion& motion)
+            {
+                // Advance only entities this peer simulates — on a client a Remote-tier prop is
+                // interpolated from snapshots, not integrated locally.
+                if (!HasAuthority(context, scene, entity))
+                {
+                    return;
+                }
+                IntegrateConstantMotion(transform, motion, delta);
+            });
     }
 }

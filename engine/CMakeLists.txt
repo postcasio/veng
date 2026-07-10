@@ -72,6 +72,7 @@ add_library(veng SHARED
         src/UI/DebugPanels.cpp
         src/UI/Inspector.cpp
         src/UI/RenderSettings.cpp
+        src/Net/InputReplication.cpp
         src/Net/Replication.cpp
         src/Reflection/FieldDisplay.cpp
         src/Reflection/FieldGate.cpp
@@ -93,6 +94,7 @@ add_library(veng SHARED
         src/Scene/Scene.cpp
         src/Scene/SceneBroadphase.cpp
         src/Scene/SceneSimulation.cpp
+        src/Scene/SceneSystem.cpp
         src/Scene/SceneViewport.cpp
         src/Scene/SystemRegistry.cpp
         src/Scene/TimeOfDay.cpp
