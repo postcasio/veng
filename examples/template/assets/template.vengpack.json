@@ -70,6 +70,31 @@
       "id": "0x5F30E0E78A88D61D",
       "type": "UIDocument",
       "source": "ui/hud.vui.xml"
+    },
+    {
+      "id": "0x5B1B7515FB2FCDC0",
+      "type": "InputMap",
+      "source": "input/overlay.inputmap.json"
+    },
+    {
+      "id": "0x8185F88D4C64E1E7",
+      "type": "StyleSheet",
+      "source": "ui/overlay.vuss"
+    },
+    {
+      "id": "0x3879B9FE00869E91",
+      "type": "UIDocument",
+      "source": "ui/overlay.vui.xml"
+    },
+    {
+      "id": "0x1FB8BD280F26F249",
+      "type": "Prefab",
+      "source": "prefabs/overlay.prefab.json"
+    },
+    {
+      "id": "0x88B360A2DD16632E",
+      "type": "Level",
+      "source": "levels/overlay.level.json"
     }
   ]
 }

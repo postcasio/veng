@@ -582,3 +582,64 @@ TEST_CASE("An overlay renders its scene through the engine drive-list")
     app.Frames = 5;
     app.Run({});
 }
+
+TEST_CASE("A PiP overlay renders at its sub-region over a live managed primary")
+{
+    // The render-path assertion the committed PiP golden stands in for: a managed primary viewport
+    // renders its own scene every frame while a fixed sub-region overlay renders its scene over it,
+    // both live Presented outputs in the same frame composited by the managed gather. A byte-exact
+    // reference PNG is deliberately not committed — the display-mode brightness path is not stable
+    // enough across platforms for a golden — so this pins the structure the golden would.
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    SystemRegistry systems;
+
+    ApplicationInfo info;
+    info.Name = "veng-level-overlay-pip";
+    info.Headless = true;
+    info.ImGui = std::nullopt;
+    info.HeadlessExtent = {320, 240};
+    info.ManagedViewport = ManagedViewportInfo{};
+
+    OverlayApp app(info, types, systems);
+    AssetHandle<Level> level;
+    Unique<Scene> primary;
+    const Renderer::ViewportRegion pip{.Offset = {40, 30}, .Extent = {120, 90}};
+
+    app.InitFn = [&](OverlayApp& a)
+    {
+        level = BuildSeatLevel(a.GetAssetManager(), a.GetTypeRegistry(), {});
+        primary = Scene::Create(a.GetTypeRegistry());
+    };
+
+    app.StepFn = [&](OverlayApp& a, int frame)
+    {
+        // Keep the managed primary live each frame — a cleared scene still renders through the full
+        // deferred path, so the primary output is a real composited frame the overlay draws over.
+        a.GetPrimaryViewport()->SetViewState({.World = primary.get(), .Delta = 0.016f});
+
+        if (frame == 0)
+        {
+            a.A = LevelOverlay::Open(a, LevelOverlayInfo{.Source = level, .Region = pip});
+        }
+        else if (frame <= 2)
+        {
+            a.A->Update(0.016f);
+        }
+        else if (frame == 3)
+        {
+            // The primary and the PiP overlay both produced live outputs this frame, the overlay
+            // placed at its fixed sub-region over the full-window primary — PiP over a live primary.
+            CHECK(a.GetPrimaryViewport()->GetOutput() != nullptr);
+            CHECK(a.GetPrimaryViewport()->GetOutputHandle().IsValid());
+            CHECK(a.A->GetViewport().GetOutput() != nullptr);
+            CHECK(a.A->GetViewport().GetOutputHandle().IsValid());
+            CHECK(a.A->GetViewport().GetRegion().Offset == pip.Offset);
+            CHECK(a.A->GetViewport().GetRegion().Extent == pip.Extent);
+            a.A.reset();
+        }
+    };
+
+    app.Frames = 5;
+    app.Run({});
+}

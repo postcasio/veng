@@ -1,0 +1,19 @@
+{
+  "actions": [
+    {
+      "id": "0xC8255A39AA77A4D2",
+      "name": "Cancel",
+      "kind": "Button"
+    }
+  ],
+  "bindings": [
+    {
+      "source": {
+        "device": "Keyboard",
+        "control": 256
+      },
+      "action": "0xC8255A39AA77A4D2",
+      "axis": "Whole"
+    }
+  ]
+}

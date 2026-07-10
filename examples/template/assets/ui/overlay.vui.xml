@@ -1,0 +1,6 @@
+<Panel class="overlay" stylesheets="0x8185F88D4C64E1E7" style="font: 0x9A6A7CD94A6DDBD7;">
+  <Text class="heading">Overlay level</Text>
+  <Text class="snap" value="captured: {Caption}"/>
+  <ProgressBar class="bar" value="{Level}"/>
+  <Button class="dismiss" onClick="Dismiss">Resume</Button>
+</Panel>

@@ -41,6 +41,14 @@ symbol: build the Doxygen reference with `cmake --build build --target docs`
   and opaque-emissive material domains, the `rgb()` linear-float colors that let a
   color exceed 1.0 and bloom through the scene's own bloom, why a screen-space
   overlay stays LDR and does not glow, and the hot-core desaturation gotcha.
+- **[Screen-space UI, level overlays, and scene captures](guides/screen-space-ui-and-overlays.md)** —
+  the three engine-driven scene components authored as data: presenting a HUD with a
+  `GuiOverlay` (the screen-space sibling of `GuiSurface`, its C++ state-component +
+  binding-system interface, and seat-based multi-viewport claiming); opening a whole level
+  as a secondary, simulated overlay with `LevelOverlay` (the lifecycle, the populate hook's
+  contract-versus-guidance, input-suspend versus the opt-in `PausePrimarySim`, stacking, and
+  reading results back); and authoring a mirror or probe with a `CaptureSurface` (the
+  same-entity material binding and the `everyFrame`/`onDemand` refresh policy).
 - **[Consuming veng](guides/consuming-veng.md)** — discovering veng from a game
   project with `find_package(veng)`: the three consumption modes (in-tree, build
   tree, install prefix), the `veng_ROOT` / `CMAKE_PREFIX_PATH` /

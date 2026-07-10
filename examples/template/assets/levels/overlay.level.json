@@ -1,0 +1,15 @@
+{
+  "world": "0x1FB8BD280F26F249",
+  "systems": [
+    "0x6C37AE233D0E890A",
+    "0x7B0DCB6C148AB975",
+    "0x98C368063567AB92",
+    "0x2BCEBD75A23A39F1"
+  ],
+  "render": {
+    "Exposure": 1.0,
+    "Bloom": true,
+    "Shadows": false,
+    "AO": false
+  }
+}

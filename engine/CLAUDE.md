@@ -79,6 +79,27 @@ game wanting full control) — the explicit `Mount` → `LoadSync<Level>` → `L
 `StartSimulation` → per-frame `TickSimulation`/`PushSceneView` path the managed world
 automates.
 
+**A second level can be opened over the running one as a `LevelOverlay`.** `Application`
+auto-ticks exactly the primary `m_World`; a game that wants a live sub-scene — a menu
+rendered as a real scene, a picture-in-picture view, a full-screen modal world — opens a
+`Level` through the `LevelOverlay` RAII handle (`Veng/LevelOverlay.h`), which composes the
+delivered `Level::LoadInto` / `Viewport` / `InputRouter` seams: `LoadInto` a fresh scene →
+run a caller **populate hook** (`std::function<void(Scene&)>`, the one cross-scene seam,
+run after load and before start) → create a `Presented` viewport (registered last, so it
+composites on top) → route input to the overlay's **own authored seat** (pointer
+association, cursor-seat handoff, and a focus-scope suspension of the layer beneath) →
+`StartSimulation`. The game ticks it from `OnUpdate` through `LevelOverlay::Update`
+(`TickSimulation` + `PushSceneView`) — no hidden second scheduler and no `Application::m_World`
+plurality — and its own viewport drives its scene's `GuiOverlay` HUD automatically. **Input
+focus and simulation pause are separate knobs:** taking the overlay's seat always suspends
+the primary world's *input*, but the primary keeps simulating unless the opt-in
+`PausePrimarySim` (`SetWorldPaused`) is set. Dropping the handle (or `Close`) tears the
+overlay down in lifetime order, restoring every router / cursor-seat / world-pause /
+drive-list value to the state it captured at open; overlays **stack** (a dialog over a modal)
+and the handles drop LIFO. Results flow back through a game-owned channel (a component the
+opener drains, a callback, or the opener's glue writing the host) — no overlay system reaches
+into the primary scene.
+
 The **engine render phase** runs between `BeginFrame()` and `EndFrame()`, uniform
 for every app and not overridable: render every registered viewport in
 registration order (each does its own `Execute` + `PrepareForAccess(Sample)`), so
@@ -1011,6 +1032,33 @@ cook-on-demand hot-reload serves UI with no new machinery. The parsing side is i
   physically-expected hot-emitter look. Authoring a glowing panel end to end is
   [docs/guides/diegetic-ui.md](../docs/guides/diegetic-ui.md).
 
+- **The screen-space overlay is a reflected component too — the engine-driven scene component
+  family has three members.** A **`GuiOverlay`** (`Veng/Gui/Overlay.h`) is the screen-space
+  sibling of `GuiSurface`: a reflected scene component `{ AssetHandle<Gui::UIDocument> Document;
+  i32 Layer; bool Interactive; Reference TargetSeat; }` the **Viewport** discovers the same way
+  (`View<GuiOverlay>()`) and drives onto its **screen-space layer stack** through a
+  `Gui::DocumentHost` + `Gui::DocumentLayer` — the exact `AttachDocument` path a HUD reaches by
+  hand, now owned by the engine (lazy load → instantiate → attach at `Layer` → re-attach on
+  recreation). It is **LDR, composited after tonemap, un-bloomed** — the honest overlay `GuiSurface`
+  is *not*. **Which viewport claims it is decided by seat:** a viewport claims the overlays whose
+  target seat is its own (the entity's own seat, or `TargetSeat`; unbound → the sole/primary
+  presenter), so split-screen per-player HUDs fall out and a single overlay never thrashes. The
+  game owns only the binding — a reflected state component plus a small system that
+  `SetContext`s a `Gui::BindingContext` (view-model + `onClick` handlers) and `Invalidate`s it —
+  not the load/instantiate/attach. `Interactive` gates whether it takes input. The **third**
+  family member is **`CaptureSurface`** (`Veng/Renderer/CaptureSurface.h`), the render-to-texture
+  sibling: a reflected component that puts a `SceneCapture` on an entity, discovered and driven by
+  the engine (built on first sight, fed to the `RegisterCapture` drive-list against its lifetime,
+  self-unregistering when the component/entity/scene goes), rebinding the capture's output onto the
+  **same-entity** material each frame (the locality rule) so a mirror / probe / monitor is authored
+  data. Its `Refresh` is `EveryFrame` or `OnDemand` (render once, then idle until `MarkDirty`). So
+  the family is one interface across three targets — `GuiSurface` (a document on a world mesh, HDR,
+  glowing), `GuiOverlay` (a document on the viewport layer stack, LDR, screen-space), and
+  `CaptureSurface` (the scene rendered into a texture, sampled by the entity's material) — each
+  discovered by `View<…>()` and driven by the engine. Authoring the screen-space and RTT members,
+  and opening a level as an overlay, is
+  [docs/guides/screen-space-ui-and-overlays.md](../docs/guides/screen-space-ui-and-overlays.md).
+
 The editor's `UIDocumentEditorPanel` authors a `*.vui.xml` through the cook-on-demand loop (a WYSIWYG
 canvas over an `Offscreen` viewport hosting the live document, an element-tree outline, and a
 resolved-style inspector); see [editor/CLAUDE.md](../editor/CLAUDE.md). A task-oriented authoring
@@ -1759,23 +1807,29 @@ be graph-sourced without a separate cycle-breaking refactor.
 
 - **`examples/hello-triangle`** — the **maximal** sample: every renderer battery, the full
   debug UI, a cooked prefab/level world, and a macOS / Windows / Linux build-configuration set.
-- **`examples/template`** — the **minimal** one a new developer copies. The smallest correct
-  `veng_add_game` app: `main.cpp` is **only** a `VengModuleRegister` that registers a **bare
-  `Application`** (no subclass) with a `ManagedViewport` and a `World`
-  (`GameWorldInfo{ .Project = "project.vengproj" }`) — and registers **nothing else** (the
-  level's one named system, `ConstantMotionSystem`, is an engine builtin the host
-  pre-registers). The engine bootstraps everything — it reads the cooked project, mounts the
+- **`examples/template`** — the **minimal** one a new developer copies, and the tree's exemplar
+  of the engine-driven scene component family and the overlay facility on the managed-world path.
+  The engine bootstraps everything from cooked data — it reads the cooked project, mounts the
   packs it names, loads the project's **startup level** (a world `Prefab`: a `Camera`, a
-  directional `Light`, and a cube whose mesh is an inline `CubeShape` recipe and which carries a
-  `ConstantMotion` to spin), owns the running scene + simulation, ticks the level's system set
-  (the engine `ConstantMotionSystem`), and pushes the resolved camera each frame. So the file
-  has **no** lifecycle override, per-frame code, custom component or system, system
-  registration, or debug UI — the rotating cube is authored as cooked data and driven by an
-  engine system, not built or driven in code. Its `project.veng` (at the example root) lists its
-  pack and names the `startupLevel` the cook writes into the cooked project (`veng_add_project`), and
-  its pack carries a prefab + level, so the cook reflects `libtemplate` via `MODULE template`
-  (only engine builtins, no custom types). It is a **standalone** project consumed
-  out-of-tree via `find_package(veng)` — removed from the engine build and exercised only by
-  the SDK conformance tests (`sdk_conformance_install` / `sdk_conformance_buildtree`). It is
-  the minimal **out-of-tree conformance** check: if the smallest app stops compiling or fails
-  to consume the SDK, a breaking change missed it.
+  directional `Light`, a cube whose mesh is an inline `CubeShape` recipe and which carries a
+  `ConstantMotion` to spin, a **`GuiSurface`** diegetic panel, a **`CaptureSurface`** mirror, and
+  a screen-space **`GuiOverlay`** HUD), owns the running scene + simulation, ticks the level's
+  system set (the engine `ConstantMotionSystem`), and pushes the resolved camera each frame — so
+  the cube, panel, mirror, and HUD are authored data driven by the engine, not built in code. On
+  top of that data-driven world, `main.cpp` layers a **thin `Application` subclass** doing the two
+  things data cannot: it binds the primary `GuiOverlay` HUD its view-model (the one thing the
+  engine cannot do from data alone), and it opens a **secondary overlay level** on a key through
+  `LevelOverlay` — a live sub-scene with its own input seat, its own `systems` (the builtin
+  `DeviceAssignmentSystem`/`InputMappingSystem` plus its one driving system), and an `Interactive`
+  `GuiOverlay` HUD with an `onClick` button that dismisses it, populated at open with a snapshot of
+  the primary scene's state (dismissable by the key or the button, the primary sim frozen via
+  `PausePrimarySim` for the modal's lifetime). So the module registers a HUD view-model type, two
+  small overlay components, and one overlay-driving `SceneSystem` — the least game code that still
+  exercises `GuiOverlay` binding and `LevelOverlay` end to end. Its `project.veng` (at the example
+  root) lists its pack and names the `startupLevel` the cook writes into the cooked project
+  (`veng_add_project`), and its pack carries the prefabs + levels, so the cook reflects
+  `libtemplate` via `MODULE template` (its overlay components + system beside the engine builtins).
+  It is a **standalone** project consumed out-of-tree via `find_package(veng)` — removed from the
+  engine build and exercised only by the SDK conformance tests (`sdk_conformance_install` /
+  `sdk_conformance_buildtree`). It is the minimal **out-of-tree conformance** check: if the
+  smallest app stops compiling or fails to consume the SDK, a breaking change missed it.

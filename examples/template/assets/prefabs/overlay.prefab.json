@@ -1,0 +1,151 @@
+{
+  "entities": [
+    {
+      "components": {
+        "::Veng::Name": {
+          "Value": "Overlay Camera"
+        },
+        "::Veng::Transform": {
+          "Position": [
+            0.0,
+            1.2,
+            3.5
+          ],
+          "Rotation": [
+            -0.1784245,
+            0.0,
+            0.0,
+            0.9839534
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Camera": {
+          "FovY": 1.0471975511965976,
+          "Near": 0.1,
+          "Far": 100.0
+        }
+      }
+    },
+    {
+      "components": {
+        "::Veng::Name": {
+          "Value": "Overlay Sun"
+        },
+        "::Veng::Transform": {
+          "Position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "Rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Light": {
+          "Type": "Directional",
+          "Direction": [
+            -0.324442,
+            -0.811107,
+            -0.486664
+          ],
+          "Color": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "Intensity": 3.0
+        }
+      }
+    },
+    {
+      "components": {
+        "::Veng::Name": {
+          "Value": "Overlay Cube"
+        },
+        "::Veng::Transform": {
+          "Position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "Rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "Scale": [
+            0.8,
+            0.8,
+            0.8
+          ]
+        },
+        "::Veng::ConstantMotion": {
+          "AngularVelocity": [
+            0.4,
+            0.9,
+            0.0
+          ],
+          "Space": "World"
+        },
+        "::Veng::MeshRenderer": {
+          "Source": {
+            "type": "::Veng::CubeShape",
+            "value": {
+              "Extent": 1.0,
+              "Material": "0x6B3337487AD11FFC"
+            }
+          }
+        }
+      }
+    },
+    {
+      "components": {
+        "::Veng::Name": {
+          "Value": "Overlay Seat"
+        },
+        "::Veng::Viewer": {
+          "Camera": 0
+        },
+        "::Veng::PlayerInput": {},
+        "::Veng::SeatInput": {
+          "UsesKeyboardMouse": true,
+          "Gamepad": "None",
+          "WantsGamepad": false
+        },
+        "::Veng::InputContextStack": {
+          "Active": [
+            "0x5B1B7515FB2FCDC0"
+          ]
+        }
+      }
+    },
+    {
+      "components": {
+        "::Veng::Name": {
+          "Value": "Overlay HUD"
+        },
+        "::Veng::GuiOverlay": {
+          "Document": "0x3879B9FE00869E91",
+          "Layer": 0,
+          "Interactive": true
+        },
+        "::OverlayControl": {
+          "Requested": false
+        }
+      }
+    }
+  ]
+}
