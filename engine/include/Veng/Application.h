@@ -27,6 +27,13 @@
 
 namespace Veng
 {
+    class ServerHost;
+    class ClientHost;
+    namespace Net
+    {
+        class Client;
+    }
+
     /// @brief Returns the directory containing the running executable.
     ///
     /// A game mounts its asset pack relative to this so the launcher + module +
@@ -130,6 +137,25 @@ namespace Veng
         u32 SimTickRate = 60;
     };
 
+    /// @brief Opt-in networking knobs for the engine-managed world; activation is a launch decision.
+    ///
+    /// Set ApplicationInfo::Net to tune the hosts the engine mounts when the launcher activates a net
+    /// mode (`--server` opens a ServerHost on the managed world; `--join` connects a ClientHost). The
+    /// knobs are only knobs — a game that leaves Net unset still gets these defaults when launched
+    /// `--server`, so zero-config LAN hosting works with no configuration. A default (no net launch
+    /// flag) constructs no host and behaves exactly as an offline app.
+    struct GameNetInfo
+    {
+        /// @brief UDP port the server listens on, and the default a `--join` with no `:port` uses.
+        u16 Port = 27750;
+        /// @brief Maximum simultaneously accepted connections; a further request is denied.
+        u32 MaxConnections = 16;
+        /// @brief Emit a snapshot every this many sim ticks (2 ⇒ 30 Hz at a 60 Hz sim).
+        u32 SnapshotIntervalTicks = 2;
+        /// @brief How many recent input ticks each client input packet carries redundantly (the loss window).
+        u32 InputRedundancyTicks = 3;
+    };
+
     /// @brief Construction parameters for Application.
     struct ApplicationInfo
     {
@@ -184,6 +210,13 @@ namespace Veng
         /// view each frame. Unset means the app loads and drives its own world (the editor, or a
         /// game wanting full control).
         optional<GameWorldInfo> World = std::nullopt;
+        /// @brief Networking knobs for the engine-managed world; nullopt uses the zero-config defaults.
+        ///
+        /// Tunes the hosts the engine mounts when the launcher activates a net mode (`--server` /
+        /// `--join`). Purely knobs — activation is a launch decision, not this field, so a windowed
+        /// game with Net unset still hosts on the defaults when launched `--server`. Offline (no net
+        /// flag) it is inert. Requires World to be set (net drives the managed world).
+        optional<GameNetInfo> Net = std::nullopt;
     };
 
     /// @brief Base class for a veng application; subclass and override the lifecycle hooks.
@@ -199,7 +232,12 @@ namespace Veng
         /// @param types    Host-owned registry of reflected types; must outlive the app.
         /// @param systems  Host-owned registry of scene systems; must outlive the app.
         Application(ApplicationInfo info, TypeRegistry& types, SystemRegistry& systems);
-        virtual ~Application() = default;
+
+        /// @brief Destroys the application, tearing down the pimpl'd net state.
+        ///
+        /// Out-of-line so the net-state pimpl (an incomplete type in this header) is complete at the
+        /// destruction site in the translation unit.
+        virtual ~Application();
 
         /// @brief Enter the main loop, blocking until the app exits.
         /// @param arguments  Command-line arguments forwarded from the launcher.
@@ -368,9 +406,33 @@ namespace Veng
         ///
         /// Non-null only when ApplicationInfo::World is set, after the world is bootstrapped. The
         /// Scene owns the level's SceneSimulation (Scene::GetSimulation); a game reads and edits
-        /// the world through it.
+        /// the world through it. In client mode (`--join`) this is the scene the ClientHost loaded
+        /// from the join flow, so it is null until the accept lands and the world starts.
         /// @return The managed world's Scene, or nullptr.
-        [[nodiscard]] Scene* GetWorld() const { return m_World.get(); }
+        [[nodiscard]] Scene* GetWorld() const { return m_PrimaryWorld; }
+
+        /// @brief Returns this peer's network role: Client under `--join`, Server otherwise.
+        ///
+        /// Server for a standalone app, a listen server, and a dedicated server; Client only when the
+        /// launcher activated join mode. Threaded onto every Sim tick's SystemContext so the authority
+        /// filter gates state advancement.
+        /// @return The peer's NetRole.
+        [[nodiscard]] NetRole GetNetRole() const;
+
+        /// @brief Returns the mounted server host, or null when not hosting.
+        ///
+        /// Non-null only after a `--server` launch bootstraps the managed world. A game reaches it for
+        /// its own traffic or to drain the lifecycle events (ServerHost::Events) its pawn-cleanup rule
+        /// watches; the join glue itself needs no game code.
+        /// @return The server host, or nullptr.
+        [[nodiscard]] ServerHost* GetServerHost() const;
+
+        /// @brief Returns the mounted client host, or null when not joined.
+        ///
+        /// Non-null only after a `--join` launch. A game reaches it to inspect its own seat / possessed
+        /// pawn; the per-frame join drive is the engine's.
+        /// @return The client host, or nullptr.
+        [[nodiscard]] ClientHost* GetClientHost() const;
 
         /// @brief Returns the level the managed world was bootstrapped from, or an empty handle.
         ///
@@ -444,6 +506,16 @@ namespace Veng
         /// AssetHandles included) — resources that outlive the context fail on destruction.
         virtual void OnDispose() {}
 
+        /// @brief Called in client mode when the own seat's possessed pawn changes (or clears).
+        ///
+        /// Only fires under `--join`, from the join drive, when the replicated own seat's Possesses
+        /// resolves to a newly-bound pawn (Entity::Null when it possesses none) — the point a game
+        /// points its Local-tier camera/viewer at that pawn. The camera rig stays untouched
+        /// client-local View machinery; this only names its target. Default is a no-op.
+        /// @param world  The client scene the ClientHost loaded.
+        /// @param pawn   The pawn the own seat now possesses, or Entity::Null.
+        virtual void OnClientPossession(Scene& world, Entity pawn) {}
+
         /// @brief Signals the run loop to exit after the current frame.
         ///
         /// The only way to stop a headless app; also works for windowed apps.
@@ -463,6 +535,9 @@ namespace Veng
             ManagedViewportInfo Info;
         };
 
+        /// @brief The pimpl'd network state (hosts + input buffers); defined in Application.cpp.
+        struct NetState;
+
         void Initialize();
         void Frame();
 
@@ -471,8 +546,76 @@ namespace Veng
         /// Called at the end of Initialize when ApplicationInfo::World is set: mounts the pack
         /// beside the executable, reads its cooked startup level, seeds the managed viewport from
         /// the level's render settings, spawns the world (LoadInto), fires OnWorldLoaded, then
-        /// starts the scene's simulation. A missing pack or startup level is a fatal assert.
+        /// starts the scene's simulation. In client mode the startup-level load is deferred to the
+        /// join flow (the level comes from the accept), so this only mounts the packs and connects.
+        /// A missing pack or startup level is a fatal assert.
         void BootstrapWorld();
+
+        /// @brief Seeds the managed viewport + view knobs from a started world scene's render settings.
+        ///
+        /// The shared tail of bringing a world online: applies the scene's LevelRenderSettings onto the
+        /// primary viewport's topology and the per-frame view. Used by the server/standalone bootstrap
+        /// and by the client when its join-loaded scene starts.
+        /// @param world  The world scene to seed the viewport from.
+        void SeedViewportFromWorld(Scene& world);
+
+        /// @brief Opens the ServerHost on the started managed world (`--server`).
+        ///
+        /// Constructs the NetState Server arm from ApplicationInfo::Net (or the zero-config defaults):
+        /// listens on the configured port, accepts up to MaxConnections, and replicates at the snapshot
+        /// interval. Called from the bootstrap tail after m_World starts.
+        /// @param levelId  The startup level id folded into each ConnectAccept for the client to load.
+        void StartServer(AssetId levelId);
+
+        /// @brief Connects the Net::Client and mounts the ClientHost (`--join`).
+        ///
+        /// Constructs the NetState Client arm from the launch target + ApplicationInfo::Net: opens the
+        /// connection and installs the join hooks (LoadClientLevel, prefab resolve, OnClientPossession).
+        /// The world scene is not loaded here — it arrives through the join flow (LoadClientLevel).
+        void ConnectClient();
+
+        /// @brief Loads the accepted level into a fresh client scene, server-authoritative entities skipped.
+        ///
+        /// The ClientHost's LoadLevel hook: LoadSync the level, LoadInto a scene with
+        /// SkipServerAuthoritative (the authored server entities arrive from the stream), retaining the
+        /// residency batch for the deferred OnWorldLoaded. The host owns the returned scene.
+        /// @param id  The level AssetId the accept named.
+        /// @return The freshly-loaded client scene.
+        [[nodiscard]] Unique<Scene> LoadClientLevel(AssetId id);
+
+        /// @brief Registers a just-loaded world scene as the primary simulation and starts it.
+        ///
+        /// The client-mode counterpart of the server/standalone bootstrap tail: registers @p world as
+        /// simulation #0, seeds the viewport, fires OnWorldLoaded (with the retained client residency
+        /// batch), and starts the simulation with this peer's role. Runs once, when the ClientHost's
+        /// join flow has loaded the scene.
+        /// @param world  The join-loaded client scene the ClientHost owns.
+        void StartWorldScene(Scene& world);
+
+        /// @brief Pumps the mounted net host for one frame: join/accept, apply the stream, feed input.
+        ///
+        /// The receive+send half of the net world drive, called once per frame after the sim ticks:
+        /// server-side it stamps the scene's change tick, pumps the ServerHost (accept → spawn seats,
+        /// generate + flush the stream, reap), ingests each connection's redundant input into its jitter
+        /// buffer, and reaps a departed connection's buffer; client-side it pumps the ClientHost (join,
+        /// apply spawn/despawn + snapshots, wire the own seat), starts the world scene once it loads,
+        /// and sends this frame's stamped local input. A no-op with no net host.
+        void PumpNet();
+
+        /// @brief Feeds each ready connection's buffered input into its seat before a server sim tick.
+        ///
+        /// Server-only: consumes one input from every connection's jitter buffer and writes it into the
+        /// connection's seat PlayerInput, so the control system re-derives Intent from the wire input at
+        /// the matching tick. Called once per Sim step, ahead of the systems. A no-op off the server.
+        void FeedServerSeatInputs();
+
+        /// @brief Stamps this client tick's resolved local input into the input send window.
+        ///
+        /// Client-only: records the local input seat's resolved PlayerInput for @p clientTick into the
+        /// redundant send buffer (drained once per frame by PumpNet). A no-op off a client, or with no
+        /// local input seat in the scene.
+        /// @param clientTick  The client sim tick being stamped.
+        void StampClientInput(u64 clientTick);
 
         /// @brief Builds the managed viewport set from a list of infos, registering each.
         ///
@@ -648,7 +791,19 @@ namespace Veng
         optional<vector<ManagedViewportInfo>> m_PendingReconfigure;
 
         /// @brief The engine-managed game world's Scene (sim attached); null when World is unset.
+        ///
+        /// Owns the standalone/server managed world. Null in client mode, where the ClientHost owns the
+        /// join-loaded scene and m_PrimaryWorld points at it instead.
         Unique<Scene> m_World;
+        /// @brief The active primary world scene (m_World, or the client host's join-loaded scene).
+        ///
+        /// The one scene the world drive ticks and pushes into the managed viewport. Set when the world
+        /// comes online (bootstrap for server/standalone, the join flow for a client); null before then.
+        Scene* m_PrimaryWorld = nullptr;
+        /// @brief The pimpl'd net hosts + input buffers; null unless a net launch mode is active.
+        Unique<NetState> m_Net;
+        /// @brief The client scene's spawn residency, held from LoadClientLevel until StartWorldScene.
+        ResidencyBatch m_ClientPending;
         /// @brief The level the managed world was bootstrapped from; empty when World is unset.
         AssetHandle<Level> m_WorldLevel;
         /// @brief Per-frame view knobs pushed into the managed viewport; seeded from the level.

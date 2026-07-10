@@ -55,6 +55,7 @@ add_library(veng SHARED
         src/Net/FaultInjectionTransport.cpp
         src/Net/Handshake.cpp
         src/Net/Host.cpp
+        src/Net/InputFeed.cpp
         src/Net/LoopbackTransport.cpp
         src/Net/Server.cpp
         src/Net/UdpTransport.cpp

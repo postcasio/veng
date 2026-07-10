@@ -18,6 +18,13 @@
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
 
+#include <Veng/Asset/Level.h>
+#include <Veng/Asset/Prefab.h>
+
+#include <Veng/Net/Client.h>
+#include <Veng/Net/Host.h>
+#include <Veng/Net/InputFeed.h>
+
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
@@ -29,12 +36,54 @@
 #include <algorithm>
 #include <array>
 #include <span>
+#include <unordered_map>
 
 namespace Veng
 {
+    /// @brief The mounted net hosts and the input buffers threaded around the world drive.
+    ///
+    /// One of the two arms is live per net launch mode: Server (the ServerHost + a per-connection input
+    /// jitter buffer) for `--server`, or Client (the owned Net::Client + ClientHost + the input send
+    /// window) for `--join`. Role reports which. The Info knobs seed the buffers and the hosts.
+    struct Application::NetState
+    {
+        NetRole Role = NetRole::Server;
+        GameNetInfo Info;
+
+        // Server arm.
+        Unique<ServerHost> Server;
+        unordered_map<Net::ConnectionId, InputJitterBuffer> Jitter;
+
+        // Client arm.
+        Unique<Net::Client> Client;
+        Unique<ClientHost> ClientHost;
+        InputSendBuffer Send;
+        bool WorldStarted = false;
+        // Prefabs a replicated spawn resolved, kept resident so their entities instantiate; keyed by
+        // AssetId value.
+        unordered_map<u64, AssetHandle<Prefab>> ClientPrefabs;
+    };
+
     Application::Application(ApplicationInfo info, TypeRegistry& types, SystemRegistry& systems)
         : m_Info(std::move(info)), m_TypeRegistry(types), m_SystemRegistry(systems)
     {
+    }
+
+    Application::~Application() = default;
+
+    NetRole Application::GetNetRole() const
+    {
+        return m_Net ? m_Net->Role : NetRole::Server;
+    }
+
+    ServerHost* Application::GetServerHost() const
+    {
+        return m_Net ? m_Net->Server.get() : nullptr;
+    }
+
+    ClientHost* Application::GetClientHost() const
+    {
+        return m_Net ? m_Net->ClientHost.get() : nullptr;
     }
 
     void Application::Initialize()
@@ -156,38 +205,215 @@ namespace Veng
         VE_ASSERT(startupLevel.IsValid(), "project '{}' declares no startup level",
                   m_Info.World->Project.string());
 
+        // Client mode defers the managed world's level load to the join flow: the level comes from the
+        // accept payload, so here we only connect and mount the ClientHost — the scene is loaded and
+        // started when the accept lands (PumpNet → StartWorldScene). No world is registered yet.
+        if (m_LaunchArgs.Join)
+        {
+            ConnectClient();
+            return;
+        }
+
+        // Standalone / server: spawn the world (the scene owns the level's simulation). LoadInto seeds
+        // the level's render settings onto a settings entity, so the renderer config is read from the
+        // scene by the same TryGetFirst query a system uses, never from the Level asset directly.
         const AssetResult<AssetHandle<Level>> level = m_AssetManager->LoadSync<Level>(startupLevel);
         VE_ASSERT(level.has_value(), "{}", level.error().Detail);
         m_WorldLevel = *level;
 
-        // Spawn the world first (the scene owns the level's simulation): LoadInto seeds the level's
-        // render settings onto a settings entity, so the renderer config is read from the scene by
-        // the same TryGetFirst query a system uses, never from the Level asset directly.
         LevelInstance instance = m_WorldLevel.Get()->LoadInto(*m_AssetManager, m_SystemRegistry);
         m_World = std::move(instance.World);
+        m_PrimaryWorld = m_World.get();
 
         // The primary world is simulation #0: register it first so the engine ticks it in the drive
         // loop and drives its captures, and SetWorldPaused targets it. It stays registered for the
         // app's life (dropped at teardown, self-unregistering).
         RegisterSimulation(*m_World);
 
-        // Seed the managed viewport's topology and the per-frame view knobs from the scene, starting
-        // from the configured initial settings: the level's post knobs (a seeded LevelRenderSettings
-        // component). The sky is the scene's Sky component, resolved by the renderer itself each
-        // Execute — no consumer seeding. Seeded once here; the game owns later changes.
-        Renderer::SceneRendererSettings settings = m_ManagedViewports.front().Info.Settings;
-        if (const LevelRenderSettings* render = m_World->TryGetFirst<LevelRenderSettings>())
-        {
-            ApplyLevelRenderSettings(*render, settings, m_WorldView);
-        }
-        GetPrimaryViewport()->Configure(settings);
+        SeedViewportFromWorld(*m_World);
 
         // Hand the world to the subclass before the simulation starts, so a game can read its
         // config from the scene, wait on residency, or capture input focus first.
         OnWorldLoaded(*m_World, instance.Pending);
 
-        m_World->StartSimulation(
-            SystemContext{.Assets = *m_AssetManager, .Input = *m_Input, .Tasks = *m_TaskSystem});
+        m_World->StartSimulation(SystemContext{.Assets = *m_AssetManager,
+                                               .Input = *m_Input,
+                                               .Tasks = *m_TaskSystem,
+                                               .Role = GetNetRole()});
+
+        // `--server` opens the host on the just-started world: it accepts connections, spawns a seat
+        // per connection, and streams state. A game that set no ApplicationInfo::Net still hosts on the
+        // zero-config defaults here.
+        if (m_LaunchArgs.Server)
+        {
+            StartServer(startupLevel);
+        }
+    }
+
+    void Application::SeedViewportFromWorld(Scene& world)
+    {
+        // Seed the managed viewport's topology and the per-frame view knobs from the scene, starting
+        // from the configured initial settings: the level's post knobs (a seeded LevelRenderSettings
+        // component). The sky is the scene's Sky component, resolved by the renderer itself each
+        // Execute — no consumer seeding. Seeded once; the game owns later changes.
+        Renderer::SceneRendererSettings settings = m_ManagedViewports.front().Info.Settings;
+        if (const LevelRenderSettings* render = world.TryGetFirst<LevelRenderSettings>())
+        {
+            ApplyLevelRenderSettings(*render, settings, m_WorldView);
+        }
+        GetPrimaryViewport()->Configure(settings);
+    }
+
+    void Application::StartServer(const AssetId levelId)
+    {
+        const GameNetInfo net = m_Info.Net.value_or(GameNetInfo{});
+
+        m_Net = CreateUnique<NetState>();
+        m_Net->Role = NetRole::Server;
+        m_Net->Info = net;
+
+        Result<Unique<ServerHost>> host = ServerHost::Create(ServerHostInfo{
+            .Server = Net::ServerInfo{.Port = net.Port, .MaxConnections = net.MaxConnections},
+            .World = *m_World,
+            .Assets = *m_AssetManager,
+            .LevelId = levelId,
+            .Replication =
+                ReplicationServer::Settings{.SnapshotInterval = net.SnapshotIntervalTicks},
+        });
+        VE_ASSERT(host, "server host failed to open: {}", host.error());
+        m_Net->Server = std::move(*host);
+
+        const Result<u16> port = m_Net->Server->Server().LocalPort();
+        Log::Info("Listening on port {}", port.value_or(net.Port));
+    }
+
+    void Application::ConnectClient()
+    {
+        const GameNetInfo net = m_Info.Net.value_or(GameNetInfo{});
+        const JoinTarget& target = *m_LaunchArgs.Join;
+        const u16 port = target.Port != 0 ? target.Port : net.Port;
+
+        m_Net = CreateUnique<NetState>();
+        m_Net->Role = NetRole::Client;
+        m_Net->Info = net;
+        m_Net->Send =
+            InputSendBuffer(InputSendBuffer::Settings{.Redundancy = net.InputRedundancyTicks});
+
+        Result<Unique<Net::Client>> client =
+            Net::Client::Connect(Net::ClientInfo{.Host = target.Host, .Port = port});
+        VE_ASSERT(client, "client failed to connect to {}:{}: {}", target.Host, port,
+                  client.error());
+        m_Net->Client = std::move(*client);
+
+        m_Net->ClientHost = ClientHost::Create(ClientHostInfo{
+            .Client = *m_Net->Client,
+            .Assets = *m_AssetManager,
+            .LoadLevel = [this](const AssetId id) -> Unique<Scene> { return LoadClientLevel(id); },
+            .ResolvePrefab = [this](const AssetId id) -> Ref<Prefab>
+            {
+                const AssetResult<AssetHandle<Prefab>> prefab =
+                    m_AssetManager->LoadSync<Prefab>(id);
+                if (!prefab.has_value())
+                {
+                    return nullptr;
+                }
+                // Keep the handle resident (the spawn instantiates from it), then hand a non-owning
+                // Ref aliasing the resident Prefab — the replication client spawns from it inline.
+                const AssetHandle<Prefab>& held =
+                    m_Net->ClientPrefabs.try_emplace(id.Value, *prefab).first->second;
+                return Ref<Prefab>(std::shared_ptr<void>{}, held.Get());
+            },
+            .OnPossession = [this](Scene& world, const Entity pawn)
+            { OnClientPossession(world, pawn); },
+        });
+
+        Log::Info("Joining {}:{}", target.Host, port);
+    }
+
+    Unique<Scene> Application::LoadClientLevel(const AssetId id)
+    {
+        // The accept names the level; load it with the server-authoritative authored entities skipped
+        // (they arrive from the spawn stream) and keep the level handle resident. The residency batch
+        // is held for OnWorldLoaded when the scene starts.
+        const AssetResult<AssetHandle<Level>> level = m_AssetManager->LoadSync<Level>(id);
+        VE_ASSERT(level.has_value(), "client level load failed: {}", level.error().Detail);
+        m_WorldLevel = *level;
+
+        LevelInstance instance = m_WorldLevel.Get()->LoadInto(
+            *m_AssetManager, m_SystemRegistry, LevelLoadInfo{.SkipServerAuthoritative = true});
+        m_ClientPending = std::move(instance.Pending);
+        return std::move(instance.World);
+    }
+
+    void Application::StartWorldScene(Scene& world)
+    {
+        m_PrimaryWorld = &world;
+        RegisterSimulation(world);
+        SeedViewportFromWorld(world);
+        OnWorldLoaded(world, m_ClientPending);
+        world.StartSimulation(SystemContext{.Assets = *m_AssetManager,
+                                            .Input = *m_Input,
+                                            .Tasks = *m_TaskSystem,
+                                            .Role = GetNetRole()});
+    }
+
+    void Application::PumpNet()
+    {
+        if (!m_Net)
+        {
+            return;
+        }
+
+        const f64 now = static_cast<f64>(Time::Now());
+
+        if (m_Net->Role == NetRole::Server)
+        {
+            // The world is generated + streamed keyed to the last completed tick (its just-ticked
+            // state); the per-step SetChangeTick already stamped this frame's mutations.
+            m_Net->Server->Pump(now, m_SimClock.GetTick());
+
+            // Ingest each connection's redundant input into its jitter buffer for next frame's ticks
+            // to consume, pruning a departed connection's buffer.
+            IngestConnectionInputs(*m_Net->Server, m_Net->Jitter, InputJitterBuffer::Settings{},
+                                   m_TypeRegistry);
+            return;
+        }
+
+        // Client: advance the join flow (accept → load → ack → apply the stream → wire the own seat),
+        // start the loaded scene once, then send this frame's stamped input window.
+        m_Net->ClientHost->Pump(now);
+        if (!m_Net->WorldStarted)
+        {
+            if (Scene* world = m_Net->ClientHost->World())
+            {
+                StartWorldScene(*world);
+                m_Net->WorldStarted = true;
+            }
+        }
+
+        // The client tracks no applied server tick, so it acks 0: the server sends full state each
+        // snapshot (idempotent, just more bandwidth) rather than gating against a baseline.
+        if (m_Net->Client->State() == Net::ClientState::Connected)
+        {
+            const vector<u8> packet = m_Net->Send.Encode(0, m_TypeRegistry);
+            (void)m_Net->Client->Server().Send(Net::Channel::UnreliableSequenced, packet);
+        }
+    }
+
+    void Application::FeedServerSeatInputs()
+    {
+        if (m_Net && m_Net->Server && m_PrimaryWorld)
+        {
+            FeedSeatInputs(*m_Net->Server, m_Net->Jitter, *m_PrimaryWorld);
+        }
+    }
+
+    void Application::StampClientInput(const u64 clientTick)
+    {
+        if (m_Net && m_PrimaryWorld)
+        {
+            StampLocalSeatInput(m_Net->Send, *m_PrimaryWorld, clientTick);
+        }
     }
 
     Renderer::ViewportRegion
@@ -282,7 +508,7 @@ namespace Veng
         // single-viewport path, byte-identical for the default managed viewport.
         if (managed.Info.Viewer == Entity::Null)
         {
-            PushSceneView(viewport, *m_World, m_WorldView, delta, m_SimAlpha);
+            PushSceneView(viewport, *m_PrimaryWorld, m_WorldView, delta, m_SimAlpha);
             return;
         }
 
@@ -293,8 +519,8 @@ namespace Veng
                            static_cast<f32>(output->GetImage()->GetHeight());
 
         Renderer::ViewState state = m_WorldView;
-        state.World = m_World.get();
-        state.Camera = ResolveCameraView(*m_World, managed.Info.Viewer, aspect)
+        state.World = m_PrimaryWorld;
+        state.Camera = ResolveCameraView(*m_PrimaryWorld, managed.Info.Viewer, aspect)
                            .value_or(DefaultCameraView(aspect));
         state.Delta = delta;
         state.Alpha = m_SimAlpha;
@@ -346,7 +572,7 @@ namespace Veng
             // The captured pointer belongs wholly to the cursor seat, in one scene: the cursor seat's
             // viewport's scene, or the primary world when the cursor seat has no viewport (the default
             // single-seat path). Resolve that scene's keyboard seat scene-locally.
-            const Scene* scene = owner != nullptr ? owner->GetPresentedScene() : m_World.get();
+            const Scene* scene = owner != nullptr ? owner->GetPresentedScene() : m_PrimaryWorld;
             if (scene == nullptr)
             {
                 return {};
@@ -375,6 +601,7 @@ namespace Veng
             .Pointer = pointer,
             .Tick = tick,
             .Alpha = alpha,
+            .Role = GetNetRole(),
         };
 
         // Resolve the sim's primary presenting viewport — the first registered Presented viewport
@@ -603,6 +830,14 @@ namespace Veng
         VE_ASSERT(parsed, "{}", parsed.error());
         m_LaunchArgs = std::move(*parsed);
 
+        // `--headless` forces a windowed game exe into the dedicated-server posture before init: no
+        // window, no swapchain, ImGui off. Applied here (ahead of Initialize) so the whole render path
+        // is never built, not merely skipped per frame.
+        if (m_LaunchArgs.Headless)
+        {
+            m_Info.Headless = true;
+        }
+
         // A leading positional argument selects the working directory (launcher convention).
         if (m_LaunchArgs.WorkingDirectory)
         {
@@ -632,6 +867,13 @@ namespace Veng
         m_TaskSystem->WaitForAll();
 
         OnDispose();
+
+        // Drop the net hosts before the world and the asset manager: a client host owns the
+        // join-loaded scene (whose components hold AssetHandles), and both hosts hold connections that
+        // must close before the transport goes. Resetting it self-unregisters that scene from the
+        // simulation drive-list through its back-reference.
+        m_Net.reset();
+        m_PrimaryWorld = nullptr;
 
         // Drop the engine-managed world before the asset manager so its components' AssetHandles
         // (the sky's environment/material, the level handle) retire through the deferred path.
@@ -742,6 +984,11 @@ namespace Veng
             m_ImGuiLayer->BeginFrame();
         }
 
+        // A dedicated server (headless with a live host) runs the accumulator + net pump with no
+        // View/render tail: the View systems are client-local presentation a headless process has no
+        // consumer for. A windowed (listen) server keeps them for its local seats.
+        const bool dedicatedServer = m_Info.Headless && GetServerHost() != nullptr;
+
         // Drive every registered simulation that is started and not paused, in registration order:
         // this frame's fixed Sim steps (0..N, the accumulator's step count, at the shared tick
         // numbers) then one View pass with the interpolation alpha. The pointer routing is scoped to
@@ -757,16 +1004,40 @@ namespace Veng
             }
             const PointerRouting pointer =
                 scene == scoped.Scene ? scoped.Routing : PointerRouting{};
+
+            // The net world's Sim steps thread Plan 05's input feed: server-side each tick's change
+            // tick keys replication dirty state and the buffered wire input fills each seat before the
+            // systems run; client-side the local seat's resolved input is stamped after the systems.
+            const bool netWorld = m_Net && scene == m_PrimaryWorld;
             for (u32 tickIndex = 0; tickIndex < step.Steps; ++tickIndex)
             {
                 const u64 tick = step.FirstTick + tickIndex;
+                if (netWorld && m_Net->Role == NetRole::Server)
+                {
+                    scene->SetChangeTick(tick);
+                    FeedServerSeatInputs();
+                }
                 scene->TickSimulationPhase(SceneSystem::Phase::Sim, step.SimDelta,
                                            BuildSystemContext(*scene, pointer, tick, 0.0f));
+                if (netWorld && m_Net->Role == NetRole::Client)
+                {
+                    StampClientInput(tick);
+                }
             }
-            scene->TickSimulationPhase(
-                SceneSystem::Phase::View, delta,
-                BuildSystemContext(*scene, pointer, m_SimClock.GetTick(), step.Alpha));
+
+            if (!dedicatedServer)
+            {
+                scene->TickSimulationPhase(
+                    SceneSystem::Phase::View, delta,
+                    BuildSystemContext(*scene, pointer, m_SimClock.GetTick(), step.Alpha));
+            }
         }
+
+        // Receive the join/state stream and flush this frame's sends after the ticks: server-side the
+        // snapshot the host generates reflects this frame's just-ticked state (keyed to the last tick),
+        // client-side the stamped input window is sent. Placed after the tick loop so a snapshot's
+        // content and its tick label agree.
+        PumpNet();
 
         // The edge latch: a frame with a live simulation that ran no tick holds its edges for the
         // next tick-running frame; a frame with no active sim never latches (it rolls next frame).
@@ -777,8 +1048,9 @@ namespace Veng
         // Push the managed world's render source into each managed viewport: a viewport naming a
         // Viewer gets that seat's camera resolved at its aspect, otherwise the scene's primary
         // camera. Plus the per-frame view knobs. After OnUpdate so a game's per-frame scene edits are
-        // reflected; before the viewport render phase reads it.
-        if (m_World)
+        // reflected; before the viewport render phase reads it. A dedicated server pushes nothing —
+        // it has no render tail.
+        if (m_PrimaryWorld && !dedicatedServer)
         {
             for (const ManagedViewport& managed : m_ManagedViewports)
             {
@@ -789,6 +1061,14 @@ namespace Veng
         m_RenderContext.BeginFrame();
 
         Renderer::CommandBuffer& cmd = m_RenderContext.GetCurrentCommandBuffer();
+
+        // A dedicated server ends the frame here: the accumulator and net pump have run, and there is
+        // no client-local presentation to render.
+        if (dedicatedServer)
+        {
+            m_RenderContext.EndFrame();
+            return;
+        }
 
         // Build, register, and push this frame's source into the world's authored capture surfaces,
         // so a scene-declared capture joins the drive-list beside any imperatively-registered ones.

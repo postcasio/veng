@@ -87,6 +87,52 @@ TEST_CASE("LaunchArguments: --level with no value is rejected")
     CHECK_FALSE(ParseTokens({"--level"}).has_value());
 }
 
+TEST_CASE("LaunchArguments: --server sets the server flag")
+{
+    const Result<LaunchArguments> parsed = ParseTokens({"--server"});
+    REQUIRE(parsed.has_value());
+    CHECK(parsed->Server);
+    CHECK_FALSE(parsed->Headless);
+    CHECK_FALSE(parsed->Join.has_value());
+}
+
+TEST_CASE("LaunchArguments: --server --headless is the dedicated-server pair")
+{
+    const Result<LaunchArguments> parsed = ParseTokens({"--server", "--headless"});
+    REQUIRE(parsed.has_value());
+    CHECK(parsed->Server);
+    CHECK(parsed->Headless);
+}
+
+TEST_CASE("LaunchArguments: --join host:port splits into host and port")
+{
+    const Result<LaunchArguments> parsed = ParseTokens({"--join", "127.0.0.1:27750"});
+    REQUIRE(parsed.has_value());
+    REQUIRE(parsed->Join.has_value());
+    CHECK(parsed->Join->Host == "127.0.0.1");
+    CHECK(parsed->Join->Port == 27750);
+}
+
+TEST_CASE("LaunchArguments: --join=host uses the default port (0)")
+{
+    const Result<LaunchArguments> parsed = ParseTokens({"--join=example.lan"});
+    REQUIRE(parsed.has_value());
+    REQUIRE(parsed->Join.has_value());
+    CHECK(parsed->Join->Host == "example.lan");
+    CHECK(parsed->Join->Port == 0);
+}
+
+TEST_CASE("LaunchArguments: --join with no value is rejected")
+{
+    CHECK_FALSE(ParseTokens({"--join"}).has_value());
+}
+
+TEST_CASE("LaunchArguments: a malformed --join port is rejected")
+{
+    CHECK_FALSE(ParseTokens({"--join", "host:notaport"}).has_value());
+    CHECK_FALSE(ParseTokens({"--join", ":27750"}).has_value());
+}
+
 TEST_CASE("LaunchArguments: an unknown flag is rejected")
 {
     CHECK_FALSE(ParseTokens({"--nope"}).has_value());
