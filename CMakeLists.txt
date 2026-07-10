@@ -573,6 +573,8 @@ if (VENG_BUILD_TESTS)
             tests/unit/sim_clock.cpp
             tests/unit/transform_interpolation.cpp
             tests/unit/input_edge_latch.cpp
+            tests/unit/net_transport.cpp
+            tests/unit/net_connection.cpp
     )
     target_link_libraries(veng_test_unit PRIVATE veng::veng doctest::doctest)
 

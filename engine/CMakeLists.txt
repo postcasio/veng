@@ -50,6 +50,10 @@ add_library(veng SHARED
         src/Math/Noise.cpp
         src/Module/ApplicationRegistry.cpp
         src/Module/ModuleLoader.cpp
+        src/Net/Connection.cpp
+        src/Net/FaultInjectionTransport.cpp
+        src/Net/LoopbackTransport.cpp
+        src/Net/UdpTransport.cpp
         src/Platform/UserPaths.cpp
         src/Task/TaskSystem.cpp
         src/Time.cpp
