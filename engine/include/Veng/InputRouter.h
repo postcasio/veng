@@ -244,6 +244,20 @@ namespace Veng
         [[nodiscard]] PointerRouting ResolvePointer(ivec2 pointerWindowPoint, bool captured,
                                                     Entity captureOwner) const;
 
+        /// @brief Resolves the Presented viewport that owns the pointer this frame, or null.
+        ///
+        /// The scene-scoping companion to ResolvePointer: the resolved routing applies only to the
+        /// simulation whose scene this viewport presents. While captured the cursor seat's associated
+        /// viewport (there is one OS cursor / one cursor seat); when free the first associated
+        /// viewport whose region contains @p pointerWindowPoint, hit-tested exactly as ResolvePointer
+        /// does. Null when none applies — no association for the cursor seat, or a free pointer over
+        /// no associated region — leaving the caller to fall back (e.g. to the primary world).
+        /// @param pointerWindowPoint  The pointer position in window framebuffer pixels.
+        /// @param captured            Whether the cursor is captured (gameplay focus).
+        /// @return The owning Presented viewport, or nullptr when none applies.
+        [[nodiscard]] const Renderer::Viewport* ResolvePointerViewport(ivec2 pointerWindowPoint,
+                                                                       bool captured) const;
+
     private:
         /// @brief Matches the OS cursor capture and the consumers to the cursor seat's focus top.
         ///

@@ -1007,6 +1007,10 @@ if (VENG_BUILD_TESTS)
             # LevelOverlay handles from OnUpdate and asserting the router/scene/pause state (it needs
             # a Context for the overlay's viewport, so it rides the gpu band though it pins no pixels).
             tests/gpu/level_overlay.cpp
+            # simulation_drive_list.cpp drives a headless Application, registering scenes as
+            # engine-ticked simulations and asserting the tick/pause/view/capture drive semantics (it
+            # needs a Context for the Application, so it rides the gpu band though it pins no pixels).
+            tests/gpu/simulation_drive_list.cpp
     )
     target_link_libraries(veng_test_gpu PRIVATE veng::veng veng_test_support doctest::doctest)
     # transfer_retire.cpp reaches through Native.h (raw vk::/VMA handles via the

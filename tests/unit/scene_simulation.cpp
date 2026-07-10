@@ -98,12 +98,14 @@ namespace
     {
         alignas(16) unsigned char AssetsBytes[64]{};
         alignas(16) unsigned char InputBytes[64]{};
+        alignas(16) unsigned char TasksBytes[64]{};
 
         SystemContext Make()
         {
             return SystemContext{
                 .Assets = *reinterpret_cast<AssetManager*>(AssetsBytes),
                 .Input = *reinterpret_cast<Input*>(InputBytes),
+                .Tasks = *reinterpret_cast<TaskSystem*>(TasksBytes),
             };
         }
     };
@@ -321,4 +323,75 @@ TEST_CASE("The all-registered convenience builds every registered system")
     const SceneSimulation sim(registry);
     CHECK_FALSE(sim.IsEmpty());
     CHECK(registry.Count() == 3);
+}
+
+TEST_CASE("SceneSimulation tracks started state and per-sim pause independently")
+{
+    SystemA::Reset();
+
+    TypeRegistry types = MakeRegistry();
+    const Unique<Scene> scene = Scene::Create(types);
+
+    SystemRegistry registry;
+    registry.Register<SystemA>();
+    SceneSimulation sim(registry);
+    ContextStorage storage;
+
+    // Fresh: not started, not paused (the engine drive-list ticks only started, non-paused sims).
+    CHECK_FALSE(sim.IsStarted());
+    CHECK_FALSE(sim.IsPaused());
+
+    sim.Start(*scene, storage.Make());
+    CHECK(sim.IsStarted());
+
+    // Pause is a separate knob; SceneSimulation::Update itself ignores it (the engine gates on it),
+    // so the flag is only what the engine reads. Start/Stop leave it untouched.
+    sim.SetPaused(true);
+    CHECK(sim.IsPaused());
+    sim.SetPaused(false);
+    CHECK_FALSE(sim.IsPaused());
+
+    sim.SetPaused(true);
+    sim.Start(*scene, storage.Make());
+    CHECK(sim.IsPaused());
+
+    sim.Stop(*scene, storage.Make());
+    CHECK_FALSE(sim.IsStarted());
+    CHECK(sim.IsPaused());
+}
+
+TEST_CASE("SystemViewInfo pick/project helpers round-trip and match the document conversion")
+{
+    // A resolved view a SystemContext would carry: a 60° perspective looking at the origin, an
+    // 800×600 region, and a 2× UI scale (a HiDPI document space).
+    SystemViewInfo view;
+    view.Camera.SetPerspective(glm::radians(60.0f), 800.0f / 600.0f, 0.1f, 100.0f);
+    view.Camera.SetView(vec3(0.0f, 0.0f, 6.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+    view.Region = {.Offset = {40, 30}, .Extent = {800, 600}};
+    view.UiScale = 2.0f;
+
+    // WorldToRegion is ProjectToScreen over the region extent; WorldToDocument divides by UiScale;
+    // DocumentExtent is the extent in logical points.
+    const vec3 world(0.5f, -0.25f, 0.0f);
+    const optional<vec2> region = WorldToRegion(view, world);
+    const optional<vec2> document = WorldToDocument(view, world);
+    REQUIRE(region.has_value());
+    REQUIRE(document.has_value());
+    CHECK(document->x == doctest::Approx(region->x / 2.0f));
+    CHECK(document->y == doctest::Approx(region->y / 2.0f));
+    CHECK(DocumentExtent(view).x == doctest::Approx(400.0f));
+    CHECK(DocumentExtent(view).y == doctest::Approx(300.0f));
+
+    // ScreenToWorldRay unprojects a region-local point: unprojecting the point WorldToRegion produced
+    // yields a ray from the camera through the original world point.
+    const optional<Ray> ray = ScreenToWorldRay(view, *region);
+    REQUIRE(ray.has_value());
+    CHECK(glm::length(ray->Origin - view.Camera.GetPosition()) == doctest::Approx(0.0f));
+    const vec3 toWorld = glm::normalize(world - ray->Origin);
+    CHECK(glm::length(ray->Direction - toWorld) == doctest::Approx(0.0f).epsilon(0.001f));
+
+    // A zero-extent region unprojects nothing (the documented guard).
+    SystemViewInfo empty = view;
+    empty.Region.Extent = {0, 0};
+    CHECK_FALSE(ScreenToWorldRay(empty, vec2(0.0f)).has_value());
 }

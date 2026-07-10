@@ -90,6 +90,19 @@ namespace Veng::Renderer
         /// @brief When the engine re-renders the capture (see CaptureRefresh).
         CaptureRefresh Refresh = CaptureRefresh::EveryFrame;
 
+        /// @brief Name of the sibling material's texture slot the capture output binds onto.
+        ///
+        /// Drive binds the capture's octahedral output handle onto the material field of this name
+        /// (a TextureHandle-kind field). The default "Texture" preserves the built-in binding; author
+        /// a different name to match a descriptively-named material slot.
+        string TextureSlot = "Texture";
+
+        /// @brief Name of the sibling material's sampler slot the capture sampler binds onto.
+        ///
+        /// Drive binds the capture's clamp sampler onto the material field of this name (a
+        /// SamplerHandle-kind field). The default "Sampler" preserves the built-in binding.
+        string SamplerSlot = "Sampler";
+
         /// @brief Runtime capture state, materialized on the first Drive; empty until then.
         mutable Unique<CaptureSurfaceRuntime> Runtime;
 
@@ -152,4 +165,6 @@ VE_REFLECT(::Veng::Renderer::CaptureSurface, 0x59B48CAC6127A406ULL)
 VE_FIELD(Shape, .DisplayName = "Shape")
 VE_FIELD(Resolution, .DisplayName = "Resolution", .Display = {.Min = 1})
 VE_FIELD(Refresh, .DisplayName = "Refresh")
+VE_FIELD(TextureSlot, .DisplayName = "Texture Slot")
+VE_FIELD(SamplerSlot, .DisplayName = "Sampler Slot")
 VE_REFLECT_END();

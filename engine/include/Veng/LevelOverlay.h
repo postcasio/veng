@@ -69,8 +69,10 @@ namespace Veng
     /// on drop". Open loads the level into a fresh scene, runs the populate hook, creates a Presented
     /// viewport (registered last, so it composites on top), routes input to the overlay's own seat
     /// (pointer association, cursor-seat handoff, and a focus-scope suspension of the layer beneath),
-    /// optionally freezes the primary simulation, and starts the scene. Update ticks and renders it
-    /// each frame the game drives it; the overlay's own viewport drives its scene's GuiOverlay HUD.
+    /// optionally freezes the primary simulation, registers the scene as an engine-ticked simulation,
+    /// and starts it. The engine ticks the overlay's simulation and scopes its pointer to the
+    /// overlay's viewport; Update re-applies the region and pushes the view each frame; the overlay's
+    /// own viewport drives its scene's GuiOverlay HUD.
     ///
     /// The handle is move-only. Dropping it (or calling Close) tears the overlay down in lifetime
     /// order and restores every router / cursor-seat / world-pause / drive-list value to the state
@@ -83,10 +85,11 @@ namespace Veng
         /// @brief Opens @p info's level as a secondary overlay over @p app's running frame.
         ///
         /// Sequences: load the source into a fresh scene and simulation (not started) → run
-        /// info.Populate against the scene → create and register a Presented viewport for the region
-        /// → route input (pointer association to the overlay seat, cursor-seat handoff, and a
-        /// viewport-less focus scope suspending info.SuspendSeat) → optionally freeze the primary
-        /// simulation → start the scene's simulation. The returned handle is safe to Update.
+        /// info.Populate against the scene → create and register a Presented viewport for the region →
+        /// register the scene as an engine-ticked simulation and push its initial view → route input
+        /// (pointer association to the overlay seat, cursor-seat handoff, and a viewport-less focus
+        /// scope suspending info.SuspendSeat) → optionally freeze the primary simulation → start the
+        /// scene's simulation. The returned handle is safe to Update.
         /// @param app   The running application whose services (assets, systems, router, context,
         ///              drive-list, world-pause) the overlay composes.
         /// @param info  The overlay parameters; info.Source must be resident unless
@@ -107,12 +110,13 @@ namespace Veng
         /// @brief Moves the overlay, tearing down any overlay this handle currently holds first.
         LevelOverlay& operator=(LevelOverlay&& other) noexcept;
 
-        /// @brief Ticks and renders the overlay for one frame.
+        /// @brief Re-applies the region and pushes the view for one frame.
         ///
-        /// Runs the overlay scene's simulation, then pushes its resolved camera into the viewport
-        /// (re-applying the region against the current framebuffer extent so a full-window overlay
-        /// tracks resizes). The viewport's own render drives the scene's GuiOverlay HUD; no explicit
-        /// UI step is needed. A no-op on a moved-from or closed handle.
+        /// Pushes the overlay's resolved camera into the viewport, re-applying the region against the
+        /// current framebuffer extent so a full-window overlay tracks resizes. The engine owns the
+        /// simulation tick (the overlay is a registered sim), so this no longer ticks it. The
+        /// viewport's own render drives the scene's GuiOverlay HUD; no explicit UI step is needed. A
+        /// no-op on a moved-from or closed handle.
         /// @param delta  Frame delta in seconds.
         void Update(f32 delta);
 

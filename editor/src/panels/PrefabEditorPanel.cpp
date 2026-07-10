@@ -153,7 +153,9 @@ namespace VengEditor
                                ? CreateUnique<SceneSimulation>(m_Systems, *playSystems)
                                : CreateUnique<SceneSimulation>(m_Systems);
         }
-        m_Simulation->Start(*m_PlayScene, SystemContext{.Assets = m_Assets, .Input = m_Input});
+        m_Simulation->Start(
+            *m_PlayScene,
+            SystemContext{.Assets = m_Assets, .Input = m_Input, .Tasks = m_Assets.GetTaskSystem()});
 
         // The running game owns input: capture the cursor in the viewport until the release
         // chord (or window-focus loss) pops it.
@@ -169,7 +171,9 @@ namespace VengEditor
 
         if (m_Simulation != nullptr && m_PlayScene != nullptr)
         {
-            m_Simulation->Stop(*m_PlayScene, SystemContext{.Assets = m_Assets, .Input = m_Input});
+            m_Simulation->Stop(*m_PlayScene, SystemContext{.Assets = m_Assets,
+                                                           .Input = m_Input,
+                                                           .Tasks = m_Assets.GetTaskSystem()});
         }
 
         ReleaseFromPlay();
@@ -224,7 +228,9 @@ namespace VengEditor
             m_Simulation != nullptr)
         {
             m_Simulation->Update(*m_PlayScene, Time::GetDeltaTime(),
-                                 SystemContext{.Assets = m_Assets, .Input = m_Input});
+                                 SystemContext{.Assets = m_Assets,
+                                               .Input = m_Input,
+                                               .Tasks = m_Assets.GetTaskSystem()});
         }
     }
 

@@ -320,6 +320,12 @@ namespace Veng
         /// @brief Returns the render context the manager builds and uploads GPU resources through.
         [[nodiscard]] Renderer::Context& GetContext() const { return m_Context; }
 
+        /// @brief Returns the task system the manager runs its async loads and builds through.
+        ///
+        /// The same worker pool a consumer threads into a SystemContext, reachable wherever an
+        /// AssetManager is in hand.
+        [[nodiscard]] TaskSystem& GetTaskSystem() const { return m_Tasks; }
+
         /// @brief Runs any pending async finalizes whose uploads completed and whose dependencies are resident.
         ///
         /// Called from the frame loop after the task system's continuation pump, on the main thread.

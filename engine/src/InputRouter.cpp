@@ -231,6 +231,31 @@ namespace Veng
         return SelectPointerOwner(regions, pointerWindowPoint);
     }
 
+    const Renderer::Viewport* InputRouter::ResolvePointerViewport(ivec2 pointerWindowPoint,
+                                                                  bool captured) const
+    {
+        // Captured: the cursor belongs wholly to the cursor seat, so its scope is that seat's
+        // associated viewport. None when the cursor seat has no association (the default single-seat
+        // path), leaving the caller to fall back to the primary world.
+        if (captured)
+        {
+            const auto association =
+                std::ranges::find(m_Associations, m_CursorSeat, &ViewportAssociation::Viewer);
+            return association != m_Associations.end() ? association->Viewport : nullptr;
+        }
+
+        // Free cursor: the first associated viewport whose region contains the point, hit-tested
+        // through WindowToViewport so the containment matches ResolvePointer / SelectPointerOwner.
+        for (const ViewportAssociation& association : m_Associations)
+        {
+            if (association.Viewport->WindowToViewport(pointerWindowPoint).has_value())
+            {
+                return association.Viewport;
+            }
+        }
+        return nullptr;
+    }
+
     PointerRouting SelectPointerOwner(std::span<const PointerRegionSeat> regions,
                                       ivec2 pointerWindowPoint)
     {

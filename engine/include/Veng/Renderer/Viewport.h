@@ -375,6 +375,19 @@ namespace Veng::Renderer
         /// @brief Returns the viewport's role.
         [[nodiscard]] ViewportRole GetRole() const;
 
+        /// @brief Returns the scene the last-pushed ViewState renders, or null before any push.
+        ///
+        /// The retained scene pointer, so the engine can match a viewport to the simulation whose
+        /// scene it presents (the primary-presenter resolution behind SystemContext::View). Null
+        /// until the owner has pushed a ViewState, so a never-pushed viewport presents no scene.
+        [[nodiscard]] const Scene* GetPresentedScene() const { return m_ViewState.World; }
+
+        /// @brief Returns the camera the last-pushed ViewState renders through (the retained view).
+        ///
+        /// The same camera ScreenToWorldRay/WorldToRegion unproject through — the view as of the last
+        /// completed frame. Default-constructed before any ViewState is pushed.
+        [[nodiscard]] const CameraView& GetPresentedCamera() const { return m_ViewState.Camera; }
+
         /// @brief Maps a window point into this viewport's region as normalized coordinates.
         ///
         /// Hit-tests windowPoint (window framebuffer pixels) against GetRegion(); on a hit,

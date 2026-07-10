@@ -1,0 +1,20 @@
+{
+  "defaultInstance": "0x0000000000002471",
+  "domain": "Translucent",
+  "shaders": {
+    "vertex": "0x0000000000002400",
+    "fragment": "0x0000000000002460"
+  },
+  "fields": [
+    {
+      "name": "CaptureMap",
+      "type": "texture",
+      "id": "0x0000000000002329"
+    },
+    {
+      "name": "CaptureSampler",
+      "type": "sampler",
+      "texture": "CaptureMap"
+    }
+  ]
+}

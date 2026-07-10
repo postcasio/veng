@@ -25,6 +25,7 @@ namespace Veng
 
     void SceneSimulation::Start(Scene& scene, const SystemContext& context)
     {
+        m_Started = true;
         for (const Unique<SceneSystem>& system : m_Systems)
         {
             system->OnStart(scene, context);
@@ -54,6 +55,7 @@ namespace Veng
 
     void SceneSimulation::Stop(Scene& scene, const SystemContext& context)
     {
+        m_Started = false;
         for (const Unique<SceneSystem>& system : m_Systems)
         {
             system->OnStop(scene, context);

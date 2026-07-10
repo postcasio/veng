@@ -28,6 +28,7 @@ namespace
     struct ContextStorage
     {
         alignas(16) unsigned char InputBytes[64]{};
+        alignas(16) unsigned char TasksBytes[64]{};
         alignas(16) unsigned char AssetsBytes[64]{};
 
         SystemContext Make()
@@ -35,6 +36,7 @@ namespace
             return SystemContext{
                 .Assets = *reinterpret_cast<AssetManager*>(AssetsBytes),
                 .Input = *reinterpret_cast<Input*>(InputBytes),
+                .Tasks = *reinterpret_cast<TaskSystem*>(TasksBytes),
             };
         }
     };

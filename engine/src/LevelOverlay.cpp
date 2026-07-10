@@ -134,6 +134,18 @@ namespace Veng
         });
         app.RegisterViewport(*overlay.m_Viewport);
 
+        // Register the overlay scene as a simulation so the engine ticks it and drives its captures —
+        // the tick is the engine's now, not a manual TickSimulation in Update. Push the initial view
+        // right away (mirroring BootstrapWorld's seed) so the viewport's retained scene pointer is set
+        // before the first engine tick, closing the first-frame gap in the per-sim view resolution.
+        app.RegisterSimulation(scene);
+        {
+            Renderer::SceneRendererSettings initialSettings;
+            Renderer::ViewState initialKnobs;
+            ApplyLevelRenderSettings(overlay.m_Render, initialSettings, initialKnobs);
+            PushSceneView(*overlay.m_Viewport, scene, initialKnobs);
+        }
+
         // 4. Route input across the three seams, capturing what each must restore.
         InputRouter& router = app.GetInputRouter();
         const InputSeat seat = ResolveInputSeat(&scene);
@@ -169,7 +181,7 @@ namespace Veng
 
         // 5. Start the simulation — each system's OnStart fires with the populated scene.
         overlay.m_Instance.World->StartSimulation(
-            SystemContext{.Assets = assets, .Input = app.GetInput()});
+            SystemContext{.Assets = assets, .Input = app.GetInput(), .Tasks = app.GetTaskSystem()});
         overlay.m_Started = true;
 
         // Join the overlay stack so a higher overlay can resolve this one's scene from its seat.
@@ -227,25 +239,11 @@ namespace Veng
             return;
         }
 
-        InputRouter& router = m_App->GetInputRouter();
         Renderer::Context& context = m_App->GetRenderContext();
 
-        // Tick the overlay's simulation, feeding it the pointer routing resolved against the
-        // router's associated regions (the overlay's viewport among them), so its systems see the
-        // pointer over the overlay's region.
-        PointerRouting pointer;
-        {
-            const vec2 scale =
-                context.IsHeadless() ? vec2(1.0f) : context.GetWindow().GetContentScale();
-            const vec2 windowPoint = m_App->GetInput().GetMousePosition() * scale;
-            pointer = router.ResolvePointer(ivec2(windowPoint), router.IsGameplayFocused(),
-                                            m_OverlaySeat);
-        }
-        m_Instance.World->TickSimulation(delta, SystemContext{
-                                                    .Assets = m_App->GetAssetManager(),
-                                                    .Input = m_App->GetInput(),
-                                                    .Pointer = pointer,
-                                                });
+        // The engine ticks the overlay's simulation (it is a registered sim) and scopes its pointer
+        // to the overlay's own viewport region, so Update only re-applies the region and pushes the
+        // view — no manual TickSimulation or pointer routing here.
 
         // Re-apply the region against the current framebuffer extent so a full-window overlay tracks
         // resizes (the viewport is not in Application's resize-tracked list); a fixed region is
@@ -280,11 +278,13 @@ namespace Veng
         Application& app = *m_App;
         InputRouter& router = app.GetInputRouter();
 
-        // 1. Stop the simulation (each system's OnStop).
+        // 1. Stop the simulation (each system's OnStop). The engine ticked it while registered; the
+        //    scene reset in step 5 self-unregisters it from the drive-list.
         if (m_Started && m_Instance.World)
         {
-            m_Instance.World->StopSimulation(
-                SystemContext{.Assets = app.GetAssetManager(), .Input = app.GetInput()});
+            m_Instance.World->StopSimulation(SystemContext{.Assets = app.GetAssetManager(),
+                                                           .Input = app.GetInput(),
+                                                           .Tasks = app.GetTaskSystem()});
             m_Started = false;
         }
 

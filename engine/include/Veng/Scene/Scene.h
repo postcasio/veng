@@ -208,6 +208,17 @@ namespace Veng
         /// @param context  Per-tick services forwarded to each system.
         void StopSimulation(const SystemContext& context);
 
+        /// @brief Binds this scene to a simulation drive-list it self-unregisters from on destruction.
+        ///
+        /// Application::RegisterSimulation calls this after appending this scene's pointer to its
+        /// drive-list; ~Scene then erases that pointer, order-preserving. Registering an
+        /// already-registered scene is a fatal assert (the back-reference would leak the prior
+        /// membership). The back-reference is not a component and is not copied by Clone, so a clone
+        /// starts unregistered.
+        /// @param driveList  The Application simulation drive-list this scene now belongs to.
+        /// @pre This scene is not already attached to a simulation drive-list.
+        void AttachToSimDriveList(vector<Scene*>& driveList);
+
         /// @brief Type-erased add: default-constructs a component of the given TypeId onto the entity.
         ///
         /// The templated Add\<T\> resolves T to TypeId and forwards here; prefab
@@ -540,6 +551,12 @@ namespace Veng
 
         /// @brief The simulation driving this scene's systems, or null when none is attached.
         Unique<SceneSimulation> m_Simulation;
+
+        /// @brief The Application simulation drive-list this scene is registered into; null when unregistered.
+        ///
+        /// Set by AttachToSimDriveList; ~Scene erases this scene's pointer from it. Not a component,
+        /// so Clone (which recreates entities and copies components) never copies it.
+        vector<Scene*>* m_SimDriveList = nullptr;
 
         template <class...>
         friend class SceneView;

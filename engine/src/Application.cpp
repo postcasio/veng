@@ -22,6 +22,7 @@
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/Transforms.h>
+#include <Veng/Scene/SceneSimulation.h>
 #include <Veng/Scene/SceneSystem.h>
 #include <Veng/Scene/SceneViewport.h>
 
@@ -161,6 +162,11 @@ namespace Veng
         LevelInstance instance = m_WorldLevel.Get()->LoadInto(*m_AssetManager, m_SystemRegistry);
         m_World = std::move(instance.World);
 
+        // The primary world is simulation #0: register it first so the engine ticks it in the drive
+        // loop and drives its captures, and SetWorldPaused targets it. It stays registered for the
+        // app's life (dropped at teardown, self-unregistering).
+        RegisterSimulation(*m_World);
+
         // Seed the managed viewport's topology and the per-frame view knobs from the scene, starting
         // from the configured initial settings: the level's post knobs (a seeded LevelRenderSettings
         // component). The sky is the scene's Sky component, resolved by the renderer itself each
@@ -176,7 +182,8 @@ namespace Veng
         // config from the scene, wait on residency, or capture input focus first.
         OnWorldLoaded(*m_World, instance.Pending);
 
-        m_World->StartSimulation(SystemContext{.Assets = *m_AssetManager, .Input = *m_Input});
+        m_World->StartSimulation(
+            SystemContext{.Assets = *m_AssetManager, .Input = *m_Input, .Tasks = *m_TaskSystem});
     }
 
     Renderer::ViewportRegion
@@ -289,36 +296,99 @@ namespace Veng
         viewport.SetViewState(state);
     }
 
-    PointerRouting Application::ComputePointerRouting() const
+    namespace
     {
-        if (!m_World)
+        // The scene-local keyboard/mouse seat a captured pointer routes to: the first
+        // (Viewer, SeatInput) with UsesKeyboardMouse, Entity::Null when the scene has none.
+        Entity FirstKeyboardSeat(const Scene& scene)
         {
-            return PointerRouting{};
+            Entity keyboardSeat = Entity::Null;
+            scene.Each<Viewer, SeatInput>(
+                [&](const Entity seat, const Viewer&, const SeatInput& devices)
+                {
+                    if (keyboardSeat == Entity::Null && devices.UsesKeyboardMouse)
+                    {
+                        keyboardSeat = seat;
+                    }
+                });
+            return keyboardSeat;
+        }
+    }
+
+    Application::ScopedPointer Application::ComputePointerRouting() const
+    {
+        if (m_Simulations.empty())
+        {
+            return {};
         }
 
-        // Under capture the router skips the region hit-test and hands the pointer to the single
-        // keyboard/mouse seat, so find it now (the first UsesKeyboardMouse seat; one is the split-
-        // screen shape). Only needed while captured, but resolved unconditionally — cheap, and the
-        // router ignores it when free.
-        Entity keyboardSeat = Entity::Null;
-        m_World->Each<Viewer, SeatInput>(
-            [&](const Entity seat, Viewer&, SeatInput& devices)
-            {
-                if (keyboardSeat == Entity::Null && devices.UsesKeyboardMouse)
-                {
-                    keyboardSeat = seat;
-                }
-            });
-
-        // GLFW reports the cursor in window coordinates (logical points), but the viewport
-        // regions hit-tested here live in framebuffer pixels (the swapchain extent), so on a
-        // HiDPI display the two differ by the window's content scale. Convert before routing so
-        // the pointer lands in the right region and its region-local position matches the window
-        // point a picking ray (Viewport::ScreenToWorldRay) later unprojects.
+        // GLFW reports the cursor in window coordinates (logical points), but the viewport regions
+        // hit-tested here live in framebuffer pixels (the swapchain extent), so on a HiDPI display the
+        // two differ by the window's content scale. Convert before routing so the pointer lands in the
+        // right region and its region-local position matches the window point a picking ray later
+        // unprojects.
         const vec2 scale = m_Window ? m_Window->GetContentScale() : vec2{1.0f, 1.0f};
-        const vec2 pointer = m_Input->GetMousePosition() * scale;
-        return m_InputRouter->ResolvePointer(ivec2(pointer), m_InputRouter->IsGameplayFocused(),
-                                             keyboardSeat);
+        const ivec2 windowPoint = ivec2(m_Input->GetMousePosition() * scale);
+        const bool captured = m_InputRouter->IsGameplayFocused();
+
+        // Identify the viewport that owns the pointer this frame; the routing is scoped to the scene
+        // it presents so an Owner handle never leaks into another scene's InputMappingSystem.
+        const Renderer::Viewport* owner =
+            m_InputRouter->ResolvePointerViewport(windowPoint, captured);
+
+        if (captured)
+        {
+            // The captured pointer belongs wholly to the cursor seat, in one scene: the cursor seat's
+            // viewport's scene, or the primary world when the cursor seat has no viewport (the default
+            // single-seat path). Resolve that scene's keyboard seat scene-locally.
+            const Scene* scene = owner != nullptr ? owner->GetPresentedScene() : m_World.get();
+            if (scene == nullptr)
+            {
+                return {};
+            }
+            return {.Routing = {.Owner = FirstKeyboardSeat(*scene), .LocalPosition = {}},
+                    .Scene = scene};
+        }
+
+        // Free cursor: the pointer routes to the first associated viewport region containing it. No
+        // owning viewport means no associated region under the cursor — no sim receives a routing.
+        if (owner == nullptr)
+        {
+            return {};
+        }
+        return {.Routing = m_InputRouter->ResolvePointer(windowPoint, false, Entity::Null),
+                .Scene = owner->GetPresentedScene()};
+    }
+
+    SystemContext Application::BuildSystemContext(const Scene& scene,
+                                                  const PointerRouting& pointer) const
+    {
+        SystemContext context{
+            .Assets = *m_AssetManager,
+            .Input = *m_Input,
+            .Tasks = *m_TaskSystem,
+            .Pointer = pointer,
+        };
+
+        // Resolve the sim's primary presenting viewport — the first registered Presented viewport
+        // whose retained scene is this one — for the view descriptor and debug-draw sink. The
+        // retained view is last frame's push (view pushes run after ticks); a never-pushed viewport
+        // presents no scene, so it never matches and View stays nullopt.
+        for (const Renderer::Viewport* viewport : m_Viewports)
+        {
+            if (viewport->GetRole() == Renderer::ViewportRole::Presented &&
+                viewport->GetPresentedScene() == &scene)
+            {
+                context.View = SystemViewInfo{
+                    .Camera = viewport->GetPresentedCamera(),
+                    .Region = viewport->GetRegion(),
+                    .UiScale = viewport->GetUiScale(),
+                };
+                context.Debug = &viewport->GetDebugDraw();
+                break;
+            }
+        }
+        return context;
     }
 
     void Application::ReconfigureManagedViewports(std::span<const ManagedViewportInfo> viewports)
@@ -401,43 +471,73 @@ namespace Veng
         capture.AttachToDriveList(m_Captures);
     }
 
+    void Application::RegisterSimulation(Scene& scene)
+    {
+        VE_ASSERT(std::ranges::find(m_Simulations, &scene) == m_Simulations.end(),
+                  "Scene is already registered to this Application's simulation drive-list");
+
+        m_Simulations.emplace_back(&scene);
+        scene.AttachToSimDriveList(m_Simulations);
+    }
+
+    SceneSimulation* Application::PrimarySimulation() const
+    {
+        // Simulation #0 is the primary (the managed world, registered first at bootstrap).
+        return m_Simulations.empty() ? nullptr : m_Simulations.front()->GetSimulation();
+    }
+
+    void Application::SetWorldPaused(bool paused)
+    {
+        if (SceneSimulation* primary = PrimarySimulation(); primary != nullptr)
+        {
+            primary->SetPaused(paused);
+        }
+    }
+
+    bool Application::IsWorldPaused() const
+    {
+        const SceneSimulation* primary = PrimarySimulation();
+        return primary != nullptr && primary->IsPaused();
+    }
+
     void Application::DriveCaptureSurfaces()
     {
-        if (!m_World)
+        // Registration gates capture driving, not run-state: iterate every registered scene
+        // regardless of started/paused, so a paused primary world (an overlay's PausePrimarySim) still
+        // drives its mirrors, and an overlay/offscreen/view-less scene's captures are engine-driven.
+        for (Scene* scenePtr : m_Simulations)
         {
-            return;
-        }
-
-        const Scene& world = *m_World;
-        for (auto [entity, surface] : world.View<Renderer::CaptureSurface>())
-        {
-            // The capture renders from the entity's world position (a probe centered on it, a mirror
-            // placed at it). The surface's material is the sibling MeshRenderer's first material.
-            const vec3 position = vec3(WorldMatrix(world, entity)[3]);
-
-            MaterialInstance* material = nullptr;
-            if (const MeshRenderer* mesh = world.TryGet<MeshRenderer>(entity); mesh != nullptr)
+            const Scene& world = *scenePtr;
+            for (auto [entity, surface] : world.View<Renderer::CaptureSurface>())
             {
-                if (mesh->Mesh.IsLoaded())
+                // The capture renders from the entity's world position (a probe centered on it, a
+                // mirror placed at it). The surface's material is the sibling MeshRenderer's first.
+                const vec3 position = vec3(WorldMatrix(world, entity)[3]);
+
+                MaterialInstance* material = nullptr;
+                if (const MeshRenderer* mesh = world.TryGet<MeshRenderer>(entity); mesh != nullptr)
                 {
-                    const std::span<const AssetHandle<MaterialInstance>> materials =
-                        mesh->Mesh.Get()->GetMaterials();
-                    if (!materials.empty() && materials[0].IsLoaded())
+                    if (mesh->Mesh.IsLoaded())
                     {
-                        material = materials[0].Get();
+                        const std::span<const AssetHandle<MaterialInstance>> materials =
+                            mesh->Mesh.Get()->GetMaterials();
+                        if (!materials.empty() && materials[0].IsLoaded())
+                        {
+                            material = materials[0].Get();
+                        }
                     }
                 }
-            }
 
-            // Register the capture on the drive-list the first time it materializes; the SceneCapture
-            // erases its own pointer on destruction, so removing the component/entity/scene unregisters
-            // it with no bookkeeping here.
-            const bool hadCapture = surface.GetCapture() != nullptr;
-            Renderer::SceneCapture* capture =
-                surface.Drive(m_RenderContext, *m_AssetManager, world, position, material);
-            if (capture != nullptr && !hadCapture)
-            {
-                RegisterCapture(*capture);
+                // Register the capture on the drive-list the first time it materializes; the
+                // SceneCapture erases its own pointer on destruction, so removing the
+                // component/entity/scene unregisters it with no bookkeeping here.
+                const bool hadCapture = surface.GetCapture() != nullptr;
+                Renderer::SceneCapture* capture =
+                    surface.Drive(m_RenderContext, *m_AssetManager, world, position, material);
+                if (capture != nullptr && !hadCapture)
+                {
+                    RegisterCapture(*capture);
+                }
             }
         }
     }
@@ -610,15 +710,21 @@ namespace Veng
             m_ImGuiLayer->BeginFrame();
         }
 
-        // Tick the managed world's simulation (Sim then View) unless paused (a fixed-pose capture
-        // or a game-controlled pause), so OnUpdate and the view push see this tick's finalized state.
-        if (m_World && !m_WorldPaused)
+        // Tick every registered simulation (Sim then View) that is started and not paused, in
+        // registration order, so OnUpdate and the view push see this tick's finalized state. The
+        // frame's pointer routing is scoped to one scene, so each sim gets it only when the pointer's
+        // owning viewport presents that sim's scene — a scene-local Owner handle never leaks across.
+        const ScopedPointer scoped = ComputePointerRouting();
+        for (Scene* scene : m_Simulations)
         {
-            m_World->TickSimulation(delta, SystemContext{
-                                               .Assets = *m_AssetManager,
-                                               .Input = *m_Input,
-                                               .Pointer = ComputePointerRouting(),
-                                           });
+            const SceneSimulation* sim = scene->GetSimulation();
+            if (sim == nullptr || !sim->IsStarted() || sim->IsPaused())
+            {
+                continue;
+            }
+            const PointerRouting pointer =
+                scene == scoped.Scene ? scoped.Routing : PointerRouting{};
+            scene->TickSimulation(delta, BuildSystemContext(*scene, pointer));
         }
 
         OnUpdate(delta);

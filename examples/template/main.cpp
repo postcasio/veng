@@ -170,8 +170,8 @@ private:
 
         if (m_Overlay)
         {
-            // The engine auto-ticks only the primary world; the overlay is ticked here through its
-            // handle — an honest TickSimulation + PushSceneView, no hidden second scheduler.
+            // The engine ticks the overlay's simulation (it registers as one on Open); Update only
+            // re-applies the region and pushes the view each frame.
             m_Overlay->Update(delta);
 
             // Dismiss on the HUD's button: the overlay system published the click into OverlayControl,

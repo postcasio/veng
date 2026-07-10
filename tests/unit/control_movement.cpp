@@ -53,12 +53,14 @@ namespace
     {
         Input HeadlessInput{nullptr};
         alignas(16) unsigned char AssetsBytes[64]{};
+        alignas(16) unsigned char TasksBytes[64]{};
 
         SystemContext Make()
         {
             return SystemContext{
                 .Assets = *reinterpret_cast<AssetManager*>(AssetsBytes),
                 .Input = HeadlessInput,
+                .Tasks = *reinterpret_cast<TaskSystem*>(TasksBytes),
             };
         }
     };

@@ -289,6 +289,20 @@ namespace Veng
         /// @param capture  The capture to drive; its lifetime stays with the caller.
         void RegisterCapture(Renderer::SceneCapture& capture);
 
+        /// @brief Registers a scene into the engine simulation drive-list ticked each frame.
+        ///
+        /// The tick counterpart of RegisterViewport: the engine ticks every registered scene's
+        /// SceneSimulation (in registration order, while started and not paused) and drives every
+        /// registered scene's CaptureSurface components — so a secondary scene (an overlay, an
+        /// offscreen feed, a view-less background) is engine-driven the same way the primary world is.
+        /// Ticking is decoupled from rendering: registration alone gates it, so a scene no viewport
+        /// presents still ticks. The same ownership model as RegisterViewport: the caller keeps the
+        /// owning Unique<Scene>, and dropping it self-unregisters (~Scene erases its own pointer). The
+        /// first registered scene is the primary simulation (SetWorldPaused targets it).
+        /// Double-registering a scene is a fatal assert.
+        /// @param scene  The scene to tick and drive; its lifetime stays with the caller.
+        void RegisterSimulation(Scene& scene);
+
         /// @brief Returns the number of engine-owned managed viewports.
         ///
         /// Zero when ApplicationInfo::ManagedViewport / ManagedViewports is unset; one for the
@@ -366,16 +380,22 @@ namespace Veng
         /// @return The mutable managed-world ViewState.
         [[nodiscard]] Renderer::ViewState& GetWorldViewState() { return m_WorldView; }
 
-        /// @brief Pauses or resumes the managed world's per-frame simulation tick.
+        /// @brief Pauses or resumes the primary simulation's per-frame tick.
         ///
-        /// Paused, the engine still pushes the view each frame (the camera resolves and the scene
-        /// renders), but runs no simulation tick — the path a fixed-pose capture or a game pause
-        /// menu takes. A game mutating the paused scene directly still sees its edits rendered.
-        /// @param paused  True to stop ticking the simulation, false to resume.
-        void SetWorldPaused(bool paused) { m_WorldPaused = paused; }
+        /// Back-compat sugar over the primary simulation's pause (SceneSimulation::SetPaused): the
+        /// state lives on the simulation, not on Application. Paused, the engine still pushes the view
+        /// each frame (the camera resolves and the scene renders) and still drives the scene's
+        /// captures, but runs no simulation tick — the path a fixed-pose capture or a game pause menu
+        /// takes. The primary simulation is the first registered (the managed world, registered at
+        /// bootstrap); a no-op when none is registered.
+        /// @param paused  True to stop ticking the primary simulation, false to resume.
+        void SetWorldPaused(bool paused);
 
-        /// @brief Returns whether the managed world's simulation tick is paused.
-        [[nodiscard]] bool IsWorldPaused() const { return m_WorldPaused; }
+        /// @brief Returns whether the primary simulation's tick is paused.
+        ///
+        /// Reads the primary simulation's pause (SceneSimulation::IsPaused); false when no simulation
+        /// is registered.
+        [[nodiscard]] bool IsWorldPaused() const;
 
     protected:
         /// @brief Called once after all engine systems are initialized.
@@ -462,15 +482,46 @@ namespace Veng
         /// @param delta    Frame delta in seconds, forwarded to the renderer.
         void PushManagedViewportView(const ManagedViewport& managed, f32 delta);
 
-        /// @brief Resolves this frame's pointer owner + region-local position for the managed world.
+        /// @brief This frame's pointer routing paired with the one scene it is scoped to.
         ///
-        /// Reads the pointer's window point from the Input snapshot and, when the cursor is captured
-        /// (gameplay focus), routes it wholly to the world's single UsesKeyboardMouse seat; otherwise
-        /// hit-tests it against the router's associated Presented viewport regions. Returns an empty
-        /// routing (no owner) when there is no managed world. Fed into the simulation's SystemContext
-        /// so InputMappingSystem gates each seat's mouse arm on ownership.
-        /// @return The pointer routing for this frame.
-        [[nodiscard]] PointerRouting ComputePointerRouting() const;
+        /// Entity handles are scene-local, so a routing carries the scene its Owner seat belongs to;
+        /// the per-sim assembly hands the routing only to the sim whose scene this names, every other
+        /// sim getting an empty routing.
+        struct ScopedPointer
+        {
+            /// @brief The resolved routing (owner seat + region-local position), empty when unscoped.
+            PointerRouting Routing;
+            /// @brief The scene the routing applies to, or null when no sim receives it this frame.
+            const Scene* Scene = nullptr;
+        };
+
+        /// @brief Resolves this frame's pointer routing and the one scene it is scoped to.
+        ///
+        /// Reads the pointer's window point from the Input snapshot and identifies the viewport that
+        /// owns it (ResolvePointerViewport): while captured the cursor seat's viewport, else the
+        /// associated viewport under the free cursor. The routing is scoped to that viewport's
+        /// presented scene, resolving the owner seat scene-locally so no cross-scene handle leaks;
+        /// while captured with no associated viewport it falls back to the primary world. Fed into
+        /// each ticked sim's SystemContext so only the owning scene's InputMappingSystem sees the
+        /// pointer.
+        /// @return The routing and the scene it applies to, or an empty routing scoped to no scene.
+        [[nodiscard]] ScopedPointer ComputePointerRouting() const;
+
+        /// @brief Builds a ticked simulation's SystemContext, resolving its primary presenting viewport.
+        ///
+        /// Fills the always-present services (assets, input, tasks) and the given per-scene @p pointer,
+        /// then resolves the sim's primary presenting viewport — the first registered Presented
+        /// viewport whose retained scene is @p scene — to populate View (its retained camera + region +
+        /// UI scale) and Debug (its debug-draw sink). View is nullopt and Debug null for a view-less
+        /// sim.
+        /// @param scene    The scene being ticked.
+        /// @param pointer  This frame's routing for @p scene (empty when the pointer is elsewhere).
+        /// @return The assembled per-tick context.
+        [[nodiscard]] SystemContext BuildSystemContext(const Scene& scene,
+                                                       const PointerRouting& pointer) const;
+
+        /// @brief Returns the primary simulation (the first registered scene's), or null when none.
+        [[nodiscard]] SceneSimulation* PrimarySimulation() const;
 
         /// @brief Re-resolves every window-tracking managed viewport's region from its Layout.
         ///
@@ -493,14 +544,16 @@ namespace Veng
         /// @param cmd  The command buffer to record into.
         void RenderManagedTail(Renderer::CommandBuffer& cmd);
 
-        /// @brief Discovers and drives the managed world's CaptureSurface components.
+        /// @brief Discovers and drives every registered scene's CaptureSurface components.
         ///
-        /// Iterates the managed world's Renderer::CaptureSurface components, materializing each one's
-        /// SceneCapture on first sight and registering it on the capture drive-list (so it renders with
-        /// the imperatively-registered captures), pushing this frame's capture source from the entity's
-        /// world position per the component's refresh policy, and binding the capture output onto the
-        /// sibling MeshRenderer's material. The capture self-unregisters when its component/entity/scene
-        /// is destroyed. Called from Frame ahead of the capture render loop. No-op without a world.
+        /// Iterates every registered simulation's scene (regardless of started/paused state —
+        /// registration alone gates capture driving) for Renderer::CaptureSurface components,
+        /// materializing each one's SceneCapture on first sight and registering it on the capture
+        /// drive-list (so it renders with the imperatively-registered captures), pushing this frame's
+        /// capture source from the entity's world position per the component's refresh policy, and
+        /// binding the capture output onto the sibling MeshRenderer's material. The capture
+        /// self-unregisters when its component/entity/scene is destroyed. Called from Frame ahead of
+        /// the capture render loop. No-op with no registered simulation.
         void DriveCaptureSurfaces();
 
         ApplicationInfo m_Info;
@@ -551,6 +604,14 @@ namespace Veng
         /// capture self-unregistering on destruction through its back-reference.
         vector<Renderer::SceneCapture*> m_Captures;
 
+        /// @brief Non-owning, ordered list of scenes the engine ticks and drives each frame.
+        ///
+        /// Registration order is tick order; index 0 is the primary simulation. Holds raw pointers,
+        /// each registered Scene holding a back-reference and erasing itself on destruction
+        /// (order-preserving). The managed world registers first at bootstrap; overlays register and
+        /// deregister around their lifetimes.
+        vector<Scene*> m_Simulations;
+
         /// @brief The engine-owned managed viewport set; empty when no managed viewport is configured.
         ///
         /// Index 0 is the primary. Constructed at Initialize from ApplicationInfo, rebuilt by a
@@ -569,8 +630,6 @@ namespace Veng
         AssetHandle<Level> m_WorldLevel;
         /// @brief Per-frame view knobs pushed into the managed viewport; seeded from the level.
         Renderer::ViewState m_WorldView;
-        /// @brief When true, the managed world's simulation tick is skipped (the view still pushes).
-        bool m_WorldPaused = false;
 
         /// @brief The managed gather pass assembling the Presented viewports; present only with ImGui.
         Unique<Renderer::GatherPass> m_Gather;

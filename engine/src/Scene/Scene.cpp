@@ -9,6 +9,7 @@
 
 #include "ComponentPool.h"
 
+#include <algorithm>
 #include <cstring>
 
 namespace Veng
@@ -101,7 +102,23 @@ namespace Veng
 
     Scene::Scene(TypeRegistry& registry) : m_Registry(&registry) {}
 
-    Scene::~Scene() = default;
+    Scene::~Scene()
+    {
+        // Order-preserving erase from the simulation drive-list (registration order is tick order),
+        // through the stored back-reference. An unregistered scene leaves m_SimDriveList null.
+        if (m_SimDriveList != nullptr)
+        {
+            const auto removed = std::ranges::remove(*m_SimDriveList, this);
+            m_SimDriveList->erase(removed.begin(), removed.end());
+        }
+    }
+
+    void Scene::AttachToSimDriveList(vector<Scene*>& driveList)
+    {
+        VE_ASSERT(m_SimDriveList == nullptr,
+                  "Scene is already registered to a simulation drive-list");
+        m_SimDriveList = &driveList;
+    }
 
     Unique<Scene> Scene::Create(TypeRegistry& registry)
     {

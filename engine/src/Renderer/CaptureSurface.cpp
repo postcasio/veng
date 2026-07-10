@@ -133,17 +133,18 @@ namespace Veng::Renderer
             }
         }
 
-        // Bind the capture output onto the sibling material every frame: SetTextureHandle writes the
-        // current frame-in-flight region, so the handle must land regardless of the push decision.
+        // Bind the capture output onto the sibling material's named slots every frame:
+        // SetTextureHandle writes the current frame-in-flight region, so the handle must land
+        // regardless of the push decision. The slot names default to Texture/Sampler.
         if (material != nullptr)
         {
-            if (HasField(*material, "Texture", MaterialField::FieldKind::TextureHandle))
+            if (HasField(*material, TextureSlot, MaterialField::FieldKind::TextureHandle))
             {
-                material->SetTextureHandle("Texture", runtime.Capture->GetOutputHandle());
+                material->SetTextureHandle(TextureSlot, runtime.Capture->GetOutputHandle());
             }
-            if (HasField(*material, "Sampler", MaterialField::FieldKind::SamplerHandle))
+            if (HasField(*material, SamplerSlot, MaterialField::FieldKind::SamplerHandle))
             {
-                material->SetSamplerHandle("Sampler", runtime.SamplerHandle);
+                material->SetSamplerHandle(SamplerSlot, runtime.SamplerHandle);
             }
         }
 

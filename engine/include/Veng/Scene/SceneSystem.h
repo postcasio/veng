@@ -2,12 +2,25 @@
 
 #include <Veng/Veng.h>
 #include <Veng/InputRouter.h>
+#include <Veng/Math/Ray.h>
+#include <Veng/Renderer/ViewportRegion.h>
+#include <Veng/Scene/Camera.h>
 
 namespace Veng
 {
     class Scene;
     class AssetManager;
     class Input;
+    class TaskSystem;
+}
+
+namespace Veng::Renderer
+{
+    class DebugDraw;
+}
+
+namespace Veng
+{
 
     /// @brief Stable identity of a registered SceneSystem, authored exactly like a TypeId/AssetId.
     ///
@@ -50,6 +63,31 @@ namespace Veng
         return VengSystem<T>::Name();
     }
 
+    /// @brief The resolved view a simulation's primary presenting viewport supplies to its systems.
+    ///
+    /// A scene-scoped view descriptor — the camera, region, and UI scale of the sim's primary
+    /// presenting viewport — delivered without a Renderer::Viewport so Sim systems stay
+    /// viewport-agnostic. The pure pick/project free functions below (ScreenToWorldRay,
+    /// WorldToRegion, WorldToDocument, DocumentExtent) operate over it, so a system picks and
+    /// projects from its SystemContext's View + Pointer without holding a viewport.
+    ///
+    /// Two constraints follow from how the engine assembles it (see SystemContext::View):
+    /// - It is the view **as of the last completed frame** — view pushes run after ticks — so a
+    ///   system that itself drives the camera this tick reads the same-tick camera from the scene
+    ///   (or builds its own CameraView) and combines it with View.Region.
+    /// - It is the **primary presenter's** view, so unprojecting Pointer through it is valid only
+    ///   single-presenter; with several viewports presenting one scene the pointer's owning region
+    ///   may differ.
+    struct SystemViewInfo
+    {
+        /// @brief The resolved camera the presenting viewport rendered the scene through last frame.
+        CameraView Camera;
+        /// @brief The presenting viewport's placement region, in framebuffer pixels.
+        Renderer::ViewportRegion Region;
+        /// @brief The scale the viewport's documents lay out at (region pixels per logical point).
+        f32 UiScale = 1.0f;
+    };
+
     /// @brief Per-tick services handed to every SceneSystem.
     ///
     /// Borrowed for the duration of the call: a system reads from these but does
@@ -62,13 +100,109 @@ namespace Veng
         AssetManager& Assets;
         /// @brief The always-present frame-coherent input service; present-but-neutral (all zeros) in headless mode.
         const Input& Input;
+        /// @brief The task system a system runs async work through (streaming gathers, off-thread builds).
+        ///
+        /// A scene-agnostic Application service, always present. A reference (not a pointer), so an
+        /// async-using system needs no null-guard.
+        TaskSystem& Tasks;
         /// @brief This frame's free-pointer owner + region-local position; default-empty when unrouted.
         ///
         /// The InputMappingSystem reads it to build each seat's region-gated pointer view. Its
         /// default (Owner == Entity::Null) leaves every seat reading neutral mouse, so a headless or
-        /// pointer-free tick needs no guard.
+        /// pointer-free tick needs no guard. The engine scopes it per scene: a routing reaches only
+        /// the sim whose scene the pointer's owning viewport presents.
         PointerRouting Pointer;
+        /// @brief The sim's primary presenting viewport's resolved view, or nullopt when unpresented.
+        ///
+        /// Populated by the engine from the sole/primary registered Presented viewport whose retained
+        /// scene is this sim's — so it is the view **as of the last completed frame** (view pushes run
+        /// after ticks) and the **primary presenter's** view (see SystemViewInfo). nullopt for a
+        /// view-less sim (a background/offscreen scene no viewport presents) and on a viewport's very
+        /// first tick before any view has been pushed.
+        optional<SystemViewInfo> View;
+        /// @brief The primary presenting viewport's immediate-mode debug-draw sink, or null when unpresented.
+        ///
+        /// The sibling of View, resolved from the same viewport's accumulator so gameplay systems push
+        /// debug lines/billboards into the scene's own view. Null for a view-less sim and headless (a
+        /// value SystemViewInfo cannot carry a mutable sink, so it rides SystemContext directly).
+        Renderer::DebugDraw* Debug = nullptr;
     };
+
+    /// @brief Unprojects a region-local point into a world-space ray through a resolved view.
+    ///
+    /// The free-function form of Viewport::ScreenToWorldRay over a SystemViewInfo: maps @p regionPoint
+    /// (region-local framebuffer pixels, e.g. PointerRouting::LocalPosition) to NDC across the region
+    /// and unprojects it through the view's camera. So a Sim system picks from its SystemContext's
+    /// View + Pointer without holding a Renderer::Viewport.
+    /// @param view         The resolved camera + region + UI scale.
+    /// @param regionPoint  A point in region-local framebuffer pixels ([0, Region.Extent]).
+    /// @return The world-space ray through @p regionPoint, or nullopt when the region has a zero extent.
+    [[nodiscard]] inline optional<Ray> ScreenToWorldRay(const SystemViewInfo& view,
+                                                        const vec2 regionPoint)
+    {
+        if (view.Region.Extent.x == 0 || view.Region.Extent.y == 0)
+        {
+            return std::nullopt;
+        }
+
+        // [0,1] (top-left origin) to NDC. The engine projection bakes the Vulkan Y flip, so a
+        // top-left fraction maps to NDC directly without a second flip.
+        const vec2 fraction = regionPoint / vec2(view.Region.Extent);
+        const vec2 ndc = fraction * 2.0f - 1.0f;
+
+        const mat4 invViewProj = glm::inverse(view.Camera.ViewProjection());
+        const vec4 nearClip = invViewProj * vec4(ndc, 0.0f, 1.0f);
+        const vec4 farClip = invViewProj * vec4(ndc, 1.0f, 1.0f);
+        const vec3 nearWorld = vec3(nearClip) / nearClip.w;
+        const vec3 farWorld = vec3(farClip) / farClip.w;
+
+        return Ray{
+            .Origin = view.Camera.GetPosition(),
+            .Direction = glm::normalize(farWorld - nearWorld),
+        };
+    }
+
+    /// @brief Projects a world point into region-local pixels through a resolved view.
+    ///
+    /// The free-function form of Viewport::WorldToRegion: composes ProjectToScreen with the view's
+    /// camera and region extent, so (0,0) is the region's top-left.
+    /// @param view   The resolved camera + region + UI scale.
+    /// @param world  The world-space point to project.
+    /// @return The region-local pixel position, or nullopt when the point is behind the camera.
+    [[nodiscard]] inline optional<vec2> WorldToRegion(const SystemViewInfo& view, const vec3 world)
+    {
+        return ProjectToScreen(view.Camera, world, vec2(view.Region.Extent));
+    }
+
+    /// @brief Projects a world point into document logical points through a resolved view.
+    ///
+    /// The free-function form of Viewport::WorldToDocument: WorldToRegion divided by the view's UI
+    /// scale, the logical-point space a hosted Gui::Document lays out and hit-tests in. Performs no
+    /// in-region rejection — a point outside [0, DocumentExtent] still returns a value.
+    /// @param view   The resolved camera + region + UI scale.
+    /// @param world  The world-space point to project.
+    /// @return The document-space position, or nullopt when the point is behind the camera.
+    [[nodiscard]] inline optional<vec2> WorldToDocument(const SystemViewInfo& view,
+                                                        const vec3 world)
+    {
+        const optional<vec2> region = WorldToRegion(view, world);
+        if (!region.has_value())
+        {
+            return std::nullopt;
+        }
+        return *region / view.UiScale;
+    }
+
+    /// @brief Returns a resolved view's region extent in document logical points.
+    ///
+    /// The free-function form of Viewport::GetDocumentExtent: Region.Extent divided by UiScale — the
+    /// bounds a WorldToDocument result is checked against (a value at or beyond it lies off-region).
+    /// @param view  The resolved camera + region + UI scale.
+    /// @return The region extent in document logical points.
+    [[nodiscard]] inline vec2 DocumentExtent(const SystemViewInfo& view)
+    {
+        return vec2(view.Region.Extent) / view.UiScale;
+    }
 
     /// @brief A unit of gameplay logic over a Scene, registered via the module host
     /// and ticked by a SceneSimulation.

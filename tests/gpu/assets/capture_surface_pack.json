@@ -35,6 +35,16 @@
       "id": "0x0000000000002442",
       "type": "Material",
       "source": "materials/capture_backdrop.vmat.json"
+    },
+    {
+      "id": "0x0000000000002460",
+      "type": "Shader",
+      "source": "shaders/capture_probe_named.frag.shader.json"
+    },
+    {
+      "id": "0x0000000000002461",
+      "type": "Material",
+      "source": "materials/capture_probe_named.vmat.json"
     }
   ]
 }

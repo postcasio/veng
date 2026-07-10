@@ -50,6 +50,9 @@ namespace
     // Cooked material ids in the capture_surface fixture pack.
     constexpr AssetId ProbeInstance{0x2451};
     constexpr AssetId BackdropInstance{0x2452};
+    // A probe material whose capture slots carry descriptive, non-default names (CaptureMap /
+    // CaptureSampler), for the configurable-slot case.
+    constexpr AssetId NamedProbeInstance{0x2471};
 
     vec4 DecodeTexel(const vector<u8>& rgba16f, u32 width, u32 x, u32 y)
     {
@@ -217,6 +220,60 @@ TEST_CASE_FIXTURE(
     // center only through the capture, never a direct line of sight.
     const vec4 corner = SampleBlock(output, Extent, vec2(0.08f, 0.08f), 2);
     CHECK(corner.g < 0.2f);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "capture surface: the output binds onto the configured non-default slot names")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(CookCapturePack()).has_value());
+
+    // The named-slot probe declares CaptureMap / CaptureSampler, not the default Texture / Sampler.
+    const AssetResult<AssetHandle<MaterialInstance>> named =
+        assets.LoadSync<MaterialInstance>(NamedProbeInstance);
+    const AssetResult<AssetHandle<MaterialInstance>> backdrop =
+        assets.LoadSync<MaterialInstance>(BackdropInstance);
+    REQUIRE(named.has_value());
+    REQUIRE(backdrop.has_value());
+
+    vector<Ref<Mesh>> meshes;
+    Entity surfaceEntity;
+    const Unique<Scene> scene =
+        BuildCaptureScene(Context, assets, Types, *named, *backdrop, CaptureRefresh::EveryFrame,
+                          meshes, surfaceEntity);
+
+    // Author the descriptive slot names on the component; Drive must bind the capture output onto
+    // these rather than the hardcoded Texture / Sampler, or the material samples nothing.
+    auto& capture = scene->Get<CaptureSurface>(surfaceEntity);
+    capture.TextureSlot = "CaptureMap";
+    capture.SamplerSlot = "CaptureSampler";
+    MaterialInstance* const material = SurfaceMaterial(*scene, surfaceEntity);
+
+    const Unique<Viewport> viewport = MakeViewport(Context, assets);
+
+    vector<u8> output;
+    for (u32 frame = 0; frame < SceneCapture::FaceCount; ++frame)
+    {
+        auto* const built = capture.Drive(Context, assets, *scene, vec3(0.0f), material);
+        REQUIRE(built != nullptr);
+        viewport->SetViewState({.World = scene.get(), .Camera = FrontCamera(), .Delta = 0.016f});
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                built->Render(cmd);
+                viewport->Render(cmd);
+            });
+        output = viewport->GetOutput()->GetImage()->Download();
+    }
+
+    // The center shows the captured backdrop's green only if the output reached the material through
+    // the CaptureMap / CaptureSampler slots — the non-default names bound end to end.
+    const vec4 center = SampleBlock(output, Extent, vec2(0.5f, 0.5f));
+    CHECK(center.g > 0.6f);
+    CHECK(center.g > center.r + 0.3f);
+    CHECK(center.g > center.b + 0.3f);
 }
 
 TEST_CASE_FIXTURE(

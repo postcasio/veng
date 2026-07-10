@@ -57,8 +57,33 @@ namespace Veng
         /// @brief Returns true when no systems were registered.
         [[nodiscard]] bool IsEmpty() const { return m_Systems.empty(); }
 
+        /// @brief Pauses or resumes this simulation's per-frame tick.
+        ///
+        /// Paused, the engine's simulation drive-list skips this simulation's Update while still
+        /// driving its scene's captures and view (registration, not run-state, gates those). The
+        /// state is per-simulation, so one scene can pause while another keeps ticking. Start/Stop
+        /// leave the pause state untouched.
+        /// @param paused  True to skip ticking, false to resume.
+        void SetPaused(bool paused) { m_Paused = paused; }
+
+        /// @brief Returns whether this simulation's tick is paused.
+        [[nodiscard]] bool IsPaused() const { return m_Paused; }
+
+        /// @brief Returns whether Start has run and Stop has not, so the engine may tick this simulation.
+        ///
+        /// The engine's drive-list ticks a registered simulation only while it is started and not
+        /// paused; Start sets this, Stop clears it. A simulation registered but never started is
+        /// not auto-ticked.
+        [[nodiscard]] bool IsStarted() const { return m_Started; }
+
     private:
         /// @brief The instantiated systems, in registration (run) order.
         vector<Unique<SceneSystem>> m_Systems;
+
+        /// @brief Whether the engine skips this simulation's per-frame tick (see SetPaused).
+        bool m_Paused = false;
+
+        /// @brief Whether Start has run without a matching Stop (see IsStarted).
+        bool m_Started = false;
     };
 }

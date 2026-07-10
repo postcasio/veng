@@ -48,6 +48,8 @@ TEST_CASE("CaptureSurface reflects its authored config but not the runtime recor
     CHECK(HasField(info, "Shape"));
     CHECK(HasField(info, "Resolution"));
     CHECK(HasField(info, "Refresh"));
+    CHECK(HasField(info, "TextureSlot"));
+    CHECK(HasField(info, "SamplerSlot"));
     CHECK_FALSE(HasField(info, "Runtime"));
 }
 
@@ -58,13 +60,13 @@ TEST_CASE("CaptureSurface authored config round-trips through the reflection ser
     const JsonFieldHooks hooks = StubHooks();
     const TypeInfo& info = registry.Info(registry.IdOf<CaptureSurface>());
 
-    // Author the component as a cook would emit it — a planar mirror at 512, refreshing on demand —
-    // then read it back through the same walker the prefab loader runs. Enums serialize as their
-    // enumerator names.
+    // Author the component as a cook would emit it — a planar mirror at 512, refreshing on demand,
+    // binding onto descriptive non-default slot names — then read it back through the same walker the
+    // prefab loader runs. Enums serialize as their enumerator names.
     const Json authored = {
-        {"Shape", "PlanarReflection"},
-        {"Resolution", 512},
-        {"Refresh", "OnDemand"},
+        {"Shape", "PlanarReflection"},     {"Resolution", 512},
+        {"Refresh", "OnDemand"},           {"TextureSlot", "CaptureMap"},
+        {"SamplerSlot", "CaptureSampler"},
     };
 
     CaptureSurface surface;
@@ -73,6 +75,8 @@ TEST_CASE("CaptureSurface authored config round-trips through the reflection ser
     CHECK(surface.Shape == CaptureShape::PlanarReflection);
     CHECK(surface.Resolution == 512u);
     CHECK(surface.Refresh == CaptureRefresh::OnDemand);
+    CHECK(surface.TextureSlot == "CaptureMap");
+    CHECK(surface.SamplerSlot == "CaptureSampler");
 
     // Re-serializing yields the same authored record — the on-disk field identity is stable, and the
     // runtime never appears in the document.
@@ -80,6 +84,8 @@ TEST_CASE("CaptureSurface authored config round-trips through the reflection ser
     CHECK(out["Shape"] == "PlanarReflection");
     CHECK(out["Resolution"] == 512);
     CHECK(out["Refresh"] == "OnDemand");
+    CHECK(out["TextureSlot"] == "CaptureMap");
+    CHECK(out["SamplerSlot"] == "CaptureSampler");
     CHECK_FALSE(out.contains("Runtime"));
 }
 
@@ -91,6 +97,9 @@ TEST_CASE("CaptureSurface defaults are the every-frame environment probe")
     CHECK(surface.Shape == CaptureShape::EnvironmentProbe);
     CHECK(surface.Resolution == 256u);
     CHECK(surface.Refresh == CaptureRefresh::EveryFrame);
+    // The slot names default to the built-in Texture / Sampler binding.
+    CHECK(surface.TextureSlot == "Texture");
+    CHECK(surface.SamplerSlot == "Sampler");
     CHECK(surface.GetCapture() == nullptr);
     CHECK_FALSE(surface.GetOutputHandle().IsValid());
     // An every-frame capture reports refreshing before it ever drives — it re-renders each frame.

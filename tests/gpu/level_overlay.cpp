@@ -37,6 +37,7 @@
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/InputMappingSystem.h>
 #include <Veng/Scene/Scene.h>
+#include <Veng/Scene/SceneSimulation.h>
 #include <Veng/Scene/SceneSystem.h>
 #include <Veng/Scene/SystemRegistry.h>
 
@@ -190,7 +191,9 @@ namespace
         input.ApplyEvent(KeyPressedEvent{Key::W, 0, 0});
 
         InputMappingSystem mapping;
-        mapping.OnUpdate(scene, 0.016f, SystemContext{.Assets = assets, .Input = input});
+        mapping.OnUpdate(
+            scene, 0.016f,
+            SystemContext{.Assets = assets, .Input = input, .Tasks = assets.GetTaskSystem()});
 
         const InputSeat seat = ResolveInputSeat(&scene);
         return scene.Get<PlayerInput>(seat.Viewer).GetValue(Move).y;
@@ -444,8 +447,18 @@ TEST_CASE("PausePrimarySim toggles and restores the observed pause value, stacke
     OverlayApp app(HeadlessInfo(), types, systems);
     AssetHandle<Level> level;
 
+    // SetWorldPaused / IsWorldPaused delegate to the primary simulation (the first registered), so a
+    // stable primary must exist for the pause to target. Register a bare primary scene + simulation
+    // ahead of any overlay so it stays simulation #0 across the test (overlays register after it).
+    Unique<Scene> primary;
+
     app.InitFn = [&](OverlayApp& a)
-    { level = BuildSeatLevel(a.GetAssetManager(), a.GetTypeRegistry(), {}); };
+    {
+        level = BuildSeatLevel(a.GetAssetManager(), a.GetTypeRegistry(), {});
+        primary = Scene::Create(a.GetTypeRegistry());
+        primary->SetSimulation(CreateUnique<SceneSimulation>(a.GetSystemRegistry()));
+        a.RegisterSimulation(*primary);
+    };
 
     app.StepFn = [&](OverlayApp& a, int frame)
     {
