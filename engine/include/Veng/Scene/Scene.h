@@ -3,6 +3,7 @@
 #include <Veng/Veng.h>
 #include <Veng/Assert.h>
 #include <Veng/Scene/Entity.h>
+#include <Veng/Scene/SceneSystem.h>
 #include <Veng/Reflection/TypeRegistry.h>
 
 #include <array>
@@ -201,6 +202,45 @@ namespace Veng
         /// @param delta    Time in seconds since the previous tick.
         /// @param context  Per-tick services forwarded to each system.
         void TickSimulation(f32 delta, const SystemContext& context);
+
+        /// @brief Runs one phase of the attached simulation, snapshotting transform history after Sim.
+        ///
+        /// The fixed-timestep drive calls this once per fixed step for Phase::Sim (advancing the tick)
+        /// and once per frame for Phase::View (carrying the interpolation alpha). After a Sim phase it
+        /// snapshots the scene's spatial state into the transform-history ring, so the render gather
+        /// and View systems can interpolate between the last two ticks. A no-op when no simulation is
+        /// attached (the snapshot still runs, capturing the static pose).
+        /// @param phase    The phase whose systems run.
+        /// @param delta    Time in seconds forwarded to each system's OnUpdate.
+        /// @param context  Per-tick services forwarded to each system.
+        void TickSimulationPhase(SceneSystem::Phase phase, f32 delta, const SystemContext& context);
+
+        /// @brief Snapshots every Transform entity's local TRS into the two-tick history ring.
+        ///
+        /// Called at the end of each Sim tick (through TickSimulationPhase). Rolls the previous
+        /// snapshot to make room for the current one, keyed off the spatial version so a static scene
+        /// copies nothing after it converges. GetInterpolatedWorldTransform blends the two by a
+        /// frame's alpha.
+        void SnapshotTransformHistory();
+
+        /// @brief Returns an entity's world matrix, interpolating its TRS between the last two Sim ticks.
+        ///
+        /// Walks the Hierarchy chain like WorldMatrix, but composes each level's local matrix from the
+        /// two-tick history blended by @p alpha (previous → current). An entity with no history entry
+        /// (never snapshotted) falls back to its live Transform, so the result equals WorldMatrix when
+        /// no interpolation applies. A View system (a camera rig) reads this so the camera and the
+        /// meshes it frames share one interpolated pose.
+        /// @param entity  The entity to resolve.
+        /// @param alpha   The interpolation fraction in [0, 1] (0 = previous tick, 1 = current).
+        /// @return The interpolated world matrix.
+        [[nodiscard]] mat4 GetInterpolatedWorldTransform(Entity entity, f32 alpha) const;
+
+        /// @brief Returns whether the history holds motion to interpolate (false for a static scene).
+        ///
+        /// True from the first Sim tick that moved a transform until the scene converges to rest; the
+        /// render gather skips its interpolation copy when this is false, keeping a static scene's
+        /// draw byte-identical to the un-interpolated path.
+        [[nodiscard]] bool HasTransformInterpolation() const { return m_HistoryDirty; }
 
         /// @brief Stops the attached simulation over this scene; a no-op when none is attached.
         ///
@@ -548,6 +588,46 @@ namespace Veng
 
         /// @brief Component pools, keyed by TypeId, created lazily.
         unordered_map<TypeId, Unique<ComponentPool>> m_Pools;
+
+        /// @brief One entity's local TRS captured for a history tick (Transform without the reflection weight).
+        ///
+        /// A plain value the history ring stores so Scene.h needs no Components.h; it mirrors
+        /// Transform's Position/Rotation/Scale and converts to it for the interpolation blend.
+        struct TransformSnapshot
+        {
+            /// @brief Local position in parent space.
+            vec3 Position{0.0f};
+            /// @brief Local rotation in parent space.
+            quat Rotation{1.0f, 0.0f, 0.0f, 0.0f};
+            /// @brief Local scale in parent space.
+            vec3 Scale{1.0f};
+        };
+
+        /// @brief Captures every Transform entity's local TRS into @p out, in pool order.
+        ///
+        /// Iterates the const Transform view (no spatial-version bump); the history snapshot fills the
+        /// current ring slot through this.
+        /// @param out  Destination map, cleared then filled.
+        void CaptureTransforms(unordered_map<Entity, TransformSnapshot>& out) const;
+
+        /// @brief Returns an entity's interpolated local matrix from the history ring, or its live one.
+        ///
+        /// The per-level step of GetInterpolatedWorldTransform: blends the entity's previous/current
+        /// snapshots by @p alpha when both exist, else falls back to its live Transform (identity when
+        /// it has none).
+        /// @param entity  The entity whose local matrix to resolve.
+        /// @param alpha   The interpolation fraction in [0, 1].
+        /// @return The entity's interpolated (or live) local matrix.
+        [[nodiscard]] mat4 InterpolatedLocalMatrix(Entity entity, f32 alpha) const;
+
+        /// @brief Previous Sim tick's transform snapshot, keyed by entity.
+        unordered_map<Entity, TransformSnapshot> m_TransformPrev;
+        /// @brief Current Sim tick's transform snapshot, keyed by entity.
+        unordered_map<Entity, TransformSnapshot> m_TransformCur;
+        /// @brief The spatial version the last history snapshot was taken at; != any real version initially.
+        u64 m_HistoryVersion = ~0ULL;
+        /// @brief True while the ring holds two differing ticks (motion to interpolate); false once converged.
+        bool m_HistoryDirty = false;
 
         /// @brief The simulation driving this scene's systems, or null when none is attached.
         Unique<SceneSimulation> m_Simulation;

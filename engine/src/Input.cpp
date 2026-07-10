@@ -7,8 +7,17 @@ namespace Veng
 {
     Input::Input(Window* window) : m_Window(window) {}
 
-    void Input::BeginFrame()
+    void Input::BeginFrame(const bool rollEdges)
     {
+        // A frame that ran no Sim tick leaves the edges latched: holding the previous state keeps a
+        // pressed/released edge observable, and holding the deltas accumulates this frame's motion,
+        // until a tick-running frame consumes them. The roll below advances the previous state to the
+        // current one, clearing the edge — so it runs only when the previous frame consumed it.
+        if (!rollEdges)
+        {
+            return;
+        }
+
         m_PreviousKeys = m_Keys;
         m_PreviousMouseButtons = m_MouseButtons;
 

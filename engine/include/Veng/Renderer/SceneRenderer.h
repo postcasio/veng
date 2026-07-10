@@ -429,6 +429,14 @@ namespace Veng::Renderer
         /// @brief Frame delta time in seconds.
         f32 Delta = 0.0f;
 
+        /// @brief Interpolation fraction into the next Sim tick, in [0, 1).
+        ///
+        /// The gather blends each candidate's world transform between the scene's last two Sim-tick
+        /// snapshots by this (Scene::GetInterpolatedWorldTransform) before the passes consume it, so a
+        /// fixed-rate simulation renders smoothly above its tick rate. Zero (or a scene with no motion
+        /// history) renders the current pose, byte-identical to the un-interpolated path.
+        f32 Alpha = 0.0f;
+
         /// @brief Dynamic-resolution multiplier on the allocated extent for this frame.
         ///
         /// The renderer's targets are allocated at a high-water-mark extent; each Execute renders
@@ -1637,6 +1645,14 @@ namespace Veng::Renderer
         /// SceneView::Visible and its tree is queried by the g-buffer and shadow passes.
         /// A static scene does not rebuild the tree.
         SceneBroadphase m_Broadphase;
+
+        /// @brief Per-frame copy of the broadphase candidates with interpolated world transforms.
+        ///
+        /// Filled only on a frame that interpolates (nonzero alpha and a scene with motion history):
+        /// each candidate's World is re-blended between the last two Sim-tick snapshots and its
+        /// WorldBounds recomputed, and SceneView::Visible points here instead of at the broadphase's
+        /// current-tick candidates. Empty (and unused) on a static or tick-aligned frame.
+        vector<VisibleMesh> m_InterpolatedCandidates;
 
         /// @brief Per-submesh frustum-survivor count from the last Execute.
         ///

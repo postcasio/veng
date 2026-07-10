@@ -677,6 +677,9 @@ namespace VengEditor
             .World = m_Ctx.Scene,
             .Camera = camera,
             .Delta = Time::GetDeltaTime(),
+            // Interpolate the play clone between its last two Sim ticks (zero while editing), so Play
+            // renders as smoothly as the launcher above the tick rate.
+            .Alpha = m_Ctx.IsPlaying() ? m_Ctx.PlayAlpha : 0.0f,
             .Exposure = m_Exposure,
             .BloomIntensity = m_BloomIntensity,
         };

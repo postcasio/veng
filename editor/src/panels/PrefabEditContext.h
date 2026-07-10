@@ -79,6 +79,13 @@ namespace VengEditor
         /// the active scene through this one pointer.
         PlayState Play = PlayState::Editing;
 
+        /// @brief This frame's fixed-timestep interpolation fraction for the play clone, in [0, 1).
+        ///
+        /// Written by PrefabEditorPanel::TickPlaySimulation each frame from the play accumulator and
+        /// read by the viewport push, so the editor's Play renders interpolated between the last two
+        /// Sim ticks exactly as the launcher does. Zero while not playing.
+        Veng::f32 PlayAlpha = 0.0f;
+
         /// @brief Returns true while a play session is active (Playing or Paused).
         [[nodiscard]] bool IsPlaying() const { return Play != PlayState::Editing; }
 

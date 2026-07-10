@@ -27,11 +27,12 @@ namespace Veng
     /// frame; a game owning its own viewports or a second seat calls it directly.
     /// @param viewport  The viewport to push into; its output extent supplies the aspect.
     /// @param scene     The scene to render and resolve the camera from.
-    /// @param knobs     The per-frame tone/bloom/environment values to carry; World/Camera/Delta
+    /// @param knobs     The per-frame tone/bloom/environment values to carry; World/Camera/Delta/Alpha
     ///                  are overwritten by this call.
     /// @param delta     Frame delta in seconds, forwarded to the renderer.
+    /// @param alpha     The fixed-timestep interpolation fraction in [0, 1), forwarded to the gather.
     void PushSceneView(Renderer::Viewport& viewport, const Scene& scene,
-                       const Renderer::ViewState& knobs, f32 delta = 0.0f);
+                       const Renderer::ViewState& knobs, f32 delta = 0.0f, f32 alpha = 0.0f);
 
     /// @brief Maps a level's post/pipeline render knobs onto a renderer's topology and per-frame view.
     ///

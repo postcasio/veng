@@ -15,6 +15,19 @@ namespace Veng
     /// column vector on the right).
     [[nodiscard]] mat4 LocalMatrix(const Transform& transform);
 
+    /// @brief Blends two Transforms component-wise by @p alpha.
+    ///
+    /// Position and scale are linearly interpolated; rotation is spherically interpolated (the
+    /// shortest-arc slerp). @p alpha at 0 returns @p from, at 1 returns @p to. The render gather
+    /// blends the last two Sim-tick snapshots by the frame's interpolation alpha through this, so a
+    /// fixed-rate sim renders smoothly at any frame rate.
+    /// @param from   The earlier (previous-tick) transform.
+    /// @param to     The later (current-tick) transform.
+    /// @param alpha  The interpolation fraction in [0, 1].
+    /// @return The interpolated transform.
+    [[nodiscard]] Transform InterpolateTransform(const Transform& from, const Transform& to,
+                                                 f32 alpha);
+
     /// @brief Returns the world matrix of an entity, composed up the Hierarchy chain (root to entity).
     ///
     /// An entity with no Transform contributes identity at its level. A Hierarchy

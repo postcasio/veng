@@ -192,11 +192,20 @@ namespace Veng
 
         /// @brief Rolls the snapshot forward for a new frame; called once at the top of the loop.
         ///
-        /// Copies current key/button state to previous and clears the per-frame mouse and
+        /// Copies current key/button/pad state to previous and clears the per-frame mouse and
         /// scroll deltas, so the edges and deltas the router then applies via ApplyEvent are
         /// this frame's. With no events applied the state stays neutral (nothing pressed).
+        ///
+        /// @p rollEdges gates that roll on whether the previous frame consumed the edges. Under a
+        /// fixed-timestep drive a frame can run zero Sim ticks (frame rate above the tick rate), and a
+        /// pressed edge on such a frame must survive until a frame that runs a tick reads it: the
+        /// caller passes false to hold the previous state (and accumulate deltas) so a within-frame tap
+        /// is not rolled away before any Sim system sees it, and true once a tick has consumed it. Held
+        /// state is unaffected either way.
+        /// @param rollEdges  True to roll edges/deltas this frame (the previous frame ran a Sim tick);
+        ///                   false to hold them latched for the next tick-running frame.
         /// @pre Must run before the event drain so ApplyEvent writes into a fresh frame.
-        void BeginFrame();
+        void BeginFrame(bool rollEdges = true);
 
         /// @brief Folds one input event into the current snapshot.
         ///

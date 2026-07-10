@@ -20,6 +20,7 @@
 #include <Veng/Task/TaskSystem.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/Scene.h>
+#include <Veng/Scene/SimClock.h>
 #include <Veng/Scene/SystemRegistry.h>
 
 #include <span>
@@ -121,6 +122,12 @@ namespace Veng
         /// Read from ExecutableDirectory() / Project; it names the packs to mount (each resolved
         /// beside the executable too) and the startup level the engine loads and runs.
         path Project;
+        /// @brief Fixed simulation ticks per second the Sim phase steps at (the accumulator rate).
+        ///
+        /// The world drive accumulates frame time and steps the Sim phase at this fixed rate with a
+        /// monotonic tick number, decoupling simulation from the frame rate; the View phase and render
+        /// still run per frame, interpolating between the last two ticks. Must be positive.
+        u32 SimTickRate = 60;
     };
 
     /// @brief Construction parameters for Application.
@@ -397,6 +404,19 @@ namespace Veng
         /// is registered.
         [[nodiscard]] bool IsWorldPaused() const;
 
+        /// @brief Returns the current fixed simulation tick number.
+        ///
+        /// Monotonic, advanced by the world drive's accumulator; the same number every registered
+        /// scene's Sim phase steps through. Zero before the first tick runs and while fully paused.
+        [[nodiscard]] u64 GetSimTick() const { return m_SimClock.GetTick(); }
+
+        /// @brief Returns this frame's interpolation fraction into the next Sim tick, in [0, 1).
+        ///
+        /// The residual accumulator the render gather and View systems blend the last two ticks by.
+        /// A game driving its own viewport (or a LevelOverlay) pushes this into its ViewState so its
+        /// scene interpolates in phase with the primary world.
+        [[nodiscard]] f32 GetSimAlpha() const { return m_SimAlpha; }
+
     protected:
         /// @brief Called once after all engine systems are initialized.
         virtual void OnInitialize() {}
@@ -516,9 +536,12 @@ namespace Veng
         /// sim.
         /// @param scene    The scene being ticked.
         /// @param pointer  This frame's routing for @p scene (empty when the pointer is elsewhere).
+        /// @param tick     The tick number to stamp (the Sim step, or the last completed tick in View).
+        /// @param alpha    The interpolation fraction to stamp (0 in Sim, the frame residual in View).
         /// @return The assembled per-tick context.
         [[nodiscard]] SystemContext BuildSystemContext(const Scene& scene,
-                                                       const PointerRouting& pointer) const;
+                                                       const PointerRouting& pointer, u64 tick,
+                                                       f32 alpha) const;
 
         /// @brief Returns the primary simulation (the first registered scene's), or null when none.
         [[nodiscard]] SceneSimulation* PrimarySimulation() const;
@@ -645,6 +668,25 @@ namespace Veng
         /// Guards against per-frame bindless churn: the gather's slots are re-registered only on a
         /// frame where a Presented viewport's output view identity or region differs from this.
         vector<Renderer::CompositePlacement> m_GatheredPlacements;
+
+        /// @brief The fixed-timestep accumulator driving every registered simulation's Sim phase.
+        ///
+        /// Frame time folds in here; it advances the shared tick number by the whole fixed steps it
+        /// completes and reports the residual interpolation alpha. Reconfigured to the managed world's
+        /// SimTickRate at bootstrap; 60 Hz otherwise.
+        SimClock m_SimClock;
+
+        /// @brief This frame's interpolation fraction (GetSimAlpha), retained for the view pushes.
+        f32 m_SimAlpha = 0.0f;
+
+        /// @brief Whether the previous frame latched input (an active sim ran zero Sim ticks).
+        ///
+        /// The edge latch: BeginFrame skips the pressed/released edge roll on a frame following one
+        /// that had a live simulation but ran no tick, so an edge survives to the next tick-running
+        /// frame. A frame with no active simulation (the editor, a full pause) does not latch — its
+        /// input rolls every frame like an ordinary UI, so this stays false there. Starts false so
+        /// the first frame rolls cleanly.
+        bool m_PreviousFrameLatchedInput = false;
 
         bool m_ShouldExit = false;
     };

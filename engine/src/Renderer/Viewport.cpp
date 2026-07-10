@@ -365,6 +365,7 @@ namespace Veng::Renderer
             .World = *m_ViewState.World,
             .Camera = m_ViewState.Camera,
             .Delta = m_ViewState.Delta,
+            .Alpha = m_ViewState.Alpha,
             // The sub-rect fraction of the allocation to render this frame; the terminal tonemap
             // upscales it to the full (allocation-sized) output, so GetOutput stays full-resolution.
             .RenderScale = GetViewRenderScale(),

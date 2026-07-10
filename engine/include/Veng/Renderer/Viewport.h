@@ -61,6 +61,12 @@ namespace Veng::Renderer
         CameraView Camera;
         /// @brief Frame delta time in seconds, forwarded to the renderer.
         f32 Delta = 0.0f;
+        /// @brief Interpolation fraction into the next Sim tick, in [0, 1).
+        ///
+        /// The render gather blends each drawn entity's transform between the last two Sim-tick
+        /// snapshots by this, so a fixed-rate simulation renders smoothly at any frame rate. Zero
+        /// renders the current tick's pose exactly (a static or un-ticked scene).
+        f32 Alpha = 0.0f;
         /// @brief Exposure scale applied before the tone curve (a bias over the metered value when
         /// the viewport's renderer has auto-exposure on).
         f32 Exposure = 1.0f;

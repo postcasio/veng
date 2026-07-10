@@ -4,6 +4,7 @@
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Result.h>
 #include <Veng/Scene/SceneSystem.h>
+#include <Veng/Scene/SimClock.h>
 
 #include "AssetEditorPanel.h"
 #include "CommandStack.h"
@@ -247,5 +248,12 @@ namespace VengEditor
 
         /// @brief The system driver, built lazily on the first Play and reused across sessions.
         Veng::Unique<Veng::SceneSimulation> m_Simulation;
+
+        /// @brief The fixed-timestep accumulator driving the play clone, reset at the start of each Play.
+        ///
+        /// The editor's Play adopts the same accumulator as the launcher: the Sim phase steps at the
+        /// fixed rate with a monotonic tick, the View phase runs once per frame, and the residual
+        /// alpha (stored on the context) interpolates the render.
+        Veng::SimClock m_PlaySimClock;
     };
 }

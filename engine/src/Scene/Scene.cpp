@@ -6,6 +6,7 @@
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/SceneClone.h>
 #include <Veng/Scene/SceneSimulation.h>
+#include <Veng/Scene/Transforms.h>
 
 #include "ComponentPool.h"
 
@@ -145,6 +146,117 @@ namespace Veng
         {
             m_Simulation->Update(*this, delta, context);
         }
+    }
+
+    void Scene::TickSimulationPhase(const SceneSystem::Phase phase, const f32 delta,
+                                    const SystemContext& context)
+    {
+        if (m_Simulation)
+        {
+            m_Simulation->UpdatePhase(*this, phase, delta, context);
+        }
+
+        // A completed Sim tick finalizes this tick's spatial state; snapshot it so the render gather
+        // and View systems interpolate between the last two ticks. The View phase derives from that
+        // finalized state and writes no new tick, so it does not snapshot.
+        if (phase == SceneSystem::Phase::Sim)
+        {
+            SnapshotTransformHistory();
+        }
+    }
+
+    void Scene::CaptureTransforms(unordered_map<Entity, TransformSnapshot>& out) const
+    {
+        out.clear();
+        for (auto [entity, transform] : View<Transform>())
+        {
+            out.emplace(entity, TransformSnapshot{.Position = transform.Position,
+                                                  .Rotation = transform.Rotation,
+                                                  .Scale = transform.Scale});
+        }
+    }
+
+    void Scene::SnapshotTransformHistory()
+    {
+        const u64 version = GetSpatialVersion();
+        if (version == m_HistoryVersion)
+        {
+            // Nothing spatial moved since the last snapshot. If the ring still holds two differing
+            // ticks, converge it once (prev = cur) so a now-static entity stops interpolating; a
+            // scene already at rest copies nothing.
+            if (m_HistoryDirty)
+            {
+                m_TransformPrev = m_TransformCur;
+                m_HistoryDirty = false;
+            }
+            return;
+        }
+
+        // Something moved: roll the ring so the prior current becomes previous, then recapture the
+        // live transforms into current. The blend interpolates previous → current.
+        m_TransformPrev.swap(m_TransformCur);
+        CaptureTransforms(m_TransformCur);
+        m_HistoryVersion = version;
+        m_HistoryDirty = true;
+    }
+
+    mat4 Scene::InterpolatedLocalMatrix(const Entity entity, const f32 alpha) const
+    {
+        const auto prevIt = m_TransformPrev.find(entity);
+        const auto curIt = m_TransformCur.find(entity);
+        if (prevIt != m_TransformPrev.end() && curIt != m_TransformCur.end())
+        {
+            const Transform from{.Position = prevIt->second.Position,
+                                 .Rotation = prevIt->second.Rotation,
+                                 .Scale = prevIt->second.Scale};
+            const Transform to{.Position = curIt->second.Position,
+                               .Rotation = curIt->second.Rotation,
+                               .Scale = curIt->second.Scale};
+            return LocalMatrix(InterpolateTransform(from, to, alpha));
+        }
+
+        // No two-tick history for this entity (first snapshot, or spawned since): use its live pose.
+        if (const auto* transform = TryGet<Transform>(entity))
+        {
+            return LocalMatrix(*transform);
+        }
+        return mat4(1.0f);
+    }
+
+    mat4 Scene::GetInterpolatedWorldTransform(const Entity entity, const f32 alpha) const
+    {
+        // Walk the Hierarchy chain entity → root with the same cycle/dead-entity checks WorldMatrix
+        // runs, then compose root → entity from each level's interpolated local matrix.
+        vector<Entity> chain;
+        Entity current = entity;
+        while (!current.IsNull())
+        {
+            VE_ASSERT(IsAlive(current),
+                      "GetInterpolatedWorldTransform: Hierarchy references a dead or stale entity");
+
+            for (const Entity seen : chain)
+            {
+                VE_ASSERT(seen != current,
+                          "GetInterpolatedWorldTransform: Hierarchy chain forms a cycle");
+            }
+            chain.push_back(current);
+
+            if (const auto* hierarchy = TryGet<Hierarchy>(current))
+            {
+                current = hierarchy->Parent;
+            }
+            else
+            {
+                current = Entity::Null;
+            }
+        }
+
+        mat4 world(1.0f);
+        for (usize i = chain.size(); i-- > 0;)
+        {
+            world = world * InterpolatedLocalMatrix(chain[i], alpha);
+        }
+        return world;
     }
 
     void Scene::StopSimulation(const SystemContext& context)

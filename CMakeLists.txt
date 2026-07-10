@@ -570,6 +570,9 @@ if (VENG_BUILD_TESTS)
             tests/unit/gui_placement.cpp
             tests/unit/gui_overlay_component.cpp
             tests/unit/capture_surface_component.cpp
+            tests/unit/sim_clock.cpp
+            tests/unit/transform_interpolation.cpp
+            tests/unit/input_edge_latch.cpp
     )
     target_link_libraries(veng_test_unit PRIVATE veng::veng doctest::doctest)
 

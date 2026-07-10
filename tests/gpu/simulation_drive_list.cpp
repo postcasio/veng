@@ -39,6 +39,11 @@ namespace
 {
     // A per-tag probe recording, from its OnUpdate, what the engine handed its SystemContext. Static
     // slots keyed by Tag so two registered sims observe independently; Reset() clears them per case.
+    //
+    // It runs in the View phase, which the fixed-timestep drive ticks once per frame (the Sim phase
+    // steps at the fixed rate off the accumulated wall clock, which is near-zero in this tight
+    // headless loop). So Updates counts frames the scene was driven — the per-frame drive-list
+    // semantic these cases pin (registration ticks, pause stops), decoupled from the sim tick rate.
     template <int Tag>
     struct ProbeSystem final : SceneSystem
     {
@@ -56,6 +61,8 @@ namespace
             Tasks = nullptr;
             Region = {};
         }
+
+        [[nodiscard]] Phase GetPhase() const override { return Phase::View; }
 
         void OnUpdate(Scene&, f32, const SystemContext& context) override
         {

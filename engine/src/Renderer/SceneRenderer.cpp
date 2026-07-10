@@ -5749,6 +5749,25 @@ namespace Veng::Renderer
         resolvedView.Visible = m_Broadphase.GetCandidates();
         resolvedView.Broadphase = &m_Broadphase;
 
+        // Fixed-timestep render interpolation: blend each candidate's world transform between the
+        // scene's last two Sim-tick snapshots by the frame's alpha, so a 60 Hz sim renders smoothly
+        // at a higher frame rate. The broadphase tree stays built from the current-tick transforms
+        // (its cull is conservative, so a sub-tick offset never drops a visible submesh); only the
+        // drawn worlds interpolate. A static scene reports no motion history and skips the copy, so
+        // its draw is byte-identical to the un-interpolated path.
+        if (view.Alpha != 0.0f && view.World.HasTransformInterpolation())
+        {
+            const std::span<const VisibleMesh> candidates = m_Broadphase.GetCandidates();
+            m_InterpolatedCandidates.assign(candidates.begin(), candidates.end());
+            for (VisibleMesh& candidate : m_InterpolatedCandidates)
+            {
+                candidate.World =
+                    view.World.GetInterpolatedWorldTransform(candidate.Owner, view.Alpha);
+                candidate.WorldBounds = candidate.Mesh->GetBounds().Transformed(candidate.World);
+            }
+            resolvedView.Visible = m_InterpolatedCandidates;
+        }
+
         // Resolve the scene's one Sky component into this frame's sky fields — the lights model,
         // the renderer reading the component off the scene the way it reads the lights. A resolved
         // source-kind or lighting-tier change recompiles the pass set at this frame boundary,

@@ -5,6 +5,7 @@
 #include <Veng/Scene/Scene.h>
 
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 namespace Veng
 {
@@ -14,6 +15,15 @@ namespace Veng
         const mat4 rotation = glm::mat4_cast(transform.Rotation);
         const mat4 scale = glm::scale(mat4(1.0f), transform.Scale);
         return translation * rotation * scale;
+    }
+
+    Transform InterpolateTransform(const Transform& from, const Transform& to, const f32 alpha)
+    {
+        return Transform{
+            .Position = glm::mix(from.Position, to.Position, alpha),
+            .Rotation = glm::slerp(from.Rotation, to.Rotation, alpha),
+            .Scale = glm::mix(from.Scale, to.Scale, alpha),
+        };
     }
 
     mat4 WorldMatrix(const Scene& scene, Entity entity)

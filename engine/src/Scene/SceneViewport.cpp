@@ -11,7 +11,7 @@
 namespace Veng
 {
     void PushSceneView(Renderer::Viewport& viewport, const Scene& scene,
-                       const Renderer::ViewState& knobs, const f32 delta)
+                       const Renderer::ViewState& knobs, const f32 delta, const f32 alpha)
     {
         const Ref<Renderer::ImageView> output = viewport.GetOutput();
         const f32 aspect = static_cast<f32>(output->GetImage()->GetWidth()) /
@@ -21,6 +21,7 @@ namespace Veng
         state.World = &scene;
         state.Camera = ResolvePrimaryCameraView(scene, aspect).value_or(DefaultCameraView(aspect));
         state.Delta = delta;
+        state.Alpha = alpha;
         viewport.SetViewState(state);
     }
 

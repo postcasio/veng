@@ -261,11 +261,12 @@ namespace Veng
                                                     : context.GetWindow().GetContentScale().x);
 
         // Push the resolved camera and the level's view knobs; the viewport's own render drives the
-        // scene's GuiOverlay HUD.
+        // scene's GuiOverlay HUD. The overlay shares the frame's interpolation alpha with the primary
+        // world (the same accumulator drives both), so its scene interpolates in phase.
         Renderer::SceneRendererSettings settings;
         Renderer::ViewState knobs;
         ApplyLevelRenderSettings(m_Render, settings, knobs);
-        PushSceneView(*m_Viewport, *m_Instance.World, knobs, delta);
+        PushSceneView(*m_Viewport, *m_Instance.World, knobs, delta, m_App->GetSimAlpha());
     }
 
     void LevelOverlay::Close()

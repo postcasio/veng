@@ -134,6 +134,10 @@ namespace Veng
 
     void Application::BootstrapWorld()
     {
+        // The managed world sets the fixed simulation rate: reconfigure the accumulator to its
+        // SimTickRate (60 Hz otherwise) before the first frame drives it.
+        m_SimClock = SimClock(SimClockInfo{.TickRate = m_Info.World->SimTickRate});
+
         // The cooked project names the packs to mount and the startup level; everything resolves
         // beside the executable so the launcher + project + packs move as one directory.
         const path projectFile = ExecutableDirectory() / m_Info.World->Project;
@@ -278,7 +282,7 @@ namespace Veng
         // single-viewport path, byte-identical for the default managed viewport.
         if (managed.Info.Viewer == Entity::Null)
         {
-            PushSceneView(viewport, *m_World, m_WorldView, delta);
+            PushSceneView(viewport, *m_World, m_WorldView, delta, m_SimAlpha);
             return;
         }
 
@@ -293,6 +297,7 @@ namespace Veng
         state.Camera = ResolveCameraView(*m_World, managed.Info.Viewer, aspect)
                            .value_or(DefaultCameraView(aspect));
         state.Delta = delta;
+        state.Alpha = m_SimAlpha;
         viewport.SetViewState(state);
     }
 
@@ -360,14 +365,16 @@ namespace Veng
                 .Scene = owner->GetPresentedScene()};
     }
 
-    SystemContext Application::BuildSystemContext(const Scene& scene,
-                                                  const PointerRouting& pointer) const
+    SystemContext Application::BuildSystemContext(const Scene& scene, const PointerRouting& pointer,
+                                                  const u64 tick, const f32 alpha) const
     {
         SystemContext context{
             .Assets = *m_AssetManager,
             .Input = *m_Input,
             .Tasks = *m_TaskSystem,
             .Pointer = pointer,
+            .Tick = tick,
+            .Alpha = alpha,
         };
 
         // Resolve the sim's primary presenting viewport — the first registered Presented viewport
@@ -688,10 +695,35 @@ namespace Veng
 
         const f32 delta = Time::Update();
 
+        // The fixed-timestep accumulator advances only while a registered simulation is live: a full
+        // pause (or no started scene) stops accumulation so resuming chases no backlog. Any active
+        // scene drives the shared tick, so an overlay and the primary sim step in phase.
+        const bool anyActive =
+            std::ranges::any_of(m_Simulations,
+                                [](const Scene* scene)
+                                {
+                                    const SceneSimulation* sim = scene->GetSimulation();
+                                    return sim != nullptr && sim->IsStarted() && !sim->IsPaused();
+                                });
+
+        SimStep step{};
+        if (anyActive)
+        {
+            step = m_SimClock.Advance(delta);
+        }
+        else
+        {
+            m_SimClock.Reset();
+        }
+        m_SimAlpha = step.Alpha;
+
         // Roll the input snapshot forward, then poll the window and route this frame's events
         // through the router (folding into the snapshot, forwarding to ImGui by focus).
-        // Headless borrows no window, so no events arrive and the snapshot stays neutral.
-        m_Input->BeginFrame();
+        // Headless borrows no window, so no events arrive and the snapshot stays neutral. The roll is
+        // held only when the previous frame latched (an active sim ran no tick), so a pressed edge on
+        // a zero-tick frame survives to the next tick-running frame; a frame with no active sim (the
+        // editor, a full pause) rolls every frame like an ordinary UI.
+        m_Input->BeginFrame(!m_PreviousFrameLatchedInput);
         if (m_Window)
         {
             m_Window->Update();
@@ -710,10 +742,11 @@ namespace Veng
             m_ImGuiLayer->BeginFrame();
         }
 
-        // Tick every registered simulation (Sim then View) that is started and not paused, in
-        // registration order, so OnUpdate and the view push see this tick's finalized state. The
-        // frame's pointer routing is scoped to one scene, so each sim gets it only when the pointer's
-        // owning viewport presents that sim's scene — a scene-local Owner handle never leaks across.
+        // Drive every registered simulation that is started and not paused, in registration order:
+        // this frame's fixed Sim steps (0..N, the accumulator's step count, at the shared tick
+        // numbers) then one View pass with the interpolation alpha. The pointer routing is scoped to
+        // one scene, so each sim gets it only when the pointer's owning viewport presents that sim's
+        // scene — a scene-local Owner handle never leaks across.
         const ScopedPointer scoped = ComputePointerRouting();
         for (Scene* scene : m_Simulations)
         {
@@ -724,8 +757,20 @@ namespace Veng
             }
             const PointerRouting pointer =
                 scene == scoped.Scene ? scoped.Routing : PointerRouting{};
-            scene->TickSimulation(delta, BuildSystemContext(*scene, pointer));
+            for (u32 tickIndex = 0; tickIndex < step.Steps; ++tickIndex)
+            {
+                const u64 tick = step.FirstTick + tickIndex;
+                scene->TickSimulationPhase(SceneSystem::Phase::Sim, step.SimDelta,
+                                           BuildSystemContext(*scene, pointer, tick, 0.0f));
+            }
+            scene->TickSimulationPhase(
+                SceneSystem::Phase::View, delta,
+                BuildSystemContext(*scene, pointer, m_SimClock.GetTick(), step.Alpha));
         }
+
+        // The edge latch: a frame with a live simulation that ran no tick holds its edges for the
+        // next tick-running frame; a frame with no active sim never latches (it rolls next frame).
+        m_PreviousFrameLatchedInput = anyActive && step.Steps == 0;
 
         OnUpdate(delta);
 

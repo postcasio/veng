@@ -44,10 +44,25 @@ namespace Veng
         /// Within each phase, systems run in registration order. The two-pass split lets
         /// a View system (a camera rig) read the state the Sim systems finalized this
         /// tick; it is the whole scheduling mechanism — no dependency graph, no parallelism.
+        /// The fixed-timestep drive splits this into UpdatePhase calls (N Sim steps, then one View);
+        /// this single-call form runs one Sim step then one View for a caller with no accumulator.
         /// @param scene    The scene the systems operate over.
         /// @param delta    Time in seconds since the previous tick.
         /// @param context  Per-tick services forwarded to each system.
         void Update(Scene& scene, f32 delta, const SystemContext& context);
+
+        /// @brief Calls OnUpdate on only the systems in the given phase, in registration order.
+        ///
+        /// The fixed-timestep drive runs the Sim phase once per fixed step (0..N times a frame) and
+        /// the View phase once per frame, so it dispatches each phase separately rather than through
+        /// Update. Sim carries the fixed step delta and the tick number; View carries the frame delta
+        /// and the interpolation alpha.
+        /// @param scene    The scene the systems operate over.
+        /// @param phase    The phase whose systems run.
+        /// @param delta    Time in seconds forwarded to each system's OnUpdate.
+        /// @param context  Per-tick services forwarded to each system.
+        void UpdatePhase(Scene& scene, SceneSystem::Phase phase, f32 delta,
+                         const SystemContext& context);
 
         /// @brief Calls OnStop on each system, in registration order.
         /// @param scene    The scene the systems operate over.

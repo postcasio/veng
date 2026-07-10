@@ -88,6 +88,21 @@ namespace Veng
         f32 UiScale = 1.0f;
     };
 
+    /// @brief Who holds simulation authority for the peer running this tick.
+    ///
+    /// A standalone or server peer is Server — its Sim phase is authoritative over
+    /// Authority::Server state. A Client peer displays server-owned state and simulates
+    /// only its client-local (view) entities. Carried on SystemContext so an
+    /// authority-gated Sim system can query the peer's role; a standalone app is always
+    /// Server.
+    enum class NetRole
+    {
+        /// @brief This peer owns and advances server-authoritative simulation state.
+        Server,
+        /// @brief This peer displays replicated server state and simulates only client-local entities.
+        Client,
+    };
+
     /// @brief Per-tick services handed to every SceneSystem.
     ///
     /// Borrowed for the duration of the call: a system reads from these but does
@@ -126,6 +141,37 @@ namespace Veng
         /// debug lines/billboards into the scene's own view. Null for a view-less sim and headless (a
         /// value SystemViewInfo cannot carry a mutable sink, so it rides SystemContext directly).
         Renderer::DebugDraw* Debug = nullptr;
+        /// @brief The fixed simulation tick number.
+        ///
+        /// In the Sim phase this is the tick being advanced (monotonic, +1 per fixed step); in the
+        /// View phase it is the last completed Sim tick. Zero before the first tick runs. The unit of
+        /// time a replicated simulation keys input and snapshots by.
+        u64 Tick = 0;
+        /// @brief Interpolation fraction into the next Sim tick, in [0, 1); View phase only.
+        ///
+        /// The frame's residual accumulator over the fixed step: a View system (a camera rig) blends
+        /// toward the coming tick by this, matching the render gather's transform interpolation so the
+        /// camera and the meshes it frames agree. Zero in the Sim phase (a fixed step has no residual).
+        f32 Alpha = 0.0f;
+        /// @brief Which peer's authority this tick runs under; Server for a standalone app.
+        ///
+        /// An authority-gated Sim system reads it to act only where this peer owns the state. Inert
+        /// until a client/server split exists — every standalone tick is Server.
+        NetRole Role = NetRole::Server;
+
+        /// @brief Returns a copy of this context with Alpha set to @p alpha.
+        ///
+        /// The View-phase context is the Sim-phase context plus the frame's interpolation fraction;
+        /// this produces it without restating the borrowed services. The reference members rebind by
+        /// copy-construction (SystemContext is not copy-assignable — its members are references).
+        /// @param alpha  The interpolation fraction to carry.
+        /// @return A copy with Alpha = @p alpha.
+        [[nodiscard]] SystemContext WithAlpha(const f32 alpha) const
+        {
+            SystemContext copy = *this;
+            copy.Alpha = alpha;
+            return copy;
+        }
     };
 
     /// @brief Unprojects a region-local point into a world-space ray through a resolved view.
