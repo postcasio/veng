@@ -63,6 +63,8 @@ namespace Veng::Net
         vector<u8> out;
         WriteType(out, ControlMessageType::ConnectAccept);
         WriteU32LE(out, message.Id);
+        WriteU64LE(out, message.LevelId);
+        WriteU32LE(out, message.SeatNetId);
         return out;
     }
 
@@ -98,12 +100,16 @@ namespace Veng::Net
 
     optional<ConnectAcceptMessage> DecodeConnectAccept(std::span<const u8> message)
     {
-        constexpr usize size = TypeByteSize + 4;
+        constexpr usize size = TypeByteSize + 4 + 8 + 4;
         if (!HasType(message, ControlMessageType::ConnectAccept, size))
         {
             return {};
         }
-        return ConnectAcceptMessage{.Id = ReadU32LE(message, 1)};
+        return ConnectAcceptMessage{
+            .Id = ReadU32LE(message, 1),
+            .LevelId = ReadU64LE(message, 5),
+            .SeatNetId = ReadU32LE(message, 13),
+        };
     }
 
     optional<ConnectDenyMessage> DecodeConnectDeny(std::span<const u8> message)

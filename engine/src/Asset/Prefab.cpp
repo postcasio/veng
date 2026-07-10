@@ -114,6 +114,31 @@ namespace Veng
         }
     }
 
+    namespace
+    {
+        // True when a prefab entity is server-authoritative: it carries an Authority whose Tier is
+        // Server, or it carries no Authority at all (the authored default is Server). The client-mode
+        // load skips exactly these — they arrive from the spawn stream instead.
+        bool IsServerAuthoritative(const Prefab::PrefabEntity& entity, const TypeRegistry& registry)
+        {
+            const TypeId authorityId = TypeIdOf<Authority>();
+            for (const Prefab::Component& component : entity.Components)
+            {
+                if (component.Type != authorityId)
+                {
+                    continue;
+                }
+                Authority authority;
+                if (ReadFields(component.Record, &authority, registry.Info(authorityId), registry))
+                {
+                    return authority.Tier == Tier::Server;
+                }
+                return true; // an undecodable Authority record: treat as the default (Server).
+            }
+            return true; // no Authority component: the authored default is Server.
+        }
+    }
+
     Prefab::Prefab(vector<PrefabEntity> entities, vector<Ref<Detail::AssetCacheEntry>> dependencies)
         : m_Entities(std::move(entities)), m_Dependencies(std::move(dependencies))
     {
@@ -127,15 +152,31 @@ namespace Veng
 
     Prefab::SpawnResult Prefab::SpawnInto(Scene& scene, AssetManager& manager) const
     {
+        return SpawnInto(scene, manager, SpawnOptions{});
+    }
+
+    Prefab::SpawnResult Prefab::SpawnInto(Scene& scene, AssetManager& manager,
+                                          const SpawnOptions& options) const
+    {
         const TypeRegistry& registry = scene.GetTypeRegistry();
 
-        // 1. Create every entity first, so a Reference field (which may point
-        //    forward) always resolves to a created handle.
+        // A skipped entity's slot stays Entity::Null so index-keyed reference remaps read null.
+        vector<bool> skip(m_Entities.size(), false);
+        if (options.SkipServerAuthoritative)
+        {
+            for (usize i = 0; i < m_Entities.size(); ++i)
+            {
+                skip[i] = IsServerAuthoritative(m_Entities[i], registry);
+            }
+        }
+
+        // 1. Create every non-skipped entity first, so a Reference field (which may
+        //    point forward) always resolves to a created handle.
         vector<Entity> spawned;
         spawned.reserve(m_Entities.size());
         for (usize i = 0; i < m_Entities.size(); ++i)
         {
-            spawned.push_back(scene.CreateEntity());
+            spawned.push_back(skip[i] ? Entity::Null : scene.CreateEntity());
         }
 
         // 2. Populate each entity's components, then remap references / rehydrate
@@ -144,6 +185,10 @@ namespace Veng
         //    links are derived and rebuilt below.
         for (usize i = 0; i < m_Entities.size(); ++i)
         {
+            if (skip[i])
+            {
+                continue;
+            }
             const PrefabEntity& prefabEntity = m_Entities[i];
             const Entity entity = spawned[i];
 
@@ -192,6 +237,10 @@ namespace Veng
         vector<Entity> parents(spawned.size());
         for (usize i = 0; i < spawned.size(); ++i)
         {
+            if (spawned[i].IsNull())
+            {
+                continue;
+            }
             parents[i] = scene.GetParent(spawned[i]);
             if (auto* link = scene.TryGet<Hierarchy>(spawned[i]))
             {
@@ -202,6 +251,10 @@ namespace Veng
         vector<Entity> roots;
         for (usize i = 0; i < spawned.size(); ++i)
         {
+            if (spawned[i].IsNull())
+            {
+                continue;
+            }
             if (parents[i].IsNull())
             {
                 roots.push_back(spawned[i]);
@@ -218,6 +271,10 @@ namespace Veng
         ResidencyBatch pending;
         for (const Entity entity : spawned)
         {
+            if (entity.IsNull())
+            {
+                continue;
+            }
             scene.ForEachComponent(
                 entity, [&](TypeId type, void* component)
                 { CollectPendingHandles(component, registry.Info(type), registry, pending); });

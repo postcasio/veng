@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Veng/Asset/AssetId.h>
 #include <Veng/Net/Connection.h>
 #include <Veng/Net/NetEvents.h>
 #include <Veng/Net/Transport.h>
@@ -65,6 +66,18 @@ namespace Veng::Net
 
         /// @brief The server-assigned id once Connected, else ServerConnectionId.
         [[nodiscard]] ConnectionId AssignedId() const;
+
+        /// @brief The level the accept named for the client to load, once Connected (else the invalid id).
+        ///
+        /// The join payload the server folded into the ConnectAccept: the world glue loads this level
+        /// (with server-authoritative authored entities skipped) before acking readiness.
+        [[nodiscard]] AssetId LevelId() const;
+
+        /// @brief The wire id of the client's own seat, once Connected (else 0).
+        ///
+        /// Names which replicated entity, once the spawn stream binds it, is this client's seat — the
+        /// one whose possession drives the local camera.
+        [[nodiscard]] u32 SeatNetId() const;
 
         /// @brief The deny reason when State() is Denied, else nullopt.
         [[nodiscard]] optional<DenyReason> GetDenyReason() const;

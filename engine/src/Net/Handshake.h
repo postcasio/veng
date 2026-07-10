@@ -39,11 +39,21 @@ namespace Veng::Net
         u32 AppVersion = 0;
     };
 
-    /// @brief The server's acceptance, carrying the assigned connection id.
+    /// @brief The server's acceptance: the assigned id plus the join payload the client loads from.
+    ///
+    /// Beyond the connection id, the accept names the level the client loads (as the raw AssetId
+    /// value) and the wire id of the client's own seat entity, so the client can wire its local
+    /// presentation to that replicated seat once the spawn stream binds it. Both default to a
+    /// no-join zero, so a bare (Plan 02) handshake with no world glue is byte-shorter only by intent
+    /// — the fields are always present on the wire.
     struct ConnectAcceptMessage
     {
         /// @brief The server-assigned connection id.
         ConnectionId Id = ServerConnectionId;
+        /// @brief The AssetId value of the level the client loads, or 0 when the server serves no world.
+        u64 LevelId = 0;
+        /// @brief The wire id of the client's own replicated seat entity, or 0 when none was spawned.
+        u32 SeatNetId = 0;
     };
 
     /// @brief The server's refusal, carrying the reason.

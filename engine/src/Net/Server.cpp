@@ -67,7 +67,8 @@ namespace Veng::Net
             bool Established = false;
             bool Closing = false; // Disconnect() called; flush the message, then reap
             DisconnectReason CloseReason = DisconnectReason::Kicked;
-            bool Remove = false; // marked for reaping this pump
+            bool Remove = false;            // marked for reaping this pump
+            vector<vector<u8>> AppReliable; // non-handshake reliable messages received this pump
         };
     }
 
@@ -188,7 +189,12 @@ namespace Veng::Net
             record.Id = NextId;
             NextId += 1;
             record.Established = true;
-            const vector<u8> accept = EncodeConnectAccept(ConnectAcceptMessage{.Id = record.Id});
+            // Let the world glue spawn this connection's seat and name the join payload folded into
+            // the accept — the seat's wire id and the level to load ride the acceptance itself.
+            const AcceptPayload payload =
+                Info.OnAccept ? Info.OnAccept(record.Id) : AcceptPayload{};
+            const vector<u8> accept = EncodeConnectAccept(ConnectAcceptMessage{
+                .Id = record.Id, .LevelId = payload.LevelId, .SeatNetId = payload.SeatNetId});
             (void)record.Conn->Send(Channel::ReliableOrdered, accept);
             Events.push_back(NetEvent{.Type = NetEventType::Connected, .Id = record.Id});
             Log::Info("Net::Server accepted connection {}", record.Id);
@@ -202,7 +208,13 @@ namespace Veng::Net
                 const optional<ControlMessageType> type = PeekControlType(*message);
                 if (!type.has_value())
                 {
-                    continue; // an unknown or app message — later plans dispatch these
+                    // A non-handshake reliable message (the join layer's ClientReady): surface it to
+                    // the world glue rather than dropping it.
+                    if (record.Established)
+                    {
+                        record.AppReliable.push_back(*message);
+                    }
+                    continue;
                 }
                 switch (*type)
                 {
@@ -261,6 +273,10 @@ namespace Veng::Net
     {
         State& s = *m_State;
         s.Events.clear();
+        for (Unique<PeerConnection>& c : s.Connections)
+        {
+            c->AppReliable.clear();
+        }
 
         // Drain the listen transport and demultiplex each datagram to its peer's link, opening a
         // provisional connection for a first-contact peer (bounded by the provisional pool).
@@ -368,6 +384,18 @@ namespace Veng::Net
     std::span<const NetEvent> Server::Events() const
     {
         return m_State->Events;
+    }
+
+    std::span<const vector<u8>> Server::ReliableAppMessages(ConnectionId id) const
+    {
+        for (const Unique<PeerConnection>& c : m_State->Connections)
+        {
+            if (c->Established && c->Id == id)
+            {
+                return c->AppReliable;
+            }
+        }
+        return {};
     }
 
     Result<u16> Server::LocalPort() const

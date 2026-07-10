@@ -25,6 +25,12 @@ namespace Veng
 
     LevelInstance Level::LoadInto(AssetManager& manager, const SystemRegistry& registry) const
     {
+        return LoadInto(manager, registry, LevelLoadInfo{});
+    }
+
+    LevelInstance Level::LoadInto(AssetManager& manager, const SystemRegistry& registry,
+                                  const LevelLoadInfo& load) const
+    {
         VE_ASSERT(m_World.IsLoaded(), "Level::LoadInto: world prefab {} is not resident",
                   m_World.Id().Value);
 
@@ -38,7 +44,9 @@ namespace Veng
         // hierarchy and the simulation queries the scene, not the root list. The spawn's
         // residency batch (the recipe-built meshes streaming in) surfaces on the instance, so
         // a caller can gate on the world being resident before its first capture.
-        Prefab::SpawnResult spawned = m_World.Get()->SpawnInto(*instance.World, manager);
+        Prefab::SpawnResult spawned = m_World.Get()->SpawnInto(
+            *instance.World, manager,
+            Prefab::SpawnOptions{.SkipServerAuthoritative = load.SkipServerAuthoritative});
         instance.Pending = std::move(spawned.Pending);
 
         // The level's config is level-scoped, not world-content, so the loader materializes it

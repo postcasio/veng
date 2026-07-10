@@ -42,6 +42,21 @@ namespace Veng
             vector<Component> Components;
         };
 
+        /// @brief Options selecting which of a prefab's authored entities a spawn materializes.
+        struct SpawnOptions
+        {
+            /// @brief Skip authored entities that carry Authority::Server (or default to it).
+            ///
+            /// The client-mode level load: a joining client loads the level's non-authoritative
+            /// scaffolding (its own cameras, local viewers, environment) but leaves the
+            /// server-authoritative entities out — they arrive from the spawn stream, server-assigned
+            /// wire ids and all, so a skipped entity is spawned exactly once. A skipped entity's index
+            /// slot resolves to Entity::Null, so a surviving entity's reference to it (or child under
+            /// it) reads null until — if ever — the replicated copy binds. Default false: every
+            /// authored entity spawns (the standalone/server path).
+            bool SkipServerAuthoritative = false;
+        };
+
         /// @brief The product of a spawn: the spawned roots plus the residency batch the spawn introduced.
         struct SpawnResult
         {
@@ -73,6 +88,18 @@ namespace Veng
         /// @param manager  The asset manager rehydration and recipe builds resolve through.
         /// @return The spawned roots and the residency batch this spawn introduced.
         [[nodiscard]] SpawnResult SpawnInto(Scene& scene, AssetManager& manager) const;
+
+        /// @brief Spawns this prefab, honoring @p options (the client-mode skip of authoritative entities).
+        ///
+        /// Identical to the two-argument SpawnInto but for the entities @p options excludes: a skipped
+        /// entity is never created (its index slot stays Entity::Null so references remap to null), so
+        /// a client loading the level in join mode materializes only the non-authoritative scaffolding.
+        /// @param scene    The scene the entities are created in.
+        /// @param manager  The asset manager rehydration and recipe builds resolve through.
+        /// @param options  Which authored entities to materialize.
+        /// @return The spawned roots and the residency batch this spawn introduced.
+        [[nodiscard]] SpawnResult SpawnInto(Scene& scene, AssetManager& manager,
+                                            const SpawnOptions& options) const;
 
         /// @brief Returns the list of prefab entities.
         [[nodiscard]] const vector<PrefabEntity>& Entities() const { return m_Entities; }

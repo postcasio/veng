@@ -35,6 +35,18 @@ namespace Veng
         ResidencyBatch Pending;
     };
 
+    /// @brief Options selecting how a level's world prefab is spawned into its scene.
+    struct LevelLoadInfo
+    {
+        /// @brief Skip the world prefab's server-authoritative authored entities (the client-mode load).
+        ///
+        /// A joining client loads the level for its non-authoritative scaffolding — its own cameras,
+        /// local viewers, environment — but leaves the server-authoritative entities out; they arrive
+        /// from the server's spawn stream, so each is instantiated exactly once. Default false: the
+        /// standalone/server load spawns every authored entity.
+        bool SkipServerAuthoritative = false;
+    };
+
     /// @brief Cached, immutable cooked-level asset: a world prefab by reference plus level-scoped wiring.
     ///
     /// A Level does not embed world entities — it references a world Prefab and adds the data
@@ -73,6 +85,21 @@ namespace Veng
         /// @return The Scene (with its SceneSimulation attached) + residency bundle.
         [[nodiscard]] LevelInstance LoadInto(AssetManager& manager,
                                              const SystemRegistry& registry) const;
+
+        /// @brief Spawns the world honoring @p load (the client-mode skip), then builds the sim + seeds.
+        ///
+        /// Identical to the two-argument LoadInto but for the world-prefab spawn: with
+        /// LevelLoadInfo::SkipServerAuthoritative set, the server-authoritative authored entities are
+        /// left out (they arrive from the spawn stream), so a joining client's scene holds only its
+        /// non-authoritative scaffolding until the stream lands. The simulation is still built and the
+        /// Session seeded, so a client scene carries the same wiring a server one does.
+        /// @param manager   The asset manager the world spawns and its dependencies resolve through.
+        /// @param registry  The host-owned system catalog the level's ids resolve against.
+        /// @param load      How to spawn the world prefab (which authored entities to materialize).
+        /// @pre The world prefab handle IsLoaded().
+        /// @return The Scene (with its SceneSimulation attached) + residency bundle.
+        [[nodiscard]] LevelInstance LoadInto(AssetManager& manager, const SystemRegistry& registry,
+                                             const LevelLoadInfo& load) const;
 
         /// @brief Returns the world-prefab handle this level references.
         [[nodiscard]] const AssetHandle<Prefab>& GetWorld() const { return m_World; }

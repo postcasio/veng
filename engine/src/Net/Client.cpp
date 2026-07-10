@@ -15,6 +15,8 @@ namespace Veng::Net
         Unique<Connection> Conn;
         ClientState State = ClientState::Connecting;
         ConnectionId AssignedId = ServerConnectionId;
+        AssetId LevelId;
+        u32 SeatNetId = 0;
         optional<DenyReason> Deny;
         vector<vector<u8>> AppReliable; // non-handshake reliable messages from the most recent Pump
     };
@@ -83,6 +85,8 @@ namespace Veng::Net
                     accept.has_value() && s.State == ClientState::Connecting)
                 {
                     s.AssignedId = accept->Id;
+                    s.LevelId = AssetId{.Value = accept->LevelId};
+                    s.SeatNetId = accept->SeatNetId;
                     s.State = ClientState::Connected;
                     Log::Info("Net::Client connected as {}", accept->Id);
                 }
@@ -124,6 +128,16 @@ namespace Veng::Net
     ConnectionId Client::AssignedId() const
     {
         return m_Impl->AssignedId;
+    }
+
+    AssetId Client::LevelId() const
+    {
+        return m_Impl->LevelId;
+    }
+
+    u32 Client::SeatNetId() const
+    {
+        return m_Impl->SeatNetId;
     }
 
     optional<DenyReason> Client::GetDenyReason() const

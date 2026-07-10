@@ -542,6 +542,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/net_replication.cpp
             tests/unit/net_state_flow.cpp
             tests/unit/net_input_flow.cpp
+            tests/unit/net_join_flow.cpp
             tests/unit/reflection.cpp
             tests/unit/reflection_variant.cpp
             tests/unit/field_display.cpp
