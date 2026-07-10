@@ -260,6 +260,13 @@ namespace Veng
     {
         Renderer::Viewport& viewport = *managed.Viewport;
 
+        // Screen-space Gui documents on this viewport lay out in logical points while the region is
+        // framebuffer pixels, so feed the window content scale as the UI scale each frame: authored
+        // px then render at logical size on a HiDPI display, and re-resolve if the window moves to a
+        // differently-scaled monitor. Same GetContentScale() the pointer routing uses, so layout,
+        // draw, and hit-testing agree.
+        viewport.SetUiScale(m_Window ? m_Window->GetContentScale().x : 1.0f);
+
         // A viewport with no bound Viewer takes the scene's primary camera — the delivered
         // single-viewport path, byte-identical for the default managed viewport.
         if (managed.Info.Viewer == Entity::Null)

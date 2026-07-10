@@ -128,6 +128,9 @@ namespace Veng
             .Region = overlay.m_Region,
             .Settings = settings,
             .Role = Renderer::ViewportRole::Presented,
+            // Screen-space Gui documents lay out in logical points; feed the window content scale so
+            // the overlay's HUD renders at logical size on a HiDPI display (Update re-applies it).
+            .UiScale = context.IsHeadless() ? 1.0f : context.GetWindow().GetContentScale().x,
         });
         app.RegisterViewport(*overlay.m_Viewport);
 
@@ -252,6 +255,12 @@ namespace Veng
             m_Region = {.Offset = {0, 0}, .Extent = context.GetRenderExtent()};
         }
         m_Viewport->SetRegion(m_Region);
+
+        // Track the window content scale each frame so the overlay's screen-space HUD stays at
+        // logical size across a HiDPI display or a move to a differently-scaled monitor (the same
+        // GetContentScale() the pointer routing above uses, so layout, draw, and hit-testing agree).
+        m_Viewport->SetUiScale(context.IsHeadless() ? 1.0f
+                                                    : context.GetWindow().GetContentScale().x);
 
         // Push the resolved camera and the level's view knobs; the viewport's own render drives the
         // scene's GuiOverlay HUD.
