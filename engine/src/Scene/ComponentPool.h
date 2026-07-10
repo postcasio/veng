@@ -51,6 +51,16 @@ namespace Veng
         /// @warning Pointer is invalidated by any structural change to this pool.
         [[nodiscard]] const Entity* DenseData() const { return m_Dense.data(); }
 
+        /// @brief Records @p tick as the change tick of the entity's component. No-op if absent.
+        ///
+        /// The per-entity twin of Scene's spatial version: a non-const access stamps the accessed
+        /// entity's component with the current sim tick, so the net layer's dirty query
+        /// (change tick > last-acked tick) sends exactly what changed since a connection last acked.
+        void Stamp(Entity entity, u64 tick);
+
+        /// @brief Returns the entity's component change tick, or 0 if the entity has no component here.
+        [[nodiscard]] u64 ChangeTick(Entity entity) const;
+
     private:
         /// @brief Sentinel for an absent sparse entry.
         static constexpr u32 Tombstone = ~0u;
@@ -67,5 +77,10 @@ namespace Veng
         vector<Entity> m_Dense;
         /// @brief dense slot → component bytes (Count * Size)
         vector<std::byte> m_Data;
+        /// @brief dense slot → last sim tick this component was stamped at (parallel to m_Dense).
+        ///
+        /// Swap-and-popped with m_Dense on Remove so it stays aligned. Zero for a component never
+        /// stamped since it was added at tick zero (before any sim tick).
+        vector<u64> m_ChangeTicks;
     };
 }

@@ -483,6 +483,23 @@ namespace Veng
         u32 Owner = 0;
     };
 
+    /// @brief Wire identity of a replicated entity: a server-assigned id the two ends agree on.
+    ///
+    /// The net layer's key for an entity across the wire. The authority owning an entity assigns it
+    /// a fresh Id from a monotonic counter (never reused, never zero — zero is the null-reference
+    /// sentinel on the wire), and the displaying end keeps its own NetId → Entity map, rebuilt from
+    /// the NetIdentity components on the entities it spawns. It is runtime-only: server-assigned at
+    /// spawn, never authored in a prefab and never persisted (like SkinnedPose/RootMotionDelta, it
+    /// carries no on-disk lifetime), so it never appears in a prefab source. It is *not* itself
+    /// replicated (VE_REPLICATED) — it *is* the wire key, carried in each snapshot's per-entity
+    /// header rather than as a replicated component. It is reflected so the inspector can surface
+    /// the assigned id (read-only — a consumer never edits it).
+    struct NetIdentity
+    {
+        /// @brief The server-assigned wire id; 0 until assigned (and the wire's null-reference value).
+        u32 Id = 0;
+    };
+
     /// @brief Camera-rig follow relationship: the target a camera entity trails and how.
     ///
     /// Read by the View-phase camera rig: each tick it reads the target's world Transform
@@ -769,6 +786,8 @@ VE_FIELD(Position, .DisplayName = "Position", .Tooltip = "Local position, parent
 VE_FIELD(Rotation, .DisplayName = "Rotation")
 VE_FIELD(Scale, .DisplayName = "Scale", .Display = {.Min = 0.001})
 VE_REFLECT_END();
+// The spatial pose is the canonical replicated state — every visible remote entity carries it.
+VE_REPLICATED(::Veng::Transform);
 
 VE_REFLECT(::Veng::Hierarchy, 0x5C9855E287465C5EULL)
 VE_FIELD(Parent, .DisplayName = "Parent", .ReadOnly = true)
@@ -872,6 +891,9 @@ VE_REFLECT_END();
 VE_REFLECT(::Veng::PlayerInput, 0x5401D36B1EF55045ULL)
 VE_FIELD(State, .DisplayName = "State")
 VE_REFLECT_END();
+// Not VE_REPLICATED: PlayerInput flows client→server on the dedicated input channel (last-N-ticks
+// redundant, unreliable), not in the server→client state snapshot — a different direction and
+// discipline from replicated state.
 
 VE_REFLECT(::Veng::InputContextStack, 0x89B0625016A01BE2ULL)
 VE_ARRAY_FIELD(Active, .DisplayName = "Active")
@@ -882,16 +904,22 @@ VE_FIELD(Move, .DisplayName = "Move")
 VE_FIELD(Look, .DisplayName = "Look")
 VE_FIELD(Actions, .DisplayName = "Actions")
 VE_REFLECT_END();
+// Not VE_REPLICATED: Intent is re-derived per tick server-side from the seat's input and is never
+// sent — the client sees only its effect (the moved Transform), never the command.
 
 VE_REFLECT(::Veng::Possesses, 0xC7D4144C7DF95B9BULL)
 VE_FIELD(Pawn, .DisplayName = "Pawn")
 VE_REFLECT_END();
+// A seat's possession is server-authoritative; the Pawn reference replicates as its target's NetId.
+VE_REPLICATED(::Veng::Possesses);
 
 VE_REFLECT(::Veng::SeatInput, 0x2D178569EDDBC215ULL)
 VE_FIELD(UsesKeyboardMouse, .DisplayName = "Uses Keyboard/Mouse")
 VE_FIELD(Gamepad, .DisplayName = "Gamepad")
 VE_FIELD(WantsGamepad, .DisplayName = "Wants Gamepad")
 VE_REFLECT_END();
+// Not VE_REPLICATED: SeatInput is a client-local device assignment (which keyboard/pad feeds a
+// seat) — meaningless on another peer, never sent.
 
 VE_REFLECT(::Veng::Mover, 0x7774F1C2B00DE07EULL)
 VE_FIELD(MoveSpeed, .DisplayName = "Move Speed", .Display = {.Min = 0.0})
@@ -920,6 +948,12 @@ VE_FIELD(Tier, .DisplayName = "Tier")
 VE_FIELD(Owner, .DisplayName = "Owner")
 VE_REFLECT_END();
 
+// Reflected so the inspector surfaces the server-assigned id (read-only), but *not* replicated:
+// NetIdentity is the wire key itself, carried in each snapshot's per-entity header.
+VE_REFLECT(::Veng::NetIdentity, 0x9E7C4A1B6D3F0852ULL)
+VE_FIELD(Id, .DisplayName = "Net Id", .ReadOnly = true)
+VE_REFLECT_END();
+
 VE_REFLECT(::Veng::CameraFollow, 0xF8BD924F0A0F9DB0ULL)
 VE_FIELD(Target, .DisplayName = "Target")
 VE_FIELD(Offset, .DisplayName = "Offset")
@@ -933,6 +967,8 @@ VE_FIELD(Pitch, .DisplayName = "Pitch", .Tooltip = "Elevation, radians; positive
 VE_FIELD(PitchLimit, .DisplayName = "Pitch Limit", .Tooltip = "Maximum |Pitch| in radians",
          .Display = {.Min = 0.0})
 VE_REFLECT_END();
+// CameraFollow / CameraLook are not VE_REPLICATED: View-phase camera rig state, derived locally per
+// client and "never on the wire" (see each struct's doc) — the client owns its own camera.
 
 VE_ENUM(::Veng::SessionPhase, 0x6DF15084654B59E7ULL)
 VE_ENUMERATOR(NotStarted)
@@ -945,6 +981,8 @@ VE_FIELD(Phase, .DisplayName = "Phase")
 VE_FIELD(Elapsed, .DisplayName = "Elapsed", .Display = {.Min = 0.0}, .ReadOnly = true)
 VE_FIELD(Score, .DisplayName = "Score")
 VE_REFLECT_END();
+// The game mode's state is server-authoritative; clients display the replicated phase/score/timer.
+VE_REPLICATED(::Veng::Session);
 
 VE_REFLECT(::Veng::GameModeConfig, 0xAE57419CF98B07F8ULL)
 VE_FIELD(PlayerPrefab, .DisplayName = "Player Prefab")

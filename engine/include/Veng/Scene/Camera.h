@@ -200,3 +200,7 @@ VE_REFLECT_END();
 VE_REFLECT(::Veng::Viewer, 0x879A9712E090AC19ULL)
 VE_FIELD(Camera, .DisplayName = "Camera")
 VE_REFLECT_END();
+// A seat entity is server-authoritative and replicated so the client learns which seats exist. The
+// Camera reference names a client-local (Local-tier) camera, so it encodes as a null wire reference
+// — the client re-wires its own camera to the replicated seat, rather than receiving one.
+VE_REPLICATED(::Veng::Viewer);

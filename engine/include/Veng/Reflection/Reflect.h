@@ -250,6 +250,19 @@ namespace Veng::Detail
     }                                                                                              \
     }
 
+/// @brief Marks a reflected type as replicated over the wire by specialising VengReplication\<T\>.
+///
+/// Placed beside the type's describe block (like VE_DISPLAY), it opts the whole struct into the
+/// net layer's snapshot encoding — TypeRegistry::Register<T>() reads the mark into
+/// TypeInfo::Replicated. A separate specialisation point from VengReflect<T>, so it composes with
+/// VE_REFLECT / VE_TYPE without touching them. The type is named fully qualified from global scope.
+#define VE_REPLICATED(Type)                                                                        \
+    template <>                                                                                    \
+    struct ::Veng::VengReplication<Type>                                                           \
+    {                                                                                              \
+        static constexpr bool Replicated = true;                                                   \
+    }
+
 /// @brief Declares a Variant\<Ts...\>'s identity by specialising VengReflect\<T\>.
 ///
 /// Type already is a Variant\<Ts...\> (or an alias of one), so the alternatives are

@@ -142,6 +142,9 @@ namespace Veng
 
     void Scene::TickSimulation(const f32 delta, const SystemContext& context)
     {
+        // Stamp every in-place edit this tick makes with the tick number, so the net layer can tell
+        // what changed since a connection last acked.
+        m_ChangeTick = context.Tick;
         if (m_Simulation)
         {
             m_Simulation->Update(*this, delta, context);
@@ -151,6 +154,7 @@ namespace Veng
     void Scene::TickSimulationPhase(const SceneSystem::Phase phase, const f32 delta,
                                     const SystemContext& context)
     {
+        m_ChangeTick = context.Tick;
         if (m_Simulation)
         {
             m_Simulation->UpdatePhase(*this, phase, delta, context);
@@ -706,7 +710,11 @@ namespace Veng
         {
             BumpSpatial();
         }
-        return PoolFor(id).Add(entity);
+        ComponentPool& pool = PoolFor(id);
+        void* slot = pool.Add(entity);
+        // Adding a component is a write: stamp it with the current tick so it reads dirty.
+        pool.Stamp(entity, m_ChangeTick);
+        return slot;
     }
 
     void Scene::RemoveRaw(Entity entity, TypeId id)
@@ -731,7 +739,14 @@ namespace Veng
         }
         if (ComponentPool* pool = TryPoolFor(id))
         {
-            return pool->TryGet(entity);
+            void* slot = pool->TryGet(entity);
+            // The same access-as-write discipline, per entity: a non-const fetch of a present
+            // component stamps it with the current tick so the net layer sees it as dirty.
+            if (slot != nullptr)
+            {
+                pool->Stamp(entity, m_ChangeTick);
+            }
+            return slot;
         }
         return nullptr;
     }
@@ -761,14 +776,22 @@ namespace Veng
             {
                 // The erased pointer is a mutable edit funnel (the inspector's),
                 // so visiting a spatial pool bumps the version like a non-const
-                // access.
+                // access, and stamps the component's change tick per entity.
                 if (IsSpatialId(id))
                 {
                     BumpSpatial();
                 }
+                pool->Stamp(entity, m_ChangeTick);
                 fn(id, component);
             }
         }
+    }
+
+    u64 Scene::GetComponentChangeTick(Entity entity, TypeId id) const
+    {
+        VE_ASSERT(IsAlive(entity), "GetComponentChangeTick on a dead or stale entity");
+        const ComponentPool* pool = TryPoolFor(id);
+        return pool != nullptr ? pool->ChangeTick(entity) : 0;
     }
 
     usize Scene::PoolCount(TypeId id) const

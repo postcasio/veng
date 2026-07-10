@@ -172,6 +172,27 @@ namespace Veng
         /// write. Read-only consumers use the const View/Each path to avoid bumping.
         [[nodiscard]] u64 GetSpatialVersion() const { return m_SpatialVersion; }
 
+        /// @brief Sets the sim tick that a non-const component access stamps as its change tick.
+        ///
+        /// The world drive sets this to SystemContext::Tick each phase, so an in-place edit during a
+        /// tick stamps that tick onto the touched (entity, component). Defaults to zero (edits before
+        /// the first tick — level load, editor authoring — stamp tick zero). The net layer's dirty
+        /// query keys off the resulting per-entity change ticks.
+        /// @param tick  The tick value non-const accesses now stamp.
+        void SetChangeTick(u64 tick) { m_ChangeTick = tick; }
+
+        /// @brief Returns the sim tick non-const accesses currently stamp (see SetChangeTick).
+        [[nodiscard]] u64 GetChangeTick() const { return m_ChangeTick; }
+
+        /// @brief Returns the last tick component @p id on @p entity was stamped at, or 0 if absent.
+        ///
+        /// A component enters a snapshot for a connection when this exceeds the connection's last-acked
+        /// tick (the send-until-acked dirty rule). A const query — it never stamps.
+        /// @param entity  The entity to query; must be alive.
+        /// @param id      The component TypeId to query.
+        /// @return The component's change tick, or 0 when the entity lacks the component.
+        [[nodiscard]] u64 GetComponentChangeTick(Entity entity, TypeId id) const;
+
         /// @brief Returns the TypeRegistry this scene was created with.
         ///
         /// The registry its components' descriptors are resolved against; prefab
@@ -496,6 +517,20 @@ namespace Veng
             return TryGetRaw(entity, id);
         }
 
+        /// @brief Const type-erased component fetch: the storage for `id` on `entity`, or nullptr if absent.
+        ///
+        /// The read-only sibling of the mutable TryGetComponent; routes through the const pool path,
+        /// so it never stamps a change tick. The snapshot encoder reads each replicated component
+        /// through it, gathering wire state without dirtying the very components it inspects.
+        /// @param entity  The entity to query; must be alive.
+        /// @param id      The TypeId of the component to fetch.
+        /// @return The component's const storage, or nullptr if the entity lacks it.
+        [[nodiscard]] const void* TryGetComponent(Entity entity, TypeId id) const
+        {
+            VE_ASSERT(IsAlive(entity), "TryGetComponent on a dead or stale entity");
+            return TryGetRaw(entity, id);
+        }
+
         /// @brief Range-for form of Each, supporting break/early-out.
         ///
         /// Usage: `for (auto [entity, a, b] : scene.View<A, B>()) { … }`
@@ -585,6 +620,8 @@ namespace Veng
         usize m_LiveCount = 0;
         /// @brief Monotonic counter for spatial-pool changes.
         u64 m_SpatialVersion = 0;
+        /// @brief The sim tick a non-const component access stamps as the touched component's change tick.
+        u64 m_ChangeTick = 0;
 
         /// @brief Component pools, keyed by TypeId, created lazily.
         unordered_map<TypeId, Unique<ComponentPool>> m_Pools;
