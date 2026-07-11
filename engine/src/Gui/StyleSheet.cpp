@@ -129,6 +129,9 @@ namespace Veng::Gui
         case StyleProperty::Rotation:
             style.Rotation = declaration.Values.x;
             return;
+        case StyleProperty::TextAlign:
+            style.TextAlignment = static_cast<TextAlign>(declaration.Unit);
+            return;
         case StyleProperty::ClipContent:
             style.ClipContent = declaration.Values.x != 0.0f;
             return;

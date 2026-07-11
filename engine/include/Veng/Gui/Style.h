@@ -140,6 +140,21 @@ namespace Veng::Gui
         WrapReverse,
     };
 
+    /// @brief Horizontal alignment of a Text element's glyph run inside its solved box.
+    ///
+    /// Meaningful when the box is wider than the shaped run — a min-width-pinned table cell, a
+    /// stretched cross-axis child, a fixed-width label. Alignment is applied at paint; it never
+    /// feeds the layout solve, so a content-sized text box aligns identically under all three.
+    enum class TextAlign : u8
+    {
+        /// @brief Glyphs start at the content box's left edge (the default).
+        Left,
+        /// @brief Glyphs center in the content box.
+        Center,
+        /// @brief Glyphs end at the content box's right edge.
+        Right,
+    };
+
     /// @brief Whether an element participates in normal flow or is absolutely positioned.
     enum class PositionType : u8
     {
@@ -255,6 +270,8 @@ namespace Veng::Gui
         f32 TextSize = 16.0f;
         /// @brief The font a Text element shapes and draws through; empty renders no text.
         AssetHandle<Font> TextFont;
+        /// @brief Horizontal alignment of a Text element's glyphs inside its solved box.
+        TextAlign TextAlignment = TextAlign::Left;
 
         /// @brief Multiplier applied to the element's alpha, in 0..1.
         ///

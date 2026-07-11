@@ -488,6 +488,14 @@ namespace Veng::Gui
         /// @brief Reads each element's computed rect back into Element::Layout from the mirror.
         void ReadLayout(Element& element, vec2 origin);
 
+        /// @brief Widens every Table's cells to their solved per-column maxima.
+        ///
+        /// Runs between the two layout passes of a Solve on a document holding a Table: reads each
+        /// cell's natural margin-box width from the first solve, takes the per-column maximum
+        /// across the table's rows, and raises each cell's layout-node min-width to its column's
+        /// width. Returns whether any node changed (the caller re-runs the layout when so).
+        bool AlignTableColumns();
+
         /// @brief Emits one element's primitives, then recurses into its children.
         ///
         /// The inherited opacity is the product of every ancestor's style opacity; it folds

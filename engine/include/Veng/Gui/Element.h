@@ -37,6 +37,13 @@ namespace Veng::Gui
         ScrollView,
         /// @brief A data-bound repeater of child elements.
         List,
+        /// @brief A column-aligning container: its rows' cells share per-column widths.
+        ///
+        /// Lays out and paints as a Panel; each direct child is a row (a row-direction flex
+        /// container), and the k-th in-flow cell of every row is widened to the column's widest
+        /// cell, so the rows read as a table. With an `items` binding it repeats its authored
+        /// row template per bound array element, exactly as a List does.
+        Table,
     };
 
     /// @brief Transient interaction-state bits an element carries for styling and events.

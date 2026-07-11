@@ -64,6 +64,10 @@ namespace Veng::Cook
             {
                 return Gui::ElementKind::List;
             }
+            if (tag == "Table")
+            {
+                return Gui::ElementKind::Table;
+            }
             return std::nullopt;
         }
 

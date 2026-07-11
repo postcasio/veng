@@ -974,8 +974,13 @@ cook-on-demand hot-reload serves UI with no new machinery. The parsing side is i
   sizing are noted follow-ons),
   `Button` (`onClick`), `Checkbox` (`value`/`checked`/`onChange`, driving the `:checked` variant),
   `Slider` (`min`/`max`/`step`/`value`/`onChange`), `ProgressBar` (a `[0,1]` fill), `TextInput`
-  (`value`/`onChange`), `ScrollView` (a clipped, scrollable region), and `List` (a data-bound
-  repeater — its authored children are an item template cloned once per element of a bound array).
+  (`value`/`onChange`), `ScrollView` (a clipped, scrollable region), `List` (a data-bound
+  repeater — its authored children are an item template cloned once per element of a bound array),
+  and `Table` (a column-aligning row container: each direct child is a row, and the k-th in-flow
+  cell of every row widens to the column's widest cell via a measured min-width between the Solve's
+  two layout passes; with an `items` binding it repeats its row template exactly as a List does).
+  A numeric Table column pairs with the `text-align` Text style property (`left`/`center`/`right`,
+  a paint-only glyph alignment inside the solved box).
   Each is an `ElementKind` the cooker recognizes and the widget layer gives behavior; a control's
   literal config attributes (`min`/`max`/`step`/`value`/`checked`) are read at `Instantiate` and its
   `{value}` binding is one-way (the model drives the widget without firing `onChange`).

@@ -296,6 +296,8 @@ namespace Veng::Gui
                 return "ScrollView";
             case ElementKind::List:
                 return "List";
+            case ElementKind::Table:
+                return "Table";
             }
             return "Panel";
         }
@@ -1064,6 +1066,7 @@ namespace Veng::Gui
             case StyleProperty::ClipContent:
             case StyleProperty::PointerEvents:
             case StyleProperty::Animation:
+            case StyleProperty::TextAlign:
                 return false;
             }
             return false;
@@ -1112,6 +1115,7 @@ namespace Veng::Gui
             case StyleProperty::PointerEvents:
             case StyleProperty::Animation:
             case StyleProperty::BackgroundGradient:
+            case StyleProperty::TextAlign:
                 return false;
             }
             return false;
@@ -1630,6 +1634,7 @@ namespace Veng::Gui
             case ElementKind::Image:
             case ElementKind::ProgressBar:
             case ElementKind::List:
+            case ElementKind::Table:
                 return false;
             }
             return false;
@@ -2018,10 +2023,103 @@ namespace Veng::Gui
         const YGNodeRef rootNode = m_Yoga->Get(*m_Root);
         YGNodeCalculateLayout(rootNode, available.x, available.y, YGDirectionLTR);
 
+        // A Table's cells widen to their per-column maxima measured off the first pass; a raised
+        // min-width re-runs the layout once. ApplyStyle re-pushes the styled min-widths on every
+        // Solve, so the natural (un-widened) widths above are what the columns are measured from.
+        if (AlignTableColumns())
+        {
+            YGNodeCalculateLayout(rootNode, available.x, available.y, YGDirectionLTR);
+        }
+
         ReadLayout(*m_Root, vec2(0.0f));
 
         m_Dirty = false;
         m_LastAvailable = available;
+    }
+
+    bool Document::AlignTableColumns()
+    {
+        bool changed = false;
+        for (const Unique<Element>& owned : m_Elements)
+        {
+            if (owned->Kind != ElementKind::Table || !owned->Visible)
+            {
+                continue;
+            }
+
+            // A row is an in-flow, visible direct child; a cell is the same one level down. An
+            // absolutely-positioned child sits outside the flow (an overlay, a rule), so it
+            // neither contributes to nor receives a column width.
+            const auto inFlow = [](const Element& element)
+            { return element.Visible && element.ComputedStyle.Position != PositionType::Absolute; };
+
+            // Column k's width is the widest k-th cell margin box across the table's rows.
+            vector<f32> columns;
+            for (const Element* row : owned->Children)
+            {
+                if (!inFlow(*row))
+                {
+                    continue;
+                }
+                usize index = 0;
+                for (const Element* cell : row->Children)
+                {
+                    if (!inFlow(*cell))
+                    {
+                        continue;
+                    }
+                    const YGNodeRef node = m_Yoga->Get(*cell);
+                    if (node == nullptr)
+                    {
+                        ++index;
+                        continue;
+                    }
+                    const f32 width = YGNodeLayoutGetWidth(node) +
+                                      YGNodeLayoutGetMargin(node, YGEdgeLeft) +
+                                      YGNodeLayoutGetMargin(node, YGEdgeRight);
+                    if (index >= columns.size())
+                    {
+                        columns.resize(index + 1, 0.0f);
+                    }
+                    columns[index] = std::max(columns[index], width);
+                    ++index;
+                }
+            }
+
+            // Raise each cell's min-width to its column's width less its own margins. The styled
+            // min-width was pushed by ApplyStyle, so only a genuinely wider column moves a node.
+            for (Element* row : owned->Children)
+            {
+                if (!inFlow(*row))
+                {
+                    continue;
+                }
+                usize index = 0;
+                for (Element* cell : row->Children)
+                {
+                    if (!inFlow(*cell))
+                    {
+                        continue;
+                    }
+                    const YGNodeRef node = m_Yoga->Get(*cell);
+                    if (node == nullptr || index >= columns.size())
+                    {
+                        ++index;
+                        continue;
+                    }
+                    const f32 target = columns[index] - YGNodeLayoutGetMargin(node, YGEdgeLeft) -
+                                       YGNodeLayoutGetMargin(node, YGEdgeRight);
+                    const YGValue current = YGNodeStyleGetMinWidth(node);
+                    if (target > 0.0f && (current.unit != YGUnitPoint || current.value < target))
+                    {
+                        YGNodeStyleSetMinWidth(node, target);
+                        changed = true;
+                    }
+                    ++index;
+                }
+            }
+        }
+        return changed;
     }
 
     void Document::BuildElement(const Element& element, DrawList& list, const f32 inherited) const
@@ -2117,6 +2215,18 @@ namespace Veng::Gui
             {
                 const vec2 label = MeasureElementText(element, std::nullopt);
                 origin = rect.Min + (rect.Size - label) * 0.5f;
+            }
+            else if (style.TextAlignment != TextAlign::Left)
+            {
+                // Center/right alignment distributes the content box's slack ahead of the run — a
+                // paint-only shift, so a content-sized box (no slack) draws exactly as Left does.
+                const f32 content = rect.Size.x - 2.0f * style.BorderStyle.Width -
+                                    style.Padding.Left - style.Padding.Right;
+                const f32 slack = content - MeasureElementText(element, std::nullopt).x;
+                if (slack > 0.0f)
+                {
+                    origin.x += style.TextAlignment == TextAlign::Right ? slack : slack * 0.5f;
+                }
             }
             vec4 textColor = style.TextColor;
             textColor.a *= opacity;
@@ -2385,11 +2495,24 @@ namespace Veng::Gui
         }
     }
 
+    namespace
+    {
+        // Whether an element repeats its authored children per bound array element. A List always
+        // does; a Table only when it carries an `items` binding — a static Table's children are
+        // hand-authored rows whose bindings resolve against the main context.
+        bool IsItemHost(const Element& element)
+        {
+            return element.Kind == ElementKind::List ||
+                   (element.Kind == ElementKind::Table &&
+                    element.Bindings.find("items") != element.Bindings.end());
+        }
+    }
+
     bool Document::IsListItem(const Element& element) const
     {
         for (const Element* e = element.Parent; e != nullptr; e = e->Parent)
         {
-            if (e->Kind == ElementKind::List)
+            if (IsItemHost(*e))
             {
                 return true;
             }
@@ -2399,12 +2522,12 @@ namespace Veng::Gui
 
     void Document::SyncLists()
     {
-        // Collect the Lists first: SyncList mutates m_Elements (adding/removing item clones), so the
-        // walk cannot iterate m_Elements directly.
+        // Collect the repeaters first: SyncList mutates m_Elements (adding/removing item clones), so
+        // the walk cannot iterate m_Elements directly.
         vector<Element*> lists;
         for (const Unique<Element>& element : m_Elements)
         {
-            if (element->Kind == ElementKind::List)
+            if (IsItemHost(*element))
             {
                 lists.push_back(element.get());
             }

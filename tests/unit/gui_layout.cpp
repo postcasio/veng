@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 #include <doctest/doctest.h>
 
@@ -195,6 +196,108 @@ TEST_CASE("gui layout: a button sizes to its label plus padding, like a text lea
     // The measured label is the content box; padding grows the border box around it.
     doc.Solve(vec2(200.0f, 200.0f));
     CheckRect(button.Layout, 0.0f, 0.0f, 32.0f, 32.0f);
+}
+
+TEST_CASE("gui layout: a table widens every cell to its column's widest")
+{
+    Document doc;
+
+    // 10px per character: cell widths are the text lengths, so the column maxima are known.
+    doc.SetTextMeasurer([](string_view text, const Style&, optional<f32>) -> vec2
+                        { return vec2(static_cast<f32>(text.size()) * 10.0f, 20.0f); });
+
+    Style column;
+    column.Direction = FlexDirection::Column;
+    column.AlignItems = Align::FlexStart;
+    doc.SetStyle(doc.Root(), column);
+
+    Element& table = doc.Add(doc.Root(), ElementKind::Table);
+    doc.SetStyle(table, column);
+
+    Style rowStyle;
+    rowStyle.Direction = FlexDirection::Row;
+    rowStyle.AlignItems = Align::FlexStart;
+
+    const auto addRow = [&](string_view name, string_view stat) -> std::pair<Element*, Element*>
+    {
+        Element& row = doc.Add(table, ElementKind::Panel);
+        doc.SetStyle(row, rowStyle);
+        Element& a = doc.Add(row, ElementKind::Text);
+        doc.SetText(a, name);
+        Element& b = doc.Add(row, ElementKind::Text);
+        doc.SetText(b, stat);
+        return {&a, &b};
+    };
+
+    const auto [nameA, statA] = addRow("LONGNAME", "1"); // 80px, 10px
+    const auto [nameB, statB] = addRow("AB", "STATS");   // 20px, 50px
+
+    doc.Solve(vec2(400.0f, 200.0f));
+
+    // Column 0 widens to the longer name (80), column 1 to the longer stat (50); the second
+    // column's cells start at the same x in both rows.
+    CHECK(nameA->Layout.Size.x == doctest::Approx(80.0f).epsilon(Eps));
+    CHECK(nameB->Layout.Size.x == doctest::Approx(80.0f).epsilon(Eps));
+    CHECK(statA->Layout.Min.x == doctest::Approx(80.0f).epsilon(Eps));
+    CHECK(statB->Layout.Min.x == doctest::Approx(80.0f).epsilon(Eps));
+    CHECK(statA->Layout.Size.x == doctest::Approx(50.0f).epsilon(Eps));
+    CHECK(statB->Layout.Size.x == doctest::Approx(50.0f).epsilon(Eps));
+
+    // The alignment survives a clean re-solve and re-applies after a text change re-dirties.
+    doc.Solve(vec2(400.0f, 200.0f));
+    CHECK(statB->Layout.Min.x == doctest::Approx(80.0f).epsilon(Eps));
+
+    doc.SetText(*nameB, "THELONGESTNAME"); // 140px: column 0 now follows row B.
+    doc.Solve(vec2(400.0f, 200.0f));
+    CHECK(nameA->Layout.Size.x == doctest::Approx(140.0f).epsilon(Eps));
+    CHECK(statA->Layout.Min.x == doctest::Approx(140.0f).epsilon(Eps));
+    CHECK(statB->Layout.Min.x == doctest::Approx(140.0f).epsilon(Eps));
+}
+
+TEST_CASE("gui layout: a table cell's margins count toward its column but stay its own")
+{
+    Document doc;
+
+    doc.SetTextMeasurer([](string_view text, const Style&, optional<f32>) -> vec2
+                        { return vec2(static_cast<f32>(text.size()) * 10.0f, 20.0f); });
+
+    Style column;
+    column.Direction = FlexDirection::Column;
+    column.AlignItems = Align::FlexStart;
+    doc.SetStyle(doc.Root(), column);
+
+    Element& table = doc.Add(doc.Root(), ElementKind::Table);
+    doc.SetStyle(table, column);
+
+    Style rowStyle;
+    rowStyle.Direction = FlexDirection::Row;
+    rowStyle.AlignItems = Align::FlexStart;
+
+    // Row A's first cell carries a 5px right margin; row B's is bare. The column width is the
+    // margin-box maximum (40 + 5), so row B's bare cell widens to 45 and both second cells
+    // start at x = 45.
+    Element& rowA = doc.Add(table, ElementKind::Panel);
+    doc.SetStyle(rowA, rowStyle);
+    Element& cellA0 = doc.Add(rowA, ElementKind::Text);
+    doc.SetText(cellA0, "FOUR");
+    Style margined;
+    margined.Margin = Insets{.Left = 0.0f, .Top = 0.0f, .Right = 5.0f, .Bottom = 0.0f};
+    doc.SetStyle(cellA0, margined);
+    Element& cellA1 = doc.Add(rowA, ElementKind::Text);
+    doc.SetText(cellA1, "X");
+
+    Element& rowB = doc.Add(table, ElementKind::Panel);
+    doc.SetStyle(rowB, rowStyle);
+    Element& cellB0 = doc.Add(rowB, ElementKind::Text);
+    doc.SetText(cellB0, "AB");
+    Element& cellB1 = doc.Add(rowB, ElementKind::Text);
+    doc.SetText(cellB1, "Y");
+
+    doc.Solve(vec2(400.0f, 200.0f));
+
+    CHECK(cellA1.Layout.Min.x == doctest::Approx(45.0f).epsilon(Eps));
+    CHECK(cellB1.Layout.Min.x == doctest::Approx(45.0f).epsilon(Eps));
+    CHECK(cellB0.Layout.Size.x == doctest::Approx(45.0f).epsilon(Eps));
 }
 
 TEST_CASE("gui layout: dirty tracking makes a clean re-solve at the same size a no-op")

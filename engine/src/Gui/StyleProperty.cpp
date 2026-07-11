@@ -78,6 +78,8 @@ namespace Veng::Gui
             return "background-gradient";
         case StyleProperty::Rotation:
             return "rotation";
+        case StyleProperty::TextAlign:
+            return "text-align";
         }
         return "unknown";
     }
@@ -227,6 +229,10 @@ namespace Veng::Gui
         if (name == "rotation")
         {
             return StyleProperty::Rotation;
+        }
+        if (name == "text-align")
+        {
+            return StyleProperty::TextAlign;
         }
         return std::nullopt;
     }

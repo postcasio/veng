@@ -365,6 +365,23 @@ namespace Veng::Cook
             return std::nullopt;
         }
 
+        optional<u32> ParseTextAlign(std::string_view v)
+        {
+            if (v == "left")
+            {
+                return static_cast<u32>(Gui::TextAlign::Left);
+            }
+            if (v == "center")
+            {
+                return static_cast<u32>(Gui::TextAlign::Center);
+            }
+            if (v == "right")
+            {
+                return static_cast<u32>(Gui::TextAlign::Right);
+            }
+            return std::nullopt;
+        }
+
         // Builds a CookedStyleProperty for an enum-valued property, or a located error.
         Result<CookedStyleProperty> EnumProperty(StyleProperty property, optional<u32> ordinal,
                                                  std::string_view value, const string& located)
@@ -474,6 +491,8 @@ namespace Veng::Cook
             return EnumProperty(property, ParsePosition(v), v, located);
         case StyleProperty::PointerEvents:
             return EnumProperty(property, ParsePointerEvents(v), v, located);
+        case StyleProperty::TextAlign:
+            return EnumProperty(property, ParseTextAlign(v), v, located);
 
         case StyleProperty::FlexGrow:
         case StyleProperty::FlexShrink:

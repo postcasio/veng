@@ -96,7 +96,9 @@ selector engine.
 Layout is **flexbox** (Yoga): `flex-direction`, `justify-content`, `align-items`,
 `flex-grow`/`flex-shrink`/`flex-basis`, `width`/`height` (`px` or `%`), `margin`,
 `padding`, `position`/`inset`. Paint is `background`, `background-gradient`, `color`
-(text / widget fill), `corner-radius`, `border-width`/`border-color`, `opacity`. Colors
+(text / widget fill), `corner-radius`, `border-width`/`border-color`, `opacity`, and
+`text-align` (`left`/`center`/`right` — a Text element's glyph alignment inside its
+solved box, meaningful when the box is wider than the run, e.g. a Table cell). Colors
 are hex `#rrggbb` or `#rrggbbaa`, resolved sRGB→linear at cook time. Register the
 stylesheet in the pack as type `StyleSheet`.
 
@@ -224,10 +226,10 @@ class/id tags, inline `style`, `{obj.field}` **bindings**, and `on*` **handlers*
 
 The widget set: `Panel` (flex box), `Text`, `Image`, `Button` (`onClick`), `Checkbox`
 (`value`/`checked`/`onChange`), `Slider` (`min`/`max`/`step`/`value`/`onChange`),
-`ProgressBar` (`value`), `TextInput` (`value`/`onChange`), `ScrollView`, and `List` (a
-data-bound repeater whose single child is the item template). Register the document in the
-pack as type `UIDocument`; its font and stylesheet resolve as ordinary cook/load
-dependencies.
+`ProgressBar` (`value`), `TextInput` (`value`/`onChange`), `ScrollView`, `List` (a
+data-bound repeater whose single child is the item template), and `Table` (a
+column-aligning row container — see below). Register the document in the pack as type
+`UIDocument`; its font and stylesheet resolve as ordinary cook/load dependencies.
 
 A `{obj.field}` value is a **binding** resolved against a bound view-model through
 reflection; a literal (`min="0"`) is read once at instantiate. A binding path is a dotted
@@ -265,6 +267,34 @@ by hand — lighting up the active tick, filling the charged slots — use `coun
 ids: `Document::FindAllByClass("tick")` returns every element carrying the class in tree order,
 so the game resolves the whole pool once and drives it by index. `hello-triangle`'s HUD authors
 its numbered tick strip this way.
+
+### `Table` — column-aligned rows
+
+A `<Table>` lays out and paints as a Panel (typically `flex-direction: column`), but each
+direct child is a **row** (a `flex-direction: row` container) and the k-th in-flow cell of
+every row is widened to that column's widest cell across the table — so the rows read as a
+table without hand-pinning widths. A cell is any element; its margins count toward the
+column but stay its own, so per-class cell spacing composes. A hidden or
+absolutely-positioned child (a rule, an overlay) neither contributes to nor receives a
+column width.
+
+With an `items` binding a Table **repeats its authored child as the row template**, exactly
+as a `List` does — one row per bound array element, each row's `{field}` bindings resolved
+against its element. Without `items` its children are static, hand-authored rows.
+
+Numeric columns pair the table with **`text-align`** (a `Text`-element style property:
+`left`/`center`/`right`): a right-aligned cell's glyphs end at the cell box's right edge, so
+a widened numeric column aligns its values' right edges. Alignment is paint-only — a
+content-sized text box (no slack) draws identically under all three values.
+
+```xml
+<Table class="scores" items="{Standings}">
+  <Panel class="score-row">
+    <Text class="score-name" value="{Name}"/>
+    <Text class="score-points" value="{Points}"/>   <!-- .score-points { text-align: right; } -->
+  </Panel>
+</Table>
+```
 
 ### `Image` — a textured box
 

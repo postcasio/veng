@@ -55,6 +55,8 @@ namespace VengEditor
                 return "ScrollView";
             case Gui::ElementKind::List:
                 return "List";
+            case Gui::ElementKind::Table:
+                return "Table";
             }
             return "Element";
         }

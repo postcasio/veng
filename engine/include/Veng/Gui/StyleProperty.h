@@ -101,12 +101,15 @@ namespace Veng::Gui
         BackgroundGradient,
         /// @brief The element's paint rotation in degrees (Style::Rotation); value is a scalar.
         Rotation,
+        /// @brief A Text element's horizontal glyph alignment (Style::TextAlignment); value is a
+        /// TextAlign ordinal.
+        TextAlign,
     };
 
     /// @brief The number of StyleProperty enumerators — keep in step when appending one.
     ///
     /// The runtime's whole-style property sweeps iterate `[0, StylePropertyCount)`.
-    inline constexpr u32 StylePropertyCount = static_cast<u32>(StyleProperty::Rotation) + 1;
+    inline constexpr u32 StylePropertyCount = static_cast<u32>(StyleProperty::TextAlign) + 1;
 
     /// @brief Canonical USS declaration name of a style property ("flex-direction", "background", …).
     ///
