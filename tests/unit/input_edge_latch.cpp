@@ -24,6 +24,18 @@ namespace
         const KeyReleasedEvent event(key, 0, 0);
         input.ApplyEvent(event);
     }
+
+    void Press(Input& input, const MouseButton button)
+    {
+        const MouseButtonPressedEvent event(button, 0);
+        input.ApplyEvent(event);
+    }
+
+    void Release(Input& input, const MouseButton button)
+    {
+        const MouseButtonReleasedEvent event(button, 0);
+        input.ApplyEvent(event);
+    }
 }
 
 TEST_CASE(
@@ -90,4 +102,77 @@ TEST_CASE("input latch: rolling every frame gives the ordinary one-frame press a
 
     input.BeginFrame(true);
     CHECK_FALSE(input.WasKeyReleased(Key::Space));
+}
+
+TEST_CASE("input latch: a press and release within one latched window still reads down at the tick")
+{
+    Input input(nullptr);
+
+    // A tap (press then release) that lands entirely across zero-tick frames must not vanish: the
+    // action layer reads the level (IsKeyDown), so the key has to stay down until a tick-running frame
+    // observes it, then release. Without the deferral the level would fall low at every tick and the
+    // action would never fire — the "a click only registers if held" symptom.
+    input.BeginFrame(true);
+    Press(input, Key::Space);
+
+    // Release arrives on a later zero-tick frame in the same window: it is deferred, the level stays
+    // down so any tick this window would see the press.
+    input.BeginFrame(false);
+    Release(input, Key::Space);
+    CHECK(input.IsKeyDown(Key::Space));
+
+    // Still latched, still down — the frame a tick actually runs on reads the press.
+    input.BeginFrame(false);
+    CHECK(input.IsKeyDown(Key::Space));
+
+    // The tick consumed the window, so this frame rolls and the deferred release applies: down clears
+    // and the released edge fires exactly once, a tick after the press was seen.
+    input.BeginFrame(true);
+    CHECK_FALSE(input.IsKeyDown(Key::Space));
+    CHECK(input.WasKeyReleased(Key::Space));
+
+    input.BeginFrame(true);
+    CHECK_FALSE(input.WasKeyReleased(Key::Space));
+}
+
+TEST_CASE("input latch: a mouse tap within one latched window survives to the tick, then releases")
+{
+    Input input(nullptr);
+
+    // The galaxy-map select-click path: a quick left-button tap between two Sim ticks must be seen
+    // down by a tick (so the orbit action triggers) and released on a later tick (so it fires the
+    // click), exactly as the keyboard tap above.
+    input.BeginFrame(true);
+    Press(input, MouseButton::Left);
+
+    input.BeginFrame(false);
+    Release(input, MouseButton::Left);
+    CHECK(input.IsMouseButtonDown(MouseButton::Left));
+
+    input.BeginFrame(false);
+    CHECK(input.IsMouseButtonDown(MouseButton::Left));
+
+    input.BeginFrame(true);
+    CHECK_FALSE(input.IsMouseButtonDown(MouseButton::Left));
+    CHECK(input.WasMouseButtonReleased(MouseButton::Left));
+}
+
+TEST_CASE("input latch: a key held across a roll releases immediately, not deferred")
+{
+    Input input(nullptr);
+
+    // The deferral only applies to a tap whose press has not yet crossed a roll. A key pressed in one
+    // window and released in a later one has already been observed down by ticks, so its release takes
+    // effect at once.
+    input.BeginFrame(true);
+    Press(input, Key::A);
+
+    // A tick ran, so this frame rolls (the press is now committed) and the key is still held.
+    input.BeginFrame(true);
+    CHECK(input.IsKeyDown(Key::A));
+
+    // Release in this later window applies immediately — not held to the next roll.
+    Release(input, Key::A);
+    CHECK_FALSE(input.IsKeyDown(Key::A));
+    CHECK(input.WasKeyReleased(Key::A));
 }

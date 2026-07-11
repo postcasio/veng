@@ -18,8 +18,32 @@ namespace Veng
             return;
         }
 
+        // Capture previous *before* lowering any deferred-release level, so the released edge fires
+        // this roll for an edge consumer even though the action layer reads level.
         m_PreviousKeys = m_Keys;
         m_PreviousMouseButtons = m_MouseButtons;
+
+        // Apply any release deferred while its press had not yet crossed a roll (a tap that went down
+        // and up entirely between two ticks): the tick just consumed saw the key/button down, so its
+        // release is honored now. Then clear the pressed-since-roll gate for the window beginning now.
+        for (usize code = 0; code < MaxKeys; ++code)
+        {
+            if (m_KeyReleaseDeferred[code])
+            {
+                m_Keys[code] = false;
+                m_KeyReleaseDeferred[code] = false;
+            }
+            m_KeyPressedSinceRoll[code] = false;
+        }
+        for (usize index = 0; index < MaxMouseButtons; ++index)
+        {
+            if (m_MouseReleaseDeferred[index])
+            {
+                m_MouseButtons[index] = false;
+                m_MouseReleaseDeferred[index] = false;
+            }
+            m_MousePressedSinceRoll[index] = false;
+        }
 
         // Roll the pad button bits before this frame's poll overwrites the current state, so the
         // pressed-edge query compares this frame's poll against last frame's.
@@ -45,6 +69,8 @@ namespace Veng
             if (code < MaxKeys)
             {
                 m_Keys[code] = true;
+                m_KeyPressedSinceRoll[code] = true;
+                m_KeyReleaseDeferred[code] = false;
             }
             break;
         }
@@ -54,7 +80,16 @@ namespace Veng
                 static_cast<usize>(static_cast<const KeyReleasedEvent&>(event).GetKey());
             if (code < MaxKeys)
             {
-                m_Keys[code] = false;
+                // Defer the release if the press has not yet crossed a roll, so a tap between two
+                // ticks stays down until a tick observes it; otherwise release immediately.
+                if (m_KeyPressedSinceRoll[code])
+                {
+                    m_KeyReleaseDeferred[code] = true;
+                }
+                else
+                {
+                    m_Keys[code] = false;
+                }
             }
             break;
         }
@@ -65,6 +100,8 @@ namespace Veng
             if (index < MaxMouseButtons)
             {
                 m_MouseButtons[index] = true;
+                m_MousePressedSinceRoll[index] = true;
+                m_MouseReleaseDeferred[index] = false;
             }
             break;
         }
@@ -74,7 +111,16 @@ namespace Veng
                 static_cast<usize>(static_cast<const MouseButtonReleasedEvent&>(event).GetButton());
             if (index < MaxMouseButtons)
             {
-                m_MouseButtons[index] = false;
+                // Defer the release if the press has not yet crossed a roll, so a tap between two
+                // ticks stays down until a tick observes it; otherwise release immediately.
+                if (m_MousePressedSinceRoll[index])
+                {
+                    m_MouseReleaseDeferred[index] = true;
+                }
+                else
+                {
+                    m_MouseButtons[index] = false;
+                }
             }
             break;
         }

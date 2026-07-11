@@ -197,13 +197,19 @@ namespace Veng
         /// this frame's. With no events applied the state stays neutral (nothing pressed).
         ///
         /// @p rollEdges gates that roll on whether the previous frame consumed the edges. Under a
-        /// fixed-timestep drive a frame can run zero Sim ticks (frame rate above the tick rate), and a
-        /// pressed edge on such a frame must survive until a frame that runs a tick reads it: the
-        /// caller passes false to hold the previous state (and accumulate deltas) so a within-frame tap
-        /// is not rolled away before any Sim system sees it, and true once a tick has consumed it. Held
-        /// state is unaffected either way.
-        /// @param rollEdges  True to roll edges/deltas this frame (the previous frame ran a Sim tick);
-        ///                   false to hold them latched for the next tick-running frame.
+        /// fixed-timestep drive a frame can run zero Sim ticks (frame rate above the tick rate), and an
+        /// input state a Sim system reads by level (a held key/button, the source of every action) must
+        /// survive until a frame that runs a tick reads it. The action resolver samples level, not
+        /// edges, so a press then release entirely between two ticks would leave the level low at every
+        /// tick and the action would never fire: a released key/button whose press has not yet crossed a
+        /// roll therefore holds its down level (its release is *deferred*) and is applied on the next
+        /// roll, guaranteeing every physical press is observed down for at least one tick and released on
+        /// a later one. The caller passes false to hold the latched state (and accumulate deltas) while
+        /// no tick ran, and true once a tick has consumed it (which then applies any deferred releases).
+        /// A key/button held across ticks is unaffected either way.
+        /// @param rollEdges  True to roll edges/deltas and apply deferred releases this frame (the
+        ///                   previous frame ran a Sim tick); false to hold them latched for the next
+        ///                   tick-running frame.
         /// @pre Must run before the event drain so ApplyEvent writes into a fresh frame.
         void BeginFrame(bool rollEdges = true);
 
@@ -319,11 +325,19 @@ namespace Veng
         std::array<bool, MaxKeys> m_Keys{};
         /// @brief Per-key held state last frame, indexed by key code.
         std::array<bool, MaxKeys> m_PreviousKeys{};
+        /// @brief Whether a key was pressed since the last roll, gating its release deferral.
+        std::array<bool, MaxKeys> m_KeyPressedSinceRoll{};
+        /// @brief A key whose release is held (its press has not yet crossed a roll), applied next roll.
+        std::array<bool, MaxKeys> m_KeyReleaseDeferred{};
 
         /// @brief Per-button held state this frame, indexed by button code.
         std::array<bool, MaxMouseButtons> m_MouseButtons{};
         /// @brief Per-button held state last frame, indexed by button code.
         std::array<bool, MaxMouseButtons> m_PreviousMouseButtons{};
+        /// @brief Whether a button was pressed since the last roll, gating its release deferral.
+        std::array<bool, MaxMouseButtons> m_MousePressedSinceRoll{};
+        /// @brief A button whose release is held (its press has not yet crossed a roll), applied next roll.
+        std::array<bool, MaxMouseButtons> m_MouseReleaseDeferred{};
 
         /// @brief Mouse position this frame, in window-space pixels.
         vec2 m_MousePosition = {0, 0};
