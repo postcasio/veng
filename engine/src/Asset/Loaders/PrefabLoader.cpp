@@ -5,6 +5,7 @@
 #include <fmt/format.h>
 
 #include <Veng/Asset/Animation.h>
+#include <Veng/Asset/AssetHandleType.h>
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/CookedBlobs.h>
 #include <Veng/Asset/Environment.h>
@@ -27,53 +28,6 @@ namespace Veng
         {
             return AssetLoadError{
                 .Kind = AssetError::Corrupt, .Id = id, .Detail = std::move(detail)};
-        }
-
-        // The AssetType an embedded AssetHandle<T> field loads as, keyed by the
-        // field's leaf TypeId — the same mapping the cooker validates against.
-        optional<AssetType> AssetTypeForHandleField(TypeId fieldType)
-        {
-            if (fieldType == TypeIdOf<AssetHandle<Texture>>())
-            {
-                return AssetType::Texture;
-            }
-            if (fieldType == TypeIdOf<AssetHandle<Mesh>>())
-            {
-                return AssetType::Mesh;
-            }
-            if (fieldType == TypeIdOf<AssetHandle<Material>>())
-            {
-                return AssetType::Material;
-            }
-            if (fieldType == TypeIdOf<AssetHandle<MaterialInstance>>())
-            {
-                return AssetType::MaterialInstance;
-            }
-            if (fieldType == TypeIdOf<AssetHandle<Prefab>>())
-            {
-                return AssetType::Prefab;
-            }
-            if (fieldType == TypeIdOf<AssetHandle<Animation>>())
-            {
-                return AssetType::Animation;
-            }
-            if (fieldType == TypeIdOf<AssetHandle<EnvironmentMap>>())
-            {
-                return AssetType::Environment;
-            }
-            if (fieldType == TypeIdOf<AssetHandle<InputMappingContext>>())
-            {
-                return AssetType::InputMap;
-            }
-            if (fieldType == TypeIdOf<AssetHandle<Gui::UIDocument>>())
-            {
-                return AssetType::UIDocument;
-            }
-            if (fieldType == TypeIdOf<AssetHandle<RawAsset>>())
-            {
-                return AssetType::Raw;
-            }
-            return std::nullopt;
         }
 
         // Load one embedded dependency by id + type, returning its cache entry.

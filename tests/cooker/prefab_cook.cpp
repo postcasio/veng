@@ -387,6 +387,45 @@ TEST_CASE("prefab cook: an AssetHandle id resolving to the wrong type is a locat
     CHECK(blob.error().find("expects type") != string::npos);
 }
 
+TEST_CASE("prefab cook: an Animation handle resolving to the wrong type is a located error")
+{
+    const LoadedModuleTypes module = LoadRegistry();
+
+    // 8002 resolves to a Texture in the reference pack, but Animator.Clip expects an
+    // Animation. AssetHandle<Animation> shares the one handle-type map with the runtime
+    // loader, so the mismatch is caught here exactly as a Mesh mismatch is.
+    json animator;
+    animator["Clip"] = FormatHexId(8002);
+    json components;
+    components["::Veng::Animator"] = animator;
+    const path packJson = WriteInlinePrefab("prefab_animation_mismatch", components);
+
+    const path refs[] = {FixtureDir / "prefab_refs.json"};
+    const Result<vector<u8>> blob = CookPrefab(packJson, &module.Types, refs, AssetId{4242});
+    REQUIRE_FALSE(blob.has_value());
+    CHECK(blob.error().find("Animation") != string::npos);
+    CHECK(blob.error().find("expects type") != string::npos);
+}
+
+TEST_CASE("prefab cook: an InputMap handle resolving to the wrong type is a located error")
+{
+    const LoadedModuleTypes module = LoadRegistry();
+
+    // The InputContextStack's Active array holds AssetHandle<InputMappingContext>; 8002 is a
+    // Texture, so the array-element handle validation (also on the shared map) rejects it.
+    json stack;
+    stack["Active"] = json::array({FormatHexId(8002)});
+    json components;
+    components["::Veng::InputContextStack"] = stack;
+    const path packJson = WriteInlinePrefab("prefab_inputmap_mismatch", components);
+
+    const path refs[] = {FixtureDir / "prefab_refs.json"};
+    const Result<vector<u8>> blob = CookPrefab(packJson, &module.Types, refs, AssetId{4242});
+    REQUIRE_FALSE(blob.has_value());
+    CHECK(blob.error().find("InputMap") != string::npos);
+    CHECK(blob.error().find("expects type") != string::npos);
+}
+
 TEST_CASE("prefab cook: a non-resident AssetHandle id is accepted as-is")
 {
     const LoadedModuleTypes module = LoadRegistry();

@@ -9,15 +9,10 @@
 
 #include <fmt/format.h>
 
+#include <Veng/Asset/AssetHandleType.h>
 #include <Veng/Asset/AssetType.h>
 #include <Veng/Asset/CookedBlobs.h>
-#include <Veng/Asset/Environment.h>
-#include <Veng/Asset/Mesh.h>
-#include <Veng/Asset/Material.h>
-#include <Veng/Asset/RawAsset.h>
-#include <Veng/Asset/Texture.h>
 #include <Veng/Cook/JsonFile.h>
-#include <Veng/Gui/UIDocument.h>
 #include <Veng/Reflection/JsonSerialize.h>
 #include <Veng/Reflection/Serialize.h>
 #include <Veng/Reflection/TypeId.h>
@@ -27,46 +22,6 @@ namespace Veng::Cook
 {
     namespace
     {
-        // The AssetType an AssetHandle<T> field expects, keyed by the field's leaf
-        // TypeId (the stable ids on VengReflect<AssetHandle<T>>). A field whose
-        // type is none of these is an AssetHandle of an unknown asset type.
-        optional<AssetType> AssetTypeForHandleField(TypeId fieldType)
-        {
-            if (fieldType == TypeIdOf<AssetHandle<Texture>>())
-            {
-                return AssetType::Texture;
-            }
-            if (fieldType == TypeIdOf<AssetHandle<Mesh>>())
-            {
-                return AssetType::Mesh;
-            }
-            if (fieldType == TypeIdOf<AssetHandle<Material>>())
-            {
-                return AssetType::Material;
-            }
-            if (fieldType == TypeIdOf<AssetHandle<MaterialInstance>>())
-            {
-                return AssetType::MaterialInstance;
-            }
-            if (fieldType == TypeIdOf<AssetHandle<Prefab>>())
-            {
-                return AssetType::Prefab;
-            }
-            if (fieldType == TypeIdOf<AssetHandle<EnvironmentMap>>())
-            {
-                return AssetType::Environment;
-            }
-            if (fieldType == TypeIdOf<AssetHandle<Gui::UIDocument>>())
-            {
-                return AssetType::UIDocument;
-            }
-            if (fieldType == TypeIdOf<AssetHandle<RawAsset>>())
-            {
-                return AssetType::Raw;
-            }
-            return std::nullopt;
-        }
-
         // Whether `actual` is an acceptable source type for an AssetHandle field expecting
         // `expected`. The default-instance rule lets a MaterialInstance field accept a bare
         // Material id (resolved to the parent's zero-override default instance at load).
