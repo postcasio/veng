@@ -978,7 +978,9 @@ cook-on-demand hot-reload serves UI with no new machinery. The parsing side is i
   repeater — its authored children are an item template cloned once per element of a bound array),
   and `Table` (a column-aligning row container: each direct child is a row, and the k-th in-flow
   cell of every row widens to the column's widest cell via a measured min-width between the Solve's
-  two layout passes; with an `items` binding it repeats its row template exactly as a List does).
+  two layout passes; a flex-grow cell is an elastic filler that absorbs row slack instead of
+  becoming a column, right-anchoring the columns after it; with an `items` binding it repeats its
+  row template exactly as a List does).
   A numeric Table column pairs with the `text-align` Text style property (`left`/`center`/`right`,
   a paint-only glyph alignment inside the solved box).
   Each is an `ElementKind` the cooker recognizes and the widget layer gives behavior; a control's

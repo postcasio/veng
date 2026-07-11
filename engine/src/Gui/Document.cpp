@@ -2049,9 +2049,15 @@ namespace Veng::Gui
 
             // A row is an in-flow, visible direct child; a cell is the same one level down. An
             // absolutely-positioned child sits outside the flow (an overlay, a rule), so it
-            // neither contributes to nor receives a column width.
+            // neither contributes to nor receives a column width. A growing cell is an elastic
+            // filler, not a column: its first-pass width is its own row's slack (different per
+            // row), so measuring it would poison the column maximum and pinning it would defeat
+            // the grow — it keeps its column index but is otherwise left alone, absorbing
+            // per-row width differences so the fixed columns after it stay right-anchored.
             const auto inFlow = [](const Element& element)
             { return element.Visible && element.ComputedStyle.Position != PositionType::Absolute; };
+            const auto isFiller = [](const Element& element)
+            { return element.ComputedStyle.FlexGrow > 0.0f; };
 
             // Column k's width is the widest k-th cell margin box across the table's rows.
             vector<f32> columns;
@@ -2069,7 +2075,7 @@ namespace Veng::Gui
                         continue;
                     }
                     const YGNodeRef node = m_Yoga->Get(*cell);
-                    if (node == nullptr)
+                    if (node == nullptr || isFiller(*cell))
                     {
                         ++index;
                         continue;
@@ -2102,7 +2108,7 @@ namespace Veng::Gui
                         continue;
                     }
                     const YGNodeRef node = m_Yoga->Get(*cell);
-                    if (node == nullptr || index >= columns.size())
+                    if (node == nullptr || isFiller(*cell) || index >= columns.size())
                     {
                         ++index;
                         continue;

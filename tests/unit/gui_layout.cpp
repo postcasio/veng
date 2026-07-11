@@ -254,6 +254,57 @@ TEST_CASE("gui layout: a table widens every cell to its column's widest")
     CHECK(statB->Layout.Min.x == doctest::Approx(140.0f).epsilon(Eps));
 }
 
+TEST_CASE("gui layout: a growing table cell is an elastic filler, right-anchoring the rest")
+{
+    Document doc;
+
+    doc.SetTextMeasurer([](string_view text, const Style&, optional<f32>) -> vec2
+                        { return vec2(static_cast<f32>(text.size()) * 10.0f, 20.0f); });
+
+    Style column;
+    column.Direction = FlexDirection::Column;
+    column.Width = Length::Points(200.0f);
+    doc.SetStyle(doc.Root(), column);
+
+    Element& table = doc.Add(doc.Root(), ElementKind::Table);
+    Style tableStyle;
+    tableStyle.Direction = FlexDirection::Column;
+    doc.SetStyle(table, tableStyle);
+
+    Style rowStyle;
+    rowStyle.Direction = FlexDirection::Row;
+    rowStyle.AlignItems = Align::FlexStart;
+
+    Style fill;
+    fill.FlexGrow = 1.0f;
+
+    const auto addRow = [&](string_view name, string_view stat) -> std::pair<Element*, Element*>
+    {
+        Element& row = doc.Add(table, ElementKind::Panel);
+        doc.SetStyle(row, rowStyle);
+        Element& a = doc.Add(row, ElementKind::Text);
+        doc.SetText(a, name);
+        Element& spacer = doc.Add(row, ElementKind::Panel);
+        doc.SetStyle(spacer, fill);
+        Element& b = doc.Add(row, ElementKind::Text);
+        doc.SetText(b, stat);
+        return {&a, &b};
+    };
+
+    const auto [nameA, statA] = addRow("LONGNAME", "1"); // 80px, 10px
+    const auto [nameB, statB] = addRow("AB", "1234");    // 20px, 40px
+
+    doc.Solve(vec2(400.0f, 200.0f));
+
+    // The name column still widens to the widest name; the filler absorbs each row's slack so
+    // both stat cells end at the rows' shared right edge, and the stat column stays aligned.
+    CHECK(nameB->Layout.Size.x == doctest::Approx(80.0f).epsilon(Eps));
+    CHECK(statA->Layout.Min.x + statA->Layout.Size.x == doctest::Approx(200.0f).epsilon(Eps));
+    CHECK(statB->Layout.Min.x + statB->Layout.Size.x == doctest::Approx(200.0f).epsilon(Eps));
+    CHECK(statA->Layout.Min.x == doctest::Approx(160.0f).epsilon(Eps));
+    CHECK(statB->Layout.Min.x == doctest::Approx(160.0f).epsilon(Eps));
+}
+
 TEST_CASE("gui layout: a table cell's margins count toward its column but stay its own")
 {
     Document doc;

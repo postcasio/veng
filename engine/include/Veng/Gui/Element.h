@@ -41,8 +41,10 @@ namespace Veng::Gui
         ///
         /// Lays out and paints as a Panel; each direct child is a row (a row-direction flex
         /// container), and the k-th in-flow cell of every row is widened to the column's widest
-        /// cell, so the rows read as a table. With an `items` binding it repeats its authored
-        /// row template per bound array element, exactly as a List does.
+        /// cell, so the rows read as a table. A cell with a positive flex-grow is an elastic
+        /// filler rather than a column: it absorbs each row's slack, so the fixed columns after
+        /// it right-anchor to the rows' shared right edge. With an `items` binding it repeats
+        /// its authored row template per bound array element, exactly as a List does.
         Table,
     };
 

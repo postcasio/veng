@@ -276,7 +276,10 @@ every row is widened to that column's widest cell across the table — so the ro
 table without hand-pinning widths. A cell is any element; its margins count toward the
 column but stay its own, so per-class cell spacing composes. A hidden or
 absolutely-positioned child (a rule, an overlay) neither contributes to nor receives a
-column width.
+column width. A cell with a positive `flex-grow` is an **elastic filler**, not a column: it
+absorbs its row's slack (give it a `flex-basis` for its minimum gap), so the fixed columns
+after it right-anchor to the rows' shared right edge — the way a name column on the left
+and numeric columns pinned to the panel's right edge coexist.
 
 With an `items` binding a Table **repeats its authored child as the row template**, exactly
 as a `List` does — one row per bound array element, each row's `{field}` bindings resolved
