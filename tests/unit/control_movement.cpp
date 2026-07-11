@@ -20,6 +20,7 @@
 #include <Veng/Asset/InputMappingContext.h>
 #include <Veng/Input.h>
 #include <Veng/Input/Actions.h>
+#include <Veng/InputEvents.h>
 #include <Veng/Reflection/Serialize.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/BuiltinTypes.h>
@@ -415,6 +416,68 @@ TEST_CASE("InputMappingSystem resolves each seat's PlayerInput; a neutral snapsh
     CHECK(VecApprox(vec3(resolved.GetValue(Move), 0.0f), vec3(0.0f)));
     CHECK_FALSE(resolved.IsHeld(Jump));
     CHECK_FALSE(resolved.WasTriggered(Jump));
+}
+
+TEST_CASE("InputMappingSystem accumulates a release edge across a multi-step frame")
+{
+    // A once-per-frame reader (a View system) must still see a release that a later Sim step of the
+    // same frame overwrote in Phase. The system ORs each step's edge into ReleasedThisFrame and
+    // resets it on the frame's first step (SystemContext::FirstStepThisFrame), so
+    // WasReleasedThisFrame survives where the per-tick WasReleased does not.
+    TypeRegistry registry = MakeRegistry();
+    const Unique<Scene> scene = Scene::Create(registry);
+
+    // A context binding Jump to a real key so the headless Input can drive it by event.
+    const ResolvedContext jumpContext{
+        .Actions = {InputAction{.Id = Jump, .Name = "Jump", .Kind = ActionKind::Button}},
+        .Bindings = {Binding{.Source = {.Device = InputDeviceType::Keyboard,
+                                        .Control = static_cast<u32>(Key::Space)},
+                             .Action = Jump,
+                             .Axis = AxisComponent::Whole,
+                             .Scale = 1.0f}}};
+
+    const Entity seat = scene->CreateEntity();
+    scene->Add<Viewer>(seat, Viewer{});
+    scene->Add<PlayerInput>(seat, PlayerInput{});
+    scene->Add<InputContextStack>(seat,
+                                  InputContextStack{.Active = {MakeResidentContext(jumpContext)}});
+    scene->Add<SeatInput>(seat, SeatInput{});
+
+    InputMappingSystem mapping;
+    ContextStorage storage;
+    Input& input = storage.HeadlessInput;
+
+    const auto tick = [&](const bool firstStep)
+    {
+        SystemContext context = storage.Make();
+        context.FirstStepThisFrame = firstStep;
+        mapping.OnUpdate(*scene, 0.016f, context);
+    };
+    const PlayerInput& resolved = scene->Get<PlayerInput>(seat);
+
+    // Frame 0: press Space and run one step — Jump is held.
+    input.BeginFrame(true);
+    input.ApplyEvent(KeyPressedEvent(Key::Space, 0, 0));
+    tick(/*firstStep=*/true);
+    CHECK(resolved.IsHeld(Jump));
+
+    // Frame 1 rolls (committing the press), then Space releases. Two Sim steps run this frame with
+    // the button up on both: step 0 sees the Completed edge, step 1 overwrites Phase to None.
+    input.BeginFrame(true);
+    input.ApplyEvent(KeyReleasedEvent(Key::Space, 0, 0));
+    tick(/*firstStep=*/true);
+    tick(/*firstStep=*/false);
+
+    // The per-tick edge was overwritten by the second step — the symptom a once-per-frame reader
+    // hit — but the frame-accumulated edge survived, so the release is observable after the ticks.
+    CHECK_FALSE(resolved.WasReleased(Jump));
+    CHECK(resolved.WasReleasedThisFrame(Jump));
+    CHECK_FALSE(resolved.IsHeld(Jump));
+
+    // Frame 2: the accumulator resets on the first step, so a fresh frame with no new edge is clean.
+    input.BeginFrame(true);
+    tick(/*firstStep=*/true);
+    CHECK_FALSE(resolved.WasReleasedThisFrame(Jump));
 }
 
 TEST_CASE(

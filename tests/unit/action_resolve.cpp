@@ -170,6 +170,30 @@ TEST_CASE("ResolveActions derives Started/Ongoing/Completed across scripted tick
     CHECK_FALSE(t4.WasTriggered(Jump));
 }
 
+TEST_CASE("ResolveActions seeds the frame-accumulated edges from this tick's phase")
+{
+    const ResolvedContext context = WasdContext();
+    const std::array active{context};
+
+    FakeRawInput down;
+    down.KeysDown = {KeySpace};
+    const FakeRawInput up;
+
+    // A single tick reads the *ThisFrame edges identically to the per-tick Was* — the seed the
+    // InputMappingSystem later ORs across a multi-step frame, unchanged for a one-step frame.
+    const ActionState started = ResolveActions(active, down, {});
+    CHECK(started.WasTriggeredThisFrame(Jump));
+    CHECK_FALSE(started.WasReleasedThisFrame(Jump));
+
+    const ActionState ongoing = ResolveActions(active, down, started);
+    CHECK_FALSE(ongoing.WasTriggeredThisFrame(Jump));
+    CHECK_FALSE(ongoing.WasReleasedThisFrame(Jump));
+
+    const ActionState completed = ResolveActions(active, up, ongoing);
+    CHECK(completed.WasReleasedThisFrame(Jump));
+    CHECK_FALSE(completed.WasTriggeredThisFrame(Jump));
+}
+
 TEST_CASE("A higher-priority context rebinds an action and leaves others falling through")
 {
     const ResolvedContext base = WasdContext();

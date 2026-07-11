@@ -681,10 +681,12 @@ namespace Veng
         /// @param pointer  This frame's routing for @p scene (empty when the pointer is elsewhere).
         /// @param tick     The tick number to stamp (the Sim step, or the last completed tick in View).
         /// @param alpha    The interpolation fraction to stamp (0 in Sim, the frame residual in View).
+        /// @param firstStepThisFrame  True on the frame's first Sim step (false in View); resets a
+        ///                            per-frame accumulator (see SystemContext::FirstStepThisFrame).
         /// @return The assembled per-tick context.
         [[nodiscard]] SystemContext BuildSystemContext(const Scene& scene,
                                                        const PointerRouting& pointer, u64 tick,
-                                                       f32 alpha) const;
+                                                       f32 alpha, bool firstStepThisFrame) const;
 
         /// @brief Returns the primary simulation (the first registered scene's), or null when none.
         [[nodiscard]] SceneSimulation* PrimarySimulation() const;

@@ -342,6 +342,27 @@ namespace Veng
         /// @param id  The action to look up.
         /// @return True on the tick the action released.
         [[nodiscard]] bool WasReleased(ActionId id) const { return State.WasReleased(id); }
+
+        /// @brief Whether an action started on any Sim tick since this frame began.
+        ///
+        /// The query a once-per-frame reader (a View system) uses so a Started edge on a non-final
+        /// tick of a multi-tick frame is not lost; a per-tick Sim system uses WasTriggered.
+        /// @param id  The action to look up.
+        /// @return True if the action activated on any tick this frame.
+        [[nodiscard]] bool WasTriggeredThisFrame(ActionId id) const
+        {
+            return State.WasTriggeredThisFrame(id);
+        }
+
+        /// @brief Whether an action released on any Sim tick since this frame began.
+        ///
+        /// The once-per-frame release query; the companion to WasTriggeredThisFrame.
+        /// @param id  The action to look up.
+        /// @return True if the action released on any tick this frame.
+        [[nodiscard]] bool WasReleasedThisFrame(ActionId id) const
+        {
+            return State.WasReleasedThisFrame(id);
+        }
     };
 
     /// @brief The ordered active input contexts for a seat, highest priority last.

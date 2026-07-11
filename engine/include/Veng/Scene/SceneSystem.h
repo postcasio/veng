@@ -160,6 +160,14 @@ namespace Veng
         /// until a client/server split exists — every standalone tick is Server.
         NetRole Role = NetRole::Server;
 
+        /// @brief Whether this is the first Sim step of the frame's fixed-step sequence.
+        ///
+        /// A frame runs 0..N Sim steps under the fixed-timestep accumulator; this is true only on
+        /// step 0, so a system accumulating across the frame's steps (InputMappingSystem folding
+        /// per-tick action edges into a frame-accumulated view) resets its accumulation here. False
+        /// in the View phase, which is not a Sim step.
+        bool FirstStepThisFrame = false;
+
         /// @brief Returns a copy of this context with Alpha set to @p alpha.
         ///
         /// The View-phase context is the Sim-phase context plus the frame's interpolation fraction;

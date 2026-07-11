@@ -66,6 +66,18 @@ namespace Veng
         return sample != nullptr && sample->Phase == ActionPhase::Completed;
     }
 
+    bool ActionState::WasTriggeredThisFrame(ActionId id) const
+    {
+        const ActionSample* sample = FindSample(Actions, id);
+        return sample != nullptr && sample->StartedThisFrame;
+    }
+
+    bool ActionState::WasReleasedThisFrame(ActionId id) const
+    {
+        const ActionSample* sample = FindSample(Actions, id);
+        return sample != nullptr && sample->ReleasedThisFrame;
+    }
+
     ActionState ResolveActions(std::span<const ResolvedContext> active, const RawInputView& raw,
                                const ActionState& previous)
     {
@@ -161,6 +173,12 @@ namespace Veng
             {
                 sample.Phase = ActionPhase::None;
             }
+
+            // Seed the frame-accumulated edges from this tick's phase. InputMappingSystem ORs these
+            // across a frame's ticks (resetting on the first) so a once-per-frame reader sees an edge
+            // a later tick would erase from Phase; a single-tick frame reads identically to Phase.
+            sample.StartedThisFrame = sample.Phase == ActionPhase::Started;
+            sample.ReleasedThisFrame = sample.Phase == ActionPhase::Completed;
         }
 
         return result;

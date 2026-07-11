@@ -123,6 +123,21 @@ namespace Veng
 
         /// @brief How the action's activation changed this tick.
         ActionPhase Phase = ActionPhase::None;
+
+        /// @brief Whether the action started (Started) on any Sim tick since this frame began.
+        ///
+        /// The frame-accumulated companion to Phase == Started: InputMappingSystem ORs this across
+        /// every Sim tick of a frame and resets it on the frame's first tick, so a once-per-frame
+        /// reader (a View system) sees a Started edge that landed on a non-final tick of a multi-tick
+        /// frame — which the single-valued Phase would have overwritten. Not reflected: a transient,
+        /// locally-derived view of Phase, never cooked or replicated.
+        bool StartedThisFrame = false;
+
+        /// @brief Whether the action released (Completed) on any Sim tick since this frame began.
+        ///
+        /// The frame-accumulated companion to Phase == Completed, maintained exactly as
+        /// StartedThisFrame. Not reflected.
+        bool ReleasedThisFrame = false;
     };
 
     /// @brief The resolved action set for one seat this tick.
@@ -151,14 +166,40 @@ namespace Veng
         [[nodiscard]] bool IsHeld(ActionId id) const;
 
         /// @brief Whether an action became active this tick (Started).
+        ///
+        /// The per-tick edge, for a Sim system that runs every tick and observes each pulse once.
+        /// A once-per-frame reader (a View system) wants WasTriggeredThisFrame instead — this pulse
+        /// is overwritten by a later tick of the same frame.
         /// @param id  The action to look up.
         /// @return True on the tick the action activated.
         [[nodiscard]] bool WasTriggered(ActionId id) const;
 
         /// @brief Whether an action was released this tick (Completed).
+        ///
+        /// The per-tick edge; see WasTriggered for the Sim-vs-View distinction.
         /// @param id  The action to look up.
         /// @return True on the tick the action released.
         [[nodiscard]] bool WasReleased(ActionId id) const;
+
+        /// @brief Whether an action started on any Sim tick since this frame began.
+        ///
+        /// The frame-accumulated edge a once-per-frame reader (a View system, or per-frame
+        /// application code) samples: under the fixed timestep a frame runs 0..N Sim ticks and a
+        /// Started pulse on a non-final tick is overwritten in Phase before the frame's single View
+        /// pass reads it. This survives that, reading the ORed StartedThisFrame the InputMappingSystem
+        /// maintains. A per-tick Sim system uses WasTriggered.
+        /// @param id  The action to look up.
+        /// @return True if the action activated on any tick this frame.
+        [[nodiscard]] bool WasTriggeredThisFrame(ActionId id) const;
+
+        /// @brief Whether an action released on any Sim tick since this frame began.
+        ///
+        /// The frame-accumulated release edge; the companion to WasTriggeredThisFrame, and the query
+        /// a once-per-frame click/release consumer must use so a Completed pulse on a non-final tick
+        /// of a multi-tick frame is not lost.
+        /// @param id  The action to look up.
+        /// @return True if the action released on any tick this frame.
+        [[nodiscard]] bool WasReleasedThisFrame(ActionId id) const;
     };
 
     /// @brief The in-memory, load-resolved form of an InputMappingContext.

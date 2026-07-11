@@ -592,7 +592,8 @@ namespace Veng
     }
 
     SystemContext Application::BuildSystemContext(const Scene& scene, const PointerRouting& pointer,
-                                                  const u64 tick, const f32 alpha) const
+                                                  const u64 tick, const f32 alpha,
+                                                  const bool firstStepThisFrame) const
     {
         SystemContext context{
             .Assets = *m_AssetManager,
@@ -602,6 +603,7 @@ namespace Veng
             .Tick = tick,
             .Alpha = alpha,
             .Role = GetNetRole(),
+            .FirstStepThisFrame = firstStepThisFrame,
         };
 
         // Resolve the sim's primary presenting viewport — the first registered Presented viewport
@@ -1017,8 +1019,9 @@ namespace Veng
                     scene->SetChangeTick(tick);
                     FeedServerSeatInputs();
                 }
-                scene->TickSimulationPhase(SceneSystem::Phase::Sim, step.SimDelta,
-                                           BuildSystemContext(*scene, pointer, tick, 0.0f));
+                scene->TickSimulationPhase(
+                    SceneSystem::Phase::Sim, step.SimDelta,
+                    BuildSystemContext(*scene, pointer, tick, 0.0f, tickIndex == 0));
                 if (netWorld && m_Net->Role == NetRole::Client)
                 {
                     StampClientInput(tick);
@@ -1029,7 +1032,7 @@ namespace Veng
             {
                 scene->TickSimulationPhase(
                     SceneSystem::Phase::View, delta,
-                    BuildSystemContext(*scene, pointer, m_SimClock.GetTick(), step.Alpha));
+                    BuildSystemContext(*scene, pointer, m_SimClock.GetTick(), step.Alpha, false));
             }
         }
 
