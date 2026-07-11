@@ -54,6 +54,13 @@ symbol: build the Doxygen reference with `cmake --build build --target docs`
   tree, install prefix), the `veng_ROOT` / `CMAKE_PREFIX_PATH` /
   `FETCHCONTENT_SOURCE_DIR_VENG` discovery incantations, and the co-development
   loop that needs no reinstall.
+- **[Networking: server-authoritative multiplayer](guides/networking.md)** — building
+  a client/server game: the server-authoritative model and fixed tick, marking a
+  component to replicate with `VE_REPLICATED`, a connection becoming a seat and the
+  owner-threading spawn rule that pawns it, the authority-filter idiom for a game's
+  Sim systems, the launch modes (listen server, dedicated server, joining client),
+  and the two-world in-process integration suite — plus what v1 leaves to a later
+  phase (prediction, delta compression, interest management).
 - **[Exposing your app to an agent with the MCP server](guides/consuming-mcp.md)** —
   linking the optional `veng::mcp` library: filling an `McpHost` from your
   systems, constructing and pumping an `McpServer`, the read-only versus mutation

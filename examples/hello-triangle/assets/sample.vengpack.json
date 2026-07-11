@@ -82,6 +82,11 @@
       "source": "prefabs/scene.prefab.json"
     },
     {
+      "id": "0x01FE4465D602376B",
+      "type": "Prefab",
+      "source": "prefabs/netpawn.prefab.json"
+    },
+    {
       "id": "0x95C2E76206A11F08",
       "type": "Level",
       "source": "levels/sample.level.json"

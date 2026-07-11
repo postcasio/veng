@@ -1753,6 +1753,99 @@ from the scene rather than the `Level` object. A game is assembled as authored d
 hand-spawned in `main.cpp`; the engine-managed game world (see **Application**) drives this end
 to end so a minimal `main.cpp` writes none of it.
 
+## Networking: server-authoritative client/server (`Veng/Net/`)
+
+`Veng/Net/` is the **core-engine** networking layer — in `libveng` proper, not an optional
+library like `veng::mcp`, because it is load-bearing for gameplay components (`Authority`,
+`PlayerInput`) that already live in the engine and the world drive must know the tick model
+regardless. It turns a game into a **server-authoritative** client/server system: the server
+simulates truth, clients display it. It is **not lockstep** — cross-machine float determinism
+is never required and no bug hunt should chase it; the Sim/View split already drew the line
+(Sim state replicates, View state derives locally). A task-oriented guide is
+[docs/guides/networking.md](../docs/guides/networking.md).
+
+**The tick model is the prerequisite, threaded through `SystemContext`.** The world drive is an
+accumulator: the **Sim phase steps at a fixed `SimTickRate`** (`GameWorldInfo`, default 60 Hz)
+with a monotonic `u64` tick, the **View phase runs once per frame** with the frame delta and an
+interpolation `Alpha`, and the render gather blends transforms between the last two ticks.
+`SystemContext` carries `Tick` (the fixed tick, the wire's unit of time), `Alpha` (View-phase
+interpolation fraction), and `Role` (`NetRole::Server`/`Client`, the authority a tick runs
+under) beside the always-present `Assets`/`Input`/`Tasks`. The **module ABI bumped once for this
+layout change**; everything else the layer adds is additive (new builtins, new `Net::` surface).
+
+- **The transport seam is socket-free (`Transport.h`).** A `Transport` moves opaque byte
+  datagrams to/from opaque `EndpointId`s; `UdpTransport` hides its sockets behind a pImpl and
+  `LoopbackTransport` (an in-process pair) carries no platform surface — so every public
+  `Veng/Net/` header compiles under `include_hygiene` with sockets linked PRIVATE, the same
+  guarantee the renderer's Native idiom gives. `FaultInjectionTransport` wraps any transport with
+  **seeded, deterministic** drop/duplicate/reorder faults for device-free adversarial testing.
+  The transport is **hand-rolled, not vendored** — the reliable-UDP core is a bounded problem and
+  ENet/GameNetworkingSockets buy surface the replication model doesn't use.
+- **`Connection.h` is the per-peer reliability layer.** Two channel disciplines over the
+  transport: **unreliable-sequenced** (latest-wins, never retransmitted — snapshots, input) and
+  **reliable-ordered** (resent until acked, MTU-capped — handshake, spawn/despawn). Time is
+  injected through `Update(now)` (no wall clock, fully deterministic under test). **Sockets pump
+  non-blocking on the main thread at frame boundaries** (receive → tick → send); a background net
+  thread is a named future, not v1.
+- **`Server.h`/`Client.h` are the connection lifecycle.** A `Net::Server` listens/accepts/denies;
+  a `Net::Client` connects. The **handshake carries a protocol version + the active pack's content
+  digest** and rejects a mismatch loudly — the `VengModuleAbiVersion` discipline on the wire, so
+  the wire carries only asset ids, never assets. Connection ids are server-assigned `u32`s (the
+  value `Authority::Owner` was reserved for). **No encryption/authentication in v1** (LAN/trusted
+  scope; a DTLS-style layer is future, layered on the `Transport` seam).
+- **Replication is reflection-driven (`Replication.h`).** A type opts in with a **`VE_REPLICATED`**
+  mark beside its `VE_REFLECT` block (`Transform`, `Viewer`, `Possesses`, `Session` marked builtin;
+  a game marks its own). A runtime **`NetIdentity`** (server-assigned `u32`, never authored/persisted)
+  is the wire key; the client keeps a `NetId → Entity` map. `EncodeSnapshot`/`ApplySnapshot` are the
+  entity-granular codec (per-component `WriteFields` bytes, MTU-packable, replicated `Entity` fields
+  translated to NetIds and remapped on apply) — **the reflection serializer is the v1 wire codec, no
+  IDL**. `ReplicationServer` diffs the scene per connection (dirty `Authority::Server` entities gated
+  by per-entity change ticks, sent until acked) and emits reliable **spawn/despawn** (carrying a
+  prefab `AssetId` when associated via `SetEntityPrefab`, so the client instantiates through the
+  ordinary prefab path) + unreliable **snapshots** on a snapshot-interval tick. `ReplicationClient`
+  applies latest-wins, marks replicated entities **`Tier::Remote`** (the first `Tier` extension), and
+  buffers each Transform snapshot for the **View-phase `RemoteInterpolationSystem`**, which renders a
+  remote ~2 snapshot intervals in the past. **Interpolation-only in v1** — prediction/rollback is a
+  named future; the local pawn wears its latency.
+- **Input replicates client→server (`Replication.h` input half, `InputFeed.h`).** The client stamps
+  its seat's resolved `PlayerInput` per tick and sends the **last N ticks redundantly** over the
+  unreliable channel (`InputSendBuffer`, loss-tolerant without retransmission); the server buffers per
+  connection in a small **`InputJitterBuffer`** (slews toward a target depth, decays edge phases on an
+  underrun) and feeds the seat's `PlayerInput` at the matching tick, from which the control system
+  re-derives `Intent` **unchanged**. `InputFeed.h`'s `StampLocalSeatInput`/`IngestConnectionInputs`/
+  `FeedSeatInputs` are the device-free helpers the world drive threads. The **authority filter**
+  (`HasAuthority(context, scene, entity)`, a `SystemContext::Role` × `Authority::Tier` query) gates
+  the authoritative Sim advancers: a `Server`-tier entity runs only on a `Server` peer, `Local` always
+  locally, `Remote` never — so a client's Sim never fights the snapshot stream while AI/server `Intent`
+  producers still write directly.
+- **`Host.h` is the world glue.** `ServerHost` binds the lifecycle + replication halves to a world: on
+  accept it spawns a **`Viewer` seat entity** for the connection (`Authority{ Server, Owner = id }`, no
+  `SeatInput` — the documented remote path), names it (with the level) in the `ConnectAccept`, and gates
+  its stream on `ClientReady`; the game-mode spawn rule pawns the pawnless seat with no net awareness.
+  `ClientHost` loads the accepted level with server-authoritative authored entities **skipped** (they
+  arrive from the stream), acks, applies the spawn/snapshot stream, and wires the client's Local-tier
+  presentation to its own replicated seat's `Possesses`. Both are usable standalone; **`Application`
+  mounts them** as the plug-and-play path.
+- **`Application` wiring (launch decision, not a build).** `ApplicationInfo::Net` (an
+  `optional<GameNetInfo>` — `Port`, `MaxConnections`, `SnapshotIntervalTicks`, `InputRedundancyTicks`)
+  tunes the hosts; **activation is a launch flag**, parsed by `LaunchArguments`: `--server`
+  (listen server) `[--headless]` (dedicated — Sim + net pump, no render tail), `--join <host[:port]>`
+  (client). `Application`'s `PumpNet` runs receive → sim ticks (feeding buffered input before the Sim
+  phase server-side, stamping resolved input after it client-side) → send, once per frame after the
+  tick loop. A game reaches the layer through `GetNetRole()` / `GetServerHost()` / `GetClientHost()`
+  and the `OnClientPossession(world, pawn)` hook. **Standalone is a server with no transport** — one
+  authority model always, no offline/online fork; `--server`/`--join` only add remote connections.
+
+The hello-triangle sample's opt-in multiplayer mode (a `MultiplayerMode` tag that switches its
+spawn rule to keep only the player prefab's Local-tier presentation in a net session, a per-seat
+pawn reconciler that pawns the listen host's own seat and each connection's from the shared
+`netpawn` prefab, and the `OnClientPossession` / host camera wiring) and the two-world integration
+suite (`tests/unit/net_two_world.cpp` — a server scene + client scene
+over a `LoopbackTransport` stepped tick-by-tick, the authoritative correctness guard) are the
+consumption exemplar and the regression net. **Prediction, delta compression, and interest
+management are the deliberate next phase**, behind the stable `ActionState`/component shapes and the
+extensible `Tier` enum.
+
 ## Project settings & build configurations
 
 `Veng/Project/` is the engine's home for **per-platform build policy** — the reflected data

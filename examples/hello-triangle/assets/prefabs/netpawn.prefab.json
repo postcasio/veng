@@ -1,0 +1,50 @@
+{
+  "entities": [
+    {
+      "components": {
+        "::Veng::Name": {
+          "Value": "Net Player Pawn"
+        },
+        "::Veng::Transform": {
+          "Position": [
+            0.0,
+            0.9,
+            0.0
+          ],
+          "Rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::Intent": {},
+        "::Veng::Mover": {
+          "MoveSpeed": 5.0,
+          "TurnSpeed": 2.0
+        },
+        "::Veng::Authority": {
+          "Tier": "Server",
+          "Owner": 0
+        },
+        "::Veng::MeshRenderer": {
+          "Source": {
+            "type": "::Veng::CapsuleShape",
+            "value": {
+              "Radius": 0.4,
+              "Height": 1.0,
+              "Segments": 24,
+              "Rings": 8,
+              "Material": "0x0083F9DCA6D4FFE2"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

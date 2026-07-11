@@ -31,6 +31,8 @@
 #include <Veng/Asset/InputMappingContext.h>
 #include <Veng/Input.h>
 #include <Veng/Input/Actions.h>
+#include <Veng/Net/Host.h>
+#include <Veng/Net/Replication.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/InputMappingSystem.h>
 #include <Veng/Scene/AnimationSystem.h>
@@ -70,17 +72,35 @@ VE_FIELD(SpeedRadiansPerSec, .DisplayName = "Speed", .Tooltip = "Radians per sec
 VE_FIELD(Axis, .DisplayName = "Axis", .Tooltip = "Spin axis (normalized at runtime)")
 VE_REFLECT_END();
 
+// A tag the app seeds onto the level's settings entity when the launcher activated a net mode
+// (`--server` or `--join`), so the sim-side spawn rule spawns the presentation seat alone (the
+// pawn arrives from the spawn stream, or is spawned per-seat on the server) instead of the full
+// local player. Absent — the default offline run — the rule spawns the whole player, unchanged.
+struct MultiplayerMode
+{
+};
+
+VE_TYPE(::MultiplayerMode, 0xF4220F737E702E78ULL);
+
 // Advances every Spinner each frame about its own axis — the gameplay tick the windowed
 // app drives through a SceneSimulation. Registered into the host SystemRegistry alongside
 // the Spinner type.
 class SpinnerSystem final : public SceneSystem
 {
 public:
-    void OnUpdate(Scene& scene, const f32 delta, const SystemContext&) override
+    void OnUpdate(Scene& scene, const f32 delta, const SystemContext& context) override
     {
         scene.Each<Transform, Spinner>(
-            [delta](Entity, Transform& transform, Spinner& spinner)
+            [&](const Entity entity, Transform& transform, Spinner& spinner)
             {
+                // The authority-filter idiom for a game Sim system: spin only an entity this peer
+                // simulates. On a client the decorative props are client-local (Authority::Local,
+                // loaded from the identical pack), so they spin here; a Server/Remote-tier entity is
+                // skipped — its motion arrives on the wire, never fought locally.
+                if (!HasAuthority(context, scene, entity))
+                {
+                    return;
+                }
                 const quat step = glm::angleAxis(spinner.SpeedRadiansPerSec * delta,
                                                  glm::normalize(spinner.Axis));
                 transform.Rotation = glm::normalize(step * transform.Rotation);
@@ -108,6 +128,12 @@ namespace Actions
 // (loaded to read the shared `--accent` token straight off the sheet the rules flatten from).
 constexpr AssetId HudDocumentId{0xB51B7421AFE8CD18ULL};
 constexpr AssetId HudStyleSheetId{0x94B0F44BE80ADA35ULL};
+
+// The single-entity pawn a networked player drives: a capsule with Intent/Mover whose mesh is an
+// inline recipe (so a prefab spawn carries it). Spawned per seat on the server — the listen host's
+// own seat and each connection's — and instantiated from this same prefab id on every client, so a
+// pawn's mesh arrives with the reliable spawn stream, not as replicated per-component state.
+constexpr AssetId NetPawnPrefabId{0x01FE4465D602376BULL};
 
 // Maps a resolved PlayerInput to an abstract Intent — the game-specific control policy,
 // reading actions by name. Pure: the same action state always yields the same Intent,
@@ -204,7 +230,16 @@ public:
         // The player prefab uses a cooked, already-resident mesh, so nothing waits on the
         // spawn's batch here; a primitive player would carry a pending batch this rule could
         // surface. Each spawn owns its own batch — the level's does not cover sim-spawned content.
-        m_Spawned = config->PlayerPrefab.Get()->SpawnInto(scene, context.Assets).Roots;
+        //
+        // In a net session (the app tagged the world MultiplayerMode) the prefab's Server-tier pawn
+        // is skipped: on a client the pawn arrives from the spawn stream and interpolates; on the
+        // listen host the app pawns this seat with the shared net pawn (so the same capsule
+        // replicates to every peer). Either way the local presentation — the Local-tier follow
+        // camera and the SeatInput control seat — spawns here, and the possession/pawning wires it.
+        // Offline (no tag) the whole player spawns as before, byte-for-byte the single-player path.
+        const bool multiplayer = scene.TryGetFirst<MultiplayerMode>() != nullptr;
+        const Prefab::SpawnOptions options{.SkipServerAuthoritative = multiplayer};
+        m_Spawned = config->PlayerPrefab.Get()->SpawnInto(scene, context.Assets, options).Roots;
     }
 
     void OnUpdate(Scene& scene, const f32, const SystemContext&) override
@@ -331,6 +366,26 @@ protected:
         }
         else
         {
+            // A net launch (`--server` or `--join`) tags the world so the spawn rule seeds only the
+            // local presentation seat and the app owns the pawns (the join stream on a client, the
+            // per-seat spawn on the server). Seeded before the simulation starts, so the rule's
+            // OnStart reads it. The default offline run leaves it untagged — the spawn rule spawns
+            // the whole local player exactly as before.
+            const LaunchArguments& launch = GetLaunchArguments();
+            if (launch.Server || launch.Join.has_value())
+            {
+                Entity settings = Entity::Null;
+                for (auto [entity, session] : world.View<Session>())
+                {
+                    settings = entity;
+                    break;
+                }
+                if (!settings.IsNull())
+                {
+                    world.Add<MultiplayerMode>(settings);
+                }
+            }
+
             // The shipped game owns input: capture the mouse in the window so the player's
             // mouse-look runs against a hidden, locked cursor (Escape frees it for the debug UI;
             // a click on the scene re-captures it).
@@ -338,6 +393,26 @@ protected:
 
             SetupHud(world);
         }
+    }
+
+    // Aims the joined client's local follow camera at the pawn its replicated seat now possesses
+    // (Entity::Null when it possesses none). The Local-tier seat and camera were spawned by the
+    // spawn rule from the same player prefab (its Server-tier pawn skipped); this only names the
+    // camera's target. The pawn itself is a server-owned Remote-tier mirror the interpolation
+    // system drives — nothing here simulates it.
+    void OnClientPossession(Scene& world, const Entity pawn) override
+    {
+        // The own presentation seat is the local input seat (the one carrying SeatInput — the
+        // replicated own seat mirror has none). Aim its follow camera at the newly possessed pawn.
+        world.Each<Viewer, SeatInput>(
+            [&](Entity, const Viewer& viewer, const SeatInput&)
+            {
+                if (!viewer.Camera.IsNull() && world.IsAlive(viewer.Camera) &&
+                    world.Has<CameraFollow>(viewer.Camera))
+                {
+                    world.Get<CameraFollow>(viewer.Camera).Target = pawn;
+                }
+            });
     }
 
     // Builds the status HUD as a scene component: reads the accent color the stylesheet defines so
@@ -388,6 +463,14 @@ protected:
         if (m_McpServer)
         {
             m_McpServer->Pump();
+        }
+
+        // Hosting: pawn each seat that lacks one (the listen host's own and each connection's) and
+        // reap a departed player's pawn (GetServerHost() is non-null only under `--server`). Runs
+        // outside any scene iteration, so it may spawn/destroy freely.
+        if (GetServerHost() != nullptr)
+        {
+            SyncPlayerPawns();
         }
 
         if (m_SmokeOutput)
@@ -624,6 +707,100 @@ private:
         }
     }
 
+    // Reconciles the server scene's pawns against its seats: pawn every seat that lacks a live pawn,
+    // and reap a pawn whose owning connection has gone. Two kinds of seat get a pawn — the listen
+    // host's own Local-tier control seat (the spawn rule seeded it; skipped on a dedicated headless
+    // server, which has no local player) and each connection's Server-tier seat (the host spawns a
+    // bare Viewer+Possesses seat per connection, no SeatInput — the remote path). Both thread their
+    // owner onto the pawn's Authority::Owner and associate the pawn's prefab id so the spawn
+    // replicates as an instantiation (its capsule mesh included), not per-component state. The
+    // connection's wire input (or the host's local input) then fills the seat's PlayerInput and the
+    // unchanged control → intent → movement pipeline drives the pawn.
+    void SyncPlayerPawns()
+    {
+        ServerHost& host = *GetServerHost();
+        Scene& world = *GetWorld();
+        const bool headless = GetLaunchArguments().Headless;
+
+        // Collect first: spawning a pawn is a structural change, illegal mid-iteration.
+        vector<Entity> unpawned;
+        world.Each<Viewer, Possesses, Authority>(
+            [&](const Entity seat, const Viewer&, const Possesses& possesses,
+                const Authority& authority)
+            {
+                if (!possesses.Pawn.IsNull() && world.IsAlive(possesses.Pawn))
+                {
+                    return;
+                }
+                // A connection's remote seat is Server-tier; the listen host's own seat is Local
+                // (and pawned only windowed — a dedicated server hosts no local player).
+                const bool remote = authority.Tier == Tier::Server;
+                const bool localHost = authority.Tier == Tier::Local && !headless;
+                if (remote || localHost)
+                {
+                    unpawned.push_back(seat);
+                }
+            });
+
+        for (const Entity seat : unpawned)
+        {
+            if (!world.IsAlive(seat))
+            {
+                continue;
+            }
+            const AssetResult<AssetHandle<Prefab>> prefab =
+                GetAssetManager().LoadSync<Prefab>(NetPawnPrefabId);
+            if (!prefab.has_value())
+            {
+                continue;
+            }
+            const vector<Entity> roots = prefab->Get()->SpawnInto(world, GetAssetManager()).Roots;
+            if (roots.empty())
+            {
+                continue;
+            }
+            const Entity pawn = roots.front();
+            const Net::ConnectionId owner = world.Get<Authority>(seat).Owner;
+            world.Get<Authority>(pawn).Owner = owner;
+            world.Get<Possesses>(seat).Pawn = pawn;
+
+            // Assign the pawn its wire id now: the host assigns ids in Pump, but the prefab
+            // association must be set before that Pump generates the spawn for a connection.
+            AssignServerNetIds(world, host.Allocator());
+            const NetId netId = world.Get<NetIdentity>(pawn).Id;
+            host.Replication().SetEntityPrefab(netId, NetPawnPrefabId);
+            m_SeatPawns[seat] = pawn;
+
+            // The host's own follow camera (the spawn rule left its Local-tier target null when the
+            // pawn was skipped) aims at the just-spawned pawn — the server-side counterpart of the
+            // client's possession wiring.
+            const Viewer& viewer = world.Get<Viewer>(seat);
+            if (world.Has<SeatInput>(seat) && !viewer.Camera.IsNull() &&
+                world.IsAlive(viewer.Camera) && world.Has<CameraFollow>(viewer.Camera))
+            {
+                world.Get<CameraFollow>(viewer.Camera).Target = pawn;
+            }
+        }
+
+        // Reap a pawn whose seat the host tore down (a disconnect destroys the connection's seat;
+        // the pawn is a separate entity, so the game reaps it).
+        for (auto it = m_SeatPawns.begin(); it != m_SeatPawns.end();)
+        {
+            if (!world.IsAlive(it->first))
+            {
+                if (world.IsAlive(it->second))
+                {
+                    world.DestroyEntity(it->second);
+                }
+                it = m_SeatPawns.erase(it);
+            }
+            else
+            {
+                ++it;
+            }
+        }
+    }
+
     void WriteSceneCapture(const char* outPath) const
     {
         const Ref<Renderer::Image> output = GetPrimaryViewport()->GetOutput()->GetImage();
@@ -686,6 +863,12 @@ private:
     // Pauses the managed world's simulation so the broadphase reads `static`; never set in smoke.
     bool m_PauseSpin = false;
 
+    // Server-side multiplayer state, populated only under `--server`: the pawn spawned for each seat
+    // (the listen host's own and each connection's), keyed by seat entity so a reaped seat's pawn is
+    // torn down with it. A joined client's own follow camera is aimed by OnClientPossession, not held
+    // here (the spawn rule owns the client's local seat + camera).
+    unordered_map<Entity, Entity> m_SeatPawns;
+
     // The windowed status HUD, authored as a GuiOverlay component on this entity: the Viewport owns
     // its load / instantiate / attach, and m_HudTicks caches the `count`-repeated tick pool the
     // SetOnInstantiate hook resolves by class, refreshed on any re-instantiate. The entity is spawned
@@ -708,6 +891,9 @@ extern "C" void VengModuleRegister(VengModuleHost* host)
     // by the host. The level's ordered SystemId set names the run order across both.
     host->Types.Register<Spinner>();
     host->Systems.Register<SpinnerSystem>();
+
+    // The tag the app seeds onto the settings entity to switch the spawn rule into net mode.
+    host->Types.Register<MultiplayerMode>();
 
     // The game-mode rule spawns the configured player prefab at the session's start, so the pawn
     // and seat exist before the control pipeline ticks.
@@ -764,6 +950,11 @@ extern "C" void VengModuleRegister(VengModuleHost* host)
                     // packs, loads the startup level, owns the running scene + simulation, and ticks
                     // + pushes the view each frame. The sample customizes the world in OnWorldLoaded.
                     .World = GameWorldInfo{.Project = "project.vengproj"},
+                    // Opt into networking with the zero-config defaults: setting Net only tunes the
+                    // hosts the engine mounts when a net launch flag activates one, so this stays
+                    // inert with no flag (the default run is offline and byte-identical) and turns
+                    // `--server` / `--join <host>` into a listening or joining session.
+                    .Net = GameNetInfo{},
                 },
                 types, systems));
         });

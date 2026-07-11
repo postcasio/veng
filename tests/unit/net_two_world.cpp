@@ -1,0 +1,652 @@
+// Two-world in-process integration: a server Scene + ServerHost and a client Scene + ClientHost
+// over a LoopbackTransport (and, for the abuse cases, a FaultInjectionTransport), stepped tick by
+// tick in one process — no ICD, no socket, no wall clock. Where the per-plan slices each proved one
+// layer (the codec, the jitter buffer, the join glue), these consolidate the whole stack into
+// end-to-end scenarios: join → play → leave with field-wise convergence, a scripted input round-trip
+// driving the server pawn and the client seeing it interpolated, convergence after seeded
+// loss/reorder/duplication, a hostile input stream the server survives, and two clients each seeing
+// both pawns while driving only its own. Deterministic by construction (fixed tick, injected time,
+// seeded faults) — the regression net every later net change runs against.
+
+#include <doctest/doctest.h>
+
+#include <glm/geometric.hpp>
+
+#include <Veng/Net/Client.h>
+#include <Veng/Net/FaultInjectionTransport.h>
+#include <Veng/Net/Host.h>
+#include <Veng/Net/InputFeed.h>
+#include <Veng/Net/LoopbackTransport.h>
+#include <Veng/Net/Replication.h>
+#include <Veng/Net/Server.h>
+#include <Veng/Net/Transport.h>
+#include <Veng/Reflection/TypeRegistry.h>
+#include <Veng/Scene/BuiltinTypes.h>
+#include <Veng/Scene/Camera.h>
+#include <Veng/Scene/Components.h>
+#include <Veng/Scene/Movement.h>
+#include <Veng/Scene/RemoteInterpolationSystem.h>
+#include <Veng/Scene/Scene.h>
+
+#include <deque>
+#include <unordered_map>
+#include <utility>
+
+using namespace Veng;
+using namespace Veng::Net;
+
+namespace
+{
+    // The sample's one game action: a 2D move axis the control mapping turns into an Intent.
+    constexpr ActionId MoveAction{0xA1};
+
+    // A dependency-free prefab and the seat spawn never dereference the manager, so a
+    // never-dereferenced reference is safe (the net_join_flow.cpp / game_mode.cpp precedent).
+    AssetManager& FakeAssets()
+    {
+        alignas(16) static unsigned char bytes[64]{};
+        return *reinterpret_cast<AssetManager*>(bytes);
+    }
+
+    // A held 2D move for one tick — the resolved input a client seat's InputMappingSystem would fill.
+    ActionState MoveState(const vec2 move)
+    {
+        ActionState state;
+        state.Actions = {
+            ActionSample{.Id = MoveAction, .Value = move, .Phase = ActionPhase::Ongoing}};
+        return state;
+    }
+
+    // The game's control mapping (the unchanged action → Intent step): move on the XZ plane.
+    Intent ControlMap(const PlayerInput& input)
+    {
+        const vec2 move = input.GetValue(MoveAction);
+        return Intent{.Move = vec3(move.x, 0.0f, move.y)};
+    }
+
+    // A SystemContext over never-dereferenced service storage with a settable role — MovementSystem
+    // and the interpolation system read only the scene, delta, and context.Role (net_input_flow.cpp).
+    struct FakeContext
+    {
+        alignas(16) unsigned char AssetsBytes[64]{};
+        alignas(16) unsigned char InputBytes[64]{};
+        alignas(16) unsigned char TasksBytes[64]{};
+        NetRole Role = NetRole::Server;
+
+        SystemContext Make()
+        {
+            return SystemContext{
+                .Assets = *reinterpret_cast<AssetManager*>(AssetsBytes),
+                .Input = *reinterpret_cast<Input*>(InputBytes),
+                .Tasks = *reinterpret_cast<TaskSystem*>(TasksBytes),
+                .Role = Role,
+            };
+        }
+    };
+
+    const ConnectionConfig FastConfig{
+        .ResendInterval = 0.02, .KeepaliveInterval = 0.05, .TimeoutInterval = 5.0};
+
+    constexpr AssetId LevelId{0x00000000000000AAULL};
+
+    // The server half of the whole world drive, minus the transport: a scene, a ServerHost, the
+    // per-connection jitter buffers, and the emulated game-mode spawn rule + control/movement sim. It
+    // is the ServerHost/InputFeed path Application drives, stepped by hand.
+    struct ServerWorld
+    {
+        TypeRegistry Types;
+        Unique<Scene> World;
+        Unique<ServerHost> Host;
+        std::unordered_map<ConnectionId, InputJitterBuffer> Jitter;
+        std::unordered_map<ConnectionId, Entity> Pawns;
+        MovementSystem Movement;
+
+        explicit ServerWorld(Transport& transport)
+        {
+            RegisterBuiltinTypes(Types);
+            World = Scene::Create(Types);
+            Result<Unique<ServerHost>> host = ServerHost::Create(ServerHostInfo{
+                .Server = ServerInfo{.TransportOverride = &transport, .Connection = FastConfig},
+                .World = *World,
+                .Assets = FakeAssets(),
+                .LevelId = LevelId,
+                .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
+            });
+            REQUIRE(host.has_value());
+            Host = std::move(*host);
+        }
+
+        // The game-mode spawn rule, net-unaware: pawn any connection-owned seat that has no live
+        // pawn, threading the seat's owner onto the pawn (Authority::Owner), and despawn a pawn whose
+        // seat has gone. The pawn is a Server-tier (Transform, Intent, Mover) entity — the movement
+        // pipeline's target, replicated by full state (no mesh needed for a convergence test).
+        void RunSpawnRule()
+        {
+            for (const ConnectionId id : Host->Server().Connections())
+            {
+                const Entity seat = Host->SeatFor(id);
+                if (seat.IsNull())
+                {
+                    continue;
+                }
+                auto& possesses = World->Get<Possesses>(seat);
+                const bool pawned = !possesses.Pawn.IsNull() && World->IsAlive(possesses.Pawn);
+                if (pawned)
+                {
+                    continue;
+                }
+                const Entity pawn = World->CreateEntity();
+                World->Add<Transform>(pawn);
+                World->Add<Intent>(pawn);
+                World->Add<Mover>(pawn);
+                World->Add<Authority>(pawn, Authority{.Tier = Tier::Server, .Owner = id});
+                possesses.Pawn = pawn;
+                Pawns[id] = pawn;
+            }
+
+            // A departed connection's seat is torn down by the host; reap its orphaned pawn.
+            for (auto it = Pawns.begin(); it != Pawns.end();)
+            {
+                if (Host->SeatFor(it->first).IsNull())
+                {
+                    if (World->IsAlive(it->second))
+                    {
+                        World->DestroyEntity(it->second);
+                    }
+                    it = Pawns.erase(it);
+                }
+                else
+                {
+                    ++it;
+                }
+            }
+        }
+
+        // One server sim step at @p tick: stamp the change tick, spawn/reap pawns, feed each
+        // connection's buffered wire input into its seat, re-derive Intent through the unchanged
+        // control mapping, and advance authoritative movement (Server role, so Server-tier pawns run).
+        void SimStep(u64 tick, f32 delta)
+        {
+            World->SetChangeTick(tick);
+            RunSpawnRule();
+            FeedSeatInputs(*Host, Jitter, *World);
+
+            for (const auto& [id, pawn] : Pawns)
+            {
+                const Entity seat = Host->SeatFor(id);
+                if (seat.IsNull() || !World->IsAlive(pawn))
+                {
+                    continue;
+                }
+                if (const PlayerInput* input = World->TryGet<PlayerInput>(seat))
+                {
+                    World->Get<Intent>(pawn) = ControlMap(*input);
+                }
+            }
+
+            FakeContext ctx;
+            ctx.Role = NetRole::Server;
+            Movement.OnUpdate(*World, delta, ctx.Make());
+        }
+
+        // The transport/net-pump half of a frame: send this tick's stream to ready seats, accept new
+        // connections, ingest each connection's redundant input into its jitter buffer.
+        void NetPump(f64 now, u64 tick)
+        {
+            Host->Pump(now, tick);
+            IngestConnectionInputs(*Host, Jitter, InputJitterBuffer::Settings{}, Types);
+        }
+    };
+
+    // The client half: a connection, a ClientHost with a Local-tier camera + a local input seat, the
+    // input send window, and the View-phase interpolation system that renders the remote pawns.
+    struct ClientWorld
+    {
+        TypeRegistry Types;
+        Unique<Net::Client> Client;
+        Unique<ClientHost> Host;
+        InputSendBuffer Send;
+        RemoteInterpolationSystem Interp;
+        Entity LocalSeat = Entity::Null;
+        Entity LocalCamera = Entity::Null;
+        Entity OwnPawn = Entity::Null;
+
+        explicit ClientWorld(Transport& transport)
+        {
+            RegisterBuiltinTypes(Types);
+            Client = *Net::Client::Connect(
+                ClientInfo{.TransportOverride = &transport, .Connection = FastConfig});
+            Send = InputSendBuffer(InputSendBuffer::Settings{.Redundancy = 3});
+            Interp.SetSettings(RemoteInterpolationSystem::Settings{
+                .SnapshotInterval = 2, .InterpolationDelayIntervals = 2, .SimTickRate = 60.0});
+
+            Host = ClientHost::Create(ClientHostInfo{
+                .Client = *Client,
+                .Assets = FakeAssets(),
+                .LoadLevel = [this](AssetId) -> Unique<Scene>
+                {
+                    // The client scene the join loads: a Local-tier camera the join wires to the own
+                    // pawn, and a Local-tier input seat whose PlayerInput a scripted input fills and
+                    // the send window carries. The server-authoritative pawns arrive from the stream.
+                    Unique<Scene> scene = Scene::Create(Types);
+                    LocalCamera = scene->CreateEntity();
+                    scene->Add<Transform>(LocalCamera);
+                    scene->Add<Camera>(LocalCamera);
+                    scene->Add<CameraFollow>(LocalCamera);
+                    scene->Add<Authority>(LocalCamera, Authority{.Tier = Tier::Local});
+
+                    LocalSeat = scene->CreateEntity();
+                    scene->Add<Viewer>(LocalSeat, Viewer{.Camera = LocalCamera});
+                    scene->Add<SeatInput>(LocalSeat);
+                    scene->Add<PlayerInput>(LocalSeat);
+                    scene->Add<Authority>(LocalSeat, Authority{.Tier = Tier::Local});
+                    return scene;
+                },
+                .ResolvePrefab = [](AssetId) -> Ref<Prefab> { return nullptr; },
+                .OnPossession =
+                    [this](Scene& world, const Entity pawn)
+                {
+                    OwnPawn = pawn;
+                    if (!LocalCamera.IsNull() && world.IsAlive(LocalCamera))
+                    {
+                        world.Get<CameraFollow>(LocalCamera).Target = pawn;
+                    }
+                },
+            });
+        }
+
+        // The client half of a frame: advance the join flow + apply the stream, run the View-phase
+        // interpolation, then stamp the scripted input and send the redundant window.
+        void Frame(f64 now, u64 clientTick, f32 delta, const optional<ActionState>& scripted)
+        {
+            Host->Pump(now);
+
+            if (Scene* world = Host->World())
+            {
+                FakeContext ctx;
+                ctx.Role = NetRole::Client;
+                Interp.OnUpdate(*world, delta, ctx.Make());
+
+                if (scripted.has_value() && !LocalSeat.IsNull() && world->IsAlive(LocalSeat))
+                {
+                    world->Get<PlayerInput>(LocalSeat).State = *scripted;
+                }
+                StampLocalSeatInput(Send, *world, clientTick);
+            }
+
+            if (Client->State() == ClientState::Connected)
+            {
+                (void)Client->Server().Send(Channel::UnreliableSequenced, Send.Encode(0, Types));
+            }
+        }
+    };
+}
+
+TEST_CASE("Two worlds join, play, converge field-wise, and leave")
+{
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+    ServerWorld server(*serverT);
+    ClientWorld client(*clientT);
+
+    // Hold +x for a while, then a quiescent tail of explicit zero-move input: the server pawn
+    // advances, then halts, so the client's past-lagged interpolation clock catches up to the newest
+    // sample and the displayed pose converges onto the server's final one.
+    const ActionState move = MoveState(vec2(1.0f, 0.0f));
+    const ActionState stop = MoveState(vec2(0.0f, 0.0f));
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    for (u64 tick = 1; tick <= 110; ++tick)
+    {
+        now += Delta;
+        server.SimStep(tick, Delta);
+        server.NetPump(now, tick);
+        client.Frame(now, tick, Delta, tick <= 60 ? move : stop);
+    }
+
+    REQUIRE(client.Client->State() == ClientState::Connected);
+    REQUIRE(client.Host->IsJoined());
+    REQUIRE(client.Host->World() != nullptr);
+
+    // The connection got a seat, the spawn rule pawned it, and the pawn moved on the server.
+    const ConnectionId id = client.Client->AssignedId();
+    const Entity serverPawn = server.Pawns.at(id);
+    const f32 serverX = server.World->Get<Transform>(serverPawn).Position.x;
+    CHECK(serverX > 0.5f);
+
+    // The own seat bound as a replicated Remote-tier Viewer, and the client wired its camera to the
+    // replicated pawn — the possession round-tripped with no bespoke message.
+    const Entity clientSeat = client.Host->Seat();
+    REQUIRE_FALSE(clientSeat.IsNull());
+    Scene& world = *client.Host->World();
+    CHECK(world.Get<Authority>(clientSeat).Tier == Tier::Remote);
+    const Entity clientPawn = client.OwnPawn;
+    REQUIRE_FALSE(clientPawn.IsNull());
+    CHECK(world.Get<CameraFollow>(client.LocalCamera).Target == clientPawn);
+
+    // Field-wise convergence: after the long quiescent tail the interpolation clock has caught up to
+    // the newest received sample, so the client's displayed pose equals the server's authoritative
+    // one (interpolation holds at the newest sample, never extrapolates past it).
+    const vec3 serverPos = server.World->Get<Transform>(serverPawn).Position;
+    const vec3 clientPos = world.Get<Transform>(clientPawn).Position;
+    CHECK(glm::length(clientPos - serverPos) < 0.05f);
+
+    // Leave: the client disconnects, the server surfaces the event, tears the seat down, and the
+    // spawn rule reaps the orphaned pawn — the world empties of the departed player.
+    client.Client->Disconnect();
+    bool sawLeave = false;
+    for (u64 tick = 111; tick <= 150; ++tick)
+    {
+        now += Delta;
+        server.SimStep(tick, Delta);
+        server.NetPump(now, tick);
+        for (const NetEvent& event : server.Host->Events())
+        {
+            if (event.Type == NetEventType::Disconnected && event.Id == id)
+            {
+                sawLeave = true;
+            }
+        }
+        client.Client->Pump(now);
+    }
+    CHECK(sawLeave);
+    CHECK(server.Host->SeatFor(id).IsNull());
+    CHECK_FALSE(server.World->IsAlive(serverPawn));
+}
+
+TEST_CASE("A scripted client input round-trips: server pawn moves, client renders it in the past")
+{
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+    ServerWorld server(*serverT);
+    ClientWorld client(*clientT);
+
+    // Script a +z hold: the wire carries it to the server seat, the control system re-derives the
+    // Intent, movement advances the Server-tier pawn along +z.
+    const ActionState move = MoveState(vec2(0.0f, 1.0f));
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    ConnectionId id = ServerConnectionId;
+    for (u64 tick = 1; tick <= 80; ++tick)
+    {
+        now += Delta;
+        server.SimStep(tick, Delta);
+        server.NetPump(now, tick);
+        client.Frame(now, tick, Delta, move);
+        if (!server.Host->Server().Connections().empty())
+        {
+            id = server.Host->Server().Connections().front();
+        }
+    }
+
+    REQUIRE(id != ServerConnectionId);
+    const Entity serverPawn = server.Pawns.at(id);
+
+    // The server pawn advanced along +z from the wire input alone — the scripted client input drove
+    // it through the unchanged PlayerInput → Intent → Movement pipeline.
+    const f32 serverZ = server.World->Get<Transform>(serverPawn).Position.z;
+    CHECK(serverZ > 0.3f);
+
+    // The client renders the pawn in the past: it has moved along +z but lags the live server pose
+    // (interpolation delay), never leading it.
+    Scene& world = *client.Host->World();
+    const Entity clientPawn = client.OwnPawn;
+    REQUIRE_FALSE(clientPawn.IsNull());
+    const f32 clientZ = world.Get<Transform>(clientPawn).Position.z;
+    CHECK(clientZ > 0.05f);
+    CHECK(clientZ <= serverZ + 1e-3f);
+}
+
+TEST_CASE("The two worlds converge after a burst of seeded loss, reorder, and duplication")
+{
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+
+    // Both ends ride a lossy, reordering, duplicating link; a generous resend/timeout lets the
+    // reliable channel punch the handshake and spawn stream through, and the redundant input window +
+    // idempotent snapshots ride the unreliable losses.
+    const FaultInjectionConfig faults{
+        .DropRate = 0.25f, .DuplicateRate = 0.1f, .ReorderRate = 0.2f, .Seed = 1337};
+    FaultInjectionTransport serverLink(*serverT, faults);
+    FaultInjectionTransport clientLink(*clientT, faults);
+
+    ServerWorld server(serverLink);
+    ClientWorld client(clientLink);
+
+    const ActionState move = MoveState(vec2(1.0f, 0.0f));
+    const ActionState stop = MoveState(vec2(0.0f, 0.0f));
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    ConnectionId id = ServerConnectionId;
+    for (u64 tick = 1; tick <= 460; ++tick)
+    {
+        now += Delta;
+        server.SimStep(tick, Delta);
+        server.NetPump(now, tick);
+        // A long quiescent tail lets the lossy latest-wins stream converge onto the halted pose.
+        client.Frame(now, tick, Delta, tick <= 300 ? move : stop);
+        if (!server.Host->Server().Connections().empty())
+        {
+            id = server.Host->Server().Connections().front();
+        }
+    }
+
+    // The join completed despite the lossy link (the reliable handshake resent until acked), and the
+    // pawn spawned exactly once — no duplicate on the reordered/duplicated spawn stream.
+    REQUIRE(client.Client->State() == ClientState::Connected);
+    REQUIRE(client.Host->IsJoined());
+    REQUIRE(id != ServerConnectionId);
+    const Entity serverPawn = server.Pawns.at(id);
+    CHECK(client.Host->Replication().Map().Size() >= 2); // the seat + the pawn, no doubles
+
+    Scene& world = *client.Host->World();
+    const Entity clientPawn = client.OwnPawn;
+    REQUIRE_FALSE(clientPawn.IsNull());
+
+    // After the run the latest-wins snapshots have converged the client's displayed pose onto the
+    // server's authoritative one — the loss burst cost bandwidth, never correctness.
+    const vec3 serverPos = server.World->Get<Transform>(serverPawn).Position;
+    const vec3 clientPos = world.Get<Transform>(clientPawn).Position;
+    CHECK(glm::length(clientPos - serverPos) < 0.2f);
+}
+
+TEST_CASE("A hostile input stream drops rather than faulting the serving server")
+{
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+    ServerWorld server(*serverT);
+    ClientWorld client(*clientT);
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+
+    // Join cleanly first.
+    for (u64 tick = 1; tick <= 30; ++tick)
+    {
+        now += Delta;
+        server.SimStep(tick, Delta);
+        server.NetPump(now, tick);
+        client.Frame(now, tick, Delta, std::nullopt);
+    }
+    REQUIRE(client.Client->State() == ClientState::Connected);
+    const ConnectionId id = client.Client->AssignedId();
+
+    // The client now sends garbage on the unreliable input channel: a too-short stub, and random
+    // bytes too large to be a valid input packet. IngestConnectionInputs must drop each, never fault.
+    for (u64 tick = 31; tick <= 70; ++tick)
+    {
+        now += Delta;
+        const vector<u8> stub(4, 0xFFu);
+        (void)client.Client->Server().Send(Channel::UnreliableSequenced, stub);
+        vector<u8> garbage(48);
+        for (usize i = 0; i < garbage.size(); ++i)
+        {
+            garbage[i] = static_cast<u8>((tick * 31 + i * 7) & 0xFF);
+        }
+        (void)client.Client->Server().Send(Channel::UnreliableSequenced, garbage);
+
+        server.SimStep(tick, Delta);
+        server.NetPump(now, tick);
+        client.Client->Pump(now);
+    }
+
+    // The server is still serving: the connection is live, its seat intact, and a clean input after
+    // the garbage still feeds the seat — the hostile stream neither killed the connection nor the sim.
+    REQUIRE(server.Host->Server().Connections().size() == 1);
+    const Entity seat = server.Host->SeatFor(id);
+    REQUIRE_FALSE(seat.IsNull());
+
+    const ActionState move = MoveState(vec2(1.0f, 0.0f));
+    bool fed = false;
+    for (u64 tick = 71; tick <= 110 && !fed; ++tick)
+    {
+        now += Delta;
+        client.Frame(now, tick, Delta, move);
+        server.SimStep(tick, Delta);
+        server.NetPump(now, tick);
+        if (server.World->Has<PlayerInput>(seat))
+        {
+            const vec2 value = server.World->Get<PlayerInput>(seat).GetValue(MoveAction);
+            if (glm::length(value - vec2(1.0f, 0.0f)) < 1e-4f)
+            {
+                fed = true;
+            }
+        }
+    }
+    CHECK(fed);
+}
+
+namespace
+{
+    // A multi-peer in-process medium so one server transport can talk to two client transports at
+    // once (a LoopbackTransport pair is strictly point-to-point). The net_lifecycle.cpp Hub, reused.
+    struct Hub
+    {
+        struct Packet
+        {
+            EndpointId From = EndpointId::None;
+            vector<u8> Bytes;
+        };
+
+        std::unordered_map<u32, std::deque<Packet>> Queues;
+        u32 NextEndpoint = 1;
+
+        u32 Register()
+        {
+            const u32 id = NextEndpoint;
+            NextEndpoint += 1;
+            Queues[id];
+            return id;
+        }
+    };
+
+    class HubTransport final : public Transport
+    {
+    public:
+        HubTransport(Ref<Hub> hub, u32 self, u32 resolveTo)
+            : m_Hub(std::move(hub)), m_Self(self), m_ResolveTo(resolveTo)
+        {
+        }
+
+        VoidResult Send(EndpointId to, std::span<const u8> bytes) override
+        {
+            const auto it = m_Hub->Queues.find(static_cast<u32>(to));
+            if (it != m_Hub->Queues.end())
+            {
+                it->second.push_back(Hub::Packet{.From = static_cast<EndpointId>(m_Self),
+                                                 .Bytes = vector<u8>(bytes.begin(), bytes.end())});
+            }
+            return {};
+        }
+
+        optional<Datagram> Receive() override
+        {
+            std::deque<Hub::Packet>& queue = m_Hub->Queues[m_Self];
+            if (queue.empty())
+            {
+                return {};
+            }
+            m_Scratch = std::move(queue.front().Bytes);
+            const EndpointId from = queue.front().From;
+            queue.pop_front();
+            return Datagram{.From = from, .Bytes = m_Scratch};
+        }
+
+        Result<EndpointId> Resolve(string_view, u16) override
+        {
+            return static_cast<EndpointId>(m_ResolveTo);
+        }
+
+    private:
+        Ref<Hub> m_Hub;
+        u32 m_Self;
+        u32 m_ResolveTo;
+        vector<u8> m_Scratch;
+    };
+}
+
+TEST_CASE("Two clients each see both pawns and drive only their own")
+{
+    const auto hub = CreateRef<Hub>();
+    const u32 serverEndpoint = hub->Register();
+    auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
+    ServerWorld server(*serverT);
+
+    auto clientTa = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    auto clientTb = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    ClientWorld clientA(*clientTa);
+    ClientWorld clientB(*clientTb);
+
+    // A drives +x, B drives -x — distinct so each pawn's motion is identifiable on the other's view.
+    const ActionState moveA = MoveState(vec2(1.0f, 0.0f));
+    const ActionState moveB = MoveState(vec2(-1.0f, 0.0f));
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    for (u64 tick = 1; tick <= 120; ++tick)
+    {
+        now += Delta;
+        server.SimStep(tick, Delta);
+        server.NetPump(now, tick);
+        clientA.Frame(now, tick, Delta, moveA);
+        clientB.Frame(now, tick, Delta, moveB);
+    }
+
+    REQUIRE(clientA.Host->IsJoined());
+    REQUIRE(clientB.Host->IsJoined());
+    REQUIRE(server.Host->Server().Connections().size() == 2);
+
+    const ConnectionId idA = clientA.Client->AssignedId();
+    const ConnectionId idB = clientB.Client->AssignedId();
+    REQUIRE(idA != idB);
+
+    // The server holds two distinct pawns, one owned by each connection, moved in opposite directions.
+    const Entity serverPawnA = server.Pawns.at(idA);
+    const Entity serverPawnB = server.Pawns.at(idB);
+    CHECK(server.World->Get<Transform>(serverPawnA).Position.x > 0.3f);
+    CHECK(server.World->Get<Transform>(serverPawnB).Position.x < -0.3f);
+
+    // Each client's own seat resolves to its own pawn — authority + ownership: A drives A's pawn only.
+    CHECK_FALSE(clientA.OwnPawn.IsNull());
+    CHECK_FALSE(clientB.OwnPawn.IsNull());
+
+    const NetId netA = server.World->Get<NetIdentity>(serverPawnA).Id;
+    const NetId netB = server.World->Get<NetIdentity>(serverPawnB).Id;
+    CHECK(clientA.OwnPawn == clientA.Host->Replication().Map().Lookup(netA));
+    CHECK(clientB.OwnPawn == clientB.Host->Replication().Map().Lookup(netB));
+
+    // Each client sees *both* pawns as replicated Remote-tier mirrors — the other player's pawn is
+    // present and interpolated, not just its own.
+    Scene& worldA = *clientA.Host->World();
+    Scene& worldB = *clientB.Host->World();
+    const Entity aSeesB = clientA.Host->Replication().Map().Lookup(netB);
+    const Entity bSeesA = clientB.Host->Replication().Map().Lookup(netA);
+    REQUIRE_FALSE(aSeesB.IsNull());
+    REQUIRE_FALSE(bSeesA.IsNull());
+    CHECK(worldA.Get<Authority>(aSeesB).Tier == Tier::Remote);
+    CHECK(worldB.Get<Authority>(bSeesA).Tier == Tier::Remote);
+
+    // Each client drives only its own pawn: A's view of B's pawn shows B's -x motion, not A's +x —
+    // A never moved B (authority stayed with each owner's input on the server).
+    CHECK(worldA.Get<Transform>(aSeesB).Position.x < 0.0f);
+    CHECK(worldB.Get<Transform>(bSeesA).Position.x > 0.0f);
+}

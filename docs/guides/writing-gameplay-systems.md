@@ -56,6 +56,10 @@ struct SystemContext
 {
     AssetManager& Assets;   // load or build resources
     const Input&  Input;    // frame-coherent input, always present
+    u64           Tick;     // the fixed sim tick number (the wire's unit of time)
+    f32           Alpha;    // interpolation fraction into the next tick; View phase only
+    NetRole       Role;     // which peer's authority this tick runs under; Server standalone
+    // ... view, pointer, and debug-draw services, elided ...
 };
 ```
 
@@ -88,6 +92,20 @@ Each tick, `SceneSimulation::Update` runs **all `Phase::Sim` systems first, then
 all `Phase::View` systems** (each phase in registration order). A View system
 therefore reads the state the Sim phase finalized *this* tick.
 
+**The Sim phase steps at a fixed rate; the View phase runs per frame.** The world
+drive is an accumulator: Sim systems advance at a fixed `SimTickRate` (a
+`GameWorldInfo` knob, default 60 Hz) with a monotonic `u64` tick number — a frame
+runs 0, 1, or several Sim ticks depending on the elapsed time, and pressed-edge
+input latches until a tick consumes it. View systems then run **once** per frame
+with the frame delta and an interpolation `Alpha` (the residual fraction into the
+coming tick), which the render gather uses to blend transforms between the last two
+ticks so motion stays smooth between fixed steps. `context.Tick` is that tick number
+and `context.Alpha` the fraction (see the `SystemContext` above). The fixed tick is
+what a client and server agree on — "tick 4812" is the wire's unit of time — so a
+Sim system's cadence is framerate-independent and replayable, while a View system
+(a camera rig) is free to run at the display rate. Networking builds directly on
+this: [Networking](networking.md) covers the full model.
+
 | | `Phase::Sim` (the default) | `Phase::View` |
 |---|---|---|
 | What it is | Deterministic, replicable game simulation | Client-local view derivation |
@@ -96,7 +114,7 @@ therefore reads the state the Sim phase finalized *this* tick.
 
 **Why the line matters.** The Sim/View split is the structural seam a networking
 layer and a paused-sim editor both rely on. Replicate the *pawn* (Sim); each
-client derives its *own* camera (View). A future net layer simulates the Sim
+client derives its *own* camera (View). The net layer simulates the Sim
 phase authoritatively and lets every client run the View phase locally. The
 editor can pause the Sim phase while still running View systems to keep the
 camera responsive. Single-threaded today it is one extra partitioned pass over
