@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Veng/Veng.h>
+#include <Veng/Input.h>
 #include <Veng/Renderer/ViewportRegion.h>
 #include <Veng/Scene/Entity.h>
 
@@ -208,6 +209,30 @@ namespace Veng
         /// @param event  The event to route.
         void Dispatch(Event& event);
 
+        /// @brief Queues a synthetic (injected) input event for paced release at the pre-tick point.
+        ///
+        /// A real window event is drained *before* the frame's Sim ticks, so the tick loop and the
+        /// edge-latch see it; a synthetic event (an MCP tool, a script) arrives at an arbitrary point
+        /// — typically after the tick loop — where applying it immediately strands it (the next
+        /// BeginFrame rolls it away before any tick reads it). Queuing instead lets DrainInjectedEvents
+        /// replay it at the same pre-tick point a window event lands, and **paces** the queue so a
+        /// press and its release straddle a tick and repeated taps of one control do not collapse into
+        /// a single held frame. Only the six foldable input kinds (key/button down·up, move, scroll)
+        /// are queued; any other event kind is ignored. Call on the render thread (the pump point).
+        /// @param event  The synthetic event to queue; decoded to its kind + payload, not retained.
+        void PostInjectedEvent(const Event& event);
+
+        /// @brief Releases one paced segment of the injected-event queue through Dispatch.
+        ///
+        /// Called once per frame at the pre-tick input point (beside the window event drain). It
+        /// applies queued events in order, stopping before any event that would reverse a control's
+        /// level already set this call — a release of a control just pressed, or a press of one just
+        /// released — so each level change straddles a frame and is observed for at least one tick
+        /// (and two rapid taps of one control stay distinct). Distinct controls (a chord) apply
+        /// together; a move/scroll never gates. Each applied event routes through Dispatch exactly as
+        /// a real window event. Empty queue is a no-op.
+        void DrainInjectedEvents();
+
         /// @brief Associates a Presented viewport's region with the seat it feeds pointer input to.
         ///
         /// The app associates the viewport it renders a seat's camera into with that seat's Viewer
@@ -273,6 +298,40 @@ namespace Veng
         /// @param event  The event to offer.
         void OfferConsumers(const Event& event);
 
+        /// @brief Which foldable input kind a queued synthetic event carries.
+        enum class InjectedKind : u8
+        {
+            /// @brief A key-press event, carrying KeyCode.
+            KeyDown,
+            /// @brief A key-release event, carrying KeyCode.
+            KeyUp,
+            /// @brief A mouse-button-press event, carrying Button.
+            MouseDown,
+            /// @brief A mouse-button-release event, carrying Button.
+            MouseUp,
+            /// @brief A cursor-move event, carrying Vector as the window-space position.
+            MouseMove,
+            /// @brief A scroll event, carrying Vector as the offset.
+            Scroll
+        };
+
+        /// @brief One queued synthetic event: its kind and the single payload that kind reads.
+        struct InjectedEvent
+        {
+            /// @brief The event kind, selecting which payload member is meaningful.
+            InjectedKind Kind = InjectedKind::KeyDown;
+            /// @brief The key for KeyDown/KeyUp.
+            Key KeyCode = Key::Space;
+            /// @brief The button for MouseDown/MouseUp.
+            MouseButton Button = MouseButton::Left;
+            /// @brief The position (MouseMove) or scroll offset (Scroll), in window pixels.
+            vec2 Vector = {};
+        };
+
+        /// @brief Rebuilds a queued event into its concrete Veng::Event and routes it through Dispatch.
+        /// @param injected  The queued event to apply.
+        void ApplyInjected(const InjectedEvent& injected);
+
         /// @brief One pushed focus entry: its identifying token and the layer it owns.
         struct FocusEntry
         {
@@ -305,5 +364,8 @@ namespace Veng
         };
         /// @brief Viewport→seat associations in registration order (the hit-test priority order).
         vector<ViewportAssociation> m_Associations;
+
+        /// @brief Synthetic events awaiting paced release, oldest first (see PostInjectedEvent).
+        vector<InjectedEvent> m_InjectedQueue;
     };
 }

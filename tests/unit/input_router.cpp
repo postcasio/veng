@@ -119,3 +119,78 @@ TEST_CASE("InputRouter: window-focus loss pops a held gameplay focus")
     router.Dispatch(gained);
     CHECK(router.IsGameplayFocused());
 }
+
+TEST_CASE("InputRouter: an injected tap is paced so the press is seen before the release")
+{
+    Input input(nullptr);
+    InputRouter router(nullptr, input);
+
+    // Queue one tap. A queued event is not applied until DrainInjectedEvents releases it.
+    const KeyPressedEvent down(Key::W, 0, 0);
+    const KeyReleasedEvent up(Key::W, 0, 0);
+    router.PostInjectedEvent(down);
+    router.PostInjectedEvent(up);
+
+    input.BeginFrame(true);
+    CHECK_FALSE(input.IsKeyDown(Key::W));
+
+    // First drain applies the press but defers the release (it would reverse W's level this frame),
+    // so a tick this frame sees the key down.
+    router.DrainInjectedEvents();
+    CHECK(input.IsKeyDown(Key::W));
+
+    // Next frame's drain applies the deferred release.
+    input.BeginFrame(true);
+    router.DrainInjectedEvents();
+    CHECK_FALSE(input.IsKeyDown(Key::W));
+}
+
+TEST_CASE("InputRouter: two injected taps of one key stay distinct instead of collapsing")
+{
+    Input input(nullptr);
+    InputRouter router(nullptr, input);
+
+    // Two back-to-back taps of the same key in one batch.
+    for (int i = 0; i < 2; ++i)
+    {
+        const KeyPressedEvent down(Key::Space, 0, 0);
+        const KeyReleasedEvent up(Key::Space, 0, 0);
+        router.PostInjectedEvent(down);
+        router.PostInjectedEvent(up);
+    }
+
+    // Each level change lands on its own frame: down, up, down, up — so a per-tick action reads two
+    // separate press→release taps rather than one held span.
+    input.BeginFrame(true);
+    router.DrainInjectedEvents();
+    CHECK(input.IsKeyDown(Key::Space));
+
+    input.BeginFrame(true);
+    router.DrainInjectedEvents();
+    CHECK_FALSE(input.IsKeyDown(Key::Space));
+
+    input.BeginFrame(true);
+    router.DrainInjectedEvents();
+    CHECK(input.IsKeyDown(Key::Space));
+
+    input.BeginFrame(true);
+    router.DrainInjectedEvents();
+    CHECK_FALSE(input.IsKeyDown(Key::Space));
+}
+
+TEST_CASE("InputRouter: an injected scroll is queued and applies on the next drain")
+{
+    Input input(nullptr);
+    InputRouter router(nullptr, input);
+
+    const MouseScrolledEvent scroll(vec2(0.0f, 3.0f));
+    router.PostInjectedEvent(scroll);
+
+    // Queued, not yet applied.
+    input.BeginFrame(true);
+    CHECK(input.GetScrollDelta().y == doctest::Approx(0.0f));
+
+    // The drain folds it into the snapshot at the pre-tick point, so a tick this frame reads it.
+    router.DrainInjectedEvents();
+    CHECK(input.GetScrollDelta().y == doctest::Approx(3.0f));
+}

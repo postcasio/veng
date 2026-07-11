@@ -189,6 +189,160 @@ namespace Veng
         OfferConsumers(event);
     }
 
+    void InputRouter::PostInjectedEvent(const Event& event)
+    {
+        switch (event.GetEventType())
+        {
+        case EventType::KeyPressed:
+            m_InjectedQueue.push_back(
+                InjectedEvent{.Kind = InjectedKind::KeyDown,
+                              .KeyCode = static_cast<const KeyPressedEvent&>(event).GetKey()});
+            break;
+        case EventType::KeyReleased:
+            m_InjectedQueue.push_back(
+                InjectedEvent{.Kind = InjectedKind::KeyUp,
+                              .KeyCode = static_cast<const KeyReleasedEvent&>(event).GetKey()});
+            break;
+        case EventType::MouseButtonPressed:
+            m_InjectedQueue.push_back(InjectedEvent{
+                .Kind = InjectedKind::MouseDown,
+                .Button = static_cast<const MouseButtonPressedEvent&>(event).GetButton()});
+            break;
+        case EventType::MouseButtonReleased:
+            m_InjectedQueue.push_back(InjectedEvent{
+                .Kind = InjectedKind::MouseUp,
+                .Button = static_cast<const MouseButtonReleasedEvent&>(event).GetButton()});
+            break;
+        case EventType::MouseMoved:
+            m_InjectedQueue.push_back(
+                InjectedEvent{.Kind = InjectedKind::MouseMove,
+                              .Vector = static_cast<const MouseMovedEvent&>(event).GetPosition()});
+            break;
+        case EventType::MouseScrolled:
+            m_InjectedQueue.push_back(
+                InjectedEvent{.Kind = InjectedKind::Scroll,
+                              .Vector = static_cast<const MouseScrolledEvent&>(event).GetOffset()});
+            break;
+        default:
+            // Not one of the six foldable input kinds an injected batch carries; ignore it rather
+            // than route a non-input event through the synthetic path.
+            break;
+        }
+    }
+
+    void InputRouter::ApplyInjected(const InjectedEvent& injected)
+    {
+        switch (injected.Kind)
+        {
+        case InjectedKind::KeyDown:
+        {
+            KeyPressedEvent event(injected.KeyCode, 0, 0);
+            Dispatch(event);
+            break;
+        }
+        case InjectedKind::KeyUp:
+        {
+            KeyReleasedEvent event(injected.KeyCode, 0, 0);
+            Dispatch(event);
+            break;
+        }
+        case InjectedKind::MouseDown:
+        {
+            MouseButtonPressedEvent event(injected.Button, 0);
+            Dispatch(event);
+            break;
+        }
+        case InjectedKind::MouseUp:
+        {
+            MouseButtonReleasedEvent event(injected.Button, 0);
+            Dispatch(event);
+            break;
+        }
+        case InjectedKind::MouseMove:
+        {
+            MouseMovedEvent event(injected.Vector);
+            Dispatch(event);
+            break;
+        }
+        case InjectedKind::Scroll:
+        {
+            MouseScrolledEvent event(injected.Vector);
+            Dispatch(event);
+            break;
+        }
+        }
+    }
+
+    void InputRouter::DrainInjectedEvents()
+    {
+        // Apply one paced segment: events in order, stopping before any event that would *reverse* a
+        // control's level already set this segment — a release of a control pressed here, or a press
+        // of one released here. Deferring the reversing event to the next frame guarantees each
+        // press-then-release (or release-then-press) straddles a frame, so a control is observed at
+        // each level for at least one tick and two rapid taps of one control stay distinct rather than
+        // folding into a single held span. Distinct controls (a chord) still apply together, and a
+        // move/scroll never reverses a level, so it never stops the segment.
+        const auto contains = [](const auto& values, const auto value)
+        { return std::ranges::find(values, value) != values.end(); };
+
+        usize applied = 0;
+        vector<Key> pressedKeys;
+        vector<Key> releasedKeys;
+        vector<MouseButton> pressedButtons;
+        vector<MouseButton> releasedButtons;
+        for (const InjectedEvent& injected : m_InjectedQueue)
+        {
+            bool reverses = false;
+            switch (injected.Kind)
+            {
+            case InjectedKind::KeyDown:
+                reverses = contains(releasedKeys, injected.KeyCode);
+                break;
+            case InjectedKind::KeyUp:
+                reverses = contains(pressedKeys, injected.KeyCode);
+                break;
+            case InjectedKind::MouseDown:
+                reverses = contains(releasedButtons, injected.Button);
+                break;
+            case InjectedKind::MouseUp:
+                reverses = contains(pressedButtons, injected.Button);
+                break;
+            case InjectedKind::MouseMove:
+            case InjectedKind::Scroll:
+                break;
+            }
+            if (reverses)
+            {
+                break;
+            }
+
+            ApplyInjected(injected);
+            ++applied;
+
+            switch (injected.Kind)
+            {
+            case InjectedKind::KeyDown:
+                pressedKeys.push_back(injected.KeyCode);
+                break;
+            case InjectedKind::KeyUp:
+                releasedKeys.push_back(injected.KeyCode);
+                break;
+            case InjectedKind::MouseDown:
+                pressedButtons.push_back(injected.Button);
+                break;
+            case InjectedKind::MouseUp:
+                releasedButtons.push_back(injected.Button);
+                break;
+            case InjectedKind::MouseMove:
+            case InjectedKind::Scroll:
+                break;
+            }
+        }
+
+        m_InjectedQueue.erase(m_InjectedQueue.begin(),
+                              m_InjectedQueue.begin() + static_cast<std::ptrdiff_t>(applied));
+    }
+
     void InputRouter::AssociateViewportSeat(const Renderer::Viewport& viewport, Entity viewer)
     {
         const auto existing =

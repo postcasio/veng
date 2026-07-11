@@ -980,6 +980,11 @@ namespace Veng
             m_Input->IngestGamepadStates(pads);
         }
 
+        // Release one paced segment of any queued synthetic input (MCP/script injection) at the same
+        // pre-tick point real window events land, so an injected event folds into this frame's
+        // snapshot for the tick loop rather than after it (see InputRouter::DrainInjectedEvents).
+        m_InputRouter->DrainInjectedEvents();
+
         // After the events are forwarded: ImGui's NewFrame consumes them this frame.
         if (m_ImGuiLayer)
         {

@@ -631,7 +631,7 @@ private:
                 return nullptr;
             },
             .ViewportNames = [] { return vector<string>{"primary"}; },
-            .InjectInput = [this](Event& event) { GetInputRouter().Dispatch(event); },
+            .InjectInput = [this](Event& event) { GetInputRouter().PostInjectedEvent(event); },
         });
 
         m_McpServer = Mcp::McpServer::Create(info, *m_McpHost);
