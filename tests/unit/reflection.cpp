@@ -17,6 +17,7 @@
 #include <Veng/Scene/Scene.h>
 #include <Veng/Asset/AssetHandle.h>
 #include <Veng/Asset/Mesh.h>
+#include <Veng/Asset/RawAsset.h>
 #include <Veng/Reflection/Serialize.h>
 
 using namespace Veng;
@@ -35,6 +36,7 @@ namespace
     static_assert(TypeIdOf<quat>() != TypeIdOf<mat4>());
     static_assert(TypeIdOf<string>() != TypeIdOf<vec3>());
     static_assert(TypeIdOf<AssetHandle<Mesh>>() != TypeIdOf<AssetHandle<Material>>());
+    static_assert(TypeIdOf<AssetHandle<RawAsset>>() != TypeIdOf<AssetHandle<Mesh>>());
     static_assert(TypeIdOf<Entity>() != TypeIdOf<u64>());
 
     // FieldClass resolves correctly per leaf.
@@ -46,6 +48,7 @@ namespace
     static_assert(FieldClassOf<mat4>() == FieldClass::Matrix);
     static_assert(FieldClassOf<string>() == FieldClass::String);
     static_assert(FieldClassOf<AssetHandle<Mesh>>() == FieldClass::AssetHandle);
+    static_assert(FieldClassOf<AssetHandle<RawAsset>>() == FieldClass::AssetHandle);
     static_assert(FieldClassOf<Entity>() == FieldClass::Reference);
 }
 
@@ -54,6 +57,8 @@ TEST_CASE("Leaf TypeIds and FieldClasses are stable and correct")
     CHECK(TypeIdOf<vec3>() == 0xA9A78263CAA293E7ULL);
     CHECK(FieldClassOf<vec3>() == FieldClass::Vector);
     CHECK(FieldClassOf<Entity>() == FieldClass::Reference);
+    CHECK(TypeIdOf<AssetHandle<RawAsset>>() == 0x05A5061C9E34F8D3ULL);
+    CHECK(FieldClassOf<AssetHandle<RawAsset>>() == FieldClass::AssetHandle);
 }
 
 // ---- Test types authored through VE_REFLECT --------------------------------

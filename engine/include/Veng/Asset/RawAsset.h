@@ -8,8 +8,14 @@ namespace Veng
 {
     /// @brief Cooked blob bytes verbatim, with no GPU resources.
     ///
-    /// A passthrough asset type so AssetManager's mount/resolve/load/cache/GC path
-    /// is testable end-to-end without a render Context.
+    /// The opaque-bytes asset type: a consumer-defined binary payload cooked by
+    /// RawImporter, loaded through the ordinary AssetManager path by RawAssetLoader,
+    /// and referenced by an AssetHandle<RawAsset> field the reflection inspector draws
+    /// as an asset picker and the prefab/level pipeline cooks and resolves like any
+    /// other handle. The engine sees only bytes; what they mean is the consumer's own
+    /// concern (a lookup table, a data file, a domain-specific catalogue). Carrying no
+    /// GPU resource, it also exercises the mount/resolve/load/cache/GC path without a
+    /// render Context.
     struct RawAsset
     {
         /// @brief The raw cooked blob bytes.

@@ -18,6 +18,7 @@ namespace Veng
     struct Animation;
     class EnvironmentMap;
     class InputMappingContext;
+    struct RawAsset;
     namespace Gui
     {
         class UIDocument;
@@ -122,6 +123,8 @@ VE_LEAF(::Veng::AssetHandle<::Veng::EnvironmentMap>, 0x4E2499935571083DULL,
 VE_LEAF(::Veng::AssetHandle<::Veng::InputMappingContext>, 0xA6CA03617AA27317ULL,
         ::Veng::FieldClass::AssetHandle);
 VE_LEAF(::Veng::AssetHandle<::Veng::Gui::UIDocument>, 0xC591D0D0452797E1ULL,
+        ::Veng::FieldClass::AssetHandle);
+VE_LEAF(::Veng::AssetHandle<::Veng::RawAsset>, 0x05A5061C9E34F8D3ULL,
         ::Veng::FieldClass::AssetHandle);
 
 // Entity is an intra-scene reference, not a value leaf — the prefab loader

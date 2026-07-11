@@ -12,6 +12,7 @@
 #include <Veng/Asset/Material.h>
 #include <Veng/Asset/MaterialInstance.h>
 #include <Veng/Asset/Mesh.h>
+#include <Veng/Asset/RawAsset.h>
 #include <Veng/Asset/Texture.h>
 #include <Veng/Gui/UIDocument.h>
 #include <Veng/Reflection/Serialize.h>
@@ -68,6 +69,10 @@ namespace Veng
             {
                 return AssetType::UIDocument;
             }
+            if (fieldType == TypeIdOf<AssetHandle<RawAsset>>())
+            {
+                return AssetType::Raw;
+            }
             return std::nullopt;
         }
 
@@ -120,6 +125,8 @@ namespace Veng
                 return load.operator()<InputMappingContext>();
             case AssetType::UIDocument:
                 return load.operator()<Gui::UIDocument>();
+            case AssetType::Raw:
+                return load.operator()<RawAsset>();
             default:
                 return std::unexpected(Corrupt(
                     parentId,

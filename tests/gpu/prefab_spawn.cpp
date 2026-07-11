@@ -18,6 +18,7 @@
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/CookedBlobs.h>
 #include <Veng/Asset/Prefab.h>
+#include <Veng/Asset/RawAsset.h>
 #include <Veng/Reflection/Serialize.h>
 #include <Veng/Reflection/TypeId.h>
 #include <Veng/Reflection/TypeRegistry.h>
@@ -56,6 +57,13 @@ namespace
     {
         ShapeVariant Shape;
     };
+
+    // A component carrying an opaque-bytes handle: the loader's dependency walk must
+    // recognize AssetHandle<RawAsset> as a Raw dependency and load it.
+    struct RawHolder
+    {
+        AssetHandle<RawAsset> Blob;
+    };
 }
 
 VE_REFLECT(::Link, 0x7A9C1E55B0334401ULL)
@@ -70,6 +78,10 @@ VE_VARIANT(::ShapeVariant, 0x1099063A85F1BA3DULL);
 
 VE_REFLECT(::VariantHolder, 0xEBD7E2BC29BE5CA3ULL)
 VE_FIELD(Shape)
+VE_REFLECT_END();
+
+VE_REFLECT(::RawHolder, 0x42416B54EF245910ULL)
+VE_FIELD(Blob)
 VE_REFLECT_END();
 
 namespace
@@ -97,6 +109,7 @@ namespace
             RegisterBuiltinTypes(Types);
             Types.Register<Link>();
             Types.Register<VariantHolder>();
+            Types.Register<RawHolder>();
             Stage = Scene::Create(Types);
             Assets = CreateUnique<AssetManager>(Context, Tasks, Types);
         }
@@ -330,6 +343,29 @@ namespace
         blob.insert(blob.end(), record.begin(), record.end());
         return blob;
     }
+
+    // A well-formed cooked prefab blob: one entity carrying one component whose
+    // reflection record is exactly `record` (produced by WriteFields).
+    vector<u8> OneComponentPrefabBlob(u64 componentTypeId, const vector<u8>& record)
+    {
+        CookedPrefabHeader header;
+        header.Version = CookedPrefabVersion;
+        header.EntityCount = 1;
+        header.ComponentCount = 1;
+        header.RecordBytes = static_cast<u32>(record.size());
+
+        const CookedPrefabEntity entity{.FirstComponent = 0, .ComponentCount = 1};
+        const CookedPrefabComponent component{.TypeId = componentTypeId,
+                                              .RecordOffset = 0,
+                                              .RecordSize = static_cast<u32>(record.size())};
+
+        vector<u8> blob;
+        PushPod(blob, header);
+        PushPod(blob, entity);
+        PushPod(blob, component);
+        blob.insert(blob.end(), record.begin(), record.end());
+        return blob;
+    }
 }
 
 TEST_CASE_FIXTURE(PrefabFixture,
@@ -348,4 +384,39 @@ TEST_CASE_FIXTURE(PrefabFixture,
     REQUIRE_FALSE(result.has_value());
     CHECK(result.error().Kind == AssetError::Corrupt);
     CHECK(result.error().Id == prefabId);
+}
+
+TEST_CASE_FIXTURE(PrefabFixture, "A prefab's embedded RawAsset handle loads as a dependency")
+{
+    const AssetId rawId{0x00A9F0FACADE0001ULL};
+    const AssetId prefabId{0x00A9F0FACADE0002ULL};
+
+    // Mount the opaque blob the prefab will reference, and take a handle carrying its id.
+    ArchiveWriter rawWriter;
+    rawWriter.Add(rawId, AssetType::Raw, vector<u8>{7, 8, 9});
+    const MountHandle rawMount = Assets->MountMemory(rawWriter.Build(), "raw_dep");
+    const AssetResult<AssetHandle<RawAsset>> raw = Assets->LoadSync<RawAsset>(rawId);
+    REQUIRE(raw.has_value());
+
+    RawHolder holder;
+    holder.Blob = *raw;
+
+    // Author a prefab whose RawHolder names that blob, and load it: the loader's
+    // dependency walk must recognize AssetHandle<RawAsset> as a Raw dependency and
+    // resolve it, rather than rejecting the field as an unknown asset type.
+    ArchiveWriter prefabWriter;
+    const Prefab::Component component = MakeComponent(Types, holder);
+    prefabWriter.Add(prefabId, AssetType::Prefab,
+                     OneComponentPrefabBlob(component.Type, component.Record));
+    const MountHandle prefabMount = Assets->MountMemory(prefabWriter.Build(), "raw_prefab");
+
+    const AssetResult<AssetHandle<Prefab>> loaded = Assets->LoadSync<Prefab>(prefabId);
+    REQUIRE(loaded.has_value());
+
+    // The spawned component resolves its handle to the resident opaque blob.
+    const vector<Entity> roots = (*loaded)->SpawnInto(*Stage, *Assets).Roots;
+    REQUIRE(roots.size() == 1);
+    const RawHolder& spawned = Stage->Get<RawHolder>(roots[0]);
+    CHECK(spawned.Blob.Id() == rawId);
+    CHECK(spawned.Blob.IsLoaded());
 }
