@@ -5,6 +5,7 @@
 #include <Veng/Input/Actions.h>
 #include <Veng/Net/Connection.h>
 #include <Veng/Net/NetEvents.h>
+#include <Veng/Net/Quantize.h>
 #include <Veng/Reflection/TypeId.h>
 #include <Veng/Result.h>
 #include <Veng/Scene/Entity.h>
@@ -213,11 +214,25 @@ namespace Veng
     class VE_API ReplicationServer
     {
     public:
-        /// @brief Server-side replication cadence.
+        /// @brief Server-side replication cadence and wire-compression knobs.
         struct Settings
         {
             /// @brief Emit a snapshot every this many ticks (2 ⇒ 30 Hz at a 60 Hz sim).
             u64 SnapshotInterval = 2;
+            /// @brief Whether the snapshot wire quantizes Transform's spatial leaves (lossy, wire-only).
+            ///
+            /// Off by default: the raw codec is lossless (field deltas only), so a byte-exact
+            /// consumer stays exact. A game opts in through GameNetInfo::QuantizeSpatial to trade the
+            /// last decimal places of a displayed pose for bandwidth; the sim state stays full-float.
+            bool QuantizeSpatial = false;
+            /// @brief The spatial quantization applied when QuantizeSpatial is set.
+            Net::QuantizationSettings Quantization;
+            /// @brief Force a full (non-delta) record every this many snapshots to a connection.
+            ///
+            /// Bounds baseline drift and re-bases a connection that lost sync: the delta encoding is
+            /// negotiated by ack, and a periodic keyframe is the self-heal a lossy link relies on.
+            /// Zero disables keyframes (delta whenever a baseline is shared).
+            u32 KeyframeInterval = 16;
         };
 
         /// @brief Constructs a replication server with the default cadence.
@@ -291,6 +306,19 @@ namespace Veng
                                                           u64 tick);
 
     private:
+        /// @brief One snapshot's sent component values, kept until acked so the baseline can advance.
+        ///
+        /// The delta encoder deltas against the value the connection has acknowledged; recovering
+        /// that value on an ack needs the states sent in the unacked window, not the whole history.
+        /// Bounded by the window (dropped once acked), never a growing ring.
+        struct SentSnapshot
+        {
+            /// @brief The server tick this snapshot was sent on.
+            u64 Tick = 0;
+            /// @brief The component wire bytes sent this snapshot, keyed by NetId then TypeId.
+            unordered_map<NetId, unordered_map<TypeId, vector<u8>>> Components;
+        };
+
         /// @brief Per-connection replication bookkeeping.
         struct ConnectionState
         {
@@ -302,6 +330,14 @@ namespace Veng
             i32 InputFeedback = 0;
             /// @brief Client input tick the server had consumed, ridden in the next snapshot header.
             u64 LastConsumedInputTick = 0;
+            /// @brief The acked baseline the delta encoder deltas against (component wire bytes).
+            unordered_map<NetId, unordered_map<TypeId, vector<u8>>> Baseline;
+            /// @brief The tick the Baseline currently represents (advanced as acks arrive).
+            u64 AdoptedTick = 0;
+            /// @brief The unacked sent snapshots, ascending by tick, adopted into Baseline on ack.
+            vector<SentSnapshot> InFlight;
+            /// @brief Snapshots generated for this connection, driving the keyframe cadence.
+            u64 SnapshotCounter = 0;
         };
 
         Settings m_Settings;
@@ -343,6 +379,13 @@ namespace Veng
         /// @brief Returns the NetId → Entity map, rebuilt as spawns and despawns arrive.
         [[nodiscard]] const NetIdMap& Map() const { return m_Map; }
 
+        /// @brief Sets the spatial quantization the snapshot decoder dequantizes with.
+        ///
+        /// Must match the server's ReplicationServer::Settings::Quantization; a mismatch dequantizes
+        /// the wrong grid. The host threads the shared GameNetInfo value onto both ends.
+        /// @param quant  The quantization settings.
+        void SetQuantization(const Net::QuantizationSettings& quant) { m_Quantization = quant; }
+
         /// @brief Applies one reliable Spawn or Despawn message into @p scene.
         /// @param message  The reliable message bytes (a leading type byte + payload).
         /// @param scene    The client scene to spawn into or despawn from.
@@ -378,6 +421,10 @@ namespace Veng
         function<Ref<Prefab>(AssetId)> m_ResolvePrefab;
         /// @brief The last ApplySnapshot's Tier::Predicted authoritative records (see PredictedRecords).
         vector<PredictedRecord> m_PredictedRecords;
+        /// @brief The per-(NetId, TypeId) baseline the delta decoder patches against (wire bytes).
+        unordered_map<NetId, unordered_map<TypeId, vector<u8>>> m_Baseline;
+        /// @brief The spatial quantization the decoder dequantizes with (see SetQuantization).
+        Net::QuantizationSettings m_Quantization;
     };
 
     // ---- Input replication (client → server) ------------------------------------------------------
@@ -436,6 +483,88 @@ namespace Veng
     [[nodiscard]] VE_API vector<u8> EncodeInputPacket(u64 ackedServerTick, u64 firstClientTick,
                                                       std::span<const ActionState> records,
                                                       const TypeRegistry& registry);
+
+    // ---- Packed input encoding (the context-keyed wire form) --------------------------------------
+    //
+    // The reflection form above is self-describing and drift-tolerant — the canonical, always-correct
+    // input wire. The packed form is the opt-down: it encodes each action's value and phase against the
+    // seat's active context's resolved action list (indices, value bits by action shape, 2-bit phase),
+    // keyed by a context-stack hash both ends compute. The receiver decodes packed only when the
+    // packet's hash matches its own resolved list; a mismatch (a mid-flight context switch) is the
+    // documented fallback to the reflection form — the same negotiated-encoding posture as the deltas.
+
+    /// @brief One action in a seat's resolved schema: its id and value shape, in stack-declared order.
+    struct PackedInputAction
+    {
+        /// @brief The action's stable id (the schema is ordered; the wire encodes by position).
+        ActionId Id = ActionId::Null;
+        /// @brief The action's value shape, selecting how many value bits the wire carries.
+        ActionKind Kind = ActionKind::Button;
+    };
+
+    /// @brief Hashes an ordered context-stack (its cooked context AssetIds) into a negotiation key.
+    ///
+    /// Order-sensitive: a different stack order yields a different hash, so both ends agree on the
+    /// resolved action list only when the hash matches. The packed packet carries this; a mismatch
+    /// falls the receiver back to the reflection form for that packet.
+    /// @param contexts  The active context AssetIds, lowest priority first.
+    /// @return The 64-bit stack hash.
+    [[nodiscard]] VE_API u64 HashContextStack(std::span<const AssetId> contexts);
+
+    /// @brief Encodes one action state against a resolved schema into a compact bit-packed record.
+    ///
+    /// Per schema action, in order: a presence bit, then (when present) a 2-bit phase and the value
+    /// bits by shape — a button is one bit, a 1D axis eight quantized bits, a 2D axis two of those. An
+    /// action in @p state absent from @p schema is dropped; a schema action absent from @p state is
+    /// encoded absent.
+    /// @param state   The resolved action state to encode.
+    /// @param schema  The seat's ordered resolved action list.
+    /// @return The bit-packed record bytes.
+    [[nodiscard]] VE_API vector<u8>
+    EncodePackedActionState(const ActionState& state, std::span<const PackedInputAction> schema);
+
+    /// @brief Decodes a packed action-state record written by EncodePackedActionState.
+    /// @param bytes   The bit-packed record.
+    /// @param schema  The seat's ordered resolved action list (must match the encoder's).
+    /// @return The reconstructed action state (axis values dequantized).
+    [[nodiscard]] VE_API ActionState
+    DecodePackedActionState(std::span<const u8> bytes, std::span<const PackedInputAction> schema);
+
+    /// @brief Encodes an input packet in the packed form, carrying the context-stack hash.
+    ///
+    /// The packed sibling of EncodeInputPacket: the same ack + redundant tick run, each record the
+    /// bit-packed form against @p schema, prefixed by @p contextHash so the receiver can verify its
+    /// own resolved list matches before decoding.
+    ///
+    /// Packet layout (framing little-endian):
+    ///
+    ///     PackedInputPacket := AckedServerTick:u64  ContextHash:u64  FirstClientTick:u64  Count:u32  Record*
+    ///     Record            := ByteLength:u32  EncodePackedActionState-bytes
+    ///
+    /// @param ackedServerTick  The highest server snapshot tick to acknowledge.
+    /// @param contextHash      The sender's context-stack hash (see HashContextStack).
+    /// @param firstClientTick  The client tick of the first record.
+    /// @param records          The action states for the contiguous tick run, oldest first.
+    /// @param schema           The seat's ordered resolved action list.
+    /// @return The encoded packet bytes.
+    [[nodiscard]] VE_API vector<u8>
+    EncodePackedInputPacket(u64 ackedServerTick, u64 contextHash, u64 firstClientTick,
+                            std::span<const ActionState> records,
+                            std::span<const PackedInputAction> schema);
+
+    /// @brief Decodes a packed input packet, verifying the context hash before decoding records.
+    ///
+    /// When the packet's carried hash does not equal @p expectedHash the packet is undecodable under
+    /// this schema — a mid-flight context switch — and an error is returned so the caller falls back
+    /// to the reflection form / drops the packet (input redundancy heals it). A truncated trailing
+    /// record stops the walk; a header too short is the one hard error.
+    /// @param packet        The encoded packet bytes.
+    /// @param expectedHash  The receiver's own context-stack hash to verify against.
+    /// @param schema        The receiver's ordered resolved action list.
+    /// @return The decoded packet, or an error on a header truncation or a hash mismatch.
+    [[nodiscard]] VE_API Result<InputPacket>
+    DecodePackedInputPacket(std::span<const u8> packet, u64 expectedHash,
+                            std::span<const PackedInputAction> schema);
 
     /// @brief Decodes an input packet, recoverable on malformed input.
     ///

@@ -155,6 +155,21 @@ namespace Veng
         u32 SnapshotIntervalTicks = 2;
         /// @brief How many recent input ticks each client input packet carries redundantly (the loss window).
         u32 InputRedundancyTicks = 3;
+        /// @brief Whether the server quantizes Transform's spatial leaves on the wire (lossy, wire-only).
+        ///
+        /// On by default: a displayed pose does not need full f32 precision, so the snapshot wire
+        /// rounds position to PositionQuantum and rotation to smallest-three. The sim state stays
+        /// full-float on both ends; only the wire representation rounds. Reconciliation's spatial
+        /// epsilon is kept >= the quantum so the rounding never reads as a misprediction.
+        bool QuantizeSpatial = true;
+        /// @brief Position grid step in meters the wire quantizes to (the max round error is half this).
+        f32 PositionQuantum = 0.001f;
+        /// @brief Half the encodable world span per axis in meters; a position past it clamps.
+        f32 PositionExtent = 4096.0f;
+        /// @brief Bits per smallest-three rotation component on the wire.
+        u32 RotationBits = 9;
+        /// @brief Force a full (non-delta) snapshot record every this many snapshots per connection.
+        u32 KeyframeIntervalSnapshots = 16;
         /// @brief Client policy selecting the predicted entity set on a possession change; null uses the default.
         ///
         /// The engine passes it to the mounted ClientHost, which promotes this set to Tier::Predicted

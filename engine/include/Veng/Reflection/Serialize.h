@@ -47,4 +47,29 @@ namespace Veng
     /// @return         Empty on success; an error string on truncation or format error.
     VE_API VoidResult ReadFields(std::span<const u8> in, void* obj, const TypeInfo& type,
                                  const TypeRegistry& registry);
+
+    /// @brief Appends one field's value bytes (no name, no length prefix) per its FieldClass.
+    ///
+    /// The single-field seam WriteFields uses per record, exposed for a field-granular consumer
+    /// (the delta codec, which emits only the fields that changed against a baseline). The byte
+    /// count is exactly what ReadFieldValue consumes for the same descriptor.
+    /// @param out       Destination buffer; the value bytes are appended.
+    /// @param fieldPtr  Pointer to the field's storage (the owning object's base + Offset).
+    /// @param field     The field descriptor selecting the encoding.
+    /// @param registry  Registry resolving nested/struct/variant/array element types.
+    VE_API void WriteFieldValue(vector<u8>& out, const void* fieldPtr, const FieldDescriptor& field,
+                                const TypeRegistry& registry);
+
+    /// @brief Reads one field's value bytes written by WriteFieldValue into fieldPtr.
+    ///
+    /// A value running past the end of @p in is a recoverable error; a descriptor naming an
+    /// unregistered type is a fatal schema fault (the ReadFields contract, applied per field).
+    /// @param in        Source byte span.
+    /// @param cursor    In/out read cursor into @p in; advanced by the bytes consumed.
+    /// @param fieldPtr  Pointer to the destination field storage.
+    /// @param field     The field descriptor selecting the decoding.
+    /// @param registry  Registry resolving nested/struct/variant/array element types.
+    /// @return Empty on success; an error string on truncation.
+    VE_API VoidResult ReadFieldValue(std::span<const u8> in, usize& cursor, void* fieldPtr,
+                                     const FieldDescriptor& field, const TypeRegistry& registry);
 }

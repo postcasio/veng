@@ -53,7 +53,9 @@ add_library(veng SHARED
         src/Net/Client.cpp
         src/Net/ClockSync.cpp
         src/Net/Connection.cpp
+        src/Net/DeltaCodec.cpp
         src/Net/FaultInjectionTransport.cpp
+        src/Net/Quantize.cpp
         src/Net/Handshake.cpp
         src/Net/Host.cpp
         src/Net/PredictionHistory.cpp

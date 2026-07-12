@@ -378,4 +378,16 @@ namespace Veng
         }
         return {};
     }
+
+    void WriteFieldValue(vector<u8>& out, const void* fieldPtr, const FieldDescriptor& field,
+                         const TypeRegistry& registry)
+    {
+        WriteValue(out, fieldPtr, field, registry);
+    }
+
+    VoidResult ReadFieldValue(std::span<const u8> in, usize& cursor, void* fieldPtr,
+                              const FieldDescriptor& field, const TypeRegistry& registry)
+    {
+        return ReadValue(in, cursor, fieldPtr, field, registry);
+    }
 }

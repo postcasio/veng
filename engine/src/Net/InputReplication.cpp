@@ -1,8 +1,11 @@
 #include <Veng/Net/Replication.h>
 
+#include <Veng/Net/BitStream.h>
 #include <Veng/Reflection/Serialize.h>
 #include <Veng/Reflection/TypeRegistry.h>
 
+#include <algorithm>
+#include <cmath>
 #include <utility>
 
 namespace Veng
@@ -62,6 +65,162 @@ namespace Veng
         {
             return registry.Info(TypeIdOf<ActionState>());
         }
+    }
+
+    namespace
+    {
+        // An axis component in [-1, 1] to 8 bits and back — the packed-input value quantization.
+        u32 QuantizeAxis8(f32 value)
+        {
+            const f32 normalized = std::clamp((value + 1.0f) * 0.5f, 0.0f, 1.0f);
+            return static_cast<u32>(std::lround(normalized * 255.0f));
+        }
+
+        f32 DequantizeAxis8(u32 code)
+        {
+            return static_cast<f32>(code) / 255.0f * 2.0f - 1.0f;
+        }
+    }
+
+    u64 HashContextStack(std::span<const AssetId> contexts)
+    {
+        // FNV-1a over the context ids in order — order-sensitive so a reordered stack differs.
+        u64 hash = 1469598103934665603ULL;
+        const auto mix = [&hash](u64 value)
+        {
+            for (u32 i = 0; i < 8; ++i)
+            {
+                hash ^= (value >> (8 * i)) & 0xFFu;
+                hash *= 1099511628211ULL;
+            }
+        };
+        for (const AssetId id : contexts)
+        {
+            mix(id.Value);
+        }
+        return hash;
+    }
+
+    vector<u8> EncodePackedActionState(const ActionState& state,
+                                       std::span<const PackedInputAction> schema)
+    {
+        Net::BitWriter bw;
+        for (const PackedInputAction& action : schema)
+        {
+            const ActionSample* sample = nullptr;
+            for (const ActionSample& candidate : state.Actions)
+            {
+                if (candidate.Id == action.Id)
+                {
+                    sample = &candidate;
+                    break;
+                }
+            }
+            bw.WriteBit(sample != nullptr);
+            if (sample == nullptr)
+            {
+                continue;
+            }
+            bw.WriteBits(static_cast<u32>(sample->Phase), 2);
+            switch (action.Kind)
+            {
+            case ActionKind::Button:
+                bw.WriteBit(sample->Value.x != 0.0f);
+                break;
+            case ActionKind::Axis1D:
+                bw.WriteBits(QuantizeAxis8(sample->Value.x), 8);
+                break;
+            case ActionKind::Axis2D:
+                bw.WriteBits(QuantizeAxis8(sample->Value.x), 8);
+                bw.WriteBits(QuantizeAxis8(sample->Value.y), 8);
+                break;
+            }
+        }
+        return bw.Take();
+    }
+
+    ActionState DecodePackedActionState(std::span<const u8> bytes,
+                                        std::span<const PackedInputAction> schema)
+    {
+        ActionState state;
+        Net::BitReader br(bytes);
+        for (const PackedInputAction& action : schema)
+        {
+            if (!br.ReadBit())
+            {
+                continue;
+            }
+            ActionSample sample;
+            sample.Id = action.Id;
+            sample.Phase = static_cast<ActionPhase>(br.ReadBits(2));
+            switch (action.Kind)
+            {
+            case ActionKind::Button:
+                sample.Value = vec2(br.ReadBit() ? 1.0f : 0.0f, 0.0f);
+                break;
+            case ActionKind::Axis1D:
+                sample.Value = vec2(DequantizeAxis8(br.ReadBits(8)), 0.0f);
+                break;
+            case ActionKind::Axis2D:
+                sample.Value.x = DequantizeAxis8(br.ReadBits(8));
+                sample.Value.y = DequantizeAxis8(br.ReadBits(8));
+                break;
+            }
+            state.Actions.push_back(sample);
+        }
+        return state;
+    }
+
+    vector<u8> EncodePackedInputPacket(u64 ackedServerTick, u64 contextHash, u64 firstClientTick,
+                                       std::span<const ActionState> records,
+                                       std::span<const PackedInputAction> schema)
+    {
+        vector<u8> out;
+        AppendU64(out, ackedServerTick);
+        AppendU64(out, contextHash);
+        AppendU64(out, firstClientTick);
+        AppendU32(out, static_cast<u32>(records.size()));
+        for (const ActionState& state : records)
+        {
+            const vector<u8> packed = EncodePackedActionState(state, schema);
+            AppendU32(out, static_cast<u32>(packed.size()));
+            out.insert(out.end(), packed.begin(), packed.end());
+        }
+        return out;
+    }
+
+    Result<InputPacket> DecodePackedInputPacket(std::span<const u8> packet, u64 expectedHash,
+                                                std::span<const PackedInputAction> schema)
+    {
+        usize cursor = 0;
+        const Result<u64> ackedServerTick = ReadU64(packet, cursor);
+        const Result<u64> contextHash = ReadU64(packet, cursor);
+        const Result<u64> firstClientTick = ReadU64(packet, cursor);
+        const Result<u32> count = ReadU32(packet, cursor);
+        if (!ackedServerTick || !contextHash || !firstClientTick || !count)
+        {
+            return std::unexpected("packed input packet: truncated header");
+        }
+        if (*contextHash != expectedHash)
+        {
+            return std::unexpected("packed input packet: context hash mismatch");
+        }
+
+        InputPacket result;
+        result.AckedServerTick = *ackedServerTick;
+        for (u32 i = 0; i < *count; ++i)
+        {
+            const Result<u32> byteLength = ReadU32(packet, cursor);
+            if (!byteLength || cursor + *byteLength > packet.size())
+            {
+                break; // truncated trailing record
+            }
+            const std::span<const u8> payload = packet.subspan(cursor, *byteLength);
+            cursor += *byteLength;
+            result.Inputs.push_back(TickedInput{.ClientTick = *firstClientTick + i,
+                                                .State = DecodePackedActionState(payload, schema)});
+        }
+        return result;
     }
 
     ActionState DecayInputPhases(const ActionState& state)

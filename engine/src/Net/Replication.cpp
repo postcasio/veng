@@ -3,6 +3,7 @@
 #include <Veng/Assert.h>
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Prefab.h>
+#include <Veng/Net/DeltaCodec.h>
 #include <Veng/Reflection/Serialize.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Result.h>
@@ -167,18 +168,53 @@ namespace Veng
             vector<u8> Bytes;
         };
 
+        // One component's live value as wire bytes: the reflection serializer's WriteFields form with
+        // its Entity references translated to NetIds, computed out of line so the live component is
+        // never mutated. This is the "current value" the delta codec deltas and the client reconstructs.
+        vector<u8> EncodeComponentWireBytes(const Scene& scene, Entity entity, TypeId typeId,
+                                            const TypeInfo& info, const TypeRegistry& registry,
+                                            const EntityRemap& encodeRef)
+        {
+            const AssetHandleFixup keepAsset = [](void*) {};
+            const void* component = scene.TryGetComponent(entity, typeId);
+
+            vector<u8> valueCopy;
+            WriteFields(valueCopy, component, info, registry);
+            ScratchComponent scratch(info);
+            ReadFields(valueCopy, scratch.Ptr, info, registry).value();
+            RemapComponentReferences(scratch.Ptr, info, registry, encodeRef, keepAsset);
+
+            vector<u8> wire;
+            WriteFields(wire, scratch.Ptr, info, registry);
+            return wire;
+        }
+
+        // Appends one component record (TypeId:u64 ByteLength:u32 <encoding tag + body>) to @p out,
+        // deltaing against @p baseline when one is shared (empty ⇒ the full self-describing form).
+        void AppendComponentRecord(vector<u8>& out, TypeId typeId, std::span<const u8> currentBytes,
+                                   std::span<const u8> baseline, bool forceFull,
+                                   TypeId transformType, const TypeRegistry& registry,
+                                   const Net::QuantizationSettings& quant)
+        {
+            vector<u8> body;
+            Net::EncodeComponentBody(body, typeId, currentBytes, baseline, forceFull, transformType,
+                                     registry, quant);
+            AppendU64(out, typeId);
+            AppendU32(out, static_cast<u32>(body.size()));
+            out.insert(out.end(), body.begin(), body.end());
+        }
+
+        // One entity's dirty replicated components as full self-describing records — the spawn/baseline
+        // form and the free EncodeSnapshot form (no per-connection baseline, no quantization).
         EncodedComponents EncodeDirtyComponents(const Scene& scene, Entity entity,
                                                 const vector<TypeId>& replicated, u64 sinceTick,
                                                 const TypeRegistry& registry,
                                                 const EntityRemap& encodeRef)
         {
-            const AssetHandleFixup keepAsset = [](void*) {};
             EncodedComponents result;
-
             for (const TypeId typeId : replicated)
             {
-                const void* component = scene.TryGetComponent(entity, typeId);
-                if (component == nullptr)
+                if (scene.TryGetComponent(entity, typeId) == nullptr)
                 {
                     continue;
                 }
@@ -186,41 +222,35 @@ namespace Veng
                 {
                     continue;
                 }
-
                 const TypeInfo& info = registry.Info(typeId);
-
-                // Copy the live value out of line, translate its Entity references to NetIds, then
-                // serialize the copy — the live component is never mutated.
-                vector<u8> valueCopy;
-                WriteFields(valueCopy, component, info, registry);
-                ScratchComponent scratch(info);
-                ReadFields(valueCopy, scratch.Ptr, info, registry).value();
-                RemapComponentReferences(scratch.Ptr, info, registry, encodeRef, keepAsset);
-
-                vector<u8> payload;
-                WriteFields(payload, scratch.Ptr, info, registry);
-
-                AppendU64(result.Bytes, typeId);
-                AppendU32(result.Bytes, static_cast<u32>(payload.size()));
-                result.Bytes.insert(result.Bytes.end(), payload.begin(), payload.end());
+                const vector<u8> wire =
+                    EncodeComponentWireBytes(scene, entity, typeId, info, registry, encodeRef);
+                AppendComponentRecord(result.Bytes, typeId, wire, {}, /*forceFull=*/false,
+                                      InvalidTypeId, registry, Net::QuantizationSettings{});
                 ++result.Count;
             }
-
             return result;
         }
 
+        // The per-(NetId, TypeId) baseline store the delta decoder patches against and updates. Null
+        // on the stateless free ApplySnapshot (which only ever sees full self-describing records).
+        using BaselineStore = unordered_map<NetId, unordered_map<TypeId, vector<u8>>>;
+
         // Applies one entity record's component list (positioned at the first component record).
-        // Decodes each component out of line so a malformed record leaves prior state intact. When
-        // the record is for a known (bound, alive) entity, each component either buffers a Transform
-        // sample (bufferTransform), collects the decoded authoritative state into @p collect (a
-        // predicted entity, handed to the reconciler rather than applied), or overwrites the live
-        // component; an unknown entity's records are parsed only to keep the cursor aligned. Stops on
-        // a truncated record.
+        // Each component body opens with an encoding tag: a full record reconstructs the value, a
+        // delta patches @p baselines[netId][type], and a quantized Transform dequantizes — all out of
+        // line, so a malformed record leaves prior state intact. When the record is for a known
+        // (bound, alive) entity, each decoded component either buffers a Transform sample
+        // (bufferTransform), collects the authoritative state into @p collect (a predicted entity,
+        // handed to the reconciler rather than applied), or overwrites the live component; an unknown
+        // entity's records are parsed only to keep the cursor aligned. Stops on a truncated record.
         void ApplyComponentRecords(std::span<const u8> packet, usize& cursor, u32 componentCount,
-                                   Scene& scene, Entity entity, bool known,
+                                   Scene& scene, Entity entity, NetId netId, bool known,
                                    const TypeRegistry& registry, const EntityRemap& decodeRef,
-                                   bool bufferTransform, u64 serverTick, bool& appliedOut,
-                                   bool& truncatedOut, PredictedRecord* collect = nullptr)
+                                   bool bufferTransform, u64 serverTick,
+                                   const Net::QuantizationSettings& quant, BaselineStore* baselines,
+                                   bool& appliedOut, bool& truncatedOut,
+                                   PredictedRecord* collect = nullptr)
         {
             const AssetHandleFixup keepAsset = [](void*) {};
             const TypeId transformId = TypeIdOf<Transform>();
@@ -244,7 +274,7 @@ namespace Veng
                     truncatedOut = true;
                     return;
                 }
-                const std::span<const u8> payload = packet.subspan(cursor, *byteLength);
+                const std::span<const u8> body = packet.subspan(cursor, *byteLength);
                 cursor += *byteLength;
 
                 if (!known)
@@ -257,6 +287,33 @@ namespace Veng
                 }
 
                 const TypeInfo& info = registry.Info(*typeId);
+
+                // Decode the body against this connection's baseline for the (entity, component),
+                // yielding the full wire bytes; store them as the new baseline for the next delta.
+                std::span<const u8> baseline;
+                if (baselines != nullptr)
+                {
+                    const auto entityIt = baselines->find(netId);
+                    if (entityIt != baselines->end())
+                    {
+                        const auto compIt = entityIt->second.find(*typeId);
+                        if (compIt != entityIt->second.end())
+                        {
+                            baseline = compIt->second;
+                        }
+                    }
+                }
+                vector<u8> payload;
+                if (VoidResult decoded = Net::DecodeComponentBody(
+                        body, baseline, *typeId, transformId, registry, quant, payload);
+                    !decoded)
+                {
+                    continue; // baseline mismatch / malformed: leave prior state intact
+                }
+                if (baselines != nullptr)
+                {
+                    (*baselines)[netId][*typeId] = payload;
+                }
 
                 ScratchComponent scratch(info);
                 if (VoidResult read = ReadFields(payload, scratch.Ptr, info, registry); !read)
@@ -465,8 +522,9 @@ namespace Veng
 
             bool applied = false;
             bool truncated = false;
-            ApplyComponentRecords(packet, cursor, *componentCount, scene, entity, known, registry,
-                                  decodeRef, /*bufferTransform=*/false, *serverTick, applied,
+            ApplyComponentRecords(packet, cursor, *componentCount, scene, entity, *netId, known,
+                                  registry, decodeRef, /*bufferTransform=*/false, *serverTick,
+                                  Net::QuantizationSettings{}, /*baselines=*/nullptr, applied,
                                   truncated);
 
             if (!known)
@@ -614,10 +672,46 @@ namespace Veng
                                                   .Bytes = std::move(despawn)});
         }
 
-        // Snapshot on the interval tick: pack dirty entity records greedily into MTU-sized unreliable
-        // packets, each a self-contained snapshot packet (header + a subset of the records).
+        // Snapshot on the interval tick: pack each connection's dirty state as ack-keyed field deltas
+        // (quantized spatial leaves) into MTU-sized unreliable packets, each a self-contained snapshot.
         if (m_Settings.SnapshotInterval != 0 && tick % m_Settings.SnapshotInterval == 0)
         {
+            // Advance the delta baseline to the acked tick by adopting the sent states the connection
+            // has now acknowledged; the newest adopted entry carries every still-dirty component's
+            // value (send-until-acked), so dropping the older window entries loses nothing.
+            if (state.AckedTick > state.AdoptedTick)
+            {
+                for (const SentSnapshot& sent : state.InFlight)
+                {
+                    if (sent.Tick > state.AckedTick)
+                    {
+                        break; // InFlight is ascending; the rest is still unacked
+                    }
+                    for (const auto& [nid, comps] : sent.Components)
+                    {
+                        for (const auto& [tid, bytes] : comps)
+                        {
+                            state.Baseline[nid][tid] = bytes;
+                        }
+                    }
+                }
+                std::erase_if(state.InFlight, [&](const SentSnapshot& sent)
+                              { return sent.Tick <= state.AckedTick; });
+                state.AdoptedTick = state.AckedTick;
+            }
+
+            ++state.SnapshotCounter;
+            const bool keyframe = m_Settings.KeyframeInterval != 0 &&
+                                  state.SnapshotCounter % m_Settings.KeyframeInterval == 0;
+            // Quantization is server-opt-in: with it off, Transform rides the lossless field-delta
+            // path (InvalidTypeId disables the quantized leaf encoding), so a byte-exact consumer of
+            // the wire stays exact; with it on, Transform's leaves quantize.
+            const TypeId transformType =
+                m_Settings.QuantizeSpatial ? TypeIdOf<Transform>() : InvalidTypeId;
+
+            SentSnapshot sent;
+            sent.Tick = tick;
+
             const auto startPacket =
                 [tick, feedback = state.InputFeedback, lastConsumed = state.LastConsumedInputTick]()
             {
@@ -633,17 +727,47 @@ namespace Veng
 
             for (auto [entity, identity] : scene.View<NetIdentity>())
             {
-                const EncodedComponents encoded = EncodeDirtyComponents(
-                    scene, entity, replicated, state.AckedTick, registry, encodeRef);
-                if (encoded.Count == 0)
+                vector<u8> comps;
+                u32 count = 0;
+                for (const TypeId typeId : replicated)
+                {
+                    if (scene.TryGetComponent(entity, typeId) == nullptr)
+                    {
+                        continue;
+                    }
+                    if (scene.GetComponentChangeTick(entity, typeId) <= state.AckedTick)
+                    {
+                        continue;
+                    }
+                    const TypeInfo& info = registry.Info(typeId);
+                    const vector<u8> wire =
+                        EncodeComponentWireBytes(scene, entity, typeId, info, registry, encodeRef);
+
+                    std::span<const u8> baseline;
+                    if (const auto entIt = state.Baseline.find(identity.Id);
+                        entIt != state.Baseline.end())
+                    {
+                        if (const auto compIt = entIt->second.find(typeId);
+                            compIt != entIt->second.end())
+                        {
+                            baseline = compIt->second;
+                        }
+                    }
+
+                    AppendComponentRecord(comps, typeId, wire, baseline, keyframe, transformType,
+                                          registry, m_Settings.Quantization);
+                    sent.Components[identity.Id][typeId] = wire;
+                    ++count;
+                }
+                if (count == 0)
                 {
                     continue;
                 }
 
                 vector<u8> record;
                 AppendU32(record, identity.Id);
-                AppendU32(record, encoded.Count);
-                record.insert(record.end(), encoded.Bytes.begin(), encoded.Bytes.end());
+                AppendU32(record, count);
+                record.insert(record.end(), comps.begin(), comps.end());
 
                 if (currentHasRecords &&
                     current.size() + record.size() > Net::MaxUnreliableMessageSize)
@@ -662,6 +786,14 @@ namespace Veng
             {
                 messages.push_back(ReplicationMessage{.Channel = Net::Channel::UnreliableSequenced,
                                                       .Bytes = std::move(current)});
+            }
+
+            // Retain this snapshot's sent state until acked, bounded by the unacked window.
+            state.InFlight.push_back(std::move(sent));
+            constexpr usize MaxInFlight = 128;
+            if (state.InFlight.size() > MaxInFlight)
+            {
+                state.InFlight.erase(state.InFlight.begin());
             }
         }
 
@@ -737,9 +869,10 @@ namespace Veng
             const EntityRemap decodeRef = MakeDecodeRef(m_Map);
             bool applied = false;
             bool truncated = false;
-            ApplyComponentRecords(message, cursor, *componentCount, scene, entity, /*known=*/true,
-                                  registry, decodeRef, /*bufferTransform=*/false, /*serverTick=*/0,
-                                  applied, truncated);
+            ApplyComponentRecords(message, cursor, *componentCount, scene, entity, *netId,
+                                  /*known=*/true, registry, decodeRef, /*bufferTransform=*/false,
+                                  /*serverTick=*/0, m_Quantization, &m_Baseline, applied,
+                                  truncated);
             (void)applied;
             (void)truncated;
 
@@ -782,6 +915,9 @@ namespace Veng
                 result.Entity = entity;
             }
             m_Map.Unbind(*netId);
+            // Drop the entity's delta baseline: a re-spawn of the same id re-bases from its spawn
+            // record, so a stale baseline can never patch the wrong entity's state.
+            m_Baseline.erase(*netId);
             result.Despawned = true;
             return result;
         }
@@ -847,9 +983,10 @@ namespace Veng
 
             bool applied = false;
             bool truncated = false;
-            ApplyComponentRecords(packet, cursor, *componentCount, scene, entity, known, registry,
-                                  decodeRef, /*bufferTransform=*/!predicted, *serverTick, applied,
-                                  truncated, predicted ? &collected : nullptr);
+            ApplyComponentRecords(packet, cursor, *componentCount, scene, entity, *netId, known,
+                                  registry, decodeRef, /*bufferTransform=*/!predicted, *serverTick,
+                                  m_Quantization, &m_Baseline, applied, truncated,
+                                  predicted ? &collected : nullptr);
 
             if (predicted && !collected.Components.empty())
             {

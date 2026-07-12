@@ -278,7 +278,14 @@ namespace Veng
             .Assets = *m_AssetManager,
             .LevelId = levelId,
             .Replication =
-                ReplicationServer::Settings{.SnapshotInterval = net.SnapshotIntervalTicks},
+                ReplicationServer::Settings{
+                    .SnapshotInterval = net.SnapshotIntervalTicks,
+                    .QuantizeSpatial = net.QuantizeSpatial,
+                    .Quantization =
+                        Net::QuantizationSettings{.PositionQuantum = net.PositionQuantum,
+                                                  .PositionExtent = net.PositionExtent,
+                                                  .RotationBits = net.RotationBits},
+                    .KeyframeInterval = net.KeyframeIntervalSnapshots},
         });
         VE_ASSERT(host, "server host failed to open: {}", host.error());
         m_Net->Server = std::move(*host);
@@ -349,6 +356,12 @@ namespace Veng
                                                              false, /*isReplay=*/true));
             },
         });
+
+        // Match the client decoder's dequantization grid to the server's wire quantization.
+        m_Net->ClientHost->Replication().SetQuantization(
+            Net::QuantizationSettings{.PositionQuantum = net.PositionQuantum,
+                                      .PositionExtent = net.PositionExtent,
+                                      .RotationBits = net.RotationBits});
 
         Log::Info("Joining {}:{}", target.Host, port);
     }
