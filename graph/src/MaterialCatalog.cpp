@@ -94,6 +94,8 @@ namespace VengGraph
             return {
                 DomainOutputPin{.Name = OutputAlbedoPin, .Type = ValuePin(TypeIdOf<Veng::vec4>())},
                 DomainOutputPin{.Name = OutputNormalPin, .Type = ValuePin(TypeIdOf<Veng::vec3>())},
+                DomainOutputPin{.Name = OutputEmissivePin,
+                                .Type = ValuePin(TypeIdOf<Veng::vec3>())},
             };
         }
         VE_ASSERT(false, "DomainOutputContract: unhandled MaterialDomain {}",
@@ -216,9 +218,9 @@ namespace VengGraph
         }
 
         // --- MaterialOutput: one input pin per domain output-contract sink ---
-        // Surface's sinks are the g-buffer channels (Albedo + Normal); PostProcess's
-        // is the single final Color. The sinks express the domain's fixed output
-        // contract.
+        // Surface's sinks are the authorable g-buffer channels (Albedo + Normal +
+        // Emissive); PostProcess's is the single final Color. The sinks express the
+        // domain's fixed output contract.
         {
             NodeType type;
             type.Name = MaterialOutputTypeName;

@@ -59,12 +59,15 @@ TEST_CASE("MaterialCatalog: the Surface MaterialOutput is the g-buffer contract"
     const NodeType* output = catalog.Find(types.MaterialOutput);
     REQUIRE(output != nullptr);
 
-    // The Surface sinks express GBufferOutput: Albedo (vec4) + Normal (vec3).
-    REQUIRE(output->Inputs.size() == 2);
+    // The Surface sinks express the authorable GBufferOutput channels: Albedo (vec4) +
+    // Normal (vec3) + Emissive (vec3).
+    REQUIRE(output->Inputs.size() == 3);
     CHECK(output->Inputs[0].Name == OutputAlbedoPin);
     CHECK(output->Inputs[1].Name == OutputNormalPin);
+    CHECK(output->Inputs[2].Name == OutputEmissivePin);
     CHECK(output->Inputs[0].Type.Type == TypeIdOf<Veng::vec4>());
     CHECK(output->Inputs[1].Type.Type == TypeIdOf<Veng::vec3>());
+    CHECK(output->Inputs[2].Type.Type == TypeIdOf<Veng::vec3>());
 }
 
 TEST_CASE("MaterialCatalog: the PostProcess MaterialOutput is a single Color sink")
@@ -111,11 +114,13 @@ TEST_CASE("MaterialCatalog: the node set is schema-independent")
 TEST_CASE("MaterialCatalog: DomainOutputContract is the per-domain sink table")
 {
     const Veng::vector<DomainOutputPin> surface = DomainOutputContract(MaterialDomain::Surface);
-    REQUIRE(surface.size() == 2);
+    REQUIRE(surface.size() == 3);
     CHECK(surface[0].Name == OutputAlbedoPin);
     CHECK(surface[0].Type.Type == TypeIdOf<Veng::vec4>());
     CHECK(surface[1].Name == OutputNormalPin);
     CHECK(surface[1].Type.Type == TypeIdOf<Veng::vec3>());
+    CHECK(surface[2].Name == OutputEmissivePin);
+    CHECK(surface[2].Type.Type == TypeIdOf<Veng::vec3>());
 
     const Veng::vector<DomainOutputPin> post = DomainOutputContract(MaterialDomain::PostProcess);
     REQUIRE(post.size() == 1);
@@ -213,6 +218,8 @@ TEST_CASE("CompileMaterialGraph: a bare Surface output emits defined defaults")
     CHECK(Contains(src, "o.ORM = float4(1, 1, 0, 0)"));
     // Velocity is always written, never authorable away.
     CHECK(Contains(src, "o.Velocity = ComputeMotionVector(input.v_CurClip, input.v_PrevClip)"));
+    // An unconnected Emissive socket emits the zero store.
+    CHECK(Contains(src, "o.Emissive = float3(0)"));
 }
 
 TEST_CASE("CompileMaterialGraph: a bare PostProcess output passes the screen sample")
@@ -384,6 +391,96 @@ TEST_CASE("CompileMaterialGraph: the output is deterministic across walks and ro
         CompileMaterialGraph(reloaded, catalog, emit, MaterialDomain::Surface);
     REQUIRE(c.has_value());
     CHECK(c->Source == a->Source);
+}
+
+TEST_CASE("CompileMaterialGraph: an unconnected Emissive socket emits the zero store")
+{
+    NodeCatalog catalog;
+    MaterialEmitTable emit;
+    const MaterialNodeTypes types =
+        RegisterMaterialNodeTypes(catalog, emit, MaterialDomain::Surface);
+
+    NodeGraph graph = MakeGraph(catalog);
+    graph.AddNode(types.MaterialOutput);
+
+    const Veng::Result<GeneratedFragment> r =
+        CompileMaterialGraph(graph, catalog, emit, MaterialDomain::Surface);
+    REQUIRE(r.has_value());
+    // The Emissive sink defaults to a zero float3 when nothing is connected — the
+    // re-cooked graph is byte-stable until a graph actually routes emission.
+    CHECK(Contains(r->Source, "o.Emissive = float3(0);"));
+}
+
+TEST_CASE("CompileMaterialGraph: a connected Constant feeds the Emissive sink")
+{
+    NodeCatalog catalog;
+    MaterialEmitTable emit;
+    const MaterialNodeTypes types =
+        RegisterMaterialNodeTypes(catalog, emit, MaterialDomain::Surface);
+
+    NodeGraph graph = MakeGraph(catalog);
+    const NodeId output = graph.AddNode(types.MaterialOutput);
+    const NodeId constant = AddByName(graph, catalog, ConstantTypeName);
+
+    const NodeType* constType = catalog.Find(ConstantTypeName);
+    REQUIRE(constType != nullptr);
+    // A distinctive vec3 authored as the emission the socket carries.
+    const Veng::vec3 emission{2.0f, 0.5f, 0.125f};
+    graph.SetProperty(constant, constType->Properties[0],
+                      std::span<const std::byte>(reinterpret_cast<const std::byte*>(&emission),
+                                                 sizeof(emission)));
+    const VengGraph::MaterialLeafType leaf = VengGraph::MaterialLeafType::Vec3;
+    graph.SetProperty(
+        constant, constType->Properties[1],
+        std::span<const std::byte>(reinterpret_cast<const std::byte*>(&leaf), sizeof(leaf)));
+
+    // The Emissive sink is the third Surface output pin (Albedo 0, Normal 1, Emissive 2).
+    REQUIRE(graph.Connect(PinRef{.Node = constant, .Pin = 0}, PinRef{.Node = output, .Pin = 2})
+                .has_value());
+
+    const Veng::Result<GeneratedFragment> r =
+        CompileMaterialGraph(graph, catalog, emit, MaterialDomain::Surface);
+    REQUIRE(r.has_value());
+    const Veng::string& src = r->Source;
+
+    // The authored emission folds inline into o.Emissive (SV_Target4's member), replacing
+    // the zero store.
+    CHECK(Contains(src, "o.Emissive = float3(2"));
+    CHECK_FALSE(Contains(src, "o.Emissive = float3(0);"));
+}
+
+TEST_CASE("CompileMaterialGraph: a pre-planset graph round-trips with the Emissive socket absent")
+{
+    NodeCatalog catalog;
+    MaterialEmitTable emit;
+    const MaterialNodeTypes types =
+        RegisterMaterialNodeTypes(catalog, emit, MaterialDomain::Surface);
+
+    // A graph authored before the Emissive socket existed: Albedo connected, no link to
+    // the Emissive pin — an absent socket entry is the unconnected default.
+    NodeGraph graph = MakeGraph(catalog);
+    const NodeId output = graph.AddNode(types.MaterialOutput);
+    const NodeId param = graph.AddNode(types.Param);
+    REQUIRE(graph.Connect(PinRef{.Node = param, .Pin = 0}, PinRef{.Node = output, .Pin = 0})
+                .has_value());
+
+    // Serialize and reload — the serialized document carries only the authored links, so
+    // the reloaded graph still leaves Emissive unconnected.
+    const Veng::string doc = WriteNodeGraph(graph, catalog);
+    CHECK_FALSE(Contains(doc, OutputEmissivePin));
+    NodeGraph reloaded = MakeGraph(catalog);
+    const NodeGraphReadOutcome outcome = ReadNodeGraph(doc, reloaded, catalog);
+    REQUIRE(outcome == NodeGraphReadOutcome::Loaded);
+
+    const Veng::Result<GeneratedFragment> before =
+        CompileMaterialGraph(graph, catalog, emit, MaterialDomain::Surface);
+    const Veng::Result<GeneratedFragment> after =
+        CompileMaterialGraph(reloaded, catalog, emit, MaterialDomain::Surface);
+    REQUIRE(before.has_value());
+    REQUIRE(after.has_value());
+    // The reloaded graph compiles identically, with the Emissive sink at its zero default.
+    CHECK(after->Source == before->Source);
+    CHECK(Contains(after->Source, "o.Emissive = float3(0);"));
 }
 
 TEST_CASE("MaterialCatalog: the math/swizzle/utility node set is registered")

@@ -299,13 +299,15 @@ namespace VengGraph
             source += "    MaterialParams p = LoadMaterialParams(input.v_MaterialIndex);\n";
             source += ctx.Body;
             source += "    GBufferOutput o;\n";
-            // Sink order matches DomainOutputContract(Surface): Albedo (0), Normal (1).
+            // Sink order matches DomainOutputContract(Surface): Albedo (0), Normal (1),
+            // Emissive (2). ORM and Velocity are not authorable sinks — the g-buffer
+            // still writes them unconditionally.
             source += fmt::format("    o.Albedo = {};\n", sinkOr(0, "float4(0,0,0,1)"));
             source +=
                 fmt::format("    o.Normal = float4({}, 0);\n", sinkOr(1, "input.v_WorldNormal"));
             source += "    o.ORM = float4(1, 1, 0, 0);\n";
             source += "    o.Velocity = ComputeMotionVector(input.v_CurClip, input.v_PrevClip);\n";
-            source += "    o.Emissive = float3(0);\n";
+            source += fmt::format("    o.Emissive = {};\n", sinkOr(2, "float3(0)"));
             source += "    return o;\n}\n";
         }
         else if (domain == Veng::MaterialDomain::Translucent)

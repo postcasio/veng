@@ -160,6 +160,8 @@ namespace VengGraph
     inline constexpr const char* OutputAlbedoPin = "Albedo";
     /// @brief MaterialOutput sink pin name for the Surface domain normal channel.
     inline constexpr const char* OutputNormalPin = "Normal";
+    /// @brief MaterialOutput sink pin name for the Surface domain emissive channel.
+    inline constexpr const char* OutputEmissivePin = "Emissive";
     /// @brief MaterialOutput sink pin name for the PostProcess domain color channel.
     inline constexpr const char* OutputColorPin = "Color";
 
@@ -174,8 +176,8 @@ namespace VengGraph
 
     /// @brief Returns the fixed output-contract sink pins for a material domain.
     ///
-    /// Surface yields Albedo (vec4) + Normal (vec3), matching GBufferOutput.
-    /// PostProcess yields a single Color (vec4).
+    /// Surface yields Albedo (vec4) + Normal (vec3) + Emissive (vec3), matching the
+    /// authorable GBufferOutput channels. PostProcess yields a single Color (vec4).
     [[nodiscard]] Veng::vector<DomainOutputPin> DomainOutputContract(Veng::MaterialDomain domain);
 
     /// @brief Registers the fixed, schema-independent material node types into @p catalog.
