@@ -405,6 +405,15 @@ namespace Veng
         RegisterSimulation(world);
         SeedViewportFromWorld(world);
         OnWorldLoaded(world, m_ClientPending);
+
+        // The residency batch existed only to hold the join-loaded assets resident across the
+        // deferred gap between the client level load and this start; the spawned scene's components
+        // now hold those handles, so release the batch's redundant cache-entry refs. Keeping it would
+        // pin every join-loaded GPU resource for the whole session and leave the last ref on this
+        // member — dropped only after Context::Dispose destroys the VMA allocator, tripping its
+        // leak assert. The standalone path's batch is a local that dies here for the same reason.
+        m_ClientPending = ResidencyBatch{};
+
         world.StartSimulation(SystemContext{.Assets = *m_AssetManager,
                                             .Input = *m_Input,
                                             .Tasks = *m_TaskSystem,
@@ -937,9 +946,13 @@ namespace Veng
         m_PrimaryWorld = nullptr;
 
         // Drop the engine-managed world before the asset manager so its components' AssetHandles
-        // (the sky's environment/material, the level handle) retire through the deferred path.
+        // (the sky's environment/material, the level handle) retire through the deferred path. The
+        // client residency batch is normally released once the world starts; drop it here too, for a
+        // client torn down after its level loaded but before the deferred start ever ran (its
+        // cache-entry refs would otherwise outlive the context's allocator).
         m_World.reset();
         m_WorldLevel = {};
+        m_ClientPending = ResidencyBatch{};
 
         // Drop the engine-owned managed tail and managed viewports before the context: the gather
         // and composite hold GPU resources, and each managed viewport self-unregisters from the
