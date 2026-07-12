@@ -613,9 +613,11 @@ if (VENG_BUILD_TESTS)
             GPUOpen::VulkanMemoryAllocator
     )
 
-    # Discover each TEST_CASE as its own ctest entry, labelled `unit` so
-    # `ctest -L unit` is the fast, driver-free feedback loop.
-    doctest_discover_tests(veng_test_unit PROPERTIES LABELS unit)
+    # One ctest entry runs the whole binary: per-case discovery costs a process
+    # spawn per TEST_CASE, dwarfing the ~1s the full suite takes in one run.
+    # Labelled `fast`: `ctest -L fast` is the driver-free inner feedback loop.
+    add_test(NAME unit COMMAND veng_test_unit)
+    set_tests_properties(unit PROPERTIES LABELS "unit;fast")
 
     # ---- Shared GPU-band support (consumed by the death + GPU bands) --------
     # Vulkan-driver probe so a GPU test can skip (not fail) where no ICD exists.
@@ -649,84 +651,84 @@ if (VENG_BUILD_TESTS)
 
     # Pure-logic death cases (no device; run with no ICD).
     add_test(NAME death.sentinel COMMAND veng_test_death sentinel)
-    set_tests_properties(death.sentinel PROPERTIES LABELS death
+    set_tests_properties(death.sentinel PROPERTIES LABELS "death;fast"
             PASS_REGULAR_EXPRESSION "sentinel death case")
 
     add_test(NAME death.vertex_format_unknown COMMAND veng_test_death vertex_format_unknown)
-    set_tests_properties(death.vertex_format_unknown PROPERTIES LABELS death
+    set_tests_properties(death.vertex_format_unknown PROPERTIES LABELS "death;fast"
             PASS_REGULAR_EXPRESSION "Unknown vertex element Format")
 
     add_test(NAME death.tovk_unmapped COMMAND veng_test_death tovk_unmapped)
-    set_tests_properties(death.tovk_unmapped PROPERTIES LABELS death
+    set_tests_properties(death.tovk_unmapped PROPERTIES LABELS "death;fast"
             PASS_REGULAR_EXPRESSION "ToVk\\(Format\\): unmapped format")
 
     add_test(NAME death.assert_message COMMAND veng_test_death assert_message)
-    set_tests_properties(death.assert_message PROPERTIES LABELS death
+    set_tests_properties(death.assert_message PROPERTIES LABELS "death;fast"
             PASS_REGULAR_EXPRESSION "assert_message case fired")
 
     add_test(NAME death.scene_get_stale_entity COMMAND veng_test_death scene_get_stale_entity)
-    set_tests_properties(death.scene_get_stale_entity PROPERTIES LABELS death
+    set_tests_properties(death.scene_get_stale_entity PROPERTIES LABELS "death;fast"
             PASS_REGULAR_EXPRESSION "dead or stale entity")
 
     add_test(NAME death.scene_get_missing_component COMMAND veng_test_death scene_get_missing_component)
-    set_tests_properties(death.scene_get_missing_component PROPERTIES LABELS death
+    set_tests_properties(death.scene_get_missing_component PROPERTIES LABELS "death;fast"
             PASS_REGULAR_EXPRESSION "lacks the component")
 
     add_test(NAME death.type_id_collision COMMAND veng_test_death type_id_collision)
-    set_tests_properties(death.type_id_collision PROPERTIES LABELS death
+    set_tests_properties(death.type_id_collision PROPERTIES LABELS "death;fast"
             PASS_REGULAR_EXPRESSION "TypeId collision")
 
     add_test(NAME death.system_id_collision COMMAND veng_test_death system_id_collision)
-    set_tests_properties(death.system_id_collision PROPERTIES LABELS death
+    set_tests_properties(death.system_id_collision PROPERTIES LABELS "death;fast"
             PASS_REGULAR_EXPRESSION "SystemId collision")
 
     add_test(NAME death.transform_parent_cycle COMMAND veng_test_death transform_parent_cycle)
-    set_tests_properties(death.transform_parent_cycle PROPERTIES LABELS death
+    set_tests_properties(death.transform_parent_cycle PROPERTIES LABELS "death;fast"
             PASS_REGULAR_EXPRESSION "parent is a descendant of child")
 
     add_test(NAME death.transform_parent_dead COMMAND veng_test_death transform_parent_dead)
-    set_tests_properties(death.transform_parent_dead PROPERTIES LABELS death
+    set_tests_properties(death.transform_parent_dead PROPERTIES LABELS "death;fast"
             PASS_REGULAR_EXPRESSION "Hierarchy references a dead or stale entity")
 
     add_test(NAME death.spot_shadow_range_nonpositive COMMAND veng_test_death spot_shadow_range_nonpositive)
-    set_tests_properties(death.spot_shadow_range_nonpositive PROPERTIES LABELS death
+    set_tests_properties(death.spot_shadow_range_nonpositive PROPERTIES LABELS "death;fast"
             PASS_REGULAR_EXPRESSION "ComputeSpotShadowView needs range > 0")
 
     add_test(NAME death.spot_shadow_cone_out_of_range COMMAND veng_test_death spot_shadow_cone_out_of_range)
-    set_tests_properties(death.spot_shadow_cone_out_of_range PROPERTIES LABELS death
+    set_tests_properties(death.spot_shadow_cone_out_of_range PROPERTIES LABELS "death;fast"
             PASS_REGULAR_EXPRESSION "ComputeSpotShadowView needs outerCone")
 
     add_test(NAME death.point_shadow_range_nonpositive COMMAND veng_test_death point_shadow_range_nonpositive)
-    set_tests_properties(death.point_shadow_range_nonpositive PROPERTIES LABELS death
+    set_tests_properties(death.point_shadow_range_nonpositive PROPERTIES LABELS "death;fast"
             PASS_REGULAR_EXPRESSION "ComputePointShadowView needs range > 0")
 
     add_test(NAME death.focus_double_pop COMMAND veng_test_death focus_double_pop)
-    set_tests_properties(death.focus_double_pop PROPERTIES LABELS death
+    set_tests_properties(death.focus_double_pop PROPERTIES LABELS "death;fast"
             PASS_REGULAR_EXPRESSION "mispaired or double pop")
 
     add_test(NAME death.shader_set_zero_reserved COMMAND veng_test_death shader_set_zero_reserved)
-    set_tests_properties(death.shader_set_zero_reserved PROPERTIES LABELS death
+    set_tests_properties(death.shader_set_zero_reserved PROPERTIES LABELS "death;fast"
             PASS_REGULAR_EXPRESSION "set 0 is reserved for the bindless registry")
 
     add_test(NAME death.shader_non_contiguous_set COMMAND veng_test_death shader_non_contiguous_set)
-    set_tests_properties(death.shader_non_contiguous_set PROPERTIES LABELS death
+    set_tests_properties(death.shader_non_contiguous_set PROPERTIES LABELS "death;fast"
             PASS_REGULAR_EXPRESSION "declared sets must be contiguous starting at 1")
 
     # GPU-coupled death cases (need a headless Context; skip with no driver).
     add_test(NAME death.buffer_upload_overrun COMMAND veng_test_death buffer_upload_overrun)
-    set_tests_properties(death.buffer_upload_overrun PROPERTIES LABELS "gpu;death"
+    set_tests_properties(death.buffer_upload_overrun PROPERTIES LABELS "gpu;death;fast"
             SKIP_RETURN_CODE 77 PASS_REGULAR_EXPRESSION "upload out of range")
 
     add_test(NAME death.index_u16_into_u32 COMMAND veng_test_death index_u16_into_u32)
-    set_tests_properties(death.index_u16_into_u32 PROPERTIES LABELS "gpu;death"
+    set_tests_properties(death.index_u16_into_u32 PROPERTIES LABELS "gpu;death;fast"
             SKIP_RETURN_CODE 77 PASS_REGULAR_EXPRESSION "cannot upload u16 indices")
 
     add_test(NAME death.index_u32_into_u16 COMMAND veng_test_death index_u32_into_u16)
-    set_tests_properties(death.index_u32_into_u16 PROPERTIES LABELS "gpu;death"
+    set_tests_properties(death.index_u32_into_u16 PROPERTIES LABELS "gpu;death;fast"
             SKIP_RETURN_CODE 77 PASS_REGULAR_EXPRESSION "cannot upload u32 indices")
 
     add_test(NAME death.descriptor_type_mismatch COMMAND veng_test_death descriptor_type_mismatch)
-    set_tests_properties(death.descriptor_type_mismatch PROPERTIES LABELS "gpu;death"
+    set_tests_properties(death.descriptor_type_mismatch PROPERTIES LABELS "gpu;death;fast"
             SKIP_RETURN_CODE 77 PASS_REGULAR_EXPRESSION "not a sampled or storage image")
 
     # Include-hygiene guard: compiles every public header while linking only the
@@ -741,6 +743,7 @@ if (VENG_BUILD_TESTS)
             veng_editor::veng_editor)
 
     add_test(NAME include_hygiene COMMAND veng_test_include_hygiene)
+    set_tests_properties(include_hygiene PROPERTIES LABELS fast)
 
     # ---- MCP band (veng::mcp, driver-free) ----------------------------------
     # A sibling include-hygiene guard over the Veng/Mcp/ public headers, narrowed to
@@ -881,7 +884,8 @@ if (VENG_BUILD_TESTS)
     target_include_directories(veng_test_editor_unit SYSTEM PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/mcp/src/Vendor)
 
-    doctest_discover_tests(veng_test_editor_unit PROPERTIES LABELS unit)
+    add_test(NAME editor_unit COMMAND veng_test_editor_unit)
+    set_tests_properties(editor_unit PROPERTIES LABELS "unit;fast")
 
     # ---- Module ABI + loader (plan 01, driver-free) -------------------------
     # A real game module and a wrong-version variant, each a SHARED library
@@ -919,7 +923,7 @@ if (VENG_BUILD_TESTS)
     target_link_libraries(veng_test_headless_smoke PRIVATE veng::veng veng_test_support)
 
     add_test(NAME headless_smoke COMMAND veng_test_headless_smoke)
-    set_tests_properties(headless_smoke PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)
+    set_tests_properties(headless_smoke PROPERTIES LABELS "gpu;fast" SKIP_RETURN_CODE 77)
 
     # ASTC capability probe for smoke_golden. The migrated hello-triangle scene
     # cooks ASTC textures, so the golden is reproducible only on a device that
@@ -969,7 +973,7 @@ if (VENG_BUILD_TESTS)
     )
 
     add_test(NAME compute_dispatch COMMAND veng_test_compute_dispatch)
-    set_tests_properties(compute_dispatch PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)
+    set_tests_properties(compute_dispatch PROPERTIES LABELS "gpu;fast" SKIP_RETURN_CODE 77)
 
     # ---- In-process multi-case GPU integration suite (plan 05, area 5b) ----
     # A single doctest-based executable running many GPU cases, each standing
@@ -1228,7 +1232,7 @@ if (VENG_BUILD_TESTS)
             VENG_CORE_SHADER_DIR="${VENG_CORE_SHADER_DIR}")
 
     add_test(NAME veng_test_multi_viewport_imgui COMMAND veng_test_multi_viewport_imgui)
-    set_tests_properties(veng_test_multi_viewport_imgui PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)
+    set_tests_properties(veng_test_multi_viewport_imgui PROPERTIES LABELS "gpu;fast" SKIP_RETURN_CODE 77)
 endif ()
 
 # ---------------------------------------------------------------------------
@@ -1303,7 +1307,8 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle)
             VENG_CORE_SHADER_DIR="${VENG_CORE_SHADER_DIR}"
     )
 
-    doctest_discover_tests(veng_test_cooker PROPERTIES LABELS cooker)
+    add_test(NAME cooker COMMAND veng_test_cooker)
+    set_tests_properties(cooker PROPERTIES LABELS cooker)
 endif ()
 
 if (VENG_BUILD_TESTS AND TARGET hello_triangle-launcher AND TARGET veng_test_golden_compare)
@@ -1317,7 +1322,7 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle-launcher AND TARGET veng_test_gol
             -D VENG_TMP=${CMAKE_CURRENT_BINARY_DIR}/smoke_golden_capture.ppm
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/SmokeGolden.cmake
     )
-    set_tests_properties(smoke_golden PROPERTIES LABELS gpu)
+    set_tests_properties(smoke_golden PROPERTIES LABELS "gpu;fast")
 
     # Automated launcher smoke: exercises the real dlopen -> VengModuleRegister ->
     # registry -> Run() binary path end-to-end. Runs the launcher with HT_SMOKE
@@ -1327,7 +1332,7 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle-launcher AND TARGET veng_test_gol
     add_test(NAME hello_triangle_launcher_smoke
         COMMAND $<TARGET_FILE:hello_triangle-launcher>)
     set_tests_properties(hello_triangle_launcher_smoke PROPERTIES
-        LABELS gpu SKIP_RETURN_CODE 77
+        LABELS "gpu;fast" SKIP_RETURN_CODE 77
         ENVIRONMENT "HT_SMOKE=${CMAKE_CURRENT_BINARY_DIR}/hello_triangle_launcher_smoke.ppm")
 
     # ---- MCP conformance smoke (gpu;mcp band) -------------------------------
