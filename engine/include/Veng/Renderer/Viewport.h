@@ -186,6 +186,19 @@ namespace Veng::Renderer
         /// @param region  The new placement and extent in window framebuffer pixels.
         void SetRegion(const ViewportRegion& region);
 
+        /// @brief Marks the viewport as window-tracking, carrying a normalized Layout, or absolute.
+        ///
+        /// A viewport with a Layout has its region re-resolved (round(Layout · render extent)) and
+        /// its UI scale re-stamped by the ViewportCompositor at registration and on every swapchain
+        /// resize, so it tracks the window with no per-frame re-apply. A nullopt Layout (the default)
+        /// leaves the region absolute — the compositor never re-resolves it. This records the policy;
+        /// the compositor performs the resolution.
+        /// @param layout  The normalized window placement to track, or nullopt for an absolute region.
+        void SetLayout(const optional<ViewportLayout>& layout);
+
+        /// @brief Returns the normalized window Layout this viewport tracks, or nullopt when absolute.
+        [[nodiscard]] const optional<ViewportLayout>& GetLayout() const { return m_Layout; }
+
         /// @brief Sets the uniform render-resolution multiplier on the region extent.
         ///
         /// While dynamic resolution is enabled this is the current (per-frame) scale: the render
@@ -580,6 +593,8 @@ namespace Veng::Renderer
         Unique<SceneRenderer> m_Renderer;
         /// @brief The viewport's window placement rectangle.
         ViewportRegion m_Region;
+        /// @brief The normalized window placement the compositor resolves; nullopt for an absolute region.
+        optional<ViewportLayout> m_Layout;
         /// @brief Uniform render-resolution multiplier on the region extent.
         f32 m_RenderScale = 1.0f;
         /// @brief Ceiling on the allocation extent as a fraction of the region's backing pixels.

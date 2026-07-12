@@ -154,10 +154,15 @@ namespace Veng
                                                        m_Compositor.GetViewports());
         m_InputRouter->RegisterConsumer(*m_GuiConsumer);
 
+        // The managed-viewport policy collaborator, over the compositor + router. Presentation-only:
+        // it owns the Presented viewports the engine drives and pulls their cameras from the runner.
+        m_ManagedViewports = CreateUnique<ManagedViewportSet>(m_RenderContext, *m_AssetManager,
+                                                              m_Compositor, *m_InputRouter);
+
         // The opt-in managed viewport set: Presented viewports owned and driven by the engine so a
-        // game pushes only a ViewState (or names a Viewer). Built before OnInitialize so a subclass
-        // can Configure one and read its renderer there. The singular ManagedViewport is sugar for a
-        // one-element ManagedViewports.
+        // game pushes only a ViewState (or names a World/Viewer). Built before OnInitialize so a
+        // subclass can Configure one and read its renderer there. The singular ManagedViewport is
+        // sugar for a one-element ManagedViewports.
         if (!m_Info.ManagedViewports.empty() || m_Info.ManagedViewport)
         {
             vector<ManagedViewportInfo> infos = m_Info.ManagedViewports;
@@ -165,16 +170,16 @@ namespace Veng
             {
                 infos.push_back(*m_Info.ManagedViewport);
             }
-            BuildManagedViewports(infos);
+            m_ManagedViewports->Build(infos);
 
-            // Window-tracking managed viewports follow swapchain resizes so their regions keep
-            // tracking the window from their normalized Layouts; SetRegion debounces each
-            // SceneRenderer::Resize to the next Render. Headless has no swapchain, so the fixed
-            // internal extents stand.
+            // Window-tracking managed viewports follow swapchain resizes so their regions and UI
+            // scale keep tracking the window from their normalized Layouts; the compositor owns the
+            // resolution and SetRegion debounces each SceneRenderer::Resize to the next Render.
+            // Headless has no swapchain, so the fixed internal extents stand.
             if (!m_Info.Headless)
             {
                 m_RenderContext.AddSwapChainInvalidationCallback(
-                    [this] { ResolveManagedViewportLayouts(); });
+                    [this] { m_Compositor.ResolveTrackingLayouts(); });
             }
         }
 
@@ -191,7 +196,7 @@ namespace Veng
         // The engine-managed game world bootstraps after OnInitialize, so a subclass has already
         // set up its ImGui surface and read the managed viewport. It renders through the managed
         // viewport, so it is gated on one being present.
-        if (m_Info.World && GetPrimaryViewport())
+        if (m_Info.World && m_ManagedViewports->Get(0))
         {
             BootstrapWorld();
         }
@@ -226,6 +231,9 @@ namespace Veng
                 .SimTickRate = m_Info.World->SimTickRate,
                 .StartSimulation = false,
             });
+            // Bind managed viewport #0 to world #0: the per-frame pull presents this world's scene
+            // through the primary viewport once the join loads it.
+            m_ManagedViewports->SetViewportWorld(0, m_ManagedWorld);
             ConnectClient();
             return;
         }
@@ -260,6 +268,10 @@ namespace Veng
             },
         });
 
+        // Bind managed viewport #0 to world #0: the per-frame pull presents this world's scene and
+        // resolves its camera through the primary viewport.
+        m_ManagedViewports->SetViewportWorld(0, m_ManagedWorld);
+
         // `--server` opens the host on the just-started world: it accepts connections, spawns a seat
         // per connection, and streams state. A game that set no ApplicationInfo::Net still hosts on the
         // zero-config defaults here.
@@ -275,12 +287,13 @@ namespace Veng
         // from the configured initial settings: the level's post knobs (a seeded LevelRenderSettings
         // component). The sky is the scene's Sky component, resolved by the renderer itself each
         // Execute — no consumer seeding. Seeded once; the game owns later changes.
-        Renderer::SceneRendererSettings settings = m_ManagedViewports.front().Info.Settings;
+        Renderer::Viewport* primary = m_ManagedViewports->Get(0);
+        Renderer::SceneRendererSettings settings = primary->GetSettings();
         if (const LevelRenderSettings* render = world.TryGetFirst<LevelRenderSettings>())
         {
             ApplyLevelRenderSettings(*render, settings, m_WorldView);
         }
-        GetPrimaryViewport()->Configure(settings);
+        primary->Configure(settings);
     }
 
     void Application::StartServer(const AssetId levelId)
@@ -498,118 +511,6 @@ namespace Veng
         }
     }
 
-    Renderer::ViewportRegion
-    Application::ResolveManagedRegion(const ManagedViewportInfo& info) const
-    {
-        // A pinned Extent is a fixed render resolution at the origin — the region does not track the
-        // window. Otherwise the region is round(Layout · render extent): the swapchain framebuffer
-        // extent windowed (larger than the logical window on a HiDPI display), HeadlessExtent headless.
-        if (info.Extent != uvec2{})
-        {
-            return {.Offset = {0, 0}, .Extent = info.Extent};
-        }
-
-        const vec2 renderExtent = vec2(m_RenderContext.GetRenderExtent());
-        const ivec2 offset = ivec2(glm::round(info.Layout.Offset * renderExtent));
-        const uvec2 extent = uvec2(glm::round(info.Layout.Extent * renderExtent));
-        return {.Offset = offset, .Extent = extent};
-    }
-
-    void Application::BuildManagedViewports(std::span<const ManagedViewportInfo> infos)
-    {
-        // Drop the prior set first (each Unique self-unregisters from the drive-list), clearing each
-        // one's pointer association so no stale pointer lingers in the router. Then build the new set
-        // in order so index 0 is the primary.
-        for (const ManagedViewport& managed : m_ManagedViewports)
-        {
-            m_InputRouter->ClearViewportSeat(*managed.Viewport);
-        }
-        m_ManagedViewports.clear();
-        m_ManagedViewports.reserve(infos.size());
-
-        for (const ManagedViewportInfo& info : infos)
-        {
-            Unique<Renderer::Viewport> viewport = Renderer::Viewport::Create({
-                .Context = m_RenderContext,
-                .Assets = *m_AssetManager,
-                .Region = ResolveManagedRegion(info),
-                .ColorFormat = info.ColorFormat,
-                .Settings = info.Settings,
-                .RenderScale = info.RenderScale,
-                .MaxAllocationScale = info.MaxAllocationScale,
-                .Role = Renderer::ViewportRole::Presented,
-            });
-
-            // Opt-in adaptive resolution: the viewport drives its own per-frame sub-rect scale from
-            // GPU frame time over the fixed allocation.
-            if (info.DynamicResolution)
-            {
-                viewport->SetDynamicResolution(*info.DynamicResolution);
-            }
-
-            RegisterViewport(*viewport);
-
-            // A managed viewport bound to a seat feeds that seat's pointer input: associate it with
-            // the router in the same step it is registered, so a free cursor over its region routes
-            // to the seat with no dead frame. An unbound viewport (the default single-camera path)
-            // needs no association — under capture the pointer routes to the keyboard seat directly.
-            if (info.Viewer != Entity::Null)
-            {
-                m_InputRouter->AssociateViewportSeat(*viewport, info.Viewer);
-            }
-
-            m_ManagedViewports.push_back({.Viewport = std::move(viewport), .Info = info});
-        }
-    }
-
-    void Application::ResolveManagedViewportLayouts()
-    {
-        for (ManagedViewport& managed : m_ManagedViewports)
-        {
-            // A pinned viewport keeps its fixed internal extent; a window-tracking one re-resolves
-            // its region from its Layout so the gather places it correctly across the resize.
-            if (managed.Info.Extent == uvec2{})
-            {
-                managed.Viewport->SetRegion(ResolveManagedRegion(managed.Info));
-            }
-        }
-    }
-
-    void Application::PushManagedViewportView(const ManagedViewport& managed, const f32 delta)
-    {
-        Renderer::Viewport& viewport = *managed.Viewport;
-        Scene& scene = m_WorldRunner->ResolveWorld(m_ManagedWorld)->GetScene();
-
-        // Screen-space Gui documents on this viewport lay out in logical points while the region is
-        // framebuffer pixels, so feed the window content scale as the UI scale each frame: authored
-        // px then render at logical size on a HiDPI display, and re-resolve if the window moves to a
-        // differently-scaled monitor. Same GetContentScale() the pointer routing uses, so layout,
-        // draw, and hit-testing agree.
-        viewport.SetUiScale(m_Window ? m_Window->GetContentScale().x : 1.0f);
-
-        // A viewport with no bound Viewer takes the scene's primary camera — the delivered
-        // single-viewport path, byte-identical for the default managed viewport.
-        if (managed.Info.Viewer == Entity::Null)
-        {
-            PushSceneView(viewport, scene, m_WorldView, delta, m_SimAlpha);
-            return;
-        }
-
-        // A bound Viewer resolves that seat's camera at the viewport's aspect, falling back to the
-        // default framing when the seat resolves none (mirrors PushSceneView's fallback).
-        const Ref<Renderer::ImageView> output = viewport.GetOutput();
-        const f32 aspect = static_cast<f32>(output->GetImage()->GetWidth()) /
-                           static_cast<f32>(output->GetImage()->GetHeight());
-
-        Renderer::ViewState state = m_WorldView;
-        state.World = &scene;
-        state.Camera = m_WorldRunner->ResolveCameraView(m_ManagedWorld, managed.Info.Viewer, aspect)
-                           .value_or(DefaultCameraView(aspect));
-        state.Delta = delta;
-        state.Alpha = m_SimAlpha;
-        viewport.SetViewState(state);
-    }
-
     namespace
     {
         // The scene-local keyboard/mouse seat a captured pointer routes to: the first
@@ -716,13 +617,7 @@ namespace Veng
 
     void Application::ReconfigureManagedViewports(std::span<const ManagedViewportInfo> viewports)
     {
-        VE_ASSERT(!m_ManagedViewports.empty(),
-                  "ReconfigureManagedViewports requires a managed viewport configured at startup");
-
-        // Defer to the top of the next frame — outside any Scene/viewport-list iteration — mirroring
-        // the SetRegion resize debounce. The rebuild constructs/drops viewports, which must not run
-        // mid-drive.
-        m_PendingReconfigure = vector<ManagedViewportInfo>(viewports.begin(), viewports.end());
+        m_ManagedViewports->Reconfigure(viewports);
     }
 
     void Application::RegisterViewport(Renderer::Viewport& viewport)
@@ -835,7 +730,7 @@ namespace Veng
         // OnDispose above, so the compositor's drive-list is empty (or holds only the managed
         // viewports) by here; each managed viewport self-unregisters from the still-live drive-list.
         m_Compositor.Dispose();
-        m_ManagedViewports.clear();
+        m_ManagedViewports.reset();
 
         // The router borrows the window, input, and ImGui layer; drop it before any of them.
         m_InputRouter.reset();
@@ -863,11 +758,7 @@ namespace Veng
         // Apply a deferred managed-viewport reconfigure at the top of the frame, outside any
         // Scene/viewport-list iteration: it drops and constructs viewports (mutating the drive-list),
         // which must not run mid-drive. Regions resolve from each info's Layout here.
-        if (m_PendingReconfigure)
-        {
-            BuildManagedViewports(*m_PendingReconfigure);
-            m_PendingReconfigure.reset();
-        }
+        m_ManagedViewports->ApplyPendingReconfigure();
 
         // Before BeginFrame: continuations that register or retire resources must
         // land before AcquireNextFrame or their GPU-state mutation is frame-ambiguous.
@@ -1025,17 +916,15 @@ namespace Veng
 
         OnUpdate(delta);
 
-        // Push the managed world's render source into each managed viewport: a viewport naming a
-        // Viewer gets that seat's camera resolved at its aspect, otherwise the scene's primary
-        // camera. Plus the per-frame view knobs. After OnUpdate so a game's per-frame scene edits are
-        // reflected; before the viewport render phase reads it. A dedicated server pushes nothing —
-        // it has no render tail.
-        if (managed != nullptr && !dedicatedServer)
+        // Pull each managed viewport's camera from the world it names and push it: a viewport naming a
+        // Viewer gets that seat's camera resolved at its aspect, otherwise the world's scene primary
+        // camera; a viewport whose world was closed renders a cleared target; one with no bound world
+        // is left for the game to drive. Plus the per-frame view knobs. After OnUpdate so a game's
+        // per-frame scene edits are reflected; before the viewport render phase reads it. A dedicated
+        // server pushes nothing — it has no render tail.
+        if (!dedicatedServer)
         {
-            for (const ManagedViewport& managedViewport : m_ManagedViewports)
-            {
-                PushManagedViewportView(managedViewport, delta);
-            }
+            m_ManagedViewports->PushViews(*m_WorldRunner, m_WorldView, delta, m_SimAlpha);
         }
 
         m_RenderContext.BeginFrame();

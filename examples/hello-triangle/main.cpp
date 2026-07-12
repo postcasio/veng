@@ -316,8 +316,8 @@ protected:
                                         .AddressModeV = Renderer::AddressMode::ClampToEdge,
                                         .AddressModeW = Renderer::AddressMode::ClampToEdge,
                                     });
-            m_SceneTexture =
-                GetImGuiLayer()->CreateTexture(*m_SceneSampler, *GetPrimaryViewport()->GetOutput());
+            m_SceneTexture = GetImGuiLayer()->CreateTexture(
+                *m_SceneSampler, *GetManagedViewports().Get(0)->GetOutput());
         }
     }
 
@@ -641,7 +641,7 @@ private:
             {
                 if (name.empty() || name == "primary")
                 {
-                    return GetPrimaryViewport();
+                    return GetManagedViewports().Get(0);
                 }
                 return nullptr;
             },
@@ -658,18 +658,18 @@ private:
     // ImGui layer, so only the topology applies — there is no scene texture to refresh.
     void ReconfigureScene()
     {
-        GetPrimaryViewport()->Configure(m_SceneSettings);
+        GetManagedViewports().Get(0)->Configure(m_SceneSettings);
         if (GetImGuiLayer())
         {
-            m_SceneTexture =
-                GetImGuiLayer()->CreateTexture(*m_SceneSampler, *GetPrimaryViewport()->GetOutput());
-            m_SceneTextureGeneration = GetPrimaryViewport()->GetOutputGeneration();
+            m_SceneTexture = GetImGuiLayer()->CreateTexture(
+                *m_SceneSampler, *GetManagedViewports().Get(0)->GetOutput());
+            m_SceneTextureGeneration = GetManagedViewports().Get(0)->GetOutputGeneration();
         }
     }
 
     void RenderUserInterface()
     {
-        Renderer::Viewport& viewport = *GetPrimaryViewport();
+        Renderer::Viewport& viewport = *GetManagedViewports().Get(0);
 
         // The output is replaced whenever the render scale changes the render extent (the manual
         // override, an adaptive-resolution adjustment) or Configure recreates it; the generation
@@ -820,7 +820,7 @@ private:
 
     void WriteSceneCapture(const char* outPath) const
     {
-        const Ref<Renderer::Image> output = GetPrimaryViewport()->GetOutput()->GetImage();
+        const Ref<Renderer::Image> output = GetManagedViewports().Get(0)->GetOutput()->GetImage();
         const auto data = output->Download();
         const u32 width = output->GetWidth();
         const u32 height = output->GetHeight();

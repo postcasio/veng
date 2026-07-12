@@ -2,6 +2,7 @@
 
 #include <Veng/Veng.h>
 #include <Veng/Renderer/GatherPass.h>
+#include <Veng/Renderer/ViewportRegion.h>
 
 namespace Veng
 {
@@ -97,6 +98,25 @@ namespace Veng::Renderer
         /// viewport presenting a given scene or to route input into a hosted document.
         /// @return The non-owning viewport drive-list.
         [[nodiscard]] const vector<Viewport*>& GetViewports() const { return m_Viewports; }
+
+        /// @brief Resolves a normalized window Layout to a pixel region against the current render extent.
+        ///
+        /// round(Layout · Context::GetRenderExtent()): the swapchain framebuffer extent windowed
+        /// (larger than the logical window on a HiDPI display), the ContextInfo::HeadlessExtent
+        /// headless. The single layout→pixel path a window-tracking viewport's region resolves
+        /// through, so its initial region and its resize tracking agree.
+        /// @param layout  The normalized window placement to resolve.
+        /// @return The pixel region for the layout at the current render extent.
+        [[nodiscard]] ViewportRegion ResolveLayout(const ViewportLayout& layout) const;
+
+        /// @brief Re-resolves the region and UI scale of every registered window-tracking viewport.
+        ///
+        /// Iterates the drive-list; for each viewport carrying a Layout (Viewport::GetLayout),
+        /// re-resolves its region (ResolveLayout, SetRegion debouncing the SceneRenderer::Resize to
+        /// the next Render) and re-stamps its UI scale from the window's content scale (1.0 headless).
+        /// A viewport with an absolute region is untouched. Called at registration and as the
+        /// swapchain-invalidation reaction, so window-tracking viewports need no per-frame re-apply.
+        void ResolveTrackingLayouts();
 
         /// @brief Releases the gather + composite tail's GPU resources ahead of context teardown.
         ///

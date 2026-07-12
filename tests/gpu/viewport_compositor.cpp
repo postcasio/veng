@@ -13,6 +13,8 @@
 
 #include <doctest/doctest.h>
 
+#include <optional>
+
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/Viewport.h>
@@ -117,4 +119,59 @@ TEST_CASE_FIXTURE(
     second.reset();
     CHECK(registry.Resolve(secondId) == nullptr);
     CHECK(compositor.GetViewports().empty());
+}
+
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "viewport_compositor: ResolveTrackingLayouts re-resolves a Layout-carrying viewport's region "
+    "and stamps its UI scale, leaving an absolute viewport untouched")
+{
+    AssetManager assets(Context, Tasks, Types);
+    const VoidResult mountResult = assets.Mount(path(TEST_SHADER_PACK));
+    REQUIRE(mountResult.has_value());
+
+    ViewportCompositor compositor(Context);
+
+    // The fixture's headless render extent is the layout resolution basis.
+    const uvec2 renderExtent = Context.GetRenderExtent();
+
+    // ResolveLayout is the single layout→pixel path: round(Layout · render extent).
+    const ViewportRegion full =
+        compositor.ResolveLayout({.Offset = {0.0f, 0.0f}, .Extent = {1.0f, 1.0f}});
+    CHECK(full.Offset == ivec2{0, 0});
+    CHECK(full.Extent == renderExtent);
+
+    // A window-tracking viewport (right half) and an absolute viewport that never tracks.
+    const ViewportLayout rightHalf{.Offset = {0.5f, 0.0f}, .Extent = {0.5f, 1.0f}};
+    Unique<Viewport> tracking = CreatePresented(Context, assets, {8, 8});
+    tracking->SetLayout(rightHalf);
+    Unique<Viewport> absolute = CreatePresented(Context, assets, {20, 12});
+
+    compositor.RegisterViewport(*tracking);
+    compositor.RegisterViewport(*absolute);
+
+    const ViewportRegion expected = compositor.ResolveLayout(rightHalf);
+
+    // The resize reaction: the compositor re-resolves the tracking viewport's region from its Layout
+    // and stamps its UI scale (1.0 headless), and leaves the absolute viewport's region alone.
+    compositor.ResolveTrackingLayouts();
+    CHECK(tracking->GetRegion().Offset == expected.Offset);
+    CHECK(tracking->GetRegion().Extent == expected.Extent);
+    CHECK(tracking->GetUiScale() == doctest::Approx(1.0f));
+    CHECK(absolute->GetRegion().Offset == ivec2{0, 0});
+    CHECK(absolute->GetRegion().Extent == uvec2{20, 12});
+
+    // A stale region (a swapchain change) is re-resolved from the Layout, not from a per-frame apply:
+    // clobber the region, run the reaction again, and it restores to the layout-resolved rectangle.
+    tracking->SetRegion({.Offset = {3, 5}, .Extent = {7, 9}});
+    compositor.ResolveTrackingLayouts();
+    CHECK(tracking->GetRegion().Offset == expected.Offset);
+    CHECK(tracking->GetRegion().Extent == expected.Extent);
+
+    // Clearing the Layout makes the viewport absolute: the reaction no longer touches its region.
+    tracking->SetLayout(std::nullopt);
+    tracking->SetRegion({.Offset = {1, 2}, .Extent = {6, 4}});
+    compositor.ResolveTrackingLayouts();
+    CHECK(tracking->GetRegion().Offset == ivec2{1, 2});
+    CHECK(tracking->GetRegion().Extent == uvec2{6, 4});
 }

@@ -1049,6 +1049,11 @@ if (VENG_BUILD_TESTS)
             # engine-ticked simulations and asserting the tick/pause/view/capture drive semantics (it
             # needs a Context for the Application, so it rides the gpu band though it pins no pixels).
             tests/gpu/simulation_drive_list.cpp
+            # managed_viewport_set.cpp drives a headless Application, binding managed viewports to
+            # worlds by handle and asserting the multi-world camera pull, split-screen reconfigure,
+            # closed-world cleared target, and set teardown order (it needs a Context for the
+            # Application/viewports, so it rides the gpu band though it pins no pixels).
+            tests/gpu/managed_viewport_set.cpp
     )
     target_link_libraries(veng_test_gpu PRIVATE veng::veng veng_test_support doctest::doctest)
     # transfer_retire.cpp reaches through Native.h (raw vk::/VMA handles via the

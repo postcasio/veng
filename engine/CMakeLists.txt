@@ -44,6 +44,7 @@ add_library(veng SHARED
         src/LevelOverlay.cpp
         src/LaunchArguments.cpp
         src/Log.cpp
+        src/ManagedViewports.cpp
         src/Math/AABB.cpp
         src/Math/BVH.cpp
         src/Math/Frustum.cpp

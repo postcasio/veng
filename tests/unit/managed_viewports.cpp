@@ -2,13 +2,13 @@
 // managed viewport set uses to resolve each normalized ViewportLayout to a pixel
 // region (round(Layout · render extent)) at construction and on every swapchain
 // resize. No Context, no Vulkan symbol touched — the resolution is mirrored here
-// exactly as Application::ResolveManagedRegion computes it, so the quadrant
+// exactly as ViewportCompositor::ResolveLayout computes it, so the quadrant
 // split, resize tracking, and reconfigure-back-to-one are exercised headless
 // (the device-owning path is proven by the gpu splitscreen test).
 
 #include <doctest/doctest.h>
 
-#include <Veng/Application.h>
+#include <Veng/ManagedViewports.h>
 #include <Veng/Renderer/ViewportRegion.h>
 
 #include <glm/glm.hpp>
@@ -21,9 +21,9 @@ using Veng::Renderer::ViewportRegion;
 
 namespace
 {
-    // Application::ResolveManagedRegion, isolated so the suite needs no Context to
-    // construct an Application. Mirrors the impl exactly: a pinned Extent is a
-    // fixed region at the origin, otherwise round(Layout · render extent).
+    // ViewportCompositor::ResolveLayout + the pinned-Extent branch, isolated so the
+    // suite needs no Context. Mirrors the impl exactly: a pinned Extent is a fixed
+    // region at the origin, otherwise round(Layout · render extent).
     ViewportRegion ResolveManagedRegion(const ManagedViewportInfo& info, uvec2 renderExtent)
     {
         if (info.Extent != uvec2{})
@@ -38,9 +38,9 @@ namespace
     }
 
     // The managed set the engine holds: one region per info, index 0 the primary,
-    // each region re-resolved on a resize. Models the observable state of
-    // Application::m_ManagedViewports across BuildManagedViewports / the resize
-    // callback / a reconfigure — the region math without the GPU viewport.
+    // each region re-resolved on a resize. Models the observable state of the
+    // ManagedViewportSet across Build / the compositor's resize resolution / a
+    // reconfigure — the region math without the GPU viewport.
     struct ManagedSet
     {
         std::vector<ManagedViewportInfo> Infos;

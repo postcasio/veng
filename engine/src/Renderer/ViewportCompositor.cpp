@@ -9,8 +9,11 @@
 #include <Veng/Renderer/SceneCapture.h>
 #include <Veng/Renderer/SwapChainCompositePass.h>
 #include <Veng/Renderer/Viewport.h>
+#include <Veng/Window.h>
 
 #include <algorithm>
+
+#include <glm/glm.hpp>
 
 namespace Veng::Renderer
 {
@@ -144,6 +147,32 @@ namespace Veng::Renderer
         cmd.PrepareForAccess(m_Gather->GetOutput(), AccessKind::Sample);
 
         m_Composite->Execute(cmd, *m_CompositeGraph, m_Context.GetCurrentSwapChainImageView());
+    }
+
+    ViewportRegion ViewportCompositor::ResolveLayout(const ViewportLayout& layout) const
+    {
+        const vec2 renderExtent = vec2(m_Context.GetRenderExtent());
+        const ivec2 offset = ivec2(glm::round(layout.Offset * renderExtent));
+        const uvec2 extent = uvec2(glm::round(layout.Extent * renderExtent));
+        return {.Offset = offset, .Extent = extent};
+    }
+
+    void ViewportCompositor::ResolveTrackingLayouts()
+    {
+        // Screen-space Gui documents lay out in logical points while the region is framebuffer
+        // pixels, so a window-tracking viewport's UI scale follows the window content scale: authored
+        // px render at logical size on a HiDPI display. Headless borrows no window and stamps 1.0.
+        const f32 uiScale =
+            m_Context.IsHeadless() ? 1.0f : m_Context.GetWindow().GetContentScale().x;
+
+        for (Viewport* viewport : m_Viewports)
+        {
+            if (const optional<ViewportLayout>& layout = viewport->GetLayout())
+            {
+                viewport->SetRegion(ResolveLayout(*layout));
+                viewport->SetUiScale(uiScale);
+            }
+        }
     }
 
     void ViewportCompositor::Dispose()

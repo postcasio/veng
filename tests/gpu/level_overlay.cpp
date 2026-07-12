@@ -633,7 +633,7 @@ TEST_CASE("A PiP overlay renders at its sub-region over a live managed primary")
     {
         // Keep the managed primary live each frame — a cleared scene still renders through the full
         // deferred path, so the primary output is a real composited frame the overlay draws over.
-        a.GetPrimaryViewport()->SetViewState({.World = primary.get(), .Delta = 0.016f});
+        a.GetManagedViewports().Get(0)->SetViewState({.World = primary.get(), .Delta = 0.016f});
 
         if (frame == 0)
         {
@@ -647,8 +647,8 @@ TEST_CASE("A PiP overlay renders at its sub-region over a live managed primary")
         {
             // The primary and the PiP overlay both produced live outputs this frame, the overlay
             // placed at its fixed sub-region over the full-window primary — PiP over a live primary.
-            CHECK(a.GetPrimaryViewport()->GetOutput() != nullptr);
-            CHECK(a.GetPrimaryViewport()->GetOutputHandle().IsValid());
+            CHECK(a.GetManagedViewports().Get(0)->GetOutput() != nullptr);
+            CHECK(a.GetManagedViewports().Get(0)->GetOutputHandle().IsValid());
             CHECK(a.A->GetViewport().GetOutput() != nullptr);
             CHECK(a.A->GetViewport().GetOutputHandle().IsValid());
             CHECK(a.A->GetViewport().GetRegion().Offset == pip.Offset);

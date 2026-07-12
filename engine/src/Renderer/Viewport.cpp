@@ -177,6 +177,11 @@ namespace Veng::Renderer
         }
     }
 
+    void Viewport::SetLayout(const optional<ViewportLayout>& layout)
+    {
+        m_Layout = layout;
+    }
+
     void Viewport::SetRenderScale(f32 scale)
     {
         VE_ASSERT(scale > 0.0f, "Viewport RenderScale must be > 0 (got {})", scale);
