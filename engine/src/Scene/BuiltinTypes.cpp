@@ -63,6 +63,10 @@ namespace Veng
         // it never serializes and never rides the wire.
         registry.Register<RemoteInterpolation>();
 
+        // The decaying render residual a reconciliation correction leaves on a predicted entity,
+        // eased to zero by the View-phase decay and applied only at the gather. Runtime-only.
+        registry.Register<PredictionError>();
+
         // Game mode as data: the replicated Session state and the per-scene config a
         // spawn rule reads. SessionPhase registers transitively through Session.
         registry.Register<Session>();

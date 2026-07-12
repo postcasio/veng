@@ -101,6 +101,10 @@ namespace Veng
             host.Replication().SetInputFeedback(id, static_cast<i32>(it->second.Depth()) -
                                                         DesiredInputCushion);
 
+            // Confirm which client input tick this state reflects: the reconciler on the client
+            // compares its recorded prediction at this tick against the resulting snapshot.
+            host.Replication().SetLastConsumedInputTick(id, it->second.LastConsumedTick());
+
             if (!consumed)
             {
                 continue;

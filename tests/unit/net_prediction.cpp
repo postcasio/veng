@@ -2,9 +2,10 @@
 // Tier::Predicted on possession and re-runs the real Sim systems (control + movement) each client
 // tick, so it responds on the tick its input is sampled. These scenarios pin the promotion/demotion
 // set math (default policy, a custom policy, depossession), the zero-tick local response (the pawn
-// moves with no server round trip), the interpolation skip (a predicted pawn is simulated, never
-// buffered), and the drift — with no whole-history restore-and-replay the divergence rides a
-// bounded latest-wins snap, asserted loosely. Deterministic (fixed tick, injected time), two-world.
+// moves with no server round trip), and the interpolation skip (a predicted pawn is simulated,
+// never buffered). Convergence under reconciliation — restore, replay, and byte-equal agreement with
+// the server — is the net_reconciliation.cpp gate. Deterministic (fixed tick, injected time),
+// two-world.
 
 #include <doctest/doctest.h>
 
@@ -502,48 +503,4 @@ TEST_CASE("Depossession demotes the predicted pawn back to a Remote mirror and u
     {
         CHECK(world.Get<Authority>(clientPawn).Tier == Tier::Remote);
     }
-}
-
-TEST_CASE("Uncorrected prediction drift stays within a bound without reconciliation")
-{
-    auto [serverT, clientT] = LoopbackTransport::CreatePair();
-    ServerWorld server(*serverT);
-    ClientWorld client(*clientT);
-
-    // Drive a sustained +x hold through a joined session, tracking the worst divergence between the
-    // client's predicted pose and the server's authoritative one. Without reconciliation the latest-
-    // wins apply snaps the predicted pawn toward the (jitter-lagged) authoritative pose each snapshot,
-    // so the divergence is bounded by the prediction lead — a documented, loosely-asserted bound.
-    const ActionState move = MoveState(vec2(1.0f, 0.0f));
-    f64 now = 0.0;
-    ConnectionId id = ServerConnectionId;
-    constexpr f32 Delta = 1.0f / 60.0f;
-
-    // Warm up the join.
-    RunJoined(server, client, 40, MoveState(vec2(0.0f, 0.0f)), now, id);
-    REQUIRE(client.Host->IsJoined());
-    const Entity serverPawn = server.PawnFor(id);
-    REQUIRE_FALSE(serverPawn.IsNull());
-    Scene& world = *client.Host->World();
-    const Entity clientPawn = client.OwnPawn;
-    REQUIRE_FALSE(clientPawn.IsNull());
-
-    f32 maxDrift = 0.0f;
-    for (u64 tick = 41; tick <= 200; ++tick)
-    {
-        now += Delta;
-        server.SimStep(tick, Delta);
-        server.NetPump(now, tick);
-        client.Frame(now, tick, Delta, move);
-
-        const vec3 serverPos = server.World->Get<Transform>(serverPawn).Position;
-        const vec3 clientPos = world.Get<Transform>(clientPawn).Position;
-        maxDrift = std::max(maxDrift, glm::length(clientPos - serverPos));
-    }
-
-    // Both advanced along +x from the same input; the predicted pawn led the authoritative one but
-    // never diverged past the bound (a handful of ticks of movement).
-    CHECK(server.World->Get<Transform>(serverPawn).Position.x > 1.0f);
-    CHECK(world.Get<Transform>(clientPawn).Position.x > 1.0f);
-    CHECK(maxDrift < 1.0f);
 }

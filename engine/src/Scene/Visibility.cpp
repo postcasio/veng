@@ -2,8 +2,12 @@
 
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Scene/Components.h>
+#include <Veng/Scene/RemoteInterpolationSystem.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/Transforms.h>
+
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 namespace Veng
 {
@@ -28,10 +32,22 @@ namespace Veng
                 continue;
             }
 
-            const AABB worldBounds = renderer->Mesh->GetBounds().Transformed(worldMatrices[i]);
+            // A predicted entity being visually smoothed after a reconciliation correction carries a
+            // decaying render offset (position + rotation about its origin), applied only here — the
+            // sim Transform stays authoritative; the render pose eases into it.
+            mat4 world = worldMatrices[i];
+            if (const auto* error = scene.TryGet<PredictionError>(dense[i]))
+            {
+                const vec3 origin = vec3(world[3]);
+                world = glm::translate(mat4(1.0f), origin + error->Position) *
+                        glm::mat4_cast(error->Rotation) * glm::translate(mat4(1.0f), -origin) *
+                        world;
+            }
+
+            const AABB worldBounds = renderer->Mesh->GetBounds().Transformed(world);
             out.push_back(VisibleMesh{
                 .Owner = dense[i],
-                .World = worldMatrices[i],
+                .World = world,
                 .WorldBounds = worldBounds,
                 .Mesh = renderer->Mesh.Get(),
             });

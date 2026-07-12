@@ -312,6 +312,8 @@ TEST_CASE("An unknown TypeId is skipped without disturbing the walk")
     // Hand-craft a packet: one entity record with one component of an unregistered TypeId.
     vector<u8> packet;
     AppendU64LE(packet, 5);             // server tick
+    AppendU32LE(packet, 0);             // input feedback
+    AppendU64LE(packet, 0);             // last consumed input tick
     AppendU32LE(packet, 1);             // NetId
     AppendU32LE(packet, 1);             // component count
     AppendU64LE(packet, 0xDEADBEEFULL); // unregistered TypeId
@@ -407,6 +409,37 @@ TEST_CASE("The snapshot header carries a signed input-feedback field that round-
     // A positive feedback (the client leading further than needed) likewise, and the default is zero.
     CHECK(ApplySnapshot(EncodeSnapshot(*server, 6, 0, 4), *client, map).InputFeedback == 4);
     CHECK(ApplySnapshot(EncodeSnapshot(*server, 7, 0), *client, map).InputFeedback == 0);
+}
+
+TEST_CASE("The snapshot header carries the last-consumed input tick, beside the feedback")
+{
+    TypeRegistry serverTypes;
+    RegisterBuiltinTypes(serverTypes);
+    Unique<Scene> server = Scene::Create(serverTypes);
+    server->SetChangeTick(1);
+    const Entity e = server->CreateEntity();
+    server->Add<Transform>(e, Transform{.Position = vec3(1.0f)});
+
+    NetIdAllocator allocator;
+    AssignServerNetIds(*server, allocator);
+
+    TypeRegistry clientTypes;
+    RegisterBuiltinTypes(clientTypes);
+    Unique<Scene> client = Scene::Create(clientTypes);
+    NetIdMap map;
+    SpawnClientMirror(*client, map, server->Get<NetIdentity>(e).Id);
+
+    // The consumed-input tick rides the header additively beside the feedback and round-trips
+    // independently of it (feedback -2, consumed 41).
+    const SnapshotApplyResult applied =
+        ApplySnapshot(EncodeSnapshot(*server, 9, 0, -2, 41), *client, map);
+    CHECK(applied.HeaderValid);
+    CHECK(applied.ServerTick == 9);
+    CHECK(applied.InputFeedback == -2);
+    CHECK(applied.LastConsumedInputTick == 41);
+
+    // Defaulted to zero when the encoder omits it.
+    CHECK(ApplySnapshot(EncodeSnapshot(*server, 10, 0), *client, map).LastConsumedInputTick == 0);
 }
 
 TEST_CASE("Change ticks are untouched by const iteration but stamped by a mutable access")

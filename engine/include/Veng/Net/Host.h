@@ -6,6 +6,7 @@
 #include <Veng/Net/ClockSync.h>
 #include <Veng/Net/NetEvents.h>
 #include <Veng/Net/PredictionHistory.h>
+#include <Veng/Net/Reconciliation.h>
 #include <Veng/Net/Replication.h>
 #include <Veng/Net/Server.h>
 #include <Veng/Result.h>
@@ -139,6 +140,16 @@ namespace Veng
         /// in the PredictionHistory, demoting the prior set back to Remote. Unset uses the
         /// owner-pawn-subtree default (see PredictionPolicy).
         PredictionPolicy Prediction;
+        /// @brief Optional: replays one predicted Sim tick during rollback reconciliation.
+        ///
+        /// On a mispredict the host restores the predicted set to the authoritative state and calls
+        /// this for each recorded input C+1..now (see Net::ReplayTick): the implementer sets the local
+        /// seat's PlayerInput and advances the scene's Sim phase for that tick with
+        /// SystemContext::IsReplay set. Unset disables rollback — a mispredict hard-snaps to the
+        /// authoritative state (planset-54 behaviour).
+        Net::ReplayTick Replay;
+        /// @brief The reconciliation compare tolerances and smoothing knobs (defaulted when unset).
+        Net::ReconcileTolerances Tolerances;
     };
 
     /// @brief Client-side join glue: load, ready, apply the stream, wire the own seat.

@@ -168,6 +168,17 @@ namespace Veng
         /// in the View phase, which is not a Sim step.
         bool FirstStepThisFrame = false;
 
+        /// @brief Whether this Sim step is a client reconciliation replay, not a live tick.
+        ///
+        /// A client that mispredicts restores its predicted set to the authoritative state and
+        /// replays its recorded inputs forward through the real Sim systems (see the networking
+        /// guide). Those replayed ticks re-run control and movement to re-derive state — but a system
+        /// with an *external* side effect (spawning an entity, triggering a sound, emitting an event
+        /// outward) must NOT repeat it per replayed tick, since the effect already fired on the
+        /// entity's first live simulation of that tick. Such a system gates the side effect on this
+        /// flag; a pure state advancer ignores it. False on every live tick and in the View phase.
+        bool IsReplay = false;
+
         /// @brief Returns a copy of this context with Alpha set to @p alpha.
         ///
         /// The View-phase context is the Sim-phase context plus the frame's interpolation fraction;

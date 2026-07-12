@@ -112,6 +112,18 @@ namespace Veng
             /// @return True if @p tick was recorded and restored, false if it was not in the ring.
             [[nodiscard]] bool Restore(u64 tick, Scene& scene) const;
 
+            /// @brief The captured bytes of @p type on @p entity at recorded @p tick, or empty when absent.
+            ///
+            /// The reconciler's compare source: the WriteFields serialization of the entity's
+            /// component as predicted at @p tick, to compare field-wise against the authoritative
+            /// snapshot record. Empty when @p tick is not recorded, the entity was not captured that
+            /// tick, or it held no such component. The view is valid until the next mutating call.
+            /// @param tick    The recorded tick to read.
+            /// @param entity  The captured entity.
+            /// @param type    The component type to read.
+            /// @return The captured component bytes, or an empty span when absent.
+            [[nodiscard]] std::span<const u8> Captured(u64 tick, Entity entity, TypeId type) const;
+
             /// @brief The recorded inputs for every tick strictly after @p tick, in ascending order.
             ///
             /// The replay source after a reconciliation: restore at the acked tick, then step these

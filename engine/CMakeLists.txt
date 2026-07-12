@@ -57,6 +57,7 @@ add_library(veng SHARED
         src/Net/Handshake.cpp
         src/Net/Host.cpp
         src/Net/PredictionHistory.cpp
+        src/Net/Reconciliation.cpp
         src/Net/InputFeed.cpp
         src/Net/LoopbackTransport.cpp
         src/Net/Server.cpp

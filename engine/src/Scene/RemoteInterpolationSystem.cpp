@@ -1,7 +1,10 @@
 #include <Veng/Scene/RemoteInterpolationSystem.h>
 
+#include <Veng/Math/Ease.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/Transforms.h>
+
+#include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
 
@@ -16,6 +19,33 @@ namespace Veng
             const Authority* authority = scene.TryGet<Authority>(entity);
             return authority != nullptr && authority->Tier == Tier::Predicted;
         }
+
+        // The render-residual decay rate: ~1/s so a correction eases out over ~150 ms
+        // (exp(-20 * 0.15) ≈ 5% remaining), frame-rate-independent through ExpApproach.
+        constexpr f32 PredictionSmoothingSpeed = 20.0f;
+
+        // Below these the residual is imperceptible and its component is dropped.
+        constexpr f32 NegligiblePosition = 1.0e-4f; // meters
+        constexpr f32 NegligibleRotation = 1.0e-6f; // 1 - |dot(q, identity)|
+    }
+
+    PredictionError DecayPredictionError(const PredictionError& error, const f32 delta,
+                                         const f32 speed)
+    {
+        const quat identity{1.0f, 0.0f, 0.0f, 0.0f};
+        const f32 t = 1.0f - glm::exp(-delta * speed);
+        return PredictionError{
+            .Position = glm::mix(error.Position, vec3(0.0f), t),
+            .Rotation = glm::normalize(glm::slerp(error.Rotation, identity, t)),
+        };
+    }
+
+    bool IsPredictionErrorNegligible(const PredictionError& error)
+    {
+        const quat identity{1.0f, 0.0f, 0.0f, 0.0f};
+        const f32 rotationDrift = 1.0f - std::abs(glm::dot(error.Rotation, identity));
+        return glm::length(error.Position) < NegligiblePosition &&
+               rotationDrift < NegligibleRotation;
     }
 
     optional<Transform> SampleRemoteInterpolation(const std::span<const RemoteSample> samples,
@@ -66,6 +96,29 @@ namespace Veng
 
     void RemoteInterpolationSystem::OnUpdate(Scene& scene, const f32 delta, const SystemContext&)
     {
+        // Decay the render residual of every corrected predicted entity toward zero — the visual
+        // ease-out of a reconciliation snap, applied only at the gather (never into Transform). Runs
+        // before the remote-interpolation clock so it advances even for a client with no remote
+        // mirrors (its own predicted pawn alone). The mutable Transform access bumps the scene's
+        // spatial version so the render gather re-reads the shrinking offset each frame; the Transform
+        // value itself is untouched. A settled residual removes its component after the walk.
+        {
+            vector<Entity> settled;
+            for (auto [entity, transform, error] : scene.View<Transform, PredictionError>())
+            {
+                (void)transform;
+                error = DecayPredictionError(error, delta, PredictionSmoothingSpeed);
+                if (IsPredictionErrorNegligible(error))
+                {
+                    settled.push_back(entity);
+                }
+            }
+            for (const Entity entity : settled)
+            {
+                scene.Remove<PredictionError>(entity);
+            }
+        }
+
         // The newest received tick across every remote buffer anchors the shared playback timeline.
         u64 newest = 0;
         bool anySamples = false;

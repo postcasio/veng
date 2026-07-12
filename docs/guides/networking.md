@@ -235,22 +235,64 @@ them by hand, and assert convergence.
 
 ---
 
+## Client-side prediction and reconciliation
+
+The local pawn is **predicted**, not interpolated: the client promotes the pawn its
+seat possesses (and the replicated subtree under it) to **`Tier::Predicted`** and runs
+the real control + movement Sim systems for it each client tick, so it responds on the
+tick its input is sampled rather than a round trip later. The client records each tick's
+input and predicted state in a bounded history.
+
+The server confirms which of the client's inputs its state reflects: every snapshot
+header carries a **`LastConsumedInputTick`** beside the buffer-depth feedback. On each
+snapshot the client compares its recorded prediction at that tick against the
+authoritative record — spatial leaves (position, rotation) within a tolerance, discrete
+state exactly. On a match the prediction stands. On a mismatch the client **restores** the
+predicted set to the authoritative record and **replays** its recorded inputs forward
+through the real Sim systems (a rollback of a handful of entities, bounded by the history
+depth), then hides the visual residual behind a render offset that decays through
+`Math::ExpApproach` — the simulation snaps to truth immediately; only the camera-facing
+pose eases. A correction beyond a teleport-scale threshold snaps without smoothing.
+
+### The one rule for gameplay authors: `IsReplay`
+
+Rollback re-runs your Sim systems for ticks they already ran once. A system that only
+**advances state** (movement, a rule reading and writing components) needs no awareness of
+this — re-running it from the restored state is exactly the point. But a system with an
+**external side effect** — spawning an entity, triggering a sound, emitting an event
+outward — must **not** repeat that effect per replayed tick, because it already fired on
+the tick's first live simulation. Gate the side effect on **`SystemContext::IsReplay`**:
+
+```cpp
+void OnUpdate(Scene& scene, f32 delta, const SystemContext& context) override
+{
+    AdvanceState(scene, delta);           // always runs — pure state
+    if (!context.IsReplay)                // fire outward effects on the live tick only
+    {
+        SpawnPickupEffect(scene);
+    }
+}
+```
+
+`IsReplay` is false on every live tick and in the View phase; it is true only during a
+reconciliation replay. During replay the world around the predicted set is frozen at the
+present (remote entities hold their current interpolated pose, no View systems run), so a
+predicted-vs-world interaction in the replay window uses present-world context — the server
+remains the arbiter of what actually happened.
+
 ## What v1 does not do
 
 Deliberately deferred to the next networking phase — do not reach for these yet:
 
-- **Client-side prediction + rollback** of the local pawn (the local pawn currently
-  wears its latency). This needs sim rewind/replay, its own phase.
-- **Delta compression, quantization, and a bit-packed input encoding.** v1 sends
+- **Delta compression, quantization, and a bit-packed input encoding.** The wire sends
   full reflected state and the reflection-encoded `ActionState`; the optimization
   tier is later, behind the stable component and `ActionState` shapes.
-- **Interest management** (per-connection relevancy). v1 replicates every
-  `Authority::Server` entity to every connection.
-- **Encryption / authentication.** v1 is loopback/LAN/trusted-transport scope.
+- **Interest management** (per-connection relevancy). Every `Authority::Server` entity
+  replicates to every connection.
+- **Encryption / authentication.** The current scope is loopback/LAN/trusted-transport.
 
-The `Tier` enum was designed to extend (`Remote` now, a predicted tier reserved),
-and the `ActionState`/component shapes are stable, so adopting the optimization tier
-later needs no change to the game code you write against this guide.
+The `ActionState`/component shapes are stable, so adopting the optimization tier later
+needs no change to the game code you write against this guide.
 
 ## Where to go next
 

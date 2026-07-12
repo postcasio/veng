@@ -19,6 +19,14 @@ namespace Veng
 
     void InputMappingSystem::OnUpdate(Scene& scene, const f32, const SystemContext& context)
     {
+        // A reconciliation replay feeds each tick its recorded PlayerInput directly, so re-resolving
+        // from present device state would overwrite the recorded input with the wrong tick's — the
+        // one device-reading system a replay must skip.
+        if (context.IsReplay)
+        {
+            return;
+        }
+
         // Reused across seats to gather each stack's resident contexts, lowest priority first.
         vector<ResolvedContext> active;
         scene.Each<Viewer, InputContextStack, PlayerInput, SeatInput>(

@@ -5,6 +5,7 @@
 #include <Veng/Input/Actions.h>
 #include <Veng/Net/Connection.h>
 #include <Veng/Net/NetEvents.h>
+#include <Veng/Reflection/TypeId.h>
 #include <Veng/Result.h>
 #include <Veng/Scene/Entity.h>
 
@@ -93,6 +94,30 @@ namespace Veng
     /// @return The number of entities newly assigned an id.
     VE_API usize AssignServerNetIds(Scene& scene, NetIdAllocator& allocator);
 
+    /// @brief One predicted entity's authoritative component state decoded from a snapshot.
+    ///
+    /// A Tier::Predicted entity is simulated locally, so its authoritative snapshot state is not
+    /// applied to the live pose the way a Remote mirror's Transform is buffered — it is handed to the
+    /// reconciler, which compares it against the recorded prediction and restores/replays on a
+    /// mismatch. ReplicationClient::ApplySnapshot decodes these (references remapped to local handles)
+    /// for every predicted entity in the packet and exposes them for that pump's reconciliation.
+    struct PredictedRecord
+    {
+        /// @brief One authoritative component's reflected type and its local-form WriteFields bytes.
+        struct Component
+        {
+            /// @brief The component's reflected type.
+            TypeId Type = InvalidTypeId;
+            /// @brief The authoritative state as WriteFields bytes, references already remapped to local handles.
+            vector<u8> Bytes;
+        };
+
+        /// @brief The local entity the record resolved to.
+        Entity Entity = Entity::Null;
+        /// @brief The authoritative replicated components the snapshot carried for the entity.
+        vector<Component> Components;
+    };
+
     /// @brief The outcome of applying a snapshot packet, for the caller and for tests.
     struct SnapshotApplyResult
     {
@@ -100,6 +125,14 @@ namespace Veng
         u64 ServerTick = 0;
         /// @brief The header's per-connection input feedback signal (see EncodeSnapshot), or 0.
         i32 InputFeedback = 0;
+        /// @brief The client tick whose input the server had consumed when it simulated this snapshot, or 0.
+        ///
+        /// The confirmation signal reconciliation keys on: a snapshot at server tick ServerTick with
+        /// LastConsumedInputTick == C means "authoritative state for the predicted set as of my input
+        /// C". The client compares its recorded prediction at C against this snapshot's authoritative
+        /// record and, on a mismatch, restores to C and replays. Zero before the server has consumed
+        /// any of this connection's input.
+        u64 LastConsumedInputTick = 0;
         /// @brief True when the header parsed (the packet carried a full header).
         bool HeaderValid = false;
         /// @brief Entity records whose NetId resolved and whose state was applied.
@@ -108,8 +141,8 @@ namespace Veng
         u32 EntitiesDropped = 0;
     };
 
-    /// @brief Serialized size of a snapshot packet header: the server tick plus the input feedback.
-    inline constexpr usize SnapshotHeaderSize = sizeof(u64) + sizeof(i32);
+    /// @brief Serialized size of a snapshot packet header: the server tick, input feedback, and last-consumed input tick.
+    inline constexpr usize SnapshotHeaderSize = sizeof(u64) + sizeof(i32) + sizeof(u64);
 
     /// @brief Encodes a snapshot of the scene's dirty replicated state into a self-delimiting packet.
     ///
@@ -123,19 +156,22 @@ namespace Veng
     /// Packet layout (framing little-endian; component payloads are the reflection serializer's
     /// WriteFields bytes):
     ///
-    ///     SnapshotPacket  := ServerTick:u64  InputFeedback:i32  EntityRecord*
+    ///     SnapshotPacket  := ServerTick:u64  InputFeedback:i32  LastConsumedInputTick:u64  EntityRecord*
     ///     EntityRecord    := NetId:u32  ComponentCount:u32  ComponentRecord*
     ///     ComponentRecord := TypeId:u64  ByteLength:u32  WriteFields-bytes
     ///
     /// A const scene walk — it stamps no change ticks on the components it reads.
-    /// @param scene          The server scene to snapshot.
-    /// @param serverTick     The tick this snapshot represents (the packet header).
-    /// @param sinceTick      A component is included when its change tick exceeds this (the last-acked tick).
-    /// @param inputFeedback  The per-connection input-timing feedback ridden in the header (see
-    ///                       ReplicationServer::SetInputFeedback); zero for none.
+    /// @param scene                  The server scene to snapshot.
+    /// @param serverTick             The tick this snapshot represents (the packet header).
+    /// @param sinceTick              A component is included when its change tick exceeds this (the last-acked tick).
+    /// @param inputFeedback          The per-connection input-timing feedback ridden in the header (see
+    ///                               ReplicationServer::SetInputFeedback); zero for none.
+    /// @param lastConsumedInputTick  The client tick whose input the server had consumed when it simulated
+    ///                               this state (see ReplicationServer::SetLastConsumedInputTick); zero for none.
     /// @return The encoded packet bytes.
     [[nodiscard]] VE_API vector<u8> EncodeSnapshot(const Scene& scene, u64 serverTick,
-                                                   u64 sinceTick, i32 inputFeedback = 0);
+                                                   u64 sinceTick, i32 inputFeedback = 0,
+                                                   u64 lastConsumedInputTick = 0);
 
     /// @brief Applies a snapshot packet to @p scene, latest-wins and recoverable.
     ///
@@ -230,6 +266,17 @@ namespace Veng
         /// @param feedback  The feedback in ticks (see EncodeSnapshot's header field).
         void SetInputFeedback(Net::ConnectionId id, i32 feedback);
 
+        /// @brief Sets the client tick whose input this connection's next snapshot reflects.
+        ///
+        /// The correctness-bearing sibling of SetInputFeedback, ridden in the connection's next
+        /// snapshot header (see SnapshotApplyResult::LastConsumedInputTick): the client reconciles
+        /// its recorded prediction at this tick against the authoritative snapshot. The server sets
+        /// it from the tick it scheduled-consumed this connection's input for. A no-op for an
+        /// untracked connection.
+        /// @param id    The connection the confirmation concerns.
+        /// @param tick  The client input tick the server had consumed when it simulated the snapshot.
+        void SetLastConsumedInputTick(Net::ConnectionId id, u64 tick);
+
         /// @brief Diffs the scene against a connection's state, returning this tick's messages to send.
         ///
         /// Emits a reliable Spawn for each replicated entity new to the connection, a reliable Despawn
@@ -253,6 +300,8 @@ namespace Veng
             u64 AckedTick = 0;
             /// @brief Input-timing feedback ridden in this connection's next snapshot header.
             i32 InputFeedback = 0;
+            /// @brief Client input tick the server had consumed, ridden in the next snapshot header.
+            u64 LastConsumedInputTick = 0;
         };
 
         Settings m_Settings;
@@ -312,9 +361,23 @@ namespace Veng
         /// @return A summary of what applied (see SnapshotApplyResult).
         SnapshotApplyResult ApplySnapshot(std::span<const u8> packet, Scene& scene);
 
+        /// @brief The predicted entities' authoritative records decoded by the last ApplySnapshot.
+        ///
+        /// A Tier::Predicted entity's snapshot state is collected here rather than applied to the live
+        /// pose (which is client-simulated); the reconciler consumes it against the header's
+        /// LastConsumedInputTick. Cleared and refilled by each ApplySnapshot, so it is read
+        /// immediately after that call, for that snapshot only.
+        /// @return A view valid until the next ApplySnapshot.
+        [[nodiscard]] std::span<const PredictedRecord> PredictedRecords() const
+        {
+            return m_PredictedRecords;
+        }
+
     private:
         NetIdMap m_Map;
         function<Ref<Prefab>(AssetId)> m_ResolvePrefab;
+        /// @brief The last ApplySnapshot's Tier::Predicted authoritative records (see PredictedRecords).
+        vector<PredictedRecord> m_PredictedRecords;
     };
 
     // ---- Input replication (client → server) ------------------------------------------------------

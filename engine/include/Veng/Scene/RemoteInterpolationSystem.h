@@ -40,6 +40,40 @@ namespace Veng
         vector<RemoteSample> Samples;
     };
 
+    /// @brief A decaying render-space pose offset applied to a predicted entity at gather time.
+    ///
+    /// When a client's prediction is corrected — its predicted pose is restored to the authoritative
+    /// state and replayed forward — the visible pose would jump. To hide the discontinuity, the
+    /// pre-correction visible pose is held as this offset from the corrected sim pose and decayed to
+    /// zero over ~100–200 ms. It is applied only where transforms feed the render gather (never
+    /// written back into Transform, which stays authoritative sim state), so the mesh eases into the
+    /// corrected pose while the simulation is already there. Runtime-only: it carries no reflected
+    /// field, so it never serializes and never rides the wire. A negligible offset removes itself.
+    struct PredictionError
+    {
+        /// @brief World-space position offset added to the render pose; decays to zero.
+        vec3 Position{0.0f};
+        /// @brief World-space rotation offset applied to the render pose about the entity origin; decays to identity.
+        quat Rotation{1.0f, 0.0f, 0.0f, 0.0f};
+    };
+
+    /// @brief Decays a render residual toward zero, frame-rate-independent (ExpApproach per component).
+    ///
+    /// Steps @p error's position and rotation toward identity by the ExpApproach fraction over @p
+    /// delta at @p speed (1/seconds), so the ease is identical at any frame rate. Used by the
+    /// View-phase decay of PredictionError.
+    /// @param error  The residual to step (position offset + rotation offset).
+    /// @param delta  The elapsed frame time, in seconds.
+    /// @param speed  The decay rate, in 1/seconds.
+    /// @return The stepped residual.
+    [[nodiscard]] VE_API PredictionError DecayPredictionError(const PredictionError& error,
+                                                              f32 delta, f32 speed);
+
+    /// @brief True when a render residual is small enough to drop (below a fixed position/rotation threshold).
+    /// @param error  The residual to test.
+    /// @return True when the offset is negligible and the component can be removed.
+    [[nodiscard]] VE_API bool IsPredictionErrorNegligible(const PredictionError& error);
+
     /// @brief Blends the two samples bracketing @p renderTick into a displayed local pose.
     ///
     /// The pure core of remote interpolation: over a tick-ordered sample run, returns the sample TRS
@@ -104,5 +138,7 @@ namespace Veng
 }
 
 VE_TYPE(::Veng::RemoteInterpolation, 0x4DB6B8EC5D0385AAULL);
+
+VE_TYPE(::Veng::PredictionError, 0x6594EF08023B7948ULL);
 
 VE_SYSTEM(::Veng::RemoteInterpolationSystem, 0x3E37AEC6CF468687ULL, "Remote Interpolation");

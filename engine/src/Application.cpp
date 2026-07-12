@@ -326,6 +326,28 @@ namespace Veng
             .OnPossession = [this](Scene& world, const Entity pawn)
             { OnClientPossession(world, pawn); },
             .Prediction = net.PredictionPolicy,
+            .Replay =
+                [this](Scene& world, const u64 tick, const PlayerInput& input)
+            {
+                // Feed the recorded input to the local seat, then advance the Sim phase for this tick
+                // with IsReplay set: InputMappingSystem leaves the fed input alone and side-effecting
+                // systems gate their effects, while control + movement re-derive the predicted state.
+                bool fed = false;
+                world.Each<SeatInput, PlayerInput>(
+                    [&](const Entity, const SeatInput&, PlayerInput& seatInput)
+                    {
+                        if (!fed)
+                        {
+                            seatInput = input;
+                            fed = true;
+                        }
+                    });
+                const f32 simDelta =
+                    1.0f / static_cast<f32>(m_Info.World ? m_Info.World->SimTickRate : 60u);
+                world.TickSimulationPhase(SceneSystem::Phase::Sim, simDelta,
+                                          BuildSystemContext(world, PointerRouting{}, tick, 0.0f,
+                                                             false, /*isReplay=*/true));
+            },
         });
 
         Log::Info("Joining {}:{}", target.Host, port);
@@ -596,7 +618,8 @@ namespace Veng
 
     SystemContext Application::BuildSystemContext(const Scene& scene, const PointerRouting& pointer,
                                                   const u64 tick, const f32 alpha,
-                                                  const bool firstStepThisFrame) const
+                                                  const bool firstStepThisFrame,
+                                                  const bool isReplay) const
     {
         SystemContext context{
             .Assets = *m_AssetManager,
@@ -607,6 +630,7 @@ namespace Veng
             .Alpha = alpha,
             .Role = GetNetRole(),
             .FirstStepThisFrame = firstStepThisFrame,
+            .IsReplay = isReplay,
         };
 
         // Resolve the sim's primary presenting viewport — the first registered Presented viewport

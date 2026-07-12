@@ -262,6 +262,11 @@ namespace
                         world.Get<CameraFollow>(LocalCamera).Target = pawn;
                     }
                 },
+                // This suite is the interpolation-only regression floor: the own pawn stays a Remote
+                // mirror rendered in the past, so it predicts nothing (prediction + reconciliation
+                // convergence is net_reconciliation.cpp's gate). Without this the default policy would
+                // promote it to Predicted and it would drift, uncorrected, off the arrival-front feed.
+                .Prediction = [](const Scene&, Entity) { return vector<Entity>{}; },
             });
         }
 

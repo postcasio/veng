@@ -212,13 +212,15 @@ namespace Veng
         // Applies one entity record's component list (positioned at the first component record).
         // Decodes each component out of line so a malformed record leaves prior state intact. When
         // the record is for a known (bound, alive) entity, each component either buffers a Transform
-        // sample (bufferTransform) or overwrites the live component; an unknown entity's records are
-        // parsed only to keep the cursor aligned. Stops on a truncated record.
+        // sample (bufferTransform), collects the decoded authoritative state into @p collect (a
+        // predicted entity, handed to the reconciler rather than applied), or overwrites the live
+        // component; an unknown entity's records are parsed only to keep the cursor aligned. Stops on
+        // a truncated record.
         void ApplyComponentRecords(std::span<const u8> packet, usize& cursor, u32 componentCount,
                                    Scene& scene, Entity entity, bool known,
                                    const TypeRegistry& registry, const EntityRemap& decodeRef,
                                    bool bufferTransform, u64 serverTick, bool& appliedOut,
-                                   bool& truncatedOut)
+                                   bool& truncatedOut, PredictedRecord* collect = nullptr)
         {
             const AssetHandleFixup keepAsset = [](void*) {};
             const TypeId transformId = TypeIdOf<Transform>();
@@ -262,6 +264,18 @@ namespace Veng
                     continue; // malformed record: leave prior state intact
                 }
                 RemapComponentReferences(scratch.Ptr, info, registry, decodeRef, keepAsset);
+
+                if (collect != nullptr)
+                {
+                    // A predicted entity: hand the decoded authoritative state (local-form, references
+                    // remapped) to the reconciler instead of writing it onto the client-simulated pose.
+                    vector<u8> local;
+                    WriteFields(local, scratch.Ptr, info, registry);
+                    collect->Components.push_back(
+                        PredictedRecord::Component{.Type = *typeId, .Bytes = std::move(local)});
+                    appliedOut = true;
+                    continue;
+                }
 
                 if (bufferTransform && *typeId == transformId)
                 {
@@ -376,7 +390,8 @@ namespace Veng
         return targets.size();
     }
 
-    vector<u8> EncodeSnapshot(const Scene& scene, u64 serverTick, u64 sinceTick, i32 inputFeedback)
+    vector<u8> EncodeSnapshot(const Scene& scene, u64 serverTick, u64 sinceTick, i32 inputFeedback,
+                              u64 lastConsumedInputTick)
     {
         const TypeRegistry& registry = scene.GetTypeRegistry();
         const vector<TypeId> replicated = ReplicatedTypeIds(registry);
@@ -385,6 +400,7 @@ namespace Veng
         vector<u8> out;
         AppendU64(out, serverTick);
         AppendU32(out, static_cast<u32>(inputFeedback));
+        AppendU64(out, lastConsumedInputTick);
 
         for (auto [entity, identity] : scene.View<NetIdentity>())
         {
@@ -419,8 +435,14 @@ namespace Veng
         {
             return result;
         }
+        const Result<u64> lastConsumed = ReadU64(packet, cursor);
+        if (!lastConsumed)
+        {
+            return result;
+        }
         result.ServerTick = *serverTick;
         result.InputFeedback = static_cast<i32>(*feedback);
+        result.LastConsumedInputTick = *lastConsumed;
         result.HeaderValid = true;
 
         const EntityRemap decodeRef = MakeDecodeRef(map);
@@ -501,6 +523,14 @@ namespace Veng
         if (const auto it = m_Connections.find(id); it != m_Connections.end())
         {
             it->second.InputFeedback = feedback;
+        }
+    }
+
+    void ReplicationServer::SetLastConsumedInputTick(Net::ConnectionId id, u64 tick)
+    {
+        if (const auto it = m_Connections.find(id); it != m_Connections.end())
+        {
+            it->second.LastConsumedInputTick = tick;
         }
     }
 
@@ -588,11 +618,13 @@ namespace Veng
         // packets, each a self-contained snapshot packet (header + a subset of the records).
         if (m_Settings.SnapshotInterval != 0 && tick % m_Settings.SnapshotInterval == 0)
         {
-            const auto startPacket = [tick, feedback = state.InputFeedback]()
+            const auto startPacket =
+                [tick, feedback = state.InputFeedback, lastConsumed = state.LastConsumedInputTick]()
             {
                 vector<u8> packet;
                 AppendU64(packet, tick);
                 AppendU32(packet, static_cast<u32>(feedback));
+                AppendU64(packet, lastConsumed);
                 return packet;
             };
 
@@ -762,6 +794,7 @@ namespace Veng
     {
         const TypeRegistry& registry = scene.GetTypeRegistry();
         SnapshotApplyResult result;
+        m_PredictedRecords.clear();
 
         usize cursor = 0;
         const Result<u64> serverTick = ReadU64(packet, cursor);
@@ -774,8 +807,14 @@ namespace Veng
         {
             return result;
         }
+        const Result<u64> lastConsumed = ReadU64(packet, cursor);
+        if (!lastConsumed)
+        {
+            return result;
+        }
         result.ServerTick = *serverTick;
         result.InputFeedback = static_cast<i32>(*feedback);
+        result.LastConsumedInputTick = *lastConsumed;
         result.HeaderValid = true;
 
         const EntityRemap decodeRef = MakeDecodeRef(m_Map);
@@ -796,18 +835,26 @@ namespace Veng
             const Entity entity = m_Map.Lookup(*netId);
             const bool known = !entity.IsNull() && scene.IsAlive(entity);
 
-            // A predicted entity is simulated locally, so its authoritative Transform applies
-            // latest-wins over the live pose (the correction target), not into the interpolation
-            // buffer a remote mirror fills. This is a bounded periodic snap toward server truth — the
-            // whole-history restore-and-replay correction rides the recorded PredictionHistory.
+            // A predicted entity is simulated locally, so its authoritative state is neither buffered
+            // (as a remote mirror's Transform is) nor applied latest-wins over the client-driven pose.
+            // Its records are collected for the reconciler, which compares them against the recorded
+            // prediction at the header's consumed-input tick and restores/replays on a mismatch.
             const Authority* authority = known ? scene.TryGet<Authority>(entity) : nullptr;
             const bool predicted = authority != nullptr && authority->Tier == Tier::Predicted;
+
+            PredictedRecord collected;
+            collected.Entity = entity;
 
             bool applied = false;
             bool truncated = false;
             ApplyComponentRecords(packet, cursor, *componentCount, scene, entity, known, registry,
                                   decodeRef, /*bufferTransform=*/!predicted, *serverTick, applied,
-                                  truncated);
+                                  truncated, predicted ? &collected : nullptr);
+
+            if (predicted && !collected.Components.empty())
+            {
+                m_PredictedRecords.push_back(std::move(collected));
+            }
 
             if (!known)
             {

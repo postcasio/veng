@@ -224,6 +224,33 @@ namespace Veng::Net
         return true;
     }
 
+    std::span<const u8> PredictionHistory::Captured(const u64 tick, const Entity entity,
+                                                    const TypeId type) const
+    {
+        const auto it = std::ranges::lower_bound(m_Inputs, tick, {}, &StoredInput::Tick);
+        if (it == m_Inputs.end() || it->Tick != tick)
+        {
+            return {};
+        }
+        const Frame& frame = m_Frames[static_cast<usize>(it - m_Inputs.begin())];
+        for (const CapturedEntity& captured : frame.Entities)
+        {
+            if (captured.Entity != entity)
+            {
+                continue;
+            }
+            for (const CapturedComponent& component : captured.Components)
+            {
+                if (component.Type == type)
+                {
+                    return component.Bytes;
+                }
+            }
+            return {};
+        }
+        return {};
+    }
+
     std::span<const StoredInput> PredictionHistory::InputsAfter(const u64 tick) const
     {
         const auto it = std::ranges::upper_bound(m_Inputs, tick, {}, &StoredInput::Tick);

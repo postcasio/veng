@@ -312,6 +312,8 @@ namespace Veng
         function<Unique<Scene>(AssetId)> LoadLevel;
         function<void(Scene&, Entity)> OnPossession;
         PredictionPolicy Policy;
+        Net::ReplayTick Replay;
+        Net::ReconcileTolerances Tolerances;
         Unique<ReplicationClient> Replication;
 
         Unique<Scene> World;
@@ -426,6 +428,8 @@ namespace Veng
         state->LoadLevel = info.LoadLevel;
         state->OnPossession = info.OnPossession;
         state->Policy = info.Prediction;
+        state->Replay = info.Replay;
+        state->Tolerances = info.Tolerances;
         state->Replication = CreateUnique<ReplicationClient>(info.ResolvePrefab);
         return Unique<ClientHost>(new ClientHost(std::move(state)));
     }
@@ -468,6 +472,16 @@ namespace Veng
                 // The newest snapshot's feedback closes the tick-offset loop: the controller trims
                 // its target lead by how early/late the server saw this client's input running.
                 s.TickSync.SetFeedbackTrim(static_cast<f32>(applied.InputFeedback));
+
+                // Reconcile the predicted set against this snapshot's authoritative record: compare
+                // at the consumed-input tick, and on a mismatch restore + replay + smooth. A no-op
+                // when nothing is predicted, or before the server has confirmed any input (client
+                // ticks start at 1, so a zero consumed-input tick means "nothing to reconcile yet").
+                if (!s.History.Tracked().empty() && applied.LastConsumedInputTick > 0)
+                {
+                    (void)Net::Reconcile(*s.World, s.History, s.Replication->PredictedRecords(),
+                                         applied.LastConsumedInputTick, s.Replay, s.Tolerances);
+                }
             }
         }
 
