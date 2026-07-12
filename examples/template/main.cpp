@@ -170,12 +170,10 @@ private:
 
         if (m_Overlay)
         {
-            // The engine ticks the overlay's simulation (it registers as one on Open); Update only
-            // re-applies the region and pushes the view each frame.
-            m_Overlay->Update(delta);
-
-            // Dismiss on the HUD's button: the overlay system published the click into OverlayControl,
-            // which the opener owns and drains. (Tab, above, is the other dismissal.)
+            // The engine ticks the overlay's simulation and pushes its camera each frame (it opens an
+            // owned world on Open), so the opener writes no per-frame overlay code — only the dismiss
+            // drain. The overlay system published the HUD button's click into OverlayControl, which
+            // the opener owns and drains here. (Tab, above, is the other dismissal.)
             const OverlayControl* const control =
                 m_Overlay->GetScene().TryGetFirst<OverlayControl>();
             if (control != nullptr && control->Requested)
@@ -187,10 +185,10 @@ private:
 
     void OnDispose() override { m_Overlay.reset(); }
 
-    // Opens the overlay level over the running frame: a fresh scene simulated concurrently, its own
-    // seat taking input while the primary's is suspended, and — the opt-in PausePrimarySim knob —
-    // the primary's simulation frozen for the modal's lifetime. The populate hook copies a snapshot
-    // of the primary HUD's state into the overlay scene before it starts.
+    // Opens the overlay level over the running frame: a fresh owned world simulated concurrently, its
+    // own seat taking input while the managed world's is suspended, and — naming the managed world as
+    // the covered world — that world's simulation frozen for the modal's lifetime. The populate hook
+    // copies a snapshot of the primary HUD's state into the overlay scene before it starts.
     void OpenOverlay()
     {
         if (!m_OverlayLevel.Id().IsValid())
@@ -202,7 +200,7 @@ private:
             *this,
             LevelOverlayInfo{
                 .Source = m_OverlayLevel,
-                .PausePrimarySim = true,
+                .CoveredWorld = GetManagedWorldId(),
                 .WaitForResidency = true,
                 .Populate =
                     [this](Scene& scene)

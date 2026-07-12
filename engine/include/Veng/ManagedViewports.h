@@ -5,6 +5,7 @@
 #include <Veng/Renderer/DynamicResolution.h>
 #include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Renderer/Types.h>
+#include <Veng/Renderer/Viewport.h>
 #include <Veng/Renderer/ViewportRegion.h>
 #include <Veng/Scene/Entity.h>
 
@@ -20,9 +21,7 @@ namespace Veng
 namespace Veng::Renderer
 {
     class Context;
-    class Viewport;
     class ViewportCompositor;
-    struct ViewState;
 }
 
 namespace Veng
@@ -169,17 +168,42 @@ namespace Veng
         /// @param world  The world the viewport presents.
         void SetViewportWorld(usize index, WorldInstanceId world);
 
-        /// @brief Pulls each bound viewport's camera from the runner and pushes it, once per frame.
+        /// @brief Registers a non-owning presented viewport bound to a world, driven beside the set.
+        ///
+        /// The camera pull that serves a Presented viewport opened at runtime over the indexed managed
+        /// set (an overlay): the caller owns the viewport (and registers it with the compositor for
+        /// render and layout tracking), and this binds it to a world so PushViews resolves and pushes
+        /// its camera each frame through the identical { World, Viewer } path a managed viewport uses,
+        /// pulling the world's own interpolation fraction. The set never owns the viewport — the caller
+        /// unregisters the binding (UnregisterBoundViewport) before dropping the viewport. The bound
+        /// viewports are not indexed and Get / Build / Reconfigure never touch them.
+        /// @param viewport  The caller-owned presented viewport whose camera the set pushes.
+        /// @param world     The world the viewport presents.
+        /// @param viewer    The seat in @p world whose camera to resolve, or Entity::Null for the primary.
+        /// @param knobs     The per-frame tone/bloom/environment knobs carried into the push.
+        void RegisterBoundViewport(Renderer::Viewport& viewport, WorldInstanceId world,
+                                   Entity viewer, const Renderer::ViewState& knobs);
+
+        /// @brief Removes a bound viewport's camera-pull binding; a no-op if it is not bound.
+        ///
+        /// The counterpart to RegisterBoundViewport, called before the caller drops the viewport so no
+        /// stale pointer lingers in the pull. Does not touch the compositor drive-list or the router.
+        /// @param viewport  The bound viewport whose binding to remove.
+        void UnregisterBoundViewport(const Renderer::Viewport& viewport);
+
+        /// @brief Pulls each managed and bound viewport's camera from the runner and pushes it, once per frame.
         ///
         /// For each managed viewport naming a valid World: resolves the world through @p runner and
         /// pushes its scene (a bound Viewer resolves that seat's camera through ResolveCameraView at
         /// the viewport's aspect; Entity::Null takes the scene primary). A viewport whose World was
-        /// closed pushes a null-scene ViewState (a cleared target, inert). A viewport with an invalid
-        /// World is left untouched for the game to drive. The runner never learns a viewport asked.
+        /// closed pushes a null-scene ViewState (a cleared target, inert). A managed viewport with an
+        /// invalid World is left untouched for the game to drive. Each registered bound viewport
+        /// (RegisterBoundViewport) is pushed the same way with its own carried knobs and its world's
+        /// own interpolation fraction. The runner never learns a viewport asked.
         /// @param runner  The world runner cameras are resolved through.
-        /// @param knobs   The per-frame tone/bloom/environment view knobs carried into each push.
+        /// @param knobs   The per-frame tone/bloom/environment view knobs carried into each managed push.
         /// @param delta   Frame delta in seconds, forwarded to the renderer.
-        /// @param alpha   The fixed-timestep interpolation fraction, forwarded to the gather.
+        /// @param alpha   The fixed-timestep interpolation fraction for the managed viewports.
         void PushViews(WorldRunner& runner, const Renderer::ViewState& knobs, f32 delta, f32 alpha);
 
         /// @brief Clears the set, dropping every managed viewport and its router association.
@@ -195,14 +219,30 @@ namespace Veng
             ManagedViewportInfo Info;
         };
 
-        /// @brief Pushes one managed viewport's resolved world source through the runner.
-        /// @param managed  The managed viewport and its { World, Viewer } binding to push into.
-        /// @param runner   The world runner the world and camera resolve through.
-        /// @param knobs    The per-frame view knobs carried into the push.
-        /// @param delta    Frame delta in seconds.
-        /// @param alpha    The interpolation fraction.
-        void PushViewportView(const ManagedViewport& managed, WorldRunner& runner,
-                              const Renderer::ViewState& knobs, f32 delta, f32 alpha) const;
+        /// @brief A non-owning presented viewport bound to a world, pushed beside the indexed set.
+        struct BoundViewport
+        {
+            /// @brief The caller-owned viewport whose camera the set pushes; never owned here.
+            Renderer::Viewport* Viewport = nullptr;
+            /// @brief The world this viewport presents.
+            WorldInstanceId World;
+            /// @brief The seat in World whose camera to resolve, or Entity::Null for the scene primary.
+            Entity Viewer = Entity::Null;
+            /// @brief The per-frame tone/bloom/environment knobs carried into the push.
+            Renderer::ViewState Knobs;
+        };
+
+        /// @brief Pushes one viewport's resolved world source through the runner by its { World, Viewer } binding.
+        /// @param viewport  The viewport to push into.
+        /// @param world     The world the viewport presents.
+        /// @param viewer    The seat whose camera to resolve, or Entity::Null for the scene primary.
+        /// @param runner    The world runner the world and camera resolve through.
+        /// @param knobs     The per-frame view knobs carried into the push.
+        /// @param delta     Frame delta in seconds.
+        /// @param alpha     The interpolation fraction.
+        void PushViewportView(Renderer::Viewport& viewport, WorldInstanceId world, Entity viewer,
+                              WorldRunner& runner, const Renderer::ViewState& knobs, f32 delta,
+                              f32 alpha) const;
 
         /// @brief The render context Viewports are created against.
         Renderer::Context& m_Context;
@@ -215,6 +255,9 @@ namespace Veng
 
         /// @brief The managed viewports in order; index 0 is the primary.
         vector<ManagedViewport> m_Viewports;
+
+        /// @brief The non-owning bound viewports (overlays) pushed beside the indexed set.
+        vector<BoundViewport> m_Bound;
 
         /// @brief A pending reconfigure, applied at the next ApplyPendingReconfigure; nullopt when none.
         optional<vector<ManagedViewportInfo>> m_PendingReconfigure;

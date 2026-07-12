@@ -1,18 +1,23 @@
 // LevelOverlay: opening a whole Level as a secondary, simulated overlay over a running Application.
 //
-// Drives a real headless Application (its own Context, no window, no ImGui) through Run(), opening
-// and dropping LevelOverlay handles from OnUpdate. The overlay creates a Presented viewport, so the
-// suite is GPU-band (it needs a Context, though the assertions are router/scene state, not pixels);
-// the gpu/main.cpp harness skips the whole band with no ICD.
+// LevelOverlay is a thin preset over WorldRunner::OpenWorld: opening one opens an owned world (the
+// runner ticks it and the engine pushes its camera each frame, so there is no per-frame game call)
+// and applies an overlay policy — a Presented viewport on top, a cursor-seat and focus handoff, and
+// an optional refcounted pause on a caller-named covered world. Drives a real headless Application
+// (its own Context, no window, no ImGui) through Run(), opening and dropping LevelOverlay handles
+// from OnUpdate. The overlay creates a Presented viewport, so the suite is GPU-band (it needs a
+// Context, though the assertions are router/scene state, not pixels); the gpu/main.cpp harness skips
+// the whole band with no ICD.
 //
-// It pins: the open/update/close lifecycle leaving the router (cursor seat + pointer associations),
-// world-pause, and drive-list byte-restored (including a drop while the focus scope is live, and
-// asserting the pointer association was cleared); the populate hook running before StartSimulation;
-// a stacked overlay (B over A) suspending the layer beneath's input and restoring it LIFO; a
-// structural change to the lower overlay's scene while a higher one is open, then a clean close
-// (the InputSeat re-resolve guard); PausePrimarySim toggling and restoring the observed pause value
-// (stacked, and a game-paused primary surviving); the full-window region tracking the framebuffer
-// extent while a fixed region does not; and an overlay rendering its scene through the drive-list.
+// It pins: the open/close lifecycle leaving the router (cursor seat + pointer associations)
+// byte-restored (including a drop while the focus scope is live, and asserting the pointer
+// association was cleared); the populate hook running before StartSimulation; a stacked overlay (B
+// over A) suspending the layer beneath's input and restoring it LIFO; a structural change to the
+// lower overlay's scene while a higher one is open, then a clean close (the InputSeat re-resolve
+// guard); the covered-world pause refcount (stacked overlays hold it until the last closes, and an
+// explicit game pause composes without being clobbered); the full-window region resolving to the
+// framebuffer extent while a fixed region is placed as given; an overlay rendering its scene through
+// the drive-list with no per-frame game call; and a clean teardown with an overlay world still open.
 
 #include <doctest/doctest.h>
 
@@ -205,7 +210,7 @@ namespace
     }
 }
 
-TEST_CASE("LevelOverlay open/update/close leaves the router and world-pause byte-restored")
+TEST_CASE("LevelOverlay open/close leaves the router byte-restored, no per-frame game call")
 {
     TypeRegistry types;
     RegisterBuiltinTypes(types);
@@ -225,9 +230,8 @@ TEST_CASE("LevelOverlay open/update/close leaves the router and world-pause byte
         const InputRouter& router = a.GetInputRouter();
         if (frame == 0)
         {
-            // Pre-open router/pause state.
+            // Pre-open router state.
             priorCursor = router.GetCursorSeat();
-            CHECK_FALSE(a.IsWorldPaused(a.GetManagedWorldId()));
             CHECK(router.ResolvePointer(ivec2(100, 100), false, Entity::Null).Owner ==
                   Entity::Null);
 
@@ -239,12 +243,11 @@ TEST_CASE("LevelOverlay open/update/close leaves the router and world-pause byte
             CHECK(overlaySeat != Entity::Null);
             CHECK(router.GetCursorSeat() == overlaySeat);
             CHECK(router.ResolvePointer(ivec2(100, 100), false, Entity::Null).Owner == overlaySeat);
-            CHECK_FALSE(a.IsWorldPaused(
-                a.GetManagedWorldId())); // a default overlay does not pause the primary sim
         }
         else if (frame == 1)
         {
-            a.A->Update(0.016f);
+            // No per-frame Update call: the runner ticked the overlay world and the engine pushed its
+            // camera on its own. The overlay still owns the cursor seat.
             CHECK(router.GetCursorSeat() == overlaySeat);
         }
         else if (frame == 2)
@@ -252,11 +255,10 @@ TEST_CASE("LevelOverlay open/update/close leaves the router and world-pause byte
             // Drop while the focus scope is live — the teardown-order guard.
             a.A.reset();
 
-            // Byte-restored: cursor seat and pointer association back to pre-open, pause untouched.
+            // Byte-restored: cursor seat and pointer association back to pre-open.
             CHECK(router.GetCursorSeat() == priorCursor);
             CHECK(router.ResolvePointer(ivec2(100, 100), false, Entity::Null).Owner ==
                   Entity::Null); // ClearViewportSeat ran
-            CHECK_FALSE(a.IsWorldPaused(a.GetManagedWorldId()));
         }
     };
 
@@ -365,7 +367,7 @@ TEST_CASE("A stacked overlay suspends the layer beneath's input and restores it 
         else if (frame == 2)
         {
             a.B.reset();
-            // Closing B returns focus/cursor to A (not the primary) and restores A's input.
+            // Closing B returns focus/cursor to A (not the base) and restores A's input.
             CHECK(router.GetCursorSeat() == seatA);
             CHECK(ResolveMoveY(assets, a.A->GetScene()) == doctest::Approx(1.0f));
         }
@@ -439,7 +441,7 @@ TEST_CASE("A structural change to the lower overlay's scene then a clean close (
     app.Run({});
 }
 
-TEST_CASE("PausePrimarySim toggles and restores the observed pause value, stacked")
+TEST_CASE("The covered-world pause is a refcount that stacks and composes with an explicit toggle")
 {
     TypeRegistry types;
     RegisterBuiltinTypes(types);
@@ -448,68 +450,63 @@ TEST_CASE("PausePrimarySim toggles and restores the observed pause value, stacke
     OverlayApp app(HeadlessInfo(), types, systems);
     AssetHandle<Level> level;
 
-    // An overlay's PausePrimarySim freezes the base world it covers — the runner's first-opened world.
-    // Register a bare base scene + simulation ahead of any overlay so it stays the runner's first
-    // world across the test (overlays adopt after it), and capture its handle to assert the pause on.
-    Unique<Scene> primary;
+    // The world the overlays cover — an ordinary runner-owned world named as CoveredWorld. It needs
+    // no simulation for the pause assertions; IsWorldPaused reads its refcount + explicit toggle.
     WorldInstanceId baseWorld;
 
     app.InitFn = [&](OverlayApp& a)
     {
         level = BuildSeatLevel(a.GetAssetManager(), a.GetTypeRegistry(), {});
-        primary = Scene::Create(a.GetTypeRegistry());
-        primary->SetSimulation(CreateUnique<SceneSimulation>(a.GetSystemRegistry()));
-        baseWorld = a.GetWorldRunner().AdoptSimulation(*primary);
+        baseWorld = a.GetWorldRunner().OpenWorld(WorldOpenInfo{.StartSimulation = false});
     };
 
     app.StepFn = [&](OverlayApp& a, int frame)
     {
-        const auto open = [&](std::optional<LevelOverlay>& slot, bool pause)
+        const auto open = [&](std::optional<LevelOverlay>& slot, WorldInstanceId covered)
         {
             slot =
-                LevelOverlay::Open(a, LevelOverlayInfo{.Source = level, .PausePrimarySim = pause});
+                LevelOverlay::Open(a, LevelOverlayInfo{.Source = level, .CoveredWorld = covered});
             slot->GetViewport().SetEnabled(false);
         };
 
         if (frame == 0)
         {
             CHECK_FALSE(a.IsWorldPaused(baseWorld));
-            open(a.A, false);
-            CHECK_FALSE(
-                a.IsWorldPaused(baseWorld)); // a default overlay leaves the primary simulating
-            open(a.B, true);
-            CHECK(a.IsWorldPaused(baseWorld)); // the opt-in freezes it
+            open(a.A, WorldInstanceId{}); // a default overlay covers nothing
+            CHECK_FALSE(a.IsWorldPaused(baseWorld));
+            open(a.B, baseWorld); // covering it holds a pause scope
+            CHECK(a.IsWorldPaused(baseWorld));
         }
         else if (frame == 1)
         {
             a.B.reset();
-            CHECK_FALSE(
-                a.IsWorldPaused(baseWorld)); // B observed false (A did not pause), restores false
+            CHECK_FALSE(a.IsWorldPaused(baseWorld)); // A covered nothing, so the base resumes
             a.A.reset();
-            CHECK_FALSE(a.IsWorldPaused(baseWorld));
 
-            // Stacked pause: both pause; closing the inner leaves it paused under the outer.
-            open(a.A, true);
+            // Stacked pause: both cover the base; closing the inner leaves it paused under the outer
+            // (the refcount, not a boolean).
+            open(a.A, baseWorld);
             CHECK(a.IsWorldPaused(baseWorld));
-            open(a.B, true); // observes true
+            open(a.B, baseWorld);
             CHECK(a.IsWorldPaused(baseWorld));
         }
         else if (frame == 2)
         {
             a.B.reset();
-            CHECK(a.IsWorldPaused(baseWorld)); // stays paused under A (observed true)
+            CHECK(a.IsWorldPaused(baseWorld)); // stays paused under A's scope
             a.A.reset();
-            CHECK_FALSE(a.IsWorldPaused(baseWorld)); // unpauses
+            CHECK_FALSE(a.IsWorldPaused(baseWorld)); // the last scope dropped, so it resumes
 
-            // A primary the game paused itself before opening is not unpaused on close.
+            // A base the game paused itself composes with an overlay's scope without clobbering.
             a.SetWorldPaused(baseWorld, true);
-            open(a.A, true);
+            open(a.A, baseWorld);
         }
         else if (frame == 3)
         {
             a.A.reset();
-            CHECK(a.IsWorldPaused(baseWorld)); // observed true, restored true
+            CHECK(a.IsWorldPaused(baseWorld)); // the explicit toggle still holds it
             a.SetWorldPaused(baseWorld, false);
+            CHECK_FALSE(a.IsWorldPaused(baseWorld));
         }
     };
 
@@ -517,7 +514,7 @@ TEST_CASE("PausePrimarySim toggles and restores the observed pause value, stacke
     app.Run({});
 }
 
-TEST_CASE("A full-window overlay tracks the framebuffer extent; a fixed region does not")
+TEST_CASE("A full-window overlay resolves to the framebuffer extent; a fixed region does not")
 {
     TypeRegistry types;
     RegisterBuiltinTypes(types);
@@ -534,23 +531,24 @@ TEST_CASE("A full-window overlay tracks the framebuffer extent; a fixed region d
         const uvec2 extent = a.GetRenderContext().GetRenderExtent();
         if (frame == 0)
         {
-            // Full window (zero-extent region) resolves to the framebuffer extent.
+            // Full window (zero-extent region) resolves to the framebuffer extent and carries a
+            // Layout so the compositor re-fits it on resize.
             a.A = LevelOverlay::Open(a, LevelOverlayInfo{.Source = level});
             a.A->GetViewport().SetEnabled(false);
             CHECK(a.A->GetViewport().GetRegion().Extent == extent);
+            CHECK(a.A->GetViewport().GetLayout().has_value());
 
-            // Fixed sub-region (PiP) placed as given.
+            // Fixed sub-region (PiP) placed as given, with no tracking Layout.
             const Renderer::ViewportRegion pip{.Offset = {40, 30}, .Extent = {200, 150}};
             a.B = LevelOverlay::Open(a, LevelOverlayInfo{.Source = level, .Region = pip});
             a.B->GetViewport().SetEnabled(false);
             CHECK(a.B->GetViewport().GetRegion().Offset == pip.Offset);
             CHECK(a.B->GetViewport().GetRegion().Extent == pip.Extent);
+            CHECK_FALSE(a.B->GetViewport().GetLayout().has_value());
         }
         else if (frame == 1)
         {
-            a.A->Update(0.016f);
-            a.B->Update(0.016f);
-            // The full-window overlay re-tracks the extent; the fixed region is unchanged.
+            // The regions are unchanged frame to frame with no window resize (headless).
             CHECK(a.A->GetViewport().GetRegion().Extent == extent);
             CHECK(a.B->GetViewport().GetRegion().Extent == uvec2(200, 150));
         }
@@ -565,7 +563,7 @@ TEST_CASE("A full-window overlay tracks the framebuffer extent; a fixed region d
     app.Run({});
 }
 
-TEST_CASE("An overlay renders its scene through the engine drive-list")
+TEST_CASE("An overlay renders its scene through the engine drive-list with no per-frame game call")
 {
     TypeRegistry types;
     RegisterBuiltinTypes(types);
@@ -583,13 +581,10 @@ TEST_CASE("An overlay renders its scene through the engine drive-list")
         {
             a.A = LevelOverlay::Open(a, LevelOverlayInfo{.Source = level});
         }
-        else if (frame <= 2)
-        {
-            a.A->Update(0.016f);
-        }
         else if (frame == 3)
         {
-            // The overlay rendered through the drive-list each frame: its output is live.
+            // The overlay rendered through the drive-list each frame — the engine pushed its camera
+            // and the compositor rendered it, with no LevelOverlay::Update call: its output is live.
             CHECK(a.A->GetViewport().GetOutput() != nullptr);
             CHECK(a.A->GetViewport().GetOutputHandle().IsValid());
             a.A.reset();
@@ -639,10 +634,6 @@ TEST_CASE("A PiP overlay renders at its sub-region over a live managed primary")
         {
             a.A = LevelOverlay::Open(a, LevelOverlayInfo{.Source = level, .Region = pip});
         }
-        else if (frame <= 2)
-        {
-            a.A->Update(0.016f);
-        }
         else if (frame == 3)
         {
             // The primary and the PiP overlay both produced live outputs this frame, the overlay
@@ -659,4 +650,37 @@ TEST_CASE("A PiP overlay renders at its sub-region over a live managed primary")
 
     app.Frames = 5;
     app.Run({});
+}
+
+TEST_CASE("Tearing down the Context with an overlay world still open retires cleanly")
+{
+    // The two-hop WorldRunner -> World -> overlay-viewport ownership chain at teardown: the overlay
+    // is opened and never explicitly closed mid-run, so it is still open when OnDispose drops it
+    // during Run()'s teardown (the runner and managed set reset before the Context disposes). Its
+    // viewport must retire against the still-live viewport registry and its world drop cleanly.
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    SystemRegistry systems;
+
+    OverlayApp app(HeadlessInfo(), types, systems);
+    AssetHandle<Level> level;
+
+    app.InitFn = [&](OverlayApp& a)
+    { level = BuildSeatLevel(a.GetAssetManager(), a.GetTypeRegistry(), {}); };
+
+    app.StepFn = [&](OverlayApp& a, int frame)
+    {
+        if (frame == 0)
+        {
+            a.A = LevelOverlay::Open(a, LevelOverlayInfo{.Source = level});
+            CHECK(a.A->GetWorld().IsValid());
+            // Left open deliberately: OnDispose (not this step) closes it during teardown.
+        }
+    };
+
+    app.Frames = 3;
+    app.Run({});
+
+    // Reaching here (ASan-clean) is the assertion: the open overlay tore down in teardown order.
+    CHECK(true);
 }

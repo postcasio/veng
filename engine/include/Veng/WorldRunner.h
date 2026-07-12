@@ -166,7 +166,7 @@ namespace Veng
         /// @param info  The type/system registries (required) and optional asset manager / context.
         explicit WorldRunner(const WorldRunnerInfo& info);
 
-        /// @brief Destroys the runner and every owned world (adopted scenes are left to their owner).
+        /// @brief Destroys the runner and every world it owns.
         ~WorldRunner();
 
         WorldRunner(const WorldRunner&) = delete;
@@ -208,6 +208,15 @@ namespace Veng
         [[nodiscard]] optional<CameraView> ResolveCameraView(WorldInstanceId world, Entity viewer,
                                                              f32 aspect) const;
 
+        /// @brief Resolves a world's interpolation fraction from its last tick; 0 for an unresolved id.
+        ///
+        /// The residual accumulator the render gather and View systems blend the last two ticks by,
+        /// read live for a presentation pull that needs a world's own phase (an overlay presenting a
+        /// world other than the one driving the frame's alpha).
+        /// @param world  The world whose interpolation fraction is read.
+        /// @return The world's LastAlpha, or 0 when the id resolves to nothing.
+        [[nodiscard]] f32 ResolveAlpha(WorldInstanceId world) const;
+
         /// @brief Ticks every world's Sim phase at its own fixed rate, then its View phase, in id order.
         ///
         /// Serial on the render thread: for each started, unpaused world, folds the frame delta (times
@@ -231,15 +240,6 @@ namespace Veng
         /// @param world  The world to pause while the scope lives.
         /// @return The pause scope; inert when the world is unminted.
         [[nodiscard]] WorldPauseScope PauseScope(WorldInstanceId world);
-
-        /// @brief Wraps an externally-owned scene as a non-owning tickable world and returns its handle.
-        ///
-        /// The transitional seam letting a scene the runner does not own be ticked on the same
-        /// schedule as owned worlds. The runner never destroys an adopted scene; the scene
-        /// self-unregisters (the world is dropped) when it is destroyed.
-        /// @param scene  The externally-owned scene to tick; its lifetime stays with its owner.
-        /// @return The adopted world's handle.
-        WorldInstanceId AdoptSimulation(Scene& scene);
 
         /// @brief Installs a freshly-loaded scene as an already-open world's scene, and returns it.
         ///
@@ -279,9 +279,6 @@ namespace Veng
         /// @brief Decrements a world's pause refcount (a WorldPauseScope drop).
         void ReleasePause(WorldInstanceId world);
 
-        /// @brief Drops adopted worlds whose scene has self-unregistered (been destroyed).
-        void PruneAdopted();
-
         /// @brief The type registry every world's scene is created against.
         TypeRegistry* m_Types = nullptr;
         /// @brief The system registry a world's simulation is built from.
@@ -291,11 +288,8 @@ namespace Veng
         /// @brief The render context capture-surface discovery uses; null on a device-free runner.
         Renderer::Context* m_Context = nullptr;
 
-        /// @brief The owned and adopted worlds, in ascending id (open) order.
+        /// @brief The owned worlds, in ascending id (open) order.
         vector<Unique<World>> m_Worlds;
-
-        /// @brief The drive-list adopted scenes self-unregister from on destruction (see AdoptSimulation).
-        vector<Scene*> m_AdoptedScenes;
 
         /// @brief The instance counter minting world ids; never reused, so a stale id resolves to nothing.
         u64 m_NextId = 1;

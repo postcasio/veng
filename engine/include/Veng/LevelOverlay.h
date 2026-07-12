@@ -8,6 +8,7 @@
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Entity.h>
 #include <Veng/World.h>
+#include <Veng/WorldRunner.h>
 
 namespace Veng
 {
@@ -35,22 +36,24 @@ namespace Veng
         AssetHandle<Level> Source;
         /// @brief The viewport region the overlay renders into; a zero extent means the full window.
         ///
-        /// A full-window overlay tracks the framebuffer extent across resizes (Update re-applies
-        /// it); a fixed sub-region (a picture-in-picture) is placed as given and does not track.
+        /// A full-window overlay carries a Layout, so the compositor re-fits its region across
+        /// swapchain resizes; a fixed sub-region (a picture-in-picture) is placed as given and does
+        /// not track.
         Renderer::ViewportRegion Region;
         /// @brief The seat whose input the overlay suspends beneath it.
         ///
         /// Entity::Null (the default) resolves to the router's current cursor seat at open time —
-        /// the primary seat, or a lower overlay whose own Open reassigned it, so a stack of overlays
-        /// each suspends the one beneath.
+        /// the covered world's seat, or a lower overlay whose own Open reassigned it, so a stack of
+        /// overlays each suspends the one beneath.
         Entity SuspendSeat = Entity::Null;
-        /// @brief When set, also freezes the primary world's simulation for the overlay's lifetime.
+        /// @brief The world the overlay covers and pauses for its lifetime; invalid pauses nothing.
         ///
-        /// Input focus and simulation pause are separate knobs: taking the overlay's seat always
-        /// suspends the primary world's input, but the primary keeps simulating unless this is set.
-        /// The pre-open pause state is captured and restored on close, so stacking and a
-        /// game-paused primary both survive.
-        bool PausePrimarySim = false;
+        /// When valid, the overlay holds a WorldRunner::PauseScope on this world while it lives, so
+        /// the covered world stops simulating beneath the modal. Because the pause is a refcount,
+        /// stacked overlays over one world nest correctly and an explicit game pause is not clobbered.
+        /// Invalid (the default) leaves every world simulating — input focus and simulation pause are
+        /// separate knobs, and taking the overlay's seat suspends the covered seat's input regardless.
+        WorldInstanceId CoveredWorld;
         /// @brief When set, Open loads the source to residency and blocks until its spawn is resident.
         ///
         /// The convenience path, accepting the first-open hitch. Unset (the default), the caller is
@@ -66,34 +69,34 @@ namespace Veng
 
     /// @brief An RAII handle that opens a whole Level as a secondary, simulated overlay.
     ///
-    /// Composes the delivered Level / Viewport / InputRouter seams into "open a level over the
-    /// running one — its own scene, systems, HUD, and input seat, simulated concurrently, dismissed
-    /// on drop". Open loads the level into a fresh scene, runs the populate hook, creates a Presented
-    /// viewport (registered last, so it composites on top), routes input to the overlay's own seat
-    /// (pointer association, cursor-seat handoff, and a focus-scope suspension of the layer beneath),
-    /// optionally freezes the primary simulation, registers the scene as an engine-ticked simulation,
-    /// and starts it. The engine ticks the overlay's simulation and scopes its pointer to the
-    /// overlay's viewport; Update re-applies the region and pushes the view each frame; the overlay's
-    /// own viewport drives its scene's GuiOverlay HUD.
+    /// A thin preset over WorldRunner::OpenWorld: opening an overlay opens an owned world (its own
+    /// scene, systems, and HUD, ticked by the runner like any world) and applies an overlay policy —
+    /// register a Presented viewport on top (composited over the covered world, its camera pulled by
+    /// the managed-viewport presentation path and its region re-fit on resize by the compositor),
+    /// hand the cursor seat and the covered seat's focus off to the overlay's own seat, and hold a
+    /// WorldRunner::PauseScope on the caller-named covered world. The runner ticks the overlay's
+    /// simulation and the engine pushes its camera each frame, so there is no per-frame game call.
     ///
-    /// The handle is move-only. Dropping it (or calling Close) tears the overlay down in lifetime
-    /// order and restores every router / cursor-seat / world-pause / drive-list value to the state
-    /// it captured at open, leaving them byte-restored. Overlays stack: a second opened over the
-    /// first nests through the cursor-seat handoff and the focus stack, and the handles must be
-    /// dropped in reverse open order (LIFO), the discipline any scope stack requires.
+    /// The handle is move-only. Dropping it (or calling Close) unwinds the policy LIFO — releases the
+    /// pause scope, pops the focus scope, restores the cursor seat and clears the pointer association,
+    /// unregisters and drops the viewport, and closes the world — restoring every router / cursor-seat
+    /// value to the state it captured at open. Overlays stack: a second opened over the first nests
+    /// through the cursor-seat handoff and the focus stack, and the handles must be dropped in reverse
+    /// open order (LIFO), the discipline any scope stack requires. The pause refcount keeps the
+    /// covered world paused until the last overlay over it closes.
     class LevelOverlay
     {
     public:
         /// @brief Opens @p info's level as a secondary overlay over @p app's running frame.
         ///
-        /// Sequences: load the source into a fresh scene and simulation (not started) → run
-        /// info.Populate against the scene → create and register a Presented viewport for the region →
-        /// register the scene as an engine-ticked simulation and push its initial view → route input
-        /// (pointer association to the overlay seat, cursor-seat handoff, and a viewport-less focus
-        /// scope suspending info.SuspendSeat) → optionally freeze the primary simulation → start the
-        /// scene's simulation. The returned handle is safe to Update.
-        /// @param app   The running application whose services (assets, systems, router, context,
-        ///              drive-list, world-pause) the overlay composes.
+        /// Sequences: open an owned world through the runner (spawning the source, running
+        /// info.Populate against the fresh scene, not started) → create and register a Presented
+        /// viewport for the region and bind it to the world for the per-frame camera pull → route
+        /// input (pointer association to the overlay seat, cursor-seat handoff, and a viewport-less
+        /// focus scope suspending info.SuspendSeat) → hold a PauseScope on info.CoveredWorld when
+        /// valid → start the world's simulation. The returned handle is move-only.
+        /// @param app   The running application whose services (assets, systems, router, runner,
+        ///              compositor, managed set) the overlay composes.
         /// @param info  The overlay parameters; info.Source must be resident unless
         ///              info.WaitForResidency is set.
         /// @return The opened overlay handle.
@@ -112,21 +115,12 @@ namespace Veng
         /// @brief Moves the overlay, tearing down any overlay this handle currently holds first.
         LevelOverlay& operator=(LevelOverlay&& other) noexcept;
 
-        /// @brief Re-applies the region and pushes the view for one frame.
+        /// @brief Closes the overlay now, restoring the captured router / cursor-seat / pause state.
         ///
-        /// Pushes the overlay's resolved camera into the viewport, re-applying the region against the
-        /// current framebuffer extent so a full-window overlay tracks resizes. The engine owns the
-        /// simulation tick (the overlay is a registered sim), so this no longer ticks it. The
-        /// viewport's own render drives the scene's GuiOverlay HUD; no explicit UI step is needed. A
-        /// no-op on a moved-from or closed handle.
-        /// @param delta  Frame delta in seconds.
-        void Update(f32 delta);
-
-        /// @brief Closes the overlay now, restoring the captured router / pause / drive-list state.
-        ///
-        /// Reverses the open in lifetime order: stop the simulation, restore the observed world-pause
-        /// value (if it was paused), pop the focus scope, restore the cursor seat and clear the
-        /// viewport's pointer association (while the viewport is still alive), then drop the viewport.
+        /// Reverses the open in lifetime order: leaves the overlay stack, releases the covered-world
+        /// pause scope, pops the focus scope, restores the cursor seat and clears the viewport's
+        /// pointer association (while the viewport is still alive), unregisters and drops the
+        /// viewport, then closes the world (stopping its simulation and dropping its scene).
         /// Idempotent — a second call, or a call on a moved-from handle, does nothing.
         void Close();
 
@@ -141,17 +135,14 @@ namespace Veng
         /// @pre IsOpen().
         [[nodiscard]] Renderer::Viewport& GetViewport() const;
 
-        /// @brief Returns the overlay's persistent per-frame view knobs, editable in place.
-        ///
-        /// The photometric half of the overlay's `ViewState` (exposure, bloom, SSR, …), seeded from
-        /// the level's `LevelRenderSettings` at open and pushed each `Update` — the overlay's analogue
-        /// of `Application::GetWorldViewState()`. Edit it to retune the overlay's view (a debug
-        /// settings panel), and the change persists because `Update` pushes this same instance rather
-        /// than re-deriving from the level settings each frame. `Update` overrides only the frame's
-        /// world / camera / delta / interpolation alpha on top of these knobs.
-        [[nodiscard]] Renderer::ViewState& GetViewState() { return m_ViewKnobs; }
+        /// @brief Returns the overlay's world handle, for resolving it through the runner.
+        [[nodiscard]] WorldInstanceId GetWorld() const { return m_World; }
 
-        /// @brief Returns the overlay's persistent per-frame view knobs (read-only).
+        /// @brief Returns the overlay's per-frame view knobs, seeded from the level at open.
+        ///
+        /// The photometric half of the overlay's ViewState (exposure, bloom, SSR, …), mapped from the
+        /// level's LevelRenderSettings at open. The engine carries the knobs captured at open into
+        /// each per-frame push, so this getter reads the seed; retuning them takes a re-open.
         [[nodiscard]] const Renderer::ViewState& GetViewState() const { return m_ViewKnobs; }
 
         /// @brief Returns the overlay's own input seat (its Viewer entity), or Entity::Null if none.
@@ -162,33 +153,23 @@ namespace Veng
 
         /// @brief The application the overlay composes; null on a moved-from or closed handle.
         Application* m_App = nullptr;
-        /// @brief The loaded overlay scene and its (waited-on) residency batch.
-        LevelInstance m_Instance;
-        /// @brief The Presented viewport the overlay renders into; dropped last in teardown.
+        /// @brief The owned overlay world opened through the runner; closed in teardown.
+        WorldInstanceId m_World;
+        /// @brief The Presented viewport the overlay renders into; dropped after its bindings clear.
         Unique<Renderer::Viewport> m_Viewport;
         /// @brief The focus scope suspending the layer beneath; popped before the cursor-seat restore.
         Unique<SeatFocusScope> m_Suspend;
         /// @brief The engine-owned empty context the focus scope swaps the suspended seat's input to.
         AssetHandle<InputMappingContext> m_SuspendContext;
+        /// @brief The refcounted pause held on the covered world; inert when none was named.
+        WorldPauseScope m_PauseScope;
         /// @brief The overlay level's render knobs, seeding the topology and the view knobs at open.
         LevelRenderSettings m_Render;
-        /// @brief The persistent per-frame view knobs pushed each Update, editable via GetViewState.
+        /// @brief The per-frame view knobs the engine carries into each push, seeded at open.
         Renderer::ViewState m_ViewKnobs;
-        /// @brief The current viewport region; recomputed from the framebuffer extent when tracking.
-        Renderer::ViewportRegion m_Region;
         /// @brief The overlay's own seat, taken as the cursor seat and the pointer-routing target.
         Entity m_OverlaySeat = Entity::Null;
         /// @brief The cursor seat observed at open, restored on close.
         Entity m_PriorCursorSeat = Entity::Null;
-        /// @brief Whether this overlay froze the primary simulation (so close restores the pause).
-        bool m_PausePrimarySim = false;
-        /// @brief The world-pause value observed at open, restored on close when PausePrimarySim.
-        bool m_PriorPaused = false;
-        /// @brief The world PausePrimarySim froze (the runner's base world), refrozen/restored by handle.
-        WorldInstanceId m_PausedWorld;
-        /// @brief Whether the region tracks the framebuffer extent (a full-window overlay).
-        bool m_TrackWindow = false;
-        /// @brief Whether the simulation was started (so close stops exactly what it started).
-        bool m_Started = false;
     };
 }

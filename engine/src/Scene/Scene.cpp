@@ -103,23 +103,9 @@ namespace Veng
 
     Scene::Scene(TypeRegistry& registry) : m_Registry(&registry) {}
 
-    Scene::~Scene()
-    {
-        // Order-preserving erase from the simulation drive-list (registration order is tick order),
-        // through the stored back-reference. An unregistered scene leaves m_SimDriveList null.
-        if (m_SimDriveList != nullptr)
-        {
-            const auto removed = std::ranges::remove(*m_SimDriveList, this);
-            m_SimDriveList->erase(removed.begin(), removed.end());
-        }
-    }
-
-    void Scene::AttachToSimDriveList(vector<Scene*>& driveList)
-    {
-        VE_ASSERT(m_SimDriveList == nullptr,
-                  "Scene is already registered to a simulation drive-list");
-        m_SimDriveList = &driveList;
-    }
+    // Out-of-line so the SceneSimulation pimpl is complete at the Unique<SceneSimulation> destruction
+    // site; the scene owns nothing else that needs a hand-written teardown.
+    Scene::~Scene() = default;
 
     Unique<Scene> Scene::Create(TypeRegistry& registry)
     {

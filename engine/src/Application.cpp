@@ -171,16 +171,17 @@ namespace Veng
                 infos.push_back(*m_Info.ManagedViewport);
             }
             m_ManagedViewports->Build(infos);
+        }
 
-            // Window-tracking managed viewports follow swapchain resizes so their regions and UI
-            // scale keep tracking the window from their normalized Layouts; the compositor owns the
-            // resolution and SetRegion debounces each SceneRenderer::Resize to the next Render.
-            // Headless has no swapchain, so the fixed internal extents stand.
-            if (!m_Info.Headless)
-            {
-                m_RenderContext.AddSwapChainInvalidationCallback(
-                    [this] { m_Compositor.ResolveTrackingLayouts(); });
-            }
+        // Every window-tracking viewport (a managed one, or an overlay registered at runtime) follows
+        // swapchain resizes so its region and UI scale keep tracking the window from its normalized
+        // Layout; the compositor re-resolves each Layout-carrying viewport it drives and SetRegion
+        // debounces the SceneRenderer::Resize to the next Render. Headless has no swapchain, so the
+        // fixed internal extents stand.
+        if (!m_Info.Headless)
+        {
+            m_RenderContext.AddSwapChainInvalidationCallback(
+                [this] { m_Compositor.ResolveTrackingLayouts(); });
         }
 
         // The managed gather + composite tail exists only with ImGui (it feeds the swapchain
@@ -628,11 +629,6 @@ namespace Veng
     void Application::RegisterCapture(Renderer::SceneCapture& capture)
     {
         m_Compositor.RegisterCapture(capture);
-    }
-
-    void Application::RegisterSimulation(Scene& scene)
-    {
-        (void)m_WorldRunner->AdoptSimulation(scene);
     }
 
     void Application::SetWorldPaused(const WorldInstanceId world, const bool paused)

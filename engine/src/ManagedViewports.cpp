@@ -116,23 +116,22 @@ namespace Veng
         }
     }
 
-    void ManagedViewportSet::PushViewportView(const ManagedViewport& managed, WorldRunner& runner,
+    void ManagedViewportSet::PushViewportView(Renderer::Viewport& viewport, WorldInstanceId world,
+                                              Entity viewer, WorldRunner& runner,
                                               const Renderer::ViewState& knobs, f32 delta,
                                               f32 alpha) const
     {
-        Renderer::Viewport& viewport = *managed.Viewport;
-
         // An invalid World is a game-driven viewport: the engine pushes nothing, so the game's own
         // SetViewState stands.
-        if (!managed.Info.World.IsValid())
+        if (!world.IsValid())
         {
             return;
         }
 
         // A world closed at runtime resolves to nothing: push a null-scene ViewState so the viewport
         // drops its retained scene pointer and renders a cleared target (inert, never a dangling read).
-        const World* world = runner.ResolveWorld(managed.Info.World);
-        if (world == nullptr)
+        const World* resolved = runner.ResolveWorld(world);
+        if (resolved == nullptr)
         {
             Renderer::ViewState cleared = knobs;
             cleared.World = nullptr;
@@ -142,11 +141,11 @@ namespace Veng
             return;
         }
 
-        const Scene& scene = world->GetScene();
+        const Scene& scene = resolved->GetScene();
 
         // A viewport with no bound Viewer takes the world's scene primary camera — the delivered
         // single-viewport path, byte-identical for the default managed viewport.
-        if (managed.Info.Viewer == Entity::Null)
+        if (viewer == Entity::Null)
         {
             PushSceneView(viewport, scene, knobs, delta, alpha);
             return;
@@ -160,8 +159,8 @@ namespace Veng
 
         Renderer::ViewState state = knobs;
         state.World = &scene;
-        state.Camera = runner.ResolveCameraView(managed.Info.World, managed.Info.Viewer, aspect)
-                           .value_or(DefaultCameraView(aspect));
+        state.Camera =
+            runner.ResolveCameraView(world, viewer, aspect).value_or(DefaultCameraView(aspect));
         state.Delta = delta;
         state.Alpha = alpha;
         viewport.SetViewState(state);
@@ -172,8 +171,31 @@ namespace Veng
     {
         for (const ManagedViewport& managed : m_Viewports)
         {
-            PushViewportView(managed, runner, knobs, delta, alpha);
+            PushViewportView(*managed.Viewport, managed.Info.World, managed.Info.Viewer, runner,
+                             knobs, delta, alpha);
         }
+
+        // Bound viewports (overlays) carry their own knobs and present a world other than the one
+        // driving the frame's alpha, so each reads its world's own interpolation fraction.
+        for (const BoundViewport& bound : m_Bound)
+        {
+            PushViewportView(*bound.Viewport, bound.World, bound.Viewer, runner, bound.Knobs, delta,
+                             runner.ResolveAlpha(bound.World));
+        }
+    }
+
+    void ManagedViewportSet::RegisterBoundViewport(Renderer::Viewport& viewport,
+                                                   WorldInstanceId world, Entity viewer,
+                                                   const Renderer::ViewState& knobs)
+    {
+        m_Bound.push_back(
+            {.Viewport = &viewport, .World = world, .Viewer = viewer, .Knobs = knobs});
+    }
+
+    void ManagedViewportSet::UnregisterBoundViewport(const Renderer::Viewport& viewport)
+    {
+        std::erase_if(m_Bound, [&viewport](const BoundViewport& bound)
+                      { return bound.Viewport == &viewport; });
     }
 
     void ManagedViewportSet::Clear()

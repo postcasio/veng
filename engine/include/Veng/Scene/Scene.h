@@ -269,25 +269,6 @@ namespace Veng
         /// @param context  Per-tick services forwarded to each system.
         void StopSimulation(const SystemContext& context);
 
-        /// @brief Binds this scene to a simulation drive-list it self-unregisters from on destruction.
-        ///
-        /// WorldRunner::AdoptSimulation calls this after appending this scene's pointer to its
-        /// drive-list; ~Scene then erases that pointer, order-preserving. Registering an
-        /// already-registered scene is a fatal assert (the back-reference would leak the prior
-        /// membership). The back-reference is not a component and is not copied by Clone, so a clone
-        /// starts unregistered.
-        /// @param driveList  The simulation drive-list this scene now belongs to.
-        /// @pre This scene is not already attached to a simulation drive-list.
-        void AttachToSimDriveList(vector<Scene*>& driveList);
-
-        /// @brief Clears the drive-list back-reference without erasing from it, for when the list dies first.
-        ///
-        /// The counterpart to AttachToSimDriveList when the drive-list's owner (a WorldRunner) is
-        /// destroyed while this externally-owned scene lives on: the runner clears each adopted scene's
-        /// back-reference so this scene's own ~Scene does not erase from the freed vector. A no-op on an
-        /// unattached scene.
-        void DetachFromSimDriveList() { m_SimDriveList = nullptr; }
-
         /// @brief Type-erased add: default-constructs a component of the given TypeId onto the entity.
         ///
         /// The templated Add\<T\> resolves T to TypeId and forwards here; prefab
@@ -676,12 +657,6 @@ namespace Veng
 
         /// @brief The simulation driving this scene's systems, or null when none is attached.
         Unique<SceneSimulation> m_Simulation;
-
-        /// @brief The Application simulation drive-list this scene is registered into; null when unregistered.
-        ///
-        /// Set by AttachToSimDriveList; ~Scene erases this scene's pointer from it. Not a component,
-        /// so Clone (which recreates entities and copies components) never copies it.
-        vector<Scene*>* m_SimDriveList = nullptr;
 
         template <class...>
         friend class SceneView;

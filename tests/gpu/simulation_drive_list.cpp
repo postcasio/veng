@@ -1,19 +1,20 @@
-// The Application simulation drive-list: RegisterSimulation makes the engine tick a scene each frame
-// (started, non-paused, in registration order) and drive its CaptureSurface components, decoupled
-// from rendering. Drives a real headless Application (its own Context, no window, no ImGui) through
-// Run(), registering scenes as simulations from OnInitialize and asserting from OnUpdate:
+// The Application world drive: WorldRunner::OpenWorld makes the engine tick a world each frame
+// (started, non-paused, in id order) and drive its CaptureSurface components, decoupled from
+// rendering. Drives a real headless Application (its own Context, no window, no ImGui) through Run(),
+// opening worlds from OnInitialize and asserting from OnUpdate:
 //
-//  - registration ticks, deregistration (dropping the scene) stops, and an unregistered scene is
-//    never auto-ticked (the opt-in);
+//  - opening a world ticks it, closing it stops, and a scene never opened as a world never ticks
+//    (the opt-in);
 //  - a paused world does not tick while a flat-peer world keeps ticking, each paused by its own
 //    handle (SetWorldPaused / IsWorldPaused are handle-keyed; no privileged primary);
-//  - SystemContext carries Tasks always, View + Debug for a presented sim, and View == nullopt for a
-//    view-less sim and around a never-pushed viewport (no crash);
-//  - the engine drives captures over every registered scene, including a paused one (registration,
-//    not run-state, gates capture driving).
+//  - SystemContext carries Tasks always, View + Debug for a presented world, and View == nullopt for
+//    a view-less world and around a never-pushed viewport (no crash);
+//  - the engine drives captures over every open world, including a paused one (open-state, not
+//    run-state, gates capture driving).
 //
 // It needs a Context for the Application (viewports, captures), so it rides the gpu band though it
-// pins no pixels.
+// pins no pixels. Each world is opened through the runner from a synthetic empty-prefab Level naming
+// the systems under test, so per-world system subsets stay independent.
 
 #include <doctest/doctest.h>
 
@@ -21,6 +22,9 @@
 
 #include <Veng/Application.h>
 #include <Veng/Input.h>
+#include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/Level.h>
+#include <Veng/Asset/Prefab.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Renderer/CaptureSurface.h>
 #include <Veng/Renderer/Viewport.h>
@@ -38,12 +42,12 @@ using namespace Veng;
 namespace
 {
     // A per-tag probe recording, from its OnUpdate, what the engine handed its SystemContext. Static
-    // slots keyed by Tag so two registered sims observe independently; Reset() clears them per case.
+    // slots keyed by Tag so two open worlds observe independently; Reset() clears them per case.
     //
     // It runs in the View phase, which the fixed-timestep drive ticks once per frame (the Sim phase
     // steps at the fixed rate off the accumulated wall clock, which is near-zero in this tight
-    // headless loop). So Updates counts frames the scene was driven — the per-frame drive-list
-    // semantic these cases pin (registration ticks, pause stops), decoupled from the sim tick rate.
+    // headless loop). So Updates counts frames the world was driven — the per-frame drive semantic
+    // these cases pin (opening ticks, pause stops), decoupled from the sim tick rate.
     template <int Tag>
     struct ProbeSystem final : SceneSystem
     {
@@ -91,8 +95,9 @@ namespace Veng
 namespace
 {
     // A headless application driven by two closures: InitFn (from OnInitialize, engine ready) and
-    // StepFn (each OnUpdate, with the frame index). Scenes registered as simulations live on the app
-    // so any still registered at teardown drop from OnDispose while the engine state is alive.
+    // StepFn (each OnUpdate, with the frame index). Viewports live on the app so any still open at
+    // teardown drop from OnDispose while the engine state is alive; worlds are runner-owned and the
+    // runner drops them at teardown.
     class DriveApp final : public Application
     {
     public:
@@ -103,22 +108,30 @@ namespace
         int Frames = 5;
         int Current = 0;
 
-        std::vector<Unique<Scene>> Scenes;
+        std::vector<AssetHandle<Level>> Levels;
         std::vector<WorldInstanceId> SimIds;
         std::vector<Unique<Renderer::Viewport>> Viewports;
 
-        // Registers a fresh scene running the named systems, started, recording its adopted-world
-        // handle in SimIds, and returns the scene.
-        Scene& AddSimulation(std::vector<SystemId> systems)
+        // Opens a runner-owned world from a synthetic empty-prefab Level running the named systems,
+        // started, recording its handle in SimIds, and returns its scene.
+        Scene& AddWorld(std::vector<SystemId> systems)
         {
-            Unique<Scene> scene = Scene::Create(GetTypeRegistry());
-            scene->SetSimulation(CreateUnique<SceneSimulation>(GetSystemRegistry(), systems));
-            const WorldInstanceId id = GetWorldRunner().AdoptSimulation(*scene);
-            scene->StartSimulation(SystemContext{
-                .Assets = GetAssetManager(), .Input = GetInput(), .Tasks = GetTaskSystem()});
-            Scenes.push_back(std::move(scene));
+            const AssetHandle<Prefab> prefab =
+                GetAssetManager().Adopt<Prefab>(Prefab::Create({}, {}));
+            const AssetHandle<Level> level = GetAssetManager().Adopt<Level>(
+                Level::Create(prefab, std::move(systems), GameModeConfig{}, LevelRenderSettings{}));
+            Levels.push_back(level);
+            const WorldInstanceId id = GetWorldRunner().OpenWorld(WorldOpenInfo{
+                .Source = level,
+                .MakeStartContext =
+                    [this]
+                {
+                    return SystemContext{
+                        .Assets = GetAssetManager(), .Input = GetInput(), .Tasks = GetTaskSystem()};
+                },
+            });
             SimIds.push_back(id);
-            return *Scenes.back();
+            return GetWorldRunner().ResolveWorld(id)->GetScene();
         }
 
         Renderer::Viewport& AddPresentedViewport()
@@ -156,11 +169,7 @@ namespace
             }
         }
 
-        void OnDispose() override
-        {
-            Viewports.clear();
-            Scenes.clear();
-        }
+        void OnDispose() override { Viewports.clear(); }
     };
 
     ApplicationInfo HeadlessInfo()
@@ -173,7 +182,7 @@ namespace
     }
 }
 
-TEST_CASE("Registration ticks a scene, dropping it stops, and an unregistered scene never ticks")
+TEST_CASE("Opening a world ticks it, closing it stops, and an unopened scene never ticks")
 {
     ProbeSystem<1>::Reset();
     ProbeSystem<2>::Reset();
@@ -186,37 +195,37 @@ TEST_CASE("Registration ticks a scene, dropping it stops, and an unregistered sc
 
     DriveApp app(HeadlessInfo(), types, systems);
 
-    // An unregistered scene the engine must never auto-tick (the opt-in), kept alive here.
-    Unique<Scene> unregistered;
+    // A scene never opened as a world the engine must never auto-tick (the opt-in), kept alive here.
+    Unique<Scene> unopened;
 
     app.InitFn = [&](DriveApp& a)
     {
-        a.AddSimulation({SystemIdOf<ProbeSystem<1>>()});
+        a.AddWorld({SystemIdOf<ProbeSystem<1>>()});
 
-        unregistered = Scene::Create(a.GetTypeRegistry());
-        unregistered->SetSimulation(CreateUnique<SceneSimulation>(
+        unopened = Scene::Create(a.GetTypeRegistry());
+        unopened->SetSimulation(CreateUnique<SceneSimulation>(
             a.GetSystemRegistry(), std::vector<SystemId>{SystemIdOf<ProbeSystem<2>>()}));
-        unregistered->StartSimulation(SystemContext{
+        unopened->StartSimulation(SystemContext{
             .Assets = a.GetAssetManager(), .Input = a.GetInput(), .Tasks = a.GetTaskSystem()});
     };
 
-    int atDrop = 0;
-    app.StepFn = [&](DriveApp&, int frame)
+    int atClose = 0;
+    app.StepFn = [&](DriveApp& a, int frame)
     {
         if (frame == 2)
         {
-            // The registered scene ticked each frame so far; the unregistered one never did.
+            // The opened world ticked each frame so far; the unopened scene never did.
             CHECK(ProbeSystem<1>::Updates >= 2);
             CHECK(ProbeSystem<2>::Updates == 0);
 
-            // Drop the registered scene: it self-unregisters, so the engine stops ticking it.
-            atDrop = ProbeSystem<1>::Updates;
-            app.Scenes.clear();
+            // Close the opened world: the engine stops ticking it.
+            atClose = ProbeSystem<1>::Updates;
+            a.GetWorldRunner().CloseWorld(a.SimIds[0]);
         }
         else if (frame == 4)
         {
-            CHECK(ProbeSystem<1>::Updates == atDrop); // no further ticks after deregistration
-            CHECK(ProbeSystem<2>::Updates == 0);      // still never auto-ticked
+            CHECK(ProbeSystem<1>::Updates == atClose); // no further ticks after the close
+            CHECK(ProbeSystem<2>::Updates == 0);       // still never auto-ticked
         }
     };
 
@@ -239,8 +248,8 @@ TEST_CASE("A paused world does not tick while a flat-peer world does, resolved b
 
     app.InitFn = [&](DriveApp& a)
     {
-        a.AddSimulation({SystemIdOf<ProbeSystem<1>>()}); // sim #0 (the primary)
-        a.AddSimulation({SystemIdOf<ProbeSystem<2>>()}); // sim #1
+        a.AddWorld({SystemIdOf<ProbeSystem<1>>()}); // world #0
+        a.AddWorld({SystemIdOf<ProbeSystem<2>>()}); // world #1
     };
 
     int pausedAt = 0;
@@ -267,7 +276,7 @@ TEST_CASE("A paused world does not tick while a flat-peer world does, resolved b
     app.Run({});
 }
 
-TEST_CASE("SystemContext carries Tasks always and View/Debug only for a presented sim")
+TEST_CASE("SystemContext carries Tasks always and View/Debug only for a presented world")
 {
     ProbeSystem<1>::Reset();
     ProbeSystem<2>::Reset();
@@ -284,8 +293,8 @@ TEST_CASE("SystemContext carries Tasks always and View/Debug only for a presente
 
     app.InitFn = [&](DriveApp& a)
     {
-        presented = &a.AddSimulation({SystemIdOf<ProbeSystem<1>>()}); // gets a viewport
-        a.AddSimulation({SystemIdOf<ProbeSystem<2>>()});              // view-less
+        presented = &a.AddWorld({SystemIdOf<ProbeSystem<1>>()}); // gets a viewport
+        a.AddWorld({SystemIdOf<ProbeSystem<2>>()});              // view-less
 
         a.AddPresentedViewport(); // presents `presented` (pushed each frame below)
         a.AddPresentedViewport(); // never pushed — must not match or crash
@@ -294,16 +303,16 @@ TEST_CASE("SystemContext carries Tasks always and View/Debug only for a presente
     app.StepFn = [&](DriveApp& a, int frame)
     {
         // Push the first viewport's ViewState toward `presented`; the engine ticks before this push,
-        // so the sim reads it (the retained state) from the next frame on.
+        // so the world reads it (the retained state) from the next frame on.
         a.Viewports.front()->SetViewState({.World = presented, .Delta = 0.016f});
 
         if (frame == 3)
         {
-            // Tasks is always the app's task system, for every ticked sim.
+            // Tasks is always the app's task system, for every ticked world.
             CHECK(ProbeSystem<1>::Tasks == &a.GetTaskSystem());
             CHECK(ProbeSystem<2>::Tasks == &a.GetTaskSystem());
 
-            // The presented sim resolved View + Debug from its viewport; the view-less one did not.
+            // The presented world resolved View + Debug from its viewport; the view-less one did not.
             CHECK(ProbeSystem<1>::HadView);
             CHECK(ProbeSystem<1>::HadDebug);
             CHECK(ProbeSystem<1>::Region.Extent == uvec2(64, 64));
@@ -332,7 +341,7 @@ TEST_CASE("SystemContext carries Tasks always and View/Debug only for a presente
     app.Run({});
 }
 
-TEST_CASE("The engine drives captures over every registered scene, including a paused one")
+TEST_CASE("The engine drives captures over every open world, including a paused one")
 {
     TypeRegistry types;
     RegisterBuiltinTypes(types);
@@ -345,11 +354,11 @@ TEST_CASE("The engine drives captures over every registered scene, including a p
 
     app.InitFn = [&](DriveApp& a)
     {
-        a.AddSimulation({}); // world #0, empty
+        a.AddWorld({}); // world #0, empty
 
-        // A secondary registered scene with a CaptureSurface entity, its sim paused so only
-        // registration — not run-state — can drive its capture (the seam-1 fix).
-        secondary = &a.AddSimulation({});
+        // A secondary open world with a CaptureSurface entity, its sim paused so only open-state —
+        // not run-state — can drive its capture.
+        secondary = &a.AddWorld({});
         captureEntity = secondary->CreateEntity();
         secondary->Add<Transform>(captureEntity);
         auto& capture = secondary->Add<Renderer::CaptureSurface>(captureEntity);
@@ -361,8 +370,8 @@ TEST_CASE("The engine drives captures over every registered scene, including a p
     {
         if (frame == 2)
         {
-            // The engine materialized the secondary (paused) scene's capture — it drove it despite
-            // the pause, because registration alone gates capture driving.
+            // The engine materialized the secondary (paused) world's capture — it drove it despite
+            // the pause, because open-state alone gates capture driving.
             CHECK(secondary->Get<Renderer::CaptureSurface>(captureEntity).GetCapture() != nullptr);
         }
     };

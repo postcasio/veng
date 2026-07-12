@@ -64,16 +64,7 @@ namespace Veng
         VE_ASSERT(m_Systems != nullptr, "WorldRunner requires a SystemRegistry");
     }
 
-    WorldRunner::~WorldRunner()
-    {
-        // Adopted scenes are externally owned and may outlive the runner; clear each one's
-        // back-reference to this runner's drive-list so its own ~Scene does not erase from the freed
-        // vector. Owned worlds' scenes were never attached, so they need no detach.
-        for (Scene* scene : m_AdoptedScenes)
-        {
-            scene->DetachFromSimDriveList();
-        }
-    }
+    WorldRunner::~WorldRunner() = default;
 
     WorldInstanceId WorldRunner::MintId()
     {
@@ -167,19 +158,10 @@ namespace Veng
         return Veng::ResolveCameraView(scene, viewer, aspect);
     }
 
-    WorldInstanceId WorldRunner::AdoptSimulation(Scene& scene)
+    f32 WorldRunner::ResolveAlpha(const WorldInstanceId world) const
     {
-        auto world = CreateUnique<World>();
-        world->Id = MintId();
-        world->LiveScene = &scene;
-        world->Adopted = true;
-        world->Clock = SimClock(SimClockInfo{});
-        const WorldInstanceId id = world->Id;
-        m_Worlds.push_back(std::move(world));
-
-        m_AdoptedScenes.push_back(&scene);
-        scene.AttachToSimDriveList(m_AdoptedScenes);
-        return id;
+        const World* resolved = ResolveWorld(world);
+        return resolved != nullptr ? resolved->LastAlpha : 0.0f;
     }
 
     Scene& WorldRunner::InstallScene(const WorldInstanceId world, Unique<Scene> scene)
@@ -188,27 +170,11 @@ namespace Veng
         VE_ASSERT(resolved != nullptr, "WorldRunner::InstallScene: unminted world");
         resolved->OwnedScene = std::move(scene);
         resolved->LiveScene = resolved->OwnedScene.get();
-        resolved->Adopted = false;
         return *resolved->LiveScene;
-    }
-
-    void WorldRunner::PruneAdopted()
-    {
-        // An adopted world's scene self-erases from m_AdoptedScenes when it is destroyed, so an
-        // adopted world whose LiveScene no longer appears there names a dead scene — drop it. The
-        // pointer is compared, never dereferenced, so a dangling LiveScene is safe here.
-        std::erase_if(m_Worlds,
-                      [this](const Unique<World>& w)
-                      {
-                          return w->Adopted && std::ranges::find(m_AdoptedScenes, w->LiveScene) ==
-                                                   m_AdoptedScenes.end();
-                      });
     }
 
     WorldTickResult WorldRunner::Tick(const WorldTickInfo& info)
     {
-        PruneAdopted();
-
         WorldTickResult result;
         for (const Unique<World>& world : m_Worlds)
         {
@@ -304,11 +270,6 @@ namespace Veng
     {
         VE_ASSERT(m_Context != nullptr && m_Assets != nullptr,
                   "WorldRunner::DriveCaptureSurfaces needs a context and asset manager");
-
-        // An adopted world whose scene was destroyed since the last Tick still lingers in m_Worlds
-        // with a dangling LiveScene until pruned; drop those before dereferencing any scene here (this
-        // runs after the frame's OnUpdate, which may have dropped an overlay's scene).
-        PruneAdopted();
 
         // Registration gates capture driving, not run-state: iterate every world regardless of
         // started/paused, so a paused world still drives its mirrors and a view-less world's captures

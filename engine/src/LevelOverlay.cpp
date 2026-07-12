@@ -3,6 +3,7 @@
 #include <Veng/Application.h>
 #include <Veng/Input.h>
 #include <Veng/InputRouter.h>
+#include <Veng/ManagedViewports.h>
 #include <Veng/Input/SeatFocusScope.h>
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/InputMappingContext.h>
@@ -47,7 +48,7 @@ namespace Veng
         }
 
         // The scene the seat lives in: a lower overlay's scene when the seat names one, else the
-        // primary world. Null when neither resolves (an overlay over a bare app with no managed
+        // managed world. Null when neither resolves (an overlay over a bare app with no managed
         // world and no lower overlay), which makes the suspend scope's context swap an inert no-op.
         Scene* SceneOfSeat(Application& app, const Entity seat)
         {
@@ -65,15 +66,23 @@ namespace Veng
             const World* managed = app.GetWorldRunner().ResolveWorld(app.GetManagedWorldId());
             return managed != nullptr ? &managed->GetScene() : nullptr;
         }
+
+        SystemContext OverlaySystemContext(Application& app)
+        {
+            return SystemContext{.Assets = app.GetAssetManager(),
+                                 .Input = app.GetInput(),
+                                 .Tasks = app.GetTaskSystem()};
+        }
     }
 
     LevelOverlay LevelOverlay::Open(Application& app, const LevelOverlayInfo& info)
     {
         AssetManager& assets = app.GetAssetManager();
+        WorldRunner& runner = app.GetWorldRunner();
 
-        // Residency: the source (and its world prefab) must be resident before LoadInto asserts on
-        // it. WaitForResidency loads the source synchronously and blocks on the spawn's batch;
-        // otherwise the caller is responsible for having preloaded it.
+        // Residency: the source (and its world prefab) must be resident before the runner's LoadInto
+        // asserts on it. WaitForResidency loads the source synchronously; otherwise the caller is
+        // responsible for having preloaded it.
         AssetHandle<Level> source = info.Source;
         if (info.WaitForResidency)
         {
@@ -88,35 +97,32 @@ namespace Veng
 
         LevelOverlay overlay;
         overlay.m_App = &app;
-        overlay.m_PausePrimarySim = info.PausePrimarySim;
 
-        // 1. Load the level into a fresh scene + simulation (not started).
-        overlay.m_Instance = source->LoadInto(assets, app.GetSystemRegistry());
+        // 1. Open an owned world through the runner (deferred start), running the populate hook against
+        //    the freshly-spawned scene before the simulation starts, so a system's OnStart observes
+        //    whatever the hook attached.
+        overlay.m_World = runner.OpenWorld(WorldOpenInfo{
+            .Source = source,
+            .StartSimulation = false,
+            .OnLoaded =
+                [&info](WorldInstanceId, Scene& scene, ResidencyBatch&)
+            {
+                if (info.Populate)
+                {
+                    info.Populate(scene);
+                }
+            },
+        });
+
+        World& world = *runner.ResolveWorld(overlay.m_World);
         if (info.WaitForResidency)
         {
-            overlay.m_Instance.Pending.WaitResident(app.GetTaskSystem());
+            world.Pending.WaitResident(app.GetTaskSystem());
         }
-        Scene& scene = *overlay.m_Instance.World;
+        Scene& scene = world.GetScene();
 
-        // 2. Run the populate hook against the loaded scene, before the simulation starts, so a
-        //    system's OnStart observes whatever the hook attached.
-        if (info.Populate)
-        {
-            info.Populate(scene);
-        }
-
-        // 3. Create a Presented viewport for the region and register it last, so it composites over
-        //    the primary. A zero-extent region means the full window and tracks resizes.
-        Renderer::Context& context = app.GetRenderContext();
-        const uvec2 renderExtent = context.GetRenderExtent();
-        overlay.m_TrackWindow = info.Region.Extent == uvec2{};
-        overlay.m_Region = overlay.m_TrackWindow
-                               ? Renderer::ViewportRegion{.Offset = {0, 0}, .Extent = renderExtent}
-                               : info.Region;
-
-        // Map the level's render settings onto the renderer topology and seed the persistent per-frame
-        // view knobs. The knobs persist across frames (Update pushes this same instance) so a debug
-        // panel can retune them, mirroring the managed world's GetWorldViewState template.
+        // Map the level's render settings onto the renderer topology and seed the per-frame view
+        // knobs carried into the engine's camera push.
         Renderer::SceneRendererSettings settings;
         if (const LevelRenderSettings* render = scene.TryGetFirst<LevelRenderSettings>())
         {
@@ -124,26 +130,40 @@ namespace Veng
         }
         ApplyLevelRenderSettings(overlay.m_Render, settings, overlay.m_ViewKnobs);
 
+        // 2. Create a Presented viewport for the region and register it last, so it composites over
+        //    the covered world. A zero-extent region tracks the window (carries a Layout the
+        //    compositor re-fits on resize); a fixed sub-region is placed absolutely.
+        Renderer::Context& context = app.GetRenderContext();
+        const bool trackWindow = info.Region.Extent == uvec2{};
+        const Renderer::ViewportRegion region =
+            trackWindow
+                ? Renderer::ViewportRegion{.Offset = {0, 0}, .Extent = context.GetRenderExtent()}
+                : info.Region;
+
         overlay.m_Viewport = Renderer::Viewport::Create({
             .Context = context,
             .Assets = assets,
-            .Region = overlay.m_Region,
+            .Region = region,
             .Settings = settings,
             .Role = Renderer::ViewportRole::Presented,
             // Screen-space Gui documents lay out in logical points; feed the window content scale so
-            // the overlay's HUD renders at logical size on a HiDPI display (Update re-applies it).
+            // the overlay's HUD renders at logical size on a HiDPI display (the compositor re-stamps
+            // it on resize alongside the region).
             .UiScale = context.IsHeadless() ? 1.0f : context.GetWindow().GetContentScale().x,
         });
+        if (trackWindow)
+        {
+            overlay.m_Viewport->SetLayout(Renderer::ViewportLayout{});
+        }
         app.RegisterViewport(*overlay.m_Viewport);
 
-        // Register the overlay scene as a simulation so the engine ticks it and drives its captures —
-        // the tick is the engine's now, not a manual TickSimulation in Update. Push the initial view
-        // right away (mirroring BootstrapWorld's seed) so the viewport's retained scene pointer is set
-        // before the first engine tick, closing the first-frame gap in the per-sim view resolution.
-        app.RegisterSimulation(scene);
-        PushSceneView(*overlay.m_Viewport, scene, overlay.m_ViewKnobs);
+        // Bind the viewport to the overlay world so the managed-viewport presentation path pulls its
+        // scene primary camera each frame (Entity::Null viewer) — the new home for what the manual
+        // per-frame push did, with no game call.
+        app.GetManagedViewports().RegisterBoundViewport(*overlay.m_Viewport, overlay.m_World,
+                                                        Entity::Null, overlay.m_ViewKnobs);
 
-        // 4. Route input across the three seams, capturing what each must restore.
+        // 3. Route input across the three seams, capturing what each must restore.
         InputRouter& router = app.GetInputRouter();
         const InputSeat seat = ResolveInputSeat(&scene);
         overlay.m_OverlaySeat = seat.Viewer;
@@ -167,41 +187,31 @@ namespace Veng
         overlay.m_Suspend =
             CreateUnique<SeatFocusScope>(router, suspend, nullptr, overlay.m_SuspendContext);
 
-        // Optionally freeze the base world the overlay covers (the runner's first-opened world —
-        // bootstrap opens the managed world first). Input focus and sim pause are separate knobs: the
-        // observed pause value is captured and restored on close, so stacking and a
-        // game-paused-before-open base both survive.
-        if (info.PausePrimarySim)
+        // 4. Pause the covered world for the overlay's lifetime, when one is named. The pause is a
+        //    refcount, so stacked overlays over one world nest and an explicit game pause survives.
+        if (info.CoveredWorld.IsValid())
         {
-            const vector<Unique<World>>& worlds = app.GetWorldRunner().GetWorlds();
-            overlay.m_PausedWorld = worlds.empty() ? WorldInstanceId{} : worlds.front()->Id;
-            overlay.m_PriorPaused = app.IsWorldPaused(overlay.m_PausedWorld);
-            app.SetWorldPaused(overlay.m_PausedWorld, true);
+            overlay.m_PauseScope = runner.PauseScope(info.CoveredWorld);
         }
 
         // 5. Start the simulation — each system's OnStart fires with the populated scene.
-        overlay.m_Instance.World->StartSimulation(
-            SystemContext{.Assets = assets, .Input = app.GetInput(), .Tasks = app.GetTaskSystem()});
-        overlay.m_Started = true;
+        scene.StartSimulation(OverlaySystemContext(app));
 
         // Join the overlay stack so a higher overlay can resolve this one's scene from its seat.
-        OpenOverlays().emplace_back(overlay.m_OverlaySeat, overlay.m_Instance.World.get());
+        OpenOverlays().emplace_back(overlay.m_OverlaySeat, &scene);
 
         return overlay;
     }
 
     LevelOverlay::LevelOverlay(LevelOverlay&& other) noexcept
-        : m_App(other.m_App), m_Instance(std::move(other.m_Instance)),
-          m_Viewport(std::move(other.m_Viewport)), m_Suspend(std::move(other.m_Suspend)),
-          m_SuspendContext(std::move(other.m_SuspendContext)), m_Render(other.m_Render),
-          m_ViewKnobs(other.m_ViewKnobs), m_Region(other.m_Region),
-          m_OverlaySeat(other.m_OverlaySeat), m_PriorCursorSeat(other.m_PriorCursorSeat),
-          m_PausePrimarySim(other.m_PausePrimarySim), m_PriorPaused(other.m_PriorPaused),
-          m_PausedWorld(other.m_PausedWorld), m_TrackWindow(other.m_TrackWindow),
-          m_Started(other.m_Started)
+        : m_App(other.m_App), m_World(other.m_World), m_Viewport(std::move(other.m_Viewport)),
+          m_Suspend(std::move(other.m_Suspend)),
+          m_SuspendContext(std::move(other.m_SuspendContext)),
+          m_PauseScope(std::move(other.m_PauseScope)), m_Render(other.m_Render),
+          m_ViewKnobs(other.m_ViewKnobs), m_OverlaySeat(other.m_OverlaySeat),
+          m_PriorCursorSeat(other.m_PriorCursorSeat)
     {
         other.m_App = nullptr;
-        other.m_Started = false;
     }
 
     LevelOverlay& LevelOverlay::operator=(LevelOverlay&& other) noexcept
@@ -210,22 +220,16 @@ namespace Veng
         {
             Close();
             m_App = other.m_App;
-            m_Instance = std::move(other.m_Instance);
+            m_World = other.m_World;
             m_Viewport = std::move(other.m_Viewport);
             m_Suspend = std::move(other.m_Suspend);
             m_SuspendContext = std::move(other.m_SuspendContext);
+            m_PauseScope = std::move(other.m_PauseScope);
             m_Render = other.m_Render;
             m_ViewKnobs = other.m_ViewKnobs;
-            m_Region = other.m_Region;
             m_OverlaySeat = other.m_OverlaySeat;
             m_PriorCursorSeat = other.m_PriorCursorSeat;
-            m_PausePrimarySim = other.m_PausePrimarySim;
-            m_PriorPaused = other.m_PriorPaused;
-            m_PausedWorld = other.m_PausedWorld;
-            m_TrackWindow = other.m_TrackWindow;
-            m_Started = other.m_Started;
             other.m_App = nullptr;
-            other.m_Started = false;
         }
         return *this;
     }
@@ -233,40 +237,6 @@ namespace Veng
     LevelOverlay::~LevelOverlay()
     {
         Close();
-    }
-
-    void LevelOverlay::Update(const f32 delta)
-    {
-        if (m_App == nullptr || !m_Viewport)
-        {
-            return;
-        }
-
-        Renderer::Context& context = m_App->GetRenderContext();
-
-        // The engine ticks the overlay's simulation (it is a registered sim) and scopes its pointer
-        // to the overlay's own viewport region, so Update only re-applies the region and pushes the
-        // view — no manual TickSimulation or pointer routing here.
-
-        // Re-apply the region against the current framebuffer extent so a full-window overlay tracks
-        // resizes (the viewport is not in Application's resize-tracked list); a fixed region is
-        // re-applied unchanged (a no-op).
-        if (m_TrackWindow)
-        {
-            m_Region = {.Offset = {0, 0}, .Extent = context.GetRenderExtent()};
-        }
-        m_Viewport->SetRegion(m_Region);
-
-        // Track the window content scale each frame so the overlay's screen-space HUD stays at
-        // logical size across a HiDPI display or a move to a differently-scaled monitor (the same
-        // GetContentScale() the pointer routing above uses, so layout, draw, and hit-testing agree).
-        m_Viewport->SetUiScale(context.IsHeadless() ? 1.0f
-                                                    : context.GetWindow().GetContentScale().x);
-
-        // Push the resolved camera over the persistent view knobs; the viewport's own render drives
-        // the scene's GuiOverlay HUD. The overlay shares the frame's interpolation alpha with the
-        // primary world (the same accumulator drives both), so its scene interpolates in phase.
-        PushSceneView(*m_Viewport, *m_Instance.World, m_ViewKnobs, delta, m_App->GetSimAlpha());
     }
 
     void LevelOverlay::Close()
@@ -277,51 +247,48 @@ namespace Veng
         }
 
         Application& app = *m_App;
+        WorldRunner& runner = app.GetWorldRunner();
         InputRouter& router = app.GetInputRouter();
-
-        // 1. Stop the simulation (each system's OnStop). The engine ticked it while registered; the
-        //    scene reset in step 5 self-unregisters it from the drive-list.
-        if (m_Started && m_Instance.World)
-        {
-            m_Instance.World->StopSimulation(SystemContext{.Assets = app.GetAssetManager(),
-                                                           .Input = app.GetInput(),
-                                                           .Tasks = app.GetTaskSystem()});
-            m_Started = false;
-        }
+        Scene& scene = runner.ResolveWorld(m_World)->GetScene();
 
         // Leave the overlay stack before the lower layer's contexts are restored, so it no longer
         // resolves as any seat's scene.
         std::erase_if(OpenOverlays(),
-                      [this](const auto& entry) { return entry.second == m_Instance.World.get(); });
+                      [&scene](const auto& entry) { return entry.second == &scene; });
 
-        // 2. Restore the observed world-pause value (not a blind false), so a stacked pause or a
-        //    game-paused-before-open primary survives.
-        if (m_PausePrimarySim)
-        {
-            app.SetWorldPaused(m_PausedWorld, m_PriorPaused);
-        }
+        // Stop the simulation (each system's OnStop) while its scene is still live; CloseWorld below
+        // only drops the world, it does not run OnStop.
+        scene.StopSimulation(OverlaySystemContext(app));
 
-        // 3. Pop the focus scope (restores the suspended seat's contexts and pops its token).
+        // Unwind the policy LIFO.
+        // 1. Release the covered-world pause (refcount decrement; a no-op when none was held).
+        m_PauseScope = WorldPauseScope{};
+
+        // 2. Pop the focus scope (restores the suspended seat's contexts and pops its token).
         m_Suspend.reset();
 
-        // 4. Restore the cursor seat and drop the overlay-seat pointer association by id (~Viewport
-        //    does not clear it).
+        // 3. Restore the cursor seat and drop the overlay-seat pointer association by id (~Viewport
+        //    does not clear it), and unregister the camera-pull binding, while the viewport is alive.
         router.SetCursorSeat(m_PriorCursorSeat);
         if (m_Viewport)
         {
             router.ClearViewportSeat(m_Viewport->GetId());
+            app.GetManagedViewports().UnregisterBoundViewport(*m_Viewport);
         }
 
-        // 5. Drop the viewport (self-unregisters from the drive-list).
+        // 4. Drop the viewport (self-unregisters from the compositor drive-list).
         m_Viewport.reset();
-        m_Instance.World.reset();
+
+        // 5. Close the owned world (drops its scene).
+        runner.CloseWorld(m_World);
+        m_World = {};
         m_App = nullptr;
     }
 
     Scene& LevelOverlay::GetScene() const
     {
-        VE_ASSERT(m_Instance.World != nullptr, "LevelOverlay::GetScene on a closed overlay");
-        return *m_Instance.World;
+        VE_ASSERT(m_App != nullptr, "LevelOverlay::GetScene on a closed overlay");
+        return m_App->GetWorldRunner().ResolveWorld(m_World)->GetScene();
     }
 
     Renderer::Viewport& LevelOverlay::GetViewport() const

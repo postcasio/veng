@@ -32,19 +32,19 @@ namespace Veng
     /// The bundle a WorldRunner owns and drives. It is view-agnostic and transport-agnostic: it
     /// holds no viewport, no seat, and no NetRole — a world does not know it is being presented or
     /// replicated, so the presentation and transport layers point inward at it by handle rather than
-    /// the world pointing out at them. The scene is either owned (the runner holds the Unique) or
-    /// adopted (an externally-owned scene wrapped as a non-owning tickable world); GetScene resolves
-    /// the live one either way. Pause is a refcount plus an explicit toggle, so stacked holds and a
-    /// game toggle compose (IsPaused is true while either is set).
+    /// the world pointing out at them. The runner owns the scene (holds the Unique); the client-join
+    /// seam may replace it (WorldRunner::InstallScene), and GetScene resolves the live one. Pause is
+    /// a refcount plus an explicit toggle, so stacked holds and a game toggle compose (IsPaused is
+    /// true while either is set).
     struct World
     {
         /// @brief This world's minted identity.
         WorldInstanceId Id;
 
-        /// @brief The owned scene (with its SceneSimulation attached), or null for an adopted world.
+        /// @brief The runner-owned scene (with its SceneSimulation attached).
         Unique<Scene> OwnedScene;
 
-        /// @brief The live scene this world drives — the owned one, or the adopted external one.
+        /// @brief The live scene this world drives (the owned one; InstallScene may replace it).
         Scene* LiveScene = nullptr;
 
         /// @brief The fixed-timestep accumulator advancing this world's Sim phase at its own rate.
@@ -61,9 +61,6 @@ namespace Veng
 
         /// @brief The explicit pause toggle (SetWorldPaused), composed with the refcount.
         bool ExplicitPaused = false;
-
-        /// @brief Whether the scene is externally owned (adopted), so the runner never destroys it.
-        bool Adopted = false;
 
         /// @brief Returns the live scene this world drives.
         [[nodiscard]] Scene& GetScene() const { return *LiveScene; }

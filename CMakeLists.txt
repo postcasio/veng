@@ -1045,9 +1045,9 @@ if (VENG_BUILD_TESTS)
             # SeatFocusScope whose viewport dies mid-scope restores cleanly. It needs real Viewports,
             # so it rides the gpu band though it pins no pixels.
             tests/gpu/input_router_association.cpp
-            # simulation_drive_list.cpp drives a headless Application, registering scenes as
-            # engine-ticked simulations and asserting the tick/pause/view/capture drive semantics (it
-            # needs a Context for the Application, so it rides the gpu band though it pins no pixels).
+            # simulation_drive_list.cpp drives a headless Application, opening worlds through the
+            # runner and asserting the engine's tick/pause/view/capture drive semantics (it needs a
+            # Context for the Application, so it rides the gpu band though it pins no pixels).
             tests/gpu/simulation_drive_list.cpp
             # managed_viewport_set.cpp drives a headless Application, binding managed viewports to
             # worlds by handle and asserting the multi-world camera pull, split-screen reconfigure,

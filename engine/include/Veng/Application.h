@@ -304,16 +304,6 @@ namespace Veng
         /// @param capture  The capture to drive; its lifetime stays with the caller.
         void RegisterCapture(Renderer::SceneCapture& capture);
 
-        /// @brief Adopts an externally-owned scene as a non-owning world ticked each frame.
-        ///
-        /// The tick counterpart of RegisterViewport: forwards to WorldRunner::AdoptSimulation, wrapping
-        /// @p scene as a non-owning world the runner ticks on the same schedule as owned worlds and
-        /// whose CaptureSurface components it drives. The caller keeps the owning Unique<Scene>, and
-        /// dropping it self-unregisters the world (~Scene erases its own pointer). Double-registering a
-        /// scene is a fatal assert.
-        /// @param scene  The scene to tick and drive; its lifetime stays with the caller.
-        void RegisterSimulation(Scene& scene);
-
         /// @brief Returns the engine-owned managed viewport set.
         ///
         /// The managed-viewport policy collaborator: GetManagedViewports().Get(0) reaches the primary
