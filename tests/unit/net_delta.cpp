@@ -297,3 +297,74 @@ TEST_CASE("The delta stream heals after a window of dropped acks")
     }
     CHECK(glm::length(world.ClientPosition() - vec3(2.0f, 1.0f, 0.0f)) < 0.002f);
 }
+
+TEST_CASE("Delta + quantization shrink the steady-state stream well below the full-record baseline")
+{
+    TypeRegistry serverTypes;
+    RegisterBuiltinTypes(serverTypes);
+    Unique<Scene> server = Scene::Create(serverTypes);
+    server->SetChangeTick(0);
+
+    // A field of moving entities — the steady-state workload the compression targets.
+    constexpr int Count = 12;
+    vector<Entity> entities;
+    for (int i = 0; i < Count; ++i)
+    {
+        const Entity e = server->CreateEntity();
+        server->Add<Transform>(e);
+        entities.push_back(e);
+    }
+    NetIdAllocator allocator;
+    AssignServerNetIds(*server, allocator);
+
+    TypeRegistry clientTypes;
+    RegisterBuiltinTypes(clientTypes);
+    Unique<Scene> client = Scene::Create(clientTypes);
+    ReplicationClient replClient([](AssetId) -> Ref<Prefab> { return nullptr; });
+    const QuantizationSettings quant{.PositionQuantum = 0.001f, .PositionExtent = 4096.0f};
+    replClient.SetQuantization(quant);
+
+    ReplicationServer replServer(ReplicationServer::Settings{.SnapshotInterval = 1,
+                                                             .QuantizeSpatial = true,
+                                                             .Quantization = quant,
+                                                             .KeyframeInterval = 32});
+    replServer.AddConnection(1);
+
+    usize compressedBytes = 0;
+    usize baselineBytes = 0;
+    for (u64 tick = 1; tick <= 120; ++tick)
+    {
+        server->SetChangeTick(tick);
+        for (int i = 0; i < Count; ++i)
+        {
+            server->Get<Transform>(entities[i]).Position =
+                vec3(static_cast<f32>(tick) * 0.05f + static_cast<f32>(i), 1.0f, 0.0f);
+        }
+
+        // The full self-describing snapshot is the planset-54 baseline (every dirty field, name-keyed).
+        baselineBytes += EncodeSnapshot(*server, tick, /*sinceTick=*/0).size();
+
+        u64 appliedTick = 0;
+        for (const ReplicationMessage& message : replServer.Generate(1, *server, tick))
+        {
+            if (message.Channel == Net::Channel::ReliableOrdered)
+            {
+                replClient.ApplyReliable(message.Bytes, *client, FakeAssets());
+            }
+            else
+            {
+                compressedBytes += message.Bytes.size();
+                appliedTick = replClient.ApplySnapshot(message.Bytes, *client).ServerTick;
+            }
+        }
+        if (appliedTick != 0)
+        {
+            replServer.Acknowledge(1, appliedTick);
+        }
+    }
+
+    // The delta + quantized wire lands the steady-state stream at a small fraction of the baseline
+    // (only the moving position, quantized, rides each tick — not a full name-keyed Transform record).
+    CHECK(compressedBytes > 0);
+    CHECK(compressedBytes < baselineBytes / 2);
+}

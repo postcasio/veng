@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Veng/Net/Connection.h>
+#include <Veng/Net/FaultInjectionTransport.h>
 #include <Veng/Net/NetEvents.h>
 #include <Veng/Net/Transport.h>
 #include <Veng/Result.h>
@@ -64,6 +65,12 @@ namespace Veng::Net
         function<AcceptPayload(ConnectionId)> OnAccept;
         /// @brief Optional transport to listen on instead of a bound UdpTransport (the loopback/test seam).
         Transport* TransportOverride = nullptr;
+        /// @brief Optional network simulation wrapping the bound transport (the launcher's --netsim).
+        ///
+        /// When set (and no TransportOverride), the bound UdpTransport is wrapped in a
+        /// SimulatedTransport with these seeded faults + latency; the server advances its clock each
+        /// Pump. Ships in every build as a dev/QA tool; inert when unset.
+        optional<FaultInjectionConfig> NetSim;
         /// @brief Timing configuration threaded into each per-peer Connection.
         ConnectionConfig Connection;
     };

@@ -8,21 +8,24 @@
 #include <deque>
 #include <span>
 
-// Veng/Net/FaultInjectionTransport.h — a lossy-link wrapper over any Transport.
+// Veng/Net/FaultInjectionTransport.h — the network-simulation wrapper over any Transport.
 //
 // Wraps an inner Transport and, on the receive path, applies seeded, deterministic
-// drop / duplicate / reorder faults so the reliability layer above can be tested
-// against an adversarial link with no real network and no wall clock — the same
-// inputs always produce the same faults. Wrapping both ends of a pair yields a
-// bidirectionally lossy channel. The knobs also serve as a net-sim harness later.
+// drop / duplicate / reorder faults plus a latency + jitter delay queue, so the
+// reliability and prediction layers above can be tested — and a human can play —
+// against an adversarial link with no real network: the same inputs and injected
+// time always produce the same faults. Wrapping both ends of a pair yields a
+// bidirectionally lossy, laggy channel. It is the one adversity tool for tests and
+// for the launcher's --netsim flag; SimulatedTransport is its consumer-facing name.
 
 namespace Veng::Net
 {
-    /// @brief Seeded fault rates for a FaultInjectionTransport.
+    /// @brief Seeded fault rates and delay for a FaultInjectionTransport.
     ///
-    /// Each rate is an independent per-datagram probability in [0, 1]. Faults are
-    /// applied on the receive path: a dropped datagram never surfaces, a duplicated
-    /// one surfaces twice, a reordered one is delivered after the datagram behind it.
+    /// Each rate is an independent per-datagram probability in [0, 1]; the latency/jitter delay each
+    /// received datagram before it surfaces. Faults apply on the receive path: a dropped datagram
+    /// never surfaces, a duplicated one surfaces twice, a reordered one is delivered after the
+    /// datagram behind it, and a delayed one is held until its release time (injected via SetTime).
     struct FaultInjectionConfig
     {
         /// @brief Probability a received datagram is dropped.
@@ -31,7 +34,11 @@ namespace Veng::Net
         f32 DuplicateRate = 0.0f;
         /// @brief Probability a received datagram is swapped past the next one.
         f32 ReorderRate = 0.0f;
-        /// @brief Seed for the deterministic fault stream.
+        /// @brief Base one-way delay in milliseconds applied to every received datagram.
+        f32 LatencyMs = 0.0f;
+        /// @brief Uniform +/- jitter in milliseconds added to the base latency, seeded.
+        f32 JitterMs = 0.0f;
+        /// @brief Seed for the deterministic fault/jitter stream.
         u64 Seed = 0;
     };
 
@@ -53,11 +60,21 @@ namespace Veng::Net
         optional<Datagram> Receive() override;
         Result<EndpointId> Resolve(string_view host, u16 port) override;
 
+        /// @brief Sets the injected wall clock (seconds) the delay queue releases against.
+        ///
+        /// The harness (or Server/Client::Pump) advances this each frame; a datagram surfaces once
+        /// the clock reaches its release time. With zero latency and jitter it is inert (every
+        /// datagram is ready immediately), so a caller that never sets it keeps the v1 behavior.
+        /// @param nowSeconds  The current injected time in seconds.
+        void SetTime(f64 nowSeconds) { m_Now = nowSeconds; }
+
     private:
         struct Held
         {
             EndpointId From;
             vector<u8> Bytes;
+            /// @brief The injected time at which this datagram may surface (arrival + latency +/- jitter).
+            f64 ReleaseTime = 0.0;
         };
 
         void Pump();
@@ -67,5 +84,9 @@ namespace Veng::Net
         Rng m_Rng;
         std::deque<Held> m_Pending;
         vector<u8> m_ReceiveScratch;
+        f64 m_Now = 0.0;
     };
+
+    /// @brief The consumer-facing name for the network-simulation transport (tests and --netsim).
+    using SimulatedTransport = FaultInjectionTransport;
 }

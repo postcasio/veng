@@ -43,10 +43,27 @@ namespace Veng::Net
             const vector<u8> bytes(incoming->Bytes.begin(), incoming->Bytes.end());
             const bool duplicate = m_Rng.NextFloat() < m_Config.DuplicateRate;
 
-            m_Pending.push_back(Held{.From = incoming->From, .Bytes = bytes});
+            // The delay queue: latency + seeded uniform jitter, held until the injected clock reaches
+            // the release time. Only draws the Rng when jitter is active, so a zero-jitter config
+            // leaves the seeded fault sequence (and thus every existing scenario) byte-identical.
+            f64 delaySeconds = static_cast<f64>(m_Config.LatencyMs) / 1000.0;
+            if (m_Config.JitterMs > 0.0f)
+            {
+                const f32 jitter = (m_Rng.NextFloat() * 2.0f - 1.0f) * m_Config.JitterMs;
+                delaySeconds += static_cast<f64>(jitter) / 1000.0;
+            }
+            if (delaySeconds < 0.0)
+            {
+                delaySeconds = 0.0;
+            }
+            const f64 release = m_Now + delaySeconds;
+
+            m_Pending.push_back(
+                Held{.From = incoming->From, .Bytes = bytes, .ReleaseTime = release});
             if (duplicate)
             {
-                m_Pending.push_back(Held{.From = incoming->From, .Bytes = bytes});
+                m_Pending.push_back(
+                    Held{.From = incoming->From, .Bytes = bytes, .ReleaseTime = release});
             }
         }
     }
@@ -54,17 +71,37 @@ namespace Veng::Net
     optional<Datagram> FaultInjectionTransport::Receive()
     {
         Pump();
-        if (m_Pending.empty())
+
+        // Find the first datagram whose delay has elapsed (all of them when latency/jitter are zero).
+        usize first = m_Pending.size();
+        for (usize i = 0; i < m_Pending.size(); ++i)
         {
-            return {};
+            if (m_Pending[i].ReleaseTime <= m_Now)
+            {
+                first = i;
+                break;
+            }
+        }
+        if (first == m_Pending.size())
+        {
+            return {}; // nothing ready to surface yet
         }
 
-        // Reorder by occasionally delivering the second pending datagram ahead of
-        // the first — a deterministic adjacent swap.
-        usize index = 0;
-        if (m_Pending.size() >= 2 && m_Rng.NextFloat() < m_Config.ReorderRate)
+        // Reorder by occasionally delivering the next ready datagram ahead of the first — a
+        // deterministic adjacent swap among the ready set.
+        usize index = first;
+        usize second = m_Pending.size();
+        for (usize i = first + 1; i < m_Pending.size(); ++i)
         {
-            index = 1;
+            if (m_Pending[i].ReleaseTime <= m_Now)
+            {
+                second = i;
+                break;
+            }
+        }
+        if (second != m_Pending.size() && m_Rng.NextFloat() < m_Config.ReorderRate)
+        {
+            index = second;
         }
 
         Held held = std::move(m_Pending[static_cast<std::ptrdiff_t>(index)]);

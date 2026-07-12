@@ -380,7 +380,9 @@ namespace
         std::unordered_map<ConnectionId, Entity> Pawns;
         MovementSystem Movement;
 
-        explicit ServerWorld(Transport& transport)
+        explicit ServerWorld(Transport& transport,
+                             ReplicationServer::Settings settings = {.SnapshotInterval = 2},
+                             f32 interestRadius = 0.0f)
         {
             RegisterBuiltinTypes(Types);
             World = Scene::Create(Types);
@@ -390,7 +392,8 @@ namespace
                 .World = *World,
                 .Assets = FakeAssets(),
                 .LevelId = LevelId,
-                .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
+                .Replication = settings,
+                .Interest = InterestSettings{.Radius = interestRadius, .MinDwellSnapshots = 2},
             });
             REQUIRE(host.has_value());
             Host = std::move(*host);
@@ -698,4 +701,122 @@ TEST_CASE("Convergence: a forced server displacement corrects with one smoothed 
         SerializeTransform(client.Types, client.Host->World()->Get<Transform>(clientPawn));
     CHECK(clientBytes == serverBytes);
     CHECK_FALSE(client.Host->World()->Has<PredictionError>(clientPawn));
+}
+
+TEST_CASE(
+    "Convergence: all mechanisms under combined loss + latency converge byte-equal (lossless wire)")
+{
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+
+    // The full adversity: loss, reorder, duplication, and a latency + jitter delay queue, both ways.
+    // The wire stays lossless (quantization off), so the predicted pose must converge byte-for-byte.
+    const FaultInjectionConfig faults{.DropRate = 0.1f,
+                                      .DuplicateRate = 0.05f,
+                                      .ReorderRate = 0.1f,
+                                      .LatencyMs = 30.0f,
+                                      .JitterMs = 8.0f,
+                                      .Seed = 99};
+    SimulatedTransport serverLink(*serverT, faults);
+    SimulatedTransport clientLink(*clientT, faults);
+
+    // Every mechanism on: prediction + rollback (the client harness), delta compression (always),
+    // and interest management (radius large enough the own pawn stays relevant while the filter runs).
+    ServerWorld server(serverLink, {.SnapshotInterval = 2, .KeyframeInterval = 8},
+                       /*interestRadius=*/1000.0f);
+    ClientWorld client(clientLink);
+
+    constexpr u64 Lead = 4;
+    const ActionState move = MoveState(vec2(1.0f, 0.0f));
+    const ActionState stop = MoveState(vec2(0.0f, 0.0f));
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    ConnectionId id = ServerConnectionId;
+    for (u64 tick = 1; tick <= 700; ++tick)
+    {
+        now += Delta;
+        serverLink.SetTime(now);
+        clientLink.SetTime(now);
+        client.Frame(now, tick + Lead, Delta, tick <= 450 ? move : stop);
+        server.SimStep(tick, Delta);
+        server.NetPump(now, tick);
+        if (!server.Host->Server().Connections().empty())
+        {
+            id = server.Host->Server().Connections().front();
+        }
+    }
+
+    REQUIRE(client.Host->IsJoined());
+    REQUIRE(id != ServerConnectionId);
+    const Entity serverPawn = server.PawnFor(id);
+    const Entity clientPawn = client.OwnPawn;
+    REQUIRE_FALSE(serverPawn.IsNull());
+    REQUIRE_FALSE(clientPawn.IsNull());
+    CHECK(server.World->Get<Transform>(serverPawn).Position.x > 1.0f);
+
+    const vector<u8> serverBytes =
+        SerializeTransform(server.Types, server.World->Get<Transform>(serverPawn));
+    const vector<u8> clientBytes =
+        SerializeTransform(client.Types, client.Host->World()->Get<Transform>(clientPawn));
+    CHECK(clientBytes == serverBytes);
+    CHECK_FALSE(client.Host->World()->Has<PredictionError>(clientPawn));
+
+    // Bounded memory: the on-match trim kept the history ring shallow through the whole run.
+    CHECK(client.Host->History().Size() <= Lead + 6);
+}
+
+TEST_CASE("Convergence: prediction with quantization + interest converges within the quantum")
+{
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+    const FaultInjectionConfig faults{.DropRate = 0.08f,
+                                      .DuplicateRate = 0.05f,
+                                      .ReorderRate = 0.1f,
+                                      .LatencyMs = 25.0f,
+                                      .JitterMs = 6.0f,
+                                      .Seed = 271};
+    SimulatedTransport serverLink(*serverT, faults);
+    SimulatedTransport clientLink(*clientT, faults);
+
+    // Quantization on (default 1 mm grid) with interest and prediction: the reconciliation epsilon
+    // (1 cm) exceeds the quantum, so quantization noise never reads as a misprediction, and the
+    // displayed pose converges to within the quantum of the authoritative one after quiescence.
+    ServerWorld server(serverLink,
+                       {.SnapshotInterval = 2, .QuantizeSpatial = true, .KeyframeInterval = 8},
+                       /*interestRadius=*/1000.0f);
+    ClientWorld client(clientLink); // default quantization matches the server's
+
+    constexpr u64 Lead = 4;
+    const ActionState move = MoveState(vec2(1.0f, 0.0f));
+    const ActionState stop = MoveState(vec2(0.0f, 0.0f));
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    ConnectionId id = ServerConnectionId;
+    for (u64 tick = 1; tick <= 700; ++tick)
+    {
+        now += Delta;
+        serverLink.SetTime(now);
+        clientLink.SetTime(now);
+        client.Frame(now, tick + Lead, Delta, tick <= 450 ? move : stop);
+        server.SimStep(tick, Delta);
+        server.NetPump(now, tick);
+        if (!server.Host->Server().Connections().empty())
+        {
+            id = server.Host->Server().Connections().front();
+        }
+    }
+
+    REQUIRE(client.Host->IsJoined());
+    REQUIRE(id != ServerConnectionId);
+    const Entity serverPawn = server.PawnFor(id);
+    const Entity clientPawn = client.OwnPawn;
+    REQUIRE_FALSE(serverPawn.IsNull());
+    REQUIRE_FALSE(clientPawn.IsNull());
+    CHECK(server.World->Get<Transform>(serverPawn).Position.x > 1.0f);
+
+    const vec3 serverPos = server.World->Get<Transform>(serverPawn).Position;
+    const vec3 clientPos = client.Host->World()->Get<Transform>(clientPawn).Position;
+    CHECK(glm::length(clientPos - serverPos) < 0.01f); // within the 1 cm reconcile epsilon
+    CHECK_FALSE(client.Host->World()->Has<PredictionError>(clientPawn)); // residual eased out
+    CHECK(client.Host->History().Size() <= Lead + 6);
 }

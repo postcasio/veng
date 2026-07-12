@@ -2,6 +2,7 @@
 
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Net/Connection.h>
+#include <Veng/Net/FaultInjectionTransport.h>
 #include <Veng/Net/NetEvents.h>
 #include <Veng/Net/Transport.h>
 #include <Veng/Result.h>
@@ -34,6 +35,12 @@ namespace Veng::Net
         u32 AppVersion = 0;
         /// @brief Optional transport to connect over instead of an opened UdpTransport (the test seam).
         Transport* TransportOverride = nullptr;
+        /// @brief Optional network simulation wrapping the opened transport (the launcher's --netsim).
+        ///
+        /// When set (and no TransportOverride), the opened UdpTransport is wrapped in a
+        /// SimulatedTransport with these seeded faults + latency; the client advances its clock each
+        /// Pump. Inert when unset.
+        optional<FaultInjectionConfig> NetSim;
         /// @brief Timing configuration for the underlying Connection.
         ConnectionConfig Connection;
     };

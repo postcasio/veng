@@ -273,7 +273,9 @@ namespace Veng
         m_Net->Info = net;
 
         Result<Unique<ServerHost>> host = ServerHost::Create(ServerHostInfo{
-            .Server = Net::ServerInfo{.Port = net.Port, .MaxConnections = net.MaxConnections},
+            .Server = Net::ServerInfo{.Port = net.Port,
+                                      .MaxConnections = net.MaxConnections,
+                                      .NetSim = m_LaunchArgs.NetSim},
             .World = *m_World,
             .Assets = *m_AssetManager,
             .LevelId = levelId,
@@ -310,8 +312,8 @@ namespace Veng
         m_Net->Send =
             InputSendBuffer(InputSendBuffer::Settings{.Redundancy = net.InputRedundancyTicks});
 
-        Result<Unique<Net::Client>> client =
-            Net::Client::Connect(Net::ClientInfo{.Host = target.Host, .Port = port});
+        Result<Unique<Net::Client>> client = Net::Client::Connect(
+            Net::ClientInfo{.Host = target.Host, .Port = port, .NetSim = m_LaunchArgs.NetSim});
         VE_ASSERT(client, "client failed to connect to {}:{}: {}", target.Host, port,
                   client.error());
         m_Net->Client = std::move(*client);

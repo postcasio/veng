@@ -75,8 +75,12 @@ namespace Veng::Net
     struct Server::State
     {
         ServerInfo Info;
-        Unique<Transport> OwnedTransport; // non-null when Create bound its own socket
-        UdpTransport* OwnedUdp = nullptr; // the same object, for LocalPort()
+        Unique<Transport>
+            OwnedInner; // the bound socket when a NetSim wrapper owns the listen transport
+        Unique<Transport>
+            OwnedTransport; // non-null when Create bound its own socket (or its NetSim wrapper)
+        UdpTransport* OwnedUdp = nullptr;       // the bound socket, for LocalPort()
+        FaultInjectionTransport* Sim = nullptr; // the --netsim wrapper, advanced each Pump
         Transport* Transport = nullptr;   // owned or overridden — the listen transport
         ConnectionId NextId = ServerConnectionId + 1;
         vector<Unique<PeerConnection>> Connections;
@@ -262,7 +266,18 @@ namespace Veng::Net
                 return std::unexpected(udp.error());
             }
             state->OwnedUdp = udp->get();
-            state->OwnedTransport = std::move(*udp);
+            if (info.NetSim.has_value())
+            {
+                // Wrap the bound socket in the network simulation; the socket outlives the wrapper.
+                state->OwnedInner = std::move(*udp);
+                auto sim = CreateUnique<FaultInjectionTransport>(*state->OwnedInner, *info.NetSim);
+                state->Sim = sim.get();
+                state->OwnedTransport = std::move(sim);
+            }
+            else
+            {
+                state->OwnedTransport = std::move(*udp);
+            }
             state->Transport = state->OwnedTransport.get();
         }
 
@@ -272,6 +287,10 @@ namespace Veng::Net
     void Server::Pump(f64 now)
     {
         State& s = *m_State;
+        if (s.Sim != nullptr)
+        {
+            s.Sim->SetTime(now);
+        }
         s.Events.clear();
         for (Unique<PeerConnection>& c : s.Connections)
         {

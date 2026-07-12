@@ -1810,10 +1810,34 @@ layout change**; everything else the layer adds is additive (new builtins, new `
   by per-entity change ticks, sent until acked) and emits reliable **spawn/despawn** (carrying a
   prefab `AssetId` when associated via `SetEntityPrefab`, so the client instantiates through the
   ordinary prefab path) + unreliable **snapshots** on a snapshot-interval tick. `ReplicationClient`
-  applies latest-wins, marks replicated entities **`Tier::Remote`** (the first `Tier` extension), and
+  applies latest-wins, marks replicated entities **`Tier::Remote`**, and
   buffers each Transform snapshot for the **View-phase `RemoteInterpolationSystem`**, which renders a
-  remote ~2 snapshot intervals in the past. **Interpolation-only in v1** — prediction/rollback is a
-  named future; the local pawn wears its latency.
+  remote ~2 snapshot intervals in the past. A client promotes the entities its seat owns to
+  **`Tier::Predicted`** and re-runs the real Sim systems for them each tick (`PredictionHistory`
+  records tick/input/state); on an authoritative snapshot the **`Net::Reconciliation`** pass
+  compares the recorded prediction at the snapshot's `LastConsumedInputTick` against the
+  authoritative record (per-field epsilon on spatial leaves, exact elsewhere) and, on a mismatch,
+  restores + replays the recorded inputs through the real systems and eases the visual residual
+  through a decaying `PredictionError` render offset (sim never lies; only the render pose eases).
+  So the local pawn responds on the tick its input is sampled; remotes stay interpolated.
+- **The snapshot wire is compressed behind the codec seam (`DeltaCodec`, `Quantize`, `BitStream`).**
+  Per (connection, entity) the encoder emits **ack-keyed field deltas** — only the leaves that
+  changed since the connection's acked baseline, a full self-describing record reserved for spawn /
+  a keyframe cadence / the drift-tolerant fallback; the baseline advances from the bounded unacked
+  send window on ack. **Quantization** (server-opt-in `GameNetInfo::QuantizeSpatial`) rounds a
+  Transform's position to fixed-point and its rotation to smallest-three on the wire while the sim
+  state stays full-float (the reconcile epsilon is kept ≥ the quantum). The **packed `PlayerInput`**
+  encodes against the seat's context's resolved action list keyed by a context-stack hash, with the
+  reflection form as the fallback. Every compressed form opts down from a canonical self-describing
+  form negotiated by an ack or a hash, so drift tolerance and the fixtures survive.
+- **Interest management is a per-connection relevancy filter on the send loop (`Interest`).**
+  `Interest(conn)` = a headless-safe spatial query around the connection's pawn ∪ the
+  **`AlwaysRelevant`**-marked entities (`VE_ALWAYS_RELEVANT`, on `Session` + `Viewer` builtin) ∪ the
+  `GameNetInfo::InterestPolicy` hook ∪ the entities the connection owns, with hysteresis + a dwell
+  floor. Set enter sends the spawn + baseline; leave sends a **despawn-with-reason**
+  (`DespawnReason::Visibility` vs `Destroyed`) the client tears down side-effect-free (never a
+  death) and re-baselines on re-entry. `GameNetInfo::InterestRadius` 0 (the default) replicates the
+  whole world, so interest is opt-in per game.
 - **Input replicates client→server (`Replication.h` input half, `InputFeed.h`).** The client stamps
   its seat's resolved `PlayerInput` per tick and sends the **last N ticks redundantly** over the
   unreliable channel (`InputSendBuffer`, loss-tolerant without retransmission); the server buffers per
@@ -1834,10 +1858,14 @@ layout change**; everything else the layer adds is additive (new builtins, new `
   presentation to its own replicated seat's `Possesses`. Both are usable standalone; **`Application`
   mounts them** as the plug-and-play path.
 - **`Application` wiring (launch decision, not a build).** `ApplicationInfo::Net` (an
-  `optional<GameNetInfo>` — `Port`, `MaxConnections`, `SnapshotIntervalTicks`, `InputRedundancyTicks`)
+  `optional<GameNetInfo>` — `Port`, `MaxConnections`, `SnapshotIntervalTicks`, `InputRedundancyTicks`,
+  the quantization/keyframe knobs, `InterestRadius`/`InterestPolicy`, and the client `PredictionPolicy`)
   tunes the hosts; **activation is a launch flag**, parsed by `LaunchArguments`: `--server`
   (listen server) `[--headless]` (dedicated — Sim + net pump, no render tail), `--join <host[:port]>`
-  (client). `Application`'s `PumpNet` runs receive → sim ticks (feeding buffered input before the Sim
+  (client), and **`--netsim latency=100,jitter=20,loss=5,dup=1,reorder=2`** wraps the constructed
+  transport in a seeded `SimulatedTransport` (the `FaultInjectionTransport` grown a latency/jitter
+  delay queue) for playable adversity — a dev/QA tool shipped in every build, inert unless set.
+  `Application`'s `PumpNet` runs receive → sim ticks (feeding buffered input before the Sim
   phase server-side, stamping resolved input after it client-side) → send, once per frame after the
   tick loop. A game reaches the layer through `GetNetRole()` / `GetServerHost()` / `GetClientHost()`
   and the `OnClientPossession(world, pawn)` hook. **Standalone is a server with no transport** — one
@@ -1848,10 +1876,15 @@ spawn rule to keep only the player prefab's Local-tier presentation in a net ses
 pawn reconciler that pawns the listen host's own seat and each connection's from the shared
 `netpawn` prefab, and the `OnClientPossession` / host camera wiring) and the two-world integration
 suite (`tests/unit/net_two_world.cpp` — a server scene + client scene
-over a `LoopbackTransport` stepped tick-by-tick, the authoritative correctness guard) are the
-consumption exemplar and the regression net. **Prediction, delta compression, and interest
-management are the deliberate next phase**, behind the stable `ActionState`/component shapes and the
-extensible `Tier` enum.
+over a `LoopbackTransport` (and a `SimulatedTransport` for the adversity cases) stepped
+tick-by-tick, the authoritative correctness guard) are the consumption exemplar and the regression
+net; the consolidated convergence suite (`net_reconciliation.cpp`) runs prediction + rollback +
+delta + quantization + interest under combined loss + latency and asserts byte-equal convergence
+(lossless wire) or within-quantum convergence after quiescence, with bounded history/baseline.
+**Prediction/rollback, delta compression + quantization + packed input, and interest management are
+delivered**, behind the stable `ActionState`/component shapes and the extensible `Tier` enum;
+**lag compensation, transport security, spectators/replays/host migration, and an editor-Play
+network client remain future**.
 
 ## Project settings & build configurations
 

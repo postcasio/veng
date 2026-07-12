@@ -280,19 +280,75 @@ present (remote entities hold their current interpolated pose, no View systems r
 predicted-vs-world interaction in the replay window uses present-world context — the server
 remains the arbiter of what actually happened.
 
-## What v1 does not do
+## Wire compression — automatic, behind the codec
 
-Deliberately deferred to the next networking phase — do not reach for these yet:
+The snapshot wire shrinks three ways, all behind the stable packet shapes, so the game code
+above is unchanged whether or not they are on:
 
-- **Delta compression, quantization, and a bit-packed input encoding.** The wire sends
-  full reflected state and the reflection-encoded `ActionState`; the optimization
-  tier is later, behind the stable component and `ActionState` shapes.
-- **Interest management** (per-connection relevancy). Every `Authority::Server` entity
-  replicates to every connection.
+- **Ack-keyed field deltas** ride always. A connection's snapshots carry only the fields that
+  changed since the tick it last acknowledged; a full self-describing record is reserved for
+  spawns, a periodic keyframe (`GameNetInfo::KeyframeIntervalSnapshots`), and the drift-tolerant
+  fallback. The delta path is loss-tolerant by construction — everything dirty since the ack is
+  re-sent each snapshot until a new ack advances the baseline — so it needs no game awareness.
+- **Spatial quantization** (`GameNetInfo::QuantizeSpatial`, on by default) rounds a `Transform`'s
+  position to a fixed-point grid (`PositionQuantum`, 1 mm default over `PositionExtent`) and its
+  rotation to a smallest-three quaternion on the wire. **The sim state stays full-float on both
+  ends** — only the wire representation rounds, and the server never quantizes its own truth. The
+  reconciliation epsilon (below) is kept ≥ the quantum, so the rounding never reads as a
+  misprediction.
+- **The packed `PlayerInput`** encodes each action's value and phase against the seat's active
+  context's resolved action list, keyed by a context-stack hash both ends verify; a mismatch
+  (a mid-flight context switch) falls back to the reflection form for that packet.
+
+## Interest management — a connection hears about its neighborhood
+
+Set `GameNetInfo::InterestRadius` (0, the default, replicates the whole world) to gate each
+connection's stream by relevancy: a connection hears about the entities within the radius of its
+pawn, plus every **always-relevant** entity, plus an optional `GameNetInfo::InterestPolicy` hook.
+
+- **Always-relevant** is a type mark beside `VE_REPLICATED` — **`VE_ALWAYS_RELEVANT(Type)`**. An
+  entity carrying any always-relevant component is relevant to every connection regardless of
+  distance; `Session` and the seat (`Viewer`) carry it builtin, so global game state always
+  reaches every client. A connection also always sees the entities it owns (its predicted pawn).
+- **Entering** interest sends the entity's spawn + baseline; **leaving** sends a
+  despawn carrying `DespawnReason::Visibility` (versus `Destroyed`). **A visibility despawn is
+  not a death** — the client tears the entity down with no game-event side effects, and a re-entry
+  re-spawns and re-baselines it. Hysteresis (a leave radius wider than the enter radius, plus a
+  minimum dwell) keeps a boundary from flapping.
+- The relevancy query is a headless-safe scene query, so a dedicated server filters interest with
+  no graphics stack.
+
+## Playing under adversity — `--netsim` and the tuning knobs
+
+The launcher ships a network-simulation flag in every build (a dev/QA tool, inert unless set):
+
+```sh
+hello_triangle-launcher --join 127.0.0.1 --netsim latency=100,jitter=20,loss=5,dup=1,reorder=2
+```
+
+`latency`/`jitter` are milliseconds; `loss`/`dup`/`reorder` are percentages. It wraps whichever
+transport the mode constructs (client or server), so an asymmetric setup runs it on one side. The
+acceptance target is the exemplar *playing well* at 100 ms / 5 % — the local pawn responsive
+(prediction), remotes smooth, corrections imperceptible in normal play.
+
+The knobs worth tuning per game, and what each trades:
+
+| Knob | Default | Trade |
+|------|---------|-------|
+| `InterestRadius` | 0 (off) | Bandwidth vs. how far a player sees; the scale lever. |
+| `QuantizeSpatial` / `PositionQuantum` | on / 1 mm | Bandwidth vs. positional precision on the wire. |
+| `KeyframeIntervalSnapshots` | 16 | Re-base cost vs. recovery latency after baseline loss. |
+| `SnapshotIntervalTicks` | 2 (30 Hz) | Bandwidth vs. remote-interpolation freshness. |
+| `ReconcileTolerances::Position` | 1 cm | Correction sensitivity; must stay ≥ `PositionQuantum`. |
+
+## What remains future
+
+Deliberately deferred — do not reach for these yet:
+
+- **Lag compensation** (server-side historical rewind for authoritative hit tests).
 - **Encryption / authentication.** The current scope is loopback/LAN/trusted-transport.
-
-The `ActionState`/component shapes are stable, so adopting the optimization tier later
-needs no change to the game code you write against this guide.
+- **Spectators, replays, host migration**, and **editor Play as a network client** — each a
+  consumer of the snapshot stream, each its own scope when earned.
 
 ## Where to go next
 

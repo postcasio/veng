@@ -3,6 +3,7 @@
 #include <Veng/Veng.h>
 #include <Veng/Result.h>
 #include <Veng/Asset/AssetId.h>
+#include <Veng/Net/FaultInjectionTransport.h>
 
 #include <span>
 
@@ -59,6 +60,14 @@ namespace Veng
         /// in client mode (NetRole::Client), the level arriving from the accept payload. An omitted
         /// port uses the app's configured default.
         optional<JoinTarget> Join;
+
+        /// @brief Network simulation to wrap the transport with (`--netsim latency=100,loss=5,...`); unset is a clean link.
+        ///
+        /// A dev/QA adversity tool shipped in every build: it wraps whichever transport the mode
+        /// constructs (server or client) in a SimulatedTransport with seeded loss/dup/reorder + a
+        /// latency/jitter delay, so the exemplar is playable under simulated adversity. The flag's
+        /// loss/dup/reorder are percentages (mapped to [0,1] rates), latency/jitter milliseconds.
+        optional<Net::FaultInjectionConfig> NetSim;
 
         /// @brief Parses launcher arguments (argv without the program name) into a LaunchArguments.
         ///

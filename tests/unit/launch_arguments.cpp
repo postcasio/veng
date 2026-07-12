@@ -142,3 +142,30 @@ TEST_CASE("LaunchArguments: a second positional argument is rejected")
 {
     CHECK_FALSE(ParseTokens({"/work", "/extra"}).has_value());
 }
+
+TEST_CASE("LaunchArguments: --netsim parses latency/jitter (ms) and loss/dup/reorder (percent)")
+{
+    const Result<LaunchArguments> parsed =
+        ParseTokens({"--netsim", "latency=100,jitter=20,loss=5,dup=1,reorder=2,seed=7"});
+    REQUIRE(parsed.has_value());
+    REQUIRE(parsed->NetSim.has_value());
+    CHECK(parsed->NetSim->LatencyMs == doctest::Approx(100.0f));
+    CHECK(parsed->NetSim->JitterMs == doctest::Approx(20.0f));
+    CHECK(parsed->NetSim->DropRate == doctest::Approx(0.05f));
+    CHECK(parsed->NetSim->DuplicateRate == doctest::Approx(0.01f));
+    CHECK(parsed->NetSim->ReorderRate == doctest::Approx(0.02f));
+    CHECK(parsed->NetSim->Seed == 7u);
+}
+
+TEST_CASE("LaunchArguments: an unknown --netsim key is rejected")
+{
+    CHECK_FALSE(ParseTokens({"--netsim", "bogus=1"}).has_value());
+    CHECK_FALSE(ParseTokens({"--netsim", "latency"}).has_value());
+}
+
+TEST_CASE("LaunchArguments: no --netsim leaves the link clean")
+{
+    const Result<LaunchArguments> parsed = ParseTokens({"--server"});
+    REQUIRE(parsed.has_value());
+    CHECK_FALSE(parsed->NetSim.has_value());
+}

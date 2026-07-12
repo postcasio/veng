@@ -10,7 +10,10 @@ namespace Veng::Net
 {
     struct Client::Impl
     {
-        Unique<Transport> OwnedTransport; // non-null when Connect opened its own socket
+        Unique<Transport> OwnedInner; // the opened socket when a NetSim wrapper owns the transport
+        Unique<Transport>
+            OwnedTransport; // non-null when Connect opened its own socket (or its NetSim wrapper)
+        FaultInjectionTransport* Sim = nullptr; // the --netsim wrapper, advanced each Pump
         Transport* Transport = nullptr;   // owned or overridden
         Unique<Connection> Conn;
         ClientState State = ClientState::Connecting;
@@ -40,7 +43,18 @@ namespace Veng::Net
             {
                 return std::unexpected(udp.error());
             }
-            impl->OwnedTransport = std::move(*udp);
+            if (info.NetSim.has_value())
+            {
+                // Wrap the opened socket in the network simulation; the socket outlives the wrapper.
+                impl->OwnedInner = std::move(*udp);
+                auto sim = CreateUnique<FaultInjectionTransport>(*impl->OwnedInner, *info.NetSim);
+                impl->Sim = sim.get();
+                impl->OwnedTransport = std::move(sim);
+            }
+            else
+            {
+                impl->OwnedTransport = std::move(*udp);
+            }
             impl->Transport = impl->OwnedTransport.get();
         }
 
@@ -65,6 +79,10 @@ namespace Veng::Net
     void Client::Pump(f64 now)
     {
         Impl& s = *m_Impl;
+        if (s.Sim != nullptr)
+        {
+            s.Sim->SetTime(now);
+        }
         s.AppReliable.clear();
         s.Conn->Update(now);
 

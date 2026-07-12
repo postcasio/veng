@@ -68,6 +68,70 @@ namespace Veng
             }
             return JoinTarget{.Host = string(host), .Port = port};
         }
+
+        // Parses a `--netsim` operand `key=value,key=value` into a fault/latency config. Keys:
+        // latency/jitter (milliseconds), loss/dup/reorder (percentages → [0,1] rates), seed (u64).
+        Result<Net::FaultInjectionConfig> ParseNetSim(const string_view text)
+        {
+            Net::FaultInjectionConfig config;
+            usize start = 0;
+            while (start <= text.size())
+            {
+                const usize comma = text.find(',', start);
+                const string_view pair = text.substr(
+                    start, comma == string_view::npos ? string_view::npos : comma - start);
+                start = comma == string_view::npos ? text.size() + 1 : comma + 1;
+                if (pair.empty())
+                {
+                    continue;
+                }
+                const usize eq = pair.find('=');
+                if (eq == string_view::npos)
+                {
+                    return std::unexpected(fmt::format("invalid --netsim term '{}'", pair));
+                }
+                const string_view key = pair.substr(0, eq);
+                const string_view valueText = pair.substr(eq + 1);
+                f32 value = 0.0f;
+                const char* const begin = valueText.data();
+                const char* const end = begin + valueText.size();
+                const std::from_chars_result parsed = std::from_chars(begin, end, value);
+                if (parsed.ec != std::errc{} || parsed.ptr != end || valueText.empty())
+                {
+                    return std::unexpected(fmt::format("invalid --netsim value '{}'", pair));
+                }
+
+                if (key == "latency")
+                {
+                    config.LatencyMs = value;
+                }
+                else if (key == "jitter")
+                {
+                    config.JitterMs = value;
+                }
+                else if (key == "loss")
+                {
+                    config.DropRate = value / 100.0f;
+                }
+                else if (key == "dup")
+                {
+                    config.DuplicateRate = value / 100.0f;
+                }
+                else if (key == "reorder")
+                {
+                    config.ReorderRate = value / 100.0f;
+                }
+                else if (key == "seed")
+                {
+                    config.Seed = static_cast<u64>(value);
+                }
+                else
+                {
+                    return std::unexpected(fmt::format("unknown --netsim key '{}'", key));
+                }
+            }
+            return config;
+        }
     }
 
     Result<LaunchArguments> LaunchArguments::Parse(const std::span<const string> args)
@@ -131,6 +195,29 @@ namespace Veng
                     return std::unexpected(target.error());
                 }
                 result.Join = *target;
+            }
+            else if (arg == "--netsim" || arg.starts_with("--netsim="))
+            {
+                string_view value;
+                if (arg.starts_with("--netsim="))
+                {
+                    value = arg.substr(std::string_view("--netsim=").size());
+                }
+                else if (i + 1 < args.size())
+                {
+                    value = args[++i];
+                }
+                else
+                {
+                    return std::unexpected(string("--netsim requires a value"));
+                }
+
+                const Result<Net::FaultInjectionConfig> netsim = ParseNetSim(value);
+                if (!netsim)
+                {
+                    return std::unexpected(netsim.error());
+                }
+                result.NetSim = *netsim;
             }
             else if (arg.starts_with("--"))
             {
