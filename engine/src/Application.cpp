@@ -59,6 +59,9 @@ namespace Veng
         Unique<ClientHost> ClientHost;
         InputSendBuffer Send;
         bool WorldStarted = false;
+        // True once the client has seeded its SimClock to the server's tick (the first snapshot
+        // reveals it). Until then the client's tick epoch is unrelated to the server's.
+        bool ClockSeeded = false;
         // Prefabs a replicated spawn resolved, kept resident so their entities instantiate; keyed by
         // AssetId value.
         unordered_map<u64, AssetHandle<Prefab>> ClientPrefabs;
@@ -433,11 +436,12 @@ namespace Veng
             }
         }
 
-        // The client tracks no applied server tick, so it acks 0: the server sends full state each
-        // snapshot (idempotent, just more bandwidth) rather than gating against a baseline.
+        // Acknowledge the highest applied server tick so the server advances this connection's delta
+        // baselines (and gates its snapshots against them) rather than re-sending full state forever.
         if (m_Net->Client->State() == Net::ClientState::Connected)
         {
-            const vector<u8> packet = m_Net->Send.Encode(0, m_TypeRegistry);
+            const vector<u8> packet =
+                m_Net->Send.Encode(m_Net->ClientHost->LastServerTick(), m_TypeRegistry);
             (void)m_Net->Client->Server().Send(Net::Channel::UnreliableSequenced, packet);
         }
     }
@@ -1007,6 +1011,26 @@ namespace Veng
             f32 slew = 1.0f;
             if (m_Net && m_Net->Role == NetRole::Client && m_Net->ClientHost)
             {
+                // Seed the client's tick epoch to the server's the first time a snapshot reveals it.
+                // Each SimClock starts at 0 when its process does, so a client joining a long-running
+                // server would otherwise stamp input at tick numbers the server's scheduled consume
+                // never matches (the input would be perpetually underrun and no client input would
+                // drive the authoritative sim). Seed to the server's last-applied tick plus a
+                // full-RTT run-ahead lead so the input for a server tick arrives before it consumes;
+                // the rate slew below then only corrects the residual.
+                if (!m_Net->ClockSeeded && m_Net->ClientHost->LastServerTick() > 0)
+                {
+                    const f32 rtt = static_cast<f32>(m_Net->Client->Server().RttEstimate());
+                    const u32 tickRate = m_Info.World ? m_Info.World->SimTickRate : 60u;
+                    const u64 lead = static_cast<u64>(rtt * static_cast<f32>(tickRate) + 0.5f) +
+                                     m_Net->Info.SnapshotIntervalTicks + 2;
+                    const u64 seed = m_Net->ClientHost->LastServerTick() + lead;
+                    m_SimClock.SetTick(seed);
+                    m_Net->ClientHost->History().Clear(); // pre-seed captures rode the old epoch
+                    m_Net->ClockSeeded = true;
+                    Log::Info("Client sim clock seeded to tick {} (server {} + lead {})", seed,
+                              m_Net->ClientHost->LastServerTick(), lead);
+                }
                 slew = m_Net->ClientHost->ObserveTickSync(m_SimClock.GetTick());
             }
             step = m_SimClock.Advance(delta * slew);

@@ -110,6 +110,21 @@ namespace Veng
         /// put and the residual is cleared, so resuming does not chase the frames spent paused.
         void Reset() { m_Accumulator = 0.0f; }
 
+        /// @brief Jumps the tick number to @p tick, clearing the accumulator.
+        ///
+        /// The seed a joining client applies once its first snapshot reveals the server's tick: the
+        /// two processes' tick epochs are otherwise unrelated (each clock starts at 0 when its own
+        /// process did), so a client that joined a long-running server would stamp input at tick
+        /// numbers the server's scheduled input consume never matches. Seeding the client's tick to
+        /// the server's (plus its run-ahead lead) aligns the epochs at once; the rate slew then only
+        /// corrects the residual jitter. No effect on the tick rate or the fixed step.
+        /// @param tick  The tick number to jump to.
+        void SetTick(u64 tick)
+        {
+            m_Tick = tick;
+            m_Accumulator = 0.0f;
+        }
+
         /// @brief Returns the last completed tick number.
         [[nodiscard]] u64 GetTick() const { return m_Tick; }
 

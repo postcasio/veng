@@ -104,7 +104,7 @@ namespace
         // than the v1 arrival-front consume; the clock-sync scenario exercises this path.
         bool ScheduledConsume = false;
 
-        explicit ServerWorld(Transport& transport, f32 interestRadius = 0.0f)
+        explicit ServerWorld(Transport& transport, f32 interestRadius = 0.0f, bool quantize = false)
         {
             RegisterBuiltinTypes(Types);
             World = Scene::Create(Types);
@@ -113,7 +113,8 @@ namespace
                 .World = *World,
                 .Assets = FakeAssets(),
                 .LevelId = LevelId,
-                .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
+                .Replication =
+                    ReplicationServer::Settings{.SnapshotInterval = 2, .QuantizeSpatial = quantize},
                 .Interest = InterestSettings{.Radius = interestRadius, .MinDwellSnapshots = 2},
             });
             REQUIRE(host.has_value());
@@ -824,4 +825,130 @@ TEST_CASE("Interest management: two clients far apart each hear only their own n
     // so the wire carried only each connection's neighborhood, not the world.
     CHECK(clientA.Host->Replication().Map().Lookup(netB).IsNull());
     CHECK(clientB.Host->Replication().Map().Lookup(netA).IsNull());
+}
+
+TEST_CASE("Two clients with quantization on: each sees the other's pawn move (not frozen at spawn)")
+{
+    const auto hub = CreateRef<Hub>();
+    const u32 serverEndpoint = hub->Register();
+    auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
+    ServerWorld server(*serverT, /*interestRadius=*/0.0f, /*quantize=*/true); // the real-app config
+
+    auto clientTa = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    auto clientTb = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    ClientWorld clientA(*clientTa);
+    ClientWorld clientB(*clientTb);
+
+    const ActionState moveA = MoveState(vec2(1.0f, 0.0f));  // +x
+    const ActionState moveB = MoveState(vec2(-1.0f, 0.0f)); // -x
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    for (u64 tick = 1; tick <= 160; ++tick)
+    {
+        now += Delta;
+        server.SimStep(tick, Delta);
+        server.NetPump(now, tick);
+        clientA.Frame(now, tick, Delta, moveA);
+        clientB.Frame(now, tick, Delta, moveB);
+    }
+
+    REQUIRE(clientA.Host->IsJoined());
+    REQUIRE(clientB.Host->IsJoined());
+    const ConnectionId idA = clientA.Client->AssignedId();
+    const ConnectionId idB = clientB.Client->AssignedId();
+    const NetId netA = server.World->Get<NetIdentity>(server.Pawns.at(idA)).Id;
+    const NetId netB = server.World->Get<NetIdentity>(server.Pawns.at(idB)).Id;
+
+    Scene& worldA = *clientA.Host->World();
+    Scene& worldB = *clientB.Host->World();
+    const Entity aSeesB = clientA.Host->Replication().Map().Lookup(netB);
+    const Entity bSeesA = clientB.Host->Replication().Map().Lookup(netA);
+    REQUIRE_FALSE(aSeesB.IsNull());
+    REQUIRE_FALSE(bSeesA.IsNull());
+
+    // The remote pawn must have MOVED from its spawn position — the frozen-at-spawn symptom would
+    // leave these at ~0. Quantized snapshots must keep the remote's interpolated pose updating.
+    CHECK(worldA.Get<Transform>(aSeesB).Position.x < -0.1f); // A sees B move -x
+    CHECK(worldB.Get<Transform>(bSeesA).Position.x > 0.1f);  // B sees A move +x
+}
+
+TEST_CASE("A late-joining client drives the server pawn only when its tick epoch is seeded")
+{
+    // The failure the running app hit: the server runs for a while before a client joins, so the two
+    // processes' SimClock tick epochs are far apart. With scheduled consume the server feeds each
+    // seat the input STAMPED AT ITS OWN TICK NUMBER, so a client stamping input on an unrelated epoch
+    // is never matched — the authoritative pawn is never driven. The fix seeds the client's clock to
+    // the server's tick at join; here the test supplies the aligned tick the seed produces.
+    constexpr u64 Lead = 4;
+    const ActionState move = MoveState(vec2(1.0f, 0.0f));
+    constexpr f32 Delta = 1.0f / 60.0f;
+
+    SUBCASE("seeded: the client's tick is aligned to the server epoch + lead, and input drives the "
+            "pawn")
+    {
+        auto [serverT, clientT] = LoopbackTransport::CreatePair();
+        ServerWorld server(*serverT);
+        server.ScheduledConsume = true;
+        ClientWorld client(*clientT);
+
+        f64 now = 0.0;
+        ConnectionId id = ServerConnectionId;
+        // The server runs alone to a high tick — a long-running server the client joins late.
+        for (u64 s = 1; s <= 600; ++s)
+        {
+            now += Delta;
+            server.SimStep(s, Delta);
+            server.NetPump(now, s);
+        }
+        // The client joins; its tick is seeded to the server epoch + lead (what Application now does).
+        for (u64 s = 601; s <= 900; ++s)
+        {
+            now += Delta;
+            client.Frame(now, s + Lead, Delta, move);
+            server.SimStep(s, Delta);
+            server.NetPump(now, s);
+            if (!server.Host->Server().Connections().empty())
+            {
+                id = server.Host->Server().Connections().front();
+            }
+        }
+        REQUIRE(id != ServerConnectionId);
+        REQUIRE(server.Pawns.contains(id));
+        CHECK(server.World->Get<Transform>(server.Pawns.at(id)).Position.x > 0.3f);
+    }
+
+    SUBCASE("unseeded: the client stamps its own epoch and the server pawn never moves (the bug)")
+    {
+        auto [serverT, clientT] = LoopbackTransport::CreatePair();
+        ServerWorld server(*serverT);
+        server.ScheduledConsume = true;
+        ClientWorld client(*clientT);
+
+        f64 now = 0.0;
+        ConnectionId id = ServerConnectionId;
+        for (u64 s = 1; s <= 600; ++s)
+        {
+            now += Delta;
+            server.SimStep(s, Delta);
+            server.NetPump(now, s);
+        }
+        // No seeding: the client stamps input on its own epoch (tick 1, 2, 3, ...) while the server
+        // consumes ticks 601+. Scheduled consume never matches — the pawn stays frozen at spawn.
+        u64 clientTick = 0;
+        for (u64 s = 601; s <= 900; ++s)
+        {
+            now += Delta;
+            client.Frame(now, ++clientTick, Delta, move);
+            server.SimStep(s, Delta);
+            server.NetPump(now, s);
+            if (!server.Host->Server().Connections().empty())
+            {
+                id = server.Host->Server().Connections().front();
+            }
+        }
+        REQUIRE(id != ServerConnectionId);
+        REQUIRE(server.Pawns.contains(id));
+        CHECK(server.World->Get<Transform>(server.Pawns.at(id)).Position.x < 0.05f);
+    }
 }
