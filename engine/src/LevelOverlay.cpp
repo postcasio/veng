@@ -113,14 +113,15 @@ namespace Veng
                                ? Renderer::ViewportRegion{.Offset = {0, 0}, .Extent = renderExtent}
                                : info.Region;
 
-        // Map the level's render settings onto the renderer topology and the per-frame view knobs.
+        // Map the level's render settings onto the renderer topology and seed the persistent per-frame
+        // view knobs. The knobs persist across frames (Update pushes this same instance) so a debug
+        // panel can retune them, mirroring the managed world's GetWorldViewState template.
         Renderer::SceneRendererSettings settings;
-        Renderer::ViewState knobs;
         if (const LevelRenderSettings* render = scene.TryGetFirst<LevelRenderSettings>())
         {
             overlay.m_Render = *render;
-            ApplyLevelRenderSettings(overlay.m_Render, settings, knobs);
         }
+        ApplyLevelRenderSettings(overlay.m_Render, settings, overlay.m_ViewKnobs);
 
         overlay.m_Viewport = Renderer::Viewport::Create({
             .Context = context,
@@ -139,12 +140,7 @@ namespace Veng
         // right away (mirroring BootstrapWorld's seed) so the viewport's retained scene pointer is set
         // before the first engine tick, closing the first-frame gap in the per-sim view resolution.
         app.RegisterSimulation(scene);
-        {
-            Renderer::SceneRendererSettings initialSettings;
-            Renderer::ViewState initialKnobs;
-            ApplyLevelRenderSettings(overlay.m_Render, initialSettings, initialKnobs);
-            PushSceneView(*overlay.m_Viewport, scene, initialKnobs);
-        }
+        PushSceneView(*overlay.m_Viewport, scene, overlay.m_ViewKnobs);
 
         // 4. Route input across the three seams, capturing what each must restore.
         InputRouter& router = app.GetInputRouter();
@@ -194,10 +190,10 @@ namespace Veng
         : m_App(other.m_App), m_Instance(std::move(other.m_Instance)),
           m_Viewport(std::move(other.m_Viewport)), m_Suspend(std::move(other.m_Suspend)),
           m_SuspendContext(std::move(other.m_SuspendContext)), m_Render(other.m_Render),
-          m_Region(other.m_Region), m_OverlaySeat(other.m_OverlaySeat),
-          m_PriorCursorSeat(other.m_PriorCursorSeat), m_PausePrimarySim(other.m_PausePrimarySim),
-          m_PriorPaused(other.m_PriorPaused), m_TrackWindow(other.m_TrackWindow),
-          m_Started(other.m_Started)
+          m_ViewKnobs(other.m_ViewKnobs), m_Region(other.m_Region),
+          m_OverlaySeat(other.m_OverlaySeat), m_PriorCursorSeat(other.m_PriorCursorSeat),
+          m_PausePrimarySim(other.m_PausePrimarySim), m_PriorPaused(other.m_PriorPaused),
+          m_TrackWindow(other.m_TrackWindow), m_Started(other.m_Started)
     {
         other.m_App = nullptr;
         other.m_Started = false;
@@ -214,6 +210,7 @@ namespace Veng
             m_Suspend = std::move(other.m_Suspend);
             m_SuspendContext = std::move(other.m_SuspendContext);
             m_Render = other.m_Render;
+            m_ViewKnobs = other.m_ViewKnobs;
             m_Region = other.m_Region;
             m_OverlaySeat = other.m_OverlaySeat;
             m_PriorCursorSeat = other.m_PriorCursorSeat;
@@ -260,13 +257,10 @@ namespace Veng
         m_Viewport->SetUiScale(context.IsHeadless() ? 1.0f
                                                     : context.GetWindow().GetContentScale().x);
 
-        // Push the resolved camera and the level's view knobs; the viewport's own render drives the
-        // scene's GuiOverlay HUD. The overlay shares the frame's interpolation alpha with the primary
-        // world (the same accumulator drives both), so its scene interpolates in phase.
-        Renderer::SceneRendererSettings settings;
-        Renderer::ViewState knobs;
-        ApplyLevelRenderSettings(m_Render, settings, knobs);
-        PushSceneView(*m_Viewport, *m_Instance.World, knobs, delta, m_App->GetSimAlpha());
+        // Push the resolved camera over the persistent view knobs; the viewport's own render drives
+        // the scene's GuiOverlay HUD. The overlay shares the frame's interpolation alpha with the
+        // primary world (the same accumulator drives both), so its scene interpolates in phase.
+        PushSceneView(*m_Viewport, *m_Instance.World, m_ViewKnobs, delta, m_App->GetSimAlpha());
     }
 
     void LevelOverlay::Close()

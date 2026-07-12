@@ -10,8 +10,12 @@
 #include <Veng/UI/Scopes.h>
 #include <Veng/UI/Widgets.h>
 
+#include <Veng/Time.h>
+
 #include <algorithm>
 #include <limits>
+#include <ranges>
+#include <span>
 
 namespace Veng::UI
 {
@@ -64,62 +68,204 @@ namespace Veng::UI
                              renderer.GetBroadphaseNodeCount()));
     }
 
-    void FrameTimeGraph::Push(const f32 milliseconds)
+    namespace
     {
-        m_Samples[m_Head] = milliseconds;
-        m_Head = (m_Head + 1) % Capacity;
-        m_Count = std::min(m_Count + 1, Capacity);
+        // One pass's GPU time after grouping: the bloom and hi-Z mip sweeps each collapse to a
+        // single named entry, every other pass stays itself.
+        struct PassCost
+        {
+            string Name;
+            f32 Milliseconds = 0.0f;
+        };
+
+        // Folds a per-scope pass name onto its display group: the per-mip bloom and hi-Z passes
+        // ("Bloom Down Mip 3", "HiZ Reduce Mip 2", …) collapse to "Bloom" / "Hi-Z" so the sweep
+        // reads as one pass; any other name passes through unchanged.
+        string PassGroup(string_view name)
+        {
+            if (name.starts_with("Bloom"))
+            {
+                return "Bloom";
+            }
+            if (name.starts_with("HiZ") || name.starts_with("Hi-Z"))
+            {
+                return "Hi-Z";
+            }
+            return string(name);
+        }
+
+        // Aggregates the frame's per-scope timings into grouped pass costs, summing each group's
+        // contiguous mip passes and preserving first-seen (execution) order.
+        vector<PassCost> AggregatePasses(std::span<const Renderer::Context::GpuPassTiming> passes)
+        {
+            vector<PassCost> costs;
+            for (const Renderer::Context::GpuPassTiming& pass : passes)
+            {
+                string group = PassGroup(pass.Name);
+                const auto existing = std::ranges::find(costs, group, &PassCost::Name);
+                if (existing == costs.end())
+                {
+                    costs.push_back({.Name = std::move(group), .Milliseconds = pass.Milliseconds});
+                }
+                else
+                {
+                    existing->Milliseconds += pass.Milliseconds;
+                }
+            }
+            return costs;
+        }
+
+        // A stable, legible color for a pass's line and legend swatch: a fixed palette indexed by
+        // a name hash, so a pass keeps its color regardless of its position in the frame's order.
+        vec4 PassColor(string_view name)
+        {
+            // A hand-tuned categorical palette: widely separated hues with alternating brightness
+            // so neighbors in the legend stay distinguishable. White is reserved for the GPU total.
+            static const std::array<vec4, 16> Palette{
+                vec4{0.90f, 0.10f, 0.10f, 1.0f}, // red
+                vec4{0.20f, 0.55f, 1.00f, 1.0f}, // blue
+                vec4{1.00f, 0.85f, 0.00f, 1.0f}, // yellow
+                vec4{0.55f, 0.20f, 0.90f, 1.0f}, // violet
+                vec4{0.10f, 0.80f, 0.30f, 1.0f}, // green
+                vec4{1.00f, 0.45f, 0.00f, 1.0f}, // orange
+                vec4{0.10f, 0.85f, 0.90f, 1.0f}, // cyan
+                vec4{0.95f, 0.35f, 0.70f, 1.0f}, // pink
+                vec4{0.60f, 0.80f, 0.10f, 1.0f}, // lime
+                vec4{0.50f, 0.35f, 0.20f, 1.0f}, // brown
+                vec4{0.45f, 0.95f, 0.65f, 1.0f}, // mint
+                vec4{0.80f, 0.55f, 1.00f, 1.0f}, // lavender
+                vec4{0.85f, 0.65f, 0.40f, 1.0f}, // tan
+                vec4{0.00f, 0.50f, 0.55f, 1.0f}, // teal
+                vec4{1.00f, 0.60f, 0.55f, 1.0f}, // salmon
+                vec4{0.65f, 0.75f, 0.85f, 1.0f}, // slate
+            };
+
+            // FNV-1a over the name.
+            u32 hash = 2166136261u;
+            for (const char c : name)
+            {
+                hash = (hash ^ static_cast<u8>(c)) * 16777619u;
+            }
+            return Palette[hash % Palette.size()];
+        }
+
+        // The whole-frame GPU line is drawn in white; the passes take the distinct palette.
+        constexpr vec4 GpuLineColor{1.0f, 1.0f, 1.0f, 1.0f};
+    }
+
+    void FrameTimeGraph::History::Push(const f32 milliseconds)
+    {
+        Samples[Head] = milliseconds;
+        Head = (Head + 1) % Capacity;
+        Count = std::min(Count + 1, Capacity);
+    }
+
+    f32 FrameTimeGraph::History::Last() const
+    {
+        return Count == 0 ? 0.0f : Samples[(Head + Capacity - 1) % Capacity];
+    }
+
+    i32 FrameTimeGraph::History::PlotOffset() const
+    {
+        // A full buffer wraps, so the oldest sample sits at the write head; until then it is
+        // filled from index 0 and plots in array order.
+        return Count == Capacity ? static_cast<i32>(Head) : 0;
     }
 
     void FrameTimeGraph::Draw(const Viewport& viewport)
     {
         const Renderer::Context& context =
             viewport.GetRenderer().GetOutput()->GetImage()->GetContext();
-        if (!context.IsGpuTimingSupported())
+        const bool gpuTiming = context.IsGpuTimingSupported();
+
+        // Sample this frame's timelines into their rolling histories: the CPU frame delta the
+        // engine just measured, and the GPU whole-frame + per-pass times read back from the
+        // device timers (a frame or two late, which is fine for a rolling history). A pass keyed
+        // by its group name keeps its own history across frames; one absent this frame simply
+        // stops receiving samples until it returns.
+        m_Cpu.Push(Time::GetDeltaTime() * 1000.0f);
+        vector<PassCost> passes;
+        if (gpuTiming)
         {
-            UI::TextDisabled("GPU timing unsupported on this device");
-            return;
+            m_Gpu.Push(context.GetLastGpuFrameTimeMs());
+            passes = AggregatePasses(context.GetLastGpuPassTimings());
+            for (const PassCost& pass : passes)
+            {
+                m_Passes[pass.Name].Push(pass.Milliseconds);
+            }
         }
 
-        Push(context.GetLastGpuFrameTimeMs());
-        Draw();
-    }
+        if (gpuTiming)
+        {
+            // The whole-frame GPU envelope first (white), then each pass's history — one shared,
+            // auto-scaled chart so the passes read against the frame total.
+            vector<UI::PlotSeries> series;
+            series.reserve(passes.size() + 1);
+            series.push_back({
+                .Color = GpuLineColor,
+                .Values = {m_Gpu.Samples.data(), m_Gpu.Count},
+                .Offset = m_Gpu.PlotOffset(),
+            });
+            for (const PassCost& pass : passes)
+            {
+                const History& history = m_Passes[pass.Name];
+                series.push_back({
+                    .Color = PassColor(pass.Name),
+                    .Values = {history.Samples.data(), history.Count},
+                    .Offset = history.PlotOffset(),
+                });
+            }
+            UI::PlotLinesMulti("##gpu", series, {.ScaleMin = 0.0f, .Size = {0.0f, 160.0f}});
 
-    void FrameTimeGraph::Draw()
-    {
-        // Reduce the valid samples to min/max/average. The buffer fills from index 0 before it
-        // wraps, so [0, m_Count) is always the populated set regardless of m_Head.
+            // Two-column legend: a swatch matching each line, then its label and current cost.
+            if (auto legend = UI::Table("GpuLegend", 2))
+            {
+                const f32 swatch = UI::GetTextLineHeight();
+                UI::TableNextColumn();
+                UI::Badge("", GpuLineColor, {swatch, swatch});
+                UI::SameLine();
+                UI::Text(fmt::format("GPU: {:.3f} ms", m_Gpu.Last()));
+                for (const PassCost& pass : passes)
+                {
+                    UI::TableNextColumn();
+                    UI::Badge("", PassColor(pass.Name), {swatch, swatch});
+                    UI::SameLine();
+                    UI::Text(fmt::format("{}: {:.3f} ms", pass.Name, pass.Milliseconds));
+                }
+            }
+
+            UI::Spacing();
+        }
+        else
+        {
+            UI::TextDisabled("GPU timing unsupported on this device");
+        }
+
+        // The CPU whole-frame plot sits below the GPU chart, on its own fixed millisecond axis.
         f32 minimum = std::numeric_limits<f32>::max();
         f32 maximum = 0.0f;
         f32 sum = 0.0f;
-        for (usize i = 0; i < m_Count; i++)
+        for (usize i = 0; i < m_Cpu.Count; i++)
         {
-            const f32 sample = m_Samples[i];
+            const f32 sample = m_Cpu.Samples[i];
             minimum = std::min(minimum, sample);
             maximum = std::max(maximum, sample);
             sum += sample;
         }
-        if (m_Count == 0)
+        if (m_Cpu.Count == 0)
         {
             minimum = 0.0f;
         }
-        const f32 average = m_Count == 0 ? 0.0f : sum / static_cast<f32>(m_Count);
-        const f32 last = m_Count == 0 ? 0.0f : m_Samples[(m_Head + Capacity - 1) % Capacity];
-
-        UI::Text(fmt::format("GPU: {:.2f} ms  (avg {:.2f}  min {:.2f}  max {:.2f})", last, average,
-                             minimum, maximum));
-
-        // A full buffer wraps, so the oldest sample sits at the write head; until then it is
-        // filled from index 0 and plots in array order. The axis is pinned so a line's height
-        // reads as absolute milliseconds.
-        const i32 offset = m_Count == Capacity ? static_cast<i32>(m_Head) : 0;
+        const f32 average = m_Cpu.Count == 0 ? 0.0f : sum / static_cast<f32>(m_Cpu.Count);
+        UI::Text(fmt::format("CPU: {:.2f} ms  (avg {:.2f}  min {:.2f}  max {:.2f})", m_Cpu.Last(),
+                             average, minimum, maximum));
         const f32 scaleMax = glm::max(maximum * 1.25f, 1000.0f / 60.0f);
-        UI::PlotLines("##gpuframetime", {m_Samples.data(), m_Count},
+        UI::PlotLines("##cpuframetime", {m_Cpu.Samples.data(), m_Cpu.Count},
                       {
-                          .OverlayText = fmt::format("{:.2f} ms", last),
+                          .OverlayText = fmt::format("{:.2f} ms", m_Cpu.Last()),
                           .ScaleMin = 0.0f,
                           .ScaleMax = scaleMax,
-                          .Offset = offset,
+                          .Offset = m_Cpu.PlotOffset(),
                           .Size = {0.0f, 80.0f},
                       });
     }

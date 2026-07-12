@@ -1141,6 +1141,12 @@ namespace Veng::Renderer
         AstcSupported = astcSupported;
         features2.features.textureCompressionASTC_LDR = astcSupported ? vk::True : vk::False;
 
+        // getFeatures2 above filled in every feature the device advertises. robustBufferAccess
+        // is mandatory-advertised, but MoltenVK cannot implement it on Metal and warns per run
+        // when it is enabled; the engine never relies on robust out-of-bounds behavior, so
+        // leave it off everywhere for uniform semantics.
+        features2.features.robustBufferAccess = vk::False;
+
         // depthClamp gates GraphicsPipelineInfo::DepthClampEnable (shadow pancaking). The
         // queried value already reflects support and is passed through to createDevice
         // unchanged; record it so IsDepthClampSupported() reports the enabled state.

@@ -696,7 +696,8 @@ private:
             }
         }
 
-        // The GPU frame-time history graph; the stateful helper samples the device timer itself.
+        // The combined frame-time graph; the stateful helper samples the CPU/GPU/per-pass timers
+        // itself and overlays the whole-frame GPU time with each pass on one chart.
         if (auto graphWindow = UI::Window("Frame Time"))
         {
             m_FrameTimeGraph.Draw(viewport);

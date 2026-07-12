@@ -3,6 +3,7 @@
 #include <Veng/Veng.h>
 #include <Veng/Asset/AssetHandle.h>
 #include <Veng/Asset/Level.h>
+#include <Veng/Renderer/Viewport.h>
 #include <Veng/Renderer/ViewportRegion.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Entity.h>
@@ -139,6 +140,19 @@ namespace Veng
         /// @pre IsOpen().
         [[nodiscard]] Renderer::Viewport& GetViewport() const;
 
+        /// @brief Returns the overlay's persistent per-frame view knobs, editable in place.
+        ///
+        /// The photometric half of the overlay's `ViewState` (exposure, bloom, SSR, …), seeded from
+        /// the level's `LevelRenderSettings` at open and pushed each `Update` — the overlay's analogue
+        /// of `Application::GetWorldViewState()`. Edit it to retune the overlay's view (a debug
+        /// settings panel), and the change persists because `Update` pushes this same instance rather
+        /// than re-deriving from the level settings each frame. `Update` overrides only the frame's
+        /// world / camera / delta / interpolation alpha on top of these knobs.
+        [[nodiscard]] Renderer::ViewState& GetViewState() { return m_ViewKnobs; }
+
+        /// @brief Returns the overlay's persistent per-frame view knobs (read-only).
+        [[nodiscard]] const Renderer::ViewState& GetViewState() const { return m_ViewKnobs; }
+
         /// @brief Returns the overlay's own input seat (its Viewer entity), or Entity::Null if none.
         [[nodiscard]] Entity GetSeat() const { return m_OverlaySeat; }
 
@@ -155,8 +169,10 @@ namespace Veng
         Unique<SeatFocusScope> m_Suspend;
         /// @brief The engine-owned empty context the focus scope swaps the suspended seat's input to.
         AssetHandle<InputMappingContext> m_SuspendContext;
-        /// @brief The overlay level's render knobs, mapped into the per-frame view each Update.
+        /// @brief The overlay level's render knobs, seeding the topology and the view knobs at open.
         LevelRenderSettings m_Render;
+        /// @brief The persistent per-frame view knobs pushed each Update, editable via GetViewState.
+        Renderer::ViewState m_ViewKnobs;
         /// @brief The current viewport region; recomputed from the framebuffer extent when tracking.
         Renderer::ViewportRegion m_Region;
         /// @brief The overlay's own seat, taken as the cursor seat and the pointer-routing target.

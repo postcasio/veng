@@ -2,6 +2,8 @@
 #include <Veng/Veng.h>
 
 #include <array>
+#include <map>
+#include <string>
 
 /// @brief À-la-carte renderer debug panels built on the `Veng::UI` widget vocabulary.
 ///
@@ -33,49 +35,66 @@ namespace Veng::UI
     /// @param viewport  The viewport whose renderer the stats are read from.
     void RendererStatsPanel(const Renderer::Viewport& viewport);
 
-    /// @brief A stateful rolling frame-time graph owning its GPU-frame-time history ring.
+    /// @brief A stateful rolling frame-time graph combining the whole-frame and per-pass timings.
     ///
-    /// The one stateful `Veng::UI` helper: a small value type the caller persists across
-    /// frames (a panel-local member), holding a fixed-capacity ring of millisecond samples.
-    /// Push a sample each frame and call `Draw` (or `Draw(viewport)`, which samples
-    /// `Context::GetLastGpuFrameTimeMs()` itself) to plot the history with a min/avg/max
-    /// readout. Imgui-free in its surface, consistent with the stateless widget wrappers.
+    /// The one stateful `Veng::UI` helper: a small value type the caller persists across frames
+    /// (a panel-local member), owning rolling millisecond histories for the CPU frame delta, the
+    /// whole-frame GPU time, and each render pass's GPU cost. One `Draw(viewport)` per frame
+    /// samples all three from the viewport's render context (and the frame delta from `Time`),
+    /// then plots the whole-frame GPU time and every grouped pass as colored lines on one shared
+    /// auto-scaled chart with a color-swatch legend, and the CPU frame time on its own axis
+    /// below. Imgui-free in its surface, consistent with the stateless widget wrappers.
     class FrameTimeGraph
     {
     public:
-        /// @brief Constructs an empty graph with a zeroed history ring.
+        /// @brief Constructs an empty graph with zeroed history rings.
         FrameTimeGraph() = default;
 
-        /// @brief Appends one GPU frame-time sample, overwriting the oldest once full.
-        /// @param milliseconds  The frame's GPU time in milliseconds.
-        void Push(f32 milliseconds);
-
-        /// @brief Samples the viewport's renderer GPU frame time, then plots the history.
+        /// @brief Samples this frame's CPU/GPU/per-pass timings, then plots the combined graph.
         ///
-        /// Reads `Context::GetLastGpuFrameTimeMs()` through the viewport's render context and
-        /// pushes it before plotting, so a caller need not sample the timeline itself. Draws a
-        /// disabled note instead of a plot when the device exposes no timestamp queries
-        /// (`Context::IsGpuTimingSupported()` is false). Draws into the current window.
-        /// @param viewport  The viewport whose render context the GPU frame time is read from.
+        /// Reads the whole-frame GPU time and the per-pass GPU breakdown
+        /// (`Context::GetLastGpuFrameTimeMs()` / `Context::GetLastGpuPassTimings()`) through the
+        /// viewport's render context and the CPU frame delta from `Time::GetDeltaTime()`, appends
+        /// each to its rolling history, then draws them: the whole-frame GPU envelope (white) and
+        /// every grouped pass (bloom / hi-Z mip sweeps collapsed) as colored lines on one shared
+        /// auto-scaled chart, a two-column legend, and the CPU frame time below on its own axis.
+        /// The GPU sections are replaced by a disabled note when the device exposes no timestamp
+        /// queries (`Context::IsGpuTimingSupported()` is false). Draws into the current window.
+        /// @param viewport  The viewport whose render context the timings are read from.
         void Draw(const Renderer::Viewport& viewport);
 
-        /// @brief Plots the accumulated history with a min/avg/max readout above the line graph.
-        ///
-        /// The axis is pinned to `[0, max·1.25]` (floored at one 60 Hz frame) so a line's
-        /// height reads as absolute milliseconds. Draws into the current window. Use the
-        /// `Draw(viewport)` overload to sample the GPU frame time automatically.
-        void Draw();
-
     private:
-        /// @brief Fixed sample capacity of the history ring.
+        /// @brief Fixed sample capacity of each history ring.
         static constexpr usize Capacity = 240;
 
-        /// @brief The rolling millisecond samples; filled from index 0 until it wraps.
-        std::array<f32, Capacity> m_Samples{};
-        /// @brief The next write slot (and, once full, the oldest sample).
-        usize m_Head = 0;
-        /// @brief The number of valid samples, saturating at Capacity.
-        usize m_Count = 0;
+        /// @brief A fixed-capacity rolling ring of millisecond samples.
+        struct History
+        {
+            /// @brief The rolling millisecond samples; filled from index 0 until it wraps.
+            std::array<f32, Capacity> Samples{};
+            /// @brief The next write slot (and, once full, the oldest sample).
+            usize Head = 0;
+            /// @brief The number of valid samples, saturating at Capacity.
+            usize Count = 0;
+
+            /// @brief Appends one sample, overwriting the oldest once full.
+            /// @param milliseconds  The sample value in milliseconds.
+            void Push(f32 milliseconds);
+
+            /// @brief Returns the most recently pushed sample, or 0 before the first push.
+            [[nodiscard]] f32 Last() const;
+
+            /// @brief Returns the plot ring offset: the write head once wrapped, else 0.
+            [[nodiscard]] i32 PlotOffset() const;
+        };
+
+        /// @brief The CPU frame-delta history, plotted on its own axis below the GPU chart.
+        History m_Cpu;
+        /// @brief The whole-frame GPU-time history, the white envelope line on the shared chart.
+        History m_Gpu;
+        /// @brief Per-pass GPU-cost histories, keyed by grouped pass name; a pass absent this
+        /// frame simply stops receiving samples until it returns.
+        map<string, History> m_Passes;
     };
 
     /// @brief Draws the renderer debug-view selector as a combo over every DebugView arm.
