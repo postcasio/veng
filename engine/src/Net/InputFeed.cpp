@@ -76,6 +76,48 @@ namespace Veng
         }
     }
 
+    namespace
+    {
+        // The buffered-depth cushion the feedback loop steers each client's lead toward: a couple of
+        // ticks of input held ahead of the consume front absorbs jitter without over-leading.
+        constexpr i32 DesiredInputCushion = 2;
+    }
+
+    void FeedSeatInputs(ServerHost& host,
+                        unordered_map<Net::ConnectionId, InputJitterBuffer>& buffers, Scene& world,
+                        const u64 serverTick)
+    {
+        for (const Net::ConnectionId id : host.Server().Connections())
+        {
+            const auto it = buffers.find(id);
+            if (it == buffers.end())
+            {
+                continue;
+            }
+            const optional<ActionState> consumed = it->second.ConsumeForTick(serverTick);
+
+            // Ride the remaining buffered depth back as this connection's timing feedback: a deep
+            // buffer means the client leads by more than it needs and can slew its tick back.
+            host.Replication().SetInputFeedback(id, static_cast<i32>(it->second.Depth()) -
+                                                        DesiredInputCushion);
+
+            if (!consumed)
+            {
+                continue;
+            }
+
+            const Entity seat = host.SeatFor(id);
+            if (seat.IsNull() || !world.IsAlive(seat))
+            {
+                continue;
+            }
+
+            PlayerInput& input = world.Has<PlayerInput>(seat) ? world.Get<PlayerInput>(seat)
+                                                              : world.Add<PlayerInput>(seat);
+            input.State = *consumed;
+        }
+    }
+
     void StampLocalSeatInput(InputSendBuffer& send, const Scene& world, const u64 clientTick)
     {
         // The local input seat is the first (SeatInput, PlayerInput) entity — the one InputMappingSystem

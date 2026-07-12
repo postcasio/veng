@@ -400,11 +400,13 @@ namespace Veng
         }
     }
 
-    void Application::FeedServerSeatInputs()
+    void Application::FeedServerSeatInputs(const u64 tick)
     {
         if (m_Net && m_Net->Server && m_PrimaryWorld)
         {
-            FeedSeatInputs(*m_Net->Server, m_Net->Jitter, *m_PrimaryWorld);
+            // Scheduled consume: the client runs its tick ahead of the server (the tick-offset slew),
+            // so the input it stamped at this tick has arrived by the time the server reaches it.
+            FeedSeatInputs(*m_Net->Server, m_Net->Jitter, *m_PrimaryWorld, tick);
         }
     }
 
@@ -953,7 +955,17 @@ namespace Veng
         SimStep step{};
         if (anyActive)
         {
-            step = m_SimClock.Advance(delta);
+            // Client tick-offset slew: stretch/shrink the frame delta by the tick-offset controller's
+            // bounded factor so the client's sim tick runs ahead of the server by RTT/2 + jitter
+            // margin — its input then arrives at or just before the server's scheduled consume. The
+            // accumulator still runs every tick exactly once (a bounded slew never doubles or skips a
+            // tick); off a client, or before the controller has an estimate, the factor is 1.0.
+            f32 slew = 1.0f;
+            if (m_Net && m_Net->Role == NetRole::Client && m_Net->ClientHost)
+            {
+                slew = m_Net->ClientHost->ObserveTickSync(m_SimClock.GetTick());
+            }
+            step = m_SimClock.Advance(delta * slew);
         }
         else
         {
@@ -1022,7 +1034,7 @@ namespace Veng
                 if (netWorld && m_Net->Role == NetRole::Server)
                 {
                     scene->SetChangeTick(tick);
-                    FeedServerSeatInputs();
+                    FeedServerSeatInputs(tick);
                 }
                 scene->TickSimulationPhase(
                     SceneSystem::Phase::Sim, step.SimDelta,

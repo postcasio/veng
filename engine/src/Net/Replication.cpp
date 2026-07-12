@@ -376,7 +376,7 @@ namespace Veng
         return targets.size();
     }
 
-    vector<u8> EncodeSnapshot(const Scene& scene, u64 serverTick, u64 sinceTick)
+    vector<u8> EncodeSnapshot(const Scene& scene, u64 serverTick, u64 sinceTick, i32 inputFeedback)
     {
         const TypeRegistry& registry = scene.GetTypeRegistry();
         const vector<TypeId> replicated = ReplicatedTypeIds(registry);
@@ -384,6 +384,7 @@ namespace Veng
 
         vector<u8> out;
         AppendU64(out, serverTick);
+        AppendU32(out, static_cast<u32>(inputFeedback));
 
         for (auto [entity, identity] : scene.View<NetIdentity>())
         {
@@ -413,7 +414,13 @@ namespace Veng
             // A packet too short to carry a header applies nothing.
             return result;
         }
+        const Result<u32> feedback = ReadU32(packet, cursor);
+        if (!feedback)
+        {
+            return result;
+        }
         result.ServerTick = *serverTick;
+        result.InputFeedback = static_cast<i32>(*feedback);
         result.HeaderValid = true;
 
         const EntityRemap decodeRef = MakeDecodeRef(map);
@@ -486,6 +493,14 @@ namespace Veng
         if (it != m_Connections.end() && tick > it->second.AckedTick)
         {
             it->second.AckedTick = tick;
+        }
+    }
+
+    void ReplicationServer::SetInputFeedback(Net::ConnectionId id, i32 feedback)
+    {
+        if (const auto it = m_Connections.find(id); it != m_Connections.end())
+        {
+            it->second.InputFeedback = feedback;
         }
     }
 
@@ -573,10 +588,11 @@ namespace Veng
         // packets, each a self-contained snapshot packet (header + a subset of the records).
         if (m_Settings.SnapshotInterval != 0 && tick % m_Settings.SnapshotInterval == 0)
         {
-            const auto startPacket = [tick]()
+            const auto startPacket = [tick, feedback = state.InputFeedback]()
             {
                 vector<u8> packet;
                 AppendU64(packet, tick);
+                AppendU32(packet, static_cast<u32>(feedback));
                 return packet;
             };
 
@@ -753,7 +769,13 @@ namespace Veng
         {
             return result;
         }
+        const Result<u32> feedback = ReadU32(packet, cursor);
+        if (!feedback)
+        {
+            return result;
+        }
         result.ServerTick = *serverTick;
+        result.InputFeedback = static_cast<i32>(*feedback);
         result.HeaderValid = true;
 
         const EntityRemap decodeRef = MakeDecodeRef(m_Map);

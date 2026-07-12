@@ -100,6 +100,9 @@ namespace
         std::unordered_map<ConnectionId, InputJitterBuffer> Jitter;
         std::unordered_map<ConnectionId, Entity> Pawns;
         MovementSystem Movement;
+        // When set, SimStep consumes input scheduled for the tick (the ahead-of-server model) rather
+        // than the v1 arrival-front consume; the clock-sync scenario exercises this path.
+        bool ScheduledConsume = false;
 
         explicit ServerWorld(Transport& transport)
         {
@@ -169,7 +172,14 @@ namespace
         {
             World->SetChangeTick(tick);
             RunSpawnRule();
-            FeedSeatInputs(*Host, Jitter, *World);
+            if (ScheduledConsume)
+            {
+                FeedSeatInputs(*Host, Jitter, *World, tick);
+            }
+            else
+            {
+                FeedSeatInputs(*Host, Jitter, *World);
+            }
 
             for (const auto& [id, pawn] : Pawns)
             {
@@ -515,6 +525,57 @@ TEST_CASE("A hostile input stream drops rather than faulting the serving server"
     CHECK(fed);
 }
 
+TEST_CASE("Scheduled consume: a client running ahead underruns ~never under steady input")
+{
+    // The ahead-of-server model the tick-offset slew produces: the client's sim tick runs a few ticks
+    // ahead of the server (RTT/2 + jitter + margin — roughly three to four ticks at a 60 Hz sim over a
+    // ~50 ms link), so the input it stamps for tick T has arrived by the time the server's scheduled
+    // consume reaches T. Modeled device-free by stepping the client Lead ticks ahead of the server on
+    // one shared tick epoch, and consuming with the scheduled ConsumeForTick path.
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+    ServerWorld server(*serverT);
+    server.ScheduledConsume = true;
+    ClientWorld client(*clientT);
+
+    constexpr u64 Lead = 4;
+    const ActionState move = MoveState(vec2(1.0f, 0.0f));
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    ConnectionId id = ServerConnectionId;
+    for (u64 step = 1; step <= 240; ++step)
+    {
+        now += Delta;
+        // The client leads by Lead ticks: this iteration it stamps and sends tick `step`, while the
+        // server — lagging — consumes tick `step - Lead`, for which the input has long since arrived.
+        client.Frame(now, step, Delta, move);
+        if (step > Lead)
+        {
+            const u64 serverTick = step - Lead;
+            server.SimStep(serverTick, Delta);
+            server.NetPump(now, serverTick);
+        }
+        if (!server.Host->Server().Connections().empty())
+        {
+            id = server.Host->Server().Connections().front();
+        }
+    }
+
+    REQUIRE(id != ServerConnectionId);
+    REQUIRE(server.Pawns.contains(id));
+
+    // The scheduled input drove the server pawn along +x every tick — real wire input, not a coasted
+    // edge (a chronic underrun would still hold the +x value but is what this asserts against).
+    CHECK(server.World->Get<Transform>(server.Pawns.at(id)).Position.x > 0.5f);
+
+    // With the client leading, each server tick's input was already buffered when the scheduled consume
+    // reached it: the server consumed a fresh input almost every tick, so underrun-duplication is
+    // negligible — a small startup transient before the first input arrives aside.
+    const InputJitterBuffer& buffer = server.Jitter.at(id);
+    REQUIRE(buffer.ConsumeCount() > 150);
+    CHECK(buffer.UnderrunCount() <= 5);
+}
+
 namespace
 {
     // A multi-peer in-process medium so one server transport can talk to two client transports at
@@ -582,6 +643,61 @@ namespace
         u32 m_ResolveTo;
         vector<u8> m_Scratch;
     };
+}
+
+TEST_CASE("Scheduled consume with the client ahead drives server input with ~zero underrun")
+{
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+    ServerWorld server(*serverT);
+    server.ScheduledConsume = true; // the ahead-of-server tick model
+    ClientWorld client(*clientT);
+
+    // The client runs its sim tick ahead of the server (the converged tick-offset slew): the input it
+    // stamps for tick T arrives before the server's scheduled consume of T. Four ticks of lead over a
+    // zero-latency loopback stands in for the RTT/2 + jitter margin a real link's slew would size at,
+    // say, 50 ms RTT — the mechanism the assertion pins is "input for T is buffered by tick T".
+    constexpr u64 AheadTicks = 4;
+    const ActionState move = MoveState(vec2(1.0f, 0.0f));
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    ConnectionId id = ServerConnectionId;
+
+    const auto step = [&](u64 serverTick)
+    {
+        now += Delta;
+        server.SimStep(serverTick, Delta);
+        server.NetPump(now, serverTick);
+        client.Frame(now, serverTick + AheadTicks, Delta, move);
+        if (!server.Host->Server().Connections().empty())
+        {
+            id = server.Host->Server().Connections().front();
+        }
+    };
+
+    // Warm up: join, spawn, and let the ahead-stamped input stream fill the buffer.
+    for (u64 tick = 1; tick <= 60; ++tick)
+    {
+        step(tick);
+    }
+    REQUIRE(client.Host->IsJoined());
+    REQUIRE(id != ServerConnectionId);
+    REQUIRE(server.Jitter.contains(id));
+
+    // Over a steady window every scheduled consume finds its tick's input already buffered, so the
+    // underrun (coast) count does not move — the input-timing win the ahead-of-server model buys.
+    const u64 underrunBefore = server.Jitter.at(id).UnderrunCount();
+    const u64 consumeBefore = server.Jitter.at(id).ConsumeCount();
+    for (u64 tick = 61; tick <= 200; ++tick)
+    {
+        step(tick);
+    }
+    CHECK(server.Jitter.at(id).ConsumeCount() - consumeBefore == 140); // one per server tick
+    CHECK(server.Jitter.at(id).UnderrunCount() - underrunBefore == 0); // none underran
+
+    // The real (not coasted) input drove the server pawn: the held +x move advanced it.
+    const Entity serverPawn = server.Pawns.at(id);
+    CHECK(server.World->Get<Transform>(serverPawn).Position.x > 0.3f);
 }
 
 TEST_CASE("Two clients each see both pawns and drive only their own")

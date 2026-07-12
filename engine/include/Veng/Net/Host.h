@@ -3,6 +3,7 @@
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Asset/Prefab.h>
 #include <Veng/Net/Client.h>
+#include <Veng/Net/ClockSync.h>
 #include <Veng/Net/NetEvents.h>
 #include <Veng/Net/Replication.h>
 #include <Veng/Net/Server.h>
@@ -172,6 +173,30 @@ namespace Veng
 
         /// @brief Whether the level has loaded and readiness has been acked.
         [[nodiscard]] bool IsJoined() const;
+
+        /// @brief The highest server sim tick a snapshot has carried, or 0 before the first.
+        ///
+        /// The tick-offset controller compares the client's own tick against this to size its lead.
+        [[nodiscard]] u64 LastServerTick() const;
+
+        /// @brief The client tick-offset controller — smoothed RTT/jitter and the running estimate.
+        ///
+        /// Fed by ObserveTickSync each frame; read for the target lead and bounded slew. The estimate
+        /// is inert until a driver applies the slew to its sim clock.
+        [[nodiscard]] const Net::TickOffsetEstimator& TickSync() const;
+
+        /// @brief Folds this frame's link state into the tick-offset controller and returns the slew.
+        ///
+        /// Observes the connection's smoothed RTT and the freshest server tick against @p clientTick,
+        /// updating TickSync(). A no-op returning 1.0 (no slew) before the connection is established
+        /// or before any server tick has arrived.
+        /// @param clientTick  The client's current sim tick.
+        /// @return The bounded step multiplier to apply next tick, or 1.0 when not yet syncing.
+        f32 ObserveTickSync(u64 clientTick);
+
+        /// @brief Sets the closed-loop feedback trim on the tick-offset controller, in ticks.
+        /// @param trimTicks  The server's consumed-input early/late correction.
+        void SetTickSyncFeedback(f32 trimTicks);
 
     private:
         struct State;

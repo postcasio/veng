@@ -98,13 +98,18 @@ namespace Veng
     {
         /// @brief The packet header's server tick, or 0 when the header was truncated.
         u64 ServerTick = 0;
-        /// @brief True when the header parsed (the packet carried at least a server tick).
+        /// @brief The header's per-connection input feedback signal (see EncodeSnapshot), or 0.
+        i32 InputFeedback = 0;
+        /// @brief True when the header parsed (the packet carried a full header).
         bool HeaderValid = false;
         /// @brief Entity records whose NetId resolved and whose state was applied.
         u32 EntitiesApplied = 0;
         /// @brief Entity records dropped because their NetId was unbound in the map.
         u32 EntitiesDropped = 0;
     };
+
+    /// @brief Serialized size of a snapshot packet header: the server tick plus the input feedback.
+    inline constexpr usize SnapshotHeaderSize = sizeof(u64) + sizeof(i32);
 
     /// @brief Encodes a snapshot of the scene's dirty replicated state into a self-delimiting packet.
     ///
@@ -118,17 +123,19 @@ namespace Veng
     /// Packet layout (framing little-endian; component payloads are the reflection serializer's
     /// WriteFields bytes):
     ///
-    ///     SnapshotPacket  := ServerTick:u64  EntityRecord*
+    ///     SnapshotPacket  := ServerTick:u64  InputFeedback:i32  EntityRecord*
     ///     EntityRecord    := NetId:u32  ComponentCount:u32  ComponentRecord*
     ///     ComponentRecord := TypeId:u64  ByteLength:u32  WriteFields-bytes
     ///
     /// A const scene walk — it stamps no change ticks on the components it reads.
-    /// @param scene       The server scene to snapshot.
-    /// @param serverTick  The tick this snapshot represents (the packet header).
-    /// @param sinceTick   A component is included when its change tick exceeds this (the last-acked tick).
+    /// @param scene          The server scene to snapshot.
+    /// @param serverTick     The tick this snapshot represents (the packet header).
+    /// @param sinceTick      A component is included when its change tick exceeds this (the last-acked tick).
+    /// @param inputFeedback  The per-connection input-timing feedback ridden in the header (see
+    ///                       ReplicationServer::SetInputFeedback); zero for none.
     /// @return The encoded packet bytes.
     [[nodiscard]] VE_API vector<u8> EncodeSnapshot(const Scene& scene, u64 serverTick,
-                                                   u64 sinceTick);
+                                                   u64 sinceTick, i32 inputFeedback = 0);
 
     /// @brief Applies a snapshot packet to @p scene, latest-wins and recoverable.
     ///
@@ -214,6 +221,15 @@ namespace Veng
         /// @param tick  The highest server tick it has applied.
         void Acknowledge(Net::ConnectionId id, u64 tick);
 
+        /// @brief Sets a connection's input-timing feedback, ridden in its next snapshot header.
+        ///
+        /// The signal the client's tick-offset controller reads to trim its lead: positive means the
+        /// client's input is arriving earlier than needed (it can run less far ahead), negative that
+        /// it is running late. A no-op for an untracked connection.
+        /// @param id        The connection the feedback concerns.
+        /// @param feedback  The feedback in ticks (see EncodeSnapshot's header field).
+        void SetInputFeedback(Net::ConnectionId id, i32 feedback);
+
         /// @brief Diffs the scene against a connection's state, returning this tick's messages to send.
         ///
         /// Emits a reliable Spawn for each replicated entity new to the connection, a reliable Despawn
@@ -235,6 +251,8 @@ namespace Veng
             set<NetId> Spawned;
             /// @brief Highest tick this connection has acked; snapshots gate against it.
             u64 AckedTick = 0;
+            /// @brief Input-timing feedback ridden in this connection's next snapshot header.
+            i32 InputFeedback = 0;
         };
 
         Settings m_Settings;
@@ -451,17 +469,36 @@ namespace Veng
         /// @return The input to feed the seat this tick, or nullopt before the first input arrives.
         [[nodiscard]] optional<ActionState> Consume();
 
+        /// @brief Consumes the input scheduled for a specific server tick (the ahead-of-server model).
+        ///
+        /// Drops any buffered client tick older than @p tick (the server has advanced past it), then
+        /// returns the input stamped at @p tick when it has arrived. When it has not (the client is
+        /// not running far enough ahead, or the packet was lost), it underruns — duplicating the last
+        /// consumed input with its edge phases decayed, exactly as Consume does. Future ticks stay
+        /// buffered for their own server tick. nullopt only before any input has ever arrived.
+        /// @param tick  The server tick whose matching client input is consumed.
+        /// @return The input to feed the seat this tick, or nullopt before the first input arrives.
+        [[nodiscard]] optional<ActionState> ConsumeForTick(u64 tick);
+
         /// @brief The number of client ticks currently buffered.
         [[nodiscard]] usize Depth() const { return m_Buffer.size(); }
 
         /// @brief The highest client tick consumed or dropped so far (0 before the first Consume).
         [[nodiscard]] u64 LastConsumedTick() const { return m_LastConsumedTick; }
 
+        /// @brief Total consume calls (Consume + ConsumeForTick) since construction.
+        [[nodiscard]] u64 ConsumeCount() const { return m_ConsumeCount; }
+
+        /// @brief Consume calls that underran — coasted on the last input rather than a fresh one.
+        [[nodiscard]] u64 UnderrunCount() const { return m_UnderrunCount; }
+
     private:
         Settings m_Settings;
         map<u64, ActionState> m_Buffer;
         optional<ActionState> m_Last;
         u64 m_LastConsumedTick = 0;
+        u64 m_ConsumeCount = 0;
+        u64 m_UnderrunCount = 0;
         bool m_Started = false;
     };
 }

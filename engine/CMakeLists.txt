@@ -51,10 +51,12 @@ add_library(veng SHARED
         src/Module/ApplicationRegistry.cpp
         src/Module/ModuleLoader.cpp
         src/Net/Client.cpp
+        src/Net/ClockSync.cpp
         src/Net/Connection.cpp
         src/Net/FaultInjectionTransport.cpp
         src/Net/Handshake.cpp
         src/Net/Host.cpp
+        src/Net/PredictionHistory.cpp
         src/Net/InputFeed.cpp
         src/Net/LoopbackTransport.cpp
         src/Net/Server.cpp

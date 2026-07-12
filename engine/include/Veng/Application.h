@@ -602,12 +602,14 @@ namespace Veng
         /// and sends this frame's stamped local input. A no-op with no net host.
         void PumpNet();
 
-        /// @brief Feeds each ready connection's buffered input into its seat before a server sim tick.
+        /// @brief Feeds each ready connection's input scheduled for a server tick into its seat.
         ///
-        /// Server-only: consumes one input from every connection's jitter buffer and writes it into the
+        /// Server-only: consumes the input each connection's client stamped at @p tick from its jitter
+        /// buffer (falling back to the underrun coast when it has not arrived) and writes it into the
         /// connection's seat PlayerInput, so the control system re-derives Intent from the wire input at
         /// the matching tick. Called once per Sim step, ahead of the systems. A no-op off the server.
-        void FeedServerSeatInputs();
+        /// @param tick  The server sim tick whose matching client input is consumed.
+        void FeedServerSeatInputs(u64 tick);
 
         /// @brief Stamps this client tick's resolved local input into the input send window.
         ///

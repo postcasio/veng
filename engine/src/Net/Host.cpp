@@ -253,6 +253,12 @@ namespace Veng
         Entity WiredPawn = Entity::Null;
         bool Joined = false;
 
+        // The tick-offset controller: the freshest server tick a snapshot carried and the estimator
+        // that folds it (with the connection's RTT) into the client's target lead. Inert this plan —
+        // observed and exposed, not yet applied to a sim clock.
+        u64 LastServerTick = 0;
+        Net::TickOffsetEstimator TickSync;
+
         // Keeps the local presentation pointed at the own seat's possessed pawn. The seat's Possesses
         // arrives from the stream and re-resolves as its pawn binds, so this re-checks each Pump and
         // fires OnPossession only when the wired pawn actually changes.
@@ -338,7 +344,14 @@ namespace Veng
         while (const optional<vector<u8>> snapshot =
                    s.Client->Server().Receive(Net::Channel::UnreliableSequenced))
         {
-            s.Replication->ApplySnapshot(*snapshot, *s.World);
+            const SnapshotApplyResult applied = s.Replication->ApplySnapshot(*snapshot, *s.World);
+            if (applied.HeaderValid && applied.ServerTick > s.LastServerTick)
+            {
+                s.LastServerTick = applied.ServerTick;
+                // The newest snapshot's feedback closes the tick-offset loop: the controller trims
+                // its target lead by how early/late the server saw this client's input running.
+                s.TickSync.SetFeedbackTrim(static_cast<f32>(applied.InputFeedback));
+            }
         }
 
         s.WireSeat();
@@ -367,5 +380,30 @@ namespace Veng
     bool ClientHost::IsJoined() const
     {
         return m_State->Joined;
+    }
+
+    u64 ClientHost::LastServerTick() const
+    {
+        return m_State->LastServerTick;
+    }
+
+    const Net::TickOffsetEstimator& ClientHost::TickSync() const
+    {
+        return m_State->TickSync;
+    }
+
+    f32 ClientHost::ObserveTickSync(const u64 clientTick)
+    {
+        State& s = *m_State;
+        if (s.Client->State() != Net::ClientState::Connected || s.LastServerTick == 0)
+        {
+            return 1.0f;
+        }
+        return s.TickSync.Observe(s.Client->Server().RttEstimate(), clientTick, s.LastServerTick);
+    }
+
+    void ClientHost::SetTickSyncFeedback(const f32 trimTicks)
+    {
+        m_State->TickSync.SetFeedbackTrim(trimTicks);
     }
 }

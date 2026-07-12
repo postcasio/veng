@@ -49,6 +49,22 @@ namespace Veng
                                unordered_map<Net::ConnectionId, InputJitterBuffer>& buffers,
                                Scene& world);
 
+    /// @brief Consumes each connection's input scheduled for @p serverTick into its seat (scheduled feed).
+    ///
+    /// The ahead-of-server variant: for every established connection it consumes the input the client
+    /// stamped at @p serverTick (InputJitterBuffer::ConsumeForTick, falling back to the underrun coast
+    /// when the client's input for that tick has not arrived), writes it into the seat's PlayerInput,
+    /// and rides the buffer's remaining depth back as that connection's input-timing feedback on its
+    /// next snapshot header (ReplicationServer::SetInputFeedback) — the closed loop the client's
+    /// tick-offset controller trims its lead against. Called once per server sim step at its tick.
+    /// @param host        The server host resolving each connection's seat and replication server.
+    /// @param buffers     The per-connection jitter buffers to consume from.
+    /// @param world       The server scene the seats live in.
+    /// @param serverTick  The current server sim tick whose matching client input is consumed.
+    VE_API void FeedSeatInputs(ServerHost& host,
+                               unordered_map<Net::ConnectionId, InputJitterBuffer>& buffers,
+                               Scene& world, u64 serverTick);
+
     /// @brief Stamps the local input seat's resolved input for a client tick (client per-tick).
     ///
     /// Records the first (SeatInput, PlayerInput) entity's resolved PlayerInput — the locally-owned

@@ -353,7 +353,8 @@ TEST_CASE("A truncated packet applies what it can and never runs off the end")
 
     SUBCASE("A packet with only a header applies nothing but reports the tick")
     {
-        vector<u8> headerOnly(packet.begin(), packet.begin() + 8);
+        vector<u8> headerOnly(packet.begin(),
+                              packet.begin() + static_cast<isize>(SnapshotHeaderSize));
         const SnapshotApplyResult applied = ApplySnapshot(headerOnly, *client, map);
         CHECK(applied.HeaderValid);
         CHECK(applied.EntitiesApplied == 0);
@@ -376,6 +377,36 @@ TEST_CASE("A truncated packet applies what it can and never runs off the end")
         // The first entity record decoded fully; the truncated tail was skipped, no crash.
         CHECK(applied.EntitiesApplied <= 1);
     }
+}
+
+TEST_CASE("The snapshot header carries a signed input-feedback field that round-trips")
+{
+    TypeRegistry serverTypes;
+    RegisterBuiltinTypes(serverTypes);
+    Unique<Scene> server = Scene::Create(serverTypes);
+    server->SetChangeTick(1);
+    const Entity e = server->CreateEntity();
+    server->Add<Transform>(e, Transform{.Position = vec3(1.0f)});
+
+    NetIdAllocator allocator;
+    AssignServerNetIds(*server, allocator);
+
+    TypeRegistry clientTypes;
+    RegisterBuiltinTypes(clientTypes);
+    Unique<Scene> client = Scene::Create(clientTypes);
+    NetIdMap map;
+    SpawnClientMirror(*client, map, server->Get<NetIdentity>(e).Id);
+
+    // A negative feedback (the client running late) survives the u32<->i32 header round-trip.
+    const SnapshotApplyResult negative =
+        ApplySnapshot(EncodeSnapshot(*server, 5, 0, -3), *client, map);
+    CHECK(negative.HeaderValid);
+    CHECK(negative.ServerTick == 5);
+    CHECK(negative.InputFeedback == -3);
+
+    // A positive feedback (the client leading further than needed) likewise, and the default is zero.
+    CHECK(ApplySnapshot(EncodeSnapshot(*server, 6, 0, 4), *client, map).InputFeedback == 4);
+    CHECK(ApplySnapshot(EncodeSnapshot(*server, 7, 0), *client, map).InputFeedback == 0);
 }
 
 TEST_CASE("Change ticks are untouched by const iteration but stamped by a mutable access")
