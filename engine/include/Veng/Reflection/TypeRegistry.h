@@ -36,6 +36,23 @@ namespace Veng
         static constexpr bool Replicated = false;
     };
 
+    /// @brief Primary template authoring whether an entity carrying this type is always network-relevant.
+    ///
+    /// TypeRegistry::Register<T>() reads VengAlwaysRelevant<T>::AlwaysRelevant into
+    /// TypeInfo::AlwaysRelevant. Interest management (the per-connection relevancy filter) treats an
+    /// entity as relevant to every connection regardless of distance when it carries any
+    /// always-relevant component — the escape hatch for global game state (the session, seats) that a
+    /// spatial query would otherwise cull. A separate specialisation point from VengReflect<T>, like
+    /// VengReplication<T>, so it composes with every reflection macro. False unless VE_ALWAYS_RELEVANT
+    /// marks it.
+    /// @tparam T  The type whose always-relevant default is authored.
+    template <class T>
+    struct VengAlwaysRelevant
+    {
+        /// @brief Whether an entity with this component is always relevant; false for the primary template.
+        static constexpr bool AlwaysRelevant = false;
+    };
+
     /// @brief The recorded description of a registered type.
     ///
     /// Carries the name, layout, construct/destruct/move thunks a type-erased
@@ -76,6 +93,12 @@ namespace Veng
         /// replicates whole (v1 has no per-field filtering — a type with a client-local field
         /// splits it out). False for every unmarked type. Set from VengReplication<T>::Replicated.
         bool Replicated = false;
+        /// @brief Whether an entity carrying this component is always network-relevant, via VE_ALWAYS_RELEVANT.
+        ///
+        /// Interest management skips the spatial cull for an entity with any always-relevant
+        /// component (the session, seats), so global game state reaches every connection regardless
+        /// of distance. False for every unmarked type. Set from VengAlwaysRelevant<T>::AlwaysRelevant.
+        bool AlwaysRelevant = false;
         /// @brief Field descriptors for Struct-class types; empty for leaves.
         vector<FieldDescriptor> Fields;
         /// @brief The type's default presentation, authored via VE_DISPLAY; the type-default arm of the cascade.
@@ -231,6 +254,7 @@ namespace Veng
             info.Fields = std::move(fields);
             info.Display = VengDisplay<T>::Get();
             info.Replicated = VengReplication<T>::Replicated;
+            info.AlwaysRelevant = VengAlwaysRelevant<T>::AlwaysRelevant;
 
             // An enum authored with VE_ENUM carries its {name, value} table; record it for
             // the editor's named combo. A bare VE_LEAF(…, Enum) has no accessor and stays empty.

@@ -593,7 +593,7 @@ namespace Veng
     }
 
     vector<ReplicationMessage> ReplicationServer::Generate(Net::ConnectionId id, const Scene& scene,
-                                                           u64 tick)
+                                                           u64 tick, const set<NetId>* interest)
     {
         vector<ReplicationMessage> messages;
 
@@ -609,8 +609,13 @@ namespace Veng
         const EntityRemap encodeRef = MakeEncodeRef(scene);
         const TypeId authorityId = TypeIdOf<Authority>();
 
-        // Diff the live replicated set against what this connection already has: a Spawn for each new
-        // NetId, a Despawn for each vanished one. NetIdentity marks exactly the server-authoritative set.
+        // An entity is relevant to this connection when interest is off (null) or it is in the set.
+        const auto relevant = [interest](NetId netId)
+        { return interest == nullptr || interest->contains(netId); };
+
+        // Diff the relevant replicated set against what this connection already has: a Spawn for each
+        // new relevant NetId, a Despawn for each spawned one now gone (destroyed) or no longer relevant
+        // (a visibility exit). NetIdentity marks exactly the server-authoritative set.
         set<NetId> live;
         for (auto [entity, identity] : scene.View<NetIdentity>())
         {
@@ -620,7 +625,7 @@ namespace Veng
             }
             live.insert(identity.Id);
 
-            if (state.Spawned.contains(identity.Id))
+            if (state.Spawned.contains(identity.Id) || !relevant(identity.Id))
             {
                 continue;
             }
@@ -653,21 +658,29 @@ namespace Veng
                                                   .Bytes = std::move(spawn)});
         }
 
-        // Despawns: NetIds this connection had that are no longer live.
-        vector<NetId> gone;
+        // Despawns: a spawned NetId no longer live is destroyed; one still live but no longer relevant
+        // is a visibility exit (re-entry re-spawns and re-baselines it).
+        vector<std::pair<NetId, DespawnReason>> gone;
         for (const NetId spawned : state.Spawned)
         {
             if (!live.contains(spawned))
             {
-                gone.push_back(spawned);
+                gone.emplace_back(spawned, DespawnReason::Destroyed);
+            }
+            else if (!relevant(spawned))
+            {
+                gone.emplace_back(spawned, DespawnReason::Visibility);
             }
         }
-        for (const NetId netId : gone)
+        for (const auto& [netId, reason] : gone)
         {
             state.Spawned.erase(netId);
+            // Drop the connection's delta baseline for the entity; a re-spawn re-bases from its spawn.
+            state.Baseline.erase(netId);
             vector<u8> despawn;
             AppendU8(despawn, static_cast<u8>(ReplicationMessageId::Despawn));
             AppendU32(despawn, netId);
+            AppendU8(despawn, static_cast<u8>(reason));
             messages.push_back(ReplicationMessage{.Channel = Net::Channel::ReliableOrdered,
                                                   .Bytes = std::move(despawn)});
         }
@@ -727,6 +740,10 @@ namespace Veng
 
             for (auto [entity, identity] : scene.View<NetIdentity>())
             {
+                if (!relevant(identity.Id))
+                {
+                    continue;
+                }
                 vector<u8> comps;
                 u32 count = 0;
                 for (const TypeId typeId : replicated)
@@ -908,6 +925,13 @@ namespace Veng
                 return result;
             }
             result.Id = *netId;
+            // The reason rides after the id (a legacy id-only despawn defaults to Destroyed). The
+            // client teardown is side-effect-free either way; the reason is surfaced for game logic,
+            // which must not fire death on a visibility exit.
+            if (const Result<u8> reason = ReadU8(message, cursor))
+            {
+                result.Reason = static_cast<DespawnReason>(*reason);
+            }
             const Entity entity = m_Map.Lookup(*netId);
             if (!entity.IsNull() && scene.IsAlive(entity))
             {

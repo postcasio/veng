@@ -552,6 +552,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/net_quantize.cpp
             tests/unit/net_delta.cpp
             tests/unit/net_packed_input.cpp
+            tests/unit/net_interest.cpp
             tests/unit/reflection.cpp
             tests/unit/reflection_variant.cpp
             tests/unit/field_display.cpp

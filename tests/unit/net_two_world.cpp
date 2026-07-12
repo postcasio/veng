@@ -104,7 +104,7 @@ namespace
         // than the v1 arrival-front consume; the clock-sync scenario exercises this path.
         bool ScheduledConsume = false;
 
-        explicit ServerWorld(Transport& transport)
+        explicit ServerWorld(Transport& transport, f32 interestRadius = 0.0f)
         {
             RegisterBuiltinTypes(Types);
             World = Scene::Create(Types);
@@ -114,6 +114,7 @@ namespace
                 .Assets = FakeAssets(),
                 .LevelId = LevelId,
                 .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
+                .Interest = InterestSettings{.Radius = interestRadius, .MinDwellSnapshots = 2},
             });
             REQUIRE(host.has_value());
             Host = std::move(*host);
@@ -770,4 +771,57 @@ TEST_CASE("Two clients each see both pawns and drive only their own")
     // A never moved B (authority stayed with each owner's input on the server).
     CHECK(worldA.Get<Transform>(aSeesB).Position.x < 0.0f);
     CHECK(worldB.Get<Transform>(bSeesA).Position.x > 0.0f);
+}
+
+TEST_CASE("Interest management: two clients far apart each hear only their own neighborhood")
+{
+    const auto hub = CreateRef<Hub>();
+    const u32 serverEndpoint = hub->Register();
+    auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
+    // A tight interest radius: the pawns start together (both visible) then drive apart past it.
+    ServerWorld server(*serverT, /*interestRadius=*/0.1f);
+
+    auto clientTa = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    auto clientTb = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    ClientWorld clientA(*clientTa);
+    ClientWorld clientB(*clientTb);
+
+    const ActionState moveA = MoveState(vec2(1.0f, 0.0f));  // +x
+    const ActionState moveB = MoveState(vec2(-1.0f, 0.0f)); // -x
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    for (u64 tick = 1; tick <= 260; ++tick)
+    {
+        now += Delta;
+        server.SimStep(tick, Delta);
+        server.NetPump(now, tick);
+        clientA.Frame(now, tick, Delta, moveA);
+        clientB.Frame(now, tick, Delta, moveB);
+    }
+
+    REQUIRE(clientA.Host->IsJoined());
+    REQUIRE(clientB.Host->IsJoined());
+    REQUIRE(server.Host->Server().Connections().size() == 2);
+
+    const ConnectionId idA = clientA.Client->AssignedId();
+    const ConnectionId idB = clientB.Client->AssignedId();
+    const Entity serverPawnA = server.Pawns.at(idA);
+    const Entity serverPawnB = server.Pawns.at(idB);
+    const NetId netA = server.World->Get<NetIdentity>(serverPawnA).Id;
+    const NetId netB = server.World->Get<NetIdentity>(serverPawnB).Id;
+
+    // The pawns drove well past the interest radius apart.
+    const f32 separation = std::abs(server.World->Get<Transform>(serverPawnA).Position.x -
+                                    server.World->Get<Transform>(serverPawnB).Position.x);
+    CHECK(separation > 0.2f);
+
+    // Each client still owns and sees its own pawn (owner-relevant + the query center)...
+    CHECK_FALSE(clientA.Host->Replication().Map().Lookup(netA).IsNull());
+    CHECK_FALSE(clientB.Host->Replication().Map().Lookup(netB).IsNull());
+
+    // ...but no longer hears about the other's pawn — it left interest (a visibility despawn),
+    // so the wire carried only each connection's neighborhood, not the world.
+    CHECK(clientA.Host->Replication().Map().Lookup(netB).IsNull());
+    CHECK(clientB.Host->Replication().Map().Lookup(netA).IsNull());
 }

@@ -4,6 +4,7 @@
 #include <Veng/Asset/Prefab.h>
 #include <Veng/Net/Client.h>
 #include <Veng/Net/ClockSync.h>
+#include <Veng/Net/Interest.h>
 #include <Veng/Net/NetEvents.h>
 #include <Veng/Net/PredictionHistory.h>
 #include <Veng/Net/Reconciliation.h>
@@ -50,6 +51,10 @@ namespace Veng
         AssetId SeatPrefabId;
         /// @brief The replication cadence for the owned ReplicationServer.
         ReplicationServer::Settings Replication;
+        /// @brief The per-connection interest filter; Radius 0 (the default) replicates the whole world.
+        Net::InterestSettings Interest;
+        /// @brief The game hook adding entities to each connection's interest set; unset adds none.
+        Net::InterestPolicy InterestPolicy;
     };
 
     /// @brief Server-side join glue: a connection becomes a seat; readiness gates its stream.

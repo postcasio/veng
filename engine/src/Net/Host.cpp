@@ -99,11 +99,12 @@ namespace Veng
 
     struct ServerHost::State
     {
-        // One connection's seat and its readiness gate.
+        // One connection's seat, its readiness gate, and its interest bookkeeping.
         struct SeatState
         {
             Entity Seat = Entity::Null;
             bool Ready = false;
+            Net::InterestState Interest;
         };
 
         Scene* World = nullptr;
@@ -115,8 +116,76 @@ namespace Veng
         Unique<Net::Server> Server;
         ReplicationServer Replication;
         NetIdAllocator Allocator;
+        Net::InterestSettings InterestSettings;
+        Net::InterestPolicy InterestPolicy;
         std::unordered_map<Net::ConnectionId, SeatState> Connections;
         vector<Net::NetEvent> Events;
+
+        // The connection's interest set this snapshot: the spatial query around its pawn ∪ the
+        // always-relevant entities ∪ the policy hook ∪ the entities it owns. Empty optional when
+        // interest is off (Radius 0), so Generate replicates the whole world (planset-54 behavior).
+        optional<set<NetId>> ComputeInterest(Net::ConnectionId id, SeatState& seat)
+        {
+            if (InterestSettings.Radius <= 0.0f)
+            {
+                return std::nullopt;
+            }
+
+            const Entity seatEntity = seat.Seat;
+            Entity pawn = Entity::Null;
+            if (!seatEntity.IsNull() && World->IsAlive(seatEntity))
+            {
+                if (const auto* possesses = World->TryGet<Possesses>(seatEntity))
+                {
+                    pawn = possesses->Pawn;
+                }
+            }
+
+            vec3 viewerPos(0.0f);
+            if (!pawn.IsNull() && World->IsAlive(pawn))
+            {
+                if (const auto* transform = World->TryGet<Transform>(pawn))
+                {
+                    viewerPos = transform->Position;
+                }
+            }
+
+            const vector<Net::InterestCandidate> spatial = Net::GatherSpatialCandidates(
+                *World, viewerPos, InterestSettings.Radius * InterestSettings.LeaveMultiplier);
+            const vector<NetId> alwaysRelevant = Net::GatherAlwaysRelevant(*World);
+
+            // The policy hook's entities plus every entity this connection owns — a connection always
+            // sees what it owns (its pawn and attachments), the predicted set, regardless of distance.
+            vector<NetId> extra;
+            if (InterestPolicy)
+            {
+                for (const Entity entity : InterestPolicy(*World, seatEntity, pawn))
+                {
+                    if (!entity.IsNull() && World->IsAlive(entity) &&
+                        World->Has<NetIdentity>(entity))
+                    {
+                        extra.push_back(World->Get<NetIdentity>(entity).Id);
+                    }
+                }
+            }
+            const TypeId authorityId = TypeIdOf<Authority>();
+            for (auto [entity, identity] : World->View<NetIdentity>())
+            {
+                if (identity.Id == InvalidNetId)
+                {
+                    continue;
+                }
+                const auto* authority =
+                    static_cast<const Authority*>(World->TryGetComponent(entity, authorityId));
+                if (authority != nullptr && authority->Owner == id)
+                {
+                    extra.push_back(identity.Id);
+                }
+            }
+
+            return Net::UpdateInterest(spatial, alwaysRelevant, extra, InterestSettings,
+                                       seat.Interest);
+        }
 
         // Spawns a seat for the connection: a Viewer seat with Authority{ Server, Owner = id } and no
         // SeatInput — the remote path. Returns the seat's freshly assigned wire id.
@@ -197,6 +266,8 @@ namespace Veng
         state->SeatPrefab = info.SeatPrefab;
         state->SeatPrefabId = info.SeatPrefabId;
         state->Replication = ReplicationServer(info.Replication);
+        state->InterestSettings = info.Interest;
+        state->InterestPolicy = info.InterestPolicy;
 
         State* raw = state.get();
         Net::ServerInfo serverInfo = info.Server;
@@ -220,13 +291,15 @@ namespace Veng
         // Assign wire ids to entities the spawn rule added this tick (the pawns), then generate and
         // queue each ready connection's stream — the Pump below flushes the queued sends.
         AssignServerNetIds(*s.World, s.Allocator);
-        for (const auto& [id, seat] : s.Connections)
+        for (auto& [id, seat] : s.Connections)
         {
             if (!seat.Ready)
             {
                 continue;
             }
-            for (const ReplicationMessage& message : s.Replication.Generate(id, *s.World, tick))
+            const optional<set<NetId>> interest = s.ComputeInterest(id, seat);
+            for (const ReplicationMessage& message :
+                 s.Replication.Generate(id, *s.World, tick, interest ? &*interest : nullptr))
             {
                 (void)s.Server->Get(id).Send(message.Channel, message.Bytes);
             }

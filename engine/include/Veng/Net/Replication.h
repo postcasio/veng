@@ -189,6 +189,20 @@ namespace Veng
     VE_API SnapshotApplyResult ApplySnapshot(std::span<const u8> packet, Scene& scene,
                                              const NetIdMap& map);
 
+    /// @brief Why an entity despawned on a connection — destruction versus a relevancy (interest) exit.
+    ///
+    /// A visibility despawn is not a destruction: the client tears the entity down locally with no
+    /// game-event side effects (it must never read as death), and a re-entry re-spawns and
+    /// re-baselines it. The one sharp edge of interest management, carried on the wire so game logic
+    /// can tell the two apart.
+    enum class DespawnReason : u8
+    {
+        /// @brief The entity was destroyed on the server — a real removal.
+        Destroyed = 0,
+        /// @brief The entity left the connection's interest set — a visibility exit, not a death.
+        Visibility = 1,
+    };
+
     /// @brief One replication message to send a connection: the channel it rides and its bytes.
     ///
     /// The replication layer produces these; the app (Plan 07's wiring) Sends each on its channel of
@@ -301,9 +315,13 @@ namespace Veng
         /// @param id     The connection to generate for (must be AddConnection'd).
         /// @param scene  The authoritative server scene.
         /// @param tick   The current server tick.
+        /// @param interest  The connection's interest set gating which entities it hears about; null
+        ///                  means every live entity is relevant (interest off — planset-54 behavior).
+        ///                  An entity that was spawned but has left the set gets a visibility despawn.
         /// @return The messages to Send on this connection, each tagged with its channel.
         [[nodiscard]] vector<ReplicationMessage> Generate(Net::ConnectionId id, const Scene& scene,
-                                                          u64 tick);
+                                                          u64 tick,
+                                                          const set<NetId>* interest = nullptr);
 
     private:
         /// @brief One snapshot's sent component values, kept until acked so the baseline can advance.
@@ -365,6 +383,8 @@ namespace Veng
             bool Spawned = false;
             /// @brief True when the message was a Despawn that destroyed an entity.
             bool Despawned = false;
+            /// @brief The despawn's reason (destruction vs a visibility exit); meaningful when Despawned.
+            DespawnReason Reason = DespawnReason::Destroyed;
             /// @brief The NetId the message concerned (0 when the message was malformed).
             NetId Id = InvalidNetId;
             /// @brief The local entity spawned or despawned (null when none / already gone).

@@ -58,6 +58,7 @@ add_library(veng SHARED
         src/Net/Quantize.cpp
         src/Net/Handshake.cpp
         src/Net/Host.cpp
+        src/Net/Interest.cpp
         src/Net/PredictionHistory.cpp
         src/Net/Reconciliation.cpp
         src/Net/InputFeed.cpp

@@ -286,6 +286,10 @@ namespace Veng
                                                   .PositionExtent = net.PositionExtent,
                                                   .RotationBits = net.RotationBits},
                     .KeyframeInterval = net.KeyframeIntervalSnapshots},
+            .Interest = Net::InterestSettings{.Radius = net.InterestRadius,
+                                              .LeaveMultiplier = net.InterestLeaveMultiplier,
+                                              .MinDwellSnapshots = net.InterestMinDwellSnapshots},
+            .InterestPolicy = net.InterestPolicy,
         });
         VE_ASSERT(host, "server host failed to open: {}", host.error());
         m_Net->Server = std::move(*host);

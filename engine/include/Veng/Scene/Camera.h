@@ -204,3 +204,4 @@ VE_REFLECT_END();
 // Camera reference names a client-local (Local-tier) camera, so it encodes as a null wire reference
 // — the client re-wires its own camera to the replicated seat, rather than receiving one.
 VE_REPLICATED(::Veng::Viewer);
+VE_ALWAYS_RELEVANT(::Veng::Viewer);

@@ -1025,6 +1025,7 @@ VE_FIELD(Score, .DisplayName = "Score")
 VE_REFLECT_END();
 // The game mode's state is server-authoritative; clients display the replicated phase/score/timer.
 VE_REPLICATED(::Veng::Session);
+VE_ALWAYS_RELEVANT(::Veng::Session);
 
 VE_REFLECT(::Veng::GameModeConfig, 0xAE57419CF98B07F8ULL)
 VE_FIELD(PlayerPrefab, .DisplayName = "Player Prefab")

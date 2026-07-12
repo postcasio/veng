@@ -263,6 +263,19 @@ namespace Veng::Detail
         static constexpr bool Replicated = true;                                                   \
     }
 
+/// @brief Marks a type so an entity carrying it is always network-relevant, via VengAlwaysRelevant.
+///
+/// Placed beside the type's describe block (like VE_REPLICATED), it exempts any entity with this
+/// component from interest management's spatial cull — global game state (the session, seats) every
+/// connection needs regardless of distance. TypeRegistry::Register<T>() reads the mark into
+/// TypeInfo::AlwaysRelevant. The type is named fully qualified from global scope.
+#define VE_ALWAYS_RELEVANT(Type)                                                                   \
+    template <>                                                                                    \
+    struct ::Veng::VengAlwaysRelevant<Type>                                                        \
+    {                                                                                              \
+        static constexpr bool AlwaysRelevant = true;                                               \
+    }
+
 /// @brief Declares a Variant\<Ts...\>'s identity by specialising VengReflect\<T\>.
 ///
 /// Type already is a Variant\<Ts...\> (or an alias of one), so the alternatives are

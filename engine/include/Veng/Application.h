@@ -17,6 +17,7 @@
 #include <Veng/Renderer/SwapChainCompositePass.h>
 #include <Veng/ImGui/ImGuiLayer.h>
 #include <Veng/Gui/GuiConsumer.h>
+#include <Veng/Net/Interest.h>
 #include <Veng/Net/PredictionHistory.h>
 #include <Veng/Task/TaskSystem.h>
 #include <Veng/Reflection/TypeRegistry.h>
@@ -170,6 +171,19 @@ namespace Veng
         u32 RotationBits = 9;
         /// @brief Force a full (non-delta) snapshot record every this many snapshots per connection.
         u32 KeyframeIntervalSnapshots = 16;
+        /// @brief Interest radius in meters around a connection's pawn; 0 (the default) replicates the whole world.
+        ///
+        /// When positive, a connection hears only about the entities within this radius of its pawn,
+        /// plus the always-relevant marks (the session, seats) and the InterestPolicy hook — the
+        /// scale lever that stops bandwidth growing with world size. Zero is the planset-54 behavior,
+        /// so interest is opt-in per game.
+        f32 InterestRadius = 0.0f;
+        /// @brief The interest boundary hysteresis: the leave radius is InterestRadius times this.
+        f32 InterestLeaveMultiplier = 1.15f;
+        /// @brief The minimum snapshots an entity stays in a connection's interest set after entering.
+        u32 InterestMinDwellSnapshots = 4;
+        /// @brief Game hook adding entities to a connection's interest set beyond the spatial query; unset adds none.
+        Net::InterestPolicy InterestPolicy;
         /// @brief Client policy selecting the predicted entity set on a possession change; null uses the default.
         ///
         /// The engine passes it to the mounted ClientHost, which promotes this set to Tier::Predicted
