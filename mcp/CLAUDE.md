@@ -7,8 +7,11 @@ it wants reachable (the current world, the `TypeRegistry`, the `AssetManager`, i
 viewports) through an `McpHost`, and pumps it once per frame; the server runs a loopback
 MCP endpoint on a background thread and marshals every engine-touching request onto the
 render thread. Project-wide conventions live in the [root CLAUDE.md](../CLAUDE.md); the
-engine surface these tools consume (reflection, the `Scene`/ECS layer, the `AssetManager`,
-viewports) is in [engine/CLAUDE.md](../engine/CLAUDE.md) and the editor tools' host in
+engine surface these tools consume is in the engine's per-system docs — reflection in
+[engine/src/Reflection/CLAUDE.md](../engine/src/Reflection/CLAUDE.md), the `Scene`/ECS layer in
+[engine/src/Scene/CLAUDE.md](../engine/src/Scene/CLAUDE.md), the `AssetManager` in
+[engine/src/Asset/CLAUDE.md](../engine/src/Asset/CLAUDE.md), viewports in
+[engine/src/Renderer/CLAUDE.md](../engine/src/Renderer/CLAUDE.md) — and the editor tools' host in
 [editor/CLAUDE.md](../editor/CLAUDE.md).
 
 The library is **not linked by `libveng`**: it is a distinct `veng::mcp` target a
@@ -88,7 +91,7 @@ Every engine-touching tool runs on the **render thread** at the pump point. The 
 thread never touches a `Scene`, a `Viewport`, or the `AssetManager` directly; it enqueues
 and blocks.
 
-This is the **inverse** of `TaskSystem` ([engine/CLAUDE.md](../engine/CLAUDE.md)):
+This is the **inverse** of `TaskSystem`:
 `TaskSystem` lands *off-thread* work *on* the render thread through a pumped queue; the MCP
 server takes a request that *arrives* on the network thread, pushes it onto a render-thread
 request queue, and the network thread blocks on a per-request result slot until the
@@ -130,16 +133,15 @@ library parses/serializes internally with **nlohmann/json** (`JSON_NOEXCEPTION`,
 transports over cpp-httplib (PRIVATE); `ReflectToJson.h` (which *does* name `nlohmann::json`)
 is an implementation header, never part of the public surface.
 
-That per-header discipline is no longer the whole story: `veng::mcp` links `veng::veng`
-PUBLIC, and `veng::veng` itself carries nlohmann/json PUBLIC (the engine's
-`Veng/Reflection/JsonSerialize.h` names `json` types — see
-[engine/CLAUDE.md](../engine/CLAUDE.md)), so nlohmann reaches every `veng::mcp` consumer
-transitively regardless of what an Mcp header names. **`mcp_include_hygiene`'s contract has
-narrowed to httplib-only** — it still proves no `Veng/Mcp/` header leaks the vendored
-transport, but it can no longer distinguish "an Mcp header leaks nlohmann" from "nlohmann
-always rides along via `veng::veng`," so it stops asserting the JSON half. A consumer
-picks up nlohmann the moment it links `veng::mcp` (or, for that matter, `veng::veng` alone) —
-it is not an *extra* dependency `veng::mcp` adds on top.
+That per-header discipline is not the whole story: `veng::mcp` links `veng::veng` PUBLIC, and
+`veng::veng` itself carries nlohmann/json PUBLIC (the engine's `Veng/Reflection/JsonSerialize.h`
+names `json` types — see [engine/src/Reflection/CLAUDE.md](../engine/src/Reflection/CLAUDE.md)),
+so nlohmann reaches every `veng::mcp` consumer transitively regardless of what an Mcp header
+names. **`mcp_include_hygiene`'s contract is httplib-only** — it proves no `Veng/Mcp/` header
+leaks the vendored transport, but it cannot distinguish "an Mcp header leaks nlohmann" from
+"nlohmann always rides along via `veng::veng`," so it asserts nothing about the JSON half. A
+consumer picks up nlohmann the moment it links `veng::mcp` (or, for that matter, `veng::veng`
+alone) — it is not an *extra* dependency `veng::mcp` adds on top.
 
 An `McpTool` also carries an `InputSchemaJson` (surfaced verbatim as the tool's `inputSchema`
 in `tools/list`) and a `ReturnsContentBlocks` flag: a plain tool's returned JSON is wrapped in
@@ -411,8 +413,8 @@ httplib stays PRIVATE and `veng-config` already carries `find_dependency(nlohman
   label-prefixed error lines — driven directly (bypassing any `main`).
 - **`mcp_include_hygiene`** — compiles every `Veng/Mcp/` public header (the client's
   `McpClient.h` / `McpClientInfo.h` / `McpClientCli.h` among them) linking only the PUBLIC deps,
-  guarding the surface's httplib-free contract (nlohmann is no longer distinguishable from the
-  transitive `veng::veng` edge, so the test's JSON half is retired).
+  guarding the surface's httplib-free contract (nlohmann rides the transitive `veng::veng` edge,
+  so the test asserts only the httplib half).
 - **`mcp_conformance`** — the shipping path: drive the hello-triangle server behind `HT_MCP`,
   assert the engine tool set is present and `render.stats` executes against the primary
   viewport.

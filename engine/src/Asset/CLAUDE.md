@@ -1,0 +1,297 @@
+# Runtime assets — loading, meshes, textures, shaders & materials
+
+This module is the runtime side of the asset system: loading cooked assets by `AssetId` through
+`AssetManager` and `AssetHandle`, the per-type loaders (textures, meshes, prefabs, materials), and
+the runtime material model (`Material` parent / `MaterialInstance` override). The on-disk archive
+format is [assetpack/CLAUDE.md](../../../assetpack/CLAUDE.md); the offline cook that produces it is
+[cooker/CLAUDE.md](../../../cooker/CLAUDE.md). Project-wide conventions live in
+[the root CLAUDE.md](../../../CLAUDE.md), the runtime overview in [engine/CLAUDE.md](../../CLAUDE.md),
+the renderer that consumes these assets in [../Renderer/CLAUDE.md](../Renderer/CLAUDE.md), prefab
+spawning and the scene in [../Scene/CLAUDE.md](../Scene/CLAUDE.md), and reflection/serializers in
+[../Reflection/CLAUDE.md](../Reflection/CLAUDE.md).
+
+## Cook offline, load by `AssetId`
+
+Assets are **cooked offline** into a binary archive, never imported at runtime — there is no
+cook-on-demand, no source parser, no re-cook path in `libveng`. The `vengc cook` tool (always built
+from source in-tree; a downstream `find_package(veng)` consumer gets it as a **prebuilt imported
+executable** whose unqualified `vengc` name `veng-config` recreates, so `$<TARGET_FILE:vengc>`
+resolves either way) turns a hand-written JSON **asset pack** into a single `.vengpack` archive; the
+engine *mounts* archives and resolves assets against them.
+
+- **`.vengpack` archives (format v5) carry content hashes.** Every cooked blob gets a content hash
+  and the table of contents gets a digest (over the serialized TOC bytes), cooker-written via
+  xxh3-128 and checkable with **`vengc verify`** (it re-hashes the blobs + digest and exits nonzero
+  on any mismatch). **The loader never verifies** — hashing is tooling, not the hot path; the
+  runtime trusts its packs. The hash function lives **only** in the cooker/verify tool, so
+  `assetpack` (which stores the raw 16 bytes and computes nothing) and `libveng` gain no hash
+  dependency. Blobs are stored **per-blob zstd-compressed or raw**; `assetpack` inflates a
+  compressed entry lazily on resolve (the codec + sizes live in the TOC, the inflate in `assetpack`
+  — see [assetpack/CLAUDE.md](../../../assetpack/CLAUDE.md)).
+- **An asset pack is a pure `{ id, type, source }` manifest.** It carries no per-asset settings.
+  **Every** asset type — texture, mesh, shader, material, prefab — has its own per-asset JSON
+  source file (`*.tex.json` / `*.mesh.json` / `*.shader.json` / `*.vmat.json` / `*.prefab.json`)
+  that the manifest entry points at; the sampler settings, import options, shader source/entry,
+  material fields, and prefab entities/components live in those files.
+- **`AssetType::InputMap` — an `InputMappingContext`, a CPU-only asset** (like
+  `Skeleton`/`Animation`/`Level`, no GPU resource). Its `*.inputmap.json` source declares the
+  actions a scheme defines (id + name + `ActionKind`) and its raw-source → action bindings; the
+  cook validates every binding against the declared actions. The runtime loads it by `AssetId`
+  through the ordinary `Load`/`LoadSync` path and hot-reloads it through `MountMemory`; a seat's
+  `InputContextStack` references one or more by id, and `InputMappingSystem` resolves the active
+  set against the raw snapshot — the gameplay control flow is
+  [../Scene/CLAUDE.md](../Scene/CLAUDE.md).
+- **Load is by opaque `u64` `AssetId`** through mounted archives.
+  `AssetManager::Load<T>(AssetId)` is **async by default**: it returns a not-yet-resident
+  `AssetHandle<T>` immediately and runs the decode + GPU upload on the task system (transfer
+  queue, no frame stall); poll `IsLoaded()` before using it. `AssetManager::LoadSync<T>(AssetId)`
+  is the **blocking** sibling — it runs the whole pipeline inline and returns a resident handle or
+  a structured error, `AssetResult<AssetHandle<T>>` (`std::expected<…, AssetLoadError>` — branch
+  on `AssetError::Kind`, not a string).
+- **`AssetManager::MountMemory(vector<u8>, string) → MountHandle`** shadow-mounts an **in-memory
+  archive** over the on-disk mounts: a later resolve of an `AssetId` the in-memory archive carries
+  hits it first. The returned `MountHandle` is **RAII** — drop it to unmount and reveal the
+  underlying mount again. The cook-on-demand loop uses it: the editor cooks a source into a
+  scratch archive in memory, mounts it, reloads the handle behind it, and replaces the
+  `MountHandle` on the next recook.
+- **`AssetManager` is owned by `Application` and constructed with a `Context&`, a `TaskSystem&`,
+  and the borrowed `TypeRegistry&`** (the registry the prefab loader reflects components through).
+  The async `Load` is the obvious call and the non-stalling one; `LoadSync` is the marked-verbose
+  blocking spelling for tests, tools, and the smoke path.
+- **The cooker loads the game module to reflect its types.** `vengc cook --module <lib>` `dlopen`s
+  the game module and reflects its component types into a `TypeRegistry` (reusing `ModuleLoader`,
+  ABI-version check included), so the `PrefabImporter` validates a prefab's components against the
+  **real** reflected descriptors — an unknown component, a wrong field type, or a malformed value
+  is a located cook-time error, the way the material importer validates `*.vmat.json` against a
+  shader's reflected parameters. A field absent from the source keeps its default-constructed
+  value (schema tolerance), so omission is allowed, type-mismatch is not. `vengc generate-type-id`
+  mints a collision-free `TypeId` (the `TypeId` analogue of `generate-id`) and `vengc` can emit a
+  type manifest.
+- **Type registration is GPU-free, by contract.** `RegisterBuiltinTypes(TypeRegistry&)` (public,
+  in `Veng/Scene/BuiltinTypes.h`), `Register<T>()`, and a module's `VengModuleRegister` (the
+  `Application` factory + the type registration) touch **no** `Context`/device — the headless
+  cooker reflects a module's types with no ICD present, and a no-device cooker test pins the
+  contract. The **host** (launcher or cooker) owns the `TypeRegistry`: it constructs it,
+  pre-registers the builtins, puts it in the `VengModuleHost` as `Types`, calls
+  `VengModuleRegister` (at which point the module registers its component types), and threads it
+  onward.
+- **Build-order edge: `veng_add_asset_pack(... MODULE <lib>)`.** A pack containing prefabs names
+  its game module; the build graph grows a `lib → cook → bundle` edge so the pack cooks after its
+  lib is built. Packs without prefabs stay module-independent. `veng_add_game` wires the example's
+  prefab pack to depend on `libhello_triangle`.
+
+## Upload tiers
+
+The same split runs underneath at the resource level: `Buffer/Image::Upload` (taking a
+`TaskSystem&`) is **async by default** — it returns a `Task<void>`, records the copy on the
+transfer queue, and never blocks — while `UploadSync` is the blocking path (host memcpy +
+`WaitIdle`) the sync loaders, tests, and smoke render use.
+
+## Textures
+
+**Textures load multi-mip and block-compressed.** A cooked texture carries a full mip chain
+(largest-first) in a GPU block format (ASTC 4×4 by default, BC7 selectable) or an uncompressed
+format. `TextureLoader` walks the levels with **`Renderer::FormatInfo`** — a header-only
+block-geometry helper (`Veng/Renderer/FormatInfo.h`, no backend include) whose
+`BytesForLevel(format, w, h)` is `ceil(w/bw)·ceil(h/bh)·bytesPerBlock`; an uncompressed format
+reports a **1×1 block**, so one helper sizes every format and the blob needs no per-level offset
+table. Upload records **one `VkBufferImageCopy` region per level** from a single staging buffer
+through the multi-region `CommandBuffer::CopyBufferToImage` overload (no `GenerateMipmaps` — a
+block-compressed image cannot be blit-mipgen'd; GPU mipgen stays scoped to runtime-built
+uncompressed textures). A **compressed format must be enabled at `createDevice`, not merely
+queried** — `textureCompressionBC` / `textureCompressionASTC_LDR` are core
+`VkPhysicalDeviceFeatures` booleans `Context` enables when the physical device supports them, and
+`Context::IsBlockCompressionSupported()` / `IsAstcSupported()` reflect the **enabled** state
+(sampling a block image without the enable is a validation error). The runtime does **not**
+transcode: on a device lacking the cooked codec's feature the loader logs **once** and returns a
+recoverable `AssetError::Unsupported`, so the affected materials sample their fallback (untextured)
+and the app still runs — only `smoke_golden` (gated to skip on a non-ASTC device) would diverge.
+
+## Meshes
+
+- **`AssetHandle<T>` is refcounted indirection into the manager's cache**, not a `Ref` to a GPU
+  resource (see the root CLAUDE.md ownership rule). Apps drop their handles in `OnDispose()` like
+  any other engine resource; `CollectGarbage()` evicts entries no handle references, retiring
+  their GPU resources through the per-frame deferred-destruction path.
+  **`AssetManager::Adopt<T>(Ref<T>)`** wraps an already-resident, runtime-created resource in an
+  `AssetHandle<T>` so it is usable everywhere a cooked, `AssetId`-loaded handle is. The adopted
+  handle carries the invalid `AssetId` (`Id().IsValid() == false`), and its cache entry is
+  **detached** — never inserted into the `AssetId` map, so `CollectGarbage()` ignores it; it stays
+  alive exactly as long as a handle references it. A reflective serializer records the invalid id
+  as "no asset", so a runtime resource is not a persistable content reference.
+- **A `Mesh` can also be built at runtime, no cooker.** `Primitives::Cube` / `Plane` / `Sphere`
+  (`Veng/Asset/Primitives.h`) generate CPU-side `MeshData` (canonical-layout vertices + `u32`
+  indices + a resident material list + an indexed submesh table) with analytic normals/tangents/UVs
+  and an optional `AssetHandle<Material>`; `Mesh::BuildSync(Renderer::Context&, const MeshData&,
+  const string&)` uploads that into a resident `Ref<Mesh>` via the blocking `UploadSync` (its
+  async sibling `AssetManager::Build<Mesh>` streams the same geometry in off the render thread). A
+  runtime primitive is **not** an `AssetId`-addressable asset and never touches an archive — it is
+  owned by whoever calls the factory and retires through the per-frame deferred-destruction path
+  like any other `Mesh`. It is interchangeable with a cooked mesh at every pipeline and draw call,
+  both being in the canonical layout (`Mesh::CanonicalLayout()`), and `AssetManager::Adopt` wraps
+  its `Ref<Mesh>` in an (id-less) `AssetHandle<Mesh>` so it is equally usable anywhere a cooked
+  handle is — e.g. a `MeshRenderer`.
+- **A mesh reference's source is `cooked AssetId | inline recipe`.** `MeshRenderer`
+  (`Veng/Scene/Components.h`) carries one runtime `AssetHandle<Mesh> Mesh` (the renderer query
+  `(Transform, MeshRenderer)` and every draw path read it) plus a serialized **`MeshSource
+  Source`** — a `Variant<CubeShape, PlaneShape, SphereShape, IcosphereShape, CylinderShape,
+  ConeShape, TorusShape, CapsuleShape>`, each alternative carrying that shape's parameters plus an
+  `AssetHandle<Material>`. An empty `Source` means the authored cooked `Mesh` is used as-is; a
+  non-empty `Source` is the inline procedural recipe, so a prefab persists "icosphere, radius 0.8,
+  4 subdivisions, brick material" inline rather than as an unaddressable runtime handle. Both
+  forms cook and load through the ordinary prefab path; the embedded material in the active
+  alternative (and the cooked `Mesh` id) resolve as ordinary load-time dependencies. The recipe
+  becomes a renderable mesh **during the populate pass**: `Prefab::SpawnInto`, right after it
+  rehydrates a component's fields, builds a non-empty `Source` into the entity's `Mesh` via
+  `BuildPrimitiveMesh(AssetManager&, const MeshSource&) → AssetHandle<Mesh>` — which builds the
+  active shape's CPU geometry (`BuildShapeMeshData`) and streams it in through
+  `AssetManager::Build<Mesh>`, yielding a pending handle identical in kind to a cooked async load.
+  So a recipe-sourced mesh **appears** a few frames after spawn exactly as a cooked mesh would
+  (the renderer skips a not-yet-resident mesh), with no second spawn pass and no per-frame scan.
+  There is no dedup cache: identical recipes build independent meshes, and a consumer wanting N
+  entities on one mesh calls `BuildPrimitiveMesh` once and assigns the shared handle N times. The
+  hand-built `Primitives::`/`Adopt` path above stays public for tests and tools.
+- **A mesh owns its materials; submeshes index them.** A `Mesh` holds a resident
+  `vector<AssetHandle<Material>>` (`GetMaterials()`) and each `SubMesh` carries a `u32
+  MaterialIndex` into it (`SubMesh::NoMaterial` = unassigned). The cooked on-disk mesh format
+  stores u64 material ids; `MeshLoader` eager-resolves those ids into material instances and
+  builds the list, exactly as `Material` resolves its own texture/shader dependencies — so every
+  asset eager-loads its dependencies. A draw iterates submeshes, binding
+  `GetMaterials()[MaterialIndex]` per range.
+- **Skinned meshes carry a skeleton and animate through GPU skinning.** A `Mesh` with a
+  `SkeletonId` is **skinned** (`Mesh::IsSkinned()`): its vertices use the skinned layout
+  (`Mesh::SkinnedLayout()` — canonical attributes plus `RGBA16Uint` bone indices + `RGBA32Sfloat`
+  weights) and it eager-resolves an `AssetHandle<Skeleton>` (`Skeleton` and `Animation` are
+  CPU-only assets, loaded by `AssetId` like any other, no GPU resource). An **`Animator`**
+  component (`AssetHandle<Animation>` + time/speed/loop/playing) plays a clip; the View-phase
+  **`AnimationSystem`** samples it against the mesh's `Skeleton` each tick into a transient
+  **`SkinnedPose`** component (the bone palette, `Skeleton::ComputeSkinningMatrices` =
+  `GlobalInverse · modelBone · inverseBind`). The `SceneRenderer` splits its g-buffer draw plan
+  into a static path (the existing GPU-driven-cull pipeline) and a **skinned path**: a second
+  pipeline built from the core `surface_skinned.vert` (4-influence linear-blend skinning) drawn
+  CPU-direct, reading a per-instance **skinning palette** SSBO (ring-buffered, **set 2**;
+  `DrawData.PaletteBase` is each instance's offset). The directional `ShadowScenePass` and the
+  `PunctualShadowScenePass` both cast a skinned caster's posed shadow through a parallel
+  `shadow_depth_skinned.vert` + the palette at set 1, and `surface_skinned.vert` skins both the
+  current and previous position (the latter through the previous-frame palette base the renderer
+  tracks, valid because the palette is ring-buffered) so a skinned mesh's deformation writes its
+  motion vector into the g-buffer velocity channel. An entity with no `SkinnedPose` (e.g. the
+  editor with systems paused) renders at the skeleton's bind pose. The core pack ships the
+  `skinned` vertex layout and the skinned surface/shadow vertex shaders.
+
+## Prefabs
+
+**Cooked prefabs load like every other asset; a `Scene` is what you spawn into.** A `*.prefab.json`
+(entities + components + field values) cooks into an `AssetType::Prefab` blob and loads through the
+**identical** `AssetManager::Load`/`LoadSync` path — a cached `AssetHandle<Prefab>` whose embedded
+asset references (a `MeshRenderer`'s mesh, a `Material`, …) are resolved as ordinary load-time
+dependencies, exactly as a `Material` resolves its textures and shaders. The cooked blob **is** the
+reflection serializer's name-keyed `WriteFields` record encoding, per component, wrapped in an
+entity/component table — not a new format. A `Scene` is an engine primitive, **never loaded**; you
+create one and spawn into it: `Prefab::SpawnInto(Scene&, AssetManager&) const → vector<Entity>`
+(the spawned roots) creates the entities, `ReadFields` each component, remaps intra-prefab `Entity`
+reference fields to the fresh handles, and rehydrates the embedded `AssetHandle` fields. Spawning
+the same prefab twice spawns two independent copies — a prefab is a reusable recipe, not a
+singleton. `SpawnInto` lives on `Prefab`, so the dependency points asset → primitive; the `Scene`
+primitive gains no asset-system dependency. The per-component populate loop also builds a
+`MeshRenderer`'s inline recipe `Source` into its `Mesh` (`BuildPrimitiveMesh`) right where it
+rehydrates the cooked-handle fields, so a recipe resolves to a pending handle through the same
+single pass as a cooked load — there is no second spawn pass and no resolver seam.
+
+## Shaders & materials
+
+The offline shader compile + reflection and `.vmat` validation run in the cooker
+([cooker/CLAUDE.md](../../../cooker/CLAUDE.md)); this section covers the runtime material.
+
+Shaders are a first-class asset authored in **Slang** — a `*.shader.json` names its `.slang`
+source, entry point, and optional vertex-layout `AssetId`. The cooker **always** compiles from
+source (there is no precompiled-inline path) and **reflects the shader offline** into a
+serializable `ShaderInterface`; the engine loads plain **SPIR-V** and gains no Slang dependency.
+Shaders are Slang only; there is no GLSL path.
+
+A material (`*.vmat.json`) references its vertex/fragment shaders by `AssetId` and declares an
+**ordered, explicitly-typed** field list; the cook validates those fields against the fragment
+shader's reflected parameters.
+
+**A material is split into a parent and an instance — the standard cross-engine division.** A
+**`Material`** (`AssetType::Material`) is the **parent**: it owns the expensive half — the
+graphics pipeline, the pipeline layout, the resident shader/texture dependencies, the reflected
+`MaterialField` **schema** (`GetFields()`), and a cooked **default parameter block** (held as
+bytes, its bindless handle slots patched at `Finalize`). A parent owns **no** per-draw SSBO slot
+and **no** per-instance mutators. A **`MaterialInstance`** (`AssetType::MaterialInstance`) is a
+cheap **override** over a parent: an `AssetHandle<Material> Parent` kept resident, **one**
+per-material SSBO slot seeded from the parent's default block and patched by its overrides, its
+resident texture overrides, and the ring-buffered
+`SetParam`/`SetTexture`/`SetTextureHandle`/`SetSamplerHandle` writes. `MaterialInstance::Bind`
+binds the **parent's** pipeline and pushes *this* instance's selector; its
+domain/layout/schema/modules delegate to the parent. So many instances share one parent's pipeline
+and differ only by a per-material slot — 30 tinted bricks are 1 generated shader + 30 cheap slots,
+not 30 pipelines. The mesh material list, the `MeshSource` shape fields, `Primitives`,
+`MeshRenderer`, and the prefab/level reflected `AssetHandle` fields all hold
+`AssetHandle<MaterialInstance>`; the draw path binds `GetMaterials()[MaterialIndex]` (an instance).
+
+**A parent declares an explicit default instance.** A parent `*.vmat.json` declares a minted
+**`defaultInstance`** `AssetId`; the cook emits a real zero-override `MaterialInstance` at that id
+beside the parent `Material` blob. Every material reference (a cooked mesh's material list, a
+reflected prefab/level `AssetHandle<MaterialInstance>` field, a C++ literal) names the
+default-instance id, not the parent id — so a reference resolves an ordinary `MaterialInstance`
+archive entry through the same `Load`/`LoadSync` path any cooked asset takes. **One `AssetId`
+names one asset of one type:** the asset cache is keyed by **id alone**, and a `MaterialInstance`
+request for a bare `Material` id is an ordinary `WrongType`, not a synthesized default — the
+parent id and its default-instance id are distinct assets. A **MID** (Material Instance Dynamic)
+is just a runtime-built instance: `AssetManager::Build<MaterialInstance>(MaterialInstanceInfo{
+.Parent = …, .Overrides = … })` (or `Adopt`) plus per-frame `SetParam` — no separate dynamic type;
+the editor previews a parent through a runtime default instance over it (no cooked
+default-instance id needed for the preview).
+
+A material instance's GPU parameters are **one reflection-sized block** per instance (set 0
+binding 4, byte-addressed at `index * MaterialParamStride`): its bindless handle slots (`uint`
+members seeded from the parent and overridden by a texture override) and its authored
+scalar/vector params share that single block, laid out by reflection at each field's offset. There
+is no fixed engine struct and no second SSBO — a material declares an arbitrary, shader-defined
+handle set (zero, one, or several), and `CookedMaterialField::Kind` (handle vs. param) is the seam
+the loader patches by offset. `CookedMaterialHeader` carries `Version` (`CookedMaterialVersion`),
+`Domain`, and `BlockBytes`; a stale blob rejects loudly. `Material::GetFields()` (delegated by
+`MaterialInstance::GetFields()`) exposes the reflected `MaterialField` table — the editor's
+parameter-schema source and an instance's override surface, so the node editor reads a material's
+authorable parameters with no Slang in `libveng_editor`.
+
+The block buffer is **N-buffered for frames-in-flight, host-visible + persistently mapped**: it
+holds `framesInFlight` copies of the `MaxMaterials * MaterialParamStride` table, and each
+frame-in-flight owns one region. `Register/UpdateMaterial` mark an instance dirty for
+`framesInFlight` frames and write only the *current* frame's region (safe because that frame is
+not yet submitted); `OnFrameAcquired` flushes each still-dirty instance into the region it just
+made current. A per-frame `SetParam` / `SetTexture` is therefore a direct, stall-free write — no
+staging, no `WaitIdle`, no hazard. **The current frame's region is selected by folding the frame
+base (`currentFrame * MaxMaterials`, via `BindlessRegistry::GetCurrentFrameBase()`) into the
+pushed material selector index in `MaterialInstance::Bind`** — not by a dynamic descriptor offset:
+a `STORAGE_BUFFER_DYNAMIC` descriptor mistranslates inside set 0's bindless Metal argument buffer
+on MoltenVK. The buffer stays a plain storage buffer bound at full range, and the shader's
+`index * MaterialParamStride` load is unchanged.
+
+A `Material` carries a first-class **`MaterialDomain`** (`Surface` / `PostProcess`,
+`Veng/Asset/Material.h`) selecting its output contract, pipeline shape, standard vertex shader,
+and invocation site — the parameter schema, bindless handles, `.vmat` authoring, and editor
+inspector are shared across domains. `Surface` is the opaque path made explicit (canonical-layout
+vertex stage, g-buffer MRT output, drawn per-submesh by the geometry pass); `PostProcess` is the
+fullscreen path (screenspace vertex stage, a single `SV_Target0` color, invoked by the post
+chain). The lowercase `"domain"` `.vmat.json` key selects it (default `surface`), and the cook
+validates the fragment shader's outputs against the domain's contract (Surface → the four-target
+g-buffer MRT, `SV_Target0`..`SV_Target3`, velocity included; PostProcess → a single `SV_Target0`).
+The per-draw selector push offset is domain-keyed — Surface 64 (after the MVP block),
+PostProcess 0.
+
+The engine ships the **standard vertex shader per domain in the core pack**: `surface.vert`
+(canonical layout) and `fullscreen.vert` (screenspace). The material contract is **one importable
+engine header per domain** (`engine/assets/core/shaders/Veng/`): `Veng/surface.slang`,
+`Veng/postprocess.slang`, and `Veng/sky.slang`. Each declares the set-0 bindless declarations, the
+per-frame view block, and its own domain's push block + fragment-input struct; `surface.slang`
+also holds `DrawData`, `GBufferOutput`, and `ComputeMotionVector` (the deferred geometry
+contract). The split is because a fullscreen domain (PostProcess, Sky) declares exactly one
+push_constant block, so it cannot coexist with the surface push in one header. A consumer (or
+generated) shader `#include`s its domain's header and **declares its own `MaterialParams`** beside
+it — the parameter block is per-shader by definition (the cooker reflects each shader's own struct
+to pack its fields at the reflected offsets), so it is not part of the engine header. The
+cross-pack include resolves because the cook threads the engine core shader dir onto every Slang
+session's search path (see [cooker/CLAUDE.md](../../../cooker/CLAUDE.md)). A game references the
+core `surface.vert` rather than shipping its own surface vertex stage.

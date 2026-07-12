@@ -9,8 +9,8 @@ offline cooker and the runtime: the `.vengpack` archive and the cooked-blob layo
 
 The cook that *writes* an archive is in [cooker/CLAUDE.md](../cooker/CLAUDE.md); the
 runtime that *mounts and resolves* one (the `AssetManager`, `AssetHandle`, mounts) is
-in [engine/CLAUDE.md](../engine/CLAUDE.md). This library is just the format and its
-serialization — neither importer nor loader.
+in [engine/src/Asset/CLAUDE.md](../engine/src/Asset/CLAUDE.md). This library is just
+the format and its serialization — neither importer nor loader.
 
 - **`AssetId` is an opaque `u64`.** Assets are addressed by id, never by path, at
   runtime. The same id is byte-identical across the cooker/runtime boundary (and
@@ -66,9 +66,11 @@ serialization — neither importer nor loader.
   carries replacement bytes in the value region (copied at the parent field's reflected offset); a
   texture override (Kind 1) carries a `TextureId` the loader resolves to a bindless index. The
   instance owns no shader/pipeline — the parent supplies those; the instance seeds its own SSBO slot
-  from the parent's default block and patches it by override. A bare parent `Material` id used where a
-  `MaterialInstance` is expected resolves at load to the parent's zero-override **default instance** (no
-  separate blob), so an explicit `*.vmatinst.json` is opt-in. The loader rejects a `Version` mismatch.
+  from the parent's default block and patches it by override. A parent material's declared
+  `defaultInstance` id is cooked as a **real zero-override `MaterialInstance` blob** beside the parent —
+  the parent id and the default-instance id are distinct archive entries, and requesting a
+  `MaterialInstance` at a bare parent `Material` id is an ordinary `WrongType` error. The loader rejects
+  a `Version` mismatch.
 - **`AssetType::Level` is a world prefab by reference plus level-scoped wiring.** Its
   blob is a **`CookedLevelHeader`** (`CookedLevelVersion`, currently `1`) — `WorldPrefabId`
   (the world prefab's `AssetId`, resolved as a load-time dependency), `SystemCount`, and the

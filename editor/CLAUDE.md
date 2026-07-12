@@ -1,124 +1,158 @@
 # libveng_editor — the editor framework
 
-The editor is a separate executable, not part of the runtime. It is built on the
-engine ([engine/CLAUDE.md](../engine/CLAUDE.md)) — `Veng::UI`, `SceneRenderer`,
-`AssetManager`, and the reflection layer — and on the cook pipeline
-([cooker/CLAUDE.md](../cooker/CLAUDE.md)) for its cook-on-demand loop. Project-wide
-conventions live in the [root CLAUDE.md](../CLAUDE.md).
+The editor is a separate executable, not part of the runtime. It is built on the engine
+([engine/CLAUDE.md](../engine/CLAUDE.md)) — `Veng::UI`, `SceneRenderer`, `AssetManager`, and the
+reflection layer — and on the cook pipeline ([cooker/CLAUDE.md](../cooker/CLAUDE.md)) for its
+cook-on-demand loop. Project-wide conventions live in the [root CLAUDE.md](../CLAUDE.md); the
+node-graph + material-codegen library both the editor and the cooker link is
+[graph/CLAUDE.md](../graph/CLAUDE.md).
 
-`libveng_editor` is the editor **framework** library; the editor is a **single,
-project-agnostic `veng-editor` exe** (built in `editor/`, links `libveng`, `libveng_editor`,
-and `libveng_cook`) — **not** a per-game binary.
+`libveng_editor` is the editor **framework** library; the editor is a **single, project-agnostic
+`veng-editor` exe** (built in `editor/`, links `libveng`, `libveng_editor`, and `libveng_cook`) —
+**not** a per-game binary.
+
+## The exe: SDK surface, flags, project launch
 
 Both `libveng_editor` and `veng-editor` are an **installed SDK surface**, gated behind the
-`VENG_INSTALL_SDK` option (default `${PROJECT_IS_TOP_LEVEL}`) that gates the editor
-build/install. `find_package(veng)` exports `veng-editor` as an **imported executable** in
-`vengTargets`; `veng-config` recreates the unqualified `veng-editor` name and the
-`veng_editor::veng_editor` library alias with `NOT TARGET`-guarded aliases, so `veng_add_editor`
-resolves the imported exe and a downstream `EDITOR_MODULE` links `veng_editor::veng_editor` in
-every consumption mode. The installed `veng-editor` carries an `INSTALL_RPATH` and requires the
-host's Vulkan SDK / Slang at runtime. **`veng-editor --version`** prints `veng-editor <version>`
-and exits before opening a window or creating a device — the SDK identity probe the conformance
-tests run.
+`VENG_INSTALL_SDK` option (default `${PROJECT_IS_TOP_LEVEL}`) that gates the editor build/install.
+`find_package(veng)` exports `veng-editor` as an **imported executable** in `vengTargets`;
+`veng-config` recreates the unqualified `veng-editor` name and the `veng_editor::veng_editor`
+library alias with `NOT TARGET`-guarded aliases, so `veng_add_editor` resolves the imported exe
+and a downstream `EDITOR_MODULE` links `veng_editor::veng_editor` in every consumption mode. The
+installed `veng-editor` carries an `INSTALL_RPATH` and requires the host's Vulkan SDK / Slang at
+runtime. **`veng-editor --version`** prints `veng-editor <version>` and exits before opening a
+window or creating a device — the SDK identity probe the conformance tests run.
 
 **`veng-editor --connect=<port|host:port>`** is the client mirror of `--mcp`: where `--mcp[=port]`
 (add `--mcp-write` for mutations) runs the editor's own MCP *server*, `--connect` makes the exe a
 one-shot *client* of an already-running MCP server — it drives one tool call (or `--list`) and
 `return`s **before** any window or device is created, exactly as `--version` does, calling the
 shared `Mcp::RunClientCli` with `"veng-editor"` as its error label (the grammar + exit-code map
-live in [mcp/CLAUDE.md](../mcp/CLAUDE.md)). Both the `--mcp` server and the `--connect` client — the
-whole MCP surface of the exe, plus `EditorMcp.cpp` and the `veng::mcp` link — are gated behind the
-**`VENG_EDITOR_WITH_MCP`** cache option (default **on**); building it off yields an MCP-free editor
-with no `veng::mcp` link and neither flag. (It is distinct from the unrelated `VENG_EDITOR_MCP`
-source-path CACHE INTERNAL string, which is untouched.)
+live in [mcp/CLAUDE.md](../mcp/CLAUDE.md)). Both the `--mcp` server and the `--connect` client —
+the whole MCP surface of the exe, plus `EditorMcp.cpp` and the `veng::mcp` link — are gated behind
+the **`VENG_EDITOR_WITH_MCP`** cache option (default **on**); building it off yields an MCP-free
+editor with no `veng::mcp` link and neither flag. (It is distinct from the unrelated
+`VENG_EDITOR_MCP` source-path CACHE INTERNAL string.)
 
-It is launched with `--project <project.veng>`;
-it reads the module(s) the project names (`ProjectSettings::Module` / `EditorModule`, from the
-`"module"` / `"editorModule"` keys) and `dlopen`s them from the project's **build-output dir** the
-same way the launcher does — but passing a non-null `EditorRegistry*` in `VengModuleHost::Editor`.
-A game ships only its library, referenced from the project file. The build-output dir (cooked packs
-+ module libraries) is **discovered from the project**: the build records it in a gitignored
-`.veng/build.json` sidecar beside the source `project.veng`, so launching with only a project
-resolves it — no CMake in the launch loop (the seam a future project-picker launcher uses;
-`--build-dir` stays an override). `veng_add_editor` builds no exe: it writes that sidecar, places an
-optional editor-extension module beside the launcher, and registers a per-project `<name>-editor`
-**run target** that launches `veng-editor` with the project's source `project.veng`. **Same-tree
-only** — a module must be built from the editor's own source tree (`VengModuleAbiVersion` rejects a
-mismatch at load); hosting separately built modules is a future module-ABI/SDK freeze.
+The editor is launched with `--project <project.veng>`; it reads the module(s) the project names
+(`ProjectSettings::Module` / `EditorModule`, from the `"module"` / `"editorModule"` keys) and
+`dlopen`s them from the project's **build-output dir** the same way the launcher does — but
+passing a non-null `EditorRegistry*` in `VengModuleHost::Editor`. A game ships only its library,
+referenced from the project file. The build-output dir (cooked packs + module libraries) is
+**discovered from the project**: the build records it in a gitignored `.veng/build.json` sidecar
+beside the source `project.veng`, so launching with only a project resolves it — no CMake in the
+launch loop (`--build-dir` stays an override). `veng_add_editor` builds no exe: it writes that
+sidecar, places an optional editor-extension module beside the launcher, and registers a
+per-project `<name>-editor` **run target** that launches `veng-editor` with the project's source
+`project.veng`. **Same-tree only** — a module must be built from the editor's own source tree
+(`VengModuleAbiVersion` rejects a mismatch at load).
 
-- **`EditorHost`** is an `Application` subclass living in `libveng_editor`. It builds a
-  top-level single-window `DockSpace` (`ImGuiConfigFlags_DockingEnable`; multi-viewport
-  OS windows are not built — they conflict with the single-offscreen-composite model),
-  owns the panel set (open/close state, Window menu, dock layout), and loads the game
-  module with `Editor = &m_EditorRegistry`. **It runs the engine render tail**, not a
-  hand-rolled present path: a render-owning panel holds its own `Viewport` and registers
-  it into the base `Application` drive-list, so the engine renders every panel viewport,
-  then `ImGuiLayer::Render` + the managed gather/composite bracket `OnRender` in the base.
-  The editor registers **no** `Presented` viewport, so the composite runs with **zero
-  placements** (a cleared assembly target, ImGui only) — the editor's content is the
-  ImGui dockspace, and each panel's scene is an ImGui texture over an `Offscreen` viewport.
-- **`EditorPanel`** is the panel base class: a `GetTitle()` / `OnUI()` virtual interface
-  plus a `Draw(bool* open)` seam (default wraps `OnUI` in one `UI::Window`). It carries
-  **no render seam** — a render-owning panel holds a registered
-  `Veng::Renderer::Viewport` (`Offscreen`) and the engine drive-list renders it each
-  frame, so the panel records no scene render of its own; it pushes the viewport's
-  `ViewState` and its region (from the ImGui content rect) in `OnUI`, and samples the
-  ready output as a `UI::Image`. The host drives each open panel and owns its visibility.
-  Top-level host panels: asset browser, console/log, and the per-asset editors below.
+**The editor opens the project, not a manifest.** `EditorHostInfo::ProjectPath` (the source
+`project.veng`, passed by `--project`) is the editor's entrypoint: `EditorHost::Create` reads it
+through `LoadProjectSettings` (the host-owned `ProjectSettings` — its `Configurations`,
+`ActiveConfiguration`, `Packs`, `StartupLevel`, and the `Module` / `EditorModule` names it
+`dlopen`s), then resolves each module as `lib<name>.<ext>` beside the build output. **The build
+output dir is resolved once in `Create`** (`m_BuildDir`): an explicit `EditorHostInfo::BuildDir`
+(`--build-dir`) override, else discovery from the `.veng/build.json` sidecar beside the project
+(`DiscoverProjectBuildDir`), else `ExecutableDirectory()` (the relocatable ship layout). The
+editor mounts each cooked pack from `m_BuildDir` (under the source manifest's stem) and builds its
+`AssetSourceIndex` from the **union** of the project's pack manifests
+(`AssetSourceIndex::ParsePacks`). The editor's own icon pack stays beside the editor exe
+(`ExecutableDirectory()`), distinct from the project's build dir. The runtime `.vengproj` is a
+game-launch artifact the editor does not consume. Cook-on-demand passes **every** project pack as
+a reference (`CookRequest::ReferenceManifests`), so an edited asset resolves cross-asset ids
+across the whole project's one AssetId namespace, not just its own pack.
+
+## Host, panels, and viewports
+
+- **`EditorHost`** is an `Application` subclass living in `libveng_editor`. It builds a top-level
+  single-window `DockSpace` (`ImGuiConfigFlags_DockingEnable`; multi-viewport OS windows are not
+  built — they conflict with the single-offscreen-composite model), owns the panel set
+  (open/close state, Window menu, dock layout), and loads the game module with
+  `Editor = &m_EditorRegistry`. **It runs the engine render tail**, not a hand-rolled present
+  path: a render-owning panel holds its own `Viewport` and registers it into the base
+  `Application` drive-list, so the engine renders every panel viewport, then `ImGuiLayer::Render`
+  + the managed gather/composite bracket `OnRender` in the base. The editor registers **no**
+  `Presented` viewport, so the composite runs with **zero placements** (a cleared assembly target,
+  ImGui only) — the editor's content is the ImGui dockspace, and each panel's scene is an ImGui
+  texture over an `Offscreen` viewport.
+- **`EditorPanel`** is the panel base class: a `GetTitle()` / `OnUI()` virtual interface plus a
+  `Draw(bool* open)` seam (default wraps `OnUI` in one `UI::Window`). It carries **no render
+  seam** — a render-owning panel holds a registered `Veng::Renderer::Viewport` (`Offscreen`) and
+  the engine drive-list renders it each frame; the panel pushes the viewport's `ViewState` and its
+  region (from the ImGui content rect) in `OnUI`, and samples the ready output as a `UI::Image`.
+  The host drives each open panel and owns its visibility. Top-level host panels: asset browser,
+  console/log, and the per-asset editors below.
 - **`AssetEditorPanel` hosts a private, class-restricted dockspace.** An asset editor is a
   top-level panel whose window hosts a per-instance ImGui dockspace; its child panels are
   submitted as separate windows tagged with a per-instance `ImGuiWindowClass`, so only that
-  editor's children dock into its area and cannot stray into the host dockspace (two open
-  editors of the same asset stay isolated by a monotonic instance id). A subclass adds
-  children with `AddChild` and arranges the initial split in `BuildDefaultLayout`; it
-  overrides `Draw` to submit the document window + dockspace + the class-tagged children.
-  A child that renders a scene owns its own registered `Offscreen` viewport, so there is
-  no render forwarding — the engine renders every panel viewport before the ImGui frame.
+  editor's children dock into its area and cannot stray into the host dockspace (two open editors
+  of the same asset stay isolated by a monotonic instance id). A subclass adds children with
+  `AddChild` and arranges the initial split in `BuildDefaultLayout`; it overrides `Draw` to submit
+  the document window + dockspace + the class-tagged children. A child that renders a scene owns
+  its own registered `Offscreen` viewport, so there is no render forwarding.
+- **`EditorRegistry`** is defined in `libveng_editor` and **forward-declared** in
+  `engine/include/Veng/Module/Module.h` (so `libveng` stays clean). It holds the
+  `AssetType`→editor-factory map (double-click an asset opens its editor), `RegisterPanel` for
+  game-contributed panels, and `RegisterFieldWidget(TypeId, FieldWidgetFn)` for custom inspector
+  widgets. It is non-null in `VengModuleHost` only in the editor host.
+
+## Scene editing: the prefab and level editors
+
 - **The prefab editor is the scene-editing surface.** `PrefabEditorPanel` (registered for
-  `AssetType::Prefab`) loads + `SpawnInto`s the prefab into a document-owned live `Scene`
-  (adding a default directional light when the prefab carries none) and hosts three children
-  over one shared `PrefabEditContext` (`Scene*` + `AssetManager*` + a multi-entity `Selection` +
-  the `Active` entity + the `EntityPayload` drag tag + a `ResolveEntity` helper): `SceneViewportPanel`
+  `AssetType::Prefab`) loads + `SpawnInto`s the prefab into a document-owned live `Scene` (adding
+  a default directional light when the prefab carries none) and hosts three children over one
+  shared `PrefabEditContext` (`Scene*` + `AssetManager*` + a multi-entity `Selection` + the
+  `Active` entity + the `EntityPayload` drag tag + a `ResolveEntity` helper): `SceneViewportPanel`
   (owns a registered `Offscreen` `Viewport` the engine renders, samples its output into a
-  `UI::Image`, feeds the viewport's region from the panel content rect and pushes an
-  orbit-camera `ViewState` each frame, with the `DebugView` dropdown; `Viewport::ScreenToWorldRay`
-  is the entity-picking seam now available to it), `PrefabExplorerPanel`, and `InspectorPanel`.
-  The host opens the sample prefab as the initial document; double-clicking a prefab in the
-  asset browser opens another.
+  `UI::Image`, feeds the viewport's region from the panel content rect and pushes an orbit-camera
+  `ViewState` each frame, with the `DebugView` dropdown; `Viewport::ScreenToWorldRay` is the
+  entity-picking seam), `PrefabExplorerPanel`, and `InspectorPanel`. The host opens the sample
+  prefab as the initial document; double-clicking a prefab in the asset browser opens another.
+- **`PrefabExplorerPanel` is a full scene-graph tree** over the intrusive `Hierarchy`
+  ([engine/src/Scene/CLAUDE.md](../engine/src/Scene/CLAUDE.md)): roots are entities with a null
+  parent, children walk `ForEachChild` in order. It drives the shared selection (click /
+  Ctrl-click toggle), inline-renames (double-click), drag-reparents (`Scene::SetParent`) and
+  reorders siblings (`Scene::MoveBefore`) — both with a cycle pre-check so the engine's fatal
+  cycle assert is never reached — and creates / adds-child / duplicates / deletes entities, plus a
+  name filter and row/empty-space context menus. Delete is reachable three ways: the toolbar trash
+  button, the row context menu, and the `Delete` key over the selection. Every structural edit is
+  **queued during the draw and applied after** the snapshot walk returns, so nothing mutates the
+  scene mid-iteration (the `Scene` contract). Duplicating an entity round-trips its components
+  into the copy but builds no derived mesh, so `DuplicateSubtree` calls `ResolveEntity` on each
+  copy after its children recurse — the byte copy carries the recipe `Source` forward but never
+  the built handle.
 - **`PrefabSerialize` is the write inverse of the cooker's `PrefabImporter`, through the same
   shared walker.** Saving a document writes each entity's components via the **merge-write**
   `JsonWriteFields(existingComponentJson, componentPtr, typeInfo, registry, hooks)`
-  (`Veng/Reflection/JsonSerialize.h`) — patching the reflected fields into the JSON already
-  read from source, so unknown keys (comments-as-keys, hand-authored structure) survive
-  untouched. Its `JsonFieldHooks::WriteReference` maps a live `Entity` back to a prefab-local
-  index, the inverse of the importer's `ReadReference`; enums come out as enumerator names,
-  matching what the cooker's `JsonReadFields`-based read now requires.
+  ([engine/src/Reflection/CLAUDE.md](../engine/src/Reflection/CLAUDE.md)) — patching the
+  reflected fields into the JSON already read from source, so unknown keys (comments-as-keys,
+  hand-authored structure) survive untouched. Its `JsonFieldHooks::WriteReference` maps a live
+  `Entity` back to a prefab-local index, the inverse of the importer's `ReadReference`; enums come
+  out as enumerator names, matching what the cooker's `JsonReadFields`-based read requires.
 - **The level editor is the game-wiring surface.** `LevelEditorPanel` (registered for
-  `AssetType::Level`) **derives from** `PrefabEditorPanel`, so the viewport / explorer /
-  inspector edit the level's **world prefab** with no scene-editing reimplemented, and adds two
-  level-scoped children over the same dockspace: a **systems panel** listing the
-  `SystemRegistry` catalog ([engine/CLAUDE.md](../engine/CLAUDE.md)) with a per-system enable
-  toggle, phase labels, and drag-reorder over the active set — writing the level's ordered
-  `SystemId` list — and a **settings panel** drawing the `GameModeConfig` and the post/pipeline
-  `LevelRenderSettings` through the shared reflection inspector (`DrawFieldWidget`). The
-  sky/environment is **not** in that panel: it is author-opt-in `Environment` / `Atmosphere` /
-  `Skylight` / `TimeOfDay` components added to world entities through the ordinary inspector Add-Component
-  surface, which the viewport resolves each frame (`ApplySceneSky`) so the sky appears the moment a
-  component is added. System *params* stay components, edited through the world surface like any
-  other; the level editor adds **no new inspector machinery** — the catalog drives the systems panel
-  and reflection draws the config. Config edits (systems / game-mode / render) accumulate in memory and
-  preview live in the viewport (render settings push straight through `ApplyLevelRenderSettings`); they
-  persist only on **Save**, which writes both the world `*.prefab.json` (the base scene save) and the
-  `*.level.json` config — the config record binds through the same shared `JsonReadFields`
-  (tolerant, `allowUnknownFields = true`) and merge-write `JsonWriteFields` the cooker's
-  `LevelImporter` reads with, so the panel's config round-trip is the walker's write inverse
-  rather than a hand-mirrored copy — then recooks the level off the render thread and hot-reloads
-  behind the stable handle (the round-trip preserves unknown keys, like the texture editor). This
-  also **gains the `Enum` arm** the panel's old hand-rolled config walk never had, so an enum
-  `LevelRenderSettings` knob is editable here and saves as the enumerator name. The document's unsaved-changes
-  marker and the Save action's enabled state fold the config dirtiness in alongside the command stack
-  (`HasUnsavedChanges`). Play runs **exactly the level's ordered system set** through the base's play
-  machinery (`GetPlaySystems`), distinct from a bare prefab document's "all registered" set.
+  `AssetType::Level`) **derives from** `PrefabEditorPanel`, so the viewport / explorer / inspector
+  edit the level's **world prefab** with no scene-editing reimplemented, and adds two level-scoped
+  children over the same dockspace: a **systems panel** listing the `SystemRegistry` catalog with
+  a per-system enable toggle, phase labels, and drag-reorder over the active set — writing the
+  level's ordered `SystemId` list — and a **settings panel** drawing the `GameModeConfig` and the
+  post/pipeline `LevelRenderSettings` through the shared reflection inspector
+  (`DrawFieldWidget`). The sky is **not** in that panel: it is the scene's author-opt-in `Sky`
+  component (plus an optional `TimeOfDay`), added to a world entity through the ordinary inspector
+  Add-Component surface and resolved by the renderer itself each frame — so the sky appears the
+  moment the component is added. System *params* stay components, edited through the world surface
+  like any other; the level editor adds **no new inspector machinery** — the catalog drives the
+  systems panel and reflection draws the config. Config edits (systems / game-mode / render)
+  accumulate in memory and preview live in the viewport (render settings push through
+  `ApplyLevelRenderSettings`); they persist only on **Save**, which writes both the world
+  `*.prefab.json` (the base scene save) and the `*.level.json` config — the config record binds
+  through the same shared `JsonReadFields` (tolerant, `allowUnknownFields = true`) and merge-write
+  `JsonWriteFields` the cooker's `LevelImporter` reads with, so the panel's config round-trip is
+  the walker's write inverse rather than a hand-mirrored copy — then recooks the level off the
+  render thread and hot-reloads behind the stable handle. The document's unsaved-changes marker
+  and the Save action's enabled state fold the config dirtiness in alongside the command stack
+  (`HasUnsavedChanges`). Play runs **exactly the level's ordered system set** through the base's
+  play machinery (`GetPlaySystems`), distinct from a bare prefab document's "all registered" set.
 - **The editor's Play seat is single, keyboard/mouse; multi-seat is a game-runtime concern.**
   Play ticks the play-clone `SceneSimulation` (`PrefabEditorPanel::TickPlaySimulation`) with a
   `SystemContext{ .Assets, .Input }` that leaves `Pointer` at its default (empty `PointerRouting`,
@@ -131,246 +165,155 @@ mismatch at load); hosting separately built modules is a future module-ABI/SDK f
   exercise: it registers no `Presented` viewport, drives no managed-viewport list, and previews a
   scene's single authored `Viewer` seat. A seat's `SeatInput` is edited through the ordinary
   reflection inspector like any other component.
-- **`PrefabExplorerPanel` is a full scene-graph tree** over the intrusive `Hierarchy`
-  ([engine/CLAUDE.md](../engine/CLAUDE.md)): roots are entities with a null parent, children
-  walk `ForEachChild` in order. It drives the shared selection (click / Ctrl-click toggle),
-  inline-renames (double-click), drag-reparents (`Scene::SetParent`) and reorders siblings
-  (`Scene::MoveBefore`) — both with a cycle pre-check so the engine's fatal cycle assert is
-  never reached — and creates / adds-child / duplicates / deletes entities, plus a name
-  filter and row/empty-space context menus. Delete is reachable three ways: the toolbar trash
-  button, the row context menu, and the `Delete` key over the selection. Every structural edit is **queued during the
-  draw and applied after** the snapshot walk returns, so nothing mutates the scene
-  mid-iteration (the `Scene` contract). Duplicating an entity round-trips its components into
-  the copy but builds no derived mesh, so `DuplicateSubtree` calls `ResolveEntity` on each
-  copy after its children recurse — the byte copy carries the recipe `Source` forward but
-  never the built handle.
-- **A mesh source re-resolves like any asset field.** A `MeshRenderer` carrying an inline
-  recipe `Source` ([engine/CLAUDE.md](../engine/CLAUDE.md)) builds its mesh during
-  `Prefab::SpawnInto`'s populate pass; there is no per-frame scan. An inspector edit to the
-  source repoints the mesh exactly as repointing a cooked `AssetHandle` field would, so two
-  of the editor's resolve triggers collapse into "the source re-resolves on the changed-bool":
-  Add Component (`InspectorPanel`) and an inspector field edit (`InspectorPanel`, gated on the
-  `DrawFieldWidget` changed-bool). The **duplicate** path is different — a `DuplicateSubtree`
-  byte copy has no inspector edit and no changed-bool to hook, so it rebuilds the derived mesh
-  from the copied source explicitly. All three funnel through `PrefabEditContext::ResolveEntity`,
-  which rebuilds the entity's `Mesh` from a non-empty `Source` via `BuildPrimitiveMesh`; a
-  future structural op (paste, undo) adds its own trigger.
-- **Reflection-driven inspector.** `InspectorPanel` edits `PrefabEditContext::Active`: an
-  editable name header, a searchable **Add Component** picker (every registered
-  `FieldClass::Struct` type not already present, minus the hierarchy-owned `Hierarchy`), and
-  per-component remove / reset-to-default — remove offered both as a right-aligned button
-  overlaid on the component header (the header sets `SetNextItemAllowOverlap` so the button
-  takes the click) and in the header context menu, queued and applied after the
-  `Scene::ForEachComponent` walk (the `Hierarchy` component is hierarchy-panel-owned and offers
-  neither). Each component's fields render in a two-column
-  `UI::PropertyTable` via the shared `DrawFieldWidget` helper (`editor/src/FieldWidget.{h,cpp}`,
-  taking a `FieldWidgetContext { AssetManager&, const AssetSourceIndex&, const EditorRegistry& }`).
-  **The widget-drawing core lives in the engine** — `Veng::UI::DrawFields` / `DrawFieldWidget`
+
+## The reflection-driven inspector
+
+- **The widget-drawing core lives in the engine** — `Veng::UI::DrawFields` / `DrawFieldWidget`
   (`Veng/UI/Inspector.h`, in `libveng`) is the reflection inspector every consumer shares (a game
   UI links only `libveng`, not the editor framework, for it). It draws a built-in widget per
   `FieldClass` (Scalar/Vector/Quaternion/String/Enum/Matrix/Struct/Variant/Array), honors
-  `FieldDescriptor::ReadOnly`/`Hidden`/`Tooltip`/`Category`, recurses nested structs/arrays/variants
-  as flattened indented rows, and gates each field on VisibleIf/EnabledIf (the engine's
-  `Veng/Reflection/FieldGate.h`). The editor's `DrawFieldWidget` is now a **thin hook provider**: it
-  builds `Veng::UI::InspectorHooks` supplying the editor-only pieces the engine core can't resolve —
-  the `AssetHandle` asset chip, the `Reference` Entity drop target, and the `EditorRegistry`'s
-  per-`TypeId` custom widgets (the registered `LightType` combo) — and delegates to the engine walk.
-  A bare game passes no hooks, so AssetHandle/Reference fields draw the engine's read-only
-  fallbacks. The **`Variant` widget** is a combo over the alternatives'
-  display names (plus "(none)") that `SetActive`s the chosen alternative on change and recurses
-  the active member's fields as indented rows — so a `MeshRenderer`'s `Source` shape variant
-  gives primitive-kind selection and per-shape parameter editing for free. `DrawFieldWidget`
-  returns a `bool changed` (accumulated through its nested-struct/variant recursion);
-  `DrawComponent` ORs it across the component's fields and, when true, calls
-  `PrefabEditContext::ResolveEntity` so an edit to a recipe source (its shape/parameters)
-  rebuilds the derived mesh. A `RegisterFieldWidget`
-  entry overrides the built-in for a given `TypeId`; the entity inspector and the node-property
-  inspector both call `DrawFieldWidget`, so the two share identical widget behavior. The
-  `AssetHandle` widget is an **asset chip** (`editor/src/AssetChip.{h,cpp}`) drop target, not a
-  read-only label: it shows the type icon plus the asset's name / type / id, accepts a same-type
-  asset dropped from the browser, and doubles as a selector — clicking it opens a searchable
-  popup over the `AssetSourceIndex` entries of the field's `AssetType` (with a "(none)" clear).
+  `FieldDescriptor::ReadOnly`/`Hidden`/`Tooltip`/`Category`, recurses nested
+  structs/arrays/variants as flattened indented rows, and gates each field on VisibleIf/EnabledIf
+  (`Veng/Reflection/FieldGate.h`).
+- **The editor's `DrawFieldWidget` is a thin hook provider** (`editor/src/FieldWidget.{h,cpp}`,
+  taking a `FieldWidgetContext { AssetManager&, const AssetSourceIndex&, const EditorRegistry& }`):
+  it builds `Veng::UI::InspectorHooks` supplying the editor-only pieces the engine core can't
+  resolve — the `AssetHandle` asset chip, the `Reference` Entity drop target, and the
+  `EditorRegistry`'s per-`TypeId` custom widgets (the registered `LightType` combo) — and
+  delegates to the engine walk. A bare game passes no hooks, so AssetHandle/Reference fields draw
+  the engine's read-only fallbacks. The entity inspector and the node-property inspector both call
+  `DrawFieldWidget`, so the two share identical widget behavior.
+- **`InspectorPanel`** edits `PrefabEditContext::Active`: an editable name header, a searchable
+  **Add Component** picker (every registered `FieldClass::Struct` type not already present, minus
+  the hierarchy-owned `Hierarchy`), and per-component remove / reset-to-default — remove offered
+  both as a right-aligned button overlaid on the component header (the header sets
+  `SetNextItemAllowOverlap` so the button takes the click) and in the header context menu, queued
+  and applied after the `Scene::ForEachComponent` walk (the `Hierarchy` component is
+  hierarchy-panel-owned and offers neither). Each component's fields render in a two-column
+  `UI::PropertyTable` via the shared `DrawFieldWidget`. The **`Variant` widget** is a combo over
+  the alternatives' display names (plus "(none)") that `SetActive`s the chosen alternative on
+  change and recurses the active member's fields as indented rows — so a `MeshRenderer`'s `Source`
+  shape variant gives primitive-kind selection and per-shape parameter editing for free.
+  `DrawFieldWidget` returns a `bool changed` (accumulated through its nested-struct/variant
+  recursion); `DrawComponent` ORs it across the component's fields and, when true, calls
+  `PrefabEditContext::ResolveEntity` so an edit to a recipe source (its shape/parameters) rebuilds
+  the derived mesh.
+- **A mesh source re-resolves like any asset field.** A `MeshRenderer` carrying an inline recipe
+  `Source` ([engine/src/Asset/CLAUDE.md](../engine/src/Asset/CLAUDE.md)) builds its mesh during
+  `Prefab::SpawnInto`'s populate pass; there is no per-frame scan. An inspector edit to the source
+  repoints the mesh exactly as repointing a cooked `AssetHandle` field would. Three triggers
+  funnel through `PrefabEditContext::ResolveEntity`, which rebuilds the entity's `Mesh` from a
+  non-empty `Source` via `BuildPrimitiveMesh`: Add Component, an inspector field edit (both gated
+  on the `DrawFieldWidget` changed-bool), and the **duplicate** path — a `DuplicateSubtree` byte
+  copy has no inspector edit to hook, so it rebuilds the derived mesh from the copied source
+  explicitly.
 - **The asset chip is the shared asset stand-in.** `DrawAssetChip(AssetChipInfo, AssetSourceIndex)`
-  renders a bordered icon-plus-text box for an `AssetId`, optionally a drag source (emitting an
-  `AssetDragPayload`) and/or a drop target (the click-to-search selector above). It is the asset
-  browser's drag stand-in and the inspector's `AssetHandle` widget; the `AssetTypeName` /
-  `AssetTypeGlyph` / `AssetTypeColor` type-metadata helpers live beside it, shared by the browser's
-  badges.
-- **`EditorRegistry`** is defined in `libveng_editor` and **forward-declared** in
-  `engine/include/Veng/Module/Module.h` (so `libveng` stays clean). It holds the
-  `AssetType`→editor-factory map (double-click an asset opens its editor),
-  `RegisterPanel` for game-contributed panels, and `RegisterFieldWidget(TypeId,
-  FieldWidgetFn)` for custom inspector widgets. It is non-null in `VengModuleHost` only
-  in the editor host.
-- **Reflection-driven inspector.** Selecting an entity walks its components through the
-  host-owned `TypeRegistry` / `FieldDescriptor` layer (`Scene::ForEachComponent`), drawing
-  a built-in widget per `FieldClass`
-  (Scalar/Vector/Quaternion/String/AssetHandle/Enum/Struct/Matrix/Reference); a
-  `RegisterFieldWidget` entry overrides the built-in for a given `TypeId`. The per-field draw
-  is the shared `DrawFieldWidget` helper (`editor/src/FieldWidget.{h,cpp}`, taking a
-  `FieldWidgetContext { AssetManager&, const AssetSourceIndex&, const EditorRegistry& }`) —
-  the entity inspector and the node-property inspector both call it, so the two share
-  identical widget behavior. The `AssetHandle` widget is an **asset chip** drop target (icon +
-  name/type/id, accepting a browser drop and click-opening a searchable picker over the
-  `AssetSourceIndex` entries of the field's `AssetType`), not a read-only label.
-- **Cook-on-demand keeps the importer boundary.** `libveng_cook` is linked **only into
-  the editor exe** — never `libveng_editor`, never `libgame` — so the editor framework
-  library stays importer-free. The exe injects a `CookBackend` implementation;
-  `EditorHost::RequestCook(CookRequest, callback)` cooks a single source off the render
-  thread via `TaskSystem` (`CookSession` → `Task<vector<u8>>`), then mounts the resulting
-  in-memory archive via `AssetManager::MountMemory` and hot-reloads behind the stable
-  `AssetHandle`.
+  (`editor/src/AssetChip.{h,cpp}`) renders a bordered icon-plus-text box for an `AssetId`,
+  optionally a drag source (emitting an `AssetDragPayload`) and/or a drop target. It is the asset
+  browser's drag stand-in and the inspector's `AssetHandle` widget — which shows the type icon
+  plus the asset's name / type / id, accepts a same-type asset dropped from the browser, and
+  doubles as a selector: clicking it opens a searchable popup over the `AssetSourceIndex` entries
+  of the field's `AssetType` (with a "(none)" clear). The `AssetTypeName` / `AssetTypeGlyph` /
+  `AssetTypeColor` type-metadata helpers live beside it, shared by the browser's badges.
+
+## Cook-on-demand and the single-asset editors
+
+- **Cook-on-demand keeps the importer boundary.** `libveng_cook` is linked **only into the editor
+  exe** — never `libveng_editor`, never `libgame` — so the editor framework library stays
+  importer-free. The exe injects a `CookBackend` implementation;
+  `EditorHost::RequestCook(CookRequest, callback)` cooks a single source off the render thread via
+  `TaskSystem` (`CookSession` → `Task<vector<u8>>`), then mounts the resulting in-memory archive
+  via `AssetManager::MountMemory` and hot-reloads behind the stable `AssetHandle`.
+- **The texture editor is the template.** `TextureEditorPanel` previews via a render target
+  (`CreateTexture` → `ImGui::Image`), edits `.tex.json` settings (sRGB + sampler filter/wrap),
+  recooks live (300ms-debounced), and round-trips the JSON on save — patching known keys,
+  preserving unknown ones. It carries a **compression-role combo** over the same round-trip
+  (writing/clearing the `"role"` key) and shows the **resolved format read-only** for the active
+  configuration ("→ ASTC4x4Srgb for 'macos'"), so the artist picks intent and reads the platform's
+  codec without choosing one.
 - **The material-instance inspector is the cheap-override authoring surface.**
   `MaterialInstanceEditorPanel` (registered for `AssetType::MaterialInstance`) edits a
   `*.vmatinst.json`: a **parent picker** (an `AssetChip` drop target of type `Material`) plus a
   **per-field override toggle** over the parent's exposed `GetFields()` — toggling a field on adds
-  it to the sparse override set, off reverts it to the parent default — so the authored surface and
-  the cook-validated surface are the same set by construction. Each param slot draws a `UI::Drag`
-  over its component count and each texture slot an `AssetChip`; an un-toggled slot shows the parent
-  default (read from the parent's `GetDefaultBlock()`) disabled. It previews through the **same**
-  `MaterialPreview` path the material editor uses (the instance over its parent on a turntable
-  sphere), recooks live (300ms-debounced) through the cook-on-demand loop, and hot-reloads behind
-  the stable handle. Changing the parent reloads the schema and drops the prior overrides. Save
-  writes the `*.vmatinst.json`.
-- **The texture editor is the template.** `TextureEditorPanel` previews via a render
-  target (`CreateTexture` → `ImGui::Image`), edits `.tex.json` settings (sRGB + sampler
-  filter/wrap), recooks live (300ms-debounced), and round-trips the JSON on save —
-  patching known keys, preserving unknown ones. It carries a **compression-role combo**
-  over the same round-trip (writing/clearing the `"role"` key) and shows the **resolved
-  format read-only** for the active configuration ("→ ASTC4x4Srgb for 'macos'"), so the
-  artist picks intent and reads the platform's codec without choosing one.
+  it to the sparse override set, off reverts it to the parent default — so the authored surface
+  and the cook-validated surface are the same set by construction. Each param slot draws a
+  `UI::Drag` over its component count and each texture slot an `AssetChip`; an un-toggled slot
+  shows the parent default (read from the parent's `GetDefaultBlock()`) disabled. It previews
+  through the **same** `MaterialPreview` path the material editor uses (the instance over its
+  parent on a turntable sphere), recooks live (300ms-debounced), and hot-reloads behind the stable
+  handle. Changing the parent reloads the schema and drops the prior overrides. Save writes the
+  `*.vmatinst.json`.
 - **The input-map editor is near-free.** `InputMappingEditorPanel` (registered for
   `AssetType::InputMap`) draws a `.inputmap.json`'s reflected document — its
-  `vector<InputAction>` actions and its `vector<Binding>` bindings — through the shared
-  reflection inspector (`DrawFields` over the same `FieldClass::Array` path the project-
-  settings panel uses), so the binding table is add/remove/edit-able with **no** bespoke
-  widget code. The one custom widget is an `ActionId` name combo scoped to the document's own
-  declared actions (a `u64` leaf has no default scalar widget), so a binding picks its action
-  by name, not a raw id. It recooks live behind the stable handle and hot-reloads, exposes a
-  `GetInspectables()` override for the editor MCP, and draws a **read-only resolved-state
-  preview** — the actions the current bindings resolve to over the editor's own input each
-  frame — so a binding's effect is observable without launching the game. It is deliberately
-  **basic by design**: no press-a-key-to-bind capture, no drag-reorder, no undo (the single-
-  asset editors have none), matching the texture/material editor idiom.
-- **The editor opens the project, not a manifest.** `EditorHostInfo::ProjectPath` (the source
-  `project.veng`, passed by `--project`) is the editor's entrypoint: `EditorHost::Create` reads it
-  through `LoadProjectSettings` (the host-owned `ProjectSettings` — its `Configurations`,
-  `ActiveConfiguration`, `Packs`, `StartupLevel`, and the `Module` / `EditorModule` names it
-  `dlopen`s), then resolves each module as `lib<name>.<ext>` beside the build output. **The build
-  output dir is resolved once in `Create`** (`m_BuildDir`): an explicit `EditorHostInfo::BuildDir`
-  (`--build-dir`) override, else discovery from the `.veng/build.json` sidecar beside the project
-  (`DiscoverProjectBuildDir`), else `ExecutableDirectory()` (the relocatable ship layout). The
-  editor mounts each cooked pack from `m_BuildDir` (under the source manifest's stem) and builds its
-  `AssetSourceIndex` from the **union** of the project's pack manifests
-  (`AssetSourceIndex::ParsePacks`). The editor's own icon pack stays beside the editor exe
-  (`ExecutableDirectory()`), distinct from the project's build dir. The runtime `.vengproj` is a
-  game-launch artifact the editor does not consume. Cook-on-demand passes **every** project pack as
-  a reference
-  (`CookRequest::ReferenceManifests`), so an edited asset resolves cross-asset ids across the
-  whole project's one AssetId namespace, not just its own pack.
-- **Project Settings is a host-level panel.** `ProjectSettingsPanel` (opened from the
-  Window menu, like the asset browser) lists and edits the host-owned `ProjectSettings` —
-  the array of `BuildConfiguration`s and the `ActiveConfiguration` selector — through the
-  shared reflection inspector (`DrawFieldWidget` / `PropertyTable`): reflection draws the
-  rows, the `CompressionRole` / `CompressionFormat` enum combos come from registered field
-  widgets (the same way `LightType` does), and the configuration-array add/remove widget
-  comes from the inspector's `FieldClass::Array` arm. Save round-trips `project.veng`
-  (preserving the `packs` key) and rewrites each configuration's `*.buildcfg` at its referenced
-  path (under `configs/`) through the editor's own nlohmann, using the shared enum⇄name tables
-  the cooker parses by — so the editor *writes* exactly what the cooker *reads*.
-- **Live preview is gated to host GPU capability.** Building any configuration is
-  unrestricted (the encoder is CPU); *previewing through* one is bounded by what the host
-  GPU can sample, so "ASTC on Windows" is structurally impossible rather than merely warned
-  against. `editor/src/PreviewCapability.{h,cpp}` gates on the device **feature** (not a
-  platform label) by reusing the engine's `Context::IsBlockCompressionSupported()` /
-  `IsAstcSupported()` queries: `IsFormatPreviewable` / `IsConfigPreviewable` intersect a
-  configuration's resolved role formats with the host's enabled features, and
-  `HostSafeFormats` builds an uncompressed, always-samplable role table. The editor's
-  default live-cook target is that host-safe profile — independent of which ship
-  configuration is selected for editing — so it never hands the GPU an unsamplable blob.
-  **"Preview as ship config" is opt-in** (the Project Settings panel's selector); a
-  host-incompatible configuration is greyed out with the stated reason, and an
-  all-incompatible project previews host-safe behind a banner. The same query is both the
-  "active config not supported on this GPU" warning and the preview-eligibility gate.
-- **The node-graph machinery lives in `veng::graph`, a shared library both the editor and
-  the cooker link.** `libveng_graph` (`graph/`, headers under `VengGraph/`, namespace
-  `VengGraph`) owns a generic, imnodes-free, device-free **topology core** (`NodeGraph` —
-  generational `NodeId`, `PinType`, the mutation vocabulary, direction/arity/acyclicity
-  validation, a construction-time `CanConnectFn`/`PinShapeFn`/`PropertySizeFn` hook set) + a
-  data-driven `NodeType`/`NodeCatalog` + graph (de)serialization to/from a JSON document
-  string (the public surface stays free of the JSON library type), **and** the material node
-  catalog + the emit walk (below). It links `veng::veng` PUBLIC and `nlohmann/json` PRIVATE;
-  `libveng_editor` and `libveng_cook` link it PUBLIC (`veng::graph → veng::veng`;
-  `editor → graph`; `cooker → graph` — no cycle), so the editor preview and the offline cook
-  run the identical walk. The editor's node-graph **UI** (imnodes canvas, panels) stays in
-  the editor; imnodes is used **only by the editor** in `.cpp` (its header never appears in a
-  public header). imnodes.cpp is compiled **exactly once**, vendored into `libveng`'s ImGui
-  aggregation TU, and `libveng_editor` imports those symbols across the PUBLIC `veng::veng`
-  link (the include dir rides veng's PUBLIC interface). `libveng_editor` must **not** also link
-  imnodes' own static target: that compiles a second imnodes.cpp into the editor, giving it a
-  private `GImNodes` the engine's `ImNodes::CreateContext` never initializes — under two-level
-  namespaces the editor's calls bind to that null context and crash.
-- **Node types are data, not subclasses.** A `NodeType` is pins (typed in/out) + a reflected
-  property struct; a node instance stores property bytes the reflection serializer and
-  inspector widgets walk, exactly like an ECS component. `NodeTypeId` is graph-local
-  (defined in `VengGraph/NodeType.h`), distinct from the runtime `TypeId` space; pin data
-  types reuse builtin leaf `TypeId`s.
-- **The material editor authors a graph that generates Slang fragment source.** Every node is
-  an **expression emitter**: `CompileMaterialGraph` (in `veng::graph`) topologically walks the
-  graph from `MaterialOutput` into generated Slang text. The walk threads a thin typed
-  **`EmittedValue` `{ Expr; PinType Type; bool IsConst }`** (the code-chunk model — Unreal's
-  translator chunks, Unity's slot vars; not a parsed AST, since the graph already *is* the
-  typed acyclic DAG), assigns **one SSA temp per output pin**, and substitutes downstream
-  applying the link-recorded coercion (`f32→vecN` splat, `vec4→vec3/vec2` truncate, via
-  `CoerceExpr`). A value used more than once is a temp (a shared `TextureSample` samples once);
-  a single-use value inlines (so the output is a pure function of the graph), and an unreached
-  node never emits (free dead-code elimination). Temp/field names derive from a stable
-  creation-order node key, so the same graph emits byte-identical text across two walks and a
-  save/load round-trip. Each node type's emit-fn lives in a `MaterialEmitTable` keyed by
-  `NodeTypeId`, populated by `RegisterMaterialNodeTypes` beside minting the types; the topology
-  core stays generic and emit-free. The catalog is **fixed and schema-independent**
-  (`RegisterMaterialNodeTypes(catalog, emit, domain)` — keyed by domain only, shaped by pin
-  leaf types, never by a loaded shader's reflected fields). It is a **shading-expression set**,
-  not three binding nodes: the binding nodes `TextureSample` (UV input + color output) and `Param`
-  (sized by its property); the sources `Constant` (an authored literal of a chosen leaf type,
-  always inlined — its `MaterialLeafType` property names the Slang type) and `ScalarParam` (a
-  `Param` specialized to `float`, carrying the same provenance); the arithmetic `Multiply` / `Add`
-  / `Subtract` / `Divide` (binary, component-wise, the scalar splatting against a vector by the
-  link coercion); the shaping `Lerp` / `Saturate` / `Clamp` / `OneMinus`; the vector algebra `Dot`
-  / `Cross` / `Normalize` / `Length` (the output pin type follows the operation — `Dot`/`Length`
-  reduce to `float`, `Cross` is vec3-only by its pin types); and the channel plumbing `Split` (a
-  vec4 fanned to four named scalar pins via swizzles) / `Combine` (four scalar inputs packed into a
-  vec4, an unconnected slot defaulting to 0). The math/swizzle/utility set is domain-independent
-  (`RegisterMathNodeTypes`, called for every domain). `MaterialOutput`'s sinks are the domain
-  contract. `MaterialOutput` emits the domain entry point (`GBufferOutput fsMain` for Surface,
-  `float4 fsMain … : SV_Target0` for PostProcess) with defined defaults for unconnected sinks
-  (Surface: Albedo `float4(0,0,0,1)`, Normal the geometric `input.v_WorldNormal`, ORM
-  `float3(1,1,0)`, Velocity always `ComputeMotionVector(...)`); the source is prefixed with its
-  domain's contract include (`Veng/surface.slang` or `Veng/postprocess.slang`). Textures stay node properties
-  (`FieldClass::AssetHandle`), not wired pins, so the topology core stays asset-agnostic. The
-  graph (nodes, positions, property values, links) is embedded under an `"_editor"` key in the
-  `.vmat.json`; `MaterialEditorPanel` drives the imnodes canvas + a node-property inspector
-  reusing the per-`FieldClass` widgets. `MaterialEditorPanel`'s cook-on-demand routes the graph
-  source through the cooker's graph-shader resolver (`SetGraphShaderResolver`, installed at the
-  editor's `veng::graph` link), so editing the graph regenerates the fragment Slang, recompiles
-  it, and hot-reloads the result into `MaterialPreview` — the same walk the offline cook runs. A
-  `Param` carries one of three provenances: *const* folds its value inline, *exposed* contributes
-  an author-tweakable `MaterialParams` field with a default, *engine-bound* contributes a field
-  the engine writes by name at runtime (no default, not an instance-override surface). The walk
-  generates the `MaterialParams` struct — ordered large-alignment-first so the cooker's std140
-  reflection and the shader's scalar-layout `Load<T>` resolve identical offsets — and the matching
-  `.vmat` field list from the same pass, so reflected offsets and packed values agree.
+  `vector<InputAction>` actions and its `vector<Binding>` bindings — through the shared reflection
+  inspector (`DrawFields` over the same `FieldClass::Array` path the project-settings panel uses),
+  so the binding table is add/remove/edit-able with **no** bespoke widget code. The one custom
+  widget is an `ActionId` name combo scoped to the document's own declared actions (a `u64` leaf
+  has no default scalar widget), so a binding picks its action by name, not a raw id. It recooks
+  live behind the stable handle and hot-reloads, exposes a `GetInspectables()` override for the
+  editor MCP, and draws a **read-only resolved-state preview** — the actions the current bindings
+  resolve to over the editor's own input each frame — so a binding's effect is observable without
+  launching the game. It is deliberately **basic by design**: no press-a-key-to-bind capture, no
+  drag-reorder, no undo (the single-asset editors have none), matching the texture/material editor
+  idiom.
+
+## Project settings and preview capability
+
+- **Project Settings is a host-level panel.** `ProjectSettingsPanel` (opened from the Window menu,
+  like the asset browser) lists and edits the host-owned `ProjectSettings` — the array of
+  `BuildConfiguration`s and the `ActiveConfiguration` selector — through the shared reflection
+  inspector (`DrawFieldWidget` / `PropertyTable`): reflection draws the rows, the
+  `CompressionRole` / `CompressionFormat` enum combos come from registered field widgets (the same
+  way `LightType` does), and the configuration-array add/remove widget comes from the inspector's
+  `FieldClass::Array` arm. Save round-trips `project.veng` (preserving the `packs` key) and
+  rewrites each configuration's `*.buildcfg` at its referenced path (under `configs/`) through the
+  editor's own nlohmann, using the shared enum⇄name tables the cooker parses by — so the editor
+  *writes* exactly what the cooker *reads*.
+- **Live preview is gated to host GPU capability.** Building any configuration is unrestricted
+  (the encoder is CPU); *previewing through* one is bounded by what the host GPU can sample, so
+  "ASTC on Windows" is structurally impossible rather than merely warned against.
+  `editor/src/PreviewCapability.{h,cpp}` gates on the device **feature** (not a platform label) by
+  reusing the engine's `Context::IsBlockCompressionSupported()` / `IsAstcSupported()` queries:
+  `IsFormatPreviewable` / `IsConfigPreviewable` intersect a configuration's resolved role formats
+  with the host's enabled features, and `HostSafeFormats` builds an uncompressed, always-samplable
+  role table. The editor's default live-cook target is that host-safe profile — independent of
+  which ship configuration is selected for editing — so it never hands the GPU an unsamplable
+  blob. **"Preview as ship config" is opt-in** (the Project Settings panel's selector); a
+  host-incompatible configuration is greyed out with the stated reason, and an all-incompatible
+  project previews host-safe behind a banner. The same query is both the "active config not
+  supported on this GPU" warning and the preview-eligibility gate.
+
+## The node-graph UI and the material editor
+
+The node-graph topology core, the material node catalog, and the Slang emit walk live in
+**`veng::graph`** ([graph/CLAUDE.md](../graph/CLAUDE.md)), which the editor links PUBLIC. The
+editor owns only the **UI**:
+
+- **imnodes is used only by the editor, in `.cpp`** (its header never appears in a public
+  header). imnodes.cpp is compiled **exactly once**, vendored into `libveng`'s ImGui aggregation
+  TU, and `libveng_editor` imports those symbols across the PUBLIC `veng::veng` link (the include
+  dir rides veng's PUBLIC interface). `libveng_editor` must **not** also link imnodes' own static
+  target: that compiles a second imnodes.cpp into the editor, giving it a private `GImNodes` the
+  engine's `ImNodes::CreateContext` never initializes — under two-level namespaces the editor's
+  calls bind to that null context and crash. The only ImGui types in panel src are those crossing
+  into imnodes (`ImVec2` for node positioning).
+- **`MaterialEditorPanel` drives the imnodes canvas + a node-property inspector** reusing the
+  per-`FieldClass` widgets. The graph (nodes, positions, property values, links) is embedded under
+  an `"_editor"` key in the `.vmat.json`. The panel's cook-on-demand routes the graph source
+  through the cooker's graph-shader resolver (`SetGraphShaderResolver`, installed at the editor's
+  `veng::graph` link), so editing the graph regenerates the fragment Slang, recompiles it, and
+  hot-reloads the result into `MaterialPreview` — the same walk the offline cook runs.
 - **The material editor mints the `defaultInstance` id.** A parent material's companion
-  default-instance id (the cook emits a zero-override `MaterialInstance` at it; every reference names
-  it) lives in the `.vmat.json`. On save, `MaterialEditorPanel` backfills a missing id — minting a
-  collision-free one against the project's packs through `EditorHost::MintAssetId` (an injected
-  `AssetIdMinter` over the cooker's in-process `GenerateAssetId`, since `libveng_editor` never links
-  the cooker) and writing it through the same preserve-unknown-keys `.vmat` round-trip. The id shows
-  read-only in the panel beside the material id. A material never opened in the editor stays on the
-  hand-mint floor (`vengc generate-id`, paste).
-- **`MaterialPreview` renders one material on a sphere through an `Offscreen` `Viewport`**
-  into an ImGui texture. It is **not** an `EditorPanel`, so its owning `MaterialEditorPanel`
-  registers the viewport on its behalf; each frame the preview advances the turntable and
-  pushes its `ViewState`, the engine renders the registered viewport, and `GetTexture()`
-  samples the result. The edit loop recooks off-thread and hot-reloads behind the stable
-  `AssetHandle`, re-fetching the texture after a recompile/resize invalidates the output.
+  default-instance id (the cook emits a zero-override `MaterialInstance` at it; every reference
+  names it) lives in the `.vmat.json`. On save, `MaterialEditorPanel` backfills a missing id —
+  minting a collision-free one against the project's packs through `EditorHost::MintAssetId` (an
+  injected `AssetIdMinter` over the cooker's in-process `GenerateAssetId`, since `libveng_editor`
+  never links the cooker) and writing it through the same preserve-unknown-keys `.vmat`
+  round-trip. The id shows read-only in the panel beside the material id. A material never opened
+  in the editor stays on the hand-mint floor (`vengc generate-id`, paste).
+- **`MaterialPreview` renders one material on a sphere through an `Offscreen` `Viewport`** into an
+  ImGui texture. It is **not** an `EditorPanel`, so its owning `MaterialEditorPanel` registers the
+  viewport on its behalf; each frame the preview advances the turntable and pushes its
+  `ViewState`, the engine renders the registered viewport, and `GetTexture()` samples the result.
+  The edit loop recooks off-thread and hot-reloads behind the stable `AssetHandle`, re-fetching
+  the texture after a recompile/resize invalidates the output.

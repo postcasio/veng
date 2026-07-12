@@ -13,104 +13,43 @@ one driving thread. Work runs off the main thread only through the `TaskSystem`
 continuation pump). Direct concurrent calls into veng APIs from outside the task
 system are illegal.
 
-## Layout
+## Layout & module guides
 
-Each library lives in its own root subdirectory; the top-level `CMakeLists.txt`
-is thin (shared deps + `add_subdirectory` per lib).
+Each library lives in its own root subdirectory; the top-level `CMakeLists.txt` is thin
+(shared deps + `add_subdirectory` per lib). This file holds the project-wide conventions
+every module is written against; each module's architecture lives in its own `CLAUDE.md`:
 
-- `engine/` — `libveng`, the runtime. Links only `assetpack` (loader, no
-  importer deps).
-  - `engine/include/Veng/` — public headers. `Veng.h` is the foundational
-    header every other header builds on (std/glm includes + house-style
-    aliases).
-  - `engine/include/Veng/Renderer/` — public renderer API (`Context`,
-    `Buffer`, `Image`, pipelines, `DescriptorSet`, `RenderGraph`, …).
-  - `engine/include/Veng/Renderer/Backend/` — backend-only headers
-    (`Vulkan.h`, `Natives.h`, `TypeMapping.h`). **Not** part of the
-    consumer-facing surface.
-  - `engine/src/Renderer/Backend/` — the Vulkan implementations of the public
-    renderer classes. (The public class lives in
-    `engine/include/Veng/Renderer/X.h`; its impl lives in
-    `engine/src/Renderer/Backend/X.cpp` — note the path asymmetry.)
-- `assetpack/` — `libveng_assetpack`, the shared archive + cooked-blob
-  format (`Veng/Asset/`: `AssetId`, `AssetType`, `Archive`, `CookedBlobs`).
-  Vulkan-free, importer-free; linked PUBLIC by `engine` and by `cooker`.
-- `cooker/` — `libveng_cook` + the `vengc` CLI (stb, assimp, Slang, JSON).
-  Never linked by the engine. Links `veng::graph` (the shared material-codegen lib).
-  Its **prefab-cooking path** links `veng::veng` and
-  reuses `ModuleLoader` to `dlopen` a game module and reflect its types — the one
-  place the Vulkan-free cooker relaxes its separation, scoped to that load path
-  (the graphics stack is linked but never initialized).
-- `graph/` — `libveng_graph` (`veng::graph`), the shared node-graph + material-codegen
-  library: the generic node-graph topology core (`NodeGraph`/`NodeType`/`NodeGraphSerialize`),
-  the material node catalog, and the topological emit walk that turns a material graph into
-  generated Slang fragment source. Links `veng::veng` PUBLIC + `nlohmann/json` PRIVATE; linked
-  PUBLIC by both `libveng_editor` and `libveng_cook` so editor preview and offline cook run the
-  identical walk. ImGui-free and Vulkan-free.
-- `editor/` — `libveng_editor`, the editor framework, plus the single
-  project-agnostic **`veng-editor`** exe (not the runtime). Links `libveng` and `veng::graph`;
-  the `veng-editor` exe also links `libveng_cook`. It is launched against a project
-  (`--project <project.veng>`) and `dlopen`s the module(s) the project names, resolved from
-  the project's build-output dir — **discovered** from a gitignored `.veng/build.json`
-  sidecar the build writes beside the project. There is no per-game editor binary.
-- `mcp/` — `libveng_mcp` (`veng::mcp`), the **optional** MCP server library a consuming
-  app (game *or* editor) links to expose its live systems to AI agents over the Model
-  Context Protocol. The consumer constructs one `McpServer` from an `McpHost`, hands it the
-  systems it wants reachable, and pumps it once per frame; the server runs a loopback MCP
-  endpoint on a background thread and marshals every engine-touching request onto the render
-  thread. Links `veng::veng` PUBLIC (which carries nlohmann/json PUBLIC in turn, so it is now
-  transitively public on `veng::mcp` too) plus cpp-httplib (vendored) PRIVATE; no `Veng/Mcp/`
-  header names a JSON type directly, but the public surface is no longer JSON-library-free —
-  `mcp_include_hygiene` guards httplib only. The library also ships a **client half**
-  (`Mcp::McpClient` + the shared `Mcp::RunClientCli` driver) so a running server is drivable from
-  a shell: it is exposed as a `--connect` mode on the exes that already link `veng::mcp` —
-  `veng-editor` (behind `VENG_EDITOR_WITH_MCP`) and a game's `<name>-launcher` (behind
-  `veng_add_game(... MCP)`), behind an MCP build opt-in — **not** a separate tool. **Not** linked
-  by `libveng` — a
-  distinct target a consumer opts into, exactly as `veng::graph` is. Editor-free: the engine
-  tools live here, the editor registers its own into the same server (`editor/src/EditorMcp`).
-- `examples/hello-triangle/` — the canonical **maximal** sample app and the smoke
-  test, and the **in-tree consumption exemplar** (built as part of the engine tree via
-  `add_subdirectory`). It is a **game module + launcher**, not one binary: `veng_add_game`
-  builds `libhello_triangle` (shared, the app) plus `hello_triangle-launcher` (the exe
-  that `dlopen`s it). A root `project.veng` is the entrypoint: it lists the pack(s) under
-  `assets/` (hand-written, cooked at build time, copied beside the launcher) and the
-  `*.buildcfg` ship targets under `configs/`.
-- `examples/template/` — the **minimal** sample: the smallest correct app a new
-  developer copies to start (`veng_add_game`, a window + a rotating cube, no debug UI),
-  and the **out-of-tree consumption exemplar**. It is a **standalone** project that
-  discovers veng with `find_package(veng)` and is **removed from the engine build**
-  (`add_subdirectory(template)` is not called) — only the SDK conformance test builds it.
-  Its `main.cpp` is a bare `Application` with a managed viewport + game world: the engine
-  reads the cooked project, mounts its packs, loads the project's startup level, and drives
-  the world — the world is authored as cooked data and bootstrapped by the engine, not built
-  or driven in code. Like `hello-triangle` it has a root `project.veng` (listing its pack
-  under `assets/`, naming the `startupLevel` the cook writes into the cooked project, and
-  referencing a `*.buildcfg` per ship target under `configs/`: macOS / Windows / Linux), so a
-  copy starts with the per-platform cook already wired. It is the engine's out-of-tree
-  conformance surface — **co-migrated with `hello-triangle` on every breaking change** (see
-  **Working norms**); a template breakage surfaces in the `sdk_conformance_*` tests, not in a
-  plain `cmake --build`.
-- `tests/` — `include_hygiene`, `headless_smoke`, `compute_dispatch`, plus the
-  `unit`, `death`, `gpu`, and `cooker` suites (and `shaders/`, `support/`).
-
-### Module guides
-
-This file holds the project-wide conventions every module is written against. The
-per-module architecture lives in a `CLAUDE.md` inside each library:
-
-- **[engine/CLAUDE.md](engine/CLAUDE.md)** — the runtime: `Application`, game
-  modules, `RenderGraph`, `SceneRenderer`, bindless, `Veng::UI`, the Scene/ECS +
-  reflection layer, runtime asset loading, and the shader/material model.
-- **[editor/CLAUDE.md](editor/CLAUDE.md)** — the editor framework: `EditorHost`,
-  panels, the reflection-driven inspector, the node-graph surface, cook-on-demand.
-- **[cooker/CLAUDE.md](cooker/CLAUDE.md)** — the offline cook pipeline: `vengc`,
-  shader compile/reflection, `.vmat` validation, the prefab-cooking relaxation.
-- **[assetpack/CLAUDE.md](assetpack/CLAUDE.md)** — the on-disk `.vengpack` archive
-  and cooked-blob format shared by the cooker and the runtime.
-- **[mcp/CLAUDE.md](mcp/CLAUDE.md)** — the optional MCP server library: the server +
-  host seam + render-thread request pump, the tool families, reflection as the
-  (de)serializer, and the loopback/`Origin`/`AllowMutations` safety posture.
+- **`engine/`** — `libveng`, the runtime. Links only `assetpack` (loader, no importer deps).
+  Public headers under `engine/include/Veng/`; the Vulkan implementations live under
+  `engine/src/Renderer/Backend/`. **[engine/CLAUDE.md](engine/CLAUDE.md)** covers
+  `Application`, game modules, and the project data model, and indexes the per-system docs
+  under `engine/src/*/CLAUDE.md` (renderer, scene/gameplay, assets/materials, reflection,
+  `Veng::UI`, `Veng::Gui`, networking).
+- **`assetpack/`** — `libveng_assetpack`, the shared `.vengpack` archive + cooked-blob format
+  (`Veng/Asset/`: `AssetId`, `AssetType`, `Archive`, `CookedBlobs`). Vulkan-free,
+  importer-free; linked PUBLIC by `engine` and `cooker`.
+  **[assetpack/CLAUDE.md](assetpack/CLAUDE.md)**.
+- **`cooker/`** — `libveng_cook` + the `vengc` CLI (stb, assimp, Slang, the texture encoders —
+  cooker-only deps, never linked by the engine). Its prefab-cooking path links `veng::veng` to
+  `dlopen` a game module and reflect its types — the one place the Vulkan-free cooker relaxes
+  its separation. **[cooker/CLAUDE.md](cooker/CLAUDE.md)**.
+- **`graph/`** — `libveng_graph` (`veng::graph`), the shared node-graph + material-codegen
+  library; linked PUBLIC by both `libveng_editor` and `libveng_cook` so editor preview and
+  offline cook run the identical emit walk. ImGui-free and Vulkan-free.
+  **[graph/CLAUDE.md](graph/CLAUDE.md)**.
+- **`editor/`** — `libveng_editor` (the editor framework) plus the single project-agnostic
+  **`veng-editor`** exe, launched against a project (`--project <project.veng>`); there is no
+  per-game editor binary. **[editor/CLAUDE.md](editor/CLAUDE.md)**.
+- **`mcp/`** — `libveng_mcp` (`veng::mcp`), the **optional** MCP server + client library a
+  consuming app (game *or* editor) links to expose its live systems to AI agents. Not linked
+  by `libveng`. **[mcp/CLAUDE.md](mcp/CLAUDE.md)**.
+- **`examples/`** — `hello-triangle` (the maximal sample, consumed **in-tree**) and `template`
+  (the minimal sample, consumed **out-of-tree** via `find_package(veng)`) — the two co-migrated
+  consumption exemplars. **[examples/CLAUDE.md](examples/CLAUDE.md)**.
+- **`tests/`** — `include_hygiene`, `headless_smoke`, `compute_dispatch`, plus the `unit`,
+  `death`, `gpu`, and `cooker` suites (and `shaders/`, `support/`).
+- **`docs/`** — the Doxygen wiring and the task-oriented guides under
+  [docs/guides/](docs/README.md).
 
 ## Build & test
 
@@ -135,16 +74,24 @@ subagents at all, or only one subagent active at a time), in which case `-j 8` i
 fine. The `-j 4` cap exists to leave headroom when multiple agents build in
 parallel; a single builder can use the wider lane.
 
+Tests and examples build only when veng is the top-level project
+(`PROJECT_IS_TOP_LEVEL`); toggles are `VENG_BUILD_TESTS` / `VENG_BUILD_EXAMPLES`.
+The cooker (`vengc`) and `veng::graph` build **unconditionally from source** — veng
+*is* the tools. The **editor** (`libveng_editor` + `veng-editor`) is gated behind
+**`VENG_INSTALL_SDK`** (default `${PROJECT_IS_TOP_LEVEL}`), which also gates the SDK
+export/install of the editor. When Doxygen is installed, `VENG_BUILD_DOCS` (default
+`PROJECT_IS_TOP_LEVEL`) adds a `docs` target rendering the public-header Doxygen
+comments to HTML under `build/docs/html` (`cmake/Docs.cmake`).
+
 ### Formatting
 
 Code style is enforced by `clang-format` against the repo-root `.clang-format`.
 The whole tree conforms to it. **`const` is west-placed** (`const T`, not `T const`)
 — `QualifierAlignment: Left` normalizes it on format, so the `const` that
 `misc-const-correctness` adds lands on the house side automatically. A checked-in
-pre-commit hook
-(`.githooks/pre-commit`) format-checks **only the lines a commit touches** via
-`git clang-format --staged`, so a commit stays fast and each changed line must
-conform. Enable it once per clone:
+pre-commit hook (`.githooks/pre-commit`) format-checks **only the lines a commit
+touches** via `git clang-format --staged`, so a commit stays fast and each changed
+line must conform. Enable it once per clone:
 
 ```sh
 git config core.hooksPath .githooks
@@ -168,9 +115,8 @@ issue instead of fixing it is a defect, not a scope boundary.
 clang-tidy is configured by the repo-root `.clang-tidy` as a **deliberately small
 allowlist** (`-*` then the eight checks below): the whole tree is clean against
 exactly these, so an enabled run — or the pre-commit hook — is green and any new
-finding is a real regression. These checks enforce mechanical conventions that are
-tedious to police by hand, and they are **authoritative** — where one of them
-contradicted older hand-written style, the tree was migrated to the check:
+finding is a real regression. These checks enforce mechanical conventions and are
+**authoritative** — where one contradicts hand-written style, the check wins:
 
 - `readability-braces-around-statements` — **every control-flow body is braced**,
   even a single statement (`if (x) { return; }`, never `if (x) return;`).
@@ -185,32 +131,23 @@ contradicted older hand-written style, the tree was migrated to the check:
 - `modernize-use-auto` — `auto` when a cast on the RHS already names the type.
 
 The broader `bugprone-*`/`performance-*`/`readability-*` families are **not**
-enabled: a survey found them either noisy against this codebase's style
-(anonymous-namespace vs `static`, implicit-bool truthiness, math parenthesization,
-C-array interop tables, `std::print` vs fmt) or large stylistic churn not worth the
-diff. Re-enabling any is a deliberate, separately-scoped pass. **Identifier naming
-is not enforced by clang-tidy** either; the house naming rules are reviewed by hand.
-Findings are warnings, never build-breaking.
+enabled: they are either noisy against this codebase's style or large stylistic
+churn not worth the diff. Re-enabling any is a deliberate, separately-scoped pass.
+**Identifier naming is not enforced by clang-tidy** either; the house naming rules
+are reviewed by hand. Findings are warnings, never build-breaking.
 
 Two ways to run it, both opt-in:
 
 - **In-build:** configure with `-DVENG_ENABLE_CLANG_TIDY=ON` and clang-tidy runs
-  per-TU during the build. It is wired only onto veng's own targets (set after
-  the FetchContent deps), so third-party sources are never linted; the `imgui`/
-  `stb`/`tinyexr` vendor aggregation TUs carry a `Checks: '-*'` override
-  (`engine/src/Vendor/.clang-tidy`) and the generated core-pack embed is
-  `SKIP_LINTING`. The option degrades to a warning if clang-tidy is not found.
+  per-TU during the build. It is wired only onto veng's own targets, so third-party
+  sources are never linted; the `imgui`/`stb`/`tinyexr` vendor aggregation TUs carry
+  a `Checks: '-*'` override (`engine/src/Vendor/.clang-tidy`) and the generated
+  core-pack embed is `SKIP_LINTING`. The option degrades to a warning if clang-tidy
+  is not found.
 - **Pre-commit:** the same `.githooks/pre-commit` hook runs a second stage that
   tidies **only the changed lines** of staged C/C++ via `clang-tidy-diff.py`
   against `build/compile_commands.json` (exported unconditionally). It skips
   cleanly when clang-tidy, the diff driver, or a compile DB is missing.
-
-Tests and examples build only when veng is the top-level project
-(`PROJECT_IS_TOP_LEVEL`); toggles are `VENG_BUILD_TESTS` / `VENG_BUILD_EXAMPLES`.
-The cooker (`vengc`) and `veng::graph` build **unconditionally from source** — veng
-*is* the tools, so a from-source build always produces them. The **editor**
-(`libveng_editor` + `veng-editor`) is gated behind **`VENG_INSTALL_SDK`** (default
-`${PROJECT_IS_TOP_LEVEL}`), which also gates the SDK export/install of the editor.
 
 ### Consuming veng — three modes through one `veng-config`
 
@@ -223,86 +160,56 @@ library aliases, and the full authoring vocabulary (`veng_add_project` /
 resolves against three sources:
 
 ```
-in-tree         add_subdirectory(veng)            hello-triangle, the tests        — unchanged
+in-tree         add_subdirectory(veng)            hello-triangle, the tests
 build tree      find_package(veng) → veng/build   co-develop engine + game, NO install
 install prefix  find_package(veng) → <prefix>     the shipped SDK
 ```
 
-- **in-tree** — veng is the top-level project; helpers `include()` from the tree and
-  resolve source paths. This is the engine's own build (`hello-triangle`, the tests).
-- **build tree** — `-Dveng_ROOT=<veng>/build` (no install). The engine's
-  `export(EXPORT vengTargets)` writes a build-tree `veng-config.cmake`; a game
-  configured against it discovers veng with no install step, and the engine's
-  `cmake --build` refreshes the exported targets in place.
-- **install prefix** — `-DCMAKE_PREFIX_PATH=<prefix>` against a `cmake --install`ed
-  SDK.
-
-Mode is captured in `VENG_PACKAGE_MODE` (`INSTALL` / `BUILD_TREE`, unset in-tree).
-Path variables are mode-resolved through the one config: the internal
-`VENG_LAUNCHER_MAIN` / `VENG_CORE_SHADER_DIR` / `VENG_CORE_PACK_JSON` (and the
-consumer-facing lowercase `veng_CORE_SHADER_DIR` / `veng_CORE_PACK_JSON` a downstream
-cook references) point at source paths in-tree and installed/build-tree paths when
-found as a package. A game repo that declares veng as a pinned `FetchContent`
-dependency can redirect to a live checkout with `FETCHCONTENT_SOURCE_DIR_VENG`. The
-installed `vengc` / `veng-editor` carry an `INSTALL_RPATH` and require the host's
-Vulkan SDK (with its Slang component) at runtime — Slang is not vendored. See
+Mode is captured in `VENG_PACKAGE_MODE` (`INSTALL` / `BUILD_TREE`, unset in-tree);
+path variables (`VENG_LAUNCHER_MAIN`, `VENG_CORE_SHADER_DIR` / `VENG_CORE_PACK_JSON`
+and their consumer-facing lowercase twins) are mode-resolved through the one config.
+The build-tree mode works because the engine's `export(EXPORT vengTargets)` writes a
+build-tree `veng-config.cmake` that `cmake --build` refreshes in place. A game repo
+that declares veng as a pinned `FetchContent` dependency can redirect to a live
+checkout with `FETCHCONTENT_SOURCE_DIR_VENG`. The installed `vengc` / `veng-editor`
+carry an `INSTALL_RPATH` and require the host's Vulkan SDK (with its Slang component)
+at runtime — Slang is not vendored. The full walkthrough is
 [docs/guides/consuming-veng.md](docs/guides/consuming-veng.md).
 
-When Doxygen is installed, `VENG_BUILD_DOCS` (default `PROJECT_IS_TOP_LEVEL`)
-adds a `docs` target that renders the public-header Doxygen comments into an HTML
-API reference under `build/docs/html` (`cmake --build build --target docs`). The
-wiring lives in `cmake/Docs.cmake`; the target is absent without Doxygen.
+### Dependencies
 
-Dependencies (fmt, VMA, nfd, tinyexr, stb, ImGui, imnodes, zstd) are pulled via
-`FetchContent` with pinned tags — no system install needed beyond Vulkan, GLFW,
-glm, and zlib (`find_package`). **nlohmann/json is a PUBLIC dependency of `libveng`**,
-joining glm/fmt/ImGui in the `include_hygiene` link set: the engine's
-`Veng/Reflection/JsonSerialize.h` names `json` types directly (see
-[engine/CLAUDE.md](engine/CLAUDE.md)), so every consumer that links `veng::veng` —
-`veng::graph`, `libveng_editor`, `veng::mcp`, `vengc` — now resolves nlohmann
-transitively through that one edge; their own PRIVATE nlohmann links are redundant but
-harmless. The SDK export/install carries it (`find_dependency(nlohmann_json)` in
-`veng-config`, an installed copy for the install-prefix mode). **zstd is the one
-third-party codec linked into `libveng`** (transitively, PUBLIC through `assetpack`,
-which inflates compressed archive blobs at runtime); it adds no public-header include
-(the codec is a plain enum field, all zstd calls confined to `Archive.cpp`). The
-cooker's heavy/toolchain deps (assimp, and Slang for shader compile + reflection, plus
-the **`bc7enc_rdo` / `astc-encoder` texture encoders**) are **cooker-only** — linked into
-`vengc` alone, never into `libveng` or its consumers, which load the *binary* archive
-and never parse or encode a source asset. The **optional `veng::mcp`** library adds one
-more pinned dep of its own — **cpp-httplib** (a vendored single header, its transport TU
-compiled `-fexceptions`) — PRIVATE to `veng_mcp`: it reaches neither `libveng` nor a
-`Veng/Mcp/` public header, so linking `veng::mcp` adds no *new* public dependency beyond
-what `veng::veng` already carries (nlohmann/json is not new — it rides in with every
-`veng::veng` link, mcp included).
+Pulled via `FetchContent` with pinned tags (fmt, VMA, nfd, tinyexr, stb, ImGui,
+imnodes, zstd) — no system install needed beyond Vulkan, GLFW, glm, and zlib
+(`find_package`). The load-bearing linkage facts:
+
+- **PUBLIC on `libveng`:** glm, fmt, ImGui, and **nlohmann/json** (the engine's
+  `Veng/Reflection/JsonSerialize.h` names `json` types), so every consumer that links
+  `veng::veng` resolves them transitively; the SDK export carries
+  `find_dependency(nlohmann_json)`.
+- **zstd is the one third-party codec linked into `libveng`** (transitively, PUBLIC
+  through `assetpack`, which inflates compressed archive blobs at runtime); it adds no
+  public-header include.
+- **Backend libs (Vulkan, GLFW, VMA, nfd) link PRIVATE** — guarded by the
+  `include_hygiene` test (see the Native idiom below).
+- **Cooker-only deps** (assimp, Slang, stb, the `bc7enc_rdo` / `astc-encoder` texture
+  encoders) are linked into `vengc` alone, never into `libveng` or its consumers.
+- **`veng::mcp`** adds one pinned dep of its own — cpp-httplib, vendored, PRIVATE.
 
 ### Build configurations — role on the asset, format on the platform
 
-A texture's codec is a **platform** decision, not a per-asset one. The project owns
-the build policy as a small reflected data model (`Veng/Project/`): a
-**`ProjectSettings`** (one per project, the JSON file `project.veng`) is the project
-entrypoint: it lists the asset **packs** it owns, a list of **`BuildConfiguration`**s
-(one per ship target — macOS / Windows / Linux / mobile, each a `*.buildcfg` JSON file
-holding a **role → format** table (`RoleToFormat`), a zstd compression level, and an
-output-pack suffix), and the startup level. A texture's `*.tex.json` declares a
-compression **role** — its *intent*, one of the closed `CompressionRole` set
-(Color / Normal / Mask / HDR / UI) — never a raw codec; the active configuration
-resolves role → concrete `CompressionFormat` per platform (the raw `"compression"` key
-stays as a per-texture escape hatch). The cook reads each configuration and emits, per
-configuration, **its packs plus a cooked project file (`.vengproj`)** — the runtime
-entrypoint naming the packs to mount and the startup level.
-
-A bare `cmake --build` cooks the **host-matching configuration** by default:
-`VENG_BUILD_CONFIG` is a cache variable defaulted from the host triple
-(`cmake/BuildConfig.cmake`'s `veng_host_default_config_name`), so building on a Mac cooks
-the macOS/ASTC pack with no flag. Override with `-DVENG_BUILD_CONFIG=windows` to cook a
-foreign config (always allowed — the encoder is CPU), and the `cook-all-packs` aggregate
-target builds every configuration's output for CI / ship. An engine-internal pack cooked
-through `veng_add_asset_pack` with **no** configuration uses the zero-config codec default (the
-hardcoded ASTC fallback); both example apps drive `veng_add_project` from a root `project.veng`,
-so neither relies on it. The data model is in `engine/CLAUDE.md`, the cook
-resolution + CMake selection in `cooker/CLAUDE.md`, and the editor surface + host-capability
-preview gate in `editor/CLAUDE.md`.
+A texture's codec is a **platform** decision, not a per-asset one: a texture's
+`*.tex.json` declares a compression **role** (its intent — Color / Normal / Mask /
+HDR / UI), never a raw codec, and the active **`BuildConfiguration`** (one
+`*.buildcfg` per ship target, listed by the project's `project.veng`) resolves
+role → concrete format per platform. The cook emits, per configuration, its packs
+plus a cooked project file (`.vengproj`) — the runtime entrypoint naming the packs to
+mount and the startup level. A bare `cmake --build` cooks the **host-matching
+configuration** by default (`VENG_BUILD_CONFIG`, host-triple-defaulted in
+`cmake/BuildConfig.cmake`); override with `-DVENG_BUILD_CONFIG=windows` (always
+allowed — the encoder is CPU), and `cook-all-packs` builds every configuration for
+CI / ship. The data model is in [engine/CLAUDE.md](engine/CLAUDE.md), the cook
+resolution + CMake selection in [cooker/CLAUDE.md](cooker/CLAUDE.md), and the editor
+surface + host-capability preview gate in [editor/CLAUDE.md](editor/CLAUDE.md).
 
 ### The release build (validation OFF)
 
@@ -317,8 +224,7 @@ cmake --build build -j 4
 ```
 
 Configure it only when you need to check release-only behavior; the debug build is
-the default and catches more (it is `-Werror` and runs the validation gate). Do not
-build both routinely.
+the default and catches more. Do not build both routinely.
 
 ## Verification — read before you trust a green run
 
@@ -342,13 +248,12 @@ build both routinely.
   end-to-end. Labelled `gpu` (`SKIP_RETURN_CODE 77`), it skips with no device and
   runs under the validation gate like the rest of the `gpu` band. The launcher + lib +
   project + pack are a **relocatable set**: copy the launcher, `libhello_triangle.*`,
-  `project.vengproj`, and `sample.vengpack` into a fresh directory and run from an unrelated
-  working directory — the module (`@loader_path`/`$ORIGIN` rpath), the cooked project, and the
-  pack (`ExecutableDirectory()`-relative) resolve beside the launcher, so it still writes a
-  correct-sized PPM and exits 0.
+  `project.vengproj`, and `sample.vengpack` into a fresh directory and run from an
+  unrelated working directory — everything resolves beside the launcher, so it still
+  writes a correct-sized PPM and exits 0.
 - **Validation errors do NOT fail tests by themselves.** The debug-messenger
-  callback (`engine/src/Renderer/Backend/Context.cpp`) only `Log::Error`s on validation
-  errors — it never aborts. So a green `ctest` under `VE_DEBUG` only means
+  callback (`engine/src/Renderer/Backend/Context.cpp`) only `Log::Error`s on
+  validation errors — it never aborts. So a green `ctest` under `VE_DEBUG` only means
   something if the validation gate ran: `ctest --test-dir build-debug -j 4 -L
   validation` (the `validation_gate` test) runs the `gpu`-labelled binaries and
   fails on any unallowlisted `Vulkan validation` ERROR line
@@ -437,28 +342,24 @@ There are **two tiers** of comment, and the rules below apply to both:
   the local *why* — never a restatement of what the next line does.
 
 **Forbidden in either tier:**
-- **Plan/planset citations.** No `(plan 09)`, `(planset-5/05)`, `(plan 08b)`,
-  "the acceptance chain from planset-1/08", "decided in the API rework, plan 07",
-  "see plans/…". The reader of the code has no reason to care which plan landed
-  it. Strip the reference; keep whatever factual statement remains.
+- **Plan/planset citations.** No `(plan 09)`, `(planset-5/05)`, "see plans/…". The
+  reader of the code has no reason to care which plan landed it. Strip the
+  reference; keep whatever factual statement remains.
 - **Future-work / temporariness.** No "for now", "v1 only / later we will",
-  "future work", "a compiled graph is a later upgrade", "not yet supported",
-  "before 06-09 add real loaders", "this is not the current direction". If a
-  limitation is real, state it as a present-tense fact ("veng is single-threaded;
-  no synchronization is provided") with no promise about the future.
+  "future work", "not yet supported". If a limitation is real, state it as a
+  present-tense fact ("veng is single-threaded; no synchronization is provided")
+  with no promise about the future.
 - **Decorative version tags.** No `v1`/`v2` sprinkled into prose to mean "and a
-  later version will differ" ("the v1 reflection surface", "v1 flattens every
-  mesh"). Drop the tag and state what the code *is*. A version number that the
-  code actually checks — an on-disk format number rejected on mismatch — is a real
-  fact and stays; describe it as such.
-- **Historical narrative.** No "used to be special-cased inside Context",
-  "ported from the planset-3 one-exe test", "the public API no longer exposes
-  barriers", "extracted from Barrier.cpp", "this contradicts plan 01's
-  assumption". Describe the current structure, not the refactor that produced it.
-  Beware `no longer` / `previously` / `used to` that contrast with an *older
-  version of the source* — cut them. (`previously`/`later` that refer to an
-  earlier/later moment in *program execution* — "clear any previously bound
-  pipeline", "a later graph pass" — are factual and stay.)
+  later version will differ". Drop the tag and state what the code *is*. A version
+  number that the code actually checks — an on-disk format number rejected on
+  mismatch — is a real fact and stays; describe it as such.
+- **Historical narrative.** No "used to be special-cased inside Context", "ported
+  from…", "extracted from…", "the public API no longer exposes barriers". Describe
+  the current structure, not the refactor that produced it. Beware `no longer` /
+  `previously` / `used to` that contrast with an *older version of the source* —
+  cut them. (`previously`/`later` that refer to an earlier/later moment in
+  *program execution* — "clear any previously bound pipeline", "a later graph
+  pass" — are factual and stay.)
 - **Re-documenting the callee at a call site.** A comment at a *usage* site
   explains why *this* code makes *this* call — the local decision, what this
   app/test demonstrates, the constraint that forced it. It does **not** restate
@@ -467,8 +368,7 @@ There are **two tiers** of comment, and the rules below apply to both:
   declaration, would it read as that callee's doc comment? If yes, it is
   misplaced — replace it with the local reason, or delete it if the call is
   self-explanatory. When one engine contract recurs at many call sites, document
-  it once and reference it (or say nothing) at the rest, rather than restating it
-  each time.
+  it once and reference it (or say nothing) at the rest.
 
 **Encouraged:** comments that give the *factual reason* a piece of code is
 unusual, surprising, or deliberately restricted — stated plainly, without the
@@ -482,11 +382,9 @@ arrived at it*.
 states its point in the fewest words that carry the *why*. Two lines only when a
 genuine non-obvious reason needs them; three or more inline lines is a smell. Cut a
 sentence that (a) describes what the called function does instead of why *this* call
-is here — that belongs on the callee's declaration; (b) restates a contract
-documented elsewhere — reference it (`see ReconfigureScene`) rather than re-deriving
-it; or (c) inventories structure the code already shows — `m_A.reset();
-m_B.reset();` needs the one reason the block exists, not a line-item map of who owns
-what. Keep the load-bearing why; drop the tour. (Doc comments on a public
+is here; (b) restates a contract documented elsewhere — reference it (`see
+ReconfigureScene`) rather than re-deriving it; or (c) inventories structure the code
+already shows. Keep the load-bearing why; drop the tour. (Doc comments on a public
 declaration are the exception: a full `@brief` plus contract is the goal there.)
 
 The test: if a sentence would still be true and useful to someone who has never
@@ -507,11 +405,8 @@ non-trivial declaration; a self-evident private helper may go without.
 
 **A documented declaration is in Doxygen form regardless of visibility.** Private
 members are not second-class: when a private field, helper, or member gets a doc
-comment, it is a `@brief` block exactly like a public one — a bare `///` prose
-comment sitting on a *declaration* is not acceptable (`/// @brief Frustum-query
-scratch.` followed by a blank `///` and the detail, not two lines of plain `///`
-prose). Plain `//`/`///` prose without `@brief` is only for *inline body* comments,
-which are never doc comments.
+comment, it is a `@brief` block exactly like a public one. Plain `//`/`///` prose
+without `@brief` is only for *inline body* comments, which are never doc comments.
 
 The house Doxygen style:
 - **One doc comment documents exactly one declaration — never a group.** A `@brief`
@@ -524,8 +419,8 @@ The house Doxygen style:
 - **`///` line comments**, not `/** … */`. Tags are `@`-prefixed (`@brief`), not
   `\`-prefixed.
 - **First line is `@brief`** — one sentence, the summary a doc index shows. Then a
-  blank `///` line, then any detailed description (the existing rationale prose
-  lives here, unchanged in spirit, still bound by the rules above).
+  blank `///` line, then any detailed description (rationale prose lives here,
+  still bound by the rules above).
 - **Document the contract:** `@param` per parameter, `@tparam` per template
   parameter, `@return` for a non-void return, `@pre`/`@post` for ordering or state
   requirements, `@warning` for a footgun, `@see` to cross-reference. A `@param` is
@@ -555,25 +450,15 @@ factories returning a smart pointer (no public constructors — they're private)
 **`Create` constructs a GPU resource; `Build` produces an engine asset.** A
 low-level GPU resource — `Buffer`, `Image`, `ImageView`, `Sampler`, `Shader`, the
 pipelines, `DescriptorSet`, `Fence`, `Semaphore` — is constructed from its descriptor
-through `X::Create(const XInfo&)`: synchronous, returning a ready `Ref<T>`, because
-constructing the object is immediate and has no async form. A higher-level engine
-**asset** that carries CPU source data and *uploads* it — `Mesh` (from `MeshData`),
-`Texture` (from `TextureData`), `Material` (from `MaterialInfo`) — is built at runtime
-through **`AssetManager`**: `Build<T>(...)` is **async by default** (runs the worker-legal
-upload off the render thread, lands the render-thread-only finalize — bindless
-registration — on the continuation pump, returns a pending `AssetHandle<T>`), and
-`BuildSync<T>(...)` is the blocking sibling (builds + finalizes inline on the render
-thread, returns a resident handle) — the async-default rule of `Load`/`LoadSync` and
-`Upload`/`UploadSync`. So the verb tells you the tier *and* the sync/async expectation:
-`Create` → a GPU object, now; `Build`/`BuildSync` → an asset, streaming or blocking. A
-bindless-registered asset's own construction is a private two-phase **`Prepare`** (worker-
-legal: construct + upload, unregistered) → **`Finalize`** (render-thread: register into
-bindless) seam that `AssetManager` and the loaders drive — not app-facing. The low-level
-`Create(const XInfo&)` GPU-construct-from-already-uploaded-handles step stays `Create` and
-public only where a from-handles path is real (`Mesh::Create(MeshInfo)`), distinct from
-building the asset from data. A runtime resource enters the `AssetManager` cache through
-**`Adopt`** — `Adopt(Ref<T>)` for a resident one, `Adopt(Task<Ref<T>>)` for a streaming one;
-`AssetManager::Build<T>` is the convenience that builds *and* adopts in one call.
+through `X::Create(const XInfo&)`: synchronous, returning a ready `Ref<T>`. A
+higher-level engine **asset** that carries CPU source data and *uploads* it — `Mesh`,
+`Texture`, `Material` — is built at runtime through **`AssetManager`**: `Build<T>(...)`
+is **async by default** (returns a pending `AssetHandle<T>`), `BuildSync<T>(...)` the
+blocking sibling — the same async-default rule as `Load`/`LoadSync` and
+`Upload`/`UploadSync`. So the verb tells you the tier *and* the sync/async
+expectation: `Create` → a GPU object, now; `Build`/`BuildSync` → an asset, streaming
+or blocking. The full asset-tier model (the `Prepare`/`Finalize` seam, `Adopt`) is in
+[engine/src/Asset/CLAUDE.md](engine/src/Asset/CLAUDE.md).
 
 The pointer type follows one rule:
 - **`Ref<T>`** (`shared_ptr`) — genuinely shared GPU resources others hold
@@ -624,30 +509,30 @@ for backend/interop code. Reach for it only when interop genuinely needs the raw
 handle.
 
 This split is guarded by the **`include_hygiene` test**, which compiles every
-public header while linking only veng's PUBLIC deps (glm, fmt, ImGui). Vulkan,
-GLFW, VMA, and nfd link PRIVATE, so if a public header leaks a backend include,
-this test fails to build. CMake `PUBLIC`/`PRIVATE` linkage is load-bearing here —
-keep glm/fmt PUBLIC and the backend libs PRIVATE.
+public header while linking only veng's PUBLIC deps. Vulkan, GLFW, VMA, and nfd
+link PRIVATE, so if a public header leaks a backend include, this test fails to
+build. CMake `PUBLIC`/`PRIVATE` linkage is load-bearing here — keep the PUBLIC
+deps PUBLIC and the backend libs PRIVATE.
 
 ## Working norms
 
 The **engine roadmap lives at the workspace root** — in `plans/`, a sibling of this repo,
 tracked by neither (it is kept out of the public engine tree; see the workspace `CLAUDE.md`).
 `plans/README.md` indexes the **plansets** (numbered coherent phases) and `plans/future/` (a
-vision/holding area: asset system, threading, events/input, testing). Each planset/future
-README carries the detail, decisions, and per-plan status column.
+vision/holding area). Each planset/future README carries the detail, decisions, and per-plan
+status column.
 
 **Plan work** — one planset per session, on the user's cue, dispatching its plans as
 appropriate (independent plans in parallel, dependent plans in sequence, derived from
 the plans' direction). Per plan:
 1. Implement it.
-2. Migrate **both** `examples/hello-triangle` (the maximal sample, consumed
-   **in-tree**) and `examples/template` (the minimal one a new developer copies,
-   consumed **out-of-tree** via `find_package(veng)`) in the *same* pass as the
-   breaking changes — together they are the dual-mode conformance check. The template
-   is **not** built by the default in-tree `cmake --build`, so a template breakage
-   surfaces in the SDK conformance tests (`sdk_conformance_install` /
-   `sdk_conformance_buildtree`, the `gpu` band), not in a plain build.
+2. Migrate **both** `examples/hello-triangle` (consumed **in-tree**) and
+   `examples/template` (consumed **out-of-tree** via `find_package(veng)`) in the *same*
+   pass as the breaking changes — together they are the dual-mode conformance check
+   ([examples/CLAUDE.md](examples/CLAUDE.md)). The template is **not** built by the
+   default in-tree `cmake --build`, so a template breakage surfaces in the SDK
+   conformance tests (`sdk_conformance_install` / `sdk_conformance_buildtree`, the
+   `gpu` band), not in a plain build.
 3. Verify against the default debug build only (clean `build-debug`, `ctest` green,
    `hello_triangle-launcher` under `HT_SMOKE` writes a correct-sized PPM) — don't
    also do a separate release build. The template has no smoke/PPM path; its conformance
@@ -668,11 +553,10 @@ pack's built-in layout ids, were minted this way.
 and zero-padded to 16 digits** (`AssetId{0x0D49F2A1C03B5E76ULL}`). JSON stores every minted
 id (`AssetId`/`SystemId`/`ActionId`) as the *same* zero-padded hex value, as a **string**
 (`"0x0D49F2A1C03B5E76"`) — a string round-trips through any JSON tool losslessly, where a
-bare number past `2^53` silently truncates through an IEEE-754-double pipeline. So a minted
-id reads identically in a `.vengpack.json`, a `.prefab.json`, and a C++ source file, modulo
-the quotes and the `ULL` suffix; the shared codec is `Veng/Asset/HexId.h`, and
-`scripts/migrate_ids.py` converts an out-of-repo pack to this form. `vengc generate-id` prints
-the id in both spellings — `0x{:016X}ULL` for C++ and `"0x{:016X}"` for JSON.
+bare number past `2^53` silently truncates through an IEEE-754-double pipeline. The shared
+codec is `Veng/Asset/HexId.h`, and `scripts/migrate_ids.py` converts an out-of-repo pack to
+this form. `vengc generate-id` prints the id in both spellings — `0x{:016X}ULL` for C++ and
+`"0x{:016X}"` for JSON.
 
 **Delegate well-scoped chunks to `model: sonnet` subagents** (exploration sweeps,
 mechanical multi-file edits, focused sub-task implementation). Keep orchestration,
@@ -683,11 +567,8 @@ trivial single-file edits that are faster inline.
 engine instance — a running game or an open editor — reach it through the MCP client
 rather than adding one-off instrumentation. Any exe built with the MCP opt-in
 (`veng-editor`, or a game's `<name>-launcher` built with `veng_add_game(... MCP)`)
-exposes a `--connect=<port>` client against an already-running server's loopback port
-(the server prints its bound port on its `listening on <ip>:<port>` line). **Discover the
-surface before using it, don't assume it**: `--connect=<port> --list` (optionally
-`--search <query>`) enumerates every tool the server advertises with its description, so
-list first, then call — never guess a tool name or its arguments. A call is
-`--connect=<port> <tool> [key=value …]` (or `--json '<obj>'` for structured arguments):
-exit 0 with the payload on stdout on success, a nonzero code with a one-line stderr
-reason otherwise. See [mcp/CLAUDE.md](mcp/CLAUDE.md) for the client and driver detail.
+exposes a `--connect=<port>` client against an already-running server's loopback port.
+**Discover the surface before using it, don't assume it**: `--connect=<port> --list`
+(optionally `--search <query>`) enumerates every tool with its description — list
+first, then call, never guess a tool name or its arguments. The call grammar and
+exit-code map are in [mcp/CLAUDE.md](mcp/CLAUDE.md).

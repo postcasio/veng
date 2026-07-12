@@ -5,11 +5,11 @@ hand-written JSON asset sources into the binary `.vengpack` archive the runtime
 mounts. It is **never linked by the engine**. The on-disk archive format it emits is
 documented in [assetpack/CLAUDE.md](../assetpack/CLAUDE.md); runtime loading of the
 result (the `AssetManager`, `AssetHandle`, async/sync `Load`) and the full
-shader/material model are in [engine/CLAUDE.md](../engine/CLAUDE.md). Project-wide
-conventions live in the [root CLAUDE.md](../CLAUDE.md).
+shader/material model are in [engine/src/Asset/CLAUDE.md](../engine/src/Asset/CLAUDE.md).
+Project-wide conventions live in the [root CLAUDE.md](../CLAUDE.md).
 
 `libveng_cook` links **`veng::graph`** PUBLIC — the shared node-graph + material-codegen
-library (see [editor/CLAUDE.md](../editor/CLAUDE.md)). A material graph is walked into Slang
+library (see [graph/CLAUDE.md](../graph/CLAUDE.md)). A material graph is walked into Slang
 fragment source by the **same** `CompileMaterialGraph` emit walk the editor runs, so the
 editor preview and the offline cook generate identical text by construction. The walk
 (`EmittedValue`, the per-node-type emit-fns, the schema-independent catalog) lives in
@@ -24,8 +24,8 @@ never parse a source asset. The split is the whole point — the runtime gains n
 importer, no source parser, no Slang, and no re-cook path.
 
 `vengc` (and `veng::graph`) build **unconditionally from a source build** — veng
-*is* the tools, so there is no build toggle to skip them (the retired
-`VENG_BUILD_TOOLS`). A library-only consumer instead uses `find_package(veng)` and
+*is* the tools, so there is no build toggle to skip them. A library-only consumer
+instead uses `find_package(veng)` and
 gets `vengc` as a **prebuilt imported executable** in `vengTargets`; `veng-config`
 recreates the unqualified `vengc` name so `$<TARGET_FILE:vengc>` resolves in every
 consumption mode. The installed `vengc` carries an `INSTALL_RPATH` and **requires the
@@ -57,10 +57,10 @@ per-asset JSON source (`*.tex.json` / `*.mesh.json` / `*.shader.json` / `*.vmat.
 / `*.prefab.json`) the manifest entry points at. The importers validate those sources
 at cook time:
 
-- **Shaders** are authored in **Slang**. The cooker **always** compiles from source
-  (there is no precompiled-inline path) and **reflects the shader offline** into a
-  serializable `ShaderInterface`; the engine then loads plain SPIR-V. (There is no
-  `glslc` / `add_shaders` path — GLSL was removed project-wide.)
+- **Shaders** are authored in **Slang** — Slang only, there is no GLSL path. The cooker
+  **always** compiles from source (there is no precompiled-inline path) and **reflects
+  the shader offline** into a serializable `ShaderInterface`; the engine then loads
+  plain SPIR-V.
 - **A fragment shader's source can be a graph, not a `.slang` file.** A `*.shader.json` whose
   `"source"` ends in `.graph.json` (plus a `"domain"`: `"Surface"` | `"PostProcess"`,
   `MaterialDomain`'s exact enumerator spellings) is cooked by
