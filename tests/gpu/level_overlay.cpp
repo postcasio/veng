@@ -227,7 +227,7 @@ TEST_CASE("LevelOverlay open/update/close leaves the router and world-pause byte
         {
             // Pre-open router/pause state.
             priorCursor = router.GetCursorSeat();
-            CHECK_FALSE(a.IsWorldPaused());
+            CHECK_FALSE(a.IsWorldPaused(a.GetManagedWorldId()));
             CHECK(router.ResolvePointer(ivec2(100, 100), false, Entity::Null).Owner ==
                   Entity::Null);
 
@@ -239,7 +239,8 @@ TEST_CASE("LevelOverlay open/update/close leaves the router and world-pause byte
             CHECK(overlaySeat != Entity::Null);
             CHECK(router.GetCursorSeat() == overlaySeat);
             CHECK(router.ResolvePointer(ivec2(100, 100), false, Entity::Null).Owner == overlaySeat);
-            CHECK_FALSE(a.IsWorldPaused()); // a default overlay does not pause the primary sim
+            CHECK_FALSE(a.IsWorldPaused(
+                a.GetManagedWorldId())); // a default overlay does not pause the primary sim
         }
         else if (frame == 1)
         {
@@ -255,7 +256,7 @@ TEST_CASE("LevelOverlay open/update/close leaves the router and world-pause byte
             CHECK(router.GetCursorSeat() == priorCursor);
             CHECK(router.ResolvePointer(ivec2(100, 100), false, Entity::Null).Owner ==
                   Entity::Null); // ClearViewportSeat ran
-            CHECK_FALSE(a.IsWorldPaused());
+            CHECK_FALSE(a.IsWorldPaused(a.GetManagedWorldId()));
         }
     };
 
@@ -447,17 +448,18 @@ TEST_CASE("PausePrimarySim toggles and restores the observed pause value, stacke
     OverlayApp app(HeadlessInfo(), types, systems);
     AssetHandle<Level> level;
 
-    // SetWorldPaused / IsWorldPaused delegate to the primary simulation (the first registered), so a
-    // stable primary must exist for the pause to target. Register a bare primary scene + simulation
-    // ahead of any overlay so it stays simulation #0 across the test (overlays register after it).
+    // An overlay's PausePrimarySim freezes the base world it covers — the runner's first-opened world.
+    // Register a bare base scene + simulation ahead of any overlay so it stays the runner's first
+    // world across the test (overlays adopt after it), and capture its handle to assert the pause on.
     Unique<Scene> primary;
+    WorldInstanceId baseWorld;
 
     app.InitFn = [&](OverlayApp& a)
     {
         level = BuildSeatLevel(a.GetAssetManager(), a.GetTypeRegistry(), {});
         primary = Scene::Create(a.GetTypeRegistry());
         primary->SetSimulation(CreateUnique<SceneSimulation>(a.GetSystemRegistry()));
-        a.RegisterSimulation(*primary);
+        baseWorld = a.GetWorldRunner().AdoptSimulation(*primary);
     };
 
     app.StepFn = [&](OverlayApp& a, int frame)
@@ -471,41 +473,43 @@ TEST_CASE("PausePrimarySim toggles and restores the observed pause value, stacke
 
         if (frame == 0)
         {
-            CHECK_FALSE(a.IsWorldPaused());
+            CHECK_FALSE(a.IsWorldPaused(baseWorld));
             open(a.A, false);
-            CHECK_FALSE(a.IsWorldPaused()); // a default overlay leaves the primary simulating
+            CHECK_FALSE(
+                a.IsWorldPaused(baseWorld)); // a default overlay leaves the primary simulating
             open(a.B, true);
-            CHECK(a.IsWorldPaused()); // the opt-in freezes it
+            CHECK(a.IsWorldPaused(baseWorld)); // the opt-in freezes it
         }
         else if (frame == 1)
         {
             a.B.reset();
-            CHECK_FALSE(a.IsWorldPaused()); // B observed false (A did not pause), restores false
+            CHECK_FALSE(
+                a.IsWorldPaused(baseWorld)); // B observed false (A did not pause), restores false
             a.A.reset();
-            CHECK_FALSE(a.IsWorldPaused());
+            CHECK_FALSE(a.IsWorldPaused(baseWorld));
 
             // Stacked pause: both pause; closing the inner leaves it paused under the outer.
             open(a.A, true);
-            CHECK(a.IsWorldPaused());
+            CHECK(a.IsWorldPaused(baseWorld));
             open(a.B, true); // observes true
-            CHECK(a.IsWorldPaused());
+            CHECK(a.IsWorldPaused(baseWorld));
         }
         else if (frame == 2)
         {
             a.B.reset();
-            CHECK(a.IsWorldPaused()); // stays paused under A (observed true)
+            CHECK(a.IsWorldPaused(baseWorld)); // stays paused under A (observed true)
             a.A.reset();
-            CHECK_FALSE(a.IsWorldPaused()); // unpauses
+            CHECK_FALSE(a.IsWorldPaused(baseWorld)); // unpauses
 
             // A primary the game paused itself before opening is not unpaused on close.
-            a.SetWorldPaused(true);
+            a.SetWorldPaused(baseWorld, true);
             open(a.A, true);
         }
         else if (frame == 3)
         {
             a.A.reset();
-            CHECK(a.IsWorldPaused()); // observed true, restored true
-            a.SetWorldPaused(false);
+            CHECK(a.IsWorldPaused(baseWorld)); // observed true, restored true
+            a.SetWorldPaused(baseWorld, false);
         }
     };
 

@@ -27,6 +27,9 @@
 #include <Veng/Scene/Movement.h>
 #include <Veng/Scene/RemoteInterpolationSystem.h>
 #include <Veng/Scene/Scene.h>
+#include <Veng/Scene/SystemRegistry.h>
+#include <Veng/World.h>
+#include <Veng/WorldRunner.h>
 
 #include <deque>
 #include <unordered_map>
@@ -219,6 +222,7 @@ namespace
         Unique<ClientHost> Host;
         InputSendBuffer Send;
         RemoteInterpolationSystem Interp;
+        Unique<Scene> ClientScene;
         Entity LocalSeat = Entity::Null;
         Entity LocalCamera = Entity::Null;
         Entity OwnPawn = Entity::Null;
@@ -235,24 +239,25 @@ namespace
             Host = ClientHost::Create(ClientHostInfo{
                 .Client = *Client,
                 .Assets = FakeAssets(),
-                .LoadLevel = [this](AssetId) -> Unique<Scene>
+                .LoadLevel = [this](AssetId) -> Scene*
                 {
-                    // The client scene the join loads: a Local-tier camera the join wires to the own
-                    // pawn, and a Local-tier input seat whose PlayerInput a scripted input fills and
-                    // the send window carries. The server-authoritative pawns arrive from the stream.
-                    Unique<Scene> scene = Scene::Create(Types);
-                    LocalCamera = scene->CreateEntity();
-                    scene->Add<Transform>(LocalCamera);
-                    scene->Add<Camera>(LocalCamera);
-                    scene->Add<CameraFollow>(LocalCamera);
-                    scene->Add<Authority>(LocalCamera, Authority{.Tier = Tier::Local});
+                    // The client scene the join loads into: a Local-tier camera the join wires to the
+                    // own pawn, and a Local-tier input seat whose PlayerInput a scripted input fills
+                    // and the send window carries. The caller owns the scene (the host borrows it); the
+                    // server-authoritative pawns arrive from the stream.
+                    ClientScene = Scene::Create(Types);
+                    LocalCamera = ClientScene->CreateEntity();
+                    ClientScene->Add<Transform>(LocalCamera);
+                    ClientScene->Add<Camera>(LocalCamera);
+                    ClientScene->Add<CameraFollow>(LocalCamera);
+                    ClientScene->Add<Authority>(LocalCamera, Authority{.Tier = Tier::Local});
 
-                    LocalSeat = scene->CreateEntity();
-                    scene->Add<Viewer>(LocalSeat, Viewer{.Camera = LocalCamera});
-                    scene->Add<SeatInput>(LocalSeat);
-                    scene->Add<PlayerInput>(LocalSeat);
-                    scene->Add<Authority>(LocalSeat, Authority{.Tier = Tier::Local});
-                    return scene;
+                    LocalSeat = ClientScene->CreateEntity();
+                    ClientScene->Add<Viewer>(LocalSeat, Viewer{.Camera = LocalCamera});
+                    ClientScene->Add<SeatInput>(LocalSeat);
+                    ClientScene->Add<PlayerInput>(LocalSeat);
+                    ClientScene->Add<Authority>(LocalSeat, Authority{.Tier = Tier::Local});
+                    return ClientScene.get();
                 },
                 .ResolvePrefab = [](AssetId) -> Ref<Prefab> { return nullptr; },
                 .OnPossession =
@@ -951,4 +956,112 @@ TEST_CASE("A late-joining client drives the server pawn only when its tick epoch
         REQUIRE(server.Pawns.contains(id));
         CHECK(server.World->Get<Transform>(server.Pawns.at(id)).Position.x < 0.05f);
     }
+}
+
+TEST_CASE("A client join loads into the WorldRunner's world #0, not a parallel scene")
+{
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+    ServerWorld server(*serverT);
+
+    // The client owns its world through a device-free WorldRunner exactly as Application does: world
+    // #0 is opened as an empty join target, and the ClientHost's LoadLevel installs the accepted level
+    // into that runner-owned world rather than into a parallel scene the host owns. This guards the
+    // ClientHost scene-ownership restructure: a silent regression to a parallel client scene is caught
+    // here rather than downstream.
+    TypeRegistry clientTypes;
+    RegisterBuiltinTypes(clientTypes);
+    SystemRegistry clientSystems;
+    WorldRunner runner(WorldRunnerInfo{.Types = &clientTypes, .Systems = &clientSystems});
+
+    const WorldInstanceId world0 =
+        runner.OpenWorld(WorldOpenInfo{.SimTickRate = 60, .StartSimulation = false});
+
+    Unique<Net::Client> client = *Net::Client::Connect(
+        ClientInfo{.TransportOverride = clientT.get(), .Connection = FastConfig});
+    const InputSendBuffer send(InputSendBuffer::Settings{.Redundancy = 3});
+    Entity localCamera = Entity::Null;
+    Entity localSeat = Entity::Null;
+    Entity ownPawn = Entity::Null;
+
+    Unique<ClientHost> host = ClientHost::Create(ClientHostInfo{
+        .Client = *client,
+        .Assets = FakeAssets(),
+        .LoadLevel = [&](AssetId) -> Scene*
+        {
+            // Load into a fresh scene the runner takes ownership of (InstallScene), replacing world
+            // #0's empty placeholder — so the joined scene is world #0, not a parallel one.
+            Unique<Scene> scene = Scene::Create(clientTypes);
+            localCamera = scene->CreateEntity();
+            scene->Add<Transform>(localCamera);
+            scene->Add<Camera>(localCamera);
+            scene->Add<CameraFollow>(localCamera);
+            scene->Add<Authority>(localCamera, Authority{.Tier = Tier::Local});
+            localSeat = scene->CreateEntity();
+            scene->Add<Viewer>(localSeat, Viewer{.Camera = localCamera});
+            scene->Add<Authority>(localSeat, Authority{.Tier = Tier::Local});
+            return &runner.InstallScene(world0, std::move(scene));
+        },
+        .ResolvePrefab = [](AssetId) -> Ref<Prefab> { return nullptr; },
+        .OnPossession =
+            [&](Scene& possessScene, const Entity pawn)
+        {
+            ownPawn = pawn;
+            if (!localCamera.IsNull() && possessScene.IsAlive(localCamera))
+            {
+                possessScene.Get<CameraFollow>(localCamera).Target = pawn;
+            }
+        },
+        .Prediction = [](const Scene&, Entity) { return vector<Entity>{}; },
+    });
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    for (u64 tick = 1; tick <= 90; ++tick)
+    {
+        now += Delta;
+        server.SimStep(tick, Delta);
+        server.NetPump(now, tick);
+        host->Pump(now);
+        if (client->State() == ClientState::Connected)
+        {
+            (void)client->Server().Send(Channel::UnreliableSequenced, send.Encode(0, clientTypes));
+        }
+    }
+
+    REQUIRE(host->IsJoined());
+    REQUIRE(host->World() != nullptr);
+
+    // The join loaded into world #0: the host's scene IS the runner-owned world #0 scene — the
+    // ClientHost owns no scene of its own.
+    const World* w0 = runner.ResolveWorld(world0);
+    REQUIRE(w0 != nullptr);
+    CHECK(host->World() == &w0->GetScene());
+
+    // The LoadLevel-authored local seat/camera live in that same runner-owned scene (proof it is the
+    // installed scene, not the empty placeholder or a parallel one).
+    Scene& world = w0->GetScene();
+    REQUIRE_FALSE(localSeat.IsNull());
+    CHECK(world.IsAlive(localSeat));
+    CHECK(world.Has<Viewer>(localSeat));
+
+    // The server-authoritative pawn spawned/streamed into world #0: replicated entities (NetIdentity)
+    // landed here, the own seat bound Remote-tier, and the client possessed the replicated pawn — the
+    // whole join stream applied into the WorldRunner's world #0, identically to the pre-change path.
+    const ConnectionId id = client->AssignedId();
+    REQUIRE(server.Pawns.contains(id));
+    int replicated = 0;
+    for (auto [entity, identity] : world.View<NetIdentity>())
+    {
+        (void)entity;
+        (void)identity;
+        ++replicated;
+    }
+    CHECK(replicated > 0);
+
+    const Entity clientSeat = host->Seat();
+    REQUIRE_FALSE(clientSeat.IsNull());
+    CHECK(world.Get<Authority>(clientSeat).Tier == Tier::Remote);
+    REQUIRE_FALSE(ownPawn.IsNull());
+    CHECK(world.IsAlive(ownPawn));
+    CHECK(world.Get<CameraFollow>(localCamera).Target == ownPawn);
 }

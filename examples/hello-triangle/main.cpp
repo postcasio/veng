@@ -321,19 +321,28 @@ protected:
         }
     }
 
+    // Resolves the engine-managed world's scene by handle through the runner, or null before the
+    // world comes online (a client join not yet accepted).
+    [[nodiscard]] Scene* ManagedScene()
+    {
+        const World* managed = GetWorldRunner().ResolveWorld(GetManagedWorldId());
+        return managed != nullptr ? &managed->GetScene() : nullptr;
+    }
+
     // The engine has mounted the pack, loaded the startup level, spawned the world, and seeded the
     // managed view from the level's render settings; the sample seeds its own editable topology
     // copy here, adds its extras, and (smoke) waits on residency before the deterministic capture.
-    void OnWorldLoaded(Scene& world, ResidencyBatch& pending) override
+    void OnWorldLoaded(WorldInstanceId world, Scene& scene, ResidencyBatch& pending) override
     {
         // Seed the editable topology copy from the scene — the level's post knobs (a seeded
         // LevelRenderSettings component) — read by the same query the engine used, so the debug
         // RenderSettingsEditor starts in sync. The exposure and bloom already rode the engine's
         // view push. The sky is the scene's Sky component, resolved by the renderer itself each
-        // Execute. Absent settings leave the defaults.
-        if (const LevelRenderSettings* render = world.TryGetFirst<LevelRenderSettings>())
+        // Execute. Absent settings leave the defaults. The world handle is the hook's argument —
+        // GetManagedWorldId() is not yet bound while the runner is still opening this world.
+        if (const LevelRenderSettings* render = scene.TryGetFirst<LevelRenderSettings>())
         {
-            ApplyLevelRenderSettings(*render, m_SceneSettings, GetWorldViewState());
+            ApplyLevelRenderSettings(*render, m_SceneSettings, GetWorldViewState(world));
         }
 
         // SSR is off by default in the engine; the sample opts in to show reflections off the
@@ -341,7 +350,7 @@ protected:
         m_SceneSettings.SSR = true;
 
         // BloomThreshold is not a level field; the sample lifts the knee so the weak lights bloom.
-        GetWorldViewState().BloomThreshold = 0.5f;
+        GetWorldViewState(world).BloomThreshold = 0.5f;
 
         // HT_DEBUG_VIEW pins a debug visualization mode by its DebugView enum index (the headless
         // capture has no combo): it overrides the level's Final mode so a g-buffer/battery target
@@ -361,7 +370,7 @@ protected:
             // Smoke renders a fixed pose: pause the simulation so the spinners hold the pinned
             // SmokeAngle (set in OnUpdate) and the View-phase camera rig does not trail, and block
             // until the world spawn's streamed meshes are resident before the capture frame.
-            SetWorldPaused(true);
+            SetWorldPaused(world, true);
             pending.WaitResident(GetTaskSystem());
         }
         else
@@ -375,14 +384,14 @@ protected:
             if (launch.Server || launch.Join.has_value())
             {
                 Entity settings = Entity::Null;
-                for (auto [entity, session] : world.View<Session>())
+                for (auto [entity, session] : scene.View<Session>())
                 {
                     settings = entity;
                     break;
                 }
                 if (!settings.IsNull())
                 {
-                    world.Add<MultiplayerMode>(settings);
+                    scene.Add<MultiplayerMode>(settings);
                 }
             }
 
@@ -391,7 +400,7 @@ protected:
             // a click on the scene re-captures it).
             GetInputRouter().PushFocus(InputFocus::Gameplay);
 
-            SetupHud(world);
+            SetupHud(scene);
         }
     }
 
@@ -484,7 +493,7 @@ protected:
             // Smoke pins a fixed pose for golden comparison: the world is paused (no tick), so the
             // sample writes the deterministic SmokeAngle each frame and the engine pushes the
             // authored camera — byte-identical run to run.
-            GetWorld()->Each<Transform, Spinner>(
+            ManagedScene()->Each<Transform, Spinner>(
                 [](Entity, Transform& transform, Spinner& spinner)
                 { transform.Rotation = glm::angleAxis(SmokeAngle, glm::normalize(spinner.Axis)); });
 
@@ -535,7 +544,7 @@ protected:
             return;
         }
 
-        const GuiOverlay* const overlay = GetWorld()->TryGet<GuiOverlay>(m_HudEntity);
+        const GuiOverlay* const overlay = ManagedScene()->TryGet<GuiOverlay>(m_HudEntity);
         Gui::Document* const document = overlay != nullptr ? overlay->GetDocument() : nullptr;
         if (document == nullptr || m_HudTicks.empty())
         {
@@ -558,7 +567,7 @@ protected:
     // Idempotent, so it is safe to call every frame.
     void SyncGameplayContext(const bool focused)
     {
-        Scene* world = GetWorld();
+        Scene* world = ManagedScene();
         if (world == nullptr)
         {
             return;
@@ -627,7 +636,7 @@ private:
         m_McpHost.emplace(Mcp::McpHost{
             .Types = GetTypeRegistry(),
             .Assets = GetAssetManager(),
-            .CurrentWorld = [this] { return GetWorld(); },
+            .CurrentWorld = [this] { return ManagedScene(); },
             .Viewport = [this](string_view name) -> Renderer::Viewport*
             {
                 if (name.empty() || name == "primary")
@@ -677,7 +686,8 @@ private:
         // managed-world ViewState, edited in place and pushed by the engine each frame.
         if (auto settingsWindow = UI::Window("Render Settings"))
         {
-            if (UI::RenderSettingsEditor(m_SceneSettings, GetWorldViewState(), viewport))
+            if (UI::RenderSettingsEditor(m_SceneSettings, GetWorldViewState(GetManagedWorldId()),
+                                         viewport))
             {
                 ReconfigureScene();
             }
@@ -692,7 +702,7 @@ private:
             // rebuilt/static by stopping every per-tick Transform write — a game-specific control.
             if (UI::Checkbox("Pause spin", m_PauseSpin))
             {
-                SetWorldPaused(m_PauseSpin);
+                SetWorldPaused(GetManagedWorldId(), m_PauseSpin);
             }
         }
 
@@ -726,7 +736,7 @@ private:
     void SyncPlayerPawns()
     {
         ServerHost& host = *GetServerHost();
-        Scene& world = *GetWorld();
+        Scene& world = *ManagedScene();
         const bool headless = GetLaunchArguments().Headless;
 
         // Collect first: spawning a pawn is a structural change, illegal mid-iteration.

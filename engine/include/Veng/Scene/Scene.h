@@ -271,14 +271,22 @@ namespace Veng
 
         /// @brief Binds this scene to a simulation drive-list it self-unregisters from on destruction.
         ///
-        /// Application::RegisterSimulation calls this after appending this scene's pointer to its
+        /// WorldRunner::AdoptSimulation calls this after appending this scene's pointer to its
         /// drive-list; ~Scene then erases that pointer, order-preserving. Registering an
         /// already-registered scene is a fatal assert (the back-reference would leak the prior
         /// membership). The back-reference is not a component and is not copied by Clone, so a clone
         /// starts unregistered.
-        /// @param driveList  The Application simulation drive-list this scene now belongs to.
+        /// @param driveList  The simulation drive-list this scene now belongs to.
         /// @pre This scene is not already attached to a simulation drive-list.
         void AttachToSimDriveList(vector<Scene*>& driveList);
+
+        /// @brief Clears the drive-list back-reference without erasing from it, for when the list dies first.
+        ///
+        /// The counterpart to AttachToSimDriveList when the drive-list's owner (a WorldRunner) is
+        /// destroyed while this externally-owned scene lives on: the runner clears each adopted scene's
+        /// back-reference so this scene's own ~Scene does not erase from the freed vector. A no-op on an
+        /// unattached scene.
+        void DetachFromSimDriveList() { m_SimDriveList = nullptr; }
 
         /// @brief Type-erased add: default-constructs a component of the given TypeId onto the entity.
         ///

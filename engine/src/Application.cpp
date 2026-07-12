@@ -24,6 +24,7 @@
 #include <Veng/Net/Client.h>
 #include <Veng/Net/Host.h>
 #include <Veng/Net/InputFeed.h>
+#include <Veng/WorldRunner.h>
 
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
@@ -120,6 +121,15 @@ namespace Veng
 
         m_AssetManager = CreateUnique<AssetManager>(m_RenderContext, *m_TaskSystem, m_TypeRegistry);
 
+        // The sim-domain scheduler owning every open world. Given the live device services, so it can
+        // spawn cooked-level worlds and drive their capture surfaces.
+        m_WorldRunner = CreateUnique<WorldRunner>(WorldRunnerInfo{
+            .Types = &m_TypeRegistry,
+            .Systems = &m_SystemRegistry,
+            .Assets = m_AssetManager.get(),
+            .Context = &m_RenderContext,
+        });
+
         // ImGui needs a window (GLFW backend), so it's only available windowed.
         if (!m_Info.Headless && m_Info.ImGui)
         {
@@ -189,10 +199,6 @@ namespace Veng
 
     void Application::BootstrapWorld()
     {
-        // The managed world sets the fixed simulation rate: reconfigure the accumulator to its
-        // SimTickRate (60 Hz otherwise) before the first frame drives it.
-        m_SimClock = SimClock(SimClockInfo{.TickRate = m_Info.World->SimTickRate});
-
         // The cooked project names the packs to mount and the startup level; everything resolves
         // beside the executable so the launcher + project + packs move as one directory.
         const path projectFile = ExecutableDirectory() / m_Info.World->Project;
@@ -211,41 +217,48 @@ namespace Veng
         VE_ASSERT(startupLevel.IsValid(), "project '{}' declares no startup level",
                   m_Info.World->Project.string());
 
-        // Client mode defers the managed world's level load to the join flow: the level comes from the
-        // accept payload, so here we only connect and mount the ClientHost — the scene is loaded and
-        // started when the accept lands (PumpNet → StartWorldScene). No world is registered yet.
+        // Client mode opens world #0 as an empty join target: the level comes from the accept payload
+        // and loads into this world's scene when the accept lands (PumpNet → StartWorldScene). The
+        // world is opened (bound to the managed viewport) but not started until the join loads it.
         if (m_LaunchArgs.Join)
         {
+            m_ManagedWorld = m_WorldRunner->OpenWorld(WorldOpenInfo{
+                .SimTickRate = m_Info.World->SimTickRate,
+                .StartSimulation = false,
+            });
             ConnectClient();
             return;
         }
 
-        // Standalone / server: spawn the world (the scene owns the level's simulation). LoadInto seeds
-        // the level's render settings onto a settings entity, so the renderer config is read from the
-        // scene by the same TryGetFirst query a system uses, never from the Level asset directly.
+        // Standalone / server: open world #0 spawning the startup level (the scene owns the level's
+        // simulation). LoadInto seeds the level's render settings onto a settings entity, so the
+        // renderer config is read from the scene by the same TryGetFirst query a system uses, never
+        // from the Level asset directly.
         const AssetResult<AssetHandle<Level>> level = m_AssetManager->LoadSync<Level>(startupLevel);
         VE_ASSERT(level.has_value(), "{}", level.error().Detail);
         m_WorldLevel = *level;
 
-        LevelInstance instance = m_WorldLevel.Get()->LoadInto(*m_AssetManager, m_SystemRegistry);
-        m_World = std::move(instance.World);
-        m_PrimaryWorld = m_World.get();
-
-        // The primary world is simulation #0: register it first so the engine ticks it in the drive
-        // loop and drives its captures, and SetWorldPaused targets it. It stays registered for the
-        // app's life (dropped at teardown, self-unregistering).
-        RegisterSimulation(*m_World);
-
-        SeedViewportFromWorld(*m_World);
-
-        // Hand the world to the subclass before the simulation starts, so a game can read its
-        // config from the scene, wait on residency, or capture input focus first.
-        OnWorldLoaded(*m_World, instance.Pending);
-
-        m_World->StartSimulation(SystemContext{.Assets = *m_AssetManager,
-                                               .Input = *m_Input,
-                                               .Tasks = *m_TaskSystem,
-                                               .Role = GetNetRole()});
+        m_ManagedWorld = m_WorldRunner->OpenWorld(WorldOpenInfo{
+            .Source = m_WorldLevel,
+            .SimTickRate = m_Info.World->SimTickRate,
+            .StartSimulation = true,
+            // Seed the viewport and hand the world to the subclass before the simulation starts, so a
+            // game can read its config from the scene, wait on residency, or capture input focus.
+            .OnLoaded =
+                [this](const WorldInstanceId world, Scene& scene, ResidencyBatch& pending)
+            {
+                SeedViewportFromWorld(scene);
+                OnWorldLoaded(world, scene, pending);
+            },
+            .MakeStartContext =
+                [this]
+            {
+                return SystemContext{.Assets = *m_AssetManager,
+                                     .Input = *m_Input,
+                                     .Tasks = *m_TaskSystem,
+                                     .Role = GetNetRole()};
+            },
+        });
 
         // `--server` opens the host on the just-started world: it accepts connections, spawns a seat
         // per connection, and streams state. A game that set no ApplicationInfo::Net still hosts on the
@@ -282,7 +295,7 @@ namespace Veng
             .Server = Net::ServerInfo{.Port = net.Port,
                                       .MaxConnections = net.MaxConnections,
                                       .NetSim = m_LaunchArgs.NetSim},
-            .World = *m_World,
+            .World = m_WorldRunner->ResolveWorld(m_ManagedWorld)->GetScene(),
             .Assets = *m_AssetManager,
             .LevelId = levelId,
             .Replication =
@@ -327,7 +340,7 @@ namespace Veng
         m_Net->ClientHost = ClientHost::Create(ClientHostInfo{
             .Client = *m_Net->Client,
             .Assets = *m_AssetManager,
-            .LoadLevel = [this](const AssetId id) -> Unique<Scene> { return LoadClientLevel(id); },
+            .LoadLevel = [this](const AssetId id) -> Scene* { return LoadClientLevel(id); },
             .ResolvePrefab = [this](const AssetId id) -> Ref<Prefab>
             {
                 const AssetResult<AssetHandle<Prefab>> prefab =
@@ -386,11 +399,12 @@ namespace Veng
         Log::Info("Joining {}:{}", target.Host, port);
     }
 
-    Unique<Scene> Application::LoadClientLevel(const AssetId id)
+    Scene* Application::LoadClientLevel(const AssetId id)
     {
         // The accept names the level; load it with the server-authoritative authored entities skipped
         // (they arrive from the spawn stream) and keep the level handle resident. The residency batch
-        // is held for OnWorldLoaded when the scene starts.
+        // is held for OnWorldLoaded when the scene starts. The loaded scene is installed as world #0's
+        // scene, so the runner owns it — the ClientHost applies the stream into a runner-owned world.
         const AssetResult<AssetHandle<Level>> level = m_AssetManager->LoadSync<Level>(id);
         VE_ASSERT(level.has_value(), "client level load failed: {}", level.error().Detail);
         m_WorldLevel = *level;
@@ -398,15 +412,13 @@ namespace Veng
         LevelInstance instance = m_WorldLevel.Get()->LoadInto(
             *m_AssetManager, m_SystemRegistry, LevelLoadInfo{.SkipServerAuthoritative = true});
         m_ClientPending = std::move(instance.Pending);
-        return std::move(instance.World);
+        return &m_WorldRunner->InstallScene(m_ManagedWorld, std::move(instance.World));
     }
 
     void Application::StartWorldScene(Scene& world)
     {
-        m_PrimaryWorld = &world;
-        RegisterSimulation(world);
         SeedViewportFromWorld(world);
-        OnWorldLoaded(world, m_ClientPending);
+        OnWorldLoaded(m_ManagedWorld, world, m_ClientPending);
 
         // The residency batch existed only to hold the join-loaded assets resident across the
         // deferred gap between the client level load and this start; the spawned scene's components
@@ -435,7 +447,7 @@ namespace Veng
         {
             // The world is generated + streamed keyed to the last completed tick (its just-ticked
             // state); the per-step SetChangeTick already stamped this frame's mutations.
-            m_Net->Server->Pump(now, m_SimClock.GetTick());
+            m_Net->Server->Pump(now, GetSimTick());
 
             // Ingest each connection's redundant input into its jitter buffer for next frame's ticks
             // to consume, pruning a departed connection's buffer.
@@ -468,19 +480,21 @@ namespace Veng
 
     void Application::FeedServerSeatInputs(const u64 tick)
     {
-        if (m_Net && m_Net->Server && m_PrimaryWorld)
+        World* world = m_WorldRunner->ResolveWorld(m_ManagedWorld);
+        if (m_Net && m_Net->Server && world != nullptr)
         {
             // Scheduled consume: the client runs its tick ahead of the server (the tick-offset slew),
             // so the input it stamped at this tick has arrived by the time the server reaches it.
-            FeedSeatInputs(*m_Net->Server, m_Net->Jitter, *m_PrimaryWorld, tick);
+            FeedSeatInputs(*m_Net->Server, m_Net->Jitter, world->GetScene(), tick);
         }
     }
 
     void Application::StampClientInput(const u64 clientTick)
     {
-        if (m_Net && m_PrimaryWorld)
+        World* world = m_WorldRunner->ResolveWorld(m_ManagedWorld);
+        if (m_Net && world != nullptr)
         {
-            StampLocalSeatInput(m_Net->Send, *m_PrimaryWorld, clientTick);
+            StampLocalSeatInput(m_Net->Send, world->GetScene(), clientTick);
         }
     }
 
@@ -564,6 +578,7 @@ namespace Veng
     void Application::PushManagedViewportView(const ManagedViewport& managed, const f32 delta)
     {
         Renderer::Viewport& viewport = *managed.Viewport;
+        Scene& scene = m_WorldRunner->ResolveWorld(m_ManagedWorld)->GetScene();
 
         // Screen-space Gui documents on this viewport lay out in logical points while the region is
         // framebuffer pixels, so feed the window content scale as the UI scale each frame: authored
@@ -576,7 +591,7 @@ namespace Veng
         // single-viewport path, byte-identical for the default managed viewport.
         if (managed.Info.Viewer == Entity::Null)
         {
-            PushSceneView(viewport, *m_PrimaryWorld, m_WorldView, delta, m_SimAlpha);
+            PushSceneView(viewport, scene, m_WorldView, delta, m_SimAlpha);
             return;
         }
 
@@ -587,8 +602,8 @@ namespace Veng
                            static_cast<f32>(output->GetImage()->GetHeight());
 
         Renderer::ViewState state = m_WorldView;
-        state.World = m_PrimaryWorld;
-        state.Camera = ResolveCameraView(*m_PrimaryWorld, managed.Info.Viewer, aspect)
+        state.World = &scene;
+        state.Camera = m_WorldRunner->ResolveCameraView(m_ManagedWorld, managed.Info.Viewer, aspect)
                            .value_or(DefaultCameraView(aspect));
         state.Delta = delta;
         state.Alpha = m_SimAlpha;
@@ -616,10 +631,12 @@ namespace Veng
 
     Application::ScopedPointer Application::ComputePointerRouting() const
     {
-        if (m_Simulations.empty())
+        if (!m_WorldRunner->HasWorlds())
         {
             return {};
         }
+        const World* managed = m_WorldRunner->ResolveWorld(m_ManagedWorld);
+        const Scene* managedScene = managed != nullptr ? &managed->GetScene() : nullptr;
 
         // GLFW reports the cursor in window coordinates (logical points), but the viewport regions
         // hit-tested here live in framebuffer pixels (the swapchain extent), so on a HiDPI display the
@@ -638,9 +655,9 @@ namespace Veng
         if (captured)
         {
             // The captured pointer belongs wholly to the cursor seat, in one scene: the cursor seat's
-            // viewport's scene, or the primary world when the cursor seat has no viewport (the default
+            // viewport's scene, or the managed world when the cursor seat has no viewport (the default
             // single-seat path). Resolve that scene's keyboard seat scene-locally.
-            const Scene* scene = owner != nullptr ? owner->GetPresentedScene() : m_PrimaryWorld;
+            const Scene* scene = owner != nullptr ? owner->GetPresentedScene() : managedScene;
             if (scene == nullptr)
             {
                 return {};
@@ -720,73 +737,34 @@ namespace Veng
 
     void Application::RegisterSimulation(Scene& scene)
     {
-        VE_ASSERT(std::ranges::find(m_Simulations, &scene) == m_Simulations.end(),
-                  "Scene is already registered to this Application's simulation drive-list");
-
-        m_Simulations.emplace_back(&scene);
-        scene.AttachToSimDriveList(m_Simulations);
+        (void)m_WorldRunner->AdoptSimulation(scene);
     }
 
-    SceneSimulation* Application::PrimarySimulation() const
+    void Application::SetWorldPaused(const WorldInstanceId world, const bool paused)
     {
-        // Simulation #0 is the primary (the managed world, registered first at bootstrap).
-        return m_Simulations.empty() ? nullptr : m_Simulations.front()->GetSimulation();
+        m_WorldRunner->SetWorldPaused(world, paused);
     }
 
-    void Application::SetWorldPaused(bool paused)
+    bool Application::IsWorldPaused(const WorldInstanceId world) const
     {
-        if (SceneSimulation* primary = PrimarySimulation(); primary != nullptr)
-        {
-            primary->SetPaused(paused);
-        }
+        return m_WorldRunner->IsWorldPaused(world);
     }
 
-    bool Application::IsWorldPaused() const
+    u64 Application::GetSimTick() const
     {
-        const SceneSimulation* primary = PrimarySimulation();
-        return primary != nullptr && primary->IsPaused();
+        const World* world =
+            m_WorldRunner != nullptr ? m_WorldRunner->ResolveWorld(m_ManagedWorld) : nullptr;
+        return world != nullptr ? world->Clock.GetTick() : 0;
     }
 
-    void Application::DriveCaptureSurfaces()
+    const AssetHandle<Level>& Application::GetWorldLevel(WorldInstanceId) const
     {
-        // Registration gates capture driving, not run-state: iterate every registered scene
-        // regardless of started/paused, so a paused primary world (an overlay's PausePrimarySim) still
-        // drives its mirrors, and an overlay/offscreen/view-less scene's captures are engine-driven.
-        for (Scene* scenePtr : m_Simulations)
-        {
-            const Scene& world = *scenePtr;
-            for (auto [entity, surface] : world.View<Renderer::CaptureSurface>())
-            {
-                // The capture renders from the entity's world position (a probe centered on it, a
-                // mirror placed at it). The surface's material is the sibling MeshRenderer's first.
-                const vec3 position = vec3(WorldMatrix(world, entity)[3]);
+        return m_WorldLevel;
+    }
 
-                MaterialInstance* material = nullptr;
-                if (const MeshRenderer* mesh = world.TryGet<MeshRenderer>(entity); mesh != nullptr)
-                {
-                    if (mesh->Mesh.IsLoaded())
-                    {
-                        const std::span<const AssetHandle<MaterialInstance>> materials =
-                            mesh->Mesh.Get()->GetMaterials();
-                        if (!materials.empty() && materials[0].IsLoaded())
-                        {
-                            material = materials[0].Get();
-                        }
-                    }
-                }
-
-                // Register the capture on the drive-list the first time it materializes; the
-                // SceneCapture erases its own pointer on destruction, so removing the
-                // component/entity/scene unregisters it with no bookkeeping here.
-                const bool hadCapture = surface.GetCapture() != nullptr;
-                Renderer::SceneCapture* capture =
-                    surface.Drive(m_RenderContext, *m_AssetManager, world, position, material);
-                if (capture != nullptr && !hadCapture)
-                {
-                    RegisterCapture(*capture);
-                }
-            }
-        }
+    Renderer::ViewState& Application::GetWorldViewState(WorldInstanceId)
+    {
+        return m_WorldView;
     }
 
     void Application::Run(vector<string> arguments)
@@ -837,19 +815,17 @@ namespace Veng
 
         OnDispose();
 
-        // Drop the net hosts before the world and the asset manager: a client host owns the
-        // join-loaded scene (whose components hold AssetHandles), and both hosts hold connections that
-        // must close before the transport goes. Resetting it self-unregisters that scene from the
-        // simulation drive-list through its back-reference.
+        // Drop the net hosts before the world runner and the asset manager: a client host borrows a
+        // runner-owned world's scene (whose components hold AssetHandles), and both hosts hold
+        // connections that must close before the transport goes.
         m_Net.reset();
-        m_PrimaryWorld = nullptr;
 
-        // Drop the engine-managed world before the asset manager so its components' AssetHandles
-        // (the sky's environment/material, the level handle) retire through the deferred path. The
-        // client residency batch is normally released once the world starts; drop it here too, for a
-        // client torn down after its level loaded but before the deferred start ever ran (its
-        // cache-entry refs would otherwise outlive the context's allocator).
-        m_World.reset();
+        // Drop the world runner (and every world it owns) before the asset manager so its worlds'
+        // components' AssetHandles (the sky's environment/material, the level handle) retire through
+        // the deferred path. The client residency batch is normally released once the world starts;
+        // drop it here too, for a client torn down after its level loaded but before the deferred
+        // start ever ran (its cache-entry refs would otherwise outlive the context's allocator).
+        m_WorldRunner.reset();
         m_WorldLevel = {};
         m_ClientPending = ResidencyBatch{};
 
@@ -903,71 +879,57 @@ namespace Veng
 
         const f32 delta = Time::Update();
 
-        // The fixed-timestep accumulator advances only while a registered simulation is live: a full
-        // pause (or no started scene) stops accumulation so resuming chases no backlog. Any active
-        // scene drives the shared tick, so an overlay and the primary sim step in phase.
-        const bool anyActive =
-            std::ranges::any_of(m_Simulations,
-                                [](const Scene* scene)
-                                {
-                                    const SceneSimulation* sim = scene->GetSimulation();
-                                    return sim != nullptr && sim->IsStarted() && !sim->IsPaused();
-                                });
+        // The managed world drives the net tick binding; resolve it and whether it is live before the
+        // world tick, so the client tick-offset slew reads and seeds its clock ahead of the advance.
+        World* const managed = m_WorldRunner->ResolveWorld(m_ManagedWorld);
+        const bool managedActive =
+            managed != nullptr && managed->GetScene().GetSimulation() != nullptr &&
+            managed->GetScene().GetSimulation()->IsStarted() && !managed->IsPaused();
 
-        SimStep step{};
-        if (anyActive)
+        // Client tick-offset control: the client runs its managed world's sim tick ahead of the server
+        // so the input it stamps for a tick arrives before the server's scheduled consume reaches it.
+        // The tick-offset controller is the single source of truth for how far ahead (the target
+        // lead); this both seeds the epoch to it and slews the sim step toward it (m_NetSlew, applied
+        // as the managed world's SimScale). Off a client, or before a snapshot has revealed the
+        // server's tick, the factor is 1.0.
+        m_NetSlew = 1.0f;
+        if (managedActive && m_Net && m_Net->Role == NetRole::Client && m_Net->ClientHost &&
+            m_Net->ClientHost->LastServerTick() > 0)
         {
-            // Client tick-offset control: the client runs its sim tick ahead of the server so the
-            // input it stamps for a tick arrives before the server's scheduled consume reaches it. The
-            // tick-offset controller is the single source of truth for how far ahead (the target
-            // lead); the world drive both seeds the epoch to it and slews the sim step toward it. Off
-            // a client, or before a snapshot has revealed the server's tick, the factor is 1.0.
-            f32 slew = 1.0f;
-            if (m_Net && m_Net->Role == NetRole::Client && m_Net->ClientHost &&
-                m_Net->ClientHost->LastServerTick() > 0)
+            SimClock& clock = managed->Clock;
+
+            // Fold this frame's link state into the controller first, so the target lead it computes
+            // drives both the hard snap and the bounded slew below — one target, never two disagreeing
+            // ones (a seed to one lead that the slew then drags off).
+            m_NetSlew = m_Net->ClientHost->ObserveTickSync(clock.GetTick());
+
+            const i64 targetLead = static_cast<i64>(
+                std::lround(std::max(0.0f, m_Net->ClientHost->TickSync().TargetOffset())));
+            const u64 desired = m_Net->ClientHost->LastServerTick() + static_cast<u64>(targetLead);
+            const i64 drift = static_cast<i64>(clock.GetTick()) - static_cast<i64>(desired);
+
+            // Seed the epoch once — each SimClock starts at 0 when its process does, so a client
+            // joining a long-running server must jump its tick to the server's or its input lands on
+            // numbers the server's scheduled consume never matches. Thereafter hard-snap only when the
+            // drift is too large for the bounded ±slew to claw back in time — a long hitch, a step
+            // change in RTT, a spiral-clamp tick drop. A snap clears the now-stale prediction history,
+            // so it is reserved for large drift and the slew handles the rest; the trigger is drift
+            // itself, not the frame budget, so a client at a healthy frame rate still recovers from a
+            // transient stall.
+            const bool seed = !m_Net->ClockSeeded;
+            const bool largeDrift =
+                std::llabs(drift) > static_cast<i64>(m_Net->Info.SnapshotIntervalTicks + 6);
+            if (seed || largeDrift)
             {
-                // Fold this frame's link state into the controller first, so the target lead it
-                // computes drives both the hard snap and the bounded slew below — one target, never
-                // two disagreeing ones (a seed to one lead that the slew then drags off).
-                slew = m_Net->ClientHost->ObserveTickSync(m_SimClock.GetTick());
-
-                const i64 targetLead = static_cast<i64>(
-                    std::lround(std::max(0.0f, m_Net->ClientHost->TickSync().TargetOffset())));
-                const u64 desired =
-                    m_Net->ClientHost->LastServerTick() + static_cast<u64>(targetLead);
-                const i64 drift =
-                    static_cast<i64>(m_SimClock.GetTick()) - static_cast<i64>(desired);
-
-                // Seed the epoch once — each SimClock starts at 0 when its process does, so a client
-                // joining a long-running server must jump its tick to the server's or its input lands
-                // on numbers the server's scheduled consume never matches. Thereafter hard-snap only
-                // when the drift is too large for the bounded ±slew to claw back in time — a long
-                // hitch, a step change in RTT, a spiral-clamp tick drop. A snap clears the now-stale
-                // prediction history, so it is reserved for large drift and the slew handles the rest;
-                // the trigger is drift itself, not the frame budget, so a client at a healthy frame
-                // rate still recovers from a transient stall.
-                const bool seed = !m_Net->ClockSeeded;
-                const bool largeDrift =
-                    std::llabs(drift) > static_cast<i64>(m_Net->Info.SnapshotIntervalTicks + 6);
-                if (seed || largeDrift)
-                {
-                    m_SimClock.SetTick(desired);
-                    m_Net->ClientHost->History()
-                        .Clear(); // captures on the pre-snap epoch are stale
-                    m_Net->ClockSeeded = true;
-                    slew = 1.0f; // fresh epoch: no residual to chase this frame
-                    Log::Info("Client sim clock {} to tick {} (server {} + lead {})",
-                              seed ? "seeded" : "re-synced", desired,
-                              m_Net->ClientHost->LastServerTick(), targetLead);
-                }
+                clock.SetTick(desired);
+                m_Net->ClientHost->History().Clear(); // captures on the pre-snap epoch are stale
+                m_Net->ClockSeeded = true;
+                m_NetSlew = 1.0f; // fresh epoch: no residual to chase this frame
+                Log::Info("Client sim clock {} to tick {} (server {} + lead {})",
+                          seed ? "seeded" : "re-synced", desired,
+                          m_Net->ClientHost->LastServerTick(), targetLead);
             }
-            step = m_SimClock.Advance(delta * slew);
         }
-        else
-        {
-            m_SimClock.Reset();
-        }
-        m_SimAlpha = step.Alpha;
 
         // Roll the input snapshot forward, then poll the window and route this frame's events
         // through the router (folding into the snapshot, forwarding to ImGui by focus).
@@ -1004,38 +966,40 @@ namespace Veng
         // consumer for. A windowed (listen) server keeps them for its local seats.
         const bool dedicatedServer = m_Info.Headless && GetServerHost() != nullptr;
 
-        // Drive every registered simulation that is started and not paused, in registration order:
-        // this frame's fixed Sim steps (0..N, the accumulator's step count, at the shared tick
-        // numbers) then one View pass with the interpolation alpha. The pointer routing is scoped to
-        // one scene, so each sim gets it only when the pointer's owning viewport presents that sim's
-        // scene — a scene-local Owner handle never leaks across.
+        // Drive every world through the runner in id order: each world's fixed Sim steps (0..N, its
+        // own accumulator's step count) then one View pass with its interpolation alpha. The pointer
+        // routing is scoped to one scene, so a world's Sim gets it only when the pointer's owning
+        // viewport presents that world's scene — a scene-local Owner handle never leaks across. The
+        // managed world's Sim steps thread the net input feed: server-side each tick's change tick
+        // keys replication dirty state and the buffered wire input fills each seat before the systems
+        // run; client-side the local seat's resolved input is stamped after the systems.
         const ScopedPointer scoped = ComputePointerRouting();
-        for (Scene* scene : m_Simulations)
-        {
-            const SceneSimulation* sim = scene->GetSimulation();
-            if (sim == nullptr || !sim->IsStarted() || sim->IsPaused())
+        const WorldTickResult ticked = m_WorldRunner->Tick(WorldTickInfo{
+            .Delta = delta,
+            .RunViewPhase = !dedicatedServer,
+            .BuildContext =
+                [this, &scoped](const WorldInstanceId, const Scene& scene, const u64 tick,
+                                const f32 alpha, const bool firstStep)
             {
-                continue;
-            }
-            const PointerRouting pointer =
-                scene == scoped.Scene ? scoped.Routing : PointerRouting{};
-
-            // The net world's Sim steps thread Plan 05's input feed: server-side each tick's change
-            // tick keys replication dirty state and the buffered wire input fills each seat before the
-            // systems run; client-side the local seat's resolved input is stamped after the systems.
-            const bool netWorld = m_Net && scene == m_PrimaryWorld;
-            for (u32 tickIndex = 0; tickIndex < step.Steps; ++tickIndex)
+                const PointerRouting pointer =
+                    &scene == scoped.Scene ? scoped.Routing : PointerRouting{};
+                return BuildSystemContext(scene, pointer, tick, alpha, firstStep);
+            },
+            .SimScale = [this](const WorldInstanceId world)
+            { return world == m_ManagedWorld ? m_NetSlew : 1.0f; },
+            .BeforeSimStep =
+                [this](const WorldInstanceId world, Scene& scene, const u64 tick)
             {
-                const u64 tick = step.FirstTick + tickIndex;
-                if (netWorld && m_Net->Role == NetRole::Server)
+                if (world == m_ManagedWorld && m_Net && m_Net->Role == NetRole::Server)
                 {
-                    scene->SetChangeTick(tick);
+                    scene.SetChangeTick(tick);
                     FeedServerSeatInputs(tick);
                 }
-                scene->TickSimulationPhase(
-                    SceneSystem::Phase::Sim, step.SimDelta,
-                    BuildSystemContext(*scene, pointer, tick, 0.0f, tickIndex == 0));
-                if (netWorld && m_Net->Role == NetRole::Client)
+            },
+            .AfterSimStep =
+                [this](const WorldInstanceId world, Scene&, const u64 tick)
+            {
+                if (world == m_ManagedWorld && m_Net && m_Net->Role == NetRole::Client)
                 {
                     // The Sim phase just ran control + movement for the Predicted set (the authority
                     // filter answers true for it client-side); stamp the seat input to send, then
@@ -1043,15 +1007,11 @@ namespace Veng
                     StampClientInput(tick);
                     m_Net->ClientHost->RecordPrediction(tick);
                 }
-            }
+            },
+        });
 
-            if (!dedicatedServer)
-            {
-                scene->TickSimulationPhase(
-                    SceneSystem::Phase::View, delta,
-                    BuildSystemContext(*scene, pointer, m_SimClock.GetTick(), step.Alpha, false));
-            }
-        }
+        // The managed world's interpolation fraction drives the view pushes and a game's overlay Update.
+        m_SimAlpha = managed != nullptr ? managed->LastAlpha : 0.0f;
 
         // Receive the join/state stream and flush this frame's sends after the ticks: server-side the
         // snapshot the host generates reflects this frame's just-ticked state (keyed to the last tick),
@@ -1059,9 +1019,9 @@ namespace Veng
         // content and its tick label agree.
         PumpNet();
 
-        // The edge latch: a frame with a live simulation that ran no tick holds its edges for the
-        // next tick-running frame; a frame with no active sim never latches (it rolls next frame).
-        m_PreviousFrameLatchedInput = anyActive && step.Steps == 0;
+        // The edge latch: a frame with a live world that ran no tick holds its edges for the next
+        // tick-running frame; a frame with no active world never latches (it rolls next frame).
+        m_PreviousFrameLatchedInput = ticked.AnyActive && !ticked.AnyTicked;
 
         OnUpdate(delta);
 
@@ -1070,11 +1030,11 @@ namespace Veng
         // camera. Plus the per-frame view knobs. After OnUpdate so a game's per-frame scene edits are
         // reflected; before the viewport render phase reads it. A dedicated server pushes nothing —
         // it has no render tail.
-        if (m_PrimaryWorld && !dedicatedServer)
+        if (managed != nullptr && !dedicatedServer)
         {
-            for (const ManagedViewport& managed : m_ManagedViewports)
+            for (const ManagedViewport& managedViewport : m_ManagedViewports)
             {
-                PushManagedViewportView(managed, delta);
+                PushManagedViewportView(managedViewport, delta);
             }
         }
 
@@ -1090,9 +1050,10 @@ namespace Veng
             return;
         }
 
-        // Build, register, and push this frame's source into the world's authored capture surfaces,
+        // Build, register, and push this frame's source into every world's authored capture surfaces,
         // so a scene-declared capture joins the drive-list beside any imperatively-registered ones.
-        DriveCaptureSurfaces();
+        m_WorldRunner->DriveCaptureSurfaces([this](Renderer::SceneCapture& capture)
+                                            { RegisterCapture(capture); });
 
         // The engine render phase, uniform for every app and not overridable. The compositor
         // renders every registered capture first (so a material sampling a capture's output reads

@@ -475,6 +475,7 @@ namespace
         InputSendBuffer Send;
         MovementSystem Movement;
         RemoteInterpolationSystem Interp;
+        Unique<Scene> ClientScene;
         Entity LocalSeat = Entity::Null;
         Entity LocalCamera = Entity::Null;
         Entity OwnPawn = Entity::Null;
@@ -492,21 +493,21 @@ namespace
             Host = ClientHost::Create(ClientHostInfo{
                 .Client = *Client,
                 .Assets = FakeAssets(),
-                .LoadLevel = [this](AssetId) -> Unique<Scene>
+                .LoadLevel = [this](AssetId) -> Scene*
                 {
-                    Unique<Scene> scene = Scene::Create(Types);
-                    LocalCamera = scene->CreateEntity();
-                    scene->Add<Transform>(LocalCamera);
-                    scene->Add<Camera>(LocalCamera);
-                    scene->Add<Authority>(LocalCamera, Authority{.Tier = Tier::Local});
+                    ClientScene = Scene::Create(Types);
+                    LocalCamera = ClientScene->CreateEntity();
+                    ClientScene->Add<Transform>(LocalCamera);
+                    ClientScene->Add<Camera>(LocalCamera);
+                    ClientScene->Add<Authority>(LocalCamera, Authority{.Tier = Tier::Local});
 
-                    LocalSeat = scene->CreateEntity();
-                    scene->Add<Viewer>(LocalSeat, Viewer{.Camera = LocalCamera});
-                    scene->Add<SeatInput>(LocalSeat);
-                    scene->Add<PlayerInput>(LocalSeat);
-                    scene->Add<Possesses>(LocalSeat);
-                    scene->Add<Authority>(LocalSeat, Authority{.Tier = Tier::Local});
-                    return scene;
+                    LocalSeat = ClientScene->CreateEntity();
+                    ClientScene->Add<Viewer>(LocalSeat, Viewer{.Camera = LocalCamera});
+                    ClientScene->Add<SeatInput>(LocalSeat);
+                    ClientScene->Add<PlayerInput>(LocalSeat);
+                    ClientScene->Add<Possesses>(LocalSeat);
+                    ClientScene->Add<Authority>(LocalSeat, Authority{.Tier = Tier::Local});
+                    return ClientScene.get();
                 },
                 .ResolvePrefab = [this](AssetId id) -> Ref<Prefab>
                 { return id == PawnPrefabId ? PawnPrefab : nullptr; },

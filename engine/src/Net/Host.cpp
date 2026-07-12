@@ -382,14 +382,16 @@ namespace Veng
     {
         Net::Client* Client = nullptr;
         AssetManager* Assets = nullptr;
-        function<Unique<Scene>(AssetId)> LoadLevel;
+        function<Scene*(AssetId)> LoadLevel;
         function<void(Scene&, Entity)> OnPossession;
         PredictionPolicy Policy;
         Net::ReplayTick Replay;
         Net::ReconcileTolerances Tolerances;
         Unique<ReplicationClient> Replication;
 
-        Unique<Scene> World;
+        // Borrowed: the caller owns the join scene (a WorldRunner world); the host applies the stream
+        // into it and never destroys it.
+        Scene* World = nullptr;
         u32 SeatNetId = InvalidNetId;
         Entity Seat = Entity::Null;
         Entity WiredPawn = Entity::Null;
@@ -564,7 +566,7 @@ namespace Veng
 
     Scene* ClientHost::World() const
     {
-        return m_State->World.get();
+        return m_State->World;
     }
 
     ReplicationClient& ClientHost::Replication()

@@ -125,12 +125,14 @@ namespace Veng
         Net::Client& Client;
         /// @brief The asset manager a replicated prefab spawn resolves through.
         AssetManager& Assets;
-        /// @brief Loads the accepted level into a fresh client Scene, with authoritative entities skipped.
+        /// @brief Loads the accepted level into the caller's client scene, with authoritative entities skipped.
         ///
-        /// Invoked once, when the accept arrives, with the level's AssetId — the app returns the
-        /// spawned client Scene (in practice Level::LoadInto with SkipServerAuthoritative). The host
-        /// owns the returned scene and applies the spawn stream into it.
-        function<Unique<Scene>(AssetId)> LoadLevel;
+        /// Invoked once, when the accept arrives, with the level's AssetId — the app loads the level
+        /// (in practice Level::LoadInto with SkipServerAuthoritative) into a scene it owns elsewhere
+        /// (a WorldRunner world) and returns a borrowed pointer to it. The host does not own the scene;
+        /// it applies the spawn stream into the borrowed one, which must outlive the host. Null on a
+        /// load failure.
+        function<Scene*(AssetId)> LoadLevel;
         /// @brief Resolves a replicated spawn's prefab AssetId to a resident Prefab (the spawn arm).
         function<Ref<Prefab>(AssetId)> ResolvePrefab;
         /// @brief Optional: wire the local presentation when the own seat's possessed pawn changes.
@@ -194,7 +196,7 @@ namespace Veng
         /// @param now  Monotonic time in seconds (injected).
         void Pump(f64 now);
 
-        /// @brief The loaded client scene, or nullptr before the accept loads it.
+        /// @brief The borrowed client scene the join loaded into, or nullptr before the accept loads it.
         [[nodiscard]] Scene* World() const;
 
         /// @brief The owned replication client (its NetId → Entity map, spawn arm).

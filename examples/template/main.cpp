@@ -131,7 +131,7 @@ private:
     // view-model, and load the overlay level's handle so a later Open finds it. The bind is deferred
     // — the overlay applies it when the Viewport instantiates the document — so this runs before the
     // first render with no ordering hole.
-    void OnWorldLoaded(Scene& world, ResidencyBatch&) override
+    void OnWorldLoaded(WorldInstanceId, Scene& world, ResidencyBatch&) override
     {
         m_Context.SetData(m_Model);
         for (auto [entity, overlay] : world.View<GuiOverlay>())

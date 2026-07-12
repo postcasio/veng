@@ -5,8 +5,8 @@
 //
 //  - registration ticks, deregistration (dropping the scene) stops, and an unregistered scene is
 //    never auto-ticked (the opt-in);
-//  - a paused sim does not tick while another keeps ticking; the primary is simulation #0, and
-//    SetWorldPaused / IsWorldPaused delegate to it;
+//  - a paused world does not tick while a flat-peer world keeps ticking, each paused by its own
+//    handle (SetWorldPaused / IsWorldPaused are handle-keyed; no privileged primary);
 //  - SystemContext carries Tasks always, View + Debug for a presented sim, and View == nullopt for a
 //    view-less sim and around a never-pushed viewport (no crash);
 //  - the engine drives captures over every registered scene, including a paused one (registration,
@@ -104,17 +104,20 @@ namespace
         int Current = 0;
 
         std::vector<Unique<Scene>> Scenes;
+        std::vector<WorldInstanceId> SimIds;
         std::vector<Unique<Renderer::Viewport>> Viewports;
 
-        // Registers a fresh scene running the named systems, started, and returns it.
+        // Registers a fresh scene running the named systems, started, recording its adopted-world
+        // handle in SimIds, and returns the scene.
         Scene& AddSimulation(std::vector<SystemId> systems)
         {
             Unique<Scene> scene = Scene::Create(GetTypeRegistry());
             scene->SetSimulation(CreateUnique<SceneSimulation>(GetSystemRegistry(), systems));
-            RegisterSimulation(*scene);
+            const WorldInstanceId id = GetWorldRunner().AdoptSimulation(*scene);
             scene->StartSimulation(SystemContext{
                 .Assets = GetAssetManager(), .Input = GetInput(), .Tasks = GetTaskSystem()});
             Scenes.push_back(std::move(scene));
+            SimIds.push_back(id);
             return *Scenes.back();
         }
 
@@ -221,7 +224,7 @@ TEST_CASE("Registration ticks a scene, dropping it stops, and an unregistered sc
     app.Run({});
 }
 
-TEST_CASE("A paused sim does not tick while another does; the primary is sim #0")
+TEST_CASE("A paused world does not tick while a flat-peer world does, resolved by handle")
 {
     ProbeSystem<1>::Reset();
     ProbeSystem<2>::Reset();
@@ -245,17 +248,18 @@ TEST_CASE("A paused sim does not tick while another does; the primary is sim #0"
     {
         if (frame == 1)
         {
-            CHECK_FALSE(a.IsWorldPaused());
-            // SetWorldPaused delegates to the primary sim (#0): pause it, leaving sim #1 ticking.
-            a.SetWorldPaused(true);
-            CHECK(a.IsWorldPaused());
+            CHECK_FALSE(a.IsWorldPaused(a.SimIds[0]));
+            // Pause world #0 by its handle, leaving world #1 ticking: worlds are flat peers, each
+            // paused independently by id — no privileged primary.
+            a.SetWorldPaused(a.SimIds[0], true);
+            CHECK(a.IsWorldPaused(a.SimIds[0]));
             pausedAt = ProbeSystem<1>::Updates;
         }
         else if (frame == 4)
         {
-            CHECK(ProbeSystem<1>::Updates == pausedAt); // sim #0 frozen since the pause
-            CHECK(ProbeSystem<2>::Updates > pausedAt);  // sim #1 kept ticking
-            CHECK(a.IsWorldPaused());
+            CHECK(ProbeSystem<1>::Updates == pausedAt); // world #0 frozen since the pause
+            CHECK(ProbeSystem<2>::Updates > pausedAt);  // world #1 kept ticking
+            CHECK(a.IsWorldPaused(a.SimIds[0]));
         }
     };
 
@@ -341,7 +345,7 @@ TEST_CASE("The engine drives captures over every registered scene, including a p
 
     app.InitFn = [&](DriveApp& a)
     {
-        a.AddSimulation({}); // sim #0 (the primary), empty
+        a.AddSimulation({}); // world #0, empty
 
         // A secondary registered scene with a CaptureSurface entity, its sim paused so only
         // registration — not run-state — can drive its capture (the seam-1 fix).

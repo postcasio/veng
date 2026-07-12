@@ -69,6 +69,7 @@ add_library(veng SHARED
         src/Task/TaskSystem.cpp
         src/Time.cpp
         src/Window.cpp
+        src/WorldRunner.cpp
         src/ImGui/ImGuiLayer.cpp
         src/ImGui/ImGuiTexture.cpp
         src/UI/Theme.cpp

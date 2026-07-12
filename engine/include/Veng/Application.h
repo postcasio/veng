@@ -25,6 +25,8 @@
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/SimClock.h>
 #include <Veng/Scene/SystemRegistry.h>
+#include <Veng/World.h>
+#include <Veng/WorldRunner.h>
 
 #include <span>
 
@@ -372,17 +374,13 @@ namespace Veng
         /// @param capture  The capture to drive; its lifetime stays with the caller.
         void RegisterCapture(Renderer::SceneCapture& capture);
 
-        /// @brief Registers a scene into the engine simulation drive-list ticked each frame.
+        /// @brief Adopts an externally-owned scene as a non-owning world ticked each frame.
         ///
-        /// The tick counterpart of RegisterViewport: the engine ticks every registered scene's
-        /// SceneSimulation (in registration order, while started and not paused) and drives every
-        /// registered scene's CaptureSurface components — so a secondary scene (an overlay, an
-        /// offscreen feed, a view-less background) is engine-driven the same way the primary world is.
-        /// Ticking is decoupled from rendering: registration alone gates it, so a scene no viewport
-        /// presents still ticks. The same ownership model as RegisterViewport: the caller keeps the
-        /// owning Unique<Scene>, and dropping it self-unregisters (~Scene erases its own pointer). The
-        /// first registered scene is the primary simulation (SetWorldPaused targets it).
-        /// Double-registering a scene is a fatal assert.
+        /// The tick counterpart of RegisterViewport: forwards to WorldRunner::AdoptSimulation, wrapping
+        /// @p scene as a non-owning world the runner ticks on the same schedule as owned worlds and
+        /// whose CaptureSurface components it drives. The caller keeps the owning Unique<Scene>, and
+        /// dropping it self-unregisters the world (~Scene erases its own pointer). Double-registering a
+        /// scene is a fatal assert.
         /// @param scene  The scene to tick and drive; its lifetime stays with the caller.
         void RegisterSimulation(Scene& scene);
 
@@ -440,14 +438,23 @@ namespace Veng
             return primary ? &primary->GetDebugDraw() : nullptr;
         }
 
-        /// @brief Returns the engine-managed game world's Scene, or null when unmanaged.
+        /// @brief Returns the world runner driving every open world.
         ///
-        /// Non-null only when ApplicationInfo::World is set, after the world is bootstrapped. The
-        /// Scene owns the level's SceneSimulation (Scene::GetSimulation); a game reads and edits
-        /// the world through it. In client mode (`--join`) this is the scene the ClientHost loaded
-        /// from the join flow, so it is null until the accept lands and the world starts.
-        /// @return The managed world's Scene, or nullptr.
-        [[nodiscard]] Scene* GetWorld() const { return m_PrimaryWorld; }
+        /// The sim-domain scheduler: a game opens further worlds by handle at runtime
+        /// (GetWorldRunner().OpenWorld(...)), resolves a world's scene by id
+        /// (ResolveWorld(id)->GetScene()), and pauses or queries a world by handle. The engine-managed
+        /// world (when ApplicationInfo::World is set) is opened here as world #0 at bootstrap.
+        /// @return The world runner.
+        [[nodiscard]] WorldRunner& GetWorldRunner() { return *m_WorldRunner; }
+
+        /// @brief Returns the handle of the engine-managed world, or an invalid handle when unmanaged.
+        ///
+        /// Valid only when ApplicationInfo::World is set, after bootstrap opens the managed world and
+        /// binds it to the managed viewport. A game resolves its scene through
+        /// GetWorldRunner().ResolveWorld(GetManagedWorldId()). Invalid before bootstrap and for a bare
+        /// app that owns no managed world.
+        /// @return The managed world's handle.
+        [[nodiscard]] WorldInstanceId GetManagedWorldId() const { return m_ManagedWorld; }
 
         /// @brief Returns this peer's network role: Client under `--join`, Server otherwise.
         ///
@@ -472,49 +479,50 @@ namespace Veng
         /// @return The client host, or nullptr.
         [[nodiscard]] ClientHost* GetClientHost() const;
 
-        /// @brief Returns the level the managed world was bootstrapped from, or an empty handle.
+        /// @brief Returns the level a world was bootstrapped from, or an empty handle.
         ///
-        /// Valid only with a managed world; a game reads the level's render settings or game-mode
-        /// config from it (e.g. to seed its own editable render-settings copy).
-        /// @return The managed world's level handle.
-        [[nodiscard]] const AssetHandle<Level>& GetWorldLevel() const { return m_WorldLevel; }
+        /// Valid only for the engine-managed world; a game reads the level's render settings or
+        /// game-mode config from it (e.g. to seed its own editable render-settings copy).
+        /// @param world  The world whose source level handle is read.
+        /// @return The world's level handle.
+        [[nodiscard]] const AssetHandle<Level>& GetWorldLevel(WorldInstanceId world) const;
 
-        /// @brief Returns the per-frame view knobs the managed world pushes into the primary viewport.
+        /// @brief Returns the per-frame view knobs the managed world pushes into its viewport.
         ///
         /// Seeded from the level's render settings at bootstrap; a game edits it in place (the
         /// tone/bloom/environment knobs a render-settings UI mutates) and the engine fills in the
-        /// scene/camera/delta each frame before pushing. Meaningless without a managed world.
+        /// scene/camera/delta each frame before pushing. Serves the engine-managed world.
+        /// @param world  The world whose view knobs are read.
         /// @return The mutable managed-world ViewState.
-        [[nodiscard]] Renderer::ViewState& GetWorldViewState() { return m_WorldView; }
+        [[nodiscard]] Renderer::ViewState& GetWorldViewState(WorldInstanceId world);
 
-        /// @brief Pauses or resumes the primary simulation's per-frame tick.
+        /// @brief Sets a world's explicit pause toggle.
         ///
-        /// Back-compat sugar over the primary simulation's pause (SceneSimulation::SetPaused): the
-        /// state lives on the simulation, not on Application. Paused, the engine still pushes the view
-        /// each frame (the camera resolves and the scene renders) and still drives the scene's
-        /// captures, but runs no simulation tick — the path a fixed-pose capture or a game pause menu
-        /// takes. The primary simulation is the first registered (the managed world, registered at
-        /// bootstrap); a no-op when none is registered.
-        /// @param paused  True to stop ticking the primary simulation, false to resume.
-        void SetWorldPaused(bool paused);
+        /// Forwards to WorldRunner::SetWorldPaused. Paused, the engine still pushes the view each frame
+        /// (the camera resolves and the scene renders) and still drives the scene's captures, but runs
+        /// no simulation tick — the path a fixed-pose capture or a game pause menu takes. Composes with
+        /// any held WorldRunner::PauseScope; a no-op for an unminted world.
+        /// @param world   The world to pause or resume.
+        /// @param paused  True to stop ticking the world, false to clear the explicit toggle.
+        void SetWorldPaused(WorldInstanceId world, bool paused);
 
-        /// @brief Returns whether the primary simulation's tick is paused.
+        /// @brief Returns whether a world is paused (a held scope or the explicit toggle).
         ///
-        /// Reads the primary simulation's pause (SceneSimulation::IsPaused); false when no simulation
-        /// is registered.
-        [[nodiscard]] bool IsWorldPaused() const;
+        /// Forwards to WorldRunner::IsWorldPaused; false for an unminted world.
+        /// @param world  The world to query.
+        [[nodiscard]] bool IsWorldPaused(WorldInstanceId world) const;
 
-        /// @brief Returns the current fixed simulation tick number.
+        /// @brief Returns the engine-managed world's current fixed simulation tick number.
         ///
-        /// Monotonic, advanced by the world drive's accumulator; the same number every registered
-        /// scene's Sim phase steps through. Zero before the first tick runs and while fully paused.
-        [[nodiscard]] u64 GetSimTick() const { return m_SimClock.GetTick(); }
+        /// Monotonic, advanced by the managed world's own clock. Zero before the first tick runs, while
+        /// the world is paused, and for a bare app with no managed world.
+        [[nodiscard]] u64 GetSimTick() const;
 
-        /// @brief Returns this frame's interpolation fraction into the next Sim tick, in [0, 1).
+        /// @brief Returns this frame's interpolation fraction into the managed world's next Sim tick, in [0, 1).
         ///
         /// The residual accumulator the render gather and View systems blend the last two ticks by.
         /// A game driving its own viewport (or a LevelOverlay) pushes this into its ViewState so its
-        /// scene interpolates in phase with the primary world.
+        /// scene interpolates in phase with the managed world.
         [[nodiscard]] f32 GetSimAlpha() const { return m_SimAlpha; }
 
     protected:
@@ -527,9 +535,10 @@ namespace Veng
         /// seeded from the level by this point, but the simulation has not started — a game seeds
         /// its own editable render-settings copy, captures input focus, or waits on @p pending
         /// before a deterministic capture here. Default is a no-op (the minimal game needs none).
-        /// @param world    The managed world's Scene (its SceneSimulation attached but not started).
+        /// @param world    The managed world's handle, for resolving it back through the runner.
+        /// @param scene    The managed world's Scene (its SceneSimulation attached but not started).
         /// @param pending  The world spawn's not-yet-resident assets; wait on it before a capture.
-        virtual void OnWorldLoaded(Scene& world, ResidencyBatch& pending) {}
+        virtual void OnWorldLoaded(WorldInstanceId world, Scene& scene, ResidencyBatch& pending) {}
 
         /// @brief Called once per frame before rendering.
         /// @param delta  Time in seconds since the previous frame.
@@ -612,22 +621,23 @@ namespace Veng
         /// The world scene is not loaded here — it arrives through the join flow (LoadClientLevel).
         void ConnectClient();
 
-        /// @brief Loads the accepted level into a fresh client scene, server-authoritative entities skipped.
+        /// @brief Loads the accepted level into the managed world's scene, server-authoritative entities skipped.
         ///
         /// The ClientHost's LoadLevel hook: LoadSync the level, LoadInto a scene with
-        /// SkipServerAuthoritative (the authored server entities arrive from the stream), retaining the
-        /// residency batch for the deferred OnWorldLoaded. The host owns the returned scene.
+        /// SkipServerAuthoritative (the authored server entities arrive from the stream), install it as
+        /// world #0's scene through the runner, and retain the residency batch for the deferred
+        /// OnWorldLoaded. The runner owns the installed scene; the host borrows it.
         /// @param id  The level AssetId the accept named.
-        /// @return The freshly-loaded client scene.
-        [[nodiscard]] Unique<Scene> LoadClientLevel(AssetId id);
+        /// @return The runner-owned world #0 scene the level loaded into.
+        [[nodiscard]] Scene* LoadClientLevel(AssetId id);
 
-        /// @brief Registers a just-loaded world scene as the primary simulation and starts it.
+        /// @brief Seeds the viewport, fires OnWorldLoaded, and starts the just-loaded managed world scene.
         ///
-        /// The client-mode counterpart of the server/standalone bootstrap tail: registers @p world as
-        /// simulation #0, seeds the viewport, fires OnWorldLoaded (with the retained client residency
-        /// batch), and starts the simulation with this peer's role. Runs once, when the ClientHost's
-        /// join flow has loaded the scene.
-        /// @param world  The join-loaded client scene the ClientHost owns.
+        /// The client-mode counterpart of the server/standalone bootstrap tail: seeds the viewport,
+        /// fires OnWorldLoaded (with the retained client residency batch), and starts the simulation
+        /// with this peer's role. Runs once, when the ClientHost's join flow has loaded the scene into
+        /// world #0.
+        /// @param world  The runner-owned world #0 scene the join loaded.
         void StartWorldScene(Scene& world);
 
         /// @brief Pumps the mounted net host for one frame: join/accept, apply the stream, feed input.
@@ -730,27 +740,12 @@ namespace Veng
                                                        f32 alpha, bool firstStepThisFrame,
                                                        bool isReplay = false) const;
 
-        /// @brief Returns the primary simulation (the first registered scene's), or null when none.
-        [[nodiscard]] SceneSimulation* PrimarySimulation() const;
-
         /// @brief Re-resolves every window-tracking managed viewport's region from its Layout.
         ///
         /// The swapchain-invalidation callback: recomputes each managed viewport's region as
         /// round(Layout · GetRenderExtent()) so quadrant regions track the window; SetRegion
         /// debounces each SceneRenderer::Resize to the next Render. Pinned viewports are untouched.
         void ResolveManagedViewportLayouts();
-
-        /// @brief Discovers and drives every registered scene's CaptureSurface components.
-        ///
-        /// Iterates every registered simulation's scene (regardless of started/paused state —
-        /// registration alone gates capture driving) for Renderer::CaptureSurface components,
-        /// materializing each one's SceneCapture on first sight and registering it on the capture
-        /// drive-list (so it renders with the imperatively-registered captures), pushing this frame's
-        /// capture source from the entity's world position per the component's refresh policy, and
-        /// binding the capture output onto the sibling MeshRenderer's material. The capture
-        /// self-unregisters when its component/entity/scene is destroyed. Called from Frame ahead of
-        /// the capture render loop. No-op with no registered simulation.
-        void DriveCaptureSurfaces();
 
         ApplicationInfo m_Info;
 
@@ -795,13 +790,13 @@ namespace Veng
         ///        is registered on the router).
         Unique<Gui::GuiConsumer> m_GuiConsumer;
 
-        /// @brief Non-owning, ordered list of scenes the engine ticks and drives each frame.
+        /// @brief The sim-domain scheduler owning and ticking every open world.
         ///
-        /// Registration order is tick order; index 0 is the primary simulation. Holds raw pointers,
-        /// each registered Scene holding a back-reference and erasing itself on destruction
-        /// (order-preserving). The managed world registers first at bootstrap; overlays register and
-        /// deregister around their lifetimes.
-        vector<Scene*> m_Simulations;
+        /// Constructed in Initialize over the borrowed registries, asset manager, and context. Reset
+        /// before the asset manager at teardown so its worlds' component AssetHandles retire through
+        /// the deferred path. The managed world is opened here as world #0 at bootstrap; overlays adopt
+        /// their scenes into it.
+        Unique<WorldRunner> m_WorldRunner;
 
         /// @brief The engine-owned managed viewport set; empty when no managed viewport is configured.
         ///
@@ -815,16 +810,11 @@ namespace Veng
         /// Frame, so the rebuild never runs mid-iteration. nullopt when none is pending.
         optional<vector<ManagedViewportInfo>> m_PendingReconfigure;
 
-        /// @brief The engine-managed game world's Scene (sim attached); null when World is unset.
+        /// @brief The engine-managed world's handle (world #0); invalid when World is unset.
         ///
-        /// Owns the standalone/server managed world. Null in client mode, where the ClientHost owns the
-        /// join-loaded scene and m_PrimaryWorld points at it instead.
-        Unique<Scene> m_World;
-        /// @brief The active primary world scene (m_World, or the client host's join-loaded scene).
-        ///
-        /// The one scene the world drive ticks and pushes into the managed viewport. Set when the world
-        /// comes online (bootstrap for server/standalone, the join flow for a client); null before then.
-        Scene* m_PrimaryWorld = nullptr;
+        /// Opened at bootstrap and bound to the managed viewport. The world the net host binds to and
+        /// whose camera the managed viewport presents in this plan; a bare app leaves it invalid.
+        WorldInstanceId m_ManagedWorld;
         /// @brief The pimpl'd net hosts + input buffers; null unless a net launch mode is active.
         Unique<NetState> m_Net;
         /// @brief The client scene's spawn residency, held from LoadClientLevel until StartWorldScene.
@@ -834,12 +824,12 @@ namespace Veng
         /// @brief Per-frame view knobs pushed into the managed viewport; seeded from the level.
         Renderer::ViewState m_WorldView;
 
-        /// @brief The fixed-timestep accumulator driving every registered simulation's Sim phase.
+        /// @brief The managed world's sim time-scale this frame (the net client slew); 1 otherwise.
         ///
-        /// Frame time folds in here; it advances the shared tick number by the whole fixed steps it
-        /// completes and reports the residual interpolation alpha. Reconfigured to the managed world's
-        /// SimTickRate at bootstrap; 60 Hz otherwise.
-        SimClock m_SimClock;
+        /// Computed before the world tick from the client tick-offset controller and applied as the
+        /// managed world's SimScale; the runner folds it into that world's clock so the client runs its
+        /// sim ahead of the server.
+        f32 m_NetSlew = 1.0f;
 
         /// @brief This frame's interpolation fraction (GetSimAlpha), retained for the view pushes.
         f32 m_SimAlpha = 0.0f;

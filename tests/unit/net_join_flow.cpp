@@ -181,10 +181,11 @@ TEST_CASE("Full join: readiness gates the stream, seat + pawn arrive, possession
         *Client::Connect(ClientInfo{.TransportOverride = clientT.get(), .Connection = Config});
 
     // The client-side level load builds a Scene carrying a Local-tier camera the join wires. The
-    // server-authoritative entities are absent — they arrive from the stream. The host owns the
-    // returned scene; the test reaches it through clientHost->World().
+    // server-authoritative entities are absent — they arrive from the stream. The caller owns the
+    // scene (the host borrows it); the test reaches it through clientHost->World().
     TypeRegistry clientTypes;
     RegisterBuiltinTypes(clientTypes);
+    Unique<Scene> clientScene;
     Entity localCamera = Entity::Null;
     Entity wiredPawn = Entity::Null;
     u32 possessionCalls = 0;
@@ -192,17 +193,17 @@ TEST_CASE("Full join: readiness gates the stream, seat + pawn arrive, possession
     Unique<ClientHost> clientHost = ClientHost::Create(ClientHostInfo{
         .Client = *client,
         .Assets = FakeAssets(),
-        .LoadLevel = [&](AssetId requested) -> Unique<Scene>
+        .LoadLevel = [&](AssetId requested) -> Scene*
         {
             CHECK(requested.Value == levelId.Value);
-            Unique<Scene> scene = Scene::Create(clientTypes);
-            const Entity camera = scene->CreateEntity();
-            scene->Add<Transform>(camera);
-            scene->Add<Camera>(camera);
-            scene->Add<Authority>(camera, Authority{.Tier = Tier::Local});
-            scene->Add<CameraFollow>(camera);
+            clientScene = Scene::Create(clientTypes);
+            const Entity camera = clientScene->CreateEntity();
+            clientScene->Add<Transform>(camera);
+            clientScene->Add<Camera>(camera);
+            clientScene->Add<Authority>(camera, Authority{.Tier = Tier::Local});
+            clientScene->Add<CameraFollow>(camera);
             localCamera = camera;
-            return scene;
+            return clientScene.get();
         },
         .ResolvePrefab = [](AssetId) -> Ref<Prefab> { return nullptr; },
         .OnPossession =

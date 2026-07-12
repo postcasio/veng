@@ -7,6 +7,7 @@
 #include <Veng/Renderer/ViewportRegion.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Entity.h>
+#include <Veng/World.h>
 
 namespace Veng
 {
@@ -183,6 +184,8 @@ namespace Veng
         bool m_PausePrimarySim = false;
         /// @brief The world-pause value observed at open, restored on close when PausePrimarySim.
         bool m_PriorPaused = false;
+        /// @brief The world PausePrimarySim froze (the runner's base world), refrozen/restored by handle.
+        WorldInstanceId m_PausedWorld;
         /// @brief Whether the region tracks the framebuffer extent (a full-window overlay).
         bool m_TrackWindow = false;
         /// @brief Whether the simulation was started (so close stops exactly what it started).

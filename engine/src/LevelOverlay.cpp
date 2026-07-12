@@ -21,8 +21,8 @@ namespace Veng
     {
         // The open overlays' (seat, scene) pairs, in open order — the layer stack a new overlay's
         // SuspendSeat resolves its scene from, so a stacked overlay suspends the input contexts of
-        // the overlay directly beneath it. The base layer beneath the first overlay is the primary
-        // world (Application::GetWorld), which no overlay owns and so is not in this list.
+        // the overlay directly beneath it. The base layer beneath the first overlay is the managed
+        // world, which no overlay owns and so is not in this list.
         vector<std::pair<Entity, Scene*>>& OpenOverlays()
         {
             static vector<std::pair<Entity, Scene*>> overlays;
@@ -62,7 +62,8 @@ namespace Veng
                     return scene;
                 }
             }
-            return app.GetWorld();
+            const World* managed = app.GetWorldRunner().ResolveWorld(app.GetManagedWorldId());
+            return managed != nullptr ? &managed->GetScene() : nullptr;
         }
     }
 
@@ -166,13 +167,16 @@ namespace Veng
         overlay.m_Suspend =
             CreateUnique<SeatFocusScope>(router, suspend, nullptr, overlay.m_SuspendContext);
 
-        // Optionally freeze the primary simulation. Input focus and sim pause are separate knobs:
-        // the observed pause value is captured and restored on close, so stacking and a
-        // game-paused-before-open primary both survive.
+        // Optionally freeze the base world the overlay covers (the runner's first-opened world —
+        // bootstrap opens the managed world first). Input focus and sim pause are separate knobs: the
+        // observed pause value is captured and restored on close, so stacking and a
+        // game-paused-before-open base both survive.
         if (info.PausePrimarySim)
         {
-            overlay.m_PriorPaused = app.IsWorldPaused();
-            app.SetWorldPaused(true);
+            const vector<Unique<World>>& worlds = app.GetWorldRunner().GetWorlds();
+            overlay.m_PausedWorld = worlds.empty() ? WorldInstanceId{} : worlds.front()->Id;
+            overlay.m_PriorPaused = app.IsWorldPaused(overlay.m_PausedWorld);
+            app.SetWorldPaused(overlay.m_PausedWorld, true);
         }
 
         // 5. Start the simulation — each system's OnStart fires with the populated scene.
@@ -193,7 +197,8 @@ namespace Veng
           m_ViewKnobs(other.m_ViewKnobs), m_Region(other.m_Region),
           m_OverlaySeat(other.m_OverlaySeat), m_PriorCursorSeat(other.m_PriorCursorSeat),
           m_PausePrimarySim(other.m_PausePrimarySim), m_PriorPaused(other.m_PriorPaused),
-          m_TrackWindow(other.m_TrackWindow), m_Started(other.m_Started)
+          m_PausedWorld(other.m_PausedWorld), m_TrackWindow(other.m_TrackWindow),
+          m_Started(other.m_Started)
     {
         other.m_App = nullptr;
         other.m_Started = false;
@@ -216,6 +221,7 @@ namespace Veng
             m_PriorCursorSeat = other.m_PriorCursorSeat;
             m_PausePrimarySim = other.m_PausePrimarySim;
             m_PriorPaused = other.m_PriorPaused;
+            m_PausedWorld = other.m_PausedWorld;
             m_TrackWindow = other.m_TrackWindow;
             m_Started = other.m_Started;
             other.m_App = nullptr;
@@ -292,7 +298,7 @@ namespace Veng
         //    game-paused-before-open primary survives.
         if (m_PausePrimarySim)
         {
-            app.SetWorldPaused(m_PriorPaused);
+            app.SetWorldPaused(m_PausedWorld, m_PriorPaused);
         }
 
         // 3. Pop the focus scope (restores the suspended seat's contexts and pops its token).
