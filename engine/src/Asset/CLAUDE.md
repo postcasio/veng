@@ -276,8 +276,9 @@ inspector are shared across domains. `Surface` is the opaque path made explicit 
 vertex stage, g-buffer MRT output, drawn per-submesh by the geometry pass); `PostProcess` is the
 fullscreen path (screenspace vertex stage, a single `SV_Target0` color, invoked by the post
 chain). The lowercase `"domain"` `.vmat.json` key selects it (default `surface`), and the cook
-validates the fragment shader's outputs against the domain's contract (Surface → the four-target
-g-buffer MRT, `SV_Target0`..`SV_Target3`, velocity included; PostProcess → a single `SV_Target0`).
+validates the fragment shader's outputs against the domain's contract (Surface → the five-target
+g-buffer MRT, `SV_Target0`..`SV_Target4`, velocity and emissive included; PostProcess → a single
+`SV_Target0`).
 The per-draw selector push offset is domain-keyed — Surface 64 (after the MVP block),
 PostProcess 0.
 

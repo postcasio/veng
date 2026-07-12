@@ -95,7 +95,11 @@ at cook time:
 - **Materials** (`*.vmat.json`) are validated against the fragment shader's reflected
   parameters — the declared, explicitly-typed field list must match — and the
   fragment outputs are validated against the material domain's contract (Surface →
-  g-buffer MRT `SV_Target0`..`SV_Target3`; PostProcess → a single `SV_Target0`). A parent
+  the five-target g-buffer MRT `SV_Target0`..`SV_Target4` — albedo/normal/ORM, velocity, and
+  emissive; PostProcess → a single `SV_Target0`). Because the Surface contract's output set is
+  part of what a cooked material *means*, a change to it bumps `CookedMaterialVersion`
+  (`assetpack`'s `CookedBlobs.h`), so a stale blob cooked against an older output set rejects
+  loudly at load rather than binding a pipeline whose color-target list no longer matches. A parent
   `*.vmat.json` may declare a top-level **`"defaultInstance"`** id: when present, the cook emits a
   companion **zero-override `MaterialInstance`** at that id beside the parent `Material` blob (the
   `CookDefaultInstanceBlob` helper synthesizes a `{ "parent": <id>, "overrides": {} }` document and

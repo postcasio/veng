@@ -67,9 +67,10 @@ Its surface is a **lifetime split** keyed on how often each piece of state chang
 
 ### The deferred pipeline and its batteries
 
-`SceneRenderer` is a **physically-based deferred renderer**: a metallic-roughness four-target
-g-buffer (albedo G0, world-normal G1, packed occlusion/roughness/metallic + emissive G2,
-per-object velocity G3, plus a sampled depth attachment) with **tangent-space normal mapping**, a
+`SceneRenderer` is a **physically-based deferred renderer**: a metallic-roughness five-target
+g-buffer (albedo G0, world-normal G1, packed occlusion/roughness/metallic G2,
+per-object velocity G3, HDR emissive G4, plus a sampled depth attachment) with **tangent-space
+normal mapping**, a
 fullscreen **Cook-Torrance** lighting pass evaluating GGX specular + Lambert diffuse over
 **multiple typed lights** (directional / point / spot) and reconstructing world position from
 depth, then tonemap to the output. The batteries hang off the g-buffer: **cascaded shadow maps**
@@ -99,8 +100,9 @@ vector for geometry (camera **and** object motion) and falls back to depth-based
 reprojection for the cleared background. Because velocity is a g-buffer channel it is **always
 written and always allocated** (the cost is one extra `RG16Sfloat` target plus a clip-position
 write, not a second geometry pass); with TAA off it is written but unread, and the `MotionVectors`
-debug arm blits it directly. The opaque material contract is therefore **G0/G1/G2/G3** — velocity
-is the fourth MRT channel of the surface output, not a separate pass. History is **YCoCg
+debug arm blits it directly. The opaque material contract is therefore **G0/G1/G2/G3/G4** —
+velocity is the fourth MRT channel of the surface output, not a separate pass, and emissive (G4)
+is the fifth. History is **YCoCg
 variance-clipped** to the 3×3 neighborhood, sampled with a **Catmull-Rom** filter, and blended
 with **luminance weighting** (Karis anti-flicker); offscreen reprojection and the first frame
 after a `Resize`/`Configure` fall back to the current color (`m_TaaHistoryReset`). The history is
@@ -302,8 +304,9 @@ the renderer's single internal graph — it is not a `RenderGraph::Pass`. The re
 **wiring** (which pass reads whose target, via the named-slot `PassIO`); each pass owns **itself**
 (sizing, declared reads/writes, recording). It knows only how to record, never what feeds it.
 
-The renderer's pipeline images (g-buffer albedo / world-normal / ORM, depth, HDR, the bloom mip
-pyramid + composite result, output) are **renderer-owned `Image`/`ImageView`s `Import`ed** into
+The renderer's pipeline images (g-buffer albedo / world-normal / ORM / velocity / emissive, depth,
+HDR, the bloom mip pyramid + composite result, output) are **renderer-owned `Image`/`ImageView`s
+`Import`ed** into
 the internal graph — not graph transients — because a fullscreen pass samples an upstream target
 through the bindless set-0 array, which needs a `Ref<ImageView>` to `Register` (a transient
 exposes only a per-frame `ImageView&`). They are registered into bindless once at `Create`
@@ -319,7 +322,7 @@ graph-declared resource (the lighting pass's `.Sample` drives the graph-derived
 The über-pipeline is **batteries-included, not extensible**: a bespoke pass graph still means
 dropping to `RenderGraph` directly (the composite path the sample retains).
 `SceneRendererSettings` carries the topology/sizing knobs — `DebugView Mode` (Final, plus the
-`Albedo` / `Normal` / `Depth` g-buffer arms, the `Roughness` / `Metallic` / `Occlusion`
+`Albedo` / `Normal` / `Depth` / `Emissive` g-buffer arms, the `Roughness` / `Metallic` / `Occlusion`
 packed-ORM-channel arms, and the `AO` / `Shadows` / `Cascades` / `PunctualShadows` / `Bloom` /
 `MotionVectors` battery-target arms) re-wires the pass set through `Configure`, the recompile
 seam; the `Bloom` / `Shadows` / `PunctualShadows` / `AO` battery toggles, the bloom `Kernel`, and
@@ -327,9 +330,10 @@ seam; the `Bloom` / `Shadows` / `PunctualShadows` / `AO` battery toggles, the bl
 terminates the chain after the g-buffer (and, for `AO` / `Shadows` / `PunctualShadows`, the
 force-wired producing battery pass) with a single fullscreen debug blit; the `Bloom` arm
 additionally runs the lighting pass and the force-wired bloom sweep and blits pyramid mip 0 after
-the up-sweep, and the `MotionVectors` arm blits the per-object velocity g-buffer channel (written
+the up-sweep, the `MotionVectors` arm blits the per-object velocity g-buffer channel (written
 by the surface pass every frame) colorized as an optical-flow field (hue = direction, brightness =
-magnitude). Per-frame values (`Exposure`, the bloom `Threshold` / `Intensity` / `Radius`, the
+magnitude), and the `Emissive` arm blits the G4 emissive channel directly — the authored emissive
+contribution alone, independent of lighting. Per-frame values (`Exposure`, the bloom `Threshold` / `Intensity` / `Radius`, the
 camera, the lights) ride `SceneView`, so tuning them never recompiles.
 
 ### Single-copy targets and the frames-in-flight contract
@@ -357,24 +361,34 @@ single-queue graph each frame, ordered by the graph's derived barriers.
 An opaque (Surface-domain) material's **fragment shader outputs** are **g-buffer channels**, not
 final swapchain color, written through a single engine-provided `GBufferOutput` struct
 (`float4 Albedo : SV_Target0; float4 Normal : SV_Target1; float4 ORM : SV_Target2;
-float2 Velocity : SV_Target3;`). Albedo (G0) is sRGB-encoded (sampled back as linear); the normal
-(G1) is the tangent-space-perturbed world normal in a signed float format; ORM (G2) packs
-occlusion (R), roughness (G), metallic (B), and emissive strength (A) — the metallic-roughness PBR
-channel set; velocity (G3, `RG16Sfloat`) is the per-object screen-space motion vector
+float2 Velocity : SV_Target3; float3 Emissive : SV_Target4;`). Albedo (G0) is sRGB-encoded
+(sampled back as linear); the normal (G1) is the tangent-space-perturbed world normal in a signed
+float format; ORM (G2) packs occlusion (R), roughness (G), and metallic (B) — the
+metallic-roughness PBR channel set — with **the alpha unused and available** (the lighting pass
+reads only `orm.rgb`); velocity (G3, `RG16Sfloat`) is the per-object screen-space motion vector
 (`curUV - prevUV`) the TAA resolve reprojects through, written by the shared `ComputeMotionVector`
-helper from the vertex stage's unjittered current/previous clip positions. Depth is the depth
-attachment, also sampled by the lighting pass for world-position reconstruction (one of the depth
-targets read as textures in the engine — the directional cascade atlas and the punctual shadow
-atlas are the others). The g-buffer layout (channels, formats, usage) is fixed in
-`Renderer/GBuffer.h`, agreed on by the geometry pass's `RenderingInfo` and every material
-pipeline. It is the **opaque** contract — a transparent/forward material outputs final color
-through a separate fragment entry, not a change to this one — and **colored** emissive (an
-emissive color distinct from albedo) is the one free channel away from needing a fifth target
-(only G0.a is unused). Folding velocity into the surface output means motion vectors cost **no
-second geometry pass** — the single g-buffer rasterization fills them — at the price of a small
-always-on write even when TAA is off. Set-0 bindless, the material parameter block, and texture
-handles work identically for an opaque material; only the fragment shader's outputs are g-buffer
-channels.
+helper from the vertex stage's unjittered current/previous clip positions; emissive (G4,
+`B10G11R11Ufloat`) is the **linear HDR radiance** the surface fragment authors per pixel —
+procedural, textured, animated on the frame clock, whatever the material writes — which the
+lighting pass **adds into the outgoing light before the sky composite** (geometry pixels are
+foreground, so the skybox composite that discards foreground leaves the emissive term intact, and
+the pre-translucent refraction grab captures it unchanged). Depth is the depth attachment, also
+sampled by the lighting pass for world-position reconstruction (one of the depth targets read as
+textures in the engine — the directional cascade atlas and the punctual shadow atlas are the
+others). The g-buffer layout (channels, formats, usage) is fixed in `Renderer/GBuffer.h`, agreed
+on by the geometry pass's `RenderingInfo` and every material pipeline. It is the **opaque**
+contract — a transparent/forward material outputs final color through a separate fragment entry,
+not a change to this one.
+
+The **5-MRT opaque contract is unconditional.** Folding velocity and emission into the surface
+output means motion vectors and per-pixel emission each cost **no second geometry pass** — the
+single g-buffer rasterization fills them — but every opaque pixel pays the G4 attachment
+(allocation, clear, write, and on a TBDR GPU its tile-memory footprint + store bandwidth) whether
+or not the scene authors any emission, exactly the always-on shape the velocity target already
+has. There is **no per-scene opt-out** — no setting inserts or removes the channel — so a
+bandwidth-constrained consumer must count G4 as a fixed tax it cannot drop. Set-0 bindless, the
+material parameter block, and texture handles work identically for an opaque material; only the
+fragment shader's outputs are g-buffer channels.
 
 ### The PostProcess fullscreen-material path
 
@@ -389,7 +403,8 @@ material** (core `tonemap.vmat`): the HDR (or bloom-composite) target is runtime
 and the per-frame `Exposure` from `SceneView` is written into the ring-buffered block each
 `Execute`. The fixed plumbing composites stay hardcoded engine passes — `SwapChainCompositePass`
 (scene behind, ImGui over) and the `DebugView` blits (albedo/normal/depth, the packed-ORM
-channels, the SSAO target, the bloom pyramid, the directional and punctual shadow maps) have no
+channels, the emissive channel, the SSAO target, the bloom pyramid, the directional and punctual
+shadow maps) have no
 authorable surface; a PostProcess material is for *tunable effects with exposed parameters*, not
 plumbing.
 

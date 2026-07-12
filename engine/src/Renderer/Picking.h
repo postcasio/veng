@@ -8,7 +8,7 @@
 /// Kept out of the GBuffer.h opaque material contract: picking is an optional,
 /// off-by-default authoring concern, and its id target is bound only by the picking
 /// pipeline variant's own RenderingInfo — never by the shipping geometry pass. The
-/// shipping g-buffer (G0/G1/G2/G3 + depth) is byte-for-byte unchanged whether or not
+/// shipping g-buffer (G0/G1/G2/G3/G4 + depth) is byte-for-byte unchanged whether or not
 /// picking is enabled.
 namespace Veng::Renderer::Picking
 {
