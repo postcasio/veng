@@ -508,18 +508,19 @@ namespace Veng
         Predicted = 3,
     };
 
-    /// @brief Ownership annotation marking who simulates an entity, ahead of the net layer.
+    /// @brief Ownership annotation marking who simulates an entity.
     ///
     /// Threaded onto entities with sensible defaults (authored entities are Server;
-    /// client-local view entities like cameras are Local) and read by nothing in the
-    /// runtime — its consumer is the future net layer. It is cheap to thread now and
-    /// expensive to retrofit across every spawn site later, so the defaulting discipline
-    /// is locked in early. It commits to no replication strategy.
+    /// client-local view entities like cameras are Local; an absent component defaults
+    /// to Server). The net layer is its consumer: HasAuthority gates the authoritative
+    /// Sim advancers by tier against the peer's NetRole, the replication server selects
+    /// Server-tier entities for the snapshot stream, the hosts stamp each connection's
+    /// seat with its Owner id, and the client marks replicated arrivals Remote.
     struct Authority
     {
         /// @brief The ownership tier.
         Tier Tier{Tier::Server};
-        /// @brief Owning connection/player id; meaning is net-layer policy, 0 by default.
+        /// @brief Owning connection id (server-assigned; see NetEvents.h); 0 = server/none.
         u32 Owner = 0;
     };
 
@@ -604,8 +605,8 @@ namespace Veng
     /// A game mode is rule systems over this state plus a GameModeConfig naming the
     /// rule set's data — no object, no registry. The rule systems read and write the
     /// phase, accumulate the elapsed timer, and track score. It is server-authoritative
-    /// (it carries Authority::Server); a future net layer replicates it. Today it is
-    /// plain scene data.
+    /// (it carries Authority::Server) and replicated (VE_REPLICATED), so clients display
+    /// the mode state the server advances.
     struct Session
     {
         /// @brief The mode's lifecycle phase; an authored session typically begins in Playing.
