@@ -79,13 +79,32 @@ TEST_CASE("sim clock: the spiral-of-death clamp bounds the step count and drops 
     CHECK(step.Steps == 5);
     CHECK(step.FirstTick == 1);
     CHECK(step.Alpha == doctest::Approx(0.0f));
+    CHECK(step.Clamped); // the frame dropped backlog — the clock now trails wall-clock time
     CHECK(clock.GetTick() == 5);
 
-    // The dropped backlog does not resurface: the next ordinary frame runs a single tick.
+    // The dropped backlog does not resurface: the next ordinary frame runs a single tick, unclamped.
     const SimStep next = clock.Advance(Step60);
     CHECK(next.Steps == 1);
     CHECK(next.FirstTick == 6);
+    CHECK_FALSE(next.Clamped);
     CHECK(clock.GetTick() == 6);
+}
+
+TEST_CASE("sim clock: SetTick jumps the tick epoch and clears the accumulator")
+{
+    SimClock clock = Make();
+    clock.Advance(Step60 * 1.5f); // tick 1, half a step of residual
+    REQUIRE(clock.GetTick() == 1);
+
+    // A networked client re-snapping its epoch to the server's tick: jump forward, residual cleared.
+    clock.SetTick(1000);
+    CHECK(clock.GetTick() == 1000);
+
+    // The next ordinary frame continues from the seeded tick with no carried residual.
+    const SimStep step = clock.Advance(Step60);
+    CHECK(step.FirstTick == 1001);
+    CHECK(clock.GetTick() == 1001);
+    CHECK(step.Alpha == doctest::Approx(0.0f));
 }
 
 TEST_CASE("sim clock: reset drops the accumulator without moving the tick (no pause debt)")

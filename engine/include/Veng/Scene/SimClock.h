@@ -40,6 +40,11 @@ namespace Veng
         /// The render/View interpolation alpha: the leftover accumulator over the step. Zero after a
         /// spiral-of-death clamp (the backlog was dropped).
         f32 Alpha = 0.0f;
+        /// @brief True when this frame hit the spiral-of-death clamp and dropped backlog ticks.
+        ///
+        /// The tick advanced fewer ticks than wall-clock elapsed, so the clock now trails real time —
+        /// a networked client uses this to detect it has fallen behind the server's tick and re-sync.
+        bool Clamped = false;
     };
 
     /// @brief A monotonic fixed-timestep tick counter driven by an accumulator.
@@ -89,6 +94,7 @@ namespace Veng
 
             // Spiral-of-death clamp: a backlog past the per-frame ceiling is dropped, not chased, so
             // a long stall resyncs to the present rather than running an unbounded catch-up burst.
+            const bool clamped = steps == m_MaxTicksPerFrame && m_Accumulator >= simDelta;
             if (steps == m_MaxTicksPerFrame)
             {
                 m_Accumulator = 0.0f;
@@ -101,6 +107,7 @@ namespace Veng
                 .FirstTick = firstTick,
                 .SimDelta = simDelta,
                 .Alpha = m_Accumulator / simDelta,
+                .Clamped = clamped,
             };
         }
 

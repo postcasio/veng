@@ -33,6 +33,14 @@ namespace Veng
 
     void ConstantMotionSystem::OnUpdate(Scene& scene, const f32 delta, const SystemContext& context)
     {
+        // A reconciliation replay re-runs the Sim phase to re-simulate the predicted set; autonomous
+        // authored motion is not part of that set, so re-integrating it each replayed tick would spin
+        // an object forward by the whole rollback window. Rollback is predicted-set-scoped — skip.
+        if (context.IsReplay)
+        {
+            return;
+        }
+
         scene.Each<Transform, ConstantMotion>(
             [&scene, &context, delta](const Entity entity, Transform& transform,
                                       ConstantMotion& motion)
