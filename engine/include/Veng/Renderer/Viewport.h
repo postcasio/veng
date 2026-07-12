@@ -7,6 +7,7 @@
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Renderer/Types.h>
+#include <Veng/Renderer/ViewportId.h>
 #include <Veng/Renderer/ViewportRegion.h>
 
 #include <Veng/Scene/Camera.h>
@@ -381,6 +382,14 @@ namespace Veng::Renderer
         /// @brief Returns the viewport's role.
         [[nodiscard]] ViewportRole GetRole() const;
 
+        /// @brief Returns the viewport's minted identity, stable for its whole lifetime.
+        ///
+        /// Minted against Context::GetViewportRegistry() at Create and retired at destruction, so
+        /// Context::ViewportRegistry::Resolve maps it back to this viewport while it lives and to
+        /// nullptr once it is gone. Never moves across Resize, Configure, region, or role changes,
+        /// and is never reused by a later viewport.
+        [[nodiscard]] ViewportId GetId() const { return m_Id; }
+
         /// @brief Returns the scene the last-pushed ViewState renders, or null before any push.
         ///
         /// The retained scene pointer, so the engine can match a viewport to the simulation whose
@@ -563,6 +572,8 @@ namespace Veng::Renderer
 
         /// @brief The Vulkan context, for bindless registration.
         Context& m_Context;
+        /// @brief The minted identity, resolved through Context::GetViewportRegistry().
+        ViewportId m_Id;
         /// @brief The asset manager the owned GuiScenePass loads its gui shaders through.
         AssetManager& m_Assets;
         /// @brief The owned deferred renderer.

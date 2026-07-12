@@ -571,6 +571,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/camera_rig.cpp
             tests/unit/game_mode.cpp
             tests/unit/viewport_mapping.cpp
+            tests/unit/viewport_id.cpp
             tests/unit/managed_viewports.cpp
             tests/unit/dynamic_resolution.cpp
             tests/unit/gui_draw_list.cpp
@@ -1007,6 +1008,7 @@ if (VENG_BUILD_TESTS)
             tests/gpu/debug_draw.cpp
             tests/gpu/point_field.cpp
             tests/gpu/viewport.cpp
+            tests/gpu/viewport_id.cpp
             tests/gpu/viewport_documents.cpp
             tests/gpu/splitscreen.cpp
             tests/gpu/hi_z_pyramid.cpp

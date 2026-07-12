@@ -39,6 +39,8 @@ namespace Veng::Renderer
         VE_ASSERT(info.MaxAllocationScale > 0.0f,
                   "Viewport MaxAllocationScale must be > 0 (got {})", info.MaxAllocationScale);
 
+        m_Id = info.Context.GetViewportRegistry().Mint(*this);
+
         // A struct member cannot default to a value pulled from the Context&, so an
         // Undefined ColorFormat resolves to the window's output format here.
         const Format colorFormat = info.ColorFormat == Format::Undefined
@@ -79,6 +81,8 @@ namespace Veng::Renderer
         {
             m_Context.GetBindlessRegistry().Release(m_SurfaceSamplerHandle);
         }
+
+        m_Context.GetViewportRegistry().Retire(m_Id);
     }
 
     void Viewport::AttachToDriveList(vector<Viewport*>& driveList)

@@ -141,6 +141,8 @@
 #include <Veng/Renderer/Types.h>
 #include <Veng/Renderer/VertexBufferLayout.h>
 #include <Veng/Renderer/Viewport.h>
+#include <Veng/Renderer/ViewportId.h>
+#include <Veng/Renderer/ViewportRegistry.h>
 
 #include <VengGraph/NodeGraph.h>
 #include <VengGraph/NodeType.h>

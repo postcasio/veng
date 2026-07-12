@@ -7,6 +7,7 @@
 #include <Veng/Renderer/Types.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
+#include <Veng/Renderer/ViewportRegistry.h>
 
 namespace Veng
 {
@@ -390,6 +391,14 @@ namespace Veng::Renderer
         /// Valid from the end of Initialize() until Dispose(). See BindlessRegistry.h.
         [[nodiscard]] BindlessRegistry& GetBindlessRegistry() const;
 
+        /// @brief Returns the render-domain viewport identity registry.
+        ///
+        /// The ViewportId -> Viewport map every Viewport mints into at Create and retires from at
+        /// destruction. Standalone-constructible and independent of the Vulkan device, so it is
+        /// valid for the whole Context lifetime, not only between Initialize() and Dispose(). See
+        /// ViewportRegistry.h.
+        [[nodiscard]] ViewportRegistry& GetViewportRegistry() { return m_ViewportRegistry; }
+
         /// @brief Queues a one-time graphics-queue acquire and shader-read transition for a
         /// bindless-sampled resource that has just gone resident.
         ///
@@ -451,6 +460,13 @@ namespace Veng::Renderer
         /// Populated by EnqueueBindlessAcquire and drained by BeginFrame. Holds a Ref so a
         /// view enqueued for a texture dropped before the next frame cannot dangle.
         vector<Ref<ImageView>> m_PendingBindlessAcquires;
+
+        /// @brief The render-domain viewport identity registry.
+        ///
+        /// Device-independent, so it is a plain value member rather than backend state: it lives for
+        /// the whole Context lifetime and outlives every Viewport that mints into it, so a viewport
+        /// retiring in its destructor always reaches a live registry.
+        ViewportRegistry m_ViewportRegistry;
 
         /// @brief Backend Vulkan state (instance, device, queues, swapchain, sync frames).
         Unique<Native> m_Native;
