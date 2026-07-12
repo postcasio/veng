@@ -547,6 +547,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/net_two_world.cpp
             tests/unit/net_clock_sync.cpp
             tests/unit/net_prediction_history.cpp
+            tests/unit/net_prediction.cpp
             tests/unit/reflection.cpp
             tests/unit/reflection_variant.cpp
             tests/unit/field_display.cpp

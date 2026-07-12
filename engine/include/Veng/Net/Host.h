@@ -5,6 +5,7 @@
 #include <Veng/Net/Client.h>
 #include <Veng/Net/ClockSync.h>
 #include <Veng/Net/NetEvents.h>
+#include <Veng/Net/PredictionHistory.h>
 #include <Veng/Net/Replication.h>
 #include <Veng/Net/Server.h>
 #include <Veng/Result.h>
@@ -132,6 +133,12 @@ namespace Veng
         /// when it possesses none) — the app points its Local-tier camera/viewer at that pawn. The
         /// camera rig itself is untouched Local-tier View machinery; this only names its target.
         function<void(Scene&, Entity)> OnPossession;
+        /// @brief Optional: selects the predicted entity set on a possession change; null uses the default.
+        ///
+        /// On each possession change the host promotes this set from Remote to Predicted and tracks it
+        /// in the PredictionHistory, demoting the prior set back to Remote. Unset uses the
+        /// owner-pawn-subtree default (see PredictionPolicy).
+        PredictionPolicy Prediction;
     };
 
     /// @brief Client-side join glue: load, ready, apply the stream, wire the own seat.
@@ -142,6 +149,12 @@ namespace Veng
     /// own seat (named by the accept's SeatNetId) to bind, then keeps the local presentation wired to
     /// that seat's replicated Possesses — respawns and vehicle swaps arrive as ordinary Possesses
     /// state, with no bespoke message.
+    ///
+    /// On each possession change it also promotes the predicted set (the possessed pawn plus the
+    /// subtree the PredictionPolicy selects) from Remote to Predicted and tracks it in the owned
+    /// PredictionHistory, demoting the prior set. The authority filter then runs the real Sim systems
+    /// for the predicted set client-side each tick, so the local pawn responds on the tick its input
+    /// is sampled; RecordPrediction captures the per-tick input and state for reconciliation.
     class VE_API ClientHost
     {
     public:
@@ -170,6 +183,24 @@ namespace Veng
 
         /// @brief The pawn the own seat currently possesses (as last wired), or Entity::Null.
         [[nodiscard]] Entity PossessedPawn() const;
+
+        /// @brief The prediction history recording the predicted set's per-tick input and state.
+        ///
+        /// The client's tracked (predicted) set is registered here on each possession change; the
+        /// per-tick RecordPrediction captures into it, and reconciliation restores/replays from it.
+        [[nodiscard]] Net::PredictionHistory& History();
+
+        /// @brief The prediction history (read-only) — its tracked set and recorded ticks.
+        [[nodiscard]] const Net::PredictionHistory& History() const;
+
+        /// @brief Records the predicted set's state and the local seat's input for a client tick.
+        ///
+        /// Called once per client Sim tick, after the predicted movement has run: captures every
+        /// tracked entity's replicated state alongside the local input seat's resolved PlayerInput for
+        /// @p tick, so a later reconciliation can restore and replay. A no-op before any pawn is
+        /// promoted (an empty tracked set) or before the world loads.
+        /// @param tick  The client sim tick whose predicted state and input are recorded.
+        void RecordPrediction(u64 tick);
 
         /// @brief Whether the level has loaded and readiness has been acked.
         [[nodiscard]] bool IsJoined() const;

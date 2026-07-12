@@ -325,6 +325,7 @@ namespace Veng
             },
             .OnPossession = [this](Scene& world, const Entity pawn)
             { OnClientPossession(world, pawn); },
+            .Prediction = net.PredictionPolicy,
         });
 
         Log::Info("Joining {}:{}", target.Host, port);
@@ -1041,7 +1042,11 @@ namespace Veng
                     BuildSystemContext(*scene, pointer, tick, 0.0f, tickIndex == 0));
                 if (netWorld && m_Net->Role == NetRole::Client)
                 {
+                    // The Sim phase just ran control + movement for the Predicted set (the authority
+                    // filter answers true for it client-side); stamp the seat input to send, then
+                    // record this tick's input and predicted state for reconciliation.
                     StampClientInput(tick);
+                    m_Net->ClientHost->RecordPrediction(tick);
                 }
             }
 

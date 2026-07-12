@@ -17,6 +17,7 @@
 #include <Veng/Renderer/SwapChainCompositePass.h>
 #include <Veng/ImGui/ImGuiLayer.h>
 #include <Veng/Gui/GuiConsumer.h>
+#include <Veng/Net/PredictionHistory.h>
 #include <Veng/Task/TaskSystem.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/Scene.h>
@@ -154,6 +155,13 @@ namespace Veng
         u32 SnapshotIntervalTicks = 2;
         /// @brief How many recent input ticks each client input packet carries redundantly (the loss window).
         u32 InputRedundancyTicks = 3;
+        /// @brief Client policy selecting the predicted entity set on a possession change; null uses the default.
+        ///
+        /// The engine passes it to the mounted ClientHost, which promotes this set to Tier::Predicted
+        /// and re-runs the real Sim systems for it client-side each tick. Unset uses the
+        /// owner-pawn-subtree default (the pawn plus its replicated attachments); a game widens it (a
+        /// driven vehicle) or narrows it here. Inert off a client.
+        PredictionPolicy PredictionPolicy;
     };
 
     /// @brief Construction parameters for Application.

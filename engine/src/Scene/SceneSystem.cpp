@@ -17,6 +17,11 @@ namespace Veng
         case Tier::Remote:
             // A remote mirror is never simulated — the interpolation system displays it.
             return false;
+        case Tier::Predicted:
+            // A client owns its predicted set: it re-runs the real Sim systems for these entities
+            // each client tick, ahead of the authoritative snapshot. Only a client ever holds the
+            // stance, so a predicted entity always simulates locally.
+            return true;
         case Tier::Server:
             // Server-authoritative state advances only on the peer that owns it.
             return context.Role == NetRole::Server;

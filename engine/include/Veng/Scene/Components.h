@@ -478,10 +478,12 @@ namespace Veng
 
     /// @brief Who simulates and owns an entity: the ownership tier of an Authority.
     ///
-    /// Integer values are stable — persisted in prefabs. Server and Local are the two
-    /// authored tiers; Remote is the client-side marking a replicated entity carries once
-    /// it arrives from the wire. A net layer that introduces predicted ownership extends the
-    /// enum further; the tiers here commit to no prediction strategy.
+    /// Integer values are stable — persisted in prefabs. Server and Local are the two authored tiers;
+    /// Remote and Predicted are runtime client-side stances a replicated entity carries. Remote is the
+    /// marking every replicated entity arrives from the wire with; Predicted is the promotion the
+    /// client applies to the entities its own seat controls, so it re-runs the real Sim systems for
+    /// them locally. Only Server and Local are ever authored or persisted; Remote and Predicted are
+    /// each peer's stance toward an entity, never replicated.
     enum class Tier : u32
     {
         /// @brief Server-authoritative: the replicated, deterministic owner.
@@ -494,6 +496,16 @@ namespace Veng
         /// stream. A Remote entity's state is server truth applied latest-wins; its Transform is
         /// presentation written by the View-phase remote-interpolation system, never authoritative.
         Remote = 2,
+        /// @brief Client-side prediction stance over a server-owned entity the local seat controls.
+        ///
+        /// The client promotes the entities its own seat controls (its pawn and any attached subtree
+        /// carrying replicated state) from Remote to Predicted, then re-runs the real Sim systems
+        /// (control + movement) for them each client tick ahead of the server — so the local pawn
+        /// responds on the tick its input is sampled. It is a client-side-only stance: a server never
+        /// holds it, it is never replicated (tier is each peer's stance, not wire state), never
+        /// authored (prefab/level data carries Server/Local only), and never persisted by the
+        /// serializer. The authoritative snapshot corrects its accumulated prediction error.
+        Predicted = 3,
     };
 
     /// @brief Ownership annotation marking who simulates an entity, ahead of the net layer.
@@ -970,6 +982,7 @@ VE_ENUM(::Veng::Tier, 0x45470D3410320AB9ULL)
 VE_ENUMERATOR(Server)
 VE_ENUMERATOR(Local)
 VE_ENUMERATOR(Remote)
+VE_ENUMERATOR(Predicted)
 VE_ENUM_END();
 
 VE_REFLECT(::Veng::Authority, 0xA934C4B9009D7735ULL)

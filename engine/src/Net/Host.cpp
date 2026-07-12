@@ -1,6 +1,7 @@
 #include <Veng/Net/Host.h>
 
 #include <Veng/Asset/Prefab.h>
+#include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
@@ -13,6 +14,71 @@ namespace Veng
 {
     namespace
     {
+        // The default prediction policy: the pawn plus every descendant in its Hierarchy subtree that
+        // carries replicated state. A purely client-local (view) child carries none, so it is left as
+        // it is — only the pawn and the replicated attachments it drags along are predicted.
+        vector<Entity> DefaultPredictionSet(const Scene& scene, const Entity pawn)
+        {
+            vector<Entity> set;
+            if (pawn.IsNull() || !scene.IsAlive(pawn))
+            {
+                return set;
+            }
+
+            vector<TypeId> replicated;
+            for (const auto& [id, info] : scene.GetTypeRegistry().All())
+            {
+                if (info.Replicated)
+                {
+                    replicated.push_back(id);
+                }
+            }
+            const auto carriesReplicated = [&](const Entity entity)
+            {
+                for (const TypeId id : replicated)
+                {
+                    if (scene.TryGetComponent(entity, id) != nullptr)
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            };
+
+            // The pawn always predicts; a descendant joins only when it carries replicated state.
+            set.push_back(pawn);
+            vector<Entity> stack;
+            scene.ForEachChild(pawn, [&](const Entity child) { stack.push_back(child); });
+            while (!stack.empty())
+            {
+                const Entity entity = stack.back();
+                stack.pop_back();
+                if (scene.IsAlive(entity) && carriesReplicated(entity))
+                {
+                    set.push_back(entity);
+                }
+                scene.ForEachChild(entity, [&](const Entity child) { stack.push_back(child); });
+            }
+            return set;
+        }
+
+        // The local input seat's resolved input — the first (SeatInput, PlayerInput) entity, the one
+        // InputMappingSystem fills from local devices (the StampLocalSeatInput seat). Null when the
+        // client carries no local input seat (a spectator).
+        const PlayerInput* FindLocalSeatInput(const Scene& scene)
+        {
+            const PlayerInput* found = nullptr;
+            scene.Each<SeatInput, PlayerInput>(
+                [&](const Entity, const SeatInput&, const PlayerInput& input)
+                {
+                    if (found == nullptr)
+                    {
+                        found = &input;
+                    }
+                });
+            return found;
+        }
+
         // The client→server readiness message: a single-byte reliable frame the Server surfaces as an
         // app reliable message (its id sits clear of the ControlMessageType 1–4 and the replication
         // Spawn/Despawn 16/17 ranges, so no layer mistakes it for its own).
@@ -245,6 +311,7 @@ namespace Veng
         AssetManager* Assets = nullptr;
         function<Unique<Scene>(AssetId)> LoadLevel;
         function<void(Scene&, Entity)> OnPossession;
+        PredictionPolicy Policy;
         Unique<ReplicationClient> Replication;
 
         Unique<Scene> World;
@@ -252,6 +319,11 @@ namespace Veng
         Entity Seat = Entity::Null;
         Entity WiredPawn = Entity::Null;
         bool Joined = false;
+
+        // The client-side prediction ring and the entities currently promoted to Tier::Predicted (the
+        // possessed pawn plus the policy's subtree). The set is swapped on every possession change.
+        Net::PredictionHistory History;
+        vector<Entity> Predicted;
 
         // The tick-offset controller: the freshest server tick a snapshot carried and the estimator
         // that folds it (with the connection's RTT) into the client's target lead. Inert this plan —
@@ -290,10 +362,54 @@ namespace Veng
             {
                 return;
             }
+            Repredict(pawn);
             WiredPawn = pawn;
             if (OnPossession)
             {
                 OnPossession(*World, pawn);
+            }
+        }
+
+        // Swaps the predicted set on a possession change: demote the current set back to Remote
+        // (interpolated) and stop tracking it, then promote the pawn's new set to Predicted and track
+        // it. The recorded history is dropped — its captures reference the superseded set.
+        void Repredict(const Entity pawn)
+        {
+            History.Clear();
+            for (const Entity entity : Predicted)
+            {
+                if (World->IsAlive(entity))
+                {
+                    if (Authority* authority = World->TryGet<Authority>(entity);
+                        authority != nullptr && authority->Tier == Tier::Predicted)
+                    {
+                        authority->Tier = Tier::Remote;
+                    }
+                }
+                History.Untrack(entity);
+            }
+            Predicted.clear();
+
+            if (pawn.IsNull() || !World->IsAlive(pawn))
+            {
+                return;
+            }
+            Predicted = Policy ? Policy(*World, pawn) : DefaultPredictionSet(*World, pawn);
+            for (const Entity entity : Predicted)
+            {
+                if (!World->IsAlive(entity))
+                {
+                    continue;
+                }
+                if (World->Has<Authority>(entity))
+                {
+                    World->Get<Authority>(entity).Tier = Tier::Predicted;
+                }
+                else
+                {
+                    World->Add<Authority>(entity, Authority{.Tier = Tier::Predicted});
+                }
+                History.Track(entity);
             }
         }
     };
@@ -309,6 +425,7 @@ namespace Veng
         state->Assets = &info.Assets;
         state->LoadLevel = info.LoadLevel;
         state->OnPossession = info.OnPossession;
+        state->Policy = info.Prediction;
         state->Replication = CreateUnique<ReplicationClient>(info.ResolvePrefab);
         return Unique<ClientHost>(new ClientHost(std::move(state)));
     }
@@ -375,6 +492,29 @@ namespace Veng
     Entity ClientHost::PossessedPawn() const
     {
         return m_State->WiredPawn;
+    }
+
+    Net::PredictionHistory& ClientHost::History()
+    {
+        return m_State->History;
+    }
+
+    const Net::PredictionHistory& ClientHost::History() const
+    {
+        return m_State->History;
+    }
+
+    void ClientHost::RecordPrediction(const u64 tick)
+    {
+        State& s = *m_State;
+        if (!s.World || s.History.Tracked().empty())
+        {
+            return;
+        }
+        // Record the local input seat's resolved input — the same snapshot StampLocalSeatInput sends —
+        // alongside the predicted set's post-movement state, so a replay re-runs the server's input.
+        const PlayerInput* input = FindLocalSeatInput(*s.World);
+        s.History.Record(tick, input != nullptr ? *input : PlayerInput{}, *s.World);
     }
 
     bool ClientHost::IsJoined() const

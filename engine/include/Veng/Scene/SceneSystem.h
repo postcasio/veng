@@ -264,12 +264,14 @@ namespace Veng
     /// The authority filter the builtin Sim systems that advance Authority::Server state
     /// (MovementSystem, the motion systems) consult before touching an entity: a Server-tier entity is
     /// simulated only by a Server-role peer, a Local-tier entity is always simulated locally (a
-    /// client-local view/UI entity), and a Remote-tier entity is never simulated (it is the client-side
-    /// mirror the interpolation system displays). An entity with no Authority component defaults to
-    /// Server-tier. On a standalone or server peer (Role::Server) every Server-tier entity passes, so
-    /// single-player behaviour is unchanged; on a client the peer skips Server/Remote-tier entities so
-    /// its Sim phase never fights the snapshot stream, while an AI or server-authoritative Intent
-    /// producer still advances the state it owns.
+    /// client-local view/UI entity), a Remote-tier entity is never simulated (it is the client-side
+    /// mirror the interpolation system displays), and a Predicted-tier entity is always simulated
+    /// locally (the client-side prediction stance over an entity its own seat controls, re-run each
+    /// client tick ahead of the server). An entity with no Authority component defaults to Server-tier.
+    /// On a standalone or server peer (Role::Server) every Server-tier entity passes, so single-player
+    /// behaviour is unchanged; on a client the peer skips Server/Remote-tier entities so its Sim phase
+    /// never fights the snapshot stream, runs its Predicted set, and still lets an AI or
+    /// server-authoritative Intent producer advance the state it owns.
     /// @param context  The per-tick services carrying this peer's NetRole.
     /// @param scene    The scene @p entity lives in.
     /// @param entity   The entity whose simulation authority is queried (must be alive).

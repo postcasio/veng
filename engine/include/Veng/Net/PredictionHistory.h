@@ -24,6 +24,18 @@ namespace Veng
 {
     class Scene;
 
+    /// @brief Selects the client-side predicted entity set for a possessed pawn.
+    ///
+    /// The game policy hook the client's promotion consults on a possession change: given the pawn the
+    /// local seat now controls, it returns the entities to promote to Tier::Predicted and track in the
+    /// PredictionHistory (the prior set is demoted back to Remote and untracked). Unset falls back to
+    /// the engine default — the pawn plus every descendant in its Hierarchy subtree that carries
+    /// replicated state — which a game widens (a driven vehicle) or narrows through this hook.
+    /// @param scene  The client scene the pawn and its subtree live in.
+    /// @param pawn   The pawn the local seat now possesses (never null when invoked).
+    /// @return The entities to predict; the pawn should generally be among them.
+    using PredictionPolicy = function<vector<Entity>(const Scene& scene, Entity pawn)>;
+
     namespace Net
     {
         /// @brief One recorded seat input keyed by the client tick it was sampled on — the replay source.

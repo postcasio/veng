@@ -7,6 +7,17 @@
 
 namespace Veng
 {
+    namespace
+    {
+        // A predicted entity is simulated locally, not interpolated — the interpolation system skips
+        // it so a buffered past sample never overwrites the live, client-driven pose.
+        bool IsPredicted(const Scene& scene, const Entity entity)
+        {
+            const Authority* authority = scene.TryGet<Authority>(entity);
+            return authority != nullptr && authority->Tier == Tier::Predicted;
+        }
+    }
+
     optional<Transform> SampleRemoteInterpolation(const std::span<const RemoteSample> samples,
                                                   const f64 renderTick)
     {
@@ -60,7 +71,10 @@ namespace Veng
         bool anySamples = false;
         for (auto [entity, interp] : scene.View<const RemoteInterpolation>())
         {
-            (void)entity;
+            if (IsPredicted(scene, entity))
+            {
+                continue;
+            }
             if (!interp.Samples.empty())
             {
                 anySamples = true;
@@ -102,8 +116,13 @@ namespace Veng
         const f64 renderTick = m_PlaybackTick;
 
         scene.Each<Transform, RemoteInterpolation>(
-            [renderTick](const Entity, Transform& transform, RemoteInterpolation& interp)
+            [&scene, renderTick](const Entity entity, Transform& transform,
+                                 RemoteInterpolation& interp)
             {
+                if (IsPredicted(scene, entity))
+                {
+                    return;
+                }
                 const optional<Transform> pose =
                     SampleRemoteInterpolation(interp.Samples, renderTick);
                 if (pose.has_value())

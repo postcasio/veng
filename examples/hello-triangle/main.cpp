@@ -403,10 +403,16 @@ protected:
     void OnClientPossession(Scene& world, const Entity pawn) override
     {
         // The own presentation seat is the local input seat (the one carrying SeatInput — the
-        // replicated own seat mirror has none). Aim its follow camera at the newly possessed pawn.
+        // replicated own seat mirror has none). Point its Possesses at the newly possessed pawn so the
+        // ControlSystem drives that pawn's Intent, and aim its follow camera at it. The client has
+        // promoted the pawn to Tier::Predicted, so movement then runs for it on the input tick.
         world.Each<Viewer, SeatInput>(
-            [&](Entity, const Viewer& viewer, const SeatInput&)
+            [&](const Entity seat, const Viewer& viewer, const SeatInput&)
             {
+                if (world.Has<Possesses>(seat))
+                {
+                    world.Get<Possesses>(seat).Pawn = pawn;
+                }
                 if (!viewer.Camera.IsNull() && world.IsAlive(viewer.Camera) &&
                     world.Has<CameraFollow>(viewer.Camera))
                 {

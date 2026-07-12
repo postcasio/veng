@@ -796,10 +796,17 @@ namespace Veng
             const Entity entity = m_Map.Lookup(*netId);
             const bool known = !entity.IsNull() && scene.IsAlive(entity);
 
+            // A predicted entity is simulated locally, so its authoritative Transform applies
+            // latest-wins over the live pose (the correction target), not into the interpolation
+            // buffer a remote mirror fills. This is a bounded periodic snap toward server truth — the
+            // whole-history restore-and-replay correction rides the recorded PredictionHistory.
+            const Authority* authority = known ? scene.TryGet<Authority>(entity) : nullptr;
+            const bool predicted = authority != nullptr && authority->Tier == Tier::Predicted;
+
             bool applied = false;
             bool truncated = false;
             ApplyComponentRecords(packet, cursor, *componentCount, scene, entity, known, registry,
-                                  decodeRef, /*bufferTransform=*/true, *serverTick, applied,
+                                  decodeRef, /*bufferTransform=*/!predicted, *serverTick, applied,
                                   truncated);
 
             if (!known)
