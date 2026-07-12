@@ -96,12 +96,6 @@ namespace Veng::Renderer
                    a.SunAngularRadius == b.SunAngularRadius && a.SunIrradiance == b.SunIrradiance;
         }
 
-        // The additive forward emissive pass shaders: the dedicated vertex stage forwarding
-        // the per-draw emissive color + texture handles, and the fragment writing only the
-        // additive emissive term into the lit HDR target.
-        constexpr AssetId EmissiveVertId{0x68AD195790159A7EULL};
-        constexpr AssetId EmissiveFragId{0xCACE958766BA4826ULL};
-        constexpr AssetId EmissiveSkinnedVertId{0x2D4350C5F6CFC608ULL};
         constexpr AssetId SsaoFragId{0xCCBA63DB760A4E8EULL};
         constexpr AssetId TonemapInstanceId{0xB5AA7227E8A2DC11ULL};
         constexpr AssetId AlbedoBlitFragId{0xF90F709155D04BE7ULL};
@@ -338,15 +332,10 @@ namespace Veng::Renderer
             u32 PrevPaletteBase;
             u32 EntityIndex; // packed Entity slot index; the picking fragment writes index + 1
             mat4 PrevWorld;
-            vec4 EmissiveColor;  // rgb additive emissive term; the emissive forward pass reads it
-            u32 EmissiveTexture; // emissive texture bindless handle (0 = flat color, no texture)
-            u32 EmissiveSampler; // emissive sampler bindless handle
-            u32 EmissivePad0;
-            u32 EmissivePad1;
         };
 
-        static_assert(sizeof(GpuDrawData) == 224,
-                      "GpuDrawData must match the shader DrawData (224 bytes)");
+        static_assert(sizeof(GpuDrawData) == 192,
+                      "GpuDrawData must match the shader DrawData (192 bytes)");
 
         // One uploaded camera-frustum survivor; std430-identical to the cull shader's
         // CullCandidate: world AABB plus the indexed-draw args its command needs.
@@ -951,166 +940,6 @@ namespace Veng::Renderer
             ResourceId m_DepthId;
         };
 
-        // The additive forward emissive pass. Re-rasterizes the same camera-frustum survivors the
-        // g-buffer pass drew, through the surface vertex layout + a minimal emissive fragment, into
-        // the lit HDR target with additive blending (LoadOp::Load) and the g-buffer depth bound
-        // read-only for occlusion. Emissive is a lighting-independent output addend, so a draw whose
-        // emissive color is zero contributes nothing under the blend — non-emitters cost only the
-        // rasterization. The emissive pipelines are built lazily from the shared surface material's
-        // layout, so the pass reads them through pointers to the renderer's member Refs at record time.
-        class EmissiveScenePass final : public ScenePass
-        {
-        public:
-            // colorLoad is LoadOp::Load for the Final arm (add onto the lit scene color) and
-            // LoadOp::Clear for the Emissive debug arm (the emissive contribution alone, into a
-            // cleared target the terminal blit shows).
-            EmissiveScenePass(Context& context, uvec2 extent, const GBufferDrawPlan* plan,
-                              const Ref<GraphicsPipeline>* staticPipeline,
-                              const Ref<GraphicsPipeline>* skinnedPipeline, ResourceId targetId,
-                              ResourceId depthId, LoadOp colorLoad = LoadOp::Load)
-                : m_Context(context), m_Extent(extent), m_Plan(plan),
-                  m_StaticPipeline(staticPipeline), m_SkinnedPipeline(skinnedPipeline),
-                  m_TargetId(targetId), m_DepthId(depthId), m_ColorLoad(colorLoad)
-            {
-            }
-
-            void Resize(const uvec2 extent) override { m_Extent = extent; }
-
-            void Declare(RenderGraph& graph, const PassIO& /*io*/) override
-            {
-                RenderGraph::PassBuilder builder = graph.AddPass("Scene Emissive");
-                builder
-                    .Color({
-                        // Add into the lit scene color (additive blend on the pipeline), or a
-                        // cleared target for the debug arm.
-                        .Resource = m_TargetId,
-                        .Load = m_ColorLoad,
-                        .Store = StoreOp::Store,
-                        .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
-                    })
-                    .Depth({
-                        // The g-buffer depth bound read-only (the pipeline disables depth writes):
-                        // emitters depth-test against the resolved scene so they occlude correctly.
-                        .Resource = m_DepthId,
-                        .Load = LoadOp::Load,
-                        .Store = StoreOp::Store,
-                    });
-                builder.Execute([this](PassContext& inner) { Record(Wrap(inner)); });
-            }
-
-        private:
-            void Record(const ScenePassContext& ctx) const
-            {
-                CommandBuffer& cmd = ctx.Cmd();
-                const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
-                const GBufferDrawPlan& plan = *m_Plan;
-
-                const uvec2 renderExtent = ctx.View().RenderExtent;
-                cmd.SetViewport({0, 0}, renderExtent);
-                cmd.SetScissor({0, 0}, renderExtent);
-
-                const Ref<GraphicsPipeline>& staticPipeline = *m_StaticPipeline;
-                const Ref<GraphicsPipeline>& skinnedPipeline = *m_SkinnedPipeline;
-
-                if (plan.Slots.empty() && plan.SkinnedSlots.empty())
-                {
-                    return;
-                }
-                if (!plan.Slots.empty() || !plan.SkinnedSlots.empty())
-                {
-                    cmd.GetNative().CommandBuffer.bindVertexBuffers(
-                        1, GetVkBuffer(*plan.CandidateIdBuffer), {0});
-                }
-
-                // The static survivors through the static emissive pipeline. The emissive color +
-                // texture handles ride each draw's DrawData record (uploaded by the renderer from
-                // the material), so one shared pipeline serves every material.
-                if (!plan.Slots.empty() && staticPipeline)
-                {
-                    cmd.BindPipeline(staticPipeline);
-                    registry.Bind(cmd);
-                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
-                        .Sets = {plan.DrawDataSet},
-                        .FirstSet = 1,
-                        .PipelineBindPoint = PipelineBindPoint::Graphics,
-                    });
-                    cmd.PushConstants(plan.Push);
-
-                    const Mesh* lastBound = nullptr;
-                    for (const DrawGroup& group : plan.Groups)
-                    {
-                        if (lastBound != group.SourceMesh)
-                        {
-                            cmd.BindVertexBuffer(group.SourceMesh->GetVertexBuffer());
-                            cmd.BindIndexBuffer(group.SourceMesh->GetIndexBuffer());
-                            lastBound = group.SourceMesh;
-                        }
-                        if (plan.Cull == SceneRendererSettings::CullMode::GPU)
-                        {
-                            const u64 offset =
-                                plan.IndirectRegionOffset + static_cast<u64>(group.FirstSlot) *
-                                                                sizeof(DrawIndexedIndirectCommand);
-                            cmd.DrawIndexedIndirect(plan.IndirectBuffer, offset, group.SlotCount,
-                                                    sizeof(DrawIndexedIndirectCommand));
-                        }
-                        else
-                        {
-                            for (u32 s = 0; s < group.SlotCount; ++s)
-                            {
-                                const DrawSlot& slot = plan.Slots[group.FirstSlot + s];
-                                cmd.DrawIndexed(slot.IndexCount, 1, slot.FirstIndex,
-                                                slot.VertexOffset, slot.CandidateId);
-                            }
-                        }
-                    }
-                }
-
-                // The skinned survivors through the skinned emissive pipeline + the palette set (set 2).
-                if (!plan.SkinnedSlots.empty() && skinnedPipeline)
-                {
-                    cmd.BindPipeline(skinnedPipeline);
-                    registry.Bind(cmd);
-                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
-                        .Sets = {plan.DrawDataSet},
-                        .FirstSet = 1,
-                        .PipelineBindPoint = PipelineBindPoint::Graphics,
-                    });
-                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
-                        .Sets = {plan.PaletteSet},
-                        .FirstSet = 2,
-                        .PipelineBindPoint = PipelineBindPoint::Graphics,
-                    });
-                    cmd.PushConstants(plan.Push);
-
-                    const Mesh* lastBound = nullptr;
-                    for (const DrawGroup& group : plan.SkinnedGroups)
-                    {
-                        if (lastBound != group.SourceMesh)
-                        {
-                            cmd.BindVertexBuffer(group.SourceMesh->GetVertexBuffer());
-                            cmd.BindIndexBuffer(group.SourceMesh->GetIndexBuffer());
-                            lastBound = group.SourceMesh;
-                        }
-                        for (u32 s = 0; s < group.SlotCount; ++s)
-                        {
-                            const DrawSlot& slot = plan.SkinnedSlots[group.FirstSlot + s];
-                            cmd.DrawIndexed(slot.IndexCount, 1, slot.FirstIndex, slot.VertexOffset,
-                                            slot.CandidateId);
-                        }
-                    }
-                }
-            }
-
-            Context& m_Context;
-            uvec2 m_Extent;
-            const GBufferDrawPlan* m_Plan = nullptr;
-            const Ref<GraphicsPipeline>* m_StaticPipeline = nullptr;
-            const Ref<GraphicsPipeline>* m_SkinnedPipeline = nullptr;
-            ResourceId m_TargetId;
-            ResourceId m_DepthId;
-            LoadOp m_ColorLoad = LoadOp::Load;
-        };
-
         // The forward translucent pass. Draws the gathered translucent submeshes back-to-front into
         // the lit HDR scene-color target after deferred lighting and the sky composite and before
         // the bloom/tonemap tail, so translucents bloom and tonemap with the scene. Depth-TESTs
@@ -1614,7 +1443,7 @@ namespace Veng::Renderer
                 case Source::Reflections:
                     return io.SsrReflection;
                 case Source::Emissive:
-                    return io.Hdr;
+                    return io.GBufferEmissive;
                 }
                 VE_ASSERT(false, "FullscreenBlitScenePass: unmapped Source");
             }
@@ -1638,7 +1467,7 @@ namespace Veng::Renderer
                 case Source::Reflections:
                     return io.SsrReflectionHandle;
                 case Source::Emissive:
-                    return io.HdrHandle;
+                    return io.EmissiveHandle;
                 }
                 VE_ASSERT(false, "FullscreenBlitScenePass: unmapped Source");
             }
@@ -2891,81 +2720,6 @@ namespace Veng::Renderer
         }
     }
 
-    void SceneRenderer::EnsureEmissivePipelines(const MaterialInstance* staticMaterial,
-                                                const MaterialInstance* skinnedMaterial)
-    {
-        if (!m_Settings.Emissive && m_Settings.Mode != DebugView::Emissive)
-        {
-            return;
-        }
-
-        // The emissive variants reuse the surface material's pipeline layout (set 0 bindless + set 1
-        // DrawData [+ set 2 palette for skinned]) so the pass binds the same per-draw DrawData the
-        // geometry pass does; the emissive color + texture handles ride that DrawData. They target
-        // the HDR target with additive blend and a read-only depth test (no depth write), so emitters
-        // occlude correctly without disturbing the depth the rest of the tail reads. The layout is
-        // identical across all surface materials, so the first available one builds the cached pipeline.
-        auto LoadShader = [this](const AssetId id, const char* what) -> AssetHandle<Veng::Shader>
-        {
-            const AssetResult<AssetHandle<Veng::Shader>> result =
-                m_Assets.LoadSync<Veng::Shader>(id);
-            VE_ASSERT(result.has_value(), "SceneRenderer: {} shader load failed: {}", what,
-                      result.has_value() ? "" : result.error().Detail);
-            return *result;
-        };
-
-        if (!m_EmissivePipeline && staticMaterial != nullptr)
-        {
-            const AssetHandle<Veng::Shader> vs = LoadShader(EmissiveVertId, "emissive vertex");
-            const AssetHandle<Veng::Shader> fs = LoadShader(EmissiveFragId, "emissive fragment");
-            m_EmissivePipeline = GraphicsPipeline::Create(
-                m_Context,
-                {
-                    .Name = "SceneRenderer Emissive Pipeline",
-                    .ColorAttachments = {{.Format = HdrFormat, .Blend = BlendState::Additive()}},
-                    .DepthAttachmentFormat = GBuffer::DepthFormat,
-                    .VertexBufferLayout = Mesh::CanonicalLayout(),
-                    .InstanceCandidateId = true,
-                    .PipelineLayout = staticMaterial->GetPipelineLayout(),
-                    .ShaderStages =
-                        {
-                            {.Stage = ShaderStage::Vertex, .Module = vs.Get()->Module},
-                            {.Stage = ShaderStage::Fragment, .Module = fs.Get()->Module},
-                        },
-                    .CullMode = CullMode::Back,
-                    .DepthTestEnable = true,
-                    .DepthWriteEnable = false,
-                    .DepthCompareOp = CompareOp::LessOrEqual,
-                });
-        }
-
-        if (!m_EmissiveSkinnedPipeline && skinnedMaterial != nullptr)
-        {
-            const AssetHandle<Veng::Shader> vs =
-                LoadShader(EmissiveSkinnedVertId, "emissive skinned vertex");
-            const AssetHandle<Veng::Shader> fs = LoadShader(EmissiveFragId, "emissive fragment");
-            m_EmissiveSkinnedPipeline = GraphicsPipeline::Create(
-                m_Context,
-                {
-                    .Name = "SceneRenderer Emissive Skinned Pipeline",
-                    .ColorAttachments = {{.Format = HdrFormat, .Blend = BlendState::Additive()}},
-                    .DepthAttachmentFormat = GBuffer::DepthFormat,
-                    .VertexBufferLayout = Mesh::SkinnedLayout(),
-                    .InstanceCandidateId = true,
-                    .PipelineLayout = skinnedMaterial->GetPipelineLayout(),
-                    .ShaderStages =
-                        {
-                            {.Stage = ShaderStage::Vertex, .Module = vs.Get()->Module},
-                            {.Stage = ShaderStage::Fragment, .Module = fs.Get()->Module},
-                        },
-                    .CullMode = CullMode::Back,
-                    .DepthTestEnable = true,
-                    .DepthWriteEnable = false,
-                    .DepthCompareOp = CompareOp::LessOrEqual,
-                });
-        }
-    }
-
     void SceneRenderer::CreateGBuffer()
     {
         // Renderer-owned and Imported (not a graph transient — sampled downstream through bindless).
@@ -3834,8 +3588,9 @@ namespace Veng::Renderer
         const bool debugPunctual = m_Settings.Mode == DebugView::PunctualShadows;
 
         // The Final view and the Bloom debug arm both composite the full scene before the bloom
-        // tail, so both fold in the same contributors (shadows, SSAO, sky, emissive) gated on their
-        // own toggles — the Bloom pyramid then blooms the same HDR the Final view would.
+        // tail, so both fold in the same contributors (shadows, SSAO, sky — plus the g-buffer
+        // emissive channel the lighting pass adds) — the Bloom pyramid then blooms the same HDR the
+        // Final view would.
         const bool sceneComposited = m_Settings.Mode == DebugView::Final || debugBloom;
 
         const bool shadowActive =
@@ -4112,18 +3867,8 @@ namespace Veng::Renderer
                 m_Passes.push_back(std::move(skyMaterialPass));
             }
 
-            // Emissive adds each surface's RGB emissive term into the lit scene color, after the
-            // sky composites and before the TAA/bloom tail, so the emission resolves and blooms with
-            // the scene. Re-rasterizes the gathered survivors with additive blend + read-only depth.
-            if (m_Settings.Emissive)
-            {
-                m_Passes.push_back(CreateUnique<EmissiveScenePass>(
-                    m_Context, m_Extent, &m_Internal->Plan, &m_EmissivePipeline,
-                    &m_EmissiveSkinnedPipeline, lightingTargetId, depthId));
-            }
-
             // SceneColor-placed point fields accumulate into the lit scene color here — after the
-            // sky and emissive composites, ahead of the refraction copy and the translucent pass —
+            // sky composite, ahead of the refraction copy and the translucent pass —
             // so translucents blend over the fields and a refractive material's grab includes them.
             // The in-list io.Hdr is exactly the lit target this position writes.
             if (m_ScenePointFieldActive)
@@ -4136,8 +3881,8 @@ namespace Veng::Renderer
                 m_Passes.push_back(std::move(scenePointFields));
             }
 
-            // Forward translucent draws alpha-blend into the lit scene color after the sky and
-            // emissive composites and before the TAA/bloom/tonemap tail, so translucents resolve,
+            // Forward translucent draws alpha-blend into the lit scene color after the sky
+            // composite and before the TAA/bloom/tonemap tail, so translucents resolve,
             // bloom, and tonemap with the scene. Depth-tested against the opaque depth, depth-write
             // off, sorted back-to-front. Additive to the pipeline: no toggle — a scene with no
             // translucent submesh records an empty pass. With Refraction on, the copy pass grabs
@@ -4269,9 +4014,10 @@ namespace Veng::Renderer
             break;
         case DebugView::Bloom:
             // Bloom samples the composited HDR, so the same contributors the Final arm folds into it
-            // run first — lighting, then the sky/atmosphere/emissive composites (each gated on its
-            // own toggle, writing the lit target before the tail) — so the pyramid blooms the scene
-            // the Final view blooms. The force-wired bloom sweep (DeclareBloom, after the last pass)
+            // run first — lighting (which adds the g-buffer emissive channel), then the
+            // sky/atmosphere composites (each gated on its own toggle, writing the lit target before
+            // the tail) — so the pyramid blooms the scene the Final view blooms. The force-wired
+            // bloom sweep (DeclareBloom, after the last pass)
             // writes the pyramid, and the terminal blit shows mip 0 after the up-sweep — the
             // accumulated bloom before composite.
             m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
@@ -4297,12 +4043,6 @@ namespace Veng::Renderer
                     m_Extent);
                 m_SkyMaterialPass = skyMaterialPass.get();
                 m_Passes.push_back(std::move(skyMaterialPass));
-            }
-            if (m_Settings.Emissive)
-            {
-                m_Passes.push_back(CreateUnique<EmissiveScenePass>(
-                    m_Context, m_Extent, &m_Internal->Plan, &m_EmissivePipeline,
-                    &m_EmissiveSkinnedPipeline, lightingTargetId, depthId));
             }
             // The same forward translucent composite the Final arm folds into the lit target, so
             // the pyramid blooms the scene the Final view blooms — including the refraction grab.
@@ -4338,12 +4078,8 @@ namespace Veng::Renderer
                 FullscreenBlitScenePass::Source::Reflections));
             break;
         case DebugView::Emissive:
-            // The emissive pass into a cleared HDR target (no lighting), so the blit shows the
-            // additive emissive contribution alone — the channel inspectable like every other.
-            // The g-buffer pass (always wired) wrote the depth the emissive pass tests against.
-            m_Passes.push_back(CreateUnique<EmissiveScenePass>(
-                m_Context, m_Extent, &m_Internal->Plan, &m_EmissivePipeline,
-                &m_EmissiveSkinnedPipeline, hdrId, depthId, LoadOp::Clear));
+            // The g-buffer pass writes the emissive channel (G4); this blit shows the authored
+            // emissive contribution alone, the channel inspectable like every other g-buffer arm.
             m_Passes.push_back(
                 CreateUnique<FullscreenBlitScenePass>(m_Context, m_AlbedoBlitPipeline, m_Extent,
                                                       FullscreenBlitScenePass::Source::Emissive));
@@ -5299,7 +5035,6 @@ namespace Veng::Renderer
                     prevWorld = it->second;
                 }
             }
-            const MaterialInstance::EmissiveParams emissive = material.GetEmissive();
             drawData[frameBase + slot] = GpuDrawData{
                 .World = item.World,
                 .NormalColumn0 = vec4(normalMatrix[0], 0.0f),
@@ -5308,9 +5043,6 @@ namespace Veng::Renderer
                 .MaterialIndex = material.GetMaterialSelector(),
                 .EntityIndex = item.Owner.Index,
                 .PrevWorld = prevWorld,
-                .EmissiveColor = vec4(emissive.Color, 0.0f),
-                .EmissiveTexture = emissive.Texture,
-                .EmissiveSampler = emissive.Sampler,
             };
 
             if (cullData != nullptr)
@@ -5434,7 +5166,6 @@ namespace Veng::Renderer
             }
 
             const mat3 normalMatrix = glm::inverseTranspose(mat3(item.World));
-            const MaterialInstance::EmissiveParams emissive = material.GetEmissive();
             drawData[frameBase + slot] = GpuDrawData{
                 .World = item.World,
                 .NormalColumn0 = vec4(normalMatrix[0], 0.0f),
@@ -5445,9 +5176,6 @@ namespace Veng::Renderer
                 .PrevPaletteBase = prevPaletteBase,
                 .EntityIndex = item.Owner.Index,
                 .PrevWorld = prevWorld,
-                .EmissiveColor = vec4(emissive.Color, 0.0f),
-                .EmissiveTexture = emissive.Texture,
-                .EmissiveSampler = emissive.Sampler,
             };
 
             plan.SkinnedSlots.push_back(DrawSlot{
@@ -5511,7 +5239,6 @@ namespace Veng::Renderer
                     prevWorld = it->second;
                 }
             }
-            const MaterialInstance::EmissiveParams emissive = material.GetEmissive();
             drawData[frameBase + slot] = GpuDrawData{
                 .World = item.World,
                 .NormalColumn0 = vec4(normalMatrix[0], 0.0f),
@@ -5520,9 +5247,6 @@ namespace Veng::Renderer
                 .MaterialIndex = material.GetMaterialSelector(),
                 .EntityIndex = item.Owner.Index,
                 .PrevWorld = prevWorld,
-                .EmissiveColor = vec4(emissive.Color, 0.0f),
-                .EmissiveTexture = emissive.Texture,
-                .EmissiveSampler = emissive.Sampler,
             };
 
             // Sort key: the submesh center in view space. The camera looks down -Z, so a farther
@@ -6119,12 +5843,6 @@ namespace Veng::Renderer
             EnsurePickingPipelines(m_Internal->Plan.PipelineMaterial,
                                    m_Internal->Plan.SkinnedPipelineMaterial);
         }
-
-        // The additive emissive pipelines share the surface material's layout the same way; build
-        // them on the first frame a material is available so the emissive pass can re-draw the
-        // survivors. A no-op when emissive is off (and not the Emissive debug arm) or already built.
-        EnsureEmissivePipelines(m_Internal->Plan.PipelineMaterial,
-                                m_Internal->Plan.SkinnedPipelineMaterial);
 
         // Expose the skinning palette + per-entity bases (filled by PrepareDraws) to the shadow
         // passes so a skinned caster casts its posed shadow.

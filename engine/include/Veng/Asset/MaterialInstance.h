@@ -116,26 +116,6 @@ namespace Veng
         /// @param handle The bindless storage-buffer handle to bind.
         void SetStorageBufferHandle(std::string_view name, Renderer::StorageBufferHandle handle);
 
-        /// @brief The additive emissive term an instance contributes to the forward emissive pass.
-        ///
-        /// Resolved from the instance's own (override-patched) parameter block: the rgb color
-        /// from an EmissiveColor vec4 field and, where authored, an EmissiveTexture handle field
-        /// modulating it. A material lacking an EmissiveColor field emits nothing (zero color).
-        struct EmissiveParams
-        {
-            /// @brief rgb additive emissive color; zero when the material declares no EmissiveColor.
-            vec3 Color{0.0f};
-            /// @brief Bindless texture handle index modulating Color, or 0 for a flat color.
-            u32 Texture = 0;
-            /// @brief Bindless sampler handle index for Texture; unused when Texture is 0.
-            u32 Sampler = 0;
-        };
-
-        /// @brief Reads this instance's emissive term from its parameter block.
-        ///
-        /// @return The resolved EmissiveParams; zero color when the material has no EmissiveColor field.
-        [[nodiscard]] EmissiveParams GetEmissive() const;
-
         /// @brief Returns the instance's slot index in the registry's per-material SSBO array.
         [[nodiscard]] u32 GetIndex() const { return m_Handle.Index; }
 

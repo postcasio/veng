@@ -106,11 +106,38 @@ onto the sibling `MeshRenderer`'s first material each frame:
   (see the template's `panel.frag.slang`). The vertex shader is the core
   `surface.vert` (`0x69BE03796E97148D`).
 
-- **`OpaqueEmissive`.** For a solid monitor that **occludes** what is behind it, bind the
-  same document handle onto an opaque `Surface`-domain material's `EmissiveTexture` instead
-  (`GuiSurface` seeds `EmissiveColor` to white so the document value passes through
-  unmodulated). The bezel is a lit g-buffer surface; the document drives the additive
-  emissive term. The panel writes depth and blocks the scene behind it.
+- **`OpaqueEmissive`.** For a solid monitor that **occludes** what is behind it, use an opaque
+  `Surface`-domain material declaring the named-field contract `EmissiveTexture` /
+  `EmissiveSampler` / `EmissiveColor` — `GuiSurface` binds the document handle onto the first two
+  and seeds `EmissiveColor` to white each frame, so the document value passes through unmodulated:
+
+  ```json
+  {
+    "defaultInstance": "0x…monitor-instance",
+    "domain": "Surface",
+    "shaders": { "vertex": "0x69BE03796E97148D", "fragment": "0x…monitor-frag" },
+    "fields": [
+      { "name": "EmissiveColor", "type": "vec4", "value": [1.0, 1.0, 1.0, 0.0] },
+      { "name": "EmissiveTexture", "type": "texture", "id": "0x…any-placeholder-texture" },
+      { "name": "EmissiveSampler", "type": "sampler", "texture": "EmissiveTexture" }
+    ]
+  }
+  ```
+
+  The material's own fragment samples the bound target and writes it into the emissive g-buffer
+  channel — the deferred lighting pass adds that channel into the scene, so the panel glows. The
+  bezel is a lit g-buffer surface, the panel writes depth (occluding the scene behind it), and —
+  because it is a first-class g-buffer draw now — it also writes **motion vectors**, so TAA
+  reprojects an animated panel correctly. In a hand-authored fragment the write is one line:
+
+  ```slang
+  const float3 texel = g_Textures[NonUniformResourceIndex(p.EmissiveTexture)].Sample(
+                           g_Samplers[NonUniformResourceIndex(p.EmissiveSampler)], input.v_UV).rgb;
+  o.Emissive = p.EmissiveColor.rgb * texel;   // GBufferOutput.Emissive → G4
+  ```
+
+  In a material graph, the equivalent is a `TextureSample` → the `MaterialOutput` node's `Emissive`
+  socket.
 
 Both composite pre-bloom, so both glow.
 

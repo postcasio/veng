@@ -35,8 +35,9 @@ namespace Veng
         /// @brief A self-radiant, see-through surface — the panel material returns the document
         ///        texel as its radiance, transparent regions show the scene behind, writes no depth.
         Translucent,
-        /// @brief A solid, occluding surface — the document handle drives the material's emissive
-        ///        term over an opaque lit g-buffer surface, so the panel occludes what is behind it.
+        /// @brief A solid, occluding surface — the material's own fragment samples the bound
+        ///        document handle and writes it into the emissive g-buffer channel over an opaque
+        ///        lit surface, so the panel occludes what is behind it (and carries motion vectors).
         OpaqueEmissive,
     };
 

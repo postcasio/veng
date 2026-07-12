@@ -2,10 +2,10 @@
 
 // A GuiSurface OpaqueEmissive panel material (gpu fixture): a solid, occluding g-buffer surface
 // whose EmissiveColor / EmissiveTexture / EmissiveSampler fields GuiSurface binds each frame. The
-// forward emissive pass reads those fields through MaterialInstance::GetEmissive and composites
-// EmissiveColor * document-texel additively pre-bloom, so the g-buffer stage here only writes a
-// dark, lit bezel — the glow comes from the emissive term. The fields are referenced so the cooker
-// reflects them into the parameter block GuiSurface writes.
+// fragment samples the bound document target and writes EmissiveColor.rgb * texel into the emissive
+// g-buffer channel (G4); the deferred lighting pass adds it, so the panel glows over a dark, lit
+// bezel. The fields are referenced so the cooker reflects them into the parameter block GuiSurface
+// writes.
 struct MaterialParams
 {
     float4 EmissiveColor;
@@ -35,20 +35,21 @@ GBufferOutput fsMain(VSOutput input)
 {
     MaterialParams p = LoadMaterialParams(input.v_MaterialIndex);
 
-    // A dark bezel; the emissive term carries the document glow. The handle fields are referenced
-    // so the reflection keeps them in the block GuiSurface binds.
+    // A dark bezel; the emissive channel carries the document glow, sampled from the bound target.
     float3 albedo = float3(0.02, 0.02, 0.02);
+    float3 emissive = float3(0.0);
     if (p.EmissiveTexture != 0u)
     {
-        albedo += 0.0 * g_Textures[NonUniformResourceIndex(p.EmissiveTexture)].Sample(
-                            g_Samplers[NonUniformResourceIndex(p.EmissiveSampler)], input.v_UV).rgb;
+        const float3 texel = g_Textures[NonUniformResourceIndex(p.EmissiveTexture)].Sample(
+                                 g_Samplers[NonUniformResourceIndex(p.EmissiveSampler)], input.v_UV).rgb;
+        emissive = p.EmissiveColor.rgb * texel;
     }
 
     GBufferOutput output;
     output.Albedo = float4(albedo, 1.0);
     output.Normal = float4(normalize(input.v_WorldNormal), 0.0);
-    output.ORM = float4(1.0, 1.0, 0.0, p.EmissiveColor.a);
+    output.ORM = float4(1.0, 1.0, 0.0, 0.0);
     output.Velocity = ComputeMotionVector(input.v_CurClip, input.v_PrevClip);
-    output.Emissive = float3(0.0);
+    output.Emissive = emissive;
     return output;
 }

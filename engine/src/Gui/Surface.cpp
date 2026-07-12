@@ -54,9 +54,9 @@ namespace Veng
                 {
                     material.SetSamplerHandle("EmissiveSampler", sampler);
                 }
-                // The emissive pass computes EmissiveColor * texel; a white default lets the
-                // document value pass through unmodulated. Seeded once so a game tint set later
-                // wins over the default.
+                // The consumer material's fragment writes EmissiveColor * texel into the emissive
+                // g-buffer channel; a white default lets the document value pass through
+                // unmodulated. Seeded once so a game tint set later wins over the default.
                 if (!runtime.EmissiveSeeded &&
                     HasField(material, "EmissiveColor", MaterialField::FieldKind::Param))
                 {

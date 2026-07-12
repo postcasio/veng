@@ -362,21 +362,6 @@
       "source": "shaders/pointfield/point_sprite_nofade.frag.shader.json"
     },
     {
-      "id": "0x68AD195790159A7E",
-      "type": "Shader",
-      "source": "shaders/emissive.vert.shader.json"
-    },
-    {
-      "id": "0xCACE958766BA4826",
-      "type": "Shader",
-      "source": "shaders/emissive.frag.shader.json"
-    },
-    {
-      "id": "0x2D4350C5F6CFC608",
-      "type": "Shader",
-      "source": "shaders/emissive_skinned.vert.shader.json"
-    },
-    {
       "id": "0xBC968C8771B00434",
       "type": "Material",
       "source": "materials/tonemap.vmat.json"

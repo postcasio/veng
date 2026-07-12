@@ -370,7 +370,6 @@ namespace Veng::UI
         {
             changed |= UI::Checkbox("SSAO", settings.AO);
             changed |= UI::Checkbox("TAA", settings.TAA);
-            changed |= UI::Checkbox("Emissive", settings.Emissive);
         }
 
         if (auto section = UI::CollapsingHeader("Bloom", TreeFlags::DefaultOpen))

@@ -49,11 +49,6 @@ struct DrawData
     uint     PrevPaletteBase; // skinned meshes: previous frame's palette base (TAA velocity)
     uint     EntityIndex;    // packed Entity slot index; the picking fragment writes index + 1
     float4x4 PrevWorld;      // previous frame's model matrix (TAA velocity; equals World with no motion)
-    float4   EmissiveColor;  // rgb additive emissive term (a unused); the emissive forward pass reads it
-    uint     EmissiveTexture; // emissive texture bindless handle (0 = none, flat color)
-    uint     EmissiveSampler; // emissive sampler bindless handle
-    uint     EmissivePad0;
-    uint     EmissivePad1;
 };
 
 // The per-draw data SSBO (set 1, binding 0). Off the set-0 bindless registry — a
