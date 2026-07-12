@@ -3,6 +3,7 @@
 #include <Veng/Veng.h>
 #include <Veng/Asset/AssetHandle.h>
 #include <Veng/InputRouter.h>
+#include <Veng/Renderer/ViewportId.h>
 #include <Veng/Scene/Entity.h>
 
 namespace Veng
@@ -69,6 +70,10 @@ namespace Veng
     /// (a fullscreen map, a pause menu, an interactive document) otherwise hand-rolls. An empty seat
     /// (ResolveInputSeat returned Entity::Null) makes the scope inert: it flips nothing and restores
     /// nothing, so a consumer that opens one before its world spawns is safe.
+    ///
+    /// The scope stores the viewport's ViewportId, not a pointer, so it need not outlive its
+    /// viewport: a viewport that dies mid-scope leaves the id-keyed clear an equality no-op, and the
+    /// focus pop and context restore proceed untouched.
     class SeatFocusScope
     {
     public:
@@ -94,8 +99,8 @@ namespace Veng
         InputRouter& m_Router;
         /// @brief The seat taken over; Entity::Null makes the scope inert.
         InputSeat m_Seat;
-        /// @brief The viewport associated for pointer routing, or nullptr when none was.
-        const Renderer::Viewport* m_Viewport;
+        /// @brief The id of the viewport associated for pointer routing; invalid when none was.
+        Renderer::ViewportId m_Viewport;
         /// @brief The token of the pushed UI focus entry, popped on destruction.
         FocusToken m_Token;
         /// @brief The seat's contexts saved before the UI swap, restored on destruction.

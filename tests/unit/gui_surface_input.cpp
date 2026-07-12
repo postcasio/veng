@@ -16,6 +16,7 @@
 #include <Veng/InputEvents.h>
 #include <Veng/InputRouter.h>
 #include <Veng/Reflection/TypeRegistry.h>
+#include <Veng/Renderer/ViewportRegistry.h>
 #include <Veng/Scene/Entity.h>
 
 using namespace Veng;
@@ -147,7 +148,8 @@ TEST_CASE("gui surface seat gate: a panel is display-only until a seat + SeatFoc
     panel.Doc->SetInteractive(true);
 
     Input input(nullptr);
-    InputRouter router(nullptr, input);
+    const Renderer::ViewportRegistry registry;
+    InputRouter router(nullptr, input, registry);
     SurfaceInputConsumer consumer(router);
     const SurfacePlacement placement = UnitPanel();
     const Ray ray = AimedRay();

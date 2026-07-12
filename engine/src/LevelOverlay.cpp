@@ -298,13 +298,12 @@ namespace Veng
         // 3. Pop the focus scope (restores the suspended seat's contexts and pops its token).
         m_Suspend.reset();
 
-        // 4. Restore the cursor seat and drop the overlay-seat pointer association — the latter must
-        //    run while the viewport is still alive (the association is keyed by the viewport pointer,
-        //    and ~Viewport does not clear it).
+        // 4. Restore the cursor seat and drop the overlay-seat pointer association by id (~Viewport
+        //    does not clear it).
         router.SetCursorSeat(m_PriorCursorSeat);
         if (m_Viewport)
         {
-            router.ClearViewportSeat(*m_Viewport);
+            router.ClearViewportSeat(m_Viewport->GetId());
         }
 
         // 5. Drop the viewport (self-unregisters from the drive-list).

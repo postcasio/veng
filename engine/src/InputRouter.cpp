@@ -5,6 +5,7 @@
 #include <Veng/Input/InputConsumer.h>
 #include <Veng/InputEvents.h>
 #include <Veng/Renderer/Viewport.h>
+#include <Veng/Renderer/ViewportRegistry.h>
 #include <Veng/Window.h>
 #include <Veng/WindowEvents.h>
 
@@ -34,7 +35,11 @@ namespace Veng
         }
     }
 
-    InputRouter::InputRouter(Window* window, Input& input) : m_Window(window), m_Input(input) {}
+    InputRouter::InputRouter(Window* window, Input& input,
+                             const Renderer::ViewportRegistry& viewportRegistry)
+        : m_Window(window), m_Input(input), m_ViewportRegistry(viewportRegistry)
+    {
+    }
 
     void InputRouter::RegisterConsumer(InputConsumer& consumer)
     {
@@ -343,22 +348,38 @@ namespace Veng
                               m_InjectedQueue.begin() + static_cast<std::ptrdiff_t>(applied));
     }
 
+    void InputRouter::SweepDeadAssociations()
+    {
+        const auto dead = std::ranges::remove_if(
+            m_Associations, [this](const ViewportAssociation& association)
+            { return m_ViewportRegistry.Resolve(association.Id) == nullptr; });
+        m_Associations.erase(dead.begin(), dead.end());
+    }
+
     void InputRouter::AssociateViewportSeat(const Renderer::Viewport& viewport, Entity viewer)
     {
-        const auto existing =
-            std::ranges::find(m_Associations, &viewport, &ViewportAssociation::Viewport);
+        SweepDeadAssociations();
+
+        const Renderer::ViewportId id = viewport.GetId();
+        const auto existing = std::ranges::find(m_Associations, id, &ViewportAssociation::Id);
         if (existing != m_Associations.end())
         {
             existing->Viewer = viewer;
             return;
         }
-        m_Associations.emplace_back(ViewportAssociation{.Viewport = &viewport, .Viewer = viewer});
+        m_Associations.emplace_back(ViewportAssociation{.Id = id, .Viewer = viewer});
     }
 
     void InputRouter::ClearViewportSeat(const Renderer::Viewport& viewport)
     {
-        const auto removed =
-            std::ranges::remove(m_Associations, &viewport, &ViewportAssociation::Viewport);
+        ClearViewportSeat(viewport.GetId());
+    }
+
+    void InputRouter::ClearViewportSeat(Renderer::ViewportId id)
+    {
+        SweepDeadAssociations();
+
+        const auto removed = std::ranges::remove(m_Associations, id, &ViewportAssociation::Id);
         m_Associations.erase(removed.begin(), removed.end());
     }
 
@@ -373,14 +394,20 @@ namespace Veng
             return PointerRouting{.Owner = captureOwner, .LocalPosition = {}};
         }
 
-        // Free cursor: gather each association's live region (a viewport owns its current region)
-        // and select the first containing the point.
+        // Free cursor: resolve each association's id to its live viewport, gather that viewport's
+        // current region, and select the first containing the point. An id that no longer resolves
+        // is skipped — never mutated away here, so this stays const.
         vector<PointerRegionSeat> regions;
         regions.reserve(m_Associations.size());
         for (const ViewportAssociation& association : m_Associations)
         {
-            regions.emplace_back(PointerRegionSeat{.Region = association.Viewport->GetRegion(),
-                                                   .Viewer = association.Viewer});
+            const Renderer::Viewport* viewport = m_ViewportRegistry.Resolve(association.Id);
+            if (viewport == nullptr)
+            {
+                continue;
+            }
+            regions.emplace_back(
+                PointerRegionSeat{.Region = viewport->GetRegion(), .Viewer = association.Viewer});
         }
         return SelectPointerOwner(regions, pointerWindowPoint);
     }
@@ -395,16 +422,19 @@ namespace Veng
         {
             const auto association =
                 std::ranges::find(m_Associations, m_CursorSeat, &ViewportAssociation::Viewer);
-            return association != m_Associations.end() ? association->Viewport : nullptr;
+            return association != m_Associations.end() ? m_ViewportRegistry.Resolve(association->Id)
+                                                       : nullptr;
         }
 
         // Free cursor: the first associated viewport whose region contains the point, hit-tested
         // through WindowToViewport so the containment matches ResolvePointer / SelectPointerOwner.
+        // An id that no longer resolves is skipped.
         for (const ViewportAssociation& association : m_Associations)
         {
-            if (association.Viewport->WindowToViewport(pointerWindowPoint).has_value())
+            const Renderer::Viewport* viewport = m_ViewportRegistry.Resolve(association.Id);
+            if (viewport != nullptr && viewport->WindowToViewport(pointerWindowPoint).has_value())
             {
-                return association.Viewport;
+                return viewport;
             }
         }
         return nullptr;

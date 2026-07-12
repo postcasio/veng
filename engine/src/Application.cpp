@@ -129,7 +129,8 @@ namespace Veng
         // Borrows the window (nullable headless) and the Input snapshot. The ImGui overlay, when
         // present, registers as the first consumer so it is offered every UI-owned event and reads
         // the cursor-capture signal.
-        m_InputRouter = CreateUnique<InputRouter>(m_Window.get(), *m_Input);
+        m_InputRouter = CreateUnique<InputRouter>(m_Window.get(), *m_Input,
+                                                  m_RenderContext.GetViewportRegistry());
         if (m_ImGuiLayer)
         {
             m_InputRouter->RegisterConsumer(*m_ImGuiLayer);

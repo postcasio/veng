@@ -2,6 +2,7 @@
 
 #include <Veng/Veng.h>
 #include <Veng/Input.h>
+#include <Veng/Renderer/ViewportId.h>
 #include <Veng/Renderer/ViewportRegion.h>
 #include <Veng/Scene/Entity.h>
 
@@ -18,6 +19,7 @@ namespace Veng
 namespace Veng::Renderer
 {
     class Viewport;
+    class ViewportRegistry;
 }
 
 namespace Veng
@@ -126,9 +128,16 @@ namespace Veng
     {
     public:
         /// @brief Constructs the router over the borrowed services.
-        /// @param window  Window whose cursor capture follows the cursor seat's focus; nullptr headless.
-        /// @param input   The frame-coherent Input snapshot routed events fold into.
-        InputRouter(Window* window, Input& input);
+        ///
+        /// The viewport registry is the source the router resolves each association's ViewportId
+        /// against every hit-test, so a destroyed viewport's association becomes an inert no-op; it
+        /// must outlive the router. The registry, not a Context, is the dependency — the router
+        /// never touches a device — so a headless router borrows a standalone registry.
+        /// @param window            Window whose cursor capture follows the cursor seat's focus; nullptr headless.
+        /// @param input             The frame-coherent Input snapshot routed events fold into.
+        /// @param viewportRegistry  The registry each associated ViewportId is resolved against; must outlive the router.
+        InputRouter(Window* window, Input& input,
+                    const Renderer::ViewportRegistry& viewportRegistry);
 
         /// @brief Registers a consumer at the tail of the priority-ordered consumer list.
         ///
@@ -236,12 +245,16 @@ namespace Veng
         /// @brief Associates a Presented viewport's region with the seat it feeds pointer input to.
         ///
         /// The app associates the viewport it renders a seat's camera into with that seat's Viewer
-        /// entity, so a pointer over the viewport routes to the seat. The association is transient
-        /// router state, keyed by viewport pointer; associating an already-associated viewport
-        /// updates its seat. Association order is the hit-test priority for any overlap (regions are
-        /// non-overlapping for split-screen), tracking the app's viewport registration order. An
-        /// unassociated Presented viewport's region routes no pointer, so the app must associate a
-        /// viewport in the same step it registers it, leaving no live region without a seat.
+        /// entity, so a pointer over the viewport routes to the seat. The association stores the
+        /// viewport's ViewportId — resolved live against the registry every hit-test — so a later
+        /// destruction of the viewport makes the association an inert no-op rather than a dangling
+        /// deref. Associating an already-associated id updates its seat. Association order is the
+        /// hit-test priority for any overlap (regions are non-overlapping for split-screen), tracking
+        /// the app's viewport registration order. This first sweeps every association whose id no
+        /// longer resolves, so the stored set stays bounded by the count of live associations across
+        /// viewport churn. An unassociated Presented viewport's region routes no pointer, so the app
+        /// must associate a viewport in the same step it registers it, leaving no live region without
+        /// a seat.
         /// @param viewport  The Presented viewport whose region owns pointer input for the seat.
         /// @param viewer    The seat entity the viewport's pointer input routes to.
         void AssociateViewportSeat(const Renderer::Viewport& viewport, Entity viewer);
@@ -249,17 +262,27 @@ namespace Veng
         /// @brief Drops a viewport's seat association, so its region routes no pointer.
         ///
         /// The app calls this when it tears down or repurposes an associated viewport; a viewport
-        /// that was never associated is ignored.
+        /// that was never associated is ignored. Delegates to the id-keyed form.
         /// @param viewport  The viewport to disassociate.
         void ClearViewportSeat(const Renderer::Viewport& viewport);
+
+        /// @brief Drops the association named by a viewport id, so its region routes no pointer.
+        ///
+        /// The teardown form that needs no live object: a scope holding an id whose viewport already
+        /// died clears by id-equality. First sweeps every association whose id no longer resolves,
+        /// then removes the named one; an id that was never associated is ignored.
+        /// @param id  The viewport id to disassociate.
+        void ClearViewportSeat(Renderer::ViewportId id);
 
         /// @brief Resolves which seat the free pointer belongs to this frame.
         ///
         /// While the cursor is captured (gameplay focus) the region hit-test is skipped and the
         /// result names the single keyboard/mouse seat, whose SeatInputView reads look as raw delta;
-        /// @p captureOwner supplies that seat (Entity::Null if there is none). When free, the
-        /// pointer's window point is hit-tested against each associated Presented viewport's region
-        /// in association order (WindowToViewport); the first containing region wins, and the result
+        /// @p captureOwner supplies that seat (Entity::Null if there is none). When free, each
+        /// association's ViewportId is resolved live against the registry — an id that no longer
+        /// resolves is skipped this frame, never mutated away, so the method stays const — and the
+        /// pointer's window point is hit-tested against each resolved viewport's region in
+        /// association order (WindowToViewport); the first containing region wins, and the result
         /// carries that seat and the pointer's region-local position. No containing region leaves the
         /// owner Entity::Null. Computed once per frame and read by every seat's view construction.
         /// @param pointerWindowPoint  The pointer position in window framebuffer pixels.
@@ -272,11 +295,13 @@ namespace Veng
         /// @brief Resolves the Presented viewport that owns the pointer this frame, or null.
         ///
         /// The scene-scoping companion to ResolvePointer: the resolved routing applies only to the
-        /// simulation whose scene this viewport presents. While captured the cursor seat's associated
-        /// viewport (there is one OS cursor / one cursor seat); when free the first associated
-        /// viewport whose region contains @p pointerWindowPoint, hit-tested exactly as ResolvePointer
-        /// does. Null when none applies — no association for the cursor seat, or a free pointer over
-        /// no associated region — leaving the caller to fall back (e.g. to the primary world).
+        /// simulation whose scene this viewport presents. Each association's ViewportId is resolved
+        /// live against the registry, so an id that no longer resolves is skipped. While captured the
+        /// cursor seat's associated viewport (there is one OS cursor / one cursor seat); when free the
+        /// first associated viewport whose region contains @p pointerWindowPoint, hit-tested exactly
+        /// as ResolvePointer does. Null when none applies — no association for the cursor seat, or a
+        /// free pointer over no associated region — leaving the caller to fall back (e.g. to the
+        /// primary world).
         /// @param pointerWindowPoint  The pointer position in window framebuffer pixels.
         /// @param captured            Whether the cursor is captured (gameplay focus).
         /// @return The owning Presented viewport, or nullptr when none applies.
@@ -332,6 +357,13 @@ namespace Veng
         /// @param injected  The queued event to apply.
         void ApplyInjected(const InjectedEvent& injected);
 
+        /// @brief Removes every association whose ViewportId no longer resolves against the registry.
+        ///
+        /// The bound on the association list: a non-const mutator calls this before its own change,
+        /// so a destroyed viewport's stale association is reclaimed rather than accumulating across
+        /// viewport churn.
+        void SweepDeadAssociations();
+
         /// @brief One pushed focus entry: its identifying token and the layer it owns.
         struct FocusEntry
         {
@@ -345,6 +377,8 @@ namespace Veng
         Window* m_Window;
         /// @brief The Input snapshot routed key/mouse events fold into.
         Input& m_Input;
+        /// @brief The registry each association's ViewportId is resolved against; borrowed, must outlive.
+        const Renderer::ViewportRegistry& m_ViewportRegistry;
         /// @brief Consumers offered each UI-owned event, in priority (registration) order.
         vector<InputConsumer*> m_Consumers;
         /// @brief Per-seat focus stacks; a seat's back is its current owner, absent/empty is UI.
@@ -354,11 +388,11 @@ namespace Veng
         /// @brief Monotonic source of focus-token identities; never reuses a value, 0 stays invalid.
         u64 m_NextToken = 1;
 
-        /// @brief A Presented viewport paired with the seat its region routes pointer input to.
+        /// @brief A Presented viewport's id paired with the seat its region routes pointer input to.
         struct ViewportAssociation
         {
-            /// @brief The associated Presented viewport, queried live for its region each resolve.
-            const Renderer::Viewport* Viewport = nullptr;
+            /// @brief The associated viewport's id, resolved live for its region each resolve.
+            Renderer::ViewportId Id;
             /// @brief The seat entity the viewport's pointer input routes to.
             Entity Viewer = Entity::Null;
         };

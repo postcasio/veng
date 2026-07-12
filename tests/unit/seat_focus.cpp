@@ -17,6 +17,7 @@
 #include <Veng/Input/SeatFocusScope.h>
 #include <Veng/InputRouter.h>
 #include <Veng/Reflection/TypeRegistry.h>
+#include <Veng/Renderer/ViewportRegistry.h>
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
@@ -116,7 +117,8 @@ namespace
 TEST_CASE("Per-seat focus: each seat's stack top is independent")
 {
     Input input(nullptr);
-    InputRouter router(nullptr, input);
+    const Renderer::ViewportRegistry viewportRegistry;
+    InputRouter router(nullptr, input, viewportRegistry);
 
     // Both seats default to UI (an absent stack is UI).
     CHECK(router.GetFocus(SeatA) == InputFocus::UI);
@@ -141,7 +143,8 @@ TEST_CASE("Per-seat focus: each seat's stack top is independent")
 TEST_CASE("Focus tokens: an out-of-order pop removes its own entry")
 {
     Input input(nullptr);
-    InputRouter router(nullptr, input);
+    const Renderer::ViewportRegistry viewportRegistry;
+    InputRouter router(nullptr, input, viewportRegistry);
 
     // Two entries on seat A: UI beneath, Gameplay on top.
     const FocusToken lower = router.PushFocus(SeatA, InputFocus::UI);
@@ -161,7 +164,8 @@ TEST_CASE("Focus tokens: an out-of-order pop removes its own entry")
 TEST_CASE("The consumer registry offers UI-owned events in registration order")
 {
     Input input(nullptr);
-    InputRouter router(nullptr, input);
+    const Renderer::ViewportRegistry viewportRegistry;
+    InputRouter router(nullptr, input, viewportRegistry);
 
     RecordingConsumer first;
     RecordingConsumer second;
@@ -183,7 +187,8 @@ TEST_CASE("The consumer registry offers UI-owned events in registration order")
 TEST_CASE("The first consumer to accept an event stops the fall-through")
 {
     Input input(nullptr);
-    InputRouter router(nullptr, input);
+    const Renderer::ViewportRegistry viewportRegistry;
+    InputRouter router(nullptr, input, viewportRegistry);
 
     RecordingConsumer first;
     RecordingConsumer second;
@@ -205,7 +210,8 @@ TEST_CASE("The first consumer to accept an event stops the fall-through")
 TEST_CASE("Under gameplay focus the cursor seat starves the consumers, snapshot still folds")
 {
     Input input(nullptr);
-    InputRouter router(nullptr, input);
+    const Renderer::ViewportRegistry viewportRegistry;
+    InputRouter router(nullptr, input, viewportRegistry);
 
     RecordingConsumer consumer;
     router.RegisterConsumer(consumer);
@@ -230,7 +236,8 @@ TEST_CASE("Under gameplay focus the cursor seat starves the consumers, snapshot 
 TEST_CASE("Cursor capture derivation follows the cursor seat's focus top")
 {
     Input input(nullptr);
-    InputRouter router(nullptr, input);
+    const Renderer::ViewportRegistry viewportRegistry;
+    InputRouter router(nullptr, input, viewportRegistry);
 
     RecordingConsumer consumer;
     router.RegisterConsumer(consumer);
@@ -284,7 +291,8 @@ TEST_CASE("ResolveInputSeat returns the first locally-owned seat, null-safe befo
 TEST_CASE("SeatFocusScope round-trips push + swap + associate, restoring in inverse order")
 {
     Input input(nullptr);
-    InputRouter router(nullptr, input);
+    const Renderer::ViewportRegistry viewportRegistry;
+    InputRouter router(nullptr, input, viewportRegistry);
 
     TypeRegistry registry = MakeRegistry();
     const Unique<Scene> scene = Scene::Create(registry);
@@ -359,7 +367,8 @@ TEST_CASE("A SeatFocusScope suspends its seat's gameplay resolution, the other s
     input.BeginFrame();
     input.ApplyEvent(KeyPressedEvent{Key::W, 0, 0});
 
-    InputRouter router(nullptr, input);
+    const Renderer::ViewportRegistry viewportRegistry;
+    InputRouter router(nullptr, input, viewportRegistry);
     InputMappingSystem mapping;
     ContextStorage storage{.HeadlessInput = input};
 
@@ -398,7 +407,8 @@ TEST_CASE("A SeatFocusScope restores through a re-resolve after a structural cha
     // cached borrowed pointer would dangle; re-resolving through the (World, Viewer) identity at
     // restore time finds the live pool and swaps the gameplay context back correctly.
     Input input(nullptr);
-    InputRouter router(nullptr, input);
+    const Renderer::ViewportRegistry viewportRegistry;
+    InputRouter router(nullptr, input, viewportRegistry);
 
     TypeRegistry registry = MakeRegistry();
     const Unique<Scene> scene = Scene::Create(registry);

@@ -46,6 +46,7 @@
 #include <Veng/Renderer/TypedBuffers.h>
 #include <Veng/Renderer/Types.h>
 #include <Veng/Renderer/VertexBufferLayout.h>
+#include <Veng/Renderer/ViewportRegistry.h>
 #include <Veng/Renderer/Backend/TypeMapping.h>
 
 #include <Veng/Reflection/TypeRegistry.h>
@@ -277,7 +278,8 @@ namespace
         // A token popped twice names no live entry on the second pop — the mispaired-pop assert,
         // proving a double pop is loud rather than a silent no-op. Headless: no window, no consumers.
         Input input(nullptr);
-        InputRouter router(nullptr, input);
+        const ViewportRegistry viewportRegistry;
+        InputRouter router(nullptr, input, viewportRegistry);
         const FocusToken token = router.PushFocus(InputFocus::Gameplay);
         router.PopFocus(token);
         router.PopFocus(token);

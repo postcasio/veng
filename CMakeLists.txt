@@ -1029,6 +1029,12 @@ if (VENG_BUILD_TESTS)
             # LevelOverlay handles from OnUpdate and asserting the router/scene/pause state (it needs
             # a Context for the overlay's viewport, so it rides the gpu band though it pins no pixels).
             tests/gpu/level_overlay.cpp
+            # input_router_association.cpp proves the router's id-keyed viewport associations resolve
+            # live against Context::GetViewportRegistry(): a destroyed viewport routes nothing, a
+            # fresh viewport inherits no dead seat (ABA), an unregistered viewport still routes, and a
+            # SeatFocusScope whose viewport dies mid-scope restores cleanly. It needs real Viewports,
+            # so it rides the gpu band though it pins no pixels.
+            tests/gpu/input_router_association.cpp
             # simulation_drive_list.cpp drives a headless Application, registering scenes as
             # engine-ticked simulations and asserting the tick/pause/view/capture drive semantics (it
             # needs a Context for the Application, so it rides the gpu band though it pins no pixels).

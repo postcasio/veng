@@ -43,13 +43,14 @@ namespace Veng
     SeatFocusScope::SeatFocusScope(InputRouter& router, const InputSeat& seat,
                                    const Renderer::Viewport* viewport,
                                    AssetHandle<InputMappingContext> context)
-        : m_Router(router), m_Seat(seat), m_Viewport(viewport)
+        : m_Router(router), m_Seat(seat),
+          m_Viewport(viewport != nullptr ? viewport->GetId() : Renderer::ViewportId{})
     {
         // An empty seat makes the scope inert: nothing is flipped, so the destructor restores
         // nothing. A consumer that opens a scope before its world spawns is safe.
         if (m_Seat.Viewer == Entity::Null)
         {
-            m_Viewport = nullptr;
+            m_Viewport = {};
             return;
         }
 
@@ -70,10 +71,11 @@ namespace Veng
             }
         }
 
-        // (c) Associate the viewport with the seat for pointer routing.
-        if (m_Viewport != nullptr)
+        // (c) Associate the viewport with the seat for pointer routing. The live viewport parameter
+        // is used here (alive at association time), so the router stores its id.
+        if (viewport != nullptr)
         {
-            m_Router.AssociateViewportSeat(*m_Viewport, m_Seat.Viewer);
+            m_Router.AssociateViewportSeat(*viewport, m_Seat.Viewer);
         }
     }
 
@@ -84,10 +86,11 @@ namespace Veng
             return;
         }
 
-        // Restore in inverse order: drop the association, restore the context, pop the token.
-        if (m_Viewport != nullptr)
+        // Restore in inverse order: drop the association, restore the context, pop the token. The
+        // clear is by id, so a viewport that died mid-scope makes it an equality no-op.
+        if (m_Viewport.IsValid())
         {
-            m_Router.ClearViewportSeat(*m_Viewport);
+            m_Router.ClearViewportSeat(m_Viewport);
         }
 
         // Restore through a fresh resolve: a structural change while the scope was open moved the

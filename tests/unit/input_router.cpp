@@ -8,6 +8,7 @@
 #include <Veng/Input.h>
 #include <Veng/InputEvents.h>
 #include <Veng/InputRouter.h>
+#include <Veng/Renderer/ViewportRegistry.h>
 #include <Veng/WindowEvents.h>
 
 using namespace Veng;
@@ -15,7 +16,8 @@ using namespace Veng;
 TEST_CASE("InputRouter: defaults to UI focus")
 {
     Input input(nullptr);
-    const InputRouter router(nullptr, input);
+    const Renderer::ViewportRegistry registry;
+    const InputRouter router(nullptr, input, registry);
 
     CHECK(router.GetFocus() == InputFocus::UI);
     CHECK_FALSE(router.IsGameplayFocused());
@@ -24,7 +26,8 @@ TEST_CASE("InputRouter: defaults to UI focus")
 TEST_CASE("InputRouter: under UI focus an input event folds into the snapshot")
 {
     Input input(nullptr);
-    InputRouter router(nullptr, input);
+    const Renderer::ViewportRegistry registry;
+    InputRouter router(nullptr, input, registry);
 
     input.BeginFrame();
     KeyPressedEvent press(Key::W, 0, 0);
@@ -37,7 +40,8 @@ TEST_CASE("InputRouter: under UI focus an input event folds into the snapshot")
 TEST_CASE("InputRouter: pushing and popping gameplay focus moves the stack top")
 {
     Input input(nullptr);
-    InputRouter router(nullptr, input);
+    const Renderer::ViewportRegistry registry;
+    InputRouter router(nullptr, input, registry);
 
     router.PushFocus(InputFocus::Gameplay);
     CHECK(router.IsGameplayFocused());
@@ -53,7 +57,8 @@ TEST_CASE("InputRouter: pushing and popping gameplay focus moves the stack top")
 TEST_CASE("InputRouter: under gameplay focus the game still receives input through the snapshot")
 {
     Input input(nullptr);
-    InputRouter router(nullptr, input);
+    const Renderer::ViewportRegistry registry;
+    InputRouter router(nullptr, input, registry);
 
     router.PushFocus(InputFocus::Gameplay);
 
@@ -68,7 +73,8 @@ TEST_CASE("InputRouter: under gameplay focus the game still receives input throu
 TEST_CASE("InputRouter: Shift+Esc releases gameplay focus and is not delivered to the game")
 {
     Input input(nullptr);
-    InputRouter router(nullptr, input);
+    const Renderer::ViewportRegistry registry;
+    InputRouter router(nullptr, input, registry);
 
     router.PushFocus(InputFocus::Gameplay);
 
@@ -89,7 +95,8 @@ TEST_CASE("InputRouter: Shift+Esc releases gameplay focus and is not delivered t
 TEST_CASE("InputRouter: a bare Escape without Shift is delivered, not a release")
 {
     Input input(nullptr);
-    InputRouter router(nullptr, input);
+    const Renderer::ViewportRegistry registry;
+    InputRouter router(nullptr, input, registry);
 
     router.PushFocus(InputFocus::Gameplay);
 
@@ -105,7 +112,8 @@ TEST_CASE("InputRouter: a bare Escape without Shift is delivered, not a release"
 TEST_CASE("InputRouter: window-focus loss pops a held gameplay focus")
 {
     Input input(nullptr);
-    InputRouter router(nullptr, input);
+    const Renderer::ViewportRegistry registry;
+    InputRouter router(nullptr, input, registry);
 
     router.PushFocus(InputFocus::Gameplay);
 
@@ -123,7 +131,8 @@ TEST_CASE("InputRouter: window-focus loss pops a held gameplay focus")
 TEST_CASE("InputRouter: an injected tap is paced so the press is seen before the release")
 {
     Input input(nullptr);
-    InputRouter router(nullptr, input);
+    const Renderer::ViewportRegistry registry;
+    InputRouter router(nullptr, input, registry);
 
     // Queue one tap. A queued event is not applied until DrainInjectedEvents releases it.
     const KeyPressedEvent down(Key::W, 0, 0);
@@ -148,7 +157,8 @@ TEST_CASE("InputRouter: an injected tap is paced so the press is seen before the
 TEST_CASE("InputRouter: two injected taps of one key stay distinct instead of collapsing")
 {
     Input input(nullptr);
-    InputRouter router(nullptr, input);
+    const Renderer::ViewportRegistry registry;
+    InputRouter router(nullptr, input, registry);
 
     // Two back-to-back taps of the same key in one batch.
     for (int i = 0; i < 2; ++i)
@@ -181,7 +191,8 @@ TEST_CASE("InputRouter: two injected taps of one key stay distinct instead of co
 TEST_CASE("InputRouter: an injected scroll is queued and applies on the next drain")
 {
     Input input(nullptr);
-    InputRouter router(nullptr, input);
+    const Renderer::ViewportRegistry registry;
+    InputRouter router(nullptr, input, registry);
 
     const MouseScrolledEvent scroll(vec2(0.0f, 3.0f));
     router.PostInjectedEvent(scroll);
