@@ -558,11 +558,6 @@ codec is `Veng/Asset/HexId.h`, and `scripts/migrate_ids.py` converts an out-of-r
 this form. `vengc generate-id` prints the id in both spellings — `0x{:016X}ULL` for C++ and
 `"0x{:016X}"` for JSON.
 
-**Delegate well-scoped chunks to `model: sonnet` subagents** (exploration sweeps,
-mechanical multi-file edits, focused sub-task implementation). Keep orchestration,
-design decisions, verification, and commits on the main thread. Don't spawn for
-trivial single-file edits that are faster inline.
-
 **Driving a running MCP server.** When a task needs to inspect or manipulate a live
 engine instance — a running game or an open editor — reach it through the MCP client
 rather than adding one-off instrumentation. Any exe built with the MCP opt-in
