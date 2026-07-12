@@ -401,7 +401,49 @@ protected:
             GetInputRouter().PushFocus(InputFocus::Gameplay);
 
             SetupHud(scene);
+
+            // Offline windowed: open a second, independently-simulated world through the runner and
+            // present it in the corner picture-in-picture viewport (managed viewport #1). The two
+            // worlds are flat peers — the single WorldRunner ticks both each frame and each managed
+            // viewport pulls its own world's camera — so the sample is a live consumer of the
+            // multi-world path, not only the tests. A net launch skips it so the hosted/joined world
+            // stays the sole world on the wire.
+            if (!launch.Server && !launch.Join.has_value())
+            {
+                OpenSecondaryWorld(GetWorldLevel(world));
+            }
         }
+    }
+
+    // Opens a second flat-peer world spawning the same startup level and binds it to the corner
+    // picture-in-picture viewport (managed viewport #1), so the engine presents two worlds at once
+    // — well within the 16-simultaneous-view ceiling. A no-op when the PiP viewport is absent (the
+    // smoke path configures a single viewport) or the level handle is invalid.
+    void OpenSecondaryWorld(const AssetHandle<Level>& level)
+    {
+        if (GetManagedViewports().GetCount() < 2 || !level.Id().IsValid())
+        {
+            return;
+        }
+
+        m_SecondWorld = GetWorldRunner().OpenWorld(WorldOpenInfo{
+            .Source = level,
+            .SimTickRate = 60,
+            .StartSimulation = true,
+            .MakeStartContext =
+                [this]
+            {
+                return SystemContext{.Assets = GetAssetManager(),
+                                     .Input = GetInput(),
+                                     .Tasks = GetTaskSystem(),
+                                     .Role = GetNetRole()};
+            },
+        });
+
+        // The PiP presents the second world's authored scene-primary camera (no bound Viewer); the
+        // two worlds' spinners drift apart as each ticks on its own clock, so the corner view is
+        // visibly a distinct world rather than a mirror of the primary.
+        GetManagedViewports().SetViewportWorld(1, m_SecondWorld);
     }
 
     // Aims the joined client's local follow camera at the pawn its replicated seat now possesses
@@ -880,6 +922,11 @@ private:
     // Pauses the managed world's simulation so the broadphase reads `static`; never set in smoke.
     bool m_PauseSpin = false;
 
+    // The second flat-peer world presented in the corner picture-in-picture viewport; opened offline
+    // windowed (invalid in smoke and net modes, which run a single world). The runner owns it, so it
+    // needs no explicit teardown here.
+    WorldInstanceId m_SecondWorld;
+
     // Server-side multiplayer state, populated only under `--server`: the pawn spawned for each seat
     // (the listen host's own and each connection's), keyed by seat entity so a reaped seat's pawn is
     // torn down with it. A joined client's own follow camera is aimed by OnClientPossession, not held
@@ -923,8 +970,39 @@ extern "C" void VengModuleRegister(VengModuleHost* host)
     // Smoke mode: no window or swapchain, render off-screen and dump — the display-free CI path.
     const bool smoke = std::getenv("HT_SMOKE") != nullptr;
 
+    // The engine owns the managed viewports (each's SceneRenderer + the gather + composite tail); the
+    // app pushes only a ViewState. Viewport 0 is the primary, covering the window; windowed it also
+    // gets a corner picture-in-picture (viewport 1) the app binds to a second flat-peer world at
+    // runtime, so the engine drives two worlds and two viewports at once. Smoke keeps the single
+    // golden viewport, so the golden capture (viewport 0's output) is byte-identical.
+    vector<ManagedViewportInfo> managedViewports;
+    managedViewports.push_back(ManagedViewportInfo{
+        // Render at the full backing extent — native resolution on a HiDPI display, not
+        // supersampling. The fixed allocation cap; a lower ceiling is the knob for a fixed perf
+        // budget, not the default posture.
+        .MaxAllocationScale = 1.0f,
+        // The windowed app opts into adaptive resolution: the per-frame sub-rect scale eases toward
+        // the GPU-frame-time budget over the fixed allocation, adapting cost without reallocating.
+        // The smoke capture leaves it off so the golden renders at the fixed baseline (the controller
+        // is inert headless anyway — no GPU timing means the sub-rect holds at the ceiling).
+        .DynamicResolution =
+            smoke ? std::nullopt
+                  : optional<
+                        Renderer::DynamicResolutionSettings>{Renderer::DynamicResolutionSettings{}},
+    });
+    if (!smoke)
+    {
+        // The picture-in-picture: a small top-right sub-region whose normalized Layout the compositor
+        // re-fits across resizes. Topology is left at the default; the app binds its world in
+        // OnWorldLoaded, before which it renders a cleared target (inert).
+        managedViewports.push_back(ManagedViewportInfo{
+            .Layout = {.Offset = {0.71f, 0.03f}, .Extent = {0.26f, 0.26f}},
+        });
+    }
+
     host->App.RegisterApplication(
-        [smoke](TypeRegistry& types, SystemRegistry& systems)
+        [smoke, managedViewports = std::move(managedViewports)](TypeRegistry& types,
+                                                                SystemRegistry& systems) mutable
         {
             return Unique<Application>(new HelloTriangleApp(
                 ApplicationInfo{
@@ -941,28 +1019,7 @@ extern "C" void VengModuleRegister(VengModuleHost* host)
                     // Persist the pipeline cache beside the launcher, the same
                     // executable-relative resolution the asset pack uses.
                     .PipelineCachePath = ExecutableDirectory() / "pipeline_cache.bin",
-                    // The engine owns the primary viewport (its SceneRenderer + the gather +
-                    // composite tail); the app pushes only a ViewState. Topology is applied
-                    // through Configure once the level's render subset is loaded.
-                    .ManagedViewport =
-                        ManagedViewportInfo{
-                            // Render at the full backing extent — native resolution on a HiDPI
-                            // display, not supersampling. The fixed allocation cap; a lower ceiling
-                            // is the knob for a fixed perf budget, not the default posture.
-                            .MaxAllocationScale = 1.0f,
-                            // The windowed app opts into adaptive resolution: the per-frame sub-rect
-                            // scale eases toward the GPU-frame-time budget over the fixed allocation,
-                            // adapting cost without reallocating. The smoke capture leaves it off so
-                            // the golden renders at the fixed baseline (the controller is inert
-                            // headless anyway — no GPU timing means the sub-rect holds at the ceiling).
-                            .DynamicResolution =
-                                smoke
-                                    ? std::nullopt
-                                    : optional<
-                                          Renderer::
-                                              DynamicResolutionSettings>{Renderer::
-                                                                             DynamicResolutionSettings{}},
-                        },
+                    .ManagedViewports = std::move(managedViewports),
                     // The engine bootstraps the world: it reads the cooked project, mounts its
                     // packs, loads the startup level, owns the running scene + simulation, and ticks
                     // + pushes the view each frame. The sample customizes the world in OnWorldLoaded.

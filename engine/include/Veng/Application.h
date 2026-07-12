@@ -51,12 +51,13 @@ namespace Veng
     ///
     /// Set ApplicationInfo::World to this to have Application bootstrap and drive the running
     /// game: it reads the cooked project file beside the executable, mounts each pack it names,
-    /// loads the project's startup level, spawns it into a Scene (with the level's SceneSimulation
-    /// attached), seeds the renderer from the level's render settings, and each frame ticks the
-    /// simulation and pushes the resolved camera into the managed primary viewport. A game reaches
-    /// the running world through GetWorld() and customizes it in OnWorldLoaded; the minimal game
-    /// needs no code at all. Requires ManagedViewport to be set (the world renders through the
-    /// managed viewport).
+    /// loads the project's startup level, opens it through the WorldRunner as world #0 (a Scene with
+    /// the level's SceneSimulation attached), seeds the renderer from the level's render settings,
+    /// binds world #0 to managed viewport #0, and each frame ticks every world and pushes each
+    /// viewport's resolved camera. A game reaches the running world by handle
+    /// (GetWorldRunner().ResolveWorld(GetManagedWorldId())->GetScene()) and customizes it in
+    /// OnWorldLoaded; the minimal game needs no code at all. Requires ManagedViewport to be set (the
+    /// world renders through the managed viewport).
     struct GameWorldInfo
     {
         /// @brief Cooked project file to bootstrap from, resolved relative to the executable.

@@ -356,7 +356,7 @@ void OnWorldLoaded(Scene&, ResidencyBatch&) override
     m_Hud = Gui::Document::Instantiate(*recipe->Get(), assets);
     m_Context.SetData(m_Model);
     m_Hud->BindContext(&m_Context, &GetTypeRegistry());
-    GetPrimaryViewport()->AttachDocument(*m_Hud);
+    GetManagedViewports().Get(0)->AttachDocument(*m_Hud);
 }
 ```
 
@@ -440,9 +440,9 @@ slides a rect the minimum amount to keep it fully on screen, and `AnchorBeside(a
 bounds, margin)` offsets a card beside a point and clamps it in one call:
 
 ```cpp
-if (const auto p = GetPrimaryViewport()->WorldToDocument(targetWorldPos)) {
+if (const auto p = GetManagedViewports().Get(0)->WorldToDocument(targetWorldPos)) {
     const vec2 pos = Gui::AnchorBeside(*p, cardSize, {12, -8},
-                                       GetPrimaryViewport()->GetDocumentExtent(), 8.0f);
+                                       GetManagedViewports().Get(0)->GetDocumentExtent(), 8.0f);
     doc->SetPlacement(*card, pos, cardSize);
 }
 ```
@@ -459,7 +459,7 @@ interactive when the game opens a **`SeatFocusScope`** on the document's seat an
 
 ```cpp
 // While the menu is open — RAII: the takeover restores on scope exit.
-m_MenuFocus.emplace(GetInputRouter(), seat, GetPrimaryViewport(), m_MenuContext);
+m_MenuFocus.emplace(GetInputRouter(), seat, GetManagedViewports().Get(0), m_MenuContext);
 m_Menu->SetInteractive(true);
 ```
 

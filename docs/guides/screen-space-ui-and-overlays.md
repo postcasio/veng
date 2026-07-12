@@ -153,10 +153,12 @@ viewport claims it (the single-viewport HUD case). So per-player HUDs fall out o
 
 ## 2. Opening a level as an overlay — `LevelOverlay`
 
-`Application` auto-ticks exactly one world. To run a **second, live scene over the running
-one** — a menu that is a real 3D scene, a picture-in-picture camera, a full-screen modal — open
-a `Level` through the **`LevelOverlay`** RAII handle (`Veng/LevelOverlay.h`). It composes the
-delivered `Level::LoadInto` / `Viewport` / `InputRouter` seams into one call.
+The `WorldRunner` ticks every open world, and `LevelOverlay` is the preset that opens one. To run
+a **second, live scene over the running one** — a menu that is a real 3D scene, a picture-in-picture
+camera, a full-screen modal — open a `Level` through the **`LevelOverlay`** RAII handle
+(`Veng/LevelOverlay.h`). It is a thin preset over `WorldRunner::OpenWorld`, composing the owned-world
+open with the overlay policy (register a viewport on top, hand off focus + the cursor seat, pause the
+covered world) into one call.
 
 ### The overlay is a first-class level
 
@@ -177,29 +179,24 @@ its HUD, and simulate it" is one `LevelOverlay::Open`.
 
 ```cpp
 m_Overlay = LevelOverlay::Open(*this, LevelOverlayInfo{
-    .Source          = m_OverlayLevel,   // a resident AssetHandle<Level>
-    .PausePrimarySim = true,             // freeze the primary sim for the modal's lifetime (opt-in)
-    .WaitForResidency = true,            // block Open until the spawn is resident
-    .Populate = [this](Scene& scene) {   // fill the overlay scene from host state, before it starts
+    .Source          = m_OverlayLevel,        // a resident AssetHandle<Level>
+    .CoveredWorld    = GetManagedWorldId(),   // pause this world for the overlay's lifetime (invalid pauses none)
+    .WaitForResidency = true,                 // block Open until the spawn is resident
+    .Populate = [this](Scene& scene) {        // fill the overlay scene from host state, before it starts
         const Entity e = scene.CreateEntity();
         scene.Add<OverlaySnapshot>(e, OverlaySnapshot{ .Caption = m_Model.Caption });
     },
 });
 ```
 
-Each frame the game drives it — the engine does **not** auto-tick it:
-
-```cpp
-if (m_Overlay)
-{
-    m_Overlay->Update(delta);   // TickSimulation + PushSceneView; its viewport drives its HUD
-}
-```
+There is **no per-frame drive** — the `WorldRunner` ticks the overlay's world and the engine pushes
+its camera each frame, exactly like any world, so the opener writes no `Update` call (there is no
+`LevelOverlay::Update`). It only decides when to close.
 
 Dropping the handle (`m_Overlay.reset()`, or `Close`) tears the overlay down and restores every
-router / cursor-seat / world-pause / drive-list value to the state captured at open. Overlays
-**stack** — a second opened over the first (a dialog over a modal) nests through the cursor-seat
-handoff and the focus stack — and the handles must drop in reverse open order (LIFO).
+router / cursor-seat / world-pause value to the state captured at open, then closes the world.
+Overlays **stack** — a second opened over the first (a dialog over a modal) nests through the
+cursor-seat handoff and the focus stack — and the handles must drop in reverse open order (LIFO).
 
 ### The populate hook: contract versus guidance
 
@@ -209,7 +206,7 @@ The one seam through which host state enters the overlay is the **populate hook*
 fresh scene and does not inspect what it attaches.
 
 The **guidance** (not enforced): attach a thin **source component** — ideally an existing
-component the primary world's systems already read, not an invented bridge type — and let a
+component the covered world's systems already read, not an invented bridge type — and let a
 **system named in the overlay's `systems`** build the rest by reading it **by component type**.
 The template's hook copies a small `OverlaySnapshot` in; the overlay's own system reads it and
 drives the HUD. What crosses the boundary, in either direction, is the game's decision — **no
@@ -223,13 +220,14 @@ storage is **not** safe — a structural change there dangles it.
 
 ### Input suspend versus simulation pause — two separate knobs
 
-Taking the overlay's seat **always suspends the primary world's input** (its seat's contexts
-swap to an empty context beneath the focus scope). Freezing the primary world's **simulation**
-is a **separate, opt-in** knob — `PausePrimarySim` (`SetWorldPaused`), captured and restored on
-close. So a live picture-in-picture view keeps the primary ticking beneath it (leave
-`PausePrimarySim` unset), while a modal that should stop the world sets it. The template's modal
-sets it; a picture-in-picture overview whose scene must keep resolving beneath the overlay leaves
-it unset.
+Taking the overlay's seat **always suspends the covered world's input** (its seat's contexts
+swap to an empty context beneath the focus scope). Freezing the covered world's **simulation**
+is a **separate, opt-in** knob — name it as `CoveredWorld`, and the overlay holds a refcounted
+`WorldRunner::PauseScope` on it for its lifetime. So a live picture-in-picture view keeps its world
+ticking beneath it (leave `CoveredWorld` invalid), while a modal that should stop the world names
+it. The template's modal names `GetManagedWorldId()`; a picture-in-picture overview whose scene must
+keep resolving beneath the overlay leaves it invalid. Because the pause is a refcount, stacked
+overlays over one world nest correctly and an explicit game pause is not clobbered.
 
 ### Reading results back
 

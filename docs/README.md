@@ -46,7 +46,7 @@ symbol: build the Doxygen reference with `cmake --build build --target docs`
   `GuiOverlay` (the screen-space sibling of `GuiSurface`, its C++ state-component +
   binding-system interface, and seat-based multi-viewport claiming); opening a whole level
   as a secondary, simulated overlay with `LevelOverlay` (the lifecycle, the populate hook's
-  contract-versus-guidance, input-suspend versus the opt-in `PausePrimarySim`, stacking, and
+  contract-versus-guidance, input-suspend versus the opt-in `CoveredWorld` pause, stacking, and
   reading results back); and authoring a mirror or probe with a `CaptureSurface` (the
   same-entity material binding and the `everyFrame`/`onDemand` refresh policy).
 - **[Consuming veng](guides/consuming-veng.md)** — discovering veng from a game

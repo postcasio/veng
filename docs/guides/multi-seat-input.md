@@ -170,34 +170,40 @@ render path.
 
 A managed viewport is described by a `ManagedViewportInfo` carrying a **normalized
 `Layout`** (an offset + extent in `[0,1]` window fractions the engine resolves to
-pixels on every resize, so quadrants stay stable across window resizes) and an
-optional bound **`Viewer`** (the seat whose camera the engine resolves and pushes
-into that viewport — and whose region the engine associates with the router). To go
-split-screen, call **`ReconfigureManagedViewports`** with the new set, applied at a
-safe point (the top of the frame, outside system iteration):
+pixels on every resize, so quadrants stay stable across window resizes), the
+**`WorldInstanceId`** of the world it presents, and an optional bound **`Viewer`**
+(the seat in that world whose camera the engine resolves and pushes into the viewport
+— and whose region the engine associates with the router). To go split-screen, call
+**`ReconfigureManagedViewports`** with the new set, applied at a safe point (the top
+of the frame, outside system iteration):
 
 ```cpp
+const WorldInstanceId world = GetManagedWorldId();
 const std::array quadrants{
-    // Left half: the primary seat (unbound — the engine already pushes its camera).
+    // Left half: seat A of the managed world.
     ManagedViewportInfo{
         .Layout = { .Offset = {0.0f, 0.0f}, .Extent = {0.5f, 1.0f} },
+        .World  = world,
+        .Viewer = seatAViewer,
     },
-    // Right half: seat B, bound to its Viewer so the engine resolves + pushes its
-    // camera and associates the region with the router for pointer routing.
+    // Right half: seat B of the same world — the engine resolves + pushes its camera
+    // and associates the region with the router for pointer routing.
     ManagedViewportInfo{
         .Layout = { .Offset = {0.5f, 0.0f}, .Extent = {0.5f, 1.0f} },
+        .World  = world,
         .Viewer = seatBViewer,
     },
 };
 ReconfigureManagedViewports(quadrants);
 ```
 
-`GetManagedViewport(n)` reaches each viewport (index 0 is the primary,
-`GetPrimaryViewport()`), and `GetManagedViewportCount()` reports the length. The
-gather + composite tail is unchanged: it already assembles every registered
-`Presented` viewport into the window, so N quadrant viewports "fall out" as N
-placements. Returning to single-seat is the inverse — reconfigure back to one
-full-window `Layout`.
+`GetManagedViewports().Get(n)` reaches each viewport (index 0 is the primary) and
+`GetManagedViewports().GetCount()` reports the length. The gather + composite tail is
+unchanged: it already assembles every registered `Presented` viewport into the window,
+so N quadrant viewports "fall out" as N placements. Two seats need not share a world —
+each viewport names its own `WorldInstanceId`, so split-screen across two worlds is the
+same reconfigure with two handles. Returning to single-seat is the inverse — reconfigure
+back to one full-window `Layout`.
 
 Reconfiguring drops the prior viewports (each self-clears its router association) and
 builds the new set in order, associating any viewport that names a `Viewer`. A

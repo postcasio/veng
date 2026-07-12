@@ -17,6 +17,16 @@ exemplar, built as part of the engine tree via `add_subdirectory`.
 
 - `veng_add_game` builds `libhello_triangle` (shared, the app) plus `hello_triangle-launcher`
   (the exe that `dlopen`s it).
+- **It is the live consumer of the flat-peer-world path.** Windowed and offline, it configures a
+  second managed viewport — a corner picture-in-picture (viewport 1) — and in `OnWorldLoaded` opens
+  a **second world** through `GetWorldRunner().OpenWorld` spawning the same startup level, binding it
+  to that viewport (`SetViewportWorld(1, …)`). The single `WorldRunner` then ticks both worlds each
+  frame and each managed viewport pulls its own world's camera, so the two worlds run as flat peers
+  (their spinners drift apart as each ticks on its own clock) — the multi-world path exercised by a
+  real app, not only the tests. Smoke configures a single viewport and opens one world, so the
+  golden capture (viewport 0's output) is byte-identical; net launches skip the second world so the
+  hosted/joined world stays the sole world. Two views is well within the fixed 16-simultaneous-view
+  ceiling (`MaxViewsPerFrame` / `MaxPresented`).
 - The `HT_SMOKE` capture and the `smoke_golden` / `hello_triangle_launcher_smoke` tests are the
   verification floor — the runbook (including golden regeneration) is in the
   [root CLAUDE.md](../CLAUDE.md), "Verification".
@@ -44,12 +54,15 @@ HUD are authored data driven by the engine, not built in code. On top of that, `
 
 - it binds the primary `GuiOverlay` HUD its view-model (the one thing the engine cannot do from
   data alone), and
-- it opens a **secondary overlay level** on a key through `LevelOverlay` — a live sub-scene with
-  its own input seat, its own `systems` (the builtin `DeviceAssignmentSystem` /
-  `InputMappingSystem` plus its one driving system), and an `Interactive` `GuiOverlay` HUD with an
-  `onClick` button that dismisses it, populated at open with a snapshot of the primary scene's
-  state (dismissable by the key or the button, the primary sim frozen via `PausePrimarySim` for
-  the modal's lifetime).
+- it opens a **secondary overlay level** on a key through `LevelOverlay` — a preset over
+  `WorldRunner::OpenWorld` that opens an owned, runner-ticked world plus the overlay policy. The
+  overlay is a live sub-scene with its own input seat, its own `systems` (the builtin
+  `DeviceAssignmentSystem` / `InputMappingSystem` plus its one driving system), and an `Interactive`
+  `GuiOverlay` HUD with an `onClick` button that dismisses it, populated at open through
+  `LevelOverlayInfo::Populate` with a snapshot of the primary scene's state (dismissable by the key
+  or the button, the covered world named by `CoveredWorld` frozen by a refcounted
+  `WorldRunner::PauseScope` for the overlay's lifetime). The runner ticks the overlay world and the
+  engine pushes its camera, so the opener writes no per-frame overlay code — only the dismiss drain.
 
 So the module registers a HUD view-model type, two small overlay components, and one
 overlay-driving `SceneSystem` — the least game code that still exercises `GuiOverlay` binding and

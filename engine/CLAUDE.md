@@ -50,71 +50,107 @@ fixed worker pool draining a work queue and returning `Task<T>` handles — is p
 frame: `Frame()` calls `TaskSystem::PumpMainThread()` at the top, before `BeginFrame()` advances
 the frame, so off-thread continuations land on the main thread.
 
-**`Application` drives the viewport list each frame.** It owns a non-owning, ordered
-`vector<Renderer::Viewport*>` (registration order = render order); `RegisterViewport(Viewport&)`
-appends a pointer and hands the viewport a back-reference, so dropping the owner's
-`Unique<Viewport>` self-unregisters it and the caller keeps ownership — only the *driving* is
-central. See [src/Renderer/CLAUDE.md](src/Renderer/CLAUDE.md) for the viewport model.
+**`Application` is a composition root that delegates to collaborators.** It owns the services
+above and three collaborators it drives each frame:
 
-**The managed viewport is a list, and split-screen is a runtime reconfigure of it.**
+- **`ViewportCompositor`** (`Veng/Renderer/ViewportCompositor.h`) — the render surface. It owns
+  the render-order viewport drive-list, the capture drive-list, render-all, and the gather +
+  composite tail. `RegisterViewport(Viewport&)` / `RegisterCapture(SceneCapture&)` forward to it:
+  each stores a non-owning pointer (registration order = render order) and hands the resource a
+  back-reference, so dropping the owner's `Unique` self-unregisters it and the caller keeps
+  ownership — only the *driving* is central. It also resolves each `Layout`-carrying viewport's
+  pixel region + UI scale on swapchain resize. See [src/Renderer/CLAUDE.md](src/Renderer/CLAUDE.md).
+- **`ManagedViewportSet`** (`Veng/ManagedViewports.h`) — the managed-viewport policy. It owns the
+  engine-managed `Presented` viewports, registers them into the compositor, and each frame **pulls**
+  each viewport's camera from the `WorldRunner` by the viewport's `{ WorldInstanceId, Viewer }`
+  binding and pushes it (`PushViews`) — a one-directional gameplay→render bridge.
+- **`WorldRunner`** (`Veng/WorldRunner.h`) — the sim-domain scheduler. It owns a **flat set of
+  first-class worlds** and ticks every one each frame.
+
+**Every `Viewport` has a `ViewportId`.** Minted at `Viewport::Create` and retired at destruction,
+resolved through the `Context`-owned **`ViewportRegistry`** (the render-domain registry joining
+`BindlessRegistry`). The input layer stores ids, not pointers, and resolves them live: `InputRouter`
+and `SeatFocusScope` key each viewport↔seat association by `ViewportId` and re-resolve it against
+the registry every hit-test, so a destroyed viewport's association becomes an inert no-op and
+address reuse cannot transfer a seat association to a new viewport. See
+[src/Renderer/CLAUDE.md](src/Renderer/CLAUDE.md) for the viewport model.
+
+**The managed viewport is a set, and split-screen is a runtime reconfigure of it.**
 `ApplicationInfo::ManagedViewport` (`ManagedViewportInfo`: render extent, color format,
 `SceneRendererSettings`, a normalized **`Layout`** — an offset + extent in `[0,1]` window
-fractions resolved to pixels on construction and every swapchain resize — and an optional bound
-**`Viewer`** seat) makes `Application` construct, register, resize-track, and expose engine-owned
-`Presented` viewports. `GetManagedViewport(n)` / `GetManagedViewportCount()` reach the set (index
-0 is the primary, `GetPrimaryViewport()`), and **`ReconfigureManagedViewports(span)`** — applied
-at a safe point (top of frame, outside iteration) — replaces the set. A viewport that names a
-`Viewer` has its camera resolved and pushed by the per-frame world drive and its region
-associated with the `InputRouter` (so a free pointer over it routes to that seat); an unbound
-viewport takes the scene's primary camera and routes no pointer. The gather + composite tail
-already assembles every registered `Presented` viewport, so split-screen is "reconfigure to N
-quadrant `Layout`s," not a bespoke render path; a single default-`Layout` managed viewport is
-byte-identical to a hand-registered full-window one. The editor leaves `ManagedViewport` unset,
-so `GetPrimaryViewport()` is null and it registers its own viewports.
+fractions resolved to pixels on construction and every swapchain resize — a `{ WorldInstanceId,
+Viewer }` world binding, and render knobs) makes `Application` construct, register, resize-track,
+and expose engine-owned `Presented` viewports; `ApplicationInfo::ManagedViewports` is the
+multi-viewport form (the singular field is sugar for a one-element set). `GetManagedViewports()`
+reaches the `ManagedViewportSet` — `Get(n)` a viewport (index 0 the primary; there is **no**
+`GetPrimaryViewport()`), `GetCount()` the size — and **`ReconfigureManagedViewports(span)`** —
+applied at a safe point (top of frame, outside iteration) — replaces the set. A viewport names the
+world it presents by `WorldInstanceId`; the per-frame pull resolves that world through the
+`WorldRunner` and pushes its scene, resolving a bound `Viewer`'s camera (`ResolveCameraView`) or
+the scene's primary camera. A viewport whose world was closed renders a cleared target (inert,
+never a dangling read); a viewport with no bound world is left for the game to drive through
+`SetViewState`. A bound `Viewer`'s region is associated with the `InputRouter` (by `ViewportId`),
+so a free pointer over it routes to that seat. The gather + composite tail assembles every
+registered `Presented` viewport, so split-screen is "reconfigure to N quadrant `Layout`s," not a
+bespoke render path; a single default-`Layout` managed viewport is byte-identical to a
+hand-registered full-window one. The editor leaves the managed set unset, so `Get(0)` is null and
+it registers its own viewports through the compositor (which still mints their ids).
 
-**`Application` optionally bootstraps and drives the whole game world.** Set
+**`Application` optionally bootstraps and drives worlds through the `WorldRunner`.** Set
 `ApplicationInfo::World` (`GameWorldInfo { path Project; }`) and `Application` runs the game: at
 the end of `Initialize` (after `OnInitialize`) it reads the **cooked project** (`<name>.vengproj`)
-beside the executable (`ReadCookedProject`), mounts each pack it names, loads its **startup
-level**, spawns the world (`Level::LoadInto`, the `Scene` owning its `SceneSimulation`), seeds
-the managed viewport's topology + per-frame view from the spawned scene — the level's
-`LevelRenderSettings` post knobs (`ApplyLevelRenderSettings`) plus the scene's one author-opt-in
-`Sky` component (resolved by the renderer itself each `Execute`) and a `TimeOfDay` (derives the
-sun direction from its hour + orbit and writes the directional light) — fires the
-`OnWorldLoaded(Scene&, ResidencyBatch&)` hook, then starts the simulation. Each `Frame` it ticks
-the world (`Scene::TickSimulation`, unless `SetWorldPaused`), calls `OnUpdate`, then resolves the
-primary camera and pushes the `ViewState` into the managed viewport (`PushSceneView`, in
-`Veng/Scene/SceneViewport.h` — the gameplay→render bridge that keeps `Renderer::Viewport`
-gameplay-agnostic, falling back to `DefaultCameraView` when the scene resolves none). A game
-reaches the running world through `GetWorld()` / `GetWorldViewState()` / `GetWorldLevel()` and
-customizes it in `OnWorldLoaded`; the **minimal game writes no lifecycle or per-frame code at
-all**. `World` unset leaves the app to load and drive its own world (the editor, or a game
-wanting full control) — the explicit `Mount` → `LoadSync<Level>` → `LoadInto` →
-`StartSimulation` → per-frame `TickSimulation`/`PushSceneView` path the managed world automates.
+beside the executable (`ReadCookedProject`), mounts each pack it names, and opens the startup level
+as **world #0** through `WorldRunner::OpenWorld` — a first-class `World` bundling
+`{ WorldInstanceId, Unique<Scene> (+ its SceneSimulation), a per-world clock, pause state }`. The
+open seeds the managed viewport's topology + per-frame view from the spawned scene (the level's
+`LevelRenderSettings` post knobs via `ApplyLevelRenderSettings`, plus the scene's author-opt-in
+`Sky` and `TimeOfDay`, resolved by the renderer itself each `Execute`), fires the
+`OnWorldLoaded(WorldInstanceId, Scene&, ResidencyBatch&)` hook, then starts the simulation, and
+binds world #0 to managed viewport #0 (`SetViewportWorld`). Each `Frame` the runner ticks every
+world and `ManagedViewportSet::PushViews` pulls each viewport's camera and pushes it.
 
-The world drive is an accumulator: the Sim phase steps at a fixed `SimTickRate`
-(`GameWorldInfo`, default 60 Hz) with a monotonic tick, the View phase runs once per frame, and
-the render gather blends transforms between the last two ticks — see
+**Worlds are flat peers addressed by `WorldInstanceId`.** There is no privileged primary world and
+no engine code path special-cases world #0 — it is privileged only in that bootstrap opens it
+first. Every world API is handle-keyed: `GetWorldRunner()` reaches the runner (a game opens further
+worlds at runtime with `OpenWorld`, closes them with `CloseWorld`), `GetManagedWorldId()` returns
+world #0's handle, `ResolveWorld(id)->GetScene()` resolves a world's scene, and
+`GetWorldViewState(id)` / `GetWorldLevel(id)` / `SetWorldPaused(id, …)` key the managed world's
+knobs by handle. The sim domain has **no back-reference out**: a `World` holds no viewport, no seat,
+and no `NetRole` — it does not know it is presented or replicated. Presentation points *inward* by
+handle (a viewport names its world; `ManagedViewportSet` asks `WorldRunner::ResolveCameraView`, a
+pure query), and the runner holds no pointer back. The **minimal game writes no lifecycle or
+per-frame code at all** — the bootstrap auto-bind (world #0 → managed viewport #0) is the zero-code
+path. `World` unset leaves the app to load and drive its own scene (the editor, or a game wanting
+full control), and the runner is device-free when given no asset manager or context (it drives
+empty-scene worlds without a GPU).
+
+The world drive is an accumulator: each world's Sim phase steps at its own fixed `SimTickRate`
+(`GameWorldInfo`, default 60 Hz) with a monotonic tick, its View phase runs once per frame, and the
+render gather blends transforms between the last two ticks — see
 [src/Net/CLAUDE.md](src/Net/CLAUDE.md) for the tick model and the `ApplicationInfo::Net` wiring
-(`--server` / `--join` / `--netsim`, `PumpNet`).
+(`--server` / `--join` / `--netsim`, `PumpNet`). **Pause is a refcount, not a boolean:**
+`WorldRunner::PauseScope(id)` is an RAII pause held for a scope's lifetime (a world is paused while
+any scope is held), composing with the explicit `SetWorldPaused(id, …)` toggle so stacked overlays
+and a game pause do not clobber each other.
 
-**A second level can be opened over the running one as a `LevelOverlay`.** `Application`
-auto-ticks exactly the primary `m_World`; a game that wants a live sub-scene — a menu rendered as
-a real scene, a picture-in-picture view, a full-screen modal world — opens a `Level` through the
-`LevelOverlay` RAII handle (`Veng/LevelOverlay.h`): `LoadInto` a fresh scene → run a caller
-**populate hook** (`std::function<void(Scene&)>`, the one cross-scene seam, run after load and
-before start) → create a `Presented` viewport (registered last, so it composites on top) → route
-input to the overlay's **own authored seat** (pointer association, cursor-seat handoff, and a
-focus-scope suspension of the layer beneath) → `StartSimulation`. The game ticks it from
-`OnUpdate` through `LevelOverlay::Update` (`TickSimulation` + `PushSceneView`) — no hidden second
-scheduler — and its own viewport drives its scene's `GuiOverlay` HUD automatically. **Input focus
-and simulation pause are separate knobs:** taking the overlay's seat always suspends the primary
-world's *input*, but the primary keeps simulating unless the opt-in `PausePrimarySim`
-(`SetWorldPaused`) is set. Dropping the handle (or `Close`) tears the overlay down in lifetime
-order, restoring every router / cursor-seat / world-pause / drive-list value to the state it
-captured at open; overlays **stack** (a dialog over a modal) and the handles drop LIFO. Results
-flow back through a game-owned channel (a component the opener drains, a callback, or the
-opener's glue writing the host) — no overlay system reaches into the primary scene.
+**A second level can be opened over the running one as a `LevelOverlay`.** `LevelOverlay`
+(`Veng/LevelOverlay.h`) is a thin **preset over `WorldRunner::OpenWorld`**: opening an overlay
+opens an owned world (its own scene, systems, and HUD, ticked by the runner like any world) and
+applies an **overlay policy** — register a `Presented` viewport on top (composited over the covered
+world, its camera pulled by the managed-viewport presentation path and its region re-fit on resize
+by the compositor), hand the cursor seat and the covered seat's focus off to the overlay's own seat
+(a `SeatFocusScope`), and hold a refcounted `WorldRunner::PauseScope` on the caller-named
+`CoveredWorld`. The one cross-scene seam is `LevelOverlayInfo::Populate` (run after load, before
+start). **There is no `LevelOverlay::Update`:** the runner ticks the overlay's simulation and the
+engine pushes its camera each frame, so there is no per-frame game call and no hidden second
+scheduler. **Input focus and simulation pause are separate knobs:** taking the overlay's seat
+always suspends the covered seat's *input*, but a world simulates unless a `CoveredWorld` pause is
+held. An overlay's `GetViewState()` knobs are captured at open — retuning them takes a re-open, not
+an in-place per-frame edit. Dropping the handle (or `Close`) unwinds the policy LIFO, restoring
+every router / cursor-seat / pause value to the state it captured at open, and closing the world;
+overlays **stack** (a dialog over a modal) and the handles drop LIFO. Results flow back through a
+game-owned channel (a component the opener drains, a callback) — no overlay system reaches into the
+covered scene.
 
 **The engine render phase** runs between `BeginFrame()` and `EndFrame()`, uniform for every app
 and not overridable: render every registered viewport in registration order (each does its own

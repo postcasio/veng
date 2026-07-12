@@ -362,8 +362,11 @@ Mcp::McpServerInfo info{ .ServerName = "mygame", .Port = port, .AllowMutations =
 m_McpHost.emplace(Mcp::McpHost{
     .Types         = GetTypeRegistry(),
     .Assets        = GetAssetManager(),
-    .CurrentWorld  = [this] { return GetWorld(); },
-    .Viewport      = [this](string_view n) { return n.empty() ? GetPrimaryViewport() : nullptr; },
+    .CurrentWorld  = [this]() -> Scene* {
+        const World* w = GetWorldRunner().ResolveWorld(GetManagedWorldId());  // null before it loads
+        return w != nullptr ? &w->GetScene() : nullptr;
+    },
+    .Viewport      = [this](string_view n) { return n.empty() ? GetManagedViewports().Get(0) : nullptr; },
     .ViewportNames = [] { return vector<string>{ "primary" }; },
 });
 m_McpServer = Mcp::McpServer::Create(info, *m_McpHost);

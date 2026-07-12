@@ -67,10 +67,15 @@ void StartMcpServerIfRequested()
     m_McpHost.emplace(Mcp::McpHost{
         .Types         = GetTypeRegistry(),
         .Assets        = GetAssetManager(),
-        .CurrentWorld  = [this] { return GetWorld(); },
+        .CurrentWorld  = [this]() -> Scene*
+        {
+            // Resolve the managed world by handle; null before it comes online, which the tools handle.
+            const World* w = GetWorldRunner().ResolveWorld(GetManagedWorldId());
+            return w != nullptr ? &w->GetScene() : nullptr;
+        },
         .Viewport      = [this](string_view name) -> Renderer::Viewport*
         {
-            return (name.empty() || name == "primary") ? GetPrimaryViewport() : nullptr;
+            return (name.empty() || name == "primary") ? GetManagedViewports().Get(0) : nullptr;
         },
         .ViewportNames = [] { return vector<string>{ "primary" }; },
     });
