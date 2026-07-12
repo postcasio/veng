@@ -12,6 +12,7 @@
 #include <Veng/Renderer/SceneCapture.h>
 #include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Renderer/Viewport.h>
+#include <Veng/Renderer/ViewportCompositor.h>
 #include <Veng/Renderer/GatherPass.h>
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/SwapChainCompositePass.h>
@@ -561,9 +562,9 @@ namespace Veng
     private:
         /// @brief One engine-owned managed viewport plus the info it was built from.
         ///
-        /// The owning Unique self-unregisters from m_Viewports on drop; the retained Info supplies
-        /// the normalized Layout the resize callback re-resolves and the optional bound Viewer the
-        /// world drive resolves a camera for.
+        /// The owning Unique self-unregisters from the compositor's drive-list on drop; the retained
+        /// Info supplies the normalized Layout the resize callback re-resolves and the optional bound
+        /// Viewer the world drive resolves a camera for.
         struct ManagedViewport
         {
             /// @brief The owned, registered Presented viewport.
@@ -739,20 +740,6 @@ namespace Veng
         /// debounces each SceneRenderer::Resize to the next Render. Pinned viewports are untouched.
         void ResolveManagedViewportLayouts();
 
-        /// @brief Constructs the managed gather pass and swapchain composite tail.
-        ///
-        /// Called at init only when ImGui is present; wires the swapchain-invalidation re-target
-        /// and the initial graph compiles.
-        void InitializeManagedTail();
-
-        /// @brief Gathers the registered Presented viewports and composites them into the swapchain.
-        ///
-        /// Rebinds the gather's placement list ({ output, region } per Presented viewport — slots
-        /// rebound only when a viewport's output view identity changed), runs the gather, then the
-        /// composite. Called from Frame after ImGuiLayer::Render. No-op without the managed tail.
-        /// @param cmd  The command buffer to record into.
-        void RenderManagedTail(Renderer::CommandBuffer& cmd);
-
         /// @brief Discovers and drives every registered scene's CaptureSurface components.
         ///
         /// Iterates every registered simulation's scene (regardless of started/paused state —
@@ -783,6 +770,13 @@ namespace Veng
 
         Renderer::Context m_RenderContext;
 
+        /// @brief Renders the registered viewports and composites them to the swapchain each frame.
+        ///
+        /// Owns the render-order viewport drive-list, the capture drive-list, and the gather +
+        /// composite tail. Declared after m_RenderContext so it destructs first, retiring its
+        /// registered viewports against the still-live Context registry.
+        Renderer::ViewportCompositor m_Compositor;
+
         /// @brief Routes window events to ImGui + Input by focus; borrows the window, input, and
         ///        ImGui layer, so it is constructed after them and reset before them.
         Unique<InputRouter> m_InputRouter;
@@ -796,22 +790,10 @@ namespace Veng
         Unique<ImGuiLayer> m_ImGuiLayer;
 
         /// @brief The Gui router consumer, registered second (behind ImGui) so attached documents
-        ///        receive UI-owned input. Borrows the router/input/window/m_Viewports, so it is
-        ///        declared after them (destroyed before them, since it is registered on the router).
+        ///        receive UI-owned input. Borrows the router/input/window and the compositor's
+        ///        viewport drive-list, so it is declared after them (destroyed before them, since it
+        ///        is registered on the router).
         Unique<Gui::GuiConsumer> m_GuiConsumer;
-
-        /// @brief Non-owning, ordered list of viewports the engine renders each frame.
-        ///
-        /// Registration order is render order. Holds raw pointers; each registered Viewport holds
-        /// a back-reference and erases itself on destruction (order-preserving). A subclass's
-        /// panel-owned viewports destruct before this base member, so the back-reference is live.
-        vector<Renderer::Viewport*> m_Viewports;
-
-        /// @brief Non-owning, ordered list of scene captures rendered ahead of the viewports.
-        ///
-        /// The viewport drive-list's capture sibling: raw pointers, registration order, each
-        /// capture self-unregistering on destruction through its back-reference.
-        vector<Renderer::SceneCapture*> m_Captures;
 
         /// @brief Non-owning, ordered list of scenes the engine ticks and drives each frame.
         ///
@@ -851,21 +833,6 @@ namespace Veng
         AssetHandle<Level> m_WorldLevel;
         /// @brief Per-frame view knobs pushed into the managed viewport; seeded from the level.
         Renderer::ViewState m_WorldView;
-
-        /// @brief The managed gather pass assembling the Presented viewports; present only with ImGui.
-        Unique<Renderer::GatherPass> m_Gather;
-        /// @brief The managed swapchain composite tail; present only with ImGui.
-        Unique<Renderer::SwapChainCompositePass> m_Composite;
-        /// @brief Compiled gather graph, re-Compile()d on swapchain resize.
-        Unique<Renderer::CompiledGraph> m_GatherGraph;
-        /// @brief Compiled composite graph, re-Compile()d on swapchain resize.
-        Unique<Renderer::CompiledGraph> m_CompositeGraph;
-
-        /// @brief Last placement list pushed to the gather; rebinds only when it changes.
-        ///
-        /// Guards against per-frame bindless churn: the gather's slots are re-registered only on a
-        /// frame where a Presented viewport's output view identity or region differs from this.
-        vector<Renderer::CompositePlacement> m_GatheredPlacements;
 
         /// @brief The fixed-timestep accumulator driving every registered simulation's Sim phase.
         ///

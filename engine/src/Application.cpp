@@ -69,7 +69,8 @@ namespace Veng
     };
 
     Application::Application(ApplicationInfo info, TypeRegistry& types, SystemRegistry& systems)
-        : m_Info(std::move(info)), m_TypeRegistry(types), m_SystemRegistry(systems)
+        : m_Info(std::move(info)), m_TypeRegistry(types), m_SystemRegistry(systems),
+          m_Compositor(m_RenderContext)
     {
     }
 
@@ -139,8 +140,8 @@ namespace Veng
         // The Gui document consumer registers second, behind ImGui: an event ImGui consumes never
         // reaches it, an event it passes is offered to the interactive documents on the engine's
         // viewports. It walks the drive-list (which self-cleans on a viewport's destruction).
-        m_GuiConsumer =
-            CreateUnique<Gui::GuiConsumer>(*m_InputRouter, *m_Input, m_Window.get(), m_Viewports);
+        m_GuiConsumer = CreateUnique<Gui::GuiConsumer>(*m_InputRouter, *m_Input, m_Window.get(),
+                                                       m_Compositor.GetViewports());
         m_InputRouter->RegisterConsumer(*m_GuiConsumer);
 
         // The opt-in managed viewport set: Presented viewports owned and driven by the engine so a
@@ -172,7 +173,7 @@ namespace Veng
         // reads it back directly.
         if (m_ImGuiLayer)
         {
-            InitializeManagedTail();
+            m_Compositor.InitializeTail(*m_AssetManager, *m_ImGuiLayer);
         }
 
         OnInitialize();
@@ -679,7 +680,7 @@ namespace Veng
         // whose retained scene is this one — for the view descriptor and debug-draw sink. The
         // retained view is last frame's push (view pushes run after ticks); a never-pushed viewport
         // presents no scene, so it never matches and View stays nullopt.
-        for (const Renderer::Viewport* viewport : m_Viewports)
+        for (const Renderer::Viewport* viewport : m_Compositor.GetViewports())
         {
             if (viewport->GetRole() == Renderer::ViewportRole::Presented &&
                 viewport->GetPresentedScene() == &scene)
@@ -707,73 +708,14 @@ namespace Veng
         m_PendingReconfigure = vector<ManagedViewportInfo>(viewports.begin(), viewports.end());
     }
 
-    void Application::InitializeManagedTail()
-    {
-        m_Gather = Renderer::GatherPass::Create({
-            .Context = m_RenderContext,
-            .Assets = *m_AssetManager,
-            .Extent = m_RenderContext.GetSwapChainExtent(),
-        });
-
-        m_Composite = Renderer::SwapChainCompositePass::Create({
-            .Context = m_RenderContext,
-            .ImGui = *m_ImGuiLayer,
-            .Assets = *m_AssetManager,
-            .SceneSource = m_Gather->GetOutput(),
-            .SwapChainFormat = m_RenderContext.GetSwapChainFormat(),
-            .ColorSpace = m_RenderContext.GetActiveDisplayColorSpace(),
-        });
-
-        const auto compileGather = [this]
-        {
-            Renderer::RenderGraph graph(m_RenderContext);
-            return m_Gather->Compile(graph);
-        };
-        const auto compileComposite = [this]
-        {
-            Renderer::RenderGraph graph(m_RenderContext);
-            const Renderer::ResourceId swapId = graph.Import("SwapChain");
-            return m_Composite->Compile(graph, swapId);
-        };
-
-        // Swapchain recreation invalidates the baked extent and may re-negotiate the surface's
-        // format/color space (a window moved to a display with different HDR support); re-target
-        // the composite before recompiling.
-        m_RenderContext.AddSwapChainInvalidationCallback(
-            [this, compileGather, compileComposite]
-            {
-                m_Gather->Resize(m_RenderContext.GetSwapChainExtent());
-                m_Composite->SetSceneSource(m_Gather->GetOutput());
-                // The ImGui layer's invalidation callback (registered earlier, so it ran first)
-                // recreated its offscreen image; re-point the composite at it or it samples the
-                // retired one (old size → squished, stale content → frozen overlay).
-                m_Composite->RefreshImGuiSource();
-                m_Composite->SetSwapChainTarget(m_RenderContext.GetSwapChainFormat(),
-                                                m_RenderContext.GetActiveDisplayColorSpace());
-                m_GatherGraph = compileGather();
-                m_CompositeGraph = compileComposite();
-            });
-
-        m_GatherGraph = compileGather();
-        m_CompositeGraph = compileComposite();
-    }
-
     void Application::RegisterViewport(Renderer::Viewport& viewport)
     {
-        VE_ASSERT(std::ranges::find(m_Viewports, &viewport) == m_Viewports.end(),
-                  "Viewport is already registered to this Application's drive-list");
-
-        m_Viewports.emplace_back(&viewport);
-        viewport.AttachToDriveList(m_Viewports);
+        m_Compositor.RegisterViewport(viewport);
     }
 
     void Application::RegisterCapture(Renderer::SceneCapture& capture)
     {
-        VE_ASSERT(std::ranges::find(m_Captures, &capture) == m_Captures.end(),
-                  "SceneCapture is already registered to this Application's drive-list");
-
-        m_Captures.emplace_back(&capture);
-        capture.AttachToDriveList(m_Captures);
+        m_Compositor.RegisterCapture(capture);
     }
 
     void Application::RegisterSimulation(Scene& scene)
@@ -847,50 +789,6 @@ namespace Veng
         }
     }
 
-    void Application::RenderManagedTail(Renderer::CommandBuffer& cmd)
-    {
-        if (!m_Gather)
-        {
-            return;
-        }
-
-        // Assemble the registered Presented viewports into the gather target, each into its own
-        // region. Zero placements composites ImGui over a clear (the editor's case).
-        vector<Renderer::CompositePlacement> placements;
-        for (const Renderer::Viewport* viewport : m_Viewports)
-        {
-            if (viewport->GetRole() == Renderer::ViewportRole::Presented)
-            {
-                placements.emplace_back(Renderer::CompositePlacement{
-                    .Texture = viewport->GetOutput(),
-                    .Region = viewport->GetRegion(),
-                });
-            }
-        }
-
-        // Rebind only when the placement set changed (output identity or region), so a steady
-        // frame issues no bindless re-registration.
-        const auto samePlacement =
-            [](const Renderer::CompositePlacement& a, const Renderer::CompositePlacement& b)
-        {
-            return a.Texture == b.Texture && a.Region.Offset == b.Region.Offset &&
-                   a.Region.Extent == b.Region.Extent;
-        };
-        if (!std::ranges::equal(placements, m_GatheredPlacements, samePlacement))
-        {
-            m_Gather->SetPlacements(placements);
-            m_GatheredPlacements = std::move(placements);
-        }
-
-        m_Gather->Execute(cmd, *m_GatherGraph);
-
-        // The composite samples the assembly target outside the graph; transition it.
-        cmd.PrepareForAccess(m_Gather->GetOutput(), Renderer::AccessKind::Sample);
-
-        m_Composite->Execute(cmd, *m_CompositeGraph,
-                             m_RenderContext.GetCurrentSwapChainImageView());
-    }
-
     void Application::Run(vector<string> arguments)
     {
         // Parse argv (without the program name) once; the engine consumes the recognised options
@@ -955,19 +853,12 @@ namespace Veng
         m_WorldLevel = {};
         m_ClientPending = ResidencyBatch{};
 
-        // Drop the engine-owned managed tail and managed viewports before the context: the gather
-        // and composite hold GPU resources, and each managed viewport self-unregisters from the
-        // still-live drive-list. A subclass's panel-owned viewports are released in OnDispose
-        // above, so the drive-list is empty (or holds only the managed viewports) by here.
-        m_CompositeGraph.reset();
-        m_Composite.reset();
-        m_GatherGraph.reset();
-        m_Gather.reset();
-
-        // The placement cache retains a Ref to each Presented viewport's output view for
-        // change-detection; clear it so dropping the viewports below releases their outputs and
-        // the images retire, rather than outliving the context's allocator.
-        m_GatheredPlacements.clear();
+        // Release the compositor's gather + composite tail (GPU resources) and its placement cache
+        // before dropping the managed viewports, so the viewports' outputs retire rather than
+        // outliving the context's allocator. A subclass's panel-owned viewports are released in
+        // OnDispose above, so the compositor's drive-list is empty (or holds only the managed
+        // viewports) by here; each managed viewport self-unregisters from the still-live drive-list.
+        m_Compositor.Dispose();
         m_ManagedViewports.clear();
 
         // The router borrows the window, input, and ImGui layer; drop it before any of them.
@@ -1203,21 +1094,12 @@ namespace Veng
         // so a scene-declared capture joins the drive-list beside any imperatively-registered ones.
         DriveCaptureSurfaces();
 
-        // The engine render phase, uniform for every app and not overridable. Scene captures
-        // render first, so a material sampling a capture's output reads this frame's result
-        // during the viewport renders that follow.
-        for (Renderer::SceneCapture* capture : m_Captures)
-        {
-            capture->Render(cmd);
-        }
-
-        // Then every registered viewport in registration order (each does its own Execute +
-        // Sample barrier), so viewport outputs are in Sample layout before OnRender builds the
-        // ImGui draw data that may sample them.
-        for (Renderer::Viewport* viewport : m_Viewports)
-        {
-            viewport->Render(cmd);
-        }
+        // The engine render phase, uniform for every app and not overridable. The compositor
+        // renders every registered capture first (so a material sampling a capture's output reads
+        // this frame's result), then every registered viewport in registration order — each into
+        // Sample layout, so viewport outputs are sampleable before OnRender builds the ImGui draw
+        // data that may sample them.
+        m_Compositor.RenderRegistered(cmd);
 
         // The app builds its ImGui frame and records any extra draws; it no longer runs the
         // composite or ImGuiLayer::Render — those bracket it in the engine phase.
@@ -1227,7 +1109,7 @@ namespace Veng
         if (m_ImGuiLayer)
         {
             m_ImGuiLayer->Render(cmd);
-            RenderManagedTail(cmd);
+            m_Compositor.Composite(cmd);
         }
 
         m_RenderContext.EndFrame();

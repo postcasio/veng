@@ -1009,6 +1009,11 @@ if (VENG_BUILD_TESTS)
             tests/gpu/point_field.cpp
             tests/gpu/viewport.cpp
             tests/gpu/viewport_id.cpp
+            # viewport_compositor.cpp proves the ViewportCompositor's render-order drive-list
+            # independent of Application: RegisterViewport order, order-preserving self-unregister on
+            # drop, and teardown retiring ids against the live Context registry. It needs real
+            # Viewports, so it rides the gpu band though it pins no pixels.
+            tests/gpu/viewport_compositor.cpp
             tests/gpu/viewport_documents.cpp
             tests/gpu/splitscreen.cpp
             tests/gpu/hi_z_pyramid.cpp
