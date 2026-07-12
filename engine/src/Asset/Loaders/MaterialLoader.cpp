@@ -214,6 +214,10 @@ namespace Veng
                             // alongside the g-buffer (folded in, not a separate prepass).
                             {.Format = Renderer::GBuffer::VelocityFormat,
                              .Blend = Renderer::BlendState::Opaque()},
+                            // G4 — HDR emissive the surface fragment writes alongside the
+                            // g-buffer; the lighting pass adds it into the outgoing radiance.
+                            {.Format = Renderer::GBuffer::EmissiveFormat,
+                             .Blend = Renderer::BlendState::Opaque()},
                         },
                     .DepthAttachmentFormat = Renderer::GBuffer::DepthFormat,
                     .VertexBufferLayout = vertexBufferLayout,

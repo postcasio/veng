@@ -69,19 +69,24 @@ DrawData LoadDrawData(uint candidateId)
 }
 
 // The deferred opaque g-buffer outputs the material fragment stage writes. The
-// metallic-roughness channel set plus the screen-space motion vector, funnelled
-// through one struct: albedo into G0 (sRGB target, the sampler decodes to linear on
-// read), the world-space normal into G1, packed occlusion/roughness/metallic
-// into G2, and the per-object motion vector into G3 (the TAA resolve reprojects through
-// it). G3 is written every frame by the same surface pipeline, so motion vectors cost
-// no second geometry pass; with TAA off the channel is written but unread. Emissive is
-// not a g-buffer channel — it is an additive forward pass into the lit HDR target.
+// metallic-roughness channel set plus the screen-space motion vector and HDR emissive,
+// funnelled through one struct: albedo into G0 (sRGB target, the sampler decodes to
+// linear on read), the world-space normal into G1, packed occlusion/roughness/metallic
+// into G2, the per-object motion vector into G3 (the TAA resolve reprojects through it),
+// and the emissive radiance into G4. G3 and G4 are written every frame by the same
+// surface pipeline, so motion vectors and emission cost no second geometry pass; with
+// TAA off the velocity channel is written but unread.
+//
+// Emissive (G4) is linear HDR radiance the lighting pass adds to the pixel's outgoing
+// light. It is non-negative (unsigned target), and magnitudes author in the HDR chain's
+// exposure-scaled units (the same convention the lit chain, bloom, and tonemap use).
 struct GBufferOutput
 {
     float4 Albedo   : SV_Target0;  // rgb sRGB albedo; a unused
     float4 Normal   : SV_Target1;  // world-space normal in xyz
     float4 ORM      : SV_Target2;  // R occlusion, G roughness, B metallic, A unused
     float2 Velocity : SV_Target3;  // screen-space motion vector (curUV - prevUV)
+    float3 Emissive : SV_Target4;  // linear HDR emissive radiance (non-negative)
 };
 
 // The per-object screen-space motion vector from the vertex stage's unjittered current

@@ -282,10 +282,10 @@ namespace Veng::Cook
         // --- 3b. Validate the fragment outputs against the domain's contract ---
 
         // Surface: float4 SV_Target0 (albedo) + SV_Target1 (normal) + SV_Target2 (ORM) +
-        // float2 SV_Target3 (screen-space motion vector). PostProcess: single float4 SV_Target0.
-        // Sky: single float4 SV_Target0 (background radiance, not a g-buffer MRT). Translucent:
-        // single float4 SV_Target0 (final HDR color + alpha, forward-blended into the scene, not a
-        // g-buffer MRT). Mismatch is a located cook error.
+        // float2 SV_Target3 (screen-space motion vector) + float3 SV_Target4 (HDR emissive).
+        // PostProcess: single float4 SV_Target0. Sky: single float4 SV_Target0 (background
+        // radiance, not a g-buffer MRT). Translucent: single float4 SV_Target0 (final HDR color +
+        // alpha, forward-blended into the scene, not a g-buffer MRT). Mismatch is a located cook error.
         const Result<vector<ReflectedFragmentOutput>> outputs =
             ReflectFragmentOutputs(fragSource, fragEntry, context.ShaderIncludeDir);
         if (!outputs)
@@ -295,20 +295,21 @@ namespace Veng::Cook
 
         if (domainValue == MaterialDomain::Surface)
         {
-            const bool ok = outputs->size() == 4 && (*outputs)[0].TargetIndex == 0 &&
+            const bool ok = outputs->size() == 5 && (*outputs)[0].TargetIndex == 0 &&
                             (*outputs)[0].IsFloat && (*outputs)[0].ComponentCount == 4 &&
                             (*outputs)[1].TargetIndex == 1 && (*outputs)[1].IsFloat &&
                             (*outputs)[1].ComponentCount == 4 && (*outputs)[2].TargetIndex == 2 &&
                             (*outputs)[2].IsFloat && (*outputs)[2].ComponentCount == 4 &&
                             (*outputs)[3].TargetIndex == 3 && (*outputs)[3].IsFloat &&
-                            (*outputs)[3].ComponentCount == 2;
+                            (*outputs)[3].ComponentCount == 2 && (*outputs)[4].TargetIndex == 4 &&
+                            (*outputs)[4].IsFloat && (*outputs)[4].ComponentCount == 3;
             if (!ok)
             {
-                return std::unexpected(
-                    fmt::format("material importer: '{}': surface material must write the g-buffer "
-                                "(float4 SV_Target0 + float4 SV_Target1 + float4 SV_Target2 + "
-                                "float2 SV_Target3); its fragment shader does not",
-                                vmatPath.string()));
+                return std::unexpected(fmt::format(
+                    "material importer: '{}': surface material must write the g-buffer "
+                    "(float4 SV_Target0 + float4 SV_Target1 + float4 SV_Target2 + "
+                    "float2 SV_Target3 + float3 SV_Target4); its fragment shader does not",
+                    vmatPath.string()));
             }
         }
         else if (domainValue == MaterialDomain::Sky)

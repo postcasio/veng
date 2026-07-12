@@ -163,6 +163,7 @@ GBufferOutput fsMain(SurfaceFragmentInput input)
     output.Normal = float4(normalize(input.v_WorldNormal), 0.0);
     output.ORM = float4(1.0, 1.0, 0.0, 0.0);
     output.Velocity = ComputeMotionVector(input.v_CurClip, input.v_PrevClip);
+    output.Emissive = float3(0.0);
     return output;
 }
 )");

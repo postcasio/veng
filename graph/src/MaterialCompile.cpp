@@ -305,6 +305,7 @@ namespace VengGraph
                 fmt::format("    o.Normal = float4({}, 0);\n", sinkOr(1, "input.v_WorldNormal"));
             source += "    o.ORM = float4(1, 1, 0, 0);\n";
             source += "    o.Velocity = ComputeMotionVector(input.v_CurClip, input.v_PrevClip);\n";
+            source += "    o.Emissive = float3(0);\n";
             source += "    return o;\n}\n";
         }
         else if (domain == Veng::MaterialDomain::Translucent)

@@ -1160,6 +1160,17 @@ namespace Veng::Renderer
         VE_ASSERT(supportedVulkan12Features.timelineSemaphore,
                   "Physical device does not support timeline semaphores!");
 
+        // The deferred g-buffer writes five color attachments (G0 albedo, G1 normal, G2 ORM,
+        // G3 velocity, G4 emissive). The Vulkan core minimum for maxColorAttachments is 4, so a
+        // minimum-spec device would fail renderpass creation mid-frame; gate it at device init and
+        // fail loudly instead. The target devices report >= 8 (Metal/MoltenVK guarantee 8, the
+        // desktop Vulkan targets report >= 8).
+        const u32 maxColorAttachments = PhysicalDevice.getProperties().limits.maxColorAttachments;
+        VE_ASSERT(maxColorAttachments >= 5,
+                  "Physical device supports only {} color attachments; the deferred g-buffer "
+                  "requires at least 5.",
+                  maxColorAttachments);
+
         // Several core shaders (the point-field sprite expansion + vertex stage, bloom
         // downsample, the BRDF-LUT and debug-line shaders) declare the SPIR-V Float16
         // capability, which vkCreateShaderModule requires be enabled — not merely supported —

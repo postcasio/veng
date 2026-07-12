@@ -59,6 +59,7 @@ struct PushConstants
     uint NormalTexture;       // G1 bindless index
     uint OrmTexture;          // G2 bindless index
     uint DepthTexture;        // depth bindless index
+    uint EmissiveTexture;     // G4 emissive bindless index
     uint Sampler;             // shared sampler index
     uint ViewConstantsIndex;  // current frame-in-flight's view-constants region
     uint LightBase;           // current frame's base index into the light buffer
@@ -71,7 +72,6 @@ struct PushConstants
 #if VE_USE_SSAO
     uint SsaoTexture;         // screen-space AO bindless index (the SSAO variant only)
     uint Pad1;
-    uint Pad2;
 #endif
 };
 
@@ -322,5 +322,12 @@ float4 fsMain(VSOutput input) : SV_Target
         ambient = AmbientColor * albedo * ambientOcclusion;
     }
 
-    return float4(direct + ambient, 1.0);
+    // G4 emissive: the linear HDR radiance the surface fragment authored, added into the
+    // pixel's outgoing light. Placement here is equivalent to a post-lighting composite: the
+    // skybox pass discards foreground pixels and geometry is foreground by definition, so
+    // emissive on geometry survives the sky composite identically; the background (depth >= 1.0,
+    // returned black above) carries none.
+    float3 emissive = g_Textures[NonUniformResourceIndex(g_PC.EmissiveTexture)].Sample(samp, sampleUV).rgb;
+
+    return float4(direct + ambient + emissive, 1.0);
 }

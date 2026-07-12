@@ -389,16 +389,16 @@ namespace Veng::Renderer
             u32 CountIndex;
         };
 
-        // The deferred-lighting fragment push block: g-buffer bindless slots,
-        // view-constants index, and light buffer base + live count.
-        // Matches deferred_lighting.frag PushConstants byte-for-byte (twelve u32s — the eight
-        // base fields plus the four IBL fields the split-sum ambient + skybox read).
+        // The deferred-lighting fragment push block: g-buffer bindless slots (including the G4
+        // emissive read), view-constants index, and light buffer base + live count.
+        // Matches deferred_lighting.frag PushConstants byte-for-byte.
         struct LightingPushConstants
         {
             u32 AlbedoTexture;
             u32 NormalTexture;
             u32 OrmTexture;
             u32 DepthTexture;
+            u32 EmissiveTexture;
             u32 Sampler;
             u32 ViewConstantsIndex;
             u32 LightBase;
@@ -412,13 +412,14 @@ namespace Veng::Renderer
 
         // The SSAO-enabled lighting variant's push block: the base + IBL fields plus the AO
         // bindless slot. Matches deferred_lighting_ssao.frag PushConstants byte-for-byte
-        // (sixteen u32s — three pads reach a 16-byte boundary).
+        // (sixteen u32s — one pad reaches a 16-byte boundary).
         struct SsaoLightingPushConstants
         {
             u32 AlbedoTexture;
             u32 NormalTexture;
             u32 OrmTexture;
             u32 DepthTexture;
+            u32 EmissiveTexture;
             u32 Sampler;
             u32 ViewConstantsIndex;
             u32 LightBase;
@@ -430,7 +431,6 @@ namespace Veng::Renderer
             f32 SkylightIntensity;
             u32 SsaoTexture;
             u32 Pad1;
-            u32 Pad2;
         };
 
         // The per-frame view-constants block (set-0 binding 5): camera/view state only.
@@ -635,6 +635,15 @@ namespace Veng::Renderer
                         // geometry pass. Cleared to zero motion for any background texel; the
                         // TAA resolve falls back to depth reprojection wherever it stays zero.
                         .Resource = io.Velocity,
+                        .Load = LoadOp::Clear,
+                        .Store = StoreOp::Store,
+                        .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 0.0f},
+                    })
+                    .Color({
+                        // G4 — HDR emissive (SV_Target4). The surface fragment writes authored
+                        // emission alongside the g-buffer; the lighting pass adds it into the
+                        // pixel's outgoing light. Cleared to zero so an un-drawn pixel emits nothing.
+                        .Resource = io.GBufferEmissive,
                         .Load = LoadOp::Clear,
                         .Store = StoreOp::Store,
                         .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 0.0f},
@@ -1381,6 +1390,7 @@ namespace Veng::Renderer
                 const TextureHandle normalHandle = io.NormalHandle;
                 const TextureHandle ormHandle = io.OrmHandle;
                 const TextureHandle depthHandle = io.DepthHandle;
+                const TextureHandle emissiveHandle = io.EmissiveHandle;
                 const TextureHandle ssaoHandle = io.SsaoHandle;
                 const SamplerHandle samplerHandle = io.SamplerHandle;
                 const bool useSsao = m_UseSsao;
@@ -1401,7 +1411,8 @@ namespace Veng::Renderer
                     .Sample(io.GBufferAlbedo)
                     .Sample(io.GBufferNormal)
                     .Sample(io.GBufferOrm)
-                    .Sample(io.GBufferDepth);
+                    .Sample(io.GBufferDepth)
+                    .Sample(io.GBufferEmissive);
 
                 // Declaring the shadow/punctual maps sampled drives the graph-derived
                 // depth-attachment → shader-read barriers. The atlases reach the
@@ -1424,9 +1435,10 @@ namespace Veng::Renderer
                 const Ref<DescriptorSet> iblSet = m_IblSet;
                 const u32 prefilterMipCount = m_PrefilterMipCount;
                 builder.Execute(
-                    [this, albedoHandle, normalHandle, ormHandle, depthHandle, ssaoHandle,
-                     samplerHandle, useSsao, skylight, iblAllowed, shadowSet, shadowRingStride,
-                     punctualRingStride, iblSet, prefilterMipCount](PassContext& inner)
+                    [this, albedoHandle, normalHandle, ormHandle, depthHandle, emissiveHandle,
+                     ssaoHandle, samplerHandle, useSsao, skylight, iblAllowed, shadowSet,
+                     shadowRingStride, punctualRingStride, iblSet,
+                     prefilterMipCount](PassContext& inner)
                     {
                         const ScenePassContext ctx = Wrap(inner);
                         CommandBuffer& cmd = ctx.Cmd();
@@ -1474,6 +1486,7 @@ namespace Veng::Renderer
                                 .NormalTexture = normalHandle.Index,
                                 .OrmTexture = ormHandle.Index,
                                 .DepthTexture = depthHandle.Index,
+                                .EmissiveTexture = emissiveHandle.Index,
                                 .Sampler = samplerHandle.Index,
                                 .ViewConstantsIndex = registry.GetCurrentViewConstantsIndex(),
                                 .LightBase = registry.GetCurrentLightBase(),
@@ -1493,6 +1506,7 @@ namespace Veng::Renderer
                                 .NormalTexture = normalHandle.Index,
                                 .OrmTexture = ormHandle.Index,
                                 .DepthTexture = depthHandle.Index,
+                                .EmissiveTexture = emissiveHandle.Index,
                                 .Sampler = samplerHandle.Index,
                                 .ViewConstantsIndex = registry.GetCurrentViewConstantsIndex(),
                                 .LightBase = registry.GetCurrentLightBase(),
@@ -2020,6 +2034,7 @@ namespace Veng::Renderer
         bindless.Release(m_LitHandle);
         bindless.Release(m_TaaHistoryHandle);
         bindless.Release(m_VelocityHandle);
+        bindless.Release(m_EmissiveHandle);
         bindless.Release(m_BloomResultHandle);
         bindless.Release(m_BloomMip0Handle);
         bindless.Release(m_SsrSceneHandle);
@@ -2961,6 +2976,7 @@ namespace Veng::Renderer
         bindless.Release(m_OrmHandle);
         bindless.Release(m_DepthHandle);
         bindless.Release(m_VelocityHandle);
+        bindless.Release(m_EmissiveHandle);
 
         m_AlbedoImage = Image::Create(m_Context, {
                                                      .Name = "SceneRenderer GBuffer Albedo",
@@ -3010,6 +3026,18 @@ namespace Veng::Renderer
         m_VelocityView = ImageView::Create(
             m_Context, {.Name = "SceneRenderer GBuffer Velocity View", .Image = m_VelocityImage});
 
+        // G4 — the HDR emissive channel. A g-buffer channel like the others: the surface pass
+        // writes authored emission as SV_Target4 every frame, so it is always allocated, and the
+        // lighting pass samples it to add emission into the outgoing radiance.
+        m_EmissiveImage = Image::Create(m_Context, {
+                                                       .Name = "SceneRenderer GBuffer Emissive",
+                                                       .Extent = {m_Extent.x, m_Extent.y, 1},
+                                                       .Format = GBuffer::EmissiveFormat,
+                                                       .Usage = GBuffer::ColorUsage,
+                                                   });
+        m_EmissiveView = ImageView::Create(
+            m_Context, {.Name = "SceneRenderer GBuffer Emissive View", .Image = m_EmissiveImage});
+
         if (!m_Sampler)
         {
             m_Sampler = Sampler::Create(m_Context, {
@@ -3026,6 +3054,7 @@ namespace Veng::Renderer
         m_OrmHandle = bindless.Register(m_OrmView);
         m_DepthHandle = bindless.Register(m_DepthView);
         m_VelocityHandle = bindless.Register(m_VelocityView);
+        m_EmissiveHandle = bindless.Register(m_EmissiveView);
 
         CreateHiZ();
     }
@@ -3898,9 +3927,13 @@ namespace Veng::Renderer
         // The velocity target (G3) is always imported — the g-buffer pass writes it on every
         // frame as a fourth color attachment.
         velocityId = graph.Import("SceneRenderer Velocity");
+        // The emissive target (G4) is always imported — the g-buffer pass writes it on every
+        // frame as a fifth color attachment.
+        const ResourceId emissiveId = graph.Import("SceneRenderer GBuffer Emissive");
         m_LitId = litId;
         m_TaaHistoryId = taaHistoryId;
         m_VelocityId = velocityId;
+        m_EmissiveId = emissiveId;
 
         // With SSR on, the lit scene color lands in an intermediate the SSR composite reflects
         // into before writing the HDR target — so SSR slots in exactly where TAA does, and the
@@ -4342,6 +4375,8 @@ namespace Veng::Renderer
             .BloomMip0Handle = m_BloomMip0Handle,
             .Velocity = velocityId,
             .VelocityHandle = m_VelocityHandle,
+            .GBufferEmissive = emissiveId,
+            .EmissiveHandle = m_EmissiveHandle,
             .SsrReflection = ssrActive ? m_SsrReflectionChainId.Level(0) : ResourceId{},
             .SsrReflectionHandle = m_SsrReflectionSampleHandle,
             .SamplerHandle = m_SamplerHandle,
@@ -6108,6 +6143,8 @@ namespace Veng::Renderer
         }
         // Velocity is a g-buffer channel the surface pass writes every frame, so it is always bound.
         bindings.push_back({m_VelocityId, m_VelocityView});
+        // Emissive (G4) is likewise a g-buffer channel written every frame, always bound.
+        bindings.push_back({m_EmissiveId, m_EmissiveView});
         if (m_PickingActive)
         {
             bindings.push_back({m_EntityIdId, m_EntityIdView});

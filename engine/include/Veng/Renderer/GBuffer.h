@@ -11,11 +11,12 @@
 /// samples them.
 ///
 /// The layout is albedo (G0) / world-normal (G1) / packed ORM (G2) / screen-space
-/// motion vector (G3) plus a sampled depth attachment the lighting pass reconstructs
-/// world position from. Velocity is folded into the surface output (written every frame
-/// as SV_Target3), so motion vectors cost no second geometry pass. This is the opaque
-/// material contract — a transparent/forward material outputs final color through a
-/// separate fragment entry, not a change to this one.
+/// motion vector (G3) / HDR emissive (G4) plus a sampled depth attachment the lighting
+/// pass reconstructs world position from. Velocity and emissive are folded into the
+/// surface output (written every frame as SV_Target3/SV_Target4), so motion vectors and
+/// emission cost no second geometry pass. This is the opaque material contract — a
+/// transparent/forward material outputs final color through a separate fragment entry,
+/// not a change to this one.
 ///
 /// Color-space contract: albedo is stored sRGB-encoded (RGBA8Srgb) and sampled as
 /// linear — the sampler decodes on read, so a material writes its sampled albedo
@@ -27,22 +28,19 @@ namespace Veng::Renderer
 {
     /// @brief The g-buffer's format and usage constants.
     ///
-    /// The geometry pass renders into G0/G1/G2/G3 (+ depth); a fullscreen pass samples them.
+    /// The geometry pass renders into G0/G1/G2/G3/G4 (+ depth); a fullscreen pass samples them.
     namespace GBuffer
     {
         /// @brief G0 — base color. rgb is the sRGB-encoded albedo; a is unused (reserved).
-        ///
-        /// Only G2.a carries data (emissive strength), so G0.a is the one free g-buffer
-        /// channel before independent colored emissive needs a fifth target.
         inline constexpr Format AlbedoFormat = Format::RGBA8Srgb;
 
         /// @brief G1 — world-space normal in xyz.
         inline constexpr Format NormalFormat = Format::RGBA16Sfloat;
 
-        /// @brief G2 — packed material params: R=occlusion, G=roughness, B=metallic, A=emissive strength.
+        /// @brief G2 — packed material params: R=occlusion, G=roughness, B=metallic, A unused.
         ///
-        /// RGBA8: roughness/metallic/occlusion are perceptually fine at 8-bit; emissive strength
-        /// is a low-dynamic scalar (the lighting pass scales albedo by it).
+        /// RGBA8: roughness/metallic/occlusion are perceptually fine at 8-bit. The lighting pass
+        /// reads only orm.rgb; the alpha channel carries no data and is available.
         inline constexpr Format ORMFormat = Format::RGBA8Unorm;
 
         /// @brief G3 — screen-space motion vector, written by the surface pass.
@@ -54,13 +52,21 @@ namespace Veng::Renderer
         /// it. Signed float to carry motion in either direction across the full UV range.
         inline constexpr Format VelocityFormat = Format::RG16Sfloat;
 
+        /// @brief G4 — HDR emissive radiance, written by the surface pass as SV_Target4.
+        ///
+        /// B10G11R11Ufloat (4 bytes/texel, unsigned — emission is non-negative). The surface
+        /// fragment writes linear HDR radiance the lighting pass adds into the pixel's outgoing
+        /// light, so per-pixel authored emission (procedural, textured, animated) costs no second
+        /// geometry pass. Cleared to zero, so an un-drawn pixel emits nothing.
+        inline constexpr Format EmissiveFormat = Format::B10G11R11Ufloat;
+
         /// @brief The depth attachment, also sampled by the lighting pass for world-position reconstruction.
         ///
         /// The lighting pass reconstructs world position via the camera's inverse view-projection.
         /// This and the shadow atlases are the depth targets read as textures in the engine.
         inline constexpr Format DepthFormat = Format::D32Sfloat;
 
-        /// @brief Usage flags for the three color attachments (G0/G1/G2).
+        /// @brief Usage flags for the color attachments (G0/G1/G2/G3/G4).
         ///
         /// Written by the geometry pass and sampled by downstream fullscreen passes.
         /// RenderGraph::Compile asserts a sampled target carries ImageUsage::Sampled,

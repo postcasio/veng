@@ -30,6 +30,7 @@ struct GBufferOutput
     float4 Normal : SV_Target1;
     float4 ORM    : SV_Target2;
     float2 Velocity : SV_Target3;  // screen-space motion vector (curUV - prevUV)
+    float3 Emissive : SV_Target4;  // linear HDR emissive radiance (non-negative)
 };
 
 struct PushConstants
@@ -63,5 +64,6 @@ GBufferOutput fsMain(VSOutput input)
     output.Normal = float4(normalize(input.v_WorldNormal), 0.0);
     output.ORM = float4(1.0, p.Roughness, 0.0, 0.0);
     output.Velocity = float2(0.0, 0.0);
+    output.Emissive = float3(0.0);
     return output;
 }

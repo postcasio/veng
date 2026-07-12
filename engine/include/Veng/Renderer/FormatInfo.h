@@ -52,6 +52,7 @@ namespace Veng::Renderer
         case Format::RGBA8Unorm:
         case Format::RGBA8Srgb:
         case Format::BGRA8Srgb:
+        case Format::B10G11R11Ufloat:
             return {.BlockWidth = 1, .BlockHeight = 1, .Bytes = 4};
         default:
             return {.BlockWidth = 1, .BlockHeight = 1, .Bytes = 0};

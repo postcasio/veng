@@ -125,6 +125,15 @@ namespace Veng::Renderer
         /// @brief Bindless slot for the velocity target (always valid — written every frame).
         TextureHandle VelocityHandle;
 
+        /// @brief HDR emissive target — g-buffer channel G4.
+        ///
+        /// The g-buffer pass writes it as a fifth color attachment (SV_Target4) every frame, so it
+        /// is always valid. The lighting pass declares .Sample so the graph derives the
+        /// ColorAttachment → ShaderReadOnly transition, then adds it into the outgoing radiance.
+        ResourceId GBufferEmissive;
+        /// @brief Bindless slot for the emissive target (always valid — written every frame).
+        TextureHandle EmissiveHandle;
+
         /// @brief SSR reflection target (mip 0) produced by the SSR trace; blitted by the Reflections debug arm.
         ///
         /// Valid only when the SSR pass is wired (Final + Settings.SSR, or the Reflections debug

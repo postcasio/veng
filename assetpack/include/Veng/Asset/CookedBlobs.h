@@ -251,7 +251,7 @@ namespace Veng
     /// @brief The current material-format version.
     ///
     /// Bumped on any layout change; the loader rejects a blob whose Version != this.
-    inline constexpr u32 CookedMaterialVersion = 6u;
+    inline constexpr u32 CookedMaterialVersion = 7u;
 
     /// @brief Cooked header for a material asset.
     ///

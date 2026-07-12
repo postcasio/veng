@@ -1255,6 +1255,18 @@ namespace Veng::Renderer
         /// @brief Bindless slot for the velocity view; the resolve samples per-object motion through it.
         TextureHandle m_VelocityHandle;
 
+        /// @brief HDR emissive target — g-buffer channel G4.
+        ///
+        /// B10G11R11Ufloat, full extent. The surface pass writes authored emission as SV_Target4
+        /// alongside the other g-buffer channels every frame (no separate pass), so it is always
+        /// allocated; the lighting pass samples it and adds it into the outgoing radiance. Created
+        /// in CreateGBuffer and recreated on Resize/Configure with the rest of the g-buffer.
+        Ref<Image> m_EmissiveImage;
+        /// @brief View over m_EmissiveImage.
+        Ref<ImageView> m_EmissiveView;
+        /// @brief Bindless slot for the emissive view; the lighting pass samples G4 through it.
+        TextureHandle m_EmissiveHandle;
+
         /// @brief Bloom mip-pyramid image: an HDR mip chain the compute down/up sweep operates on.
         ///
         /// HdrFormat, sized to m_Extent with a mip chain stopping ~3 levels short of 1×1
@@ -1796,6 +1808,8 @@ namespace Veng::Renderer
         ResourceId m_TaaHistoryId;
         /// @brief Imported id for the velocity g-buffer channel (G3), written every frame.
         ResourceId m_VelocityId;
+        /// @brief Imported id for the emissive g-buffer channel (G4), written every frame.
+        ResourceId m_EmissiveId;
         /// @brief Per-mip subresource handle for the bloom pyramid the down/up sweep reads and writes.
         MipChainId m_BloomChainId;
         /// @brief Imported id for the bloom composite result.

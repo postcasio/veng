@@ -88,6 +88,11 @@ namespace Veng::Renderer
         ///        The single-channel mask codec. Appended at the fixed ordinal 27 for cooked-blob
         ///        integer stability; the cooker writes the literal and the texture loader reads it.
         BC4Unorm,
+        /// @brief 11-bit R + 11-bit G + 10-bit B unsigned float, packed in 32 bits (no alpha).
+        ///        The HDR emissive g-buffer channel's format: unsigned (emission is non-negative),
+        ///        4 bytes/texel, magnitude cap matching the FP16 lit chain. Appended at the fixed
+        ///        ordinal 28 for cooked-blob integer stability.
+        B10G11R11Ufloat,
     };
 
     /// @brief Requested display output mode for the presentable swapchain.
