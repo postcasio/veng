@@ -16,7 +16,13 @@ namespace Veng::Net
                          const TickSyncSettings& settings)
     {
         const f32 tickRate = static_cast<f32>(settings.TickRate);
-        const f32 leadSeconds = rttSeconds * 0.5f + jitterSeconds;
+        // The offset the controller steers is measured against the last snapshot's server tick, which
+        // lags the server's live tick by the downstream latency (~RTT/2). So the lead must cover the
+        // whole round trip — the upstream trip the input still has to make (~RTT/2) plus that
+        // downstream staleness (~RTT/2) — not just the one-way trip, or the client ends up level with
+        // the live server and its input arrives after the consume front (chronic jitter-buffer
+        // underrun). Plus the jitter the buffer absorbs and the safety margin.
+        const f32 leadSeconds = rttSeconds + jitterSeconds;
         const f32 target = leadSeconds * tickRate + settings.MarginTicks - feedbackTrimTicks;
         return std::max(target, 0.0f);
     }

@@ -401,8 +401,8 @@ namespace Veng
         vector<Entity> Predicted;
 
         // The tick-offset controller: the freshest server tick a snapshot carried and the estimator
-        // that folds it (with the connection's RTT) into the client's target lead. Inert this plan —
-        // observed and exposed, not yet applied to a sim clock.
+        // that folds it (with the connection's RTT) into the client's target lead. The world drive
+        // reads the target each frame to seed and slew its sim clock ahead of the server.
         u64 LastServerTick = 0;
         Net::TickOffsetEstimator TickSync;
 
@@ -503,6 +503,7 @@ namespace Veng
         state->Policy = info.Prediction;
         state->Replay = info.Replay;
         state->Tolerances = info.Tolerances;
+        state->TickSync = Net::TickOffsetEstimator(info.TickSync);
         state->Replication = CreateUnique<ReplicationClient>(info.ResolvePrefab);
         return Unique<ClientHost>(new ClientHost(std::move(state)));
     }

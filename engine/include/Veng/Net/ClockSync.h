@@ -36,8 +36,12 @@ namespace Veng::Net
 
     /// @brief The lead, in ticks, the client should run ahead of the server.
     ///
-    /// (RTT/2 + jitter)·TickRate + MarginTicks − feedbackTrim: the trip time one way, plus the jitter
-    /// the buffer must absorb, plus the safety margin, less any closed-loop correction the server's
+    /// (RTT + jitter)·TickRate + MarginTicks − feedbackTrim. The lead is measured against the last
+    /// snapshot's server tick, which lags the server's live tick by the downstream latency (~RTT/2),
+    /// so the target folds the whole round trip — the upstream trip the input still has to make plus
+    /// that downstream staleness — not just the one-way trip; a half-RTT target leaves the client
+    /// level with the live server and its input arriving after the consume front. Plus the jitter the
+    /// buffer must absorb and the safety margin, less any closed-loop correction the server's
     /// consumed-input feedback supplies. Clamped at zero — the client never targets running behind.
     /// @param rttSeconds       Smoothed round-trip time in seconds.
     /// @param jitterSeconds    Smoothed RTT jitter (mean absolute deviation) in seconds.

@@ -155,6 +155,12 @@ namespace Veng
         Net::ReplayTick Replay;
         /// @brief The reconciliation compare tolerances and smoothing knobs (defaulted when unset).
         Net::ReconcileTolerances Tolerances;
+        /// @brief Tick-offset controller tuning — the sim tick rate and the lead margin.
+        ///
+        /// The estimator converts RTT/jitter seconds into a tick lead at TickRate, so it must match
+        /// the world's SimTickRate; MarginTicks carries the fixed safety lead beyond the round-trip
+        /// estimate (the snapshot-cadence staleness plus the buffered-input cushion).
+        Net::TickSyncSettings TickSync;
     };
 
     /// @brief Client-side join glue: load, ready, apply the stream, wire the own seat.

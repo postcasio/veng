@@ -21,16 +21,49 @@ namespace
         .TickRate = 60, .MarginTicks = 1.0f, .MaxSlew = 0.05f, .SlewGain = 0.2f};
 }
 
-TEST_CASE("clock sync: target lead is (RTT/2 + jitter)·rate + margin, clamped at zero")
+TEST_CASE("clock sync: target lead is (RTT + jitter)·rate + margin, clamped at zero")
 {
-    // rtt 0.1 s ⇒ 0.05 s one-way, jitter 0.02 s ⇒ 0.07 s lead · 60 = 4.2 ticks, + 1 margin = 5.2.
-    CHECK(TargetTickOffset(0.1f, 0.02f, 0.0f, Settings) == doctest::Approx(5.2f));
+    // The lead is measured against the last (already-stale) snapshot tick, so it folds the full round
+    // trip, not the one-way trip: rtt 0.1 s + jitter 0.02 s ⇒ 0.12 s · 60 = 7.2 ticks, + 1 margin = 8.2.
+    CHECK(TargetTickOffset(0.1f, 0.02f, 0.0f, Settings) == doctest::Approx(8.2f));
 
     // Zero link state still leads by the margin.
     CHECK(TargetTickOffset(0.0f, 0.0f, 0.0f, Settings) == doctest::Approx(1.0f));
 
     // A feedback trim larger than the lead clamps the target at zero, never negative.
     CHECK(TargetTickOffset(0.1f, 0.02f, 100.0f, Settings) == doctest::Approx(0.0f));
+}
+
+TEST_CASE("clock sync: the lead covers snapshot staleness so input beats the consume front")
+{
+    // The client only ever learns the server's tick through a snapshot, which is already stale by the
+    // downstream trip (~RTT/2) when it arrives. Model that: the controller observes the client tick
+    // against a *delayed* server tick, and the true lead over the live server must still exceed the
+    // upstream trip plus the jitter the buffer absorbs — otherwise the input stamped for a tick
+    // reaches the server after it has consumed that tick (the chronic jitter-buffer underrun a
+    // half-RTT target caused). This is the regression guard for that fix; the isolated convergence
+    // tests below model an ideal, staleness-free offset and so never exercised it.
+    const f32 rtt = 0.1f;
+    const f32 jitter = 0.02f;
+    const f32 oneWayTicks = rtt * 0.5f * static_cast<f32>(Settings.TickRate);
+    const auto staleness = static_cast<i64>(std::llround(oneWayTicks));
+
+    f32 clientPos = 0.0f;
+    i64 trueServer = 0;
+    for (int step = 0; step < 800; ++step)
+    {
+        const i64 lastHeard = trueServer - staleness;
+        const f32 offset = clientPos - static_cast<f32>(lastHeard);
+        clientPos += EstimateTickOffset(TickOffsetInput{.RttSeconds = rtt,
+                                                        .JitterSeconds = jitter,
+                                                        .CurrentOffsetTicks = offset},
+                                        Settings)
+                         .SlewFactor;
+        ++trueServer;
+    }
+
+    const f32 trueLead = clientPos - static_cast<f32>(trueServer);
+    CHECK(trueLead >= oneWayTicks + jitter * static_cast<f32>(Settings.TickRate));
 }
 
 TEST_CASE("clock sync: the slew is bounded and directed by the lead error")
