@@ -190,9 +190,12 @@ float3 LtcIntegrateEdgeVec(float3 v1, float3 v2)
     return cross(v1, v2) * theta_sintheta;
 }
 
+// Negated so the summed integral is positive for a polygon whose front face (its CCW-winding
+// normal) points at the shading point — the Rect/Polygon authoring convention and the
+// facing disk LtcSphere builds. The raw edge-vector z sums negative for that orientation.
 float LtcIntegrateEdge(float3 v1, float3 v2)
 {
-    return LtcIntegrateEdgeVec(v1, v2).z;
+    return -LtcIntegrateEdgeVec(v1, v2).z;
 }
 
 // Sample the LTC LUTs by (roughness, sqrt(1 - N·V)) and reconstruct the inverse transform.
@@ -497,9 +500,11 @@ float4 fsMain(VSOutput input) : SV_Target
     else if (g_PC.SkylightOn != 0)
     {
         // The cosine-convolved coefficients reconstruct cosine-weighted irradiance directly;
-        // clamp the SH ringing below zero before it darkens the surface.
+        // clamp the SH ringing below zero before it darkens the surface. The Lambertian
+        // albedo/pi turns irradiance into outgoing radiance, matching the direct arm's
+        // normalization (the IBL arm folds the same 1/pi into its irradiance convolution).
         float3 irradiance = max(ShEvalIrradiance(vc.SkyShCoeffs, N), float3(0.0));
-        ambient = irradiance * albedo * g_PC.SkylightIntensity * ambientOcclusion;
+        ambient = irradiance * (albedo / Pi) * g_PC.SkylightIntensity * ambientOcclusion;
     }
     else
     {
