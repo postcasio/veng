@@ -170,9 +170,11 @@ float3 EvaluateLight(float3 N, float3 V, float3 L, float3 radiance,
 //
 // An area light's GGX response is the analytic integral of a clamped-cosine distribution
 // warped by a per-(roughness, view-angle) matrix read from the LTC LUTs. The polygon integral
-// is the clamped sum of per-edge terms (IntegrateEdge), which handles convex polygons of any
-// vertex count and the disk-approximated Sphere uniformly; below the horizon the clamp drops
-// the contribution, so a surface facing away from the light stays dark.
+// sums per-edge vector terms (IntegrateEdgeVec) into the polygon's vector form factor, then
+// resolves the horizon through the proportional-sphere approximation (LtcClippedFormFactor):
+// the raw edge sum is exact only for a polygon fully above the transformed horizon, and a
+// straddling polygon's below-horizon part subtracts — clamping that sum cuts to zero while
+// the true integral is still positive, drawing a hard boundary across a lit surface.
 static const float LtcLutSize = 64.0;
 static const float LtcLutScale = (LtcLutSize - 1.0) / LtcLutSize;
 static const float LtcLutBias = 0.5 / LtcLutSize;
@@ -190,12 +192,30 @@ float3 LtcIntegrateEdgeVec(float3 v1, float3 v2)
     return cross(v1, v2) * theta_sintheta;
 }
 
-// Negated so the summed integral is positive for a polygon whose front face (its CCW-winding
-// normal) points at the shading point — the Rect/Polygon authoring convention and the
-// facing disk LtcSphere builds. The raw edge-vector z sums negative for that orientation.
-float LtcIntegrateEdge(float3 v1, float3 v2)
+// Horizon-clipped form factor of a spherical cap whose unclipped vector form factor has
+// length len and axis cosine z (the analytic sphere irradiance with horizon of Snyder, as
+// formulated in Lagarde & de Rousiers, "Moving Frostbite to PBR"). The integrators treat the
+// transformed polygon as the proportional cap — exact for the facing disk, and the standard
+// clipless approximation for a warped Rect/Polygon.
+float LtcClippedFormFactor(float z, float len)
 {
-    return -LtcIntegrateEdgeVec(v1, v2).z;
+    float sinSigmaSqr = min(len, 0.9999);
+    float cosTheta = clamp(z, -0.9999, 0.9999);
+    float e;
+    if (cosTheta * cosTheta > sinSigmaSqr)
+    {
+        // Cap fully above (or below) the horizon: the unclipped product survives the clamp.
+        e = Pi * sinSigmaSqr * max(cosTheta, 0.0);
+    }
+    else
+    {
+        float sinTheta = sqrt(1.0 - cosTheta * cosTheta);
+        float x = sqrt(1.0 / sinSigmaSqr - 1.0);
+        float y = -x * (cosTheta / sinTheta);
+        float sinThetaSqrtY = sinTheta * sqrt(1.0 - y * y);
+        e = (cosTheta * acos(y) - x * sinThetaSqrtY) * sinSigmaSqr + atan(sinThetaSqrtY / x);
+    }
+    return max(e, 0.0) / Pi;
 }
 
 // Sample the LTC LUTs by (roughness, sqrt(1 - N·V)) and reconstruct the inverse transform.
@@ -221,8 +241,10 @@ float3 LtcAreaVertex(uint index)
 }
 
 // The LTC integral over a convex polygon read from the area-vertex buffer. Minv is the fitted
-// matrix (specular) or identity (Lambert diffuse). A two-sided light takes the absolute integral.
-float LtcPolygon(float3 N, float3 V, float3 P, float3x3 Minv, uint base, uint count, bool twoSided)
+// matrix (specular) or identity (Lambert diffuse). areaNormal is the polygon's CCW front-face
+// normal; a one-sided light contributes nothing to a point behind its plane.
+float LtcPolygon(float3 N, float3 V, float3 P, float3x3 Minv, uint base, uint count,
+                 bool twoSided, float3 areaNormal)
 {
     float3 T1 = normalize(V - N * dot(V, N));
     float3 T2 = cross(N, T1);
@@ -230,14 +252,32 @@ float LtcPolygon(float3 N, float3 V, float3 P, float3x3 Minv, uint base, uint co
     float3x3 M = mul(Minv, float3x3(T1, T2, N));
 
     float3 prev = normalize(mul(M, LtcAreaVertex(base + count - 1u) - P));
-    float sum = 0.0;
+    float3 vsum = float3(0.0);
     for (uint i = 0; i < count; ++i)
     {
         float3 cur = normalize(mul(M, LtcAreaVertex(base + i) - P));
-        sum += LtcIntegrateEdge(prev, cur);
+        vsum += LtcIntegrateEdgeVec(prev, cur);
         prev = cur;
     }
-    return twoSided ? abs(sum) : max(0.0, sum);
+
+    float len = length(vsum);
+    if (len < 1e-6)
+    {
+        return 0.0;
+    }
+    // The edge-vector z sums negative for a front face pointing at the shading point (the
+    // Rect/Polygon CCW authoring convention), so the front-lit axis cosine is the negated z.
+    float z = -vsum.z / len;
+    bool behind = dot(P - LtcAreaVertex(base), areaNormal) < 0.0;
+    if (behind && !twoSided)
+    {
+        return 0.0;
+    }
+    if (behind)
+    {
+        z = -z;
+    }
+    return LtcClippedFormFactor(z, len);
 }
 
 // The LTC integral of a Sphere light, approximated as a disk of SphereSegments edges centered
@@ -257,16 +297,24 @@ float LtcSphere(float3 N, float3 V, float3 P, float3x3 Minv, float3 center, floa
     float3 bb = cross(tt, dir);
 
     float3 prev = normalize(mul(M, (center + radius * tt) - P));
-    float sum = 0.0;
+    float3 vsum = float3(0.0);
     for (uint i = 1; i <= SphereSegments; ++i)
     {
         float ang = (2.0 * Pi) * float(i) / float(SphereSegments);
         float3 vert = center + radius * (cos(ang) * tt + sin(ang) * bb);
         float3 cur = normalize(mul(M, vert - P));
-        sum += LtcIntegrateEdge(prev, cur);
+        vsum += LtcIntegrateEdgeVec(prev, cur);
         prev = cur;
     }
-    return max(0.0, sum);
+
+    float len = length(vsum);
+    if (len < 1e-6)
+    {
+        return 0.0;
+    }
+    // The facing disk always fronts the shading point, so there is no behind case; the
+    // front-lit axis cosine is the negated z (see LtcPolygon).
+    return LtcClippedFormFactor(-vsum.z / len, len);
 }
 
 // The full area-light contribution (diffuse + tinted specular), before range attenuation and
@@ -299,8 +347,8 @@ float3 EvaluateAreaLight(GpuLight light, float3 N, float3 V, float3 P, float3 al
         {
             return float3(0.0);
         }
-        specSum = LtcPolygon(N, V, P, Minv, base, count, twoSided);
-        diffSum = LtcPolygon(N, V, P, ident, base, count, twoSided);
+        specSum = LtcPolygon(N, V, P, Minv, base, count, twoSided, light.AreaNormal.xyz);
+        diffSum = LtcPolygon(N, V, P, ident, base, count, twoSided, light.AreaNormal.xyz);
     }
 
     float3 specScale = f0 * t2.x + (1.0 - f0) * t2.y;
