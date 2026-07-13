@@ -190,9 +190,12 @@ float3 LtcIntegrateEdgeVec(float3 v1, float3 v2)
     return cross(v1, v2) * theta_sintheta;
 }
 
+// Negated so the summed integral is positive for a polygon whose front face (its CCW-winding
+// normal) points at the shading point — the Rect/Polygon authoring convention and the
+// facing disk LtcSphere builds. The raw edge-vector z sums negative for that orientation.
 float LtcIntegrateEdge(float3 v1, float3 v2)
 {
-    return LtcIntegrateEdgeVec(v1, v2).z;
+    return -LtcIntegrateEdgeVec(v1, v2).z;
 }
 
 // Sample the LTC LUTs by (roughness, sqrt(1 - N·V)) and reconstruct the inverse transform.
