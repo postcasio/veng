@@ -206,9 +206,12 @@ float3x3 LtcMatrix(float nDotV, float roughness, SamplerState samp, out float4 t
     uv = uv * LtcLutScale + LtcLutBias;
     float4 t1 = g_Textures[NonUniformResourceIndex(g_PC.LtcMatTexture)].SampleLevel(samp, uv, 0.0);
     t2 = g_Textures[NonUniformResourceIndex(g_PC.LtcMagTexture)].SampleLevel(samp, uv, 0.0);
-    return float3x3(t1.x, 0.0, t1.y,
+    // The LUT packs glm column-major invM[col][row]: t1.y is row 2/col 0 and t1.z row 0/col 2,
+    // so the row-major reconstruction places t1.z in the top row — swapping them transposes the
+    // matrix and mirrors the specular lobe to the wrong side of the light.
+    return float3x3(t1.x, 0.0, t1.z,
                     0.0, 1.0, 0.0,
-                    t1.z, 0.0, t1.w);
+                    t1.y, 0.0, t1.w);
 }
 
 // Load a packed area-light polygon vertex (world space) by its region-relative index.
