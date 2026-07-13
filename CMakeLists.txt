@@ -1497,6 +1497,18 @@ endif ()
 # serially — each does a heavy nested configure + build.
 if (VENG_BUILD_TESTS AND VENG_INSTALL_SDK AND TARGET veng-editor AND TARGET vengc
         AND TARGET veng_test_headless_smoke)
+    # The nested consumer must target the architecture this build's SDK libraries carry: a
+    # default nested configure inherits the invoking process tree's CPU preference (a Rosetta
+    # ctest makes universal clang default to x86_64 against an arm64 SDK), so pin the engine
+    # build's own architecture through to the template configure on Apple hosts.
+    set(VENG_SDK_CONFORMANCE_ARCH "")
+    if (APPLE)
+        if (CMAKE_OSX_ARCHITECTURES)
+            set(VENG_SDK_CONFORMANCE_ARCH "${CMAKE_OSX_ARCHITECTURES}")
+        else ()
+            set(VENG_SDK_CONFORMANCE_ARCH "${CMAKE_SYSTEM_PROCESSOR}")
+        endif ()
+    endif ()
     foreach (MODE install buildtree)
         add_test(NAME sdk_conformance_${MODE}
             COMMAND ${CMAKE_COMMAND}
@@ -1506,6 +1518,7 @@ if (VENG_BUILD_TESTS AND VENG_INSTALL_SDK AND TARGET veng-editor AND TARGET veng
                 -D VENG_TEMPLATE_SRC=${CMAKE_CURRENT_SOURCE_DIR}/examples/template
                 -D VENG_SCRATCH=${CMAKE_CURRENT_BINARY_DIR}/sdk_conformance_${MODE}
                 -D VENG_PROBE_BIN=$<TARGET_FILE:veng_test_headless_smoke>
+                "-D" "VENG_OSX_ARCH=${VENG_SDK_CONFORMANCE_ARCH}"
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/SdkConformance.cmake
         )
         set_tests_properties(sdk_conformance_${MODE} PROPERTIES

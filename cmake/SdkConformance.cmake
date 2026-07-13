@@ -73,8 +73,15 @@ else ()
 endif ()
 
 # ---- Configure the standalone template --------------------------------------
+# VENG_OSX_ARCH (Apple hosts) pins the template to the architecture the SDK libraries carry:
+# a default configure follows the invoking process tree's CPU preference, which under a
+# Rosetta-translated ancestor makes universal clang target x86_64 against an arm64 SDK.
+set(ARCH_ARGS "")
+if (DEFINED VENG_OSX_ARCH AND NOT VENG_OSX_ARCH STREQUAL "")
+    list(APPEND ARCH_ARGS "-DCMAKE_OSX_ARCHITECTURES=${VENG_OSX_ARCH}")
+endif ()
 execute_process(
-    COMMAND "${VENG_CMAKE}" -B "${BUILD_DIR}" -S "${TEMPLATE_COPY}" "${DISCOVERY_ARG}"
+    COMMAND "${VENG_CMAKE}" -B "${BUILD_DIR}" -S "${TEMPLATE_COPY}" "${DISCOVERY_ARG}" ${ARCH_ARGS}
     RESULT_VARIABLE CONFIGURE_RESULT
 )
 if (NOT CONFIGURE_RESULT EQUAL 0)
