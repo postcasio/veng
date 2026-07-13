@@ -69,6 +69,10 @@ namespace Veng
 
         SamplerInfo samplerInfo = info.Sampler;
         samplerInfo.Name = m_Name + " Sampler";
+        // The sampler must cover the texture's whole mip chain: SamplerInfo's
+        // MaxLod default (1) would clamp minification to the top two levels and
+        // alias the lower mips out of use.
+        samplerInfo.MaxLod = static_cast<f32>(mipLevels);
         m_Sampler = Sampler::Create(context, samplerInfo);
     }
 
