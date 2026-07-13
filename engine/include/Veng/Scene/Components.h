@@ -834,15 +834,19 @@ namespace Veng
     /// are not here: they are the author-opt-in Sky and TimeOfDay scene components, resolved by
     /// the renderer itself. This struct carries the view-wide post and pipeline toggles the app maps
     /// onto its SceneRendererSettings (Bloom / Shadows / AO) and its per-frame SceneView
-    /// (Exposure, BloomIntensity).
+    /// (Exposure, BloomThreshold, BloomIntensity, BloomRadius).
     struct LevelRenderSettings
     {
         /// @brief Tonemap exposure fed into the per-frame SceneView.
         f32 Exposure = 1.0f;
         /// @brief Whether the bloom battery is enabled.
         bool Bloom = true;
+        /// @brief Bloom bright-pass luminance knee fed into the per-frame SceneView.
+        f32 BloomThreshold = 1.0f;
         /// @brief Bloom composite intensity fed into the per-frame SceneView.
         f32 BloomIntensity = 1.0f;
+        /// @brief Bloom upsample spread fed into the per-frame SceneView.
+        f32 BloomRadius = 1.0f;
         /// @brief Whether the directional cascaded-shadow battery is enabled.
         bool Shadows = true;
         /// @brief Whether the punctual shadow atlas is enabled.
@@ -1158,7 +1162,9 @@ VE_REFLECT_END();
 VE_REFLECT(::Veng::LevelRenderSettings, 0x28E4618C66455E21ULL)
 VE_FIELD(Exposure, .DisplayName = "Exposure", .Display = {.Min = 0.0})
 VE_FIELD(Bloom, .DisplayName = "Bloom")
+VE_FIELD(BloomThreshold, .DisplayName = "Bloom Threshold", .Display = {.Min = 0.0})
 VE_FIELD(BloomIntensity, .DisplayName = "Bloom Intensity", .Display = {.Min = 0.0})
+VE_FIELD(BloomRadius, .DisplayName = "Bloom Radius", .Display = {.Min = 0.0})
 VE_FIELD(Shadows, .DisplayName = "Shadows")
 VE_FIELD(PunctualShadows, .DisplayName = "Punctual / Area Shadows")
 VE_FIELD(AO, .DisplayName = "SSAO")
