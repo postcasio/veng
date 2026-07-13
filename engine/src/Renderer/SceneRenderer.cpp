@@ -5510,12 +5510,26 @@ namespace Veng::Renderer
                 reinterpret_cast<u32*>(static_cast<u8*>(m_AutoExposureBuffer->GetMappedData()) +
                                        static_cast<usize>(frameIndex) * m_AutoExposureStride);
 
-            // Weighted average of bins 1..255 (bin centers in log2 space), skipping the black bin.
+            // Weighted average of bins 1..255 (bin centers in log2 space), skipping the black bin
+            // and the lit pixels outside the [low, high] percentile band — trimming the tails
+            // makes a bimodal frame (a sun-lit surface against a near-black sky) meter on the
+            // band rather than the mean of both. The default 0..1 band meters every lit pixel.
             const f32 minLogLum = std::log2(std::max(view.AutoExposureMinLuminance, 1e-5f));
             const f32 maxLogLum = std::log2(std::max(view.AutoExposureMaxLuminance, 1e-4f));
             const f32 logRange = maxLogLum - minLogLum;
+            u64 litTotal = 0;
+            for (u32 bin = 1; bin < AutoExposureBinCount; ++bin)
+            {
+                litTotal += region[bin];
+            }
+            const f32 lowPercentile = std::clamp(view.AutoExposureLowPercentile, 0.0f, 1.0f);
+            const f32 highPercentile =
+                std::clamp(view.AutoExposureHighPercentile, lowPercentile, 1.0f);
+            const f64 lowRank = static_cast<f64>(litTotal) * lowPercentile;
+            const f64 highRank = static_cast<f64>(litTotal) * highPercentile;
             f64 weightedLog = 0.0;
-            u64 count = 0;
+            f64 count = 0.0;
+            f64 rank = 0.0;
             for (u32 bin = 1; bin < AutoExposureBinCount; ++bin)
             {
                 const u32 binCount = region[bin];
@@ -5523,10 +5537,20 @@ namespace Veng::Renderer
                 {
                     continue;
                 }
+                // The portion of this bin inside the percentile band (bins straddling an edge
+                // contribute fractionally, so the band boundaries do not snap to bins).
+                const f64 binLow = rank;
+                rank += binCount;
+                const f64 inBand =
+                    std::max(0.0, std::min(rank, highRank) - std::max(binLow, lowRank));
+                if (inBand <= 0.0)
+                {
+                    continue;
+                }
                 const f32 t =
                     (static_cast<f32>(bin) - 0.5f) / static_cast<f32>(AutoExposureBinCount - 1);
-                weightedLog += static_cast<f64>(minLogLum + t * logRange) * binCount;
-                count += binCount;
+                weightedLog += static_cast<f64>(minLogLum + t * logRange) * inBand;
+                count += inBand;
             }
 
             // Zero this slot before this frame's metering pass accumulates into it (host-coherent,
@@ -5535,10 +5559,9 @@ namespace Veng::Renderer
 
             // A frame with no lit content (count == 0) leaves the adaptation and reset pending
             // untouched, so the exposure holds rather than blowing up on an empty meter.
-            if (count > 0)
+            if (count > 0.0)
             {
-                const f32 meteredLuminance =
-                    std::exp2(static_cast<f32>(weightedLog / static_cast<f64>(count)));
+                const f32 meteredLuminance = std::exp2(static_cast<f32>(weightedLog / count));
                 if (m_AutoExposureReset)
                 {
                     m_AdaptedLuminance = meteredLuminance;

@@ -488,6 +488,21 @@ namespace Veng::Renderer
         /// Ignored when auto-exposure is off.
         f32 AutoExposureSpeed = 2.5f;
 
+        /// @brief Lower percentile of the lit-pixel histogram the metering averages from, in [0, 1].
+        ///
+        /// The metering averages log-luminance over the histogram slice between the low and high
+        /// percentiles of lit pixels, discarding the tails outside them. The default 0..1 band
+        /// meters every lit pixel; a raised low percentile makes a bimodal scene (a sun-lit
+        /// surface against a near-black sky) meter on its bright content instead of the mean of
+        /// both. Ignored when auto-exposure is off.
+        f32 AutoExposureLowPercentile = 0.0f;
+
+        /// @brief Upper percentile of the lit-pixel histogram the metering averages to, in [0, 1].
+        ///
+        /// See AutoExposureLowPercentile; lowering it excludes extreme highlights (a star disc)
+        /// from the meter. Ignored when auto-exposure is off.
+        f32 AutoExposureHighPercentile = 1.0f;
+
         /// @brief Environment map for the skybox and image-based lighting; empty for none.
         ///
         /// The renderer fills this from the resolved Sky component each Execute (its source is an

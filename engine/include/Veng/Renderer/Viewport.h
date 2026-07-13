@@ -79,6 +79,10 @@ namespace Veng::Renderer
         f32 AutoExposureMaxLuminance = 8.0f;
         /// @brief Auto-exposure adaptation rate per second (0 freezes the current adaptation).
         f32 AutoExposureSpeed = 2.5f;
+        /// @brief Lower percentile of the lit-pixel histogram the metering averages from, in [0, 1].
+        f32 AutoExposureLowPercentile = 0.0f;
+        /// @brief Upper percentile of the lit-pixel histogram the metering averages to, in [0, 1].
+        f32 AutoExposureHighPercentile = 1.0f;
         /// @brief Bloom bright-pass luminance knee.
         f32 BloomThreshold = 1.0f;
         /// @brief Bloom composite mix intensity.
