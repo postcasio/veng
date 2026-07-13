@@ -18,6 +18,9 @@ namespace Veng
         registry.Register<Name>();
         registry.Register<Transform>();
         registry.Register<Hierarchy>();
+        // Per-frame (View-phase) authored pose: the render gather draws the entity's live
+        // transform instead of blending the sim-tick history. Runtime-only, fieldless.
+        registry.Register<ViewPose>();
         registry.Register<Camera>();
         registry.Register<Viewer>();
         registry.Register<MeshRenderer>();

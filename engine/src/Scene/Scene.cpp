@@ -192,9 +192,13 @@ namespace Veng
 
     mat4 Scene::InterpolatedLocalMatrix(const Entity entity, const f32 alpha) const
     {
+        // A ViewPose transform is authored per frame, after the tick snapshot: its live pose is
+        // already this frame's pose, and the history ring holds earlier frames' writes — blending
+        // those would render the entity a frame stale against the anchor it follows.
         const auto prevIt = m_TransformPrev.find(entity);
         const auto curIt = m_TransformCur.find(entity);
-        if (prevIt != m_TransformPrev.end() && curIt != m_TransformCur.end())
+        if (prevIt != m_TransformPrev.end() && curIt != m_TransformCur.end() &&
+            !Has<ViewPose>(entity))
         {
             const Transform from{.Position = prevIt->second.Position,
                                  .Rotation = prevIt->second.Rotation,
@@ -205,7 +209,8 @@ namespace Veng
             return LocalMatrix(InterpolateTransform(from, to, alpha));
         }
 
-        // No two-tick history for this entity (first snapshot, or spawned since): use its live pose.
+        // No two-tick history for this entity (first snapshot, or spawned since), or a live
+        // ViewPose: use the live pose.
         if (const auto* transform = TryGet<Transform>(entity))
         {
             return LocalMatrix(*transform);

@@ -249,8 +249,9 @@ namespace Veng
         /// Walks the Hierarchy chain like WorldMatrix, but composes each level's local matrix from the
         /// two-tick history blended by @p alpha (previous → current). An entity with no history entry
         /// (never snapshotted) falls back to its live Transform, so the result equals WorldMatrix when
-        /// no interpolation applies. A View system (a camera rig) reads this so the camera and the
-        /// meshes it frames share one interpolated pose.
+        /// no interpolation applies; a ViewPose level resolves its live Transform (a per-frame authored
+        /// pose is already this frame's — see ViewPose). A View system (a camera rig) reads this so the
+        /// camera and the meshes it frames share one interpolated pose.
         /// @param entity  The entity to resolve.
         /// @param alpha   The interpolation fraction in [0, 1] (0 = previous tick, 1 = current).
         /// @return The interpolated world matrix.

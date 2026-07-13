@@ -66,6 +66,19 @@ namespace Veng
         Entity NextSibling = Entity::Null;
     };
 
+    /// @brief Marks an entity whose Transform is authored per frame, in the View phase.
+    ///
+    /// The render gather blends every transform between the scene's last two Sim-tick snapshots,
+    /// but a View-authored pose — a camera-anchored impostor, a billboard, any presentation
+    /// entity re-placed each frame — is already this frame's pose: the snapshots hold earlier
+    /// frames' writes, so blending renders the entity a frame stale, visibly lagging its anchor
+    /// while the camera moves. This tag makes the entity's own local transform resolve live in
+    /// Scene::GetInterpolatedWorldTransform; ancestor levels keep their own interpolation.
+    /// Runtime-only display state, added by the system that authors the pose.
+    struct ViewPose
+    {
+    };
+
     /// @brief Cube shape recipe: the parameters of Primitives::Cube plus its material.
     struct CubeShape
     {
@@ -866,6 +879,8 @@ VE_REPLICATED(::Veng::Transform);
 VE_REFLECT(::Veng::Hierarchy, 0x5C9855E287465C5EULL)
 VE_FIELD(Parent, .DisplayName = "Parent", .ReadOnly = true)
 VE_REFLECT_END();
+
+VE_TYPE(::Veng::ViewPose, 0xC8BD67E5A1ED1A82ULL);
 
 VE_REFLECT(::Veng::CubeShape, 0x2B758A3FE238BAA5ULL)
 VE_FIELD(Extent, .DisplayName = "Extent", .Display = {.Min = 0.001})

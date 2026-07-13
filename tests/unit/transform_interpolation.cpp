@@ -23,6 +23,7 @@ namespace
         registry.Register<Name>("Name");
         registry.Register<Transform>("Transform");
         registry.Register<Hierarchy>("Hierarchy");
+        registry.Register<ViewPose>("ViewPose");
         return registry;
     }
 
@@ -130,4 +131,52 @@ TEST_CASE("scene interpolation: a child composes its parent's interpolated world
     // At alpha 0.5 the parent is halfway to x=5, and the child sits at parent + local(2) = 7.
     const mat4 childWorld = scene->GetInterpolatedWorldTransform(child, 0.5f);
     CHECK(glm::all(glm::epsilonEqual(Translation(childWorld), vec3(7, 0, 0), 1e-5f)));
+}
+
+TEST_CASE("scene interpolation: a ViewPose entity resolves its live pose, never the history")
+{
+    TypeRegistry registry = MakeRegistry();
+    const Unique<Scene> scene = Scene::Create(registry);
+
+    const Entity entity = scene->CreateEntity();
+    scene->Add<Transform>(entity, Transform{.Position = {0.0f, 0.0f, 0.0f}});
+    scene->Add<ViewPose>(entity);
+
+    // Two ticks of history {0, 10}, then a per-frame (post-snapshot) write to x=20 — the View-phase
+    // authoring pattern. The tagged entity renders the live pose at any alpha; untagged it would
+    // blend the stale ring.
+    scene->SnapshotTransformHistory();
+    scene->Get<Transform>(entity).Position = {10.0f, 0.0f, 0.0f};
+    scene->SnapshotTransformHistory();
+    scene->Get<Transform>(entity).Position = {20.0f, 0.0f, 0.0f};
+    REQUIRE(scene->HasTransformInterpolation());
+
+    CHECK(glm::all(glm::epsilonEqual(
+        Translation(scene->GetInterpolatedWorldTransform(entity, 0.0f)), vec3(20, 0, 0), 1e-5f)));
+    CHECK(glm::all(glm::epsilonEqual(
+        Translation(scene->GetInterpolatedWorldTransform(entity, 0.5f)), vec3(20, 0, 0), 1e-5f)));
+}
+
+TEST_CASE("scene interpolation: a ViewPose child stays live under an interpolated parent")
+{
+    TypeRegistry registry = MakeRegistry();
+    const Unique<Scene> scene = Scene::Create(registry);
+
+    const Entity parent = scene->CreateEntity();
+    scene->Add<Transform>(parent, Transform{.Position = {0.0f, 0.0f, 0.0f}});
+    const Entity child = scene->CreateEntity();
+    scene->Add<Transform>(child, Transform{.Position = {2.0f, 0.0f, 0.0f}});
+    scene->Add<ViewPose>(child);
+    scene->SetParent(child, parent);
+
+    scene->SnapshotTransformHistory();
+    scene->Get<Transform>(parent).Position = {10.0f, 0.0f, 0.0f};
+    scene->Get<Transform>(child).Position = {4.0f, 0.0f, 0.0f};
+    scene->SnapshotTransformHistory();
+    scene->Get<Transform>(child).Position = {6.0f, 0.0f, 0.0f};
+
+    // The parent level blends to x=5; the tagged child contributes its live local(6) = 11 —
+    // ancestor interpolation composes with the child's per-frame pose.
+    const mat4 childWorld = scene->GetInterpolatedWorldTransform(child, 0.5f);
+    CHECK(glm::all(glm::epsilonEqual(Translation(childWorld), vec3(11, 0, 0), 1e-5f)));
 }

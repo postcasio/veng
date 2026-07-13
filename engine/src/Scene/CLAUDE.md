@@ -85,9 +85,14 @@ carrying the view/projection — Y flipped for Vulkan clip space), `MeshRenderer
 `AssetHandle<Mesh>` a draw queries — the mesh owns its materials, so a renderer queries
 `(Transform, MeshRenderer)` and draws each submesh with its material), `Animator` (plays an
 `AssetHandle<Animation>` on a skinned-mesh entity; the `AnimationSystem` writes the result into a
-transient `SkinnedPose` the renderer uploads), and `Light` (a directional light —
+transient `SkinnedPose` the renderer uploads), `Light` (a directional light —
 `Direction`/`Color`/`Intensity`; `SceneRenderer::Execute` selects the first `Light` entity into
-the `SceneView`, or a zero-intensity default → flat ambient when the scene has none).
+the `SceneView`, or a zero-intensity default → flat ambient when the scene has none), and
+`ViewPose` (a fieldless runtime-only tag marking an entity whose `Transform` is authored per
+frame in the View phase — a camera-anchored impostor, a billboard: the render gather resolves
+its own local transform live instead of blending the scene's two-tick history, which holds
+earlier frames' writes and would render it a frame stale; ancestor levels keep their own
+interpolation).
 
 ## Bounds & broadphase inputs
 
