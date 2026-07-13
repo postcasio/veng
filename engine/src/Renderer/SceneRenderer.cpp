@@ -506,18 +506,26 @@ namespace Veng::Renderer
         struct DrawSlot
         {
             const Mesh* SourceMesh;
+            // The submesh's material — its pipeline is bound for this slot's group. Surface
+            // materials do not all share one pipeline (a custom fragment shader is its own
+            // pipeline), so the group that binds a pipeline is keyed on this, not just the mesh.
+            const MaterialInstance* Pipeline;
             u32 IndexCount;
             u32 FirstIndex;
             i32 VertexOffset;
             u32 CandidateId; // == the per-draw DrawData slot and the command firstInstance
         };
 
-        // A contiguous run of candidate slots sharing one source mesh, so the mesh's
-        // vertex/index buffers bind once. CPU mode draws each slot; GPU mode issues one
-        // vkCmdDrawIndexedIndirect over the run's commands (the culled slots no-op).
+        // A contiguous run of candidate slots sharing one source mesh and one pipeline, so the
+        // mesh's vertex/index buffers and the material pipeline each bind once. CPU mode draws
+        // each slot; GPU mode issues one vkCmdDrawIndexedIndirect over the run's commands (the
+        // culled slots no-op).
         struct DrawGroup
         {
             const Mesh* SourceMesh;
+            // The material whose pipeline the group's draws are recorded through. Borrowed: the
+            // mesh's resident AssetHandle keeps it alive for this frame.
+            const MaterialInstance* PipelineMaterial;
             u32 FirstSlot;
             u32 SlotCount;
         };
@@ -532,17 +540,22 @@ namespace Veng::Renderer
             Ref<Buffer> CandidateIdBuffer;
             Ref<Buffer> IndirectBuffer;   // GPU mode only
             u32 IndirectRegionOffset = 0; // byte offset of this frame's command region (GPU)
-            // One loaded surface material whose pipeline is bound for the whole pass — every
-            // surface material shares the surface pipeline shape, so binding any one suffices.
-            // Borrowed: the mesh's resident AssetHandle keeps it alive for this frame.
+            // A representative loaded static surface material (the first survivor's). Its shared
+            // pipeline layout drives the picking-pipeline build; the g-buffer draws bind each
+            // group's own pipeline (see DrawGroup). Borrowed: the mesh's resident AssetHandle keeps
+            // it alive for this frame.
             const MaterialInstance* PipelineMaterial = nullptr;
             vector<DrawSlot> Slots;
+            // Contiguous runs sharing a mesh and a pipeline; each carries the material pipeline to
+            // bind for its draws, so a scene mixing surface materials with different fragment
+            // shaders binds each draw's own pipeline rather than one for the whole pass.
             vector<DrawGroup> Groups;
 
-            // Skinned draws ride a parallel CPU-direct path after the static draws: the skinned
-            // surface pipeline (built from surface_skinned.vert) bound from a representative
-            // skinned material, with the per-instance palette bound at set 2. They share the same
-            // DrawData buffer (each slot's DrawData.PaletteBase points into the palette).
+            // Skinned draws ride a parallel CPU-direct path after the static draws: per group the
+            // skinned surface pipeline (built from surface_skinned.vert) from that group's material,
+            // with the per-instance palette bound at set 2. They share the same DrawData buffer
+            // (each slot's DrawData.PaletteBase points into the palette). This is a representative
+            // loaded skinned material whose shared layout drives the skinned picking-pipeline build.
             const MaterialInstance* SkinnedPipelineMaterial = nullptr;
             Ref<DescriptorSet> PaletteSet;
             vector<DrawSlot> SkinnedSlots;
@@ -684,24 +697,28 @@ namespace Veng::Renderer
 
                 if (!plan.Slots.empty())
                 {
-                    // One surface pipeline drives every static submesh; bind it, set 0 (bindless),
-                    // and set 1 (the per-draw DrawData SSBO) once, then push the frame selector.
-                    // The pipeline is shared across materials (all surface materials reuse the core
-                    // surface.vert + the deferred g-buffer formats), so binding any one binds the
-                    // pipeline for the whole static pass (Surface pushes no selector).
-                    plan.PipelineMaterial->Bind(cmd);
-                    registry.Bind(cmd);
-
-                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
-                        .Sets = {plan.DrawDataSet},
-                        .FirstSet = 1,
-                        .PipelineBindPoint = PipelineBindPoint::Graphics,
-                    });
-                    cmd.PushConstants(plan.Push);
-
+                    // The fragment pipeline is not shared across surface materials — a custom
+                    // fragment shader is its own pipeline — so it binds per group, keyed on the
+                    // group's material. Set 0 (bindless), set 1 (the per-draw DrawData SSBO), and
+                    // the frame selector push share the surface pipeline layout (core surface.vert
+                    // + the deferred g-buffer formats), so they (re)bind against whichever pipeline
+                    // is current; binding them right after each pipeline bind keeps a valid layout.
                     const Mesh* lastBound = nullptr;
+                    const MaterialInstance* lastPipeline = nullptr;
                     for (const DrawGroup& group : plan.Groups)
                     {
+                        if (lastPipeline != group.PipelineMaterial)
+                        {
+                            group.PipelineMaterial->Bind(cmd);
+                            registry.Bind(cmd);
+                            cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                                .Sets = {plan.DrawDataSet},
+                                .FirstSet = 1,
+                                .PipelineBindPoint = PipelineBindPoint::Graphics,
+                            });
+                            cmd.PushConstants(plan.Push);
+                            lastPipeline = group.PipelineMaterial;
+                        }
                         if (lastBound != group.SourceMesh)
                         {
                             cmd.BindVertexBuffer(group.SourceMesh->GetVertexBuffer());
@@ -736,26 +753,32 @@ namespace Veng::Renderer
 
                 // Skinned draws: the skinned surface pipeline + the palette set (set 2), always
                 // CPU-direct (skinned meshes opt out of GPU-driven culling). They share the same
-                // DrawData buffer; each slot's DrawData.PaletteBase points into the palette.
-                if (!plan.SkinnedSlots.empty() && plan.SkinnedPipelineMaterial != nullptr)
+                // DrawData buffer; each slot's DrawData.PaletteBase points into the palette. As on
+                // the static path the fragment pipeline binds per group, keyed on the group's
+                // material; set 0 / set 1 / set 2 / the push (re)bind against its shared layout.
+                if (!plan.SkinnedSlots.empty())
                 {
-                    plan.SkinnedPipelineMaterial->Bind(cmd);
-                    registry.Bind(cmd);
-                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
-                        .Sets = {plan.DrawDataSet},
-                        .FirstSet = 1,
-                        .PipelineBindPoint = PipelineBindPoint::Graphics,
-                    });
-                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
-                        .Sets = {plan.PaletteSet},
-                        .FirstSet = 2,
-                        .PipelineBindPoint = PipelineBindPoint::Graphics,
-                    });
-                    cmd.PushConstants(plan.Push);
-
                     const Mesh* lastBound = nullptr;
+                    const MaterialInstance* lastPipeline = nullptr;
                     for (const DrawGroup& group : plan.SkinnedGroups)
                     {
+                        if (lastPipeline != group.PipelineMaterial)
+                        {
+                            group.PipelineMaterial->Bind(cmd);
+                            registry.Bind(cmd);
+                            cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                                .Sets = {plan.DrawDataSet},
+                                .FirstSet = 1,
+                                .PipelineBindPoint = PipelineBindPoint::Graphics,
+                            });
+                            cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                                .Sets = {plan.PaletteSet},
+                                .FirstSet = 2,
+                                .PipelineBindPoint = PipelineBindPoint::Graphics,
+                            });
+                            cmd.PushConstants(plan.Push);
+                            lastPipeline = group.PipelineMaterial;
+                        }
                         if (lastBound != group.SourceMesh)
                         {
                             cmd.BindVertexBuffer(group.SourceMesh->GetVertexBuffer());
@@ -5060,6 +5083,7 @@ namespace Veng::Renderer
 
             plan.Slots.push_back(DrawSlot{
                 .SourceMesh = &mesh,
+                .Pipeline = materials[subMesh.MaterialIndex].Get(),
                 .IndexCount = subMesh.IndexCount,
                 .FirstIndex = subMesh.IndexOffset,
                 .VertexOffset = 0,
@@ -5067,17 +5091,24 @@ namespace Veng::Renderer
             });
         }
 
-        // Group contiguous slots that share a source mesh so the mesh's buffers bind once.
+        // Group contiguous slots that share both a source mesh and a pipeline, so the mesh's
+        // buffers and the material pipeline each bind once per group. Splitting on the pipeline
+        // (not just the mesh) is what lets surface materials with different fragment shaders
+        // coexist — each group binds its own.
         for (u32 s = 0; s < plan.Slots.size();)
         {
             const Mesh* mesh = plan.Slots[s].SourceMesh;
+            const MaterialInstance* pipeline = plan.Slots[s].Pipeline;
             u32 count = 0;
-            while (s + count < plan.Slots.size() && plan.Slots[s + count].SourceMesh == mesh)
+            while (s + count < plan.Slots.size() && plan.Slots[s + count].SourceMesh == mesh &&
+                   plan.Slots[s + count].Pipeline == pipeline)
             {
                 ++count;
             }
-            plan.Groups.push_back(
-                DrawGroup{.SourceMesh = mesh, .FirstSlot = s, .SlotCount = count});
+            plan.Groups.push_back(DrawGroup{.SourceMesh = mesh,
+                                            .PipelineMaterial = pipeline,
+                                            .FirstSlot = s,
+                                            .SlotCount = count});
             s += count;
         }
 
@@ -5180,6 +5211,7 @@ namespace Veng::Renderer
 
             plan.SkinnedSlots.push_back(DrawSlot{
                 .SourceMesh = &mesh,
+                .Pipeline = materials[subMesh.MaterialIndex].Get(),
                 .IndexCount = subMesh.IndexCount,
                 .FirstIndex = subMesh.IndexOffset,
                 .VertexOffset = 0,
@@ -5190,14 +5222,18 @@ namespace Veng::Renderer
         for (u32 s = 0; s < plan.SkinnedSlots.size();)
         {
             const Mesh* mesh = plan.SkinnedSlots[s].SourceMesh;
+            const MaterialInstance* pipeline = plan.SkinnedSlots[s].Pipeline;
             u32 count = 0;
             while (s + count < plan.SkinnedSlots.size() &&
-                   plan.SkinnedSlots[s + count].SourceMesh == mesh)
+                   plan.SkinnedSlots[s + count].SourceMesh == mesh &&
+                   plan.SkinnedSlots[s + count].Pipeline == pipeline)
             {
                 ++count;
             }
-            plan.SkinnedGroups.push_back(
-                DrawGroup{.SourceMesh = mesh, .FirstSlot = s, .SlotCount = count});
+            plan.SkinnedGroups.push_back(DrawGroup{.SourceMesh = mesh,
+                                                   .PipelineMaterial = pipeline,
+                                                   .FirstSlot = s,
+                                                   .SlotCount = count});
             s += count;
         }
 
