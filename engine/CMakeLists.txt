@@ -142,6 +142,7 @@ add_library(veng SHARED
         src/Renderer/ViewportCompositor.cpp
         src/Renderer/ViewportRegistry.cpp
         src/Renderer/LightPacking.cpp
+        src/Renderer/LtcLut.cpp
         src/Renderer/ShadowCascades.cpp
         src/Renderer/HiZHistory.cpp
         src/Renderer/PunctualShadows.cpp

@@ -23,7 +23,10 @@ namespace Veng::Renderer
 {
     /// @brief One light packed for the ring-buffered light buffer (set-0 binding 6).
     ///
-    /// std430-compatible, matching the shader's GpuLight byte-for-byte: four vec4s.
+    /// std430-compatible, matching the shader's GpuLight byte-for-byte: six vec4s. The
+    /// first four are the punctual-light fields; the last two carry the area-light
+    /// shape (sphere radius, polygon vertex range into the area-vertex buffer, the
+    /// area-shadow slot, and the precomputed world-space area normal).
     struct PackedLight
     {
         /// @brief xyz world position, w range.
@@ -32,8 +35,12 @@ namespace Veng::Renderer
         vec4 DirectionType;
         /// @brief rgb linear color, a intensity.
         vec4 ColorIntensity;
-        /// @brief x cos(inner), y cos(outer), z shadow slot (-1 unshadowed), w pad.
+        /// @brief x cos(inner), y cos(outer), z punctual shadow slot (-1 unshadowed), w flags (bit0 two-sided).
         vec4 Cone;
+        /// @brief x sphere radius, y polygon vertex base, z polygon vertex count, w area-shadow slot (-1 none).
+        vec4 Area;
+        /// @brief xyz world-space area normal (Rect/Polygon local +Z), w pad.
+        vec4 AreaNormal;
     };
 
     static_assert(sizeof(PackedLight) == BindlessRegistry::LightStride,
@@ -51,6 +58,11 @@ namespace Veng::Renderer
         std::array<PackedLight, SceneView::MaxLights> Lights{};
         /// @brief Number of packed lights, capped at SceneView::MaxLights.
         u32 LightCount = 0;
+
+        /// @brief World-space polygon vertices for Rect/Polygon area lights, valid in [0, AreaVertexCount).
+        std::array<vec4, BindlessRegistry::MaxAreaVertices> AreaVertices{};
+        /// @brief Number of packed area vertices, capped at MaxAreaVertices.
+        u32 AreaVertexCount = 0;
 
         /// @brief Shadow records for the first MaxShadowedPunctual point/spot lights, valid in [0, PunctualCount).
         std::array<PunctualShadowRecord, MaxShadowedPunctual> PunctualRecords{};

@@ -949,6 +949,8 @@ namespace Veng::Renderer
         void CreateOutput();
         /// @brief Recreates g-buffer images/views at the current extent and (re-)registers them into bindless.
         void CreateGBuffer();
+        /// @brief Loads the baked LTC lookup tables from the core pack into textures and registers them.
+        void CreateLtcResources();
         /// @brief Recreates the hi-Z pyramid image, per-mip views, and reduction descriptor sets.
         ///
         /// Sized to the depth target with a full mip chain; not cleared (it carries data across
@@ -1249,6 +1251,19 @@ namespace Veng::Renderer
         Ref<ImageView> m_EmissiveView;
         /// @brief Bindless slot for the emissive view; the lighting pass samples G4 through it.
         TextureHandle m_EmissiveHandle;
+
+        /// @brief LTC inverse-matrix lookup table for area-light shading (RGBA32F, LtcLut::Size²).
+        Ref<Image> m_LtcMatImage;
+        /// @brief View over m_LtcMatImage.
+        Ref<ImageView> m_LtcMatView;
+        /// @brief Bindless slot for the LTC matrix LUT.
+        TextureHandle m_LtcMatHandle;
+        /// @brief LTC magnitude/Fresnel lookup table for area-light shading (RGBA32F, LtcLut::Size²).
+        Ref<Image> m_LtcMagImage;
+        /// @brief View over m_LtcMagImage.
+        Ref<ImageView> m_LtcMagView;
+        /// @brief Bindless slot for the LTC magnitude LUT.
+        TextureHandle m_LtcMagHandle;
 
         /// @brief Bloom mip-pyramid image: an HDR mip chain the compute down/up sweep operates on.
         ///

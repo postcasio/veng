@@ -146,6 +146,11 @@ namespace Veng::Renderer
         /// @brief Shared sampler bindless slot used by fullscreen passes.
         SamplerHandle SamplerHandle;
 
+        /// @brief Bindless slot for the LTC inverse-matrix lookup table (area-light shading).
+        TextureHandle LtcMatHandle;
+        /// @brief Bindless slot for the LTC magnitude/Fresnel lookup table (area-light shading).
+        TextureHandle LtcMagHandle;
+
         /// @brief Directional shadow atlas written by ShadowScenePass and sampled by the lighting pass.
         ///
         /// Invalid when Settings.Shadows is false. When valid the lighting pass declares .Sample

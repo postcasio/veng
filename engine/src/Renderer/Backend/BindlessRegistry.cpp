@@ -108,6 +108,14 @@ namespace Veng::Renderer
                          .Type = DescriptorType::StorageBuffer,
                          .Count = 1,
                          .Stages = ShaderStage::All},
+                        // The per-frame area-light vertex buffer: a single ByteAddressBuffer of
+                        // vec4 vertices, byte-addressed at index * AreaVertexStride. Rect and
+                        // Polygon lights read their world-space vertices here; the folded view
+                        // base selects the current region, like the light buffer above.
+                        {.Binding = AreaVertexBinding,
+                         .Type = DescriptorType::StorageBuffer,
+                         .Count = 1,
+                         .Stages = ShaderStage::All},
                     },
             });
 
@@ -153,6 +161,17 @@ namespace Veng::Renderer
                                         .HostMapped = true,
                                     });
         m_Set->Write(LightBinding, m_LightBuffer);
+
+        // Ringed by framesInFlight * MaxViewsPerFrame, parallel to the light buffer.
+        m_AreaVertexBuffer = Buffer::Create(
+            context, {
+                         .Name = "Bindless AreaVertices",
+                         .Size = static_cast<u64>(m_FramesInFlight) * MaxViewsPerFrame *
+                                 MaxAreaVertices * AreaVertexStride,
+                         .Usage = BufferUsage::Storage,
+                         .HostMapped = true,
+                     });
+        m_Set->Write(AreaVertexBinding, m_AreaVertexBuffer);
 
         m_Textures.Init(MaxTextures, m_FramesInFlight);
         m_Samplers.Init(MaxSamplers, m_FramesInFlight);
@@ -417,6 +436,24 @@ namespace Veng::Renderer
     u32 BindlessRegistry::GetCurrentLightBase() const
     {
         return GetCurrentViewConstantsIndex() * MaxLights;
+    }
+
+    void BindlessRegistry::WriteAreaVertices(std::span<const std::byte> vertices)
+    {
+        VE_ASSERT(
+            vertices.size() <= static_cast<usize>(MaxAreaVertices) * AreaVertexStride,
+            "BindlessRegistry::WriteAreaVertices: {} bytes exceeds the {}-vertex region ({} bytes)",
+            vertices.size(), MaxAreaVertices,
+            static_cast<usize>(MaxAreaVertices) * AreaVertexStride);
+
+        const u64 offset = static_cast<u64>(GetCurrentAreaVertexBase()) * AreaVertexStride;
+        auto* base = static_cast<u8*>(m_AreaVertexBuffer->GetMappedData());
+        std::memcpy(base + offset, vertices.data(), vertices.size());
+    }
+
+    u32 BindlessRegistry::GetCurrentAreaVertexBase() const
+    {
+        return GetCurrentViewConstantsIndex() * MaxAreaVertices;
     }
 
     void BindlessRegistry::OnFrameAcquired(u32 frameInFlight)

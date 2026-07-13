@@ -227,6 +227,43 @@ namespace VengEditor
                     debug.DrawLine(position, position + axis * 1.5f, LightGizmoColor);
                 }
                 break;
+            case LightType::Rect:
+                // The rect area light's Width × Height plane, oriented by the transform, plus a
+                // short stub along the emitting normal (local +Z).
+                {
+                    const mat4 world = WorldMatrix(*m_Ctx.Scene, entity);
+                    const f32 hw = light.Width * 0.5f;
+                    const f32 hh = light.Height * 0.5f;
+                    const vec3 c0 = vec3(world * vec4(-hw, -hh, 0.0f, 1.0f));
+                    const vec3 c1 = vec3(world * vec4(hw, -hh, 0.0f, 1.0f));
+                    const vec3 c2 = vec3(world * vec4(hw, hh, 0.0f, 1.0f));
+                    const vec3 c3 = vec3(world * vec4(-hw, hh, 0.0f, 1.0f));
+                    debug.DrawLine(c0, c1, LightGizmoColor);
+                    debug.DrawLine(c1, c2, LightGizmoColor);
+                    debug.DrawLine(c2, c3, LightGizmoColor);
+                    debug.DrawLine(c3, c0, LightGizmoColor);
+                    const vec3 n = glm::normalize(vec3(world[2]));
+                    debug.DrawLine(position, position + n * 0.5f, LightGizmoColor);
+                }
+                break;
+            case LightType::Sphere:
+                // The sphere area light's emitting body at its authored radius.
+                debug.DrawSphere(position, light.Radius, LightGizmoColor);
+                break;
+            case LightType::Polygon:
+                // The polygon area light's outline, its vertices oriented by the transform.
+                {
+                    const mat4 world = WorldMatrix(*m_Ctx.Scene, entity);
+                    const usize count = light.PolygonVertices.size();
+                    for (usize i = 0; i < count; ++i)
+                    {
+                        const vec3 a = vec3(world * vec4(light.PolygonVertices[i], 1.0f));
+                        const vec3 b =
+                            vec3(world * vec4(light.PolygonVertices[(i + 1) % count], 1.0f));
+                        debug.DrawLine(a, b, LightGizmoColor);
+                    }
+                }
+                break;
             }
         }
 

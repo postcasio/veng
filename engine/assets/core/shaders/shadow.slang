@@ -255,6 +255,110 @@ float PunctualShadowVisibility(float3 worldPos, float3 N, float3 L, int slot)
                            worldPos, bias, texel, tileMin, tileMax);
 }
 
+// PCSS area-light shadow visibility over the punctual atlas. An area light is rendered as a
+// spot-style caster (record type 2, face 0) in slot `slot`; this samples that tile with
+// percentage-closer soft shadows — a blocker search sets an average occluder depth, the penumbra
+// width grows with the light's world size (lightRadius) and the receiver→blocker gap, and a
+// variable-radius PCF filter produces the soft edge. Returns full visibility outside the tile or
+// with no occluder, so a large light casts a broad, soft shadow and a small one a crisp one.
+float AreaShadowSample(int slot, float3 worldPos, float3 N, float3 L, float lightRadius)
+{
+    PunctualShadowRecord record = g_Punctual.Records[slot];
+    if (record.Params.x < 0.5)
+    {
+        return 1.0;
+    }
+
+    float4 lightClip = mul(record.ViewProj[0], float4(worldPos, 1.0));
+    if (lightClip.w <= 0.0)
+    {
+        return 1.0;
+    }
+    float3 ndc = lightClip.xyz / lightClip.w;
+    if (ndc.z < 0.0 || ndc.z > 1.0)
+    {
+        return 1.0;
+    }
+    float2 uv = ndc.xy * 0.5 + 0.5;
+
+    // The record's tile: an area/spot caster uses face 0, so column 0, row = slot.
+    float2 tileSize = float2(1.0 / float(CubeFaceCount), 1.0 / float(MaxShadowedPunctual));
+    float2 tileMin = float2(0.0, float(slot)) * tileSize;
+    float2 tileMax = tileMin + tileSize;
+    if (any(uv < tileMin) || any(uv > tileMax))
+    {
+        return 1.0;
+    }
+
+    float invTileRes = g_Punctual.AtlasParams.x;
+    float2 texel =
+        float2(invTileRes / float(CubeFaceCount), invTileRes / float(MaxShadowedPunctual));
+    float2 clampMin = tileMin + 0.5 * texel;
+    float2 clampMax = tileMax - 0.5 * texel;
+
+    float nDotL = saturate(dot(N, L));
+    float slope = clamp(1.0 - nDotL, 0.0, 1.0);
+    float bias = record.Params.w * (1.0 + 2.0 * slope);
+    float refDepth = ndc.z - bias;
+
+    uint atlasW = 0;
+    uint atlasH = 0;
+    g_PunctualAtlas.GetDimensions(atlasW, atlasH);
+    float2 atlasDims = float2(float(atlasW), float(atlasH));
+
+    // The light's angular size (world radius over its range) sets how wide the search and penumbra
+    // grow — the larger the light, the softer the shadow.
+    float range = max(record.Params.z, 1e-3);
+    float sizeFactor = saturate(lightRadius / range);
+
+    // Blocker search: average the depth of texels nearer the light than the receiver.
+    const int SearchSteps = 2;
+    float searchTexels = 1.5 + sizeFactor * 24.0;
+    float blockerSum = 0.0;
+    float blockerCount = 0.0;
+    for (int sy = -SearchSteps; sy <= SearchSteps; ++sy)
+    {
+        for (int sx = -SearchSteps; sx <= SearchSteps; ++sx)
+        {
+            float2 off = float2(float(sx), float(sy)) / float(SearchSteps) * searchTexels * texel;
+            float2 sUv = clamp(uv + off, clampMin, clampMax);
+            int2 coord = int2(sUv * atlasDims);
+            float d = g_PunctualAtlas.Load(int3(coord, 0)).r;
+            if (d < refDepth)
+            {
+                blockerSum += d;
+                blockerCount += 1.0;
+            }
+        }
+    }
+    if (blockerCount < 0.5)
+    {
+        return 1.0;
+    }
+
+    float avgBlocker = blockerSum / blockerCount;
+
+    // PCSS penumbra: proportional to the receiver→blocker gap and the light's size, in texels.
+    float penumbra = (refDepth - avgBlocker) / max(avgBlocker, 1e-4);
+    float filterTexels = clamp(1.0 + penumbra * sizeFactor * 64.0, 1.0, 24.0);
+
+    // Variable-radius PCF through the hardware comparison sampler.
+    const int PcfSteps = 2;
+    float visibility = 0.0;
+    float weight = 0.0;
+    for (int py = -PcfSteps; py <= PcfSteps; ++py)
+    {
+        for (int px = -PcfSteps; px <= PcfSteps; ++px)
+        {
+            float2 off = float2(float(px), float(py)) / float(PcfSteps) * filterTexels * texel;
+            float2 tapUv = clamp(uv + off, clampMin, clampMax);
+            visibility += g_PunctualAtlas.SampleCmpLevelZero(g_ShadowSampler, tapUv, refDepth);
+            weight += 1.0;
+        }
+    }
+    return visibility / weight;
+}
+
 // Visualize the cascade selection: a per-cascade tint the DebugView::Cascades arm
 // multiplies into the lit result so each fragment's selected cascade is a colour
 // bucket (0 red, 1 green, 2 blue, 3 yellow). Uses the same view-depth → cascade

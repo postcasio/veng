@@ -240,6 +240,24 @@ namespace Veng::Renderer
         /// @return The base light index for the current view slot.
         [[nodiscard]] u32 GetCurrentLightBase() const;
 
+        /// @brief Writes the per-frame area-light polygon vertices into the current view slot's
+        /// region of the shared area-vertex buffer.
+        ///
+        /// Parallel to WriteLights: Rect and Polygon area lights emit their world-space vertices
+        /// here, and each light's Area.y/z record the base index and count into this region. A
+        /// vertex is one vec4 (xyz world position). Writing the current region is always safe for
+        /// the same reasons WriteLights is.
+        /// @param vertices Per-frame area vertices; at most MaxAreaVertices, each AreaVertexStride bytes.
+        void WriteAreaVertices(std::span<const std::byte> vertices);
+
+        /// @brief The base area-vertex index of the current view slot's region in the shared
+        /// area-vertex buffer: GetCurrentViewConstantsIndex() * MaxAreaVertices.
+        ///
+        /// A light's packed polygon base index is relative to zero; the shader adds this base so
+        /// the load lands in this view's region, exactly as GetCurrentLightBase does for lights.
+        /// @return The base area-vertex index for the current view slot.
+        [[nodiscard]] u32 GetCurrentAreaVertexBase() const;
+
         /// @brief Returns the descriptor set layout for set 0.
         [[nodiscard]] const Ref<DescriptorSetLayout>& GetSet0Layout() const { return m_Layout; }
 
@@ -262,6 +280,8 @@ namespace Veng::Renderer
         static constexpr u32 ViewConstantsBinding = 5;
         /// @brief Binding index for the light buffer.
         static constexpr u32 LightBinding = 6;
+        /// @brief Binding index for the area-light polygon-vertex buffer.
+        static constexpr u32 AreaVertexBinding = 7;
 
         /// @brief Maximum registered sampled images.
         static constexpr u32 MaxTextures = 1024;
@@ -312,9 +332,23 @@ namespace Veng::Renderer
         /// @brief The fixed byte stride of one GpuLight entry in the LightBinding
         /// ByteAddressBuffer.
         ///
-        /// The GpuLight struct (four vec4) is 64 bytes; the pass reads the i-th light
-        /// at (base + i) * LightStride.
-        static constexpr u32 LightStride = 64;
+        /// The GpuLight struct (six vec4) is 96 bytes; the pass reads the i-th light
+        /// at (base + i) * LightStride. The first four vec4 are the punctual light
+        /// fields (position/range, direction/type, color/intensity, cone/flags); the
+        /// last two carry the area-light shape (sphere radius, polygon vertex
+        /// range, area-shadow slot, and the area normal).
+        static constexpr u32 LightStride = 96;
+
+        /// @brief The fixed cap on area-light polygon vertices packed per view.
+        ///
+        /// Rect and Polygon area lights emit their world-space vertices into the
+        /// per-view area-vertex buffer (each vertex one vec4); a light records its
+        /// base index and count. A Rect contributes four; a Polygon contributes its
+        /// PolygonVertices, clamped so the running total stays within this cap.
+        static constexpr u32 MaxAreaVertices = 256;
+
+        /// @brief The byte stride of one packed area-light polygon vertex (a vec4).
+        static constexpr u32 AreaVertexStride = 16;
 
     private:
         /// @brief A free-list slot allocator with deferred release, one per arrayed binding.
@@ -435,6 +469,13 @@ namespace Veng::Renderer
         /// region is rewritten every Execute, per view slot, so only the current
         /// (not-yet-submitted) region is touched.
         Ref<Buffer> m_LightBuffer;
+
+        /// @brief The shared area-light polygon-vertex buffer, ringed like m_LightBuffer.
+        ///
+        /// Holds framesInFlight * MaxViewsPerFrame * MaxAreaVertices vec4 vertices; a light's
+        /// packed polygon base is folded through GetCurrentAreaVertexBase() into its own view's
+        /// region, so Rect and Polygon lights read their world-space vertices from here.
+        Ref<Buffer> m_AreaVertexBuffer;
 
         /// @brief Distinct viewport renders seen so far in the current frame-in-flight.
         ///

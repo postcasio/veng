@@ -31,6 +31,7 @@ namespace Veng
     {
         settings.Bloom = render.Bloom;
         settings.Shadows = render.Shadows;
+        settings.PunctualShadows = render.PunctualShadows;
         settings.AO = render.AO;
 
         view.Exposure = render.Exposure;

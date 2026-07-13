@@ -26,6 +26,10 @@
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
 [[vk::binding(1, 0)]] SamplerState g_Samplers[];
 [[vk::binding(6, 0)]] ByteAddressBuffer g_Lights;
+// The per-frame area-light polygon-vertex buffer (Rect/Polygon world-space vertices, one vec4
+// each). A light's Area.y/z give the base/count relative to this view's region; AreaVertexBase
+// folds in the region start, exactly as LightBase does for the light buffer.
+[[vk::binding(7, 0)]] ByteAddressBuffer g_AreaVertices;
 
 // Set 2: the image-based-lighting maps (off the bindless registry, a closed
 // renderer-owned set). Irradiance is the diffuse term; the prefiltered cube + the BRDF
@@ -36,21 +40,29 @@
 [[vk::binding(3, 2)]] Texture2D g_BrdfLut;
 [[vk::binding(4, 2)]] SamplerState g_IblSampler;
 
-static const uint LightStride = 64;
+static const uint LightStride = 96;
+static const uint AreaVertexStride = 16;
 
-// LightType, matching the Light builtin's enum (Directional/Point/Spot).
+// LightType, matching the Light builtin's enum.
 static const float LightTypeDirectional = 0.0;
 static const float LightTypePoint = 1.0;
 static const float LightTypeSpot = 2.0;
+static const float LightTypeRect = 3.0;
+static const float LightTypeSphere = 4.0;
+static const float LightTypePolygon = 5.0;
 
 // One light, packed by the renderer into the ring-buffered light buffer. Position
-// is the entity's world transform; the type rides DirectionType.w.
+// is the entity's world transform; the type rides DirectionType.w. The last two
+// vec4 carry the area-light shape: a Sphere's radius, a Rect/Polygon's vertex range
+// into the area-vertex buffer, the area-shadow slot, and the world area normal.
 struct GpuLight
 {
     float4 PositionRange;   // xyz world position, w range
     float4 DirectionType;   // xyz travel direction, w LightType
     float4 ColorIntensity;  // rgb linear color, a intensity
-    float4 Cone;            // x cos(inner), y cos(outer), zw pad
+    float4 Cone;            // x cos(inner), y cos(outer), z shadow slot, w flags (bit0 two-sided)
+    float4 Area;            // x sphere radius, y poly vertex base, z poly vertex count, w area-shadow slot
+    float4 AreaNormal;      // xyz world area normal (Rect/Polygon), w pad
 };
 
 struct PushConstants
@@ -69,6 +81,9 @@ struct PushConstants
     uint PrefilterMipCount;   // prefiltered specular mip count (roughness -> LOD)
     float EnvIntensity;       // scales the IBL ambient
     float SkylightIntensity;  // scales the SH skylight ambient
+    uint LtcMatTexture;       // LTC inverse-matrix LUT bindless index (area lights)
+    uint LtcMagTexture;       // LTC magnitude/Fresnel LUT bindless index (area lights)
+    uint AreaVertexBase;      // current frame's base index into the area-vertex buffer
 #if VE_USE_SSAO
     uint SsaoTexture;         // screen-space AO bindless index (the SSAO variant only)
     uint Pad1;
@@ -151,6 +166,159 @@ float3 EvaluateLight(float3 N, float3 V, float3 L, float3 radiance,
     return (diffuse + specular) * radiance * nDotL;
 }
 
+// ---- Area lights: Linearly Transformed Cosines (Heitz et al.) ----
+//
+// An area light's GGX response is the analytic integral of a clamped-cosine distribution
+// warped by a per-(roughness, view-angle) matrix read from the LTC LUTs. The polygon integral
+// is the clamped sum of per-edge terms (IntegrateEdge), which handles convex polygons of any
+// vertex count and the disk-approximated Sphere uniformly; below the horizon the clamp drops
+// the contribution, so a surface facing away from the light stays dark.
+static const float LtcLutSize = 64.0;
+static const float LtcLutScale = (LtcLutSize - 1.0) / LtcLutSize;
+static const float LtcLutBias = 0.5 / LtcLutSize;
+// A Sphere light is integrated as a shading-point-facing disk of this many edges.
+static const uint SphereSegments = 16;
+
+float3 LtcIntegrateEdgeVec(float3 v1, float3 v2)
+{
+    float x = dot(v1, v2);
+    float y = abs(x);
+    float a = 0.8543985 + (0.4965155 + 0.0145206 * y) * y;
+    float b = 3.4175940 + (4.1616724 + y) * y;
+    float v = a / b;
+    float theta_sintheta = (x > 0.0) ? v : 0.5 * rsqrt(max(1.0 - x * x, 1e-7)) - v;
+    return cross(v1, v2) * theta_sintheta;
+}
+
+float LtcIntegrateEdge(float3 v1, float3 v2)
+{
+    return LtcIntegrateEdgeVec(v1, v2).z;
+}
+
+// Sample the LTC LUTs by (roughness, sqrt(1 - N·V)) and reconstruct the inverse transform.
+// t2 returns the BRDF magnitude (x) and Fresnel weight (y) the specular tint is split across.
+float3x3 LtcMatrix(float nDotV, float roughness, SamplerState samp, out float4 t2)
+{
+    float2 uv = float2(roughness, sqrt(saturate(1.0 - nDotV)));
+    uv = uv * LtcLutScale + LtcLutBias;
+    float4 t1 = g_Textures[NonUniformResourceIndex(g_PC.LtcMatTexture)].SampleLevel(samp, uv, 0.0);
+    t2 = g_Textures[NonUniformResourceIndex(g_PC.LtcMagTexture)].SampleLevel(samp, uv, 0.0);
+    return float3x3(t1.x, 0.0, t1.y,
+                    0.0, 1.0, 0.0,
+                    t1.z, 0.0, t1.w);
+}
+
+// Load a packed area-light polygon vertex (world space) by its region-relative index.
+float3 LtcAreaVertex(uint index)
+{
+    return g_AreaVertices.Load<float4>((g_PC.AreaVertexBase + index) * AreaVertexStride).xyz;
+}
+
+// The LTC integral over a convex polygon read from the area-vertex buffer. Minv is the fitted
+// matrix (specular) or identity (Lambert diffuse). A two-sided light takes the absolute integral.
+float LtcPolygon(float3 N, float3 V, float3 P, float3x3 Minv, uint base, uint count, bool twoSided)
+{
+    float3 T1 = normalize(V - N * dot(V, N));
+    float3 T2 = cross(N, T1);
+    // Slang's float3x3(a,b,c) fills rows, so this is already the world→(T1,T2,N) rotation.
+    float3x3 M = mul(Minv, float3x3(T1, T2, N));
+
+    float3 prev = normalize(mul(M, LtcAreaVertex(base + count - 1u) - P));
+    float sum = 0.0;
+    for (uint i = 0; i < count; ++i)
+    {
+        float3 cur = normalize(mul(M, LtcAreaVertex(base + i) - P));
+        sum += LtcIntegrateEdge(prev, cur);
+        prev = cur;
+    }
+    return twoSided ? abs(sum) : max(0.0, sum);
+}
+
+// The LTC integral of a Sphere light, approximated as a disk of SphereSegments edges centered
+// at the light and facing the shading point — correct at any angular size, and cheap.
+float LtcSphere(float3 N, float3 V, float3 P, float3x3 Minv, float3 center, float radius)
+{
+    float3 T1 = normalize(V - N * dot(V, N));
+    float3 T2 = cross(N, T1);
+    float3x3 M = mul(Minv, float3x3(T1, T2, N));
+
+    float3 toCenter = center - P;
+    float dist = length(toCenter);
+    float3 dir = dist > 1e-4 ? toCenter / dist : float3(0.0, 0.0, 1.0);
+    float3 up = abs(dir.y) < 0.99 ? float3(0.0, 1.0, 0.0) : float3(1.0, 0.0, 0.0);
+    float3 tt = normalize(cross(up, dir));
+    // Wound so the disk's front face points back toward the shading point.
+    float3 bb = cross(tt, dir);
+
+    float3 prev = normalize(mul(M, (center + radius * tt) - P));
+    float sum = 0.0;
+    for (uint i = 1; i <= SphereSegments; ++i)
+    {
+        float ang = (2.0 * Pi) * float(i) / float(SphereSegments);
+        float3 vert = center + radius * (cos(ang) * tt + sin(ang) * bb);
+        float3 cur = normalize(mul(M, vert - P));
+        sum += LtcIntegrateEdge(prev, cur);
+        prev = cur;
+    }
+    return max(0.0, sum);
+}
+
+// The full area-light contribution (diffuse + tinted specular), before range attenuation and
+// shadowing. Metals drop the diffuse arm; the specular arm is split across the Fresnel weights.
+float3 EvaluateAreaLight(GpuLight light, float3 N, float3 V, float3 P, float3 albedo,
+                         float roughness, float metallic, float3 f0, SamplerState samp)
+{
+    float nDotV = max(dot(N, V), 1e-4);
+    float4 t2;
+    float3x3 Minv = LtcMatrix(nDotV, roughness, samp, t2);
+    float3x3 ident = float3x3(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0);
+
+    float type = light.DirectionType.w;
+    bool twoSided = light.Cone.w > 0.5;
+
+    float specSum;
+    float diffSum;
+    if (type == LightTypeSphere)
+    {
+        float3 center = light.PositionRange.xyz;
+        float radius = max(light.Area.x, 1e-4);
+        specSum = LtcSphere(N, V, P, Minv, center, radius);
+        diffSum = LtcSphere(N, V, P, ident, center, radius);
+    }
+    else
+    {
+        uint base = uint(light.Area.y);
+        uint count = uint(light.Area.z);
+        if (count < 3u)
+        {
+            return float3(0.0);
+        }
+        specSum = LtcPolygon(N, V, P, Minv, base, count, twoSided);
+        diffSum = LtcPolygon(N, V, P, ident, base, count, twoSided);
+    }
+
+    float3 specScale = f0 * t2.x + (1.0 - f0) * t2.y;
+    float3 diffuse = albedo * (1.0 - metallic) * diffSum;
+    float3 specular = specSum * specScale;
+    float3 radiance = light.ColorIntensity.rgb * light.ColorIntensity.a;
+    return radiance * (diffuse + specular) * (1.0 / (2.0 * Pi));
+}
+
+// Area-light visibility through the punctual shadow atlas with PCSS softening. An area light is
+// shadowed as a spot-style caster (its slot rides Cone.z, -1 = unshadowed); the penumbra widens
+// with the light's world size (AreaNormal.w), so a large light casts a soft shadow.
+float AreaShadowVisibility(GpuLight light, float3 worldPos, float3 N)
+{
+    int slot = int(light.Cone.z);
+    if (slot < 0)
+    {
+        return 1.0;
+    }
+    float3 toLight = light.PositionRange.xyz - worldPos;
+    float3 L = normalize(toLight);
+    return AreaShadowSample(slot, worldPos, N, L, light.AreaNormal.w);
+}
+
 [shader("fragment")]
 float4 fsMain(VSOutput input) : SV_Target
 {
@@ -219,6 +387,22 @@ float4 fsMain(VSOutput input) : SV_Target
 
         float type = light.DirectionType.w;
         float3 radiance = light.ColorIntensity.rgb * light.ColorIntensity.a;
+
+        // Rect/Sphere/Polygon are area lights: shade analytically through the LTC path and fall
+        // off with a smooth range cutoff only — the solid-angle integral already carries the
+        // inverse-square, so no separate distance term. (Area shadowing is applied below.)
+        if (type > LightTypeSpot + 0.5)
+        {
+            float3 area =
+                EvaluateAreaLight(light, N, V, worldPos, albedo, roughness, metallic, f0, samp);
+            float dist = length(light.PositionRange.xyz - worldPos);
+            float range = max(light.PositionRange.w, 1e-4);
+            float rangeFactor = saturate(1.0 - pow(dist / range, 4.0));
+            rangeFactor *= rangeFactor;
+            float areaVisibility = AreaShadowVisibility(light, worldPos, N);
+            direct += area * rangeFactor * areaVisibility;
+            continue;
+        }
 
         float3 L;
         float attenuation = 1.0;

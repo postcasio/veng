@@ -365,6 +365,11 @@
       "id": "0xBC968C8771B00434",
       "type": "Material",
       "source": "materials/tonemap.vmat.json"
+    },
+    {
+      "id": "0x27644C3AE58BB0D3",
+      "type": "Raw",
+      "source": "data/ltc_lut.bin"
     }
   ]
 }

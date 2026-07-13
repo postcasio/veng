@@ -263,8 +263,12 @@ namespace Veng
     /// @brief Selects how the deferred lighting pass attenuates a light.
     ///
     /// Directional has no position or falloff. Point and Spot are placed by the
-    /// entity's Transform and fall off with distance (Spot adds a cone). Integer
-    /// values are stable — packed into the light SSBO and persisted in prefabs.
+    /// entity's Transform and fall off with distance (Spot adds a cone). Rect,
+    /// Sphere, and Polygon are area lights: their emission is integrated over a
+    /// finite shape (a linearly-transformed-cosine evaluation of the GGX BRDF), so
+    /// they produce a soft, physically-sized specular highlight and penumbra rather
+    /// than a punctual point response. Integer values are stable — packed into the
+    /// light SSBO and persisted in prefabs.
     enum class LightType : u32
     {
         /// @brief Infinite directional light; no position or falloff.
@@ -273,15 +277,26 @@ namespace Veng
         Point = 1,
         /// @brief Cone spot light; falls off within Range and the cone angles.
         Spot = 2,
+        /// @brief Rectangular area light in the entity's local XY plane (Width × Height).
+        Rect = 3,
+        /// @brief Spherical area light of the given Radius; correct at any angular size.
+        Sphere = 4,
+        /// @brief Convex-polygon area light from PolygonVertices in the entity's local frame.
+        Polygon = 5,
     };
 
     /// @brief Light component shaded by the deferred lighting pass.
     ///
-    /// Type selects directional, point, or spot. Direction is the world-space
-    /// travel direction (directional and spot); Color is linear RGB; Intensity
-    /// scales it. Range is the point/spot falloff radius. InnerCone/OuterCone
-    /// are the spot's half-angles in radians: full intensity within InnerCone,
-    /// zero beyond OuterCone, smooth between.
+    /// Type selects the light's shape. Direction is the world-space travel
+    /// direction (directional and spot); Color is linear RGB; Intensity scales it.
+    /// Range is the falloff radius for every positioned light (point, spot, and the
+    /// area lights). InnerCone/OuterCone are the spot's half-angles in radians: full
+    /// intensity within InnerCone, zero beyond OuterCone, smooth between.
+    ///
+    /// The area shapes are placed and oriented by the entity's Transform: a Rect
+    /// spans Width × Height in the local XY plane and emits along local +Z; a Sphere
+    /// has the given Radius; a Polygon takes its vertices from PolygonVertices in the
+    /// local frame. TwoSided lets a Rect or Polygon emit from both faces.
     ///
     /// The light's world position comes from the entity's Transform — never stored
     /// here — so a parented or animated light moves with its entity.
@@ -295,12 +310,22 @@ namespace Veng
         vec3 Color{1.0f, 1.0f, 1.0f};
         /// @brief Scales the color at full brightness.
         f32 Intensity{1.0f};
-        /// @brief Falloff radius for point and spot lights.
+        /// @brief Falloff radius for positioned lights (point, spot, and area).
         f32 Range{10.0f};
         /// @brief Spot inner half-angle in radians; full intensity within.
         f32 InnerCone{0.0f};
         /// @brief Spot outer half-angle in radians; zero intensity beyond.
         f32 OuterCone{0.5f};
+        /// @brief Full width of a Rect area light along the entity's local X axis.
+        f32 Width{1.0f};
+        /// @brief Full height of a Rect area light along the entity's local Y axis.
+        f32 Height{1.0f};
+        /// @brief Radius of a Sphere area light.
+        f32 Radius{1.0f};
+        /// @brief Whether a Rect or Polygon area light emits from both faces.
+        bool TwoSided{false};
+        /// @brief Convex polygon vertices in entity-local space, wound CCW about local +Z (Polygon).
+        vector<vec3> PolygonVertices;
     };
 
     /// @brief Per-seat resolved input for this tick — the serializable action snapshot.
@@ -807,6 +832,11 @@ namespace Veng
         f32 BloomIntensity = 1.0f;
         /// @brief Whether the directional cascaded-shadow battery is enabled.
         bool Shadows = true;
+        /// @brief Whether the punctual shadow atlas is enabled.
+        ///
+        /// Drives the point/spot shadow maps and the soft (PCSS) shadows cast by Sphere/Rect/Polygon
+        /// area lights — independent of the directional Shadows toggle above.
+        bool PunctualShadows = true;
         /// @brief Whether the SSAO battery is enabled.
         bool AO = true;
     };
@@ -816,6 +846,9 @@ VE_ENUM(::Veng::LightType, 0x006B1D62EF4B5A16ULL)
 VE_ENUMERATOR(Directional)
 VE_ENUMERATOR(Point)
 VE_ENUMERATOR(Spot)
+VE_ENUMERATOR(Rect)
+VE_ENUMERATOR(Sphere)
+VE_ENUMERATOR(Polygon)
 VE_ENUM_END();
 
 VE_REFLECT(::Veng::Name, 0xDA40E8FAC8A6DB84ULL)
@@ -927,6 +960,17 @@ VE_FIELD(InnerCone, .DisplayName = "Inner Cone",
 VE_FIELD(OuterCone, .DisplayName = "Outer Cone",
          .Display = {.Min = 0.0, .Max = 3.14159265, .Step = 0.01},
          .VisibleIf = VE_WHEN(self.Type == ::Veng::LightType::Spot))
+VE_FIELD(Width, .DisplayName = "Width", .Display = {.Min = 0.0, .Step = 0.05},
+         .VisibleIf = VE_WHEN(self.Type == ::Veng::LightType::Rect))
+VE_FIELD(Height, .DisplayName = "Height", .Display = {.Min = 0.0, .Step = 0.05},
+         .VisibleIf = VE_WHEN(self.Type == ::Veng::LightType::Rect))
+VE_FIELD(Radius, .DisplayName = "Radius", .Display = {.Min = 0.0, .Step = 0.05},
+         .VisibleIf = VE_WHEN(self.Type == ::Veng::LightType::Sphere))
+VE_FIELD(TwoSided, .DisplayName = "Two Sided",
+         .VisibleIf = VE_WHEN(self.Type == ::Veng::LightType::Rect ||
+                              self.Type == ::Veng::LightType::Polygon))
+VE_ARRAY_FIELD(PolygonVertices, .DisplayName = "Polygon Vertices",
+               .VisibleIf = VE_WHEN(self.Type == ::Veng::LightType::Polygon))
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::PlayerInput, 0x5401D36B1EF55045ULL)
@@ -1101,5 +1145,6 @@ VE_FIELD(Exposure, .DisplayName = "Exposure", .Display = {.Min = 0.0})
 VE_FIELD(Bloom, .DisplayName = "Bloom")
 VE_FIELD(BloomIntensity, .DisplayName = "Bloom Intensity", .Display = {.Min = 0.0})
 VE_FIELD(Shadows, .DisplayName = "Shadows")
+VE_FIELD(PunctualShadows, .DisplayName = "Punctual / Area Shadows")
 VE_FIELD(AO, .DisplayName = "SSAO")
 VE_REFLECT_END();

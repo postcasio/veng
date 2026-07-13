@@ -1,5 +1,7 @@
 #include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Renderer/ScenePass.h>
+#include <Veng/Renderer/LtcLut.h>
+#include <Veng/Asset/RawAsset.h>
 
 #include "DebugDrawScenePass.h"
 #include "EnvironmentIbl.h"
@@ -75,6 +77,8 @@ namespace Veng::Renderer
         constexpr AssetId DeferredLightingCascadesFragId{0x834ED7C05F336E01ULL};
         constexpr AssetId SkyboxFragId{0xFCA568CC3463618FULL};
         constexpr AssetId AtmosphereSkyFragId{0x7DC6D927B2DF7858ULL};
+        // The baked LTC lookup tables (matrix table then magnitude table, RGBA32F) for area lights.
+        constexpr AssetId LtcLutId{0x27644C3AE58BB0D3ULL};
 
         // Cube face edge length for the baked material sky. Mip 0 suffices for display; the
         // roughness chain the IBL tier needs is convolved from this cube, not baked here. Sized so
@@ -397,6 +401,9 @@ namespace Veng::Renderer
             u32 PrefilterMipCount; // prefiltered specular mip count (roughness → LOD)
             f32 EnvIntensity;      // scales the IBL ambient
             f32 SkylightIntensity; // scales the SH skylight ambient
+            u32 LtcMatTexture;     // LTC inverse-matrix LUT bindless slot (area lights)
+            u32 LtcMagTexture;     // LTC magnitude/Fresnel LUT bindless slot (area lights)
+            u32 AreaVertexBase;    // current frame's base index into the area-vertex buffer
         };
 
         // The SSAO-enabled lighting variant's push block: the base + IBL fields plus the AO
@@ -418,6 +425,9 @@ namespace Veng::Renderer
             u32 PrefilterMipCount;
             f32 EnvIntensity;
             f32 SkylightIntensity;
+            u32 LtcMatTexture;
+            u32 LtcMagTexture;
+            u32 AreaVertexBase;
             u32 SsaoTexture;
             u32 Pad1;
         };
@@ -1244,6 +1254,8 @@ namespace Veng::Renderer
                 const TextureHandle depthHandle = io.DepthHandle;
                 const TextureHandle emissiveHandle = io.EmissiveHandle;
                 const TextureHandle ssaoHandle = io.SsaoHandle;
+                const TextureHandle ltcMatHandle = io.LtcMatHandle;
+                const TextureHandle ltcMagHandle = io.LtcMagHandle;
                 const SamplerHandle samplerHandle = io.SamplerHandle;
                 const bool useSsao = m_UseSsao;
                 const bool skylight = m_Skylight;
@@ -1288,8 +1300,8 @@ namespace Veng::Renderer
                 const u32 prefilterMipCount = m_PrefilterMipCount;
                 builder.Execute(
                     [this, albedoHandle, normalHandle, ormHandle, depthHandle, emissiveHandle,
-                     ssaoHandle, samplerHandle, useSsao, skylight, iblAllowed, shadowSet,
-                     shadowRingStride, punctualRingStride, iblSet,
+                     ssaoHandle, ltcMatHandle, ltcMagHandle, samplerHandle, useSsao, skylight,
+                     iblAllowed, shadowSet, shadowRingStride, punctualRingStride, iblSet,
                      prefilterMipCount](PassContext& inner)
                     {
                         const ScenePassContext ctx = Wrap(inner);
@@ -1348,6 +1360,9 @@ namespace Veng::Renderer
                                 .PrefilterMipCount = prefilterMipCount,
                                 .EnvIntensity = view.EnvironmentIntensity,
                                 .SkylightIntensity = view.SkylightIntensity,
+                                .LtcMatTexture = ltcMatHandle.Index,
+                                .LtcMagTexture = ltcMagHandle.Index,
+                                .AreaVertexBase = registry.GetCurrentAreaVertexBase(),
                                 .SsaoTexture = ssaoHandle.Index,
                             });
                         }
@@ -1368,6 +1383,9 @@ namespace Veng::Renderer
                                 .PrefilterMipCount = prefilterMipCount,
                                 .EnvIntensity = view.EnvironmentIntensity,
                                 .SkylightIntensity = view.SkylightIntensity,
+                                .LtcMatTexture = ltcMatHandle.Index,
+                                .LtcMagTexture = ltcMagHandle.Index,
+                                .AreaVertexBase = registry.GetCurrentAreaVertexBase(),
                             });
                         }
                         cmd.DrawFullscreenTriangle();
@@ -1862,6 +1880,7 @@ namespace Veng::Renderer
 
         CreateOutput();
         CreateGBuffer();
+        CreateLtcResources();
         CreateCullResources();
         CreateHdr();
         CreateTaa();
@@ -1895,7 +1914,56 @@ namespace Veng::Renderer
         bindless.Release(m_SsrHiZSampleHandle);
         bindless.Release(m_RefractionSceneHandle);
         bindless.Release(m_RefractionDepthHandle);
+        bindless.Release(m_LtcMatHandle);
+        bindless.Release(m_LtcMagHandle);
         bindless.Release(m_SamplerHandle);
+    }
+
+    // Loads the two LTC lookup tables (RGBA32F, LtcLut::Size²) from the baked core-pack Raw asset
+    // and uploads them into textures registered into bindless. The fit is a fixed GGX-only constant
+    // baked offline (data/ltc_lut.bin: the matrix table then the magnitude table), so the runtime
+    // pays no fit — just a small synchronous load and upload at setup.
+    void SceneRenderer::CreateLtcResources()
+    {
+        BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
+        const u32 size = LtcLut::Size;
+        const usize tableBytes = static_cast<usize>(size) * size * sizeof(vec4);
+
+        // The Raw blob is the matrix table immediately followed by the magnitude table.
+        std::span<const u8> matBytes;
+        std::span<const u8> magBytes;
+        const AssetResult<AssetHandle<RawAsset>> lut = m_Assets.LoadSync<RawAsset>(LtcLutId);
+        VE_ASSERT(lut.has_value(), "SceneRenderer: failed to load the baked LTC lookup asset");
+        const vector<u8>& blob = lut.value().Get()->Bytes;
+        VE_ASSERT(blob.size() >= 2 * tableBytes,
+                  "SceneRenderer: LTC lookup asset is {} bytes, expected at least {}", blob.size(),
+                  2 * tableBytes);
+        matBytes = std::span<const u8>(blob.data(), tableBytes);
+        magBytes = std::span<const u8>(blob.data() + tableBytes, tableBytes);
+
+        m_LtcMatImage =
+            Image::Create(m_Context, {
+                                         .Name = "SceneRenderer LTC Matrix LUT",
+                                         .Extent = {size, size, 1},
+                                         .Format = Format::RGBA32Sfloat,
+                                         .Usage = ImageUsage::Sampled | ImageUsage::TransferDst,
+                                     });
+        m_LtcMatImage->UploadSync(matBytes);
+        m_LtcMatView = ImageView::Create(
+            m_Context, {.Name = "SceneRenderer LTC Matrix LUT View", .Image = m_LtcMatImage});
+        m_LtcMatHandle = bindless.Register(m_LtcMatView);
+
+        m_LtcMagImage =
+            Image::Create(m_Context, {
+                                         .Name = "SceneRenderer LTC Magnitude LUT",
+                                         .Extent = {size, size, 1},
+                                         .Format = Format::RGBA32Sfloat,
+                                         .Usage = ImageUsage::Sampled | ImageUsage::TransferDst,
+                                     });
+        m_LtcMagImage->UploadSync(magBytes);
+        m_LtcMagView = ImageView::Create(
+            m_Context, {.Name = "SceneRenderer LTC Magnitude LUT View", .Image = m_LtcMagImage});
+        m_LtcMagHandle = bindless.Register(m_LtcMagView);
     }
 
     void SceneRenderer::CreatePipelines()
@@ -4139,6 +4207,8 @@ namespace Veng::Renderer
             .SsrReflection = ssrActive ? m_SsrReflectionChainId.Level(0) : ResourceId{},
             .SsrReflectionHandle = m_SsrReflectionSampleHandle,
             .SamplerHandle = m_SamplerHandle,
+            .LtcMatHandle = m_LtcMatHandle,
+            .LtcMagHandle = m_LtcMagHandle,
             .ShadowMap = shadowId,
             .ShadowView = shadowAtlasView,
             .PunctualShadowMap = punctualShadowId,
@@ -5753,6 +5823,8 @@ namespace Veng::Renderer
         // rather than clobbering the one another viewport's draws still read this frame.
         registry.BeginView();
         registry.WriteLights(std::as_bytes(std::span(packed.Lights.data(), packed.LightCount)));
+        registry.WriteAreaVertices(
+            std::as_bytes(std::span(packed.AreaVertices.data(), packed.AreaVertexCount)));
 
         // Pack view constants (camera/view state only; shadow system rides set-1).
         // The unjittered view-projection drives the frustum cull, hi-Z, and next frame's
