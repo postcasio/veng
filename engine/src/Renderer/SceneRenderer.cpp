@@ -4554,7 +4554,7 @@ namespace Veng::Renderer
             // ratio is at the source's level. Computed at record time from this frame's extent.
             const u32 srcLevel = level == 0 ? 0u : level - 1;
             builder.Execute(
-                [pipeline, set, level, srcLevel, allocExtent, brightPass](PassContext& inner)
+                [this, pipeline, set, level, srcLevel, allocExtent, brightPass](PassContext& inner)
                 {
                     const auto* view = static_cast<const SceneView*>(inner.UserData());
                     VE_ASSERT(view != nullptr, "Bloom down pass: null SceneView");
@@ -4574,7 +4574,10 @@ namespace Veng::Renderer
                         .SourceScaleUV = src.ScaleUV,
                         .SourceMaxUV = src.MaxUV,
                         .BrightPass = brightPass,
-                        .Threshold = view->BloomThreshold,
+                        // The authored threshold is display-referred (1.0 = the post-exposure
+                        // white point); dividing by the frame's resolved exposure moves it into
+                        // HDR units, so it tracks the metered exposure across lighting regimes.
+                        .Threshold = view->BloomThreshold / std::max(m_ResolvedExposure, 1e-5f),
                     });
                     cmd.Dispatch((dst.ValidExtent.x + 7) / 8, (dst.ValidExtent.y + 7) / 8, 1);
                 });
@@ -5578,6 +5581,7 @@ namespace Veng::Renderer
                                            view.AutoExposureMaxLuminance);
             exposure = (view.AutoExposureKey / std::max(clamped, 1e-5f)) * view.Exposure;
         }
+        m_ResolvedExposure = exposure;
 
         // Per-frame param writes land in the ring-buffered block's current region (no stall).
         if (m_TonemapMaterial.IsLoaded())

@@ -560,8 +560,11 @@ namespace Veng::Renderer
 
         /// @brief Bloom bright-pass luminance knee; pushed to the downsample compute each Execute.
         ///
-        /// The soft-knee threshold the HDR → mip 0 downsample applies. Tuning this rides the
-        /// compute push, so it does not trigger a recompile. Ignored when bloom is inactive.
+        /// The soft-knee threshold the HDR → mip 0 downsample applies, display-referred: it is
+        /// divided by the frame's resolved exposure (manual or metered), so 1.0 sits at the
+        /// post-exposure white point and blooms what the tone curve cannot show regardless of the
+        /// lighting regime. Tuning this rides the compute push, so it does not trigger a
+        /// recompile. Ignored when bloom is inactive.
         f32 BloomThreshold = 1.0f;
         /// @brief Bloom composite mix intensity; pushed to the composite compute each Execute.
         ///
@@ -1538,6 +1541,11 @@ namespace Veng::Renderer
         u32 m_AutoExposureStride = 0;
         /// @brief The internal adapted luminance the exposure derives from; eased toward the metered value.
         f32 m_AdaptedLuminance = 0.18f;
+        /// @brief The exposure this Execute resolved (manual, or metered under auto-exposure).
+        ///
+        /// Written before the graph replays, so a recorded pass (the bloom bright-pass) can scale
+        /// a display-referred knob into HDR units with the same exposure the tonemap will apply.
+        f32 m_ResolvedExposure = 1.0f;
         /// @brief Whether the next adaptation snaps to the metered value rather than easing toward it.
         ///
         /// Set at Create and whenever the readback ring is stale (Resize/Configure/enable), so the
