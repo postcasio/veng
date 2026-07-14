@@ -99,157 +99,186 @@ namespace Veng
 
     struct ServerHost::State
     {
-        // One connection's seat, its readiness gate, and its interest bookkeeping.
+        // One hosted world: its scene, seat rule, and its own replication instance and wire-id space.
+        // The replication and allocator are per world, so a world's baselines and NetIds never cross
+        // into a peer's.
+        struct HostedWorld
+        {
+            WorldInstanceId Id;
+            Scene* World = nullptr;
+            AssetId LevelId;
+            Ref<Prefab> SeatPrefab;
+            AssetId SeatPrefabId;
+            ReplicationServer Replication;
+            NetIdAllocator Allocator;
+            Net::InterestSettings InterestSettings;
+            Net::InterestPolicy InterestPolicy;
+        };
+
+        // One connection's world binding, seat, readiness gate, and interest bookkeeping.
         struct SeatState
         {
+            WorldInstanceId World;
             Entity Seat = Entity::Null;
             bool Ready = false;
             Net::InterestState Interest;
         };
 
-        Scene* World = nullptr;
         AssetManager* Assets = nullptr;
-        AssetId LevelId;
-        Ref<Prefab> SeatPrefab;
-        AssetId SeatPrefabId;
-
         Unique<Net::Server> Server;
-        ReplicationServer Replication;
-        NetIdAllocator Allocator;
-        Net::InterestSettings InterestSettings;
-        Net::InterestPolicy InterestPolicy;
+
+        // The hosted worlds keyed by WorldInstanceId value; the primary is the default routing target
+        // and what the no-arg accessors resolve. SelectWorld routes an accepted connection to one of
+        // these; unset, every connection binds to the primary.
+        std::unordered_map<u64, HostedWorld> Worlds;
+        WorldInstanceId Primary;
+        function<WorldInstanceId(Net::ConnectionId)> SelectWorld;
+
         std::unordered_map<Net::ConnectionId, SeatState> Connections;
         vector<Net::NetEvent> Events;
 
+        HostedWorld& WorldOf(WorldInstanceId id)
+        {
+            const auto it = Worlds.find(id.Value);
+            VE_ASSERT(it != Worlds.end(), "no hosted world for id {}", id.Value);
+            return it->second;
+        }
+
         // The connection's interest set this snapshot: the spatial query around its pawn ∪ the
         // always-relevant entities ∪ the policy hook ∪ the entities it owns. Empty optional when
-        // interest is off (Radius 0), so Generate replicates the whole world (planset-54 behavior).
-        optional<set<NetId>> ComputeInterest(Net::ConnectionId id, SeatState& seat)
+        // interest is off (Radius 0), so Generate replicates the whole world.
+        optional<set<NetId>> ComputeInterest(HostedWorld& world, Net::ConnectionId id,
+                                             SeatState& seat)
         {
-            if (InterestSettings.Radius <= 0.0f)
+            Scene& scene = *world.World;
+            if (world.InterestSettings.Radius <= 0.0f)
             {
                 return std::nullopt;
             }
 
             const Entity seatEntity = seat.Seat;
             Entity pawn = Entity::Null;
-            if (!seatEntity.IsNull() && World->IsAlive(seatEntity))
+            if (!seatEntity.IsNull() && scene.IsAlive(seatEntity))
             {
-                if (const auto* possesses = World->TryGet<Possesses>(seatEntity))
+                if (const auto* possesses = scene.TryGet<Possesses>(seatEntity))
                 {
                     pawn = possesses->Pawn;
                 }
             }
 
             vec3 viewerPos(0.0f);
-            if (!pawn.IsNull() && World->IsAlive(pawn))
+            if (!pawn.IsNull() && scene.IsAlive(pawn))
             {
-                if (const auto* transform = World->TryGet<Transform>(pawn))
+                if (const auto* transform = scene.TryGet<Transform>(pawn))
                 {
                     viewerPos = transform->Position;
                 }
             }
 
             const vector<Net::InterestCandidate> spatial = Net::GatherSpatialCandidates(
-                *World, viewerPos, InterestSettings.Radius * InterestSettings.LeaveMultiplier);
-            const vector<NetId> alwaysRelevant = Net::GatherAlwaysRelevant(*World);
+                scene, viewerPos,
+                world.InterestSettings.Radius * world.InterestSettings.LeaveMultiplier);
+            const vector<NetId> alwaysRelevant = Net::GatherAlwaysRelevant(scene);
 
             // The policy hook's entities plus every entity this connection owns — a connection always
             // sees what it owns (its pawn and attachments), the predicted set, regardless of distance.
             vector<NetId> extra;
-            if (InterestPolicy)
+            if (world.InterestPolicy)
             {
-                for (const Entity entity : InterestPolicy(*World, seatEntity, pawn))
+                for (const Entity entity : world.InterestPolicy(scene, seatEntity, pawn))
                 {
-                    if (!entity.IsNull() && World->IsAlive(entity) &&
-                        World->Has<NetIdentity>(entity))
+                    if (!entity.IsNull() && scene.IsAlive(entity) && scene.Has<NetIdentity>(entity))
                     {
-                        extra.push_back(World->Get<NetIdentity>(entity).Id);
+                        extra.push_back(scene.Get<NetIdentity>(entity).Id);
                     }
                 }
             }
             const TypeId authorityId = TypeIdOf<Authority>();
-            for (auto [entity, identity] : World->View<NetIdentity>())
+            for (auto [entity, identity] : scene.View<NetIdentity>())
             {
                 if (identity.Id == InvalidNetId)
                 {
                     continue;
                 }
                 const auto* authority =
-                    static_cast<const Authority*>(World->TryGetComponent(entity, authorityId));
+                    static_cast<const Authority*>(scene.TryGetComponent(entity, authorityId));
                 if (authority != nullptr && authority->Owner == id)
                 {
                     extra.push_back(identity.Id);
                 }
             }
 
-            return Net::UpdateInterest(spatial, alwaysRelevant, extra, InterestSettings,
+            return Net::UpdateInterest(spatial, alwaysRelevant, extra, world.InterestSettings,
                                        seat.Interest);
         }
 
-        // Spawns a seat for the connection: a Viewer seat with Authority{ Server, Owner = id } and no
-        // SeatInput — the remote path. Returns the seat's freshly assigned wire id.
-        u32 SpawnSeat(Net::ConnectionId id)
+        // Spawns a seat into the connection's world: a Viewer seat with Authority{ Server, Owner = id }
+        // and no SeatInput (its input arrives from the wire). Returns the seat's freshly assigned wire
+        // id, drawn from that world's allocator.
+        u32 SpawnSeat(HostedWorld& world, Net::ConnectionId id)
         {
+            Scene& scene = *world.World;
             Entity seat = Entity::Null;
-            if (SeatPrefab)
+            if (world.SeatPrefab)
             {
-                Prefab::SpawnResult spawned = SeatPrefab->SpawnInto(*World, *Assets);
-                seat = spawned.Roots.empty() ? World->CreateEntity() : spawned.Roots.front();
+                Prefab::SpawnResult spawned = world.SeatPrefab->SpawnInto(scene, *Assets);
+                seat = spawned.Roots.empty() ? scene.CreateEntity() : spawned.Roots.front();
             }
             else
             {
-                seat = World->CreateEntity();
+                seat = scene.CreateEntity();
             }
 
             // A seat is a Viewer with a Possesses link; a remote seat carries no local device
             // assignment, so its PlayerInput is fed from the wire, never resolved from devices.
-            if (!World->Has<Viewer>(seat))
+            if (!scene.Has<Viewer>(seat))
             {
-                World->Add<Viewer>(seat);
+                scene.Add<Viewer>(seat);
             }
-            if (!World->Has<Possesses>(seat))
+            if (!scene.Has<Possesses>(seat))
             {
-                World->Add<Possesses>(seat);
+                scene.Add<Possesses>(seat);
             }
-            if (World->Has<SeatInput>(seat))
+            if (scene.Has<SeatInput>(seat))
             {
-                World->Remove<SeatInput>(seat);
+                scene.Remove<SeatInput>(seat);
             }
 
             const Authority owner{.Tier = Tier::Server, .Owner = id};
-            if (World->Has<Authority>(seat))
+            if (scene.Has<Authority>(seat))
             {
-                World->Get<Authority>(seat) = owner;
+                scene.Get<Authority>(seat) = owner;
             }
             else
             {
-                World->Add<Authority>(seat, owner);
+                scene.Add<Authority>(seat, owner);
             }
 
-            const u32 netId = Allocator.Next();
-            if (World->Has<NetIdentity>(seat))
+            const u32 netId = world.Allocator.Next();
+            if (scene.Has<NetIdentity>(seat))
             {
-                World->Get<NetIdentity>(seat).Id = netId;
+                scene.Get<NetIdentity>(seat).Id = netId;
             }
             else
             {
-                World->Add<NetIdentity>(seat).Id = netId;
+                scene.Add<NetIdentity>(seat).Id = netId;
             }
 
-            Connections[id] = SeatState{.Seat = seat, .Ready = false};
+            Connections[id] = SeatState{.World = world.Id, .Seat = seat, .Ready = false};
             return netId;
         }
 
         Net::AcceptPayload OnAccept(Net::ConnectionId id)
         {
-            const u32 seatNetId = SpawnSeat(id);
-            Replication.AddConnection(id);
-            if (SeatPrefabId.IsValid())
+            const WorldInstanceId target = SelectWorld ? SelectWorld(id) : Primary;
+            HostedWorld& world = WorldOf(target);
+            const u32 seatNetId = SpawnSeat(world, id);
+            world.Replication.AddConnection(id);
+            if (world.SeatPrefabId.IsValid())
             {
-                Replication.SetEntityPrefab(seatNetId, SeatPrefabId);
+                world.Replication.SetEntityPrefab(seatNetId, world.SeatPrefabId);
             }
-            return Net::AcceptPayload{.LevelId = LevelId.Value, .SeatNetId = seatNetId};
+            return Net::AcceptPayload{.LevelId = world.LevelId.Value, .SeatNetId = seatNetId};
         }
     };
 
@@ -260,14 +289,18 @@ namespace Veng
     Result<Unique<ServerHost>> ServerHost::Create(const ServerHostInfo& info)
     {
         auto state = CreateUnique<State>();
-        state->World = &info.World;
         state->Assets = &info.Assets;
-        state->LevelId = info.LevelId;
-        state->SeatPrefab = info.SeatPrefab;
-        state->SeatPrefabId = info.SeatPrefabId;
-        state->Replication = ReplicationServer(info.Replication);
-        state->InterestSettings = info.Interest;
-        state->InterestPolicy = info.InterestPolicy;
+        state->Primary = info.WorldId;
+        state->SelectWorld = info.SelectWorld;
+        state->Worlds.emplace(info.WorldId.Value,
+                              State::HostedWorld{.Id = info.WorldId,
+                                                 .World = &info.World,
+                                                 .LevelId = info.LevelId,
+                                                 .SeatPrefab = info.SeatPrefab,
+                                                 .SeatPrefabId = info.SeatPrefabId,
+                                                 .Replication = ReplicationServer(info.Replication),
+                                                 .InterestSettings = info.Interest,
+                                                 .InterestPolicy = info.InterestPolicy});
 
         State* raw = state.get();
         Net::ServerInfo serverInfo = info.Server;
@@ -283,23 +316,42 @@ namespace Veng
         return Unique<ServerHost>(new ServerHost(std::move(state)));
     }
 
+    void ServerHost::AddWorld(const ServerWorldInfo& world)
+    {
+        m_State->Worlds.insert_or_assign(
+            world.WorldId.Value,
+            State::HostedWorld{.Id = world.WorldId,
+                               .World = &world.World,
+                               .LevelId = world.LevelId,
+                               .SeatPrefab = world.SeatPrefab,
+                               .SeatPrefabId = world.SeatPrefabId,
+                               .Replication = ReplicationServer(world.Replication),
+                               .InterestSettings = world.Interest,
+                               .InterestPolicy = world.InterestPolicy});
+    }
+
     void ServerHost::Pump(f64 now, u64 tick)
     {
         State& s = *m_State;
         s.Events.clear();
 
-        // Assign wire ids to entities the spawn rule added this tick (the pawns), then generate and
-        // queue each ready connection's stream — the Pump below flushes the queued sends.
-        AssignServerNetIds(*s.World, s.Allocator);
+        // Assign wire ids to entities the spawn rule added this tick (the pawns), per world from its
+        // own allocator, then generate and queue each ready connection's stream from its world's
+        // replication instance — the Pump below flushes the queued sends.
+        for (auto& [value, world] : s.Worlds)
+        {
+            AssignServerNetIds(*world.World, world.Allocator);
+        }
         for (auto& [id, seat] : s.Connections)
         {
             if (!seat.Ready)
             {
                 continue;
             }
-            const optional<set<NetId>> interest = s.ComputeInterest(id, seat);
-            for (const ReplicationMessage& message :
-                 s.Replication.Generate(id, *s.World, tick, interest ? &*interest : nullptr))
+            State::HostedWorld& world = s.WorldOf(seat.World);
+            const optional<set<NetId>> interest = s.ComputeInterest(world, id, seat);
+            for (const ReplicationMessage& message : world.Replication.Generate(
+                     id, *world.World, tick, interest ? &*interest : nullptr))
             {
                 (void)s.Server->Get(id).Send(message.Channel, message.Bytes);
             }
@@ -308,7 +360,7 @@ namespace Veng
         // Receive + handshake (OnAccept spawns seats) + flush + reap.
         s.Server->Pump(now);
 
-        // Tear down a disconnected connection's seat; surface every lifecycle event for game policy.
+        // Tear down a disconnected connection's seat in its world; surface every lifecycle event.
         for (const Net::NetEvent& event : s.Server->Events())
         {
             if (event.Type == Net::NetEventType::Disconnected)
@@ -316,12 +368,13 @@ namespace Veng
                 const auto it = s.Connections.find(event.Id);
                 if (it != s.Connections.end())
                 {
+                    State::HostedWorld& world = s.WorldOf(it->second.World);
                     const Entity seat = it->second.Seat;
-                    if (!seat.IsNull() && s.World->IsAlive(seat))
+                    if (!seat.IsNull() && world.World->IsAlive(seat))
                     {
-                        s.World->DestroyEntity(seat);
+                        world.World->DestroyEntity(seat);
                     }
-                    s.Replication.RemoveConnection(event.Id);
+                    world.Replication.RemoveConnection(event.Id);
                     s.Connections.erase(it);
                 }
             }
@@ -351,12 +404,31 @@ namespace Veng
 
     ReplicationServer& ServerHost::Replication()
     {
-        return m_State->Replication;
+        return m_State->WorldOf(m_State->Primary).Replication;
+    }
+
+    ReplicationServer& ServerHost::ReplicationFor(Net::ConnectionId id)
+    {
+        const auto it = m_State->Connections.find(id);
+        const WorldInstanceId world =
+            it != m_State->Connections.end() ? it->second.World : m_State->Primary;
+        return m_State->WorldOf(world).Replication;
+    }
+
+    ReplicationServer& ServerHost::ReplicationForWorld(WorldInstanceId world)
+    {
+        return m_State->WorldOf(world).Replication;
+    }
+
+    WorldInstanceId ServerHost::WorldFor(Net::ConnectionId id) const
+    {
+        const auto it = m_State->Connections.find(id);
+        return it != m_State->Connections.end() ? it->second.World : WorldInstanceId{};
     }
 
     NetIdAllocator& ServerHost::Allocator()
     {
-        return m_State->Allocator;
+        return m_State->WorldOf(m_State->Primary).Allocator;
     }
 
     Entity ServerHost::SeatFor(Net::ConnectionId id) const

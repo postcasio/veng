@@ -34,7 +34,7 @@ namespace Veng
                 InputJitterBuffer& buffer =
                     buffers.try_emplace(id, InputJitterBuffer(settings)).first->second;
                 buffer.Ingest(*decoded);
-                host.Replication().Acknowledge(id, decoded->AckedServerTick);
+                host.ReplicationFor(id).Acknowledge(id, decoded->AckedServerTick);
             }
         }
 
@@ -98,12 +98,13 @@ namespace Veng
 
             // Ride the remaining buffered depth back as this connection's timing feedback: a deep
             // buffer means the client leads by more than it needs and can slew its tick back.
-            host.Replication().SetInputFeedback(id, static_cast<i32>(it->second.Depth()) -
-                                                        DesiredInputCushion);
+            ReplicationServer& replication = host.ReplicationFor(id);
+            replication.SetInputFeedback(id, static_cast<i32>(it->second.Depth()) -
+                                                 DesiredInputCushion);
 
             // Confirm which client input tick this state reflects: the reconciler on the client
             // compares its recorded prediction at this tick against the resulting snapshot.
-            host.Replication().SetLastConsumedInputTick(id, it->second.LastConsumedTick());
+            replication.SetLastConsumedInputTick(id, it->second.LastConsumedTick());
 
             if (!consumed)
             {

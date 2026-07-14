@@ -1162,3 +1162,186 @@ TEST_CASE("Two worlds in one runner carry distinct NetRoles; authority gates eac
     CHECK(serverScene.Get<Transform>(serverPawn).Position.x > 0.5f);
     CHECK(clientScene.Get<Transform>(clientPawn).Position.x == doctest::Approx(0.0f));
 }
+
+TEST_CASE("One ServerHost hosts two worlds with isolated replication over separate connections")
+{
+    // The per-world replication ownership refactor: one ServerHost holds two hosted worlds, each with
+    // its own ReplicationServer and NetId allocator, and demuxes each connection to its world's
+    // instance. Two clients join over one server transport (a Hub, since a LoopbackTransport pair is
+    // point-to-point) — client A to world A over a clean link, client B to world B over a lossy,
+    // reordering, duplicating one. The server drives each pawn's Intent directly (no input path), so
+    // this isolates replication state. The asserts pin structural isolation: each client hears only
+    // its own world's spawns/snapshots, the two worlds' NetId spaces are independent (not one shared
+    // allocator), and B's fault burst leaves A's baseline uncorrupted and its scene still converging.
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    Unique<Scene> sceneA = Scene::Create(types);
+    Unique<Scene> sceneB = Scene::Create(types);
+
+    const WorldInstanceId worldA{.Value = 1};
+    const WorldInstanceId worldB{.Value = 2};
+
+    const auto hub = CreateRef<Hub>();
+    const u32 serverEndpoint = hub->Register();
+    auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
+
+    // Route connections to worlds in arrival order — no client-presented world selector exists yet,
+    // so the server binds the first accepted connection to A and the second to B.
+    const vector<WorldInstanceId> arrival{worldA, worldB};
+    usize accepted = 0;
+
+    Result<Unique<ServerHost>> hostResult = ServerHost::Create(ServerHostInfo{
+        .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
+        .WorldId = worldA,
+        .World = *sceneA,
+        .Assets = FakeAssets(),
+        .LevelId = LevelId,
+        .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
+        .Interest = InterestSettings{.Radius = 0.0f},
+        .SelectWorld =
+            [&](ConnectionId)
+        {
+            const WorldInstanceId world = arrival[accepted == 0 ? 0 : 1];
+            ++accepted;
+            return world;
+        },
+    });
+    REQUIRE(hostResult.has_value());
+    Unique<ServerHost> host = std::move(*hostResult);
+    host->AddWorld(ServerWorldInfo{
+        .WorldId = worldB,
+        .World = *sceneB,
+        .LevelId = LevelId,
+        .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
+        .Interest = InterestSettings{.Radius = 0.0f},
+    });
+
+    std::unordered_map<ConnectionId, Entity> pawns;
+    std::unordered_map<ConnectionId, InputJitterBuffer> jitter;
+    MovementSystem movement;
+
+    // The server frame: pawn each seated connection in its own world's scene, aim its Intent (A +x,
+    // B -x, so each world's motion is distinct), and advance authoritative movement in both scenes.
+    const auto driveServer = [&](u64 tick, f32 delta, bool moving)
+    {
+        sceneA->SetChangeTick(tick);
+        sceneB->SetChangeTick(tick);
+        for (const ConnectionId id : host->Server().Connections())
+        {
+            const WorldInstanceId world = host->WorldFor(id);
+            Scene& scene = world == worldA ? *sceneA : *sceneB;
+            const Entity seat = host->SeatFor(id);
+            if (seat.IsNull())
+            {
+                continue;
+            }
+            auto& possesses = scene.Get<Possesses>(seat);
+            if (possesses.Pawn.IsNull() || !scene.IsAlive(possesses.Pawn))
+            {
+                const Entity pawn = scene.CreateEntity();
+                scene.Add<Transform>(pawn);
+                scene.Add<Intent>(pawn);
+                scene.Add<Mover>(pawn);
+                scene.Add<Authority>(pawn, Authority{.Tier = Tier::Server, .Owner = id});
+                possesses.Pawn = pawn;
+                pawns[id] = pawn;
+            }
+            const f32 dir = world == worldA ? 1.0f : -1.0f;
+            scene.Get<Intent>(possesses.Pawn).Move = moving ? vec3(dir, 0.0f, 0.0f) : vec3(0.0f);
+        }
+        FakeContext ctx;
+        ctx.Role = NetRole::Server;
+        movement.OnUpdate(*sceneA, delta, ctx.Make());
+        movement.OnUpdate(*sceneB, delta, ctx.Make());
+    };
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    u64 tick = 0;
+
+    // Bring client A up first so it deterministically takes world A (arrival 0).
+    auto clientTa = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    ClientWorld clientA(*clientTa);
+    while (!clientA.Host->IsJoined() && tick < 200)
+    {
+        ++tick;
+        now += Delta;
+        driveServer(tick, Delta, true);
+        host->Pump(now, tick);
+        IngestConnectionInputs(*host, jitter, InputJitterBuffer::Settings{}, types);
+        clientA.Frame(now, tick, Delta, std::nullopt);
+    }
+    REQUIRE(clientA.Host->IsJoined());
+
+    // Client B joins world B over a lossy, reordering, duplicating link — the faults ride only its
+    // own connection's inbound stream, never A's.
+    auto clientTbBase = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    const FaultInjectionConfig faults{
+        .DropRate = 0.25f, .DuplicateRate = 0.1f, .ReorderRate = 0.2f, .Seed = 4242};
+    FaultInjectionTransport clientTb(*clientTbBase, faults);
+    ClientWorld clientB(clientTb);
+
+    for (u64 step = 0; step < 460; ++step)
+    {
+        ++tick;
+        now += Delta;
+        // Move for the bulk of the run, then a long quiescent tail so both the clean and the lossy
+        // latest-wins streams converge onto the halted pose.
+        driveServer(tick, Delta, step < 320);
+        host->Pump(now, tick);
+        IngestConnectionInputs(*host, jitter, InputJitterBuffer::Settings{}, types);
+        clientA.Frame(now, tick, Delta, std::nullopt);
+        clientB.Frame(now, tick, Delta, std::nullopt);
+    }
+
+    REQUIRE(clientA.Host->IsJoined());
+    REQUIRE(clientB.Host->IsJoined());
+    REQUIRE(host->Server().Connections().size() == 2);
+
+    const ConnectionId idA = clientA.Client->AssignedId();
+    const ConnectionId idB = clientB.Client->AssignedId();
+    REQUIRE(idA != idB);
+
+    // The connections bound to distinct worlds.
+    CHECK(host->WorldFor(idA) == worldA);
+    CHECK(host->WorldFor(idB) == worldB);
+
+    // Each world's pawn moved in its own direction on the server.
+    REQUIRE(pawns.contains(idA));
+    REQUIRE(pawns.contains(idB));
+    const Entity serverPawnA = pawns.at(idA);
+    const Entity serverPawnB = pawns.at(idB);
+    CHECK(sceneA->Get<Transform>(serverPawnA).Position.x > 0.5f);
+    CHECK(sceneB->Get<Transform>(serverPawnB).Position.x < -0.5f);
+
+    // NetIds do not cross instances: each world allocates from its own counter, so the two worlds'
+    // seats share a NetId value (both the first id) and their pawns share the next — proof the id
+    // spaces are independent, not one shared allocator handing out 1, 2, 3, 4.
+    const NetId seatNetA = sceneA->Get<NetIdentity>(host->SeatFor(idA)).Id;
+    const NetId seatNetB = sceneB->Get<NetIdentity>(host->SeatFor(idB)).Id;
+    const NetId pawnNetA = sceneA->Get<NetIdentity>(serverPawnA).Id;
+    const NetId pawnNetB = sceneB->Get<NetIdentity>(serverPawnB).Id;
+    CHECK(seatNetA == seatNetB);
+    CHECK(pawnNetA == pawnNetB);
+    CHECK(seatNetA != pawnNetA);
+
+    // Snapshots/spawns applied only to their own world's client: each client's replication map holds
+    // exactly its own seat + pawn (2), never the peer world's entities (which share its NetId values).
+    CHECK(clientA.Host->Replication().Map().Size() == 2);
+    CHECK(clientB.Host->Replication().Map().Size() == 2);
+
+    // The clean world converged tightly; the faulted world converged too (looser) — B's drop/reorder
+    // burst cost bandwidth, never correctness, and never touched A's baseline.
+    Scene& clientWorldA = *clientA.Host->World();
+    Scene& clientWorldB = *clientB.Host->World();
+    REQUIRE_FALSE(clientA.OwnPawn.IsNull());
+    REQUIRE_FALSE(clientB.OwnPawn.IsNull());
+    const vec3 clientPosA = clientWorldA.Get<Transform>(clientA.OwnPawn).Position;
+    const vec3 clientPosB = clientWorldB.Get<Transform>(clientB.OwnPawn).Position;
+    CHECK(glm::length(clientPosA - sceneA->Get<Transform>(serverPawnA).Position) < 0.05f);
+    CHECK(glm::length(clientPosB - sceneB->Get<Transform>(serverPawnB).Position) < 0.2f);
+
+    // Each client saw its own world's motion, not the peer's: A's pawn moved +x, B's -x.
+    CHECK(clientPosA.x > 0.1f);
+    CHECK(clientPosB.x < -0.1f);
+}

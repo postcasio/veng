@@ -13,6 +13,7 @@
 #include <Veng/Result.h>
 #include <Veng/Scene/Entity.h>
 #include <Veng/Veng.h>
+#include <Veng/World.h>
 
 #include <span>
 
@@ -20,10 +21,16 @@
 //
 // The lifecycle layer (Server/Client) and the replication layer (ReplicationServer/Client) are
 // world-agnostic — they move bytes and diff scenes. ServerHost and ClientHost are the thin policy
-// objects that bind them to a game world: the server spawns a seat entity per connection and gates
+// objects that bind them to game worlds: the server spawns a seat entity per connection and gates
 // its replication stream on readiness; the client loads the accepted level, acks, applies the
-// spawn stream, and wires its local presentation to its own replicated seat. Both own their
-// replication half; a custom app can own them directly, and Plan 07 mounts them in Application.
+// spawn stream, and wires its local presentation to its own replicated seat.
+//
+// Replication is per world, owned by the Host: a ServerHost holds one ReplicationServer per hosted
+// world and a connection→world binding, demuxing each connection's inbound traffic to its world's
+// instance and muxing its sends back; a ClientHost owns the one ReplicationClient for the world it
+// joined. Because an instance only ever sees its own world's connections and acks, ack-scoping and
+// baseline isolation are structural — one world's ack can never advance a peer world's baseline.
+// A custom app can own the hosts directly; Application mounts them as the plug-and-play path.
 // Socket-free — every socket type stays behind the Transport seam.
 
 namespace Veng
@@ -31,25 +38,25 @@ namespace Veng
     class Scene;
     class AssetManager;
 
-    /// @brief Configuration for a ServerHost: the underlying server plus the world it seats into.
-    struct ServerHostInfo
+    /// @brief One hosted world's seat rule and replication cadence, added to a ServerHost.
+    ///
+    /// A ServerHost hosts one world at Create (from its ServerHostInfo) and any number more through
+    /// AddWorld. Each carries its own ReplicationServer, NetId allocator, seat prefab, level, and
+    /// interest filter, so its replication state is wholly its own. The shared Net::Server and asset
+    /// manager come from the host, not from here.
+    struct ServerWorldInfo
     {
-        /// @brief The underlying Net::Server configuration (transport, connection timing, parity).
-        ///
-        /// The host installs its own OnAccept (spawning the seat and naming the accept's join
-        /// payload); any OnAccept set here is overwritten.
-        Net::ServerInfo Server;
-        /// @brief The server scene the host spawns each connection's seat into; must outlive the host.
+        /// @brief The WorldInstanceId this hosted world's replication instance is keyed by.
+        WorldInstanceId WorldId;
+        /// @brief The server scene the host spawns this world's seats into; must outlive the host.
         Scene& World;
-        /// @brief The asset manager the seat prefab's dependencies resolve through at spawn.
-        AssetManager& Assets;
-        /// @brief The AssetId of the level accepted clients load (named in each ConnectAccept).
+        /// @brief The AssetId of the level a client joining this world loads (named in its ConnectAccept).
         AssetId LevelId;
         /// @brief The seat template spawned per connection; null spawns a bare Viewer+Possesses seat.
         Ref<Prefab> SeatPrefab;
         /// @brief If valid, each seat's Spawn rides this prefab id so the client instantiates it too.
         AssetId SeatPrefabId;
-        /// @brief The replication cadence for the owned ReplicationServer.
+        /// @brief The replication cadence for this world's ReplicationServer.
         ReplicationServer::Settings Replication;
         /// @brief The per-connection interest filter; Radius 0 (the default) replicates the whole world.
         Net::InterestSettings Interest;
@@ -57,19 +64,64 @@ namespace Veng
         Net::InterestPolicy InterestPolicy;
     };
 
-    /// @brief Server-side join glue: a connection becomes a seat; readiness gates its stream.
+    /// @brief Configuration for a ServerHost: the shared server plus its initial hosted world.
+    struct ServerHostInfo
+    {
+        /// @brief The underlying Net::Server configuration (transport, connection timing, parity).
+        ///
+        /// The host installs its own OnAccept (routing the connection to a world, spawning its seat,
+        /// and naming the accept's join payload); any OnAccept set here is overwritten.
+        Net::ServerInfo Server;
+        /// @brief The WorldInstanceId of the initial hosted world (its replication instance's key).
+        ///
+        /// Also the primary world: the default SelectWorld target, and the world Replication() and
+        /// Allocator() resolve. Left zero, the single hosted world is keyed by the invalid id — valid
+        /// as an internal key for a lone world.
+        WorldInstanceId WorldId;
+        /// @brief The server scene the host spawns the initial world's seats into; must outlive the host.
+        Scene& World;
+        /// @brief The asset manager the seat prefab's dependencies resolve through at spawn.
+        AssetManager& Assets;
+        /// @brief The AssetId of the level accepted clients load (named in the initial world's ConnectAccept).
+        AssetId LevelId;
+        /// @brief The seat template spawned per connection; null spawns a bare Viewer+Possesses seat.
+        Ref<Prefab> SeatPrefab;
+        /// @brief If valid, each seat's Spawn rides this prefab id so the client instantiates it too.
+        AssetId SeatPrefabId;
+        /// @brief The replication cadence for the initial world's ReplicationServer.
+        ReplicationServer::Settings Replication;
+        /// @brief The per-connection interest filter; Radius 0 (the default) replicates the whole world.
+        Net::InterestSettings Interest;
+        /// @brief The game hook adding entities to each connection's interest set; unset adds none.
+        Net::InterestPolicy InterestPolicy;
+        /// @brief Routes a newly accepted connection to the hosted world it joins; unset binds every
+        /// connection to the primary world (WorldId).
+        ///
+        /// Called synchronously at accept, before the seat is spawned. The returned world must be one
+        /// the host holds (added at Create or through AddWorld). This is where the server decides a
+        /// connection's world in the absence of a client-presented selector.
+        function<WorldInstanceId(Net::ConnectionId)> SelectWorld;
+    };
+
+    /// @brief Server-side join glue: a connection becomes a seat in its world; readiness gates its stream.
     ///
-    /// On accept the host spawns a Viewer seat entity for the connection — Authority{ Server, Owner =
-    /// connectionId } and no SeatInput (the documented remote path) — assigns its wire id, and names
-    /// it (with the level) in the ConnectAccept. The game mode's own spawn rule pawns the pawnless
-    /// seat with no net awareness. Each Pump generates and sends the replication stream for every
-    /// connection that has acked ClientReady, so a client that never readies holds no stream (and is
-    /// reaped by the Server's timeout). On disconnect the seat is destroyed and the event surfaced;
-    /// pawn cleanup is a game rule over that event.
+    /// On accept the host routes the connection to a hosted world (SelectWorld, or the primary world),
+    /// spawns a Viewer seat entity in that world — Authority{ Server, Owner = connectionId } and no
+    /// SeatInput (a remote seat's input arrives from the wire) — assigns its wire id from that world's
+    /// allocator, and names it (with the world's level) in the ConnectAccept. The game mode's own spawn
+    /// rule pawns the pawnless seat with no net awareness. Each Pump generates and sends the replication
+    /// stream for every connection that has acked ClientReady, drawing from the connection's world's
+    /// ReplicationServer, so a client that never readies holds no stream (and is reaped by the Server's
+    /// timeout). On disconnect the seat is destroyed in its world and the event surfaced; pawn cleanup
+    /// is a game rule over that event.
+    ///
+    /// Replication is one instance per hosted world: each only ever sees its own world's connections
+    /// and acks, so a connection's ack advances only its world's baseline and one world's replication
+    /// state can never cross into a peer's.
     class VE_API ServerHost
     {
     public:
-        /// @brief Creates a server host, opening its underlying Net::Server.
+        /// @brief Creates a server host, opening its underlying Net::Server and its initial world.
         /// @param info  Host + server configuration.
         /// @return The host, or an error string if the server's transport could not be opened.
         static Result<Unique<ServerHost>> Create(const ServerHostInfo& info);
@@ -78,6 +130,14 @@ namespace Veng
 
         ServerHost(const ServerHost&) = delete;
         ServerHost& operator=(const ServerHost&) = delete;
+
+        /// @brief Hosts an additional world with its own ReplicationServer, allocator, and seat rule.
+        ///
+        /// The world becomes a valid SelectWorld target: connections routed to it get their seats
+        /// spawned into its scene and their stream from its replication instance. Adding a world with
+        /// an already-hosted WorldId replaces its configuration.
+        /// @param world  The world's scene, level, seat rule, replication cadence, and interest filter.
+        void AddWorld(const ServerWorldInfo& world);
 
         /// @brief Pumps one frame: send this tick's stream to ready seats, then advance the server.
         ///
@@ -94,10 +154,26 @@ namespace Veng
         /// @brief The underlying server (for LocalPort, Connections, an app's own traffic).
         [[nodiscard]] Net::Server& Server();
 
-        /// @brief The owned replication server.
+        /// @brief The primary hosted world's replication server (the initial world's instance).
         [[nodiscard]] ReplicationServer& Replication();
 
-        /// @brief The wire-id allocator the host assigns seats and authoritative entities from.
+        /// @brief The replication server for the world a connection is bound to (its demux target).
+        ///
+        /// The instance a connection's inbound acks and outbound stream route through. Falls back to
+        /// the primary world's instance for an unbound id (a no-op there, since it tracks no such
+        /// connection).
+        /// @param id  The connection whose world's replication is resolved.
+        [[nodiscard]] ReplicationServer& ReplicationFor(Net::ConnectionId id);
+
+        /// @brief The replication server for a specific hosted world.
+        /// @param world  A hosted world's id (from Create or AddWorld).
+        [[nodiscard]] ReplicationServer& ReplicationForWorld(WorldInstanceId world);
+
+        /// @brief The world a connection was bound to at accept, or an invalid id if unbound.
+        /// @param id  The connection to resolve.
+        [[nodiscard]] WorldInstanceId WorldFor(Net::ConnectionId id) const;
+
+        /// @brief The primary hosted world's wire-id allocator (the initial world's instance).
         [[nodiscard]] NetIdAllocator& Allocator();
 
         /// @brief The seat entity spawned for a connection, or Entity::Null for an unknown id.

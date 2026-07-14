@@ -345,6 +345,7 @@ namespace Veng
             .Server = Net::ServerInfo{.Port = net.Port,
                                       .MaxConnections = net.MaxConnections,
                                       .NetSim = m_LaunchArgs.NetSim},
+            .WorldId = m_ManagedWorld,
             .World = m_WorldRunner->ResolveWorld(m_ManagedWorld)->GetScene(),
             .Assets = *m_AssetManager,
             .LevelId = levelId,
