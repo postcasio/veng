@@ -205,7 +205,7 @@ namespace Veng
 
     /// @brief One replication message to send a connection: the channel it rides and its bytes.
     ///
-    /// The replication layer produces these; the app (Plan 07's wiring) Sends each on its channel of
+    /// The replication layer produces these; the app Sends each on its channel of
     /// the connection. Keeping the transport out of the layer makes the whole flow drivable device-free
     /// over two in-process scenes, exactly the two-world test fixture.
     struct ReplicationMessage
@@ -279,7 +279,7 @@ namespace Veng
         /// @brief Advances a connection's acked tick, gating which state its snapshots still carry.
         ///
         /// A component enters a connection's snapshot only while its change tick exceeds this — the
-        /// send-until-acked rule. Acks arrive from the client (Plan 05's piggyback, or a standalone ack
+        /// send-until-acked rule. Acks arrive from the client (a piggybacked snapshot ack, or a standalone ack
         /// message); until one does, a connection's baseline stays at zero and every snapshot carries
         /// full state (idempotent, just more bandwidth).
         /// @param id    The connection acknowledging.

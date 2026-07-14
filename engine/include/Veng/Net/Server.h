@@ -11,7 +11,7 @@
 
 // Veng/Net/Server.h — the listen/accept side of the connection lifecycle.
 //
-// Above Plan 01's per-peer Connection layer, a Server owns one transport (a bound
+// Above the per-peer Connection layer, a Server owns one transport (a bound
 // UDP socket, or a caller-supplied override), demultiplexes datagrams to a
 // Connection per peer, and runs the handshake: a provisional connection is created
 // on first contact and either accepted (assigned a ConnectionId, promoted) or

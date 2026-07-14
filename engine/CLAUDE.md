@@ -133,6 +133,30 @@ render gather blends transforms between the last two ticks — see
 any scope is held), composing with the explicit `SetWorldPaused(id, …)` toggle so stacked overlays
 and a game pause do not clobber each other.
 
+**Networking is per-world and multiplexed over one connection.** `NetRole` is a **per-world**
+property, not a process-global one: each world ticks under its own authority (a `Host`-side role map,
+`NetState::WorldRoles`, feeds each world's `SystemContext`; the `World` itself holds no role), and the
+**two axes are orthogonal** — a world's authority role (`Server`/`Client`) is separate from whether
+the *process* binds a transport (`--server`/`--join`, `GetNetRole()`). So a standalone world is
+`Server` with no transport, and a single process can host one world while displaying another. One
+connection **multiplexes N worlds** across **three id spaces**: the process-private `WorldInstanceId`
+(a runner handle, never on the wire), the opaque consumer-defined **`WorldKey`** (a 128-bit name that
+rides only the join request), and the per-connection **`JoinId`** (a `u16` wire tag framed ahead of
+every world message). A client **joins by `WorldKey`**, which the `ServerHost` resolves through a
+**get-or-create factory** — open on a miss, reuse on a hit, so two clients on the same key converge on
+one instance — which is also the **seam that keeps single-player net-free** (a standalone process
+invokes the world-open path with no `Host` and no replication instantiated at all). Each world carries
+its **own replication instance** (one `ReplicationServer`/`ReplicationClient` per world, muxed at the
+`Host`), so **ack/baseline isolation is structural over the shared reliability channels** — one
+world's ack never advances a peer's baseline — though the wire stream and compute stay coupled, so the
+honest guarantee is per-world **convergence, not independent streams**. The join reply echoes a
+**content digest** the client validates its reconstructed world against (fail-loud carried into the
+join tier); worlds are **server-owned** — refcounted by live joins, idle-reaped after a keep-warm
+dwell, and bounded by a server-wide cap (with a per-connection join cap); and clock/tick-sync scopes
+**per `JoinId`**. The wire break **fails loudly**: `Net::ProtocolVersion` is **2** and the
+`ConnectAcceptMessage` carries only the connection id (the level/seat moved to the per-world join
+reply). See [src/Net/CLAUDE.md](src/Net/CLAUDE.md) for the full model.
+
 **A second level can be opened over the running one as a `LevelOverlay`.** `LevelOverlay`
 (`Veng/LevelOverlay.h`) is a thin **preset over `WorldRunner::OpenWorld`**: opening an overlay
 opens an owned world (its own scene, systems, and HUD, ticked by the runner like any world) and

@@ -1027,7 +1027,9 @@ extern "C" void VengModuleRegister(VengModuleHost* host)
                     // Opt into networking with the zero-config defaults: setting Net only tunes the
                     // hosts the engine mounts when a net launch flag activates one, so this stays
                     // inert with no flag (the default run is offline and byte-identical) and turns
-                    // `--server` / `--join <host>` into a listening or joining session.
+                    // `--server` / `--join <host>` into a listening or joining session. The single
+                    // managed world is joined by the engine's default WorldKey over the multiplexed
+                    // transport — one joined world, one JoinId — so this exercises the common path.
                     .Net = GameNetInfo{},
                 },
                 types, systems));
