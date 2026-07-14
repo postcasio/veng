@@ -128,13 +128,18 @@ function(veng_add_project TARGET_NAME)
 
         # The engine core shader dir is on every cook's Slang search path so a consumer
         # shader resolves `#include "Veng/surface.slang"`. A source-dir include still wins.
+        # A per-build-tree cooked-blob cache (under the build dir, so debug/release trees never
+        # share one) lets an incremental re-cook copy an unchanged asset's final compressed bytes
+        # instead of re-encoding it. Each configuration's blobs key separately, so the project's
+        # per-platform packs never collide in the shared cache.
         add_custom_command(
                 OUTPUT ${CFG_OUTPUTS}
                 COMMAND ${CMAKE_COMMAND} -E make_directory ${ARG_OUTPUT_DIR}
                 COMMAND $<TARGET_FILE:vengc> cook-project ${PROJECT_ABS}
                         --config ${CFG_NAME} --out-dir ${ARG_OUTPUT_DIR}
                         ${MODULE_ARGS} ${REFERENCE_ARGS}
-                        --shader-include ${VENG_CORE_SHADER_DIR} --depfile ${PROJ_OUT}.d
+                        --shader-include ${VENG_CORE_SHADER_DIR}
+                        --cache-dir ${CMAKE_BINARY_DIR}/vengc-cache --depfile ${PROJ_OUT}.d
                 DEPENDS vengc ${PROJECT_ABS} ${CFG_ABS} ${PACK_MANIFESTS} ${MODULE_DEP}
                 DEPFILE ${PROJ_OUT}.d
                 COMMENT "Cooking project ${TARGET_NAME} (${CFG_NAME})")

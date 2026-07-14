@@ -1,6 +1,7 @@
 #include <Veng/Asset/CookedProject.h>
 #include <Veng/Cook/AssetPack.h>
 #include <Veng/Cook/BuiltinImporters.h>
+#include <Veng/Cook/CookCache.h>
 #include <Veng/Cook/Cooker.h>
 #include <Veng/Cook/ModuleTypes.h>
 #include <Veng/Cook/Verify.h>
@@ -8,6 +9,8 @@
 #include <Veng/Scene/BuiltinTypes.h>
 
 #include <algorithm>
+#include <cstdlib>
+#include <filesystem>
 
 #include <fmt/format.h>
 
@@ -16,18 +19,66 @@ using namespace Veng::Cook;
 
 namespace
 {
+    // The cook cache's own format version. Folded into the tool tag so a change to the cache file
+    // layout or the manifest schema invalidates every cached entry without a manual sweep.
+    constexpr u32 CookCacheFormatVersion = 2;
+
     void PrintUsage()
     {
         fmt::print(stderr, "usage:\n"
                            "  vengc cook <pack.json> [-o <out.vengpack>] [--reference "
                            "<pack.json>]... [--module <lib>] [--config <file.buildcfg>] "
-                           "[--shader-include <dir>] [--depfile <out.d>]\n"
+                           "[--shader-include <dir>] [--cache-dir <dir>] [--depfile <out.d>]\n"
                            "  vengc cook-project <project.veng> --config <name> --out-dir <dir> "
                            "[--reference <pack.json>]... [--module <lib>] [--shader-include <dir>] "
-                           "[--depfile <out.d>]\n"
+                           "[--cache-dir <dir>] [--depfile <out.d>]\n"
                            "  vengc generate-id [--reference <pack.json>]...\n"
                            "  vengc generate-type-id [--module <lib>]\n"
                            "  vengc verify <archive.vengpack>\n");
+    }
+
+    // A fingerprint of this cooker binary, so any rebuild of vengc (an importer or format change
+    // relinks it) invalidates the whole cache — no manual version bump per importer needed. Folds
+    // the cache-format version with the executable's own path, size, and mtime; the size/mtime are
+    // dropped when the executable cannot be stat'd (a bare-name PATH launch), leaving the format
+    // version as the guaranteed component.
+    string ComputeToolTag(const char* argv0)
+    {
+        string tag = fmt::format("cachefmt={}", CookCacheFormatVersion);
+        std::error_code ec;
+        const path exe = std::filesystem::weakly_canonical(path(argv0), ec);
+        if (!ec && std::filesystem::exists(exe, ec))
+        {
+            const auto size = std::filesystem::file_size(exe, ec);
+            if (!ec)
+            {
+                const auto mtime = std::filesystem::last_write_time(exe, ec);
+                if (!ec)
+                {
+                    tag += fmt::format(";exe={};size={};mtime={}", exe.string(), size,
+                                       mtime.time_since_epoch().count());
+                }
+            }
+        }
+        return tag;
+    }
+
+    // Opens the cooked-blob cache at `cacheDir` with the tool tag derived from `argv0`. Returns
+    // nullopt (no caching) when `cacheDir` is unset; a real open failure is fatal so a broken cache
+    // dir surfaces loudly rather than silently disabling the cache.
+    optional<CookCache> OpenCache(const optional<path>& cacheDir, const char* argv0)
+    {
+        if (!cacheDir)
+        {
+            return std::nullopt;
+        }
+        Result<CookCache> opened = CookCache::Open(*cacheDir, ComputeToolTag(argv0));
+        if (!opened)
+        {
+            fmt::print(stderr, "vengc: {}\n", opened.error());
+            std::exit(1);
+        }
+        return std::move(*opened);
     }
 
     // Prints the loaded type table as a name → TypeId manifest (stdout, not persisted).
@@ -75,6 +126,7 @@ int main(int argc, char** argv)
         optional<path> modulePath;
         optional<path> configPath;
         optional<path> shaderIncludePath;
+        optional<path> cacheDirPath;
         optional<path> depfilePath;
 
         for (usize i = 1; i < args.size(); ++i)
@@ -132,6 +184,15 @@ int main(int argc, char** argv)
                     return 1;
                 }
                 shaderIncludePath = path(args[++i]);
+            }
+            else if (args[i] == "--cache-dir")
+            {
+                if (i + 1 >= args.size())
+                {
+                    fmt::print(stderr, "vengc: --cache-dir requires an argument\n");
+                    return 1;
+                }
+                cacheDirPath = path(args[++i]);
             }
             else if (!packPath)
             {
@@ -191,11 +252,14 @@ int main(int argc, char** argv)
         Cooker cooker;
         RegisterBuiltinImporters(cooker);
 
+        const optional<CookCache> cache = OpenCache(cacheDirPath, argv[0]);
+
         vector<path> dependencies;
         const VoidResult result = cooker.CookPack(
             *packPath, *outPath, referencePacks, types, systems,
             depfilePath ? &dependencies : nullptr, config ? &*config : nullptr,
-            configPath ? *configPath : path{}, shaderIncludePath ? *shaderIncludePath : path{});
+            configPath ? *configPath : path{}, shaderIncludePath ? *shaderIncludePath : path{},
+            cache ? &*cache : nullptr);
         if (!result)
         {
             fmt::print(stderr, "vengc: {}\n", result.error());
@@ -225,6 +289,7 @@ int main(int argc, char** argv)
         optional<path> outDir;
         optional<path> modulePath;
         optional<path> shaderIncludePath;
+        optional<path> cacheDirPath;
         optional<path> depfilePath;
         vector<path> referencePacks;
 
@@ -256,6 +321,15 @@ int main(int argc, char** argv)
                     return 1;
                 }
                 outDir = path(args[++i]);
+            }
+            else if (args[i] == "--cache-dir")
+            {
+                if (i + 1 >= args.size())
+                {
+                    fmt::print(stderr, "vengc: --cache-dir requires an argument\n");
+                    return 1;
+                }
+                cacheDirPath = path(args[++i]);
             }
             else if (args[i] == "--module")
             {
@@ -353,6 +427,8 @@ int main(int argc, char** argv)
         Cooker cooker;
         RegisterBuiltinImporters(cooker);
 
+        const optional<CookCache> cache = OpenCache(cacheDirPath, argv[0]);
+
         // Cook each pack under the selected configuration and collect both the runtime mount names
         // (un-suffixed, the names the launcher mounts) and every source for one combined depfile.
         CookedProject cooked;
@@ -383,7 +459,8 @@ int main(int argc, char** argv)
             vector<path> packDeps;
             const VoidResult result = cooker.CookPack(
                 packManifest, outPack, packRefs, types, systems, depfilePath ? &packDeps : nullptr,
-                &*config, configFile, shaderIncludePath ? *shaderIncludePath : path{});
+                &*config, configFile, shaderIncludePath ? *shaderIncludePath : path{},
+                cache ? &*cache : nullptr);
             if (!result)
             {
                 fmt::print(stderr, "vengc: {}\n", result.error());

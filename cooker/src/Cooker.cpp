@@ -11,6 +11,7 @@
 
 #include <Veng/Asset/AtomicFile.h>
 #include <Veng/Asset/HexId.h>
+#include <Veng/Cook/CookCache.h>
 #include <Veng/Cook/JsonFile.h>
 #include <Veng/Project/CompressionFormat.h>
 #include <Veng/Project/CompressionRole.h>
@@ -48,13 +49,12 @@ namespace Veng::Cook
         // CompressionLevel; the zero-config cook uses this default.
         constexpr int ZstdLevel = ZSTD_CLEVEL_DEFAULT;
 
-        // Adds a blob to the archive, compressing it with zstd at `level` and storing whichever of
-        // the raw or compressed bytes is smaller. The content hash covers the stored bytes, so
-        // verify re-hashes exactly what is on disk. Routes both cooker Add sites through one
-        // path so every blob is considered for compression by construction; an already
-        // incompressible blob keeps the raw, zero-copy resolve path.
-        void EmitBlob(ArchiveWriter& writer, AssetId id, AssetType type, std::span<const u8> blob,
-                      int level)
+        // Turns a raw cooked blob into its stored form: compresses it with zstd at `level` and keeps
+        // whichever of the raw or compressed bytes is smaller. The content hash covers the stored
+        // bytes, so verify re-hashes exactly what is on disk; an already incompressible blob keeps
+        // the raw, zero-copy resolve path. This is the one place a blob is considered for
+        // compression, so both the fresh-cook and cache-store paths agree on the stored bytes.
+        CachedBlob MakeStoredBlob(AssetId id, AssetType type, std::span<const u8> blob, int level)
         {
             const usize bound = ZSTD_compressBound(blob.size());
             vector<u8> compressed(bound);
@@ -64,12 +64,28 @@ namespace Veng::Cook
             if (ZSTD_isError(produced) == 0u && produced < blob.size())
             {
                 compressed.resize(produced);
-                writer.Add(id, type, compressed, Xxh3_128(compressed), ArchiveCodec::Zstd,
-                           blob.size());
-                return;
+                return CachedBlob{.Id = id,
+                                  .Type = type,
+                                  .Codec = ArchiveCodec::Zstd,
+                                  .UncompressedSize = blob.size(),
+                                  .Hash = Xxh3_128(compressed),
+                                  .Bytes = std::move(compressed)};
             }
 
-            writer.Add(id, type, blob, Xxh3_128(blob));
+            return CachedBlob{.Id = id,
+                              .Type = type,
+                              .Codec = ArchiveCodec::Stored,
+                              .UncompressedSize = blob.size(),
+                              .Hash = Xxh3_128(blob),
+                              .Bytes = vector<u8>(blob.begin(), blob.end())};
+        }
+
+        // Adds an already-stored blob to the archive verbatim, passing the codec and inflated length
+        // through. Serves both a freshly compressed blob and one replayed from the cache.
+        void AddStored(ArchiveWriter& writer, const CachedBlob& blob)
+        {
+            writer.Add(blob.Id, blob.Type, blob.Bytes, blob.Hash, blob.Codec,
+                       blob.UncompressedSize);
         }
 
         // Parses and validates the common pack JSON preamble. On error returns a located message.
@@ -384,7 +400,7 @@ namespace Veng::Cook
                                 std::span<const path> referencePacks, const TypeRegistry* types,
                                 const SystemRegistry* systems, vector<path>* outDependencies,
                                 const BuildConfiguration* config, const path& configFile,
-                                const path& shaderIncludeDir) const
+                                const path& shaderIncludeDir, const CookCache* cache) const
     {
         const Result<json> packResult = ReadAndValidatePack(packJson);
         if (!packResult)
@@ -435,10 +451,21 @@ namespace Veng::Cook
             refPacks.push_back(std::move(*refPackResult));
         }
 
-        // std::set keeps dependencies sorted and de-duplicated.
+        // std::set keeps dependencies sorted and de-duplicated. `entryDeps`/`entryResolutions`, when
+        // non-null, additionally collect the current entry's own inputs so a cache entry records
+        // exactly what that one asset read; the pointers are retargeted per entry below.
         std::set<path> dependencies;
-        auto record = [&dependencies](const path& p)
-        { dependencies.insert(NormalizeDependency(p)); };
+        vector<path>* entryDeps = nullptr;
+        vector<std::pair<AssetId, path>>* entryResolutions = nullptr;
+        auto record = [&](const path& p)
+        {
+            const path normalized = NormalizeDependency(p);
+            dependencies.insert(normalized);
+            if (entryDeps != nullptr)
+            {
+                entryDeps->push_back(normalized);
+            }
+        };
 
         record(packJson);
         for (const path& refPath : referencePacks)
@@ -448,15 +475,19 @@ namespace Veng::Cook
 
         // The configuration file is one central depfile input, recorded centrally like the pack
         // JSON: a configuration edit re-cooks the whole pack — coarse by design, since the texture
-        // encode is the expensive part and the rest of a re-cook is fast.
+        // encode is the expensive part and the rest of a re-cook is fast. The configuration's effect
+        // on a per-asset cache entry is captured by its fingerprint in the cache key, not here.
         if (config != nullptr && !configFile.empty())
         {
             record(configFile);
         }
 
-        // Resolve searches the main pack first, then reference packs in order.
+        // resolveById is the pure id → source lookup (main pack first, then references in order),
+        // with no recording — the cache validation path re-resolves through it to confirm an id
+        // still maps to the same source. `resolve` wraps it to also record the resolved source as a
+        // dependency and, per entry, as a resolution the cache pins.
         const AssetPack& mainPack = *mainPackResult;
-        auto resolve = [&mainPack, &refPacks, &record](AssetId id) -> optional<ResolvedSource>
+        auto resolveById = [&mainPack, &refPacks](AssetId id) -> optional<ResolvedSource>
         {
             if (const AssetPackEntry* e = mainPack.FindById(id))
             {
@@ -464,9 +495,7 @@ namespace Veng::Cook
                 {
                     return std::nullopt;
                 }
-                const path absolute = mainPack.Dir / e->Source;
-                record(absolute);
-                return ResolvedSource{.AbsolutePath = absolute, .Type = e->Type};
+                return ResolvedSource{.AbsolutePath = mainPack.Dir / e->Source, .Type = e->Type};
             }
             for (const AssetPack& ref : refPacks)
             {
@@ -476,12 +505,23 @@ namespace Veng::Cook
                     {
                         return std::nullopt;
                     }
-                    const path absolute = ref.Dir / e->Source;
-                    record(absolute);
-                    return ResolvedSource{.AbsolutePath = absolute, .Type = e->Type};
+                    return ResolvedSource{.AbsolutePath = ref.Dir / e->Source, .Type = e->Type};
                 }
             }
             return std::nullopt;
+        };
+        auto resolve = [&](AssetId id) -> optional<ResolvedSource>
+        {
+            const optional<ResolvedSource> resolved = resolveById(id);
+            if (resolved)
+            {
+                record(resolved->AbsolutePath);
+                if (entryResolutions != nullptr)
+                {
+                    entryResolutions->emplace_back(id, NormalizeDependency(resolved->AbsolutePath));
+                }
+            }
+            return resolved;
         };
 
         const CookContext context{
@@ -498,39 +538,278 @@ namespace Veng::Cook
         // default. This is the one place the level field is consumed.
         const int level = config != nullptr ? config->CompressionLevel : ZstdLevel;
 
-        ArchiveWriter writer;
+        // Inputs shared by every entry's cache key: the config fingerprint (codec table + level),
+        // and the pack + shader-include dirs, computed once. The pack and shader-include dirs are
+        // normalized to a canonical absolute form so two spellings of the same directory (a relative
+        // vs. absolute --shader-include) key identically rather than each seeding its own entries.
+        const string configFingerprint =
+            config != nullptr ? FingerprintBuildConfiguration(*config) : string{};
+        const path keyPackDir = NormalizeDependency(context.PackDir);
+        const path keyShaderIncludeDir =
+            shaderIncludeDir.empty() ? path{} : NormalizeDependency(shaderIncludeDir);
+
+        // Content hashes of dependency files, memoized for this cook. Many entries share a
+        // dependency — the engine shader headers a whole material set includes, or a single model a
+        // group of meshes each extract from — so hashing per (entry, dep) re-reads the same bytes
+        // repeatedly. Memoizing by path collapses that to one hash per unique file per cook, which
+        // dominates the incremental (all-hit) re-cook cost. A file is static across one cook, so the
+        // memo is safe within a single CookPack call.
+        std::unordered_map<string, ContentHash> hashMemo;
+        auto hashDep = [&hashMemo](const path& p) -> optional<ContentHash>
+        {
+            const string key = p.string();
+            if (const auto it = hashMemo.find(key); it != hashMemo.end())
+            {
+                return it->second;
+            }
+            const optional<ContentHash> hash = HashFileContents(p);
+            if (hash)
+            {
+                hashMemo.emplace(key, *hash);
+            }
+            return hash;
+        };
+
         std::set<u64> seenIds;
+
+        // One blob destined for the archive: its descriptor (always known) plus, for a freshly
+        // cooked blob, its bytes in hand. A cache-hit blob carries no bytes here — they are read back
+        // from the cache only if the pack actually has to be written.
+        struct PlannedBlob
+        {
+            ArchiveBlobDescriptor Descriptor;
+            optional<vector<u8>> FreshBytes;
+        };
+        vector<PlannedBlob> planned;
+
+        // Fresh cook results to persist after the pack is written (misses only).
+        struct PendingStore
+        {
+            string Key;
+            CookCacheEntry Entry;
+        };
+        vector<PendingStore> pendingStores;
+
+        // The pack is served entirely from cache only when every entry hits; one miss (or no cache)
+        // means the pack is rewritten and the unchanged-pack write skip below cannot apply.
+        bool allHits = cache != nullptr;
 
         const json& assets = pack["assets"];
         for (usize index = 0; index < assets.size(); ++index)
         {
-            const VoidResult entryResult =
-                CookEntry(context, assets[index], seenIds, writer, level);
+            const json& entry = assets[index];
+
+            // Compute the entry's cache key up front. A malformed entry (no key possible) simply
+            // cooks fresh and reports its own located error from CookEntry.
+            optional<string> cacheKey;
+            if (cache != nullptr && entry.is_object())
+            {
+                cacheKey = cache->KeyFor(CookCacheKeyInputs{
+                    .EntryJson = entry.dump(),
+                    .PackDir = keyPackDir,
+                    .ConfigFingerprint = configFingerprint,
+                    .ShaderIncludeDir = keyShaderIncludeDir,
+                });
+
+                if (const optional<CookCacheMeta> meta = cache->LoadMeta(*cacheKey))
+                {
+                    // A cache hit is trusted only if every recorded input is unchanged: each source
+                    // file is unchanged (by stat, then hash), and each resolved id still maps to the
+                    // same source (the id→source remap a content check alone would miss).
+                    bool valid = true;
+                    for (const CachedDep& dep : meta->SourceDeps)
+                    {
+                        const optional<FileStat> st = StatFile(dep.Path);
+                        if (!st)
+                        {
+                            valid = false;
+                            break;
+                        }
+                        // Fast path: an unchanged size+mtime means the file is unchanged — skip the
+                        // read entirely, which is what makes an all-hit re-cook cheap. This trusts
+                        // mtime for a positive match, the same assumption the build's depfile makes.
+                        if (st->Size == dep.Size && st->Mtime == dep.Mtime)
+                        {
+                            continue;
+                        }
+                        // Stat differs (a touch, a checkout): fall back to the content hash. A hash
+                        // that still matches is a hit, so a mtime change alone never forces a re-cook.
+                        const optional<ContentHash> current = hashDep(dep.Path);
+                        if (!current || current->Lo != dep.Hash.Lo || current->Hi != dep.Hash.Hi)
+                        {
+                            valid = false;
+                            break;
+                        }
+                    }
+                    if (valid)
+                    {
+                        for (const auto& [resId, resPath] : meta->Resolutions)
+                        {
+                            const optional<ResolvedSource> now = resolveById(resId);
+                            if (!now || NormalizeDependency(now->AbsolutePath) != resPath)
+                            {
+                                valid = false;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (valid)
+                    {
+                        // Plan the stored blobs by descriptor (no bytes yet), enforcing the same
+                        // id-uniqueness a fresh cook would, and re-record the entry's dependencies so
+                        // the depfile stays complete even though the importer never ran.
+                        for (const CachedBlobMeta& blob : meta->Blobs)
+                        {
+                            if (!seenIds.insert(blob.Id.Value).second)
+                            {
+                                return std::unexpected(
+                                    fmt::format("pack '{}': asset[{}]: asset id {} duplicated",
+                                                packJson.string(), index, blob.Id.Value));
+                            }
+                            planned.push_back(PlannedBlob{
+                                .Descriptor =
+                                    ArchiveBlobDescriptor{.Id = blob.Id,
+                                                          .Type = blob.Type,
+                                                          .Codec = blob.Codec,
+                                                          .Size = blob.Size,
+                                                          .UncompressedSize = blob.UncompressedSize,
+                                                          .Hash = blob.Hash},
+                                .FreshBytes = std::nullopt});
+                        }
+                        for (const CachedDep& dep : meta->SourceDeps)
+                        {
+                            dependencies.insert(dep.Path);
+                        }
+                        continue;
+                    }
+                }
+            }
+
+            // Miss (or caching disabled): cook fresh, capturing this entry's own inputs so a hit can
+            // be stored. The captured deps/resolutions still flow into the global depfile set too.
+            allHits = false;
+            vector<path> capturedDeps;
+            vector<std::pair<AssetId, path>> capturedResolutions;
+            entryDeps = cacheKey ? &capturedDeps : nullptr;
+            entryResolutions = cacheKey ? &capturedResolutions : nullptr;
+
+            vector<CachedBlob> blobs;
+            const VoidResult entryResult = CookEntry(context, entry, seenIds, blobs, level);
+            entryDeps = nullptr;
+            entryResolutions = nullptr;
             if (!entryResult)
             {
                 return std::unexpected(fmt::format("pack '{}': asset[{}]: {}", packJson.string(),
                                                    index, entryResult.error()));
             }
-        }
 
-        // Build once to lay out the TOC bytes, hash them via the reader, then
-        // rebuild with the digest set. The header's ArchiveDigest field is
-        // excluded from the hashed range so the second build is stable.
-        const vector<u8> staged = writer.Build();
-        const Result<ArchiveReader> reader = ArchiveReader::FromBytes(staged);
-        if (!reader)
-        {
-            return std::unexpected(fmt::format("pack '{}': {}", packJson.string(), reader.error()));
-        }
+            for (const CachedBlob& blob : blobs)
+            {
+                planned.push_back(PlannedBlob{
+                    .Descriptor = ArchiveBlobDescriptor{.Id = blob.Id,
+                                                        .Type = blob.Type,
+                                                        .Codec = blob.Codec,
+                                                        .Size = blob.Bytes.size(),
+                                                        .UncompressedSize = blob.UncompressedSize,
+                                                        .Hash = blob.Hash},
+                    .FreshBytes = blob.Bytes});
+            }
 
-        writer.SetArchiveDigest(Xxh3_128(reader->TocBytes()));
+            if (cache != nullptr && cacheKey)
+            {
+                CookCacheEntry toStore;
+                toStore.Blobs = std::move(blobs);
+                toStore.Resolutions = std::move(capturedResolutions);
+                // De-duplicate the entry's dependency paths, capturing a stat + content hash for
+                // each; a file that cannot be read is skipped, degrading the entry to a miss next
+                // time rather than being trusted.
+                const std::set<path> uniqueDeps(capturedDeps.begin(), capturedDeps.end());
+                for (const path& depPath : uniqueDeps)
+                {
+                    const optional<FileStat> st = StatFile(depPath);
+                    const optional<ContentHash> hash = hashDep(depPath);
+                    if (st && hash)
+                    {
+                        toStore.SourceDeps.push_back(CachedDep{
+                            .Path = depPath, .Size = st->Size, .Mtime = st->Mtime, .Hash = *hash});
+                    }
+                }
+                pendingStores.push_back(
+                    PendingStore{.Key = *cacheKey, .Entry = std::move(toStore)});
+            }
+        }
 
         if (outDependencies)
         {
             outDependencies->assign(dependencies.begin(), dependencies.end());
         }
 
-        return writer.Write(outArchive);
+        // Compute the pack's identity — TOC digest + total size — from the blob descriptors alone,
+        // no bytes needed. assetpack lays out the TOC exactly as it would when writing; the digest
+        // (hashing lives here, not in assetpack) is the same one a full build produces.
+        vector<ArchiveBlobDescriptor> descriptors;
+        descriptors.reserve(planned.size());
+        for (const PlannedBlob& p : planned)
+        {
+            descriptors.push_back(p.Descriptor);
+        }
+        const ArchiveTocImage toc = BuildArchiveToc(descriptors);
+        const ContentHash digest = Xxh3_128(toc.TocBytes);
+
+        // If every entry hit and the existing pack already has this exact identity, the pack we would
+        // write is byte-for-byte what is already on disk — skip reading the blobs back and skip the
+        // write. This is what keeps a project cook cheap when a change to one pack forces every pack's
+        // cook to re-run: an unchanged pack costs no blob reads and no write.
+        if (allHits)
+        {
+            const optional<ArchiveIdentity> existing = ReadArchiveIdentity(outArchive);
+            if (existing && existing->Digest.Lo == digest.Lo && existing->Digest.Hi == digest.Hi &&
+                existing->TotalSize == toc.TotalSize)
+            {
+                return {};
+            }
+        }
+
+        // Assemble the archive, materializing each blob's bytes: a freshly cooked blob has them in
+        // hand; a cache-hit blob is read back from the cache now that the pack must be written.
+        ArchiveWriter writer;
+        for (PlannedBlob& p : planned)
+        {
+            if (p.FreshBytes)
+            {
+                writer.Add(p.Descriptor.Id, p.Descriptor.Type, *p.FreshBytes, p.Descriptor.Hash,
+                           p.Descriptor.Codec, p.Descriptor.UncompressedSize);
+                continue;
+            }
+            const optional<vector<u8>> bytes = cache->LoadBlob(p.Descriptor.Hash);
+            if (!bytes)
+            {
+                return std::unexpected(
+                    fmt::format("pack '{}': cached blob for asset id {} is missing from the cache",
+                                packJson.string(), p.Descriptor.Id.Value));
+            }
+            writer.Add(p.Descriptor.Id, p.Descriptor.Type, *bytes, p.Descriptor.Hash,
+                       p.Descriptor.Codec, p.Descriptor.UncompressedSize);
+        }
+        writer.SetArchiveDigest(digest);
+
+        if (const VoidResult written = writer.Write(outArchive); !written)
+        {
+            return written;
+        }
+
+        // Persist the freshly cooked entries now that the pack is on disk.
+        for (const PendingStore& ps : pendingStores)
+        {
+            if (const VoidResult stored = cache->Store(ps.Key, ps.Entry); !stored)
+            {
+                return std::unexpected(fmt::format("pack '{}': cache store failed: {}",
+                                                   packJson.string(), stored.error()));
+            }
+        }
+
+        return {};
     }
 
     Result<vector<u8>> Cooker::CookSource(const path& sourcePath, AssetId id, AssetType type,
@@ -598,7 +877,7 @@ namespace Veng::Cook
         }
 
         ArchiveWriter writer;
-        EmitBlob(writer, id, type, *blob, ZstdLevel);
+        AddStored(writer, MakeStoredBlob(id, type, *blob, ZstdLevel));
 
         const vector<u8> staged = writer.Build();
         const Result<ArchiveReader> reader = ArchiveReader::FromBytes(staged);
@@ -613,7 +892,8 @@ namespace Veng::Cook
     }
 
     VoidResult Cooker::CookEntry(const CookContext& context, const json& entry,
-                                 std::set<u64>& seenIds, ArchiveWriter& writer, int level) const
+                                 std::set<u64>& seenIds, vector<CachedBlob>& outBlobs,
+                                 int level) const
     {
         if (!entry.is_object())
         {
@@ -672,7 +952,7 @@ namespace Veng::Cook
             return std::unexpected(blob.error());
         }
 
-        EmitBlob(writer, AssetId{.Value = id}, *type, *blob, level);
+        outBlobs.push_back(MakeStoredBlob(AssetId{.Value = id}, *type, *blob, level));
 
         // A parent Material whose `*.vmat.json` declares a `defaultInstance` id emits a companion
         // zero-override MaterialInstance at that id, so every direct reference names a real instance
@@ -722,8 +1002,9 @@ namespace Veng::Cook
                     return std::unexpected(instanceBlob.error());
                 }
 
-                EmitBlob(writer, AssetId{.Value = defaultInstanceId}, AssetType::MaterialInstance,
-                         *instanceBlob, level);
+                outBlobs.push_back(MakeStoredBlob(AssetId{.Value = defaultInstanceId},
+                                                  AssetType::MaterialInstance, *instanceBlob,
+                                                  level));
             }
         }
 

@@ -2,6 +2,7 @@
 
 #include <Veng/Asset/Archive.h>
 #include <Veng/Cook/AssetPack.h>
+#include <Veng/Cook/CookCache.h>
 #include <Veng/Cook/Importer.h>
 
 #include <set>
@@ -118,12 +119,16 @@ namespace Veng::Cook
         /// @param shaderIncludeDir Engine core shader dir threaded onto each Slang session's search
         ///                         path so a consumer shader resolves `#include "Veng/surface.slang"`;
         ///                         empty for a cook that ships no engine shader header (the core pack).
+        /// @param cache           Optional cooked-blob cache. When non-null, each entry whose inputs
+        ///                         are unchanged is served from the cache (skipping the importer and
+        ///                         compression) and a freshly cooked entry is written back to it; the
+        ///                         resulting archive is byte-identical either way. Null disables caching.
         [[nodiscard]] VoidResult
         CookPack(const path& packJson, const path& outArchive,
                  std::span<const path> referencePacks = {}, const TypeRegistry* types = nullptr,
                  const SystemRegistry* systems = nullptr, vector<path>* outDependencies = nullptr,
                  const BuildConfiguration* config = nullptr, const path& configFile = {},
-                 const path& shaderIncludeDir = {}) const;
+                 const path& shaderIncludeDir = {}, const CookCache* cache = nullptr) const;
 
         /// @brief Cooks one source asset and returns a complete single-entry .vengpack as in-memory bytes.
         ///
@@ -151,9 +156,13 @@ namespace Veng::Cook
                                                     const path& shaderIncludeDir = {}) const;
 
     private:
-        /// @brief Cooks one pack entry JSON into the archive at `level`, enforcing id uniqueness.
+        /// @brief Cooks one pack entry JSON into `outBlobs` at `level`, enforcing id uniqueness.
+        ///
+        /// Appends every stored blob the entry emits (the asset itself, plus a parent Material's
+        /// default MaterialInstance) to `outBlobs`; the caller adds them to the archive and, when a
+        /// cache is active, stores them. Records the entry's source dependencies through `context`.
         [[nodiscard]] VoidResult CookEntry(const CookContext& context, const json& entry,
-                                           std::set<u64>& seenIds, ArchiveWriter& writer,
+                                           std::set<u64>& seenIds, vector<CachedBlob>& outBlobs,
                                            int level) const;
 
         /// @brief Registered importers keyed by AssetType.

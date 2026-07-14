@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 
 #include <fmt/format.h>
@@ -40,6 +41,103 @@ namespace Veng
         static_assert(sizeof(OnDiskTocEntry) == 56);
 
         constexpr char ArchiveMagic[8] = {'V', 'E', 'N', 'G', 'P', 'A', 'C', 'K'};
+
+        // Serializes the header (with `digest`) followed by the TOC entries for `sorted` (which must
+        // already be id-sorted), computing each blob's offset from the running size. Returns that
+        // header+TOC prefix plus the total blob-region size. The one place the on-disk header/TOC
+        // layout is written, shared by ArchiveWriter::Build and BuildArchiveToc so a digest computed
+        // from descriptors matches the bytes a full build emits.
+        struct HeaderTocLayout
+        {
+            vector<u8> Bytes; // header + TOC entries
+            u64 BlobRegionSize = 0;
+        };
+
+        HeaderTocLayout LayoutHeaderAndToc(std::span<const ArchiveBlobDescriptor> sorted,
+                                           ContentHash digest)
+        {
+            OnDiskHeader header{};
+            std::memcpy(header.Magic, ArchiveMagic, sizeof(ArchiveMagic));
+            header.Version = ArchiveFormatVersion;
+            header.Count = static_cast<u32>(sorted.size());
+            header.DigestLo = digest.Lo;
+            header.DigestHi = digest.Hi;
+
+            HeaderTocLayout layout;
+            layout.Bytes.resize(sizeof(OnDiskHeader) + sorted.size() * sizeof(OnDiskTocEntry));
+
+            usize cursor = 0;
+            std::memcpy(layout.Bytes.data() + cursor, &header, sizeof(header));
+            cursor += sizeof(header);
+
+            u64 blobOffset = 0;
+            for (const ArchiveBlobDescriptor& d : sorted)
+            {
+                const OnDiskTocEntry entry{
+                    .Id = d.Id.Value,
+                    .Type = static_cast<u32>(d.Type),
+                    .Codec = static_cast<u32>(d.Codec),
+                    .Offset = blobOffset,
+                    .Size = d.Size,
+                    .HashLo = d.Hash.Lo,
+                    .HashHi = d.Hash.Hi,
+                    .UncompressedSize = d.UncompressedSize,
+                };
+                std::memcpy(layout.Bytes.data() + cursor, &entry, sizeof(entry));
+                cursor += sizeof(entry);
+                blobOffset += d.Size;
+            }
+            layout.BlobRegionSize = blobOffset;
+            return layout;
+        }
+    }
+
+    ArchiveTocImage BuildArchiveToc(std::span<const ArchiveBlobDescriptor> blobs)
+    {
+        vector<ArchiveBlobDescriptor> sorted(blobs.begin(), blobs.end());
+        std::ranges::sort(sorted, [](const ArchiveBlobDescriptor& a, const ArchiveBlobDescriptor& b)
+                          { return a.Id.Value < b.Id.Value; });
+
+        // The digest covers the TOC-entry bytes only (not the header), so the header's own digest
+        // field never affects the result — a zero digest here yields the same TOC bytes.
+        const HeaderTocLayout layout = LayoutHeaderAndToc(sorted, ContentHash{});
+        ArchiveTocImage image;
+        image.TocBytes.assign(layout.Bytes.begin() + sizeof(OnDiskHeader), layout.Bytes.end());
+        image.TotalSize = layout.Bytes.size() + layout.BlobRegionSize;
+        return image;
+    }
+
+    optional<ArchiveIdentity> ReadArchiveIdentity(const path& filePath)
+    {
+        std::error_code ec;
+        const auto size = std::filesystem::file_size(filePath, ec);
+        if (ec)
+        {
+            return std::nullopt;
+        }
+        if (size < sizeof(OnDiskHeader))
+        {
+            return std::nullopt;
+        }
+
+        std::ifstream in(filePath, std::ios::binary);
+        if (!in)
+        {
+            return std::nullopt;
+        }
+        OnDiskHeader header{};
+        in.read(reinterpret_cast<char*>(&header), sizeof(header));
+        if (!in)
+        {
+            return std::nullopt;
+        }
+        if (std::memcmp(header.Magic, ArchiveMagic, sizeof(ArchiveMagic)) != 0 ||
+            header.Version != ArchiveFormatVersion)
+        {
+            return std::nullopt;
+        }
+        return ArchiveIdentity{.Digest = {.Lo = header.DigestLo, .Hi = header.DigestHi},
+                               .TotalSize = static_cast<u64>(size)};
     }
 
     void ArchiveWriter::Add(AssetId id, AssetType type, std::span<const u8> blob, ContentHash hash,
@@ -72,43 +170,28 @@ namespace Veng
         std::ranges::sort(sorted,
                           [](const Entry* a, const Entry* b) { return a->Id.Value < b->Id.Value; });
 
-        OnDiskHeader header{};
-        std::memcpy(header.Magic, ArchiveMagic, sizeof(ArchiveMagic));
-        header.Version = ArchiveFormatVersion;
-        header.Count = static_cast<u32>(sorted.size());
-        header.DigestLo = m_ArchiveDigest.Lo;
-        header.DigestHi = m_ArchiveDigest.Hi;
-
-        vector<OnDiskTocEntry> toc;
-        toc.reserve(sorted.size());
-
-        u64 blobOffset = 0;
+        vector<ArchiveBlobDescriptor> descriptors;
+        descriptors.reserve(sorted.size());
         for (const Entry* entry : sorted)
         {
-            toc.push_back(OnDiskTocEntry{
-                .Id = entry->Id.Value,
-                .Type = static_cast<u32>(entry->Type),
-                .Codec = static_cast<u32>(entry->Codec),
-                .Offset = blobOffset,
+            descriptors.push_back(ArchiveBlobDescriptor{
+                .Id = entry->Id,
+                .Type = entry->Type,
+                .Codec = entry->Codec,
                 .Size = entry->Blob.size(),
-                .HashLo = entry->Hash.Lo,
-                .HashHi = entry->Hash.Hi,
                 .UncompressedSize = entry->UncompressedSize,
+                .Hash = entry->Hash,
             });
-            blobOffset += entry->Blob.size();
         }
 
-        vector<u8> out(sizeof(OnDiskHeader) + toc.size() * sizeof(OnDiskTocEntry) + blobOffset);
+        // Header + TOC through the shared layout (so the digest a caller computes over descriptors
+        // matches these bytes), then the blob region appended in the same id-sorted order.
+        const HeaderTocLayout layout = LayoutHeaderAndToc(descriptors, m_ArchiveDigest);
 
+        vector<u8> out(layout.Bytes.size() + layout.BlobRegionSize);
         usize cursor = 0;
-        std::memcpy(out.data() + cursor, &header, sizeof(header));
-        cursor += sizeof(header);
-
-        for (const OnDiskTocEntry& entry : toc)
-        {
-            std::memcpy(out.data() + cursor, &entry, sizeof(entry));
-            cursor += sizeof(entry);
-        }
+        std::memcpy(out.data() + cursor, layout.Bytes.data(), layout.Bytes.size());
+        cursor += layout.Bytes.size();
 
         for (const Entry* entry : sorted)
         {

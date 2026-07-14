@@ -193,6 +193,63 @@ shared `ToString`/`Parse` tables, never ordinal. The runtime carries no JSON par
   `windows.buildcfg` re-cooks only that config's pack — per-config invalidation falls out
   for free, with no shared mutable "active codec" to reason about.
 
+## The cook cache
+
+An incremental re-cook skips the expensive importer + compression work for any asset whose inputs
+are unchanged, copying its **final stored (compressed-or-raw) bytes** straight into the new archive
+instead of re-encoding. The store is `CookCache` (`Cook/CookCache.{h,cpp}`, in the veng-free
+`veng_cook_objs` core), enabled by `vengc cook … --cache-dir <dir>` (and `cook-project`); with no
+`--cache-dir` the field is null and the cook runs exactly as before. `veng_add_asset_pack` /
+`veng_add_project` pass `${CMAKE_BINARY_DIR}/vengc-cache`, so the cache lives **inside the build
+tree** — `build-debug/` and `build/` never share one.
+
+- **The cache is a pure optimization, never consulted for correctness.** The runtime never reads it
+  and `vengc verify` ignores it; a miss (or any validation failure) simply re-cooks. A cache hit
+  produces a **byte-identical** archive to a fresh cook — `MakeStoredBlob` is the one place a blob's
+  stored form is chosen, so the compressed bytes agree whether freshly encoded or replayed.
+- **It is ccache-style: a direct key selects a per-entry manifest, which is then validated.** The
+  key folds the tool tag (cache-format version + the `vengc` executable's own size/mtime, so any
+  rebuild of the cooker invalidates everything), the manifest entry JSON, the pack directory, the
+  active configuration's fingerprint, and the shader-include dir. A hit is trusted only after every
+  recorded **source dependency** is confirmed unchanged **and** every recorded cross-asset
+  **resolution** (`AssetId → source path`) still maps identically — the id→source-remap check a
+  content hash alone cannot express. The dependency set is exactly what the depfile records (the
+  entry's own source, importer-recorded payloads/includes, resolved reference sources), so the cache
+  is as complete as the depfile, and a hit re-records those paths so the **depfile stays complete**
+  even though the importer never ran.
+- **Validation is stat-fast-path, content-hash-authoritative.** Each dependency stores its size,
+  mtime, and xxh3-128. On a lookup the file is `stat`'d first: an unchanged size+mtime is trusted as
+  unchanged and the file is **not read** — this is what makes an all-hit re-cook cheap (reading the
+  sources back to hash them dominates otherwise, and the largest assets are the models/catalogs). A
+  differing stat (a `touch`, a branch switch) falls back to re-hashing the contents; a still-matching
+  hash is a hit, so a mtime change without a content change never forces a re-cook. The one case the
+  fast path trusts is content that changes while size **and** mtime both stay identical — the same
+  assumption the build's own depfile makes when it decides whether to run the cook at all, so it adds
+  no trust the build doesn't already place in mtime. Within one cook, content hashes are memoized by
+  path, so a file many entries share (an engine shader header, a model several meshes extract from)
+  is hashed at most once.
+- **Storage is two-level and content-addressed** under `<dir>/`: `entries/<key>.json` holds a cook's
+  dependency + resolution manifest and its emitted blob **descriptors** (id/type/codec/size/hash, no
+  bytes); `blobs/<hash>.blob` holds each blob's stored bytes, addressed by their content hash so
+  identical outputs across entries or configurations share one file. Every write is atomic (a killed
+  cook strands no torn cache file).
+- **An unchanged pack is recognized from metadata alone and its write is skipped.** Because
+  `cook-project` cooks every pack in one invocation, a change to *one* pack re-runs the whole command
+  and would otherwise rewrite every pack. To avoid that, a hit loads only the entry **metadata** (no
+  blob bytes); the cook lays out the archive TOC from those descriptors (`BuildArchiveToc`) and hashes
+  it into the same digest a full build would produce, then compares that digest + total size against
+  the existing pack file's header (`ReadArchiveIdentity`, a 32-byte read). If every entry hit and the
+  identity matches, the pack on disk is already byte-for-byte what would be written — so **no blob is
+  read and nothing is written**. Only when an entry actually changed (or the file is absent/different)
+  are the hit blobs read back from the cache and the pack rewritten. This is why the digest lives in
+  the TOC (over each blob's content hash): the whole pack's identity is checkable without its bytes.
+- **Different build configs never collide, by key not by directory.** Because the configuration's
+  fingerprint (its role → format table, zstd level, name/target) is folded into the key, one cache
+  dir holds a pack's macOS and Windows (or any two configs') blobs under distinct keys — a shared
+  cache dir hands each cook only its own bytes. One entry can emit **several** blobs (a parent
+  `Material` and its default `MaterialInstance`); all of them are stored and replayed together under
+  the single entry key.
+
 ## The prefab-cooking relaxation
 
 The **prefab-cooking path** is the one place the Vulkan-free cooker relaxes its
@@ -246,11 +303,12 @@ so the cooker and the runtime loader share one encoder.
   game module's types **and systems** for prefab and level validation; `--config <file>`
   to select the build configuration whose role → format table the texture cook resolves
   through; `--shader-include <dir>` to add the engine core shader dir to every Slang session's
-  search path so a consumer shader resolves `#include "Veng/surface.slang"`). Engine-internal
-  packs (the core pack, the editor icons) cook this way.
+  search path so a consumer shader resolves `#include "Veng/surface.slang"`; `--cache-dir <dir>` to
+  serve unchanged assets from the cook cache instead of re-encoding them, see [The cook
+  cache](#the-cook-cache)). Engine-internal packs (the core pack, the editor icons) cook this way.
 - **`cook-project`** — cook a whole **project** for one configuration: `vengc cook-project
   <project.veng> --config <name> --out-dir <dir> [--module <lib>] [--reference <pack>]...
-  [--shader-include <dir>]`.
+  [--shader-include <dir>] [--cache-dir <dir>]`.
   `ParseProject` hand-parses the project's `packs`, `configurations`, and `startupLevel`;
   the named configuration is matched by `BuildConfiguration.Name`; each pack cooks into
   `<stem><suffix>.vengpack` and a `<projstem><suffix>.vengproj` (`WriteCookedProject`) names

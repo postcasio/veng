@@ -94,6 +94,69 @@ namespace Veng
         ContentHash Hash;
     };
 
+    /// @brief A blob's TOC-relevant metadata, without its bytes.
+    ///
+    /// Enough to lay out the table of contents and compute an archive's identity — its TOC digest and
+    /// total size — from the cook cache's stored descriptors, so an unchanged pack can be recognized
+    /// without reading a single blob. Mirrors the fields ArchiveWriter records per entry.
+    struct ArchiveBlobDescriptor
+    {
+        /// @brief The asset identifier.
+        AssetId Id;
+        /// @brief The asset type.
+        AssetType Type{};
+        /// @brief Codec the stored bytes are under.
+        ArchiveCodec Codec = ArchiveCodec::Stored;
+        /// @brief Stored (on-disk) blob byte length.
+        u64 Size = 0;
+        /// @brief Inflated blob byte length; equals Size when stored uncompressed.
+        u64 UncompressedSize = 0;
+        /// @brief xxh3-128 content hash of the stored bytes.
+        ContentHash Hash;
+    };
+
+    /// @brief The serialized table of contents plus the total archive size for a set of descriptors.
+    ///
+    /// TocBytes is the exact byte range ArchiveWriter emits between the header and the blob region —
+    /// the range the cooker hashes into the archive digest — so hashing it yields the same digest a
+    /// full Build would. TotalSize is the complete on-disk length (header + TOC + blob region).
+    struct ArchiveTocImage
+    {
+        /// @brief The serialized TOC-entry bytes (excludes the header), for the cooker to hash.
+        vector<u8> TocBytes;
+        /// @brief Total on-disk archive length in bytes.
+        u64 TotalSize = 0;
+    };
+
+    /// @brief Lays out the table of contents for a set of blob descriptors, without their bytes.
+    ///
+    /// Sorts the descriptors by AssetId and serializes the TOC exactly as ArchiveWriter::Build does,
+    /// so the cooker can compute an archive's digest (by hashing the returned TocBytes) and total
+    /// size from cached metadata alone — the basis for skipping the rewrite of an unchanged pack.
+    /// assetpack computes no hash itself; the caller hashes TocBytes.
+    /// @param blobs  The blob descriptors (any order).
+    /// @return The serialized TOC bytes and the total archive size.
+    [[nodiscard]] ArchiveTocImage BuildArchiveToc(std::span<const ArchiveBlobDescriptor> blobs);
+
+    /// @brief An existing archive's stored identity: its header digest and on-disk size.
+    struct ArchiveIdentity
+    {
+        /// @brief The digest stored in the archive header (as written, not recomputed).
+        ContentHash Digest;
+        /// @brief The archive file's on-disk byte length.
+        u64 TotalSize = 0;
+    };
+
+    /// @brief Reads an existing archive file's stored digest and size, without reading its body.
+    ///
+    /// Reads only the fixed-size header (and stats the file length), so it is cheap regardless of the
+    /// archive's size. Returns nullopt if the file is missing, too small, or not a `.vengpack` of the
+    /// current format version. The cooker compares this against a freshly computed identity to decide
+    /// whether a pack is already up to date and its write can be skipped.
+    /// @param filePath  The archive file to inspect.
+    /// @return The stored digest and size, or nullopt when the file cannot be identified.
+    [[nodiscard]] optional<ArchiveIdentity> ReadArchiveIdentity(const path& filePath);
+
     /// @brief Builds a .vengpack archive in memory.
     ///
     /// Call Add() for each asset, then Build() to obtain a byte buffer or Write() to emit a file.
