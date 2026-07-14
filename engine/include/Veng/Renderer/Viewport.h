@@ -71,6 +71,8 @@ namespace Veng::Renderer
         /// @brief Exposure scale applied before the tone curve (a bias over the metered value when
         /// the viewport's renderer has auto-exposure on).
         f32 Exposure = 1.0f;
+        /// @brief The tone curve the terminal tonemap pass maps the exposed HDR through.
+        Tonemapper Tonemapper = ::Veng::Renderer::Tonemapper::ACES;
         /// @brief Auto-exposure target key (the mid-grey the adapted luminance maps to).
         f32 AutoExposureKey = 0.18f;
         /// @brief Auto-exposure lower clamp on the adapted average luminance.

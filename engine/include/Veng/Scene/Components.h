@@ -6,6 +6,7 @@
 #include <Veng/Renderer/Atmosphere.h>
 #include <Veng/Renderer/PointField.h>
 #include <Veng/Renderer/SunPosition.h>
+#include <Veng/Renderer/Tonemapper.h>
 #include <Veng/Scene/Entity.h>
 #include <Veng/Reflection/Reflect.h>
 #include <Veng/Reflection/Variant.h>
@@ -847,6 +848,9 @@ namespace Veng
     {
         /// @brief Tonemap exposure fed into the per-frame SceneView.
         f32 Exposure = 1.0f;
+        /// @brief The tone curve the terminal tonemap pass maps the exposed HDR through, fed into
+        ///        the per-frame SceneView. Serialized by name in the level "render" block.
+        Renderer::Tonemapper Tonemapper = Renderer::Tonemapper::ACES;
         /// @brief Whether auto-exposure adapts the tonemap exposure to the scene's luminance.
         ///
         /// When set, Exposure becomes a manual bias on the adapted result instead of the absolute
@@ -1191,6 +1195,7 @@ VE_REFLECT_END();
 
 VE_REFLECT(::Veng::LevelRenderSettings, 0x28E4618C66455E21ULL)
 VE_FIELD(Exposure, .DisplayName = "Exposure", .Display = {.Min = 0.0})
+VE_FIELD(Tonemapper, .DisplayName = "Tonemapper")
 VE_FIELD(AutoExposure, .DisplayName = "Auto Exposure")
 VE_FIELD(Bloom, .DisplayName = "Bloom")
 VE_FIELD(BloomThreshold, .DisplayName = "Bloom Threshold", .Display = {.Min = 0.0})

@@ -39,6 +39,7 @@ namespace Veng
         settings.AO = render.AO;
 
         view.Exposure = render.Exposure;
+        view.Tonemapper = render.Tonemapper;
         view.BloomThreshold = render.BloomThreshold;
         view.BloomIntensity = render.BloomIntensity;
         view.BloomRadius = render.BloomRadius;

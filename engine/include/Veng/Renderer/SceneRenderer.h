@@ -6,6 +6,7 @@
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/DebugDraw.h>
 #include <Veng/Renderer/Types.h>
+#include <Veng/Renderer/Tonemapper.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/HiZHistory.h>
@@ -461,6 +462,12 @@ namespace Veng::Renderer
         /// SceneRendererSettings::AutoExposure on this is a manual bias multiplied onto the
         /// metered/adapted exposure rather than the exposure itself.
         f32 Exposure = 1.0f;
+
+        /// @brief The tone curve the terminal tonemap pass maps the exposed HDR through.
+        ///
+        /// Written into the tonemap material's param block each Execute (as a float), so switching
+        /// it never triggers a recompile.
+        Tonemapper Tonemapper = ::Veng::Renderer::Tonemapper::ACES;
 
         /// @brief Auto-exposure target key: the mid-grey the adapted average luminance maps to.
         ///

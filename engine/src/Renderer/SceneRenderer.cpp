@@ -5588,6 +5588,8 @@ namespace Veng::Renderer
         {
             MaterialInstance& tonemap = *m_TonemapMaterial.Get();
             tonemap.SetParam("Exposure", exposure);
+            // The tone curve selector, carried as a float the fragment casts back to the enum.
+            tonemap.SetParam("Tonemapper", static_cast<f32>(static_cast<u32>(view.Tonemapper)));
             // The terminal tonemap reads the sub-rect HDR and upscales it to the full output.
             tonemap.SetParam("RenderScale", vec4(renderScaleUV, maxValidUV));
         }

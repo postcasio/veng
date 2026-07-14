@@ -21,6 +21,11 @@
       "value": 1.0
     },
     {
+      "name": "Tonemapper",
+      "type": "float",
+      "value": 2.0
+    },
+    {
       "name": "RenderScale",
       "type": "vec4",
       "value": [

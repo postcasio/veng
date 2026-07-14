@@ -76,6 +76,7 @@ namespace Veng
         registry.Register<GameModeConfig>();
 
         // Level-scoped post/pipeline render knobs a Level carries and the app maps onto the renderer.
+        registry.Register<Renderer::Tonemapper>();
         registry.Register<LevelRenderSettings>();
 
         // The scene's one authored sky, resolved by the renderer per Execute. SkySource and its
