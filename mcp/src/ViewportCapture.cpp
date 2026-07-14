@@ -11,6 +11,7 @@
 #include <glm/gtc/packing.hpp>
 
 #include <array>
+#include <cmath>
 #include <span>
 
 namespace Veng::Mcp
@@ -91,12 +92,25 @@ namespace Veng::Mcp
             return encoded;
         }
 
-        /// @brief Tonemaps an RGBA16F download to 8-bit RGB, dropping alpha.
+        /// @brief The sRGB opto-electronic transfer function (linear → sRGB-encoded), per channel.
         ///
-        /// Matches the smoke capture: unpack each half-float channel, clamp to [0,1], and scale to
-        /// 8-bit — the tonemapped scene-color output, not a raw HDR dump. Returns empty when the
-        /// download is smaller than the pixel count implies (a partial or unexpected-format image).
-        vector<u8> TonemapRgba16fToRgb8(std::span<const u8> download, u32 width, u32 height)
+        /// The IEC 61966-2-1 encoding: a linear toe below the knee, a 1/2.4 power curve above it.
+        f32 LinearToSrgb(f32 linear)
+        {
+            const f32 c = glm::clamp(linear, 0.0f, 1.0f);
+            return c <= 0.0031308f ? c * 12.92f : 1.055f * std::pow(c, 1.0f / 2.4f) - 0.055f;
+        }
+
+        /// @brief Encodes an RGBA16F download to sRGB 8-bit RGB, dropping alpha.
+        ///
+        /// The viewport output is the tonemapped scene color, held **linear** display-referred (the
+        /// tonemap pass returns linear; the swapchain composite applies the display transfer — the
+        /// _SRGB store for an sRGB swapchain, the scRGB/PQ encode for HDR). A PNG is sRGB by
+        /// convention, so this reproduces that display transfer: unpack each half-float channel,
+        /// apply the sRGB OETF, and quantize to 8-bit — otherwise a linear-to-8-bit write reads far
+        /// too dark (crushed mid-tones). Returns empty when the download is smaller than the pixel
+        /// count implies (a partial or unexpected-format image).
+        vector<u8> EncodeRgba16fToSrgb8(std::span<const u8> download, u32 width, u32 height)
         {
             const usize pixelCount = static_cast<usize>(width) * height;
             if (download.size() < pixelCount * 4 * sizeof(u16))
@@ -111,9 +125,9 @@ namespace Veng::Mcp
             {
                 for (u32 channel = 0; channel < 3; ++channel)
                 {
-                    const f32 value =
-                        glm::clamp(glm::unpackHalf1x16(halves[pixel * 4 + channel]), 0.0f, 1.0f);
-                    rgb8[pixel * 3 + channel] = static_cast<u8>(value * 255.0f + 0.5f);
+                    const f32 encoded =
+                        LinearToSrgb(glm::unpackHalf1x16(halves[pixel * 4 + channel]));
+                    rgb8[pixel * 3 + channel] = static_cast<u8>(encoded * 255.0f + 0.5f);
                 }
             }
             return rgb8;
@@ -132,10 +146,10 @@ namespace Veng::Mcp
         const u32 height = image->GetHeight();
 
         const vector<u8> download = image->Download();
-        const vector<u8> rgb8 = TonemapRgba16fToRgb8(download, width, height);
+        const vector<u8> rgb8 = EncodeRgba16fToSrgb8(download, width, height);
         if (rgb8.empty())
         {
-            return std::unexpected(string("the viewport output could not be tonemapped"));
+            return std::unexpected(string("the viewport output could not be encoded"));
         }
 
         const vector<u8> png = EncodePng(width, height, rgb8);
