@@ -55,6 +55,11 @@ namespace Veng
     {
         GatherMeshes(scene, m_Candidates, m_SceneBounds);
 
+        // The caster bound is the union of the shadow-casting candidates alone — the box the
+        // shadow projections fit to, so a non-caster (an emissive body co-located with its own
+        // light) never widens a shadow frustum. It equals m_SceneBounds when every candidate casts.
+        m_CasterBounds = AABB::Empty();
+
         // One BVH leaf per submesh: a frustum rejects an off-screen submesh of an on-screen
         // mesh by the same tree descent. The candidate list is in mesh-then-submesh order, so
         // a mesh's submeshes are contiguous (the g-buffer pass relies on this to skip redundant
@@ -64,6 +69,10 @@ namespace Veng
         for (u32 meshIndex = 0; meshIndex < m_Candidates.size(); ++meshIndex)
         {
             const VisibleMesh& candidate = m_Candidates[meshIndex];
+            if (candidate.CastsShadows)
+            {
+                m_CasterBounds.Expand(candidate.WorldBounds);
+            }
             const std::span<const SubMesh> subMeshes = candidate.Mesh->GetSubMeshes();
             for (u32 subMeshIndex = 0; subMeshIndex < subMeshes.size(); ++subMeshIndex)
             {

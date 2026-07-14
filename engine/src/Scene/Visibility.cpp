@@ -50,6 +50,7 @@ namespace Veng
                 .World = world,
                 .WorldBounds = worldBounds,
                 .Mesh = renderer->Mesh.Get(),
+                .CastsShadows = renderer->CastsShadows,
             });
             outBounds.Expand(worldBounds);
         }

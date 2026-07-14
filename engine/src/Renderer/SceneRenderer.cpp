@@ -5592,12 +5592,24 @@ namespace Veng::Renderer
             tonemap.SetParam("RenderScale", vec4(renderScaleUV, maxValidUV));
         }
 
+        // Sync the broadphase first: re-gathers and rebuilds only when the scene's spatial
+        // version moved or a mesh finished loading. The scene passes then query its tree.
+        // sceneBounds is the bound union from the same gather, so no separate SceneBounds call is
+        // needed; casterBounds excludes the non-casters (so a light's own co-located body never
+        // widens its shadow frustum) and drives both the cascade near-extension and the punctual
+        // spot/area fit.
+        m_Broadphase.Sync(view.World);
+        const AABB sceneBounds = m_Broadphase.GetSceneBounds();
+        const AABB casterBounds = m_Broadphase.GetCasterBounds();
+
         // Pack every Light entity into the GPU light layout: directional selection,
         // punctual shadow-slot assignment, and the std430 per-light records. The first
         // MaxShadowedPunctual point/spot lights are assigned a shadow slot (Cone.z carries
-        // it, -1 = unshadowed); their records ride set-1 binding 3.
-        const PackedSceneLights packed = PackSceneLights(view.World, m_Settings.PunctualShadows,
-                                                         m_Settings.PunctualShadowResolution);
+        // it, -1 = unshadowed); their records ride set-1 binding 3. The caster bound fits each
+        // spot/area light's shadow frustum to the geometry it must shadow.
+        const PackedSceneLights packed =
+            PackSceneLights(view.World, m_Settings.PunctualShadows,
+                            m_Settings.PunctualShadowResolution, casterBounds);
 
         // Mirror filled records into the GPU block (unused slots stay zeroed → type 0 = "no map").
         // AtlasParams.x = 1/tileRes, used by the lighting pass for inset clamping and PCF.
@@ -5609,18 +5621,12 @@ namespace Veng::Renderer
         punctualBlock.AtlasParams =
             vec4(1.0f / static_cast<f32>(m_Settings.PunctualShadowResolution), 0.0f, 0.0f, 0.0f);
 
-        // Sync the broadphase: re-gathers and rebuilds only when the scene's spatial
-        // version moved or a mesh finished loading. The scene passes then query its tree.
-        // sceneBounds is the bound union from the same gather, so no separate SceneBounds call is needed.
-        m_Broadphase.Sync(view.World);
-        const AABB sceneBounds = m_Broadphase.GetSceneBounds();
-
         // sceneBounds extends only the per-cascade light-axis cull near plane (off-screen
         // casters); the cascade XY extent comes from the camera frustum slice. With depth
         // clamp the render near stays tight and the shadow pipelines pancake nearer casters
         // onto it — PancakeNear must match the pipelines' DepthClampEnable.
         const CascadeData cascades =
-            ComputeCascades(view.Camera, packed.DirectionalTravel, sceneBounds,
+            ComputeCascades(view.Camera, packed.DirectionalTravel, casterBounds,
                             {.Count = m_Settings.CascadeCount,
                              .Lambda = m_Settings.CascadeSplitLambda,
                              .Resolution = m_Settings.ShadowResolution,

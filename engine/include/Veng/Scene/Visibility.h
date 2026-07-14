@@ -26,6 +26,11 @@ namespace Veng
         AABB WorldBounds;
         /// @brief Resident mesh pointer; valid for the gathering Execute only.
         const Mesh* Mesh;
+        /// @brief Whether the entity's MeshRenderer opts this mesh into shadow casting.
+        ///
+        /// Mirrors MeshRenderer::CastsShadows. The camera view draws every candidate regardless;
+        /// the shadow views skip a candidate whose flag is false, and the caster bound excludes it.
+        bool CastsShadows;
     };
 
     /// @brief One per-submesh draw candidate: a gather record and the submesh within it.

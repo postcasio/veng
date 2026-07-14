@@ -215,6 +215,10 @@ namespace Veng::Renderer
                     const auto DrawStatic = [&](const VisibleMesh& item, u32 subMeshIndex,
                                                 const mat4& lightViewProj, const Mesh*& lastBound)
                     {
+                        if (!item.CastsShadows)
+                        {
+                            return;
+                        }
                         const Mesh& mesh = *item.Mesh;
                         if (mesh.IsSkinned())
                         {
@@ -244,6 +248,10 @@ namespace Veng::Renderer
                     const auto DrawSkinned = [&](const VisibleMesh& item, u32 subMeshIndex,
                                                  const mat4& lightViewProj, const Mesh*& lastBound)
                     {
+                        if (!item.CastsShadows)
+                        {
+                            return;
+                        }
                         const Mesh& mesh = *item.Mesh;
                         if (!mesh.IsSkinned())
                         {

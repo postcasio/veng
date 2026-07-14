@@ -433,3 +433,43 @@ TEST_CASE("SceneBroadphase: per-submesh leaves — a frustum drops one submesh o
         CHECK(culled == vector<u32>{0u});
     }
 }
+
+TEST_CASE("SceneBroadphase: the caster bound excludes non-casting meshes")
+{
+    Renderer::Context context;
+    TaskSystem tasks;
+    TypeRegistry types;
+    RegisterBuiltins(types);
+
+    AssetManager manager(context, tasks, types);
+    Unique<Scene> scene = Scene::Create(types);
+
+    const AssetHandle<Mesh> mesh =
+        manager.Adopt<Mesh>(BoundsMesh(AABB{.Min = vec3(-1.0f), .Max = vec3(1.0f)}));
+
+    // A caster near the origin and a far non-caster (an emissive body sitting on its own light).
+    const Entity caster = scene->CreateEntity();
+    scene->Add<Transform>(caster, Transform{.Position = vec3(0.0f)});
+    scene->Add<MeshRenderer>(caster, MeshRenderer{.Mesh = mesh, .CastsShadows = true});
+
+    const Entity nonCaster = scene->CreateEntity();
+    scene->Add<Transform>(nonCaster, Transform{.Position = vec3(1000.0f, 0.0f, 0.0f)});
+    scene->Add<MeshRenderer>(nonCaster, MeshRenderer{.Mesh = mesh, .CastsShadows = false});
+
+    SceneBroadphase broadphase;
+    broadphase.Sync(*scene);
+
+    // The scene bound spans both; the caster bound holds only the near caster, so the far
+    // non-caster never widens a shadow frustum fit to the caster bound.
+    CHECK(broadphase.GetSceneBounds().Max.x == doctest::Approx(1001.0f));
+    CHECK(broadphase.GetCasterBounds().Max.x == doctest::Approx(1.0f));
+    CHECK(broadphase.GetCasterBounds().Min.x == doctest::Approx(-1.0f));
+    CHECK_FALSE(broadphase.GetCasterBounds().IsEmpty());
+
+    // The candidate carries the flag through the gather.
+    for (const VisibleMesh& candidate : broadphase.GetCandidates())
+    {
+        const bool isNear = candidate.WorldBounds.Max.x < 500.0f;
+        CHECK(candidate.CastsShadows == isNear);
+    }
+}

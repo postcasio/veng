@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 #include <span>
 
 namespace Veng::Renderer
@@ -22,6 +23,13 @@ namespace Veng::Renderer
         // half-angle (radians, < π/2) covers the scene in front. PCSS in the lighting pass softens
         // the penumbra by the light's own size, so a large light casts a soft shadow.
         constexpr f32 AreaShadowCone = 1.3f;
+
+        // An area light whose scene is smaller than this fraction of its distance is treated as
+        // near-parallel: the direction to it barely diverges across the scene, so it is shadowed by
+        // the parallel-projection cascade atlas (which fits resolution to the camera view) instead
+        // of its single perspective tile (which spreads one tile over the whole scene). A closer
+        // area light, where the direction genuinely diverges, keeps the perspective tile.
+        constexpr f32 CascadeParallaxThreshold = 0.2f;
 
         // Bakes an atlas-tile remap into a punctual view-proj: a fragment projected by the
         // result lands in slot s, face f's tile, so the lighting pass samples the correct
@@ -44,7 +52,7 @@ namespace Veng::Renderer
     }
 
     PackedSceneLights PackSceneLights(const Scene& world, const bool punctualShadows,
-                                      const u32 punctualShadowResolution)
+                                      const u32 punctualShadowResolution, const AABB& sceneBounds)
     {
         PackedSceneLights result;
 
@@ -53,13 +61,6 @@ namespace Veng::Renderer
             if (result.LightCount >= SceneView::MaxLights)
             {
                 break;
-            }
-
-            // Shadow the first directional light; its direction drives the light-space matrix.
-            if (!result.HaveDirectional && light.Type == LightType::Directional)
-            {
-                result.HaveDirectional = true;
-                result.DirectionalTravel = light.Direction;
             }
 
             const mat4 world4 = WorldMatrix(world, entity);
@@ -71,38 +72,73 @@ namespace Veng::Renderer
             const bool isArea = light.Type == LightType::Rect || light.Type == LightType::Sphere ||
                                 light.Type == LightType::Polygon;
 
+            // The scene's first directional-equivalent light drives the cascaded shadow atlas: a
+            // Directional light always, or an area light far enough that the direction to it barely
+            // diverges across the scene (near-parallel). The parallel cascade projection fits its
+            // resolution to the camera view, so it shadows a large scene far better than the area
+            // light's single perspective tile. cascadeShadowed marks the area case for the shader.
+            bool cascadeShadowed = false;
+            if (!result.HaveDirectional)
+            {
+                if (light.Type == LightType::Directional)
+                {
+                    result.HaveDirectional = true;
+                    result.DirectionalTravel = light.Direction;
+                }
+                else if (isArea && !sceneBounds.IsEmpty() && glm::length(light.Direction) > 1e-5f)
+                {
+                    const f32 distance = glm::length(sceneBounds.Center() - worldPos);
+                    const f32 extent = glm::length(sceneBounds.Size());
+                    if (distance > 1e-3f && extent < distance * CascadeParallaxThreshold)
+                    {
+                        result.HaveDirectional = true;
+                        result.DirectionalTravel = glm::normalize(light.Direction);
+                        cascadeShadowed = true;
+                    }
+                }
+            }
+
             // Assign a shadow slot to the first MaxShadowedPunctual point/spot/area lights;
             // the rest carry -1. With punctual shadows off all lights carry -1. Point uses six
             // cube faces; spot and area use a single perspective map (area aimed along Direction,
             // softened per-light-size by PCSS in the lighting pass).
             f32 shadowSlot = -1.0f;
-            if (punctualShadows && result.PunctualCount < MaxShadowedPunctual &&
+            if (punctualShadows && result.PunctualCount < MaxShadowedPunctual && !cascadeShadowed &&
                 (light.Type == LightType::Point || light.Type == LightType::Spot || isArea))
             {
                 const u32 slot = result.PunctualCount;
                 PunctualShadowRecord& record = result.PunctualRecords[slot];
-                // Depth bias scales with world units per texel: a coarser tile (larger
-                // range or smaller resolution) needs more bias. The shader adds a
-                // slope-scaled term on top.
-                const f32 worldPerTexel =
-                    light.Range * 2.0f / static_cast<f32>(punctualShadowResolution);
-                const f32 punctualBias = std::clamp(worldPerTexel * 0.5f, 0.0005f, 0.01f);
+                const f32 invResolution = 1.0f / static_cast<f32>(punctualShadowResolution);
+                // Depth bias scales with world units per texel: a coarser tile needs more bias, a
+                // finer one less. The shader adds a slope-scaled term on top. The floor/ceiling
+                // clamp keeps a degenerate range from starving or flooding the compare.
+                const auto texelBias = [](f32 worldPerTexel)
+                { return std::clamp(worldPerTexel * 0.5f, 0.0005f, 0.01f); };
                 if (light.Type != LightType::Point)
                 {
                     // Aim the perspective map along the light's travel direction; area lights use a
-                    // wide fixed cone, a spot its own outer cone.
+                    // wide fixed cone as the cap, a spot its own outer cone. The scene bound then
+                    // tightens the frustum to the casters it must shadow.
                     const f32 dirLen = glm::length(light.Direction);
                     const vec3 aimDir =
                         dirLen > 1e-5f ? light.Direction / dirLen : vec3(0.0f, -1.0f, 0.0f);
                     const f32 cone = isArea ? AreaShadowCone : light.OuterCone;
+                    const std::optional<AABB> fitBounds =
+                        sceneBounds.IsEmpty() ? std::nullopt : std::optional<AABB>(sceneBounds);
                     const SpotShadowView spotView =
-                        ComputeSpotShadowView(worldPos, aimDir, light.Range, cone);
+                        ComputeSpotShadowView(worldPos, aimDir, light.Range, cone, fitBounds);
                     // A spot/area uses face 0 only. Record carries the tile-remapped matrix
                     // for the lighting pass; the raw array carries the un-remapped one
                     // for the depth pass and per-view frustum cull.
                     record.ViewProj[0] = ComposePunctualTileRemap(spotView.ViewProj, slot, 0);
                     result.PunctualRawViewProj[slot][0] = spotView.ViewProj;
-                    record.Params = vec4(2.0f, spotView.Near, spotView.Far, punctualBias);
+                    // World per texel at the far plane: the fitted tile spans 2·far·tan(fovy/2)
+                    // across the tile's texels, so a narrow fitted cone yields a small bias — the
+                    // fit's tighter depth precision needs far less than the full range implied.
+                    const f32 worldPerTexel =
+                        2.0f * spotView.Far * std::tan(spotView.Fovy * 0.5f) * invResolution;
+                    record.Params =
+                        vec4(2.0f, spotView.Near, spotView.Far, texelBias(worldPerTexel));
                 }
                 else
                 {
@@ -113,7 +149,9 @@ namespace Veng::Renderer
                             ComposePunctualTileRemap(pointView.ViewProj[f], slot, f);
                         result.PunctualRawViewProj[slot][f] = pointView.ViewProj[f];
                     }
-                    record.Params = vec4(1.0f, pointView.Near, pointView.Far, punctualBias);
+                    const f32 worldPerTexel = light.Range * 2.0f * invResolution;
+                    record.Params =
+                        vec4(1.0f, pointView.Near, pointView.Far, texelBias(worldPerTexel));
                 }
                 record.PositionRange = vec4(worldPos, light.Range);
 
@@ -130,7 +168,9 @@ namespace Veng::Renderer
             vec3 areaNormal{0.0f};
             // The light's world-space size, driving the PCSS penumbra width in the lighting pass.
             f32 shadowRadius = 0.0f;
-            const f32 flags = light.TwoSided ? 1.0f : 0.0f;
+            // Bit 0: two-sided. Bit 1: cascade-shadowed (a near-parallel area light samples the
+            // cascade atlas, not its punctual tile).
+            const f32 flags = (light.TwoSided ? 1.0f : 0.0f) + (cascadeShadowed ? 2.0f : 0.0f);
 
             if (light.Type == LightType::Sphere)
             {

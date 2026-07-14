@@ -255,12 +255,33 @@ float PunctualShadowVisibility(float3 worldPos, float3 N, float3 L, int slot)
                            worldPos, bias, texel, tileMin, tileMax);
 }
 
+// A 16-point Poisson disk over the unit circle: the sample pattern for the PCSS blocker search
+// and filter. A disk (versus a square grid) spends every tap inside the penumbra footprint, and
+// per-fragment rotation (below) turns the residual undersampling into fine dither rather than the
+// crawling banding a fixed grid shows as the light or camera moves.
+static const float2 AreaPoissonDisk[16] = {
+    float2(-0.942016, -0.399062), float2(0.945586, -0.768907), float2(-0.094184, -0.929389),
+    float2(0.344959, 0.293878),   float2(-0.915886, 0.457714), float2(-0.815442, -0.879125),
+    float2(-0.382775, 0.276768),  float2(0.974844, 0.756484),  float2(0.443233, -0.975116),
+    float2(0.537430, -0.473734),  float2(-0.264969, -0.418930), float2(0.791975, 0.190902),
+    float2(-0.241888, 0.997065),  float2(-0.814100, 0.914376), float2(0.199841, 0.786414),
+    float2(0.143832, -0.141008)};
+
+// Rotate a unit-disk offset by (cos, sin) and scale it to a texel-space step. The tile grid is
+// non-square, so the per-axis texel size is anisotropic and applied component-wise.
+float2 AreaDiskOffset(float2 disk, float2 rot, float radiusTexels, float2 texel)
+{
+    float2 rotated = float2(disk.x * rot.x - disk.y * rot.y, disk.x * rot.y + disk.y * rot.x);
+    return rotated * radiusTexels * texel;
+}
+
 // PCSS area-light shadow visibility over the punctual atlas. An area light is rendered as a
 // spot-style caster (record type 2, face 0) in slot `slot`; this samples that tile with
 // percentage-closer soft shadows — a blocker search sets an average occluder depth, the penumbra
-// width grows with the light's world size (lightRadius) and the receiver→blocker gap, and a
-// variable-radius PCF filter produces the soft edge. Returns full visibility outside the tile or
-// with no occluder, so a large light casts a broad, soft shadow and a small one a crisp one.
+// width grows with the light's angular size (lightRadius over the fitted far distance) and the
+// receiver→blocker gap, and a variable-radius Poisson filter produces the soft edge. Returns full
+// visibility outside the tile or with no occluder, so a large light casts a broad, soft shadow and
+// a small one a crisp one.
 float AreaShadowSample(int slot, float3 worldPos, float3 N, float3 L, float lightRadius)
 {
     PunctualShadowRecord record = g_Punctual.Records[slot];
@@ -306,29 +327,34 @@ float AreaShadowSample(int slot, float3 worldPos, float3 N, float3 L, float ligh
     g_PunctualAtlas.GetDimensions(atlasW, atlasH);
     float2 atlasDims = float2(float(atlasW), float(atlasH));
 
-    // The light's angular size (world radius over its range) sets how wide the search and penumbra
-    // grow — the larger the light, the softer the shadow.
+    // Per-fragment disk rotation from a hash of the fragment's shadow texel. Keyed on the shadow-map
+    // coordinate (not the screen), so the rotation is stable frame to frame for a given surface
+    // point — the noise does not crawl as the camera moves.
+    int2 texelCoord = int2(uv * atlasDims);
+    float hash = frac(sin(dot(float2(texelCoord), float2(12.9898, 78.233))) * 43758.5453);
+    float angle = hash * 6.2831853;
+    float2 rot = float2(cos(angle), sin(angle));
+
+    // The light's angular size (world radius over the fitted far distance) sets how wide the search
+    // and penumbra grow — the larger the light subtends, the softer the shadow.
     float range = max(record.Params.z, 1e-3);
     float sizeFactor = saturate(lightRadius / range);
 
-    // Blocker search: average the depth of texels nearer the light than the receiver.
-    const int SearchSteps = 2;
+    // Blocker search: average the depth of Poisson taps nearer the light than the receiver.
+    const int BlockerTaps = 12;
     float searchTexels = 1.5 + sizeFactor * 24.0;
     float blockerSum = 0.0;
     float blockerCount = 0.0;
-    for (int sy = -SearchSteps; sy <= SearchSteps; ++sy)
+    [unroll]
+    for (int i = 0; i < BlockerTaps; ++i)
     {
-        for (int sx = -SearchSteps; sx <= SearchSteps; ++sx)
+        float2 sUv = clamp(uv + AreaDiskOffset(AreaPoissonDisk[i], rot, searchTexels, texel),
+                           clampMin, clampMax);
+        float d = g_PunctualAtlas.Load(int3(int2(sUv * atlasDims), 0)).r;
+        if (d < refDepth)
         {
-            float2 off = float2(float(sx), float(sy)) / float(SearchSteps) * searchTexels * texel;
-            float2 sUv = clamp(uv + off, clampMin, clampMax);
-            int2 coord = int2(sUv * atlasDims);
-            float d = g_PunctualAtlas.Load(int3(coord, 0)).r;
-            if (d < refDepth)
-            {
-                blockerSum += d;
-                blockerCount += 1.0;
-            }
+            blockerSum += d;
+            blockerCount += 1.0;
         }
     }
     if (blockerCount < 0.5)
@@ -342,21 +368,17 @@ float AreaShadowSample(int slot, float3 worldPos, float3 N, float3 L, float ligh
     float penumbra = (refDepth - avgBlocker) / max(avgBlocker, 1e-4);
     float filterTexels = clamp(1.0 + penumbra * sizeFactor * 64.0, 1.0, 24.0);
 
-    // Variable-radius PCF through the hardware comparison sampler.
-    const int PcfSteps = 2;
+    // Variable-radius PCF over the full rotated Poisson disk through the hardware comparison sampler.
+    const int PcfTaps = 16;
     float visibility = 0.0;
-    float weight = 0.0;
-    for (int py = -PcfSteps; py <= PcfSteps; ++py)
+    [unroll]
+    for (int i = 0; i < PcfTaps; ++i)
     {
-        for (int px = -PcfSteps; px <= PcfSteps; ++px)
-        {
-            float2 off = float2(float(px), float(py)) / float(PcfSteps) * filterTexels * texel;
-            float2 tapUv = clamp(uv + off, clampMin, clampMax);
-            visibility += g_PunctualAtlas.SampleCmpLevelZero(g_ShadowSampler, tapUv, refDepth);
-            weight += 1.0;
-        }
+        float2 tapUv = clamp(uv + AreaDiskOffset(AreaPoissonDisk[i], rot, filterTexels, texel),
+                             clampMin, clampMax);
+        visibility += g_PunctualAtlas.SampleCmpLevelZero(g_ShadowSampler, tapUv, refDepth);
     }
-    return visibility / weight;
+    return visibility / float(PcfTaps);
 }
 
 // Visualize the cascade selection: a per-cascade tint the DebugView::Cascades arm

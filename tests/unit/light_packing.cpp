@@ -220,6 +220,70 @@ TEST_CASE("PackSceneLights: the packed light count is capped at MaxLights")
     CHECK(packed.LightCount == Renderer::SceneView::MaxLights);
 }
 
+TEST_CASE("PackSceneLights: a caster bound tightens a spot light's shadow far plane")
+{
+    TypeRegistry types;
+    RegisterBuiltins(types);
+    const Unique<Scene> scene = Scene::Create(types);
+
+    // A far-reaching spot light at the origin aimed down -Z. A spot always uses its perspective
+    // tile (never the cascade path), so this exercises the scene-bound frustum fit.
+    AddLight(*scene, Light{.Type = LightType::Spot,
+                           .Direction = vec3(0.0f, 0.0f, -1.0f),
+                           .Range = 10000.0f,
+                           .OuterCone = 0.5f});
+
+    // Without a bound the record's far is the full range.
+    const PackedSceneLights unfitted = PackSceneLights(*scene, true, 1024);
+    REQUIRE(unfitted.PunctualCount == 1);
+    CHECK(unfitted.PunctualRecords[0].Params.z == doctest::Approx(10000.0f));
+
+    // With a caster bound holding only a small far patch, the far pulls in to it.
+    const AABB casterBounds{.Min = vec3(-2.0f, -2.0f, -102.0f), .Max = vec3(2.0f, 2.0f, -98.0f)};
+    const PackedSceneLights fitted = PackSceneLights(*scene, true, 1024, casterBounds);
+    REQUIRE(fitted.PunctualCount == 1);
+    CHECK(fitted.PunctualRecords[0].Params.z < 200.0f);
+    CHECK(fitted.PunctualRecords[0].Params.z == doctest::Approx(102.0f * 1.02f).epsilon(0.05));
+    // The tightened frustum needs far less bias than the full-range one (its clamp ceiling).
+    CHECK(fitted.PunctualRecords[0].Params.w < unfitted.PunctualRecords[0].Params.w);
+}
+
+TEST_CASE("PackSceneLights: a far Sphere area light is cascade-routed, not punctual-slotted")
+{
+    TypeRegistry types;
+    RegisterBuiltins(types);
+    const Unique<Scene> scene = Scene::Create(types);
+
+    // A sphere light at the origin over a small, distant caster patch: the scene subtends a tiny
+    // angle from the light (near-parallel), so it drives the cascade atlas instead of a tile.
+    AddLight(*scene, Light{.Type = LightType::Sphere,
+                           .Direction = vec3(0.0f, 0.0f, -1.0f),
+                           .Range = 10000.0f,
+                           .Radius = 50.0f});
+    const AABB farBounds{.Min = vec3(-2.0f, -2.0f, -102.0f), .Max = vec3(2.0f, 2.0f, -98.0f)};
+
+    const PackedSceneLights packed = PackSceneLights(*scene, true, 1024, farBounds);
+    REQUIRE(packed.LightCount == 1);
+    // It takes no punctual slot and instead drives the directional cascade direction.
+    CHECK(packed.PunctualCount == 0);
+    CHECK(packed.HaveDirectional);
+    CHECK(packed.DirectionalTravel == vec3(0.0f, 0.0f, -1.0f));
+    // Cone.w bit 1 marks the light cascade-shadowed for the lighting pass.
+    CHECK((static_cast<int>(packed.Lights[0].Cone.w) & 2) != 0);
+
+    // The same light over a bound it sits close to (the scene subtends a wide angle) stays on its
+    // perspective tile — the direction genuinely diverges, so cascades would be wrong.
+    const Unique<Scene> near = Scene::Create(types);
+    AddLight(*near, Light{.Type = LightType::Sphere,
+                          .Direction = vec3(0.0f, 0.0f, -1.0f),
+                          .Range = 10000.0f,
+                          .Radius = 50.0f});
+    const AABB nearBounds{.Min = vec3(-60.0f, -60.0f, -80.0f), .Max = vec3(60.0f, 60.0f, -20.0f)};
+    const PackedSceneLights nearPacked = PackSceneLights(*near, true, 1024, nearBounds);
+    CHECK(nearPacked.PunctualCount == 1);
+    CHECK_FALSE(nearPacked.HaveDirectional);
+}
+
 TEST_CASE("PackSceneLights: the punctual depth bias is texel-scaled and clamped")
 {
     TypeRegistry types;

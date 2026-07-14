@@ -111,6 +111,72 @@ TEST_CASE("ComputeSpotShadowView: range fit — far at range, near clips, carrie
     CHECK(ProjectNdc(view.ViewProj, nearer).z < 0.0f);
 }
 
+TEST_CASE("ComputeSpotShadowView: a small far bound tightens the cone, near, and far")
+{
+    const vec3 position(0.0f, 0.0f, 0.0f);
+    const vec3 direction(0.0f, 0.0f, -1.0f);
+    const f32 range = 100.0f;
+    const f32 outerCone = glm::radians(60.0f); // a wide authored cone
+
+    // A small box far down the aim axis: a compact caster set lit by a distant, bright light.
+    const AABB bounds{.Min = vec3(-2.0f, -2.0f, -52.0f), .Max = vec3(2.0f, 2.0f, -48.0f)};
+    const SpotShadowView fitted =
+        ComputeSpotShadowView(position, direction, range, outerCone, bounds);
+    const SpotShadowView base = ComputeSpotShadowView(position, direction, range, outerCone);
+
+    // Far pulls in to the bound's far corner (well inside range); near pulls out to its near
+    // corner (well past the base 5% floor); the cone narrows to the bound's angular radius.
+    CHECK(fitted.Far < range);
+    CHECK(fitted.Far == doctest::Approx(52.0f * 1.02f).epsilon(0.02));
+    CHECK(fitted.Near > base.Near * 2.0f);
+    CHECK(fitted.Near == doctest::Approx(48.0f / 1.02f).epsilon(0.02));
+    CHECK(fitted.Fovy < base.Fovy * 0.25f);
+
+    // The bound's far corner still projects inside the tile (z ∈ [0,1], xy ∈ [-1,1]).
+    const vec3 farCorner(2.0f, 2.0f, -52.0f);
+    const vec3 ndc = ProjectNdc(fitted.ViewProj, farCorner);
+    CHECK(ndc.z >= -1e-3f);
+    CHECK(ndc.z <= 1.0f + 1e-3f);
+    CHECK(std::abs(ndc.x) <= 1.0f + 1e-3f);
+    CHECK(std::abs(ndc.y) <= 1.0f + 1e-3f);
+}
+
+TEST_CASE("ComputeSpotShadowView: a bound straddling the light keeps the authored cone")
+{
+    const vec3 position(0.0f, 0.0f, 0.0f);
+    const vec3 direction(0.0f, 0.0f, -1.0f);
+    const f32 range = 100.0f;
+    const f32 outerCone = glm::radians(30.0f);
+
+    // A box centered on the light: corners fall behind it, so the cone cannot tighten.
+    const AABB bounds{.Min = vec3(-60.0f), .Max = vec3(60.0f)};
+    const SpotShadowView fitted =
+        ComputeSpotShadowView(position, direction, range, outerCone, bounds);
+    const SpotShadowView base = ComputeSpotShadowView(position, direction, range, outerCone);
+
+    // Cone and near stay at the authored values; only the far tightens to the front extent.
+    CHECK(fitted.Fovy == doctest::Approx(base.Fovy));
+    CHECK(fitted.Near == doctest::Approx(base.Near));
+    CHECK(fitted.Far < range);
+    CHECK(fitted.Far == doctest::Approx(60.0f * 1.02f).epsilon(0.02));
+}
+
+TEST_CASE("ComputeSpotShadowView: an empty bound leaves the base frustum unchanged")
+{
+    const vec3 position(1.0f, 2.0f, -3.0f);
+    const vec3 direction(0.0f, 0.0f, -1.0f);
+    const f32 range = 40.0f;
+    const f32 outerCone = glm::radians(35.0f);
+
+    const SpotShadowView base = ComputeSpotShadowView(position, direction, range, outerCone);
+    const SpotShadowView withEmpty =
+        ComputeSpotShadowView(position, direction, range, outerCone, AABB::Empty());
+
+    CHECK(withEmpty.Far == doctest::Approx(base.Far));
+    CHECK(withEmpty.Near == doctest::Approx(base.Near));
+    CHECK(withEmpty.Fovy == doctest::Approx(base.Fovy));
+}
+
 TEST_CASE("ComputeSpotShadowView: straight-down and straight-up spots stay non-degenerate")
 {
     const vec3 position(0.0f, 10.0f, 0.0f);

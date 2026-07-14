@@ -210,6 +210,14 @@ namespace Veng
         /// ordinary async load path, replacing any authored cooked Mesh; an empty Source
         /// leaves the authored cooked Mesh in place.
         MeshSource Source;
+        /// @brief Whether this mesh is rendered into the shadow maps (and bounds the shadow fit).
+        ///
+        /// True (the default) draws the mesh as a caster in every shadow view and folds its world
+        /// bound into the caster bound the shadow projections fit to. False excludes it from both:
+        /// the mesh still draws in the camera view but casts no shadow and never extends a shadow
+        /// frustum. Set it false for geometry that must not occlude — an emissive body co-located
+        /// with its own light, a skybox proxy, a held first-person prop.
+        bool CastsShadows = true;
     };
 
     /// @brief How an Animator treats a clip's baked root motion.
@@ -839,6 +847,11 @@ namespace Veng
     {
         /// @brief Tonemap exposure fed into the per-frame SceneView.
         f32 Exposure = 1.0f;
+        /// @brief Whether auto-exposure adapts the tonemap exposure to the scene's luminance.
+        ///
+        /// When set, Exposure becomes a manual bias on the adapted result instead of the absolute
+        /// exposure. Off matches the renderer's own default.
+        bool AutoExposure = false;
         /// @brief Whether the bloom battery is enabled.
         bool Bloom = true;
         /// @brief Bloom bright-pass luminance knee fed into the per-frame SceneView.
@@ -854,8 +867,24 @@ namespace Veng
         /// Drives the point/spot shadow maps and the soft (PCSS) shadows cast by Sphere/Rect/Polygon
         /// area lights — independent of the directional Shadows toggle above.
         bool PunctualShadows = true;
+        /// @brief Far distance (world units) the directional cascades are fit and rendered out to.
+        ///
+        /// Caps the shadowed range: cascades pack their resolution into this distance from the
+        /// camera, and geometry past it is unshadowed. A large world needs a large value so distant
+        /// casters still shadow; the default matches the renderer's own MaxShadowDistance default.
+        f32 MaxShadowDistance = 100.0f;
+        /// @brief Directional cascade shadow-map resolution: the per-cascade tile edge, in texels.
+        ///
+        /// A larger value sharpens the cascades at a memory/bandwidth cost. Clamped to the device
+        /// maximum by the renderer; the default matches the renderer's own ShadowResolution default.
+        u32 ShadowResolution = 1024;
         /// @brief Whether the SSAO battery is enabled.
         bool AO = true;
+        /// @brief Whether screen-space reflections run.
+        ///
+        /// Off matches the renderer's own default. SSR renders the g-buffer at full resolution, so
+        /// it disables the dynamic-resolution sub-rect while active.
+        bool SSR = false;
     };
 }
 
@@ -945,6 +974,7 @@ VE_VARIANT(::Veng::MeshSource, 0xC64CE2B415C54D22ULL);
 VE_REFLECT(::Veng::MeshRenderer, 0x3C5CB13E46E0450BULL)
 VE_FIELD(Mesh, .DisplayName = "Mesh")
 VE_FIELD(Source, .DisplayName = "Source")
+VE_FIELD(CastsShadows, .DisplayName = "Casts shadows")
 VE_REFLECT_END();
 
 VE_ENUM(::Veng::RootMotionMode, 0x2F4A31CEE94569AFULL)
@@ -1161,11 +1191,15 @@ VE_REFLECT_END();
 
 VE_REFLECT(::Veng::LevelRenderSettings, 0x28E4618C66455E21ULL)
 VE_FIELD(Exposure, .DisplayName = "Exposure", .Display = {.Min = 0.0})
+VE_FIELD(AutoExposure, .DisplayName = "Auto Exposure")
 VE_FIELD(Bloom, .DisplayName = "Bloom")
 VE_FIELD(BloomThreshold, .DisplayName = "Bloom Threshold", .Display = {.Min = 0.0})
 VE_FIELD(BloomIntensity, .DisplayName = "Bloom Intensity", .Display = {.Min = 0.0})
 VE_FIELD(BloomRadius, .DisplayName = "Bloom Radius", .Display = {.Min = 0.0})
 VE_FIELD(Shadows, .DisplayName = "Shadows")
 VE_FIELD(PunctualShadows, .DisplayName = "Punctual / Area Shadows")
+VE_FIELD(MaxShadowDistance, .DisplayName = "Max Shadow Distance", .Display = {.Min = 0.0})
+VE_FIELD(ShadowResolution, .DisplayName = "Shadow Resolution", .Display = {.Min = 1})
 VE_FIELD(AO, .DisplayName = "SSAO")
+VE_FIELD(SSR, .DisplayName = "Screen-Space Reflections")
 VE_REFLECT_END();

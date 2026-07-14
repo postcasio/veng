@@ -32,6 +32,10 @@ namespace Veng
         settings.Bloom = render.Bloom;
         settings.Shadows = render.Shadows;
         settings.PunctualShadows = render.PunctualShadows;
+        settings.MaxShadowDistance = render.MaxShadowDistance;
+        settings.ShadowResolution = render.ShadowResolution;
+        settings.AutoExposure = render.AutoExposure;
+        settings.SSR = render.SSR;
         settings.AO = render.AO;
 
         view.Exposure = render.Exposure;

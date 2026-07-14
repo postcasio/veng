@@ -1,7 +1,9 @@
 #include <Veng/Renderer/PunctualShadows.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <limits>
 #include <numbers>
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -33,29 +35,74 @@ namespace Veng::Renderer
         }
     }
 
-    SpotShadowView ComputeSpotShadowView(vec3 position, vec3 direction, f32 range, f32 outerCone)
+    SpotShadowView ComputeSpotShadowView(vec3 position, vec3 direction, f32 range, f32 outerCone,
+                                         std::optional<AABB> sceneBounds)
     {
         constexpr f32 HalfPi = std::numbers::pi_v<f32> / 2.0f;
         VE_ASSERT(range > 0.0f, "ComputeSpotShadowView needs range > 0 (got {})", range);
         VE_ASSERT(outerCone > 0.0f && outerCone < HalfPi,
                   "ComputeSpotShadowView needs outerCone in (0, π/2) (got {})", outerCone);
 
-        const f32 near = ShadowNear(range);
-        const f32 far = range;
+        f32 near = ShadowNear(range);
+        f32 far = range;
 
         // The cone's full angular width, so the shadow frustum exactly contains the
         // lit cone. Clamped below π so a wide cone never degenerates the projection.
         constexpr f32 Epsilon = 1e-3f;
-        const f32 fovy = std::clamp(2.0f * outerCone, Epsilon, std::numbers::pi_v<f32> - Epsilon);
+        f32 fovy = std::clamp(2.0f * outerCone, Epsilon, std::numbers::pi_v<f32> - Epsilon);
 
         const vec3 dir = glm::normalize(direction);
         const vec3 up = StableUp(dir);
         const mat4 view = glm::lookAt(position, position + dir, up);
 
+        // Tighten the frustum to the scene bound: the far plane to the bound's farthest front
+        // corner, and — when the whole bound is in front of the light — the near plane to its
+        // nearest corner and the cone to its angular radius about the aim axis. The fit only ever
+        // tightens: a bound reaching past the light's range, or straddling it, keeps the authored
+        // near/cone. A tighter frustum packs the tile's texels onto the casters, the perspective
+        // analogue of the cascade slab fit.
+        if (sceneBounds.has_value() && !sceneBounds->IsEmpty())
+        {
+            const std::array<vec3, 8> corners = sceneBounds->Corners();
+            f32 minFront = std::numeric_limits<f32>::max();
+            f32 maxFront = 0.0f;
+            f32 maxAngle = 0.0f;
+            bool anyFront = false;
+            bool allFront = true;
+            for (const vec3& corner : corners)
+            {
+                const vec3 v = vec3(view * vec4(corner, 1.0f)); // light view looks down -Z
+                const f32 frontDistance = -v.z;
+                if (frontDistance <= Epsilon)
+                {
+                    allFront = false;
+                    continue;
+                }
+                anyFront = true;
+                minFront = std::min(minFront, frontDistance);
+                maxFront = std::max(maxFront, frontDistance);
+                const f32 radial = std::sqrt(v.x * v.x + v.y * v.y);
+                maxAngle = std::max(maxAngle, std::atan2(radial, frontDistance));
+            }
+            if (anyFront)
+            {
+                // A small margin so a caster exactly on the bound does not clip the frustum.
+                constexpr f32 Margin = 1.02f;
+                far = std::min(range, maxFront * Margin);
+                if (allFront)
+                {
+                    near = std::clamp(minFront / Margin, MinNear, far * 0.9f);
+                    const f32 fitFovy = std::clamp(2.0f * maxAngle * Margin, Epsilon,
+                                                   std::numbers::pi_v<f32> - Epsilon);
+                    fovy = std::min(fovy, fitFovy);
+                }
+            }
+        }
+
         mat4 proj = glm::perspectiveZO(fovy, 1.0f, near, far);
         proj[1][1] *= -1.0f; // Vulkan clip space has Y pointing down.
 
-        return {.ViewProj = proj * view, .Near = near, .Far = far};
+        return {.ViewProj = proj * view, .Near = near, .Far = far, .Fovy = fovy};
     }
 
     PointShadowView ComputePointShadowView(vec3 position, f32 range)

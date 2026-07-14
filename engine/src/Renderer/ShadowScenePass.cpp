@@ -281,6 +281,10 @@ namespace Veng::Renderer
                         {
                             const SubMeshCandidate& c = candidates[id];
                             const VisibleMesh& item = view.Visible[c.MeshCandidate];
+                            if (!item.CastsShadows)
+                            {
+                                continue;
+                            }
                             const Mesh& mesh = *item.Mesh;
                             if (mesh.IsSkinned())
                             {
@@ -324,6 +328,10 @@ namespace Veng::Renderer
                             {
                                 const SubMeshCandidate& c = candidates[id];
                                 const VisibleMesh& item = view.Visible[c.MeshCandidate];
+                                if (!item.CastsShadows)
+                                {
+                                    continue;
+                                }
                                 const Mesh& mesh = *item.Mesh;
                                 if (!mesh.IsSkinned())
                                 {

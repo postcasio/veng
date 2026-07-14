@@ -63,6 +63,13 @@ namespace Veng
         /// Equals SceneBounds(scene) as of the last Sync; used by ComputeCascades.
         [[nodiscard]] AABB GetSceneBounds() const { return m_SceneBounds; }
 
+        /// @brief Returns the union of the shadow-casting candidates' world bounds.
+        ///
+        /// The box the shadow projections fit to — every candidate whose MeshRenderer::CastsShadows
+        /// is set. Equals GetSceneBounds() when every candidate casts, and AABB::Empty() when none
+        /// do (or the scene is empty).
+        [[nodiscard]] AABB GetCasterBounds() const { return m_CasterBounds; }
+
         /// @brief Returns true if the most recent Sync rebuilt the tree.
         ///
         /// False on a fully static frame. The rendered image is identical either way.
@@ -86,6 +93,8 @@ namespace Veng
         vector<Entity> m_Pending;
         /// @brief World-space union of all gathered candidate bounds.
         AABB m_SceneBounds = AABB::Empty();
+        /// @brief World-space union of the shadow-casting candidates' bounds.
+        AABB m_CasterBounds = AABB::Empty();
         /// @brief != any real version on construction, so the first Sync rebuilds.
         u64 m_LastVersion = ~0ull;
         /// @brief Set by the most recent Sync call.

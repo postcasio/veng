@@ -3,6 +3,7 @@
 #include <array>
 
 #include <Veng/Veng.h>
+#include <Veng/Math/AABB.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/PunctualShadows.h>
 #include <Veng/Renderer/SceneRenderer.h>
@@ -89,7 +90,11 @@ namespace Veng::Renderer
     /// @param world                    Scene whose Light entities are packed.
     /// @param punctualShadows          Whether point/spot lights are assigned shadow slots.
     /// @param punctualShadowResolution Per-tile edge length, used to scale the depth bias.
+    /// @param sceneBounds              Caster bound the spot/area shadow frustums are fit to; the
+    ///                                 empty box (the default) leaves each frustum at its light's
+    ///                                 own range and cone.
     /// @return The packed lights, shadow records, and directional selection for this frame.
     [[nodiscard]] PackedSceneLights PackSceneLights(const Scene& world, bool punctualShadows,
-                                                    u32 punctualShadowResolution);
+                                                    u32 punctualShadowResolution,
+                                                    const AABB& sceneBounds = AABB::Empty());
 }

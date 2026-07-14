@@ -453,7 +453,19 @@ float4 fsMain(VSOutput input) : SV_Target
             float range = max(light.PositionRange.w, 1e-4);
             float rangeFactor = saturate(1.0 - pow(dist / range, 4.0));
             rangeFactor *= rangeFactor;
-            float areaVisibility = AreaShadowVisibility(light, worldPos, N);
+            // A near-parallel area light (Cone.w bit 1) is shadowed by the cascade atlas — parallel
+            // projection, fit to the camera view — using its travel direction, not its position.
+            // Any other area light samples its punctual perspective tile.
+            float areaVisibility;
+            if ((int(light.Cone.w) & 2) != 0)
+            {
+                float3 sunL = normalize(-light.DirectionType.xyz);
+                areaVisibility = DirectionalShadowVisibility(worldPos, N, sunL, viewDepth);
+            }
+            else
+            {
+                areaVisibility = AreaShadowVisibility(light, worldPos, N);
+            }
             direct += area * rangeFactor * areaVisibility;
             continue;
         }
