@@ -1065,3 +1065,100 @@ TEST_CASE("A client join loads into the WorldRunner's world #0, not a parallel s
     CHECK(world.IsAlive(ownPawn));
     CHECK(world.Get<CameraFollow>(localCamera).Target == ownPawn);
 }
+
+TEST_CASE("Two worlds in one runner carry distinct NetRoles; authority gates each by its own role")
+{
+    // One WorldRunner, two worlds ticked serially each frame: A ticks Server-tier, B ticks
+    // Client-tier — the per-world role the world drive stamps onto each world's SystemContext through
+    // the runner's BuildContext seam, fed from a world→role map rather than a process-global role.
+    // Each world holds an identical authored Server-tier pawn (Transform + Intent + Mover). The
+    // authority filter runs MovementSystem only where the pawn's tier matches the world's role, so the
+    // Server world advances its pawn while the Client world leaves its own frozen (it would instead
+    // arrive from a snapshot stream) — per-world authority with a single runner and no transport.
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    SystemRegistry systems;
+    systems.Register<MovementSystem>(); // the authoritative advancer HasAuthority gates
+
+    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+
+    // Never-dereferenced fake services: MovementSystem reads only the scene, the delta, and the role.
+    alignas(16) unsigned char assetsBytes[64]{};
+    alignas(16) unsigned char inputBytes[64]{};
+    alignas(16) unsigned char tasksBytes[64]{};
+    const auto makeContext = [&](const u64 tick, const f32 alpha, const NetRole role)
+    {
+        return SystemContext{
+            .Assets = *reinterpret_cast<AssetManager*>(assetsBytes),
+            .Input = *reinterpret_cast<Input*>(inputBytes),
+            .Tasks = *reinterpret_cast<TaskSystem*>(tasksBytes),
+            .Tick = tick,
+            .Alpha = alpha,
+            .Role = role,
+        };
+    };
+
+    // Open a world driven by MovementSystem alone, seeding one authored Server-tier pawn moving +x.
+    const auto openWorld = [&](const NetRole role)
+    {
+        return runner.OpenWorld(WorldOpenInfo{
+            .SimTickRate = 60,
+            .StartSimulation = true,
+            .EmptySimulation = true,
+            .OnLoaded =
+                [](WorldInstanceId, Scene& scene, ResidencyBatch&)
+            {
+                const Entity pawn = scene.CreateEntity();
+                scene.Add<Transform>(pawn);
+                scene.Add<Intent>(pawn, Intent{.Move = vec3(1.0f, 0.0f, 0.0f)});
+                scene.Add<Mover>(pawn);
+                scene.Add<Authority>(pawn, Authority{.Tier = Tier::Server});
+            },
+            .MakeStartContext = [&makeContext, role]() { return makeContext(0, 0.0f, role); },
+        });
+    };
+
+    const WorldInstanceId serverWorld = openWorld(NetRole::Server);
+    const WorldInstanceId clientWorld = openWorld(NetRole::Client);
+
+    // The host-side world→role map the drive consults: Server for A, Client for B.
+    std::unordered_map<u64, NetRole> roles;
+    roles[serverWorld.Value] = NetRole::Server;
+    roles[clientWorld.Value] = NetRole::Client;
+
+    constexpr f32 Delta = 1.0f / 60.0f;
+    for (int frame = 0; frame < 30; ++frame)
+    {
+        runner.Tick(WorldTickInfo{
+            .Delta = Delta,
+            .BuildContext = [&](const WorldInstanceId world, const Scene&, const u64 tick,
+                                const f32 alpha, bool)
+            { return makeContext(tick, alpha, roles.at(world.Value)); },
+        });
+    }
+
+    // The single Server-tier pawn in each world.
+    const auto pawnOf = [](const Scene& scene)
+    {
+        Entity found = Entity::Null;
+        for (auto [entity, transform, mover] : scene.View<Transform, Mover>())
+        {
+            (void)transform;
+            (void)mover;
+            found = entity;
+        }
+        return found;
+    };
+
+    Scene& serverScene = runner.ResolveWorld(serverWorld)->GetScene();
+    Scene& clientScene = runner.ResolveWorld(clientWorld)->GetScene();
+    const Entity serverPawn = pawnOf(serverScene);
+    const Entity clientPawn = pawnOf(clientScene);
+    REQUIRE_FALSE(serverPawn.IsNull());
+    REQUIRE_FALSE(clientPawn.IsNull());
+
+    // The Server world advanced its authoritative pawn; the Client world left its identical pawn
+    // frozen — a Client peer never advances Server-tier state, it displays the replicated mirror.
+    CHECK(serverScene.Get<Transform>(serverPawn).Position.x > 0.5f);
+    CHECK(clientScene.Get<Transform>(clientPawn).Position.x == doctest::Approx(0.0f));
+}

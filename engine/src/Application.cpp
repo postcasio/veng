@@ -46,11 +46,18 @@ namespace Veng
     ///
     /// One of the two arms is live per net launch mode: Server (the ServerHost + a per-connection input
     /// jitter buffer) for `--server`, or Client (the owned Net::Client + ClientHost + the input send
-    /// window) for `--join`. Role reports which. The Info knobs seed the buffers and the hosts.
+    /// window) for `--join`. Role reports which transport arm the process mounts — its transport
+    /// capability — while WorldRoles carries the orthogonal per-world authority axis.
     struct Application::NetState
     {
         NetRole Role = NetRole::Server;
         GameNetInfo Info;
+
+        // The host-side per-world authority role, keyed by WorldInstanceId value: which NetRole each
+        // net-active world ticks under. The transport binds one world here, so it holds that world
+        // alone; the world drive stamps a world's per-tick context Role from it and pumps net only for a
+        // world it names. A world absent from the map is Server-tier with no transport (standalone).
+        unordered_map<u64, NetRole> WorldRoles;
 
         // Server arm.
         Unique<ServerHost> Server;
@@ -90,6 +97,31 @@ namespace Veng
     ClientHost* Application::GetClientHost() const
     {
         return m_Net ? m_Net->ClientHost.get() : nullptr;
+    }
+
+    NetRole Application::RoleForWorld(const WorldInstanceId world) const
+    {
+        if (m_Net)
+        {
+            const auto it = m_Net->WorldRoles.find(world.Value);
+            if (it != m_Net->WorldRoles.end())
+            {
+                return it->second;
+            }
+        }
+        return NetRole::Server;
+    }
+
+    bool Application::IsWorldNetActive(const WorldInstanceId world) const
+    {
+        return m_Net && m_Net->WorldRoles.contains(world.Value);
+    }
+
+    u64 Application::WorldSimTick(const WorldInstanceId world) const
+    {
+        const World* resolved =
+            m_WorldRunner != nullptr ? m_WorldRunner->ResolveWorld(world) : nullptr;
+        return resolved != nullptr ? resolved->Clock.GetTick() : 0;
     }
 
     void Application::Initialize()
@@ -259,13 +291,15 @@ namespace Veng
                 SeedViewportFromWorld(scene);
                 OnWorldLoaded(world, scene, pending);
             },
+            // The standalone/server bootstrap opens the managed world Server-tier: it owns and advances
+            // authoritative state whether or not a transport is later bound (`--server`).
             .MakeStartContext =
                 [this]
             {
                 return SystemContext{.Assets = *m_AssetManager,
                                      .Input = *m_Input,
                                      .Tasks = *m_TaskSystem,
-                                     .Role = GetNetRole()};
+                                     .Role = NetRole::Server};
             },
         });
 
@@ -304,6 +338,8 @@ namespace Veng
         m_Net = CreateUnique<NetState>();
         m_Net->Role = NetRole::Server;
         m_Net->Info = net;
+        // The hosted managed world ticks Server-tier — its Sim owns and advances authoritative state.
+        m_Net->WorldRoles[m_ManagedWorld.Value] = NetRole::Server;
 
         Result<Unique<ServerHost>> host = ServerHost::Create(ServerHostInfo{
             .Server = Net::ServerInfo{.Port = net.Port,
@@ -342,6 +378,9 @@ namespace Veng
         m_Net = CreateUnique<NetState>();
         m_Net->Role = NetRole::Client;
         m_Net->Info = net;
+        // The joined managed world ticks Client-tier — its Sim displays replicated state and advances
+        // only its client-local (and predicted) entities.
+        m_Net->WorldRoles[m_ManagedWorld.Value] = NetRole::Client;
         m_Net->Send =
             InputSendBuffer(InputSendBuffer::Settings{.Redundancy = net.InputRedundancyTicks});
 
@@ -391,8 +430,9 @@ namespace Veng
                 const f32 simDelta =
                     1.0f / static_cast<f32>(m_Info.World ? m_Info.World->SimTickRate : 60u);
                 world.TickSimulationPhase(SceneSystem::Phase::Sim, simDelta,
-                                          BuildSystemContext(world, PointerRouting{}, tick, 0.0f,
-                                                             false, /*isReplay=*/true));
+                                          BuildSystemContext(world, RoleForWorld(m_ManagedWorld),
+                                                             PointerRouting{}, tick, 0.0f, false,
+                                                             /*isReplay=*/true));
             },
             // The controller converts RTT/jitter to a tick lead at the sim rate; its margin carries
             // the snapshot-cadence staleness plus the two-tick buffered-input cushion beyond the
@@ -445,7 +485,7 @@ namespace Veng
         world.StartSimulation(SystemContext{.Assets = *m_AssetManager,
                                             .Input = *m_Input,
                                             .Tasks = *m_TaskSystem,
-                                            .Role = GetNetRole()});
+                                            .Role = RoleForWorld(m_ManagedWorld)});
     }
 
     void Application::PumpNet()
@@ -455,13 +495,28 @@ namespace Veng
             return;
         }
 
+        // Pump each net-active world once. The transport binds one world here, so the map holds exactly
+        // that world; iterating it keeps the drive per-world for the later multiplexed transport to
+        // route to, while a standalone Server-tier world (absent from the map) is never pumped.
+        for (const auto& [worldValue, role] : m_Net->WorldRoles)
+        {
+            PumpNetWorld(WorldInstanceId{.Value = worldValue}, role);
+        }
+    }
+
+    void Application::PumpNetWorld(const WorldInstanceId world, const NetRole role)
+    {
         const f64 now = static_cast<f64>(Time::Now());
 
-        if (m_Net->Role == NetRole::Server)
+        if (role == NetRole::Server)
         {
+            if (m_Net->Server == nullptr)
+            {
+                return;
+            }
             // The world is generated + streamed keyed to the last completed tick (its just-ticked
             // state); the per-step SetChangeTick already stamped this frame's mutations.
-            m_Net->Server->Pump(now, GetSimTick());
+            m_Net->Server->Pump(now, WorldSimTick(world));
 
             // Ingest each connection's redundant input into its jitter buffer for next frame's ticks
             // to consume, pruning a departed connection's buffer.
@@ -470,14 +525,19 @@ namespace Veng
             return;
         }
 
+        if (m_Net->ClientHost == nullptr)
+        {
+            return;
+        }
+
         // Client: advance the join flow (accept → load → ack → apply the stream → wire the own seat),
         // start the loaded scene once, then send this frame's stamped input window.
         m_Net->ClientHost->Pump(now);
         if (!m_Net->WorldStarted)
         {
-            if (Scene* world = m_Net->ClientHost->World())
+            if (Scene* scene = m_Net->ClientHost->World())
             {
-                StartWorldScene(*world);
+                StartWorldScene(*scene);
                 m_Net->WorldStarted = true;
             }
         }
@@ -492,23 +552,23 @@ namespace Veng
         }
     }
 
-    void Application::FeedServerSeatInputs(const u64 tick)
+    void Application::FeedServerSeatInputs(const WorldInstanceId world, const u64 tick)
     {
-        World* world = m_WorldRunner->ResolveWorld(m_ManagedWorld);
-        if (m_Net && m_Net->Server && world != nullptr)
+        World* resolved = m_WorldRunner->ResolveWorld(world);
+        if (m_Net && m_Net->Server && resolved != nullptr)
         {
             // Scheduled consume: the client runs its tick ahead of the server (the tick-offset slew),
             // so the input it stamped at this tick has arrived by the time the server reaches it.
-            FeedSeatInputs(*m_Net->Server, m_Net->Jitter, world->GetScene(), tick);
+            FeedSeatInputs(*m_Net->Server, m_Net->Jitter, resolved->GetScene(), tick);
         }
     }
 
-    void Application::StampClientInput(const u64 clientTick)
+    void Application::StampClientInput(const WorldInstanceId world, const u64 clientTick)
     {
-        World* world = m_WorldRunner->ResolveWorld(m_ManagedWorld);
-        if (m_Net && world != nullptr)
+        World* resolved = m_WorldRunner->ResolveWorld(world);
+        if (m_Net && resolved != nullptr)
         {
-            StampLocalSeatInput(m_Net->Send, world->GetScene(), clientTick);
+            StampLocalSeatInput(m_Net->Send, resolved->GetScene(), clientTick);
         }
     }
 
@@ -578,9 +638,9 @@ namespace Veng
                 .Scene = owner->GetPresentedScene()};
     }
 
-    SystemContext Application::BuildSystemContext(const Scene& scene, const PointerRouting& pointer,
-                                                  const u64 tick, const f32 alpha,
-                                                  const bool firstStepThisFrame,
+    SystemContext Application::BuildSystemContext(const Scene& scene, const NetRole role,
+                                                  const PointerRouting& pointer, const u64 tick,
+                                                  const f32 alpha, const bool firstStepThisFrame,
                                                   const bool isReplay) const
     {
         SystemContext context{
@@ -590,7 +650,7 @@ namespace Veng
             .Pointer = pointer,
             .Tick = tick,
             .Alpha = alpha,
-            .Role = GetNetRole(),
+            .Role = role,
             .FirstStepThisFrame = firstStepThisFrame,
             .IsReplay = isReplay,
         };
@@ -643,9 +703,7 @@ namespace Veng
 
     u64 Application::GetSimTick() const
     {
-        const World* world =
-            m_WorldRunner != nullptr ? m_WorldRunner->ResolveWorld(m_ManagedWorld) : nullptr;
-        return world != nullptr ? world->Clock.GetTick() : 0;
+        return WorldSimTick(m_ManagedWorld);
     }
 
     const AssetHandle<Level>& Application::GetWorldLevel(WorldInstanceId) const
@@ -780,7 +838,7 @@ namespace Veng
         // as the managed world's SimScale). Off a client, or before a snapshot has revealed the
         // server's tick, the factor is 1.0.
         m_NetSlew = 1.0f;
-        if (managedActive && m_Net && m_Net->Role == NetRole::Client && m_Net->ClientHost &&
+        if (managedActive && RoleForWorld(m_ManagedWorld) == NetRole::Client && m_Net->ClientHost &&
             m_Net->ClientHost->LastServerTick() > 0)
         {
             SimClock& clock = managed->Clock;
@@ -865,33 +923,34 @@ namespace Veng
             .Delta = delta,
             .RunViewPhase = !dedicatedServer,
             .BuildContext =
-                [this, &scoped](const WorldInstanceId, const Scene& scene, const u64 tick,
+                [this, &scoped](const WorldInstanceId world, const Scene& scene, const u64 tick,
                                 const f32 alpha, const bool firstStep)
             {
                 const PointerRouting pointer =
                     &scene == scoped.Scene ? scoped.Routing : PointerRouting{};
-                return BuildSystemContext(scene, pointer, tick, alpha, firstStep);
+                return BuildSystemContext(scene, RoleForWorld(world), pointer, tick, alpha,
+                                          firstStep);
             },
             .SimScale = [this](const WorldInstanceId world)
             { return world == m_ManagedWorld ? m_NetSlew : 1.0f; },
             .BeforeSimStep =
                 [this](const WorldInstanceId world, Scene& scene, const u64 tick)
             {
-                if (world == m_ManagedWorld && m_Net && m_Net->Role == NetRole::Server)
+                if (IsWorldNetActive(world) && RoleForWorld(world) == NetRole::Server)
                 {
                     scene.SetChangeTick(tick);
-                    FeedServerSeatInputs(tick);
+                    FeedServerSeatInputs(world, tick);
                 }
             },
             .AfterSimStep =
                 [this](const WorldInstanceId world, Scene&, const u64 tick)
             {
-                if (world == m_ManagedWorld && m_Net && m_Net->Role == NetRole::Client)
+                if (IsWorldNetActive(world) && RoleForWorld(world) == NetRole::Client)
                 {
                     // The Sim phase just ran control + movement for the Predicted set (the authority
                     // filter answers true for it client-side); stamp the seat input to send, then
                     // record this tick's input and predicted state for reconciliation.
-                    StampClientInput(tick);
+                    StampClientInput(world, tick);
                     m_Net->ClientHost->RecordPrediction(tick);
                 }
             },

@@ -364,12 +364,14 @@ namespace Veng
         /// @return The managed world's handle.
         [[nodiscard]] WorldInstanceId GetManagedWorldId() const { return m_ManagedWorld; }
 
-        /// @brief Returns this peer's network role: Client under `--join`, Server otherwise.
+        /// @brief Returns the process's transport-arm role: Client under `--join`, Server otherwise.
         ///
         /// Server for a standalone app, a listen server, and a dedicated server; Client only when the
-        /// launcher activated join mode. Threaded onto every Sim tick's SystemContext so the authority
-        /// filter gates state advancement.
-        /// @return The peer's NetRole.
+        /// launcher activated join mode. This names the process's transport capability (which host it
+        /// mounts), a separate axis from what authority role each world ticks under — that is per-world,
+        /// stamped onto each world's SystemContext from the host-side world→role map, not from this
+        /// process-level value.
+        /// @return The process's transport-arm NetRole.
         [[nodiscard]] NetRole GetNetRole() const;
 
         /// @brief Returns the mounted server host, or null when not hosting.
@@ -535,32 +537,66 @@ namespace Veng
         /// @param world  The runner-owned world #0 scene the join loaded.
         void StartWorldScene(Scene& world);
 
-        /// @brief Pumps the mounted net host for one frame: join/accept, apply the stream, feed input.
+        /// @brief Pumps net for every net-active world once this frame: join/accept, apply the stream, feed input.
         ///
-        /// The receive+send half of the net world drive, called once per frame after the sim ticks:
-        /// server-side it stamps the scene's change tick, pumps the ServerHost (accept → spawn seats,
-        /// generate + flush the stream, reap), ingests each connection's redundant input into its jitter
-        /// buffer, and reaps a departed connection's buffer; client-side it pumps the ClientHost (join,
-        /// apply spawn/despawn + snapshots, wire the own seat), starts the world scene once it loads,
-        /// and sends this frame's stamped local input. A no-op with no net host.
+        /// The receive+send half of the net world drive, called once per frame after the sim ticks. It
+        /// iterates the host-side world→role map (the net-active worlds — those the process's transport
+        /// binds) and pumps each through PumpNetWorld. A world absent from the map (a standalone
+        /// Server-tier world with no transport) is skipped. A no-op with no net host.
         void PumpNet();
+
+        /// @brief Pumps net for one net-active world under its role: apply the stream, feed input.
+        ///
+        /// Server-side it pumps the ServerHost (accept → spawn seats, generate + flush the stream at the
+        /// world's sim tick, reap) and ingests each connection's redundant input into its jitter buffer;
+        /// client-side it pumps the ClientHost (join, apply spawn/despawn + snapshots, wire the own
+        /// seat), starts the world scene once it loads, and sends this frame's stamped local input.
+        /// @param world  The net-active world being pumped.
+        /// @param role   The authority role @p world ticks under (its host-side map entry).
+        void PumpNetWorld(WorldInstanceId world, NetRole role);
+
+        /// @brief Returns the authority role @p world ticks under, from the host-side world→role map.
+        ///
+        /// The per-world authority axis: a world the process's transport binds carries the role its map
+        /// entry names (Server for a hosted world, Client for a joined one); a world absent from the map
+        /// — a standalone world with no transport — is Server-tier. Read by the world drive to stamp
+        /// each world's per-tick SystemContext and to gate its net input feed.
+        /// @param world  The world whose role is queried.
+        /// @return The world's NetRole; Server when it is not net-active.
+        [[nodiscard]] NetRole RoleForWorld(WorldInstanceId world) const;
+
+        /// @brief Returns whether @p world is net-active — bound by the process's transport this frame.
+        ///
+        /// True only for a world in the host-side world→role map (one the mounted host hosts or has
+        /// joined). A standalone Server-tier world with no transport is not net-active, so the drive
+        /// neither pumps net for it nor threads the net input feed through its Sim steps.
+        /// @param world  The world to test.
+        /// @return True when @p world is bound by a mounted host.
+        [[nodiscard]] bool IsWorldNetActive(WorldInstanceId world) const;
+
+        /// @brief Returns @p world's current fixed simulation tick, or 0 for an unresolved id.
+        /// @param world  The world whose clock tick is read.
+        /// @return The world's monotonic sim tick.
+        [[nodiscard]] u64 WorldSimTick(WorldInstanceId world) const;
 
         /// @brief Feeds each ready connection's input scheduled for a server tick into its seat.
         ///
         /// Server-only: consumes the input each connection's client stamped at @p tick from its jitter
         /// buffer (falling back to the underrun coast when it has not arrived) and writes it into the
         /// connection's seat PlayerInput, so the control system re-derives Intent from the wire input at
-        /// the matching tick. Called once per Sim step, ahead of the systems. A no-op off the server.
-        /// @param tick  The server sim tick whose matching client input is consumed.
-        void FeedServerSeatInputs(u64 tick);
+        /// the matching tick. Called once per Sim step of the hosted world, ahead of the systems.
+        /// @param world  The hosted world whose seats are fed.
+        /// @param tick   The server sim tick whose matching client input is consumed.
+        void FeedServerSeatInputs(WorldInstanceId world, u64 tick);
 
         /// @brief Stamps this client tick's resolved local input into the input send window.
         ///
         /// Client-only: records the local input seat's resolved PlayerInput for @p clientTick into the
-        /// redundant send buffer (drained once per frame by PumpNet). A no-op off a client, or with no
-        /// local input seat in the scene.
+        /// redundant send buffer (drained once per frame by PumpNet). A no-op with no local input seat
+        /// in the scene.
+        /// @param world       The joined world whose local seat input is stamped.
         /// @param clientTick  The client sim tick being stamped.
-        void StampClientInput(u64 clientTick);
+        void StampClientInput(WorldInstanceId world, u64 clientTick);
 
         /// @brief This frame's pointer routing paired with the one scene it is scoped to.
         ///
@@ -589,12 +625,13 @@ namespace Veng
 
         /// @brief Builds a ticked simulation's SystemContext, resolving its primary presenting viewport.
         ///
-        /// Fills the always-present services (assets, input, tasks) and the given per-scene @p pointer,
-        /// then resolves the sim's primary presenting viewport — the first registered Presented
-        /// viewport whose retained scene is @p scene — to populate View (its retained camera + region +
-        /// UI scale) and Debug (its debug-draw sink). View is nullopt and Debug null for a view-less
-        /// sim.
+        /// Fills the always-present services (assets, input, tasks), stamps the world's authority @p role
+        /// and the given per-scene @p pointer, then resolves the sim's primary presenting viewport — the
+        /// first registered Presented viewport whose retained scene is @p scene — to populate View (its
+        /// retained camera + region + UI scale) and Debug (its debug-draw sink). View is nullopt and
+        /// Debug null for a view-less sim.
         /// @param scene    The scene being ticked.
+        /// @param role     The authority role the world ticks under (from RoleForWorld).
         /// @param pointer  This frame's routing for @p scene (empty when the pointer is elsewhere).
         /// @param tick     The tick number to stamp (the Sim step, or the last completed tick in View).
         /// @param alpha    The interpolation fraction to stamp (0 in Sim, the frame residual in View).
@@ -602,7 +639,7 @@ namespace Veng
         ///                            per-frame accumulator (see SystemContext::FirstStepThisFrame).
         /// @param isReplay  True when this is a reconciliation replay step (see SystemContext::IsReplay).
         /// @return The assembled per-tick context.
-        [[nodiscard]] SystemContext BuildSystemContext(const Scene& scene,
+        [[nodiscard]] SystemContext BuildSystemContext(const Scene& scene, NetRole role,
                                                        const PointerRouting& pointer, u64 tick,
                                                        f32 alpha, bool firstStepThisFrame,
                                                        bool isReplay = false) const;
