@@ -339,6 +339,22 @@ target_include_directories(veng_cook_objs PRIVATE
 set_source_files_properties(src/Vendor/TinyExr.cpp PROPERTIES
         COMPILE_DEFINITIONS TINYEXR_USE_EXCEPTIONS=0)
 
+# Precompile the foundational header the importer TUs all parse. The vendor
+# aggregation TUs #include third-party sources with their own feature macros —
+# force-injecting Veng.h ahead of those is unsafe — and the debug-optimized
+# encode TUs compile under ${VENG_COOK_DEBUG_OPT}, which clang rejects against
+# a PCH built without it (__OPTIMIZE__ mismatch); both opt out.
+target_precompile_headers(veng_cook_objs PRIVATE <Veng/Veng.h>)
+set_source_files_properties(
+        src/Vendor/StbImage.cpp
+        src/Vendor/TinyExr.cpp
+        src/Vendor/XxHash.cpp
+        src/Importers/TextureImporter.cpp
+        src/Importers/FontImporter.cpp
+        ${bc7enc_rdo_SOURCE_DIR}/bc7enc.cpp
+        ${bc7enc_rdo_SOURCE_DIR}/rgbcx.cpp
+        PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+
 # assimp/Slang headers are needed at compile time by MeshImporter/ShaderImporter
 # (their link is on the executables below). msdf-atlas-gen (plus its msdfgen core/ext) headers back
 # the FontImporter's MSDF generation (its link is on the executables below, alongside its FreeType
@@ -421,6 +437,7 @@ target_link_libraries(libveng_cook PRIVATE
         fmt::fmt assimp::assimp slang::slang ZLIB::ZLIB ${VENG_ASTCENC_TARGET}
         msdf-atlas-gen::msdf-atlas-gen pugixml::pugixml)
 target_compile_options(libveng_cook PRIVATE -fno-exceptions)
+target_precompile_headers(libveng_cook PRIVATE <Veng/Veng.h>)
 
 add_executable(vengc tool/main.cpp)
 target_link_libraries(vengc PRIVATE veng::cook fmt::fmt)

@@ -21,6 +21,14 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 find_program(CCACHE_PROGRAM ccache)
 if (CCACHE_PROGRAM)
     set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+    # clang stamps every .pch with a build timestamp, which ccache folds into the
+    # cache key — a PCH rebuild would miss for every downstream TU even with the
+    # header content unchanged. Suppressing the stamp makes the PCH byte-reproducible
+    # so cached results survive PCH rebuilds. (Caching PCH-using TUs at all also
+    # requires sloppiness=pch_defines,time_macros in the ccache configuration.)
+    if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        add_compile_options(-Xclang -fno-pch-timestamp)
+    endif ()
 endif ()
 
 include(FetchContent)
@@ -594,6 +602,13 @@ if (VENG_BUILD_TESTS)
             tests/unit/net_lifecycle.cpp
     )
     target_link_libraries(veng_test_unit PRIVATE veng::veng doctest::doctest)
+    # Precompile the foundational header + doctest once per suite: a test TU is
+    # otherwise ~90% redundant header parsing. The doctest mains define the
+    # implementation macro before their include, which a force-included PCH would
+    # defeat, so they opt out (the property covers every target compiling them).
+    target_precompile_headers(veng_test_unit PRIVATE <Veng/Veng.h> <doctest/doctest.h>)
+    set_source_files_properties(tests/unit/main.cpp tests/gpu/main.cpp
+            PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 
     # Some unit cases reach into engine internals under src/ (the backend
     # TypeMapping header below); that path is on the include search list so they
@@ -880,6 +895,7 @@ if (VENG_BUILD_TESTS)
     target_link_libraries(veng_test_editor_unit PRIVATE veng_editor::veng_editor veng::mcp
             doctest::doctest nlohmann_json::nlohmann_json)
     target_compile_definitions(veng_test_editor_unit PRIVATE JSON_NOEXCEPTION)
+    target_precompile_headers(veng_test_editor_unit PRIVATE <Veng/Veng.h> <doctest/doctest.h>)
     target_include_directories(veng_test_editor_unit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/editor/src
             ${VENG_EDITOR_MCP_INCLUDE} ${CMAKE_CURRENT_SOURCE_DIR}/tests)
     target_include_directories(veng_test_editor_unit SYSTEM PRIVATE
@@ -1056,6 +1072,7 @@ if (VENG_BUILD_TESTS)
             tests/gpu/managed_viewport_set.cpp
     )
     target_link_libraries(veng_test_gpu PRIVATE veng::veng veng_test_support doctest::doctest)
+    target_precompile_headers(veng_test_gpu PRIVATE <Veng/Veng.h> <doctest/doctest.h>)
     # transfer_retire.cpp reaches through Native.h (raw vk::/VMA handles via the
     # public escape hatch) to drive RetireOnTransfer/ReleaseBuffer, so this target
     # needs the backend headers' *include dirs* (Vulkan + GLFW + VMA). Allowed:
@@ -1294,6 +1311,7 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle)
     # libveng_editor in addition to libveng_cook (no cycle: the cooker is never linked
     # by the editor framework). editor/src is on the include path for its headers.
     target_link_libraries(veng_test_cooker PRIVATE veng::cook veng_editor::veng_editor doctest::doctest)
+    target_precompile_headers(veng_test_cooker PRIVATE <Veng/Veng.h> <doctest/doctest.h>)
     # engine/src is on the include path so the stylesheet cook test can reach the private
     # StyleSheetLoader.h decode entry point (DecodeStyleSheet), exercising the runtime variable
     # table end-to-end from a cooked blob; veng::cook already links veng::veng transitively.
