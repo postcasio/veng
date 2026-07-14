@@ -20,6 +20,8 @@
 #include <Veng/Net/Replication.h>
 #include <Veng/Net/Server.h>
 #include <Veng/Net/Transport.h>
+#include <Veng/Net/WorldEnvelope.h>
+#include <Veng/Net/WorldKey.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Camera.h>
@@ -100,7 +102,7 @@ namespace
         TypeRegistry Types;
         Unique<Scene> World;
         Unique<ServerHost> Host;
-        std::unordered_map<ConnectionId, InputJitterBuffer> Jitter;
+        std::unordered_map<u64, InputJitterBuffer> Jitter;
         std::unordered_map<ConnectionId, Entity> Pawns;
         MovementSystem Movement;
         // When set, SimStep consumes input scheduled for the tick (the ahead-of-server model) rather
@@ -179,11 +181,11 @@ namespace
             RunSpawnRule();
             if (ScheduledConsume)
             {
-                FeedSeatInputs(*Host, Jitter, *World, tick);
+                FeedSeatInputs(*Host, Jitter, WorldInstanceId{}, *World, tick);
             }
             else
             {
-                FeedSeatInputs(*Host, Jitter, *World);
+                FeedSeatInputs(*Host, Jitter, WorldInstanceId{}, *World);
             }
 
             for (const auto& [id, pawn] : Pawns)
@@ -227,7 +229,7 @@ namespace
         Entity LocalCamera = Entity::Null;
         Entity OwnPawn = Entity::Null;
 
-        explicit ClientWorld(Transport& transport)
+        explicit ClientWorld(Transport& transport, WorldKey key = DefaultWorldKey)
         {
             RegisterBuiltinTypes(Types);
             Client = *Net::Client::Connect(
@@ -239,6 +241,7 @@ namespace
             Host = ClientHost::Create(ClientHostInfo{
                 .Client = *Client,
                 .Assets = FakeAssets(),
+                .WorldKey = key,
                 .LoadLevel = [this](AssetId) -> Scene*
                 {
                     // The client scene the join loads into: a Local-tier camera the join wires to the
@@ -296,9 +299,11 @@ namespace
                 StampLocalSeatInput(Send, *world, clientTick);
             }
 
-            if (Client->State() == ClientState::Connected)
+            if (Client->State() == ClientState::Connected && Host->CurrentJoinId() != ControlJoinId)
             {
-                (void)Client->Server().Send(Channel::UnreliableSequenced, Send.Encode(0, Types));
+                (void)Client->Server().Send(
+                    Channel::UnreliableSequenced,
+                    EncodeWorldEnvelope(Host->CurrentJoinId(), Send.Encode(0, Types)));
             }
         }
     };
@@ -583,7 +588,8 @@ TEST_CASE("Scheduled consume: a client running ahead underruns ~never under stea
     // With the client leading, each server tick's input was already buffered when the scheduled consume
     // reached it: the server consumed a fresh input almost every tick, so underrun-duplication is
     // negligible — a small startup transient before the first input arrives aside.
-    const InputJitterBuffer& buffer = server.Jitter.at(id);
+    const InputJitterBuffer& buffer =
+        server.Jitter.at(InputBufferKey(id, server.Host->CurrentJoin(id)));
     REQUIRE(buffer.ConsumeCount() > 150);
     CHECK(buffer.UnderrunCount() <= 5);
 }
@@ -694,18 +700,19 @@ TEST_CASE("Scheduled consume with the client ahead drives server input with ~zer
     }
     REQUIRE(client.Host->IsJoined());
     REQUIRE(id != ServerConnectionId);
-    REQUIRE(server.Jitter.contains(id));
+    const u64 jitterKey = InputBufferKey(id, server.Host->CurrentJoin(id));
+    REQUIRE(server.Jitter.contains(jitterKey));
 
     // Over a steady window every scheduled consume finds its tick's input already buffered, so the
     // underrun (coast) count does not move — the input-timing win the ahead-of-server model buys.
-    const u64 underrunBefore = server.Jitter.at(id).UnderrunCount();
-    const u64 consumeBefore = server.Jitter.at(id).ConsumeCount();
+    const u64 underrunBefore = server.Jitter.at(jitterKey).UnderrunCount();
+    const u64 consumeBefore = server.Jitter.at(jitterKey).ConsumeCount();
     for (u64 tick = 61; tick <= 200; ++tick)
     {
         step(tick);
     }
-    CHECK(server.Jitter.at(id).ConsumeCount() - consumeBefore == 140); // one per server tick
-    CHECK(server.Jitter.at(id).UnderrunCount() - underrunBefore == 0); // none underran
+    CHECK(server.Jitter.at(jitterKey).ConsumeCount() - consumeBefore == 140); // one per server tick
+    CHECK(server.Jitter.at(jitterKey).UnderrunCount() - underrunBefore == 0); // none underran
 
     // The real (not coasted) input drove the server pawn: the held +x move advanced it.
     const Entity serverPawn = server.Pawns.at(id);
@@ -1168,11 +1175,11 @@ TEST_CASE("One ServerHost hosts two worlds with isolated replication over separa
     // The per-world replication ownership refactor: one ServerHost holds two hosted worlds, each with
     // its own ReplicationServer and NetId allocator, and demuxes each connection to its world's
     // instance. Two clients join over one server transport (a Hub, since a LoopbackTransport pair is
-    // point-to-point) — client A to world A over a clean link, client B to world B over a lossy,
-    // reordering, duplicating one. The server drives each pawn's Intent directly (no input path), so
-    // this isolates replication state. The asserts pin structural isolation: each client hears only
-    // its own world's spawns/snapshots, the two worlds' NetId spaces are independent (not one shared
-    // allocator), and B's fault burst leaves A's baseline uncorrupted and its scene still converging.
+    // point-to-point), each presenting a distinct WorldKey — client A to world A over a clean link,
+    // client B to world B over a lossy, reordering, duplicating one. The server drives each pawn's
+    // Intent directly (no input path), so this isolates replication state. The asserts pin structural
+    // isolation: each client hears only its own world's spawns/snapshots, the two worlds' NetId spaces
+    // are independent (not one shared allocator), and B's fault burst leaves A's baseline uncorrupted.
     TypeRegistry types;
     RegisterBuiltinTypes(types);
     Unique<Scene> sceneA = Scene::Create(types);
@@ -1180,36 +1187,30 @@ TEST_CASE("One ServerHost hosts two worlds with isolated replication over separa
 
     const WorldInstanceId worldA{.Value = 1};
     const WorldInstanceId worldB{.Value = 2};
+    const WorldKey keyA = WorldKey::FromU64(0xA);
+    const WorldKey keyB = WorldKey::FromU64(0xB);
 
     const auto hub = CreateRef<Hub>();
     const u32 serverEndpoint = hub->Register();
     auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
 
-    // Route connections to worlds in arrival order — no client-presented world selector exists yet,
-    // so the server binds the first accepted connection to A and the second to B.
-    const vector<WorldInstanceId> arrival{worldA, worldB};
-    usize accepted = 0;
-
+    // Both worlds are pre-registered under their keys: a client presenting keyA converges on world A,
+    // keyB on world B — the get-or-create map keyed by the client-presented WorldKey.
     Result<Unique<ServerHost>> hostResult = ServerHost::Create(ServerHostInfo{
         .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
         .WorldId = worldA,
+        .Key = keyA,
         .World = *sceneA,
         .Assets = FakeAssets(),
         .LevelId = LevelId,
         .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
         .Interest = InterestSettings{.Radius = 0.0f},
-        .SelectWorld =
-            [&](ConnectionId)
-        {
-            const WorldInstanceId world = arrival[accepted == 0 ? 0 : 1];
-            ++accepted;
-            return world;
-        },
     });
     REQUIRE(hostResult.has_value());
     Unique<ServerHost> host = std::move(*hostResult);
     host->AddWorld(ServerWorldInfo{
         .WorldId = worldB,
+        .Key = keyB,
         .World = *sceneB,
         .LevelId = LevelId,
         .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
@@ -1217,7 +1218,7 @@ TEST_CASE("One ServerHost hosts two worlds with isolated replication over separa
     });
 
     std::unordered_map<ConnectionId, Entity> pawns;
-    std::unordered_map<ConnectionId, InputJitterBuffer> jitter;
+    std::unordered_map<u64, InputJitterBuffer> jitter;
     MovementSystem movement;
 
     // The server frame: pawn each seated connection in its own world's scene, aim its Intent (A +x,
@@ -1259,9 +1260,9 @@ TEST_CASE("One ServerHost hosts two worlds with isolated replication over separa
     constexpr f32 Delta = 1.0f / 60.0f;
     u64 tick = 0;
 
-    // Bring client A up first so it deterministically takes world A (arrival 0).
+    // Client A presents keyA, converging on world A.
     auto clientTa = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
-    ClientWorld clientA(*clientTa);
+    ClientWorld clientA(*clientTa, keyA);
     while (!clientA.Host->IsJoined() && tick < 200)
     {
         ++tick;
@@ -1279,7 +1280,7 @@ TEST_CASE("One ServerHost hosts two worlds with isolated replication over separa
     const FaultInjectionConfig faults{
         .DropRate = 0.25f, .DuplicateRate = 0.1f, .ReorderRate = 0.2f, .Seed = 4242};
     FaultInjectionTransport clientTb(*clientTbBase, faults);
-    ClientWorld clientB(clientTb);
+    ClientWorld clientB(clientTb, keyB);
 
     for (u64 step = 0; step < 460; ++step)
     {
@@ -1344,4 +1345,682 @@ TEST_CASE("One ServerHost hosts two worlds with isolated replication over separa
     // Each client saw its own world's motion, not the peer's: A's pawn moved +x, B's -x.
     CHECK(clientPosA.x > 0.1f);
     CHECK(clientPosB.x < -0.1f);
+}
+
+// ---- The multiplexed transport: N worlds over one connection --------------------------------------
+
+namespace
+{
+    // A client that multiplexes several joined worlds over its one connection, tracking each join's
+    // scene and possessed pawn by JoinId. AutoJoin is off; the test calls Join per world.
+    struct MultiplexClient
+    {
+        TypeRegistry Types;
+        Unique<Net::Client> Client;
+        Unique<ClientHost> Host;
+        RemoteInterpolationSystem Interp;
+        // The client scene each join loaded, keyed by the level id the reply named.
+        std::unordered_map<u64, Unique<Scene>> Scenes;
+        std::unordered_map<u64, Entity> PawnByJoin; // possessed pawn, keyed by JoinId
+
+        explicit MultiplexClient(Transport& transport)
+        {
+            RegisterBuiltinTypes(Types);
+            Interp.SetSettings(RemoteInterpolationSystem::Settings{
+                .SnapshotInterval = 2, .InterpolationDelayIntervals = 2, .SimTickRate = 60.0});
+            Client = *Net::Client::Connect(
+                ClientInfo{.TransportOverride = &transport, .Connection = FastConfig});
+            Host = ClientHost::Create(ClientHostInfo{
+                .Client = *Client,
+                .Assets = FakeAssets(),
+                .AutoJoin = false,
+                .LoadLevel = [this](AssetId level) -> Scene*
+                {
+                    Unique<Scene>& scene = Scenes[level.Value];
+                    scene = Scene::Create(Types);
+                    return scene.get();
+                },
+                .ResolvePrefab = [](AssetId) -> Ref<Prefab> { return nullptr; },
+                .OnPossession =
+                    [this](Scene& world, const Entity pawn)
+                {
+                    // Attribute the possession to the join whose scene this is.
+                    for (const JoinId join : Host->Joins())
+                    {
+                        if (Host->World(join) == &world)
+                        {
+                            PawnByJoin[join] = pawn;
+                        }
+                    }
+                },
+                .Prediction = [](const Scene&, Entity) { return vector<Entity>{}; },
+            });
+        }
+
+        // Advance the join flow + apply each world's stream, then run the View-phase interpolation for
+        // every joined world so each remote pose tracks its own world's buffered snapshots.
+        void Frame(f64 now, f32 delta)
+        {
+            Host->Pump(now);
+            FakeContext ctx;
+            ctx.Role = NetRole::Client;
+            for (const JoinId join : Host->Joins())
+            {
+                if (Scene* world = Host->World(join))
+                {
+                    Interp.OnUpdate(*world, delta, ctx.Make());
+                }
+            }
+        }
+    };
+
+    // Pawns and moves each seat in its own world's scene; scenes are borrowed by WorldInstanceId value.
+    void DriveWorlds(ServerHost& host, const std::unordered_map<u64, Scene*>& scenes,
+                     const std::unordered_map<u64, f32>& dirByWorld, MovementSystem& movement,
+                     std::unordered_map<u64, Entity>& pawnByWorld, u64 tick, f32 delta)
+    {
+        for (const auto& [value, scene] : scenes)
+        {
+            scene->SetChangeTick(tick);
+        }
+        for (const ConnectionId id : host.Server().Connections())
+        {
+            for (const JoinId join : host.JoinsFor(id))
+            {
+                const WorldInstanceId world = host.WorldForJoin(id, join);
+                Scene& scene = *scenes.at(world.Value);
+                const Entity seat = host.SeatFor(id, join);
+                if (seat.IsNull())
+                {
+                    continue;
+                }
+                auto& possesses = scene.Get<Possesses>(seat);
+                if (possesses.Pawn.IsNull() || !scene.IsAlive(possesses.Pawn))
+                {
+                    const Entity pawn = scene.CreateEntity();
+                    scene.Add<Transform>(pawn);
+                    scene.Add<Intent>(pawn);
+                    scene.Add<Mover>(pawn);
+                    scene.Add<Authority>(pawn, Authority{.Tier = Tier::Server, .Owner = id});
+                    possesses.Pawn = pawn;
+                    pawnByWorld[world.Value] = pawn;
+                }
+                scene.Get<Intent>(possesses.Pawn).Move =
+                    vec3(dirByWorld.at(world.Value), 0.0f, 0.0f);
+            }
+        }
+        FakeContext ctx;
+        ctx.Role = NetRole::Server;
+        for (const auto& [value, scene] : scenes)
+        {
+            movement.OnUpdate(*scene, delta, ctx.Make());
+        }
+    }
+}
+
+TEST_CASE("One client multiplexes two worlds over one connection; identical NetIds route by JoinId")
+{
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+
+    TypeRegistry serverTypes;
+    RegisterBuiltinTypes(serverTypes);
+    Unique<Scene> sceneA = Scene::Create(serverTypes);
+    Unique<Scene> sceneB = Scene::Create(serverTypes);
+    const WorldInstanceId worldA{.Value = 1};
+    const WorldInstanceId worldB{.Value = 2};
+    const WorldKey keyA = WorldKey::FromU64(0xA);
+    const WorldKey keyB = WorldKey::FromU64(0xB);
+    const AssetId levelA{0x00000000000000A1ULL};
+    const AssetId levelB{0x00000000000000B2ULL};
+
+    Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
+        .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
+        .WorldId = worldA,
+        .Key = keyA,
+        .World = *sceneA,
+        .Assets = FakeAssets(),
+        .LevelId = levelA,
+        .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
+        .Interest = InterestSettings{.Radius = 0.0f},
+    });
+    REQUIRE(hostR.has_value());
+    Unique<ServerHost> host = std::move(*hostR);
+    host->AddWorld(
+        ServerWorldInfo{.WorldId = worldB,
+                        .Key = keyB,
+                        .World = *sceneB,
+                        .LevelId = levelB,
+                        .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
+                        .Interest = InterestSettings{.Radius = 0.0f}});
+
+    MultiplexClient client(*clientT);
+    const std::unordered_map<u64, Scene*> scenes{{worldA.Value, sceneA.get()},
+                                                 {worldB.Value, sceneB.get()}};
+    const std::unordered_map<u64, f32> dirs{{worldA.Value, 1.0f}, {worldB.Value, -1.0f}};
+    MovementSystem movement;
+    std::unordered_map<u64, Entity> pawnByWorld;
+    std::unordered_map<u64, InputJitterBuffer> jitter;
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    bool joined = false;
+    for (u64 tick = 1; tick <= 260; ++tick)
+    {
+        now += Delta;
+        DriveWorlds(*host, scenes, dirs, movement, pawnByWorld, tick, Delta);
+        host->Pump(now, tick);
+        IngestConnectionInputs(*host, jitter, InputJitterBuffer::Settings{}, serverTypes);
+        client.Frame(now, Delta);
+        if (!joined && client.Client->State() == ClientState::Connected)
+        {
+            client.Host->Join(keyA);
+            client.Host->Join(keyB);
+            joined = true;
+        }
+    }
+
+    // Both worlds joined over the one connection, each under its own JoinId.
+    REQUIRE(client.Host->Joins().size() == 2);
+    const JoinId joinA = client.Host->Joins()[0]; // keyA requested first ⇒ lower JoinId
+    const JoinId joinB = client.Host->Joins()[1];
+    Scene* clientA = client.Host->World(joinA);
+    Scene* clientB = client.Host->World(joinB);
+    REQUIRE(clientA != nullptr);
+    REQUIRE(clientB != nullptr);
+    CHECK(clientA != clientB);
+
+    // The two worlds allocate NetIds from their own counters, so the pawn shares a NetId value (2)
+    // across both worlds — proof the wire key is (JoinId, NetId), not NetId alone.
+    const NetId pawnNetA = sceneA->Get<NetIdentity>(pawnByWorld.at(worldA.Value)).Id;
+    const NetId pawnNetB = sceneB->Get<NetIdentity>(pawnByWorld.at(worldB.Value)).Id;
+    CHECK(pawnNetA == pawnNetB);
+
+    // The identical NetId routes to the correct scene by JoinId: join A's map resolves it to a pawn
+    // that moved +x in scene A, join B's to one that moved -x in scene B.
+    const Entity aPawn = client.Host->Replication(joinA).Map().Lookup(pawnNetA);
+    const Entity bPawn = client.Host->Replication(joinB).Map().Lookup(pawnNetB);
+    REQUIRE_FALSE(aPawn.IsNull());
+    REQUIRE_FALSE(bPawn.IsNull());
+    CHECK(clientA->IsAlive(aPawn));
+    CHECK(clientB->IsAlive(bPawn));
+    CHECK(clientA->Get<Transform>(aPawn).Position.x > 0.1f);
+    CHECK(clientB->Get<Transform>(bPawn).Position.x < -0.1f);
+
+    // Each joined world keeps its own clock: both per-JoinId controllers tracked a server tick.
+    CHECK(client.Host->LastServerTick(joinA) > 0);
+    CHECK(client.Host->LastServerTick(joinB) > 0);
+}
+
+TEST_CASE("A drop/reorder burst on the shared connection leaves both multiplexed worlds converging")
+{
+    auto [serverT, clientTBase] = LoopbackTransport::CreatePair();
+    // The whole connection (both worlds' streams) rides a lossy, reordering, duplicating link — the
+    // worlds share the channels, so the honest guarantee is convergence, not stream independence.
+    const FaultInjectionConfig faults{
+        .DropRate = 0.2f, .DuplicateRate = 0.1f, .ReorderRate = 0.15f, .Seed = 909};
+    FaultInjectionTransport clientLink(*clientTBase, faults);
+
+    TypeRegistry serverTypes;
+    RegisterBuiltinTypes(serverTypes);
+    Unique<Scene> sceneA = Scene::Create(serverTypes);
+    Unique<Scene> sceneB = Scene::Create(serverTypes);
+    const WorldInstanceId worldA{.Value = 1};
+    const WorldInstanceId worldB{.Value = 2};
+    const WorldKey keyA = WorldKey::FromU64(0xA);
+    const WorldKey keyB = WorldKey::FromU64(0xB);
+
+    Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
+        .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
+        .WorldId = worldA,
+        .Key = keyA,
+        .World = *sceneA,
+        .Assets = FakeAssets(),
+        .LevelId = AssetId{0x00000000000000A1ULL},
+        .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
+        .Interest = InterestSettings{.Radius = 0.0f},
+    });
+    REQUIRE(hostR.has_value());
+    Unique<ServerHost> host = std::move(*hostR);
+    host->AddWorld(
+        ServerWorldInfo{.WorldId = worldB,
+                        .Key = keyB,
+                        .World = *sceneB,
+                        .LevelId = AssetId{0x00000000000000B2ULL},
+                        .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
+                        .Interest = InterestSettings{.Radius = 0.0f}});
+
+    MultiplexClient client(clientLink);
+    const std::unordered_map<u64, Scene*> scenes{{worldA.Value, sceneA.get()},
+                                                 {worldB.Value, sceneB.get()}};
+    MovementSystem movement;
+    std::unordered_map<u64, Entity> pawnByWorld;
+    std::unordered_map<u64, InputJitterBuffer> jitter;
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    bool joined = false;
+    for (u64 tick = 1; tick <= 620; ++tick)
+    {
+        now += Delta;
+        // Drive both worlds, then halt with a long quiescent tail so the lossy latest-wins streams
+        // converge onto the stopped pose.
+        const f32 speed = tick < 420 ? 1.0f : 0.0f;
+        const std::unordered_map<u64, f32> dirs{{worldA.Value, speed}, {worldB.Value, -speed}};
+        DriveWorlds(*host, scenes, dirs, movement, pawnByWorld, tick, Delta);
+        host->Pump(now, tick);
+        IngestConnectionInputs(*host, jitter, InputJitterBuffer::Settings{}, serverTypes);
+        client.Frame(now, Delta);
+        if (!joined && client.Client->State() == ClientState::Connected)
+        {
+            client.Host->Join(keyA);
+            client.Host->Join(keyB);
+            joined = true;
+        }
+    }
+
+    REQUIRE(client.Host->Joins().size() == 2);
+    const JoinId joinA = client.Host->Joins()[0];
+    const JoinId joinB = client.Host->Joins()[1];
+    const NetId netA = sceneA->Get<NetIdentity>(pawnByWorld.at(worldA.Value)).Id;
+    const NetId netB = sceneB->Get<NetIdentity>(pawnByWorld.at(worldB.Value)).Id;
+    const Entity aPawn = client.Host->Replication(joinA).Map().Lookup(netA);
+    const Entity bPawn = client.Host->Replication(joinB).Map().Lookup(netB);
+    REQUIRE_FALSE(aPawn.IsNull());
+    REQUIRE_FALSE(bPawn.IsNull());
+
+    // Both worlds converged despite the loss burst — neither's baseline was corrupted by the other.
+    const vec3 serverA = sceneA->Get<Transform>(pawnByWorld.at(worldA.Value)).Position;
+    const vec3 serverB = sceneB->Get<Transform>(pawnByWorld.at(worldB.Value)).Position;
+    CHECK(glm::length(client.Host->World(joinA)->Get<Transform>(aPawn).Position - serverA) < 0.25f);
+    CHECK(glm::length(client.Host->World(joinB)->Get<Transform>(bPawn).Position - serverB) < 0.25f);
+    CHECK(serverA.x > 0.1f);  // A moved +x
+    CHECK(serverB.x < -0.1f); // B moved -x
+}
+
+namespace
+{
+    // A ServerHost whose worlds are all get-or-create factory-opened (a distinct scene per WorldKey),
+    // plus a never-joined primary. Tracks open/close counts so the convergence, cap, and reap
+    // behaviors can be asserted. The primary is registered under a key no client presents.
+    struct FactoryServer
+    {
+        TypeRegistry Types;
+        Unique<Scene> Primary;
+        Unique<ServerHost> Host;
+        std::unordered_map<u64, Unique<Scene>> Scenes; // factory scenes, by WorldInstanceId value
+        u64 NextWorld = 100;
+        u64 NextLevel = 0x1000;
+        u32 OpenCount = 0;
+        u32 CloseCount = 0;
+        vector<u64> Closed;
+        std::unordered_map<u64, InputJitterBuffer> Jitter;
+
+        explicit FactoryServer(Transport& transport, u32 maxHosted = 64, u32 maxPerConn = 4,
+                               f64 dwell = 5.0)
+        {
+            RegisterBuiltinTypes(Types);
+            Primary = Scene::Create(Types);
+            Result<Unique<ServerHost>> host = ServerHost::Create(ServerHostInfo{
+                .Server = ServerInfo{.TransportOverride = &transport, .Connection = FastConfig},
+                .WorldId = WorldInstanceId{.Value = 1},
+                .Key = WorldKey::FromU64(0xFFFFFFFFULL), // primary key, presented by no client
+                .World = *Primary,
+                .Assets = FakeAssets(),
+                .LevelId = LevelId,
+                .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
+                .Interest = InterestSettings{.Radius = 0.0f},
+                .MaxJoinedWorldsPerConnection = maxPerConn,
+                .MaxHostedWorlds = maxHosted,
+                .IdleKeepWarmDwell = dwell,
+                .WorldFactory = [this](const WorldKey&) -> optional<ServerWorldResolution>
+                {
+                    const u64 world = NextWorld++;
+                    const u64 level = NextLevel++;
+                    Unique<Scene>& scene = Scenes[world];
+                    scene = Scene::Create(Types);
+                    ++OpenCount;
+                    return ServerWorldResolution{
+                        .WorldId = WorldInstanceId{.Value = world},
+                        .World = scene.get(),
+                        .LevelId = AssetId{.Value = level},
+                        .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
+                        .Interest = InterestSettings{.Radius = 0.0f}};
+                },
+                .CloseWorld =
+                    [this](WorldInstanceId id)
+                {
+                    ++CloseCount;
+                    Closed.push_back(id.Value);
+                    Scenes.erase(id.Value);
+                },
+            });
+            REQUIRE(host.has_value());
+            Host = std::move(*host);
+        }
+
+        void Pump(f64 now, u64 tick)
+        {
+            Host->Pump(now, tick);
+            IngestConnectionInputs(*Host, Jitter, InputJitterBuffer::Settings{}, Types);
+        }
+    };
+}
+
+TEST_CASE("A second client presenting the same WorldKey converges on the existing instance")
+{
+    const auto hub = CreateRef<Hub>();
+    const u32 serverEndpoint = hub->Register();
+    auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
+    FactoryServer server(*serverT);
+
+    const WorldKey shared = WorldKey::FromU64(0x5EED);
+
+    auto clientTa = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    auto clientTb = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    ClientWorld clientA(*clientTa, shared);
+    ClientWorld clientB(*clientTb, shared);
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    for (u64 tick = 1; tick <= 120; ++tick)
+    {
+        now += Delta;
+        server.Pump(now, tick);
+        clientA.Frame(now, tick, Delta, std::nullopt);
+        clientB.Frame(now, tick, Delta, std::nullopt);
+    }
+
+    REQUIRE(clientA.Host->IsJoined());
+    REQUIRE(clientB.Host->IsJoined());
+
+    // The factory opened the shared world exactly once — the second presenter converged on it, not a
+    // second instance. The host holds the primary plus that one factory world.
+    CHECK(server.OpenCount == 1);
+    CHECK(server.Host->HostedWorldCount() == 2);
+    CHECK(server.Host->WorldFor(clientA.Client->AssignedId()) ==
+          server.Host->WorldFor(clientB.Client->AssignedId()));
+}
+
+TEST_CASE(
+    "A create-on-miss past MaxHostedWorlds is rejected; a join past the per-connection cap too")
+{
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+    // Primary + at most two factory worlds; a connection may join at most two worlds.
+    FactoryServer server(*serverT, /*maxHosted=*/3, /*maxPerConn=*/2);
+
+    MultiplexClient client(*clientT);
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    bool requested = false;
+    for (u64 tick = 1; tick <= 160; ++tick)
+    {
+        now += Delta;
+        server.Pump(now, tick);
+        client.Frame(now, Delta);
+        if (!requested && client.Client->State() == ClientState::Connected)
+        {
+            // Three distinct keys, but the per-connection cap is two: the third join is refused.
+            client.Host->Join(WorldKey::FromU64(0x1));
+            client.Host->Join(WorldKey::FromU64(0x2));
+            client.Host->Join(WorldKey::FromU64(0x3));
+            requested = true;
+        }
+    }
+
+    // The per-connection cap (2) bounds the joins that land; the server opened only those two worlds,
+    // never breaching the hosted-worlds cap.
+    CHECK(client.Host->Joins().size() == 2);
+    CHECK(server.OpenCount == 2);
+    CHECK(server.Host->HostedWorldCount() == 3); // primary + two factory worlds
+}
+
+TEST_CASE(
+    "A hosted world whose last join leaves is reaped after the idle dwell; a re-join reuses it")
+{
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+    constexpr f64 Dwell = 0.5;
+    FactoryServer server(*serverT, /*maxHosted=*/64, /*maxPerConn=*/4, Dwell);
+
+    const WorldKey key = WorldKey::FromU64(0xC0FFEE);
+
+    // A minimal client we can construct, join, and drop under test control.
+    const auto makeClient = [&](Unique<Net::Client>& client, Unique<ClientHost>& host,
+                                Unique<Scene>& scene, TypeRegistry& types)
+    {
+        RegisterBuiltinTypes(types);
+        client = *Net::Client::Connect(
+            ClientInfo{.TransportOverride = clientT.get(), .Connection = FastConfig});
+        host = ClientHost::Create(ClientHostInfo{
+            .Client = *client,
+            .Assets = FakeAssets(),
+            .WorldKey = key,
+            .LoadLevel = [&](AssetId) -> Scene*
+            {
+                scene = Scene::Create(types);
+                return scene.get();
+            },
+            .ResolvePrefab = [](AssetId) -> Ref<Prefab> { return nullptr; },
+        });
+    };
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+
+    {
+        Unique<Net::Client> client;
+        Unique<ClientHost> host;
+        Unique<Scene> scene;
+        TypeRegistry types;
+        makeClient(client, host, scene, types);
+        for (u64 tick = 1; tick <= 16 && !host->IsJoined(); ++tick)
+        {
+            now += Delta;
+            server.Pump(now, tick);
+            host->Pump(now);
+        }
+        REQUIRE(host->IsJoined());
+        CHECK(server.OpenCount == 1);
+        client->Disconnect();
+        // Advance a little past the disconnect but not yet the dwell: the world stays warm.
+        for (u64 tick = 17; tick <= 20; ++tick)
+        {
+            now += Delta;
+            host->Pump(now);
+            server.Pump(now, tick);
+        }
+        CHECK(server.CloseCount == 0);
+        CHECK(server.Host->HostedWorldCount() == 2); // primary + the warm factory world
+    }
+
+    // Advance well past the idle dwell with no joins: the factory world is reaped.
+    for (u64 tick = 21; tick <= 120; ++tick)
+    {
+        now += Delta;
+        server.Pump(now, tick);
+    }
+    CHECK(server.CloseCount == 1);
+    CHECK(server.Host->HostedWorldCount() == 1); // only the primary remains
+
+    // A re-join opens a fresh instance for the key (the old one was reaped past the dwell).
+    Unique<Net::Client> client2;
+    Unique<ClientHost> host2;
+    Unique<Scene> scene2;
+    TypeRegistry types2;
+    makeClient(client2, host2, scene2, types2);
+    for (u64 tick = 121; tick <= 140 && !host2->IsJoined(); ++tick)
+    {
+        now += Delta;
+        server.Pump(now, tick);
+        host2->Pump(now);
+    }
+    REQUIRE(host2->IsJoined());
+    CHECK(server.OpenCount == 2); // a second open: the reaped world did not survive the dwell
+}
+
+TEST_CASE("A join whose client-reconstructed world mismatches the echoed digest is rejected loudly")
+{
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+
+    TypeRegistry serverTypes;
+    RegisterBuiltinTypes(serverTypes);
+    Unique<Scene> serverScene = Scene::Create(serverTypes);
+
+    // The server's world carries a nonzero content digest; the client will reconstruct a different one.
+    Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
+        .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
+        .World = *serverScene,
+        .Assets = FakeAssets(),
+        .LevelId = LevelId,
+        .Digest = ContentDigest{.Lo = 0xDEADBEEF, .Hi = 0x1234},
+        .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
+    });
+    REQUIRE(hostR.has_value());
+    Unique<ServerHost> host = std::move(*hostR);
+
+    Unique<Net::Client> client = *Net::Client::Connect(
+        ClientInfo{.TransportOverride = clientT.get(), .Connection = FastConfig});
+
+    TypeRegistry clientTypes;
+    RegisterBuiltinTypes(clientTypes);
+    bool loaded = false;
+    Unique<ClientHost> clientHost = ClientHost::Create(ClientHostInfo{
+        .Client = *client,
+        .Assets = FakeAssets(),
+        // The client's own digest of the resolved world disagrees with the server's echoed one.
+        .WorldDigest = [](AssetId) { return ContentDigest{.Lo = 0x0}; },
+        .LoadLevel = [&](AssetId) -> Scene*
+        {
+            loaded = true;
+            return nullptr;
+        },
+        .ResolvePrefab = [](AssetId) -> Ref<Prefab> { return nullptr; },
+    });
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    for (u64 tick = 1; tick <= 30; ++tick)
+    {
+        now += Delta;
+        serverScene->SetChangeTick(tick);
+        host->Pump(now, tick);
+        clientHost->Pump(now);
+    }
+
+    // The connection is up, but the join was rejected on the digest mismatch: no level was ever
+    // loaded and no world was joined — the stream is never applied against a diverged scene.
+    REQUIRE(client->State() == ClientState::Connected);
+    CHECK_FALSE(loaded);
+    CHECK_FALSE(clientHost->IsJoined());
+    CHECK(clientHost->Joins().empty());
+}
+
+TEST_CASE("A peer with a stale ProtocolVersion is rejected at the connection handshake")
+{
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+
+    TypeRegistry serverTypes;
+    RegisterBuiltinTypes(serverTypes);
+    Unique<Scene> serverScene = Scene::Create(serverTypes);
+
+    Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
+        .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
+        .World = *serverScene,
+        .Assets = FakeAssets(),
+        .LevelId = LevelId,
+    });
+    REQUIRE(hostR.has_value());
+    Unique<ServerHost> host = std::move(*hostR);
+
+    // A client advertising a different protocol version is denied at the door.
+    Unique<Net::Client> client = *Net::Client::Connect(ClientInfo{
+        .ProtocolVersion = Net::ProtocolVersion + 1,
+        .TransportOverride = clientT.get(),
+        .Connection = FastConfig,
+    });
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    for (u64 tick = 1; tick <= 20 && client->State() == ClientState::Connecting; ++tick)
+    {
+        now += Delta;
+        serverScene->SetChangeTick(tick);
+        host->Pump(now, tick);
+        client->Pump(now);
+    }
+
+    CHECK(client->State() == ClientState::Denied);
+    REQUIRE(client->GetDenyReason().has_value());
+    CHECK(*client->GetDenyReason() == DenyReason::ProtocolMismatch);
+    CHECK(host->Server().Connections().empty());
+}
+
+TEST_CASE("Input tagged with an ungranted or garbage JoinId is dropped, not routed")
+{
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+    ServerWorld server(*serverT);
+    ClientWorld client(*clientT);
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+
+    // Join cleanly first.
+    for (u64 tick = 1; tick <= 20 && !client.Host->IsJoined(); ++tick)
+    {
+        now += Delta;
+        server.SimStep(tick, Delta);
+        server.NetPump(now, tick);
+        client.Frame(now, tick, Delta, std::nullopt);
+    }
+    REQUIRE(client.Host->IsJoined());
+    const ConnectionId id = client.Client->AssignedId();
+    const Entity seat = server.Host->SeatFor(id);
+    REQUIRE_FALSE(seat.IsNull());
+    const JoinId granted = client.Host->CurrentJoinId();
+
+    // Fire input tagged with an ungranted JoinId, a short/garbage frame, and an unmarked frame — each
+    // must be dropped before any routing, never feeding the seat and never faulting the server.
+    InputSendBuffer send(InputSendBuffer::Settings{.Redundancy = 3});
+    send.Stamp(1, MoveState(vec2(1.0f, 0.0f)));
+    for (u64 tick = 21; tick <= 50; ++tick)
+    {
+        now += Delta;
+        const auto ungranted = static_cast<JoinId>(granted + 7);
+        (void)client.Client->Server().Send(
+            Channel::UnreliableSequenced,
+            EncodeWorldEnvelope(ungranted, send.Encode(0, server.Types)));
+        (void)client.Client->Server().Send(Channel::UnreliableSequenced, vector<u8>{0x00, 0x01});
+        (void)client.Client->Server().Send(Channel::UnreliableSequenced,
+                                           vector<u8>(24, static_cast<u8>(tick)));
+        server.SimStep(tick, Delta);
+        server.NetPump(now, tick);
+        client.Client->Pump(now);
+    }
+
+    // The server is unscathed: the connection is live, the seat intact, and no ungranted input reached
+    // the seat's PlayerInput (the world's own move stayed zero, never the injected +x).
+    REQUIRE(server.Host->Server().Connections().size() == 1);
+    REQUIRE_FALSE(server.Host->SeatFor(id).IsNull());
+    if (server.World->Has<PlayerInput>(seat))
+    {
+        const vec2 fed = server.World->Get<PlayerInput>(seat).GetValue(MoveAction);
+        CHECK(glm::length(fed - vec2(1.0f, 0.0f)) > 1e-4f);
+    }
+
+    // A clean, correctly-tagged input after the garbage still feeds the seat — the drops were surgical.
+    bool fed = false;
+    for (u64 tick = 51; tick <= 90 && !fed; ++tick)
+    {
+        now += Delta;
+        client.Frame(now, tick, Delta, MoveState(vec2(1.0f, 0.0f)));
+        server.SimStep(tick, Delta);
+        server.NetPump(now, tick);
+        if (server.World->Has<PlayerInput>(seat) &&
+            glm::length(server.World->Get<PlayerInput>(seat).GetValue(MoveAction) -
+                        vec2(1.0f, 0.0f)) < 1e-4f)
+        {
+            fed = true;
+        }
+    }
+    CHECK(fed);
 }

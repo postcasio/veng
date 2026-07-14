@@ -18,7 +18,11 @@ namespace Veng::Net
     /// encoding). Any wire-visible change bumps it; there is no in-protocol negotiation — a peer
     /// advertising a different version is rejected loudly. It is the default local version an app
     /// advertises (overridable per Server/Client to force a stricter app-level parity check).
-    inline constexpr u32 ProtocolVersion = 1;
+    ///
+    /// Version 2 introduced the per-connection world-multiplexing envelope (a JoinId tag ahead of
+    /// each world-tagged payload) and the two-tier connection/join handshake, so the connection
+    /// accept no longer bakes in a single level or seat.
+    inline constexpr u32 ProtocolVersion = 2;
 
     /// @brief A server-assigned connection identifier: a per-session u32, never reused.
     ///
@@ -29,6 +33,37 @@ namespace Veng::Net
 
     /// @brief The reserved connection id meaning "the server itself, or no connection".
     inline constexpr ConnectionId ServerConnectionId = 0;
+
+    /// @brief A per-connection wire tag naming one joined world, framed ahead of every world message.
+    ///
+    /// Server-assigned when a connection joins a world, monotonic per connection and never reused
+    /// within it (so a stale datagram for a departed join is dropped, not misrouted to a recycled
+    /// tag). Its per-connection scope means it can never name another connection's worlds — the id
+    /// carried on the hot path, distinct from the process-local WorldInstanceId (never on the wire)
+    /// and the opaque WorldKey (only on the join request).
+    using JoinId = u16;
+
+    /// @brief The reserved JoinId meaning "connection/join control, not a world-tagged payload".
+    ///
+    /// The world-multiplexing envelope reserves zero: a payload tagged with it is a join-tier
+    /// control message (a join request/reply/deny), not world data. Real joins are assigned from one.
+    inline constexpr JoinId ControlJoinId = 0;
+
+    /// @brief Why a server refused a world join at the join tier — a per-request, logged rejection.
+    ///
+    /// Distinct from DenyReason (which refuses the whole connection at the door): a join deny leaves
+    /// the connection live and only refuses the one requested world.
+    enum class JoinDenyReason : u8
+    {
+        /// @brief The authorization hook refused this connection's join/create of the key.
+        NotAuthorized = 0,
+        /// @brief The connection is already at its MaxJoinedWorldsPerConnection.
+        PerConnectionCapReached = 1,
+        /// @brief Opening a new world for the key would exceed the server-wide MaxHostedWorlds.
+        HostedWorldsCapReached = 2,
+        /// @brief The key missed the shared map and no factory materialized a world for it.
+        NoSuchWorld = 3,
+    };
 
     /// @brief The content identity a client and server must share to interoperate.
     ///

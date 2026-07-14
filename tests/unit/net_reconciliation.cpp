@@ -22,6 +22,7 @@
 #include <Veng/Net/Reconciliation.h>
 #include <Veng/Net/Replication.h>
 #include <Veng/Net/Server.h>
+#include <Veng/Net/WorldEnvelope.h>
 #include <Veng/Reflection/Serialize.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/BuiltinTypes.h>
@@ -376,7 +377,7 @@ namespace
         Unique<Scene> World;
         Unique<ServerHost> Host;
         Ref<Prefab> PawnPrefab;
-        std::unordered_map<ConnectionId, InputJitterBuffer> Jitter;
+        std::unordered_map<u64, InputJitterBuffer> Jitter;
         std::unordered_map<ConnectionId, Entity> Pawns;
         MovementSystem Movement;
 
@@ -431,7 +432,7 @@ namespace
         {
             World->SetChangeTick(tick);
             RunSpawnRule();
-            FeedSeatInputs(*Host, Jitter, *World,
+            FeedSeatInputs(*Host, Jitter, WorldInstanceId{}, *World,
                            tick); // scheduled: confirms LastConsumedInputTick
 
             for (const auto& [id, pawn] : Pawns)
@@ -574,9 +575,11 @@ namespace
                 ctx.Role = NetRole::Client;
                 Interp.OnUpdate(*world, delta, ctx.Make());
             }
-            if (Client->State() == ClientState::Connected)
+            if (Client->State() == ClientState::Connected && Host->CurrentJoinId() != ControlJoinId)
             {
-                (void)Client->Server().Send(Channel::UnreliableSequenced, Send.Encode(0, Types));
+                (void)Client->Server().Send(
+                    Channel::UnreliableSequenced,
+                    EncodeWorldEnvelope(Host->CurrentJoinId(), Send.Encode(0, Types)));
             }
         }
     };

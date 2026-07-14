@@ -30,20 +30,6 @@ namespace Veng::Net
         ContentDigest Content;
     };
 
-    /// @brief The world-glue extras a server folds into an accepted connection's ConnectAccept.
-    ///
-    /// Returned by ServerInfo::OnAccept the moment a connection is accepted (its id is assigned but
-    /// the accept is not yet on the wire), so the join payload the client needs — which level to load
-    /// and which replicated seat is its own — rides the acceptance itself. A default (both zero)
-    /// leaves the accept a bare id, the standalone/no-world-glue behavior.
-    struct AcceptPayload
-    {
-        /// @brief The AssetId value of the level the accepted client loads, or 0 for none.
-        u64 LevelId = 0;
-        /// @brief The wire id of the client's own seat entity the server spawned, or 0 for none.
-        u32 SeatNetId = 0;
-    };
-
     /// @brief Configuration for a Server.
     struct ServerInfo
     {
@@ -57,12 +43,6 @@ namespace Veng::Net
         ContentDigest Content;
         /// @brief Optional app connect-policy hook; returning false denies the request AppRefused.
         function<bool(const ConnectRequestInfo&)> OnConnectRequest;
-        /// @brief Optional world-glue hook; fills the join payload folded into the ConnectAccept.
-        ///
-        /// Called once per accepted connection, synchronously, with the freshly assigned id, before
-        /// the accept is encoded — the seat-spawning glue populates the client's seat and returns its
-        /// wire id here. Unset leaves the accept a bare id (the standalone path).
-        function<AcceptPayload(ConnectionId)> OnAccept;
         /// @brief Optional transport to listen on instead of a bound UdpTransport (the loopback/test seam).
         Transport* TransportOverride = nullptr;
         /// @brief Optional network simulation wrapping the bound transport (the launcher's --netsim).

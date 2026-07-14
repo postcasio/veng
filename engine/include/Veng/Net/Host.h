@@ -10,6 +10,7 @@
 #include <Veng/Net/Reconciliation.h>
 #include <Veng/Net/Replication.h>
 #include <Veng/Net/Server.h>
+#include <Veng/Net/WorldKey.h>
 #include <Veng/Result.h>
 #include <Veng/Scene/Entity.h>
 #include <Veng/Veng.h>
@@ -17,42 +18,55 @@
 
 #include <span>
 
-// Veng/Net/Host.h — the world glue that makes a connection a seat and join a sequence.
+// Veng/Net/Host.h — the world glue that multiplexes N worlds over one connection.
 //
 // The lifecycle layer (Server/Client) and the replication layer (ReplicationServer/Client) are
 // world-agnostic — they move bytes and diff scenes. ServerHost and ClientHost are the thin policy
-// objects that bind them to game worlds: the server spawns a seat entity per connection and gates
-// its replication stream on readiness; the client loads the accepted level, acks, applies the
-// spawn stream, and wires its local presentation to its own replicated seat.
+// objects that bind them to game worlds. A client joins a world by an opaque WorldKey; the server
+// resolves it through a get-or-create factory, assigns a per-connection JoinId, spawns the
+// connection's seat in that world, and gates that world's stream on a per-world ClientReady. Every
+// world-tagged message rides the world-multiplexing envelope (a JoinId ahead of the payload), so N
+// worlds share one connection's two reliability channels.
 //
 // Replication is per world, owned by the Host: a ServerHost holds one ReplicationServer per hosted
-// world and a connection→world binding, demuxing each connection's inbound traffic to its world's
-// instance and muxing its sends back; a ClientHost owns the one ReplicationClient for the world it
-// joined. Because an instance only ever sees its own world's connections and acks, ack-scoping and
-// baseline isolation are structural — one world's ack can never advance a peer world's baseline.
-// A custom app can own the hosts directly; Application mounts them as the plug-and-play path.
-// Socket-free — every socket type stays behind the Transport seam.
+// world, the shared WorldKey → WorldInstanceId map, and a (connection, JoinId) → world binding,
+// demuxing each connection's inbound traffic by JoinId to the right world's instance and muxing its
+// sends back; a ClientHost owns one ReplicationClient per joined world. Because an instance only
+// ever sees its own world's connections and acks, ack-scoping and baseline isolation are structural
+// — one world's ack can never advance a peer world's baseline (their wire streams remain coupled on
+// the shared channels, so the honest guarantee is convergence, not stream independence). A custom
+// app can own the hosts directly; Application mounts them as the plug-and-play path. Socket-free —
+// every socket type stays behind the Transport seam.
+//
+// This layer widens the blast radius of the transport's pre-existing unauthenticated posture: an
+// attacker spoofing an established connection's UDP source reaches every world that connection has
+// joined, not one. The authorization hook is a policy seam, not a security mechanism; the scope
+// stays LAN/trusted, and a transport-security layer is where such a defense would sit.
 
 namespace Veng
 {
     class Scene;
     class AssetManager;
 
-    /// @brief One hosted world's seat rule and replication cadence, added to a ServerHost.
+    /// @brief One hosted world's scene, seat rule, replication cadence, and content digest.
     ///
     /// A ServerHost hosts one world at Create (from its ServerHostInfo) and any number more through
-    /// AddWorld. Each carries its own ReplicationServer, NetId allocator, seat prefab, level, and
-    /// interest filter, so its replication state is wholly its own. The shared Net::Server and asset
-    /// manager come from the host, not from here.
+    /// AddWorld or its get-or-create factory. Each carries its own ReplicationServer, NetId
+    /// allocator, seat prefab, level, and interest filter, so its replication state is wholly its
+    /// own. The shared Net::Server and asset manager come from the host, not from here.
     struct ServerWorldInfo
     {
         /// @brief The WorldInstanceId this hosted world's replication instance is keyed by.
         WorldInstanceId WorldId;
+        /// @brief The opaque key clients present to join this world; keys the shared get-or-create map.
+        Net::WorldKey Key;
         /// @brief The server scene the host spawns this world's seats into; must outlive the host.
         Scene& World;
-        /// @brief The AssetId of the level a client joining this world loads (named in its ConnectAccept).
+        /// @brief The AssetId of the level a client joining this world loads (named in its join reply).
         AssetId LevelId;
-        /// @brief The seat template spawned per connection; null spawns a bare Viewer+Possesses seat.
+        /// @brief The content digest echoed to a joining client to validate its reconstructed world.
+        Net::ContentDigest Digest;
+        /// @brief The seat template spawned per join; null spawns a bare Viewer+Possesses seat.
         Ref<Prefab> SeatPrefab;
         /// @brief If valid, each seat's Spawn rides this prefab id so the client instantiates it too.
         AssetId SeatPrefabId;
@@ -64,27 +78,54 @@ namespace Veng
         Net::InterestPolicy InterestPolicy;
     };
 
+    /// @brief A world the get-or-create factory materialized for a WorldKey, returned to the ServerHost.
+    ///
+    /// The factory drives the consumer's world runner directly (opening a scene on a miss) and hands
+    /// the ServerHost the borrowed scene plus the per-world replication configuration; the ServerHost
+    /// wraps it with a ReplicationServer, records the shared key mapping, and closes it through the
+    /// info's CloseWorld hook when the world idles out. The scene must outlive the join.
+    struct ServerWorldResolution
+    {
+        /// @brief The process-local id the consumer minted for the opened world.
+        WorldInstanceId WorldId;
+        /// @brief The opened world's scene; borrowed, must outlive the join.
+        Scene* World = nullptr;
+        /// @brief The AssetId of the level a joining client loads, or the invalid id.
+        AssetId LevelId;
+        /// @brief The content digest echoed to a joining client to validate its reconstructed world.
+        Net::ContentDigest Digest;
+        /// @brief The seat template spawned per join; null spawns a bare Viewer+Possesses seat.
+        Ref<Prefab> SeatPrefab;
+        /// @brief If valid, each seat's Spawn rides this prefab id so the client instantiates it too.
+        AssetId SeatPrefabId;
+        /// @brief The replication cadence for this world's ReplicationServer.
+        ReplicationServer::Settings Replication;
+        /// @brief The per-connection interest filter; Radius 0 replicates the whole world.
+        Net::InterestSettings Interest;
+        /// @brief The game hook adding entities to each connection's interest set; unset adds none.
+        Net::InterestPolicy InterestPolicy;
+    };
+
     /// @brief Configuration for a ServerHost: the shared server plus its initial hosted world.
     struct ServerHostInfo
     {
         /// @brief The underlying Net::Server configuration (transport, connection timing, parity).
-        ///
-        /// The host installs its own OnAccept (routing the connection to a world, spawning its seat,
-        /// and naming the accept's join payload); any OnAccept set here is overwritten.
         Net::ServerInfo Server;
         /// @brief The WorldInstanceId of the initial hosted world (its replication instance's key).
         ///
-        /// Also the primary world: the default SelectWorld target, and the world Replication() and
-        /// Allocator() resolve. Left zero, the single hosted world is keyed by the invalid id — valid
-        /// as an internal key for a lone world.
+        /// Also the primary world: the one Replication() and Allocator() resolve, registered under Key.
         WorldInstanceId WorldId;
+        /// @brief The opaque key the initial world is registered under (the single-world default key).
+        Net::WorldKey Key = Net::DefaultWorldKey;
         /// @brief The server scene the host spawns the initial world's seats into; must outlive the host.
         Scene& World;
         /// @brief The asset manager the seat prefab's dependencies resolve through at spawn.
         AssetManager& Assets;
-        /// @brief The AssetId of the level accepted clients load (named in the initial world's ConnectAccept).
+        /// @brief The AssetId of the level accepted clients load (named in the initial world's join reply).
         AssetId LevelId;
-        /// @brief The seat template spawned per connection; null spawns a bare Viewer+Possesses seat.
+        /// @brief The content digest echoed to a client joining the initial world, for validation.
+        Net::ContentDigest Digest;
+        /// @brief The seat template spawned per join; null spawns a bare Viewer+Possesses seat.
         Ref<Prefab> SeatPrefab;
         /// @brief If valid, each seat's Spawn rides this prefab id so the client instantiates it too.
         AssetId SeatPrefabId;
@@ -94,30 +135,44 @@ namespace Veng
         Net::InterestSettings Interest;
         /// @brief The game hook adding entities to each connection's interest set; unset adds none.
         Net::InterestPolicy InterestPolicy;
-        /// @brief Routes a newly accepted connection to the hosted world it joins; unset binds every
-        /// connection to the primary world (WorldId).
+        /// @brief The most worlds one connection may join; a join past it is denied PerConnectionCapReached.
+        u32 MaxJoinedWorldsPerConnection = 4;
+        /// @brief The server-wide bound on total live worlds; a create-on-miss past it is denied HostedWorldsCapReached.
+        u32 MaxHostedWorlds = 64;
+        /// @brief Seconds a world with no live joins is held warm before it is reaped (CloseWorld).
+        f64 IdleKeepWarmDwell = 5.0;
+        /// @brief The authorization hook: may this connection join/create this key? Unset allows all.
         ///
-        /// Called synchronously at accept, before the seat is spawned. The returned world must be one
-        /// the host holds (added at Create or through AddWorld). This is where the server decides a
-        /// connection's world in the absence of a client-presented selector.
-        function<WorldInstanceId(Net::ConnectionId)> SelectWorld;
+        /// Called before any cap check, world open, or JoinId assignment, so a refusal leaves no
+        /// resource to reap. A policy seam, not a security mechanism (the transport is unauthenticated).
+        function<bool(Net::ConnectionId, const Net::WorldKey&)> Authorize;
+        /// @brief The get-or-create factory: materialize a world for a key that missed the shared map.
+        ///
+        /// Called only on a miss, after the caps clear, to open a new world through the consumer's
+        /// runner; returning nullopt denies the join NoSuchWorld. Unset means only pre-registered
+        /// worlds (Create + AddWorld) can be joined. A hit reuses the existing instance, so two
+        /// connections presenting the same key converge on one shared world.
+        function<optional<ServerWorldResolution>(const Net::WorldKey&)> WorldFactory;
+        /// @brief Closes a factory-opened world when it idles out; unset leaves the world open.
+        ///
+        /// Invoked with a factory-opened world's id once it has been join-less past IdleKeepWarmDwell,
+        /// so the consumer's runner can close it (WorldRunner::CloseWorld). Pre-registered worlds
+        /// (Create + AddWorld) are never reaped — the consumer owns their lifetime.
+        function<void(WorldInstanceId)> CloseWorld;
     };
 
-    /// @brief Server-side join glue: a connection becomes a seat in its world; readiness gates its stream.
+    /// @brief Server-side join glue: a connection joins worlds by WorldKey; readiness gates each stream.
     ///
-    /// On accept the host routes the connection to a hosted world (SelectWorld, or the primary world),
-    /// spawns a Viewer seat entity in that world — Authority{ Server, Owner = connectionId } and no
-    /// SeatInput (a remote seat's input arrives from the wire) — assigns its wire id from that world's
-    /// allocator, and names it (with the world's level) in the ConnectAccept. The game mode's own spawn
-    /// rule pawns the pawnless seat with no net awareness. Each Pump generates and sends the replication
-    /// stream for every connection that has acked ClientReady, drawing from the connection's world's
-    /// ReplicationServer, so a client that never readies holds no stream (and is reaped by the Server's
-    /// timeout). On disconnect the seat is destroyed in its world and the event surfaced; pawn cleanup
-    /// is a game rule over that event.
-    ///
-    /// Replication is one instance per hosted world: each only ever sees its own world's connections
-    /// and acks, so a connection's ack advances only its world's baseline and one world's replication
-    /// state can never cross into a peer's.
+    /// On a join request the host resolves the opaque WorldKey in a fixed order — authorize, per-
+    /// connection cap, server-wide cap, get-or-create through the factory — then assigns a
+    /// per-connection JoinId, spawns a Viewer seat in that world (Authority{ Server, Owner = id }, no
+    /// SeatInput — a remote seat's input arrives from the wire), and replies with the world's level,
+    /// a content digest, and the seat's wire id. The game mode's own spawn rule pawns the pawnless
+    /// seat with no net awareness. Each Pump generates and sends the replication stream for every
+    /// (connection, join) that has acked its per-world ClientReady, demuxing inbound datagrams by
+    /// JoinId to the right world's ReplicationServer and dropping a datagram whose JoinId the
+    /// connection was never granted. On disconnect every join's seat is destroyed and the event
+    /// surfaced; a world whose last join leaves is held warm then reaped.
     class VE_API ServerHost
     {
     public:
@@ -131,22 +186,23 @@ namespace Veng
         ServerHost(const ServerHost&) = delete;
         ServerHost& operator=(const ServerHost&) = delete;
 
-        /// @brief Hosts an additional world with its own ReplicationServer, allocator, and seat rule.
+        /// @brief Pre-registers an additional world under its key, with its own ReplicationServer.
         ///
-        /// The world becomes a valid SelectWorld target: connections routed to it get their seats
-        /// spawned into its scene and their stream from its replication instance. Adding a world with
-        /// an already-hosted WorldId replaces its configuration.
-        /// @param world  The world's scene, level, seat rule, replication cadence, and interest filter.
+        /// The world becomes joinable by its key: a join request naming it spawns the connection's
+        /// seat into its scene and streams from its replication instance. A pre-registered world is
+        /// never idle-reaped (the consumer owns its lifetime); registering a key already mapped
+        /// replaces its configuration.
+        /// @param world  The world's key, scene, level, seat rule, replication cadence, and interest.
         void AddWorld(const ServerWorldInfo& world);
 
-        /// @brief Pumps one frame: send this tick's stream to ready seats, then advance the server.
+        /// @brief Pumps one frame: send each ready join's stream, then advance the server.
         ///
-        /// Assigns wire ids to any newly spawned authoritative entities (the pawns the game's spawn
-        /// rule added), generates and queues each ready connection's replication messages, pumps the
-        /// transport (flushing those sends, accepting new connections — which spawns their seats —
-        /// and reaping dead ones), tears down a disconnected connection's seat, and folds a
-        /// ClientReady into the readiness gate. The caller sets the scene's change tick for @p tick
-        /// before calling.
+        /// Assigns wire ids to newly spawned authoritative entities per world, generates and queues
+        /// each ready (connection, join)'s replication messages (each wrapped in its JoinId envelope),
+        /// pumps the transport, resolves inbound join requests (authorize → caps → get-or-create →
+        /// seat + JoinId + reply), folds each per-world ClientReady into its readiness gate, tears down
+        /// a disconnected connection's seats, and reaps idle factory worlds. The caller sets each
+        /// world's change tick for @p tick before calling.
         /// @param now   Monotonic time in seconds (injected).
         /// @param tick  The current server sim tick (the snapshot cadence and header time).
         void Pump(f64 now, u64 tick);
@@ -157,30 +213,72 @@ namespace Veng
         /// @brief The primary hosted world's replication server (the initial world's instance).
         [[nodiscard]] ReplicationServer& Replication();
 
-        /// @brief The replication server for the world a connection is bound to (its demux target).
+        /// @brief The replication server for the world a connection's current (first) join resolves to.
         ///
-        /// The instance a connection's inbound acks and outbound stream route through. Falls back to
-        /// the primary world's instance for an unbound id (a no-op there, since it tracks no such
-        /// connection).
-        /// @param id  The connection whose world's replication is resolved.
+        /// The current-join convenience: a single-join connection's one world. Falls back to the
+        /// primary world's instance for a connection with no joins.
+        /// @param id  The connection whose current join's replication is resolved.
         [[nodiscard]] ReplicationServer& ReplicationFor(Net::ConnectionId id);
 
+        /// @brief The replication server for a specific (connection, join) — the inbound demux target.
+        /// @param id    The connection.
+        /// @param join  The JoinId (granted to @p id); falls back to the primary world if ungranted.
+        [[nodiscard]] ReplicationServer& ReplicationForJoin(Net::ConnectionId id, Net::JoinId join);
+
         /// @brief The replication server for a specific hosted world.
-        /// @param world  A hosted world's id (from Create or AddWorld).
+        /// @param world  A hosted world's id (from Create, AddWorld, or the factory).
         [[nodiscard]] ReplicationServer& ReplicationForWorld(WorldInstanceId world);
 
-        /// @brief The world a connection was bound to at accept, or an invalid id if unbound.
+        /// @brief The world a connection's current (first) join resolves to, or an invalid id if none.
         /// @param id  The connection to resolve.
         [[nodiscard]] WorldInstanceId WorldFor(Net::ConnectionId id) const;
+
+        /// @brief The world a specific (connection, join) resolves to, or an invalid id if ungranted.
+        /// @param id    The connection.
+        /// @param join  The JoinId to resolve.
+        [[nodiscard]] WorldInstanceId WorldForJoin(Net::ConnectionId id, Net::JoinId join) const;
 
         /// @brief The primary hosted world's wire-id allocator (the initial world's instance).
         [[nodiscard]] NetIdAllocator& Allocator();
 
-        /// @brief The seat entity spawned for a connection, or Entity::Null for an unknown id.
+        /// @brief The wire-id allocator for a specific hosted world.
+        /// @param world  A hosted world's id.
+        [[nodiscard]] NetIdAllocator& AllocatorForWorld(WorldInstanceId world);
+
+        /// @brief The seat entity for a connection's current (first) join, or Entity::Null.
+        /// @param id  The connection to resolve.
         [[nodiscard]] Entity SeatFor(Net::ConnectionId id) const;
 
-        /// @brief Whether a connection has acked ClientReady (its stream is flowing).
+        /// @brief The seat entity for a specific (connection, join), or Entity::Null if ungranted.
+        /// @param id    The connection.
+        /// @param join  The JoinId to resolve.
+        [[nodiscard]] Entity SeatFor(Net::ConnectionId id, Net::JoinId join) const;
+
+        /// @brief The JoinId of a connection's current (first) join, or ControlJoinId if it has none.
+        /// @param id  The connection to resolve.
+        [[nodiscard]] Net::JoinId CurrentJoin(Net::ConnectionId id) const;
+
+        /// @brief The JoinIds a connection has been granted, in ascending order.
+        /// @param id  The connection to resolve.
+        /// @return The granted JoinIds, empty for a connection with no joins.
+        [[nodiscard]] vector<Net::JoinId> JoinsFor(Net::ConnectionId id) const;
+
+        /// @brief Whether a JoinId was granted to a connection (the inbound-demux gate).
+        /// @param id    The connection.
+        /// @param join  The JoinId to test.
+        [[nodiscard]] bool IsGranted(Net::ConnectionId id, Net::JoinId join) const;
+
+        /// @brief Whether a connection's current (first) join has acked its ClientReady.
+        /// @param id  The connection to resolve.
         [[nodiscard]] bool IsReady(Net::ConnectionId id) const;
+
+        /// @brief Whether a specific (connection, join) has acked its ClientReady (its stream flows).
+        /// @param id    The connection.
+        /// @param join  The JoinId to test.
+        [[nodiscard]] bool IsReady(Net::ConnectionId id, Net::JoinId join) const;
+
+        /// @brief The number of currently live hosted worlds (pre-registered plus factory-opened).
+        [[nodiscard]] usize HostedWorldCount() const;
 
         /// @brief The lifecycle events surfaced this Pump, for game policy (e.g. pawn cleanup).
         /// @return A view valid until the next Pump.
@@ -195,19 +293,37 @@ namespace Veng
     };
 
     /// @brief Configuration for a ClientHost: the connection plus the world-load and wiring hooks.
+    ///
+    /// The hooks apply per joined world (keyed by JoinId); a single-world session auto-joins one key
+    /// on connect and drives them through the current-join convenience accessors. A multiplexed
+    /// client presents further keys through ClientHost::Join.
     struct ClientHostInfo
     {
         /// @brief The connection to the server; must outlive the host.
         Net::Client& Client;
         /// @brief The asset manager a replicated prefab spawn resolves through.
         AssetManager& Assets;
-        /// @brief Loads the accepted level into the caller's client scene, with authoritative entities skipped.
+        /// @brief The world to auto-join on connect (the single-world default key).
+        Net::WorldKey WorldKey = Net::DefaultWorldKey;
+        /// @brief Whether to auto-join WorldKey once the connection is accepted.
         ///
-        /// Invoked once, when the accept arrives, with the level's AssetId — the app loads the level
-        /// (in practice Level::LoadInto with SkipServerAuthoritative) into a scene it owns elsewhere
-        /// (a WorldRunner world) and returns a borrowed pointer to it. The host does not own the scene;
-        /// it applies the spawn stream into the borrowed one, which must outlive the host. Null on a
-        /// load failure.
+        /// True is the single-world convenience: the host requests WorldKey the moment it connects. A
+        /// client that drives its own joins (through ClientHost::Join) sets this false.
+        bool AutoJoin = true;
+        /// @brief Computes the digest the client validates against the join reply's echoed world digest.
+        ///
+        /// Given the level id the reply named, returns the client's own digest of its reconstructed
+        /// world; a mismatch rejects the join loudly (no stream is applied). Unset returns the zero
+        /// digest, which matches a content-free server world.
+        function<Net::ContentDigest(AssetId)> WorldDigest;
+        /// @brief Loads the joined world's level into the caller's client scene, authoritative entities skipped.
+        ///
+        /// Invoked per join, when the join reply arrives, with the level's AssetId — the app loads the
+        /// level (in practice Level::LoadInto with SkipServerAuthoritative) into a scene it owns
+        /// elsewhere (a WorldRunner world) and returns a borrowed pointer to it. The host does not own
+        /// the scene; it applies the spawn stream into the borrowed one, which must outlive the host.
+        /// Null on a load failure. A multiplexed client distinguishes joins by the level id (or the
+        /// returned scene) it hands back here.
         function<Scene*(AssetId)> LoadLevel;
         /// @brief Resolves a replicated spawn's prefab AssetId to a resident Prefab (the spawn arm).
         function<Ref<Prefab>(AssetId)> ResolvePrefab;
@@ -237,24 +353,33 @@ namespace Veng
         ///
         /// The estimator converts RTT/jitter seconds into a tick lead at TickRate, so it must match
         /// the world's SimTickRate; MarginTicks carries the fixed safety lead beyond the round-trip
-        /// estimate (the snapshot-cadence staleness plus the buffered-input cushion).
+        /// estimate (the snapshot-cadence staleness plus the buffered-input cushion). Applied to every
+        /// joined world's controller.
         Net::TickSyncSettings TickSync;
+        /// @brief The spatial dequantization grid every joined world's replication client decodes with.
+        ///
+        /// Must match the server's ReplicationServer::Settings::Quantization; the host threads the
+        /// shared GameNetInfo value onto each join's ReplicationClient as it is created.
+        Net::QuantizationSettings Quantization;
     };
 
-    /// @brief Client-side join glue: load, ready, apply the stream, wire the own seat.
+    /// @brief Client-side join glue: join by WorldKey, load, ready, apply each world's stream.
     ///
-    /// Once the connection is accepted the host loads the named level (server-authoritative entities
-    /// skipped — they arrive from the stream), acks ClientReady, and thereafter applies the reliable
-    /// spawn/despawn stream and the unreliable snapshots into the client scene. It watches for its
-    /// own seat (named by the accept's SeatNetId) to bind, then keeps the local presentation wired to
-    /// that seat's replicated Possesses — respawns and vehicle swaps arrive as ordinary Possesses
-    /// state, with no bespoke message.
+    /// Once the connection is accepted the host requests the auto-join world (unless AutoJoin is off),
+    /// naming it by WorldKey. On the join reply it validates the echoed content digest against its own
+    /// reconstruction (rejecting a mismatch loudly), loads the named level (server-authoritative
+    /// entities skipped — they arrive from the stream), acks a per-world ClientReady, and thereafter
+    /// applies that world's reliable spawn/despawn stream and its unreliable snapshots — each demuxed
+    /// by its JoinId. It watches for the join's own seat (named by the reply's SeatNetId) to bind,
+    /// then keeps the local presentation wired to that seat's replicated Possesses, with no bespoke
+    /// message.
     ///
-    /// On each possession change it also promotes the predicted set (the possessed pawn plus the
-    /// subtree the PredictionPolicy selects) from Remote to Predicted and tracks it in the owned
-    /// PredictionHistory, demoting the prior set. The authority filter then runs the real Sim systems
-    /// for the predicted set client-side each tick, so the local pawn responds on the tick its input
-    /// is sampled; RecordPrediction captures the per-tick input and state for reconciliation.
+    /// Each joined world keeps its own ReplicationClient, NetId map, prediction history, and
+    /// tick-offset controller — identity and clock scope per JoinId. A single-world session drives the
+    /// current-join convenience accessors (the one and only join); a multiplexed client keys by
+    /// JoinId. On each possession change the join's predicted set (the possessed pawn plus the subtree
+    /// the PredictionPolicy selects) is promoted Remote → Predicted and tracked, and RecordPrediction
+    /// captures the per-tick input and state for that world's reconciliation.
     class VE_API ClientHost
     {
     public:
@@ -268,64 +393,102 @@ namespace Veng
         ClientHost(const ClientHost&) = delete;
         ClientHost& operator=(const ClientHost&) = delete;
 
-        /// @brief Pumps one frame: advance the connection, load-on-accept, apply the stream, wire the seat.
+        /// @brief Requests joining a world by its opaque key; the reply assigns its JoinId.
+        ///
+        /// Queues a join request the next Pump sends (or sends it now if already connected). The join
+        /// reply — validated and loaded through the info hooks — assigns the JoinId under which the
+        /// world's accessors key. Presenting a key already joined is idempotent. The auto-join issues
+        /// this for WorldKey on connect; a multiplexed client calls it per additional world.
+        /// @param key  The opaque world to join.
+        void Join(const Net::WorldKey& key);
+
+        /// @brief Pumps one frame: advance the connection, resolve join replies, apply each stream.
         /// @param now  Monotonic time in seconds (injected).
         void Pump(f64 now);
 
-        /// @brief The borrowed client scene the join loaded into, or nullptr before the accept loads it.
+        /// @brief The JoinIds this client currently holds, in ascending order.
+        /// @return The joined worlds' JoinIds, empty before the first join lands.
+        [[nodiscard]] vector<Net::JoinId> Joins() const;
+
+        /// @brief The JoinId of the current (first) joined world, or ControlJoinId before any lands.
+        [[nodiscard]] Net::JoinId CurrentJoinId() const;
+
+        /// @brief The current join's client scene, or nullptr before the first join loads it.
         [[nodiscard]] Scene* World() const;
 
-        /// @brief The owned replication client (its NetId → Entity map, spawn arm).
+        /// @brief A specific join's client scene, or nullptr for an unknown JoinId.
+        /// @param join  The JoinId to resolve.
+        [[nodiscard]] Scene* World(Net::JoinId join) const;
+
+        /// @brief The current join's replication client (its NetId → Entity map, spawn arm).
         [[nodiscard]] ReplicationClient& Replication();
 
-        /// @brief The client's own seat entity once it binds, or Entity::Null.
+        /// @brief A specific join's replication client; asserts on an unknown JoinId.
+        /// @param join  The JoinId to resolve.
+        [[nodiscard]] ReplicationClient& Replication(Net::JoinId join);
+
+        /// @brief The current join's own seat entity once it binds, or Entity::Null.
         [[nodiscard]] Entity Seat() const;
 
-        /// @brief The pawn the own seat currently possesses (as last wired), or Entity::Null.
+        /// @brief A specific join's own seat entity once it binds, or Entity::Null.
+        /// @param join  The JoinId to resolve.
+        [[nodiscard]] Entity Seat(Net::JoinId join) const;
+
+        /// @brief The pawn the current join's own seat possesses (as last wired), or Entity::Null.
         [[nodiscard]] Entity PossessedPawn() const;
 
-        /// @brief The prediction history recording the predicted set's per-tick input and state.
-        ///
-        /// The client's tracked (predicted) set is registered here on each possession change; the
-        /// per-tick RecordPrediction captures into it, and reconciliation restores/replays from it.
+        /// @brief The prediction history for the current join's predicted set.
         [[nodiscard]] Net::PredictionHistory& History();
 
-        /// @brief The prediction history (read-only) — its tracked set and recorded ticks.
+        /// @brief The prediction history (read-only) for the current join's predicted set.
         [[nodiscard]] const Net::PredictionHistory& History() const;
 
-        /// @brief Records the predicted set's state and the local seat's input for a client tick.
-        ///
-        /// Called once per client Sim tick, after the predicted movement has run: captures every
-        /// tracked entity's replicated state alongside the local input seat's resolved PlayerInput for
-        /// @p tick, so a later reconciliation can restore and replay. A no-op before any pawn is
-        /// promoted (an empty tracked set) or before the world loads.
+        /// @brief The prediction history for a specific join; asserts on an unknown JoinId.
+        /// @param join  The JoinId to resolve.
+        [[nodiscard]] Net::PredictionHistory& History(Net::JoinId join);
+
+        /// @brief Records the current join's predicted state and local input for a client tick.
         /// @param tick  The client sim tick whose predicted state and input are recorded.
         void RecordPrediction(u64 tick);
 
-        /// @brief Whether the level has loaded and readiness has been acked.
+        /// @brief Records a specific join's predicted state and local input for a client tick.
+        /// @param join  The JoinId whose predicted set is recorded.
+        /// @param tick  The client sim tick whose predicted state and input are recorded.
+        void RecordPrediction(Net::JoinId join, u64 tick);
+
+        /// @brief Whether the current (first) join has loaded and acked its readiness.
         [[nodiscard]] bool IsJoined() const;
 
-        /// @brief The highest server sim tick a snapshot has carried, or 0 before the first.
-        ///
-        /// The tick-offset controller compares the client's own tick against this to size its lead.
+        /// @brief Whether a specific join has loaded and acked its readiness.
+        /// @param join  The JoinId to test.
+        [[nodiscard]] bool IsJoined(Net::JoinId join) const;
+
+        /// @brief The highest server sim tick a snapshot has carried for the current join, or 0.
         [[nodiscard]] u64 LastServerTick() const;
 
-        /// @brief The client tick-offset controller — smoothed RTT/jitter and the running estimate.
-        ///
-        /// Fed by ObserveTickSync each frame; read for the target lead and bounded slew. The estimate
-        /// is inert until a driver applies the slew to its sim clock.
+        /// @brief The highest server sim tick a snapshot has carried for a specific join, or 0.
+        /// @param join  The JoinId to resolve.
+        [[nodiscard]] u64 LastServerTick(Net::JoinId join) const;
+
+        /// @brief The current join's tick-offset controller — smoothed RTT/jitter and the running estimate.
         [[nodiscard]] const Net::TickOffsetEstimator& TickSync() const;
 
-        /// @brief Folds this frame's link state into the tick-offset controller and returns the slew.
-        ///
-        /// Observes the connection's smoothed RTT and the freshest server tick against @p clientTick,
-        /// updating TickSync(). A no-op returning 1.0 (no slew) before the connection is established
-        /// or before any server tick has arrived.
+        /// @brief A specific join's tick-offset controller; asserts on an unknown JoinId.
+        /// @param join  The JoinId to resolve.
+        [[nodiscard]] const Net::TickOffsetEstimator& TickSync(Net::JoinId join) const;
+
+        /// @brief Folds this frame's link state into the current join's tick-offset controller.
         /// @param clientTick  The client's current sim tick.
         /// @return The bounded step multiplier to apply next tick, or 1.0 when not yet syncing.
         f32 ObserveTickSync(u64 clientTick);
 
-        /// @brief Sets the closed-loop feedback trim on the tick-offset controller, in ticks.
+        /// @brief Folds this frame's link state into a specific join's tick-offset controller.
+        /// @param join        The JoinId whose controller is updated.
+        /// @param clientTick  The client's current sim tick.
+        /// @return The bounded step multiplier, or 1.0 when not yet syncing.
+        f32 ObserveTickSync(Net::JoinId join, u64 clientTick);
+
+        /// @brief Sets the closed-loop feedback trim on the current join's tick-offset controller.
         /// @param trimTicks  The server's consumed-input early/late correction.
         void SetTickSyncFeedback(f32 trimTicks);
 

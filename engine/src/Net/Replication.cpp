@@ -11,6 +11,7 @@
 #include <Veng/Scene/RemoteInterpolationSystem.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/SceneClone.h>
+#include <Veng/Net/WorldEnvelope.h>
 
 #include <algorithm>
 #include <new>
@@ -787,7 +788,7 @@ namespace Veng
                 record.insert(record.end(), comps.begin(), comps.end());
 
                 if (currentHasRecords &&
-                    current.size() + record.size() > Net::MaxUnreliableMessageSize)
+                    current.size() + record.size() > Net::MaxEnvelopedUnreliablePayload)
                 {
                     messages.push_back(ReplicationMessage{
                         .Channel = Net::Channel::UnreliableSequenced, .Bytes = std::move(current)});

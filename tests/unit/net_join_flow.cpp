@@ -81,25 +81,43 @@ TEST_CASE("The accept spawns a connection-owned Viewer seat with no SeatInput, a
     Unique<Client> client =
         *Client::Connect(ClientInfo{.TransportOverride = clientT.get(), .Connection = Config});
 
+    // The seat spawns when the client joins a world by key, not at the connection accept. A minimal
+    // ClientHost auto-joins the default key; its LoadLevel captures the level named in the join reply.
+    TypeRegistry clientTypes;
+    RegisterBuiltinTypes(clientTypes);
+    Unique<Scene> clientScene;
+    AssetId requestedLevel;
+    Unique<ClientHost> clientHost = ClientHost::Create(ClientHostInfo{
+        .Client = *client,
+        .Assets = FakeAssets(),
+        .LoadLevel = [&](AssetId requested) -> Scene*
+        {
+            requestedLevel = requested;
+            clientScene = Scene::Create(clientTypes);
+            return clientScene.get();
+        },
+        .ResolvePrefab = [](AssetId) -> Ref<Prefab> { return nullptr; },
+    });
+
     f64 now = 0.0;
-    for (u64 tick = 1; tick <= 8 && client->State() == ClientState::Connecting; ++tick)
+    for (u64 tick = 1; tick <= 12 && !clientHost->IsJoined(); ++tick)
     {
         now += 1.0 / 60.0;
         serverScene->SetChangeTick(tick);
         (*host)->Pump(now, tick);
-        client->Pump(now);
+        clientHost->Pump(now);
     }
 
     REQUIRE(client->State() == ClientState::Connected);
+    REQUIRE(clientHost->IsJoined());
 
-    // The accept names the level and the client's own seat wire id.
-    CHECK(client->LevelId().Value == levelId.Value);
+    // The join reply named the level the client loaded.
+    CHECK(requestedLevel.Value == levelId.Value);
     const ConnectionId id = client->AssignedId();
     const Entity seat = (*host)->SeatFor(id);
     REQUIRE_FALSE(seat.IsNull());
     const u32 seatNetId = serverScene->Get<NetIdentity>(seat).Id;
     CHECK(seatNetId != InvalidNetId);
-    CHECK(client->SeatNetId() == seatNetId);
 
     // The seat is a Viewer owned by the connection, with the SeatInput stripped (the remote path).
     CHECK(serverScene->Has<Viewer>(seat));
@@ -299,15 +317,31 @@ TEST_CASE("Disconnect tears the seat down and surfaces the event")
     Unique<Client> client =
         *Client::Connect(ClientInfo{.TransportOverride = clientT.get(), .Connection = Config});
 
+    // A ClientHost auto-joins the default world so a seat is spawned to tear down.
+    TypeRegistry clientTypes;
+    RegisterBuiltinTypes(clientTypes);
+    Unique<Scene> clientScene;
+    Unique<ClientHost> clientHost = ClientHost::Create(ClientHostInfo{
+        .Client = *client,
+        .Assets = FakeAssets(),
+        .LoadLevel = [&](AssetId) -> Scene*
+        {
+            clientScene = Scene::Create(clientTypes);
+            return clientScene.get();
+        },
+        .ResolvePrefab = [](AssetId) -> Ref<Prefab> { return nullptr; },
+    });
+
     f64 now = 0.0;
-    for (u64 tick = 1; tick <= 8 && client->State() == ClientState::Connecting; ++tick)
+    for (u64 tick = 1; tick <= 12 && !clientHost->IsJoined(); ++tick)
     {
         now += 1.0 / 60.0;
         serverScene->SetChangeTick(tick);
         (*host)->Pump(now, tick);
-        client->Pump(now);
+        clientHost->Pump(now);
     }
     REQUIRE(client->State() == ClientState::Connected);
+    REQUIRE(clientHost->IsJoined());
 
     const ConnectionId id = client->AssignedId();
     const Entity seat = (*host)->SeatFor(id);
@@ -318,7 +352,7 @@ TEST_CASE("Disconnect tears the seat down and surfaces the event")
     client->Disconnect();
 
     bool sawDisconnect = false;
-    for (u64 tick = 9; tick <= 20; ++tick)
+    for (u64 tick = 13; tick <= 30; ++tick)
     {
         now += 1.0 / 60.0;
         serverScene->SetChangeTick(tick);

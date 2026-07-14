@@ -81,7 +81,7 @@ namespace Veng::Net
             OwnedTransport; // non-null when Create bound its own socket (or its NetSim wrapper)
         UdpTransport* OwnedUdp = nullptr;       // the bound socket, for LocalPort()
         FaultInjectionTransport* Sim = nullptr; // the --netsim wrapper, advanced each Pump
-        Transport* Transport = nullptr;   // owned or overridden — the listen transport
+        Transport* Transport = nullptr;         // owned or overridden — the listen transport
         ConnectionId NextId = ServerConnectionId + 1;
         vector<Unique<PeerConnection>> Connections;
         vector<ConnectionId> EstablishedIds;
@@ -193,12 +193,9 @@ namespace Veng::Net
             record.Id = NextId;
             NextId += 1;
             record.Established = true;
-            // Let the world glue spawn this connection's seat and name the join payload folded into
-            // the accept — the seat's wire id and the level to load ride the acceptance itself.
-            const AcceptPayload payload =
-                Info.OnAccept ? Info.OnAccept(record.Id) : AcceptPayload{};
-            const vector<u8> accept = EncodeConnectAccept(ConnectAcceptMessage{
-                .Id = record.Id, .LevelId = payload.LevelId, .SeatNetId = payload.SeatNetId});
+            // The connection accept establishes the link only; which world the client loads and which
+            // seat is its own ride the per-world join reply, not this acceptance.
+            const vector<u8> accept = EncodeConnectAccept(ConnectAcceptMessage{.Id = record.Id});
             (void)record.Conn->Send(Channel::ReliableOrdered, accept);
             Events.push_back(NetEvent{.Type = NetEventType::Connected, .Id = record.Id});
             Log::Info("Net::Server accepted connection {}", record.Id);

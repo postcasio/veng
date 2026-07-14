@@ -1,11 +1,16 @@
 #include <Veng/Net/Host.h>
 
 #include <Veng/Asset/Prefab.h>
+#include <Veng/Log.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
+#include "Handshake.h"
+#include <Veng/Net/WorldEnvelope.h>
 
+#include <algorithm>
+#include <map>
 #include <span>
 #include <unordered_map>
 #include <utility>
@@ -79,9 +84,9 @@ namespace Veng
             return found;
         }
 
-        // The client→server readiness message: a single-byte reliable frame the Server surfaces as an
-        // app reliable message (its id sits clear of the ControlMessageType 1–4 and the replication
-        // Spawn/Despawn 16/17 ranges, so no layer mistakes it for its own).
+        // The client→server per-world readiness message: a single-byte payload the ServerHost gates
+        // its per-join stream on. Rides the world-multiplexing envelope tagged with its JoinId, so its
+        // id need only stay clear of the replication Spawn/Despawn message ids inside a world payload.
         constexpr u8 ClientReadyMessageId = 32;
 
         vector<u8> EncodeClientReady()
@@ -89,9 +94,9 @@ namespace Veng
             return vector<u8>{ClientReadyMessageId};
         }
 
-        bool IsClientReady(std::span<const u8> message)
+        bool IsClientReady(std::span<const u8> payload)
         {
-            return message.size() == 1 && message[0] == ClientReadyMessageId;
+            return payload.size() == 1 && payload[0] == ClientReadyMessageId;
         }
     }
 
@@ -100,41 +105,65 @@ namespace Veng
     struct ServerHost::State
     {
         // One hosted world: its scene, seat rule, and its own replication instance and wire-id space.
-        // The replication and allocator are per world, so a world's baselines and NetIds never cross
-        // into a peer's.
+        // A factory-opened world is idle-reaped once its live-join count reaches zero and the dwell
+        // elapses; a pre-registered world (Create + AddWorld) is never reaped — the consumer owns it.
         struct HostedWorld
         {
             WorldInstanceId Id;
+            Net::WorldKey Key;
             Scene* World = nullptr;
             AssetId LevelId;
+            Net::ContentDigest Digest;
             Ref<Prefab> SeatPrefab;
             AssetId SeatPrefabId;
             ReplicationServer Replication;
             NetIdAllocator Allocator;
             Net::InterestSettings InterestSettings;
             Net::InterestPolicy InterestPolicy;
+            bool FactoryOpened = false;
+            u32 JoinRefs = 0;
+            optional<f64> IdleSince; // set (factory-opened only) when JoinRefs reaches zero
         };
 
-        // One connection's world binding, seat, readiness gate, and interest bookkeeping.
-        struct SeatState
+        // One (connection, join): the joined world, the seat spawned in it, the readiness gate, and
+        // the per-join interest bookkeeping.
+        struct JoinState
         {
+            Net::JoinId Join = Net::ControlJoinId;
             WorldInstanceId World;
             Entity Seat = Entity::Null;
             bool Ready = false;
             Net::InterestState Interest;
         };
 
+        // One connection's joins, its per-connection JoinId allocator, and the WorldKey → JoinId
+        // dedupe so a repeat join of the same key is idempotent.
+        struct ConnectionState
+        {
+            std::map<Net::JoinId, JoinState> Joins; // ordered, so the first is the current-join
+            std::unordered_map<Net::WorldKey, Net::JoinId> KeyToJoin;
+            Net::JoinId NextJoin = 1; // monotonic per connection, never reused, one reserved
+        };
+
+        Net::ServerInfo InfoServer;
         AssetManager* Assets = nullptr;
         Unique<Net::Server> Server;
 
-        // The hosted worlds keyed by WorldInstanceId value; the primary is the default routing target
-        // and what the no-arg accessors resolve. SelectWorld routes an accepted connection to one of
-        // these; unset, every connection binds to the primary.
+        // The shared WorldKey → WorldInstanceId map (convergence: two connections presenting one key
+        // hit one world) and the hosted worlds keyed by WorldInstanceId value. The primary is the
+        // initial world the no-arg accessors resolve.
+        std::unordered_map<Net::WorldKey, WorldInstanceId> KeyMap;
         std::unordered_map<u64, HostedWorld> Worlds;
         WorldInstanceId Primary;
-        function<WorldInstanceId(Net::ConnectionId)> SelectWorld;
 
-        std::unordered_map<Net::ConnectionId, SeatState> Connections;
+        u32 MaxJoinedWorldsPerConnection = 4;
+        u32 MaxHostedWorlds = 64;
+        f64 IdleKeepWarmDwell = 5.0;
+        function<bool(Net::ConnectionId, const Net::WorldKey&)> Authorize;
+        function<optional<ServerWorldResolution>(const Net::WorldKey&)> WorldFactory;
+        function<void(WorldInstanceId)> CloseWorld;
+
+        std::unordered_map<Net::ConnectionId, ConnectionState> Connections;
         vector<Net::NetEvent> Events;
 
         HostedWorld& WorldOf(WorldInstanceId id)
@@ -144,11 +173,39 @@ namespace Veng
             return it->second;
         }
 
-        // The connection's interest set this snapshot: the spatial query around its pawn ∪ the
-        // always-relevant entities ∪ the policy hook ∪ the entities it owns. Empty optional when
-        // interest is off (Radius 0), so Generate replicates the whole world.
+        [[nodiscard]] HostedWorld* TryWorldOf(WorldInstanceId id)
+        {
+            const auto it = Worlds.find(id.Value);
+            return it != Worlds.end() ? &it->second : nullptr;
+        }
+
+        // The current-join convenience: a connection's first (lowest) granted join, or nullptr.
+        [[nodiscard]] JoinState* CurrentJoinState(Net::ConnectionId id)
+        {
+            const auto it = Connections.find(id);
+            if (it == Connections.end() || it->second.Joins.empty())
+            {
+                return nullptr;
+            }
+            return &it->second.Joins.begin()->second;
+        }
+
+        [[nodiscard]] JoinState* JoinStateOf(Net::ConnectionId id, Net::JoinId join)
+        {
+            const auto it = Connections.find(id);
+            if (it == Connections.end())
+            {
+                return nullptr;
+            }
+            const auto jit = it->second.Joins.find(join);
+            return jit != it->second.Joins.end() ? &jit->second : nullptr;
+        }
+
+        // The connection's interest set for a joined world this snapshot: the spatial query around its
+        // pawn ∪ the always-relevant entities ∪ the policy hook ∪ the entities it owns. Empty optional
+        // when interest is off (Radius 0), so Generate replicates the whole world.
         optional<set<NetId>> ComputeInterest(HostedWorld& world, Net::ConnectionId id,
-                                             SeatState& seat)
+                                             JoinState& join)
         {
             Scene& scene = *world.World;
             if (world.InterestSettings.Radius <= 0.0f)
@@ -156,7 +213,7 @@ namespace Veng
                 return std::nullopt;
             }
 
-            const Entity seatEntity = seat.Seat;
+            const Entity seatEntity = join.Seat;
             Entity pawn = Entity::Null;
             if (!seatEntity.IsNull() && scene.IsAlive(seatEntity))
             {
@@ -209,13 +266,13 @@ namespace Veng
             }
 
             return Net::UpdateInterest(spatial, alwaysRelevant, extra, world.InterestSettings,
-                                       seat.Interest);
+                                       join.Interest);
         }
 
-        // Spawns a seat into the connection's world: a Viewer seat with Authority{ Server, Owner = id }
-        // and no SeatInput (its input arrives from the wire). Returns the seat's freshly assigned wire
-        // id, drawn from that world's allocator.
-        u32 SpawnSeat(HostedWorld& world, Net::ConnectionId id)
+        // Spawns a seat into a joined world: a Viewer seat with Authority{ Server, Owner = id } and no
+        // SeatInput (its input arrives from the wire). Returns the seat's freshly assigned wire id,
+        // drawn from that world's allocator.
+        u32 SpawnSeat(HostedWorld& world, Net::ConnectionId id, Entity& outSeat)
         {
             Scene& scene = *world.World;
             Entity seat = Entity::Null;
@@ -264,21 +321,176 @@ namespace Veng
                 scene.Add<NetIdentity>(seat).Id = netId;
             }
 
-            Connections[id] = SeatState{.World = world.Id, .Seat = seat, .Ready = false};
+            outSeat = seat;
             return netId;
         }
 
-        Net::AcceptPayload OnAccept(Net::ConnectionId id)
+        // Resolves a join request in the fixed order (idempotent hit, authorize, per-connection cap,
+        // hosted-worlds cap on a new-world open, get-or-create), then assigns a JoinId and spawns the
+        // seat. Sends the reply (accept or deny) enveloped at the join-control tier.
+        void ResolveJoin(Net::ConnectionId id, const Net::JoinRequestMessage& request)
         {
-            const WorldInstanceId target = SelectWorld ? SelectWorld(id) : Primary;
-            HostedWorld& world = WorldOf(target);
-            const u32 seatNetId = SpawnSeat(world, id);
+            ConnectionState& conn = Connections[id];
+
+            const auto deny = [&](Net::JoinDenyReason reason)
+            {
+                const vector<u8> payload = Net::EncodeJoinDeny(
+                    Net::JoinDenyMessage{.RequestToken = request.RequestToken, .Reason = reason});
+                (void)Server->Get(id).Send(Net::Channel::ReliableOrdered,
+                                           Net::EncodeWorldEnvelope(Net::ControlJoinId, payload));
+                Log::Warn("ServerHost denying join for connection {}: reason {}", id,
+                          static_cast<u32>(reason));
+            };
+
+            // Idempotent: a repeat join of the same key re-accepts with the existing JoinId.
+            if (const auto existing = conn.KeyToJoin.find(request.Key);
+                existing != conn.KeyToJoin.end())
+            {
+                const JoinState& join = conn.Joins.at(existing->second);
+                HostedWorld& world = WorldOf(join.World);
+                const NetId seatNet = world.World->Has<NetIdentity>(join.Seat)
+                                          ? world.World->Get<NetIdentity>(join.Seat).Id
+                                          : InvalidNetId;
+                const vector<u8> payload = Net::EncodeJoinAccept(
+                    Net::JoinAcceptMessage{.RequestToken = request.RequestToken,
+                                           .Join = join.Join,
+                                           .LevelId = world.LevelId.Value,
+                                           .WorldDigest = world.Digest,
+                                           .SeatNetId = seatNet});
+                (void)Server->Get(id).Send(Net::Channel::ReliableOrdered,
+                                           Net::EncodeWorldEnvelope(Net::ControlJoinId, payload));
+                return;
+            }
+
+            if (Authorize && !Authorize(id, request.Key))
+            {
+                deny(Net::JoinDenyReason::NotAuthorized);
+                return;
+            }
+            if (conn.Joins.size() >= MaxJoinedWorldsPerConnection)
+            {
+                deny(Net::JoinDenyReason::PerConnectionCapReached);
+                return;
+            }
+
+            WorldInstanceId worldId;
+            const auto mapped = KeyMap.find(request.Key);
+            if (mapped != KeyMap.end())
+            {
+                worldId = mapped->second;
+            }
+            else
+            {
+                // A new-world open is bounded by the server-wide cap, checked before the factory runs.
+                if (Worlds.size() >= MaxHostedWorlds)
+                {
+                    deny(Net::JoinDenyReason::HostedWorldsCapReached);
+                    return;
+                }
+                if (!WorldFactory)
+                {
+                    deny(Net::JoinDenyReason::NoSuchWorld);
+                    return;
+                }
+                optional<ServerWorldResolution> resolved = WorldFactory(request.Key);
+                if (!resolved || resolved->World == nullptr)
+                {
+                    deny(Net::JoinDenyReason::NoSuchWorld);
+                    return;
+                }
+                worldId = resolved->WorldId;
+                Worlds.emplace(worldId.Value,
+                               HostedWorld{.Id = worldId,
+                                           .Key = request.Key,
+                                           .World = resolved->World,
+                                           .LevelId = resolved->LevelId,
+                                           .Digest = resolved->Digest,
+                                           .SeatPrefab = resolved->SeatPrefab,
+                                           .SeatPrefabId = resolved->SeatPrefabId,
+                                           .Replication = ReplicationServer(resolved->Replication),
+                                           .InterestSettings = resolved->Interest,
+                                           .InterestPolicy = resolved->InterestPolicy,
+                                           .FactoryOpened = true});
+                KeyMap.emplace(request.Key, worldId);
+            }
+
+            HostedWorld& world = WorldOf(worldId);
+            const Net::JoinId joinId = conn.NextJoin;
+            conn.NextJoin += 1;
+
+            Entity seat = Entity::Null;
+            const u32 seatNetId = SpawnSeat(world, id, seat);
             world.Replication.AddConnection(id);
             if (world.SeatPrefabId.IsValid())
             {
                 world.Replication.SetEntityPrefab(seatNetId, world.SeatPrefabId);
             }
-            return Net::AcceptPayload{.LevelId = world.LevelId.Value, .SeatNetId = seatNetId};
+            conn.Joins.emplace(joinId, JoinState{.Join = joinId, .World = worldId, .Seat = seat});
+            conn.KeyToJoin.emplace(request.Key, joinId);
+
+            world.JoinRefs += 1;
+            world.IdleSince.reset();
+
+            const vector<u8> payload =
+                Net::EncodeJoinAccept(Net::JoinAcceptMessage{.RequestToken = request.RequestToken,
+                                                             .Join = joinId,
+                                                             .LevelId = world.LevelId.Value,
+                                                             .WorldDigest = world.Digest,
+                                                             .SeatNetId = seatNetId});
+            (void)Server->Get(id).Send(Net::Channel::ReliableOrdered,
+                                       Net::EncodeWorldEnvelope(Net::ControlJoinId, payload));
+            Log::Info("ServerHost accepted connection {} into world {} as join {}", id,
+                      worldId.Value, joinId);
+        }
+
+        // Releases a join from its world: destroys the seat and drops the world's live-join refcount,
+        // starting the idle dwell for a factory world that just emptied.
+        void ReleaseJoin(Net::ConnectionId id, JoinState& join, f64 now)
+        {
+            HostedWorld* world = TryWorldOf(join.World);
+            if (world == nullptr)
+            {
+                return;
+            }
+            if (!join.Seat.IsNull() && world->World->IsAlive(join.Seat))
+            {
+                world->World->DestroyEntity(join.Seat);
+            }
+            world->Replication.RemoveConnection(id);
+            if (world->JoinRefs > 0)
+            {
+                world->JoinRefs -= 1;
+            }
+            if (world->JoinRefs == 0 && world->FactoryOpened)
+            {
+                world->IdleSince = now;
+            }
+        }
+
+        // Reaps every factory-opened world that has been join-less past the idle dwell — closing it
+        // through the consumer's CloseWorld hook and dropping its key mapping so a re-join cold-opens.
+        void ReapIdleWorlds(f64 now)
+        {
+            vector<WorldInstanceId> reap;
+            for (auto& [value, world] : Worlds)
+            {
+                if (world.FactoryOpened && world.JoinRefs == 0 && world.IdleSince &&
+                    now - *world.IdleSince >= IdleKeepWarmDwell)
+                {
+                    reap.push_back(world.Id);
+                }
+            }
+            for (const WorldInstanceId id : reap)
+            {
+                const HostedWorld& world = WorldOf(id);
+                const Net::WorldKey key = world.Key;
+                if (CloseWorld)
+                {
+                    CloseWorld(id);
+                }
+                KeyMap.erase(key);
+                Worlds.erase(id.Value);
+            }
         }
     };
 
@@ -291,21 +503,26 @@ namespace Veng
         auto state = CreateUnique<State>();
         state->Assets = &info.Assets;
         state->Primary = info.WorldId;
-        state->SelectWorld = info.SelectWorld;
+        state->MaxJoinedWorldsPerConnection = info.MaxJoinedWorldsPerConnection;
+        state->MaxHostedWorlds = info.MaxHostedWorlds;
+        state->IdleKeepWarmDwell = info.IdleKeepWarmDwell;
+        state->Authorize = info.Authorize;
+        state->WorldFactory = info.WorldFactory;
+        state->CloseWorld = info.CloseWorld;
         state->Worlds.emplace(info.WorldId.Value,
                               State::HostedWorld{.Id = info.WorldId,
+                                                 .Key = info.Key,
                                                  .World = &info.World,
                                                  .LevelId = info.LevelId,
+                                                 .Digest = info.Digest,
                                                  .SeatPrefab = info.SeatPrefab,
                                                  .SeatPrefabId = info.SeatPrefabId,
                                                  .Replication = ReplicationServer(info.Replication),
                                                  .InterestSettings = info.Interest,
                                                  .InterestPolicy = info.InterestPolicy});
+        state->KeyMap.emplace(info.Key, info.WorldId);
 
-        State* raw = state.get();
         Net::ServerInfo serverInfo = info.Server;
-        serverInfo.OnAccept = [raw](Net::ConnectionId id) { return raw->OnAccept(id); };
-
         Result<Unique<Net::Server>> server = Net::Server::Create(serverInfo);
         if (!server.has_value())
         {
@@ -321,13 +538,16 @@ namespace Veng
         m_State->Worlds.insert_or_assign(
             world.WorldId.Value,
             State::HostedWorld{.Id = world.WorldId,
+                               .Key = world.Key,
                                .World = &world.World,
                                .LevelId = world.LevelId,
+                               .Digest = world.Digest,
                                .SeatPrefab = world.SeatPrefab,
                                .SeatPrefabId = world.SeatPrefabId,
                                .Replication = ReplicationServer(world.Replication),
                                .InterestSettings = world.Interest,
                                .InterestPolicy = world.InterestPolicy});
+        m_State->KeyMap.insert_or_assign(world.Key, world.WorldId);
     }
 
     void ServerHost::Pump(f64 now, u64 tick)
@@ -336,65 +556,91 @@ namespace Veng
         s.Events.clear();
 
         // Assign wire ids to entities the spawn rule added this tick (the pawns), per world from its
-        // own allocator, then generate and queue each ready connection's stream from its world's
-        // replication instance — the Pump below flushes the queued sends.
+        // own allocator, then generate and queue each ready (connection, join)'s stream from its
+        // world's replication instance — each message wrapped in its JoinId envelope so the peer
+        // demuxes it to the right world.
         for (auto& [value, world] : s.Worlds)
         {
             AssignServerNetIds(*world.World, world.Allocator);
         }
-        for (auto& [id, seat] : s.Connections)
+        for (auto& [id, conn] : s.Connections)
         {
-            if (!seat.Ready)
+            for (auto& [joinId, join] : conn.Joins)
             {
-                continue;
-            }
-            State::HostedWorld& world = s.WorldOf(seat.World);
-            const optional<set<NetId>> interest = s.ComputeInterest(world, id, seat);
-            for (const ReplicationMessage& message : world.Replication.Generate(
-                     id, *world.World, tick, interest ? &*interest : nullptr))
-            {
-                (void)s.Server->Get(id).Send(message.Channel, message.Bytes);
+                if (!join.Ready)
+                {
+                    continue;
+                }
+                State::HostedWorld& world = s.WorldOf(join.World);
+                const optional<set<NetId>> interest = s.ComputeInterest(world, id, join);
+                for (const ReplicationMessage& message : world.Replication.Generate(
+                         id, *world.World, tick, interest ? &*interest : nullptr))
+                {
+                    (void)s.Server->Get(id).Send(message.Channel,
+                                                 Net::EncodeWorldEnvelope(joinId, message.Bytes));
+                }
             }
         }
 
-        // Receive + handshake (OnAccept spawns seats) + flush + reap.
+        // Receive + connection handshake + flush + reap dead peers.
         s.Server->Pump(now);
 
-        // Tear down a disconnected connection's seat in its world; surface every lifecycle event.
         for (const Net::NetEvent& event : s.Server->Events())
         {
-            if (event.Type == Net::NetEventType::Disconnected)
+            if (event.Type == Net::NetEventType::Connected)
+            {
+                s.Connections.try_emplace(event.Id);
+            }
+            else if (event.Type == Net::NetEventType::Disconnected)
             {
                 const auto it = s.Connections.find(event.Id);
                 if (it != s.Connections.end())
                 {
-                    State::HostedWorld& world = s.WorldOf(it->second.World);
-                    const Entity seat = it->second.Seat;
-                    if (!seat.IsNull() && world.World->IsAlive(seat))
+                    for (auto& [joinId, join] : it->second.Joins)
                     {
-                        world.World->DestroyEntity(seat);
+                        s.ReleaseJoin(event.Id, join, now);
                     }
-                    world.Replication.RemoveConnection(event.Id);
                     s.Connections.erase(it);
                 }
             }
             s.Events.push_back(event);
         }
 
-        // A ClientReady opens a connection's stream.
+        // Resolve join requests and fold each per-world ClientReady into its readiness gate. Both ride
+        // the world-multiplexing envelope: a join-control tier (ControlJoinId) frame is a join
+        // request; a world-tagged frame is world data (the ClientReady), gated on the granted set.
         for (const Net::ConnectionId id : s.Server->Connections())
         {
             for (const vector<u8>& message : s.Server->ReliableAppMessages(id))
             {
-                if (IsClientReady(message))
+                const optional<Net::WorldEnvelope> env = Net::DecodeWorldEnvelope(message);
+                if (!env)
                 {
-                    if (const auto it = s.Connections.find(id); it != s.Connections.end())
+                    continue; // short/garbage frame — dropped before any routing
+                }
+                if (env->Join == Net::ControlJoinId)
+                {
+                    if (Net::PeekJoinType(env->Payload) == Net::JoinMessageType::JoinRequest)
                     {
-                        it->second.Ready = true;
+                        if (const optional<Net::JoinRequestMessage> request =
+                                Net::DecodeJoinRequest(env->Payload))
+                        {
+                            s.ResolveJoin(id, *request);
+                        }
                     }
+                    continue;
+                }
+                // World-tagged data on the reliable channel: only the per-world ClientReady. Gate on
+                // the granted set — a tag the connection was never granted is dropped, not routed.
+                if (State::JoinState* join = s.JoinStateOf(id, env->Join);
+                    join != nullptr && IsClientReady(env->Payload))
+                {
+                    join->Ready = true;
                 }
             }
         }
+
+        s.ReapIdleWorlds(now);
     }
 
     Net::Server& ServerHost::Server()
@@ -409,10 +655,14 @@ namespace Veng
 
     ReplicationServer& ServerHost::ReplicationFor(Net::ConnectionId id)
     {
-        const auto it = m_State->Connections.find(id);
-        const WorldInstanceId world =
-            it != m_State->Connections.end() ? it->second.World : m_State->Primary;
-        return m_State->WorldOf(world).Replication;
+        const State::JoinState* join = m_State->CurrentJoinState(id);
+        return m_State->WorldOf(join != nullptr ? join->World : m_State->Primary).Replication;
+    }
+
+    ReplicationServer& ServerHost::ReplicationForJoin(Net::ConnectionId id, Net::JoinId join)
+    {
+        const State::JoinState* state = m_State->JoinStateOf(id, join);
+        return m_State->WorldOf(state != nullptr ? state->World : m_State->Primary).Replication;
     }
 
     ReplicationServer& ServerHost::ReplicationForWorld(WorldInstanceId world)
@@ -422,8 +672,14 @@ namespace Veng
 
     WorldInstanceId ServerHost::WorldFor(Net::ConnectionId id) const
     {
-        const auto it = m_State->Connections.find(id);
-        return it != m_State->Connections.end() ? it->second.World : WorldInstanceId{};
+        const State::JoinState* join = m_State->CurrentJoinState(id);
+        return join != nullptr ? join->World : WorldInstanceId{};
+    }
+
+    WorldInstanceId ServerHost::WorldForJoin(Net::ConnectionId id, Net::JoinId join) const
+    {
+        const State::JoinState* state = m_State->JoinStateOf(id, join);
+        return state != nullptr ? state->World : WorldInstanceId{};
     }
 
     NetIdAllocator& ServerHost::Allocator()
@@ -431,16 +687,63 @@ namespace Veng
         return m_State->WorldOf(m_State->Primary).Allocator;
     }
 
+    NetIdAllocator& ServerHost::AllocatorForWorld(WorldInstanceId world)
+    {
+        return m_State->WorldOf(world).Allocator;
+    }
+
     Entity ServerHost::SeatFor(Net::ConnectionId id) const
     {
+        const State::JoinState* join = m_State->CurrentJoinState(id);
+        return join != nullptr ? join->Seat : Entity::Null;
+    }
+
+    Entity ServerHost::SeatFor(Net::ConnectionId id, Net::JoinId join) const
+    {
+        const State::JoinState* state = m_State->JoinStateOf(id, join);
+        return state != nullptr ? state->Seat : Entity::Null;
+    }
+
+    Net::JoinId ServerHost::CurrentJoin(Net::ConnectionId id) const
+    {
+        const State::JoinState* join = m_State->CurrentJoinState(id);
+        return join != nullptr ? join->Join : Net::ControlJoinId;
+    }
+
+    vector<Net::JoinId> ServerHost::JoinsFor(Net::ConnectionId id) const
+    {
+        vector<Net::JoinId> joins;
         const auto it = m_State->Connections.find(id);
-        return it != m_State->Connections.end() ? it->second.Seat : Entity::Null;
+        if (it != m_State->Connections.end())
+        {
+            for (const auto& [joinId, join] : it->second.Joins)
+            {
+                joins.push_back(joinId);
+            }
+        }
+        return joins;
+    }
+
+    bool ServerHost::IsGranted(Net::ConnectionId id, Net::JoinId join) const
+    {
+        return m_State->JoinStateOf(id, join) != nullptr;
     }
 
     bool ServerHost::IsReady(Net::ConnectionId id) const
     {
-        const auto it = m_State->Connections.find(id);
-        return it != m_State->Connections.end() && it->second.Ready;
+        const State::JoinState* join = m_State->CurrentJoinState(id);
+        return join != nullptr && join->Ready;
+    }
+
+    bool ServerHost::IsReady(Net::ConnectionId id, Net::JoinId join) const
+    {
+        const State::JoinState* state = m_State->JoinStateOf(id, join);
+        return state != nullptr && state->Ready;
+    }
+
+    usize ServerHost::HostedWorldCount() const
+    {
+        return m_State->Worlds.size();
     }
 
     std::span<const Net::NetEvent> ServerHost::Events() const
@@ -454,112 +757,203 @@ namespace Veng
     {
         Net::Client* Client = nullptr;
         AssetManager* Assets = nullptr;
+        Net::WorldKey AutoJoinKey;
+        bool AutoJoin = true;
+        bool AutoJoinRequested = false;
+        function<Net::ContentDigest(AssetId)> WorldDigest;
         function<Scene*(AssetId)> LoadLevel;
+        function<Ref<Prefab>(AssetId)> ResolvePrefab;
         function<void(Scene&, Entity)> OnPossession;
         PredictionPolicy Policy;
         Net::ReplayTick Replay;
         Net::ReconcileTolerances Tolerances;
-        Unique<ReplicationClient> Replication;
+        Net::TickSyncSettings TickSyncSettings;
+        Net::QuantizationSettings Quantization;
 
-        // Borrowed: the caller owns the join scene (a WorldRunner world); the host applies the stream
-        // into it and never destroys it.
-        Scene* World = nullptr;
-        u32 SeatNetId = InvalidNetId;
-        Entity Seat = Entity::Null;
-        Entity WiredPawn = Entity::Null;
-        bool Joined = false;
-
-        // The client-side prediction ring and the entities currently promoted to Tier::Predicted (the
-        // possessed pawn plus the policy's subtree). The set is swapped on every possession change.
-        Net::PredictionHistory History;
-        vector<Entity> Predicted;
-
-        // The tick-offset controller: the freshest server tick a snapshot carried and the estimator
-        // that folds it (with the connection's RTT) into the client's target lead. The world drive
-        // reads the target each frame to seed and slew its sim clock ahead of the server.
-        u64 LastServerTick = 0;
-        Net::TickOffsetEstimator TickSync;
-
-        // Keeps the local presentation pointed at the own seat's possessed pawn. The seat's Possesses
-        // arrives from the stream and re-resolves as its pawn binds, so this re-checks each Pump and
-        // fires OnPossession only when the wired pawn actually changes.
-        void WireSeat()
+        // One joined world's whole client state — replication, identity map, prediction, and clock,
+        // all scoped per JoinId.
+        struct JoinClient
         {
-            if (SeatNetId == InvalidNetId || !World)
-            {
-                return;
-            }
-            const Entity seat = Replication->Map().Lookup(SeatNetId);
-            if (seat.IsNull() || !World->IsAlive(seat))
-            {
-                return;
-            }
-            Seat = seat;
+            Net::JoinId Join = Net::ControlJoinId;
+            Unique<ReplicationClient> Replication;
+            Scene* World = nullptr; // borrowed (a WorldRunner world); must outlive the host
+            u32 SeatNetId = InvalidNetId;
+            Entity Seat = Entity::Null;
+            Entity WiredPawn = Entity::Null;
+            bool Ready = false;
+            Net::PredictionHistory History;
+            vector<Entity> Predicted;
+            u64 LastServerTick = 0;
+            Net::TickOffsetEstimator TickSync;
+        };
 
-            const Possesses* possesses = World->TryGet<Possesses>(seat);
+        // A requested-but-unaccepted join, correlated to its reply by the token.
+        struct PendingJoin
+        {
+            u32 Token = 0;
+            Net::WorldKey Key;
+            bool Sent = false;
+        };
+
+        std::map<Net::JoinId, JoinClient> Joins; // ordered, so the first is the current-join
+        vector<PendingJoin> Pending;
+        u32 NextToken = 1;
+        Net::JoinId CurrentJoin = Net::ControlJoinId;
+
+        [[nodiscard]] JoinClient* CurrentJoinClient()
+        {
+            const auto it = Joins.find(CurrentJoin);
+            return it != Joins.end() ? &it->second : nullptr;
+        }
+
+        [[nodiscard]] const JoinClient* CurrentJoinClient() const
+        {
+            const auto it = Joins.find(CurrentJoin);
+            return it != Joins.end() ? &it->second : nullptr;
+        }
+
+        [[nodiscard]] JoinClient* JoinClientOf(Net::JoinId join)
+        {
+            const auto it = Joins.find(join);
+            return it != Joins.end() ? &it->second : nullptr;
+        }
+
+        // Keeps a join's local presentation pointed at its own seat's possessed pawn. The seat's
+        // Possesses arrives from the stream and re-resolves as its pawn binds, so this re-checks each
+        // Pump and fires OnPossession only when the wired pawn actually changes.
+        void WireSeat(JoinClient& jc)
+        {
+            if (jc.SeatNetId == InvalidNetId || jc.World == nullptr)
+            {
+                return;
+            }
+            const Entity seat = jc.Replication->Map().Lookup(jc.SeatNetId);
+            if (seat.IsNull() || !jc.World->IsAlive(seat))
+            {
+                return;
+            }
+            jc.Seat = seat;
+
+            const Possesses* possesses = jc.World->TryGet<Possesses>(seat);
             if (possesses == nullptr)
             {
                 return;
             }
             const Entity pawn = possesses->Pawn;
             // A named pawn that has not yet spawned locally is not wired until it binds.
-            if (!pawn.IsNull() && !World->IsAlive(pawn))
+            if (!pawn.IsNull() && !jc.World->IsAlive(pawn))
             {
                 return;
             }
-            if (pawn == WiredPawn)
+            if (pawn == jc.WiredPawn)
             {
                 return;
             }
-            Repredict(pawn);
-            WiredPawn = pawn;
+            Repredict(jc, pawn);
+            jc.WiredPawn = pawn;
             if (OnPossession)
             {
-                OnPossession(*World, pawn);
+                OnPossession(*jc.World, pawn);
             }
         }
 
-        // Swaps the predicted set on a possession change: demote the current set back to Remote
+        // Swaps a join's predicted set on a possession change: demote the current set back to Remote
         // (interpolated) and stop tracking it, then promote the pawn's new set to Predicted and track
         // it. The recorded history is dropped — its captures reference the superseded set.
-        void Repredict(const Entity pawn)
+        void Repredict(JoinClient& jc, const Entity pawn)
         {
-            History.Clear();
-            for (const Entity entity : Predicted)
+            jc.History.Clear();
+            for (const Entity entity : jc.Predicted)
             {
-                if (World->IsAlive(entity))
+                if (jc.World->IsAlive(entity))
                 {
-                    if (Authority* authority = World->TryGet<Authority>(entity);
+                    if (Authority* authority = jc.World->TryGet<Authority>(entity);
                         authority != nullptr && authority->Tier == Tier::Predicted)
                     {
                         authority->Tier = Tier::Remote;
                     }
                 }
-                History.Untrack(entity);
+                jc.History.Untrack(entity);
             }
-            Predicted.clear();
+            jc.Predicted.clear();
 
-            if (pawn.IsNull() || !World->IsAlive(pawn))
+            if (pawn.IsNull() || !jc.World->IsAlive(pawn))
             {
                 return;
             }
-            Predicted = Policy ? Policy(*World, pawn) : DefaultPredictionSet(*World, pawn);
-            for (const Entity entity : Predicted)
+            jc.Predicted = Policy ? Policy(*jc.World, pawn) : DefaultPredictionSet(*jc.World, pawn);
+            for (const Entity entity : jc.Predicted)
             {
-                if (!World->IsAlive(entity))
+                if (!jc.World->IsAlive(entity))
                 {
                     continue;
                 }
-                if (World->Has<Authority>(entity))
+                if (jc.World->Has<Authority>(entity))
                 {
-                    World->Get<Authority>(entity).Tier = Tier::Predicted;
+                    jc.World->Get<Authority>(entity).Tier = Tier::Predicted;
                 }
                 else
                 {
-                    World->Add<Authority>(entity, Authority{.Tier = Tier::Predicted});
+                    jc.World->Add<Authority>(entity, Authority{.Tier = Tier::Predicted});
                 }
-                History.Track(entity);
+                jc.History.Track(entity);
             }
+        }
+
+        // Validates the reply's echoed world digest against the client's own reconstruction, loads the
+        // join's scene, and — on success — installs the JoinClient and acks its per-world ClientReady.
+        // A digest mismatch is rejected loudly: no JoinClient is installed, so no stream ever applies.
+        void HandleJoinAccept(const Net::JoinAcceptMessage& accept)
+        {
+            const auto pending = std::ranges::find_if(Pending, [&](const PendingJoin& p)
+                                                      { return p.Token == accept.RequestToken; });
+            if (pending == Pending.end())
+            {
+                return; // unknown or duplicate reply
+            }
+            Pending.erase(pending);
+
+            if (Joins.contains(accept.Join))
+            {
+                return; // already installed (a resent accept)
+            }
+
+            const AssetId levelId{.Value = accept.LevelId};
+            const Net::ContentDigest expected =
+                WorldDigest ? WorldDigest(levelId) : Net::ContentDigest{};
+            if (!(expected == accept.WorldDigest))
+            {
+                Log::Error(
+                    "ClientHost rejecting join {}: world digest mismatch (server {:016X}{:016X}"
+                    ", client {:016X}{:016X})",
+                    accept.Join, accept.WorldDigest.Hi, accept.WorldDigest.Lo, expected.Hi,
+                    expected.Lo);
+                return;
+            }
+
+            Scene* scene = LoadLevel ? LoadLevel(levelId) : nullptr;
+            if (scene == nullptr)
+            {
+                return; // load failed — no join installed
+            }
+
+            JoinClient jc;
+            jc.Join = accept.Join;
+            jc.SeatNetId = accept.SeatNetId;
+            jc.World = scene;
+            jc.TickSync = Net::TickOffsetEstimator(TickSyncSettings);
+            jc.Replication = CreateUnique<ReplicationClient>(ResolvePrefab);
+            jc.Replication->SetQuantization(Quantization);
+            jc.Ready = true;
+            Joins.emplace(accept.Join, std::move(jc));
+            if (CurrentJoin == Net::ControlJoinId)
+            {
+                CurrentJoin = accept.Join;
+            }
+
+            // Ack this world's ClientReady, enveloped with its JoinId, opening its stream.
+            (void)Client->Server().Send(Net::Channel::ReliableOrdered,
+                                        Net::EncodeWorldEnvelope(accept.Join, EncodeClientReady()));
         }
     };
 
@@ -572,14 +966,26 @@ namespace Veng
         auto state = CreateUnique<State>();
         state->Client = &info.Client;
         state->Assets = &info.Assets;
+        state->AutoJoinKey = info.WorldKey;
+        state->AutoJoin = info.AutoJoin;
+        state->WorldDigest = info.WorldDigest;
         state->LoadLevel = info.LoadLevel;
+        state->ResolvePrefab = info.ResolvePrefab;
         state->OnPossession = info.OnPossession;
         state->Policy = info.Prediction;
         state->Replay = info.Replay;
         state->Tolerances = info.Tolerances;
-        state->TickSync = Net::TickOffsetEstimator(info.TickSync);
-        state->Replication = CreateUnique<ReplicationClient>(info.ResolvePrefab);
+        state->TickSyncSettings = info.TickSync;
+        state->Quantization = info.Quantization;
         return Unique<ClientHost>(new ClientHost(std::move(state)));
+    }
+
+    void ClientHost::Join(const Net::WorldKey& key)
+    {
+        State& s = *m_State;
+        const u32 token = s.NextToken;
+        s.NextToken += 1;
+        s.Pending.push_back(State::PendingJoin{.Token = token, .Key = key});
     }
 
     void ClientHost::Pump(f64 now)
@@ -592,120 +998,260 @@ namespace Veng
             return;
         }
 
-        // On the accept: load the level (server-authoritative entities skipped) and ack readiness.
-        if (!s.World)
+        // Auto-join the configured world once, the moment the connection is up.
+        if (s.AutoJoin && !s.AutoJoinRequested)
         {
-            s.SeatNetId = s.Client->SeatNetId();
-            s.World = s.LoadLevel(s.Client->LevelId());
-            (void)s.Client->Server().Send(Net::Channel::ReliableOrdered, EncodeClientReady());
-            s.Joined = true;
-        }
-        if (!s.World)
-        {
-            return;
+            Join(s.AutoJoinKey);
+            s.AutoJoinRequested = true;
         }
 
-        // The baseline spawn stream + steady-state spawn/despawn (reliable), then snapshots (unreliable).
+        // Send any not-yet-sent join requests, enveloped at the join-control tier.
+        for (State::PendingJoin& pending : s.Pending)
+        {
+            if (!pending.Sent)
+            {
+                const vector<u8> payload = Net::EncodeJoinRequest(
+                    Net::JoinRequestMessage{.Key = pending.Key, .RequestToken = pending.Token});
+                (void)s.Client->Server().Send(
+                    Net::Channel::ReliableOrdered,
+                    Net::EncodeWorldEnvelope(Net::ControlJoinId, payload));
+                pending.Sent = true;
+            }
+        }
+
+        // Drain the reliable channel: a join-control frame is a join reply; a world-tagged frame is
+        // that world's spawn/despawn stream, demuxed to its ReplicationClient (dropped if ungranted).
         for (const vector<u8>& message : s.Client->ReliableAppMessages())
         {
-            s.Replication->ApplyReliable(message, *s.World, *s.Assets);
+            const optional<Net::WorldEnvelope> env = Net::DecodeWorldEnvelope(message);
+            if (!env)
+            {
+                continue;
+            }
+            if (env->Join == Net::ControlJoinId)
+            {
+                const optional<Net::JoinMessageType> type = Net::PeekJoinType(env->Payload);
+                if (type == Net::JoinMessageType::JoinAccept)
+                {
+                    if (const optional<Net::JoinAcceptMessage> accept =
+                            Net::DecodeJoinAccept(env->Payload))
+                    {
+                        s.HandleJoinAccept(*accept);
+                    }
+                }
+                else if (type == Net::JoinMessageType::JoinDeny)
+                {
+                    if (const optional<Net::JoinDenyMessage> deny =
+                            Net::DecodeJoinDeny(env->Payload))
+                    {
+                        std::erase_if(s.Pending, [&](const State::PendingJoin& p)
+                                      { return p.Token == deny->RequestToken; });
+                        Log::Warn("ClientHost join denied: reason {}",
+                                  static_cast<u32>(deny->Reason));
+                    }
+                }
+                continue;
+            }
+            State::JoinClient* jc = s.JoinClientOf(env->Join);
+            if (jc != nullptr && jc->World != nullptr)
+            {
+                jc->Replication->ApplyReliable(env->Payload, *jc->World, *s.Assets);
+            }
         }
-        while (const optional<vector<u8>> snapshot =
+
+        // Drain the unreliable channel: each snapshot is demuxed by its JoinId to the right world's
+        // ReplicationClient, reconciled against that world's own prediction and clock.
+        while (const optional<vector<u8>> packet =
                    s.Client->Server().Receive(Net::Channel::UnreliableSequenced))
         {
-            const SnapshotApplyResult applied = s.Replication->ApplySnapshot(*snapshot, *s.World);
-            if (applied.HeaderValid && applied.ServerTick > s.LastServerTick)
+            const optional<Net::WorldEnvelope> env = Net::DecodeWorldEnvelope(*packet);
+            if (!env || env->Join == Net::ControlJoinId)
             {
-                s.LastServerTick = applied.ServerTick;
-                // The newest snapshot's feedback closes the tick-offset loop: the controller trims
-                // its target lead by how early/late the server saw this client's input running.
-                s.TickSync.SetFeedbackTrim(static_cast<f32>(applied.InputFeedback));
-
-                // Reconcile the predicted set against this snapshot's authoritative record: compare
-                // at the consumed-input tick, and on a mismatch restore + replay + smooth. A no-op
-                // when nothing is predicted, or before the server has confirmed any input (client
-                // ticks start at 1, so a zero consumed-input tick means "nothing to reconcile yet").
-                if (!s.History.Tracked().empty() && applied.LastConsumedInputTick > 0)
+                continue;
+            }
+            State::JoinClient* jc = s.JoinClientOf(env->Join);
+            if (jc == nullptr || jc->World == nullptr)
+            {
+                continue;
+            }
+            const SnapshotApplyResult applied =
+                jc->Replication->ApplySnapshot(env->Payload, *jc->World);
+            if (applied.HeaderValid && applied.ServerTick > jc->LastServerTick)
+            {
+                jc->LastServerTick = applied.ServerTick;
+                jc->TickSync.SetFeedbackTrim(static_cast<f32>(applied.InputFeedback));
+                if (!jc->History.Tracked().empty() && applied.LastConsumedInputTick > 0)
                 {
-                    (void)Net::Reconcile(*s.World, s.History, s.Replication->PredictedRecords(),
+                    (void)Net::Reconcile(*jc->World, jc->History,
+                                         jc->Replication->PredictedRecords(),
                                          applied.LastConsumedInputTick, s.Replay, s.Tolerances);
                 }
             }
         }
 
-        s.WireSeat();
+        for (auto& [joinId, jc] : s.Joins)
+        {
+            s.WireSeat(jc);
+        }
+    }
+
+    vector<Net::JoinId> ClientHost::Joins() const
+    {
+        vector<Net::JoinId> joins;
+        for (const auto& [joinId, jc] : m_State->Joins)
+        {
+            joins.push_back(joinId);
+        }
+        return joins;
+    }
+
+    Net::JoinId ClientHost::CurrentJoinId() const
+    {
+        return m_State->CurrentJoin;
     }
 
     Scene* ClientHost::World() const
     {
-        return m_State->World;
+        const State::JoinClient* jc = m_State->CurrentJoinClient();
+        return jc != nullptr ? jc->World : nullptr;
+    }
+
+    Scene* ClientHost::World(Net::JoinId join) const
+    {
+        const State::JoinClient* jc = m_State->JoinClientOf(join);
+        return jc != nullptr ? jc->World : nullptr;
     }
 
     ReplicationClient& ClientHost::Replication()
     {
-        return *m_State->Replication;
+        State::JoinClient* jc = m_State->CurrentJoinClient();
+        VE_ASSERT(jc != nullptr, "ClientHost::Replication() before any world joined");
+        return *jc->Replication;
+    }
+
+    ReplicationClient& ClientHost::Replication(Net::JoinId join)
+    {
+        State::JoinClient* jc = m_State->JoinClientOf(join);
+        VE_ASSERT(jc != nullptr, "ClientHost::Replication called with unknown join {}", join);
+        return *jc->Replication;
     }
 
     Entity ClientHost::Seat() const
     {
-        return m_State->Seat;
+        const State::JoinClient* jc = m_State->CurrentJoinClient();
+        return jc != nullptr ? jc->Seat : Entity::Null;
+    }
+
+    Entity ClientHost::Seat(Net::JoinId join) const
+    {
+        const State::JoinClient* jc = m_State->JoinClientOf(join);
+        return jc != nullptr ? jc->Seat : Entity::Null;
     }
 
     Entity ClientHost::PossessedPawn() const
     {
-        return m_State->WiredPawn;
+        const State::JoinClient* jc = m_State->CurrentJoinClient();
+        return jc != nullptr ? jc->WiredPawn : Entity::Null;
     }
 
     Net::PredictionHistory& ClientHost::History()
     {
-        return m_State->History;
+        State::JoinClient* jc = m_State->CurrentJoinClient();
+        VE_ASSERT(jc != nullptr, "ClientHost::History() before any world joined");
+        return jc->History;
     }
 
     const Net::PredictionHistory& ClientHost::History() const
     {
-        return m_State->History;
+        const State::JoinClient* jc = m_State->CurrentJoinClient();
+        VE_ASSERT(jc != nullptr, "ClientHost::History() before any world joined");
+        return jc->History;
+    }
+
+    Net::PredictionHistory& ClientHost::History(Net::JoinId join)
+    {
+        State::JoinClient* jc = m_State->JoinClientOf(join);
+        VE_ASSERT(jc != nullptr, "ClientHost::History called with unknown join {}", join);
+        return jc->History;
     }
 
     void ClientHost::RecordPrediction(const u64 tick)
     {
-        State& s = *m_State;
-        if (!s.World || s.History.Tracked().empty())
+        RecordPrediction(m_State->CurrentJoin, tick);
+    }
+
+    void ClientHost::RecordPrediction(const Net::JoinId join, const u64 tick)
+    {
+        State::JoinClient* jc = m_State->JoinClientOf(join);
+        if (jc == nullptr || jc->World == nullptr || jc->History.Tracked().empty())
         {
             return;
         }
-        // Record the local input seat's resolved input — the same snapshot StampLocalSeatInput sends —
-        // alongside the predicted set's post-movement state, so a replay re-runs the server's input.
-        const PlayerInput* input = FindLocalSeatInput(*s.World);
-        s.History.Record(tick, input != nullptr ? *input : PlayerInput{}, *s.World);
+        const PlayerInput* input = FindLocalSeatInput(*jc->World);
+        jc->History.Record(tick, input != nullptr ? *input : PlayerInput{}, *jc->World);
     }
 
     bool ClientHost::IsJoined() const
     {
-        return m_State->Joined;
+        const State::JoinClient* jc = m_State->CurrentJoinClient();
+        return jc != nullptr && jc->Ready;
+    }
+
+    bool ClientHost::IsJoined(Net::JoinId join) const
+    {
+        const State::JoinClient* jc = m_State->JoinClientOf(join);
+        return jc != nullptr && jc->Ready;
     }
 
     u64 ClientHost::LastServerTick() const
     {
-        return m_State->LastServerTick;
+        const State::JoinClient* jc = m_State->CurrentJoinClient();
+        return jc != nullptr ? jc->LastServerTick : 0;
+    }
+
+    u64 ClientHost::LastServerTick(Net::JoinId join) const
+    {
+        const State::JoinClient* jc = m_State->JoinClientOf(join);
+        return jc != nullptr ? jc->LastServerTick : 0;
     }
 
     const Net::TickOffsetEstimator& ClientHost::TickSync() const
     {
-        return m_State->TickSync;
+        const State::JoinClient* jc = m_State->CurrentJoinClient();
+        VE_ASSERT(jc != nullptr, "ClientHost::TickSync() before any world joined");
+        return jc->TickSync;
+    }
+
+    const Net::TickOffsetEstimator& ClientHost::TickSync(Net::JoinId join) const
+    {
+        const State::JoinClient* jc = m_State->JoinClientOf(join);
+        VE_ASSERT(jc != nullptr, "ClientHost::TickSync called with unknown join {}", join);
+        return jc->TickSync;
     }
 
     f32 ClientHost::ObserveTickSync(const u64 clientTick)
     {
+        return ObserveTickSync(m_State->CurrentJoin, clientTick);
+    }
+
+    f32 ClientHost::ObserveTickSync(const Net::JoinId join, const u64 clientTick)
+    {
         State& s = *m_State;
-        if (s.Client->State() != Net::ClientState::Connected || s.LastServerTick == 0)
+        State::JoinClient* jc = s.JoinClientOf(join);
+        if (jc == nullptr || s.Client->State() != Net::ClientState::Connected ||
+            jc->LastServerTick == 0)
         {
             return 1.0f;
         }
-        return s.TickSync.Observe(s.Client->Server().RttEstimate(), clientTick, s.LastServerTick);
+        return jc->TickSync.Observe(s.Client->Server().RttEstimate(), clientTick,
+                                    jc->LastServerTick);
     }
 
     void ClientHost::SetTickSyncFeedback(const f32 trimTicks)
     {
-        m_State->TickSync.SetFeedbackTrim(trimTicks);
+        if (State::JoinClient* jc = m_State->CurrentJoinClient())
+        {
+            jc->TickSync.SetFeedbackTrim(trimTicks);
+        }
     }
 }

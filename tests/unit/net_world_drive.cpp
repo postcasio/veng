@@ -13,6 +13,7 @@
 #include <Veng/Net/LoopbackTransport.h>
 #include <Veng/Net/Replication.h>
 #include <Veng/Net/Server.h>
+#include <Veng/Net/WorldEnvelope.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Components.h>
@@ -88,39 +89,58 @@ TEST_CASE("The world-drive input feed carries a client's input into the server s
     Unique<Client> client =
         *Client::Connect(ClientInfo{.TransportOverride = clientT.get(), .Connection = Config});
 
-    // Drive the handshake to Connected — the accept spawns the connection's seat.
+    // A ClientHost auto-joins the default world so a seat is spawned and a JoinId is granted; the
+    // manual input send below tags its packet with that JoinId (the world-multiplexing envelope).
+    TypeRegistry clientTypes;
+    RegisterBuiltinTypes(clientTypes);
+    Unique<Scene> clientScene;
+    Unique<ClientHost> clientHost = ClientHost::Create(ClientHostInfo{
+        .Client = *client,
+        .Assets = FakeAssets(),
+        .LoadLevel = [&](AssetId) -> Scene*
+        {
+            clientScene = Scene::Create(clientTypes);
+            return clientScene.get();
+        },
+        .ResolvePrefab = [](AssetId) -> Ref<Prefab> { return nullptr; },
+    });
+
+    // Drive the handshake and the join — the join spawns the connection's seat.
     f64 now = 0.0;
-    for (u64 tick = 1; tick <= 8 && client->State() == ClientState::Connecting; ++tick)
+    for (u64 tick = 1; tick <= 12 && !clientHost->IsJoined(); ++tick)
     {
         now += 1.0 / 60.0;
         serverScene->SetChangeTick(tick);
         (*host)->Pump(now, tick);
-        client->Pump(now);
+        clientHost->Pump(now);
     }
     REQUIRE(client->State() == ClientState::Connected);
+    REQUIRE(clientHost->IsJoined());
 
     const ConnectionId id = client->AssignedId();
     const Entity seat = (*host)->SeatFor(id);
     REQUIRE_FALSE(seat.IsNull());
+    const JoinId join = clientHost->CurrentJoinId();
 
-    // The client stamps a tick's input and sends the redundant window on the unreliable channel —
-    // the client half of the world-drive input feed.
+    // The client stamps a tick's input and sends the redundant window on the unreliable channel,
+    // tagged with its JoinId — the client half of the world-drive input feed.
     InputSendBuffer send(InputSendBuffer::Settings{.Redundancy = 3});
     const vec2 move(0.5f, -0.25f);
     send.Stamp(/*clientTick=*/1, MoveState(move));
-    (void)client->Server().Send(Channel::UnreliableSequenced, send.Encode(0, serverTypes));
+    (void)client->Server().Send(Channel::UnreliableSequenced,
+                                EncodeWorldEnvelope(join, send.Encode(0, serverTypes)));
 
-    // The server receives, ingests into the connection's jitter buffer, then feeds the seat.
-    std::unordered_map<ConnectionId, InputJitterBuffer> jitter;
+    // The server receives, ingests into the (connection, join) jitter buffer, then feeds the seat.
+    std::unordered_map<u64, InputJitterBuffer> jitter;
     bool fed = false;
-    for (u64 tick = 9; tick <= 20 && !fed; ++tick)
+    for (u64 tick = 13; tick <= 30 && !fed; ++tick)
     {
         now += 1.0 / 60.0;
         serverScene->SetChangeTick(tick);
-        client->Pump(now);
+        clientHost->Pump(now);
         (*host)->Pump(now, tick);
         IngestConnectionInputs(**host, jitter, InputJitterBuffer::Settings{}, serverTypes);
-        FeedSeatInputs(**host, jitter, *serverScene);
+        FeedSeatInputs(**host, jitter, WorldInstanceId{}, *serverScene);
 
         if (serverScene->Has<PlayerInput>(seat))
         {

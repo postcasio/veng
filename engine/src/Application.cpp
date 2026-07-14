@@ -24,6 +24,7 @@
 #include <Veng/Net/Client.h>
 #include <Veng/Net/Host.h>
 #include <Veng/Net/InputFeed.h>
+#include <Veng/Net/WorldEnvelope.h>
 #include <Veng/WorldRunner.h>
 
 #include <Veng/Scene/Camera.h>
@@ -61,7 +62,9 @@ namespace Veng
 
         // Server arm.
         Unique<ServerHost> Server;
-        unordered_map<Net::ConnectionId, InputJitterBuffer> Jitter;
+        // The per-(connection, joined world) input jitter buffers, keyed by InputBufferKey — a
+        // connection multiplexes N worlds, each its own input stream.
+        unordered_map<u64, InputJitterBuffer> Jitter;
 
         // Client arm.
         Unique<Net::Client> Client;
@@ -443,13 +446,11 @@ namespace Veng
                     .TickRate = m_Info.World ? m_Info.World->SimTickRate : 60u,
                     .MarginTicks = static_cast<f32>(net.SnapshotIntervalTicks) + 2.0f,
                 },
+            // Match each joined world's decoder dequantization grid to the server's wire quantization.
+            .Quantization = Net::QuantizationSettings{.PositionQuantum = net.PositionQuantum,
+                                                      .PositionExtent = net.PositionExtent,
+                                                      .RotationBits = net.RotationBits},
         });
-
-        // Match the client decoder's dequantization grid to the server's wire quantization.
-        m_Net->ClientHost->Replication().SetQuantization(
-            Net::QuantizationSettings{.PositionQuantum = net.PositionQuantum,
-                                      .PositionExtent = net.PositionExtent,
-                                      .RotationBits = net.RotationBits});
 
         Log::Info("Joining {}:{}", target.Host, port);
     }
@@ -545,11 +546,15 @@ namespace Veng
 
         // Acknowledge the highest applied server tick so the server advances this connection's delta
         // baselines (and gates its snapshots against them) rather than re-sending full state forever.
-        if (m_Net->Client->State() == Net::ClientState::Connected)
+        // Tag the input with the joined world's JoinId so the server demuxes it to the right instance;
+        // before the join lands (no JoinId yet) there is no world to feed, so nothing is sent.
+        const Net::JoinId join = m_Net->ClientHost->CurrentJoinId();
+        if (m_Net->Client->State() == Net::ClientState::Connected && join != Net::ControlJoinId)
         {
             const vector<u8> packet =
                 m_Net->Send.Encode(m_Net->ClientHost->LastServerTick(), m_TypeRegistry);
-            (void)m_Net->Client->Server().Send(Net::Channel::UnreliableSequenced, packet);
+            (void)m_Net->Client->Server().Send(Net::Channel::UnreliableSequenced,
+                                               Net::EncodeWorldEnvelope(join, packet));
         }
     }
 
@@ -560,7 +565,7 @@ namespace Veng
         {
             // Scheduled consume: the client runs its tick ahead of the server (the tick-offset slew),
             // so the input it stamped at this tick has arrived by the time the server reaches it.
-            FeedSeatInputs(*m_Net->Server, m_Net->Jitter, resolved->GetScene(), tick);
+            FeedSeatInputs(*m_Net->Server, m_Net->Jitter, world, resolved->GetScene(), tick);
         }
     }
 
