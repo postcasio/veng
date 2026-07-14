@@ -812,7 +812,7 @@ namespace Veng
         Net::WorldKey AutoJoinKey;
         bool AutoJoin = true;
         bool AutoJoinRequested = false;
-        function<Net::ContentDigest(AssetId)> WorldDigest;
+        function<Net::ContentDigest(const Net::WorldKey&)> WorldDigest;
         function<Scene*(AssetId)> LoadLevel;
         function<Ref<Prefab>(AssetId)> ResolvePrefab;
         function<void(Scene&, Entity)> OnPossession;
@@ -963,6 +963,7 @@ namespace Veng
             {
                 return; // unknown or duplicate reply
             }
+            const Net::WorldKey key = pending->Key;
             Pending.erase(pending);
 
             if (Joins.contains(accept.Join))
@@ -972,7 +973,7 @@ namespace Veng
 
             const AssetId levelId{.Value = accept.LevelId};
             const Net::ContentDigest expected =
-                WorldDigest ? WorldDigest(levelId) : Net::ContentDigest{};
+                WorldDigest ? WorldDigest(key) : Net::ContentDigest{};
             if (!(expected == accept.WorldDigest))
             {
                 Log::Error(

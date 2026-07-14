@@ -421,6 +421,10 @@ namespace Veng
         m_Net->ClientHost = ClientHost::Create(ClientHostInfo{
             .Client = *m_Net->Client,
             .Assets = *m_AssetManager,
+            // The client mirror of the server's factory-supplied digest: yields the digest this client
+            // expects for the key it joins, validated against the reply's echo. Unset (the default)
+            // presents the zero digest.
+            .WorldDigest = net.ClientWorldDigest,
             .LoadLevel = [this](const AssetId id) -> Scene* { return LoadClientLevel(id); },
             .ResolvePrefab = [this](const AssetId id) -> Ref<Prefab>
             {

@@ -126,6 +126,15 @@ namespace Veng
         /// owner-pawn-subtree default (the pawn plus its replicated attachments); a game widens it (a
         /// driven vehicle) or narrows it here. Inert off a client.
         PredictionPolicy PredictionPolicy;
+        /// @brief Client hook yielding the content digest the client expects for a joined WorldKey; unset validates against none.
+        ///
+        /// The client mirror of the server's per-key ServerWorldResolution::Digest: given a WorldKey the
+        /// client is joining, returns the digest of its own procedurally-reconstructed world, which the
+        /// mounted ClientHost compares against the join reply's echoed digest — a mismatch rejects the
+        /// join loudly. A per-key provider (a connection may join several worlds by opaque key). Unset
+        /// presents the zero digest (matching a content-free server world), the zero-config default.
+        /// Inert off a client.
+        function<Net::ContentDigest(const Net::WorldKey&)> ClientWorldDigest;
 
         /// @brief The get-or-place world factory the mounted ServerHost resolves a joined WorldKey through.
         ///

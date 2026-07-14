@@ -344,10 +344,12 @@ namespace Veng
         bool AutoJoin = true;
         /// @brief Computes the digest the client validates against the join reply's echoed world digest.
         ///
-        /// Given the level id the reply named, returns the client's own digest of its reconstructed
-        /// world; a mismatch rejects the join loudly (no stream is applied). Unset returns the zero
-        /// digest, which matches a content-free server world.
-        function<Net::ContentDigest(AssetId)> WorldDigest;
+        /// Given the WorldKey being joined, returns the client's own digest of its reconstructed world;
+        /// a mismatch rejects the join loudly (no stream is applied). The client mirror of the server's
+        /// per-key ServerWorldResolution::Digest — a client joining multiple worlds by opaque key yields
+        /// a distinct expected digest per key. Unset returns the zero digest, which matches a
+        /// content-free server world.
+        function<Net::ContentDigest(const Net::WorldKey&)> WorldDigest;
         /// @brief Loads the joined world's level into the caller's client scene, authoritative entities skipped.
         ///
         /// Invoked per join, when the join reply arrives, with the level's AssetId — the app loads the

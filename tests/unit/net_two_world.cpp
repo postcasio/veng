@@ -1888,8 +1888,8 @@ TEST_CASE("A join whose client-reconstructed world mismatches the echoed digest 
     Unique<ClientHost> clientHost = ClientHost::Create(ClientHostInfo{
         .Client = *client,
         .Assets = FakeAssets(),
-        // The client's own digest of the resolved world disagrees with the server's echoed one.
-        .WorldDigest = [](AssetId) { return ContentDigest{.Lo = 0x0}; },
+        // The client's own digest of the joined key disagrees with the server's echoed one.
+        .WorldDigest = [](const WorldKey&) { return ContentDigest{.Lo = 0x0}; },
         .LoadLevel = [&](AssetId) -> Scene*
         {
             loaded = true;
@@ -1914,6 +1914,73 @@ TEST_CASE("A join whose client-reconstructed world mismatches the echoed digest 
     CHECK_FALSE(loaded);
     CHECK_FALSE(clientHost->IsJoined());
     CHECK(clientHost->Joins().empty());
+}
+
+TEST_CASE("A join whose client-supplied per-key digest matches the echoed digest is admitted")
+{
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+
+    TypeRegistry serverTypes;
+    RegisterBuiltinTypes(serverTypes);
+    Unique<Scene> serverScene = Scene::Create(serverTypes);
+
+    // The server echoes this per-world content digest; the client reconstructs the same value.
+    constexpr ContentDigest ServerDigest{.Lo = 0x00ABCDEF, .Hi = 0x99};
+    Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
+        .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
+        .World = *serverScene,
+        .Assets = FakeAssets(),
+        .LevelId = LevelId,
+        .Digest = ServerDigest,
+        .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
+    });
+    REQUIRE(hostR.has_value());
+    Unique<ServerHost> host = std::move(*hostR);
+
+    Unique<Net::Client> client = *Net::Client::Connect(
+        ClientInfo{.TransportOverride = clientT.get(), .Connection = FastConfig});
+
+    TypeRegistry clientTypes;
+    RegisterBuiltinTypes(clientTypes);
+    Unique<Scene> clientScene;
+    bool loaded = false;
+    WorldKey seenKey;
+    Unique<ClientHost> clientHost = ClientHost::Create(ClientHostInfo{
+        .Client = *client,
+        .Assets = FakeAssets(),
+        // The per-key provider yields the digest the client expects for the key it joins; it matches
+        // the server's echo for the auto-joined DefaultWorldKey, so the join is admitted.
+        .WorldDigest = [&](const WorldKey& key) -> ContentDigest
+        {
+            seenKey = key;
+            return key == DefaultWorldKey ? ServerDigest : ContentDigest{};
+        },
+        .LoadLevel = [&](AssetId) -> Scene*
+        {
+            loaded = true;
+            clientScene = Scene::Create(clientTypes);
+            return clientScene.get();
+        },
+        .ResolvePrefab = [](AssetId) -> Ref<Prefab> { return nullptr; },
+    });
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    for (u64 tick = 1; tick <= 30 && !clientHost->IsJoined(); ++tick)
+    {
+        now += Delta;
+        serverScene->SetChangeTick(tick);
+        host->Pump(now, tick);
+        clientHost->Pump(now);
+    }
+
+    // The matching digest cleared validation: the level loaded and the world joined, the provider was
+    // consulted with the joined key, and the stream applies against the accepted scene.
+    REQUIRE(client->State() == ClientState::Connected);
+    CHECK(seenKey == DefaultWorldKey);
+    CHECK(loaded);
+    CHECK(clientHost->IsJoined());
+    CHECK(clientHost->Joins().size() == 1);
 }
 
 TEST_CASE("A peer with a stale ProtocolVersion is rejected at the connection handshake")
