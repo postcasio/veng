@@ -2,6 +2,73 @@
 # Library
 # ---------------------------------------------------------------------------
 
+# The Vulkan backend TUs all parse vulkan.hpp (via Veng/Renderer/Backend/Vulkan.h),
+# which dominates their compile time and which the library-wide Veng.h PCH cannot
+# cover without taxing every non-backend TU. They build as their own object library
+# so a second PCH precompiles the Vulkan header for exactly these TUs; the objects
+# are absorbed into veng below via $<TARGET_OBJECTS>, so nothing links this target.
+add_library(veng_backend_objs OBJECT
+        src/Renderer/Backend/Barrier.cpp
+        src/Renderer/Backend/BarrierDecision.cpp
+        src/Renderer/Backend/RenderGraphSchedule.cpp
+        src/Renderer/Backend/BindlessRegistry.cpp
+        src/Renderer/Backend/TransientAllocation.cpp
+        src/Renderer/Backend/Buffer.cpp
+        src/Renderer/Backend/CommandBuffer.cpp
+        src/Renderer/Backend/CommandPool.cpp
+        src/Renderer/Backend/ComputePipeline.cpp
+        src/Renderer/Backend/Context.cpp
+        src/Renderer/Backend/DebugMarkers.cpp
+        src/Renderer/Backend/DescriptorPool.cpp
+        src/Renderer/Backend/DescriptorSet.cpp
+        src/Renderer/Backend/DescriptorSetLayout.cpp
+        src/Renderer/Backend/Fence.cpp
+        src/Renderer/Backend/GraphicsPipeline.cpp
+        src/Renderer/Backend/Image.cpp
+        src/Renderer/Backend/ImageView.cpp
+        src/Renderer/Backend/PipelineLayout.cpp
+        src/Renderer/Backend/Sampler.cpp
+        src/Renderer/Backend/Semaphore.cpp
+        src/Renderer/Backend/ShaderModule.cpp
+        src/Renderer/Backend/SwapChain.cpp
+        src/Renderer/Backend/SynchronizationFrame.cpp
+        src/Renderer/Backend/TimelineSemaphore.cpp
+        src/Renderer/Backend/Utils.cpp
+        src/Renderer/Backend/VertexBufferLayout.cpp
+)
+# The objects land inside the veng shared library, so they must be PIC, carry the
+# VE_API export annotations' build-side define, and compile under the same
+# no-exceptions contract as the rest of the library.
+set_target_properties(veng_backend_objs PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_include_directories(veng_backend_objs PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(veng_backend_objs PRIVATE VE_BUILD_SHARED)
+target_compile_options(veng_backend_objs PRIVATE -fno-exceptions)
+if (VE_DEBUG)
+    target_compile_definitions(veng_backend_objs PRIVATE VE_ENABLE_VALIDATION_LAYERS=1 VE_DEBUG=1)
+endif ()
+# See the matching veng block below: the dynamic-dispatcher storage lives in
+# Context.cpp, which compiles here.
+if (WIN32)
+    target_compile_definitions(veng_backend_objs PRIVATE
+            VULKAN_HPP_STORAGE_SHARED VULKAN_HPP_STORAGE_SHARED_EXPORT)
+endif ()
+# Compile-time usage requirements only — the object library is never installed or
+# exported, so these links stay out of the SDK export set.
+target_link_libraries(veng_backend_objs PRIVATE
+        glm::glm
+        fmt::fmt
+        veng::assetpack
+        Vulkan::Vulkan
+        glfw
+        GPUOpen::VulkanMemoryAllocator
+)
+target_precompile_headers(veng_backend_objs PRIVATE
+        <Veng/Veng.h> <Veng/Renderer/Backend/Vulkan.h>)
+# Context.cpp defines VMA_IMPLEMENTATION ahead of its includes; a force-included
+# PCH would have already pulled the VMA header without it, so it opts out.
+set_source_files_properties(src/Renderer/Backend/Context.cpp
+        PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+
 add_library(veng SHARED
         src/Application.cpp
         src/Assert.cpp
@@ -154,33 +221,7 @@ add_library(veng SHARED
         src/Renderer/Passes/SkyScenePass.cpp
         src/Renderer/SsaoScenePass.cpp
         src/Renderer/ShaderInterface.cpp
-        src/Renderer/Backend/Barrier.cpp
-        src/Renderer/Backend/BarrierDecision.cpp
-        src/Renderer/Backend/RenderGraphSchedule.cpp
-        src/Renderer/Backend/BindlessRegistry.cpp
-        src/Renderer/Backend/TransientAllocation.cpp
-        src/Renderer/Backend/Buffer.cpp
-        src/Renderer/Backend/CommandBuffer.cpp
-        src/Renderer/Backend/CommandPool.cpp
-        src/Renderer/Backend/ComputePipeline.cpp
-        src/Renderer/Backend/Context.cpp
-        src/Renderer/Backend/DebugMarkers.cpp
-        src/Renderer/Backend/DescriptorPool.cpp
-        src/Renderer/Backend/DescriptorSet.cpp
-        src/Renderer/Backend/DescriptorSetLayout.cpp
-        src/Renderer/Backend/Fence.cpp
-        src/Renderer/Backend/GraphicsPipeline.cpp
-        src/Renderer/Backend/Image.cpp
-        src/Renderer/Backend/ImageView.cpp
-        src/Renderer/Backend/PipelineLayout.cpp
-        src/Renderer/Backend/Sampler.cpp
-        src/Renderer/Backend/Semaphore.cpp
-        src/Renderer/Backend/ShaderModule.cpp
-        src/Renderer/Backend/SwapChain.cpp
-        src/Renderer/Backend/SynchronizationFrame.cpp
-        src/Renderer/Backend/TimelineSemaphore.cpp
-        src/Renderer/Backend/Utils.cpp
-        src/Renderer/Backend/VertexBufferLayout.cpp
+        $<TARGET_OBJECTS:veng_backend_objs>
         src/Vendor/ImGui.cpp
         src/Vendor/TinyExr.cpp
 )
