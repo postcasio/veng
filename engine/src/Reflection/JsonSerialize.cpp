@@ -5,6 +5,7 @@
 #include <Veng/Reflection/EnumName.h>
 
 #include <algorithm>
+#include <charconv>
 #include <cstring>
 
 #include <fmt/format.h>
@@ -34,8 +35,63 @@ namespace Veng
 
         // ---- Read side ------------------------------------------------------
 
+        // Reads a 64-bit integer leaf from either a JSON string (the lossless form — a value past
+        // 2^53 truncates through JSON's IEEE-754-double number) or a plain JSON number (accepted for
+        // small values and hand-authored convenience). A string is parsed base-10, sign included.
+        template <typename Int>
+        Result<Int> ReadInteger64(const Json& value, const string& path)
+        {
+            if (value.is_string())
+            {
+                const string text = value.get<string>();
+                const char* begin = text.data();
+                const char* const end = text.data() + text.size();
+                if (begin != end && *begin == '+')
+                {
+                    ++begin;
+                }
+                Int parsed = 0;
+                const auto [ptr, ec] = std::from_chars(begin, end, parsed);
+                if (ec != std::errc{} || ptr != end)
+                {
+                    return std::unexpected(
+                        fmt::format("{}: '{}' is not a valid 64-bit integer", path, text));
+                }
+                return parsed;
+            }
+            if (value.is_number_integer() || value.is_number_unsigned())
+            {
+                return value.get<Int>();
+            }
+            return std::unexpected(
+                fmt::format("{}: expected a 64-bit integer as a number or string", path));
+        }
+
         VoidResult ReadScalar(void* fieldPtr, TypeId type, const Json& value, const string& path)
         {
+            // 64-bit integers accept a JSON string (lossless past 2^53) as well as a number, so they
+            // are dispatched before the number/boolean guard the narrower scalars require.
+            if (type == TypeIdOf<i64>())
+            {
+                const Result<i64> v = ReadInteger64<i64>(value, path);
+                if (!v)
+                {
+                    return std::unexpected(v.error());
+                }
+                std::memcpy(fieldPtr, &*v, sizeof(i64));
+                return {};
+            }
+            if (type == TypeIdOf<u64>())
+            {
+                const Result<u64> v = ReadInteger64<u64>(value, path);
+                if (!v)
+                {
+                    return std::unexpected(v.error());
+                }
+                std::memcpy(fieldPtr, &*v, sizeof(u64));
+                return {};
+            }
+
             if (!value.is_number() && !value.is_boolean())
             {
                 return std::unexpected(fmt::format("{}: expected a number or boolean", path));
@@ -62,12 +118,6 @@ namespace Veng
             if (type == TypeIdOf<u32>())
             {
                 const u32 v = value.get<u32>();
-                std::memcpy(fieldPtr, &v, sizeof(v));
-                return {};
-            }
-            if (type == TypeIdOf<u64>())
-            {
-                const u64 v = value.get<u64>();
                 std::memcpy(fieldPtr, &v, sizeof(v));
                 return {};
             }
@@ -372,11 +422,20 @@ namespace Veng
                 std::memcpy(&v, fieldPtr, sizeof(v));
                 return v;
             }
+            // 64-bit integers serialize as a decimal string: a bare JSON number past 2^53 truncates
+            // through the IEEE-754-double number pipeline, so the string is the lossless form (the
+            // same reason minted ids are stored as strings). ReadScalar accepts either on the way in.
+            if (type == TypeIdOf<i64>())
+            {
+                i64 v = 0;
+                std::memcpy(&v, fieldPtr, sizeof(v));
+                return std::to_string(v);
+            }
             if (type == TypeIdOf<u64>())
             {
                 u64 v = 0;
                 std::memcpy(&v, fieldPtr, sizeof(v));
-                return v;
+                return std::to_string(v);
             }
             return nullptr;
         }
