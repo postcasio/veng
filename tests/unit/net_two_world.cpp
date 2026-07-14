@@ -1656,7 +1656,7 @@ namespace
         std::unordered_map<u64, InputJitterBuffer> Jitter;
 
         explicit FactoryServer(Transport& transport, u32 maxHosted = 64, u32 maxPerConn = 4,
-                               f64 dwell = 5.0)
+                               f64 dwell = 5.0, u32 maxPerInstance = 0)
         {
             RegisterBuiltinTypes(Types);
             Primary = Scene::Create(Types);
@@ -1671,6 +1671,7 @@ namespace
                 .Interest = InterestSettings{.Radius = 0.0f},
                 .MaxJoinedWorldsPerConnection = maxPerConn,
                 .MaxHostedWorlds = maxHosted,
+                .MaxPlayersPerInstance = maxPerInstance,
                 .IdleKeepWarmDwell = dwell,
                 .WorldFactory = [this](const WorldKey&) -> optional<ServerWorldResolution>
                 {
@@ -2023,4 +2024,231 @@ TEST_CASE("Input tagged with an ungranted or garbage JoinId is dropped, not rout
         }
     }
     CHECK(fed);
+}
+
+// ---- Instance placement (the get-or-place policy) ------------------------------------------------
+
+TEST_CASE("MaxPlayersPerInstance = 0 converges every joiner of a key on one instance")
+{
+    // The default placement policy is convergence: with no per-instance cap, every connection
+    // presenting one key lands in the single bucket the first join opened — byte-identical to the 1:1
+    // get-or-create map. Three joiners, one factory-opened world.
+    const auto hub = CreateRef<Hub>();
+    const u32 serverEndpoint = hub->Register();
+    auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
+    FactoryServer server(*serverT, /*maxHosted=*/64, /*maxPerConn=*/4, /*dwell=*/5.0,
+                         /*maxPerInstance=*/0);
+
+    const WorldKey shared = WorldKey::FromU64(0x5EED);
+
+    vector<Unique<HubTransport>> transports;
+    vector<Unique<ClientWorld>> clients;
+    for (int i = 0; i < 3; ++i)
+    {
+        transports.push_back(CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint));
+        clients.push_back(CreateUnique<ClientWorld>(*transports.back(), shared));
+    }
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    for (u64 tick = 1; tick <= 160; ++tick)
+    {
+        now += Delta;
+        server.Pump(now, tick);
+        for (const Unique<ClientWorld>& client : clients)
+        {
+            client->Frame(now, tick, Delta, std::nullopt);
+        }
+    }
+
+    std::unordered_map<u64, int> perWorld;
+    for (const Unique<ClientWorld>& client : clients)
+    {
+        REQUIRE(client->Host->IsJoined());
+        const WorldInstanceId world = server.Host->WorldFor(client->Client->AssignedId());
+        REQUIRE(world.IsValid());
+        perWorld[world.Value] += 1;
+    }
+
+    CHECK(perWorld.size() == 1);                 // one bucket
+    CHECK(server.OpenCount == 1);                // opened exactly once
+    CHECK(server.Host->HostedWorldCount() == 2); // primary + the one converged instance
+}
+
+TEST_CASE("MaxPlayersPerInstance buckets a key's joiners into capacity-bounded instances")
+{
+    // A per-instance cap of N buckets a busy key: the built-in policy places a joiner into the first
+    // bucket under capacity and opens a fresh one when every bucket is full. 2N+1 joiners for one key
+    // land in three buckets (N + N + 1), each its own instance (its own ReplicationServer).
+    const auto hub = CreateRef<Hub>();
+    const u32 serverEndpoint = hub->Register();
+    auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
+    constexpr u32 Cap = 2;
+    FactoryServer server(*serverT, /*maxHosted=*/64, /*maxPerConn=*/4, /*dwell=*/5.0,
+                         /*maxPerInstance=*/Cap);
+
+    const WorldKey busy = WorldKey::FromU64(0xB055);
+
+    constexpr int Joiners = 2 * static_cast<int>(Cap) + 1; // five
+    vector<Unique<HubTransport>> transports;
+    vector<Unique<ClientWorld>> clients;
+    for (int i = 0; i < Joiners; ++i)
+    {
+        transports.push_back(CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint));
+        clients.push_back(CreateUnique<ClientWorld>(*transports.back(), busy));
+    }
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    for (u64 tick = 1; tick <= 200; ++tick)
+    {
+        now += Delta;
+        server.Pump(now, tick);
+        for (const Unique<ClientWorld>& client : clients)
+        {
+            client->Frame(now, tick, Delta, std::nullopt);
+        }
+    }
+
+    // Every joiner landed in some bucket, and the buckets partition the five seats three ways.
+    std::unordered_map<u64, int> perWorld;
+    for (const Unique<ClientWorld>& client : clients)
+    {
+        REQUIRE(client->Host->IsJoined());
+        const WorldInstanceId world = server.Host->WorldFor(client->Client->AssignedId());
+        REQUIRE(world.IsValid());
+        perWorld[world.Value] += 1;
+    }
+
+    CHECK(perWorld.size() == 3);                 // three distinct buckets
+    CHECK(server.OpenCount == 3);                // three factory opens
+    CHECK(server.Host->HostedWorldCount() == 4); // primary + three buckets
+    int total = 0;
+    for (const auto& [world, count] : perWorld)
+    {
+        CHECK(count <= static_cast<int>(Cap)); // no bucket over capacity
+        total += count;
+    }
+    CHECK(total == Joiners);
+}
+
+TEST_CASE("An emptied capacity bucket is reaped after the idle dwell; its peers stay")
+{
+    // Cap 1 forces one bucket per joiner; when a bucket's only seat leaves it idles out and is reaped
+    // (dropping out of the key's list) while the other bucket, still joined, is untouched.
+    const auto hub = CreateRef<Hub>();
+    const u32 serverEndpoint = hub->Register();
+    auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
+    constexpr f64 Dwell = 0.5;
+    FactoryServer server(*serverT, /*maxHosted=*/64, /*maxPerConn=*/4, Dwell, /*maxPerInstance=*/1);
+
+    const WorldKey busy = WorldKey::FromU64(0xF0FA);
+
+    auto transportA = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    auto transportB = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    ClientWorld clientA(*transportA, busy);
+    ClientWorld clientB(*transportB, busy);
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    for (u64 tick = 1; tick <= 120; ++tick)
+    {
+        now += Delta;
+        server.Pump(now, tick);
+        clientA.Frame(now, tick, Delta, std::nullopt);
+        clientB.Frame(now, tick, Delta, std::nullopt);
+    }
+
+    REQUIRE(clientA.Host->IsJoined());
+    REQUIRE(clientB.Host->IsJoined());
+    const WorldInstanceId worldA = server.Host->WorldFor(clientA.Client->AssignedId());
+    const WorldInstanceId worldB = server.Host->WorldFor(clientB.Client->AssignedId());
+    REQUIRE(worldA != worldB); // the cap of 1 split them into two buckets
+    CHECK(server.OpenCount == 2);
+    CHECK(server.Host->HostedWorldCount() == 3); // primary + two buckets
+
+    // A leaves; flush the graceful-close datagram (pump A so the leave is sent and the server processes
+    // it), then drive past the dwell with only B (whose keepalive stays alive). A's bucket empties and
+    // reaps; B's stays live.
+    clientA.Client->Disconnect();
+    for (u64 tick = 121; tick <= 140; ++tick)
+    {
+        now += Delta;
+        server.Pump(now, tick);
+        clientA.Frame(now, tick, Delta, std::nullopt);
+        clientB.Frame(now, tick, Delta, std::nullopt);
+    }
+    for (u64 tick = 141; tick <= 220; ++tick)
+    {
+        now += Delta;
+        server.Pump(now, tick);
+        clientB.Frame(now, tick, Delta, std::nullopt);
+    }
+
+    REQUIRE(server.CloseCount == 1);
+    CHECK(server.Closed.front() == worldA.Value); // the emptied bucket, not B's
+    CHECK(server.Host->HostedWorldCount() == 2);  // primary + B's surviving bucket
+    CHECK(clientB.Host->IsJoined());
+    CHECK(server.Host->WorldFor(clientB.Client->AssignedId()) == worldB);
+}
+
+// ---- Runtime net activation (host stood up after the world is live) ------------------------------
+
+TEST_CASE("A server host stood up after its world has ticked standalone still accepts a join")
+{
+    // The runtime-activation seam at the host layer: a world runs standalone (no transport bound),
+    // then a ServerHost is constructed over that already-live scene and a client connects and joins it
+    // by WorldKey — the "start hosting after launch" path, minus the process boundary.
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    Unique<Scene> world = Scene::Create(types);
+
+    // Pre-activation: the world advances a few ticks with no host at all (standalone Server-tier).
+    MovementSystem movement;
+    const Entity mover = world->CreateEntity();
+    world->Add<Transform>(mover);
+    world->Add<Intent>(mover, Intent{.Move = vec3(1.0f, 0.0f, 0.0f)});
+    world->Add<Mover>(mover);
+    world->Add<Authority>(mover, Authority{.Tier = Tier::Server});
+    FakeContext ctx;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    for (u64 tick = 1; tick <= 30; ++tick)
+    {
+        world->SetChangeTick(tick);
+        movement.OnUpdate(*world, Delta, ctx.Make());
+    }
+    const vec3 preHostPos = world->Get<Transform>(mover).Position;
+    REQUIRE(preHostPos.x > 0.1f); // it moved before any host existed
+
+    // Runtime activation: bind the transport and stand the host up over the live world.
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+    Result<Unique<ServerHost>> host = ServerHost::Create(ServerHostInfo{
+        .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
+        .WorldId = WorldInstanceId{.Value = 1},
+        .World = *world,
+        .Assets = FakeAssets(),
+        .LevelId = LevelId,
+        .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
+        .Interest = InterestSettings{.Radius = 0.0f},
+    });
+    REQUIRE(host.has_value());
+
+    ClientWorld client(*clientT);
+
+    f64 now = 0.5;
+    std::unordered_map<u64, InputJitterBuffer> jitter;
+    for (u64 tick = 31; tick <= 90; ++tick)
+    {
+        now += Delta;
+        world->SetChangeTick(tick);
+        movement.OnUpdate(*world, Delta, ctx.Make());
+        (*host)->Pump(now, tick);
+        IngestConnectionInputs(**host, jitter, InputJitterBuffer::Settings{}, types);
+        client.Frame(now, tick, Delta, std::nullopt);
+    }
+
+    // The client connected to the after-the-fact host and joined the world by DefaultWorldKey.
+    CHECK(client.Client->State() == ClientState::Connected);
+    CHECK(client.Host->IsJoined());
+    CHECK((*host)->WorldFor(client.Client->AssignedId()).IsValid());
 }

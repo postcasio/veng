@@ -106,6 +106,14 @@ namespace Veng
             Build(*m_PendingReconfigure);
             m_PendingReconfigure.reset();
         }
+
+        // Rebinds apply after any reconfigure, so a rebind of a viewport the reconfigure rebuilt lands
+        // on the new viewport (the same top-of-frame safe point, outside the drive loop).
+        for (const PendingRebind& rebind : m_PendingRebinds)
+        {
+            SetViewportWorld(rebind.Index, rebind.World);
+        }
+        m_PendingRebinds.clear();
     }
 
     void ManagedViewportSet::SetViewportWorld(usize index, WorldInstanceId world)
@@ -114,6 +122,11 @@ namespace Veng
         {
             m_Viewports[index].Info.World = world;
         }
+    }
+
+    void ManagedViewportSet::RebindWorld(usize index, WorldInstanceId world)
+    {
+        m_PendingRebinds.push_back({.Index = index, .World = world});
     }
 
     void ManagedViewportSet::PushViewportView(Renderer::Viewport& viewport, WorldInstanceId world,

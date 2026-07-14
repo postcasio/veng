@@ -167,10 +167,10 @@ future.
 `Host.h` is the world glue. **`ServerHost`** wraps the lifecycle + replication halves and the world
 lifecycle. A client joins a world by presenting a `WorldKey`; the host resolves it in a fixed order —
 **authorize** (the `Authorize` hook: may this connection join/create this key? default allow-all),
-**per-connection cap** (`MaxJoinedWorldsPerConnection`, default 4), **server-wide cap**
-(`MaxHostedWorlds`, default 64), then **get-or-create** through the consumer `WorldFactory`
-(`WorldKey → ServerWorldResolution`, opening a world on a miss via the runner, **reusing** on a hit so
-two connections presenting the same key **converge on one shared instance**). It then assigns a
+**per-connection cap** (`MaxJoinedWorldsPerConnection`, default 4), then **get-or-place** through the
+placement policy, opening a fresh bucket through the consumer `WorldFactory`
+(`WorldKey → ServerWorldResolution`) when the policy asks for one, bounded by the **server-wide cap**
+(`MaxHostedWorlds`, default 64). It then assigns a
 per-connection `JoinId`, spawns a **`Viewer` seat entity** in that world (`Authority{ Server, Owner =
 id }`, no `SeatInput` — the remote path), and replies (`JoinAcceptMessage`) with the world's level, a
 **content digest** of the resolved world, and the seat's wire id; the game-mode spawn rule pawns the
@@ -186,6 +186,24 @@ per-join server surface keys by `(conn, join)` — `ReplicationForJoin` / `World
 `IsGranted` / `IsReady` / `JoinsFor` / `CurrentJoin`, with no-arg / `(conn)` forms the current-join
 convenience.
 
+**Get-or-place: a `WorldKey` maps to N buckets, resolved by a placement policy.** The shared map is
+`WorldKey → [WorldInstance]` — a key may have several live **buckets**, each a full instance with its
+own `ReplicationServer` (so replication-state isolation is structural per bucket; the buckets still tick
+serially in the host). On a join the host offers the key's live buckets (each with its live-seat count,
+a `WorldPlacement`) to the `Placement` policy `(WorldKey, connection, buckets) → optional<WorldInstanceId>`:
+returning an existing bucket converges on it, returning `nullopt` opens a fresh bucket through the
+`WorldFactory` (bounded by `MaxHostedWorlds`). The **default policy is convergence** — one bucket per
+key — so a host that sets no capacity is byte-identical to a 1:1 get-or-create map. The built-in
+**capacity policy** is driven by one knob, **`MaxPlayersPerInstance`** (`0` = no max, the default =
+pure convergence): a value > 0 places a joiner into the first bucket under capacity and opens a fresh
+bucket when every existing one is full. A consumer may supply its own `Placement` for a different fill
+rule. Placement is **purely server-side and off the wire** — the client only ever names the `WorldKey`;
+which bucket it lands in is the server's decision, identified per-connection by the `JoinId`, and the
+echoed content digest is identical across buckets of one key, so which bucket a join lands in never
+changes what the client validates. The policy takes only `(WorldKey, connection)`; party/affinity
+grouping is not expressed here. A bucket that empties reaps per the idle keep-warm dwell and drops out
+of the key's list, its peers untouched.
+
 **`ClientHost`** owns one `ReplicationClient` per joined world. `Join(WorldKey)` requests a world;
 `ClientHostInfo{ WorldKey, AutoJoin }` auto-joins one key on connect (the single-world convenience).
 On the join reply it **validates the echoed content digest** against its own reconstruction (the
@@ -200,14 +218,22 @@ are shared across joins — a multiplexed client distinguishes joins by the leve
 `LoadLevel` returns. Both hosts are usable standalone; **`Application` mounts them** as the
 plug-and-play path.
 
-`Application` wiring is a launch decision, not a build. `ApplicationInfo::Net` (an
+`Application` wiring is a launch *or runtime* decision, not a build. `ApplicationInfo::Net` (an
 `optional<GameNetInfo>` — `Port`, `MaxConnections`, `SnapshotIntervalTicks`, `InputRedundancyTicks`,
-the quantization/keyframe knobs, `InterestRadius`/`InterestPolicy`, and the client `PredictionPolicy`)
-tunes the hosts; **activation is a launch flag**, parsed by `LaunchArguments`: `--server` (listen
-server) `[--headless]` (dedicated — Sim + net pump, no render tail), `--join <host[:port]>` (client),
-and **`--netsim latency=100,jitter=20,loss=5,dup=1,reorder=2`** wraps the constructed transport in a
-seeded `SimulatedTransport` for playable adversity — a dev/QA tool shipped in every build, inert
-unless set. The single managed world joins by `Net::DefaultWorldKey` (auto-join server-side
+the quantization/keyframe knobs, `InterestRadius`/`InterestPolicy`, the client `PredictionPolicy`, plus
+the hosting hooks `WorldFactory` / `Authorize` / `Placement` / `MaxPlayersPerInstance` / `CloseWorld`
+and the `MaxHostedWorlds` / `MaxJoinedWorldsPerConnection` / `IdleKeepWarmDwell` caps) tunes the hosts;
+**activation is a launch flag or a runtime call**. `LaunchArguments` parses `--server` (listen server)
+`[--headless]` (dedicated — Sim + net pump, no render tail), the first-class **`--dedicated`** (the
+honest name for `--server --headless`), `--join <host[:port]>` (client), and **`--netsim
+latency=100,jitter=20,loss=5,dup=1,reorder=2`** wraps the constructed transport in a seeded
+`SimulatedTransport` for playable adversity — a dev/QA tool shipped in every build, inert unless set.
+The same host construction is exposed as runtime operations for a menu-driven flow: **`StartHosting()`**
+mounts the `ServerHost` on the managed world after boot (mirrors `--server`, with the `GameNetInfo`
+hooks), **`Connect(host, port)`** mounts the `ClientHost` against an endpoint (mirrors `--join`), and
+**`StopNet()`** drops the host back to standalone — a process that calls none of them, or that used a
+launch flag, behaves exactly as before. The managed viewport re-points to another open world at runtime
+through **`RebindManagedViewport(index, world)`** (deferred to the top of frame, like a reconfigure). The single managed world joins by `Net::DefaultWorldKey` (auto-join server-side
 pre-registers it; the client auto-joins it), so the one-world session is one joined world and one
 `JoinId` — behavior-identical to the pre-multiplex path. **Per-world roles ride
 `NetState::WorldRoles`**, a `WorldInstanceId → NetRole` map: `PumpNet()` iterates the net-active

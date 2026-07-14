@@ -284,6 +284,54 @@ TEST_CASE("A viewport whose bound world is closed renders a cleared target witho
     app.Run({});
 }
 
+TEST_CASE("A runtime rebind re-points a managed viewport from one world to another, leaving the "
+          "first untouched")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    SystemRegistry systems;
+
+    MvApp app(HeadlessInfo({ManagedViewportInfo{}}), types, systems);
+
+    MvApp::WorldSeat a{};
+    MvApp::WorldSeat b{};
+
+    app.InitFn = [&](MvApp& app)
+    {
+        a = app.OpenCameraWorld(vec3(0.0f, 0.0f, 5.0f));
+        b = app.OpenCameraWorld(vec3(20.0f, 3.0f, 5.0f));
+        // Bind viewport 0 to world A at startup (the immediate bootstrap setter).
+        app.GetManagedViewports().SetViewportWorld(0, a.World);
+    };
+
+    app.StepFn = [&](MvApp& app, int frame)
+    {
+        const Renderer::Viewport* v = app.GetManagedViewports().Get(0);
+        REQUIRE(v != nullptr);
+
+        if (frame == 1)
+        {
+            // The pull presented world A.
+            CHECK(v->GetPresentedScene() == a.Scene);
+            // Request a runtime rebind to world B — deferred, so it applies at the next frame's top, not
+            // mid-drive: this frame's push still presents A.
+            app.RebindManagedViewport(0, b.World);
+            CHECK(v->GetPresentedScene() == a.Scene);
+        }
+        else if (frame == 3)
+        {
+            // The rebind applied at frame 2's top and frame 2's push presented B: the viewport now shows
+            // world B, and A is untouched — still a live, open world (the rebind re-pointed, not closed).
+            CHECK(v->GetPresentedScene() == b.Scene);
+            CHECK(app.GetWorldRunner().ResolveWorld(a.World) != nullptr);
+            CHECK(v->GetOutputHandle().IsValid());
+        }
+    };
+
+    app.Frames = 5;
+    app.Run({});
+}
+
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                   "ManagedViewportSet teardown self-unregisters each viewport and retires its id "
                   "against the live Context registry")

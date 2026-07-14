@@ -173,6 +173,15 @@ namespace Veng
             {
                 result.Headless = true;
             }
+            else if (arg == "--dedicated")
+            {
+                // The first-class dedicated-server flag: a headless listen host with no window, no
+                // managed viewport, and no local seat — the honest name for `--server --headless`, so
+                // it sets both arms and drives the identical ServerHost path.
+                result.Dedicated = true;
+                result.Server = true;
+                result.Headless = true;
+            }
             else if (arg == "--join" || arg.starts_with("--join="))
             {
                 string_view value;

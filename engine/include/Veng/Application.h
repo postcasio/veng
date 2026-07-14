@@ -18,6 +18,7 @@
 #include <Veng/Renderer/SwapChainCompositePass.h>
 #include <Veng/ImGui/ImGuiLayer.h>
 #include <Veng/Gui/GuiConsumer.h>
+#include <Veng/Net/Host.h>
 #include <Veng/Net/Interest.h>
 #include <Veng/Net/PredictionHistory.h>
 #include <Veng/Task/TaskSystem.h>
@@ -125,6 +126,43 @@ namespace Veng
         /// owner-pawn-subtree default (the pawn plus its replicated attachments); a game widens it (a
         /// driven vehicle) or narrows it here. Inert off a client.
         PredictionPolicy PredictionPolicy;
+
+        /// @brief The get-or-place world factory the mounted ServerHost resolves a joined WorldKey through.
+        ///
+        /// Materializes a world for a key that has no live bucket (opening a scene through the game's own
+        /// runner and returning it) so a client may join a world by content, not only the pre-registered
+        /// managed world. Unset means only the managed world is joinable (the single-world default). Read
+        /// by both the `--server` launch path and the runtime StartHosting call; inert off a host.
+        function<optional<ServerWorldResolution>(const Net::WorldKey&)> WorldFactory;
+        /// @brief The authorization hook: may this connection join or create this key? Unset allows all.
+        ///
+        /// Threaded into the mounted ServerHost, called before any world open or JoinId assignment. Inert
+        /// off a host.
+        function<bool(Net::ConnectionId, const Net::WorldKey&)> Authorize;
+        /// @brief Closes a factory-opened world when it idles out; unset leaves factory worlds open.
+        ///
+        /// The counterpart to WorldFactory: invoked with a factory-opened world's id once it has been
+        /// join-less past the idle keep-warm dwell, so the game's runner can close it. Inert off a host.
+        function<void(WorldInstanceId)> CloseWorld;
+        /// @brief The get-or-place policy for a WorldKey's instances; unset uses the capacity policy.
+        ///
+        /// Threaded into the mounted ServerHost. Unset selects the built-in capacity policy driven by
+        /// MaxPlayersPerInstance; a game supplies its own for a different fill rule. Inert off a host.
+        function<optional<WorldInstanceId>(const Net::WorldKey&, Net::ConnectionId,
+                                           std::span<const WorldPlacement>)>
+            Placement;
+        /// @brief Per-instance seat cap the built-in placement policy buckets a key to; 0 = no cap (convergence).
+        ///
+        /// 0 (the default) converges every joiner of a key on one instance; a value > 0 buckets a busy
+        /// key into instances of at most this many seats, spun up on demand through WorldFactory. Ignored
+        /// when Placement is set.
+        u32 MaxPlayersPerInstance = 0;
+        /// @brief The server-wide bound on total live hosted worlds; a fresh-bucket open past it is denied.
+        u32 MaxHostedWorlds = 64;
+        /// @brief The most worlds one connection may join before a further join is denied.
+        u32 MaxJoinedWorldsPerConnection = 4;
+        /// @brief Seconds a factory-opened world with no live joins is held warm before it is reaped.
+        f64 IdleKeepWarmDwell = 5.0;
     };
 
     /// @brief Construction parameters for Application.
@@ -332,6 +370,18 @@ namespace Veng
         /// @param viewports  The new managed set; each info's Layout, World, Viewer, and render knobs apply.
         void ReconfigureManagedViewports(std::span<const ManagedViewportInfo> viewports);
 
+        /// @brief Re-points a managed viewport at a different world at runtime, applied at the top of frame.
+        ///
+        /// Forwards to ManagedViewportSet::RebindWorld: records the new world binding and applies it at
+        /// the same safe point (top of the next frame) ReconfigureManagedViewports uses, so no rebind
+        /// lands mid-drive. The viewport keeps its render target and its bound Viewer; only the world it
+        /// presents changes, and its next per-frame camera pull resolves the new world (the old world is
+        /// untouched — closing it is a separate WorldRunner::CloseWorld). The presentation-side complement
+        /// of opening a world at runtime: open a world, then show it. A no-op for an out-of-range index.
+        /// @param index  The managed viewport index (0 the primary).
+        /// @param world  The world the viewport presents next.
+        void RebindManagedViewport(usize index, WorldInstanceId world);
+
         /// @brief Returns the managed primary viewport's debug-draw accumulator, or null when unconfigured.
         ///
         /// The single-viewport convenience for the canonical per-SceneView DebugDraw channel: it
@@ -384,10 +434,43 @@ namespace Veng
 
         /// @brief Returns the mounted client host, or null when not joined.
         ///
-        /// Non-null only after a `--join` launch. A game reaches it to inspect its own seat / possessed
-        /// pawn; the per-frame join drive is the engine's.
+        /// Non-null only after a `--join` launch or a runtime Connect. A game reaches it to inspect its
+        /// own seat / possessed pawn, or to Join further worlds by key; the per-frame join drive is the
+        /// engine's.
         /// @return The client host, or nullptr.
         [[nodiscard]] ClientHost* GetClientHost() const;
+
+        /// @brief Starts hosting the managed world at runtime, mounting the ServerHost (mirrors `--server`).
+        ///
+        /// The runtime counterpart to the `--server` launch flag: binds the listening transport and
+        /// stands up the ServerHost on the managed world — with the WorldFactory, Authorize, Placement,
+        /// and lifetime hooks from ApplicationInfo::Net — against the same zero-config defaults the
+        /// launch flag uses. The managed world becomes Server-tier and accepts connections. A game drives
+        /// this from a system (a menu's Host button) after boot; a process that never calls it stays
+        /// standalone, exactly as today.
+        /// @pre A managed world is configured (ApplicationInfo::World is set) and started, and no net
+        ///      mode is already active (neither a launch flag nor a prior runtime call).
+        /// @return Empty on success, or an error string if the transport could not be opened.
+        VoidResult StartHosting();
+
+        /// @brief Connects to a server as a client at runtime, mounting the ClientHost (mirrors `--join`).
+        ///
+        /// The runtime counterpart to the `--join` launch flag: binds the connecting transport to the
+        /// endpoint and stands up the ClientHost, whose join flow loads the joined world into the managed
+        /// world's scene. A game drives this from a system (a menu's Join button) after boot.
+        /// @param host  The server host to resolve and connect to.
+        /// @param port  The server port, or 0 to use ApplicationInfo::Net's configured default.
+        /// @pre A managed world is configured and no net mode is already active.
+        /// @return Empty on success, or an error string if the connection could not be opened.
+        VoidResult Connect(const string& host, u16 port = 0);
+
+        /// @brief Tears the net mode down, returning the process to standalone (no transport).
+        ///
+        /// Releases the mounted host (server or client) and clears the per-world roles, so the managed
+        /// world returns to a Server-tier standalone world with no transport bound — the path a
+        /// return-to-front-end takes. A no-op when no net mode is active. The world scenes are untouched;
+        /// closing or re-opening a world is a separate WorldRunner operation.
+        void StopNet();
 
         /// @brief Returns the level a world was bootstrapped from, or an empty handle.
         ///
@@ -503,20 +586,26 @@ namespace Veng
         /// @param world  The world scene to seed the viewport from.
         void SeedViewportFromWorld(Scene& world);
 
-        /// @brief Opens the ServerHost on the started managed world (`--server`).
+        /// @brief Opens the ServerHost on the started managed world (`--server` and runtime StartHosting).
         ///
         /// Constructs the NetState Server arm from ApplicationInfo::Net (or the zero-config defaults):
-        /// listens on the configured port, accepts up to MaxConnections, and replicates at the snapshot
-        /// interval. Called from the bootstrap tail after m_World starts.
-        /// @param levelId  The startup level id folded into each ConnectAccept for the client to load.
-        void StartServer(AssetId levelId);
+        /// listens on the configured port, accepts up to MaxConnections, replicates at the snapshot
+        /// interval, and threads the game's hosting hooks (WorldFactory, Authorize, Placement,
+        /// MaxPlayersPerInstance, the lifetime knobs). Called from the bootstrap tail after m_World starts
+        /// and from StartHosting at runtime.
+        /// @param levelId  The managed world's level id folded into its join reply for the client to load.
+        /// @return Empty on success, or an error string if the transport could not be opened.
+        VoidResult StartServer(AssetId levelId);
 
-        /// @brief Connects the Net::Client and mounts the ClientHost (`--join`).
+        /// @brief Connects the Net::Client and mounts the ClientHost (`--join` and runtime Connect).
         ///
-        /// Constructs the NetState Client arm from the launch target + ApplicationInfo::Net: opens the
+        /// Constructs the NetState Client arm from the endpoint + ApplicationInfo::Net: opens the
         /// connection and installs the join hooks (LoadClientLevel, prefab resolve, OnClientPossession).
         /// The world scene is not loaded here — it arrives through the join flow (LoadClientLevel).
-        void ConnectClient();
+        /// @param host  The server host to resolve and connect to.
+        /// @param port  The resolved server port (the caller applies the GameNetInfo default for 0).
+        /// @return Empty on success, or an error string if the connection could not be opened.
+        VoidResult ConnectClient(const string& host, u16 port);
 
         /// @brief Loads the accepted level into the managed world's scene, server-authoritative entities skipped.
         ///

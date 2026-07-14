@@ -106,6 +106,20 @@ namespace Veng
         Net::InterestPolicy InterestPolicy;
     };
 
+    /// @brief One live instance ("bucket") of a WorldKey, offered to the placement policy on a join.
+    ///
+    /// The get-or-place policy resolves a join to a bucket from the live set a key currently has. Each
+    /// carries its world id and its current live-seat (live-join) count, so a capacity policy can pick
+    /// the first bucket under a cap. A key with no live buckets offers an empty span, and any policy
+    /// returning nullopt asks the ServerHost to open a fresh bucket through the WorldFactory.
+    struct WorldPlacement
+    {
+        /// @brief The bucket's world instance id (a live hosted world under the key).
+        WorldInstanceId World;
+        /// @brief The bucket's current live-seat count — its live joins, the capacity metric.
+        u32 LiveSeats = 0;
+    };
+
     /// @brief Configuration for a ServerHost: the shared server plus its initial hosted world.
     struct ServerHostInfo
     {
@@ -139,6 +153,13 @@ namespace Veng
         u32 MaxJoinedWorldsPerConnection = 4;
         /// @brief The server-wide bound on total live worlds; a create-on-miss past it is denied HostedWorldsCapReached.
         u32 MaxHostedWorlds = 64;
+        /// @brief Per-instance seat cap the built-in placement policy fills to; 0 (the default) means no cap.
+        ///
+        /// Drives the built-in get-or-place policy when Placement is unset: 0 converges every joiner of a
+        /// key on one bucket (byte-identical to a single get-or-create instance), and a value > 0 places a
+        /// joiner into the first bucket with fewer than this many live seats, opening a fresh bucket through
+        /// the WorldFactory when every existing one is full. Ignored when Placement is set.
+        u32 MaxPlayersPerInstance = 0;
         /// @brief Seconds a world with no live joins is held warm before it is reaped (CloseWorld).
         f64 IdleKeepWarmDwell = 5.0;
         /// @brief The authorization hook: may this connection join/create this key? Unset allows all.
@@ -153,6 +174,17 @@ namespace Veng
         /// worlds (Create + AddWorld) can be joined. A hit reuses the existing instance, so two
         /// connections presenting the same key converge on one shared world.
         function<optional<ServerWorldResolution>(const Net::WorldKey&)> WorldFactory;
+        /// @brief The get-or-place policy: which live bucket of a key a joiner lands in, or a fresh one.
+        ///
+        /// Called on every join after authorize + the per-connection cap clear, with the key's live
+        /// buckets (each with its live-seat count) and the joining connection. Returning an offered
+        /// bucket's id places the joiner there (converging on it); returning nullopt asks for a fresh
+        /// bucket, opened through WorldFactory and bounded by MaxHostedWorlds. Unset uses the built-in
+        /// capacity policy driven by MaxPlayersPerInstance (convergence when that is 0). The policy sees
+        /// only (key, connection); party/affinity grouping is not expressed here.
+        function<optional<WorldInstanceId>(const Net::WorldKey&, Net::ConnectionId,
+                                           std::span<const WorldPlacement>)>
+            Placement;
         /// @brief Closes a factory-opened world when it idles out; unset leaves the world open.
         ///
         /// Invoked with a factory-opened world's id once it has been join-less past IdleKeepWarmDwell,

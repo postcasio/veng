@@ -168,6 +168,18 @@ namespace Veng
         /// @param world  The world the viewport presents.
         void SetViewportWorld(usize index, WorldInstanceId world);
 
+        /// @brief Records a world rebind applied at the next ApplyPendingReconfigure (top of frame).
+        ///
+        /// The deferred runtime counterpart to SetViewportWorld: re-points the indexed managed viewport
+        /// at a different world, applied at the same safe point a reconfigure uses (never mid-drive), so
+        /// the viewport's next camera pull resolves the new world while keeping its render target and
+        /// bound Viewer. A no-op for an out-of-range index (dropped at apply). A pending rebind of a
+        /// viewport a pending reconfigure also replaces is applied after the reconfigure, on the rebuilt
+        /// set.
+        /// @param index  The managed viewport index (0 the primary).
+        /// @param world  The world the viewport presents next.
+        void RebindWorld(usize index, WorldInstanceId world);
+
         /// @brief Registers a non-owning presented viewport bound to a world, driven beside the set.
         ///
         /// The camera pull that serves a Presented viewport opened at runtime over the indexed managed
@@ -261,5 +273,17 @@ namespace Veng
 
         /// @brief A pending reconfigure, applied at the next ApplyPendingReconfigure; nullopt when none.
         optional<vector<ManagedViewportInfo>> m_PendingReconfigure;
+
+        /// @brief One deferred world rebind: the viewport index and the world to re-point it at.
+        struct PendingRebind
+        {
+            /// @brief The managed viewport index to rebind.
+            usize Index = 0;
+            /// @brief The world the viewport presents after the rebind applies.
+            WorldInstanceId World;
+        };
+
+        /// @brief Pending world rebinds applied in order at the next ApplyPendingReconfigure.
+        vector<PendingRebind> m_PendingRebinds;
     };
 }

@@ -35,6 +35,8 @@
 #include <Veng/Scene/SceneSystem.h>
 #include <Veng/Scene/SceneViewport.h>
 
+#include <fmt/format.h>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -270,7 +272,11 @@ namespace Veng
             // Bind managed viewport #0 to world #0: the per-frame pull presents this world's scene
             // through the primary viewport once the join loads it.
             m_ManagedViewports->SetViewportWorld(0, m_ManagedWorld);
-            ConnectClient();
+            const JoinTarget& target = *m_LaunchArgs.Join;
+            const u16 port =
+                target.Port != 0 ? target.Port : m_Info.Net.value_or(GameNetInfo{}).Port;
+            const VoidResult connected = ConnectClient(target.Host, port);
+            VE_ASSERT(connected, "{}", connected.error());
             return;
         }
 
@@ -315,7 +321,8 @@ namespace Veng
         // zero-config defaults here.
         if (m_LaunchArgs.Server)
         {
-            StartServer(startupLevel);
+            const VoidResult hosting = StartServer(startupLevel);
+            VE_ASSERT(hosting, "{}", hosting.error());
         }
     }
 
@@ -334,7 +341,7 @@ namespace Veng
         primary->Configure(settings);
     }
 
-    void Application::StartServer(const AssetId levelId)
+    VoidResult Application::StartServer(const AssetId levelId)
     {
         const GameNetInfo net = m_Info.Net.value_or(GameNetInfo{});
 
@@ -365,19 +372,31 @@ namespace Veng
                                               .LeaveMultiplier = net.InterestLeaveMultiplier,
                                               .MinDwellSnapshots = net.InterestMinDwellSnapshots},
             .InterestPolicy = net.InterestPolicy,
+            .MaxJoinedWorldsPerConnection = net.MaxJoinedWorldsPerConnection,
+            .MaxHostedWorlds = net.MaxHostedWorlds,
+            .MaxPlayersPerInstance = net.MaxPlayersPerInstance,
+            .IdleKeepWarmDwell = net.IdleKeepWarmDwell,
+            .Authorize = net.Authorize,
+            .WorldFactory = net.WorldFactory,
+            .Placement = net.Placement,
+            .CloseWorld = net.CloseWorld,
         });
-        VE_ASSERT(host, "server host failed to open: {}", host.error());
+        if (!host)
+        {
+            // A failed bind leaves no net mode active, so a caller may retry (or fall back to standalone).
+            m_Net.reset();
+            return std::unexpected(fmt::format("server host failed to open: {}", host.error()));
+        }
         m_Net->Server = std::move(*host);
 
         const Result<u16> port = m_Net->Server->Server().LocalPort();
         Log::Info("Listening on port {}", port.value_or(net.Port));
+        return {};
     }
 
-    void Application::ConnectClient()
+    VoidResult Application::ConnectClient(const string& host, const u16 port)
     {
         const GameNetInfo net = m_Info.Net.value_or(GameNetInfo{});
-        const JoinTarget& target = *m_LaunchArgs.Join;
-        const u16 port = target.Port != 0 ? target.Port : net.Port;
 
         m_Net = CreateUnique<NetState>();
         m_Net->Role = NetRole::Client;
@@ -389,9 +408,14 @@ namespace Veng
             InputSendBuffer(InputSendBuffer::Settings{.Redundancy = net.InputRedundancyTicks});
 
         Result<Unique<Net::Client>> client = Net::Client::Connect(
-            Net::ClientInfo{.Host = target.Host, .Port = port, .NetSim = m_LaunchArgs.NetSim});
-        VE_ASSERT(client, "client failed to connect to {}:{}: {}", target.Host, port,
-                  client.error());
+            Net::ClientInfo{.Host = host, .Port = port, .NetSim = m_LaunchArgs.NetSim});
+        if (!client)
+        {
+            // A failed connect leaves no net mode active, so the caller stays standalone (or retries).
+            m_Net.reset();
+            return std::unexpected(
+                fmt::format("client failed to connect to {}:{}: {}", host, port, client.error()));
+        }
         m_Net->Client = std::move(*client);
 
         m_Net->ClientHost = ClientHost::Create(ClientHostInfo{
@@ -452,7 +476,39 @@ namespace Veng
                                                       .RotationBits = net.RotationBits},
         });
 
-        Log::Info("Joining {}:{}", target.Host, port);
+        Log::Info("Joining {}:{}", host, port);
+        return {};
+    }
+
+    VoidResult Application::StartHosting()
+    {
+        VE_ASSERT(m_Info.World, "StartHosting requires a managed world (ApplicationInfo::World)");
+        if (m_Net)
+        {
+            return std::unexpected(string("a net mode is already active"));
+        }
+        VE_ASSERT(m_WorldRunner->ResolveWorld(m_ManagedWorld) != nullptr,
+                  "StartHosting before the managed world is opened");
+        // The managed world's level is echoed to a joining client (the reply names the level it loads).
+        return StartServer(m_WorldLevel.Id());
+    }
+
+    VoidResult Application::Connect(const string& host, const u16 port)
+    {
+        VE_ASSERT(m_Info.World, "Connect requires a managed world (ApplicationInfo::World)");
+        if (m_Net)
+        {
+            return std::unexpected(string("a net mode is already active"));
+        }
+        const u16 resolved = port != 0 ? port : m_Info.Net.value_or(GameNetInfo{}).Port;
+        return ConnectClient(host, resolved);
+    }
+
+    void Application::StopNet()
+    {
+        // Dropping the host closes its connections and returns the managed world to Server-tier with no
+        // transport (the standalone authority model); the world scenes themselves are untouched.
+        m_Net.reset();
     }
 
     Scene* Application::LoadClientLevel(const AssetId id)
@@ -685,6 +741,11 @@ namespace Veng
     void Application::ReconfigureManagedViewports(std::span<const ManagedViewportInfo> viewports)
     {
         m_ManagedViewports->Reconfigure(viewports);
+    }
+
+    void Application::RebindManagedViewport(const usize index, const WorldInstanceId world)
+    {
+        m_ManagedViewports->RebindWorld(index, world);
     }
 
     void Application::RegisterViewport(Renderer::Viewport& viewport)

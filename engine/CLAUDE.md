@@ -128,7 +128,9 @@ The world drive is an accumulator: each world's Sim phase steps at its own fixed
 (`GameWorldInfo`, default 60 Hz) with a monotonic tick, its View phase runs once per frame, and the
 render gather blends transforms between the last two ticks — see
 [src/Net/CLAUDE.md](src/Net/CLAUDE.md) for the tick model and the `ApplicationInfo::Net` wiring
-(`--server` / `--join` / `--netsim`, `PumpNet`). **Pause is a refcount, not a boolean:**
+(`--server` / `--dedicated` / `--join` / `--netsim`, `PumpNet`, and the runtime `StartHosting()` /
+`Connect()` / `StopNet()` operations that mount the same hosts after boot). **Pause is a refcount, not
+a boolean:**
 `WorldRunner::PauseScope(id)` is an RAII pause held for a scope's lifetime (a world is paused while
 any scope is held), composing with the explicit `SetWorldPaused(id, …)` toggle so stacked overlays
 and a game pause do not clobber each other.
@@ -143,9 +145,12 @@ connection **multiplexes N worlds** across **three id spaces**: the process-priv
 (a runner handle, never on the wire), the opaque consumer-defined **`WorldKey`** (a 128-bit name that
 rides only the join request), and the per-connection **`JoinId`** (a `u16` wire tag framed ahead of
 every world message). A client **joins by `WorldKey`**, which the `ServerHost` resolves through a
-**get-or-create factory** — open on a miss, reuse on a hit, so two clients on the same key converge on
-one instance — which is also the **seam that keeps single-player net-free** (a standalone process
-invokes the world-open path with no `Host` and no replication instantiated at all). Each world carries
+**get-or-place policy** — a key maps to N live buckets, and a join lands in an existing bucket (default:
+convergence, one bucket, so two clients on a key share one instance) or opens a fresh one through the
+`WorldFactory`; the built-in capacity policy (`MaxPlayersPerInstance`, 0 = no max = convergence) buckets
+a busy key into instances of ≤ N, each its own `ReplicationServer`. The factory is also the **seam that
+keeps single-player net-free** (a standalone process invokes the world-open path with no `Host` and no
+replication instantiated at all). Each world carries
 its **own replication instance** (one `ReplicationServer`/`ReplicationClient` per world, muxed at the
 `Host`), so **ack/baseline isolation is structural over the shared reliability channels** — one
 world's ack never advances a peer's baseline — though the wire stream and compute stay coupled, so the

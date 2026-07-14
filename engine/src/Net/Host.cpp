@@ -149,18 +149,22 @@ namespace Veng
         AssetManager* Assets = nullptr;
         Unique<Net::Server> Server;
 
-        // The shared WorldKey → WorldInstanceId map (convergence: two connections presenting one key
-        // hit one world) and the hosted worlds keyed by WorldInstanceId value. The primary is the
-        // initial world the no-arg accessors resolve.
-        std::unordered_map<Net::WorldKey, WorldInstanceId> KeyMap;
+        // The shared WorldKey → live buckets map (a key may hold N instances the placement policy fills)
+        // and the hosted worlds keyed by WorldInstanceId value. Convergence is the one-bucket case. The
+        // primary is the initial world the no-arg accessors resolve.
+        std::unordered_map<Net::WorldKey, vector<WorldInstanceId>> KeyMap;
         std::unordered_map<u64, HostedWorld> Worlds;
         WorldInstanceId Primary;
 
         u32 MaxJoinedWorldsPerConnection = 4;
         u32 MaxHostedWorlds = 64;
+        u32 MaxPlayersPerInstance = 0;
         f64 IdleKeepWarmDwell = 5.0;
         function<bool(Net::ConnectionId, const Net::WorldKey&)> Authorize;
         function<optional<ServerWorldResolution>(const Net::WorldKey&)> WorldFactory;
+        function<optional<WorldInstanceId>(const Net::WorldKey&, Net::ConnectionId,
+                                           std::span<const WorldPlacement>)>
+            Placement;
         function<void(WorldInstanceId)> CloseWorld;
 
         std::unordered_map<Net::ConnectionId, ConnectionState> Connections;
@@ -325,9 +329,39 @@ namespace Veng
             return netId;
         }
 
+        // Resolves which live bucket of a key a joiner lands in: the custom Placement policy if set,
+        // else the built-in capacity policy (the first bucket under MaxPlayersPerInstance; 0 means no
+        // cap, so the first bucket — pure convergence). Returns an existing bucket's id, or nullopt to
+        // open a fresh bucket through the factory. Only buckets currently mapped to the key are offered.
+        optional<WorldInstanceId> PlaceInBucket(const Net::WorldKey& key, Net::ConnectionId id)
+        {
+            vector<WorldPlacement> buckets;
+            if (const auto it = KeyMap.find(key); it != KeyMap.end())
+            {
+                for (const WorldInstanceId world : it->second)
+                {
+                    buckets.push_back({.World = world, .LiveSeats = WorldOf(world).JoinRefs});
+                }
+            }
+
+            if (Placement)
+            {
+                return Placement(key, id, buckets);
+            }
+
+            for (const WorldPlacement& bucket : buckets)
+            {
+                if (MaxPlayersPerInstance == 0 || bucket.LiveSeats < MaxPlayersPerInstance)
+                {
+                    return bucket.World;
+                }
+            }
+            return std::nullopt;
+        }
+
         // Resolves a join request in the fixed order (idempotent hit, authorize, per-connection cap,
-        // hosted-worlds cap on a new-world open, get-or-create), then assigns a JoinId and spawns the
-        // seat. Sends the reply (accept or deny) enveloped at the join-control tier.
+        // get-or-place through the policy, hosted-worlds cap on a fresh-bucket open), then assigns a
+        // JoinId and spawns the seat. Sends the reply (accept or deny) enveloped at the join-control tier.
         void ResolveJoin(Net::ConnectionId id, const Net::JoinRequestMessage& request)
         {
             ConnectionState& conn = Connections[id];
@@ -373,15 +407,16 @@ namespace Veng
                 return;
             }
 
+            // Get-or-place: the policy either lands the joiner in an existing bucket (convergence when
+            // one bucket, load-bucketing when several) or asks for a fresh bucket the factory opens.
             WorldInstanceId worldId;
-            const auto mapped = KeyMap.find(request.Key);
-            if (mapped != KeyMap.end())
+            if (const optional<WorldInstanceId> placed = PlaceInBucket(request.Key, id))
             {
-                worldId = mapped->second;
+                worldId = *placed;
             }
             else
             {
-                // A new-world open is bounded by the server-wide cap, checked before the factory runs.
+                // A fresh-bucket open is bounded by the server-wide cap, checked before the factory runs.
                 if (Worlds.size() >= MaxHostedWorlds)
                 {
                     deny(Net::JoinDenyReason::HostedWorldsCapReached);
@@ -411,7 +446,7 @@ namespace Veng
                                            .InterestSettings = resolved->Interest,
                                            .InterestPolicy = resolved->InterestPolicy,
                                            .FactoryOpened = true});
-                KeyMap.emplace(request.Key, worldId);
+                KeyMap[request.Key].push_back(worldId);
             }
 
             HostedWorld& world = WorldOf(worldId);
@@ -488,7 +523,16 @@ namespace Veng
                 {
                     CloseWorld(id);
                 }
-                KeyMap.erase(key);
+                // Drop only the reaped bucket from the key's list; a key with other live buckets keeps
+                // them, and a key whose last bucket reaped loses its entry so a re-join cold-opens.
+                if (const auto it = KeyMap.find(key); it != KeyMap.end())
+                {
+                    std::erase(it->second, id);
+                    if (it->second.empty())
+                    {
+                        KeyMap.erase(it);
+                    }
+                }
                 Worlds.erase(id.Value);
             }
         }
@@ -505,9 +549,11 @@ namespace Veng
         state->Primary = info.WorldId;
         state->MaxJoinedWorldsPerConnection = info.MaxJoinedWorldsPerConnection;
         state->MaxHostedWorlds = info.MaxHostedWorlds;
+        state->MaxPlayersPerInstance = info.MaxPlayersPerInstance;
         state->IdleKeepWarmDwell = info.IdleKeepWarmDwell;
         state->Authorize = info.Authorize;
         state->WorldFactory = info.WorldFactory;
+        state->Placement = info.Placement;
         state->CloseWorld = info.CloseWorld;
         state->Worlds.emplace(info.WorldId.Value,
                               State::HostedWorld{.Id = info.WorldId,
@@ -520,7 +566,7 @@ namespace Veng
                                                  .Replication = ReplicationServer(info.Replication),
                                                  .InterestSettings = info.Interest,
                                                  .InterestPolicy = info.InterestPolicy});
-        state->KeyMap.emplace(info.Key, info.WorldId);
+        state->KeyMap[info.Key].push_back(info.WorldId);
 
         Net::ServerInfo serverInfo = info.Server;
         Result<Unique<Net::Server>> server = Net::Server::Create(serverInfo);
@@ -547,7 +593,13 @@ namespace Veng
                                .Replication = ReplicationServer(world.Replication),
                                .InterestSettings = world.Interest,
                                .InterestPolicy = world.InterestPolicy});
-        m_State->KeyMap.insert_or_assign(world.Key, world.WorldId);
+        // Register the world as a bucket of its key (a fresh key gets its first bucket); re-adding the
+        // same id is idempotent so a config-replacing AddWorld leaves the key's bucket list unchanged.
+        vector<WorldInstanceId>& buckets = m_State->KeyMap[world.Key];
+        if (std::ranges::find(buckets, world.WorldId) == buckets.end())
+        {
+            buckets.push_back(world.WorldId);
+        }
     }
 
     void ServerHost::Pump(f64 now, u64 tick)

@@ -104,6 +104,17 @@ TEST_CASE("LaunchArguments: --server --headless is the dedicated-server pair")
     CHECK(parsed->Headless);
 }
 
+TEST_CASE("LaunchArguments: --dedicated is a first-class synonym for --server --headless")
+{
+    const Result<LaunchArguments> parsed = ParseTokens({"--dedicated"});
+    REQUIRE(parsed.has_value());
+    // The dedicated flag sets both arms, so the process drives the identical ServerHost path headless.
+    CHECK(parsed->Dedicated);
+    CHECK(parsed->Server);
+    CHECK(parsed->Headless);
+    CHECK_FALSE(parsed->Join.has_value());
+}
+
 TEST_CASE("LaunchArguments: --join host:port splits into host and port")
 {
     const Result<LaunchArguments> parsed = ParseTokens({"--join", "127.0.0.1:27750"});

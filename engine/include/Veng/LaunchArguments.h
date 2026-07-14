@@ -54,6 +54,14 @@ namespace Veng
         /// the dedicated server (accumulator + net pump, no View/render tail) from a windowed game exe.
         bool Headless = false;
 
+        /// @brief Boot a dedicated server (`--dedicated`): a headless listen host with no local seat.
+        ///
+        /// The first-class dedicated-server flag and the honest name for the `--server --headless`
+        /// composite: it sets both Server and Headless, so the process opens a ServerHost on the managed
+        /// world and runs the accumulator + net pump with no window, viewport, or local presenter. A
+        /// dedicated host differs from a listen host only in the absence of that local seat and screen.
+        bool Dedicated = false;
+
         /// @brief Connect to a server as a client (`--join <host[:port]>`); unset stays standalone/server.
         ///
         /// The client activation: the engine connects a Net::Client to the target and drives the world
@@ -73,7 +81,8 @@ namespace Veng
         ///
         /// Pure and device-free — it reads no files and touches no global state, so it is unit
         /// tested with no window. Recognises `--level=<id>` / `--level <id>`, `--server`,
-        /// `--headless`, `--join <host[:port]>`, and one leading positional working directory.
+        /// `--headless`, `--dedicated` (`--server --headless`), `--join <host[:port]>`, and one leading
+        /// positional working directory.
         /// @param args  The argument tokens after argv[0].
         /// @return The parsed arguments, or an error string for an unknown flag, a malformed
         ///         level id, a malformed join target, or a second positional argument.
