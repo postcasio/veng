@@ -256,6 +256,16 @@ namespace Veng
             resolvedSeat = ResolvePresentationSeat(destination->GetScene(), departedViewer);
         }
 
+        // Whether the cursor seat is routed through a viewport *other* than this one, captured before
+        // we reassociate. Only then must this rebind leave the cursor seat alone — a split-screen peer
+        // owns it. The stored Info.Viewer is unreliable here: a viewport bound without seat resolution
+        // (the bootstrap SetViewportWorld) leaves Info.Viewer null while the cursor seat still points
+        // at the world this viewport presents, so the live association — not the stored viewer — is
+        // the source of truth for ownership.
+        const Renderer::Viewport* const cursorViewport = m_Router.ResolvePointerViewport({}, true);
+        const bool cursorOwnedElsewhere =
+            cursorViewport != nullptr && cursorViewport != managed.Viewport.get();
+
         if (resolvedSeat != Entity::Null)
         {
             m_Router.AssociateViewportSeat(*managed.Viewport, resolvedSeat);
@@ -264,7 +274,12 @@ namespace Veng
         {
             m_Router.ClearViewportSeat(*managed.Viewport);
         }
-        if (!departedViewer.IsNull() && m_Router.GetCursorSeat() == departedViewer)
+        // The cursor seat follows this viewport to its new seat unless a different viewport owns it. A
+        // scene-local seat handle cannot survive the scene change, so the presenting viewport's rebind
+        // must move the cursor seat to the destination's seat — otherwise a captured pointer resolves
+        // no viewport for the stale seat and falls back to the managed world, and the presented
+        // world's seat never receives the look delta.
+        if (!cursorOwnedElsewhere)
         {
             m_Router.SetCursorSeat(resolvedSeat);
         }
