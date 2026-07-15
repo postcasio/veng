@@ -201,6 +201,8 @@ add_library(veng SHARED
         src/Renderer/PointField.cpp
         src/Renderer/Passes/PointFieldScenePass.cpp
         src/Renderer/VolumeField.cpp
+        src/Renderer/VolumeMarch.cpp
+        src/Renderer/Passes/VolumeScenePass.cpp
         src/Renderer/EnvironmentIbl.cpp
         src/Renderer/RenderGraph.cpp
         src/Renderer/SceneCapture.cpp

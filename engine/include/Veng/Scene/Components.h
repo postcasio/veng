@@ -6,6 +6,7 @@
 #include <Veng/Renderer/Atmosphere.h>
 #include <Veng/Renderer/PointField.h>
 #include <Veng/Renderer/SunPosition.h>
+#include <Veng/Renderer/VolumeField.h>
 #include <Veng/Renderer/Tonemapper.h>
 #include <Veng/Scene/Entity.h>
 #include <Veng/Reflection/Reflect.h>
@@ -835,6 +836,34 @@ namespace Veng
         Ref<Renderer::PointField> Field;
     };
 
+    /// @brief A scene-authored bounded emissive volumetric medium the renderer ray-marches.
+    ///
+    /// Resolved by the renderer via View<VolumeField> each Execute — the lights model: every
+    /// component with a live Field contributes one field to the volume pass, whose presence is
+    /// driven by any live field existing (no consumer toggle). Opacity, EmissionScale,
+    /// ExtinctionScale, and Steps are authored knobs (reflected, cooked, editable in the inspector);
+    /// Field is the built GPU resource, runtime-only and never serialized. A consumer builds a
+    /// Renderer::VolumeField from its voxel data and assigns it; a null Field draws nothing. The
+    /// field's bounds are world-space (the resource's contract) — the entity's Transform is not
+    /// applied.
+    struct VolumeField
+    {
+        /// @brief Overall fade: scales emission and extinction toward zero (1 full, 0 invisible).
+        f32 Opacity = 1.0f;
+        /// @brief Unit remap over the baked emission radiance density.
+        f32 EmissionScale = 1.0f;
+        /// @brief Unit remap over the baked extinction density.
+        f32 ExtinctionScale = 1.0f;
+        /// @brief Fixed ray-march step count through the field (the quality knob).
+        u32 Steps = 64;
+        /// @brief The built GPU field this entity draws, or null for none.
+        ///
+        /// Runtime-only: carries no VE_FIELD, so reflection, the cooker, and the inspector never
+        /// see it — it serializes as absent and default-constructs to null on load. A consumer (a
+        /// system or app code) builds a Renderer::VolumeField from its voxel data and assigns it.
+        Ref<Renderer::VolumeField> Field;
+    };
+
     /// @brief Level-scoped post/pipeline render knobs.
     ///
     /// Carried on a Level and seeded into the renderer the app drives — a reflected,
@@ -1191,6 +1220,14 @@ VE_FIELD(Lod, .DisplayName = "LOD")
 VE_FIELD(CellSize, .DisplayName = "Cell Size", .Display = {.Min = 0.001})
 VE_FIELD(Placement, .DisplayName = "Placement",
          .Tooltip = "HDR tail (post-TAA, pre-bloom) or lit scene color (ahead of translucents)")
+VE_REFLECT_END();
+
+VE_REFLECT(::Veng::VolumeField, 0xA8C07107902C21E0ULL)
+VE_FIELD(Opacity, .DisplayName = "Opacity", .Tooltip = "Fades emission and extinction toward zero",
+         .Display = {.Min = 0.0, .Max = 1.0})
+VE_FIELD(EmissionScale, .DisplayName = "Emission Scale", .Display = {.Min = 0.0})
+VE_FIELD(ExtinctionScale, .DisplayName = "Extinction Scale", .Display = {.Min = 0.0})
+VE_FIELD(Steps, .DisplayName = "Steps", .Tooltip = "Ray-march step count", .Display = {.Min = 1.0})
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::LevelRenderSettings, 0x28E4618C66455E21ULL)

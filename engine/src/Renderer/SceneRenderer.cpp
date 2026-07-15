@@ -8,6 +8,7 @@
 #include "Passes/AtmospherePrecompute.h"
 #include "Passes/PointFieldScenePass.h"
 #include "Passes/SkyScenePass.h"
+#include "Passes/VolumeScenePass.h"
 #include "ShadowScenePass.h"
 #include "PunctualShadowScenePass.h"
 #include "Picking.h"
@@ -3972,6 +3973,17 @@ namespace Veng::Renderer
                 m_Passes.push_back(std::move(scenePointFields));
             }
 
+            // Volume fields ray-march into the lit scene color in the same slot — after the sky
+            // composite, ahead of the refraction copy and the translucent pass — so a field
+            // attenuates the backdrop behind it, the refraction grab captures it, translucents blend
+            // over it, and TAA resolves the per-pixel march jitter. The in-list io.Hdr is exactly the
+            // lit target this position writes.
+            if (m_VolumeFieldActive)
+            {
+                m_Passes.push_back(CreateUnique<VolumeScenePass>(
+                    m_Context, m_Assets, &m_VolumeFields, HdrFormat, m_SamplerHandle));
+            }
+
             // Forward translucent draws alpha-blend into the lit scene color after the sky
             // composite and before the TAA/bloom/tonemap tail, so translucents resolve,
             // bloom, and tonemap with the scene. Depth-tested against the opaque depth, depth-write
@@ -4436,6 +4448,38 @@ namespace Veng::Renderer
         {
             m_PointFieldActive = active;
             m_ScenePointFieldActive = sceneActive;
+            Rebuild();
+        }
+    }
+
+    void SceneRenderer::ResolveVolumeFields(const SceneView& view)
+    {
+        // Refill this Execute's live field set from the scene's VolumeField components — the lights
+        // model. Each component's authored knobs fold into the instance beside its built field; a
+        // null Field contributes nothing.
+        m_VolumeFields.clear();
+        for (auto [entity, field] : view.World.View<Veng::VolumeField>())
+        {
+            if (field.Field == nullptr)
+            {
+                continue;
+            }
+            m_VolumeFields.push_back(VolumeFieldInstance{
+                .Field = field.Field.get(),
+                .Opacity = field.Opacity,
+                .EmissionScale = field.EmissionScale,
+                .ExtinctionScale = field.ExtinctionScale,
+                .Steps = field.Steps,
+            });
+        }
+
+        // Presence drives the pass: insert it the first frame a live field exists, drop it when the
+        // last one goes. The recompile happens at this frame boundary and reuses the imported output
+        // (identity preserved), so a cached GetOutput() ref stays valid.
+        const bool active = !m_VolumeFields.empty();
+        if (active != m_VolumeFieldActive)
+        {
+            m_VolumeFieldActive = active;
             Rebuild();
         }
     }
@@ -5677,6 +5721,10 @@ namespace Veng::Renderer
         // Resolve the scene's point-field components into this Execute's live field set the same
         // way — the pass inserts on the first live field and drops when the last one goes.
         ResolvePointFields(resolvedView);
+
+        // Resolve the scene's volume-field components the same way — the volume march pass inserts on
+        // the first live field and drops when the last one goes.
+        ResolveVolumeFields(resolvedView);
 
         // Forward the resolved authored sky material to the sky-material pass (a no-op when the pass
         // is absent or no material is bound). The game has already written the material's own

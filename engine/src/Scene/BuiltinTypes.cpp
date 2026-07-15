@@ -91,6 +91,11 @@ namespace Veng
         // carries no reflected field, so it neither registers Renderer::PointField nor serializes.
         registry.Register<PointField>();
 
+        // A scene-authored volume field, resolved by the renderer per Execute. Its authored knobs
+        // register transitively; the runtime-only Field carries no reflected field, so it neither
+        // registers Renderer::VolumeField nor serializes.
+        registry.Register<VolumeField>();
+
         // A document mapped onto a world mesh, driven into an HDR target and glowing through the
         // scene's bloom. GuiSurfaceDomain and the AssetHandle<Gui::UIDocument> recipe leaf register
         // transitively through its fields.

@@ -9,6 +9,7 @@
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/Sampler.h>
 #include <Veng/Renderer/Viewport.h>
+#include <Veng/Renderer/VolumeField.h>
 #include <Veng/ImGui/ImGuiLayer.h>
 #include <Veng/Asset/Prefab.h>
 #include <Veng/Asset/Level.h>
@@ -52,8 +53,14 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <fstream>
+#include <vector>
+
+#include <Veng/Math/AABB.h>
+
+#include <glm/common.hpp>
 
 using namespace Veng;
 
@@ -650,6 +657,7 @@ protected:
         m_McpServer.reset();
         m_SceneTexture.reset();
         m_SceneSampler.reset();
+        m_VolumeField.reset();
     }
 
 private:
@@ -692,6 +700,120 @@ private:
         });
 
         m_McpServer = Mcp::McpServer::Create(info, *m_McpHost);
+    }
+
+    // Reflects the m_ShowVolume toggle onto the managed scene: builds the nebula on first enable and
+    // carries it on a lazily created entity's VolumeField component while shown / a null Field while
+    // hidden (the presence-driven pass drops). Runs from OnRender, after the frame's render, so the
+    // scene edit lands next frame with no mid-iteration structural change.
+    void SyncVolumeDemo()
+    {
+        Scene* scene = ManagedScene();
+        if (scene == nullptr)
+        {
+            return;
+        }
+        if (m_ShowVolume && m_VolumeField == nullptr)
+        {
+            m_VolumeField = BuildNebula();
+        }
+        if (m_VolumeEntity.IsNull())
+        {
+            m_VolumeEntity = scene->CreateEntity();
+            scene->Add<Name>(m_VolumeEntity).Value = "Nebula";
+            scene->Add<VolumeField>(m_VolumeEntity);
+        }
+        scene->Get<VolumeField>(m_VolumeEntity).Field = m_ShowVolume ? m_VolumeField : nullptr;
+    }
+
+    // Builds the demo nebula: a 64^3 RGBA16F volume whose RGB is emission radiance density and A is
+    // extinction density, from layered value noise densest near the box center and fading to the
+    // padded border — generic procedural content (a glowing gas cloud), no external data. Built
+    // synchronously on the render thread (OnRender), the blocking factory arm.
+    Ref<Renderer::VolumeField> BuildNebula()
+    {
+        constexpr u32 N = 64;
+
+        // A cheap integer hash → [0,1), and a smooth trilinear value noise + a 4-octave fbm over it.
+        auto hash = [](i32 x, i32 y, i32 z) -> f32
+        {
+            u32 h = static_cast<u32>(x) * 374761393u + static_cast<u32>(y) * 668265263u +
+                    static_cast<u32>(z) * 2147483647u;
+            h = (h ^ (h >> 13)) * 1274126177u;
+            return static_cast<f32>(h & 0xFFFFFFu) / static_cast<f32>(0xFFFFFFu);
+        };
+        auto valueNoise = [&](vec3 p) -> f32
+        {
+            const vec3 i = glm::floor(p);
+            const vec3 f = glm::fract(p);
+            const vec3 u = f * f * (3.0f - 2.0f * f);
+            const auto c = [&](i32 dx, i32 dy, i32 dz)
+            {
+                return hash(static_cast<i32>(i.x) + dx, static_cast<i32>(i.y) + dy,
+                            static_cast<i32>(i.z) + dz);
+            };
+            const f32 x00 = glm::mix(c(0, 0, 0), c(1, 0, 0), u.x);
+            const f32 x10 = glm::mix(c(0, 1, 0), c(1, 1, 0), u.x);
+            const f32 x01 = glm::mix(c(0, 0, 1), c(1, 0, 1), u.x);
+            const f32 x11 = glm::mix(c(0, 1, 1), c(1, 1, 1), u.x);
+            return glm::mix(glm::mix(x00, x10, u.y), glm::mix(x01, x11, u.y), u.z);
+        };
+        auto fbm = [&](vec3 p) -> f32
+        {
+            f32 sum = 0.0f;
+            f32 amp = 0.5f;
+            for (u32 octave = 0; octave < 4; ++octave)
+            {
+                sum += amp * valueNoise(p);
+                p *= 2.0f;
+                amp *= 0.5f;
+            }
+            return sum;
+        };
+
+        std::vector<u8> voxels(static_cast<usize>(N) * N * N * 8);
+        auto* halves = reinterpret_cast<u16*>(voxels.data());
+        for (u32 z = 0; z < N; ++z)
+        {
+            for (u32 y = 0; y < N; ++y)
+            {
+                for (u32 x = 0; x < N; ++x)
+                {
+                    // Normalized [-1,1] position; a soft spherical falloff carves the cloud out of
+                    // the box and modulates the noise so density fades to zero at the padded border.
+                    const vec3 p = (vec3(x, y, z) / static_cast<f32>(N - 1)) * 2.0f - 1.0f;
+                    const f32 radial = glm::clamp(1.0f - glm::length(p), 0.0f, 1.0f);
+                    const f32 noise = fbm(vec3(x, y, z) * (6.0f / static_cast<f32>(N)));
+                    const f32 density = glm::clamp(radial * (0.4f + noise), 0.0f, 1.0f);
+                    const f32 d = density * density; // sharpen the core
+
+                    // A warm-to-cool emissive gradient by height, scaled by density; extinction rises
+                    // with density so the dense core silhouettes against its own glow.
+                    const vec3 warm(1.4f, 0.5f, 0.9f);
+                    const vec3 cool(0.3f, 0.5f, 1.3f);
+                    const vec3 emission =
+                        glm::mix(warm, cool, glm::clamp(p.y * 0.5f + 0.5f, 0.0f, 1.0f)) *
+                        (d * 2.0f);
+                    const f32 extinction = d * 2.5f;
+
+                    const usize base =
+                        (static_cast<usize>(z) * N * N + static_cast<usize>(y) * N + x) * 4;
+                    halves[base + 0] = glm::packHalf1x16(emission.x);
+                    halves[base + 1] = glm::packHalf1x16(emission.y);
+                    halves[base + 2] = glm::packHalf1x16(emission.z);
+                    halves[base + 3] = glm::packHalf1x16(extinction);
+                }
+            }
+        }
+
+        Renderer::VolumeFieldData data;
+        data.Name = "Demo Nebula";
+        data.Resolution = {N, N, N};
+        data.Format = Renderer::Format::RGBA16Sfloat;
+        data.Bounds = AABB{.Min = vec3(-6.0f, -1.0f, -6.0f), .Max = vec3(6.0f, 8.0f, 6.0f)};
+        data.Voxels = voxels;
+        VE_ASSERT(data.IsValid(), "BuildNebula: voxel span size mismatch");
+        return Renderer::VolumeField::BuildSync(GetRenderContext(), data);
     }
 
     // Configure can recreate the viewport's output image, so the ImGui texture must be re-fetched
@@ -745,6 +867,13 @@ private:
             if (UI::Checkbox("Pause spin", m_PauseSpin))
             {
                 SetWorldPaused(GetManagedWorldId(), m_PauseSpin);
+            }
+
+            // Default-off demo of the volume-field pass: toggles a procedural emissive nebula
+            // ray-marched against the scene (depth-aware), built lazily on first enable.
+            if (UI::Checkbox("Volume nebula", m_ShowVolume))
+            {
+                SyncVolumeDemo();
             }
         }
 
@@ -921,6 +1050,15 @@ private:
 
     // Pauses the managed world's simulation so the broadphase reads `static`; never set in smoke.
     bool m_PauseSpin = false;
+
+    // Default-off debug demo: a procedural CPU-noise nebula built through VolumeField::BuildSync and
+    // attached to the managed scene via the VolumeField component, toggled from the debug panel. Off
+    // by default so the smoke fixture and golden never author a volume — the presence-driven volume
+    // pass stays absent and the capture is byte-identical. The field is built lazily on first enable
+    // and the entity carries it while shown / a null Field while hidden.
+    bool m_ShowVolume = false;
+    Ref<Renderer::VolumeField> m_VolumeField;
+    Entity m_VolumeEntity = Entity::Null;
 
     // The second flat-peer world presented in the corner picture-in-picture viewport; opened offline
     // windowed (invalid in smoke and net modes, which run a single world). The runner owns it, so it

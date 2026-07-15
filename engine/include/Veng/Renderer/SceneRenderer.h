@@ -12,6 +12,7 @@
 #include <Veng/Renderer/HiZHistory.h>
 #include <Veng/Renderer/PointField.h>
 #include <Veng/Renderer/PunctualShadows.h>
+#include <Veng/Renderer/VolumeMarch.h>
 #include <Veng/Renderer/ShadowCascades.h>
 
 #include <Veng/Math/SphericalHarmonics.h>
@@ -1117,6 +1118,16 @@ namespace Veng::Renderer
         /// @param view  The scene to resolve the point fields from.
         void ResolvePointFields(const SceneView& view);
 
+        /// @brief Resolves the scene's VolumeField components into this Execute's live field set.
+        ///
+        /// Walks View<VolumeField> off @p view.World, folds each component's authored knobs with its
+        /// built field into a VolumeFieldInstance, and collects every live (non-null) field into
+        /// m_VolumeFields for the volume pass to march — the lights model. When whether any live
+        /// field exists changes between Executes, drives an internal Rebuild to insert or drop the
+        /// pass at the frame boundary (reusing the imported output, so GetOutput() stays valid).
+        /// @param view  The scene to resolve the volume fields from.
+        void ResolveVolumeFields(const SceneView& view);
+
         /// @brief Sets m_ActiveCull from Settings.Cull and the device-support fallback.
         ///
         /// CullMode::GPU survives only where Context::IsGpuDrivenCullingSupported() is true;
@@ -2128,6 +2139,21 @@ namespace Veng::Renderer
 
         /// @brief Whether the current pass set carries the scene-color point-field pass.
         bool m_ScenePointFieldActive = false;
+
+        /// @brief This Execute's live volume fields, resolved from the scene's VolumeField components.
+        ///
+        /// Refilled every Execute by ResolveVolumeFields walking View<VolumeField>; the volume pass
+        /// reads it by pointer and marches each field. A borrow of the built fields (the scene's
+        /// components own their lifetimes), with the authored knobs folded in per instance. Empty
+        /// when no component carries a live field.
+        vector<VolumeFieldInstance> m_VolumeFields;
+
+        /// @brief Whether the current pass set carries the volume pass; gates the internal Rebuild.
+        ///
+        /// True once ResolveVolumeFields has seen a live field and wired the pass. Compared against
+        /// each Execute's presence so the pass inserts on the first live field and drops when the last
+        /// one goes, recompiling at the frame boundary (reusing the imported output).
+        bool m_VolumeFieldActive = false;
 
         /// @brief Entity-id picking target (R32Uint), allocated only when Settings.Picking is set.
         ///

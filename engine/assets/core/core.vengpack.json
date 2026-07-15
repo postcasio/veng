@@ -362,6 +362,11 @@
       "source": "shaders/pointfield/point_sprite_nofade.frag.shader.json"
     },
     {
+      "id": "0xE92C90AE36AC3607",
+      "type": "Shader",
+      "source": "shaders/volumefield/volume_field.frag.shader.json"
+    },
+    {
       "id": "0xBC968C8771B00434",
       "type": "Material",
       "source": "materials/tonemap.vmat.json"
