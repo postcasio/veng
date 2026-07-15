@@ -252,7 +252,13 @@ claims the overlays whose target seat is its own (the entity's own seat, or `Tar
 the sole/primary presenter), so split-screen per-player HUDs fall out and a single overlay never
 thrashes. The game owns only the binding — a reflected state component plus a small system that
 `SetContext`s a `Gui::BindingContext` (view-model + `onClick` handlers) and `Invalidate`s it — not
-the load/instantiate/attach. `Interactive` gates whether it takes input.
+the load/instantiate/attach. `Interactive` gates whether it takes input. **`Detach(viewport)` is the
+exact inverse of `Drive`** — it releases the driven document from a viewport's layer stack while the
+runtime host survives for the next `Drive`, idempotent and touching only the document the engine
+attached. `~GuiOverlay` detaches on component destruction (the right lifetime when the *component*
+goes); `Detach` covers the other case — a viewport stops presenting a world that stays alive (a world
+rebind), where the engine detaches the departed scene's overlays without waiting on component
+teardown.
 
 The **third** family member is **`CaptureSurface`** (`Veng/Renderer/CaptureSurface.h`), the
 render-to-texture sibling: a reflected component that puts a `SceneCapture` on an entity,

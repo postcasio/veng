@@ -1,7 +1,9 @@
 #include <Veng/ManagedViewports.h>
 
 #include <Veng/InputRouter.h>
+#include <Veng/Log.h>
 #include <Veng/WorldRunner.h>
+#include <Veng/Gui/Overlay.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
@@ -9,10 +11,45 @@
 #include <Veng/Renderer/ViewportCompositor.h>
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Scene.h>
+#include <Veng/Scene/SceneSimulation.h>
 #include <Veng/Scene/SceneViewport.h>
+
+#include "ManagedRebind.h"
+
+#include <algorithm>
 
 namespace Veng
 {
+    Entity ResolvePresentationSeat(const Scene& scene, const Entity boundViewer)
+    {
+        // The bound seat survives the rebind only when its scene-local handle still names a live Viewer
+        // in the destination scene; otherwise fall to the scene's sole/first Viewer, then to no seat.
+        if (!boundViewer.IsNull() && scene.IsAlive(boundViewer) && scene.Has<Viewer>(boundViewer))
+        {
+            return boundViewer;
+        }
+        for (auto [entity, viewer] : scene.View<Viewer>())
+        {
+            return entity;
+        }
+        return Entity::Null;
+    }
+
+    bool IsWorldPresentable(const WorldRunner& runner, const WorldInstanceId world)
+    {
+        const World* resolved = runner.ResolveWorld(world);
+        if (resolved == nullptr || resolved->LiveScene == nullptr)
+        {
+            return false;
+        }
+        const SceneSimulation* sim = resolved->GetScene().GetSimulation();
+        if (sim == nullptr || !sim->IsStarted())
+        {
+            return false;
+        }
+        return resolved->Pending.IsResident() && resolved->Clock.GetTick() >= 1;
+    }
+
     ManagedViewportSet::ManagedViewportSet(Renderer::Context& context, AssetManager& assets,
                                            Renderer::ViewportCompositor& compositor,
                                            InputRouter& router)
@@ -99,7 +136,7 @@ namespace Veng
         m_PendingReconfigure = vector<ManagedViewportInfo>(infos.begin(), infos.end());
     }
 
-    void ManagedViewportSet::ApplyPendingReconfigure()
+    void ManagedViewportSet::ApplyPendingReconfigure(WorldRunner& runner, const f32 delta)
     {
         if (m_PendingReconfigure)
         {
@@ -108,12 +145,43 @@ namespace Veng
         }
 
         // Rebinds apply after any reconfigure, so a rebind of a viewport the reconfigure rebuilt lands
-        // on the new viewport (the same top-of-frame safe point, outside the drive loop).
+        // on the new viewport (the same top-of-frame safe point, outside the drive loop). Each is a
+        // complete rebind: detach the departed world's overlays and re-resolve the seat.
         for (const PendingRebind& rebind : m_PendingRebinds)
         {
-            SetViewportWorld(rebind.Index, rebind.World);
+            ApplyCompleteRebind(rebind.Index, rebind.World, runner);
         }
         m_PendingRebinds.clear();
+
+        // Present-on-ready rebinds hold the viewport on its current world until the destination readies.
+        // Drop one whose destination closed mid-wait, apply one that readied, and abandon one that
+        // exceeds the timeout (surfaced through GetAbandonedPresentWorld) so a never-ready destination
+        // does not strand the viewport on the old world forever.
+        for (auto it = m_PendingReadyRebinds.begin(); it != m_PendingReadyRebinds.end();)
+        {
+            if (runner.ResolveWorld(it->World) == nullptr)
+            {
+                it = m_PendingReadyRebinds.erase(it);
+                continue;
+            }
+            if (IsWorldPresentable(runner, it->World))
+            {
+                ApplyCompleteRebind(it->Index, it->World, runner);
+                it = m_PendingReadyRebinds.erase(it);
+                continue;
+            }
+            it->Waited += delta;
+            if (it->Waited >= PresentReadyTimeoutSeconds)
+            {
+                Log::Warn("Managed viewport {} present-on-ready to world {} timed out after {}s; "
+                          "abandoning and keeping the current world.",
+                          it->Index, it->World.Value, it->Waited);
+                m_AbandonedPresents.push_back({.Index = it->Index, .World = it->World});
+                it = m_PendingReadyRebinds.erase(it);
+                continue;
+            }
+            ++it;
+        }
     }
 
     void ManagedViewportSet::SetViewportWorld(usize index, WorldInstanceId world)
@@ -124,9 +192,116 @@ namespace Veng
         }
     }
 
-    void ManagedViewportSet::RebindWorld(usize index, WorldInstanceId world)
+    void ManagedViewportSet::SupersedePending(const usize index)
     {
+        std::erase_if(m_PendingRebinds,
+                      [index](const PendingRebind& r) { return r.Index == index; });
+        std::erase_if(m_PendingReadyRebinds,
+                      [index](const PendingReadyRebind& r) { return r.Index == index; });
+        std::erase_if(m_AbandonedPresents,
+                      [index](const AbandonedPresent& a) { return a.Index == index; });
+    }
+
+    void ManagedViewportSet::RebindWorld(const usize index, const WorldInstanceId world)
+    {
+        SupersedePending(index);
         m_PendingRebinds.push_back({.Index = index, .World = world});
+    }
+
+    void ManagedViewportSet::RebindWorldWhenReady(const usize index, const WorldInstanceId world)
+    {
+        SupersedePending(index);
+        m_PendingReadyRebinds.push_back({.Index = index, .World = world});
+    }
+
+    void ManagedViewportSet::ApplyCompleteRebind(const usize index, const WorldInstanceId world,
+                                                 WorldRunner& runner)
+    {
+        if (index >= m_Viewports.size())
+        {
+            return;
+        }
+        ManagedViewport& managed = m_Viewports[index];
+        const WorldInstanceId departedWorld = managed.Info.World;
+        const Entity departedViewer = managed.Info.Viewer;
+
+        // Detach the departed world's engine-driven overlay documents from this viewport — the exact
+        // inverse of the per-frame Drive, same frame as the rebind so no dismiss-retry window opens. A
+        // closed departed world skips (its documents died with it); a rebind to the same world skips.
+        if (departedWorld != world)
+        {
+            if (const World* departed = runner.ResolveWorld(departedWorld); departed != nullptr)
+            {
+                for (auto [entity, overlay] : departed->GetScene().View<GuiOverlay>())
+                {
+                    overlay.Detach(*managed.Viewport);
+                }
+            }
+        }
+
+        managed.Info.World = world;
+
+        // Re-resolve the seat in the destination scene (a scene-local Viewer handle cannot survive a
+        // scene change): the bound seat if it still resolves, else the scene's sole/first Viewer, else
+        // none. Re-point the router association to it, and follow the cursor seat when the departed
+        // association owned it. Focus policy (captured vs. free) is deliberately left to the game.
+        Entity resolvedSeat = Entity::Null;
+        if (const World* destination = runner.ResolveWorld(world); destination != nullptr)
+        {
+            resolvedSeat = ResolvePresentationSeat(destination->GetScene(), departedViewer);
+        }
+
+        if (resolvedSeat != Entity::Null)
+        {
+            m_Router.AssociateViewportSeat(*managed.Viewport, resolvedSeat);
+        }
+        else
+        {
+            m_Router.ClearViewportSeat(*managed.Viewport);
+        }
+        if (!departedViewer.IsNull() && m_Router.GetCursorSeat() == departedViewer)
+        {
+            m_Router.SetCursorSeat(resolvedSeat);
+        }
+        managed.Info.Viewer = resolvedSeat;
+    }
+
+    WorldInstanceId ManagedViewportSet::GetViewportWorld(const usize index) const
+    {
+        return index < m_Viewports.size() ? m_Viewports[index].Info.World : WorldInstanceId{};
+    }
+
+    optional<WorldInstanceId> ManagedViewportSet::GetPendingViewportWorld(const usize index) const
+    {
+        // Supersession keeps at most one pending rebind per index across both lists, so the first match
+        // is the only one.
+        for (const PendingRebind& r : m_PendingRebinds)
+        {
+            if (r.Index == index)
+            {
+                return r.World;
+            }
+        }
+        for (const PendingReadyRebind& r : m_PendingReadyRebinds)
+        {
+            if (r.Index == index)
+            {
+                return r.World;
+            }
+        }
+        return std::nullopt;
+    }
+
+    WorldInstanceId ManagedViewportSet::GetAbandonedPresentWorld(const usize index) const
+    {
+        for (const AbandonedPresent& a : m_AbandonedPresents)
+        {
+            if (a.Index == index)
+            {
+                return a.World;
+            }
+        }
+        return WorldInstanceId{};
     }
 
     void ManagedViewportSet::PushViewportView(Renderer::Viewport& viewport, WorldInstanceId world,

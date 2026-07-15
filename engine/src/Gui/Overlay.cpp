@@ -6,6 +6,7 @@
 #include <Veng/Gui/Document.h>
 #include <Veng/Gui/DocumentHost.h>
 #include <Veng/Gui/DocumentLayer.h>
+#include <Veng/Renderer/Viewport.h>
 
 namespace Veng
 {
@@ -109,5 +110,23 @@ namespace Veng
         }
 
         runtime.Layer->Present(viewport);
+    }
+
+    void GuiOverlay::Detach(Renderer::Viewport& viewport) const
+    {
+        // An overlay that never drove holds no document, so there is nothing to detach.
+        if (Runtime == nullptr || Runtime->Host == nullptr)
+        {
+            return;
+        }
+
+        // Detach only when the live document is hosted on this exact viewport: a document attached
+        // elsewhere or already detached is left alone, so the call is idempotent and touches only what
+        // Drive attached here. The host and its document survive for the next Drive to re-attach.
+        Gui::Document* const document = Runtime->Host->Get();
+        if (document != nullptr && document->GetHostViewport() == &viewport)
+        {
+            viewport.DetachDocument(*document);
+        }
     }
 }

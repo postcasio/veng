@@ -863,6 +863,26 @@ namespace Veng
         m_ManagedViewports->RebindWorld(index, world);
     }
 
+    void Application::RebindManagedViewportWhenReady(const usize index, const WorldInstanceId world)
+    {
+        m_ManagedViewports->RebindWorldWhenReady(index, world);
+    }
+
+    WorldInstanceId Application::GetManagedViewportWorld(const usize index) const
+    {
+        return m_ManagedViewports->GetViewportWorld(index);
+    }
+
+    optional<WorldInstanceId> Application::GetPendingManagedViewportWorld(const usize index) const
+    {
+        return m_ManagedViewports->GetPendingViewportWorld(index);
+    }
+
+    WorldInstanceId Application::GetAbandonedManagedPresentWorld(const usize index) const
+    {
+        return m_ManagedViewports->GetAbandonedPresentWorld(index);
+    }
+
     void Application::RegisterViewport(Renderer::Viewport& viewport)
     {
         m_Compositor.RegisterViewport(viewport);
@@ -991,10 +1011,14 @@ namespace Veng
 
     void Application::Frame()
     {
-        // Apply a deferred managed-viewport reconfigure at the top of the frame, outside any
+        const f32 delta = Time::Update();
+
+        // Apply the deferred managed-viewport work at the top of the frame, outside any
         // Scene/viewport-list iteration: it drops and constructs viewports (mutating the drive-list),
-        // which must not run mid-drive. Regions resolve from each info's Layout here.
-        m_ManagedViewports->ApplyPendingReconfigure();
+        // which must not run mid-drive. Regions resolve from each info's Layout here; world rebinds run
+        // their departed-overlay detach and seat re-resolution through the runner; present-on-ready
+        // rebinds accrue this frame's delta toward their ready timeout.
+        m_ManagedViewports->ApplyPendingReconfigure(*m_WorldRunner, delta);
 
         // Before BeginFrame: continuations that register or retire resources must
         // land before AcquireNextFrame or their GPU-state mutation is frame-ambiguous.
@@ -1003,8 +1027,6 @@ namespace Veng
         // Finalize resident async loads (bindless registration + cache swap) before
         // BeginFrame, in the same main-thread window as the continuation pump.
         m_AssetManager->PumpFinalizes();
-
-        const f32 delta = Time::Update();
 
         // The managed world's interpolation fraction drives the view pushes and a game's overlay Update;
         // resolve it before the tick so its alpha is read after the advance.

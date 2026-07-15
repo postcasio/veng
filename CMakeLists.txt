@@ -584,6 +584,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/viewport_mapping.cpp
             tests/unit/viewport_id.cpp
             tests/unit/managed_viewports.cpp
+            tests/unit/managed_rebind.cpp
             tests/unit/dynamic_resolution.cpp
             tests/unit/gui_draw_list.cpp
             tests/unit/gui_layout.cpp

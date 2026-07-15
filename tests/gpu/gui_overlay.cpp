@@ -262,6 +262,56 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "gui overlay: Detach releases the driven document, idempotently, sparing a "
+                  "hand-attached one")
+{
+    RegisterBuiltinTypes(Types);
+
+    const path archive = CookUiPack();
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(archive).has_value());
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity entity = scene->CreateEntity();
+    auto& overlay = scene->Add<GuiOverlay>(entity);
+    overlay.Document = *assets.LoadSync<Gui::UIDocument>(UIDocumentId);
+
+    const Unique<Viewport> viewport = MakeViewport(Context, assets);
+    viewport->SetViewState({.World = scene.get(), .Delta = 0.016f});
+
+    // A second document attached to the same viewport by hand (a DocumentHost + DocumentLayer, not a
+    // GuiOverlay) — the game-owned attachment the engine's departed-world detach must never touch.
+    Gui::DocumentHost handHost(assets, Types, UIDocumentId);
+    Gui::DocumentLayer handLayer(handHost, 1);
+    REQUIRE(handLayer.Present(*viewport) != nullptr);
+
+    // The first render drives the overlay onto the stack; both documents now sit on the viewport.
+    RenderOnce(Context, *viewport);
+    const GuiOverlay* const driven = scene->TryGet<GuiOverlay>(entity);
+    REQUIRE(driven->GetDocument() != nullptr);
+    CHECK(driven->GetDocument()->GetHostViewport() == viewport.get());
+    CHECK(viewport->GetAttachedDocuments().size() == 2);
+
+    // Detach releases only the overlay's document from this viewport; the hand-attached one survives.
+    driven->Detach(*viewport);
+    CHECK(driven->GetDocument()->GetHostViewport() == nullptr);
+    CHECK(handLayer.Get()->GetHostViewport() == viewport.get());
+    CHECK(viewport->GetAttachedDocuments().size() == 1);
+
+    // Detach is idempotent: a second call with the document already detached is a safe no-op.
+    driven->Detach(*viewport);
+    CHECK(viewport->GetAttachedDocuments().size() == 1);
+
+    // The next drive re-attaches the overlay's document (the runtime host survived the detach), so the
+    // stack returns to both documents — the warm-world re-present path.
+    RenderOnce(Context, *viewport);
+    CHECK(driven->GetDocument()->GetHostViewport() == viewport.get());
+    CHECK(viewport->GetAttachedDocuments().size() == 2);
+
+    std::filesystem::remove(archive);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                   "gui overlay: a document that fails to load surfaces null, not an abort")
 {
     RegisterBuiltinTypes(Types);
