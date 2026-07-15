@@ -75,6 +75,33 @@ namespace
             return {.World = world, .Seat = seat, .Scene = &scene};
         }
 
+        // Like OpenCameraWorld, but with a started simulation so the world ticks each frame and reaches
+        // presentability (resolves, started, resident, ticked) — the destination a present-on-ready
+        // rebind waits on and then applies.
+        WorldSeat OpenReadyCameraWorld(vec3 eye)
+        {
+            const WorldInstanceId world = GetWorldRunner().OpenWorld(WorldOpenInfo{
+                .SimTickRate = 60,
+                .StartSimulation = true,
+                .EmptySimulation = true,
+                .MakeStartContext =
+                    [this]
+                {
+                    return SystemContext{.Assets = GetAssetManager(),
+                                         .Input = GetInput(),
+                                         .Tasks = GetTaskSystem(),
+                                         .Role = GetNetRole()};
+                },
+            });
+            Scene& scene = GetWorldRunner().ResolveWorld(world)->GetScene();
+            const Entity camera = scene.CreateEntity();
+            scene.Add<Transform>(camera).Position = eye;
+            scene.Add<Camera>(camera);
+            const Entity seat = scene.CreateEntity();
+            scene.Add<Viewer>(seat).Camera = camera;
+            return {.World = world, .Seat = seat, .Scene = &scene};
+        }
+
     protected:
         void OnInitialize() override
         {
@@ -329,6 +356,133 @@ TEST_CASE("A runtime rebind re-points a managed viewport from one world to anoth
     };
 
     app.Frames = 5;
+    app.Run({});
+}
+
+TEST_CASE("A present-on-ready rebind holds the old world until the destination readies, then swaps "
+          "once")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    SystemRegistry systems;
+
+    MvApp app(HeadlessInfo({ManagedViewportInfo{}}), types, systems);
+
+    MvApp::WorldSeat oldWorld{};
+    MvApp::WorldSeat destination{};
+
+    app.InitFn = [&](MvApp& app)
+    {
+        oldWorld = app.OpenReadyCameraWorld(vec3(0.0f, 0.0f, 5.0f));
+        destination = app.OpenReadyCameraWorld(vec3(20.0f, 3.0f, 5.0f));
+        app.GetManagedViewports().SetViewportWorld(0, oldWorld.World);
+        // Request the swap to the destination only once it is ready. At this point the destination has
+        // just opened and not yet ticked, so it is not presentable.
+        app.RebindManagedViewportWhenReady(0, destination.World);
+    };
+
+    app.StepFn = [&](MvApp& app, int frame)
+    {
+        const Renderer::Viewport* v = app.GetManagedViewports().Get(0);
+        REQUIRE(v != nullptr);
+
+        if (frame == 0)
+        {
+            // The destination had not ticked at this frame's top, so the swap is still pending: the
+            // viewport's applied binding is still the old world, and the query reports the destination
+            // in flight. (GetPresentedScene reflects the prior frame's push, so it is checked from
+            // frame 1 on, once a push has run.)
+            CHECK(app.GetManagedViewportWorld(0) == oldWorld.World);
+            REQUIRE(app.GetPendingManagedViewportWorld(0).has_value());
+            CHECK(*app.GetPendingManagedViewportWorld(0) == destination.World);
+        }
+        else if (frame == 1)
+        {
+            // Frame 0's push presented the old world (the rebind had not applied yet).
+            CHECK(v->GetPresentedScene() == oldWorld.Scene);
+        }
+        else if (frame == 3)
+        {
+            // The destination ticked and became presentable, so the rebind applied: the viewport now
+            // presents the destination, the pending query clears, and the old world stays open.
+            CHECK(app.GetManagedViewportWorld(0) == destination.World);
+            CHECK_FALSE(app.GetPendingManagedViewportWorld(0).has_value());
+            CHECK(v->GetPresentedScene() == destination.Scene);
+            CHECK(app.GetWorldRunner().ResolveWorld(oldWorld.World) != nullptr);
+            CHECK(app.GetAbandonedManagedPresentWorld(0) == WorldInstanceId{});
+        }
+    };
+
+    app.Frames = 6;
+    app.Run({});
+}
+
+TEST_CASE(
+    "A present-on-ready rebind is superseded by a later rebind, and dropped if its destination "
+    "closes")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    SystemRegistry systems;
+
+    MvApp app(HeadlessInfo({ManagedViewportInfo{}}), types, systems);
+
+    MvApp::WorldSeat base{};
+    MvApp::WorldSeat neverReady{};
+    MvApp::WorldSeat replacement{};
+
+    app.InitFn = [&](MvApp& app)
+    {
+        base = app.OpenReadyCameraWorld(vec3(0.0f, 0.0f, 5.0f));
+        // A world whose simulation never starts never reaches presentability, so a present-on-ready
+        // rebind onto it waits indefinitely — until superseded or dropped.
+        neverReady = app.OpenCameraWorld(vec3(20.0f, 3.0f, 5.0f));
+        replacement = app.OpenReadyCameraWorld(vec3(-10.0f, 1.0f, 5.0f));
+        app.GetManagedViewports().SetViewportWorld(0, base.World);
+        app.RebindManagedViewportWhenReady(0, neverReady.World);
+    };
+
+    app.StepFn = [&](MvApp& app, int frame)
+    {
+        const Renderer::Viewport* v = app.GetManagedViewports().Get(0);
+        REQUIRE(v != nullptr);
+
+        if (frame == 0)
+        {
+            // The conditional rebind is in flight and holds the base world (the destination never
+            // readies).
+            REQUIRE(app.GetPendingManagedViewportWorld(0).has_value());
+            CHECK(*app.GetPendingManagedViewportWorld(0) == neverReady.World);
+            CHECK(app.GetManagedViewportWorld(0) == base.World);
+            // A later unconditional rebind supersedes the conditional one (last wins): the viewport goes
+            // to the replacement, not the never-ready destination.
+            app.RebindManagedViewport(0, replacement.World);
+        }
+        else if (frame == 2)
+        {
+            // The unconditional rebind applied; the superseded conditional never did.
+            CHECK(app.GetManagedViewportWorld(0) == replacement.World);
+            CHECK_FALSE(app.GetPendingManagedViewportWorld(0).has_value());
+            CHECK(v->GetPresentedScene() == replacement.Scene);
+            // Now request a present-on-ready to the never-ready world again, then close it mid-wait.
+            app.RebindManagedViewportWhenReady(0, neverReady.World);
+        }
+        else if (frame == 3)
+        {
+            REQUIRE(app.GetPendingManagedViewportWorld(0).has_value());
+            CHECK(*app.GetPendingManagedViewportWorld(0) == neverReady.World);
+            app.GetWorldRunner().CloseWorld(neverReady.World);
+        }
+        else if (frame == 5)
+        {
+            // The destination closed mid-wait, so the conditional rebind dropped: no pending, and the
+            // viewport still presents the replacement (unchanged).
+            CHECK_FALSE(app.GetPendingManagedViewportWorld(0).has_value());
+            CHECK(app.GetManagedViewportWorld(0) == replacement.World);
+        }
+    };
+
+    app.Frames = 7;
     app.Run({});
 }
 

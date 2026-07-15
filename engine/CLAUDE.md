@@ -96,6 +96,26 @@ bespoke render path; a single default-`Layout` managed viewport is byte-identica
 hand-registered full-window one. The editor leaves the managed set unset, so `Get(0)` is null and
 it registers its own viewports through the compositor (which still mints their ids).
 
+**A world rebind is a complete operation, and presentation state is queryable.**
+`RebindManagedViewport(index, world)` records a deferred rebind applied at the top-of-frame safe
+point, where it is a **complete rebind**: it detaches the *departed* world's engine-driven overlay
+documents from the viewport (`GuiOverlay::Detach`, the exact inverse of the per-frame `Drive` — the
+runtime host survives, only what the engine attached is touched, hand-attached documents untouched),
+and **re-resolves the seat** in the destination scene (the bound `Viewer` when it still resolves
+there, else the scene's sole/first `Viewer`, else cleared), re-pointing the `InputRouter` association
+and — when the departed association owned it — the cursor seat, and resetting `Info.Viewer`; input
+*focus* is left to the game. `GetManagedViewportWorld(index)` returns the applied binding and
+`GetPendingManagedViewportWorld(index)` the destination of an in-flight rebind (so a pending world
+counts as presented and is not reaped in its own rebind gap). **`RebindManagedViewportWhenReady(index,
+world)`** is the front-door / world-jump path: it holds the viewport on its current world until the
+destination is **ready** (resolves, its scene installed, its simulation started, its `World::Pending`
+residency batch resident, and its clock ticked ≥ 1), then swaps in one frame — no empty-world frame,
+no consumer polling loop. It is superseded by any later rebind of the same index (last wins), dropped
+if the destination closes first, and **abandoned on a ready timeout** (surfaced through
+`GetAbandonedManagedPresentWorld(index)`) so a never-ready destination does not strand the viewport on
+the old world. `ManagedViewportSet` carries the same surface (`GetViewportWorld` /
+`GetPendingViewportWorld` / `RebindWorldWhenReady` / `GetAbandonedPresentWorld`).
+
 **`Application` optionally bootstraps and drives worlds through the `WorldRunner`.** Set
 `ApplicationInfo::World` (`GameWorldInfo { path Project; }`) and `Application` runs the game: at
 the end of `Initialize` (after `OnInitialize`) it reads the **cooked project** (`<name>.vengproj`)

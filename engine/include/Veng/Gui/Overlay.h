@@ -130,6 +130,17 @@ namespace Veng
         /// @param assets    The asset manager the document recipe and its fonts load through.
         void Drive(Renderer::Viewport& viewport, AssetManager& assets) const;
 
+        /// @brief Detaches the presented document from a viewport's layer stack — the inverse of Drive.
+        ///
+        /// Removes the live document from @p viewport's layer stack when it is hosted there, leaving the
+        /// runtime host and its document intact so the next Drive re-attaches. Idempotent: an undriven
+        /// overlay, a document hosted on another viewport, or a document already detached is a no-op.
+        /// Used to release an overlay a viewport stopped presenting while its world stays alive (a world
+        /// rebind), where ~GuiOverlay's destroy-time detach is the wrong lifetime. Only the document the
+        /// engine attached through Drive is touched.
+        /// @param viewport  The viewport to detach the document from, if it is hosted there.
+        void Detach(Renderer::Viewport& viewport) const;
+
     private:
         /// @brief Ensures the runtime record exists, holding the deferred binding before first Drive.
         GuiOverlayRuntime& EnsureRuntime() const;

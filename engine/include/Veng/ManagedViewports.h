@@ -154,10 +154,49 @@ namespace Veng
         /// @param infos  The new managed set; each info's Layout, World, Viewer, and render knobs apply.
         void Reconfigure(std::span<const ManagedViewportInfo> infos);
 
-        /// @brief Applies a pending reconfigure if one is recorded; a no-op otherwise.
+        /// @brief Applies pending reconfigure, world rebinds, and ready present-on-ready swaps.
         ///
-        /// Called at the top of a frame, outside any Scene/viewport-list iteration.
-        void ApplyPendingReconfigure();
+        /// Called at the top of a frame, outside any Scene/viewport-list iteration. In order: applies a
+        /// recorded reconfigure (rebuilds the set), applies each unconditional world rebind as a
+        /// complete rebind (detaching the departed world's engine-driven overlay documents from the
+        /// viewport and re-resolving its seat in the destination), then evaluates each present-on-ready
+        /// rebind — applying it once its destination is ready, dropping it if the destination closed, or
+        /// abandoning it (surfaced through GetAbandonedPresentWorld) once it exceeds the ready timeout.
+        /// The runner resolves the departed and destination worlds; @p delta advances each pending
+        /// present-on-ready request's wait clock.
+        /// @param runner  The runner the departed/destination worlds resolve through.
+        /// @param delta   The wall-clock frame delta in seconds, accruing toward the ready timeout.
+        void ApplyPendingReconfigure(WorldRunner& runner, f32 delta);
+
+        /// @brief Returns the world a managed viewport currently presents (its applied binding).
+        ///
+        /// The applied binding: what the per-frame camera pull resolves for this viewport now. An
+        /// in-flight rebind (deferred or present-on-ready) is not reflected here until it applies — read
+        /// GetPendingViewportWorld for that. An out-of-range index returns the invalid handle.
+        /// @param index  The managed viewport index (0 the primary).
+        /// @return The presented world's handle, or an invalid handle when index is out of range.
+        [[nodiscard]] WorldInstanceId GetViewportWorld(usize index) const;
+
+        /// @brief Returns the destination of a viewport's in-flight rebind, or nullopt when none is pending.
+        ///
+        /// The world a recorded rebind (deferred RebindWorld or present-on-ready RebindWorldWhenReady)
+        /// will re-point this viewport to once it applies. A present-on-ready request reads here for its
+        /// whole wait, so a caller treats a pending destination as presented (never reaping it in its
+        /// own rebind gap); it clears when the rebind applies, is superseded, is dropped (destination
+        /// closed), or is abandoned (timed out). An out-of-range index has no pending rebind.
+        /// @param index  The managed viewport index (0 the primary).
+        /// @return The pending destination world, or nullopt when no rebind is in flight for the index.
+        [[nodiscard]] optional<WorldInstanceId> GetPendingViewportWorld(usize index) const;
+
+        /// @brief Returns the destination a present-on-ready rebind abandoned on timeout, else invalid.
+        ///
+        /// The self-contained failure surface of RebindWorldWhenReady: when a present-on-ready request
+        /// exceeds its ready timeout it is abandoned (the viewport keeps its current world) and its
+        /// destination is recorded here, so a caller can react rather than presenting the old world
+        /// forever. The record clears when a later rebind of the same index is recorded (it supersedes).
+        /// @param index  The managed viewport index (0 the primary).
+        /// @return The abandoned destination world, or an invalid handle when none was abandoned.
+        [[nodiscard]] WorldInstanceId GetAbandonedPresentWorld(usize index) const;
 
         /// @brief Binds a managed viewport to the world it presents.
         ///
@@ -175,10 +214,27 @@ namespace Veng
         /// the viewport's next camera pull resolves the new world while keeping its render target and
         /// bound Viewer. A no-op for an out-of-range index (dropped at apply). A pending rebind of a
         /// viewport a pending reconfigure also replaces is applied after the reconfigure, on the rebuilt
-        /// set.
+        /// set. Recording a rebind supersedes any earlier pending rebind of the same index — the plain
+        /// deferred one and a present-on-ready one alike — so the last request for an index wins.
         /// @param index  The managed viewport index (0 the primary).
         /// @param world  The world the viewport presents next.
         void RebindWorld(usize index, WorldInstanceId world);
+
+        /// @brief Records a present-on-ready rebind: applied at the top of frame once the world is ready.
+        ///
+        /// The complete-scene-change counterpart to RebindWorld: the viewport keeps presenting its
+        /// current world until the destination is ready (resolves, its scene is installed, its
+        /// simulation started, its spawn residency batch resident, and its clock has ticked at least
+        /// once), then the rebind applies in one frame — the departed world's overlays detach and the
+        /// seat re-resolves atomically, with no empty-world frame between. Superseded by any later
+        /// rebind of the same index (last wins), dropped if the destination closes before it is ready,
+        /// and abandoned once it exceeds the ready timeout (surfaced through GetAbandonedPresentWorld),
+        /// so a destination that never readies does not strand the viewport presenting the old world
+        /// forever. The pending destination is observable through GetPendingViewportWorld. A no-op for an
+        /// out-of-range index (dropped at apply).
+        /// @param index  The managed viewport index (0 the primary).
+        /// @param world  The world to present once it is ready.
+        void RebindWorldWhenReady(usize index, WorldInstanceId world);
 
         /// @brief Registers a non-owning presented viewport bound to a world, driven beside the set.
         ///
@@ -256,6 +312,25 @@ namespace Veng
                               WorldRunner& runner, const Renderer::ViewState& knobs, f32 delta,
                               f32 alpha) const;
 
+        /// @brief Applies a world rebind to a viewport: departed-overlay detach + seat re-resolution.
+        ///
+        /// The complete rebind at the apply point: detaches every engine-driven overlay of the departed
+        /// world (when it still resolves and differs from the destination) from the viewport, re-points
+        /// the viewport's seat association (and the cursor seat when the departed association owned it)
+        /// to the destination's resolved seat, resets Info.World and Info.Viewer, and leaves focus
+        /// policy untouched.
+        /// @param index   The managed viewport index; out of range is a no-op.
+        /// @param world   The destination world the viewport presents after the rebind.
+        /// @param runner  The runner the departed/destination worlds resolve through.
+        void ApplyCompleteRebind(usize index, WorldInstanceId world, WorldRunner& runner);
+
+        /// @brief Drops any pending rebind (deferred, present-on-ready, or abandoned) for an index.
+        ///
+        /// The supersession sweep a newly recorded rebind runs so the last request for an index wins and
+        /// no stale abandonment record lingers past it.
+        /// @param index  The managed viewport index whose pending state is cleared.
+        void SupersedePending(usize index);
+
         /// @brief The render context Viewports are created against.
         Renderer::Context& m_Context;
         /// @brief The asset manager Viewports load their shaders through.
@@ -285,5 +360,34 @@ namespace Veng
 
         /// @brief Pending world rebinds applied in order at the next ApplyPendingReconfigure.
         vector<PendingRebind> m_PendingRebinds;
+
+        /// @brief One conditional present-on-ready rebind: its target index, world, and wait clock.
+        struct PendingReadyRebind
+        {
+            /// @brief The managed viewport index to rebind once the world is ready.
+            usize Index = 0;
+            /// @brief The destination world, applied only once IsWorldPresentable reports it ready.
+            WorldInstanceId World;
+            /// @brief Seconds spent waiting for readiness, accrued toward the ready timeout.
+            f32 Waited = 0.0f;
+        };
+
+        /// @brief Present-on-ready rebinds, held until their destination readies, times out, or closes.
+        vector<PendingReadyRebind> m_PendingReadyRebinds;
+
+        /// @brief One abandoned present-on-ready destination: the index it targeted and its world.
+        struct AbandonedPresent
+        {
+            /// @brief The managed viewport index whose present-on-ready request was abandoned.
+            usize Index = 0;
+            /// @brief The destination world the request timed out waiting to present.
+            WorldInstanceId World;
+        };
+
+        /// @brief Present-on-ready destinations abandoned on timeout, cleared when the index is superseded.
+        vector<AbandonedPresent> m_AbandonedPresents;
+
+        /// @brief Seconds a present-on-ready rebind waits for readiness before it is abandoned.
+        static constexpr f32 PresentReadyTimeoutSeconds = 15.0f;
     };
 }

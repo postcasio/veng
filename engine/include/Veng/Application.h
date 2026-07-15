@@ -401,6 +401,47 @@ namespace Veng
         /// @param world  The world the viewport presents next.
         void RebindManagedViewport(usize index, WorldInstanceId world);
 
+        /// @brief Re-points a managed viewport at a world once that world is ready, at the top of frame.
+        ///
+        /// Forwards to ManagedViewportSet::RebindWorldWhenReady: the viewport keeps presenting its
+        /// current world until the destination resolves, installs its scene, starts its simulation,
+        /// reports its residency batch resident, and ticks at least once, then swaps in one frame (the
+        /// departed world's overlays detach and the seat re-resolves atomically) — the front-door / world
+        /// jump path, with no empty-world frame and no consumer polling loop. Superseded by a later
+        /// rebind of the same index, dropped if the destination closes first, and abandoned (surfaced
+        /// through GetAbandonedPresentWorld) if the destination never readies. A no-op for an
+        /// out-of-range index.
+        /// @param index  The managed viewport index (0 the primary).
+        /// @param world  The world to present once it is ready.
+        void RebindManagedViewportWhenReady(usize index, WorldInstanceId world);
+
+        /// @brief Returns the world a managed viewport currently presents (its applied binding).
+        ///
+        /// Forwards to ManagedViewportSet::GetViewportWorld. An in-flight rebind is not reflected until
+        /// it applies (read GetPendingManagedViewportWorld for that); an out-of-range index returns the
+        /// invalid handle.
+        /// @param index  The managed viewport index (0 the primary).
+        /// @return The presented world's handle, or an invalid handle when index is out of range.
+        [[nodiscard]] WorldInstanceId GetManagedViewportWorld(usize index) const;
+
+        /// @brief Returns the destination of a viewport's in-flight rebind, or nullopt when none pends.
+        ///
+        /// Forwards to ManagedViewportSet::GetPendingViewportWorld. A pending destination (a deferred or
+        /// present-on-ready rebind) counts as presented for lifetime purposes, so it is not reaped in its
+        /// own rebind gap.
+        /// @param index  The managed viewport index (0 the primary).
+        /// @return The pending destination world, or nullopt when no rebind is in flight for the index.
+        [[nodiscard]] optional<WorldInstanceId> GetPendingManagedViewportWorld(usize index) const;
+
+        /// @brief Returns the destination a present-on-ready rebind abandoned on timeout, else invalid.
+        ///
+        /// Forwards to ManagedViewportSet::GetAbandonedPresentWorld: the failure surface of
+        /// RebindManagedViewportWhenReady, so a caller can react to a destination that never readied
+        /// rather than presenting the old world forever.
+        /// @param index  The managed viewport index (0 the primary).
+        /// @return The abandoned destination world, or an invalid handle when none was abandoned.
+        [[nodiscard]] WorldInstanceId GetAbandonedManagedPresentWorld(usize index) const;
+
         /// @brief Returns the managed primary viewport's debug-draw accumulator, or null when unconfigured.
         ///
         /// The single-viewport convenience for the canonical per-SceneView DebugDraw channel: it
