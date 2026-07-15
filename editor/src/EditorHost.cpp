@@ -10,6 +10,7 @@
 #include <Veng/Renderer/Context.h>
 #include <Veng/Scene/BuiltinSystems.h>
 #include <Veng/Scene/BuiltinTypes.h>
+#include <Veng/Gui/DriverRegistry.h>
 #include <Veng/Scene/SystemRegistry.h>
 #include <Veng/UI/UI.h>
 #include <Veng/Vendor/ImGui.h>
@@ -505,6 +506,7 @@ namespace VengEditor
         ApplicationRegistry App;
         TypeRegistry Types;
         SystemRegistry Systems;
+        GuiDriverRegistry Drivers;
         EditorRegistry Editor;
     };
 
@@ -571,6 +573,7 @@ namespace VengEditor
             .App = registries->App,
             .Types = registries->Types,
             .Systems = registries->Systems,
+            .Drivers = &registries->Drivers,
             .Editor = &registries->Editor,
         };
         gameModule->Register(host);

@@ -37,7 +37,8 @@ namespace Veng
 
         // Reads a 64-bit integer leaf from either a JSON string (the lossless form — a value past
         // 2^53 truncates through JSON's IEEE-754-double number) or a plain JSON number (accepted for
-        // small values and hand-authored convenience). A string is parsed base-10, sign included.
+        // small values and hand-authored convenience). A string is parsed base-10, sign included, or
+        // base-16 when it carries a `0x`/`0X` prefix (the canonical spelling for a minted id).
         template <typename Int>
         Result<Int> ReadInteger64(const Json& value, const string& path)
         {
@@ -50,8 +51,14 @@ namespace Veng
                 {
                     ++begin;
                 }
+                int base = 10;
+                if (end - begin >= 2 && begin[0] == '0' && (begin[1] == 'x' || begin[1] == 'X'))
+                {
+                    begin += 2;
+                    base = 16;
+                }
                 Int parsed = 0;
-                const auto [ptr, ec] = std::from_chars(begin, end, parsed);
+                const auto [ptr, ec] = std::from_chars(begin, end, parsed, base);
                 if (ec != std::errc{} || ptr != end)
                 {
                     return std::unexpected(
@@ -82,6 +89,20 @@ namespace Veng
                 return {};
             }
             if (type == TypeIdOf<u64>())
+            {
+                const Result<u64> v = ReadInteger64<u64>(value, path);
+                if (!v)
+                {
+                    return std::unexpected(v.error());
+                }
+                std::memcpy(fieldPtr, &*v, sizeof(u64));
+                return {};
+            }
+            // A non-builtin scalar leaf is a 64-bit id-family enum (ActionId, GuiDriverId, …): read
+            // it as a u64 (a string or number), so it authors as a hex-id string exactly like a
+            // minted id. Handled before the number/boolean guard the narrower scalars require.
+            if (type != TypeIdOf<bool>() && type != TypeIdOf<f32>() && type != TypeIdOf<i32>() &&
+                type != TypeIdOf<u32>())
             {
                 const Result<u64> v = ReadInteger64<u64>(value, path);
                 if (!v)
@@ -437,7 +458,11 @@ namespace Veng
                 std::memcpy(&v, fieldPtr, sizeof(v));
                 return std::to_string(v);
             }
-            return nullptr;
+            // A non-builtin scalar leaf is a 64-bit id-family enum (ActionId, GuiDriverId, …):
+            // serialize it as its canonical hex-id string, the same spelling ReadScalar accepts.
+            u64 id = 0;
+            std::memcpy(&id, fieldPtr, sizeof(id));
+            return fmt::format("0x{:016X}", id);
         }
 
         Json WriteVectorLike(const void* fieldPtr, TypeId type, const TypeRegistry& registry)

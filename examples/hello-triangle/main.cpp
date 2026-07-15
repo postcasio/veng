@@ -21,6 +21,8 @@
 #include <Veng/UI/DebugPanels.h>
 
 #include <Veng/Gui/Document.h>
+#include <Veng/Gui/Driver.h>
+#include <Veng/Gui/DriverRegistry.h>
 #include <Veng/Gui/Element.h>
 #include <Veng/Gui/Overlay.h>
 #include <Veng/Gui/StyleSheet.h>
@@ -132,10 +134,9 @@ namespace Actions
     constexpr ActionId Jump{0xB64A2DFE34C4E523ULL};
 }
 
-// The cooked HUD assets: the document instantiated over the primary viewport, and its stylesheet
-// (loaded to read the shared `--accent` token straight off the sheet the rules flatten from).
+// The cooked HUD document instantiated over the primary viewport; its stylesheet (with the shared
+// `--accent` / `--tick-idle` tokens) is referenced from the document markup and resolved by the engine.
 constexpr AssetId HudDocumentId{0xB51B7421AFE8CD18ULL};
-constexpr AssetId HudStyleSheetId{0x94B0F44BE80ADA35ULL};
 
 // The single-entity pawn a networked player drives: a capsule with Intent/Mover whose mesh is an
 // inline recipe (so a prefab spawn carries it). Spawned per seat on the server — the listen host's
@@ -281,6 +282,47 @@ private:
 };
 
 VE_SYSTEM(SpawnPlayerRule, 0x70CCE23C99D1C3A1ULL, "Spawn Player Rule");
+
+// The status HUD's presentation driver, named on the HUD overlay and instantiated by the engine
+// once per claimed instance: it resolves the `count`-repeated tick pool by class on instantiate and
+// sweeps a highlight across it each frame — the per-instance form of the find-and-bind HUD system a
+// consumer used to hand-roll, with no per-frame app code and no entity-keyed state. It reads and
+// writes only its own document, so it stamps no scene component and needs no ViewOutput tag.
+class HudDriver final : public GuiDriver
+{
+public:
+    void OnInstantiate(Gui::Document& document, Scene&, Entity) override
+    {
+        m_Ticks = document.FindAllByClass("tick");
+    }
+
+    void OnUpdate(const GuiDriverFrame& frame) override
+    {
+        if (m_Ticks.empty())
+        {
+            return;
+        }
+
+        // The two tick colors mirror the stylesheet's --accent / --tick-idle tokens; the driver
+        // owns the sweep phase, so two split-screen instances light independently.
+        const vec4 accent{0.31f, 0.639f, 1.0f, 1.0f};
+        const vec4 idle{0.263f, 0.314f, 0.4f, 0.533f};
+
+        m_Phase += frame.Delta;
+        const usize active =
+            static_cast<usize>(m_Phase * 3.0f) % m_Ticks.size(); // three ticks per second
+        for (usize i = 0; i < m_Ticks.size(); i++)
+        {
+            frame.Document.SetTextColor(*m_Ticks[i], i == active ? accent : idle);
+        }
+    }
+
+private:
+    vector<Gui::Element*> m_Ticks;
+    f32 m_Phase = 0.0f;
+};
+
+VE_GUI_DRIVER(HudDriver, 0xE46A19EB6642A7D3ULL, "HUD");
 
 class HelloTriangleApp final : public Application
 {
@@ -480,27 +522,14 @@ protected:
             });
     }
 
-    // Builds the status HUD as a scene component: reads the accent color the stylesheet defines so
-    // the tick highlight and the spinner arc share one source, spawns a HUD entity carrying a
-    // GuiOverlay referencing the cooked document, and hands the overlay the resolve-once hook that
-    // caches the `count`-repeated tick pool by class. The Viewport then owns the load, instantiate,
-    // and attach; UpdateHud only sweeps the highlight. The smoke path adds no overlay — the golden
-    // capture is the 3D scene only.
+    // Builds the status HUD as a scene component: spawns a HUD entity carrying a GuiOverlay that
+    // names both the cooked document and the HudDriver. The engine owns the whole HUD from data —
+    // load, instantiate, attach, and the per-instance driver that resolves the tick pool and sweeps
+    // the highlight each frame — so the app writes no per-frame HUD code. The smoke path adds no
+    // overlay, so the golden capture is the 3D scene only.
     void SetupHud(Scene& world)
     {
         AssetManager& assets = GetAssetManager();
-        if (const auto sheet = assets.LoadSync<Gui::StyleSheet>(HudStyleSheetId))
-        {
-            if (const auto accent = sheet->Get()->FindVariableColor("accent"))
-            {
-                m_HudAccent = *accent;
-            }
-            if (const auto idle = sheet->Get()->FindVariableColor("tick-idle"))
-            {
-                m_HudIdle = *idle;
-            }
-        }
-
         const AssetResult<AssetHandle<Gui::UIDocument>> recipe =
             assets.LoadSync<Gui::UIDocument>(HudDocumentId);
         if (!recipe)
@@ -508,15 +537,14 @@ protected:
             return;
         }
 
-        m_HudEntity = world.CreateEntity();
-        world.Add<Name>(m_HudEntity).Value = "HUD";
-        auto& overlay = world.Add<GuiOverlay>(m_HudEntity);
+        const Entity hud = world.CreateEntity();
+        world.Add<Name>(hud).Value = "HUD";
+        auto& overlay = world.Add<GuiOverlay>(hud);
         overlay.Document = *recipe;
-        overlay.SetOnInstantiate([this](Gui::Document& document)
-                                 { m_HudTicks = document.FindAllByClass("tick"); });
+        overlay.Driver = GuiDriverIdOf<HudDriver>();
     }
 
-    void OnUpdate(const f32 delta) override
+    void OnUpdate(const f32) override
     {
         // The engine ticks the managed world's simulation (control, movement, spinners) and pushes
         // the resolved camera into the viewport each frame; the sample handles only smoke capture,
@@ -573,20 +601,16 @@ protected:
             GetInputRouter().PushFocus(InputFocus::Gameplay);
         }
 
-        // The seat's base gameplay context is authored on the player prefab; the focus gate only
-        // toggles it: with gameplay focused the seat's contexts resolve WASD/mouse/Space, and
-        // when ImGui owns the mouse the stack is emptied so every action resolves to None (the
-        // pawn and follow camera stay still). This replaces the old raw-capture gate. The seat is
-        // spawned by the game-mode rule, so this runs each frame outside any iteration.
-        SyncGameplayContext(GetInputRouter().IsGameplayFocused());
+        // The seat's gameplay context is authored `requiresGameplayFocus`, so the engine excludes it
+        // from resolution whenever ImGui owns the cursor — every gameplay action resolves to None with
+        // no stack surgery here (the old SyncGameplayContext save/restore is gone). The focus keys
+        // above are the only input the app touches.
 
         // Runtime net control through builtin request components: a system stamps a request onto the
         // world's scene and the engine drains it at its frame-safe point, so gameplay reaches the
         // start-hosting / connect / stop-net operations it cannot call directly. Here the mode keys
         // stand in for a menu's Host / Join / Leave buttons.
         PollNetModeRequests();
-
-        UpdateHud(delta);
     }
 
     // Stamps a net request onto the managed world when its mode key edges down. Only the key→request
@@ -621,66 +645,6 @@ protected:
         {
             stamp(StopNetRequest{});
         }
-    }
-
-    // Sweeps a highlight across the tick pool resolved by SetOnInstantiate — one tick lit in the
-    // accent color, the rest idle. The Viewport drives the overlay's load / instantiate / attach, so
-    // this reads the live document off the component; it is null until the first drive instantiates
-    // it. The spinner's rotation runs from its stylesheet keyframe, so it needs no per-frame drive.
-    void UpdateHud(const f32 delta)
-    {
-        if (m_HudEntity.IsNull())
-        {
-            return;
-        }
-
-        const GuiOverlay* const overlay = ManagedScene()->TryGet<GuiOverlay>(m_HudEntity);
-        Gui::Document* const document = overlay != nullptr ? overlay->GetDocument() : nullptr;
-        if (document == nullptr || m_HudTicks.empty())
-        {
-            return;
-        }
-
-        m_HudPhase += delta;
-        const usize active =
-            static_cast<usize>(m_HudPhase * 3.0f) % m_HudTicks.size(); // three ticks per second
-        for (usize i = 0; i < m_HudTicks.size(); i++)
-        {
-            document->SetTextColor(*m_HudTicks[i], i == active ? m_HudAccent : m_HudIdle);
-        }
-    }
-
-    // Gates the seat's authored input contexts on gameplay focus. On losing focus it saves each
-    // seat's active contexts and empties the stack (all actions None); on regaining focus it
-    // restores the saved contexts. The base context is authored prefab data — this only pops it
-    // for the focus gate and pushes it back, never fabricates the binding scheme in code.
-    // Idempotent, so it is safe to call every frame.
-    void SyncGameplayContext(const bool focused)
-    {
-        Scene* world = ManagedScene();
-        if (world == nullptr)
-        {
-            return;
-        }
-
-        world->Each<Viewer, InputContextStack>(
-            [&](const Entity seat, Viewer&, InputContextStack& stack)
-            {
-                if (!focused && !stack.Active.empty())
-                {
-                    m_SuspendedContexts[seat] = std::move(stack.Active);
-                    stack.Active.clear();
-                }
-                else if (focused && stack.Active.empty())
-                {
-                    if (const auto it = m_SuspendedContexts.find(seat);
-                        it != m_SuspendedContexts.end())
-                    {
-                        stack.Active = std::move(it->second);
-                        m_SuspendedContexts.erase(it);
-                    }
-                }
-            });
     }
 
     void OnRender() override
@@ -1078,10 +1042,6 @@ private:
     u32 m_FrameCount = 0;
     const char* m_SmokeOutput = nullptr;
 
-    // Each seat's authored input contexts, saved while gameplay is unfocused so the focus gate can
-    // empty the stack (all actions None) and restore it on refocus, without fabricating the scheme.
-    unordered_map<Entity, vector<AssetHandle<InputMappingContext>>> m_SuspendedContexts;
-
     // The optional MCP server and the provider seam it captures by reference. m_McpHost holds the
     // TypeRegistry/AssetManager references and the per-frame world/viewport closures; it must
     // outlive m_McpServer, so it is declared first (destroyed last) and reset after the server in
@@ -1111,19 +1071,6 @@ private:
     // torn down with it. A joined client's own follow camera is aimed by OnClientPossession, not held
     // here (the spawn rule owns the client's local seat + camera).
     unordered_map<Entity, Entity> m_SeatPawns;
-
-    // The windowed status HUD, authored as a GuiOverlay component on this entity: the Viewport owns
-    // its load / instantiate / attach, and m_HudTicks caches the `count`-repeated tick pool the
-    // SetOnInstantiate hook resolves by class, refreshed on any re-instantiate. The entity is spawned
-    // only off the smoke path, so the golden capture stays scene-only.
-    Entity m_HudEntity = Entity::Null;
-    vector<Gui::Element*> m_HudTicks;
-
-    // The highlight-sweep phase, in seconds, and the two tick colors read off the stylesheet's
-    // `--accent` / `--tick-idle` tokens (the fallbacks apply only if the sheet fails to load).
-    f32 m_HudPhase = 0.0f;
-    vec4 m_HudAccent{0.08f, 0.37f, 1.0f, 1.0f};
-    vec4 m_HudIdle{0.06f, 0.08f, 0.13f, 0.53f};
 };
 
 // Factory captures the headless flag so the launcher stays game-agnostic.
@@ -1145,6 +1092,13 @@ extern "C" void VengModuleRegister(VengModuleHost* host)
     // The game-specific control mapping: reads input into a PlayerInput snapshot and produces the
     // Intent the engine's MovementSystem consumes.
     host->Systems.Register<ControlSystem>();
+
+    // The HUD's presentation driver, named on the HUD overlay component; the engine instantiates it
+    // per claimed overlay instance and drives it each frame.
+    if (host->Drivers != nullptr)
+    {
+        host->Drivers->Register<HudDriver>();
+    }
 
     // Smoke mode: no window or swapchain, render off-screen and dump — the display-free CI path.
     const bool smoke = std::getenv("HT_SMOKE") != nullptr;

@@ -1,4 +1,5 @@
 {
+  "requiresGameplayFocus": true,
   "actions": [
     {
       "id": "0x74080D78CF763EC4",

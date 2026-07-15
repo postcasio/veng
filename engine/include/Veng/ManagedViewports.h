@@ -14,6 +14,7 @@
 namespace Veng
 {
     class AssetManager;
+    class GuiDriverRegistry;
     class InputRouter;
     class WorldRunner;
 }
@@ -114,8 +115,10 @@ namespace Veng
         /// @param assets      The asset manager Viewports load their shaders through; must outlive the set.
         /// @param compositor  The compositor the viewports register into; must outlive the set.
         /// @param router      The input router viewport↔seat associations are made through; must outlive the set.
+        /// @param drivers     The host-owned GuiDriver catalog set on each built viewport, or nullptr (undriven).
         ManagedViewportSet(Renderer::Context& context, AssetManager& assets,
-                           Renderer::ViewportCompositor& compositor, InputRouter& router);
+                           Renderer::ViewportCompositor& compositor, InputRouter& router,
+                           GuiDriverRegistry* drivers = nullptr);
 
         /// @brief Clears the set, self-unregistering each viewport and its router association.
         ~ManagedViewportSet();
@@ -339,6 +342,8 @@ namespace Veng
         Renderer::ViewportCompositor& m_Compositor;
         /// @brief The input router viewport↔seat associations are made through.
         InputRouter& m_Router;
+        /// @brief The host-owned GuiDriver catalog set on each built viewport; null drives none.
+        GuiDriverRegistry* m_GuiDrivers = nullptr;
 
         /// @brief The managed viewports in order; index 0 is the primary.
         vector<ManagedViewport> m_Viewports;

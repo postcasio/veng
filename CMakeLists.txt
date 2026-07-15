@@ -596,6 +596,8 @@ if (VENG_BUILD_TESTS)
             tests/unit/gui_presence.cpp
             tests/unit/gui_placement.cpp
             tests/unit/gui_overlay_component.cpp
+            tests/unit/gui_driver_registry.cpp
+            tests/unit/level_render_settings.cpp
             tests/unit/capture_surface_component.cpp
             tests/unit/sim_clock.cpp
             tests/unit/transform_interpolation.cpp
@@ -919,7 +921,9 @@ if (VENG_BUILD_TESTS)
 
     add_library(veng_test_bad_version_module SHARED tests/module/bad_version_module.cpp)
     target_link_libraries(veng_test_bad_version_module PRIVATE veng::veng)
-    target_compile_definitions(veng_test_bad_version_module PRIVATE VENG_MODULE_ABI_VERSION=999999u)
+    # ABI 5 is the version immediately before the GuiDriverRegistry member landed (ABI 6): a module
+    # built against it must be rejected at load, never entered.
+    target_compile_definitions(veng_test_bad_version_module PRIVATE VENG_MODULE_ABI_VERSION=5u)
 
     add_executable(veng_test_loader tests/module/loader_test.cpp)
     target_link_libraries(veng_test_loader PRIVATE veng::veng)

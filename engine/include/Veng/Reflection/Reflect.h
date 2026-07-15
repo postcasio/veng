@@ -263,6 +263,23 @@ namespace Veng::Detail
         static constexpr bool Replicated = true;                                                   \
     }
 
+/// @brief Marks a reflected type as a view/presentation output by specialising VengViewOutput\<T\>.
+///
+/// Placed beside the type's describe block (like VE_REPLICATED), it declares the component a
+/// presentation binding — a GuiOverlay driver (see Veng/Gui/Driver.h) — is permitted to write:
+/// derived, view-owned state that gameplay may read but that no simulation or wire owns. It is the
+/// checkable half of the driver boundary: a driver reads scene state and stamps request/command
+/// components, and beyond those may write only a ViewOutput-tagged component — never a VE_REPLICATED
+/// or a Sim-input component. TypeRegistry::Register<T>() reads the mark into TypeInfo::ViewOutput. A
+/// separate specialisation point from VengReflect<T>, so it composes with every reflection macro.
+/// The type is named fully qualified from global scope.
+#define VE_VIEW_OUTPUT(Type)                                                                       \
+    template <>                                                                                    \
+    struct ::Veng::VengViewOutput<Type>                                                            \
+    {                                                                                              \
+        static constexpr bool ViewOutput = true;                                                   \
+    }
+
 /// @brief Marks a type so an entity carrying it is always network-relevant, via VengAlwaysRelevant.
 ///
 /// Placed beside the type's describe block (like VE_REPLICATED), it exempts any entity with this

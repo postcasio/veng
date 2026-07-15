@@ -60,8 +60,8 @@ namespace Veng
             return std::unexpected(Corrupt(id, read.error()));
         }
 
-        const Ref<InputMappingContext> context =
-            InputMappingContext::Create(std::move(data.Actions), std::move(data.Bindings));
+        const Ref<InputMappingContext> context = InputMappingContext::Create(
+            std::move(data.Actions), std::move(data.Bindings), data.RequiresGameplayFocus);
 
         return Detail::LoadJob{.Resource = Detail::RefAny(context)};
     }

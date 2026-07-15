@@ -4,6 +4,7 @@
 #include <Veng/Module/ApplicationRegistry.h>
 #include <Veng/Module/Module.h>
 #include <Veng/Module/ModuleLoader.h>
+#include <Veng/Gui/DriverRegistry.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/BuiltinSystems.h>
 #include <Veng/Scene/BuiltinTypes.h>
@@ -57,17 +58,22 @@ int main(const int argc, char** argv)
     Veng::ApplicationRegistry apps;
     Veng::TypeRegistry types;
     Veng::SystemRegistry systems;
+    Veng::GuiDriverRegistry drivers;
 
     // Builtins must be present before the module registers its own: game components may reference
     // builtin types, and a level names the builtin systems the engine pre-registers here.
     Veng::RegisterBuiltinTypes(types);
     Veng::RegisterBuiltinSystems(systems);
 
-    Veng::VengModuleHost host{.App = apps, .Types = types, .Systems = systems, .Editor = nullptr};
+    Veng::VengModuleHost host{
+        .App = apps, .Types = types, .Systems = systems, .Drivers = &drivers, .Editor = nullptr};
     module->Register(host);
 
     Veng::Unique<Veng::Application> app = apps.Create(types, systems);
     VE_ASSERT(app, "module registered no Application");
+    // Hand the app the populated driver catalog before Run so its managed viewports drive
+    // component-authored GuiOverlay drivers.
+    app->SetGuiDriverRegistry(&drivers);
     app->Run(Veng::vector<Veng::string>(argv, argv + argc));
 
     return 0;

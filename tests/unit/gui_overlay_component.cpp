@@ -64,6 +64,7 @@ TEST_CASE("GuiOverlay reflects its authored fields but not the runtime record")
     // serializer all walk this field list, so the runtime is invisible to every one of them.
     CHECK(HasField(info, "Document"));
     CHECK(HasField(info, "Layer"));
+    CHECK(HasField(info, "Driver"));
     CHECK(HasField(info, "Interactive"));
     CHECK(HasField(info, "TargetSeat"));
     CHECK_FALSE(HasField(info, "Runtime"));
@@ -81,6 +82,7 @@ TEST_CASE("GuiOverlay authored fields round-trip through the reflection serializ
     const Json authored = {
         {"Document", "0xA09AA8B60AEAA8BE"},
         {"Layer", 3},
+        {"Driver", "0xE9906144475EB699"},
         {"Interactive", true},
         {"TargetSeat", 5u},
     };
@@ -90,6 +92,8 @@ TEST_CASE("GuiOverlay authored fields round-trip through the reflection serializ
 
     CHECK(overlay.Document.Id().Value == 0xA09AA8B60AEAA8BEULL);
     CHECK(overlay.Layer == 3);
+    // The GuiDriverId leaf authors as a hex-id string, exactly like a minted id.
+    CHECK(static_cast<u64>(overlay.Driver) == 0xE9906144475EB699ULL);
     CHECK(overlay.Interactive);
     CHECK(overlay.TargetSeat.Index == 5u);
 
@@ -97,6 +101,7 @@ TEST_CASE("GuiOverlay authored fields round-trip through the reflection serializ
     const Json out = JsonWriteFields(&overlay, info, registry, hooks);
     CHECK(out["Document"] == "0xA09AA8B60AEAA8BE");
     CHECK(out["Layer"] == 3);
+    CHECK(out["Driver"] == "0xE9906144475EB699");
     CHECK(out["Interactive"] == true);
     CHECK(out["TargetSeat"] == 5u);
 }
@@ -108,6 +113,7 @@ TEST_CASE("GuiOverlay defaults are the single-viewport display-only HUD")
     const GuiOverlay overlay;
     CHECK_FALSE(overlay.Document.Id().IsValid());
     CHECK(overlay.Layer == 0);
+    CHECK(overlay.Driver == GuiDriverId::Null); // undriven by default
     CHECK_FALSE(overlay.Interactive);
     CHECK(overlay.TargetSeat.IsNull());
     CHECK(overlay.GetHost() == nullptr);

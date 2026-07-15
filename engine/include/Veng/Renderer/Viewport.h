@@ -19,6 +19,7 @@ namespace Veng
 {
     class Scene;
     class AssetManager;
+    class GuiDriverRegistry;
     struct GuiOverlay;
 }
 
@@ -359,6 +360,15 @@ namespace Veng::Renderer
         /// @brief Returns the seat a hosted document inherits (Entity::Null for the default).
         [[nodiscard]] Entity GetSeat() const { return m_Seat; }
 
+        /// @brief Sets the driver catalog a claimed driven GuiOverlay resolves its Driver id against.
+        ///
+        /// Borrowed and host-owned (the launcher/editor threads it through from the module host). Null
+        /// — the default — leaves every claimed GuiOverlay undriven regardless of its Driver id, the
+        /// path an editor preview or a driver-free test takes. Set by the engine on each managed
+        /// viewport so a component-authored driver instantiates on the first drive.
+        /// @param drivers  The driver catalog, or nullptr to drive no overlays.
+        void SetGuiDriverRegistry(GuiDriverRegistry* drivers) { m_GuiDrivers = drivers; }
+
         /// @brief Sets the scale attached Gui documents lay out and draw at.
         ///
         /// Documents solve at the region extent divided by this scale — so authored px sizes are
@@ -422,6 +432,12 @@ namespace Veng::Renderer
         /// The same camera ScreenToWorldRay/WorldToRegion unproject through — the view as of the last
         /// completed frame. Default-constructed before any ViewState is pushed.
         [[nodiscard]] const CameraView& GetPresentedCamera() const { return m_ViewState.Camera; }
+
+        /// @brief Returns the frame delta (seconds) of the last-pushed ViewState.
+        ///
+        /// The per-frame delta a driven GuiOverlay's driver reads through GuiDriverFrame::Delta.
+        /// Zero before any ViewState is pushed.
+        [[nodiscard]] f32 GetViewDelta() const { return m_ViewState.Delta; }
 
         /// @brief Maps a window point into this viewport's region as normalized coordinates.
         ///
@@ -750,6 +766,9 @@ namespace Veng::Renderer
 
         /// @brief The seat a hosted document inherits as its input identity; Null reads every device.
         Entity m_Seat = Entity::Null;
+
+        /// @brief The driver catalog a claimed driven GuiOverlay resolves against; null drives none.
+        GuiDriverRegistry* m_GuiDrivers = nullptr;
 
         /// @brief The UI overlay pass, created lazily on the first document attach; null until then.
         ///

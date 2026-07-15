@@ -186,6 +186,7 @@ add_library(veng SHARED
         src/Gui/DocumentHost.cpp
         src/Gui/DocumentLayer.cpp
         src/Gui/DocumentTexture.cpp
+        src/Gui/DriverRegistry.cpp
         src/Gui/GuiConsumer.cpp
         src/Gui/Overlay.cpp
         src/Gui/Placement.cpp

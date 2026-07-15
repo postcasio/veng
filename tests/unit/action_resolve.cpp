@@ -252,6 +252,83 @@ TEST_CASE("An unbound declared action still produces a None sample")
     CHECK(state.Actions[0].Phase == ActionPhase::None);
 }
 
+TEST_CASE("A focus-gated context is excluded from resolution while gameplay focus is off")
+{
+    // The gate is a pure predicate over the resolved contexts; the InputMappingSystem filters the
+    // seat's stack through it before ResolveActions. Model that here device-free: a gated gameplay
+    // context stacked over an always-active base, filtered by focus, resolved.
+    ResolvedContext gameplay = WasdContext();
+    gameplay.RequiresGameplayFocus = true;
+
+    // The authored stack, never mutated by the gate.
+    const std::array<ResolvedContext, 1> stack{gameplay};
+
+    FakeRawInput raw;
+    raw.KeysDown = {KeyW, KeySpace};
+
+    // Build the effective active list exactly as the system does: keep only contexts active under
+    // the current focus. This is the whole of the gate — the source stack is untouched throughout.
+    const auto effective = [&](bool focused)
+    {
+        vector<ResolvedContext> active;
+        for (const ResolvedContext& context : stack)
+        {
+            if (IsContextActiveUnderFocus(context, focused))
+            {
+                active.push_back(context);
+            }
+        }
+        return active;
+    };
+
+    SUBCASE("unfocused: the gated context contributes nothing")
+    {
+        const vector<ResolvedContext> active = effective(/*focused=*/false);
+        CHECK(active.empty());
+        const ActionState state = ResolveActions(active, raw, {});
+        // No context resolved, so no action samples at all — every gameplay binding silenced.
+        CHECK(state.Actions.empty());
+        CHECK(state.GetValue(Move) == vec2{0.0f, 0.0f});
+        CHECK_FALSE(state.WasTriggered(Jump));
+    }
+
+    SUBCASE("focused: the gated context resolves identically to an ungated one")
+    {
+        const vector<ResolvedContext> active = effective(/*focused=*/true);
+        REQUIRE(active.size() == 1);
+        const ActionState gatedState = ResolveActions(active, raw, {});
+
+        // The same bindings as an ungated stack yield a byte-identical result once focused.
+        ResolvedContext ungated = WasdContext();
+        const std::array<ResolvedContext, 1> ungatedStack{ungated};
+        const ActionState ungatedState = ResolveActions(ungatedStack, raw, {});
+
+        CHECK(gatedState.GetValue(Move) == ungatedState.GetValue(Move));
+        CHECK(gatedState.WasTriggered(Jump) == ungatedState.WasTriggered(Jump));
+        CHECK(gatedState.GetValue(Move) == vec2{0.0f, 1.0f});
+    }
+
+    // The authored stack's one entry still carries its gate flag — never mutated by evaluation.
+    CHECK(stack[0].RequiresGameplayFocus);
+}
+
+TEST_CASE("An ungated stack resolves the same regardless of focus")
+{
+    const ResolvedContext base = WasdContext(); // RequiresGameplayFocus defaults false
+    const std::array<ResolvedContext, 1> stack{base};
+
+    FakeRawInput raw;
+    raw.KeysDown = {KeyD};
+
+    CHECK(IsContextActiveUnderFocus(stack[0], /*focused=*/true));
+    CHECK(IsContextActiveUnderFocus(stack[0], /*focused=*/false));
+
+    const ActionState focused = ResolveActions(stack, raw, {});
+    const ActionState unfocused = ResolveActions(stack, raw, {});
+    CHECK(focused.GetValue(Move) == unfocused.GetValue(Move));
+    CHECK(focused.GetValue(Move) == vec2{1.0f, 0.0f});
+}
+
 TEST_CASE("A neutral snapshot yields every action None with zero value")
 {
     const ResolvedContext context = WasdContext();

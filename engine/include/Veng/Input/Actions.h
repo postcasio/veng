@@ -213,7 +213,30 @@ namespace Veng
 
         /// @brief The raw-source → action bindings this context contributes.
         vector<Binding> Bindings;
+
+        /// @brief Whether this context resolves only while its seat holds gameplay focus.
+        ///
+        /// A gated context (authored `requiresGameplayFocus`) is excluded from a seat's effective
+        /// active list whenever the seat is not gameplay-focused — a pure evaluation the
+        /// InputMappingSystem performs at list assembly, never a mutation of the authored
+        /// InputContextStack. False (the default) leaves a context always active, the status quo.
+        bool RequiresGameplayFocus = false;
     };
+
+    /// @brief Whether a resolved context contributes bindings under the current focus.
+    ///
+    /// The focus gate as a pure predicate: a context requiring gameplay focus is active only while
+    /// the seat is gameplay-focused; an ungated context is always active. The InputMappingSystem
+    /// filters a seat's stack through this before ResolveActions, so a gate never touches the
+    /// authored active list — device-free, testable in isolation.
+    /// @param context          The resolved context to test.
+    /// @param gameplayFocused  Whether the seat currently holds gameplay focus.
+    /// @return True when @p context should contribute to the seat's resolution this tick.
+    [[nodiscard]] inline bool IsContextActiveUnderFocus(const ResolvedContext& context,
+                                                        const bool gameplayFocused)
+    {
+        return gameplayFocused || !context.RequiresGameplayFocus;
+    }
 
     /// @brief The raw-input read surface the resolver needs, satisfied by Veng::Input.
     ///

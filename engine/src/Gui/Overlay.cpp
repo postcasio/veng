@@ -6,6 +6,9 @@
 #include <Veng/Gui/Document.h>
 #include <Veng/Gui/DocumentHost.h>
 #include <Veng/Gui/DocumentLayer.h>
+#include <Veng/Gui/Driver.h>
+#include <Veng/Gui/DriverRegistry.h>
+#include <Veng/Log.h>
 #include <Veng/Renderer/Viewport.h>
 
 namespace Veng
@@ -23,6 +26,10 @@ namespace Veng
         Unique<Gui::DocumentLayer> Layer;
         /// @brief The Interactive value last applied to the layer, to reapply only on a change.
         bool AppliedInteractive = false;
+        /// @brief The instantiated presentation driver, or null when the overlay is undriven.
+        Unique<GuiDriver> Driver;
+        /// @brief The document the driver was last OnInstantiate'd against; detects a re-instantiate.
+        Gui::Document* DriverDocument = nullptr;
     };
 
     GuiOverlay::GuiOverlay() = default;
@@ -97,7 +104,8 @@ namespace Veng
         runtime.AppliedInteractive = Interactive;
     }
 
-    void GuiOverlay::Drive(Renderer::Viewport& viewport, AssetManager& assets) const
+    void GuiOverlay::Drive(Renderer::Viewport& viewport, AssetManager& assets, Scene& scene,
+                           GuiDriverRegistry* const drivers) const
     {
         EnsureHost(assets);
         GuiOverlayRuntime& runtime = *Runtime;
@@ -109,7 +117,43 @@ namespace Veng
             runtime.AppliedInteractive = Interactive;
         }
 
-        runtime.Layer->Present(viewport);
+        // Present first: it instantiates the document (or re-instantiates it) and returns the live
+        // tree, which the driver's OnInstantiate/OnUpdate then read.
+        Gui::Document* const document = runtime.Layer->Present(viewport);
+
+        // Instantiate the named driver once, when a registry is available and the id resolves; an
+        // unresolved id logs once and leaves the overlay undriven (a recoverable miss).
+        if (runtime.Driver == nullptr && Driver != GuiDriverId::Null && drivers != nullptr)
+        {
+            runtime.Driver = drivers->Instantiate(Driver);
+            runtime.DriverDocument = nullptr;
+            if (runtime.Driver == nullptr)
+            {
+                Log::Warn("GuiOverlay names GuiDriver {:#018x}, which no registered driver claims; "
+                          "leaving the overlay undriven.",
+                          static_cast<u64>(Driver));
+            }
+        }
+
+        if (runtime.Driver != nullptr && document != nullptr)
+        {
+            // Re-run OnInstantiate whenever the live document changed identity (first instantiate or
+            // a re-instantiate), so cached element pointers stay valid — exactly like SetOnInstantiate.
+            if (document != runtime.DriverDocument)
+            {
+                runtime.Driver->OnInstantiate(*document, scene, viewport.GetSeat());
+                runtime.DriverDocument = document;
+            }
+            runtime.Driver->OnUpdate(GuiDriverFrame{
+                .Document = *document,
+                .Scene = scene,
+                .Seat = viewport.GetSeat(),
+                .Delta = viewport.GetViewDelta(),
+                .View = SystemViewInfo{.Camera = viewport.GetPresentedCamera(),
+                                       .Region = viewport.GetRegion(),
+                                       .UiScale = viewport.GetUiScale()},
+            });
+        }
     }
 
     void GuiOverlay::Detach(Renderer::Viewport& viewport) const

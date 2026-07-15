@@ -39,11 +39,15 @@ namespace Veng
                 }
 
                 // A not-yet-resident context contributes no actions until it streams in — the
-                // ordinary async-load contract; skip it and resolve the rest.
+                // ordinary async-load contract; skip it and resolve the rest. A focus-gated context
+                // is excluded while the seat is not gameplay-focused (IsContextActiveUnderFocus) —
+                // pure evaluation over the authored stack, which stays untouched, so a HUD owning the
+                // cursor silences gameplay bindings with no stack surgery and no order change.
                 active.clear();
                 for (const AssetHandle<InputMappingContext>& handle : stack.Active)
                 {
-                    if (handle.IsLoaded())
+                    if (handle.IsLoaded() && IsContextActiveUnderFocus(handle.Get()->GetResolved(),
+                                                                       context.GameplayFocused))
                     {
                         active.push_back(handle.Get()->GetResolved());
                     }

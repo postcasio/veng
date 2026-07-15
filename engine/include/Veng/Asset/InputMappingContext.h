@@ -23,6 +23,14 @@ namespace Veng
 
         /// @brief The raw-source → action bindings this context contributes.
         vector<Binding> Bindings;
+
+        /// @brief Whether this context resolves only while its seat holds gameplay focus.
+        ///
+        /// Authored `"requiresGameplayFocus"` in the *.inputmap.json source; carried into the
+        /// ResolvedContext the InputMappingSystem gates on. A tolerant field within the fixed
+        /// CookedInputMapVersion — absent in a pre-change blob, so existing cooked maps load
+        /// unchanged with the false default. False leaves the context always active.
+        bool RequiresGameplayFocus = false;
     };
 
     /// @brief A named, remappable set of input-action bindings — the authored input scheme.
@@ -42,11 +50,13 @@ namespace Veng
         /// @brief Creates a context from its decoded actions and bindings.
         ///
         /// Builds the resolver-ready ResolvedContext once, so GetResolved() is a plain read.
-        /// @param actions   The declared actions, in declaration order.
-        /// @param bindings  The raw-source → action bindings.
+        /// @param actions               The declared actions, in declaration order.
+        /// @param bindings              The raw-source → action bindings.
+        /// @param requiresGameplayFocus Whether the context resolves only under gameplay focus.
         /// @return The constructed context.
         static Ref<InputMappingContext> Create(vector<InputAction> actions,
-                                               vector<Binding> bindings);
+                                               vector<Binding> bindings,
+                                               bool requiresGameplayFocus = false);
 
         /// @brief Returns the actions this context declares, in declaration order.
         [[nodiscard]] std::span<const InputAction> GetActions() const { return m_Actions; }
@@ -58,7 +68,8 @@ namespace Veng
         [[nodiscard]] const ResolvedContext& GetResolved() const { return m_Resolved; }
 
     private:
-        InputMappingContext(vector<InputAction> actions, vector<Binding> bindings);
+        InputMappingContext(vector<InputAction> actions, vector<Binding> bindings,
+                            bool requiresGameplayFocus);
 
         /// @brief The declared actions, in declaration order.
         vector<InputAction> m_Actions;
@@ -80,4 +91,5 @@ namespace Veng
 VE_REFLECT(::Veng::InputMapData, 0x02571406767C54BCULL)
 VE_ARRAY_FIELD(Actions, .DisplayName = "Actions")
 VE_ARRAY_FIELD(Bindings, .DisplayName = "Bindings")
+VE_FIELD(RequiresGameplayFocus, .DisplayName = "Requires Gameplay Focus")
 VE_REFLECT_END();
