@@ -465,6 +465,76 @@ path and the smoke golden is unaffected; no example consumes a `PointField`, and
 (`tests/gpu/point_field.cpp`) is the conformance surface — it runs the cull, the LOD switch, and
 both sprite paths (compute and forced-direct) against the same brightness assertions.
 
+### Volume fields
+
+**A volume field ray-marches a bounded emissive, light-absorbing medium into the lit scene color.**
+Where a point field sums discrete flux, a volume field integrates a *density function over a region
+of space* — a nebula, a dust bank, a glowing gas cloud — so the medium's shape holds up under camera
+orbit: its dust lanes silhouette, its bright core glows through its own haze, and it occupies scene
+volume rather than reading as a flat screen-space glow. The capability is deliberately bounded to
+**emission + extinction**: emitted radiance density in RGB, light-absorption density in A, both per
+world-unit, packed into one 3D texture and sampled once per march step. There is no in-scattering
+from scene lights, no self-shadowing, and no phase function — that is lit/shadowed participating
+media, a named future increment, not this.
+
+- **Resource / component split, the point-field model verbatim.** `Renderer::VolumeField`
+  (`Veng/Renderer/VolumeField.h`) is the GPU resource: a `Type3D` emission+extinction texture + its
+  view + sampler + a **world-space AABB**, `Build`/`BuildSync`-constructed from CPU voxel data
+  (worker-legal creation, no bindless registration — the dedicated-set decision below). The
+  reflected **`VolumeField` scene component** (`Veng/Scene/Components.h`) carries the authored,
+  live-tunable knobs — `Opacity` (an overall fade scaling emission and extinction toward zero),
+  `EmissionScale`, `ExtinctionScale`, `Steps` (the fixed march step count, the quality knob,
+  default 64) — plus a **runtime-only `Ref<VolumeField> Field`** (no `VE_FIELD`: never reflected,
+  cooked, or serialized; a system or app builds the resource and assigns it). **World-space bounds
+  live on the resource; the entity `Transform` is not applied** — the `PointField` contract exactly.
+- **Presence-driven, no settings toggle.** `VolumeScenePass` (`Renderer/Passes/VolumeScenePass.h`)
+  exists in the compiled graph **iff a live `VolumeField` component (non-null built field) exists**,
+  resolved by the renderer itself each `Execute` (`View<VolumeField>`, the lights model — no
+  `SceneRendererSettings` arm). With no field the frame is **byte-identical** and the smoke golden
+  does not move; no engine example authors a volume, so the golden is unmoved across the whole
+  capability.
+- **The lit scene-color slot, after the sky composite, ahead of the refraction grab.** The pass
+  draws into the lit scene color **after deferred lighting and the sky composite** (so it attenuates
+  the backdrop behind it) and **before the refraction grab and the translucent pass**. Everything
+  downstream then treats it as scene content: the pre-translucent **refraction grab captures it**, a
+  **translucent blends over it**, **SSR reflects it**, and — the load-bearing one — the **TAA
+  resolve is the march jitter's integrator** (the per-pixel start offset is dithered and temporally
+  rotated precisely so TAA converges it to a smooth result; without TAA the march reads as
+  per-pixel noise that a consumer must hide with a high step count).
+- **One fullscreen draw per field, blended `(ONE, SRC_ALPHA)`.** The fragment marches the view ray
+  front-to-back and returns `float4(accumulated emission, surviving transmittance)`: with the blend
+  `srcColor = ONE, dstColor = SRC_ALPHA`, **one blend both adds the medium's glow (`+ L`) and
+  attenuates the background (`× T`)**. The march clips the ray to the field's AABB (a textbook slab
+  intersection, mirrored on the CPU by `Renderer::ComputeMarchSegment` in `VolumeMarch.h`) and to
+  the reconstructed g-buffer scene depth — so opaque geometry in front of the field shortens or fully
+  occludes the march — steps a fixed `Steps` count with a per-pixel interleaved-gradient-noise start
+  jitter (Jiménez, SIGGRAPH 2014), and **early-outs once transmittance falls below ~0.003**
+  (effectively opaque). The pure-math half — the segment clip, the far-to-near ordering predicate,
+  the resolved per-field draw record — lives device-free in `Veng/Renderer/VolumeMarch.h`,
+  unit-testable with no ICD.
+- **The 3D texture binds through a dedicated per-pass set, not set-0 bindless.** The pass binds set 0
+  (view constants + the bindless depth texture) plus **its own volume set** (the `Texture3D` +
+  sampler) — the IBL-cubemap / shadow-atlas precedent: a non-2D descriptor inside set 0's Metal
+  argument buffer is a MoltenVK mistranslation risk the engine refuses once, and a closed
+  producer→consumer resource needs no global registration.
+- **Overlapping fields composite independently — a documented approximation.** Live fields draw
+  **far-to-near** (`VolumeFieldFartherFirst`, by camera distance to bounds center), so each nearer
+  field's `(ONE, SRC_ALPHA)` blend attenuates whatever the farther fields already composited behind
+  it. Two *overlapping* fields, though, each attenuate the other's **entire** contribution or none,
+  by draw order — not their true interleaved optical depth. This is acceptable at the "a handful of
+  volumes" scope the capability targets; correct interleaving would need a single merged march.
+
+**Named future increments** (none built here): **lit / shadowed media** (in-scattering from scene
+lights, self-shadowing, a phase function — sun shafts, shadowed fog); a **froxel grid / global fog**
+system (this is bounded fields, not a scene-wide volumetric); **cooked volume-texture assets** (a
+`VolumeField` is runtime-`Build`-only today — an imported/cooked 3D-texture asset, with its format
+questions, is future and moves nothing in the cooked formats); **per-sprite attenuation through a
+volume** (a point-field star dimmed by the dust in front of it — today points composite over the
+medium unattenuated); **shader-side detail-noise modulation** (adding sub-voxel structure beyond the
+baked resolution); and **half-resolution marching** (marching into a half-res target and upsampling,
+trading the per-pixel march cost for a bilateral resolve). No example consumes a `VolumeField`; the
+resource's own upload path and the pure march math are the conformance surfaces.
+
 ## Viewport: a region + a renderer + a role
 
 A `Viewport` (`Veng/Renderer/Viewport.h`) is *"a renderable view into a world"* made first-class:
