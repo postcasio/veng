@@ -44,6 +44,40 @@ namespace Veng::Net
         {
             return payload.size() >= size && payload[0] == static_cast<u8>(type);
         }
+
+        // The fixed header of a wire-serialized travel payload: the reflected type id (u64) plus the
+        // byte-blob length (u32). The blob follows inline.
+        constexpr usize PayloadHeaderSize = 8 + 4;
+
+        void WriteTravelPayload(vector<u8>& out, const TravelPayload& payload)
+        {
+            WriteU64LE(out, payload.Type);
+            WriteU32LE(out, static_cast<u32>(payload.Bytes.size()));
+            out.insert(out.end(), payload.Bytes.begin(), payload.Bytes.end());
+        }
+
+        // Reads a travel payload at @p offset, bounds-checked. On success fills @p out and advances
+        // @p offset past the blob; returns false (leaving both untouched) if the message is truncated.
+        [[nodiscard]] bool ReadTravelPayload(std::span<const u8> message, usize& offset,
+                                             TravelPayload& out)
+        {
+            if (message.size() < offset + PayloadHeaderSize)
+            {
+                return false;
+            }
+            const TypeId type = ReadU64LE(message, offset);
+            const u32 length = ReadU32LE(message, offset + 8);
+            const usize start = offset + PayloadHeaderSize;
+            if (message.size() < start + length)
+            {
+                return false;
+            }
+            out.Type = type;
+            out.Bytes.assign(message.begin() + static_cast<std::ptrdiff_t>(start),
+                             message.begin() + static_cast<std::ptrdiff_t>(start + length));
+            offset = start + length;
+            return true;
+        }
     }
 
     optional<ControlMessageType> PeekControlType(std::span<const u8> message)
@@ -74,6 +108,8 @@ namespace Veng::Net
         case JoinMessageType::JoinRequest:
         case JoinMessageType::JoinAccept:
         case JoinMessageType::JoinDeny:
+        case JoinMessageType::TravelRequest:
+        case JoinMessageType::DirectedTravel:
             return static_cast<JoinMessageType>(payload[0]);
         }
         return {};
@@ -169,6 +205,7 @@ namespace Veng::Net
         WriteU64LE(out, message.Key.Lo);
         WriteU64LE(out, message.Key.Hi);
         WriteU32LE(out, message.RequestToken);
+        WriteTravelPayload(out, message.Payload);
         return out;
     }
 
@@ -182,6 +219,7 @@ namespace Veng::Net
         WriteU64LE(out, message.WorldDigest.Lo);
         WriteU64LE(out, message.WorldDigest.Hi);
         WriteU32LE(out, message.SeatNetId);
+        WriteTravelPayload(out, message.Payload);
         return out;
     }
 
@@ -201,10 +239,16 @@ namespace Veng::Net
         {
             return {};
         }
-        return JoinRequestMessage{
+        JoinRequestMessage message{
             .Key = WorldKey{.Lo = ReadU64LE(payload, 1), .Hi = ReadU64LE(payload, 9)},
             .RequestToken = ReadU32LE(payload, 17),
         };
+        usize offset = 21;
+        if (!ReadTravelPayload(payload, offset, message.Payload))
+        {
+            return {};
+        }
+        return message;
     }
 
     optional<JoinAcceptMessage> DecodeJoinAccept(std::span<const u8> payload)
@@ -214,7 +258,7 @@ namespace Veng::Net
         {
             return {};
         }
-        return JoinAcceptMessage{
+        JoinAcceptMessage message{
             .RequestToken = ReadU32LE(payload, 1),
             .Join = ReadU16LE(payload, 5),
             .LevelId = ReadU64LE(payload, 7),
@@ -222,6 +266,12 @@ namespace Veng::Net
                 ContentDigest{.Lo = ReadU64LE(payload, 15), .Hi = ReadU64LE(payload, 23)},
             .SeatNetId = ReadU32LE(payload, 31),
         };
+        usize offset = 35;
+        if (!ReadTravelPayload(payload, offset, message.Payload))
+        {
+            return {};
+        }
+        return message;
     }
 
     optional<JoinDenyMessage> DecodeJoinDeny(std::span<const u8> payload)
@@ -236,5 +286,63 @@ namespace Veng::Net
             .RequestToken = ReadU32LE(payload, 1),
             .Reason = static_cast<JoinDenyReason>(payload[5]),
         };
+    }
+
+    vector<u8> EncodeTravelRequest(const TravelRequestMessage& message)
+    {
+        vector<u8> out;
+        WriteJoinType(out, JoinMessageType::TravelRequest);
+        WriteU64LE(out, message.Key.Lo);
+        WriteU64LE(out, message.Key.Hi);
+        WriteTravelPayload(out, message.Payload);
+        return out;
+    }
+
+    vector<u8> EncodeDirectedTravel(const DirectedTravelMessage& message)
+    {
+        vector<u8> out;
+        WriteJoinType(out, JoinMessageType::DirectedTravel);
+        WriteU16LE(out, message.Leave);
+        WriteU64LE(out, message.Join.Lo);
+        WriteU64LE(out, message.Join.Hi);
+        WriteTravelPayload(out, message.Payload);
+        return out;
+    }
+
+    optional<TravelRequestMessage> DecodeTravelRequest(std::span<const u8> payload)
+    {
+        constexpr usize size = TypeByteSize + 8 + 8;
+        if (!HasJoinType(payload, JoinMessageType::TravelRequest, size))
+        {
+            return {};
+        }
+        TravelRequestMessage message{
+            .Key = WorldKey{.Lo = ReadU64LE(payload, 1), .Hi = ReadU64LE(payload, 9)},
+        };
+        usize offset = 17;
+        if (!ReadTravelPayload(payload, offset, message.Payload))
+        {
+            return {};
+        }
+        return message;
+    }
+
+    optional<DirectedTravelMessage> DecodeDirectedTravel(std::span<const u8> payload)
+    {
+        constexpr usize size = TypeByteSize + 2 + 8 + 8;
+        if (!HasJoinType(payload, JoinMessageType::DirectedTravel, size))
+        {
+            return {};
+        }
+        DirectedTravelMessage message{
+            .Leave = ReadU16LE(payload, 1),
+            .Join = WorldKey{.Lo = ReadU64LE(payload, 3), .Hi = ReadU64LE(payload, 11)},
+        };
+        usize offset = 19;
+        if (!ReadTravelPayload(payload, offset, message.Payload))
+        {
+            return {};
+        }
+        return message;
     }
 }

@@ -49,6 +49,7 @@
 #include <Veng/Veng.h>
 #include <Veng/Window.h>
 #include <Veng/WindowEvents.h>
+#include <Veng/WorldDirectory.h>
 
 #include <Veng/ImGui/ImGuiLayer.h>
 #include <Veng/ImGui/ImGuiTexture.h>

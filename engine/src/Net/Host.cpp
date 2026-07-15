@@ -105,8 +105,9 @@ namespace Veng
     struct ServerHost::State
     {
         // One hosted world: its scene, seat rule, and its own replication instance and wire-id space.
-        // A factory-opened world is idle-reaped once its live-join count reaches zero and the dwell
-        // elapses; a pre-registered world (Create + AddWorld) is never reaped — the consumer owns it.
+        // Its existence, presence refcount, keep-warm dwell, and idle reap are the WorldDirectory's; the
+        // host holds only the replication state keyed by WorldInstanceId, dropped when the directory
+        // reaps the world.
         struct HostedWorld
         {
             WorldInstanceId Id;
@@ -120,9 +121,6 @@ namespace Veng
             NetIdAllocator Allocator;
             Net::InterestSettings InterestSettings;
             Net::InterestPolicy InterestPolicy;
-            bool FactoryOpened = false;
-            u32 JoinRefs = 0;
-            optional<f64> IdleSince; // set (factory-opened only) when JoinRefs reaches zero
         };
 
         // One (connection, join): the joined world, the seat spawned in it, the readiness gate, and
@@ -149,23 +147,16 @@ namespace Veng
         AssetManager* Assets = nullptr;
         Unique<Net::Server> Server;
 
-        // The shared WorldKey → live buckets map (a key may hold N instances the placement policy fills)
-        // and the hosted worlds keyed by WorldInstanceId value. Convergence is the one-bucket case. The
-        // primary is the initial world the no-arg accessors resolve.
-        std::unordered_map<Net::WorldKey, vector<WorldInstanceId>> KeyMap;
+        // The hosted worlds' replication state keyed by WorldInstanceId value; the primary is the initial
+        // world the no-arg accessors resolve. The WorldKey → bucket map, presence, dwell, and reap live
+        // in the directory below; this map is the host's replication complement, dropped on reap.
         std::unordered_map<u64, HostedWorld> Worlds;
         WorldInstanceId Primary;
 
-        u32 MaxJoinedWorldsPerConnection = 4;
-        u32 MaxHostedWorlds = 64;
-        u32 MaxPlayersPerInstance = 0;
-        f64 IdleKeepWarmDwell = 5.0;
-        function<bool(Net::ConnectionId, const Net::WorldKey&)> Authorize;
-        function<optional<ServerWorldResolution>(const Net::WorldKey&)> WorldFactory;
-        function<optional<WorldInstanceId>(const Net::WorldKey&, Net::ConnectionId,
-                                           std::span<const WorldPlacement>)>
-            Placement;
-        function<void(WorldInstanceId)> CloseWorld;
+        // The role-neutral get-or-place directory: owned (built from the ServerHostInfo hooks) unless the
+        // caller borrowed a shared one. Directory always points at the live one.
+        Unique<WorldDirectory> OwnedDirectory;
+        WorldDirectory* Directory = nullptr;
 
         std::unordered_map<Net::ConnectionId, ConnectionState> Connections;
         vector<Net::NetEvent> Events;
@@ -329,39 +320,32 @@ namespace Veng
             return netId;
         }
 
-        // Resolves which live bucket of a key a joiner lands in: the custom Placement policy if set,
-        // else the built-in capacity policy (the first bucket under MaxPlayersPerInstance; 0 means no
-        // cap, so the first bucket — pure convergence). Returns an existing bucket's id, or nullopt to
-        // open a fresh bucket through the factory. Only buckets currently mapped to the key are offered.
-        optional<WorldInstanceId> PlaceInBucket(const Net::WorldKey& key, Net::ConnectionId id)
+        // Wraps a factory resolution into a hosted world's replication state, if not already present.
+        // The directory recorded the bucket; this is the host's replication complement.
+        void EnsureHostedWorld(const Net::WorldKey& key, const ServerWorldResolution& resolved)
         {
-            vector<WorldPlacement> buckets;
-            if (const auto it = KeyMap.find(key); it != KeyMap.end())
+            if (Worlds.contains(resolved.WorldId.Value))
             {
-                for (const WorldInstanceId world : it->second)
-                {
-                    buckets.push_back({.World = world, .LiveSeats = WorldOf(world).JoinRefs});
-                }
+                return;
             }
-
-            if (Placement)
-            {
-                return Placement(key, id, buckets);
-            }
-
-            for (const WorldPlacement& bucket : buckets)
-            {
-                if (MaxPlayersPerInstance == 0 || bucket.LiveSeats < MaxPlayersPerInstance)
-                {
-                    return bucket.World;
-                }
-            }
-            return std::nullopt;
+            Worlds.emplace(resolved.WorldId.Value,
+                           HostedWorld{.Id = resolved.WorldId,
+                                       .Key = key,
+                                       .World = resolved.World,
+                                       .LevelId = resolved.LevelId,
+                                       .Digest = resolved.Digest,
+                                       .SeatPrefab = resolved.SeatPrefab,
+                                       .SeatPrefabId = resolved.SeatPrefabId,
+                                       .Replication = ReplicationServer(resolved.Replication),
+                                       .InterestSettings = resolved.Interest,
+                                       .InterestPolicy = resolved.InterestPolicy});
         }
 
-        // Resolves a join request in the fixed order (idempotent hit, authorize, per-connection cap,
-        // get-or-place through the policy, hosted-worlds cap on a fresh-bucket open), then assigns a
-        // JoinId and spawns the seat. Sends the reply (accept or deny) enveloped at the join-control tier.
+        // Resolves a join request through the directory in the fixed order (idempotent hit, then
+        // authorize → per-connection cap → get-or-place → hosted cap → factory), then assigns a JoinId
+        // and spawns the seat. Sends the reply (accept or deny) enveloped at the join-control tier. The
+        // opaque payload rides into the resolution and is echoed (the bucket's recorded params) in the
+        // accept.
         void ResolveJoin(Net::ConnectionId id, const Net::JoinRequestMessage& request)
         {
             ConnectionState& conn = Connections[id];
@@ -376,6 +360,19 @@ namespace Veng
                           static_cast<u32>(reason));
             };
 
+            const auto sendAccept = [&](Net::JoinId joinId, const HostedWorld& world, NetId seatNet)
+            {
+                const vector<u8> payload = Net::EncodeJoinAccept(
+                    Net::JoinAcceptMessage{.RequestToken = request.RequestToken,
+                                           .Join = joinId,
+                                           .LevelId = world.LevelId.Value,
+                                           .WorldDigest = world.Digest,
+                                           .SeatNetId = seatNet,
+                                           .Payload = Directory->PayloadOf(world.Id)});
+                (void)Server->Get(id).Send(Net::Channel::ReliableOrdered,
+                                           Net::EncodeWorldEnvelope(Net::ControlJoinId, payload));
+            };
+
             // Idempotent: a repeat join of the same key re-accepts with the existing JoinId.
             if (const auto existing = conn.KeyToJoin.find(request.Key);
                 existing != conn.KeyToJoin.end())
@@ -385,70 +382,23 @@ namespace Veng
                 const NetId seatNet = world.World->Has<NetIdentity>(join.Seat)
                                           ? world.World->Get<NetIdentity>(join.Seat).Id
                                           : InvalidNetId;
-                const vector<u8> payload = Net::EncodeJoinAccept(
-                    Net::JoinAcceptMessage{.RequestToken = request.RequestToken,
-                                           .Join = join.Join,
-                                           .LevelId = world.LevelId.Value,
-                                           .WorldDigest = world.Digest,
-                                           .SeatNetId = seatNet});
-                (void)Server->Get(id).Send(Net::Channel::ReliableOrdered,
-                                           Net::EncodeWorldEnvelope(Net::ControlJoinId, payload));
+                sendAccept(join.Join, world, seatNet);
                 return;
             }
 
-            if (Authorize && !Authorize(id, request.Key))
+            const WorldResolveResult resolve = Directory->Resolve(
+                id, request.Key, request.Payload, static_cast<u32>(conn.Joins.size()));
+            if (resolve.Outcome == WorldResolveOutcome::Denied)
             {
-                deny(Net::JoinDenyReason::NotAuthorized);
+                deny(resolve.Reason);
                 return;
             }
-            if (conn.Joins.size() >= MaxJoinedWorldsPerConnection)
+            if (resolve.Outcome == WorldResolveOutcome::Opened)
             {
-                deny(Net::JoinDenyReason::PerConnectionCapReached);
-                return;
+                EnsureHostedWorld(request.Key, *resolve.Opened);
             }
 
-            // Get-or-place: the policy either lands the joiner in an existing bucket (convergence when
-            // one bucket, load-bucketing when several) or asks for a fresh bucket the factory opens.
-            WorldInstanceId worldId;
-            if (const optional<WorldInstanceId> placed = PlaceInBucket(request.Key, id))
-            {
-                worldId = *placed;
-            }
-            else
-            {
-                // A fresh-bucket open is bounded by the server-wide cap, checked before the factory runs.
-                if (Worlds.size() >= MaxHostedWorlds)
-                {
-                    deny(Net::JoinDenyReason::HostedWorldsCapReached);
-                    return;
-                }
-                if (!WorldFactory)
-                {
-                    deny(Net::JoinDenyReason::NoSuchWorld);
-                    return;
-                }
-                optional<ServerWorldResolution> resolved = WorldFactory(request.Key);
-                if (!resolved || resolved->World == nullptr)
-                {
-                    deny(Net::JoinDenyReason::NoSuchWorld);
-                    return;
-                }
-                worldId = resolved->WorldId;
-                Worlds.emplace(worldId.Value,
-                               HostedWorld{.Id = worldId,
-                                           .Key = request.Key,
-                                           .World = resolved->World,
-                                           .LevelId = resolved->LevelId,
-                                           .Digest = resolved->Digest,
-                                           .SeatPrefab = resolved->SeatPrefab,
-                                           .SeatPrefabId = resolved->SeatPrefabId,
-                                           .Replication = ReplicationServer(resolved->Replication),
-                                           .InterestSettings = resolved->Interest,
-                                           .InterestPolicy = resolved->InterestPolicy,
-                                           .FactoryOpened = true});
-                KeyMap[request.Key].push_back(worldId);
-            }
-
+            const WorldInstanceId worldId = resolve.World;
             HostedWorld& world = WorldOf(worldId);
             const Net::JoinId joinId = conn.NextJoin;
             conn.NextJoin += 1;
@@ -463,23 +413,16 @@ namespace Veng
             conn.Joins.emplace(joinId, JoinState{.Join = joinId, .World = worldId, .Seat = seat});
             conn.KeyToJoin.emplace(request.Key, joinId);
 
-            world.JoinRefs += 1;
-            world.IdleSince.reset();
+            // Report the live join as presence to the directory, which owns the refcount and dwell.
+            Directory->AddJoin(worldId);
 
-            const vector<u8> payload =
-                Net::EncodeJoinAccept(Net::JoinAcceptMessage{.RequestToken = request.RequestToken,
-                                                             .Join = joinId,
-                                                             .LevelId = world.LevelId.Value,
-                                                             .WorldDigest = world.Digest,
-                                                             .SeatNetId = seatNetId});
-            (void)Server->Get(id).Send(Net::Channel::ReliableOrdered,
-                                       Net::EncodeWorldEnvelope(Net::ControlJoinId, payload));
+            sendAccept(joinId, world, seatNetId);
             Log::Info("ServerHost accepted connection {} into world {} as join {}", id,
                       worldId.Value, joinId);
         }
 
-        // Releases a join from its world: destroys the seat and drops the world's live-join refcount,
-        // starting the idle dwell for a factory world that just emptied.
+        // Releases a join from its world: destroys the seat and reports the presence drop to the
+        // directory, which starts the idle dwell for a bucket that just emptied.
         void ReleaseJoin(Net::ConnectionId id, JoinState& join, f64 now)
         {
             HostedWorld* world = TryWorldOf(join.World);
@@ -492,47 +435,25 @@ namespace Veng
                 world->World->DestroyEntity(join.Seat);
             }
             world->Replication.RemoveConnection(id);
-            if (world->JoinRefs > 0)
-            {
-                world->JoinRefs -= 1;
-            }
-            if (world->JoinRefs == 0 && world->FactoryOpened)
-            {
-                world->IdleSince = now;
-            }
+            Directory->RemoveJoin(join.World, now);
         }
 
-        // Reaps every factory-opened world that has been join-less past the idle dwell — closing it
-        // through the consumer's CloseWorld hook and dropping its key mapping so a re-join cold-opens.
+        // Sends a directed-travel control message to a connection (a travel reply, or unprompted).
+        void SendDirectedTravel(Net::ConnectionId id, Net::JoinId leave, const Net::WorldKey& key,
+                                const Net::TravelPayload& payload)
+        {
+            const vector<u8> message = Net::EncodeDirectedTravel(
+                Net::DirectedTravelMessage{.Leave = leave, .Join = key, .Payload = payload});
+            (void)Server->Get(id).Send(Net::Channel::ReliableOrdered,
+                                       Net::EncodeWorldEnvelope(Net::ControlJoinId, message));
+        }
+
+        // Reaps idle buckets through the directory (its CloseWorld hook + optional runner teardown),
+        // then drops each reaped world's host-side replication state.
         void ReapIdleWorlds(f64 now)
         {
-            vector<WorldInstanceId> reap;
-            for (auto& [value, world] : Worlds)
+            for (const WorldInstanceId id : Directory->ReapIdle(now))
             {
-                if (world.FactoryOpened && world.JoinRefs == 0 && world.IdleSince &&
-                    now - *world.IdleSince >= IdleKeepWarmDwell)
-                {
-                    reap.push_back(world.Id);
-                }
-            }
-            for (const WorldInstanceId id : reap)
-            {
-                const HostedWorld& world = WorldOf(id);
-                const Net::WorldKey key = world.Key;
-                if (CloseWorld)
-                {
-                    CloseWorld(id);
-                }
-                // Drop only the reaped bucket from the key's list; a key with other live buckets keeps
-                // them, and a key whose last bucket reaped loses its entry so a re-join cold-opens.
-                if (const auto it = KeyMap.find(key); it != KeyMap.end())
-                {
-                    std::erase(it->second, id);
-                    if (it->second.empty())
-                    {
-                        KeyMap.erase(it);
-                    }
-                }
                 Worlds.erase(id.Value);
             }
         }
@@ -547,14 +468,28 @@ namespace Veng
         auto state = CreateUnique<State>();
         state->Assets = &info.Assets;
         state->Primary = info.WorldId;
-        state->MaxJoinedWorldsPerConnection = info.MaxJoinedWorldsPerConnection;
-        state->MaxHostedWorlds = info.MaxHostedWorlds;
-        state->MaxPlayersPerInstance = info.MaxPlayersPerInstance;
-        state->IdleKeepWarmDwell = info.IdleKeepWarmDwell;
-        state->Authorize = info.Authorize;
-        state->WorldFactory = info.WorldFactory;
-        state->Placement = info.Placement;
-        state->CloseWorld = info.CloseWorld;
+
+        // Consume a borrowed directory when given one (the Application-shared path); otherwise build a
+        // private one from the info's caps and policy hooks (the self-contained ServerHost).
+        if (info.Directory != nullptr)
+        {
+            state->Directory = info.Directory;
+        }
+        else
+        {
+            state->OwnedDirectory = WorldDirectory::Create(WorldDirectoryInfo{
+                .MaxHostedWorlds = info.MaxHostedWorlds,
+                .MaxJoinedWorldsPerConnection = info.MaxJoinedWorldsPerConnection,
+                .MaxPlayersPerInstance = info.MaxPlayersPerInstance,
+                .IdleKeepWarmDwell = info.IdleKeepWarmDwell,
+                .Authorize = info.Authorize,
+                .WorldFactory = info.WorldFactory,
+                .Placement = info.Placement,
+                .CloseWorld = info.CloseWorld,
+            });
+            state->Directory = state->OwnedDirectory.get();
+        }
+
         state->Worlds.emplace(info.WorldId.Value,
                               State::HostedWorld{.Id = info.WorldId,
                                                  .Key = info.Key,
@@ -566,7 +501,7 @@ namespace Veng
                                                  .Replication = ReplicationServer(info.Replication),
                                                  .InterestSettings = info.Interest,
                                                  .InterestPolicy = info.InterestPolicy});
-        state->KeyMap[info.Key].push_back(info.WorldId);
+        state->Directory->Register(info.Key, info.WorldId);
 
         Net::ServerInfo serverInfo = info.Server;
         Result<Unique<Net::Server>> server = Net::Server::Create(serverInfo);
@@ -593,13 +528,8 @@ namespace Veng
                                .Replication = ReplicationServer(world.Replication),
                                .InterestSettings = world.Interest,
                                .InterestPolicy = world.InterestPolicy});
-        // Register the world as a bucket of its key (a fresh key gets its first bucket); re-adding the
-        // same id is idempotent so a config-replacing AddWorld leaves the key's bucket list unchanged.
-        vector<WorldInstanceId>& buckets = m_State->KeyMap[world.Key];
-        if (std::ranges::find(buckets, world.WorldId) == buckets.end())
-        {
-            buckets.push_back(world.WorldId);
-        }
+        // Register the world as a never-reaped bucket of its key; re-adding the same id is idempotent.
+        m_State->Directory->Register(world.Key, world.WorldId);
     }
 
     void ServerHost::Pump(f64 now, u64 tick)
@@ -672,12 +602,27 @@ namespace Veng
                 }
                 if (env->Join == Net::ControlJoinId)
                 {
-                    if (Net::PeekJoinType(env->Payload) == Net::JoinMessageType::JoinRequest)
+                    const optional<Net::JoinMessageType> type = Net::PeekJoinType(env->Payload);
+                    if (type == Net::JoinMessageType::JoinRequest)
                     {
                         if (const optional<Net::JoinRequestMessage> request =
                                 Net::DecodeJoinRequest(env->Payload))
                         {
                             s.ResolveJoin(id, *request);
+                        }
+                    }
+                    else if (type == Net::JoinMessageType::TravelRequest)
+                    {
+                        // A client travel request: the server directs the resulting join. In this plan it
+                        // echoes the requested key; a server-driven placement would resolve a different
+                        // one. The connection leaves its current (presenting) join once the new is ready.
+                        if (const optional<Net::TravelRequestMessage> request =
+                                Net::DecodeTravelRequest(env->Payload))
+                        {
+                            const State::JoinState* current = s.CurrentJoinState(id);
+                            const Net::JoinId leave =
+                                current != nullptr ? current->Join : Net::ControlJoinId;
+                            s.SendDirectedTravel(id, leave, request->Key, request->Payload);
                         }
                     }
                     continue;
@@ -793,9 +738,15 @@ namespace Veng
         return state != nullptr && state->Ready;
     }
 
+    void ServerHost::DirectTravel(const Net::ConnectionId connection, const Net::JoinId leave,
+                                  const Net::WorldKey& key, const Net::TravelPayload& payload)
+    {
+        m_State->SendDirectedTravel(connection, leave, key, payload);
+    }
+
     usize ServerHost::HostedWorldCount() const
     {
-        return m_State->Worlds.size();
+        return m_State->Directory->WorldCount();
     }
 
     std::span<const Net::NetEvent> ServerHost::Events() const
@@ -821,12 +772,17 @@ namespace Veng
         Net::ReconcileTolerances Tolerances;
         Net::TickSyncSettings TickSyncSettings;
         Net::QuantizationSettings Quantization;
+        function<Net::QuantizationSettings(const Net::WorldKey&)> WorldQuantization;
+        function<void(Net::JoinId)> OnLeaveWorld;
+        function<void(const Net::WorldKey&, Net::JoinDenyReason)> OnTravelDenied;
 
         // One joined world's whole client state — replication, identity map, prediction, and clock,
         // all scoped per JoinId.
         struct JoinClient
         {
             Net::JoinId Join = Net::ControlJoinId;
+            Net::TravelPayload
+                Payload; // the params the reply echoed, for the game's reconstruction
             Unique<ReplicationClient> Replication;
             Scene* World = nullptr; // borrowed (a WorldRunner world); must outlive the host
             u32 SeatNetId = InvalidNetId;
@@ -839,11 +795,15 @@ namespace Veng
             Net::TickOffsetEstimator TickSync;
         };
 
-        // A requested-but-unaccepted join, correlated to its reply by the token.
+        // A requested-but-unaccepted join, correlated to its reply by the token. Payload rides the join
+        // request; LeaveOnReady names a join to leave once this one is ready (a make-before-break
+        // directed travel), or ControlJoinId for an ordinary join.
         struct PendingJoin
         {
             u32 Token = 0;
             Net::WorldKey Key;
+            Net::TravelPayload Payload;
+            Net::JoinId LeaveOnReady = Net::ControlJoinId;
             bool Sent = false;
         };
 
@@ -952,9 +912,29 @@ namespace Veng
             }
         }
 
+        // Leaves a join: drops its stream and state and notifies the caller (who frees its scene).
+        void LeaveJoin(Net::JoinId join)
+        {
+            const auto it = Joins.find(join);
+            if (it == Joins.end())
+            {
+                return;
+            }
+            Joins.erase(it);
+            if (CurrentJoin == join)
+            {
+                CurrentJoin = Joins.empty() ? Net::ControlJoinId : Joins.begin()->first;
+            }
+            if (OnLeaveWorld)
+            {
+                OnLeaveWorld(join);
+            }
+        }
+
         // Validates the reply's echoed world digest against the client's own reconstruction, loads the
         // join's scene, and — on success — installs the JoinClient and acks its per-world ClientReady.
         // A digest mismatch is rejected loudly: no JoinClient is installed, so no stream ever applies.
+        // Once installed (the make-before-break "ready"), a directed travel leaves its departed join.
         void HandleJoinAccept(const Net::JoinAcceptMessage& accept)
         {
             const auto pending = std::ranges::find_if(Pending, [&](const PendingJoin& p)
@@ -964,6 +944,7 @@ namespace Veng
                 return; // unknown or duplicate reply
             }
             const Net::WorldKey key = pending->Key;
+            const Net::JoinId leaveOnReady = pending->LeaveOnReady;
             Pending.erase(pending);
 
             if (Joins.contains(accept.Join))
@@ -992,11 +973,16 @@ namespace Veng
 
             JoinClient jc;
             jc.Join = accept.Join;
+            jc.Payload = accept.Payload;
             jc.SeatNetId = accept.SeatNetId;
             jc.World = scene;
             jc.TickSync = Net::TickOffsetEstimator(TickSyncSettings);
             jc.Replication = CreateUnique<ReplicationClient>(ResolvePrefab);
-            jc.Replication->SetQuantization(Quantization);
+            // The per-key spatial envelope: WorldQuantization, when set, yields this key's grid so two
+            // hosted worlds with different envelopes each decode correctly on one client; unset threads
+            // the shared grid onto every join.
+            jc.Replication->SetQuantization(WorldQuantization ? WorldQuantization(key)
+                                                              : Quantization);
             jc.Ready = true;
             Joins.emplace(accept.Join, std::move(jc));
             if (CurrentJoin == Net::ControlJoinId)
@@ -1007,6 +993,13 @@ namespace Veng
             // Ack this world's ClientReady, enveloped with its JoinId, opening its stream.
             (void)Client->Server().Send(Net::Channel::ReliableOrdered,
                                         Net::EncodeWorldEnvelope(accept.Join, EncodeClientReady()));
+
+            // Make-before-break: the destination is ready, so leave the departed join now — the old
+            // world stayed live until this moment, and a denied join would have skipped this entirely.
+            if (leaveOnReady != Net::ControlJoinId)
+            {
+                LeaveJoin(leaveOnReady);
+            }
         }
     };
 
@@ -1030,15 +1023,32 @@ namespace Veng
         state->Tolerances = info.Tolerances;
         state->TickSyncSettings = info.TickSync;
         state->Quantization = info.Quantization;
+        state->WorldQuantization = info.WorldQuantization;
+        state->OnLeaveWorld = info.OnLeaveWorld;
+        state->OnTravelDenied = info.OnTravelDenied;
         return Unique<ClientHost>(new ClientHost(std::move(state)));
     }
 
-    void ClientHost::Join(const Net::WorldKey& key)
+    void ClientHost::Join(const Net::WorldKey& key, const Net::TravelPayload& payload)
     {
         State& s = *m_State;
         const u32 token = s.NextToken;
         s.NextToken += 1;
-        s.Pending.push_back(State::PendingJoin{.Token = token, .Key = key});
+        s.Pending.push_back(State::PendingJoin{.Token = token, .Key = key, .Payload = payload});
+    }
+
+    void ClientHost::Travel(const Net::WorldKey& key, const Net::TravelPayload& payload)
+    {
+        State& s = *m_State;
+        const vector<u8> message =
+            Net::EncodeTravelRequest(Net::TravelRequestMessage{.Key = key, .Payload = payload});
+        (void)s.Client->Server().Send(Net::Channel::ReliableOrdered,
+                                      Net::EncodeWorldEnvelope(Net::ControlJoinId, message));
+    }
+
+    void ClientHost::Leave(const Net::JoinId join)
+    {
+        m_State->LeaveJoin(join);
     }
 
     void ClientHost::Pump(f64 now)
@@ -1063,8 +1073,8 @@ namespace Veng
         {
             if (!pending.Sent)
             {
-                const vector<u8> payload = Net::EncodeJoinRequest(
-                    Net::JoinRequestMessage{.Key = pending.Key, .RequestToken = pending.Token});
+                const vector<u8> payload = Net::EncodeJoinRequest(Net::JoinRequestMessage{
+                    .Key = pending.Key, .RequestToken = pending.Token, .Payload = pending.Payload});
                 (void)s.Client->Server().Send(
                     Net::Channel::ReliableOrdered,
                     Net::EncodeWorldEnvelope(Net::ControlJoinId, payload));
@@ -1097,10 +1107,37 @@ namespace Veng
                     if (const optional<Net::JoinDenyMessage> deny =
                             Net::DecodeJoinDeny(env->Payload))
                     {
-                        std::erase_if(s.Pending, [&](const State::PendingJoin& p)
-                                      { return p.Token == deny->RequestToken; });
+                        // A denied make-before-break join leaves the client where it was (the departed
+                        // join is never left); surface the reason so a caller can snap back and report.
+                        const auto pending =
+                            std::ranges::find_if(s.Pending, [&](const State::PendingJoin& p)
+                                                 { return p.Token == deny->RequestToken; });
+                        if (pending != s.Pending.end())
+                        {
+                            if (pending->LeaveOnReady != Net::ControlJoinId && s.OnTravelDenied)
+                            {
+                                s.OnTravelDenied(pending->Key, deny->Reason);
+                            }
+                            s.Pending.erase(pending);
+                        }
                         Log::Warn("ClientHost join denied: reason {}",
                                   static_cast<u32>(deny->Reason));
+                    }
+                }
+                else if (type == Net::JoinMessageType::DirectedTravel)
+                {
+                    // The server directs a travel: join the named world (carrying the payload) and, once
+                    // that join is ready, leave the departed one — make-before-break, resolved in
+                    // HandleJoinAccept. The request sends next Pump like any queued join.
+                    if (const optional<Net::DirectedTravelMessage> directed =
+                            Net::DecodeDirectedTravel(env->Payload))
+                    {
+                        const u32 token = s.NextToken;
+                        s.NextToken += 1;
+                        s.Pending.push_back(State::PendingJoin{.Token = token,
+                                                               .Key = directed->Join,
+                                                               .Payload = directed->Payload,
+                                                               .LeaveOnReady = directed->Leave});
                     }
                 }
                 continue;
@@ -1205,6 +1242,13 @@ namespace Veng
     {
         const State::JoinClient* jc = m_State->CurrentJoinClient();
         return jc != nullptr ? jc->WiredPawn : Entity::Null;
+    }
+
+    const Net::TravelPayload& ClientHost::JoinPayload(const Net::JoinId join) const
+    {
+        static const Net::TravelPayload empty;
+        const State::JoinClient* jc = m_State->JoinClientOf(join);
+        return jc != nullptr ? jc->Payload : empty;
     }
 
     Net::PredictionHistory& ClientHost::History()

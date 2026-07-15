@@ -30,8 +30,10 @@
 #include <Veng/World.h>
 #include <Veng/WorldRunner.h>
 #include <Veng/ManagedViewports.h>
+#include <Veng/WorldDirectory.h>
 
 #include <span>
+#include <unordered_set>
 
 namespace Veng
 {
@@ -136,6 +138,14 @@ namespace Veng
         /// presents the zero digest (matching a content-free server world), the zero-config default.
         /// Inert off a client.
         function<Net::ContentDigest(const Net::WorldKey&)> ClientWorldDigest;
+        /// @brief Client hook yielding the spatial dequantization grid a joined WorldKey decodes with; unset uses the shared envelope.
+        ///
+        /// The client mirror of the server's per-world ServerWorldResolution::Replication quantization:
+        /// given a WorldKey the client is joining, returns the dequantization grid that join decodes
+        /// with, so two hosted worlds with different spatial envelopes both decode correctly on one
+        /// client. Unset threads the shared PositionQuantum/PositionExtent/RotationBits onto every join.
+        /// Inert off a client.
+        function<Net::QuantizationSettings(const Net::WorldKey&)> ClientWorldQuantization;
         /// @brief Whether a joining client auto-joins Net::DefaultWorldKey into the managed world on connect.
         ///
         /// True (the default) is the single-world convenience: the mounted ClientHost requests
@@ -152,22 +162,28 @@ namespace Veng
         /// runner and returning it) so a client may join a world by content, not only the pre-registered
         /// managed world. Unset means only the managed world is joinable (the single-world default). Read
         /// by both the `--server` launch path and the runtime StartHosting call; inert off a host.
-        function<optional<ServerWorldResolution>(const Net::WorldKey&)> WorldFactory;
+        function<optional<ServerWorldResolution>(const Net::WorldKey&, const Net::TravelPayload&)>
+            WorldFactory;
         /// @brief The authorization hook: may this connection join or create this key? Unset allows all.
         ///
-        /// Threaded into the mounted ServerHost, called before any world open or JoinId assignment. Inert
-        /// off a host.
-        function<bool(Net::ConnectionId, const Net::WorldKey&)> Authorize;
-        /// @brief Closes a factory-opened world when it idles out; unset leaves factory worlds open.
+        /// Threaded into the world directory, called before any world open or JoinId assignment; the
+        /// opaque travel payload rides in so a policy may gate on arrival data. Inert off a host and in
+        /// standalone travel where the connection is ConnectionId{}.
+        function<bool(Net::ConnectionId, const Net::WorldKey&, const Net::TravelPayload&)>
+            Authorize;
+        /// @brief Closes a factory-opened world when it idles out; unset leaves the world's runner teardown alone.
         ///
         /// The counterpart to WorldFactory: invoked with a factory-opened world's id once it has been
-        /// join-less past the idle keep-warm dwell, so the game's runner can close it. Inert off a host.
+        /// presence-less past the idle keep-warm dwell — before the directory's runner teardown, so a
+        /// game captures its persistent state here.
         function<void(WorldInstanceId)> CloseWorld;
         /// @brief The get-or-place policy for a WorldKey's instances; unset uses the capacity policy.
         ///
-        /// Threaded into the mounted ServerHost. Unset selects the built-in capacity policy driven by
-        /// MaxPlayersPerInstance; a game supplies its own for a different fill rule. Inert off a host.
+        /// Threaded into the world directory. Unset selects the built-in capacity policy driven by
+        /// MaxPlayersPerInstance; a game supplies its own for a different fill rule (a proximity match
+        /// comparing the requester's payload against each live bucket's recorded params).
         function<optional<WorldInstanceId>(const Net::WorldKey&, Net::ConnectionId,
+                                           const Net::TravelPayload&,
                                            std::span<const WorldPlacement>)>
             Placement;
         /// @brief Per-instance seat cap the built-in placement policy buckets a key to; 0 = no cap (convergence).
@@ -245,6 +261,19 @@ namespace Veng
         /// game with Net unset still hosts on the defaults when launched `--server`. Offline (no net
         /// flag) it is inert. Requires World to be set (net drives the managed world).
         optional<GameNetInfo> Net = std::nullopt;
+    };
+
+    /// @brief The destination of an Application::Travel: the key, arrival payload, and presentation choice.
+    struct TravelInfo
+    {
+        /// @brief The opaque world to travel to (the directory / server resolves it).
+        Net::WorldKey Key;
+        /// @brief Opaque arrival data threaded into the destination; empty is valid.
+        Net::TravelPayload Payload;
+        /// @brief The managed viewport index that presents the destination.
+        usize ViewportIndex = 0;
+        /// @brief True to present the destination on the viewport; false resolves/joins without presenting (data worlds).
+        bool Present = true;
     };
 
     /// @brief Base class for a veng application; subclass and override the lifecycle hooks.
@@ -540,6 +569,20 @@ namespace Veng
         /// @return The runner world the join installs its replicated scene into.
         [[nodiscard]] WorldInstanceId JoinWorld(const Net::WorldKey& key);
 
+        /// @brief Travels to a destination world — the one primitive across standalone, client, and host.
+        ///
+        /// Resolves by the process's situation: standalone resolves the key through the world directory
+        /// (get-or-place, opening a world through the game's factory on a miss) and present-on-ready
+        /// rebinds the named viewport onto it, pinning the destination and unpinning the departed world
+        /// so the dwell owns its fate; a client sends a travel request the server answers with a directed
+        /// travel (join the resolved world, make-before-break leave the old one); a host resolves locally
+        /// and moves its presentation. Total — every failure (authorize denial, caps, factory nullopt,
+        /// connect loss) returns through VoidResult with the denial reason. The TravelRequest component
+        /// (Veng/Scene/Requests.h) lowers onto this.
+        /// @param info  The destination key, opaque arrival payload, presenting viewport, and present flag.
+        /// @return Empty on success, or an error string describing why the travel could not run.
+        VoidResult Travel(const TravelInfo& info);
+
         /// @brief Tears the net mode down, returning the process to standalone (no transport).
         ///
         /// Releases the mounted host (server or client) and clears the per-world roles, so the managed
@@ -683,21 +726,40 @@ namespace Veng
         /// @return Empty on success, or an error string if the connection could not be opened.
         VoidResult ConnectClient(const string& host, u16 port);
 
-        /// @brief Travels a world to a destination — the drive behind TravelRequest and ConnectRequest.Join.
+        /// @brief Constructs the world directory from ApplicationInfo::Net, sharing the runner for teardown.
         ///
-        /// The single travel entry point the request drain routes both a TravelRequest and a
-        /// ConnectRequest's post-connect Join through. The travel drive itself is not resolved here,
-        /// so this reports a failure the drain surfaces on the request — the one seam this drain
-        /// depends on that lives outside it.
-        /// @param world          The world the request was stamped in.
-        /// @param destination    The world to travel to.
-        /// @param payload        Opaque arrival data threaded into the destination.
-        /// @param viewportIndex  The managed viewport to present the destination on.
-        /// @param present        Whether to present the destination on the viewport.
-        /// @return Empty on success, or an error string describing why the travel could not run.
-        VoidResult TravelInWorld(WorldInstanceId world, const Net::WorldKey& destination,
-                                 const Net::TravelPayload& payload, usize viewportIndex,
-                                 bool present);
+        /// Called at bootstrap whenever ApplicationInfo::World is set (transport or not): builds the
+        /// role-neutral directory from the Net hooks and caps (or their zero-config defaults), registers
+        /// the managed world as a never-reaped bucket, and hands it the runner so a reap tears the closed
+        /// world down after the CloseWorld hook. The ServerHost borrows it when hosting is stood up.
+        void BuildWorldDirectory();
+
+        /// @brief Reconciles the directory's presentation pins with the managed viewports' bindings.
+        ///
+        /// The one-directional presentation→lifetime bridge: for each managed viewport, the world it
+        /// presents (its applied binding) and any pending rebind destination count as pinned, so a
+        /// presented world — pending destination included, so never reaped in its own rebind gap — is
+        /// held warm, and a departed world is unpinned so the dwell owns its fate. Run once per frame at
+        /// the rebind apply point. The directory never reaches into presentation; Application translates
+        /// bindings into pins here.
+        void SyncPresentationPins();
+
+        /// @brief Drives the directory's idle reap when no host owns it (the standalone path).
+        ///
+        /// Standalone, Application reaps the directory each frame (the directory runs the CloseWorld hook
+        /// then the runner teardown); while hosting, the ServerHost's Pump owns the reap of the shared
+        /// directory, so this is a no-op there to avoid double-reaping.
+        void ReapDirectory();
+
+        /// @brief Resolves a TravelInfo standalone through the directory: get-or-place, then present.
+        ///
+        /// The no-transport arm of Travel: resolves the key through the directory (opening a world
+        /// through the game's factory on a miss), and — when presenting — present-on-ready rebinds the
+        /// named viewport onto the destination, so SyncPresentationPins pins it and unpins the departed
+        /// one at the rebind apply point.
+        /// @param info  The travel destination.
+        /// @return Empty on success, or the directory's denial reason.
+        VoidResult TravelStandalone(const TravelInfo& info);
 
         /// @brief Drains the builtin request components across every open world at the frame-safe point.
         ///
@@ -728,6 +790,15 @@ namespace Veng
         /// @param world  The runner world the join loaded.
         /// @param scene  The runner-owned scene the join loaded into @p world.
         void StartWorldScene(WorldInstanceId world, Scene& scene);
+
+        /// @brief Closes a joined client world by JoinId: teardown the runner world and its net state.
+        ///
+        /// The client-side "leave" of a make-before-break directed travel: once the destination join is
+        /// ready the ClientHost drops the departed join, and this closes that join's fresh runner world
+        /// (WorldRunner::CloseWorld) and clears its per-world net bookkeeping. A no-op for a join with no
+        /// tracked runner world.
+        /// @param join  The JoinId whose runner world to close.
+        void CloseJoinedWorld(Net::JoinId join);
 
         /// @brief Resolves the JoinId whose replicated scene is @p world's, or ControlJoinId if none.
         ///
@@ -911,6 +982,17 @@ namespace Veng
         /// Opened at bootstrap and bound to the managed viewport. The world the net host binds to and
         /// whose camera the managed viewport presents in this plan; a bare app leaves it invalid.
         WorldInstanceId m_ManagedWorld;
+        /// @brief The role-neutral world directory; built when World is set, borrowed by a mounted host.
+        ///
+        /// Owns the get-or-place map, presence refcount, keep-warm dwell, and idle reap in every role.
+        /// Application resolves standalone travels and drives presentation pins through it; the ServerHost
+        /// consumes it (ServerHostInfo::Directory) when hosting is stood up.
+        Unique<WorldDirectory> m_Directory;
+        /// @brief The worlds Application currently pins for presentation, keyed by WorldInstanceId value.
+        ///
+        /// The pin set SyncPresentationPins reconciles each frame against the managed viewports' bindings,
+        /// so a pin is added/removed exactly once as a world enters/leaves presentation.
+        std::unordered_set<u64> m_PinnedWorlds;
         /// @brief The pimpl'd net hosts + input buffers; null unless a net launch mode is active.
         Unique<NetState> m_Net;
         /// @brief The level the managed world was bootstrapped from; empty when World is unset.

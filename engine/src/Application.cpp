@@ -98,6 +98,9 @@ namespace Veng
         // The runner worlds each in-flight join installs into, in join-request (FIFO) order: LoadLevel
         // pops the front to place the reply's scene, so a reply lands in the world its join opened.
         std::deque<WorldInstanceId> PendingJoinWorlds;
+        // The runner world each granted JoinId's scene lives in, rebuilt each PumpNet — so a directed
+        // travel's leave can close the departed join's world after the ClientHost has dropped the join.
+        unordered_map<u64, WorldInstanceId> JoinWorlds;
 
         // Prefabs a replicated spawn resolved, kept resident so their entities instantiate; keyed by
         // AssetId value.
@@ -295,6 +298,9 @@ namespace Veng
             // Bind managed viewport #0 to world #0: the per-frame pull presents this world's scene
             // through the primary viewport once the join loads it.
             m_ManagedViewports->SetViewportWorld(0, m_ManagedWorld);
+            // The world directory runs in every role; a joining client still owns one (its managed
+            // world is a pinned bucket, and a later Travel resolves through it).
+            BuildWorldDirectory();
             const JoinTarget& target = *m_LaunchArgs.Join;
             const u16 port =
                 target.Port != 0 ? target.Port : m_Info.Net.value_or(GameNetInfo{}).Port;
@@ -338,6 +344,11 @@ namespace Veng
         // Bind managed viewport #0 to world #0: the per-frame pull presents this world's scene and
         // resolves its camera through the primary viewport.
         m_ManagedViewports->SetViewportWorld(0, m_ManagedWorld);
+
+        // The role-neutral world directory: the managed world is a pre-registered (never-reaped) bucket,
+        // and Travel / a mounted host resolve through it. The presentation pins follow at the frame's
+        // rebind apply point, so the managed world is pinned by viewport #0 from the first frame.
+        BuildWorldDirectory();
 
         // `--server` opens the host on the just-started world: it accepts connections, spawns a seat
         // per connection, and streams state. A game that set no ApplicationInfo::Net still hosts on the
@@ -399,10 +410,9 @@ namespace Veng
             .MaxHostedWorlds = net.MaxHostedWorlds,
             .MaxPlayersPerInstance = net.MaxPlayersPerInstance,
             .IdleKeepWarmDwell = net.IdleKeepWarmDwell,
-            .Authorize = net.Authorize,
-            .WorldFactory = net.WorldFactory,
-            .Placement = net.Placement,
-            .CloseWorld = net.CloseWorld,
+            // The host consumes the Application-owned directory (get-or-place, presence, dwell, reap);
+            // the policy hooks and caps already live in it, so they are not repeated here.
+            .Directory = m_Directory.get(),
         });
         if (!host)
         {
@@ -508,10 +518,15 @@ namespace Veng
                     .TickRate = m_Info.World ? m_Info.World->SimTickRate : 60u,
                     .MarginTicks = static_cast<f32>(net.SnapshotIntervalTicks) + 2.0f,
                 },
-            // Match each joined world's decoder dequantization grid to the server's wire quantization.
+            // Match each joined world's decoder dequantization grid to the server's wire quantization,
+            // with a per-key override for a world of a different spatial envelope.
             .Quantization = Net::QuantizationSettings{.PositionQuantum = net.PositionQuantum,
                                                       .PositionExtent = net.PositionExtent,
                                                       .RotationBits = net.RotationBits},
+            .WorldQuantization = net.ClientWorldQuantization,
+            // A make-before-break directed travel leaves its departed join once the destination is
+            // ready: close that join's runner world, dropping its net state — the "leave" of this plan.
+            .OnLeaveWorld = [this](const Net::JoinId join) { CloseJoinedWorld(join); },
         });
 
         Log::Info("Joining {}:{}", host, port);
@@ -569,12 +584,127 @@ namespace Veng
         m_Net.reset();
     }
 
-    VoidResult Application::TravelInWorld(const WorldInstanceId, const Net::WorldKey&,
-                                          const Net::TravelPayload&, const usize, const bool)
+    void Application::BuildWorldDirectory()
     {
-        // The travel drive is not resolved here: the request drain surfaces this on the request so a
-        // TravelRequest (and a ConnectRequest's post-connect Join) fails cleanly and readably.
-        return std::unexpected(string("no travel resolver"));
+        const GameNetInfo net = m_Info.Net.value_or(GameNetInfo{});
+        m_Directory = WorldDirectory::Create(WorldDirectoryInfo{
+            .MaxHostedWorlds = net.MaxHostedWorlds,
+            .MaxJoinedWorldsPerConnection = net.MaxJoinedWorldsPerConnection,
+            .MaxPlayersPerInstance = net.MaxPlayersPerInstance,
+            .IdleKeepWarmDwell = net.IdleKeepWarmDwell,
+            .Runner = m_WorldRunner.get(),
+            .Authorize = net.Authorize,
+            .WorldFactory = net.WorldFactory,
+            .Placement = net.Placement,
+            .CloseWorld = net.CloseWorld,
+        });
+        // The managed world is a never-reaped bucket: "you start here" is just its being pre-registered,
+        // not app bookkeeping — the home-star special case dies.
+        if (m_ManagedWorld.IsValid())
+        {
+            m_Directory->Register(Net::DefaultWorldKey, m_ManagedWorld);
+        }
+    }
+
+    void Application::SyncPresentationPins()
+    {
+        if (!m_Directory)
+        {
+            return;
+        }
+
+        // The worlds presentation shows this frame: each managed viewport's applied binding plus any
+        // pending rebind destination (a pending destination counts, so a presented world is never reaped
+        // in its own rebind gap).
+        std::unordered_set<u64> present;
+        const usize count = m_ManagedViewports->GetCount();
+        for (usize i = 0; i < count; ++i)
+        {
+            const WorldInstanceId world = m_ManagedViewports->GetViewportWorld(i);
+            if (world.IsValid() && m_Directory->Contains(world))
+            {
+                present.insert(world.Value);
+            }
+            if (const optional<WorldInstanceId> pending =
+                    m_ManagedViewports->GetPendingViewportWorld(i);
+                pending && pending->IsValid() && m_Directory->Contains(*pending))
+            {
+                present.insert(pending->Value);
+            }
+        }
+
+        const f64 now = static_cast<f64>(Time::Now());
+        // Pin worlds newly present; unpin worlds that left presentation, so the dwell owns their fate.
+        for (const u64 value : present)
+        {
+            if (!m_PinnedWorlds.contains(value))
+            {
+                m_Directory->Pin(WorldInstanceId{.Value = value});
+            }
+        }
+        for (auto it = m_PinnedWorlds.begin(); it != m_PinnedWorlds.end();)
+        {
+            if (!present.contains(*it))
+            {
+                m_Directory->Unpin(WorldInstanceId{.Value = *it}, now);
+                it = m_PinnedWorlds.erase(it);
+            }
+            else
+            {
+                ++it;
+            }
+        }
+        m_PinnedWorlds = std::move(present);
+    }
+
+    void Application::ReapDirectory()
+    {
+        // While hosting, the ServerHost's Pump reaps the shared directory (and drops its per-world
+        // replication state); standalone, Application owns the reap. Skip it when a host is active so a
+        // world is never reaped twice.
+        if (m_Directory && GetServerHost() == nullptr)
+        {
+            (void)m_Directory->ReapIdle(static_cast<f64>(Time::Now()));
+        }
+    }
+
+    VoidResult Application::TravelStandalone(const TravelInfo& info)
+    {
+        const WorldResolveResult resolve =
+            m_Directory->Resolve(Net::ConnectionId{}, info.Key, info.Payload, /*heldWorlds=*/0);
+        if (resolve.Outcome == WorldResolveOutcome::Denied)
+        {
+            return std::unexpected(
+                fmt::format("travel denied: {}", static_cast<u32>(resolve.Reason)));
+        }
+
+        // Present-on-ready rebind onto the destination when presenting: the pin follows at the rebind
+        // apply point (SyncPresentationPins reads the pending destination, so it is pinned immediately),
+        // and the departed world is unpinned there too — the dwell then owns its fate. A non-presenting
+        // resolve opens/places the world but takes no presentation pin, so an unpinned world's fate is
+        // the dwell's.
+        if (info.Present && info.ViewportIndex < m_ManagedViewports->GetCount())
+        {
+            m_ManagedViewports->RebindWorldWhenReady(info.ViewportIndex, resolve.World);
+        }
+        return {};
+    }
+
+    VoidResult Application::Travel(const TravelInfo& info)
+    {
+        VE_ASSERT(m_Directory, "Travel requires a managed world (ApplicationInfo::World)");
+
+        // Client: the server resolves a payload-parameterized key and directs the join (make-before-
+        // break). The client never self-resolves such a key.
+        if (m_Net && m_Net->ClientHost != nullptr && GetNetRole() == NetRole::Client)
+        {
+            m_Net->ClientHost->Travel(info.Key, info.Payload);
+            return {};
+        }
+
+        // Standalone and listen host: resolve locally through the directory, then present. The local
+        // resolution is join-visible, so a remote joiner of the same key converges on it.
+        return TravelStandalone(info);
     }
 
     void Application::DrainRequestComponents()
@@ -615,8 +745,10 @@ namespace Veng
             // invalid (default) key is connect-only.
             if (!(request.Join == Net::WorldKey{}))
             {
-                if (VoidResult result = TravelInWorld(world, request.Join, request.Payload,
-                                                      /*viewportIndex=*/0, /*present=*/true);
+                if (VoidResult result = Travel(TravelInfo{.Key = request.Join,
+                                                          .Payload = request.Payload,
+                                                          .ViewportIndex = 0,
+                                                          .Present = true});
                     !result)
                 {
                     error = std::move(result.error());
@@ -626,11 +758,12 @@ namespace Veng
             return RequestResult::Handled;
         };
 
-        dispatch.Travel =
-            [this](const WorldInstanceId world, const TravelRequest& request, string& error)
+        dispatch.Travel = [this](const WorldInstanceId, const TravelRequest& request, string& error)
         {
-            if (VoidResult result = TravelInWorld(world, request.Destination, request.Payload,
-                                                  request.ViewportIndex, request.Present);
+            if (VoidResult result = Travel(TravelInfo{.Key = request.Destination,
+                                                      .Payload = request.Payload,
+                                                      .ViewportIndex = request.ViewportIndex,
+                                                      .Present = request.Present});
                 !result)
             {
                 error = std::move(result.error());
@@ -650,13 +783,24 @@ namespace Veng
 
     Scene* Application::LoadClientLevel(const AssetId id)
     {
-        // The reply installs into the world queued for this join (FIFO in reply order); with no queued
-        // target it falls back to the managed world (the direct-ClientHost edge).
-        WorldInstanceId target = m_ManagedWorld;
+        // The reply installs into the world queued for this join (FIFO in reply order). A join with no
+        // queued target — a server-directed travel the ClientHost issued itself — opens a fresh runner
+        // world here, so it never clobbers the managed world or another join's scene.
+        WorldInstanceId target;
         if (!m_Net->PendingJoinWorlds.empty())
         {
             target = m_Net->PendingJoinWorlds.front();
             m_Net->PendingJoinWorlds.pop_front();
+        }
+        else
+        {
+            target = m_WorldRunner->OpenWorld(WorldOpenInfo{
+                .SimTickRate = m_Info.World ? m_Info.World->SimTickRate : 60u,
+                .StartSimulation = false,
+            });
+            m_Net->WorldRoles[target.Value] = NetRole::Client;
+            m_Net->ClientWorlds[target.Value].Send = InputSendBuffer(
+                InputSendBuffer::Settings{.Redundancy = m_Net->Info.InputRedundancyTicks});
         }
 
         // The accept names the level; load it with the server-authoritative authored entities skipped
@@ -706,6 +850,24 @@ namespace Veng
                                             .Role = RoleForWorld(world)});
     }
 
+    void Application::CloseJoinedWorld(const Net::JoinId join)
+    {
+        if (!m_Net)
+        {
+            return;
+        }
+        const auto it = m_Net->JoinWorlds.find(join);
+        if (it == m_Net->JoinWorlds.end())
+        {
+            return;
+        }
+        const WorldInstanceId world = it->second;
+        m_Net->WorldRoles.erase(world.Value);
+        m_Net->ClientWorlds.erase(world.Value);
+        m_Net->JoinWorlds.erase(it);
+        m_WorldRunner->CloseWorld(world);
+    }
+
     Net::JoinId Application::ClientJoinForWorld(const WorldInstanceId world) const
     {
         if (!m_Net || m_Net->ClientHost == nullptr)
@@ -733,6 +895,26 @@ namespace Veng
         if (!m_Net)
         {
             return;
+        }
+
+        // Keep the JoinId → runner world map current before the join/apply flow, so a directed travel's
+        // leave (fired from inside the pump) resolves the departed join's world from this frame's map.
+        if (m_Net->ClientHost != nullptr)
+        {
+            m_Net->JoinWorlds.clear();
+            for (const auto& [worldValue, role] : m_Net->WorldRoles)
+            {
+                if (role != NetRole::Client)
+                {
+                    continue;
+                }
+                const WorldInstanceId world{.Value = worldValue};
+                const Net::JoinId join = ClientJoinForWorld(world);
+                if (join != Net::ControlJoinId)
+                {
+                    m_Net->JoinWorlds[join] = world;
+                }
+            }
         }
 
         // One ClientHost multiplexes every joined world over one connection, so advance the shared
@@ -1101,6 +1283,13 @@ namespace Veng
         // their departed-overlay detach and seat re-resolution through the runner; present-on-ready
         // rebinds accrue this frame's delta toward their ready timeout.
         m_ManagedViewports->ApplyPendingReconfigure(*m_WorldRunner, delta);
+
+        // Translate the managed viewports' world bindings into directory presence pins at the rebind
+        // apply point (one-directional: presentation drives lifetime, never the reverse), then reap the
+        // directory standalone (a host owns the reap when hosting). A presented world — pending rebind
+        // destination included — is pinned and never reaped; a departed world is unpinned to the dwell.
+        SyncPresentationPins();
+        ReapDirectory();
 
         // Drain the builtin request components at the same frame-safe point: a gameplay system stamps
         // one onto its world's scene to reach an application-level operation it cannot call directly

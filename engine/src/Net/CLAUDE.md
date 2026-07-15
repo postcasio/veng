@@ -51,8 +51,9 @@ on the main thread at frame boundaries** (receive → tick → send).
 
 `Server.h`/`Client.h` are the connection lifecycle. A `Net::Server` listens/accepts/denies; a
 `Net::Client` connects. The handshake is **two-tier** (`Handshake.h`): a **connection tier**
-establishes the process↔process link — the connect request carries `Net::ProtocolVersion` (**2**, the
-version the multiplexed wire introduced) + the active pack's content digest, rejected loudly on a
+establishes the process↔process link — the connect request carries `Net::ProtocolVersion` (**3**, the
+version that added the join-request travel payload + the travel-request / directed-travel join-tier
+messages atop the multiplexed wire) + the active pack's content digest, rejected loudly on a
 mismatch (the `VengModuleAbiVersion` discipline on the wire, so the wire carries only asset ids,
 never assets) — and a **per-world join tier** joins one world (below). The `ConnectAcceptMessage`
 carries **only the assigned connection id**: it no longer bakes in a single level or seat, since
@@ -186,23 +187,48 @@ per-join server surface keys by `(conn, join)` — `ReplicationForJoin` / `World
 `IsGranted` / `IsReady` / `JoinsFor` / `CurrentJoin`, with no-arg / `(conn)` forms the current-join
 convenience.
 
-**Get-or-place: a `WorldKey` maps to N buckets, resolved by a placement policy.** The shared map is
-`WorldKey → [WorldInstance]` — a key may have several live **buckets**, each a full instance with its
-own `ReplicationServer` (so replication-state isolation is structural per bucket; the buckets still tick
-serially in the host). On a join the host offers the key's live buckets (each with its live-seat count,
-a `WorldPlacement`) to the `Placement` policy `(WorldKey, connection, buckets) → optional<WorldInstanceId>`:
-returning an existing bucket converges on it, returning `nullopt` opens a fresh bucket through the
-`WorldFactory` (bounded by `MaxHostedWorlds`). The **default policy is convergence** — one bucket per
-key — so a host that sets no capacity is byte-identical to a 1:1 get-or-create map. The built-in
-**capacity policy** is driven by one knob, **`MaxPlayersPerInstance`** (`0` = no max, the default =
-pure convergence): a value > 0 places a joiner into the first bucket under capacity and opens a fresh
-bucket when every existing one is full. A consumer may supply its own `Placement` for a different fill
-rule. Placement is **purely server-side and off the wire** — the client only ever names the `WorldKey`;
-which bucket it lands in is the server's decision, identified per-connection by the `JoinId`, and the
-echoed content digest is identical across buckets of one key, so which bucket a join lands in never
-changes what the client validates. The policy takes only `(WorldKey, connection)`; party/affinity
-grouping is not expressed here. A bucket that empties reaps per the idle keep-warm dwell and drops out
-of the key's list, its peers untouched.
+**The world lifetime policy is the role-neutral `WorldDirectory` (`Veng/WorldDirectory.h`).** The
+`WorldKey → live-instance` map, the get-or-place resolution order, the presence refcount, the keep-warm
+dwell, the idle reap, and the caps live in a directory that runs in **every role, transport or none**: a
+`ServerHost` **borrows** one (`ServerHostInfo::Directory`; unset builds a private one from the host's
+caps/hooks, so a stand-alone host is unchanged), and a standalone `Application` **constructs** one and
+resolves its travels through it. The host reports live joins as presence (`AddJoin`/`RemoveJoin`); the
+directory's **other presence source is pins** (`Pin`/`Unpin`) — the presentation drive pins the world a
+viewport shows, so "a presented world is never reaped" and "a hosted world is refcounted by joins" are
+one refcount. A bucket at zero presence starts its dwell; past it the directory invokes the consumer
+**`CloseWorld` hook first, then `WorldRunner::CloseWorld`** — the hook-before-teardown ordering is the
+persistence capture point, guaranteed in every role.
+
+**Get-or-place: a `WorldKey` maps to N buckets, resolved by a placement policy.** The map is
+`WorldKey → [WorldInstance]` — a key may have several live **buckets**, each (host-side) a full instance
+with its own `ReplicationServer` (replication-state isolation is structural per bucket; the buckets still
+tick serially in the host). On a join the directory offers the key's live buckets (each a `WorldPlacement`
+carrying its presence count **and its recorded `TravelPayload`**) to the `Placement` policy
+`(WorldKey, connection, payload, buckets) → optional<WorldInstanceId>`: returning an existing bucket
+converges on it, returning `nullopt` opens a fresh bucket through the `WorldFactory`
+(`(WorldKey, payload) → ServerWorldResolution`, bounded by `MaxHostedWorlds`). The **default policy is
+convergence** — one bucket per key — so a host that sets no capacity is byte-identical to a 1:1
+get-or-create map. The built-in **capacity policy** is driven by one knob, **`MaxPlayersPerInstance`**
+(`0` = no max, the default = pure convergence): a value > 0 places a joiner into the first bucket under
+capacity and opens a fresh bucket when every existing one is full. A consumer may supply its own
+`Placement` for a different fill rule — comparing the requester's payload against each live bucket's
+recorded params is the **proximity match** enabler. Placement is **purely server-side and off the wire**
+— the client only ever names the `WorldKey` (and its opaque payload); which bucket it lands in is the
+server's decision, identified per-connection by the `JoinId`, and the echoed content digest is identical
+across buckets of one key. A bucket that empties reaps per the idle keep-warm dwell and drops out of the
+key's list, its peers untouched.
+
+**The travel payload and server-directed travel.** `Net::TravelPayload` is an opaque
+`{ TypeId; bytes }` blob the engine **moves but never decodes**: it rides the **join request** into
+`Authorize`/`Placement`/`WorldFactory`, is recorded on the bucket, and is **echoed in the join reply**
+so a client's factory-parameterized reconstruction has its inputs — a world can be parameterized by data
+no client-derivable key encodes (a drop-out position). A client that must let the server resolve such a
+key sends a **travel-request** control message; the server replies a **directed-travel**
+`{ Leave, Join, Payload }` (also available unprompted via `ServerHost::DirectTravel`): the client joins
+`Join` and, once that join is ready, leaves `Leave` — **make-before-break**, so a denied join leaves the
+client exactly where it was. `Application::Travel(TravelInfo)` is the one primitive across standalone
+(directory resolve → present-on-ready rebind → pin destination / unpin departed), client (travel-request
+→ directed travel), and listen host; the `TravelRequest` request component lowers onto it.
 
 **`ClientHost`** owns one `ReplicationClient` per joined world. `Join(WorldKey)` requests a world;
 `ClientHostInfo{ WorldKey, AutoJoin }` auto-joins one key on connect (the single-world convenience).

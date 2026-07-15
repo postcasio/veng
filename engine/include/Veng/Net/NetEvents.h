@@ -21,8 +21,10 @@ namespace Veng::Net
     ///
     /// Version 2 introduced the per-connection world-multiplexing envelope (a JoinId tag ahead of
     /// each world-tagged payload) and the two-tier connection/join handshake, so the connection
-    /// accept no longer bakes in a single level or seat.
-    inline constexpr u32 ProtocolVersion = 2;
+    /// accept no longer bakes in a single level or seat. Version 3 threaded the opaque travel payload
+    /// into the join request and its reply and added the travel-request / directed-travel join-tier
+    /// control messages (the world-directory travel primitive).
+    inline constexpr u32 ProtocolVersion = 3;
 
     /// @brief A server-assigned connection identifier: a per-session u32, never reused.
     ///

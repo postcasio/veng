@@ -10,11 +10,13 @@
 #include <Veng/Net/Reconciliation.h>
 #include <Veng/Net/Replication.h>
 #include <Veng/Net/Server.h>
+#include <Veng/Net/TravelPayload.h>
 #include <Veng/Net/WorldKey.h>
 #include <Veng/Result.h>
 #include <Veng/Scene/Entity.h>
 #include <Veng/Veng.h>
 #include <Veng/World.h>
+#include <Veng/WorldDirectory.h>
 
 #include <span>
 
@@ -78,47 +80,9 @@ namespace Veng
         Net::InterestPolicy InterestPolicy;
     };
 
-    /// @brief A world the get-or-create factory materialized for a WorldKey, returned to the ServerHost.
-    ///
-    /// The factory drives the consumer's world runner directly (opening a scene on a miss) and hands
-    /// the ServerHost the borrowed scene plus the per-world replication configuration; the ServerHost
-    /// wraps it with a ReplicationServer, records the shared key mapping, and closes it through the
-    /// info's CloseWorld hook when the world idles out. The scene must outlive the join.
-    struct ServerWorldResolution
-    {
-        /// @brief The process-local id the consumer minted for the opened world.
-        WorldInstanceId WorldId;
-        /// @brief The opened world's scene; borrowed, must outlive the join.
-        Scene* World = nullptr;
-        /// @brief The AssetId of the level a joining client loads, or the invalid id.
-        AssetId LevelId;
-        /// @brief The content digest echoed to a joining client to validate its reconstructed world.
-        Net::ContentDigest Digest;
-        /// @brief The seat template spawned per join; null spawns a bare Viewer+Possesses seat.
-        Ref<Prefab> SeatPrefab;
-        /// @brief If valid, each seat's Spawn rides this prefab id so the client instantiates it too.
-        AssetId SeatPrefabId;
-        /// @brief The replication cadence for this world's ReplicationServer.
-        ReplicationServer::Settings Replication;
-        /// @brief The per-connection interest filter; Radius 0 replicates the whole world.
-        Net::InterestSettings Interest;
-        /// @brief The game hook adding entities to each connection's interest set; unset adds none.
-        Net::InterestPolicy InterestPolicy;
-    };
-
-    /// @brief One live instance ("bucket") of a WorldKey, offered to the placement policy on a join.
-    ///
-    /// The get-or-place policy resolves a join to a bucket from the live set a key currently has. Each
-    /// carries its world id and its current live-seat (live-join) count, so a capacity policy can pick
-    /// the first bucket under a cap. A key with no live buckets offers an empty span, and any policy
-    /// returning nullopt asks the ServerHost to open a fresh bucket through the WorldFactory.
-    struct WorldPlacement
-    {
-        /// @brief The bucket's world instance id (a live hosted world under the key).
-        WorldInstanceId World;
-        /// @brief The bucket's current live-seat count — its live joins, the capacity metric.
-        u32 LiveSeats = 0;
-    };
+    // ServerWorldResolution and WorldPlacement are the get-or-place vocabulary; they live in
+    // Veng/WorldDirectory.h (the role-neutral directory that owns the map/placement/reap), and the
+    // ServerHost consumes them through it.
 
     /// @brief Configuration for a ServerHost: the shared server plus its initial hosted world.
     struct ServerHostInfo
@@ -165,32 +129,46 @@ namespace Veng
         /// @brief The authorization hook: may this connection join/create this key? Unset allows all.
         ///
         /// Called before any cap check, world open, or JoinId assignment, so a refusal leaves no
-        /// resource to reap. A policy seam, not a security mechanism (the transport is unauthenticated).
-        function<bool(Net::ConnectionId, const Net::WorldKey&)> Authorize;
+        /// resource to reap. The opaque travel payload rides in so a policy may gate on arrival data. A
+        /// policy seam, not a security mechanism (the transport is unauthenticated).
+        function<bool(Net::ConnectionId, const Net::WorldKey&, const Net::TravelPayload&)>
+            Authorize;
         /// @brief The get-or-create factory: materialize a world for a key that missed the shared map.
         ///
         /// Called only on a miss, after the caps clear, to open a new world through the consumer's
         /// runner; returning nullopt denies the join NoSuchWorld. Unset means only pre-registered
         /// worlds (Create + AddWorld) can be joined. A hit reuses the existing instance, so two
-        /// connections presenting the same key converge on one shared world.
-        function<optional<ServerWorldResolution>(const Net::WorldKey&)> WorldFactory;
+        /// connections presenting the same key converge on one shared world. The travel payload rides in
+        /// so a world may be parameterized by data no key encodes.
+        function<optional<ServerWorldResolution>(const Net::WorldKey&, const Net::TravelPayload&)>
+            WorldFactory;
         /// @brief The get-or-place policy: which live bucket of a key a joiner lands in, or a fresh one.
         ///
         /// Called on every join after authorize + the per-connection cap clear, with the key's live
-        /// buckets (each with its live-seat count) and the joining connection. Returning an offered
-        /// bucket's id places the joiner there (converging on it); returning nullopt asks for a fresh
-        /// bucket, opened through WorldFactory and bounded by MaxHostedWorlds. Unset uses the built-in
-        /// capacity policy driven by MaxPlayersPerInstance (convergence when that is 0). The policy sees
-        /// only (key, connection); party/affinity grouping is not expressed here.
+        /// buckets (each with its presence and recorded payload), the joining connection, and the
+        /// requester's payload. Returning an offered bucket's id places the joiner there (converging on
+        /// it); returning nullopt asks for a fresh bucket, opened through WorldFactory and bounded by
+        /// MaxHostedWorlds. Unset uses the built-in capacity policy driven by MaxPlayersPerInstance
+        /// (convergence when that is 0). The payload lets a proximity policy match a request against
+        /// every live bucket's params; party/affinity grouping is not expressed here.
         function<optional<WorldInstanceId>(const Net::WorldKey&, Net::ConnectionId,
+                                           const Net::TravelPayload&,
                                            std::span<const WorldPlacement>)>
             Placement;
         /// @brief Closes a factory-opened world when it idles out; unset leaves the world open.
         ///
         /// Invoked with a factory-opened world's id once it has been join-less past IdleKeepWarmDwell,
-        /// so the consumer's runner can close it (WorldRunner::CloseWorld). Pre-registered worlds
-        /// (Create + AddWorld) are never reaped — the consumer owns their lifetime.
+        /// so the consumer can capture its persistent state; the world's runner teardown follows. Pre-
+        /// registered worlds (Create + AddWorld) are never reaped — the consumer owns their lifetime.
         function<void(WorldInstanceId)> CloseWorld;
+        /// @brief The directory the host consumes for get-or-place + lifetime; unset builds one from the hooks.
+        ///
+        /// When set (borrowed, must outlive the host), the host resolves joins and reports presence
+        /// through this shared directory rather than owning the map/refcount/reap — the path an
+        /// Application takes to share one directory across its standalone travel and its hosting. When
+        /// unset, the host builds a private directory from the caps and policy hooks above, so a
+        /// stand-alone ServerHost keeps its self-contained behaviour.
+        WorldDirectory* Directory = nullptr;
     };
 
     /// @brief Server-side join glue: a connection joins worlds by WorldKey; readiness gates each stream.
@@ -309,6 +287,20 @@ namespace Veng
         /// @param join  The JoinId to test.
         [[nodiscard]] bool IsReady(Net::ConnectionId id, Net::JoinId join) const;
 
+        /// @brief Directs a connection to travel: join a world by key and, once ready, leave a join.
+        ///
+        /// Sends a directed-travel control message: the client joins @p key (carrying @p payload through
+        /// the ordinary join flow, digest validation included) and, once that join is ready, leaves
+        /// @p leave — make-before-break, so a denied join leaves the client where it was. A @p leave of
+        /// ControlJoinId names nothing to leave (a fresh travel). Sent automatically as the reply to a
+        /// client travel request, and callable unprompted for server-driven placement.
+        /// @param connection  The connection to direct.
+        /// @param leave       The connection's join to leave once the new one is ready, or ControlJoinId.
+        /// @param key         The world the client must join.
+        /// @param payload     The opaque travel payload the client carries into the join.
+        void DirectTravel(Net::ConnectionId connection, Net::JoinId leave, const Net::WorldKey& key,
+                          const Net::TravelPayload& payload);
+
         /// @brief The number of currently live hosted worlds (pre-registered plus factory-opened).
         [[nodiscard]] usize HostedWorldCount() const;
 
@@ -393,8 +385,27 @@ namespace Veng
         /// @brief The spatial dequantization grid every joined world's replication client decodes with.
         ///
         /// Must match the server's ReplicationServer::Settings::Quantization; the host threads the
-        /// shared GameNetInfo value onto each join's ReplicationClient as it is created.
+        /// shared GameNetInfo value onto each join's ReplicationClient as it is created — unless
+        /// WorldQuantization overrides it per key (a world with a wider spatial envelope).
         Net::QuantizationSettings Quantization;
+        /// @brief Per-key spatial dequantization override; unset uses the shared Quantization on every join.
+        ///
+        /// The client mirror of the server's already-per-world ServerWorldResolution::Replication: given
+        /// the WorldKey being joined, returns the dequantization grid that join's ReplicationClient
+        /// decodes with, so two hosted worlds with different spatial envelopes both decode correctly on
+        /// one client. Unset threads the shared Quantization onto every join (the single-envelope default).
+        function<Net::QuantizationSettings(const Net::WorldKey&)> WorldQuantization;
+        /// @brief Optional: closes a join left by a make-before-break directed travel; the caller frees its world.
+        ///
+        /// Called with the JoinId a directed travel dropped once its make-before-break destination became
+        /// ready (the old join is no longer applied), so the caller can close that join's runner world
+        /// (WorldRunner::CloseWorld). Unset leaves the caller to observe the leave through Joins().
+        function<void(Net::JoinId)> OnLeaveWorld;
+        /// @brief Optional: reports a directed-travel destination the server refused; the client stays put.
+        ///
+        /// Called with the refused key and reason when a make-before-break join is denied — the old join
+        /// is never left (the snap-back is "never left"), and this surfaces the reason a caller shows.
+        function<void(const Net::WorldKey&, Net::JoinDenyReason)> OnTravelDenied;
     };
 
     /// @brief Client-side join glue: join by WorldKey, load, ready, apply each world's stream.
@@ -433,8 +444,27 @@ namespace Veng
         /// reply — validated and loaded through the info hooks — assigns the JoinId under which the
         /// world's accessors key. Presenting a key already joined is idempotent. The auto-join issues
         /// this for WorldKey on connect; a multiplexed client calls it per additional world.
-        /// @param key  The opaque world to join.
-        void Join(const Net::WorldKey& key);
+        /// @param key      The opaque world to join.
+        /// @param payload  The opaque travel payload threaded into the server's resolution; empty by default.
+        void Join(const Net::WorldKey& key, const Net::TravelPayload& payload = {});
+
+        /// @brief Requests a server-directed travel to a world by key, carrying an opaque payload.
+        ///
+        /// Sends a travel request the server resolves and answers with a directed travel (join this
+        /// world, and once ready leave the current one). Unlike Join, a travel lets the server resolve a
+        /// payload-parameterized key and orchestrate the make-before-break — the client never
+        /// self-resolves such a key. The reply's join runs the ordinary join flow (digest, payload).
+        /// @param key      The opaque world to travel to.
+        /// @param payload  The opaque travel payload the server resolves the key with; empty by default.
+        void Travel(const Net::WorldKey& key, const Net::TravelPayload& payload = {});
+
+        /// @brief Leaves a joined world, dropping its stream and state; the caller frees its scene.
+        ///
+        /// Stops applying the join's stream and releases its ReplicationClient and per-join state. The
+        /// borrowed scene (a runner world) is the caller's to close. The make-before-break directed
+        /// travel calls this internally once the destination is ready; a client may call it directly.
+        /// @param join  The JoinId to leave; a no-op for an unknown join.
+        void Leave(Net::JoinId join);
 
         /// @brief Pumps one frame: advance the connection, resolve join replies, apply each stream.
         /// @param now  Monotonic time in seconds (injected).
@@ -470,6 +500,14 @@ namespace Veng
 
         /// @brief The pawn the current join's own seat possesses (as last wired), or Entity::Null.
         [[nodiscard]] Entity PossessedPawn() const;
+
+        /// @brief The travel payload the server echoed for a join, so the client's reconstruction has its inputs.
+        ///
+        /// The reply echoes the bucket's recorded params; a game reads them here to parameterize its
+        /// procedural reconstruction of the joined world. Empty for an unknown join or a payload-free one.
+        /// @param join  The JoinId to resolve.
+        /// @return The echoed payload, or an empty payload.
+        [[nodiscard]] const Net::TravelPayload& JoinPayload(Net::JoinId join) const;
 
         /// @brief The prediction history for the current join's predicted set.
         [[nodiscard]] Net::PredictionHistory& History();

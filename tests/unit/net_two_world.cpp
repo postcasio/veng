@@ -31,8 +31,10 @@
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/SystemRegistry.h>
 #include <Veng/World.h>
+#include <Veng/WorldDirectory.h>
 #include <Veng/WorldRunner.h>
 
+#include <cstring>
 #include <deque>
 #include <unordered_map>
 #include <utility>
@@ -1851,7 +1853,8 @@ namespace
                 .MaxHostedWorlds = maxHosted,
                 .MaxPlayersPerInstance = maxPerInstance,
                 .IdleKeepWarmDwell = dwell,
-                .WorldFactory = [this](const WorldKey&) -> optional<ServerWorldResolution>
+                .WorldFactory = [this](const WorldKey&,
+                                       const TravelPayload&) -> optional<ServerWorldResolution>
                 {
                     const u64 world = NextWorld++;
                     const u64 level = NextLevel++;
@@ -2496,4 +2499,633 @@ TEST_CASE("A server host stood up after its world has ticked standalone still ac
     CHECK(client.Client->State() == ClientState::Connected);
     CHECK(client.Host->IsJoined());
     CHECK((*host)->WorldFor(client.Client->AssignedId()).IsValid());
+}
+
+// ---- The travel payload and the world directory (planset-60 plan 01) -----------------------------
+
+namespace
+{
+    // Packs/unpacks a 1D position into a payload's opaque bytes — the game's own encoding, which the
+    // engine never interprets. Used by the proximity-match placement policy and the payload cases.
+    TravelPayload PosPayload(f32 x)
+    {
+        TravelPayload payload;
+        payload.Type = 0x51; // an arbitrary game type tag
+        payload.Bytes.resize(sizeof(f32));
+        std::memcpy(payload.Bytes.data(), &x, sizeof(f32));
+        return payload;
+    }
+
+    f32 PosOf(const TravelPayload& payload)
+    {
+        f32 x = 0.0f;
+        if (payload.Bytes.size() >= sizeof(f32))
+        {
+            std::memcpy(&x, payload.Bytes.data(), sizeof(f32));
+        }
+        return x;
+    }
+
+    // A minimal client that joins keys with an explicit payload and tracks each join's scene, the
+    // payload the reply echoed, and any make-before-break leave or travel denial the host surfaced.
+    struct PayloadClient
+    {
+        TypeRegistry Types;
+        Unique<Net::Client> Client;
+        Unique<ClientHost> Host;
+        vector<Unique<Scene>> Pending; // scenes handed to the host, kept alive here
+        vector<JoinId> Left;
+        vector<std::pair<WorldKey, JoinDenyReason>> Denied;
+
+        explicit PayloadClient(Transport& transport)
+        {
+            RegisterBuiltinTypes(Types);
+            Client = *Net::Client::Connect(
+                ClientInfo{.TransportOverride = &transport, .Connection = FastConfig});
+            Host = ClientHost::Create(ClientHostInfo{
+                .Client = *Client,
+                .Assets = FakeAssets(),
+                .AutoJoin = false,
+                .LoadLevel = [this](AssetId) -> Scene*
+                {
+                    // Install under the JoinId the host is about to assign: joins are answered in
+                    // request order, so the next unfilled JoinId is this reply's. Simplest device-free
+                    // stand-in: a fresh scene the host borrows.
+                    Unique<Scene> scene = Scene::Create(Types);
+                    Scene* raw = scene.get();
+                    Pending.push_back(std::move(scene));
+                    return raw;
+                },
+                .ResolvePrefab = [](AssetId) -> Ref<Prefab> { return nullptr; },
+                .OnLeaveWorld = [this](const JoinId join) { Left.push_back(join); },
+                .OnTravelDenied = [this](const WorldKey& key, const JoinDenyReason reason)
+                { Denied.emplace_back(key, reason); },
+            });
+        }
+
+        void Pump(f64 now) { Host->Pump(now); }
+    };
+}
+
+TEST_CASE("The travel payload reaches Authorize, Placement, and WorldFactory, and is echoed to the "
+          "client")
+{
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+
+    TypeRegistry serverTypes;
+    RegisterBuiltinTypes(serverTypes);
+    Unique<Scene> primary = Scene::Create(serverTypes);
+    Unique<Scene> factoryScene = Scene::Create(serverTypes);
+
+    const WorldKey key = WorldKey::FromU64(0xBEEF);
+    const TravelPayload sent = PosPayload(3.5f);
+
+    TravelPayload seenAuthorize;
+    TravelPayload seenPlacement;
+    TravelPayload seenFactory;
+    bool authorizeSeen = false;
+    bool placementSeen = false;
+    bool factorySeen = false;
+
+    Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
+        .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
+        .WorldId = WorldInstanceId{.Value = 1},
+        .Key = WorldKey::FromU64(0xFFFFFFFFULL), // the primary key, presented by no client
+        .World = *primary,
+        .Assets = FakeAssets(),
+        .LevelId = LevelId,
+        .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
+        .Interest = InterestSettings{.Radius = 0.0f},
+        .Authorize =
+            [&](ConnectionId, const WorldKey&, const TravelPayload& p)
+        {
+            seenAuthorize = p;
+            authorizeSeen = true;
+            return true;
+        },
+        .WorldFactory = [&](const WorldKey&,
+                            const TravelPayload& p) -> optional<ServerWorldResolution>
+        {
+            seenFactory = p;
+            factorySeen = true;
+            return ServerWorldResolution{.WorldId = WorldInstanceId{.Value = 100},
+                                         .World = factoryScene.get(),
+                                         .LevelId = LevelId,
+                                         .Replication =
+                                             ReplicationServer::Settings{.SnapshotInterval = 2},
+                                         .Interest = InterestSettings{.Radius = 0.0f}};
+        },
+        .Placement = [&](const WorldKey&, ConnectionId, const TravelPayload& p,
+                         std::span<const WorldPlacement>) -> optional<WorldInstanceId>
+        {
+            seenPlacement = p;
+            placementSeen = true;
+            return std::nullopt; // force the factory to open the world
+        },
+    });
+    REQUIRE(hostR.has_value());
+    Unique<ServerHost> host = std::move(*hostR);
+
+    PayloadClient client(*clientT);
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    bool requested = false;
+    for (u64 tick = 1; tick <= 40 && !client.Host->IsJoined(); ++tick)
+    {
+        now += Delta;
+        primary->SetChangeTick(tick);
+        factoryScene->SetChangeTick(tick);
+        host->Pump(now, tick);
+        client.Pump(now);
+        if (!requested && client.Client->State() == ClientState::Connected)
+        {
+            client.Host->Join(key, sent);
+            requested = true;
+        }
+    }
+
+    REQUIRE(client.Host->IsJoined());
+    CHECK(authorizeSeen);
+    CHECK(seenAuthorize == sent);
+    CHECK(placementSeen);
+    CHECK(seenPlacement == sent);
+    CHECK(factorySeen);
+    CHECK(seenFactory == sent);
+
+    // The reply echoed the bucket's recorded payload (here the request's), so the client's factory-
+    // parameterized reconstruction has its inputs.
+    CHECK(client.Host->JoinPayload(client.Host->CurrentJoinId()) == sent);
+}
+
+TEST_CASE("A payload-bucketing placement policy converges near params and splits far ones")
+{
+    // The proximity-match enabler: the placement policy reads each requester's payload and each live
+    // bucket's recorded payload, converging requests whose positions are close and opening a fresh
+    // bucket for a far one — matching quality expressed over data no WorldKey encodes.
+    const auto hub = CreateRef<Hub>();
+    const u32 serverEndpoint = hub->Register();
+    auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
+
+    TypeRegistry serverTypes;
+    RegisterBuiltinTypes(serverTypes);
+    Unique<Scene> primary = Scene::Create(serverTypes);
+    std::unordered_map<u64, Unique<Scene>> factoryScenes;
+    u64 nextWorld = 100;
+    u64 nextLevel = 0x3000;
+    u32 openCount = 0;
+    constexpr f32 Radius = 1.0f;
+
+    Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
+        .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
+        .WorldId = WorldInstanceId{.Value = 1},
+        .Key = WorldKey::FromU64(0xFFFFFFFFULL),
+        .World = *primary,
+        .Assets = FakeAssets(),
+        .LevelId = LevelId,
+        .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
+        .Interest = InterestSettings{.Radius = 0.0f},
+        .WorldFactory = [&](const WorldKey&,
+                            const TravelPayload&) -> optional<ServerWorldResolution>
+        {
+            const u64 world = nextWorld++;
+            Unique<Scene>& scene = factoryScenes[world];
+            scene = Scene::Create(serverTypes);
+            ++openCount;
+            return ServerWorldResolution{.WorldId = WorldInstanceId{.Value = world},
+                                         .World = scene.get(),
+                                         .LevelId = AssetId{.Value = nextLevel++},
+                                         .Replication =
+                                             ReplicationServer::Settings{.SnapshotInterval = 2},
+                                         .Interest = InterestSettings{.Radius = 0.0f}};
+        },
+        .Placement = [&](const WorldKey&, ConnectionId, const TravelPayload& request,
+                         std::span<const WorldPlacement> buckets) -> optional<WorldInstanceId>
+        {
+            const f32 want = PosOf(request);
+            for (const WorldPlacement& bucket : buckets)
+            {
+                if (std::abs(PosOf(bucket.Payload) - want) <= Radius)
+                {
+                    return bucket.World; // converge on a near bucket
+                }
+            }
+            return std::nullopt; // far from every bucket: open a fresh one
+        },
+    });
+    REQUIRE(hostR.has_value());
+    Unique<ServerHost> host = std::move(*hostR);
+
+    const WorldKey key = WorldKey::FromU64(0x5EED);
+    // Three requesters: near, near, far.
+    const f32 positions[3] = {0.0f, 0.5f, 100.0f};
+    vector<Unique<HubTransport>> transports;
+    vector<Unique<PayloadClient>> clients;
+    for (const f32 pos : positions)
+    {
+        transports.push_back(CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint));
+        clients.push_back(CreateUnique<PayloadClient>(*transports.back()));
+        (void)pos;
+    }
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    std::array<bool, 3> requested{};
+    for (u64 tick = 1; tick <= 200; ++tick)
+    {
+        now += Delta;
+        primary->SetChangeTick(tick);
+        for (auto& [value, scene] : factoryScenes)
+        {
+            scene->SetChangeTick(tick);
+        }
+        host->Pump(now, tick);
+        for (usize i = 0; i < clients.size(); ++i)
+        {
+            clients[i]->Pump(now);
+            if (!requested[i] && clients[i]->Client->State() == ClientState::Connected)
+            {
+                clients[i]->Host->Join(key, PosPayload(positions[i]));
+                requested[i] = true;
+            }
+        }
+    }
+
+    for (const Unique<PayloadClient>& client : clients)
+    {
+        REQUIRE(client->Host->IsJoined());
+    }
+
+    const WorldInstanceId w0 = host->WorldFor(clients[0]->Client->AssignedId());
+    const WorldInstanceId w1 = host->WorldFor(clients[1]->Client->AssignedId());
+    const WorldInstanceId w2 = host->WorldFor(clients[2]->Client->AssignedId());
+
+    // The two near requests converged on one bucket; the far one opened a second — two factory opens.
+    CHECK(w0 == w1);
+    CHECK(w2 != w0);
+    CHECK(openCount == 2);
+    CHECK(host->HostedWorldCount() == 3); // primary + two buckets
+}
+
+TEST_CASE(
+    "A client travel request lands a directed travel make-before-break, and a denied one stays put")
+{
+    // Two pre-registered worlds; the client joins A, then travels to B. The server directs the travel
+    // (join B, leave A once B is ready). The make-before-break guarantee: A stays joined until B lands.
+    const WorldKey keyA = WorldKey::FromU64(0xA);
+    const WorldKey keyB = WorldKey::FromU64(0xB);
+
+    const auto build = [&](bool authorizeB, Unique<Scene>& sceneA, Unique<Scene>& sceneB,
+                           TypeRegistry& types, Transport& transport) -> Unique<ServerHost>
+    {
+        RegisterBuiltinTypes(types);
+        sceneA = Scene::Create(types);
+        sceneB = Scene::Create(types);
+        Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
+            .Server = ServerInfo{.TransportOverride = &transport, .Connection = FastConfig},
+            .WorldId = WorldInstanceId{.Value = 1},
+            .Key = keyA,
+            .World = *sceneA,
+            .Assets = FakeAssets(),
+            .LevelId = AssetId{0x00000000000000A1ULL},
+            .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
+            .Interest = InterestSettings{.Radius = 0.0f},
+            // Deny key B in the snap-back subcase; A is always allowed.
+            .Authorize = [keyB, authorizeB](ConnectionId, const WorldKey& key, const TravelPayload&)
+            { return authorizeB || !(key == keyB); },
+        });
+        REQUIRE(hostR.has_value());
+        Unique<ServerHost> host = std::move(*hostR);
+        host->AddWorld(
+            ServerWorldInfo{.WorldId = WorldInstanceId{.Value = 2},
+                            .Key = keyB,
+                            .World = *sceneB,
+                            .LevelId = AssetId{0x00000000000000B2ULL},
+                            .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
+                            .Interest = InterestSettings{.Radius = 0.0f}});
+        return host;
+    };
+
+    SUBCASE("make-before-break: A stays until B is ready, then A is left")
+    {
+        auto [serverT, clientT] = LoopbackTransport::CreatePair();
+        TypeRegistry serverTypes;
+        Unique<Scene> sceneA;
+        Unique<Scene> sceneB;
+        Unique<ServerHost> host = build(true, sceneA, sceneB, serverTypes, *serverT);
+
+        PayloadClient client(*clientT);
+
+        f64 now = 0.0;
+        constexpr f32 Delta = 1.0f / 60.0f;
+        bool joinedA = false;
+        bool travelled = false;
+        bool joinedAOnce = false;
+        bool sawGap =
+            false; // a frame with no join at all would break the make-before-break guarantee
+        JoinId joinA = ControlJoinId;
+        for (u64 tick = 1; tick <= 120; ++tick)
+        {
+            now += Delta;
+            sceneA->SetChangeTick(tick);
+            sceneB->SetChangeTick(tick);
+            host->Pump(now, tick);
+            client.Pump(now);
+            if (!joinedA && client.Client->State() == ClientState::Connected)
+            {
+                client.Host->Join(keyA);
+                joinedA = true;
+            }
+            if (client.Host->IsJoined())
+            {
+                joinedAOnce = true;
+            }
+            if (joinedA && !travelled && client.Host->IsJoined())
+            {
+                joinA = client.Host->CurrentJoinId();
+                client.Host->Travel(keyB);
+                travelled = true;
+            }
+            // Make-before-break: once A landed, the client is never join-less — A stays until B is ready,
+            // and B is installed in the same step A is left (never a gap where the client left nothing).
+            if (joinedAOnce && client.Host->Joins().empty())
+            {
+                sawGap = true;
+            }
+        }
+
+        // A was never dropped before B was ready (no gap), then A was left and only B remains.
+        CHECK_FALSE(sawGap);
+        REQUIRE(client.Host->Joins().size() == 1);
+        CHECK(client.Host->Joins().front() != joinA);
+        REQUIRE(client.Left.size() == 1);
+        CHECK(client.Left.front() == joinA);
+        CHECK(client.Denied.empty());
+    }
+
+    SUBCASE("snap-back: a denied destination never leaves the old join, and surfaces the reason")
+    {
+        auto [serverT, clientT] = LoopbackTransport::CreatePair();
+        TypeRegistry serverTypes;
+        Unique<Scene> sceneA;
+        Unique<Scene> sceneB;
+        Unique<ServerHost> host = build(false, sceneA, sceneB, serverTypes, *serverT);
+
+        PayloadClient client(*clientT);
+
+        f64 now = 0.0;
+        constexpr f32 Delta = 1.0f / 60.0f;
+        bool joinedA = false;
+        bool travelled = false;
+        JoinId joinA = ControlJoinId;
+        for (u64 tick = 1; tick <= 120; ++tick)
+        {
+            now += Delta;
+            sceneA->SetChangeTick(tick);
+            sceneB->SetChangeTick(tick);
+            host->Pump(now, tick);
+            client.Pump(now);
+            if (!joinedA && client.Client->State() == ClientState::Connected)
+            {
+                client.Host->Join(keyA);
+                joinedA = true;
+            }
+            if (joinedA && !travelled && client.Host->IsJoined())
+            {
+                joinA = client.Host->CurrentJoinId();
+                client.Host->Travel(keyB);
+                travelled = true;
+            }
+        }
+
+        // The denied travel never left A (the snap-back is "never left"), and the reason surfaced.
+        REQUIRE(client.Host->Joins().size() == 1);
+        CHECK(client.Host->Joins().front() == joinA);
+        CHECK(client.Left.empty());
+        REQUIRE(client.Denied.size() == 1);
+        CHECK(client.Denied.front().first == keyB);
+        CHECK(client.Denied.front().second == JoinDenyReason::NotAuthorized);
+    }
+}
+
+TEST_CASE("The world directory reaps after the dwell, reuses warm, and never reaps a pinned world")
+{
+    // The standalone directory, device-free: no transport, no ServerHost — just Resolve/Pin/Unpin/reap
+    // over a real (device-free) WorldRunner. Proves the lifetime policy every role shares.
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    SystemRegistry systems;
+    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+
+    u32 openCount = 0;
+    u64 nextLevel = 0x4000;
+    int closeHookCalls = 0;
+    bool worldOpenAtHook = false; // the hook must precede the runner teardown
+
+    Unique<WorldDirectory> dir = WorldDirectory::Create(WorldDirectoryInfo{
+        .IdleKeepWarmDwell = 0.5,
+        .Runner = &runner,
+        .WorldFactory = [&](const WorldKey&,
+                            const TravelPayload&) -> optional<ServerWorldResolution>
+        {
+            const WorldInstanceId world =
+                runner.OpenWorld(WorldOpenInfo{.SimTickRate = 60, .StartSimulation = false});
+            ++openCount;
+            return ServerWorldResolution{.WorldId = world,
+                                         .World = &runner.ResolveWorld(world)->GetScene(),
+                                         .LevelId = AssetId{.Value = nextLevel++}};
+        },
+        .CloseWorld =
+            [&](WorldInstanceId id)
+        {
+            ++closeHookCalls;
+            // Hook-before-teardown: the world is still resolvable when the capture hook runs.
+            worldOpenAtHook = runner.ResolveWorld(id) != nullptr;
+        },
+    });
+
+    const WorldKey key = WorldKey::FromU64(0xA11CE);
+
+    // Travel: resolve opens the world, then present pins it.
+    const WorldResolveResult first = dir->Resolve(ConnectionId{}, key, {}, /*heldWorlds=*/0);
+    REQUIRE(first.Outcome == WorldResolveOutcome::Opened);
+    const WorldInstanceId world = first.World;
+    CHECK(openCount == 1);
+    dir->Pin(world); // presented
+
+    // A pinned (presented) world never reaps, however far past the dwell.
+    CHECK(dir->ReapIdle(1000.0).empty());
+    CHECK(runner.ResolveWorld(world) != nullptr);
+
+    // Unpin starts the dwell; within it the world stays warm and a re-travel reuses the warm instance
+    // with no fresh factory call.
+    dir->Unpin(world, 10.0);
+    CHECK(dir->ReapIdle(10.2).empty()); // 0.2s < 0.5s dwell
+    const WorldResolveResult reuse = dir->Resolve(ConnectionId{}, key, {}, 0);
+    CHECK(reuse.Outcome == WorldResolveOutcome::Placed);
+    CHECK(reuse.World == world);
+    CHECK(openCount == 1); // warm reuse: no second factory call
+    dir->Pin(world);       // re-present, clearing the idle stamp
+    CHECK(dir->ReapIdle(1000.0).empty());
+
+    // Finally unpin and let the dwell elapse: the world is reaped, the capture hook running before the
+    // runner teardown.
+    dir->Unpin(world, 2000.0);
+    const vector<WorldInstanceId> reaped = dir->ReapIdle(2001.0);
+    REQUIRE(reaped.size() == 1);
+    CHECK(reaped.front() == world);
+    CHECK(closeHookCalls == 1);
+    CHECK(worldOpenAtHook);                       // hook preceded teardown
+    CHECK(runner.ResolveWorld(world) == nullptr); // the runner teardown followed
+    CHECK(dir->WorldCount() == 0);
+}
+
+TEST_CASE("Two hosted worlds with different quantization envelopes each decode on one client")
+{
+    // The client-side per-key wire envelope: two worlds hosted with different spatial quantization
+    // grids, both joined by one client whose WorldQuantization yields each key's matching grid — so
+    // each world's remote pawn decodes correctly rather than one being misdecoded by a shared grid.
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+
+    TypeRegistry serverTypes;
+    RegisterBuiltinTypes(serverTypes);
+    Unique<Scene> sceneA = Scene::Create(serverTypes);
+    Unique<Scene> sceneB = Scene::Create(serverTypes);
+    const WorldInstanceId worldA{.Value = 1};
+    const WorldInstanceId worldB{.Value = 2};
+    const WorldKey keyA = WorldKey::FromU64(0xA);
+    const WorldKey keyB = WorldKey::FromU64(0xB);
+
+    // Two envelopes: a tight metre-scale one and a wide system-scale one.
+    const QuantizationSettings envA{.PositionQuantum = 0.001f, .PositionExtent = 16.0f};
+    const QuantizationSettings envB{.PositionQuantum = 0.05f, .PositionExtent = 4096.0f};
+
+    Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
+        .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
+        .WorldId = worldA,
+        .Key = keyA,
+        .World = *sceneA,
+        .Assets = FakeAssets(),
+        .LevelId = AssetId{0x00000000000000A1ULL},
+        .Replication = ReplicationServer::Settings{.SnapshotInterval = 2,
+                                                   .QuantizeSpatial = true,
+                                                   .Quantization = envA},
+        .Interest = InterestSettings{.Radius = 0.0f},
+    });
+    REQUIRE(hostR.has_value());
+    Unique<ServerHost> host = std::move(*hostR);
+    host->AddWorld(
+        ServerWorldInfo{.WorldId = worldB,
+                        .Key = keyB,
+                        .World = *sceneB,
+                        .LevelId = AssetId{0x00000000000000B2ULL},
+                        .Replication = ReplicationServer::Settings{.SnapshotInterval = 2,
+                                                                   .QuantizeSpatial = true,
+                                                                   .Quantization = envB},
+                        .Interest = InterestSettings{.Radius = 0.0f}});
+
+    // A client that decodes each key with its matching envelope through the per-key provider.
+    TypeRegistry clientTypes;
+    RegisterBuiltinTypes(clientTypes);
+    Unique<Net::Client> client = *Net::Client::Connect(
+        ClientInfo{.TransportOverride = clientT.get(), .Connection = FastConfig});
+    RemoteInterpolationSystem interp;
+    interp.SetSettings(RemoteInterpolationSystem::Settings{
+        .SnapshotInterval = 2, .InterpolationDelayIntervals = 2, .SimTickRate = 60.0});
+    std::unordered_map<u16, Unique<Scene>> scenes; // by JoinId
+    std::deque<u16> loadOrder;                     // JoinId assignment is request order
+    Unique<ClientHost> clientHost = ClientHost::Create(ClientHostInfo{
+        .Client = *client,
+        .Assets = FakeAssets(),
+        .AutoJoin = false,
+        .LoadLevel = [&](AssetId level) -> Scene*
+        {
+            Unique<Scene>& scene = scenes[level.Value & 0xFFFF];
+            scene = Scene::Create(clientTypes);
+            return scene.get();
+        },
+        .ResolvePrefab = [](AssetId) -> Ref<Prefab> { return nullptr; },
+        .Prediction = [](const Scene&, Entity) { return vector<Entity>{}; },
+        .WorldQuantization = [&](const WorldKey& key) -> QuantizationSettings
+        { return key == keyA ? envA : envB; },
+    });
+
+    const std::unordered_map<u64, Scene*> serverScenes{{worldA.Value, sceneA.get()},
+                                                       {worldB.Value, sceneB.get()}};
+    // Distinct target positions within each envelope: A near the origin, B far out.
+    const std::unordered_map<u64, f32> targetX{{worldA.Value, 4.0f}, {worldB.Value, 1000.0f}};
+    std::unordered_map<u64, Entity> pawnByWorld;
+    std::unordered_map<u64, InputJitterBuffer> jitter;
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    bool joined = false;
+    for (u64 tick = 1; tick <= 260; ++tick)
+    {
+        now += Delta;
+        for (const auto& [value, scene] : serverScenes)
+        {
+            scene->SetChangeTick(tick);
+        }
+        // Server frame: pawn each seat in its world and place the pawn at that world's target x.
+        for (const ConnectionId id : host->Server().Connections())
+        {
+            for (const JoinId join : host->JoinsFor(id))
+            {
+                const WorldInstanceId world = host->WorldForJoin(id, join);
+                Scene& scene = *serverScenes.at(world.Value);
+                const Entity seat = host->SeatFor(id, join);
+                if (seat.IsNull())
+                {
+                    continue;
+                }
+                auto& possesses = scene.Get<Possesses>(seat);
+                if (possesses.Pawn.IsNull() || !scene.IsAlive(possesses.Pawn))
+                {
+                    const Entity pawn = scene.CreateEntity();
+                    scene.Add<Transform>(pawn);
+                    scene.Add<Authority>(pawn, Authority{.Tier = Tier::Server, .Owner = id});
+                    possesses.Pawn = pawn;
+                    pawnByWorld[world.Value] = pawn;
+                }
+                scene.Get<Transform>(possesses.Pawn).Position.x = targetX.at(world.Value);
+            }
+        }
+        host->Pump(now, tick);
+        IngestConnectionInputs(*host, jitter, InputJitterBuffer::Settings{}, serverTypes);
+
+        clientHost->Pump(now);
+        FakeContext ctx;
+        ctx.Role = NetRole::Client;
+        for (const JoinId join : clientHost->Joins())
+        {
+            if (Scene* world = clientHost->World(join))
+            {
+                interp.OnUpdate(*world, Delta, ctx.Make());
+            }
+        }
+        if (!joined && client->State() == ClientState::Connected)
+        {
+            clientHost->Join(keyA);
+            clientHost->Join(keyB);
+            joined = true;
+        }
+    }
+
+    REQUIRE(clientHost->Joins().size() == 2);
+    const JoinId joinA = clientHost->Joins()[0];
+    const JoinId joinB = clientHost->Joins()[1];
+    const NetId netA = sceneA->Get<NetIdentity>(pawnByWorld.at(worldA.Value)).Id;
+    const NetId netB = sceneB->Get<NetIdentity>(pawnByWorld.at(worldB.Value)).Id;
+    const Entity clientPawnA = clientHost->Replication(joinA).Map().Lookup(netA);
+    const Entity clientPawnB = clientHost->Replication(joinB).Map().Lookup(netB);
+    REQUIRE_FALSE(clientPawnA.IsNull());
+    REQUIRE_FALSE(clientPawnB.IsNull());
+
+    // Each world's remote pawn decoded to its own target within its envelope's quantum — proof the
+    // per-key grid was applied, not one shared grid that would mis-scale the far world.
+    const f32 gotA = clientHost->World(joinA)->Get<Transform>(clientPawnA).Position.x;
+    const f32 gotB = clientHost->World(joinB)->Get<Transform>(clientPawnB).Position.x;
+    CHECK(std::abs(gotA - 4.0f) < 0.05f);
+    CHECK(std::abs(gotB - 1000.0f) < 1.0f);
 }

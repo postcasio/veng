@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Veng/Net/NetEvents.h>
+#include <Veng/Net/TravelPayload.h>
 #include <Veng/Net/WorldKey.h>
 #include <Veng/Veng.h>
 
@@ -41,6 +42,8 @@ namespace Veng::Net
         JoinRequest = 1,
         JoinAccept = 2,
         JoinDeny = 3,
+        TravelRequest = 4,
+        DirectedTravel = 5,
     };
 
     /// @brief A client's connect request: the parity payload the server checks at the door.
@@ -89,6 +92,8 @@ namespace Veng::Net
         WorldKey Key;
         /// @brief A client-assigned token echoed in the reply so the client can match it to this request.
         u32 RequestToken = 0;
+        /// @brief The opaque travel payload threaded into the server's resolution; empty is common.
+        TravelPayload Payload;
     };
 
     /// @brief The server's acceptance of a join: the assigned JoinId plus the world-construction payload.
@@ -109,6 +114,8 @@ namespace Veng::Net
         ContentDigest WorldDigest;
         /// @brief The wire id of the client's own replicated seat entity in this world, or 0 when none.
         u32 SeatNetId = 0;
+        /// @brief The travel payload echoed back so the client's factory-parameterized reconstruction has its inputs.
+        TravelPayload Payload;
     };
 
     /// @brief The server's refusal of a join, carrying the request token and the reason.
@@ -118,6 +125,35 @@ namespace Veng::Net
         u32 RequestToken = 0;
         /// @brief Why the join was refused (the connection stays live; only this world is refused).
         JoinDenyReason Reason = JoinDenyReason::NotAuthorized;
+    };
+
+    /// @brief A client's request to travel to a world, letting the server direct the resulting join.
+    ///
+    /// Rides the world-multiplexing envelope tagged ControlJoinId. Unlike a bare join, a travel goes
+    /// through the server so it may resolve a parameterized key and reply DirectedTravel — the client
+    /// never self-resolves a payload-parameterized key. The payload rides into the server's resolution.
+    struct TravelRequestMessage
+    {
+        /// @brief The opaque world the client asks to travel to.
+        WorldKey Key;
+        /// @brief The opaque travel payload the server resolves the key with; empty is common.
+        TravelPayload Payload;
+    };
+
+    /// @brief The server's directive to a client: join this world and, once ready, leave that one.
+    ///
+    /// The reply to a travel request (and available to the server unprompted). The client joins Join by
+    /// the ordinary join flow (digest validation included, the payload supplying reconstruction params)
+    /// and, once that join is ready, leaves Leave — make-before-break, so a denied join leaves the
+    /// client where it was. A Leave of ControlJoinId means nothing to leave (a fresh travel).
+    struct DirectedTravelMessage
+    {
+        /// @brief The client join to leave once the new join is ready, or ControlJoinId for none.
+        JoinId Leave = ControlJoinId;
+        /// @brief The opaque world the client must join.
+        WorldKey Join;
+        /// @brief The opaque travel payload the client carries into the join.
+        TravelPayload Payload;
     };
 
     /// @brief Reads the leading control-type byte of a reliable message.
@@ -144,6 +180,10 @@ namespace Veng::Net
     [[nodiscard]] vector<u8> EncodeJoinAccept(const JoinAcceptMessage& message);
     /// @brief Encodes a join deny (type byte + fields) as a join-tier payload.
     [[nodiscard]] vector<u8> EncodeJoinDeny(const JoinDenyMessage& message);
+    /// @brief Encodes a travel request (type byte + fields) as a join-tier payload.
+    [[nodiscard]] vector<u8> EncodeTravelRequest(const TravelRequestMessage& message);
+    /// @brief Encodes a directed travel (type byte + fields) as a join-tier payload.
+    [[nodiscard]] vector<u8> EncodeDirectedTravel(const DirectedTravelMessage& message);
 
     /// @brief Decodes a connect request; nullopt if truncated or mistyped.
     [[nodiscard]] optional<ConnectRequestMessage> DecodeConnectRequest(std::span<const u8> message);
@@ -159,4 +199,8 @@ namespace Veng::Net
     [[nodiscard]] optional<JoinAcceptMessage> DecodeJoinAccept(std::span<const u8> payload);
     /// @brief Decodes a join deny; nullopt if truncated, mistyped, or an unknown reason.
     [[nodiscard]] optional<JoinDenyMessage> DecodeJoinDeny(std::span<const u8> payload);
+    /// @brief Decodes a travel request; nullopt if truncated or mistyped.
+    [[nodiscard]] optional<TravelRequestMessage> DecodeTravelRequest(std::span<const u8> payload);
+    /// @brief Decodes a directed travel; nullopt if truncated or mistyped.
+    [[nodiscard]] optional<DirectedTravelMessage> DecodeDirectedTravel(std::span<const u8> payload);
 }
