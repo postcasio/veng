@@ -571,6 +571,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/json_serialize.cpp
             tests/unit/point_field_bucket.cpp
             tests/unit/point_field_component.cpp
+            tests/unit/volume_field.cpp
             tests/unit/project_settings.cpp
             tests/unit/primitive_resolve.cpp
             tests/unit/camera.cpp
@@ -1039,6 +1040,7 @@ if (VENG_BUILD_TESTS)
             tests/gpu/splitscreen.cpp
             tests/gpu/hi_z_pyramid.cpp
             tests/gpu/volume_texture_3d.cpp
+            tests/gpu/volume_field.cpp
             tests/gpu/occlusion_test.cpp
             tests/gpu/prefab_spawn.cpp
             tests/gpu/level_loader.cpp

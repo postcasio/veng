@@ -143,6 +143,7 @@
 #include <Veng/Renderer/Viewport.h>
 #include <Veng/Renderer/ViewportId.h>
 #include <Veng/Renderer/ViewportRegistry.h>
+#include <Veng/Renderer/VolumeField.h>
 
 #include <VengGraph/NodeGraph.h>
 #include <VengGraph/NodeType.h>
