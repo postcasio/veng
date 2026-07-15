@@ -29,11 +29,14 @@
 
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
+#include <Veng/Scene/Requests.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/Transforms.h>
 #include <Veng/Scene/SceneSimulation.h>
 #include <Veng/Scene/SceneSystem.h>
 #include <Veng/Scene/SceneViewport.h>
+
+#include "Scene/RequestDrain.h"
 
 #include <fmt/format.h>
 
@@ -566,6 +569,85 @@ namespace Veng
         m_Net.reset();
     }
 
+    VoidResult Application::TravelInWorld(const WorldInstanceId, const Net::WorldKey&,
+                                          const Net::TravelPayload&, const usize, const bool)
+    {
+        // The travel drive is not resolved here: the request drain surfaces this on the request so a
+        // TravelRequest (and a ConnectRequest's post-connect Join) fails cleanly and readably.
+        return std::unexpected(string("no travel resolver"));
+    }
+
+    void Application::DrainRequestComponents()
+    {
+        RequestDispatch dispatch;
+
+        dispatch.StopNet = [this](const WorldInstanceId, const StopNetRequest&, string&)
+        {
+            // Client disconnect or server stop; a harmless no-op when standalone, so always handled.
+            StopNet();
+            return RequestResult::Handled;
+        };
+
+        dispatch.Host = [this](const WorldInstanceId world, const HostRequest&, string& error)
+        {
+            if (RoleForWorld(world) == NetRole::Client)
+            {
+                error = "cannot start hosting from a client-tier world";
+                return RequestResult::Failed;
+            }
+            if (VoidResult result = StartHosting(); !result)
+            {
+                error = std::move(result.error());
+                return RequestResult::Failed;
+            }
+            return RequestResult::Handled;
+        };
+
+        dispatch.Connect =
+            [this](const WorldInstanceId world, const ConnectRequest& request, string& error)
+        {
+            if (VoidResult result = Connect(request.Host, request.Port); !result)
+            {
+                error = std::move(result.error());
+                return RequestResult::Failed;
+            }
+            // The connect-and-enter front door: a non-default Join key travels after connecting, an
+            // invalid (default) key is connect-only.
+            if (!(request.Join == Net::WorldKey{}))
+            {
+                if (VoidResult result = TravelInWorld(world, request.Join, request.Payload,
+                                                      /*viewportIndex=*/0, /*present=*/true);
+                    !result)
+                {
+                    error = std::move(result.error());
+                    return RequestResult::Failed;
+                }
+            }
+            return RequestResult::Handled;
+        };
+
+        dispatch.Travel =
+            [this](const WorldInstanceId world, const TravelRequest& request, string& error)
+        {
+            if (VoidResult result = TravelInWorld(world, request.Destination, request.Payload,
+                                                  request.ViewportIndex, request.Present);
+                !result)
+            {
+                error = std::move(result.error());
+                return RequestResult::Failed;
+            }
+            return RequestResult::Handled;
+        };
+
+        dispatch.Exit = [this](const WorldInstanceId, const ExitRequest&, string&)
+        {
+            RequestExit();
+            return RequestResult::Handled;
+        };
+
+        DrainRequests(*m_WorldRunner, dispatch);
+    }
+
     Scene* Application::LoadClientLevel(const AssetId id)
     {
         // The reply installs into the world queued for this join (FIFO in reply order); with no queued
@@ -995,6 +1077,13 @@ namespace Veng
         // Scene/viewport-list iteration: it drops and constructs viewports (mutating the drive-list),
         // which must not run mid-drive. Regions resolve from each info's Layout here.
         m_ManagedViewports->ApplyPendingReconfigure();
+
+        // Drain the builtin request components at the same frame-safe point: a gameplay system stamps
+        // one onto its world's scene to reach an application-level operation it cannot call directly
+        // (host, connect, stop-net, travel, exit), and the engine carries them out here, before the
+        // input snapshot and the world tick. Runs on the local Application only; requests never ride
+        // the wire.
+        DrainRequestComponents();
 
         // Before BeginFrame: continuations that register or retire resources must
         // land before AcquireNextFrame or their GPU-state mutation is frame-ambiguous.

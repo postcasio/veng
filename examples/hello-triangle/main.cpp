@@ -41,6 +41,7 @@
 #include <Veng/Scene/CameraRig.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Movement.h>
+#include <Veng/Scene/Requests.h>
 #include <Veng/Scene/RootMotion.h>
 #include <Veng/Scene/Transforms.h>
 #include <Veng/Scene/SceneSystem.h>
@@ -579,7 +580,47 @@ protected:
         // spawned by the game-mode rule, so this runs each frame outside any iteration.
         SyncGameplayContext(GetInputRouter().IsGameplayFocused());
 
+        // Runtime net control through builtin request components: a system stamps a request onto the
+        // world's scene and the engine drains it at its frame-safe point, so gameplay reaches the
+        // start-hosting / connect / stop-net operations it cannot call directly. Here the mode keys
+        // stand in for a menu's Host / Join / Leave buttons.
+        PollNetModeRequests();
+
         UpdateHud(delta);
+    }
+
+    // Stamps a net request onto the managed world when its mode key edges down. Only the key→request
+    // mapping is the sample's; opening the transport and reporting the outcome is the engine's drain.
+    // Skipped under a `--server` / `--join` launch (the world is already on the wire) and in headless.
+    void PollNetModeRequests()
+    {
+        const LaunchArguments& launch = GetLaunchArguments();
+        if (launch.Server || launch.Join.has_value() || launch.Headless)
+        {
+            return;
+        }
+        Scene* const scene = ManagedScene();
+        if (scene == nullptr)
+        {
+            return;
+        }
+
+        const auto stamp = [scene](auto request)
+        { scene->Add(scene->CreateEntity(), std::move(request)); };
+
+        // F9 hosts, F10 connects to a local server, F11 returns to standalone.
+        if (GetInput().WasKeyPressed(Key::F9))
+        {
+            stamp(HostRequest{});
+        }
+        if (GetInput().WasKeyPressed(Key::F10))
+        {
+            stamp(ConnectRequest{.Host = "127.0.0.1"});
+        }
+        if (GetInput().WasKeyPressed(Key::F11))
+        {
+            stamp(StopNetRequest{});
+        }
     }
 
     // Sweeps a highlight across the tick pool resolved by SetOnInstantiate — one tick lit in the

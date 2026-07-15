@@ -21,6 +21,7 @@
 #include <Veng/Net/Host.h>
 #include <Veng/Net/Interest.h>
 #include <Veng/Net/PredictionHistory.h>
+#include <Veng/Net/TravelPayload.h>
 #include <Veng/Task/TaskSystem.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/Scene.h>
@@ -640,6 +641,30 @@ namespace Veng
         /// @param port  The resolved server port (the caller applies the GameNetInfo default for 0).
         /// @return Empty on success, or an error string if the connection could not be opened.
         VoidResult ConnectClient(const string& host, u16 port);
+
+        /// @brief Travels a world to a destination — the drive behind TravelRequest and ConnectRequest.Join.
+        ///
+        /// The single travel entry point the request drain routes both a TravelRequest and a
+        /// ConnectRequest's post-connect Join through. The travel drive itself is not resolved here,
+        /// so this reports a failure the drain surfaces on the request — the one seam this drain
+        /// depends on that lives outside it.
+        /// @param world          The world the request was stamped in.
+        /// @param destination    The world to travel to.
+        /// @param payload        Opaque arrival data threaded into the destination.
+        /// @param viewportIndex  The managed viewport to present the destination on.
+        /// @param present        Whether to present the destination on the viewport.
+        /// @return Empty on success, or an error string describing why the travel could not run.
+        VoidResult TravelInWorld(WorldInstanceId world, const Net::WorldKey& destination,
+                                 const Net::TravelPayload& payload, usize viewportIndex,
+                                 bool present);
+
+        /// @brief Drains the builtin request components across every open world at the frame-safe point.
+        ///
+        /// Builds the request dispatch from this Application's own operations (StopNet, StartHosting,
+        /// Connect, TravelInWorld, RequestExit) and drains each open world's request components in the
+        /// fixed type order, applying the handled / pending / failed consumption semantics. Called once
+        /// per frame from Frame, right after the deferred managed-viewport reconfigure.
+        void DrainRequestComponents();
 
         /// @brief Loads the accepted level into a joined world's scene, server-authoritative entities skipped.
         ///

@@ -87,8 +87,10 @@
 #include <Veng/Net/FaultInjectionTransport.h>
 #include <Veng/Net/LoopbackTransport.h>
 #include <Veng/Net/PredictionHistory.h>
+#include <Veng/Net/TravelPayload.h>
 #include <Veng/Net/Transport.h>
 #include <Veng/Net/UdpTransport.h>
+#include <Veng/Net/WorldKey.h>
 
 #include <Veng/Platform/UserPaths.h>
 
@@ -112,6 +114,7 @@
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Entity.h>
 #include <Veng/Scene/InputMappingSystem.h>
+#include <Veng/Scene/Requests.h>
 #include <Veng/Scene/Resolve.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/Transforms.h>

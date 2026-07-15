@@ -9,6 +9,7 @@
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/RemoteInterpolationSystem.h>
+#include <Veng/Scene/Requests.h>
 
 namespace Veng
 {
@@ -74,6 +75,15 @@ namespace Veng
         // spawn rule reads. SessionPhase registers transitively through Session.
         registry.Register<Session>();
         registry.Register<GameModeConfig>();
+
+        // Local-only runtime requests a gameplay system stamps and the engine drains at its
+        // frame-safe point: travel, start-hosting, connect, stop-net, exit. None is replicated (they
+        // never ride a snapshot); RequestStatus registers transitively through each request's Status.
+        registry.Register<TravelRequest>();
+        registry.Register<HostRequest>();
+        registry.Register<ConnectRequest>();
+        registry.Register<StopNetRequest>();
+        registry.Register<ExitRequest>();
 
         // Level-scoped post/pipeline render knobs a Level carries and the app maps onto the renderer.
         registry.Register<Renderer::Tonemapper>();
