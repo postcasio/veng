@@ -248,9 +248,12 @@ namespace Veng
         /// entity, so a pointer over the viewport routes to the seat. The association stores the
         /// viewport's ViewportId — resolved live against the registry every hit-test — so a later
         /// destruction of the viewport makes the association an inert no-op rather than a dangling
-        /// deref. Associating an already-associated id updates its seat. Association order is the
-        /// hit-test priority for any overlap (regions are non-overlapping for split-screen), tracking
-        /// the app's viewport registration order. This first sweeps every association whose id no
+        /// deref. Associating an already-associated id updates its seat in place, keeping its
+        /// position. Associations are kept in creation order, tracking the app's viewport
+        /// registration (render) order, and any overlap hit-tests topmost-first: the latest
+        /// containing association wins, so an overlay's full-window viewport composited over an
+        /// associated world viewport routes the pointer to the overlay's seat (split-screen regions
+        /// do not overlap, so their order is immaterial). This first sweeps every association whose id no
         /// longer resolves, so the stored set stays bounded by the count of live associations across
         /// viewport churn. An unassociated Presented viewport's region routes no pointer, so the app
         /// must associate a viewport in the same step it registers it, leaving no live region without
@@ -281,8 +284,9 @@ namespace Veng
         /// @p captureOwner supplies that seat (Entity::Null if there is none). When free, each
         /// association's ViewportId is resolved live against the registry — an id that no longer
         /// resolves is skipped this frame, never mutated away, so the method stays const — and the
-        /// pointer's window point is hit-tested against each resolved viewport's region in
-        /// association order (WindowToViewport); the first containing region wins, and the result
+        /// pointer's window point is hit-tested against each resolved viewport's region
+        /// (WindowToViewport); the last containing region in association order wins (the topmost
+        /// viewport under the cursor — see AssociateViewportSeat), and the result
         /// carries that seat and the pointer's region-local position. No containing region leaves the
         /// owner Entity::Null. Computed once per frame and read by every seat's view construction.
         /// @param pointerWindowPoint  The pointer position in window framebuffer pixels.
@@ -298,7 +302,8 @@ namespace Veng
         /// simulation whose scene this viewport presents. Each association's ViewportId is resolved
         /// live against the registry, so an id that no longer resolves is skipped. While captured the
         /// cursor seat's associated viewport (there is one OS cursor / one cursor seat); when free the
-        /// first associated viewport whose region contains @p pointerWindowPoint, hit-tested exactly
+        /// last associated viewport whose region contains @p pointerWindowPoint (topmost — see
+        /// AssociateViewportSeat), hit-tested exactly
         /// as ResolvePointer does. Null when none applies — no association for the cursor seat, or a
         /// free pointer over no associated region — leaving the caller to fall back (e.g. to the
         /// primary world).

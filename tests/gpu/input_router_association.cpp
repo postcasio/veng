@@ -117,6 +117,38 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "input_router associations: an overlapping later association wins (topmost)")
+{
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(path(TEST_SHADER_PACK)).has_value());
+
+    Input input(nullptr);
+    InputRouter router(nullptr, input, Context.GetViewportRegistry());
+
+    constexpr Entity baseSeat{.Index = 1, .Generation = 1};
+    constexpr Entity overlaySeat{.Index = 2, .Generation = 1};
+    const ivec2 inside{16, 16};
+
+    // The stacked-overlay shape: a base viewport with a seat association, then an overlay viewport
+    // over the same region associated after it. The pointer routes to the overlay's seat — the
+    // topmost viewport under the cursor — and the scene-scoping companion agrees.
+    const Unique<Viewport> base = CreateViewport(Context, assets, {32, 32});
+    router.AssociateViewportSeat(*base, baseSeat);
+
+    {
+        const Unique<Viewport> overlay = CreateViewport(Context, assets, {32, 32});
+        router.AssociateViewportSeat(*overlay, overlaySeat);
+
+        CHECK(router.ResolvePointer(inside, false, Entity::Null).Owner == overlaySeat);
+        CHECK(router.ResolvePointerViewport(inside, false) == overlay.get());
+    }
+
+    // The overlay is gone: the base owns its region again, no re-association needed.
+    CHECK(router.ResolvePointer(inside, false, Entity::Null).Owner == baseSeat);
+    CHECK(router.ResolvePointerViewport(inside, false) == base.get());
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                   "input_router associations: a live-but-unregistered viewport still routes")
 {
     AssetManager assets(Context, Tasks, Types);

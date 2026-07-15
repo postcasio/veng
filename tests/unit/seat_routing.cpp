@@ -330,6 +330,29 @@ TEST_CASE("A free pointer resolves to the seat whose quadrant it is over, viewpo
     CHECK(outside.Owner == Entity::Null);
 }
 
+TEST_CASE("Overlapping regions resolve topmost: the later association wins the pointer")
+{
+    // A full-window base viewport (seat A) with a full-window overlay viewport (seat B) associated
+    // after it — the stacked-overlay shape, where the later-registered viewport composites on top.
+    constexpr ViewportRegion window{.Offset = {0, 0}, .Extent = {1280, 720}};
+    const std::array regions{PointerRegionSeat{.Region = window, .Viewer = SeatA},
+                             PointerRegionSeat{.Region = window, .Viewer = SeatB}};
+
+    // The pointer routes to the overlay's seat — the topmost viewport the user sees — not the
+    // covered base's, even though both regions contain the point.
+    const PointerRouting routing = SelectPointerOwner(regions, ivec2(100, 200));
+    CHECK(routing.Owner == SeatB);
+    CHECK(routing.LocalPosition.x == doctest::Approx(100.0f));
+    CHECK(routing.LocalPosition.y == doctest::Approx(200.0f));
+
+    // A sub-region overlay leaves the base owning the pointer outside the overlay's region.
+    constexpr ViewportRegion inset{.Offset = {320, 180}, .Extent = {640, 360}};
+    const std::array insetRegions{PointerRegionSeat{.Region = window, .Viewer = SeatA},
+                                  PointerRegionSeat{.Region = inset, .Viewer = SeatB}};
+    CHECK(SelectPointerOwner(insetRegions, ivec2(400, 300)).Owner == SeatB);
+    CHECK(SelectPointerOwner(insetRegions, ivec2(100, 100)).Owner == SeatA);
+}
+
 TEST_CASE("A seat reads the pointer only while it owns the quadrant, position local + delta raw")
 {
     // Seed a known raw window delta (+15, +7) and a final window position in the right quadrant:

@@ -10,6 +10,7 @@
 #include <Veng/WindowEvents.h>
 
 #include <algorithm>
+#include <ranges>
 
 namespace Veng
 {
@@ -395,8 +396,9 @@ namespace Veng
         }
 
         // Free cursor: resolve each association's id to its live viewport, gather that viewport's
-        // current region, and select the first containing the point. An id that no longer resolves
-        // is skipped — never mutated away here, so this stays const.
+        // current region in association order, and select the last containing the point (topmost —
+        // see SelectPointerOwner). An id that no longer resolves is skipped — never mutated away
+        // here, so this stays const.
         vector<PointerRegionSeat> regions;
         regions.reserve(m_Associations.size());
         for (const ViewportAssociation& association : m_Associations)
@@ -426,10 +428,12 @@ namespace Veng
                                                        : nullptr;
         }
 
-        // Free cursor: the first associated viewport whose region contains the point, hit-tested
-        // through WindowToViewport so the containment matches ResolvePointer / SelectPointerOwner.
-        // An id that no longer resolves is skipped.
-        for (const ViewportAssociation& association : m_Associations)
+        // Free cursor: the last associated viewport whose region contains the point — associations
+        // track registration (render) order, so the latest containing one is the topmost the user
+        // sees (an overlay's viewport over a full-window world). Hit-tested through
+        // WindowToViewport so the containment matches ResolvePointer / SelectPointerOwner. An id
+        // that no longer resolves is skipped.
+        for (const ViewportAssociation& association : m_Associations | std::views::reverse)
         {
             const Renderer::Viewport* viewport = m_ViewportRegistry.Resolve(association.Id);
             if (viewport != nullptr && viewport->WindowToViewport(pointerWindowPoint).has_value())
@@ -443,7 +447,11 @@ namespace Veng
     PointerRouting SelectPointerOwner(std::span<const PointerRegionSeat> regions,
                                       ivec2 pointerWindowPoint)
     {
-        for (const PointerRegionSeat& entry : regions)
+        // Later entries win any overlap: the regions arrive in association (registration = render)
+        // order, so the last containing region is the topmost viewport the user sees under the
+        // cursor — an overlay's full-window viewport over an associated world viewport routes to
+        // the overlay's seat, not the covered one's.
+        for (const PointerRegionSeat& entry : regions | std::views::reverse)
         {
             const Renderer::ViewportRegion& region = entry.Region;
             if (region.Extent.x == 0 || region.Extent.y == 0)
