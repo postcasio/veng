@@ -194,6 +194,17 @@ namespace Veng
         /// underflow.
         void PopFocus();
 
+        /// @brief Returns whether a focus token still names a live entry in any seat's stack.
+        ///
+        /// A token goes stale when its entry is popped by a path other than its holder — most
+        /// notably the window-focus-loss release (alt-tab pops the cursor seat's gameplay entry
+        /// directly). A holder that caches tokens across frames (the FocusRequest seam) checks this
+        /// to detect such an external pop and drop the dead token rather than treat the seat as still
+        /// held.
+        /// @param token  The token to test; a default (invalid) token is never live.
+        /// @return True if the token names a live focus entry.
+        [[nodiscard]] bool IsFocusTokenLive(FocusToken token) const;
+
         /// @brief Returns the focus layer owning a seat's input (UI when its stack is empty).
         /// @param seat  The seat whose focus top to read.
         [[nodiscard]] InputFocus GetFocus(Entity seat) const;

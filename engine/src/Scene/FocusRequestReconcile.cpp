@@ -10,7 +10,17 @@ namespace Veng
         // Entity::Null names the cursor seat — the single keyboard/mouse seat whose focus drives the
         // OS cursor capture — the same convenience PushFocus(InputFocus) resolves to.
         const Entity seat = request.Seat.IsNull() ? router.GetCursorSeat() : request.Seat;
-        const auto held = tokens.find(seat);
+        auto held = tokens.find(seat);
+
+        // Drop a token the router popped out from under us — window-focus loss (alt-tab) releases the
+        // cursor seat's gameplay focus directly, leaving our cached token naming no live entry. Left
+        // in place it would make a re-capture a no-op (we would think the seat is still held) and a
+        // release pop a dead token (a fatal mispaired pop). Cleared, a re-capture pushes fresh.
+        if (held != tokens.end() && !router.IsFocusTokenLive(held->second))
+        {
+            tokens.erase(held);
+            held = tokens.end();
+        }
         const bool haveToken = held != tokens.end();
 
         if (request.Focus == InputFocus::Gameplay)

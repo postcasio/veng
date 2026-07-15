@@ -98,6 +98,21 @@ namespace Veng
         SyncCursorState();
     }
 
+    bool InputRouter::IsFocusTokenLive(const FocusToken token) const
+    {
+        if (!token.IsValid())
+        {
+            return false;
+        }
+        return std::ranges::any_of(m_Stacks,
+                                   [token](const auto& entry)
+                                   {
+                                       return std::ranges::any_of(entry.second,
+                                                                  [token](const FocusEntry& focus)
+                                                                  { return focus.Token == token; });
+                                   });
+    }
+
     InputFocus InputRouter::GetFocus(Entity seat) const
     {
         const auto stack = m_Stacks.find(seat);
