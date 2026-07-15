@@ -140,6 +140,59 @@ The engine drives layout and draw and re-reads only the dirtied bindings; the ga
 model and the handlers. That is the whole division: **the engine owns load → instantiate →
 attach; the game owns bind → update.**
 
+### The ergonomic path — a per-instance `GuiDriver`
+
+The `SetContext` pattern above is fully supported, but it forces the game to find the overlay,
+guard the one-time bind, and keep per-instance state in system members — which becomes an
+entity-keyed map the moment two viewports claim two instances of one overlay. The **ergonomic
+path is a driver**: a named, registered, **per-instance** presentation binding the engine
+instantiates *with the document* and destroys *with it*. A `GuiOverlay` names one in a reflected
+`Driver` field, and the game writes no find-and-bind system at all.
+
+A `GuiDriver` (`Veng/Gui/Driver.h`) has two hooks — `OnInstantiate` (resolve elements and bind
+the driver's own `Gui::BindingContext`, re-run on any re-instantiate) and `OnUpdate` (once per
+frame while attached, handed a `GuiDriverFrame { Document, Scene, Seat, Delta, View }` with the
+claiming viewport's real view). The template's `TemplateOverlayDriver` in
+[`main.cpp`](../../examples/template/main.cpp) is the live reference — it seeds its model from the
+populate-hook snapshot, binds the dismiss handler, and publishes the button press to a drained
+channel:
+
+```cpp
+class TemplateOverlayDriver final : public GuiDriver
+{
+public:
+    void OnInstantiate(Gui::Document& document, Scene& scene, Entity) override
+    {
+        if (const OverlaySnapshot* snapshot = scene.TryGetFirst<OverlaySnapshot>()) { m_Model = *snapshot; }
+        m_Context.SetData(m_Model);
+        m_Context.SetHandler("Dismiss", [this](Gui::Element&) { m_DismissRequested = true; });
+        document.BindContext(&m_Context);          // the document supplies its own registry
+    }
+    void OnUpdate(const GuiDriverFrame& frame) override { /* publish state into a drained channel */ }
+    // ... per-instance view-model in members ...
+};
+
+VE_GUI_DRIVER(TemplateOverlayDriver, 0x…ULL, "Template Overlay");   // mint the id with `vengc generate-id`
+```
+
+Mint the `GuiDriverId` with `vengc generate-id` (it is a leaf in the `SystemId`/`ActionId` id
+family), register the driver in `VengModuleRegister` — `host->Drivers->Register<TemplateOverlayDriver>()`
+(guard the null `Drivers` pointer; the launcher passes it, a bare host may not) — and name it on
+the overlay, in the prefab or in C++:
+
+```json
+"::Veng::GuiOverlay": { "Document": "0x…", "Driver": "0x…", "Interactive": true }
+```
+
+Two viewports claiming one overlay (split-screen) become **two driver instances with independent
+view-models**, so the per-instance state a binding system would key by entity dissolves. **The
+boundary is concrete and checkable:** a driver reads scene state and *stamps* request/command and
+`VE_VIEW_OUTPUT`-tagged components — but never writes a `VE_REPLICATED` or a Sim-input component
+and never advances authoritative simulation. It is a presentation binding, not a controller;
+gameplay stays components + systems (see
+[Writing gameplay systems](writing-gameplay-systems.md)). Registering the driver requires the
+module ABI at **version 6** — the `GuiDriverRegistry` is the host member whose addition bumped it.
+
 ### Multi-viewport: which viewport claims an overlay is decided by seat
 
 A scene presented by more than one viewport (split-screen) resolves which viewport drives an

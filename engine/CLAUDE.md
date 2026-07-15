@@ -187,6 +187,26 @@ constructs; travel rides an opaque **`Net::TravelPayload`** through `Authorize`/
 `WorldFactory` and the join reply, and the server can **direct** a client's travel (make-before-break).
 See [src/Net/CLAUDE.md](src/Net/CLAUDE.md) for the full model.
 
+**Application-level operations are reached from gameplay through builtin request components.** A
+`SystemContext` carries no `Application` back-reference, so a gameplay system cannot call the
+operations that open and close worlds, bind the transport, exit, or hold an input-focus token. The
+builtin, **local-only** request components (`Veng/Scene/Requests.h`) are that data channel:
+`TravelRequest`, `HostRequest`, `ConnectRequest`, `StopNetRequest`, `ExitRequest`, and
+`FocusRequest`. A system stamps one onto any world's scene; `Application::Frame` **drains** them at
+its frame-safe point (right after the deferred managed-viewport reconfigure, before the world tick),
+in the fixed order **StopNet → Host → Connect → Travel → Exit** over a snapshot of the open worlds.
+None is `VE_REPLICATED` — a request never rides a snapshot, and on a `Client`-tier world it lowers
+to the client-side meaning. Consumption is uniform: a handled request is **removed** (absence is the
+ack), an unhandleable one is left **Pending** to retry, and a failed one is marked
+`RequestStatus::Failed` with an `Error` and held exactly one frame so the stamper can read the
+outcome before re-stamping. **`Application::Travel(TravelInfo)`** is the one travel primitive the
+`TravelRequest` drain lowers onto — resolving standalone (directory get-or-place → present-on-ready
+rebind → pin/unpin), client (travel-request → server-directed travel), or listen-host — and
+`FocusRequest` drives the `InputRouter`'s coarse gameplay/UI focus for a seat through an
+engine-owned per-seat token (so a stateless system can capture or release focus). See
+[src/Scene/CLAUDE.md](src/Scene/CLAUDE.md) for the request idiom and
+[src/Net/CLAUDE.md](src/Net/CLAUDE.md) for `Travel`.
+
 **A second level can be opened over the running one as a `LevelOverlay`.** `LevelOverlay`
 (`Veng/LevelOverlay.h`) is a thin **preset over `WorldRunner::OpenWorld`**: opening an overlay
 opens an owned world (its own scene, systems, and HUD, ticked by the runner like any world) and
@@ -235,12 +255,15 @@ and calls `Run()`.
   (`string`, `vector`, `Ref<T>` flow across freely). veng is **not** a binary-plugin platform — a
   module is recompiled with the engine from one tree. A one-integer `VengModuleAbiVersion`
   handshake (checked by `ModuleLoader` before the entry runs) **rejects a stale module loudly at
-  load**. The ABI is at **version 5** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
+  load**. The ABI is at **version 6** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
   header is authoritative). The host struct is `{ ApplicationRegistry& App; TypeRegistry& Types;
-  SystemRegistry& Systems; EditorRegistry* Editor; }`. The gameplay layer adds **no** ABI
-  surface: game modes are systems + components, the system catalog rides a per-system trait the
-  way a component's `TypeId` does, and a `Level` is an asset — registered through the existing
-  registries or authored as data, never through a new host entry.
+  SystemRegistry& Systems; GuiDriverRegistry* Drivers; EditorRegistry* Editor; }` — the
+  `Drivers` registry (the per-instance presentation-binding catalog, see
+  [src/Gui/CLAUDE.md](src/Gui/CLAUDE.md)) is the member whose addition bumped the ABI 5 → 6. The
+  gameplay *simulation* layer still adds **no** ABI surface: game modes are systems + components,
+  the system catalog rides a per-system trait the way a component's `TypeId` does, and a `Level`
+  is an asset — registered through the existing registries or authored as data, never through a
+  new host entry.
 - **`veng_add_game(<name> SOURCES … [ASSET_PACK …] [MCP])`** is the build entry: it emits
   `lib<name>` + `<name>-launcher` from one declaration, compiling the launcher exe from
   **`launcher_main.cpp`** — an **installed SDK artifact** whose path is `VENG_LAUNCHER_MAIN`,

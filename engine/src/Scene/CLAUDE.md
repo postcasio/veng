@@ -178,6 +178,17 @@ which a game-specific control system reads to produce the abstract `Intent` game
   with none — the input-free minimal template — resolves nothing, a clean no-op with no guard; in
   headless the neutral snapshot resolves to all-`None`. `IsLocallyOwned` returns true for every
   seat; it is the seam the net layer keys on.
+    **A context can be gated on gameplay focus as authored data.** An `InputMapData`
+  (`Veng/Asset/InputMappingContext.h`) carries a reflected **`RequiresGameplayFocus`** flag
+  (authored `"requiresGameplayFocus"`, tolerant-read so existing cooked maps are unchanged); when
+  it is set, `InputMappingSystem` **excludes** that context from the seat's effective active list
+  whenever the seat lacks gameplay focus (`SystemContext::GameplayFocused`, stamped from
+  `InputRouter::IsGameplayFocused()` and `false` headless). This is **pure evaluation at list
+  assembly** — the authored `InputContextStack::Active` is never mutated and the order of the
+  remaining contexts is unchanged — so a mouse-look context that should not resolve while a menu
+  holds focus declares the gate rather than a system lifting and re-inserting it from a saved
+  index. It composes orthogonally with the coarse `FocusRequest`/`SeatFocusScope` focus stack (a
+  map screen's authored stack *swap* is deliberate state change; this gate is evaluation).
 - **`SeatInput` scopes the raw read *per seat*.** A reflected **`SeatInput`** component
   (`Veng/Scene/Components.h`, `UsesKeyboardMouse` + a `Gamepad` id + `WantsGamepad`) on the
   `Viewer` seat names that seat's devices; `InputMappingSystem` builds each seat a filtered

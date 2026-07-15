@@ -81,7 +81,12 @@ and its `*.level.json` source carries four pieces. hello-triangle's
   bloom, shadows, SSAO). These are a *reflected, tolerantly-serialized* struct, not
   a renderer type — a new field never invalidates existing level blobs, and the
   renderer stays untouched. The app maps them onto its `SceneRendererSettings` and
-  per-frame `SceneView` at load.
+  per-frame `SceneView` at load. It also carries the **auto-exposure metering**
+  envelope — `AutoExposureMaxLuminance`, `AutoExposureLowPercentile`,
+  `AutoExposureHighPercentile` — authored beside the other post knobs; absent, each
+  falls back to the engine default, and present, the engine delivers them onto the
+  world's `ViewState` through the same load path (including a client's join-loaded
+  scene), so metering is level data rather than a value assigned in C++.
 
 The game mode itself is **rule systems over a `Session` component** — not an
 object, no registry, no ABI bump. The `Session`
@@ -153,7 +158,10 @@ reimplementing scene editing — and it adds two level-scoped children:
 
 - a **systems panel** listing the `SystemRegistry` catalog with an enable toggle,
   drag-reorder over the active set, and phase labels — writing the level's ordered
-  `systems` list, and
+  `systems` list. A HUD whose `GuiOverlay` names a per-instance `GuiDriver` needs
+  **no** binding-only system here — the engine instantiates the driver with the
+  document (see [Screen-space UI and overlays](screen-space-ui-and-overlays.md)) —
+  so the active set stays pure simulation, and
 - a **settings panel** drawing the `gameMode` and `render` config through the
   shared reflection inspector.
 

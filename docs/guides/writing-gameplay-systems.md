@@ -551,6 +551,66 @@ This example reuses the real shipped pieces:
 
 ---
 
+## 8. Reaching application operations — request components
+
+A `SystemContext` carries no `Application` back-reference by design, so a system
+**cannot call** the process-level operations: opening or joining a world, starting
+to host, connecting, stopping the net mode, exiting, or holding an input-focus
+token across frames. The bridge is a family of builtin, **local-only** request
+components in
+[`engine/include/Veng/Scene/Requests.h`](../../engine/include/Veng/Scene/Requests.h)
+— `TravelRequest`, `HostRequest`, `ConnectRequest`, `StopNetRequest`,
+`ExitRequest`, and `FocusRequest`. A system **stamps** one onto any world's scene;
+`Application::Frame` **drains** it at its frame-safe point (before the world tick)
+and reports the outcome back through the component. So a menu's Host button is a
+system that stamps a `HostRequest`, not a call into the app:
+
+```cpp
+// A menu system reaching an application operation: stamp, don't call.
+scene.Add<HostRequest>(menuEntity);   // the engine drains it and starts hosting
+```
+
+None of these is `VE_REPLICATED` — a request never rides the wire, and on a
+`Client`-tier world it lowers to the client-side meaning (a `TravelRequest`
+becomes a client travel/join). The **consumption semantics are uniform**: a
+handled request is **removed** (absence is the acknowledgement — re-stamp freely),
+an unhandleable one is left **`Pending`** and retried next frame, and a failed one
+is marked `RequestStatus::Failed` with an `Error` string and **held exactly one
+frame** so the stamping system can read the outcome. Read `Status` before
+re-stamping — a system that re-stamps unconditionally every frame overwrites
+`Failed` before it can be seen.
+
+`FocusRequest` is the same idiom for the `InputRouter`'s **coarse** gameplay/UI
+focus: stamp `FocusRequest{ Focus = Gameplay }` (a `Null` seat means the cursor
+seat) to capture the pointer and `{ Focus = UI }` to release it. The engine owns a
+single per-seat token behind it and reconciles idempotently, so a *stateless*
+system can drive focus — which a raw `FocusToken` held across frames could not —
+and the request-driven token never disturbs a token an overlay suspend or a
+`SeatFocusScope` pushed.
+
+**Focus-gated input contexts** are the authored, fine-grained complement to
+`FocusRequest`. An `InputMappingContext` can declare `requiresGameplayFocus` in its
+`*.inputmap.json`; `InputMappingSystem` then **excludes** that context from a seat's
+effective bindings whenever the seat lacks gameplay focus (`SystemContext` carries a
+`GameplayFocused` flag for exactly this). It is pure evaluation — the authored
+`InputContextStack` is never mutated — so a mouse-look context that must go quiet
+while a menu holds focus declares the gate instead of a system lifting it off the
+stack and re-inserting it.
+
+### The one exception: presentation binding may be a driver
+
+Everything above keeps the rule that **simulation logic is components + systems**.
+The single narrow exception is **presentation binding**: a `GuiOverlay` may name a
+registered per-instance `GuiDriver` (see
+[Screen-space UI and overlays](screen-space-ui-and-overlays.md)) that the engine
+instantiates with the document. A driver *reads* scene state and *stamps*
+request/command and `VE_VIEW_OUTPUT`-tagged components — exactly the writes a system
+makes — but it **never** advances authoritative simulation and never writes a
+`VE_REPLICATED` or Sim-input component. It is an ergonomic home for per-instance HUD
+binding, not a controller object; your game logic still lives in systems.
+
+---
+
 ## Where to go next
 
 - **[Authoring input actions](authoring-input-actions.md)** — stage 1 of the
