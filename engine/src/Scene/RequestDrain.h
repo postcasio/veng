@@ -45,14 +45,16 @@ namespace Veng
         function<RequestResult(WorldInstanceId, const TravelRequest&, string& error)> Travel;
         /// @brief Flags the application to exit at the end of the frame.
         function<RequestResult(WorldInstanceId, const ExitRequest&, string& error)> Exit;
+        /// @brief Reconciles a seat's input focus, capturing or releasing the engine-held token.
+        function<RequestResult(WorldInstanceId, const FocusRequest&, string& error)> Focus;
     };
 
     /// @brief Drains every open world's request components once, in the fixed type order.
     ///
     /// Captures a snapshot of the open-world ids (in id order) before it begins, so a world opened
     /// by an earlier same-frame request is not visited until next frame, then processes the request
-    /// types in the order StopNet, Host, Connect, Travel, Exit — teardown before setup, exit last —
-    /// across that snapshot. Within a type, worlds are visited in id order, so two requests in two
+    /// types in the order StopNet, Host, Connect, Travel, Focus, Exit — teardown before setup, exit
+    /// last — across that snapshot. Within a type, worlds are visited in id order, so two requests in two
     /// worlds resolve in world-id order and the later proceeds against the earlier's post-state. Each
     /// scene holds at most one request per type (the components are the queue, depth one per scene);
     /// the drain applies the uniform handled / pending / failed consumption semantics.

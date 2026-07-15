@@ -408,3 +408,10 @@ namespace Veng
         vector<InjectedEvent> m_InjectedQueue;
     };
 }
+
+/// @cond DOXYGEN_EXCLUDE
+VE_ENUM(::Veng::InputFocus, 0xDD5E260AC15D9ABCULL)
+VE_ENUMERATOR(UI)
+VE_ENUMERATOR(Gameplay)
+VE_ENUM_END();
+/// @endcond

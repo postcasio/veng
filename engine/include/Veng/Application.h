@@ -991,6 +991,14 @@ namespace Veng
         ///        ImGui layer, so it is constructed after them and reset before them.
         Unique<InputRouter> m_InputRouter;
 
+        /// @brief The per-seat request-driven focus tokens the FocusRequest drain owns.
+        ///
+        /// One token per seat a system has captured gameplay focus for through a FocusRequest; the
+        /// engine holds it across frames on the stampers' behalf (they cannot) and pops it when a
+        /// UI FocusRequest releases the seat. It only ever holds/pops its own tokens, so it composes
+        /// with overlay / SeatFocusScope focus tokens without disturbing them.
+        unordered_map<Entity, FocusToken> m_FocusRequestTokens;
+
         /// @brief Worker pool; destroyed after m_AssetManager to avoid tearing down live workers.
         Unique<TaskSystem> m_TaskSystem;
 

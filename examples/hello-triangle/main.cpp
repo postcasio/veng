@@ -215,6 +215,70 @@ public:
 
 VE_SYSTEM(ControlSystem, 0x1C2F5C03357C19B2ULL, "Control");
 
+// Drives the cursor seat's input focus from data: a View-phase system (once per frame) that reads
+// the seat's current focus and the frame's raw input, and stamps a builtin FocusRequest expressing
+// the focus the seat should hold — the engine owns the focus token behind it. It captures gameplay
+// focus at start and on a scene click (outside any ImGui window), and releases it on Escape, so the
+// mouse drives the game while captured and the debug UI while free — the focus policy every windowed
+// consumer needs, now authored as a level system rather than hand-rolled in the app's OnUpdate. A
+// gameplay system driving input focus is exactly what the FocusRequest seam exists for; the request
+// is drained at the engine's frame-safe point, and its per-seat token composes with any overlay
+// focus scope. Reuses one holder entity so a session of clicks does not accrete entities.
+class GameplayFocusSystem final : public SceneSystem
+{
+public:
+    [[nodiscard]] Phase GetPhase() const override { return Phase::View; }
+
+    void OnStart(Scene& scene, const SystemContext&) override
+    {
+        // Start captured, the shipped windowed default. Headless (no window) makes the token's cursor
+        // grab a no-op, so a smoke/headless run is unaffected.
+        Stamp(scene, InputFocus::Gameplay);
+    }
+
+    void OnUpdate(Scene& scene, const f32, const SystemContext& context) override
+    {
+        if (context.GameplayFocused)
+        {
+            // Escape frees the cursor for the debug UI.
+            if (context.Input.WasKeyPressed(Key::Escape))
+            {
+                Stamp(scene, InputFocus::UI);
+            }
+        }
+        else if (context.Input.WasMouseButtonPressed(MouseButton::Left) && !UI::WantCaptureMouse())
+        {
+            // A left click on the scene (not on an ImGui window) re-captures the cursor.
+            Stamp(scene, InputFocus::Gameplay);
+        }
+    }
+
+private:
+    // Stamps the requested focus onto a single reused holder entity: the drain removes the component
+    // when it reconciles the token, so re-add it when absent, else overwrite a not-yet-drained one.
+    void Stamp(Scene& scene, const InputFocus focus)
+    {
+        if (m_Holder.IsNull() || !scene.IsAlive(m_Holder))
+        {
+            m_Holder = scene.CreateEntity();
+            scene.Add<Name>(m_Holder).Value = "Focus Request";
+        }
+        if (auto* existing = scene.TryGet<FocusRequest>(m_Holder))
+        {
+            *existing = FocusRequest{.Focus = focus};
+        }
+        else
+        {
+            scene.Add<FocusRequest>(m_Holder, FocusRequest{.Focus = focus});
+        }
+    }
+
+    // The reused request holder; recreated if a scene reset invalidates it.
+    Entity m_Holder = Entity::Null;
+};
+
+VE_SYSTEM(GameplayFocusSystem, 0x538985F20107EF02ULL, "Gameplay Focus");
+
 // The game mode's spawn rule: a Sim-phase system that instantiates the configured player
 // prefab when the Session is Playing, and tears it down when the session ends or play stops.
 // The player prefab authors its own Viewer/Possesses/Camera/CameraFollow wiring, so the
@@ -452,11 +516,6 @@ protected:
                 }
             }
 
-            // The shipped game owns input: capture the mouse in the window so the player's
-            // mouse-look runs against a hidden, locked cursor (Escape frees it for the debug UI;
-            // a click on the scene re-captures it).
-            GetInputRouter().PushFocus(InputFocus::Gameplay);
-
             SetupHud(scene);
 
             // Offline windowed: open a second, independently-simulated world through the runner and
@@ -593,25 +652,11 @@ protected:
             return;
         }
 
-        // Escape frees the mouse to drive the debug UI; a left click on the scene (outside any
-        // ImGui window) re-captures it and resumes mouse-look. ImGui's NewFrame already ran this
-        // frame, so WantCaptureMouse reflects this frame's cursor.
-        if (GetInputRouter().IsGameplayFocused())
-        {
-            if (GetInput().WasKeyPressed(Key::Escape))
-            {
-                GetInputRouter().PopFocus();
-            }
-        }
-        else if (GetInput().WasMouseButtonPressed(MouseButton::Left) && !UI::WantCaptureMouse())
-        {
-            GetInputRouter().PushFocus(InputFocus::Gameplay);
-        }
-
-        // The seat's gameplay context is authored `requiresGameplayFocus`, so the engine excludes it
-        // from resolution whenever ImGui owns the cursor — every gameplay action resolves to None with
-        // no stack surgery here (the old SyncGameplayContext save/restore is gone). The focus keys
-        // above are the only input the app touches.
+        // Gameplay-focus capture/release is driven by the level's GameplayFocusSystem through the
+        // builtin FocusRequest seam (a click captures the cursor, Escape frees it for the debug UI),
+        // so the app touches no focus state here. The seat's gameplay context is authored
+        // `requiresGameplayFocus`, so the engine excludes it from resolution whenever ImGui owns the
+        // cursor — every gameplay action resolves to None with no stack surgery.
 
         // Runtime net control through builtin request components: a system stamps a request onto the
         // world's scene and the engine drains it at its frame-safe point, so gameplay reaches the
@@ -1203,6 +1248,10 @@ extern "C" void VengModuleRegister(VengModuleHost* host)
     // The game-specific control mapping: reads input into a PlayerInput snapshot and produces the
     // Intent the engine's MovementSystem consumes.
     host->Systems.Register<ControlSystem>();
+
+    // Drives the cursor seat's gameplay-focus capture/release from a level system through the
+    // builtin FocusRequest seam, replacing a hand-rolled focus policy in the app's OnUpdate.
+    host->Systems.Register<GameplayFocusSystem>();
 
     // The HUD's presentation driver, named on the HUD overlay component; the engine instantiates it
     // per claimed overlay instance and drives it each frame.

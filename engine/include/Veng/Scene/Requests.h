@@ -1,17 +1,21 @@
 #pragma once
 
 #include <Veng/Veng.h>
+#include <Veng/InputRouter.h>
 #include <Veng/Net/TravelPayload.h>
 #include <Veng/Net/WorldKey.h>
 #include <Veng/Reflection/Reflect.h>
+#include <Veng/Scene/Entity.h>
 
 // Veng/Scene/Requests.h — the builtin, local-only request components.
 //
-// A gameplay system cannot reach the application-level operations that open and close worlds or
-// bind the transport: StartHosting / Connect / StopNet / RequestExit (and travel) are methods on
-// Application, and SystemContext carries no Application back-reference. These components are the
-// data channel across that gap. A system stamps one onto any world's scene; the engine drains it
-// at its frame-safe point and reports the outcome back through the component's Status.
+// A gameplay system cannot reach the application-level operations that open and close worlds,
+// bind the transport, or hold an input-focus token across frames: StartHosting / Connect /
+// StopNet / RequestExit (and travel) are methods on Application, an InputRouter focus token is
+// held by whoever pushed it, and SystemContext carries no Application back-reference. These
+// components are the data channel across that gap. A system stamps one onto any world's scene; the
+// engine drains it at its frame-safe point and reports the outcome back through the component's
+// Status.
 //
 // The components are **local-only** — none is replicated (no VE_REPLICATED), so a request never
 // rides a snapshot; the engine drains them on the local Application only. On a Client-tier world a
@@ -123,6 +127,30 @@ namespace Veng
         /// @brief The failure reason, set when Status is Failed.
         string Error;
     };
+
+    /// @brief Requests that a seat hold a given input focus, so a system can drive focus capture/release.
+    ///
+    /// An InputRouter focus token is held by whoever pushed it, which no across-frames stateless
+    /// system can be. This component lets a system express the focus a seat should hold as a
+    /// drained request; the engine owns a single per-seat request-driven token behind it and
+    /// reconciles idempotently: a Gameplay request with no engine-held token pushes gameplay focus
+    /// and stores the token, a UI request with a token held pops it, and requesting the state
+    /// already held is a no-op success. The engine only ever pops the token it itself pushed, so
+    /// the request-driven token composes with — and never disturbs — tokens pushed by an overlay
+    /// suspend or a SeatFocusScope. Always handled (removed the same frame); the engine keeps the
+    /// token across frames until a UI request releases it, so a system stamps only on the focus
+    /// edge, not every frame.
+    struct FocusRequest
+    {
+        /// @brief The seat to affect; Entity::Null resolves to the router's cursor seat.
+        Entity Seat = Entity::Null;
+        /// @brief The focus the seat should hold: Gameplay captures, UI releases.
+        InputFocus Focus = InputFocus::Gameplay;
+        /// @brief The engine-reported outcome; starts Pending.
+        RequestStatus Status = RequestStatus::Pending;
+        /// @brief The failure reason, set when Status is Failed.
+        string Error;
+    };
 }
 
 /// @cond DOXYGEN_EXCLUDE
@@ -154,6 +182,13 @@ VE_FIELD(Error, .DisplayName = "Error", .ReadOnly = true)
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::ExitRequest, 0x837C01FFF9673D84ULL)
+VE_FIELD(Status, .DisplayName = "Status", .ReadOnly = true)
+VE_FIELD(Error, .DisplayName = "Error", .ReadOnly = true)
+VE_REFLECT_END();
+
+VE_REFLECT(::Veng::FocusRequest, 0x232F4A7AB3F5F74DULL)
+VE_FIELD(Seat, .DisplayName = "Seat")
+VE_FIELD(Focus, .DisplayName = "Focus")
 VE_FIELD(Status, .DisplayName = "Status", .ReadOnly = true)
 VE_FIELD(Error, .DisplayName = "Error", .ReadOnly = true)
 VE_REFLECT_END();

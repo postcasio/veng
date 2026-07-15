@@ -12,7 +12,10 @@
 #include <string>
 #include <vector>
 
+#include <Veng/Input.h>
+#include <Veng/InputRouter.h>
 #include <Veng/Reflection/TypeRegistry.h>
+#include <Veng/Renderer/ViewportRegistry.h>
 #include <Veng/Scene/Requests.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/SceneSystem.h>
@@ -20,6 +23,7 @@
 #include <Veng/World.h>
 #include <Veng/WorldRunner.h>
 
+#include <Scene/FocusRequestReconcile.h>
 #include <Scene/RequestDrain.h>
 
 using namespace Veng;
@@ -33,7 +37,12 @@ namespace
         types.Register<ConnectRequest>();
         types.Register<StopNetRequest>();
         types.Register<ExitRequest>();
+        types.Register<FocusRequest>();
     }
+
+    // Two distinct seat entities standing in for router seats.
+    constexpr Entity SeatA{.Index = 1, .Generation = 1};
+    constexpr Entity SeatB{.Index = 2, .Generation = 1};
 
     // Opens an empty-scene world with no simulation — device-free, nothing to tick; the drain only
     // scans each world's scene for request components.
@@ -234,6 +243,91 @@ TEST_CASE("Every request component is registered unreplicated")
     assertUnreplicated(types.IdOf<ConnectRequest>());
     assertUnreplicated(types.IdOf<StopNetRequest>());
     assertUnreplicated(types.IdOf<ExitRequest>());
+    assertUnreplicated(types.IdOf<FocusRequest>());
+}
+
+TEST_CASE("A FocusRequest drain reconciles the engine-owned per-seat focus token")
+{
+    TypeRegistry types;
+    RegisterRequests(types);
+    SystemRegistry systems;
+    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    const WorldInstanceId world = OpenEmpty(runner);
+
+    // The reconcile is device-free: a headless router (no window, no ICD) over a bare token map.
+    Input input(nullptr);
+    const Renderer::ViewportRegistry viewportRegistry;
+    InputRouter router(nullptr, input, viewportRegistry);
+
+    FocusRequestTokens tokens;
+    RequestDispatch dispatch;
+    dispatch.Focus = [&](WorldInstanceId, const FocusRequest& request, std::string& error)
+    { return ReconcileFocusRequest(router, tokens, request, error); };
+
+    // A Gameplay request captures the seat and stores one engine-held token; the component is
+    // consumed the same frame (absence is the ack).
+    Stamp<FocusRequest>(runner, world, FocusRequest{.Seat = SeatA, .Focus = InputFocus::Gameplay});
+    DrainRequests(runner, dispatch);
+    CHECK(router.IsGameplayFocused(SeatA));
+    REQUIRE(tokens.size() == 1);
+    CHECK(Find<FocusRequest>(runner, world) == nullptr);
+    const FocusToken firstToken = tokens.at(SeatA);
+
+    // A second Gameplay request while already held is a no-op success: no extra push, the same token,
+    // still consumed.
+    Stamp<FocusRequest>(runner, world, FocusRequest{.Seat = SeatA, .Focus = InputFocus::Gameplay});
+    DrainRequests(runner, dispatch);
+    CHECK(router.IsGameplayFocused(SeatA));
+    REQUIRE(tokens.size() == 1);
+    CHECK(tokens.at(SeatA) == firstToken);
+    CHECK(Find<FocusRequest>(runner, world) == nullptr);
+
+    // An interleaved SeatFocusScope-style token pushed ABOVE the engine's request token.
+    const FocusToken scopeToken = router.PushFocus(SeatA, InputFocus::Gameplay);
+
+    // A UI request pops only the engine's own token, wherever it sits, leaving the interleaved scope
+    // token intact — so the seat stays gameplay-focused through the scope.
+    Stamp<FocusRequest>(runner, world, FocusRequest{.Seat = SeatA, .Focus = InputFocus::UI});
+    DrainRequests(runner, dispatch);
+    CHECK(tokens.empty());
+    CHECK(router.IsGameplayFocused(SeatA));
+    CHECK(Find<FocusRequest>(runner, world) == nullptr);
+
+    // The scope drops its own token, returning the seat to UI — proving the drain never touched it.
+    router.PopFocus(scopeToken);
+    CHECK(router.GetFocus(SeatA) == InputFocus::UI);
+
+    // A UI request with nothing engine-held is a no-op success, still consumed.
+    Stamp<FocusRequest>(runner, world, FocusRequest{.Seat = SeatA, .Focus = InputFocus::UI});
+    DrainRequests(runner, dispatch);
+    CHECK(tokens.empty());
+    CHECK(Find<FocusRequest>(runner, world) == nullptr);
+}
+
+TEST_CASE("A FocusRequest with a null seat resolves to the router's cursor seat")
+{
+    TypeRegistry types;
+    RegisterRequests(types);
+    SystemRegistry systems;
+    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    const WorldInstanceId world = OpenEmpty(runner);
+
+    Input input(nullptr);
+    const Renderer::ViewportRegistry viewportRegistry;
+    InputRouter router(nullptr, input, viewportRegistry);
+    router.SetCursorSeat(SeatB);
+
+    FocusRequestTokens tokens;
+    RequestDispatch dispatch;
+    dispatch.Focus = [&](WorldInstanceId, const FocusRequest& request, std::string& error)
+    { return ReconcileFocusRequest(router, tokens, request, error); };
+
+    // Seat left default (Entity::Null) resolves to the cursor seat, so the capture lands on SeatB.
+    Stamp<FocusRequest>(runner, world, FocusRequest{.Focus = InputFocus::Gameplay});
+    DrainRequests(runner, dispatch);
+    CHECK(router.IsGameplayFocused(SeatB));
+    CHECK(tokens.count(SeatB) == 1);
+    CHECK(Find<FocusRequest>(runner, world) == nullptr);
 }
 
 TEST_CASE("A host request in a client-tier world fails without reaching server state")

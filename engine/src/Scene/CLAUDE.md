@@ -161,7 +161,14 @@ which a game-specific control system reads to produce the abstract `Intent` game
   `AssetHandle<InputMappingContext>` (highest priority last), authored on the player prefab.
   Gameplay systems push/pop it to switch schemes (enter a vehicle → push the `vehicle` context);
   popping to empty neutralizes the seat's input. It is the fine-grained sibling of the
-  `InputRouter`'s coarse focus stack.
+  `InputRouter`'s coarse focus stack. A system drives that **coarse** stack — capturing or releasing
+  a seat's gameplay focus — through the builtin **`FocusRequest`** component (`Veng/Scene/Requests.h`):
+  it stamps `FocusRequest{ Focus = Gameplay }` (a `Null` seat means the cursor seat) to capture and
+  `{ Focus = UI }` to release, and the engine drain owns a single per-seat focus token behind it,
+  reconciling idempotently. This lets a stateless system drive focus — which a `FocusToken` held
+  across frames otherwise could not — and the request-driven token composes with, and never pops,
+  a token pushed by an overlay suspend or a `SeatFocusScope`. It is a local-only request like its
+  siblings; see **The system catalog** and the request family in `Veng/Scene/Requests.h`.
 - **`InputMappingSystem`** (`Veng/Scene/InputMappingSystem.h`) is the builtin Sim system that
   resolves each locally-owned seat's `InputContextStack` against the raw snapshot into that seat's
   `PlayerInput`. It is the **sole reader of raw device state**, registered in

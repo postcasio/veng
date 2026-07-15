@@ -167,6 +167,8 @@ namespace Veng
         /// `requiresGameplayFocus`) from a seat's effective active list while the seat is not
         /// gameplay-focused — a pure evaluation, never a mutation of the authored InputContextStack.
         /// A HUD/menu owning the cursor thus silences gameplay bindings without any stack surgery.
+        /// The transition itself — capturing or releasing this focus — is driven by a system through
+        /// the builtin FocusRequest component (Veng/Scene/Requests.h), the engine owning the token.
         bool GameplayFocused = false;
 
         /// @brief Whether this is the first Sim step of the frame's fixed-step sequence.
