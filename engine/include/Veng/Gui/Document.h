@@ -330,6 +330,16 @@ namespace Veng::Gui
         ///                  when context is non-null.
         void BindContext(BindingContext* context, const TypeRegistry* registry);
 
+        /// @brief Binds a context using the registry the document was instantiated against.
+        ///
+        /// The self-sufficient form for a caller that holds no TypeRegistry of its own — a GuiOverlay
+        /// driver binding its view-model in OnInstantiate. Resolves the registry from the document's
+        /// own AssetManager, so `{obj.field}` bindings and named handlers resolve without the caller
+        /// re-supplying it. Passing null clears the binding. The context is borrowed and must outlive
+        /// the binding.
+        /// @param context  The game-owned binding context, or nullptr to clear.
+        void BindContext(BindingContext* context);
+
         /// @brief Re-resolves every `{path}` binding whose context changed and writes the elements.
         ///
         /// Compares the bound context's version against the one last resolved; on a move it walks

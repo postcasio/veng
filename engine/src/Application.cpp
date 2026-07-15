@@ -219,8 +219,8 @@ namespace Veng
 
         // The managed-viewport policy collaborator, over the compositor + router. Presentation-only:
         // it owns the Presented viewports the engine drives and pulls their cameras from the runner.
-        m_ManagedViewports = CreateUnique<ManagedViewportSet>(m_RenderContext, *m_AssetManager,
-                                                              m_Compositor, *m_InputRouter);
+        m_ManagedViewports = CreateUnique<ManagedViewportSet>(
+            m_RenderContext, *m_AssetManager, m_Compositor, *m_InputRouter, m_GuiDriverRegistry);
 
         // The opt-in managed viewport set: Presented viewports owned and driven by the engine so a
         // game pushes only a ViewState (or names a World/Viewer). Built before OnInitialize so a
@@ -1092,9 +1092,11 @@ namespace Veng
             .Tick = tick,
             .Alpha = alpha,
             .Role = role,
+            // The focus gate every seat's input resolution reads: true only while the router reports
+            // the cursor seat gameplay-focused, false headless (no window owns focus).
+            .GameplayFocused = m_InputRouter->IsGameplayFocused(),
             .FirstStepThisFrame = firstStepThisFrame,
-            .IsReplay = isReplay,
-        };
+            .IsReplay = isReplay};
 
         // Resolve the sim's primary presenting viewport — the first registered Presented viewport
         // whose retained scene is this one — for the view descriptor and debug-draw sink. The

@@ -78,7 +78,11 @@ int main()
             TypeRegistry types;
             SystemRegistry systems;
             RegisterBuiltinTypes(types);
-            VengModuleHost host{.App = app, .Types = types, .Systems = systems, .Editor = nullptr};
+            VengModuleHost host{.App = app,
+                                .Types = types,
+                                .Systems = systems,
+                                .Drivers = nullptr,
+                                .Editor = nullptr};
 
             Check(!app.HasApplication(), "no Application before Register");
             Check(!types.IsRegistered(TypeIdOf<Probe>()), "game component absent before Register");

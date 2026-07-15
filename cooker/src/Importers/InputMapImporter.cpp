@@ -66,6 +66,17 @@ namespace Veng::Cook
 
         InputMapData data;
 
+        // Optional focus gate: a context authored `"requiresGameplayFocus": true` resolves only
+        // while its seat holds gameplay focus. Absent defaults to false (always active).
+        if (doc.contains("requiresGameplayFocus"))
+        {
+            if (!doc["requiresGameplayFocus"].is_boolean())
+            {
+                return std::unexpected(Located(file, "'requiresGameplayFocus' must be a boolean"));
+            }
+            data.RequiresGameplayFocus = doc["requiresGameplayFocus"].get<bool>();
+        }
+
         if (!doc.contains("actions") || !doc["actions"].is_array())
         {
             return std::unexpected(Located(file, "missing or invalid 'actions' array"));

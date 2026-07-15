@@ -52,8 +52,9 @@ namespace Veng
 
     ManagedViewportSet::ManagedViewportSet(Renderer::Context& context, AssetManager& assets,
                                            Renderer::ViewportCompositor& compositor,
-                                           InputRouter& router)
-        : m_Context(context), m_Assets(assets), m_Compositor(compositor), m_Router(router)
+                                           InputRouter& router, GuiDriverRegistry* const drivers)
+        : m_Context(context), m_Assets(assets), m_Compositor(compositor), m_Router(router),
+          m_GuiDrivers(drivers)
     {
     }
 
@@ -108,6 +109,10 @@ namespace Veng
             {
                 viewport->SetDynamicResolution(*info.DynamicResolution);
             }
+
+            // Hand the viewport the driver catalog so a claimed, driver-authored GuiOverlay
+            // instantiates its driver on the first drive; null leaves every overlay undriven.
+            viewport->SetGuiDriverRegistry(m_GuiDrivers);
 
             m_Compositor.RegisterViewport(*viewport);
 

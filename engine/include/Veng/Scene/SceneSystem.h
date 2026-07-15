@@ -160,6 +160,15 @@ namespace Veng
         /// until a client/server split exists — every standalone tick is Server.
         NetRole Role = NetRole::Server;
 
+        /// @brief Whether the presenting seat currently holds gameplay focus this frame.
+        ///
+        /// Stamped from the InputRouter's focus state (false headless — no window owns focus). The
+        /// InputMappingSystem reads it to exclude a focus-gated InputMappingContext (one authored
+        /// `requiresGameplayFocus`) from a seat's effective active list while the seat is not
+        /// gameplay-focused — a pure evaluation, never a mutation of the authored InputContextStack.
+        /// A HUD/menu owning the cursor thus silences gameplay bindings without any stack surgery.
+        bool GameplayFocused = false;
+
         /// @brief Whether this is the first Sim step of the frame's fixed-step sequence.
         ///
         /// A frame runs 0..N Sim steps under the fixed-timestep accumulator; this is true only on

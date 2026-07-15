@@ -4,6 +4,9 @@
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Level.h>
 #include <Veng/Gui/BindingContext.h>
+#include <Veng/Gui/Document.h>
+#include <Veng/Gui/Driver.h>
+#include <Veng/Gui/DriverRegistry.h>
 #include <Veng/Gui/Element.h>
 #include <Veng/Gui/Overlay.h>
 #include <Veng/Input.h>
@@ -61,42 +64,37 @@ struct OverlayControl
 VE_REFLECT(::OverlayControl, 0xD865A8B4DB6DEA5CULL)
 VE_FIELD(Requested)
 VE_REFLECT_END();
+// The dismiss channel is a view/presentation output: the overlay's driver (a presentation binding)
+// writes it and the opener reads it. Tagging it ViewOutput marks it as within the driver boundary —
+// a driver may write it, but never a replicated or Sim-input component.
+VE_VIEW_OUTPUT(::OverlayControl);
 
-// Drives the overlay level's own HUD: the one system named in the overlay level's `systems` beside
-// the builtin input systems. On its first tick it binds the interactive HUD a view-model plus a
-// "Dismiss" handler, then each frame mirrors the button's press into the OverlayControl the opener
-// drains. It reads its snapshot and drives its HUD entirely within the overlay scene — the "modal
-// live scene" runs its own simulation, its HUD driven by its own viewport, taking input on its own
-// seat.
-class TemplateOverlaySystem final : public SceneSystem
+// Drives the overlay level's own HUD as a per-instance presentation driver — named on the overlay
+// HUD's GuiOverlay, instantiated by the engine with the document. On instantiate it seeds a
+// view-model from the populate-hook snapshot and binds it plus a "Dismiss" handler to the document;
+// each frame it mirrors the button's press into the OverlayControl the opener drains. It reads its
+// snapshot and drives its HUD entirely within the overlay scene, stamping only the ViewOutput dismiss
+// channel — the "modal live scene" runs its own simulation, its HUD bound by its own driver instance.
+class TemplateOverlayDriver final : public GuiDriver
 {
 public:
-    // Presentation binding derived from finalized Sim state, so it runs in the View phase.
-    [[nodiscard]] Phase GetPhase() const override { return Phase::View; }
-
-    void OnUpdate(Scene& scene, f32, const SystemContext&) override
+    void OnInstantiate(Gui::Document& document, Scene& scene, Entity) override
     {
-        if (!m_Bound)
+        // Seed the model from the populate-hook snapshot, then bind it plus the dismiss handler to
+        // the freshly instantiated document (re-run on any re-instantiate, so the binding survives).
+        if (const OverlaySnapshot* snapshot = scene.TryGetFirst<OverlaySnapshot>())
         {
-            // Seed the model from the populate-hook snapshot, then bind it plus the dismiss handler
-            // to every GuiOverlay in the overlay scene. The bind is deferred inside the overlay until
-            // its Viewport instantiates the document, so binding here (before the first render) has
-            // no ordering hole.
-            if (const OverlaySnapshot* snapshot = scene.TryGetFirst<OverlaySnapshot>())
-            {
-                m_Model = *snapshot;
-            }
-            m_Context.SetData(m_Model);
-            m_Context.SetHandler("Dismiss", [this](Gui::Element&) { m_DismissRequested = true; });
-            for (auto [entity, overlay] : scene.View<GuiOverlay>())
-            {
-                overlay.SetContext(&m_Context);
-            }
-            m_Bound = true;
+            m_Model = *snapshot;
         }
+        m_Context.SetData(m_Model);
+        m_Context.SetHandler("Dismiss", [this](Gui::Element&) { m_DismissRequested = true; });
+        document.BindContext(&m_Context);
+    }
 
+    void OnUpdate(const GuiDriverFrame& frame) override
+    {
         // Publish the button's press into the drained channel; the opener reads it and closes.
-        if (auto* control = scene.TryGetFirst<OverlayControl>())
+        if (auto* control = frame.Scene.TryGetFirst<OverlayControl>())
         {
             control->Requested = m_DismissRequested;
         }
@@ -106,10 +104,9 @@ private:
     OverlaySnapshot m_Model;
     Gui::BindingContext m_Context;
     bool m_DismissRequested = false;
-    bool m_Bound = false;
 };
 
-VE_SYSTEM(TemplateOverlaySystem, 0x2BCEBD75A23A39F1ULL, "Template Overlay");
+VE_GUI_DRIVER(TemplateOverlayDriver, 0xE9906144475EB699ULL, "Template Overlay");
 
 // The cooked overlay level the Tab key opens as a secondary, simulated overlay. Its own prefab
 // authors an input seat, a spinning cube, and an interactive GuiOverlay HUD; its `systems` name the
@@ -225,7 +222,12 @@ extern "C" void VengModuleRegister(VengModuleHost* host)
     host->Types.Register<TemplateHud>();
     host->Types.Register<OverlaySnapshot>();
     host->Types.Register<OverlayControl>();
-    host->Systems.Register<TemplateOverlaySystem>();
+    // The overlay HUD's presentation binding is a per-instance driver named on its GuiOverlay, not a
+    // per-world system: the engine instantiates it with the document and drives it each frame.
+    if (host->Drivers != nullptr)
+    {
+        host->Drivers->Register<TemplateOverlayDriver>();
+    }
     host->App.RegisterApplication(
         [](TypeRegistry& types, SystemRegistry& systems)
         {

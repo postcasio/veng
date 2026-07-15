@@ -1,7 +1,12 @@
 # Scene & gameplay — ECS, input control flow, systems, levels
 
 `Scene` is the runtime ECS world, and the gameplay layer is built from its primitives — components
-marking entities plus systems acting on them, never controller/manager/mode objects — shaped for
+marking entities plus systems acting on them. **Simulation logic is components + systems**, never
+controller/manager/mode objects; the one narrow exception is **presentation binding**, which may be
+a per-instance driver (a `GuiOverlay` names a registered `GuiDriver` the engine instantiates with its
+document — see [../Gui/CLAUDE.md](../Gui/CLAUDE.md)). A driver reads scene state and stamps
+request/command and `VE_VIEW_OUTPUT`-tagged components; it never advances authoritative simulation or
+writes a replicated or Sim-input component. It is shaped for
 veng's data-oriented grain and for the networking built on top. Project-wide conventions live in
 [the root CLAUDE.md](../../../CLAUDE.md); the runtime overview and the engine-managed world drive
 in [engine/CLAUDE.md](../../CLAUDE.md); reflection and the `TypeRegistry` in

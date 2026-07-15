@@ -885,6 +885,22 @@ namespace Veng
         /// When set, Exposure becomes a manual bias on the adapted result instead of the absolute
         /// exposure. Off matches the renderer's own default.
         bool AutoExposure = false;
+        /// @brief Auto-exposure upper clamp on the adapted average luminance.
+        ///
+        /// Bounds how dark the metering lets a bright scene drive the exposure; a large value suits a
+        /// high-dynamic-range scene (a bright sky, a starfield). The default matches the renderer's
+        /// own ViewState default, so a level authoring none is unchanged.
+        f32 AutoExposureMaxLuminance = 8.0f;
+        /// @brief Lower percentile of the lit-pixel histogram the metering averages from, in [0, 1].
+        ///
+        /// Discards the darkest tail before averaging (0 keeps it). The default matches the
+        /// renderer's own ViewState default.
+        f32 AutoExposureLowPercentile = 0.0f;
+        /// @brief Upper percentile of the lit-pixel histogram the metering averages to, in [0, 1].
+        ///
+        /// Discards the brightest tail before averaging (1 keeps it). The default matches the
+        /// renderer's own ViewState default.
+        f32 AutoExposureHighPercentile = 1.0f;
         /// @brief Whether the bloom battery is enabled.
         bool Bloom = true;
         /// @brief Bloom bright-pass luminance knee fed into the per-frame SceneView.
@@ -1234,6 +1250,12 @@ VE_REFLECT(::Veng::LevelRenderSettings, 0x28E4618C66455E21ULL)
 VE_FIELD(Exposure, .DisplayName = "Exposure", .Display = {.Min = 0.0})
 VE_FIELD(Tonemapper, .DisplayName = "Tonemapper")
 VE_FIELD(AutoExposure, .DisplayName = "Auto Exposure")
+VE_FIELD(AutoExposureMaxLuminance, .DisplayName = "Auto Exposure Max Luminance",
+         .Display = {.Min = 0.0})
+VE_FIELD(AutoExposureLowPercentile, .DisplayName = "Auto Exposure Low Percentile",
+         .Display = {.Min = 0.0, .Max = 1.0})
+VE_FIELD(AutoExposureHighPercentile, .DisplayName = "Auto Exposure High Percentile",
+         .Display = {.Min = 0.0, .Max = 1.0})
 VE_FIELD(Bloom, .DisplayName = "Bloom")
 VE_FIELD(BloomThreshold, .DisplayName = "Bloom Threshold", .Display = {.Min = 0.0})
 VE_FIELD(BloomIntensity, .DisplayName = "Bloom Intensity", .Display = {.Min = 0.0})

@@ -166,6 +166,83 @@ TEST_CASE("input map cook: happy path — header + resolved context round-trip")
     CHECK(resolved.Bindings[3].Axis == AxisComponent::Whole);
 }
 
+TEST_CASE("input map cook: requiresGameplayFocus authors into the resolved context")
+{
+    json map = SampleMap();
+    map["requiresGameplayFocus"] = true;
+    const path packJson = WriteInputMapPack("inputmap_focus", map);
+
+    const Result<vector<u8>> blobResult = CookInputMap(packJson, AssetId{7777});
+    REQUIRE_MESSAGE(blobResult.has_value(),
+                    "cook failed: ", blobResult ? string{} : blobResult.error());
+    const vector<u8>& blob = *blobResult;
+
+    TypeRegistry registry;
+    RegisterBuiltinTypes(registry);
+    CookedInputMapHeader header{};
+    std::memcpy(&header, blob.data(), sizeof(header));
+    const std::span<const u8> record(blob.data() + sizeof(CookedInputMapHeader),
+                                     header.RecordBytes);
+
+    InputMapData data;
+    REQUIRE(
+        ReadFields(record, &data, registry.Info(TypeIdOf<InputMapData>()), registry).has_value());
+    CHECK(data.RequiresGameplayFocus);
+
+    // The gate carries into the resolver-ready form the InputMappingSystem reads.
+    const Ref<InputMappingContext> context = InputMappingContext::Create(
+        std::move(data.Actions), std::move(data.Bindings), data.RequiresGameplayFocus);
+    CHECK(context->GetResolved().RequiresGameplayFocus);
+}
+
+TEST_CASE("input map cook: a map not authoring requiresGameplayFocus defaults to false")
+{
+    // SampleMap authors no gate; the field defaults false, so an existing map is unchanged.
+    const path packJson = WriteInputMapPack("inputmap_nofocus", SampleMap());
+    const Result<vector<u8>> blobResult = CookInputMap(packJson, AssetId{7777});
+    REQUIRE(blobResult.has_value());
+
+    TypeRegistry registry;
+    RegisterBuiltinTypes(registry);
+    CookedInputMapHeader header{};
+    std::memcpy(&header, blobResult->data(), sizeof(header));
+    const std::span<const u8> record(blobResult->data() + sizeof(CookedInputMapHeader),
+                                     header.RecordBytes);
+    InputMapData data;
+    REQUIRE(
+        ReadFields(record, &data, registry.Info(TypeIdOf<InputMapData>()), registry).has_value());
+    CHECK_FALSE(data.RequiresGameplayFocus);
+}
+
+TEST_CASE("input map load: a pre-change blob without the gate field tolerant-reads to false")
+{
+    TypeRegistry registry;
+    RegisterBuiltinTypes(registry);
+    const TypeInfo& full = registry.Info(TypeIdOf<InputMapData>());
+
+    // Encode through a TypeInfo carrying only the original { Actions, Bindings } descriptors, so the
+    // record names no RequiresGameplayFocus — exactly a blob cooked before the field existed.
+    TypeInfo older = full;
+    std::erase_if(older.Fields,
+                  [](const FieldDescriptor& f) { return f.Name == "RequiresGameplayFocus"; });
+    REQUIRE(older.Fields.size() == full.Fields.size() - 1);
+
+    InputMapData authored;
+    authored.Actions.push_back(InputAction{
+        .Id = static_cast<ActionId>(MoveId), .Name = "Move", .Kind = ActionKind::Axis2D});
+    authored.RequiresGameplayFocus = true; // dropped by the old encoder
+
+    vector<u8> record;
+    WriteFields(record, &authored, older, registry);
+
+    // The current loader reads it through the full 3-field TypeInfo; the missing field stays at its
+    // default (false), so an existing cooked map loads unchanged within CookedInputMapVersion.
+    InputMapData loaded;
+    REQUIRE(ReadFields(record, &loaded, full, registry).has_value());
+    REQUIRE(loaded.Actions.size() == 1);
+    CHECK_FALSE(loaded.RequiresGameplayFocus);
+}
+
 TEST_CASE("input map cook: a binding onto an undeclared action is a located error")
 {
     json map = SampleMap();

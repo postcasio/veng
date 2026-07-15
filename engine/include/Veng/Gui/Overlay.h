@@ -2,6 +2,7 @@
 
 #include <Veng/Veng.h>
 #include <Veng/Asset/AssetHandle.h>
+#include <Veng/Gui/Driver.h>
 #include <Veng/Gui/UIDocument.h>
 #include <Veng/Reflection/Reflect.h>
 #include <Veng/Scene/Entity.h>
@@ -9,6 +10,8 @@
 namespace Veng
 {
     class AssetManager;
+    class GuiDriverRegistry;
+    class Scene;
 
     namespace Gui
     {
@@ -62,6 +65,15 @@ namespace Veng
 
         /// @brief The document's z-order in the viewport layer stack; higher composites over lower.
         i32 Layer = 0;
+
+        /// @brief The presentation driver instantiated with this overlay's document; Null = undriven.
+        ///
+        /// Names a driver in the host-owned GuiDriverRegistry (see Veng/Gui/Driver.h). When set and
+        /// the registry resolves it, Drive instantiates the driver on the first drive, owns it for the
+        /// runtime's lifetime, re-runs OnInstantiate on any document re-instantiate, and calls
+        /// OnUpdate each drive — the engine's per-instance path for a HUD's data binding. Null (the
+        /// default) leaves the overlay undriven; a consumer binds it through SetContext instead.
+        GuiDriverId Driver = GuiDriverId::Null;
 
         /// @brief Whether the document takes input, or is display-only.
         ///
@@ -126,9 +138,17 @@ namespace Veng
         /// viewport that claims this overlay calls Drive, so the document never thrashes between
         /// viewports. A failed document load is logged once and leaves the overlay silent — a
         /// recoverable miss, never an abort.
+        ///
+        /// When Driver is set and @p drivers resolves it, the driver is instantiated on the first
+        /// drive (owned in the runtime, destroyed with it), its OnInstantiate re-run whenever the
+        /// document (re)instantiates, and its OnUpdate called each drive with the claiming viewport's
+        /// real view. An unresolved or Null Driver leaves the overlay undriven.
         /// @param viewport  The claiming viewport to present the document on.
         /// @param assets    The asset manager the document recipe and its fonts load through.
-        void Drive(Renderer::Viewport& viewport, AssetManager& assets) const;
+        /// @param scene     The presented scene the overlay lives in, handed to the driver.
+        /// @param drivers   The driver catalog the Driver id resolves against, or nullptr (undriven).
+        void Drive(Renderer::Viewport& viewport, AssetManager& assets, Scene& scene,
+                   GuiDriverRegistry* drivers) const;
 
         /// @brief Detaches the presented document from a viewport's layer stack — the inverse of Drive.
         ///
@@ -154,6 +174,7 @@ namespace Veng
 VE_REFLECT(::Veng::GuiOverlay, 0xC703A9C84AC4BA09ULL)
 VE_FIELD(Document, .DisplayName = "Document")
 VE_FIELD(Layer, .DisplayName = "Layer")
+VE_FIELD(Driver, .DisplayName = "Driver")
 VE_FIELD(Interactive, .DisplayName = "Interactive")
 VE_FIELD(TargetSeat, .DisplayName = "Target Seat")
 VE_REFLECT_END();

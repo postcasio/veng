@@ -39,6 +39,7 @@ namespace Veng
 {
     class ServerHost;
     class ClientHost;
+    class GuiDriverRegistry;
     namespace Net
     {
         class Client;
@@ -358,6 +359,21 @@ namespace Veng
         /// it here, so a module's SceneSystem registrations are present. A SceneSimulation
         /// reads it to instantiate the running systems. Must outlive this Application.
         [[nodiscard]] SystemRegistry& GetSystemRegistry() { return m_SystemRegistry; }
+
+        /// @brief Sets the host-owned GuiDriver catalog the engine drives claimed overlays through.
+        ///
+        /// The host (launcher/editor) calls VengModuleRegister — which fills this with the module's
+        /// GuiDriver registrations — then hands the populated registry here before Run, so the managed
+        /// viewports built during initialisation resolve each driven GuiOverlay's Driver id against it.
+        /// Null (the default) leaves every overlay undriven. Borrowed; must outlive this Application.
+        /// @param drivers  The host-owned driver catalog, or nullptr for none.
+        void SetGuiDriverRegistry(GuiDriverRegistry* drivers) { m_GuiDriverRegistry = drivers; }
+
+        /// @brief Returns the host-owned GuiDriver catalog, or nullptr when none was set.
+        [[nodiscard]] GuiDriverRegistry* GetGuiDriverRegistry() const
+        {
+            return m_GuiDriverRegistry;
+        }
 
         /// @brief Returns the ImGui layer, or nullptr if the app opted out.
         [[nodiscard]] ImGuiLayer* GetImGuiLayer() const { return m_ImGuiLayer.get(); }
@@ -927,6 +943,9 @@ namespace Veng
 
         /// @brief Borrowed from the host; must outlive this app and every SceneSimulation it drives.
         SystemRegistry& m_SystemRegistry;
+
+        /// @brief Borrowed host-owned GuiDriver catalog, or null; must outlive this app if set.
+        GuiDriverRegistry* m_GuiDriverRegistry = nullptr;
 
         Unique<Window> m_Window;
 

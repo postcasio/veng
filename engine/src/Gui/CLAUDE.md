@@ -242,8 +242,8 @@ the physically-expected hot-emitter look. Authoring a glowing panel end to end i
 The screen-space overlay is a reflected component too — the engine-driven scene component family
 has three members (scene/ECS material is [../Scene/CLAUDE.md](../Scene/CLAUDE.md)). A
 **`GuiOverlay`** (`Veng/Gui/Overlay.h`) is the screen-space sibling of `GuiSurface`: a reflected
-scene component `{ AssetHandle<Gui::UIDocument> Document; i32 Layer; bool Interactive; Reference
-TargetSeat; }` the **Viewport** discovers the same way (`View<GuiOverlay>()`) and drives onto its
+scene component `{ AssetHandle<Gui::UIDocument> Document; i32 Layer; GuiDriverId Driver; bool
+Interactive; Reference TargetSeat; }` the **Viewport** discovers the same way (`View<GuiOverlay>()`) and drives onto its
 **screen-space layer stack** through a `Gui::DocumentHost` + `Gui::DocumentLayer` — the exact
 `AttachDocument` path a HUD reaches by hand, owned by the engine (lazy load → instantiate → attach
 at `Layer` → re-attach on recreation). It is **LDR, composited after tonemap, un-bloomed** — the
@@ -259,6 +259,34 @@ attached. `~GuiOverlay` detaches on component destruction (the right lifetime wh
 goes); `Detach` covers the other case — a viewport stops presenting a world that stays alive (a world
 rebind), where the engine detaches the departed scene's overlays without waiting on component
 teardown.
+
+### The `GuiOverlay` driver — per-instance presentation binding
+
+The game owns only the data binding, and the **ergonomic path for it is a driver**, not a
+find-and-bind system. A **`GuiDriver`** (`Veng/Gui/Driver.h`) is a named, registered, per-instance
+presentation binding the engine instantiates from `GuiOverlay` data. `VE_GUI_DRIVER(Type, 0x…ULL,
+"Name")` mints a `GuiDriverId` (a `u64` leaf in the `SystemId`/`ActionId` id family, minted with
+`vengc generate-id`); a module registers the driver into the host-owned **`GuiDriverRegistry`**
+(`Veng/Gui/DriverRegistry.h`, mirroring `SystemRegistry` — register/enumerate-without-instantiating/
+duplicate-id-fatal, GPU-free/cooker-safe) reached through `VengModuleHost::Drivers` (the member whose
+addition **bumped `VENG_MODULE_ABI_VERSION` 5 → 6**). A `GuiOverlay` names one in its reflected
+`Driver` field (`GuiDriverId::Null` = undriven, the status quo). `GuiOverlay::Drive` instantiates the
+named driver on the first drive, owns it in the runtime (destroyed with it), re-runs `OnInstantiate`
+whenever the document (re)instantiates — exactly like `SetOnInstantiate` — and calls `OnUpdate` each
+drive with a `GuiDriverFrame { Document, Scene, Seat, Delta, View }` carrying the claiming viewport's
+real view. Two claimed instances of one overlay (split-screen) are **two driver instances with
+independent view-models**, so the per-instance state a per-world binding system would key by entity
+dissolves. `OnInstantiate` resolves elements and binds the driver's `Gui::BindingContext` through
+`Document::BindContext(context)` (the registry-free overload — the document supplies its own).
+
+**The boundary is concrete and checkable.** A driver reads scene state, stamps request/command
+components, and beyond those may write **only a component tagged `VE_VIEW_OUTPUT`**
+(`Veng/Reflection/Reflect.h`) — derived, view-owned state gameplay may read but no simulation or wire
+owns (`TypeInfo::ViewOutput` records the mark). A driver **never** writes a `VE_REPLICATED` or a
+Sim-input component, and never advances authoritative simulation — that stays components + systems. The
+bare `SetContext` / find-and-bind system pattern remains fully supported; the driver is the ergonomic
+path, not the only one. Both examples show the shape: hello-triangle's HUD sweep and the template's
+overlay HUD binding are drivers, their levels' `systems` arrays carrying no binding-only system.
 
 The **third** family member is **`CaptureSurface`** (`Veng/Renderer/CaptureSurface.h`), the
 render-to-texture sibling: a reflected component that puts a `SceneCapture` on an entity,

@@ -14,6 +14,9 @@ namespace Veng
     /// @brief Forward-declared so the reference member needs no include here.
     class SystemRegistry;
 
+    /// @brief Forward-declared so the pointer member needs no include here.
+    class GuiDriverRegistry;
+
     /// @brief The host-side module contract: the registries a loaded module writes into.
     ///
     /// The host owns these for the module's whole lifetime. Registration is GPU-free
@@ -27,6 +30,8 @@ namespace Veng
         TypeRegistry& Types;
         /// @brief Receives the module's SceneSystem registrations, in run order.
         SystemRegistry& Systems;
+        /// @brief Receives the module's GuiDriver registrations (per-instance UI presentation drivers).
+        GuiDriverRegistry* Drivers;
         /// @brief Non-null only when loaded by the editor host.
         EditorRegistry* Editor;
     };
@@ -48,7 +53,7 @@ extern "C"
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 5u
+#define VENG_MODULE_ABI_VERSION 6u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

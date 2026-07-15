@@ -542,12 +542,17 @@ namespace Veng::Renderer
             return;
         }
 
-        const Scene& world = *m_ViewState.World;
+        // The ViewState borrows the presented scene const for rendering, but the engine owns it
+        // mutably; a driven overlay's driver is the sanctioned point that reads finalized view state
+        // and stamps request/view-output components, so hand Drive a mutable scene here. The render
+        // gather already ran (Execute, above), and a driver stamps no GuiOverlay, so mutating other
+        // component pools now cannot disturb this View<GuiOverlay> walk.
+        Scene& world = const_cast<Scene&>(*m_ViewState.World);
         for (auto [entity, overlay] : world.View<GuiOverlay>())
         {
             if (ClaimsOverlay(world, entity, overlay))
             {
-                overlay.Drive(*this, m_Assets);
+                overlay.Drive(*this, m_Assets, world, m_GuiDrivers);
             }
         }
     }

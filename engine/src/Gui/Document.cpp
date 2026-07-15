@@ -2382,6 +2382,15 @@ namespace Veng::Gui
         m_BoundVersion = 0;
     }
 
+    void Document::BindContext(BindingContext* context)
+    {
+        // Resolve the registry from the document's own AssetManager, so a caller holding no
+        // TypeRegistry (a GuiOverlay driver) binds its view-model without re-supplying it.
+        const TypeRegistry* const registry =
+            context != nullptr && m_Assets != nullptr ? &m_Assets->GetTypeRegistry() : nullptr;
+        BindContext(context, registry);
+    }
+
     namespace
     {
         // A `value` binding on a value-bearing control (Slider/Checkbox/ProgressBar) writes the

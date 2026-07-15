@@ -53,6 +53,21 @@ namespace Veng
         static constexpr bool AlwaysRelevant = false;
     };
 
+    /// @brief Primary template authoring whether a type is a view/presentation output; false unless VE_VIEW_OUTPUT marks it.
+    ///
+    /// TypeRegistry::Register<T>() reads VengViewOutput<T>::ViewOutput into TypeInfo::ViewOutput. A
+    /// ViewOutput component is derived, view-owned state a GuiOverlay driver (see Veng/Gui/Driver.h)
+    /// is permitted to write — the checkable half of the driver boundary. A separate specialisation
+    /// point from VengReflect<T>, like VengReplication<T>, so it composes with every reflection macro.
+    /// False unless VE_VIEW_OUTPUT marks it.
+    /// @tparam T  The type whose view-output default is authored.
+    template <class T>
+    struct VengViewOutput
+    {
+        /// @brief Whether the type is a view/presentation output; false for the primary template.
+        static constexpr bool ViewOutput = false;
+    };
+
     /// @brief The recorded description of a registered type.
     ///
     /// Carries the name, layout, construct/destruct/move thunks a type-erased
@@ -99,6 +114,12 @@ namespace Veng
         /// component (the session, seats), so global game state reaches every connection regardless
         /// of distance. False for every unmarked type. Set from VengAlwaysRelevant<T>::AlwaysRelevant.
         bool AlwaysRelevant = false;
+        /// @brief Whether the type is a view/presentation output a GuiOverlay driver may write, via VE_VIEW_OUTPUT.
+        ///
+        /// A ViewOutput component is derived, view-owned state gameplay may read but no simulation or
+        /// wire owns — the one class of component (beyond request/command components) a driver is
+        /// permitted to write. False for every unmarked type. Set from VengViewOutput<T>::ViewOutput.
+        bool ViewOutput = false;
         /// @brief Field descriptors for Struct-class types; empty for leaves.
         vector<FieldDescriptor> Fields;
         /// @brief The type's default presentation, authored via VE_DISPLAY; the type-default arm of the cascade.
@@ -255,6 +276,7 @@ namespace Veng
             info.Display = VengDisplay<T>::Get();
             info.Replicated = VengReplication<T>::Replicated;
             info.AlwaysRelevant = VengAlwaysRelevant<T>::AlwaysRelevant;
+            info.ViewOutput = VengViewOutput<T>::ViewOutput;
 
             // An enum authored with VE_ENUM carries its {name, value} table; record it for
             // the editor's named combo. A bare VE_LEAF(…, Enum) has no accessor and stays empty.
