@@ -1551,6 +1551,184 @@ TEST_CASE("One client multiplexes two worlds over one connection; identical NetI
     CHECK(client.Host->LastServerTick(joinB) > 0);
 }
 
+TEST_CASE(
+    "With the auto-join off, each joined WorldKey lands in its own runner world, not world #0")
+{
+    // The client complement of the server's per-WorldKey worlds, exercised through the Application
+    // primitives it composes: a device-free WorldRunner, a ClientHost with AutoJoin off, and a per-join
+    // pending-target queue whose LoadLevel installs each reply's scene into the runner world its join
+    // opened. It guards the client-side per-world join binding: a front-end world #0 the client owns
+    // independently must survive every join untouched, and two distinct WorldKeys must land in two
+    // distinct runner worlds — never a second join installing over world #0's scene (the use-after-free
+    // the single-managed-world client caused).
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+
+    TypeRegistry serverTypes;
+    RegisterBuiltinTypes(serverTypes);
+    Unique<Scene> sceneA = Scene::Create(serverTypes);
+    Unique<Scene> sceneB = Scene::Create(serverTypes);
+    const WorldInstanceId worldA{.Value = 1};
+    const WorldInstanceId worldB{.Value = 2};
+    const WorldKey keyA = WorldKey::FromU64(0xA);
+    const WorldKey keyB = WorldKey::FromU64(0xB);
+    const AssetId levelA{0x00000000000000A1ULL};
+    const AssetId levelB{0x00000000000000B2ULL};
+
+    Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
+        .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
+        .WorldId = worldA,
+        .Key = keyA,
+        .World = *sceneA,
+        .Assets = FakeAssets(),
+        .LevelId = levelA,
+        .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
+        .Interest = InterestSettings{.Radius = 0.0f},
+    });
+    REQUIRE(hostR.has_value());
+    Unique<ServerHost> host = std::move(*hostR);
+    host->AddWorld(
+        ServerWorldInfo{.WorldId = worldB,
+                        .Key = keyB,
+                        .World = *sceneB,
+                        .LevelId = levelB,
+                        .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
+                        .Interest = InterestSettings{.Radius = 0.0f}});
+
+    // The client owns its worlds through a WorldRunner exactly as Application does.
+    TypeRegistry clientTypes;
+    RegisterBuiltinTypes(clientTypes);
+    SystemRegistry clientSystems;
+    WorldRunner runner(WorldRunnerInfo{.Types = &clientTypes, .Systems = &clientSystems});
+
+    // A front-end world #0 the client owns independently of any join; it is never a join target, so it
+    // must stay untouched — the crash was a second join freeing world #0's scene out from under it.
+    const WorldInstanceId frontEnd =
+        runner.OpenWorld(WorldOpenInfo{.SimTickRate = 60, .StartSimulation = false});
+    Scene* const frontEndScene = &runner.ResolveWorld(frontEnd)->GetScene();
+    const Entity sentinel = frontEndScene->CreateEntity();
+
+    Unique<Net::Client> client = *Net::Client::Connect(
+        ClientInfo{.TransportOverride = clientT.get(), .Connection = FastConfig});
+    const InputSendBuffer send(InputSendBuffer::Settings{.Redundancy = 3});
+
+    // The join's runner-world target queue: each join pushes the world it opened, LoadLevel pops it FIFO
+    // (replies arrive in request order over the reliable channel) — Application::JoinWorld's mechanism.
+    std::deque<WorldInstanceId> pending;
+    std::unordered_map<u64, Entity>
+        seatByWorld; // the LoadLevel-authored local seat, by runner world
+
+    Unique<ClientHost> clientHost = ClientHost::Create(ClientHostInfo{
+        .Client = *client,
+        .Assets = FakeAssets(),
+        .AutoJoin = false,
+        .LoadLevel = [&](AssetId) -> Scene*
+        {
+            REQUIRE_FALSE(pending.empty());
+            const WorldInstanceId target = pending.front();
+            pending.pop_front();
+            Unique<Scene> scene = Scene::Create(clientTypes);
+            const Entity camera = scene->CreateEntity();
+            scene->Add<Transform>(camera);
+            scene->Add<Camera>(camera);
+            scene->Add<CameraFollow>(camera);
+            scene->Add<Authority>(camera, Authority{.Tier = Tier::Local});
+            const Entity seat = scene->CreateEntity();
+            scene->Add<Viewer>(seat, Viewer{.Camera = camera});
+            scene->Add<Authority>(seat, Authority{.Tier = Tier::Local});
+            seatByWorld[target.Value] = seat;
+            return &runner.InstallScene(target, std::move(scene));
+        },
+        .ResolvePrefab = [](AssetId) -> Ref<Prefab> { return nullptr; },
+        .Prediction = [](const Scene&, Entity) { return vector<Entity>{}; },
+    });
+
+    // Application::JoinWorld's shape: open a fresh runner world, queue it, request the join.
+    auto joinWorld = [&](const WorldKey& key) -> WorldInstanceId
+    {
+        const WorldInstanceId world =
+            runner.OpenWorld(WorldOpenInfo{.SimTickRate = 60, .StartSimulation = false});
+        pending.push_back(world);
+        clientHost->Join(key);
+        return world;
+    };
+
+    const std::unordered_map<u64, Scene*> scenes{{worldA.Value, sceneA.get()},
+                                                 {worldB.Value, sceneB.get()}};
+    const std::unordered_map<u64, f32> dirs{{worldA.Value, 1.0f}, {worldB.Value, -1.0f}};
+    MovementSystem movement;
+    std::unordered_map<u64, Entity> pawnByWorld;
+    std::unordered_map<u64, InputJitterBuffer> jitter;
+
+    WorldInstanceId gameA{};
+    WorldInstanceId gameB{};
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    bool joined = false;
+    for (u64 tick = 1; tick <= 200; ++tick)
+    {
+        now += Delta;
+        DriveWorlds(*host, scenes, dirs, movement, pawnByWorld, tick, Delta);
+        host->Pump(now, tick);
+        IngestConnectionInputs(*host, jitter, InputJitterBuffer::Settings{}, serverTypes);
+        clientHost->Pump(now);
+        if (client->State() == ClientState::Connected)
+        {
+            if (!joined)
+            {
+                gameA = joinWorld(keyA);
+                gameB = joinWorld(keyB);
+                joined = true;
+            }
+            (void)client->Server().Send(Channel::UnreliableSequenced, send.Encode(0, clientTypes));
+        }
+    }
+
+    // Both joins landed, each into its own opened runner world — neither is the front-end world #0.
+    REQUIRE(clientHost->Joins().size() == 2);
+    CHECK(gameA != frontEnd);
+    CHECK(gameB != frontEnd);
+    CHECK(gameA != gameB);
+
+    const JoinId joinA = clientHost->Joins()[0]; // keyA requested first ⇒ lower JoinId
+    const JoinId joinB = clientHost->Joins()[1];
+
+    // The join's scene IS the runner world it opened (the ClientHost owns no scene of its own) — the
+    // per-world binding the fix installs, keyed FIFO to the requesting join.
+    const World* runnerA = runner.ResolveWorld(gameA);
+    const World* runnerB = runner.ResolveWorld(gameB);
+    REQUIRE(runnerA != nullptr);
+    REQUIRE(runnerB != nullptr);
+    Scene* const clientA = &runnerA->GetScene();
+    Scene* const clientB = &runnerB->GetScene();
+    CHECK(clientHost->World(joinA) == clientA);
+    CHECK(clientHost->World(joinB) == clientB);
+    CHECK(clientA != clientB);
+
+    // The front-end world #0 survived both joins untouched: same scene object, sentinel still alive —
+    // the second join never freed or overwrote a peer world's scene (the use-after-free regression).
+    CHECK(&runner.ResolveWorld(frontEnd)->GetScene() == frontEndScene);
+    CHECK(frontEndScene->IsAlive(sentinel));
+    CHECK(clientA != frontEndScene);
+    CHECK(clientB != frontEndScene);
+
+    // Each joined world is presentable: its LoadLevel-authored local seat lives in the runner-owned
+    // scene, and the server pawn streamed in and moved in its own direction (proof both worlds' streams
+    // applied to their own scene, not one clobbering the other).
+    CHECK(clientA->IsAlive(seatByWorld.at(gameA.Value)));
+    CHECK(clientB->IsAlive(seatByWorld.at(gameB.Value)));
+
+    const NetId pawnNetA = sceneA->Get<NetIdentity>(pawnByWorld.at(worldA.Value)).Id;
+    const NetId pawnNetB = sceneB->Get<NetIdentity>(pawnByWorld.at(worldB.Value)).Id;
+    const Entity aPawn = clientHost->Replication(joinA).Map().Lookup(pawnNetA);
+    const Entity bPawn = clientHost->Replication(joinB).Map().Lookup(pawnNetB);
+    REQUIRE_FALSE(aPawn.IsNull());
+    REQUIRE_FALSE(bPawn.IsNull());
+    CHECK(clientA->IsAlive(aPawn));
+    CHECK(clientB->IsAlive(bPawn));
+    CHECK(clientA->Get<Transform>(aPawn).Position.x > 0.1f);
+    CHECK(clientB->Get<Transform>(bPawn).Position.x < -0.1f);
+}
+
 TEST_CASE("A drop/reorder burst on the shared connection leaves both multiplexed worlds converging")
 {
     auto [serverT, clientTBase] = LoopbackTransport::CreatePair();

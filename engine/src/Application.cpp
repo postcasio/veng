@@ -40,6 +40,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <deque>
 #include <span>
 #include <unordered_map>
 
@@ -71,11 +72,30 @@ namespace Veng
         // Client arm.
         Unique<Net::Client> Client;
         Unique<ClientHost> ClientHost;
-        InputSendBuffer Send;
-        bool WorldStarted = false;
-        // True once the client has seeded its SimClock to the server's tick (the first snapshot
-        // reveals it). Until then the client's tick epoch is unrelated to the server's.
-        bool ClockSeeded = false;
+
+        // Per client-joined world: its input send window, retained level, spawn residency, and the
+        // clock-seed/slew latches driving its Client-tier sim. Keyed by WorldInstanceId value. The
+        // single-join session has one entry (the managed world); a multiplexed client one per join.
+        struct ClientWorldState
+        {
+            InputSendBuffer Send;
+            // Keeps the joined level resident for the world's lifetime (its spawned components reference it).
+            AssetHandle<Level> Level;
+            // The spawn residency, held from the join load until the world's simulation starts.
+            ResidencyBatch Pending;
+            bool Started = false;
+            // True once this world's SimClock has been seeded to the server's tick (its first snapshot
+            // reveals it). Until then its tick epoch is unrelated to the server's.
+            bool ClockSeeded = false;
+            // This world's sim time-scale this frame (the client slew toward its target tick lead); 1
+            // when not yet syncing. Applied as the world's SimScale so it runs its sim ahead of the server.
+            f32 Slew = 1.0f;
+        };
+        unordered_map<u64, ClientWorldState> ClientWorlds;
+        // The runner worlds each in-flight join installs into, in join-request (FIFO) order: LoadLevel
+        // pops the front to place the reply's scene, so a reply lands in the world its join opened.
+        std::deque<WorldInstanceId> PendingJoinWorlds;
+
         // Prefabs a replicated spawn resolved, kept resident so their entities instantiate; keyed by
         // AssetId value.
         unordered_map<u64, AssetHandle<Prefab>> ClientPrefabs;
@@ -401,11 +421,19 @@ namespace Veng
         m_Net = CreateUnique<NetState>();
         m_Net->Role = NetRole::Client;
         m_Net->Info = net;
-        // The joined managed world ticks Client-tier — its Sim displays replicated state and advances
-        // only its client-local (and predicted) entities.
-        m_Net->WorldRoles[m_ManagedWorld.Value] = NetRole::Client;
-        m_Net->Send =
-            InputSendBuffer(InputSendBuffer::Settings{.Redundancy = net.InputRedundancyTicks});
+
+        // The auto-join binds the managed world #0 as the Client-tier join target: its Sim displays
+        // replicated state and advances only its client-local (and predicted) entities, and the fixed
+        // DefaultWorldKey reply loads into it (queued FIFO like any join). With the auto-join off, the
+        // managed world is left as it is — a consumer joins the worlds it wants through JoinWorld, each
+        // into its own runner world.
+        if (net.AutoJoinDefaultWorld)
+        {
+            m_Net->WorldRoles[m_ManagedWorld.Value] = NetRole::Client;
+            m_Net->ClientWorlds[m_ManagedWorld.Value].Send =
+                InputSendBuffer(InputSendBuffer::Settings{.Redundancy = net.InputRedundancyTicks});
+            m_Net->PendingJoinWorlds.push_back(m_ManagedWorld);
+        }
 
         Result<Unique<Net::Client>> client = Net::Client::Connect(
             Net::ClientInfo{.Host = host, .Port = port, .NetSim = m_LaunchArgs.NetSim});
@@ -421,6 +449,9 @@ namespace Veng
         m_Net->ClientHost = ClientHost::Create(ClientHostInfo{
             .Client = *m_Net->Client,
             .Assets = *m_AssetManager,
+            // Auto-join the DefaultWorldKey into the managed world on connect unless opted out, in which
+            // case the consumer drives every join through JoinWorld.
+            .AutoJoin = net.AutoJoinDefaultWorld,
             // The client mirror of the server's factory-supplied digest: yields the digest this client
             // expects for the key it joins, validated against the reply's echo. Unset (the default)
             // presents the zero digest.
@@ -508,6 +539,26 @@ namespace Veng
         return ConnectClient(host, resolved);
     }
 
+    WorldInstanceId Application::JoinWorld(const Net::WorldKey& key)
+    {
+        VE_ASSERT(m_Net && m_Net->ClientHost,
+                  "JoinWorld requires an active client connection (Connect or --join)");
+
+        // Open a fresh runner world the join's reply installs its scene into (LoadClientLevel), started
+        // once the reply loads it. It ticks Client-tier and carries its own input send window, so a
+        // joined gameplay world never collides with the managed world or another join.
+        const WorldInstanceId world = m_WorldRunner->OpenWorld(WorldOpenInfo{
+            .SimTickRate = m_Info.World ? m_Info.World->SimTickRate : 60u,
+            .StartSimulation = false,
+        });
+        m_Net->WorldRoles[world.Value] = NetRole::Client;
+        m_Net->ClientWorlds[world.Value].Send = InputSendBuffer(
+            InputSendBuffer::Settings{.Redundancy = m_Net->Info.InputRedundancyTicks});
+        m_Net->PendingJoinWorlds.push_back(world);
+        m_Net->ClientHost->Join(key);
+        return world;
+    }
+
     void Application::StopNet()
     {
         // Dropping the host closes its connections and returns the managed world to Server-tier with no
@@ -517,37 +568,82 @@ namespace Veng
 
     Scene* Application::LoadClientLevel(const AssetId id)
     {
+        // The reply installs into the world queued for this join (FIFO in reply order); with no queued
+        // target it falls back to the managed world (the direct-ClientHost edge).
+        WorldInstanceId target = m_ManagedWorld;
+        if (!m_Net->PendingJoinWorlds.empty())
+        {
+            target = m_Net->PendingJoinWorlds.front();
+            m_Net->PendingJoinWorlds.pop_front();
+        }
+
         // The accept names the level; load it with the server-authoritative authored entities skipped
-        // (they arrive from the spawn stream) and keep the level handle resident. The residency batch
-        // is held for OnWorldLoaded when the scene starts. The loaded scene is installed as world #0's
-        // scene, so the runner owns it — the ClientHost applies the stream into a runner-owned world.
+        // (they arrive from the spawn stream) and keep the level handle resident in the target world's
+        // state. The residency batch is held for OnWorldLoaded when the scene starts. The loaded scene is
+        // installed as the target world's scene, so the runner owns it — the ClientHost applies the
+        // stream into a runner-owned world.
         const AssetResult<AssetHandle<Level>> level = m_AssetManager->LoadSync<Level>(id);
         VE_ASSERT(level.has_value(), "client level load failed: {}", level.error().Detail);
-        m_WorldLevel = *level;
 
-        LevelInstance instance = m_WorldLevel.Get()->LoadInto(
+        NetState::ClientWorldState& state = m_Net->ClientWorlds[target.Value];
+        state.Level = *level;
+        LevelInstance instance = state.Level.Get()->LoadInto(
             *m_AssetManager, m_SystemRegistry, LevelLoadInfo{.SkipServerAuthoritative = true});
-        m_ClientPending = std::move(instance.Pending);
-        return &m_WorldRunner->InstallScene(m_ManagedWorld, std::move(instance.World));
+        state.Pending = std::move(instance.Pending);
+        // The managed world's level handle is also mirrored for GetWorldLevel and StartHosting's reply.
+        if (target == m_ManagedWorld)
+        {
+            m_WorldLevel = state.Level;
+        }
+        return &m_WorldRunner->InstallScene(target, std::move(instance.World));
     }
 
-    void Application::StartWorldScene(Scene& world)
+    void Application::StartWorldScene(const WorldInstanceId world, Scene& scene)
     {
-        SeedViewportFromWorld(world);
-        OnWorldLoaded(m_ManagedWorld, world, m_ClientPending);
+        // Seed the managed viewport only from the managed world; a joined world becomes presented through
+        // the consumer's RebindManagedViewport, which keeps the viewport's existing render settings.
+        if (world == m_ManagedWorld)
+        {
+            SeedViewportFromWorld(scene);
+        }
+
+        NetState::ClientWorldState& state = m_Net->ClientWorlds[world.Value];
+        OnWorldLoaded(world, scene, state.Pending);
 
         // The residency batch existed only to hold the join-loaded assets resident across the
         // deferred gap between the client level load and this start; the spawned scene's components
         // now hold those handles, so release the batch's redundant cache-entry refs. Keeping it would
-        // pin every join-loaded GPU resource for the whole session and leave the last ref on this
-        // member — dropped only after Context::Dispose destroys the VMA allocator, tripping its
-        // leak assert. The standalone path's batch is a local that dies here for the same reason.
-        m_ClientPending = ResidencyBatch{};
+        // pin every join-loaded GPU resource for the whole session and leave the last ref in this
+        // state — dropped only after Context::Dispose destroys the VMA allocator, tripping its leak
+        // assert. The standalone path's batch is a local that dies here for the same reason.
+        state.Pending = ResidencyBatch{};
 
-        world.StartSimulation(SystemContext{.Assets = *m_AssetManager,
+        scene.StartSimulation(SystemContext{.Assets = *m_AssetManager,
                                             .Input = *m_Input,
                                             .Tasks = *m_TaskSystem,
-                                            .Role = RoleForWorld(m_ManagedWorld)});
+                                            .Role = RoleForWorld(world)});
+    }
+
+    Net::JoinId Application::ClientJoinForWorld(const WorldInstanceId world) const
+    {
+        if (!m_Net || m_Net->ClientHost == nullptr)
+        {
+            return Net::ControlJoinId;
+        }
+        const World* resolved = m_WorldRunner->ResolveWorld(world);
+        if (resolved == nullptr)
+        {
+            return Net::ControlJoinId;
+        }
+        const Scene* scene = &resolved->GetScene();
+        for (const Net::JoinId join : m_Net->ClientHost->Joins())
+        {
+            if (m_Net->ClientHost->World(join) == scene)
+            {
+                return join;
+            }
+        }
+        return Net::ControlJoinId;
     }
 
     void Application::PumpNet()
@@ -557,9 +653,16 @@ namespace Veng
             return;
         }
 
-        // Pump each net-active world once. The transport binds one world here, so the map holds exactly
-        // that world; iterating it keeps the drive per-world for the later multiplexed transport to
-        // route to, while a standalone Server-tier world (absent from the map) is never pumped.
+        // One ClientHost multiplexes every joined world over one connection, so advance the shared
+        // join/apply flow once before the per-world drive rather than once per net-active client world.
+        if (m_Net->ClientHost != nullptr)
+        {
+            m_Net->ClientHost->Pump(static_cast<f64>(Time::Now()));
+        }
+
+        // Pump each net-active world once: a Server-tier world flushes its host stream, a Client-tier
+        // world starts its loaded scene and sends its stamped input. A standalone Server-tier world
+        // (absent from the map) is never pumped.
         for (const auto& [worldValue, role] : m_Net->WorldRoles)
         {
             PumpNetWorld(WorldInstanceId{.Value = worldValue}, role);
@@ -592,27 +695,33 @@ namespace Veng
             return;
         }
 
-        // Client: advance the join flow (accept → load → ack → apply the stream → wire the own seat),
-        // start the loaded scene once, then send this frame's stamped input window.
-        m_Net->ClientHost->Pump(now);
-        if (!m_Net->WorldStarted)
+        // Client: the shared ClientHost was already pumped in PumpNet. Resolve this world's join (invalid
+        // until its reply loads its scene), start its scene once, then send its stamped input window.
+        const Net::JoinId join = ClientJoinForWorld(world);
+        if (join == Net::ControlJoinId)
         {
-            if (Scene* scene = m_Net->ClientHost->World())
+            return;
+        }
+
+        NetState::ClientWorldState& state = m_Net->ClientWorlds[world.Value];
+        if (!state.Started)
+        {
+            World* resolved = m_WorldRunner->ResolveWorld(world);
+            if (resolved != nullptr)
             {
-                StartWorldScene(*scene);
-                m_Net->WorldStarted = true;
+                StartWorldScene(world, resolved->GetScene());
+                state.Started = true;
             }
         }
 
-        // Acknowledge the highest applied server tick so the server advances this connection's delta
-        // baselines (and gates its snapshots against them) rather than re-sending full state forever.
-        // Tag the input with the joined world's JoinId so the server demuxes it to the right instance;
-        // before the join lands (no JoinId yet) there is no world to feed, so nothing is sent.
-        const Net::JoinId join = m_Net->ClientHost->CurrentJoinId();
-        if (m_Net->Client->State() == Net::ClientState::Connected && join != Net::ControlJoinId)
+        // Acknowledge the highest applied server tick for this world so the server advances this
+        // connection's delta baselines (and gates its snapshots against them) rather than re-sending
+        // full state forever. Tag the input with the world's JoinId so the server demuxes it to the
+        // right instance.
+        if (m_Net->Client->State() == Net::ClientState::Connected)
         {
             const vector<u8> packet =
-                m_Net->Send.Encode(m_Net->ClientHost->LastServerTick(), m_TypeRegistry);
+                state.Send.Encode(m_Net->ClientHost->LastServerTick(join), m_TypeRegistry);
             (void)m_Net->Client->Server().Send(Net::Channel::UnreliableSequenced,
                                                Net::EncodeWorldEnvelope(join, packet));
         }
@@ -634,7 +743,9 @@ namespace Veng
         World* resolved = m_WorldRunner->ResolveWorld(world);
         if (m_Net && resolved != nullptr)
         {
-            StampLocalSeatInput(m_Net->Send, resolved->GetScene(), clientTick);
+            // Stamp into this world's own send window; a multiplexed client keeps one per joined world.
+            StampLocalSeatInput(m_Net->ClientWorlds[world.Value].Send, resolved->GetScene(),
+                                clientTick);
         }
     }
 
@@ -837,17 +948,17 @@ namespace Veng
 
         // Drop the net hosts before the world runner and the asset manager: a client host borrows a
         // runner-owned world's scene (whose components hold AssetHandles), and both hosts hold
-        // connections that must close before the transport goes.
+        // connections that must close before the transport goes. This also releases each client world's
+        // retained level handle and its held spawn residency (normally released once the world starts,
+        // but held here for a client torn down after a level loaded but before its deferred start ran) —
+        // while the asset manager and context are still live, so their refs never outlive the allocator.
         m_Net.reset();
 
         // Drop the world runner (and every world it owns) before the asset manager so its worlds'
         // components' AssetHandles (the sky's environment/material, the level handle) retire through
-        // the deferred path. The client residency batch is normally released once the world starts;
-        // drop it here too, for a client torn down after its level loaded but before the deferred
-        // start ever ran (its cache-entry refs would otherwise outlive the context's allocator).
+        // the deferred path.
         m_WorldRunner.reset();
         m_WorldLevel = {};
-        m_ClientPending = ResidencyBatch{};
 
         // Release the compositor's gather + composite tail (GPU resources) and its placement cache
         // before dropping the managed viewports, so the viewports' outputs retire rather than
@@ -895,55 +1006,75 @@ namespace Veng
 
         const f32 delta = Time::Update();
 
-        // The managed world drives the net tick binding; resolve it and whether it is live before the
-        // world tick, so the client tick-offset slew reads and seeds its clock ahead of the advance.
+        // The managed world's interpolation fraction drives the view pushes and a game's overlay Update;
+        // resolve it before the tick so its alpha is read after the advance.
         World* const managed = m_WorldRunner->ResolveWorld(m_ManagedWorld);
-        const bool managedActive =
-            managed != nullptr && managed->GetScene().GetSimulation() != nullptr &&
-            managed->GetScene().GetSimulation()->IsStarted() && !managed->IsPaused();
 
-        // Client tick-offset control: the client runs its managed world's sim tick ahead of the server
-        // so the input it stamps for a tick arrives before the server's scheduled consume reaches it.
-        // The tick-offset controller is the single source of truth for how far ahead (the target
-        // lead); this both seeds the epoch to it and slews the sim step toward it (m_NetSlew, applied
-        // as the managed world's SimScale). Off a client, or before a snapshot has revealed the
-        // server's tick, the factor is 1.0.
-        m_NetSlew = 1.0f;
-        if (managedActive && RoleForWorld(m_ManagedWorld) == NetRole::Client && m_Net->ClientHost &&
-            m_Net->ClientHost->LastServerTick() > 0)
+        // Client tick-offset control, per net-active client world: each runs its sim tick ahead of the
+        // server so the input it stamps for a tick arrives before the server's scheduled consume reaches
+        // it. Each world's tick-offset controller (keyed by its JoinId) is the single source of truth for
+        // how far ahead the world runs; this seeds the world's epoch to it and slews its sim step toward
+        // it (the world's Slew, applied as that world's SimScale). Reset every client world's slew first,
+        // so a world not yet syncing (no snapshot, or paused) runs unscaled.
+        if (m_Net && m_Net->ClientHost)
         {
-            SimClock& clock = managed->Clock;
-
-            // Fold this frame's link state into the controller first, so the target lead it computes
-            // drives both the hard snap and the bounded slew below — one target, never two disagreeing
-            // ones (a seed to one lead that the slew then drags off).
-            m_NetSlew = m_Net->ClientHost->ObserveTickSync(clock.GetTick());
-
-            const i64 targetLead = static_cast<i64>(
-                std::lround(std::max(0.0f, m_Net->ClientHost->TickSync().TargetOffset())));
-            const u64 desired = m_Net->ClientHost->LastServerTick() + static_cast<u64>(targetLead);
-            const i64 drift = static_cast<i64>(clock.GetTick()) - static_cast<i64>(desired);
-
-            // Seed the epoch once — each SimClock starts at 0 when its process does, so a client
-            // joining a long-running server must jump its tick to the server's or its input lands on
-            // numbers the server's scheduled consume never matches. Thereafter hard-snap only when the
-            // drift is too large for the bounded ±slew to claw back in time — a long hitch, a step
-            // change in RTT, a spiral-clamp tick drop. A snap clears the now-stale prediction history,
-            // so it is reserved for large drift and the slew handles the rest; the trigger is drift
-            // itself, not the frame budget, so a client at a healthy frame rate still recovers from a
-            // transient stall.
-            const bool seed = !m_Net->ClockSeeded;
-            const bool largeDrift =
-                std::llabs(drift) > static_cast<i64>(m_Net->Info.SnapshotIntervalTicks + 6);
-            if (seed || largeDrift)
+            for (auto& [worldValue, clientWorld] : m_Net->ClientWorlds)
             {
-                clock.SetTick(desired);
-                m_Net->ClientHost->History().Clear(); // captures on the pre-snap epoch are stale
-                m_Net->ClockSeeded = true;
-                m_NetSlew = 1.0f; // fresh epoch: no residual to chase this frame
-                Log::Info("Client sim clock {} to tick {} (server {} + lead {})",
-                          seed ? "seeded" : "re-synced", desired,
-                          m_Net->ClientHost->LastServerTick(), targetLead);
+                clientWorld.Slew = 1.0f;
+            }
+            for (const auto& [worldValue, role] : m_Net->WorldRoles)
+            {
+                if (role != NetRole::Client)
+                {
+                    continue;
+                }
+                const WorldInstanceId world{.Value = worldValue};
+                World* const w = m_WorldRunner->ResolveWorld(world);
+                const bool active = w != nullptr && w->GetScene().GetSimulation() != nullptr &&
+                                    w->GetScene().GetSimulation()->IsStarted() && !w->IsPaused();
+                const Net::JoinId join = ClientJoinForWorld(world);
+                if (!active || join == Net::ControlJoinId ||
+                    m_Net->ClientHost->LastServerTick(join) == 0)
+                {
+                    continue;
+                }
+
+                NetState::ClientWorldState& state = m_Net->ClientWorlds[world.Value];
+                SimClock& clock = w->Clock;
+
+                // Fold this frame's link state into the controller first, so the target lead it computes
+                // drives both the hard snap and the bounded slew below — one target, never two
+                // disagreeing ones (a seed to one lead that the slew then drags off).
+                state.Slew = m_Net->ClientHost->ObserveTickSync(join, clock.GetTick());
+
+                const i64 targetLead = static_cast<i64>(
+                    std::lround(std::max(0.0f, m_Net->ClientHost->TickSync(join).TargetOffset())));
+                const u64 desired =
+                    m_Net->ClientHost->LastServerTick(join) + static_cast<u64>(targetLead);
+                const i64 drift = static_cast<i64>(clock.GetTick()) - static_cast<i64>(desired);
+
+                // Seed the epoch once — each SimClock starts at 0 when its process does, so a client
+                // joining a long-running server must jump its tick to the server's or its input lands on
+                // numbers the server's scheduled consume never matches. Thereafter hard-snap only when
+                // the drift is too large for the bounded ±slew to claw back in time — a long hitch, a
+                // step change in RTT, a spiral-clamp tick drop. A snap clears the now-stale prediction
+                // history, so it is reserved for large drift and the slew handles the rest; the trigger
+                // is drift itself, not the frame budget, so a client at a healthy frame rate still
+                // recovers from a transient stall.
+                const bool seed = !state.ClockSeeded;
+                const bool largeDrift =
+                    std::llabs(drift) > static_cast<i64>(m_Net->Info.SnapshotIntervalTicks + 6);
+                if (seed || largeDrift)
+                {
+                    clock.SetTick(desired);
+                    m_Net->ClientHost->History(join)
+                        .Clear(); // captures on the pre-snap epoch are stale
+                    state.ClockSeeded = true;
+                    state.Slew = 1.0f; // fresh epoch: no residual to chase this frame
+                    Log::Info("Client sim clock {} to tick {} (server {} + lead {})",
+                              seed ? "seeded" : "re-synced", desired,
+                              m_Net->ClientHost->LastServerTick(join), targetLead);
+                }
             }
         }
 
@@ -1002,8 +1133,18 @@ namespace Veng
                 return BuildSystemContext(scene, RoleForWorld(world), pointer, tick, alpha,
                                           firstStep);
             },
-            .SimScale = [this](const WorldInstanceId world)
-            { return world == m_ManagedWorld ? m_NetSlew : 1.0f; },
+            .SimScale = [this](const WorldInstanceId world) -> f32
+            {
+                if (m_Net)
+                {
+                    const auto it = m_Net->ClientWorlds.find(world.Value);
+                    if (it != m_Net->ClientWorlds.end())
+                    {
+                        return it->second.Slew;
+                    }
+                }
+                return 1.0f;
+            },
             .BeforeSimStep =
                 [this](const WorldInstanceId world, Scene& scene, const u64 tick)
             {
@@ -1018,11 +1159,15 @@ namespace Veng
             {
                 if (IsWorldNetActive(world) && RoleForWorld(world) == NetRole::Client)
                 {
-                    // The Sim phase just ran control + movement for the Predicted set (the authority
-                    // filter answers true for it client-side); stamp the seat input to send, then
-                    // record this tick's input and predicted state for reconciliation.
-                    StampClientInput(world, tick);
-                    m_Net->ClientHost->RecordPrediction(tick);
+                    const Net::JoinId join = ClientJoinForWorld(world);
+                    if (join != Net::ControlJoinId)
+                    {
+                        // The Sim phase just ran control + movement for the Predicted set (the authority
+                        // filter answers true for it client-side); stamp the seat input to send, then
+                        // record this tick's input and predicted state for this world's reconciliation.
+                        StampClientInput(world, tick);
+                        m_Net->ClientHost->RecordPrediction(join, tick);
+                    }
                 }
             },
         });

@@ -135,6 +135,15 @@ namespace Veng
         /// presents the zero digest (matching a content-free server world), the zero-config default.
         /// Inert off a client.
         function<Net::ContentDigest(const Net::WorldKey&)> ClientWorldDigest;
+        /// @brief Whether a joining client auto-joins Net::DefaultWorldKey into the managed world on connect.
+        ///
+        /// True (the default) is the single-world convenience: the mounted ClientHost requests
+        /// Net::DefaultWorldKey the moment it connects, and its reply loads into the managed world #0 —
+        /// byte-identical to the single-join behavior. False suppresses the auto-join: Connect (or a
+        /// `--join` launch) stands up the transport and ClientHost without joining any world, leaving the
+        /// managed world untouched, so a consumer explicitly joins the WorldKey(s) it wants through
+        /// Application::JoinWorld — each landing in its own runner world. Inert off a client.
+        bool AutoJoinDefaultWorld = true;
 
         /// @brief The get-or-place world factory the mounted ServerHost resolves a joined WorldKey through.
         ///
@@ -473,6 +482,22 @@ namespace Veng
         /// @return Empty on success, or an error string if the connection could not be opened.
         VoidResult Connect(const string& host, u16 port = 0);
 
+        /// @brief Joins a world by opaque key into its own runner world, returning that world's handle.
+        ///
+        /// The client complement of the server's per-WorldKey worlds: opens a fresh WorldRunner world,
+        /// requests the join over the mounted ClientHost, and installs the replicated scene into that
+        /// world when the reply lands (never the managed world #0) — so a joined gameplay world and the
+        /// managed world (a front-end, or a second joined world) coexist without colliding. The world
+        /// opens paused; the join flow starts its simulation once the reply loads it, ticking it
+        /// Client-tier. The returned handle is what a consumer rebinds the managed viewport to
+        /// (RebindManagedViewport) to present the joined world. Pair it with
+        /// GameNetInfo::AutoJoinDefaultWorld = false to suppress the fixed auto-join and drive every join
+        /// explicitly.
+        /// @param key  The opaque world to join (the server resolves it through its get-or-place policy).
+        /// @pre A client connection is active (a prior Connect or a `--join` launch).
+        /// @return The runner world the join installs its replicated scene into.
+        [[nodiscard]] WorldInstanceId JoinWorld(const Net::WorldKey& key);
+
         /// @brief Tears the net mode down, returning the process to standalone (no transport).
         ///
         /// Releases the mounted host (server or client) and clears the per-world roles, so the managed
@@ -616,24 +641,37 @@ namespace Veng
         /// @return Empty on success, or an error string if the connection could not be opened.
         VoidResult ConnectClient(const string& host, u16 port);
 
-        /// @brief Loads the accepted level into the managed world's scene, server-authoritative entities skipped.
+        /// @brief Loads the accepted level into a joined world's scene, server-authoritative entities skipped.
         ///
         /// The ClientHost's LoadLevel hook: LoadSync the level, LoadInto a scene with
         /// SkipServerAuthoritative (the authored server entities arrive from the stream), install it as
-        /// world #0's scene through the runner, and retain the residency batch for the deferred
-        /// OnWorldLoaded. The runner owns the installed scene; the host borrows it.
+        /// the join's runner-world scene, and retain the residency batch for the deferred OnWorldLoaded.
+        /// The install target is the world queued for the in-flight join (the auto-join and each
+        /// JoinWorld push one, resolved FIFO in reply order); with no queued target it falls back to the
+        /// managed world. The runner owns the installed scene; the host borrows it.
         /// @param id  The level AssetId the accept named.
-        /// @return The runner-owned world #0 scene the level loaded into.
+        /// @return The runner-owned scene the level loaded into.
         [[nodiscard]] Scene* LoadClientLevel(AssetId id);
 
-        /// @brief Seeds the viewport, fires OnWorldLoaded, and starts the just-loaded managed world scene.
+        /// @brief Seeds the viewport (managed world only), fires OnWorldLoaded, and starts a joined world's scene.
         ///
-        /// The client-mode counterpart of the server/standalone bootstrap tail: seeds the viewport,
-        /// fires OnWorldLoaded (with the retained client residency batch), and starts the simulation
-        /// with this peer's role. Runs once, when the ClientHost's join flow has loaded the scene into
-        /// world #0.
-        /// @param world  The runner-owned world #0 scene the join loaded.
-        void StartWorldScene(Scene& world);
+        /// The client-mode counterpart of the server/standalone bootstrap tail: seeds the managed
+        /// viewport when @p world is the managed world, fires OnWorldLoaded (with the retained per-world
+        /// residency batch), and starts the simulation under @p world's role. Runs once per joined world,
+        /// when the ClientHost's join flow has loaded its scene.
+        /// @param world  The runner world the join loaded.
+        /// @param scene  The runner-owned scene the join loaded into @p world.
+        void StartWorldScene(WorldInstanceId world, Scene& scene);
+
+        /// @brief Resolves the JoinId whose replicated scene is @p world's, or ControlJoinId if none.
+        ///
+        /// Matches a net-active client world to its ClientHost join by scene identity — a join's loaded
+        /// scene is the runner world's scene — so the per-world client drive keys its input send,
+        /// prediction record, and clock sync by the right JoinId. ControlJoinId before the world's join
+        /// reply has loaded its scene.
+        /// @param world  The client world to resolve.
+        /// @return The world's JoinId, or Net::ControlJoinId when it is not a loaded joined world.
+        [[nodiscard]] Net::JoinId ClientJoinForWorld(WorldInstanceId world) const;
 
         /// @brief Pumps net for every net-active world once this frame: join/accept, apply the stream, feed input.
         ///
@@ -809,19 +847,10 @@ namespace Veng
         WorldInstanceId m_ManagedWorld;
         /// @brief The pimpl'd net hosts + input buffers; null unless a net launch mode is active.
         Unique<NetState> m_Net;
-        /// @brief The client scene's spawn residency, held from LoadClientLevel until StartWorldScene.
-        ResidencyBatch m_ClientPending;
         /// @brief The level the managed world was bootstrapped from; empty when World is unset.
         AssetHandle<Level> m_WorldLevel;
         /// @brief Per-frame view knobs pushed into the managed viewport; seeded from the level.
         Renderer::ViewState m_WorldView;
-
-        /// @brief The managed world's sim time-scale this frame (the net client slew); 1 otherwise.
-        ///
-        /// Computed before the world tick from the client tick-offset controller and applied as the
-        /// managed world's SimScale; the runner folds it into that world's clock so the client runs its
-        /// sim ahead of the server.
-        f32 m_NetSlew = 1.0f;
 
         /// @brief This frame's interpolation fraction (GetSimAlpha), retained for the view pushes.
         f32 m_SimAlpha = 0.0f;
