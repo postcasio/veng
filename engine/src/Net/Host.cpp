@@ -438,6 +438,29 @@ namespace Veng
             Directory->RemoveJoin(join.World, now);
         }
 
+        // Handles a client's leave notice: releases the named join's seat + presence and surfaces a
+        // WorldLeft event, the connection staying live. Idempotent — an unknown join is dropped.
+        void HandleLeave(Net::ConnectionId id, Net::JoinId join, f64 now)
+        {
+            const auto connIt = Connections.find(id);
+            if (connIt == Connections.end())
+            {
+                return;
+            }
+            ConnectionState& conn = connIt->second;
+            const auto joinIt = conn.Joins.find(join);
+            if (joinIt == conn.Joins.end())
+            {
+                return;
+            }
+            ReleaseJoin(id, joinIt->second, now);
+            conn.Joins.erase(joinIt);
+            std::erase_if(conn.KeyToJoin,
+                          [join](const auto& entry) { return entry.second == join; });
+            Events.push_back(
+                Net::NetEvent{.Type = Net::NetEventType::WorldLeft, .Id = id, .Join = join});
+        }
+
         // Sends a directed-travel control message to a connection (a travel reply, or unprompted).
         void SendDirectedTravel(Net::ConnectionId id, Net::JoinId leave, const Net::WorldKey& key,
                                 const Net::TravelPayload& payload)
@@ -625,6 +648,16 @@ namespace Veng
                             s.SendDirectedTravel(id, leave, request->Key, request->Payload);
                         }
                     }
+                    else if (type == Net::JoinMessageType::LeaveNotice)
+                    {
+                        // A client leaving one joined world: tear down its seat and presence, the
+                        // connection staying live (distinct from a disconnect, which reaps every join).
+                        if (const optional<Net::LeaveNoticeMessage> notice =
+                                Net::DecodeLeaveNotice(env->Payload))
+                        {
+                            s.HandleLeave(id, notice->Join, now);
+                        }
+                    }
                     continue;
                 }
                 // World-tagged data on the reliable channel: only the per-world ClientReady. Gate on
@@ -776,6 +809,10 @@ namespace Veng
         function<void(Net::JoinId)> OnLeaveWorld;
         function<void(const Net::WorldKey&, Net::JoinDenyReason)> OnTravelDenied;
 
+        // The single-source anchor registry shared across this client's joins: one live join binds a
+        // claimant at a time, and a second binding an already-bound claimant is a fatal assert.
+        AnchorBindings Anchors;
+
         // One joined world's whole client state — replication, identity map, prediction, and clock,
         // all scoped per JoinId.
         struct JoinClient
@@ -804,6 +841,8 @@ namespace Veng
             Net::WorldKey Key;
             Net::TravelPayload Payload;
             Net::JoinId LeaveOnReady = Net::ControlJoinId;
+            // The live scene an adopt-in-place join binds to; null for an ordinary level-loading join.
+            Scene* AdoptScene = nullptr;
             bool Sent = false;
         };
 
@@ -912,7 +951,9 @@ namespace Veng
             }
         }
 
-        // Leaves a join: drops its stream and state and notifies the caller (who frees its scene).
+        // Leaves a join: removes its footprint from the scene (destroy wire-owned, release adopted,
+        // demote predicted), tells the server to tear down the seat, drops the per-join state, and
+        // notifies the caller. The scene itself is left standing — a peer join may still present it.
         void LeaveJoin(Net::JoinId join)
         {
             const auto it = Joins.find(join);
@@ -920,6 +961,25 @@ namespace Veng
             {
                 return;
             }
+            JoinClient& jc = it->second;
+
+            // Demote the predicted set back to Remote and drop its history, then tear down the join's
+            // spawned/adopted set in the scene.
+            if (jc.World != nullptr)
+            {
+                Repredict(jc, Entity::Null);
+                jc.Replication->Leave(*jc.World);
+            }
+
+            // Tell the server we are leaving so it tears down this join's seat and drops the presence.
+            if (Client->State() == Net::ClientState::Connected)
+            {
+                const vector<u8> notice =
+                    Net::EncodeLeaveNotice(Net::LeaveNoticeMessage{.Join = join});
+                (void)Client->Server().Send(Net::Channel::ReliableOrdered,
+                                            Net::EncodeWorldEnvelope(Net::ControlJoinId, notice));
+            }
+
             Joins.erase(it);
             if (CurrentJoin == join)
             {
@@ -945,6 +1005,7 @@ namespace Veng
             }
             const Net::WorldKey key = pending->Key;
             const Net::JoinId leaveOnReady = pending->LeaveOnReady;
+            Scene* const adoptScene = pending->AdoptScene;
             Pending.erase(pending);
 
             if (Joins.contains(accept.Join))
@@ -965,7 +1026,10 @@ namespace Veng
                 return;
             }
 
-            Scene* scene = LoadLevel ? LoadLevel(levelId) : nullptr;
+            // Adopt-in-place: the reply's level is ignored — the standing scene is the client's
+            // reconstruction, and the stream applies into it. An ordinary join loads the named level.
+            Scene* scene =
+                adoptScene != nullptr ? adoptScene : (LoadLevel ? LoadLevel(levelId) : nullptr);
             if (scene == nullptr)
             {
                 return; // load failed — no join installed
@@ -983,6 +1047,9 @@ namespace Veng
             // the shared grid onto every join.
             jc.Replication->SetQuantization(WorldQuantization ? WorldQuantization(key)
                                                               : Quantization);
+            // Scope this join's anchor adoptions to the client-shared registry, so the single-source
+            // invariant is enforced across every join sharing a scene.
+            jc.Replication->SetAdoption(accept.Join, Anchors);
             jc.Ready = true;
             Joins.emplace(accept.Join, std::move(jc));
             if (CurrentJoin == Net::ControlJoinId)
@@ -1035,6 +1102,16 @@ namespace Veng
         const u32 token = s.NextToken;
         s.NextToken += 1;
         s.Pending.push_back(State::PendingJoin{.Token = token, .Key = key, .Payload = payload});
+    }
+
+    void ClientHost::JoinInto(const Net::WorldKey& key, Scene& adoptScene,
+                              const Net::TravelPayload& payload)
+    {
+        State& s = *m_State;
+        const u32 token = s.NextToken;
+        s.NextToken += 1;
+        s.Pending.push_back(State::PendingJoin{
+            .Token = token, .Key = key, .Payload = payload, .AdoptScene = &adoptScene});
     }
 
     void ClientHost::Travel(const Net::WorldKey& key, const Net::TravelPayload& payload)

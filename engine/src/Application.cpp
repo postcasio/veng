@@ -577,6 +577,32 @@ namespace Veng
         return world;
     }
 
+    WorldInstanceId Application::JoinWorld(const Net::WorldKey& key, const WorldInstanceId adopt)
+    {
+        VE_ASSERT(m_Net && m_Net->ClientHost,
+                  "JoinWorld requires an active client connection (Connect or --join)");
+        World* resolved = m_WorldRunner->ResolveWorld(adopt);
+        VE_ASSERT(resolved != nullptr, "JoinWorld adopt target is not an open world");
+        VE_ASSERT(m_Net->ClientWorlds.contains(adopt.Value) &&
+                      m_Net->ClientWorlds[adopt.Value].Started,
+                  "JoinWorld adopt target's scene is not a started client world");
+
+        // Adopt in place: the join binds to the existing world's live scene rather than opening a fresh
+        // one and loading a level. No new WorldRole / ClientWorlds entry — the two joins share the one
+        // world's per-world client state; their wire-id spaces are disjoint (kept per ReplicationClient).
+        m_Net->ClientHost->JoinInto(key, resolved->GetScene());
+        return adopt;
+    }
+
+    void Application::LeaveWorld(const Net::JoinId join)
+    {
+        VE_ASSERT(m_Net && m_Net->ClientHost,
+                  "LeaveWorld requires an active client connection (Connect or --join)");
+        // The ClientHost removes the join's footprint and notifies the server; the OnLeaveWorld hook
+        // (CloseJoinedWorld) closes the runner world only when no peer join still presents its scene.
+        m_Net->ClientHost->Leave(join);
+    }
+
     void Application::StopNet()
     {
         // Dropping the host closes its connections and returns the managed world to Server-tier with no
@@ -862,9 +888,26 @@ namespace Veng
             return;
         }
         const WorldInstanceId world = it->second;
+        m_Net->JoinWorlds.erase(it);
+
+        // Keep the world when a peer join still presents its scene (an adopt-in-place swap: the departed
+        // join's scene is the destination join's). Only when this was the sole join on the world — a
+        // fresh-world join (today's kind) — is the runner world closed, reproducing current teardown.
+        const World* resolved = m_WorldRunner->ResolveWorld(world);
+        const Scene* scene = resolved != nullptr ? &resolved->GetScene() : nullptr;
+        if (scene != nullptr && m_Net->ClientHost != nullptr)
+        {
+            for (const Net::JoinId other : m_Net->ClientHost->Joins())
+            {
+                if (m_Net->ClientHost->World(other) == scene)
+                {
+                    return; // a peer join still streams into this scene — leave the world standing
+                }
+            }
+        }
+
         m_Net->WorldRoles.erase(world.Value);
         m_Net->ClientWorlds.erase(world.Value);
-        m_Net->JoinWorlds.erase(it);
         m_WorldRunner->CloseWorld(world);
     }
 

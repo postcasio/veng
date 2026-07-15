@@ -3,6 +3,7 @@
 #include <Veng/Assert.h>
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Prefab.h>
+#include <Veng/Log.h>
 #include <Veng/Net/DeltaCodec.h>
 #include <Veng/Reflection/Serialize.h>
 #include <Veng/Reflection/TypeRegistry.h>
@@ -251,7 +252,8 @@ namespace Veng
                                    bool bufferTransform, u64 serverTick,
                                    const Net::QuantizationSettings& quant, BaselineStore* baselines,
                                    bool& appliedOut, bool& truncatedOut,
-                                   PredictedRecord* collect = nullptr)
+                                   PredictedRecord* collect = nullptr,
+                                   vector<TypeId>* addedTypes = nullptr)
         {
             const AssetHandleFixup keepAsset = [](void*) {};
             const TypeId transformId = TypeIdOf<Transform>();
@@ -359,6 +361,13 @@ namespace Veng
                 void* dest = scene.TryGetComponent(entity, *typeId);
                 if (dest == nullptr)
                 {
+                    // Absent before this record: the stream is adding the component. An adoption pass
+                    // notes it (addedTypes) so leave/despawn removes exactly the types the stream added,
+                    // keeping the claimant's pre-existing components at their last values.
+                    if (addedTypes != nullptr)
+                    {
+                        addedTypes->push_back(*typeId);
+                    }
                     dest = scene.AddComponent(entity, *typeId);
                 }
                 info.Destruct(dest);
@@ -644,6 +653,11 @@ namespace Veng
             const EncodedComponents encoded =
                 EncodeDirtyComponents(scene, entity, replicated, 0, registry, encodeRef);
 
+            // An anchored entity replicates its opaque anchor in the spawn record (beside the prefab
+            // id), read before the client creates any entity so the claimant resolves at spawn time.
+            const auto* anchor =
+                static_cast<const NetAnchor*>(scene.TryGetComponent(entity, TypeIdOf<NetAnchor>()));
+
             vector<u8> spawn;
             AppendU8(spawn, static_cast<u8>(ReplicationMessageId::Spawn));
             AppendU32(spawn, identity.Id);
@@ -652,6 +666,12 @@ namespace Veng
             if (hasPrefab)
             {
                 AppendU64(spawn, prefabIt->second.Value);
+            }
+            AppendU8(spawn, anchor != nullptr ? 1 : 0);
+            if (anchor != nullptr)
+            {
+                AppendU64(spawn, anchor->Lo);
+                AppendU64(spawn, anchor->Hi);
             }
             AppendU32(spawn, encoded.Count);
             spawn.insert(spawn.end(), encoded.Bytes.begin(), encoded.Bytes.end());
@@ -818,9 +838,80 @@ namespace Veng
         return messages;
     }
 
+    Net::JoinId AnchorBindings::OwnerOf(u64 lo, u64 hi) const
+    {
+        const auto it = m_Owners.find({lo, hi});
+        return it != m_Owners.end() ? it->second : Net::ControlJoinId;
+    }
+
+    void AnchorBindings::Bind(u64 lo, u64 hi, Net::JoinId join)
+    {
+        m_Owners[{lo, hi}] = join;
+    }
+
+    void AnchorBindings::Release(u64 lo, u64 hi)
+    {
+        m_Owners.erase({lo, hi});
+    }
+
     ReplicationClient::ReplicationClient(function<Ref<Prefab>(AssetId)> resolvePrefab)
         : m_ResolvePrefab(std::move(resolvePrefab))
     {
+    }
+
+    void ReplicationClient::SetAdoption(Net::JoinId join, AnchorBindings& bindings)
+    {
+        m_Join = join;
+        m_Anchors = &bindings;
+    }
+
+    void ReplicationClient::ReleaseAdopted(Scene& scene, NetId id)
+    {
+        const auto it = m_Adopted.find(id);
+        if (it == m_Adopted.end())
+        {
+            return;
+        }
+        const AdoptedEntity adopted = std::move(it->second);
+        m_Adopted.erase(it);
+
+        // Remove exactly the component types the stream added at bind; the claimant's pre-existing
+        // components keep their last-applied values, and the entity itself is never destroyed.
+        if (!adopted.Claimant.IsNull() && scene.IsAlive(adopted.Claimant))
+        {
+            for (const TypeId type : adopted.AddedTypes)
+            {
+                scene.RemoveComponent(adopted.Claimant, type);
+            }
+        }
+        // Free the anchor for the next join to bind, and drop the wire id's map + baseline state.
+        m_Anchors->Release(adopted.AnchorLo, adopted.AnchorHi);
+        m_Map.Unbind(id);
+        m_Baseline.erase(id);
+    }
+
+    void ReplicationClient::Leave(Scene& scene)
+    {
+        // Release every adopted claimant (kept alive) and destroy every wire-owned entity. Snapshot the
+        // map first: DestroyEntity is recursive and mutates the scene, and ReleaseAdopted mutates the
+        // maps being walked.
+        const vector<std::pair<NetId, Entity>> bindings(m_Map.Bindings().begin(),
+                                                        m_Map.Bindings().end());
+        for (const auto& [id, entity] : bindings)
+        {
+            if (m_Adopted.contains(id))
+            {
+                ReleaseAdopted(scene, id);
+                continue;
+            }
+            if (!entity.IsNull() && scene.IsAlive(entity))
+            {
+                scene.DestroyEntity(entity);
+            }
+        }
+        m_Map.Clear();
+        m_Baseline.clear();
+        m_Adopted.clear();
     }
 
     ReplicationClient::ReliableApplyResult
@@ -859,10 +950,101 @@ namespace Veng
                 }
                 prefabId = AssetId{.Value = *raw};
             }
+            const Result<u8> hasAnchor = ReadU8(message, cursor);
+            if (!hasAnchor)
+            {
+                return result;
+            }
+            u64 anchorLo = 0;
+            u64 anchorHi = 0;
+            if (*hasAnchor != 0)
+            {
+                const Result<u64> lo = ReadU64(message, cursor);
+                const Result<u64> hi = ReadU64(message, cursor);
+                if (!lo || !hi)
+                {
+                    return result;
+                }
+                anchorLo = *lo;
+                anchorHi = *hi;
+            }
             const Result<u32> componentCount = ReadU32(message, cursor);
             if (!componentCount)
             {
                 return result;
+            }
+
+            const EntityRemap decodeRef = MakeDecodeRef(m_Map);
+            bool applied = false;
+            bool truncated = false;
+
+            // An anchored spawn binds to a live local claimant carrying the equal anchor instead of
+            // spawning a duplicate. Resolve the claimant from the per-scene View<NetAnchor>; two matches
+            // is ambiguous API misuse (adoption cannot pick — a fatal assert), one is the claimant, none
+            // falls through to an ordinary wire-owned spawn with a one-shot warning.
+            if (*hasAnchor != 0)
+            {
+                Entity claimant = Entity::Null;
+                u32 matches = 0;
+                for (auto [entity, netAnchor] : scene.View<NetAnchor>())
+                {
+                    if (netAnchor.Lo == anchorLo && netAnchor.Hi == anchorHi)
+                    {
+                        claimant = entity;
+                        ++matches;
+                    }
+                }
+                VE_ASSERT(matches <= 1,
+                          "two live claimants of anchor {:016X}{:016X} in one scene — adoption is "
+                          "ambiguous",
+                          anchorHi, anchorLo);
+
+                if (matches == 1)
+                {
+                    // Single-source: exactly one live join binds a claimant at a time. A different join
+                    // already binding this anchor is the tripwire on that invariant (a fatal assert);
+                    // the same join re-binding is an idempotent re-spawn.
+                    const Net::JoinId owner = m_Anchors->OwnerOf(anchorLo, anchorHi);
+                    VE_ASSERT(
+                        owner == Net::ControlJoinId || owner == m_Join,
+                        "anchor {:016X}{:016X} is already bound by join {}; a second live join "
+                        "binding it violates single-source adoption",
+                        anchorHi, anchorLo, owner);
+                    m_Anchors->Bind(anchorLo, anchorHi, m_Join);
+
+                    // Apply the record's components onto the claimant, recording which types the stream
+                    // added (absent before) so the release removes exactly those and keeps the rest.
+                    vector<TypeId> added;
+                    ApplyComponentRecords(message, cursor, *componentCount, scene, claimant, *netId,
+                                          /*known=*/true, registry, decodeRef,
+                                          /*bufferTransform=*/false, /*serverTick=*/0,
+                                          m_Quantization, &m_Baseline, applied, truncated,
+                                          /*collect=*/nullptr, &added);
+                    (void)applied;
+                    (void)truncated;
+
+                    // Route the wire id to the claimant; the derived entity keeps its Local authority
+                    // and identity — only the replicated state layers on.
+                    m_Map.Bind(*netId, claimant);
+                    m_Adopted[*netId] = AdoptedEntity{.Claimant = claimant,
+                                                      .AnchorLo = anchorLo,
+                                                      .AnchorHi = anchorHi,
+                                                      .AddedTypes = std::move(added)};
+                    result.Spawned = true;
+                    result.Adopted = true;
+                    result.Id = *netId;
+                    result.Entity = claimant;
+                    return result;
+                }
+
+                if (!m_WarnedClaimantMiss)
+                {
+                    Log::Warn(
+                        "Anchored spawn {} found no local claimant for anchor {:016X}{:016X}; "
+                        "spawning wire-owned (derivation drift?)",
+                        *netId, anchorHi, anchorLo);
+                    m_WarnedClaimantMiss = true;
+                }
             }
 
             // Instantiate through the ordinary prefab path when a resident prefab is named; otherwise
@@ -884,9 +1066,6 @@ namespace Veng
                 entity = scene.CreateEntity();
             }
 
-            const EntityRemap decodeRef = MakeDecodeRef(m_Map);
-            bool applied = false;
-            bool truncated = false;
             ApplyComponentRecords(message, cursor, *componentCount, scene, entity, *netId,
                                   /*known=*/true, registry, decodeRef, /*bufferTransform=*/false,
                                   /*serverTick=*/0, m_Quantization, &m_Baseline, applied,
@@ -934,6 +1113,15 @@ namespace Veng
                 result.Reason = static_cast<DespawnReason>(*reason);
             }
             const Entity entity = m_Map.Lookup(*netId);
+            // An adopted claimant is released, never destroyed: the derived entity outlives the binding
+            // (re-adoptable by the next join), with only the stream-added state removed.
+            if (m_Adopted.contains(*netId))
+            {
+                result.Entity = entity;
+                ReleaseAdopted(scene, *netId);
+                result.Despawned = true;
+                return result;
+            }
             if (!entity.IsNull() && scene.IsAlive(entity))
             {
                 scene.DestroyEntity(entity);

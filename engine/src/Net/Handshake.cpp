@@ -110,6 +110,7 @@ namespace Veng::Net
         case JoinMessageType::JoinDeny:
         case JoinMessageType::TravelRequest:
         case JoinMessageType::DirectedTravel:
+        case JoinMessageType::LeaveNotice:
             return static_cast<JoinMessageType>(payload[0]);
         }
         return {};
@@ -309,6 +310,14 @@ namespace Veng::Net
         return out;
     }
 
+    vector<u8> EncodeLeaveNotice(const LeaveNoticeMessage& message)
+    {
+        vector<u8> out;
+        WriteJoinType(out, JoinMessageType::LeaveNotice);
+        WriteU16LE(out, message.Join);
+        return out;
+    }
+
     optional<TravelRequestMessage> DecodeTravelRequest(std::span<const u8> payload)
     {
         constexpr usize size = TypeByteSize + 8 + 8;
@@ -344,5 +353,15 @@ namespace Veng::Net
             return {};
         }
         return message;
+    }
+
+    optional<LeaveNoticeMessage> DecodeLeaveNotice(std::span<const u8> payload)
+    {
+        constexpr usize size = TypeByteSize + 2;
+        if (!HasJoinType(payload, JoinMessageType::LeaveNotice, size))
+        {
+            return {};
+        }
+        return LeaveNoticeMessage{.Join = ReadU16LE(payload, 1)};
     }
 }

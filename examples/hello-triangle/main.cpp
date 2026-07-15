@@ -144,6 +144,13 @@ constexpr AssetId HudDocumentId{0xB51B7421AFE8CD18ULL};
 // pawn's mesh arrives with the reliable spawn stream, not as replicated per-component state.
 constexpr AssetId NetPawnPrefabId{0x01FE4465D602376BULL};
 
+// The second hosted world the swap demo hops a joined client into under one persistent scene. The
+// engine never interprets a WorldKey; the game names its regimes (here, the default world and this).
+inline Net::WorldKey RegimeBKey()
+{
+    return Net::WorldKey::FromU64(0x0B);
+}
+
 // Maps a resolved PlayerInput to an abstract Intent — the game-specific control policy,
 // reading actions by name. Pure: the same action state always yields the same Intent,
 // whether the actions came from the device, a recording, or the wire, so it is unit-testable
@@ -611,6 +618,49 @@ protected:
         // start-hosting / connect / stop-net operations it cannot call directly. Here the mode keys
         // stand in for a menu's Host / Join / Leave buttons.
         PollNetModeRequests();
+        PollSwapDemo();
+    }
+
+    // Drives the adopt-in-place swap on a joined client: F12 hops the client between the default world
+    // and regime B under one persistent scene. Make-before-break — the destination is adopted while the
+    // current join stays live, and only once the destination is ready is the old join left, so the
+    // scene's derived content never reloads and the client is never join-less.
+    void PollSwapDemo()
+    {
+        const ClientHost* const client = GetClientHost();
+        if (client == nullptr)
+        {
+            return;
+        }
+
+        // Complete a pending swap: the moment the adopted destination is ready, leave the departed join.
+        if (m_SwapLeaveJoin != Net::ControlJoinId)
+        {
+            for (const Net::JoinId join : client->Joins())
+            {
+                if (join != m_SwapLeaveJoin && client->IsJoined(join))
+                {
+                    LeaveWorld(m_SwapLeaveJoin);
+                    m_SwapLeaveJoin = Net::ControlJoinId;
+                    m_CurrentRegime = m_SwapTarget;
+                    break;
+                }
+            }
+            return;
+        }
+
+        // Initiate on F12: adopt the other regime's world into the presented scene while this one stays.
+        if (GetInput().WasKeyPressed(Key::F12) && client->IsJoined())
+        {
+            const WorldInstanceId presented = GetManagedViewportWorld(0);
+            if (presented.IsValid())
+            {
+                m_SwapTarget =
+                    m_CurrentRegime == RegimeBKey() ? Net::DefaultWorldKey : RegimeBKey();
+                m_SwapLeaveJoin = client->CurrentJoinId();
+                (void)JoinWorld(m_SwapTarget, presented);
+            }
+        }
     }
 
     // Stamps a net request onto the managed world when its mode key edges down. Only the key→request
@@ -912,7 +962,57 @@ private:
     void SyncPlayerPawns()
     {
         ServerHost& host = *GetServerHost();
-        Scene& world = *ManagedScene();
+        // Host a second world once, so a joined client can hop into it under one scene (the swap demo).
+        EnsureRegimeWorld(host);
+        SyncPawnsForWorld(host, GetManagedWorldId(), *ManagedScene());
+        if (const World* regime = GetWorldRunner().ResolveWorld(m_RegimeWorld))
+        {
+            SyncPawnsForWorld(host, m_RegimeWorld, regime->GetScene());
+        }
+    }
+
+    // Opens a second hosted world spawning the same level and registers it under the regime-B key, so
+    // a joined client can adopt it in place. Idempotent; retries next frame until the level is resident.
+    void EnsureRegimeWorld(ServerHost& host)
+    {
+        if (m_RegimeRegistered)
+        {
+            return;
+        }
+        const AssetHandle<Level>& level = GetWorldLevel(GetManagedWorldId());
+        if (!level.Id().IsValid())
+        {
+            return;
+        }
+        m_RegimeRegistered = true;
+        m_RegimeWorld = GetWorldRunner().OpenWorld(WorldOpenInfo{
+            .Source = level,
+            .SimTickRate = 60,
+            .StartSimulation = true,
+            .MakeStartContext =
+                [this]
+            {
+                return SystemContext{.Assets = GetAssetManager(),
+                                     .Input = GetInput(),
+                                     .Tasks = GetTaskSystem(),
+                                     .Role = NetRole::Server};
+            },
+        });
+        const World* regime = GetWorldRunner().ResolveWorld(m_RegimeWorld);
+        host.AddWorld(
+            ServerWorldInfo{.WorldId = m_RegimeWorld,
+                            .Key = RegimeBKey(),
+                            .World = regime->GetScene(),
+                            .LevelId = level.Id(),
+                            .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
+                            .Interest = Net::InterestSettings{.Radius = 0.0f}});
+    }
+
+    // The per-world pawn rule: pawn every seat in @p scene that lacks a live pawn, keyed by world so a
+    // reaped seat's pawn is torn down with it.
+    void SyncPawnsForWorld(ServerHost& host, WorldInstanceId worldId, Scene& world)
+    {
+        auto& seatPawns = m_SeatPawns[worldId.Value];
         const bool headless = GetLaunchArguments().Headless;
 
         // Collect first: spawning a pawn is a structural change, illegal mid-iteration.
@@ -959,10 +1059,10 @@ private:
 
             // Assign the pawn its wire id now: the host assigns ids in Pump, but the prefab
             // association must be set before that Pump generates the spawn for a connection.
-            AssignServerNetIds(world, host.Allocator());
+            AssignServerNetIds(world, host.AllocatorForWorld(worldId));
             const NetId netId = world.Get<NetIdentity>(pawn).Id;
-            host.Replication().SetEntityPrefab(netId, NetPawnPrefabId);
-            m_SeatPawns[seat] = pawn;
+            host.ReplicationForWorld(worldId).SetEntityPrefab(netId, NetPawnPrefabId);
+            seatPawns[seat] = pawn;
 
             // The host's own follow camera (the spawn rule left its Local-tier target null when the
             // pawn was skipped) aims at the just-spawned pawn — the server-side counterpart of the
@@ -975,9 +1075,9 @@ private:
             }
         }
 
-        // Reap a pawn whose seat the host tore down (a disconnect destroys the connection's seat;
+        // Reap a pawn whose seat the host tore down (a disconnect or a world-leave destroys the seat;
         // the pawn is a separate entity, so the game reaps it).
-        for (auto it = m_SeatPawns.begin(); it != m_SeatPawns.end();)
+        for (auto it = seatPawns.begin(); it != seatPawns.end();)
         {
             if (!world.IsAlive(it->first))
             {
@@ -985,7 +1085,7 @@ private:
                 {
                     world.DestroyEntity(it->second);
                 }
-                it = m_SeatPawns.erase(it);
+                it = seatPawns.erase(it);
             }
             else
             {
@@ -1066,11 +1166,22 @@ private:
     // needs no explicit teardown here.
     WorldInstanceId m_SecondWorld;
 
-    // Server-side multiplayer state, populated only under `--server`: the pawn spawned for each seat
-    // (the listen host's own and each connection's), keyed by seat entity so a reaped seat's pawn is
-    // torn down with it. A joined client's own follow camera is aimed by OnClientPossession, not held
-    // here (the spawn rule owns the client's local seat + camera).
-    unordered_map<Entity, Entity> m_SeatPawns;
+    // Server-side multiplayer state, populated only under `--server`: per hosted world, the pawn
+    // spawned for each seat (the listen host's own and each connection's), keyed by world then seat so a
+    // reaped seat's pawn is torn down with it. A joined client's own follow camera is aimed by
+    // OnClientPossession, not held here (the spawn rule owns the client's local seat + camera).
+    unordered_map<u64, unordered_map<Entity, Entity>> m_SeatPawns;
+
+    // The second hosted world the swap demo hops a joined client into under one scene (opened + hosted
+    // once under `--server`; invalid until then).
+    WorldInstanceId m_RegimeWorld;
+    bool m_RegimeRegistered = false;
+
+    // Client swap state (the make-before-break driver): the join to leave once the adopted destination
+    // is ready, the key being adopted, and the regime the client currently presents.
+    Net::JoinId m_SwapLeaveJoin = Net::ControlJoinId;
+    Net::WorldKey m_SwapTarget;
+    Net::WorldKey m_CurrentRegime = Net::DefaultWorldKey;
 };
 
 // Factory captures the headless flag so the launcher stays game-agnostic.

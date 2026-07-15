@@ -62,6 +62,10 @@ namespace Veng
         // inspector can surface the assigned id; the net layer keys snapshots by it.
         registry.Register<NetIdentity>();
 
+        // The opaque 128-bit anchor binding a replicated entity to its live local twin. Reflected so a
+        // consumer authors/inspects it; the net layer resolves a claimant by it at spawn time.
+        registry.Register<NetAnchor>();
+
         // The client-side pose-sample buffer a replicated entity carries, filled by snapshots and read
         // by the View-phase RemoteInterpolationSystem. Runtime-only: it carries no reflected field, so
         // it never serializes and never rides the wire.

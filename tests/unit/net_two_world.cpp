@@ -3129,3 +3129,598 @@ TEST_CASE("Two hosted worlds with different quantization envelopes each decode o
     CHECK(std::abs(gotA - 4.0f) < 0.05f);
     CHECK(std::abs(gotB - 1000.0f) < 1.0f);
 }
+
+// ---------------------------------------------------------------------------------------------------
+// Adopt-in-place joins, the scene-preserving leave, the make-before-break swap, and stable-anchor
+// adoption — a client persistent scene the joins bind into (never a level load), with an anchored
+// authoritative entity binding to its live local claimant. Device-free over the loopback.
+
+namespace
+{
+    const WorldKey AdoptKeyA = WorldKey::FromU64(0x0ADA);
+    const WorldKey AdoptKeyB = WorldKey::FromU64(0x0ADB);
+
+    // A server hosting one or two worlds (each its own scene), with a net-unaware spawn rule pawning
+    // each seat and an optional anchored authoritative entity carrying replicated Session state.
+    struct AdoptServer
+    {
+        TypeRegistry Types;
+        Unique<Scene> SceneA;
+        Unique<Scene> SceneB;
+        Unique<ServerHost> Host;
+        std::unordered_map<u64, std::unordered_map<ConnectionId, Entity>> Pawns;
+        vector<NetEvent> Events;
+        vector<Entity> Anchored;
+
+        explicit AdoptServer(Transport& transport, bool twoWorlds, bool denyB = false)
+        {
+            RegisterBuiltinTypes(Types);
+            SceneA = Scene::Create(Types);
+            Result<Unique<ServerHost>> host = ServerHost::Create(ServerHostInfo{
+                .Server = ServerInfo{.TransportOverride = &transport, .Connection = FastConfig},
+                .WorldId = WorldInstanceId{.Value = 1},
+                .Key = AdoptKeyA,
+                .World = *SceneA,
+                .Assets = FakeAssets(),
+                .LevelId = LevelId,
+                .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
+                .Interest = InterestSettings{.Radius = 0.0f},
+                .Authorize = [denyB](ConnectionId, const WorldKey& key, const TravelPayload&)
+                { return !denyB || !(key == AdoptKeyB); },
+            });
+            REQUIRE(host.has_value());
+            Host = std::move(*host);
+            if (twoWorlds)
+            {
+                SceneB = Scene::Create(Types);
+                Host->AddWorld(ServerWorldInfo{
+                    .WorldId = WorldInstanceId{.Value = 2},
+                    .Key = AdoptKeyB,
+                    .World = *SceneB,
+                    .LevelId = LevelId,
+                    .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
+                    .Interest = InterestSettings{.Radius = 0.0f}});
+            }
+        }
+
+        // An anchored authoritative entity: a NetAnchor (bound across the wire) plus a replicated
+        // Session the adoption applies onto the claimant. Seeded into world A's scene.
+        Entity SeedAnchored(u64 lo, u64 hi, i32 score)
+        {
+            const Entity entity = SceneA->CreateEntity();
+            SceneA->Add<NetAnchor>(entity, NetAnchor{.Lo = lo, .Hi = hi});
+            SceneA->Add<Session>(entity, Session{.Phase = SessionPhase::Playing, .Score = score});
+            SceneA->Add<Authority>(entity, Authority{.Tier = Tier::Server});
+            Anchored.push_back(entity);
+            return entity;
+        }
+
+        void SpawnFor(WorldInstanceId world, Scene& scene)
+        {
+            for (const ConnectionId id : Host->Server().Connections())
+            {
+                for (const JoinId join : Host->JoinsFor(id))
+                {
+                    if (Host->WorldForJoin(id, join) != world)
+                    {
+                        continue;
+                    }
+                    const Entity seat = Host->SeatFor(id, join);
+                    if (seat.IsNull())
+                    {
+                        continue;
+                    }
+                    auto& possesses = scene.Get<Possesses>(seat);
+                    if (!possesses.Pawn.IsNull() && scene.IsAlive(possesses.Pawn))
+                    {
+                        continue;
+                    }
+                    const Entity pawn = scene.CreateEntity();
+                    scene.Add<Transform>(pawn);
+                    scene.Add<Intent>(pawn);
+                    scene.Add<Mover>(pawn);
+                    scene.Add<Authority>(pawn, Authority{.Tier = Tier::Server, .Owner = id});
+                    possesses.Pawn = pawn;
+                    Pawns[world.Value][id] = pawn;
+                }
+            }
+        }
+
+        void Pump(f64 now, u64 tick)
+        {
+            SceneA->SetChangeTick(tick);
+            if (SceneB)
+            {
+                SceneB->SetChangeTick(tick);
+            }
+            SpawnFor(WorldInstanceId{.Value = 1}, *SceneA);
+            if (SceneB)
+            {
+                SpawnFor(WorldInstanceId{.Value = 2}, *SceneB);
+            }
+            // Re-stamp the anchored entities at this tick so their spawn record carries the state (a
+            // component keeps the change tick of its last mutable touch — seeded ones would read tick 0).
+            for (const Entity entity : Anchored)
+            {
+                if (SceneA->IsAlive(entity))
+                {
+                    (void)SceneA->Get<Session>(entity);
+                }
+            }
+            Host->Pump(now, tick);
+            for (const NetEvent& event : Host->Events())
+            {
+                Events.push_back(event);
+            }
+        }
+    };
+
+    // A client with one persistent scene every join adopts into (never a level load). Tracks the
+    // possessions wired and the joins left.
+    struct AdoptClient
+    {
+        TypeRegistry Types;
+        Unique<Net::Client> Client;
+        Unique<ClientHost> Host;
+        Unique<Scene> World;
+        vector<JoinId> Left;
+        int Possessions = 0;
+        Entity LastPossessed = Entity::Null;
+
+        explicit AdoptClient(Transport& transport)
+        {
+            RegisterBuiltinTypes(Types);
+            World = Scene::Create(Types);
+            Client = *Net::Client::Connect(
+                ClientInfo{.TransportOverride = &transport, .Connection = FastConfig});
+            Host = ClientHost::Create(ClientHostInfo{
+                .Client = *Client,
+                .Assets = FakeAssets(),
+                .AutoJoin = false,
+                .LoadLevel = [](AssetId) -> Scene* { return nullptr; },
+                .ResolvePrefab = [](AssetId) -> Ref<Prefab> { return nullptr; },
+                .OnPossession =
+                    [this](Scene&, const Entity pawn)
+                {
+                    ++Possessions;
+                    LastPossessed = pawn;
+                },
+                .OnLeaveWorld = [this](const JoinId join) { Left.push_back(join); },
+            });
+        }
+
+        // A derived Local prop the joins must never touch (the "byte-untouched" census target).
+        Entity SeedDerived(const vec3 position)
+        {
+            const Entity entity = World->CreateEntity();
+            World->Add<Transform>(entity, Transform{.Position = position});
+            World->Add<Authority>(entity, Authority{.Tier = Tier::Local});
+            return entity;
+        }
+
+        // A live local claimant carrying an anchor (a derived entity with server-authoritative state
+        // to receive): a NetAnchor plus a derived Transform the adoption must keep.
+        Entity SeedClaimant(u64 lo, u64 hi, const vec3 position)
+        {
+            const Entity entity = World->CreateEntity();
+            World->Add<NetAnchor>(entity, NetAnchor{.Lo = lo, .Hi = hi});
+            World->Add<Transform>(entity, Transform{.Position = position});
+            World->Add<Authority>(entity, Authority{.Tier = Tier::Local});
+            return entity;
+        }
+
+        void Pump(f64 now) { Host->Pump(now); }
+
+        [[nodiscard]] usize CountAnchor(u64 lo, u64 hi) const
+        {
+            usize count = 0;
+            for (auto [entity, anchor] : World->View<NetAnchor>())
+            {
+                if (anchor.Lo == lo && anchor.Hi == hi)
+                {
+                    ++count;
+                }
+            }
+            return count;
+        }
+
+        [[nodiscard]] usize CountRemote() const
+        {
+            usize count = 0;
+            for (auto [entity, authority] : World->View<Authority>())
+            {
+                if (authority.Tier == Tier::Remote)
+                {
+                    ++count;
+                }
+            }
+            return count;
+        }
+
+        [[nodiscard]] usize CountPredicted() const
+        {
+            usize count = 0;
+            for (auto [entity, authority] : World->View<Authority>())
+            {
+                if (authority.Tier == Tier::Predicted)
+                {
+                    ++count;
+                }
+            }
+            return count;
+        }
+    };
+}
+
+TEST_CASE(
+    "Adopt-in-place: a join binds into a live scene, streaming in without touching derived state")
+{
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+    AdoptServer server(*serverT, /*twoWorlds=*/false);
+    AdoptClient client(*clientT);
+
+    // A derived Local prop stands in the persistent scene before any join — its state must survive the
+    // adopt untouched.
+    const Entity prop = client.SeedDerived(vec3(3.0f, 4.0f, 5.0f));
+    usize entitiesBefore = 0;
+    for (auto [entity, authority] : client.World->View<Authority>())
+    {
+        (void)entity;
+        (void)authority;
+        ++entitiesBefore;
+    }
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    bool joined = false;
+    for (u64 tick = 1; tick <= 40; ++tick)
+    {
+        now += Delta;
+        server.Pump(now, tick);
+        client.Pump(now);
+        if (!joined && client.Client->State() == ClientState::Connected)
+        {
+            client.Host->JoinInto(AdoptKeyA, *client.World);
+            joined = true;
+        }
+    }
+
+    REQUIRE(client.Host->IsJoined());
+    // The join bound to the *same* persistent scene — no level was loaded.
+    CHECK(client.Host->World() == client.World.get());
+    // The derived prop is byte-untouched: same tier, same transform, still alive.
+    REQUIRE(client.World->IsAlive(prop));
+    CHECK(client.World->Get<Authority>(prop).Tier == Tier::Local);
+    CHECK(client.World->Get<Transform>(prop).Position == vec3(3.0f, 4.0f, 5.0f));
+    // The stream spawned wire-owned entities (the seat + pawn) into the live scene alongside the prop.
+    usize entitiesAfter = 0;
+    for (auto [entity, authority] : client.World->View<Authority>())
+    {
+        (void)entity;
+        (void)authority;
+        ++entitiesAfter;
+    }
+    CHECK(entitiesAfter > entitiesBefore);
+    CHECK(client.CountRemote() >= 1);
+}
+
+TEST_CASE("Adopt-in-place: a digest mismatch refuses the join before any stream applies")
+{
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+    AdoptServer server(*serverT, /*twoWorlds=*/false);
+
+    // A client whose reconstruction digest disagrees with the server's world digest (zero): the adopt
+    // is rejected loudly, no join installed, and nothing streams into the scene.
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    Unique<Scene> scene = Scene::Create(types);
+    Unique<Net::Client> conn = *Net::Client::Connect(
+        ClientInfo{.TransportOverride = clientT.get(), .Connection = FastConfig});
+    Unique<ClientHost> host = ClientHost::Create(ClientHostInfo{
+        .Client = *conn,
+        .Assets = FakeAssets(),
+        .AutoJoin = false,
+        .WorldDigest = [](const WorldKey&) { return ContentDigest{.Lo = 0xDEAD, .Hi = 0}; },
+        .LoadLevel = [](AssetId) -> Scene* { return nullptr; },
+        .ResolvePrefab = [](AssetId) -> Ref<Prefab> { return nullptr; },
+    });
+
+    const Entity prop = scene->CreateEntity();
+    scene->Add<Authority>(prop, Authority{.Tier = Tier::Local});
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    bool asked = false;
+    for (u64 tick = 1; tick <= 40; ++tick)
+    {
+        now += Delta;
+        server.Pump(now, tick);
+        conn->Pump(now);
+        host->Pump(now);
+        if (!asked && conn->State() == ClientState::Connected)
+        {
+            host->JoinInto(AdoptKeyA, *scene);
+            asked = true;
+        }
+    }
+
+    CHECK_FALSE(host->IsJoined());
+    // No wire-owned entity ever spawned: the scene holds only the derived prop.
+    usize entities = 0;
+    for (auto [entity, authority] : scene->View<Authority>())
+    {
+        (void)entity;
+        (void)authority;
+        ++entities;
+    }
+    CHECK(entities == 1);
+}
+
+TEST_CASE(
+    "Leave removes exactly the wire-owned set, the scene surviving, and the server reaps the seat")
+{
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+    AdoptServer server(*serverT, /*twoWorlds=*/false);
+    AdoptClient client(*clientT);
+    const Entity prop = client.SeedDerived(vec3(1.0f, 0.0f, 0.0f));
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    bool joined = false;
+    JoinId join = ControlJoinId;
+    ConnectionId connId = ServerConnectionId;
+    for (u64 tick = 1; tick <= 60; ++tick)
+    {
+        now += Delta;
+        server.Pump(now, tick);
+        client.Pump(now);
+        if (!joined && client.Client->State() == ClientState::Connected)
+        {
+            client.Host->JoinInto(AdoptKeyA, *client.World);
+            joined = true;
+        }
+    }
+    REQUIRE(client.Host->IsJoined());
+    join = client.Host->CurrentJoinId();
+    connId = client.Client->AssignedId();
+    REQUIRE(server.Host->SeatFor(connId, join).IsNull() == false);
+    const usize remoteBefore = client.CountRemote();
+    CHECK(remoteBefore >= 1);
+
+    // Leave the join: its wire-owned entities go, the derived prop stays.
+    client.Host->Leave(join);
+    for (u64 tick = 61; tick <= 90; ++tick)
+    {
+        now += Delta;
+        server.Pump(now, tick);
+        client.Pump(now);
+    }
+
+    CHECK(client.Host->Joins().empty());
+    CHECK(client.CountRemote() == 0);     // every wire-owned entity destroyed
+    REQUIRE(client.World->IsAlive(prop)); // the scene survived
+    CHECK(client.World->Get<Transform>(prop).Position == vec3(1.0f, 0.0f, 0.0f));
+
+    // The server tore the seat down, dropped the join, and surfaced a WorldLeft event — the connection
+    // staying live.
+    CHECK(server.Host->SeatFor(connId, join).IsNull());
+    CHECK(server.Host->JoinsFor(connId).empty());
+    bool sawLeft = false;
+    for (const NetEvent& event : server.Events)
+    {
+        if (event.Type == NetEventType::WorldLeft && event.Id == connId && event.Join == join)
+        {
+            sawLeft = true;
+        }
+    }
+    CHECK(sawLeft);
+    CHECK(server.Host->Server().Connections().size() == 1);
+}
+
+TEST_CASE(
+    "The swap: adopt B while A stays live, hand possession over, then leave A — one predicted set")
+{
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+    AdoptServer server(*serverT, /*twoWorlds=*/true);
+    AdoptClient client(*clientT);
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    bool joinedA = false;
+    bool adoptedB = false;
+    bool leftA = false;
+    JoinId joinA = ControlJoinId;
+    JoinId joinB = ControlJoinId;
+    Entity pawnA = Entity::Null;
+    bool sawGap = false;
+    usize maxPredicted = 0;
+
+    for (u64 tick = 1; tick <= 200; ++tick)
+    {
+        now += Delta;
+        server.Pump(now, tick);
+        client.Pump(now);
+
+        if (!joinedA && client.Client->State() == ClientState::Connected)
+        {
+            client.Host->JoinInto(AdoptKeyA, *client.World);
+            joinedA = true;
+        }
+        // Once A is joined and its pawn possessed, adopt B into the same scene (make-before-break).
+        if (joinedA && !adoptedB && client.Host->IsJoined() && !client.LastPossessed.IsNull())
+        {
+            joinA = client.Host->CurrentJoinId();
+            pawnA = client.LastPossessed;
+            client.Host->JoinInto(AdoptKeyB, *client.World);
+            adoptedB = true;
+        }
+        // Once B is joined *and* its own pawn possessed (a distinct pawn), leave A in the same frame —
+        // the possession handoff and the demotion of A's predicted set land together.
+        if (adoptedB && !leftA)
+        {
+            for (const JoinId j : client.Host->Joins())
+            {
+                if (j != joinA)
+                {
+                    joinB = j;
+                }
+            }
+            const bool bReady = joinB != ControlJoinId && client.Host->IsJoined(joinB) &&
+                                !client.LastPossessed.IsNull() && client.LastPossessed != pawnA;
+            if (bReady)
+            {
+                client.Host->Leave(joinA);
+                leftA = true;
+            }
+        }
+
+        // The make-before-break guarantee: once A landed, the client is never join-less.
+        if (joinedA && client.Host->IsJoined() && client.Host->Joins().empty())
+        {
+            sawGap = true;
+        }
+        // One predicted set across the boundary: at each tick's end at most one pawn is Predicted.
+        maxPredicted = std::max(maxPredicted, client.CountPredicted());
+    }
+
+    CHECK_FALSE(sawGap);
+    CHECK(leftA);
+    REQUIRE(client.Host->Joins().size() == 1);
+    CHECK(client.Host->Joins().front() == joinB);
+    REQUIRE(client.Left.size() == 1);
+    CHECK(client.Left.front() == joinA);
+    // Never two predicted pawns at a tick boundary — the demotion rode the same pump as the promotion.
+    CHECK(maxPredicted <= 1);
+    // Possession handed over to B's pawn (a distinct entity from A's).
+    CHECK(client.LastPossessed != pawnA);
+    CHECK_FALSE(client.LastPossessed.IsNull());
+}
+
+TEST_CASE("The swap snaps back: a denied destination never leaves the live join")
+{
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+    AdoptServer server(*serverT, /*twoWorlds=*/true, /*denyB=*/true);
+    AdoptClient client(*clientT);
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    bool joinedA = false;
+    bool adoptedB = false;
+    JoinId joinA = ControlJoinId;
+    for (u64 tick = 1; tick <= 160; ++tick)
+    {
+        now += Delta;
+        server.Pump(now, tick);
+        client.Pump(now);
+        if (!joinedA && client.Client->State() == ClientState::Connected)
+        {
+            client.Host->JoinInto(AdoptKeyA, *client.World);
+            joinedA = true;
+        }
+        if (joinedA && !adoptedB && client.Host->IsJoined())
+        {
+            joinA = client.Host->CurrentJoinId();
+            client.Host->JoinInto(AdoptKeyB, *client.World);
+            adoptedB = true;
+        }
+        // The consumer only leaves A once B is ready; B is denied, so A is never left.
+    }
+
+    // A stays the sole join; nothing was left.
+    REQUIRE(client.Host->Joins().size() == 1);
+    CHECK(client.Host->Joins().front() == joinA);
+    CHECK(client.Left.empty());
+    CHECK(client.CountRemote() >= 1); // A's wire-owned set is bit-intact
+}
+
+TEST_CASE("Stable-anchor adoption: server state lands on the live claimant, released on leave")
+{
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+    AdoptServer server(*serverT, /*twoWorlds=*/false);
+    server.SeedAnchored(0x7ULL, 0x0ULL, /*score=*/42);
+
+    AdoptClient client(*clientT);
+    const Entity claimant = client.SeedClaimant(0x7ULL, 0x0ULL, vec3(2.0f, 0.0f, 0.0f));
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    bool joined = false;
+    JoinId join = ControlJoinId;
+    for (u64 tick = 1; tick <= 60; ++tick)
+    {
+        now += Delta;
+        server.Pump(now, tick);
+        client.Pump(now);
+        if (!joined && client.Client->State() == ClientState::Connected)
+        {
+            client.Host->JoinInto(AdoptKeyA, *client.World);
+            joined = true;
+        }
+    }
+
+    REQUIRE(client.Host->IsJoined());
+    join = client.Host->CurrentJoinId();
+    // The server state landed on the *claimant* — no duplicate anchored entity spawned.
+    CHECK(client.CountAnchor(0x7ULL, 0x0ULL) == 1);
+    REQUIRE(client.World->IsAlive(claimant));
+    REQUIRE(client.World->Has<Session>(claimant));
+    CHECK(client.World->Get<Session>(claimant).Score == 42);
+    // The claimant stayed a derived Local entity; its pre-existing transform is untouched.
+    CHECK(client.World->Get<Authority>(claimant).Tier == Tier::Local);
+    CHECK(client.World->Get<Transform>(claimant).Position == vec3(2.0f, 0.0f, 0.0f));
+
+    // Leave releases the binding: the stream-added Session goes, the claimant (and its pre-existing
+    // components) survive, re-adoptable by the next join.
+    client.Host->Leave(join);
+    for (u64 tick = 61; tick <= 80; ++tick)
+    {
+        now += Delta;
+        server.Pump(now, tick);
+        client.Pump(now);
+    }
+    REQUIRE(client.World->IsAlive(claimant));
+    CHECK_FALSE(client.World->Has<Session>(claimant)); // stream-added type removed
+    CHECK(client.World->Has<NetAnchor>(claimant));     // pre-existing kept
+    CHECK(client.World->Get<Transform>(claimant).Position == vec3(2.0f, 0.0f, 0.0f));
+    CHECK(client.CountAnchor(0x7ULL, 0x0ULL) == 1); // anchor index entry stays
+}
+
+TEST_CASE("Stable-anchor adoption: a claimant-less anchored spawn falls back to a wire-owned spawn")
+{
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+    AdoptServer server(*serverT, /*twoWorlds=*/false);
+    server.SeedAnchored(0x9ULL, 0x0ULL, /*score=*/7);
+
+    // The client scene carries no claimant for anchor 9: the anchored spawn falls back to an ordinary
+    // wire-owned entity (a Remote mirror carrying the state) instead of adopting.
+    AdoptClient client(*clientT);
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    bool joined = false;
+    for (u64 tick = 1; tick <= 60; ++tick)
+    {
+        now += Delta;
+        server.Pump(now, tick);
+        client.Pump(now);
+        if (!joined && client.Client->State() == ClientState::Connected)
+        {
+            client.Host->JoinInto(AdoptKeyA, *client.World);
+            joined = true;
+        }
+    }
+
+    REQUIRE(client.Host->IsJoined());
+    // The fallback spawned a wire-owned Remote entity carrying the anchored state; the fallback does
+    // not stamp NetAnchor, so it never pollutes the claimant index.
+    CHECK(client.CountAnchor(0x9ULL, 0x0ULL) == 0);
+    bool sawState = false;
+    for (auto [entity, session] : client.World->View<Session>())
+    {
+        if (session.Score == 7 && client.World->Get<Authority>(entity).Tier == Tier::Remote)
+        {
+            sawState = true;
+        }
+    }
+    CHECK(sawState);
+}

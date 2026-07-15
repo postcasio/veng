@@ -448,6 +448,21 @@ namespace Veng
         /// @param payload  The opaque travel payload threaded into the server's resolution; empty by default.
         void Join(const Net::WorldKey& key, const Net::TravelPayload& payload = {});
 
+        /// @brief Requests joining a world *into an existing live scene* — the adopt-in-place join.
+        ///
+        /// Like Join, but the reply loads no level: @p adoptScene is the client's already-standing
+        /// reconstruction of the world, and the stream's spawns apply into it. The echoed content digest
+        /// is still validated (fail-loud on mismatch, before any stream applies) — it attests both peers
+        /// agree on the world's generation inputs, not that the standing scene is a valid reconstruction,
+        /// so the caller guarantees the scene's derived content is valid for @p key. The scene is
+        /// borrowed and must outlive the join. Two joins over one scene (a swap) is supported — their
+        /// wire-id spaces are disjoint.
+        /// @param key         The opaque world to join.
+        /// @param adoptScene  The live scene the join binds to and streams into (borrowed).
+        /// @param payload     The opaque travel payload threaded into the server's resolution.
+        void JoinInto(const Net::WorldKey& key, Scene& adoptScene,
+                      const Net::TravelPayload& payload = {});
+
         /// @brief Requests a server-directed travel to a world by key, carrying an opaque payload.
         ///
         /// Sends a travel request the server resolves and answers with a directed travel (join this
@@ -458,10 +473,13 @@ namespace Veng
         /// @param payload  The opaque travel payload the server resolves the key with; empty by default.
         void Travel(const Net::WorldKey& key, const Net::TravelPayload& payload = {});
 
-        /// @brief Leaves a joined world, dropping its stream and state; the caller frees its scene.
+        /// @brief Leaves a joined world without touching the scene beyond removing its footprint.
         ///
-        /// Stops applying the join's stream and releases its ReplicationClient and per-join state. The
-        /// borrowed scene (a runner world) is the caller's to close. The make-before-break directed
+        /// Destroys exactly this join's wire-owned spawned set (recursively), releases its adopted
+        /// anchor bindings (the claimants survive), demotes its predicted set, drops its
+        /// ReplicationClient / prediction history / tick-sync, and sends the server a leave notice so it
+        /// tears down the seat. The borrowed scene is left standing (a peer join may still present it);
+        /// closing its runner world remains the caller's separate act. The make-before-break directed
         /// travel calls this internally once the destination is ready; a client may call it directly.
         /// @param join  The JoinId to leave; a no-op for an unknown join.
         void Leave(Net::JoinId join);

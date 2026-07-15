@@ -244,6 +244,35 @@ are shared across joins — a multiplexed client distinguishes joins by the leve
 `LoadLevel` returns. Both hosts are usable standalone; **`Application` mounts them** as the
 plug-and-play path.
 
+**Adopt-in-place, leave, and the swap.** `ClientHost::JoinInto(key, scene)` is the **adopt** join:
+the reply loads no level — the borrowed `scene` is the client's already-standing reconstruction, and
+the stream applies into it (the digest is still validated). `ClientHost::Leave(join)` /
+`Application::LeaveWorld(join)` is the **scene-preserving leave**: it destroys exactly that join's
+wire-owned spawned set (walking the `ReplicationClient`'s `NetId → Entity` map, recursive
+`DestroyEntity`), *releases* its adopted anchor bindings (the claimants survive), demotes the
+predicted set, drops the per-join state, and sends a **leave-notice** (`JoinMessageType::LeaveNotice`)
+so the server tears down the seat, decrements directory presence, and surfaces a `NetEventType::WorldLeft`
+(the connection staying live). The **swap** is make-before-break over one scene: `JoinWorld(to, adopt)`
+adopts the destination while the source join stays live and streaming; on the destination's readiness
+the possession handoff runs (`OnClientPossession` for its pawn, the source's predicted set demoted and
+the destination's promoted in one pump — exactly one predicted set across the boundary); then
+`LeaveWorld(from)`. Any failure before the leave aborts with the source untouched (the structural
+snap-back). Two joins over one scene keep **disjoint wire-id spaces** (each `ReplicationClient` its own
+map); a fresh-world join left then closed reproduces the old teardown.
+
+**Stable-anchor adoption.** A builtin reflected `NetAnchor { u64 Lo; u64 Hi }` (opaque; the game mints
+it, not `VE_REPLICATED`) names content **derived on both peers that also carries server-authoritative
+state**. An authoritative entity carrying one replicates its anchor in its **spawn record** (a field
+beside the prefab id, read before any entity is created). On the client an anchored spawn resolves a
+**claimant** — a live local entity carrying the equal anchor, found by scanning `View<NetAnchor>` —
+and **adopts** it: the wire id maps to the claimant and the record's components apply onto it (the
+types the stream *added* recorded for release); a claimant-less spawn falls back to an ordinary
+wire-owned spawn with a one-shot warning. Binding is **single-source** — one live join binds a claimant
+at a time (a shared `AnchorBindings` registry across a client's joins), and a second live join binding
+an already-bound claimant, or two live claimants of one anchor, is a fatal assert. Release (on leave or
+despawn) never destroys the claimant: it removes exactly the stream-added component types, keeps the
+pre-existing values, and frees the anchor for the next join.
+
 `Application` wiring is a launch *or runtime* decision, not a build. `ApplicationInfo::Net` (an
 `optional<GameNetInfo>` — `Port`, `MaxConnections`, `SnapshotIntervalTicks`, `InputRedundancyTicks`,
 the quantization/keyframe knobs, `InterestRadius`/`InterestPolicy`, the client `PredictionPolicy`, plus

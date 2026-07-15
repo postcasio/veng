@@ -585,6 +585,32 @@ namespace Veng
         /// @return The runner world the join installs its replicated scene into.
         [[nodiscard]] WorldInstanceId JoinWorld(const Net::WorldKey& key);
 
+        /// @brief Joins a world *into an existing live world's scene* — the adopt-in-place join.
+        ///
+        /// Unlike JoinWorld(key), no fresh runner world is opened and no level is loaded: the join binds
+        /// to @p adopt's already-standing scene and streams its spawns into it. The echoed content digest
+        /// is still validated (the join is refused fail-loud on mismatch, before any stream applies), so
+        /// the consumer must guarantee the standing scene's derived content is a valid reconstruction of
+        /// @p key. This is the scene-preserving half of a swap: adopt the destination while the current
+        /// join stays live, then LeaveWorld the old one once the destination is ready. The derived and
+        /// Local-tier entities are untouched by construction.
+        /// @param key    The opaque world to join.
+        /// @param adopt  The live runner world whose scene the join binds to (installed and started).
+        /// @pre A client connection is active, and @p adopt resolves to a started scene.
+        /// @return @p adopt (the shared world the join now streams into).
+        WorldInstanceId JoinWorld(const Net::WorldKey& key, WorldInstanceId adopt);
+
+        /// @brief Leaves a joined world, removing exactly that join's replicated footprint from its scene.
+        ///
+        /// Destroys the join's wire-owned spawned set, releases its adopted anchor bindings (claimants
+        /// survive), demotes its predicted set, drops its per-join net state, and notifies the server so
+        /// it tears down the seat. The scene is otherwise untouched — a peer join adopting it stays live —
+        /// and the runner world is closed only if no other join still presents its scene (so leaving a
+        /// fresh-world join reproduces the old close-on-leave teardown). The scene-preserving half of a
+        /// swap and a first-class client operation.
+        /// @param join  The JoinId to leave; a no-op for an unknown join.
+        void LeaveWorld(Net::JoinId join);
+
         /// @brief Travels to a destination world — the one primitive across standalone, client, and host.
         ///
         /// Resolves by the process's situation: standalone resolves the key through the world directory

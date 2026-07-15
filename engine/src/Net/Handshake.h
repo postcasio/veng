@@ -44,6 +44,7 @@ namespace Veng::Net
         JoinDeny = 3,
         TravelRequest = 4,
         DirectedTravel = 5,
+        LeaveNotice = 6,
     };
 
     /// @brief A client's connect request: the parity payload the server checks at the door.
@@ -156,6 +157,18 @@ namespace Veng::Net
         TravelPayload Payload;
     };
 
+    /// @brief A client's notice that it is leaving a joined world, so the server tears down its seat.
+    ///
+    /// Rides the world-multiplexing envelope tagged ControlJoinId. Names the JoinId the client is
+    /// leaving (per-connection scope, so it can never name another connection's world); the server
+    /// releases that join's seat, drops the directory presence, and surfaces the leave. Idempotent — a
+    /// notice for a join the server already reaped is dropped.
+    struct LeaveNoticeMessage
+    {
+        /// @brief The client's JoinId being left.
+        JoinId Join = ControlJoinId;
+    };
+
     /// @brief Reads the leading control-type byte of a reliable message.
     /// @param message  The message bytes (with the leading type byte).
     /// @return The type, or nullopt if the message is empty or the byte is not a known type.
@@ -184,6 +197,8 @@ namespace Veng::Net
     [[nodiscard]] vector<u8> EncodeTravelRequest(const TravelRequestMessage& message);
     /// @brief Encodes a directed travel (type byte + fields) as a join-tier payload.
     [[nodiscard]] vector<u8> EncodeDirectedTravel(const DirectedTravelMessage& message);
+    /// @brief Encodes a leave notice (type byte + fields) as a join-tier payload.
+    [[nodiscard]] vector<u8> EncodeLeaveNotice(const LeaveNoticeMessage& message);
 
     /// @brief Decodes a connect request; nullopt if truncated or mistyped.
     [[nodiscard]] optional<ConnectRequestMessage> DecodeConnectRequest(std::span<const u8> message);
@@ -203,4 +218,6 @@ namespace Veng::Net
     [[nodiscard]] optional<TravelRequestMessage> DecodeTravelRequest(std::span<const u8> payload);
     /// @brief Decodes a directed travel; nullopt if truncated or mistyped.
     [[nodiscard]] optional<DirectedTravelMessage> DecodeDirectedTravel(std::span<const u8> payload);
+    /// @brief Decodes a leave notice; nullopt if truncated or mistyped.
+    [[nodiscard]] optional<LeaveNoticeMessage> DecodeLeaveNotice(std::span<const u8> payload);
 }

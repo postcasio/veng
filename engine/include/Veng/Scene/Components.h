@@ -589,6 +589,28 @@ namespace Veng
         u32 Id = 0;
     };
 
+    /// @brief An opaque 128-bit stable identity binding a replicated entity to its live local twin.
+    ///
+    /// The WorldKey discipline applied to entities: content derived on *both* peers that also carries
+    /// server-authoritative dynamic state names itself with an anchor the consumer mints (from its own
+    /// stable ids), and the engine never interprets the two halves. An authoritative entity carrying a
+    /// NetAnchor replicates it in its spawn record; on the displaying peer the net layer resolves a
+    /// live local entity carrying the equal anchor (its claimant) and binds the wire id to it — applying
+    /// the replicated state onto the derived entity instead of spawning a duplicate. A claimant-less
+    /// anchored spawn falls back to an ordinary wire-owned spawn. Reflected so a consumer may author or
+    /// inspect it; not itself replicated (VE_REPLICATED) — it rides the spawn record, read before any
+    /// entity is created, so the claimant is resolvable at spawn time rather than a snapshot later.
+    struct NetAnchor
+    {
+        /// @brief Low 64 bits of the opaque anchor id.
+        u64 Lo = 0;
+        /// @brief High 64 bits of the opaque anchor id.
+        u64 Hi = 0;
+
+        /// @brief Equality over both halves — two entities share an anchor iff both halves match.
+        [[nodiscard]] bool operator==(const NetAnchor&) const = default;
+    };
+
     /// @brief Camera-rig follow relationship: the target a camera entity trails and how.
     ///
     /// Read by the View-phase camera rig: each tick it reads the target's world Transform
@@ -1137,6 +1159,13 @@ VE_REFLECT_END();
 // NetIdentity is the wire key itself, carried in each snapshot's per-entity header.
 VE_REFLECT(::Veng::NetIdentity, 0x9E7C4A1B6D3F0852ULL)
 VE_FIELD(Id, .DisplayName = "Net Id", .ReadOnly = true)
+VE_REFLECT_END();
+
+// Reflected so a consumer authors/inspects the anchor, but *not* replicated: NetAnchor rides the
+// spawn record (read before the entity is created) so the claimant resolves at spawn time.
+VE_REFLECT(::Veng::NetAnchor, 0x6B5366CCAC328A6CULL)
+VE_FIELD(Lo, .DisplayName = "Anchor Lo")
+VE_FIELD(Hi, .DisplayName = "Anchor Hi")
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::CameraFollow, 0xF8BD924F0A0F9DB0ULL)

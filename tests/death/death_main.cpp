@@ -49,7 +49,9 @@
 #include <Veng/Renderer/ViewportRegistry.h>
 #include <Veng/Renderer/Backend/TypeMapping.h>
 
+#include <Veng/Net/Replication.h>
 #include <Veng/Reflection/TypeRegistry.h>
+#include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Entity.h>
 #include <Veng/Scene/Scene.h>
@@ -193,6 +195,83 @@ namespace
         const Entity e = scene->CreateEntity();
         // The entity is live but has no DeathPosition: Get asserts present.
         (void)scene->Get<DeathPosition>(e);
+    }
+
+    // A never-dereferenced AssetManager: the anchored spawn carries no prefab, so the prefab arm
+    // (the only asset use) is never taken (the net-test FakeAssets precedent).
+    AssetManager& DeathFakeAssets()
+    {
+        alignas(16) static unsigned char bytes[64]{};
+        return *reinterpret_cast<AssetManager*>(bytes);
+    }
+
+    // A reliable Spawn message carrying an anchor and no components — the minimal anchored spawn that
+    // drives the claimant resolution (its layout mirrors ReplicationServer::Generate).
+    vector<u8> MakeAnchoredSpawn(NetId netId, u64 lo, u64 hi)
+    {
+        vector<u8> message;
+        const auto u32le = [&](u32 value)
+        {
+            for (int i = 0; i < 4; ++i)
+            {
+                message.push_back(static_cast<u8>(value >> (8 * i)));
+            }
+        };
+        const auto u64le = [&](u64 value)
+        {
+            for (int i = 0; i < 8; ++i)
+            {
+                message.push_back(static_cast<u8>(value >> (8 * i)));
+            }
+        };
+        message.push_back(16); // ReplicationMessageId::Spawn
+        u32le(netId);
+        u32le(0);             // owner
+        message.push_back(0); // hasPrefab
+        message.push_back(1); // hasAnchor
+        u64le(lo);
+        u64le(hi);
+        u32le(0); // componentCount
+        return message;
+    }
+
+    void RunAnchorTwoClaimants()
+    {
+        TypeRegistry registry;
+        RegisterBuiltinTypes(registry);
+        const Unique<Scene> scene = Scene::Create(registry);
+
+        // Two live local entities equally claim anchor {7,0} — adoption cannot pick a claimant.
+        const Entity a = scene->CreateEntity();
+        scene->Add<NetAnchor>(a, NetAnchor{.Lo = 7});
+        const Entity b = scene->CreateEntity();
+        scene->Add<NetAnchor>(b, NetAnchor{.Lo = 7});
+
+        ReplicationClient client([](AssetId) -> Ref<Prefab> { return nullptr; });
+        const vector<u8> spawn = MakeAnchoredSpawn(1, 7, 0);
+        (void)client.ApplyReliable(spawn, *scene, DeathFakeAssets());
+    }
+
+    void RunAnchorSecondJoinBinds()
+    {
+        TypeRegistry registry;
+        RegisterBuiltinTypes(registry);
+        const Unique<Scene> scene = Scene::Create(registry);
+
+        const Entity claimant = scene->CreateEntity();
+        scene->Add<NetAnchor>(claimant, NetAnchor{.Lo = 7});
+
+        // Two live joins over one scene, sharing the single-source registry: the first binds the
+        // claimant, the second binding it violates single-source adoption.
+        AnchorBindings bindings;
+        ReplicationClient first([](AssetId) -> Ref<Prefab> { return nullptr; });
+        ReplicationClient second([](AssetId) -> Ref<Prefab> { return nullptr; });
+        first.SetAdoption(1, bindings);
+        second.SetAdoption(2, bindings);
+
+        const vector<u8> spawn = MakeAnchoredSpawn(1, 7, 0);
+        (void)first.ApplyReliable(spawn, *scene, DeathFakeAssets());
+        (void)second.ApplyReliable(spawn, *scene, DeathFakeAssets());
     }
 
     void RunTypeIdCollision()
@@ -444,6 +523,14 @@ int main(int argc, char** argv)
     else if (name == "type_id_collision")
     {
         RunTypeIdCollision();
+    }
+    else if (name == "anchor_two_claimants")
+    {
+        RunAnchorTwoClaimants();
+    }
+    else if (name == "anchor_second_join_binds")
+    {
+        RunAnchorSecondJoinBinds();
     }
     else if (name == "system_id_collision")
     {

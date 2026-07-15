@@ -72,6 +72,9 @@ namespace Veng
         /// @brief Returns the number of bindings.
         [[nodiscard]] usize Size() const;
 
+        /// @brief The wire-id → entity bindings, for a caller walking the whole spawned set.
+        [[nodiscard]] const unordered_map<NetId, Entity>& Bindings() const { return m_Bindings; }
+
         /// @brief Rebuilds the map from every NetIdentity component in @p scene (bindings cleared first).
         ///
         /// The map is derived state: a client rebuilds it from the entities it has spawned rather than
@@ -81,6 +84,32 @@ namespace Veng
     private:
         /// @brief The bindings; keyed by wire id.
         unordered_map<NetId, Entity> m_Bindings;
+    };
+
+    /// @brief Cross-join record of which live join currently binds each anchor's claimant.
+    ///
+    /// Stable-anchor adoption is **single-source**: a derived entity's authoritative state comes from
+    /// exactly one join at a time. A ReplicationClient records its adoptions here; a second live join
+    /// (a different ReplicationClient sharing this registry) binding an already-bound anchor is a fatal
+    /// assert, the tripwire on the single-source invariant. A ClientHost owns one registry shared across
+    /// its joins; a ReplicationClient with no shared registry uses its own private one (a lone client
+    /// has no peer join to contend with). Keyed by the anchor's two opaque halves — the engine never
+    /// interprets them.
+    class AnchorBindings
+    {
+    public:
+        /// @brief The JoinId currently binding the anchor (@p lo, @p hi), or ControlJoinId if unbound.
+        [[nodiscard]] Net::JoinId OwnerOf(u64 lo, u64 hi) const;
+
+        /// @brief Records that @p join binds the anchor (@p lo, @p hi)'s claimant.
+        void Bind(u64 lo, u64 hi, Net::JoinId join);
+
+        /// @brief Releases the anchor (@p lo, @p hi)'s binding; a no-op if unbound.
+        void Release(u64 lo, u64 hi);
+
+    private:
+        /// @brief Anchor halves → the join that binds its claimant (std::map keys the 128-bit pair).
+        map<std::pair<u64, u64>, Net::JoinId> m_Owners;
     };
 
     /// @brief Assigns a fresh NetIdentity to every server-authoritative entity in @p scene that lacks one.
@@ -379,9 +408,14 @@ namespace Veng
         /// @brief The outcome of applying one reliable message, for the caller and for tests.
         struct ReliableApplyResult
         {
-            /// @brief True when the message was a Spawn that instantiated an entity.
+            /// @brief True when the message was a Spawn that instantiated or adopted an entity.
             bool Spawned = false;
-            /// @brief True when the message was a Despawn that destroyed an entity.
+            /// @brief True when a Spawn bound its wire id to a live local claimant rather than a fresh entity.
+            ///
+            /// An anchored spawn whose anchor resolved to a claimant adopts it: no entity is created, the
+            /// record's components apply onto the claimant, and its despawn releases (never destroys) it.
+            bool Adopted = false;
+            /// @brief True when the message was a Despawn that destroyed or released an entity.
             bool Despawned = false;
             /// @brief The despawn's reason (destruction vs a visibility exit); meaningful when Despawned.
             DespawnReason Reason = DespawnReason::Destroyed;
@@ -395,6 +429,17 @@ namespace Veng
         /// @param resolvePrefab  Maps a prefab AssetId to a resident Prefab (the app's LoadSync; a
         ///                       null return falls the spawn back to the component-state arm).
         explicit ReplicationClient(function<Ref<Prefab>(AssetId)> resolvePrefab);
+
+        /// @brief Enables stable-anchor adoption for this client, scoped to @p join over shared @p bindings.
+        ///
+        /// After this call an anchored spawn (a spawn carrying a NetAnchor) resolves a live local
+        /// claimant in the target scene and adopts it instead of spawning a duplicate; the shared
+        /// registry enforces single-source across a ClientHost's joins (@p join names this client's
+        /// join). Unset (the default), the client still adopts but through a private registry — correct
+        /// for a lone client with no peer join.
+        /// @param join      The JoinId this client's adoptions are attributed to.
+        /// @param bindings  The cross-join single-source registry (borrowed; must outlive the client).
+        void SetAdoption(Net::JoinId join, AnchorBindings& bindings);
 
         /// @brief Returns the NetId → Entity map, rebuilt as spawns and despawns arrive.
         [[nodiscard]] const NetIdMap& Map() const { return m_Map; }
@@ -436,7 +481,38 @@ namespace Veng
             return m_PredictedRecords;
         }
 
+        /// @brief Tears down this client's footprint in @p scene: destroy wire-owned, release adopted.
+        ///
+        /// The scene-preserving leave: each wire-owned entity this client spawned is destroyed
+        /// (recursively, so replicated attachments go with their roots); each adopted claimant is
+        /// released — its stream-added component types removed, its pre-existing values kept, the entity
+        /// never destroyed and its anchor freed for the next join. Clears the id map, baselines, and
+        /// adoption bookkeeping. The scene itself (a runner world) is the caller's.
+        /// @param scene  The client scene this client applied its stream into.
+        void Leave(Scene& scene);
+
     private:
+        /// @brief Releases an adopted claimant: removes the stream-added types, frees the anchor binding.
+        ///
+        /// The claimant is never destroyed and its pre-existing components keep their last values. A
+        /// no-op if @p id was not adopted. Drops the id map binding and delta baseline for @p id.
+        /// @param scene  The scene the claimant lives in.
+        /// @param id     The adopted wire id to release.
+        void ReleaseAdopted(Scene& scene, NetId id);
+
+        /// @brief One adopted claimant: the derived entity, its anchor, and the types the stream added.
+        struct AdoptedEntity
+        {
+            /// @brief The live local entity the wire id was bound to.
+            Entity Claimant = Entity::Null;
+            /// @brief The anchor's low half (for releasing the shared binding).
+            u64 AnchorLo = 0;
+            /// @brief The anchor's high half.
+            u64 AnchorHi = 0;
+            /// @brief The component types the stream added at bind (absent before) — removed on release.
+            vector<TypeId> AddedTypes;
+        };
+
         NetIdMap m_Map;
         function<Ref<Prefab>(AssetId)> m_ResolvePrefab;
         /// @brief The last ApplySnapshot's Tier::Predicted authoritative records (see PredictedRecords).
@@ -445,6 +521,15 @@ namespace Veng
         unordered_map<NetId, unordered_map<TypeId, vector<u8>>> m_Baseline;
         /// @brief The spatial quantization the decoder dequantizes with (see SetQuantization).
         Net::QuantizationSettings m_Quantization;
+        /// @brief The JoinId this client's adoptions are attributed to in the shared registry.
+        Net::JoinId m_Join = Net::ControlJoinId;
+        /// @brief The single-source registry (shared when SetAdoption was called, else this private one).
+        AnchorBindings m_OwnAnchors;
+        AnchorBindings* m_Anchors = &m_OwnAnchors;
+        /// @brief The adopted claimants, keyed by wire id, for snapshot routing and release.
+        unordered_map<NetId, AdoptedEntity> m_Adopted;
+        /// @brief Whether a claimant-less anchored spawn has already logged its one-shot warning.
+        bool m_WarnedClaimantMiss = false;
     };
 
     // ---- Input replication (client → server) ------------------------------------------------------

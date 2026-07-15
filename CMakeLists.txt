@@ -700,6 +700,14 @@ if (VENG_BUILD_TESTS)
     set_tests_properties(death.type_id_collision PROPERTIES LABELS "death;fast"
             PASS_REGULAR_EXPRESSION "TypeId collision")
 
+    add_test(NAME death.anchor_two_claimants COMMAND veng_test_death anchor_two_claimants)
+    set_tests_properties(death.anchor_two_claimants PROPERTIES LABELS "death;fast"
+            PASS_REGULAR_EXPRESSION "two live claimants")
+
+    add_test(NAME death.anchor_second_join_binds COMMAND veng_test_death anchor_second_join_binds)
+    set_tests_properties(death.anchor_second_join_binds PROPERTIES LABELS "death;fast"
+            PASS_REGULAR_EXPRESSION "already bound by join")
+
     add_test(NAME death.system_id_collision COMMAND veng_test_death system_id_collision)
     set_tests_properties(death.system_id_collision PROPERTIES LABELS "death;fast"
             PASS_REGULAR_EXPRESSION "SystemId collision")

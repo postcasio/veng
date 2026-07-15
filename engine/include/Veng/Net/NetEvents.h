@@ -22,8 +22,9 @@ namespace Veng::Net
     /// Version 2 introduced the per-connection world-multiplexing envelope (a JoinId tag ahead of
     /// each world-tagged payload) and the two-tier connection/join handshake, so the connection
     /// accept no longer bakes in a single level or seat. Version 3 threaded the opaque travel payload
-    /// into the join request and its reply and added the travel-request / directed-travel join-tier
-    /// control messages (the world-directory travel primitive).
+    /// into the join request and its reply, added the travel-request / directed-travel / leave-notice
+    /// join-tier control messages (the world-directory travel and adopt-in-place primitives), and grew
+    /// the reliable spawn record an optional anchor field (the stable-anchor binding).
     inline constexpr u32 ProtocolVersion = 3;
 
     /// @brief A server-assigned connection identifier: a per-session u32, never reused.
@@ -128,6 +129,12 @@ namespace Veng::Net
         Connected = 0,
         /// @brief A connection ended (see NetEvent::Reason).
         Disconnected = 1,
+        /// @brief A connection left one joined world (its seat torn down), the connection staying live.
+        ///
+        /// Distinct from Disconnected: the connection remains, only the named join (NetEvent::Join) is
+        /// gone. Surfaced when a client sends a leave notice; game policy reaps the join's server-side
+        /// pawn the way a disconnect reaps every join's.
+        WorldLeft = 2,
     };
 
     /// @brief One typed connection-lifecycle event, drained from a Server per pump.
@@ -142,5 +149,7 @@ namespace Veng::Net
         ConnectionId Id = ServerConnectionId;
         /// @brief Why the connection ended; ignored for a Connected event.
         DisconnectReason Reason = DisconnectReason::Timeout;
+        /// @brief The joined world this event concerns; meaningful only for a WorldLeft event.
+        JoinId Join = ControlJoinId;
     };
 }
