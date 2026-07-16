@@ -116,6 +116,7 @@ namespace Veng
             Net::WorldKey Key;
             Scene* World = nullptr;
             AssetId LevelId;
+            u32 SimTickRate = 60;
             Net::ContentDigest Digest;
             Ref<Prefab> SeatPrefab;
             AssetId SeatPrefabId;
@@ -381,6 +382,7 @@ namespace Veng
                                        .Key = key,
                                        .World = resolved.World,
                                        .LevelId = resolved.LevelId,
+                                       .SimTickRate = resolved.SimTickRate,
                                        .Digest = resolved.Digest,
                                        .SeatPrefab = resolved.SeatPrefab,
                                        .SeatPrefabId = resolved.SeatPrefabId,
@@ -416,6 +418,7 @@ namespace Veng
                                            .LevelId = world.LevelId.Value,
                                            .WorldDigest = world.Digest,
                                            .SeatNetId = seatNet,
+                                           .SimTickRate = world.SimTickRate,
                                            .Payload = Directory->PayloadOf(world.Id)});
                 (void)Server->Get(id).Send(Net::Channel::ReliableOrdered,
                                            Net::EncodeWorldEnvelope(Net::ControlJoinId, payload));
@@ -780,6 +783,7 @@ namespace Veng
                                                  .Key = info.Key,
                                                  .World = &info.World,
                                                  .LevelId = info.LevelId,
+                                                 .SimTickRate = info.SimTickRate,
                                                  .Digest = info.Digest,
                                                  .SeatPrefab = info.SeatPrefab,
                                                  .SeatPrefabId = info.SeatPrefabId,
@@ -807,6 +811,7 @@ namespace Veng
                                .Key = world.Key,
                                .World = &world.World,
                                .LevelId = world.LevelId,
+                               .SimTickRate = world.SimTickRate,
                                .Digest = world.Digest,
                                .SeatPrefab = world.SeatPrefab,
                                .SeatPrefabId = world.SeatPrefabId,
@@ -1235,6 +1240,7 @@ namespace Veng
         bool AutoJoinRequested = false;
         function<Net::ContentDigest(const Net::WorldKey&, const Net::TravelPayload&)> WorldDigest;
         function<Scene*(AssetId)> LoadLevel;
+        function<Scene*()> OpenEmptyWorld;
         function<Ref<Prefab>(AssetId)> ResolvePrefab;
         function<void(Scene&, Entity)> OnPossession;
         PredictionPolicy Policy;
@@ -1490,9 +1496,22 @@ namespace Veng
             }
 
             // Adopt-in-place: the reply's level is ignored — the standing scene is the client's
-            // reconstruction, and the stream applies into it. An ordinary join loads the named level.
-            Scene* scene =
-                adoptScene != nullptr ? adoptScene : (LoadLevel ? LoadLevel(levelId) : nullptr);
+            // reconstruction, and the stream applies into it. An ordinary join loads the named
+            // level; a level-less reply (a data world) installs an empty stream-populated scene
+            // through OpenEmptyWorld, never touching LoadLevel.
+            Scene* scene = nullptr;
+            if (adoptScene != nullptr)
+            {
+                scene = adoptScene;
+            }
+            else if (!levelId.IsValid())
+            {
+                scene = OpenEmptyWorld ? OpenEmptyWorld() : nullptr;
+            }
+            else
+            {
+                scene = LoadLevel ? LoadLevel(levelId) : nullptr;
+            }
             if (scene == nullptr)
             {
                 return; // load failed — no join installed
@@ -1505,7 +1524,15 @@ namespace Veng
             jc.Present = present;
             jc.SeatNetId = accept.SeatNetId;
             jc.World = scene;
-            jc.TickSync = Net::TickOffsetEstimator(TickSyncSettings);
+            // Each join's controller runs at the hosted world's own rate (the reply carries it), so
+            // a slow data world's RTT converts into leads in its own ticks; the shared settings keep
+            // supplying the margin and slew knobs (and the rate for a reply carrying none).
+            Net::TickSyncSettings tickSync = TickSyncSettings;
+            if (accept.SimTickRate > 0)
+            {
+                tickSync.TickRate = accept.SimTickRate;
+            }
+            jc.TickSync = Net::TickOffsetEstimator(tickSync);
             jc.Replication = CreateUnique<ReplicationClient>(ResolvePrefab);
             // The per-key spatial envelope: WorldQuantization, when set, yields this key's grid so two
             // hosted worlds with different envelopes each decode correctly on one client; unset threads
@@ -1548,6 +1575,7 @@ namespace Veng
         state->AutoJoin = info.AutoJoin;
         state->WorldDigest = info.WorldDigest;
         state->LoadLevel = info.LoadLevel;
+        state->OpenEmptyWorld = info.OpenEmptyWorld;
         state->ResolvePrefab = info.ResolvePrefab;
         state->OnPossession = info.OnPossession;
         state->Policy = info.Prediction;

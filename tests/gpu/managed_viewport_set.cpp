@@ -83,7 +83,7 @@ namespace
             const WorldInstanceId world = GetWorldRunner().OpenWorld(WorldOpenInfo{
                 .SimTickRate = 60,
                 .StartSimulation = true,
-                .EmptySimulation = true,
+                .Systems = vector<SystemId>{},
                 .MakeStartContext =
                     [this]
                 {

@@ -123,6 +123,12 @@ namespace Veng::Net
         ContentDigest WorldDigest;
         /// @brief The wire id of the client's own replicated seat entity in this world, or 0 when none.
         u32 SeatNetId = 0;
+        /// @brief The hosted world's fixed simulation ticks per second.
+        ///
+        /// The client constructs this join's tick-offset estimator at this rate, so the RTT-to-lead
+        /// conversion runs in the joined world's own ticks (a 1 Hz data world leads by whole slow
+        /// ticks, never a shared 60 Hz default's).
+        u32 SimTickRate = 60;
         /// @brief The travel payload echoed back so the client's factory-parameterized reconstruction has its inputs.
         TravelPayload Payload;
     };

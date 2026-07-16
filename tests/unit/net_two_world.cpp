@@ -1118,7 +1118,7 @@ TEST_CASE("Two worlds in one runner carry distinct NetRoles; authority gates eac
         return runner.OpenWorld(WorldOpenInfo{
             .SimTickRate = 60,
             .StartSimulation = true,
-            .EmptySimulation = true,
+            .Systems = vector<SystemId>{SystemIdOf<MovementSystem>()},
             .OnLoaded =
                 [](WorldInstanceId, Scene& scene, ResidencyBatch&)
             {
@@ -1369,6 +1369,8 @@ namespace
         // The client scene each join loaded, keyed by the level id the reply named.
         std::unordered_map<u64, Unique<Scene>> Scenes;
         std::unordered_map<u64, Entity> PawnByJoin; // possessed pawn, keyed by JoinId
+        // Directed-travel denials surfaced by OnTravelDenied, so a case asserts the refusal reason.
+        vector<std::pair<WorldKey, JoinDenyReason>> TravelDenied;
 
         explicit MultiplexClient(Transport& transport)
         {
@@ -1401,6 +1403,8 @@ namespace
                     }
                 },
                 .Prediction = [](const Scene&, Entity) { return vector<Entity>{}; },
+                .OnTravelDenied = [this](const WorldKey& key, const JoinDenyReason reason)
+                { TravelDenied.emplace_back(key, reason); },
             });
         }
 
@@ -5887,4 +5891,590 @@ TEST_CASE("Account-addressed sends reach the wire, the local account loops back,
         host->SendToWorldMembers(WorldInstanceId{.Value = 99}, PartyChannel, CounterBlob(4));
     REQUIRE_FALSE(unknown.has_value());
     CHECK(unknown.error().find("not hosted") != string::npos);
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Scene-less data worlds, per-join tick rate, per-world idle dwell, and the join budget.
+
+namespace
+{
+    // A client for level-less data worlds: counts the LoadLevel and OpenEmptyWorld invocations so a
+    // case asserts the level-less reply skips LoadLevel entirely, and owns the empty scene each
+    // level-less join binds to. Joins are test-driven unless a key is given (the auto-join).
+    struct DataWorldClient
+    {
+        TypeRegistry Types;
+        Unique<Net::Client> Client;
+        Unique<ClientHost> Host;
+        vector<Unique<Scene>> Scenes;
+        int LoadLevelCalls = 0;
+        int EmptyOpens = 0;
+
+        explicit DataWorldClient(
+            Transport& transport, optional<WorldKey> autoJoin = {},
+            function<ContentDigest(const WorldKey&, const TravelPayload&)> digest = {},
+            const AccountId account = {})
+        {
+            RegisterBuiltinTypes(Types);
+            Types.Register<VengTest::TestScore>();
+            Client = *Net::Client::Connect(ClientInfo{
+                .Account = account, .TransportOverride = &transport, .Connection = FastConfig});
+            Host = ClientHost::Create(ClientHostInfo{
+                .Client = *Client,
+                .Assets = FakeAssets(),
+                .WorldKey = autoJoin.value_or(DefaultWorldKey),
+                .AutoJoin = autoJoin.has_value(),
+                .WorldDigest = std::move(digest),
+                .LoadLevel = [this](AssetId) -> Scene*
+                {
+                    ++LoadLevelCalls;
+                    Scenes.push_back(Scene::Create(Types));
+                    return Scenes.back().get();
+                },
+                .OpenEmptyWorld = [this]() -> Scene*
+                {
+                    ++EmptyOpens;
+                    Scenes.push_back(Scene::Create(Types));
+                    return Scenes.back().get();
+                },
+                .ResolvePrefab = [](AssetId) -> Ref<Prefab> { return nullptr; },
+                .Prediction = [](const Scene&, Entity) { return vector<Entity>{}; },
+            });
+        }
+
+        void Pump(const f64 now) { Host->Pump(now); }
+    };
+}
+
+TEST_CASE("A level-less data world joins end to end: no LoadLevel, empty scene, stream-populated")
+{
+    // The scene-less join path: the factory resolves the key with the invalid LevelId, the reply
+    // names no level, and the client installs an empty scene its stream populates — no placebo
+    // level, no core-pack stub. The echoed digest is validated exactly as for a level world.
+    const auto hub = CreateRef<Hub>();
+    const u32 serverEndpoint = hub->Register();
+    auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
+
+    TypeRegistry serverTypes;
+    RegisterBuiltinTypes(serverTypes);
+    serverTypes.Register<VengTest::TestScore>();
+    Unique<Scene> primary = Scene::Create(serverTypes);
+    Unique<Scene> dataScene;
+    const WorldKey dataKey = WorldKey::FromU64(0xDA7A);
+    const ContentDigest dataDigest{.Lo = 0x5150, .Hi = 0xC0DE};
+
+    Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
+        .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
+        .WorldId = WorldInstanceId{.Value = 1},
+        .Key = WorldKey::FromU64(0xFFFFFFFFULL), // primary key, presented by no client
+        .World = *primary,
+        .Assets = FakeAssets(),
+        .LevelId = LevelId,
+        .WorldFactory = [&](const WorldKey&,
+                            const TravelPayload&) -> optional<ServerWorldResolution>
+        {
+            // A data world: no authored level (the invalid id), a game-chosen digest.
+            dataScene = Scene::Create(serverTypes);
+            return ServerWorldResolution{.WorldId = WorldInstanceId{.Value = 100},
+                                         .World = dataScene.get(),
+                                         .Digest = dataDigest,
+                                         .Replication =
+                                             ReplicationServer::Settings{.SnapshotInterval = 2}};
+        },
+    });
+    REQUIRE(hostR.has_value());
+    Unique<ServerHost> host = std::move(*hostR);
+
+    // The matching client validates the data world's digest through its per-key hook.
+    auto clientT = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    DataWorldClient client(*clientT, dataKey,
+                           [&](const WorldKey&, const TravelPayload&) { return dataDigest; });
+
+    // A projection entity the server populates the data world with once it exists; the client must
+    // receive it purely from the stream.
+    Entity record = Entity::Null;
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    for (u64 tick = 1; tick <= 200; ++tick)
+    {
+        now += Delta;
+        primary->SetChangeTick(tick);
+        if (dataScene != nullptr)
+        {
+            dataScene->SetChangeTick(tick);
+            if (record.IsNull())
+            {
+                record = dataScene->CreateEntity();
+                dataScene->Add<Transform>(record).Position = vec3(1.0f, 2.0f, 3.0f);
+                dataScene->Add<VengTest::TestScore>(record);
+                dataScene->Add<Authority>(record, Authority{.Tier = Tier::Server});
+            }
+            else if (dataScene->IsAlive(record))
+            {
+                // The projection's ongoing writes: a non-spatial replicated value the client must
+                // track through snapshots (a data world runs no interpolation system, so a Transform
+                // sample would sit in the remote buffer unrendered — data rides plain components).
+                dataScene->Get<VengTest::TestScore>(record).Value += 1;
+            }
+        }
+        host->Pump(now, tick);
+        client.Pump(now);
+    }
+
+    // The join landed through the empty path: OpenEmptyWorld once, LoadLevel never.
+    REQUIRE(client.Host->IsJoined());
+    CHECK(client.LoadLevelCalls == 0);
+    CHECK(client.EmptyOpens == 1);
+
+    // The stream populated the empty scene: the projection entity spawned client-side with its
+    // baseline state, and its snapshot-updated value tracked the server's ongoing writes.
+    Scene* clientScene = client.Host->World();
+    REQUIRE(clientScene != nullptr);
+    REQUIRE(dataScene->IsAlive(record));
+    const NetId recordNet = dataScene->Get<NetIdentity>(record).Id;
+    const Entity clientRecord = client.Host->Replication().Map().Lookup(recordNet);
+    REQUIRE_FALSE(clientRecord.IsNull());
+    CHECK(clientScene->Get<Transform>(clientRecord).Position.y == doctest::Approx(2.0f));
+    REQUIRE(clientScene->Has<VengTest::TestScore>(clientRecord));
+    CHECK(clientScene->Get<VengTest::TestScore>(clientRecord).Value > 100);
+
+    // The digest is still enforced on the empty path: a client whose reconstruction digest does not
+    // match the echoed one is rejected before any scene is installed — no empty world opens.
+    auto mismatchT = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    DataWorldClient mismatch(*mismatchT, dataKey); // unset digest hook: the zero digest
+    for (u64 tick = 201; tick <= 280; ++tick)
+    {
+        now += Delta;
+        primary->SetChangeTick(tick);
+        dataScene->SetChangeTick(tick);
+        host->Pump(now, tick);
+        client.Pump(now);
+        mismatch.Pump(now);
+    }
+    CHECK_FALSE(mismatch.Host->IsJoined());
+    CHECK(mismatch.EmptyOpens == 0);
+    CHECK(mismatch.LoadLevelCalls == 0);
+}
+
+TEST_CASE("The join reply carries each world's SimTickRate; each join's estimator runs at its own "
+          "rate and the slow world's standing join reattaches")
+{
+    // A 60 Hz gameplay world and a 1 Hz data world share one connection: each join's tick-offset
+    // estimator is constructed at the rate its reply carried, so the same link converts into a
+    // large lead in fast ticks and a whole-tick-scale lead in slow ticks — never one rate for both.
+    const auto hub = CreateRef<Hub>();
+    const u32 serverEndpoint = hub->Register();
+    auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
+
+    TypeRegistry serverTypes;
+    RegisterBuiltinTypes(serverTypes);
+    Unique<Scene> sceneFast = Scene::Create(serverTypes);
+    Unique<Scene> sceneSlow = Scene::Create(serverTypes);
+    const WorldKey fastKey = WorldKey::FromU64(0xFA);
+    const WorldKey slowKey = WorldKey::FromU64(0x51);
+
+    Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
+        .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
+        .WorldId = WorldInstanceId{.Value = 1},
+        .Key = fastKey,
+        .World = *sceneFast,
+        .Assets = FakeAssets(),
+        .LevelId = AssetId{0x00000000000000A1ULL},
+        .SimTickRate = 60,
+        .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
+    });
+    REQUIRE(hostR.has_value());
+    Unique<ServerHost> host = std::move(*hostR);
+    host->AddWorld(ServerWorldInfo{
+        .WorldId = WorldInstanceId{.Value = 2},
+        .Key = slowKey,
+        .World = *sceneSlow,
+        .LevelId = AssetId{0x00000000000000B2ULL},
+        .SimTickRate = 1,
+        .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
+    });
+
+    const AccountId account{.Lo = 0x1C2};
+
+    // The client link carries a real one-way delay so the RTT the estimators convert is nonzero —
+    // the rate difference must show in the targets, not just the stored settings.
+    auto firstBase = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    FaultInjectionTransport firstLink(*firstBase, FaultInjectionConfig{.LatencyMs = 50.0f});
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    u64 tick = 0;
+
+    {
+        IdentityClient client(firstLink, account);
+        bool requested = false;
+        for (u64 step = 1; step <= 400; ++step)
+        {
+            ++tick;
+            now += Delta;
+            firstLink.SetTime(now);
+            sceneFast->SetChangeTick(tick);
+            sceneSlow->SetChangeTick(tick);
+            host->Pump(now, tick);
+            client.Pump(now);
+            if (!requested && client.Client->State() == ClientState::Connected)
+            {
+                client.Host->Join(fastKey, {}, /*present=*/true);  // the gameplay join
+                client.Host->Join(slowKey, {}, /*present=*/false); // the standing data world
+                requested = true;
+            }
+            // Fold the link state into both controllers once each join's stream has revealed a
+            // server tick, exactly as the world drive does per net-active world.
+            for (const JoinId join : client.Host->Joins())
+            {
+                if (client.Host->LastServerTick(join) > 0)
+                {
+                    (void)client.Host->ObserveTickSync(join, tick);
+                }
+            }
+        }
+
+        REQUIRE(client.Host->Joins().size() == 2);
+        const JoinId fastJoin = client.Host->Joins()[0];
+        const JoinId slowJoin = client.Host->Joins()[1];
+
+        // Each join's controller was constructed at the rate its reply carried.
+        CHECK(client.Host->TickSync(fastJoin).GetSettings().TickRate == 60);
+        CHECK(client.Host->TickSync(slowJoin).GetSettings().TickRate == 1);
+
+        // Both controllers observed the link and hold their own leads: the 60 Hz join's target
+        // converts the ~100 ms round trip into several fast ticks, the 1 Hz join's into a fraction
+        // of one slow tick over the margin — whole-tick scale, never the fast world's lead.
+        REQUIRE(client.Host->TickSync(fastJoin).HasEstimate());
+        REQUIRE(client.Host->TickSync(slowJoin).HasEstimate());
+        const f32 fastTarget = client.Host->TickSync(fastJoin).TargetOffset();
+        const f32 slowTarget = client.Host->TickSync(slowJoin).TargetOffset();
+        CHECK(fastTarget > slowTarget + 1.0f);
+        CHECK(slowTarget < 2.5f);
+
+        client.Client->Disconnect();
+        for (u64 step = 0; step < 40; ++step)
+        {
+            ++tick;
+            now += Delta;
+            firstLink.SetTime(now);
+            host->Pump(now, tick);
+            client.Pump(now);
+        }
+        REQUIRE(host->Server().Connections().empty());
+    }
+
+    // Reattach: the reconnect restores both joins — the presenting gameplay world and the slow
+    // world's standing join — and the restored slow join's estimator again runs at 1 Hz.
+    auto secondT = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    IdentityClient second(*secondT, account);
+    for (u64 step = 0; step < 200 && second.Host->Joins().size() < 2; ++step)
+    {
+        ++tick;
+        now += Delta;
+        sceneFast->SetChangeTick(tick);
+        sceneSlow->SetChangeTick(tick);
+        host->Pump(now, tick);
+        second.Pump(now);
+    }
+    REQUIRE(second.Host->Joins().size() == 2);
+    usize presenting = 0;
+    usize slowStanding = 0;
+    for (const JoinId join : second.Host->Joins())
+    {
+        if (second.Host->IsPresenting(join))
+        {
+            ++presenting;
+            CHECK(second.Host->TickSync(join).GetSettings().TickRate == 60);
+        }
+        else
+        {
+            ++slowStanding;
+            CHECK(second.Host->TickSync(join).GetSettings().TickRate == 1);
+        }
+    }
+    CHECK(presenting == 1);
+    CHECK(slowStanding == 1);
+}
+
+TEST_CASE("A seatless data world's pump grows no input state, and a sparse snapshot cadence "
+          "starves no clock sync")
+{
+    // A client data world carries no input seat, so its per-frame packets are header-only acks: the
+    // server's jitter buffer for the (connection, join) must idle at zero depth and the seat must
+    // never grow a PlayerInput. And a data world's minutes-scale snapshot cadence must not starve
+    // the clock-sync inputs — the RTT estimate rides the connection tier (keepalives/acks), so it
+    // stays live while the join's tick observation idles benignly at 1.0.
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+
+    TypeRegistry serverTypes;
+    RegisterBuiltinTypes(serverTypes);
+    Unique<Scene> dataScene = Scene::Create(serverTypes);
+    const WorldInstanceId dataWorld{.Value = 1};
+
+    Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
+        .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
+        .WorldId = dataWorld,
+        .World = *dataScene,
+        .Assets = FakeAssets(),
+        .LevelId = AssetId{}, // level-less: the data world through the default key
+        .SimTickRate = 1,
+        // A minutes-scale snapshot cadence (in ticks): no snapshot fires inside this run.
+        .Replication = ReplicationServer::Settings{.SnapshotInterval = 100000},
+    });
+    REQUIRE(hostR.has_value());
+    Unique<ServerHost> host = std::move(*hostR);
+
+    DataWorldClient client(*clientT, DefaultWorldKey);
+    InputSendBuffer send(InputSendBuffer::Settings{.Redundancy = 3});
+    std::unordered_map<u64, InputJitterBuffer> jitter;
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    for (u64 tick = 1; tick <= 300; ++tick)
+    {
+        now += Delta;
+        dataScene->SetChangeTick(tick);
+        FeedSeatInputs(*host, jitter, dataWorld, *dataScene, tick);
+        host->Pump(now, tick);
+        IngestConnectionInputs(*host, jitter, InputJitterBuffer::Settings{}, serverTypes);
+        client.Pump(now);
+        // The client's per-world send runs even with no seat to stamp: a header-only ack packet.
+        if (client.Client->State() == ClientState::Connected &&
+            client.Host->CurrentJoinId() != ControlJoinId)
+        {
+            (void)client.Client->Server().Send(
+                Channel::UnreliableSequenced,
+                EncodeWorldEnvelope(client.Host->CurrentJoinId(),
+                                    send.Encode(client.Host->LastServerTick(), serverTypes)));
+        }
+    }
+
+    REQUIRE(client.Host->IsJoined());
+    CHECK(client.LoadLevelCalls == 0);
+    CHECK(client.EmptyOpens == 1);
+
+    // The seatless input stream cost nothing: the join's jitter buffer never buffered a tick, and
+    // the seat never grew a PlayerInput from the feed.
+    const ConnectionId id = client.Client->AssignedId();
+    const auto it = jitter.find(InputBufferKey(id, host->CurrentJoin(id)));
+    if (it != jitter.end())
+    {
+        // Header-only packets buffered nothing, and the per-tick feed coasted on emptiness — the
+        // buffer never held a tick and never fed the seat.
+        CHECK(it->second.Depth() == 0);
+        CHECK(it->second.LastConsumedTick() == 0);
+    }
+    const Entity seat = host->SeatFor(id);
+    REQUIRE_FALSE(seat.IsNull());
+    CHECK_FALSE(dataScene->Has<PlayerInput>(seat));
+
+    // No snapshot fired inside the run, so the join's tick observation idles benignly — while the
+    // connection-tier clock inputs stayed live (the keepalive/ack RTT estimate is nonzero).
+    CHECK(client.Host->LastServerTick() == 0);
+    CHECK(client.Host->ObserveTickSync(300) == doctest::Approx(1.0f));
+    CHECK(client.Client->Server().RttEstimate() > 0.0f);
+}
+
+TEST_CASE("A world resolved with its own IdleDwell outlives the directory default and reaps after "
+          "its own")
+{
+    // The per-world reap patience: the directory holds one global keep-warm dwell, but a resolution
+    // may name how long its world outlives zero presence. The default-dwell world reaps first; the
+    // override world survives the default window and reaps only past its own.
+    const auto hub = CreateRef<Hub>();
+    const u32 serverEndpoint = hub->Register();
+    auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
+
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    Unique<Scene> primary = Scene::Create(types);
+    std::unordered_map<u64, Unique<Scene>> factoryScenes;
+    vector<u64> closed;
+    u64 nextWorld = 100;
+    u64 nextLevel = 0x2000;
+
+    const WorldKey fastKey = WorldKey::FromU64(0xFA57);
+    const WorldKey slowKey = WorldKey::FromU64(0x510E);
+    constexpr f64 DefaultDwell = 0.5;
+    constexpr f64 SlowDwell = 3.0;
+
+    Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
+        .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
+        .WorldId = WorldInstanceId{.Value = 1},
+        .Key = WorldKey::FromU64(0xFFFFFFFFULL),
+        .World = *primary,
+        .Assets = FakeAssets(),
+        .LevelId = LevelId,
+        .IdleKeepWarmDwell = DefaultDwell,
+        .WorldFactory = [&](const WorldKey& key,
+                            const TravelPayload&) -> optional<ServerWorldResolution>
+        {
+            const u64 world = nextWorld++;
+            Unique<Scene>& scene = factoryScenes[world];
+            scene = Scene::Create(types);
+            ServerWorldResolution resolution{.WorldId = WorldInstanceId{.Value = world},
+                                             .World = scene.get(),
+                                             .LevelId = AssetId{.Value = nextLevel++}};
+            if (key == slowKey)
+            {
+                // The long-lived data world: its members may all blip offline together, so it
+                // outlives zero presence by minutes-scale patience, not the gameplay default.
+                resolution.IdleDwell = SlowDwell;
+            }
+            return resolution;
+        },
+        .CloseWorld =
+            [&](const WorldInstanceId id)
+        {
+            closed.push_back(id.Value);
+            factoryScenes.erase(id.Value);
+        },
+    });
+    REQUIRE(hostR.has_value());
+    Unique<ServerHost> host = std::move(*hostR);
+
+    auto fastT = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    auto slowT = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    ClientWorld fastClient(*fastT, fastKey);
+    ClientWorld slowClient(*slowT, slowKey);
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    u64 tick = 0;
+    for (u64 step = 0; step < 120; ++step)
+    {
+        ++tick;
+        now += Delta;
+        primary->SetChangeTick(tick);
+        host->Pump(now, tick);
+        fastClient.Frame(now, tick, Delta, std::nullopt);
+        slowClient.Frame(now, tick, Delta, std::nullopt);
+    }
+    REQUIRE(fastClient.Host->IsJoined());
+    REQUIRE(slowClient.Host->IsJoined());
+    const WorldInstanceId fastWorld = host->WorldFor(fastClient.Client->AssignedId());
+    const WorldInstanceId slowWorld = host->WorldFor(slowClient.Client->AssignedId());
+
+    // Both leave together; flush the graceful closes so both buckets start their dwell at ~now.
+    fastClient.Client->Disconnect();
+    slowClient.Client->Disconnect();
+    for (u64 step = 0; step < 20; ++step)
+    {
+        ++tick;
+        now += Delta;
+        host->Pump(now, tick);
+        fastClient.Frame(now, tick, Delta, std::nullopt);
+        slowClient.Frame(now, tick, Delta, std::nullopt);
+    }
+    REQUIRE(host->Server().Connections().empty());
+
+    // Past the directory default but inside the override: the default-dwell world reaped, the
+    // override world is still warm.
+    const f64 emptiedAt = now;
+    while (now < emptiedAt + DefaultDwell + 0.5)
+    {
+        ++tick;
+        now += Delta;
+        host->Pump(now, tick);
+    }
+    REQUIRE(closed.size() == 1);
+    CHECK(closed.front() == fastWorld.Value);
+    CHECK(host->HostedWorldCount() == 2); // the primary + the slow world, still warm
+
+    // Past the override: the slow world reaps through the same hook.
+    while (now < emptiedAt + SlowDwell + 0.5)
+    {
+        ++tick;
+        now += Delta;
+        host->Pump(now, tick);
+    }
+    REQUIRE(closed.size() == 2);
+    CHECK(closed.back() == slowWorld.Value);
+    CHECK(host->HostedWorldCount() == 1); // the primary alone
+}
+
+TEST_CASE("The default join budget holds the standing-join matrix; the ninth join refuses with "
+          "its reason")
+{
+    // The standing-join arithmetic the default budgets: a presenting gameplay world plus the
+    // standing data worlds an account holds, with a make-before-break overlap, all join without
+    // denial on the default cap — and the ninth concurrent join still refuses, per-connection.
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    Unique<Scene> primary = Scene::Create(types);
+    std::unordered_map<u64, Unique<Scene>> factoryScenes;
+    u64 nextWorld = 100;
+    u64 nextLevel = 0x3000;
+
+    // No MaxJoinedWorldsPerConnection given: the engine default is under test.
+    Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
+        .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
+        .WorldId = WorldInstanceId{.Value = 1},
+        .Key = WorldKey::FromU64(0xFFFFFFFFULL),
+        .World = *primary,
+        .Assets = FakeAssets(),
+        .LevelId = LevelId,
+        .WorldFactory = [&](const WorldKey&,
+                            const TravelPayload&) -> optional<ServerWorldResolution>
+        {
+            const u64 world = nextWorld++;
+            Unique<Scene>& scene = factoryScenes[world];
+            scene = Scene::Create(types);
+            return ServerWorldResolution{.WorldId = WorldInstanceId{.Value = world},
+                                         .World = scene.get(),
+                                         .LevelId = AssetId{.Value = nextLevel++}};
+        },
+    });
+    REQUIRE(hostR.has_value());
+    Unique<ServerHost> host = std::move(*hostR);
+
+    MultiplexClient client(*clientT);
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    u64 tick = 0;
+    const auto pump = [&](const u64 steps)
+    {
+        for (u64 step = 0; step < steps; ++step)
+        {
+            ++tick;
+            now += Delta;
+            primary->SetChangeTick(tick);
+            host->Pump(now, tick);
+            client.Frame(now, Delta);
+        }
+    };
+
+    pump(40);
+    REQUIRE(client.Client->State() == ClientState::Connected);
+
+    // The matrix: one presenting gameplay world, three standing data worlds, and a fifth join
+    // standing in for the make-before-break travel overlap — all land without denial.
+    client.Host->Join(WorldKey::FromU64(0x1), {}, /*present=*/true);
+    client.Host->Join(WorldKey::FromU64(0x2));
+    client.Host->Join(WorldKey::FromU64(0x3));
+    client.Host->Join(WorldKey::FromU64(0x4));
+    client.Host->Join(WorldKey::FromU64(0x5));
+    pump(80);
+    REQUIRE(client.Host->Joins().size() == 5);
+
+    // The headroom: three more standing joins fill the default budget exactly.
+    client.Host->Join(WorldKey::FromU64(0x6));
+    client.Host->Join(WorldKey::FromU64(0x7));
+    client.Host->Join(WorldKey::FromU64(0x8));
+    pump(80);
+    REQUIRE(client.Host->Joins().size() == 8);
+
+    // The ninth concurrent join refuses per-connection: a directed travel's destination is denied,
+    // the reason surfaces, and the live joins are untouched (make-before-break never leaves).
+    client.Host->Travel(WorldKey::FromU64(0x9));
+    pump(80);
+    REQUIRE(client.TravelDenied.size() == 1);
+    CHECK(client.TravelDenied.front().first == WorldKey::FromU64(0x9));
+    CHECK(client.TravelDenied.front().second == JoinDenyReason::PerConnectionCapReached);
+    CHECK(client.Host->Joins().size() == 8);
 }

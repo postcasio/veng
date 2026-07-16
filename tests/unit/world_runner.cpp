@@ -34,6 +34,17 @@ namespace
 
         void OnUpdate(Scene& scene, f32, const SystemContext&) override { ++Updates[&scene]; }
     };
+
+    // A second registered probe the opener-named system set deliberately leaves out, proving an
+    // empty world runs exactly the systems its opener names — never the whole registry.
+    struct OtherProbe final : SceneSystem
+    {
+        static inline std::map<const Scene*, int> Updates;
+
+        static void Reset() { Updates.clear(); }
+
+        void OnUpdate(Scene& scene, f32, const SystemContext&) override { ++Updates[&scene]; }
+    };
 }
 
 namespace Veng
@@ -43,6 +54,13 @@ namespace Veng
     {
         static constexpr SystemId Id = 0x0071D000000000A1ULL;
         static string Name() { return "TickProbe"; }
+    };
+
+    template <>
+    struct VengSystem<OtherProbe>
+    {
+        static constexpr SystemId Id = 0x0071D000000000A2ULL;
+        static string Name() { return "OtherProbe"; }
     };
 }
 
@@ -66,14 +84,14 @@ namespace
         }
     };
 
-    // A WorldOpenInfo for an empty-scene world running the whole registry (TickProbe), started with
+    // A WorldOpenInfo for an empty-scene world running the opener-named probe, started with
     // the fake context — the device-free open the runner supports with no AssetManager.
     WorldOpenInfo EmptyWorld(ContextStorage& storage)
     {
         return WorldOpenInfo{
             .SimTickRate = 60,
             .StartSimulation = true,
-            .EmptySimulation = true,
+            .Systems = vector<SystemId>{SystemIdOf<TickProbe>()},
             .MakeStartContext = [&storage] { return storage.Make(); },
         };
     }
@@ -126,6 +144,64 @@ TEST_CASE("A device-free WorldRunner opens two empty worlds and ticks both, reso
     CHECK(TickProbe::Updates[&worldB->GetScene()] == 3);
     CHECK(worldA->Clock.GetTick() == 3);
     CHECK(worldB->Clock.GetTick() == 3);
+}
+
+TEST_CASE("An empty world runs exactly its opener-named system set; an empty set runs none")
+{
+    TickProbe::Reset();
+    OtherProbe::Reset();
+
+    TypeRegistry types;
+    SystemRegistry systems;
+    systems.Register<TickProbe>();
+    systems.Register<OtherProbe>();
+    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    ContextStorage storage;
+
+    // Named set: exactly TickProbe, though the registry also holds OtherProbe.
+    const WorldInstanceId named = runner.OpenWorld(WorldOpenInfo{
+        .SimTickRate = 60,
+        .StartSimulation = true,
+        .Systems = vector<SystemId>{SystemIdOf<TickProbe>()},
+        .MakeStartContext = [&storage] { return storage.Make(); },
+    });
+
+    // Empty set: a simulation running no systems — the world still starts and its clock ticks
+    // (the data-world shape: content arrives by other means, no system advances it).
+    const WorldInstanceId bare = runner.OpenWorld(WorldOpenInfo{
+        .SimTickRate = 60,
+        .StartSimulation = true,
+        .Systems = vector<SystemId>{},
+        .MakeStartContext = [&storage] { return storage.Make(); },
+    });
+
+    // Disengaged: no simulation at all — the world holds a scene but never ticks.
+    const WorldInstanceId simless = runner.OpenWorld(WorldOpenInfo{
+        .SimTickRate = 60,
+        .StartSimulation = true,
+        .MakeStartContext = [&storage] { return storage.Make(); },
+    });
+
+    const Scene* namedScene = &runner.ResolveWorld(named)->GetScene();
+    const Scene* bareScene = &runner.ResolveWorld(bare)->GetScene();
+    CHECK(runner.ResolveWorld(simless)->GetScene().GetSimulation() == nullptr);
+
+    for (int i = 0; i < 3; ++i)
+    {
+        runner.Tick(OneStep(storage));
+    }
+
+    // The named world ran exactly its named system: TickProbe stepped, OtherProbe never did.
+    CHECK(TickProbe::Updates[namedScene] == 3);
+    CHECK(OtherProbe::Updates.find(namedScene) == OtherProbe::Updates.end());
+
+    // The empty-set world ticked its clock while running no systems at all.
+    CHECK(TickProbe::Updates.find(bareScene) == TickProbe::Updates.end());
+    CHECK(OtherProbe::Updates.find(bareScene) == OtherProbe::Updates.end());
+    CHECK(runner.ResolveWorld(bare)->Clock.GetTick() == 3);
+
+    // The simulation-less world never advanced.
+    CHECK(runner.ResolveWorld(simless)->Clock.GetTick() == 0);
 }
 
 TEST_CASE("Closing a world resolves its id to nothing and leaves a peer untouched")

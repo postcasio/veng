@@ -88,9 +88,10 @@ namespace Veng
         else
         {
             world->OwnedScene = Scene::Create(*m_Types);
-            if (info.EmptySimulation)
+            if (info.Systems.has_value())
             {
-                world->OwnedScene->SetSimulation(CreateUnique<SceneSimulation>(*m_Systems));
+                world->OwnedScene->SetSimulation(
+                    CreateUnique<SceneSimulation>(*m_Systems, *info.Systems));
             }
         }
         world->LiveScene = world->OwnedScene.get();

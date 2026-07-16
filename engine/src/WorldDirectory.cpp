@@ -26,10 +26,13 @@ namespace Veng
             std::unordered_map<Net::AccountId, u32> Members;
             bool Reapable = true;
             optional<f64> IdleSince;
+            // The per-world idle-dwell override the opening resolution named; unset inherits the
+            // directory's IdleKeepWarmDwell.
+            optional<f64> Dwell;
         };
 
         u32 MaxHostedWorlds = 64;
-        u32 MaxJoinedWorldsPerConnection = 4;
+        u32 MaxJoinedWorldsPerConnection = 8;
         u32 MaxPlayersPerInstance = 0;
         f64 IdleKeepWarmDwell = 5.0;
         WorldRunner* Runner = nullptr;
@@ -215,7 +218,8 @@ namespace Veng
         s.Buckets.emplace(world.Value, State::Bucket{.World = world,
                                                      .Key = request.Key,
                                                      .Payload = request.Payload,
-                                                     .Reapable = true});
+                                                     .Reapable = true,
+                                                     .Dwell = resolved->IdleDwell});
         s.KeyMap[request.Key].push_back(world);
         return {
             .Outcome = WorldResolveOutcome::Opened, .World = world, .Opened = std::move(resolved)};
@@ -271,7 +275,7 @@ namespace Veng
         for (const auto& [value, bucket] : s.Buckets)
         {
             if (bucket.Reapable && bucket.Presence == 0 && bucket.IdleSince &&
-                now - *bucket.IdleSince >= s.IdleKeepWarmDwell)
+                now - *bucket.IdleSince >= bucket.Dwell.value_or(s.IdleKeepWarmDwell))
             {
                 reaped.push_back(bucket.World);
             }

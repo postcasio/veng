@@ -61,12 +61,15 @@ namespace Veng
         u32 SimTickRate = 60;
         /// @brief Whether to start the world's simulation now; false defers it (the client join target).
         bool StartSimulation = true;
-        /// @brief For an empty-scene world, attach and drive an all-registered SceneSimulation.
+        /// @brief For an empty-scene world, the ordered system set its SceneSimulation runs.
         ///
-        /// Meaningful only with an empty Source: the empty scene gets a SceneSimulation built from the
-        /// whole system registry so the runner ticks it. A level-spawned world always carries the
-        /// simulation the level built. Ignored when Source is a level.
-        bool EmptySimulation = false;
+        /// Meaningful only with an empty Source: engaged, the empty scene gets a SceneSimulation
+        /// built from exactly this ordered set — an empty vector is legal and attaches a simulation
+        /// running no systems (a ticking data world populated by other means); disengaged, the world
+        /// carries no simulation. An empty world runs the systems its opener names, exactly as a
+        /// level world runs the systems its level names; a caller wanting every registered system
+        /// enumerates SystemRegistry::Entries(). Ignored when Source is a level.
+        optional<vector<SystemId>> Systems;
         /// @brief Invoked once with the spawned scene and its residency batch, before the sim starts.
         function<void(WorldInstanceId, Scene&, ResidencyBatch&)> OnLoaded;
         /// @brief Builds the SystemContext the simulation starts with; required when StartSimulation.

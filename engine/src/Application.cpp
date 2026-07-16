@@ -470,6 +470,9 @@ namespace Veng
             .World = m_WorldRunner->ResolveWorld(m_ManagedWorld)->GetScene(),
             .Assets = *m_AssetManager,
             .LevelId = levelId,
+            // Echoed in each join reply so a joining client's tick-offset estimator runs at the
+            // hosted world's actual rate.
+            .SimTickRate = m_Info.World->SimTickRate,
             .Replication =
                 ReplicationServer::Settings{
                     .SnapshotInterval = net.SnapshotIntervalTicks,
@@ -558,6 +561,7 @@ namespace Veng
             // presents the zero digest.
             .WorldDigest = net.ClientWorldDigest,
             .LoadLevel = [this](const AssetId id) -> Scene* { return LoadClientLevel(id); },
+            .OpenEmptyWorld = [this]() -> Scene* { return OpenEmptyClientWorld(); },
             .ResolvePrefab = [this](const AssetId id) -> Ref<Prefab>
             {
                 const AssetResult<AssetHandle<Prefab>> prefab =
@@ -959,27 +963,42 @@ namespace Veng
         DrainRequests(*m_WorldRunner, dispatch);
     }
 
-    Scene* Application::LoadClientLevel(const AssetId id)
+    WorldInstanceId Application::NextJoinTargetWorld()
     {
         // The reply installs into the world queued for this join (FIFO in reply order). A join with no
         // queued target — a server-directed travel the ClientHost issued itself — opens a fresh runner
         // world here, so it never clobbers the managed world or another join's scene.
-        WorldInstanceId target;
         if (!m_Net->PendingJoinWorlds.empty())
         {
-            target = m_Net->PendingJoinWorlds.front();
+            const WorldInstanceId target = m_Net->PendingJoinWorlds.front();
             m_Net->PendingJoinWorlds.pop_front();
+            return target;
         }
-        else
-        {
-            target = m_WorldRunner->OpenWorld(WorldOpenInfo{
-                .SimTickRate = m_Info.World ? m_Info.World->SimTickRate : 60u,
-                .StartSimulation = false,
-            });
-            m_Net->WorldRoles[target.Value] = NetRole::Client;
-            m_Net->ClientWorlds[target.Value].Send = InputSendBuffer(
-                InputSendBuffer::Settings{.Redundancy = m_Net->Info.InputRedundancyTicks});
-        }
+        const WorldInstanceId target = m_WorldRunner->OpenWorld(WorldOpenInfo{
+            .SimTickRate = m_Info.World ? m_Info.World->SimTickRate : 60u,
+            .StartSimulation = false,
+        });
+        m_Net->WorldRoles[target.Value] = NetRole::Client;
+        m_Net->ClientWorlds[target.Value].Send = InputSendBuffer(
+            InputSendBuffer::Settings{.Redundancy = m_Net->Info.InputRedundancyTicks});
+        return target;
+    }
+
+    Scene* Application::OpenEmptyClientWorld()
+    {
+        const WorldInstanceId target = NextJoinTargetWorld();
+
+        // A level-less data world: nothing to load — its content arrives entirely from the stream.
+        // The installed scene carries a simulation running no systems so the world starts and ticks
+        // through the ordinary joined-world path; presentation bridges read it, no system advances it.
+        Unique<Scene> scene = Scene::Create(m_TypeRegistry);
+        scene->SetSimulation(CreateUnique<SceneSimulation>(m_SystemRegistry, vector<SystemId>{}));
+        return &m_WorldRunner->InstallScene(target, std::move(scene));
+    }
+
+    Scene* Application::LoadClientLevel(const AssetId id)
+    {
+        const WorldInstanceId target = NextJoinTargetWorld();
 
         // The accept names the level; load it with the server-authoritative authored entities skipped
         // (they arrive from the spawn stream) and keep the level handle resident in the target world's

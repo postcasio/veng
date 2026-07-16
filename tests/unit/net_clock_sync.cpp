@@ -117,6 +117,39 @@ TEST_CASE("clock sync: the controller converges the client lead to the target an
     CHECK(settledLead == doctest::Approx(target).epsilon(0.02));
 }
 
+TEST_CASE("clock sync: a 1 Hz tick rate converges to a whole-tick lead near the margin")
+{
+    // A slow data world: seconds-scale ticks make even a hefty RTT a fraction of one tick, so the
+    // target lead is dominated by the margin — small whole ticks, never the tens a 60 Hz rate
+    // would convert the same link into. The controller must converge exactly as at 60 Hz.
+    const TickSyncSettings slow{
+        .TickRate = 1, .MarginTicks = 1.0f, .MaxSlew = 0.05f, .SlewGain = 0.2f};
+    const f32 rtt = 0.1f;
+    const f32 jitter = 0.02f;
+
+    // (0.1 + 0.02) · 1 + 1 = 1.12 ticks — the margin plus a fraction of one slow tick.
+    const f32 target = TargetTickOffset(rtt, jitter, 0.0f, slow);
+    CHECK(target == doctest::Approx(1.12f));
+
+    f32 clientPos = 0.0f;
+    u64 serverTick = 0;
+    for (int step = 0; step < 400; ++step)
+    {
+        const f32 offset = clientPos - static_cast<f32>(serverTick);
+        const TickOffsetEstimate est = EstimateTickOffset(
+            TickOffsetInput{
+                .RttSeconds = rtt, .JitterSeconds = jitter, .CurrentOffsetTicks = offset},
+            slow);
+        CHECK(est.SlewFactor >= 1.0f - slow.MaxSlew);
+        CHECK(est.SlewFactor <= 1.0f + slow.MaxSlew);
+        clientPos += est.SlewFactor;
+        ++serverTick;
+    }
+
+    const f32 settledLead = clientPos - static_cast<f32>(serverTick);
+    CHECK(settledLead == doctest::Approx(target).epsilon(0.02));
+}
+
 TEST_CASE("clock sync: a mid-trace RTT step change re-converges the lead")
 {
     f32 rtt = 0.05f;

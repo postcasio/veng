@@ -69,7 +69,14 @@ namespace Veng
         /// @brief The server scene the host spawns this world's seats into; must outlive the host.
         Scene& World;
         /// @brief The AssetId of the level a client joining this world loads (named in its join reply).
+        ///
+        /// The invalid id names a level-less data world: the reply carries no level and the client
+        /// installs an empty scene its stream populates.
         AssetId LevelId;
+        /// @brief Fixed simulation ticks per second this world steps at (echoed in the join reply).
+        ///
+        /// Each joining client constructs that join's tick-offset estimator at this rate.
+        u32 SimTickRate = 60;
         /// @brief The content digest echoed to a joining client to validate its reconstructed world.
         Net::ContentDigest Digest;
         /// @brief The seat template spawned per join; null spawns a bare Viewer+Possesses seat.
@@ -104,7 +111,11 @@ namespace Veng
         /// @brief The asset manager the seat prefab's dependencies resolve through at spawn.
         AssetManager& Assets;
         /// @brief The AssetId of the level accepted clients load (named in the initial world's join reply).
+        ///
+        /// The invalid id names a level-less data world; see ServerWorldInfo::LevelId.
         AssetId LevelId;
+        /// @brief Fixed simulation ticks per second the initial world steps at (echoed in its join reply).
+        u32 SimTickRate = 60;
         /// @brief The content digest echoed to a client joining the initial world, for validation.
         Net::ContentDigest Digest;
         /// @brief The seat template spawned per join; null spawns a bare Viewer+Possesses seat.
@@ -118,7 +129,10 @@ namespace Veng
         /// @brief The game hook adding entities to each connection's interest set; unset adds none.
         Net::InterestPolicy InterestPolicy;
         /// @brief The most worlds one connection may join; a join past it is denied PerConnectionCapReached.
-        u32 MaxJoinedWorldsPerConnection = 4;
+        ///
+        /// The default budgets the standing-join architecture (the arithmetic is documented on
+        /// GameNetInfo::MaxJoinedWorldsPerConnection) while still capping fan-out abuse.
+        u32 MaxJoinedWorldsPerConnection = 8;
         /// @brief The server-wide bound on total live worlds; a create-on-miss past it is denied HostedWorldsCapReached.
         u32 MaxHostedWorlds = 64;
         /// @brief Per-instance seat cap the built-in placement policy fills to; 0 (the default) means no cap.
@@ -465,13 +479,23 @@ namespace Veng
         function<Net::ContentDigest(const Net::WorldKey&, const Net::TravelPayload&)> WorldDigest;
         /// @brief Loads the joined world's level into the caller's client scene, authoritative entities skipped.
         ///
-        /// Invoked per join, when the join reply arrives, with the level's AssetId — the app loads the
-        /// level (in practice Level::LoadInto with SkipServerAuthoritative) into a scene it owns
-        /// elsewhere (a WorldRunner world) and returns a borrowed pointer to it. The host does not own
-        /// the scene; it applies the spawn stream into the borrowed one, which must outlive the host.
-        /// Null on a load failure. A multiplexed client distinguishes joins by the level id (or the
-        /// returned scene) it hands back here.
+        /// Invoked per join, when the join reply arrives naming a valid level, with the level's
+        /// AssetId — the app loads the level (in practice Level::LoadInto with
+        /// SkipServerAuthoritative) into a scene it owns elsewhere (a WorldRunner world) and returns
+        /// a borrowed pointer to it. The host does not own the scene; it applies the spawn stream
+        /// into the borrowed one, which must outlive the host. Null on a load failure. A multiplexed
+        /// client distinguishes joins by the level id (or the returned scene) it hands back here.
+        /// Never invoked for a level-less join (see OpenEmptyWorld).
         function<Scene*(AssetId)> LoadLevel;
+        /// @brief Supplies the client scene for a join whose reply names no level (a data world).
+        ///
+        /// Invoked per join, when a reply carrying the invalid level id arrives: the world has no
+        /// authored level and its content arrives entirely from the stream, so the app installs an
+        /// empty scene into the runner world it queued for the join and returns a borrowed pointer
+        /// (the LoadLevel ownership contract, minus the level; LoadLevel is never invoked for such a
+        /// join). The echoed content digest is validated before this runs, exactly as for a level
+        /// join. Null (or unset) fails the join install.
+        function<Scene*()> OpenEmptyWorld;
         /// @brief Resolves a replicated spawn's prefab AssetId to a resident Prefab (the spawn arm).
         function<Ref<Prefab>(AssetId)> ResolvePrefab;
         /// @brief Optional: wire the local presentation when the own seat's possessed pawn changes.
@@ -496,12 +520,12 @@ namespace Veng
         Net::ReplayTick Replay;
         /// @brief The reconciliation compare tolerances and smoothing knobs (defaulted when unset).
         Net::ReconcileTolerances Tolerances;
-        /// @brief Tick-offset controller tuning — the sim tick rate and the lead margin.
+        /// @brief Tick-offset controller tuning — the pre-reply default rate and the lead margin.
         ///
-        /// The estimator converts RTT/jitter seconds into a tick lead at TickRate, so it must match
-        /// the world's SimTickRate; MarginTicks carries the fixed safety lead beyond the round-trip
-        /// estimate (the snapshot-cadence staleness plus the buffered-input cushion). Applied to every
-        /// joined world's controller.
+        /// The estimator converts RTT/jitter seconds into a tick lead at TickRate. Each join's
+        /// controller is constructed at the tick rate its join reply carries (the hosted world's
+        /// SimTickRate), so TickRate here is only the default for a reply carrying none; MarginTicks
+        /// and the slew knobs apply to every joined world's controller as given.
         Net::TickSyncSettings TickSync;
         /// @brief The spatial dequantization grid every joined world's replication client decodes with.
         ///

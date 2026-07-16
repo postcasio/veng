@@ -53,7 +53,7 @@ namespace
         return WorldOpenInfo{
             .SimTickRate = 60,
             .StartSimulation = true,
-            .EmptySimulation = true,
+            .Systems = vector<SystemId>{},
             .MakeStartContext = [&storage] { return storage.Make(); },
         };
     }
@@ -147,7 +147,7 @@ TEST_CASE("IsWorldPresentable gates on resolve, started sim, residency, and a fi
         const WorldInstanceId world = runner.OpenWorld(WorldOpenInfo{
             .SimTickRate = 60,
             .StartSimulation = false,
-            .EmptySimulation = true,
+            .Systems = vector<SystemId>{},
         });
         CHECK_FALSE(IsWorldPresentable(runner, world));
     }

@@ -45,8 +45,17 @@ namespace Veng
         WorldInstanceId WorldId;
         /// @brief The opened world's scene; borrowed, must outlive the world.
         Scene* World = nullptr;
-        /// @brief The AssetId of the level a joining client loads, or the invalid id.
+        /// @brief The AssetId of the level a joining client loads; the invalid id names a level-less world.
+        ///
+        /// A data world has no authored level: resolving with the invalid id makes the join reply
+        /// carry no level, and the client installs an empty scene its stream populates (LoadLevel is
+        /// never invoked). The digest below is validated either way.
         AssetId LevelId;
+        /// @brief Fixed simulation ticks per second the opened world steps at (echoed in the join reply).
+        ///
+        /// Each joining client constructs that join's tick-offset estimator at this rate, so a slow
+        /// data world's RTT converts into leads in its own ticks, not a shared default's.
+        u32 SimTickRate = 60;
         /// @brief The content digest echoed to a joining client to validate its reconstructed world.
         Net::ContentDigest Digest;
         /// @brief The seat template spawned per join; null spawns a bare Viewer+Possesses seat.
@@ -59,6 +68,12 @@ namespace Veng
         Net::InterestSettings Interest;
         /// @brief The game hook adding entities to each connection's interest set; unset adds none.
         Net::InterestPolicy InterestPolicy;
+        /// @brief Seconds this world outlives zero presence before it reaps; unset inherits the directory default.
+        ///
+        /// The per-world override of WorldDirectoryInfo::IdleKeepWarmDwell: a gameplay bubble wants
+        /// seconds, a long-lived data world whose members may all blip offline together wants
+        /// minutes. Applies only to this factory-opened bucket.
+        optional<f64> IdleDwell;
     };
 
     /// @brief One live instance ("bucket") of a WorldKey, offered to the placement policy on a resolve.
@@ -109,7 +124,11 @@ namespace Veng
         /// @brief The server-wide bound on total live instances; a fresh-bucket open past it is denied.
         u32 MaxHostedWorlds = 64;
         /// @brief The most worlds one connection may hold; a resolve past it is denied PerConnectionCapReached.
-        u32 MaxJoinedWorldsPerConnection = 4;
+        ///
+        /// The default budgets the standing-join architecture (see GameNetInfo's arithmetic): a
+        /// gameplay world plus several standing data worlds plus a make-before-break travel overlap,
+        /// with headroom — while still capping fan-out abuse.
+        u32 MaxJoinedWorldsPerConnection = 8;
         /// @brief Per-instance presence cap the built-in placement policy fills to; 0 (default) converges.
         ///
         /// Drives the built-in get-or-place policy when Placement is unset: 0 converges every requester of
@@ -117,6 +136,9 @@ namespace Veng
         /// fresh bucket through the factory when every existing one is full. Ignored when Placement is set.
         u32 MaxPlayersPerInstance = 0;
         /// @brief Seconds a bucket with no presence is held warm before it is reaped.
+        ///
+        /// The directory-wide default; a factory-opened bucket whose resolution set
+        /// ServerWorldResolution::IdleDwell dwells by that value instead.
         f64 IdleKeepWarmDwell = 5.0;
         /// @brief The optional runner the reap tears the closed world down through, after the close hook.
         ///

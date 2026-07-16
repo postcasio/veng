@@ -223,7 +223,8 @@ future.
 lifecycle. A client joins a world by presenting a `WorldKey`; the host resolves it in a fixed order —
 **authorize** (the `Authorize` hook over a **`Net::JoinRequestInfo`** — the connection, its admitted
 account (always valid: admission precedes authorization), the key, and the payload; default
-allow-all), **per-connection cap** (`MaxJoinedWorldsPerConnection`, default 4), then **get-or-place**
+allow-all), **per-connection cap** (`MaxJoinedWorldsPerConnection`, default 8 — budgeting the
+standing-join architecture, the arithmetic documented on `GameNetInfo`), then **get-or-place**
 through the placement policy, opening a fresh bucket through the consumer `WorldFactory`
 (`WorldKey → ServerWorldResolution`) when the policy asks for one, bounded by the **server-wide cap**
 (`MaxHostedWorlds`, default 64). It then assigns a
@@ -231,7 +232,8 @@ per-connection `JoinId`, spawns a **`Viewer` seat entity** in that world (`Autho
 id }`, no `SeatInput` — the remote path, stamped with a **`SeatAccount`** — a builtin,
 **non-replicated** component, so the account id stays server-local and is never broadcast to world
 members; a game wanting a public identity replicates its own display component), and replies
-(`JoinAcceptMessage`) with the world's level, a
+(`JoinAcceptMessage`) with the world's level (the invalid id for a **level-less data world** — no
+placebo level, no stub asset), its **`SimTickRate`**, a
 **content digest** of the resolved world, and the seat's wire id; the game-mode spawn rule pawns the
 pawnless seat with no net awareness. Each world's stream is gated on a **per-world `ClientReady`**,
 and inbound datagrams are **demuxed by `JoinId` only to a world the connection was granted** — a tag
@@ -239,7 +241,9 @@ naming an ungranted world is **dropped, not routed**. A refused join surfaces a 
 (`NotAuthorized` / `PerConnectionCapReached` / `HostedWorldsCapReached` / `NoSuchWorld`) and leaves
 the connection live. Pre-registered worlds (`Create` + `AddWorld`) are joinable by key and never
 reaped; a **factory-opened world is refcounted by its live-join count**, held warm for
-`IdleKeepWarmDwell` (default 5 s) after its last join leaves, then reaped through the `CloseWorld`
+`IdleKeepWarmDwell` (default 5 s; a resolution may name its own patience through
+`ServerWorldResolution::IdleDwell` — a long-lived data world dwells minutes while a gameplay bubble
+keeps the seconds default) after its last join leaves, then reaped through the `CloseWorld`
 hook — so a reconnect or a briefly-emptied shared world re-converges on the warm instance. The
 per-join server surface keys by `(conn, join)` — `ReplicationForJoin` / `WorldForJoin` / `SeatFor` /
 `IsGranted` / `IsReady` / `JoinsFor` / `CurrentJoin`, with no-arg / `(conn)` forms the current-join
@@ -299,11 +303,15 @@ client exactly where it was. `Application::Travel(TravelInfo)` is the one primit
 `ClientHostInfo{ WorldKey, AutoJoin }` auto-joins one key on connect (the single-world convenience).
 On the join reply it **validates the echoed content digest** against its own reconstruction (the
 `WorldDigest` hook), rejecting a mismatch loudly, loads the named level with server-authoritative
-authored entities **skipped** (they arrive from the stream), acks the per-world `ClientReady`,
-applies that world's spawn/snapshot stream, and wires the Local-tier presentation to its replicated
-seat's `Possesses`. **Identity and clock scope per `JoinId`:** each joined world keeps its own NetId
-map, prediction history, and **tick-offset controller**, so a client joining two worlds over one
-socket keeps a distinct tick lead per world (`TickSync(join)` / `ObserveTickSync(join, tick)`). The
+authored entities **skipped** (they arrive from the stream) — or, for a reply naming **no level**
+(a scene-less data world), installs an empty stream-populated scene through the `OpenEmptyWorld`
+hook, `LoadLevel` never invoked and the digest validated the same — acks the per-world
+`ClientReady`, applies that world's spawn/snapshot stream, and wires the Local-tier presentation to
+its replicated seat's `Possesses`. **Identity and clock scope per `JoinId`:** each joined world
+keeps its own NetId map, prediction history, and **tick-offset controller** — constructed at the
+`SimTickRate` its join reply carried, so a 1 Hz data world's RTT converts into whole slow-tick
+leads while a 60 Hz world sharing the socket keeps its own fast lead (`TickSync(join)` /
+`ObserveTickSync(join, tick)`; `ClientHostInfo::TickSync.TickRate` is only the pre-reply default). The
 flat `ClientHostInfo` hooks (`LoadLevel` / `OnPossession` / `Prediction` / `Replay` / `Tolerances`)
 are shared across joins — a multiplexed client distinguishes joins by the level id (or scene)
 `LoadLevel` returns. Both hosts are usable standalone; **`Application` mounts them** as the

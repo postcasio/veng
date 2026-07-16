@@ -144,6 +144,9 @@ namespace Veng::Net
         /// @brief True once at least one observation has been folded in.
         [[nodiscard]] bool HasEstimate() const { return m_HasEstimate; }
 
+        /// @brief The controller tuning this estimator was constructed with.
+        [[nodiscard]] const TickSyncSettings& GetSettings() const { return m_Settings; }
+
     private:
         /// @brief The controller tuning.
         TickSyncSettings m_Settings;

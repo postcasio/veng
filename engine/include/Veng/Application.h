@@ -252,7 +252,14 @@ namespace Veng
         /// @brief The server-wide bound on total live hosted worlds; a fresh-bucket open past it is denied.
         u32 MaxHostedWorlds = 64;
         /// @brief The most worlds one connection may join before a further join is denied.
-        u32 MaxJoinedWorldsPerConnection = 4;
+        ///
+        /// The default budgets the standing-join architecture the engine itself recommends: one
+        /// presenting gameplay world, plus the standing data worlds an account typically holds
+        /// across reconnects — a per-account world, a shared state-projection world, a group
+        /// world — is four concurrent joins, and a make-before-break travel overlaps a fifth while
+        /// the destination readies. Eight leaves headroom for another standing data world and a
+        /// second in-flight transition while still capping join fan-out abuse.
+        u32 MaxJoinedWorldsPerConnection = 8;
         /// @brief Seconds a factory-opened world with no live joins is held warm before it is reaped.
         f64 IdleKeepWarmDwell = 5.0;
     };
@@ -910,6 +917,25 @@ namespace Veng
         /// @param id  The level AssetId the accept named.
         /// @return The runner-owned scene the level loaded into.
         [[nodiscard]] Scene* LoadClientLevel(AssetId id);
+
+        /// @brief Resolves the runner world an in-flight join's reply installs into.
+        ///
+        /// Pops the world queued for the join (FIFO in reply order); with no queued target — a
+        /// server-directed travel the ClientHost issued itself — opens a fresh Client-tier runner
+        /// world with its own input send window, so a reply never clobbers the managed world or
+        /// another join's scene.
+        /// @return The runner world the reply's scene installs into.
+        [[nodiscard]] WorldInstanceId NextJoinTargetWorld();
+
+        /// @brief Installs an empty scene for a level-less joined world (a stream-populated data world).
+        ///
+        /// The ClientHost's OpenEmptyWorld hook: for a join reply naming no level, create an empty
+        /// scene over the type registry, attach a simulation running no systems (so the world ticks
+        /// and starts through the ordinary joined-world path), and install it into the world queued
+        /// for the in-flight join — the same target resolution as LoadClientLevel, without a level
+        /// load. The runner owns the installed scene; the host borrows it.
+        /// @return The runner-owned empty scene the join binds to.
+        [[nodiscard]] Scene* OpenEmptyClientWorld();
 
         /// @brief Seeds the viewport (managed world only), fires OnWorldLoaded, and starts a joined world's scene.
         ///
