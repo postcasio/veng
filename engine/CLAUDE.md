@@ -178,9 +178,11 @@ honest guarantee is per-world **convergence, not independent streams**. The join
 **content digest** the client validates its reconstructed world against (fail-loud carried into the
 join tier); worlds are **server-owned** — refcounted by live joins, idle-reaped after a keep-warm
 dwell, and bounded by a server-wide cap (with a per-connection join cap); and clock/tick-sync scopes
-**per `JoinId`**. The wire break **fails loudly**: `Net::ProtocolVersion` is **3** and the
+**per `JoinId`**. The wire break **fails loudly**: `Net::ProtocolVersion` is **4** and the
 `ConnectAcceptMessage` carries only the connection id (the level/seat moved to the per-world join
-reply). World lifetime is the role-neutral **`WorldDirectory`** (`Veng/WorldDirectory.h`) — the
+reply). Who a connection *is* is a consumer-minted, opaque **`Net::AccountId`** presented at the
+handshake (the `GameNetInfo::Identity` / `AdmitAccount` hooks) and threaded through seats,
+authorization, and directory membership — see [src/Net/CLAUDE.md](src/Net/CLAUDE.md). World lifetime is the role-neutral **`WorldDirectory`** (`Veng/WorldDirectory.h`) — the
 `WorldKey → live-instance` map, get-or-place, presence refcount (live joins **plus** presentation
 pins), keep-warm dwell, and idle reap — which a `ServerHost` borrows and a standalone `Application`
 constructs; travel rides an opaque **`Net::TravelPayload`** through `Authorize`/`Placement`/

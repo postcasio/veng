@@ -144,6 +144,25 @@ TEST_CASE("LaunchArguments: a malformed --join port is rejected")
     CHECK_FALSE(ParseTokens({"--join", ":27750"}).has_value());
 }
 
+TEST_CASE("LaunchArguments: --name sets the local player name")
+{
+    const Result<LaunchArguments> separated = ParseTokens({"--name", "ada"});
+    REQUIRE(separated.has_value());
+    REQUIRE(separated->Name.has_value());
+    CHECK(*separated->Name == "ada");
+
+    const Result<LaunchArguments> joined = ParseTokens({"--name=grace"});
+    REQUIRE(joined.has_value());
+    REQUIRE(joined->Name.has_value());
+    CHECK(*joined->Name == "grace");
+}
+
+TEST_CASE("LaunchArguments: --name with no or an empty value is rejected")
+{
+    CHECK_FALSE(ParseTokens({"--name"}).has_value());
+    CHECK_FALSE(ParseTokens({"--name="}).has_value());
+}
+
 TEST_CASE("LaunchArguments: an unknown flag is rejected")
 {
     CHECK_FALSE(ParseTokens({"--nope"}).has_value());

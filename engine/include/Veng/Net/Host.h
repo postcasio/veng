@@ -2,7 +2,9 @@
 
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Asset/Prefab.h>
+#include <Veng/Net/AccountId.h>
 #include <Veng/Net/Client.h>
+#include <Veng/Net/JoinRequest.h>
 #include <Veng/Net/ClockSync.h>
 #include <Veng/Net/Interest.h>
 #include <Veng/Net/NetEvents.h>
@@ -126,13 +128,14 @@ namespace Veng
         u32 MaxPlayersPerInstance = 0;
         /// @brief Seconds a world with no live joins is held warm before it is reaped (CloseWorld).
         f64 IdleKeepWarmDwell = 5.0;
-        /// @brief The authorization hook: may this connection join/create this key? Unset allows all.
+        /// @brief The authorization hook: may this requester join/create this key? Unset allows all.
         ///
         /// Called before any cap check, world open, or JoinId assignment, so a refusal leaves no
-        /// resource to reap. The opaque travel payload rides in so a policy may gate on arrival data. A
-        /// policy seam, not a security mechanism (the transport is unauthenticated).
-        function<bool(Net::ConnectionId, const Net::WorldKey&, const Net::TravelPayload&)>
-            Authorize;
+        /// resource to reap. The request identity carries the connection, its admitted account (always
+        /// valid — admission precedes authorization), the key, and the opaque travel payload, so a
+        /// policy may gate on who is asking or on arrival data. A policy seam, not a security
+        /// mechanism (the transport is unauthenticated).
+        function<bool(const Net::JoinRequestInfo&)> Authorize;
         /// @brief The get-or-create factory: materialize a world for a key that missed the shared map.
         ///
         /// Called only on a miss, after the caps clear, to open a new world through the consumer's
@@ -144,15 +147,15 @@ namespace Veng
             WorldFactory;
         /// @brief The get-or-place policy: which live bucket of a key a joiner lands in, or a fresh one.
         ///
-        /// Called on every join after authorize + the per-connection cap clear, with the key's live
-        /// buckets (each with its presence and recorded payload), the joining connection, and the
-        /// requester's payload. Returning an offered bucket's id places the joiner there (converging on
-        /// it); returning nullopt asks for a fresh bucket, opened through WorldFactory and bounded by
-        /// MaxHostedWorlds. Unset uses the built-in capacity policy driven by MaxPlayersPerInstance
-        /// (convergence when that is 0). The payload lets a proximity policy match a request against
-        /// every live bucket's params; party/affinity grouping is not expressed here.
-        function<optional<WorldInstanceId>(const Net::WorldKey&, Net::ConnectionId,
-                                           const Net::TravelPayload&,
+        /// Called on every join after authorize + the per-connection cap clear, with the request
+        /// identity (connection, account, key, payload) and the key's live buckets (each with its
+        /// presence and recorded payload). Returning an offered bucket's id places the joiner there
+        /// (converging on it); returning nullopt asks for a fresh bucket, opened through WorldFactory
+        /// and bounded by MaxHostedWorlds. Unset uses the built-in capacity policy driven by
+        /// MaxPlayersPerInstance (convergence when that is 0). The payload lets a proximity policy
+        /// match a request against every live bucket's params; party/affinity grouping is not
+        /// expressed here.
+        function<optional<WorldInstanceId>(const Net::JoinRequestInfo&,
                                            std::span<const WorldPlacement>)>
             Placement;
         /// @brief Closes a factory-opened world when it idles out; unset leaves the world open.
@@ -263,6 +266,17 @@ namespace Veng
         /// @param id    The connection.
         /// @param join  The JoinId to resolve.
         [[nodiscard]] Entity SeatFor(Net::ConnectionId id, Net::JoinId join) const;
+
+        /// @brief The account bound to a connection at admission, or the invalid id when unknown.
+        /// @param id  The connection to resolve.
+        [[nodiscard]] Net::AccountId AccountFor(Net::ConnectionId id) const;
+
+        /// @brief The live connection an account is bound to, or ServerConnectionId when none is.
+        ///
+        /// Exactly one live connection holds an account (a duplicate is refused at the handshake), so
+        /// the reverse lookup is single-valued; after a reconnect it re-points to the fresh connection.
+        /// @param account  The account to resolve.
+        [[nodiscard]] Net::ConnectionId ConnectionFor(const Net::AccountId& account) const;
 
         /// @brief The JoinId of a connection's current (first) join, or ControlJoinId if it has none.
         /// @param id  The connection to resolve.

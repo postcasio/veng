@@ -118,6 +118,7 @@ add_library(veng SHARED
         src/Math/Noise.cpp
         src/Module/ApplicationRegistry.cpp
         src/Module/ModuleLoader.cpp
+        src/Net/AccountId.cpp
         src/Net/Client.cpp
         src/Net/ClockSync.cpp
         src/Net/Connection.cpp

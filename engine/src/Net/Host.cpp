@@ -134,10 +134,11 @@ namespace Veng
             Net::InterestState Interest;
         };
 
-        // One connection's joins, its per-connection JoinId allocator, and the WorldKey → JoinId
-        // dedupe so a repeat join of the same key is idempotent.
+        // One connection's admitted account, its joins, its per-connection JoinId allocator, and the
+        // WorldKey → JoinId dedupe so a repeat join of the same key is idempotent.
         struct ConnectionState
         {
+            Net::AccountId Account;                 // bound at admission, stable for the connection
             std::map<Net::JoinId, JoinState> Joins; // ordered, so the first is the current-join
             std::unordered_map<Net::WorldKey, Net::JoinId> KeyToJoin;
             Net::JoinId NextJoin = 1; // monotonic per connection, never reused, one reserved
@@ -265,9 +266,11 @@ namespace Veng
         }
 
         // Spawns a seat into a joined world: a Viewer seat with Authority{ Server, Owner = id } and no
-        // SeatInput (its input arrives from the wire). Returns the seat's freshly assigned wire id,
-        // drawn from that world's allocator.
-        u32 SpawnSeat(HostedWorld& world, Net::ConnectionId id, Entity& outSeat)
+        // SeatInput (its input arrives from the wire), stamped with the connection's account
+        // (SeatAccount — a non-replicated builtin, so the id stays server-local). Returns the seat's
+        // freshly assigned wire id, drawn from that world's allocator.
+        u32 SpawnSeat(HostedWorld& world, Net::ConnectionId id, const Net::AccountId& account,
+                      Entity& outSeat)
         {
             Scene& scene = *world.World;
             Entity seat = Entity::Null;
@@ -304,6 +307,16 @@ namespace Veng
             else
             {
                 scene.Add<Authority>(seat, owner);
+            }
+
+            const SeatAccount seatAccount{.Account = account};
+            if (scene.Has<SeatAccount>(seat))
+            {
+                scene.Get<SeatAccount>(seat) = seatAccount;
+            }
+            else
+            {
+                scene.Add<SeatAccount>(seat, seatAccount);
             }
 
             const u32 netId = world.Allocator.Next();
@@ -386,8 +399,12 @@ namespace Veng
                 return;
             }
 
-            const WorldResolveResult resolve = Directory->Resolve(
-                id, request.Key, request.Payload, static_cast<u32>(conn.Joins.size()));
+            const WorldResolveResult resolve =
+                Directory->Resolve(Net::JoinRequestInfo{.Connection = id,
+                                                        .Account = conn.Account,
+                                                        .Key = request.Key,
+                                                        .Payload = request.Payload},
+                                   static_cast<u32>(conn.Joins.size()));
             if (resolve.Outcome == WorldResolveOutcome::Denied)
             {
                 deny(resolve.Reason);
@@ -404,7 +421,7 @@ namespace Veng
             conn.NextJoin += 1;
 
             Entity seat = Entity::Null;
-            const u32 seatNetId = SpawnSeat(world, id, seat);
+            const u32 seatNetId = SpawnSeat(world, id, conn.Account, seat);
             world.Replication.AddConnection(id);
             if (world.SeatPrefabId.IsValid())
             {
@@ -413,16 +430,18 @@ namespace Veng
             conn.Joins.emplace(joinId, JoinState{.Join = joinId, .World = worldId, .Seat = seat});
             conn.KeyToJoin.emplace(request.Key, joinId);
 
-            // Report the live join as presence to the directory, which owns the refcount and dwell.
-            Directory->AddJoin(worldId);
+            // Report the live join as presence to the directory, which owns the refcount and dwell,
+            // recording the account as a member of the bucket (the MembersOf primitive).
+            Directory->AddJoin(worldId, conn.Account);
 
             sendAccept(joinId, world, seatNetId);
             Log::Info("ServerHost accepted connection {} into world {} as join {}", id,
                       worldId.Value, joinId);
         }
 
-        // Releases a join from its world: destroys the seat and reports the presence drop to the
-        // directory, which starts the idle dwell for a bucket that just emptied.
+        // Releases a join from its world: destroys the seat and reports the presence drop (and the
+        // account's membership drop) to the directory, which starts the idle dwell for a bucket that
+        // just emptied.
         void ReleaseJoin(Net::ConnectionId id, JoinState& join, f64 now)
         {
             HostedWorld* world = TryWorldOf(join.World);
@@ -435,7 +454,10 @@ namespace Veng
                 world->World->DestroyEntity(join.Seat);
             }
             world->Replication.RemoveConnection(id);
-            Directory->RemoveJoin(join.World, now);
+            const auto conn = Connections.find(id);
+            Directory->RemoveJoin(join.World, now,
+                                  conn != Connections.end() ? conn->second.Account
+                                                            : Net::AccountId{});
         }
 
         // Handles a client's leave notice: releases the named join's seat + presence and surfaces a
@@ -594,7 +616,9 @@ namespace Veng
         {
             if (event.Type == Net::NetEventType::Connected)
             {
-                s.Connections.try_emplace(event.Id);
+                // Bind the admitted account for the connection's lifetime; every player-keyed
+                // decision below (authorize, seat stamp, directory membership) reads it from here.
+                s.Connections.try_emplace(event.Id).first->second.Account = event.Account;
             }
             else if (event.Type == Net::NetEventType::Disconnected)
             {
@@ -732,6 +756,27 @@ namespace Veng
     {
         const State::JoinState* state = m_State->JoinStateOf(id, join);
         return state != nullptr ? state->Seat : Entity::Null;
+    }
+
+    Net::AccountId ServerHost::AccountFor(Net::ConnectionId id) const
+    {
+        const auto it = m_State->Connections.find(id);
+        return it != m_State->Connections.end() ? it->second.Account : Net::AccountId{};
+    }
+
+    Net::ConnectionId ServerHost::ConnectionFor(const Net::AccountId& account) const
+    {
+        if (account.IsValid())
+        {
+            for (const auto& [id, conn] : m_State->Connections)
+            {
+                if (conn.Account == account)
+                {
+                    return id;
+                }
+            }
+        }
+        return Net::ServerConnectionId;
     }
 
     Net::JoinId ServerHost::CurrentJoin(Net::ConnectionId id) const

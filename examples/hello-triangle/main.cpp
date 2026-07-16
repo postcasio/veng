@@ -92,6 +92,28 @@ struct MultiplayerMode
 
 VE_TYPE(::MultiplayerMode, 0xF4220F737E702E78ULL);
 
+// Derives a stable account id from the --name launch token: FNV-1a over the name into each
+// 64-bit half (differently seeded), so relaunching with the same name presents the same account
+// and the server reattaches it, while distinct names collide only as a 128-bit hash would.
+Net::AccountId AccountFromName(const string_view name)
+{
+    const auto fnv1a = [name](u64 hash)
+    {
+        for (const char c : name)
+        {
+            hash ^= static_cast<u8>(c);
+            hash *= 1099511628211ULL;
+        }
+        return hash;
+    };
+    Net::AccountId id{.Lo = fnv1a(14695981039346656037ULL), .Hi = fnv1a(0x9E3779B97F4A7C15ULL)};
+    if (!id.IsValid())
+    {
+        id.Lo = 1;
+    }
+    return id;
+}
+
 // Advances every Spinner each frame about its own axis — the gameplay tick the windowed
 // app drives through a SceneSimulation. Registered into the host SystemRegistry alongside
 // the Spinner type.
@@ -398,9 +420,28 @@ VE_GUI_DRIVER(HudDriver, 0xE46A19EB6642A7D3ULL, "HUD");
 class HelloTriangleApp final : public Application
 {
 public:
-    HelloTriangleApp(const ApplicationInfo& info, TypeRegistry& types, SystemRegistry& systems)
-        : Application(info, types, systems)
+    HelloTriangleApp(ApplicationInfo info, TypeRegistry& types, SystemRegistry& systems)
+        : Application(WithIdentity(std::move(info), this), types, systems)
     {
+    }
+
+private:
+    // Wires the sample's account identity into the net knobs: a stable hash of the --name launch
+    // token, so a relaunch with the same name reattaches as the same account; with no name it
+    // falls through to the engine's process-random ephemeral default. The hook captures the app
+    // because the parsed launch arguments live on it and the hook is evaluated at bootstrap, after
+    // parsing; only the pointer is taken here, never dereferenced during construction.
+    static ApplicationInfo WithIdentity(ApplicationInfo info, const HelloTriangleApp* app)
+    {
+        if (info.Net)
+        {
+            info.Net->Identity = [app]() -> Net::AccountId
+            {
+                const optional<string>& name = app->GetLaunchArguments().Name;
+                return name.has_value() ? AccountFromName(*name) : Net::GenerateAccountId();
+            };
+        }
+        return info;
     }
 
 protected:

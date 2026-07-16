@@ -21,7 +21,7 @@ namespace Veng::Net
 
         [[nodiscard]] bool IsKnownDenyReason(u8 value)
         {
-            return value <= static_cast<u8>(DenyReason::AppRefused);
+            return value <= static_cast<u8>(DenyReason::AccountAlreadyConnected);
         }
 
         [[nodiscard]] bool IsKnownDisconnectReason(u8 value)
@@ -124,6 +124,8 @@ namespace Veng::Net
         WriteU64LE(out, message.Content.Lo);
         WriteU64LE(out, message.Content.Hi);
         WriteU32LE(out, message.AppVersion);
+        WriteU64LE(out, message.Account.Lo);
+        WriteU64LE(out, message.Account.Hi);
         return out;
     }
 
@@ -153,7 +155,7 @@ namespace Veng::Net
 
     optional<ConnectRequestMessage> DecodeConnectRequest(std::span<const u8> message)
     {
-        constexpr usize size = TypeByteSize + 4 + 8 + 8 + 4;
+        constexpr usize size = TypeByteSize + 4 + 8 + 8 + 4 + 16;
         if (!HasType(message, ControlMessageType::ConnectRequest, size))
         {
             return {};
@@ -162,6 +164,7 @@ namespace Veng::Net
             .ProtocolVersion = ReadU32LE(message, 1),
             .Content = ContentDigest{.Lo = ReadU64LE(message, 5), .Hi = ReadU64LE(message, 13)},
             .AppVersion = ReadU32LE(message, 21),
+            .Account = AccountId{.Lo = ReadU64LE(message, 25), .Hi = ReadU64LE(message, 33)},
         };
     }
 

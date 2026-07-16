@@ -21,6 +21,9 @@ namespace Veng
             Net::WorldKey Key;
             Net::TravelPayload Payload;
             u32 Presence = 0;
+            // The accounts present on this bucket, refcounted per account (one account may hold
+            // several presences — a join and a pin, say). Only valid accounts are recorded.
+            std::unordered_map<Net::AccountId, u32> Members;
             bool Reapable = true;
             optional<f64> IdleSince;
         };
@@ -30,12 +33,10 @@ namespace Veng
         u32 MaxPlayersPerInstance = 0;
         f64 IdleKeepWarmDwell = 5.0;
         WorldRunner* Runner = nullptr;
-        function<bool(Net::ConnectionId, const Net::WorldKey&, const Net::TravelPayload&)>
-            Authorize;
+        function<bool(const Net::JoinRequestInfo&)> Authorize;
         function<optional<ServerWorldResolution>(const Net::WorldKey&, const Net::TravelPayload&)>
             WorldFactory;
-        function<optional<WorldInstanceId>(const Net::WorldKey&, Net::ConnectionId,
-                                           const Net::TravelPayload&,
+        function<optional<WorldInstanceId>(const Net::JoinRequestInfo&,
                                            std::span<const WorldPlacement>)>
             Placement;
         function<void(WorldInstanceId)> CloseWorld;
@@ -55,11 +56,10 @@ namespace Veng
         // The get-or-place selection: the custom policy if set, else the built-in capacity policy (the
         // first bucket under MaxPlayersPerInstance; 0 means the first — pure convergence). Only buckets
         // currently mapped to the key are offered, each carrying its presence and recorded payload.
-        optional<WorldInstanceId> Place(const Net::WorldKey& key, Net::ConnectionId connection,
-                                        const Net::TravelPayload& payload)
+        optional<WorldInstanceId> Place(const Net::JoinRequestInfo& request)
         {
             vector<WorldPlacement> buckets;
-            if (const auto it = KeyMap.find(key); it != KeyMap.end())
+            if (const auto it = KeyMap.find(request.Key); it != KeyMap.end())
             {
                 for (const WorldInstanceId world : it->second)
                 {
@@ -71,7 +71,7 @@ namespace Veng
 
             if (Placement)
             {
-                return Placement(key, connection, payload, buckets);
+                return Placement(request, buckets);
             }
 
             for (const WorldPlacement& bucket : buckets)
@@ -84,9 +84,26 @@ namespace Veng
             return std::nullopt;
         }
 
-        // Drops one unit of presence, stamping the idle-since when the last presence leaves a reapable
-        // bucket so the dwell owns its fate.
-        void Release(WorldInstanceId world, f64 now)
+        // Adds one unit of presence, recording a valid account as a bucket member.
+        void Acquire(WorldInstanceId world, const Net::AccountId& account)
+        {
+            Bucket* bucket = Find(world);
+            if (bucket == nullptr)
+            {
+                return;
+            }
+            bucket->Presence += 1;
+            bucket->IdleSince.reset();
+            if (account.IsValid())
+            {
+                bucket->Members[account] += 1;
+            }
+        }
+
+        // Drops one unit of presence (and the account's membership when its refcount empties),
+        // stamping the idle-since when the last presence leaves a reapable bucket so the dwell owns
+        // its fate.
+        void Release(WorldInstanceId world, f64 now, const Net::AccountId& account)
         {
             Bucket* bucket = Find(world);
             if (bucket == nullptr)
@@ -96,6 +113,17 @@ namespace Veng
             if (bucket->Presence > 0)
             {
                 bucket->Presence -= 1;
+            }
+            if (account.IsValid())
+            {
+                if (const auto it = bucket->Members.find(account); it != bucket->Members.end())
+                {
+                    it->second -= 1;
+                    if (it->second == 0)
+                    {
+                        bucket->Members.erase(it);
+                    }
+                }
             }
             if (bucket->Presence == 0 && bucket->Reapable)
             {
@@ -144,14 +172,12 @@ namespace Veng
         }
     }
 
-    WorldResolveResult WorldDirectory::Resolve(const Net::ConnectionId connection,
-                                               const Net::WorldKey& key,
-                                               const Net::TravelPayload& payload,
+    WorldResolveResult WorldDirectory::Resolve(const Net::JoinRequestInfo& request,
                                                const u32 heldWorlds)
     {
         State& s = *m_State;
 
-        if (s.Authorize && !s.Authorize(connection, key, payload))
+        if (s.Authorize && !s.Authorize(request))
         {
             return {.Outcome = WorldResolveOutcome::Denied,
                     .Reason = Net::JoinDenyReason::NotAuthorized};
@@ -162,7 +188,7 @@ namespace Veng
                     .Reason = Net::JoinDenyReason::PerConnectionCapReached};
         }
 
-        if (const optional<WorldInstanceId> placed = s.Place(key, connection, payload))
+        if (const optional<WorldInstanceId> placed = s.Place(request))
         {
             return {.Outcome = WorldResolveOutcome::Placed, .World = *placed};
         }
@@ -178,7 +204,7 @@ namespace Veng
             return {.Outcome = WorldResolveOutcome::Denied,
                     .Reason = Net::JoinDenyReason::NoSuchWorld};
         }
-        optional<ServerWorldResolution> resolved = s.WorldFactory(key, payload);
+        optional<ServerWorldResolution> resolved = s.WorldFactory(request.Key, request.Payload);
         if (!resolved || resolved->World == nullptr)
         {
             return {.Outcome = WorldResolveOutcome::Denied,
@@ -186,36 +212,56 @@ namespace Veng
         }
 
         const WorldInstanceId world = resolved->WorldId;
-        s.Buckets.emplace(
-            world.Value,
-            State::Bucket{.World = world, .Key = key, .Payload = payload, .Reapable = true});
-        s.KeyMap[key].push_back(world);
+        s.Buckets.emplace(world.Value, State::Bucket{.World = world,
+                                                     .Key = request.Key,
+                                                     .Payload = request.Payload,
+                                                     .Reapable = true});
+        s.KeyMap[request.Key].push_back(world);
         return {
             .Outcome = WorldResolveOutcome::Opened, .World = world, .Opened = std::move(resolved)};
     }
 
-    void WorldDirectory::AddJoin(const WorldInstanceId world)
+    void WorldDirectory::AddJoin(const WorldInstanceId world, const Net::AccountId& account)
     {
-        Pin(world);
+        m_State->Acquire(world, account);
     }
 
-    void WorldDirectory::RemoveJoin(const WorldInstanceId world, const f64 now)
+    void WorldDirectory::RemoveJoin(const WorldInstanceId world, const f64 now,
+                                    const Net::AccountId& account)
     {
-        m_State->Release(world, now);
+        m_State->Release(world, now, account);
     }
 
-    void WorldDirectory::Pin(const WorldInstanceId world)
+    void WorldDirectory::Pin(const WorldInstanceId world, const Net::AccountId& account)
     {
-        if (State::Bucket* bucket = m_State->Find(world))
+        m_State->Acquire(world, account);
+    }
+
+    void WorldDirectory::Unpin(const WorldInstanceId world, const f64 now,
+                               const Net::AccountId& account)
+    {
+        m_State->Release(world, now, account);
+    }
+
+    vector<Net::AccountId> WorldDirectory::MembersOf(const Net::WorldKey& key) const
+    {
+        vector<Net::AccountId> members;
+        const auto it = m_State->KeyMap.find(key);
+        if (it == m_State->KeyMap.end())
         {
-            bucket->Presence += 1;
-            bucket->IdleSince.reset();
+            return members;
         }
-    }
-
-    void WorldDirectory::Unpin(const WorldInstanceId world, const f64 now)
-    {
-        m_State->Release(world, now);
+        for (const WorldInstanceId world : it->second)
+        {
+            for (const auto& [account, count] : m_State->Buckets.at(world.Value).Members)
+            {
+                if (std::ranges::find(members, account) == members.end())
+                {
+                    members.push_back(account);
+                }
+            }
+        }
+        return members;
     }
 
     vector<WorldInstanceId> WorldDirectory::ReapIdle(const f64 now)

@@ -18,6 +18,7 @@ namespace Veng::Net
         Unique<Connection> Conn;
         ClientState State = ClientState::Connecting;
         ConnectionId AssignedId = ServerConnectionId;
+        AccountId Account; // the account presented at the handshake (minted when unconfigured)
         optional<DenyReason> Deny;
         vector<vector<u8>> AppReliable; // non-handshake reliable messages from the most recent Pump
     };
@@ -64,10 +65,15 @@ namespace Veng::Net
 
         impl->Conn = CreateUnique<Connection>(*impl->Transport, *peer, info.Connection);
 
+        // An unconfigured account mints the ephemeral per-process default, so the presented id is
+        // always valid (see ClientInfo::Account).
+        impl->Account = info.Account.IsValid() ? info.Account : GenerateAccountId();
+
         const vector<u8> request = EncodeConnectRequest(ConnectRequestMessage{
             .ProtocolVersion = info.ProtocolVersion,
             .Content = info.Content,
             .AppVersion = info.AppVersion,
+            .Account = impl->Account,
         });
         (void)impl->Conn->Send(Channel::ReliableOrdered, request);
 
@@ -142,6 +148,11 @@ namespace Veng::Net
     ConnectionId Client::AssignedId() const
     {
         return m_Impl->AssignedId;
+    }
+
+    AccountId Client::GetAccount() const
+    {
+        return m_Impl->Account;
     }
 
     optional<DenyReason> Client::GetDenyReason() const

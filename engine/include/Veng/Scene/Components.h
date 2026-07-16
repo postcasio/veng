@@ -8,6 +8,7 @@
 #include <Veng/Renderer/SunPosition.h>
 #include <Veng/Renderer/VolumeField.h>
 #include <Veng/Renderer/Tonemapper.h>
+#include <Veng/Net/AccountId.h>
 #include <Veng/Scene/Entity.h>
 #include <Veng/Reflection/Reflect.h>
 #include <Veng/Reflection/Variant.h>
@@ -611,6 +612,19 @@ namespace Veng
         [[nodiscard]] bool operator==(const NetAnchor&) const = default;
     };
 
+    /// @brief The account a seat entity belongs to, stamped by the server when it spawns the seat.
+    ///
+    /// Server-local bookkeeping: the host stamps each spawned seat with the connection's admitted
+    /// account so server-side game code can key player decisions on the person, not the transport
+    /// link. Deliberately not replicated — the account id is never broadcast to world members; a
+    /// game wanting a public identity replicates its own display component instead. Runtime-only,
+    /// never authored (the account exists only once a connection is admitted).
+    struct SeatAccount
+    {
+        /// @brief The seat's owning account (valid — admission precedes the seat spawn).
+        Net::AccountId Account;
+    };
+
     /// @brief Camera-rig follow relationship: the target a camera entity trails and how.
     ///
     /// Read by the View-phase camera rig: each tick it reads the target's world Transform
@@ -1166,6 +1180,12 @@ VE_REFLECT_END();
 VE_REFLECT(::Veng::NetAnchor, 0x6B5366CCAC328A6CULL)
 VE_FIELD(Lo, .DisplayName = "Anchor Lo")
 VE_FIELD(Hi, .DisplayName = "Anchor Hi")
+VE_REFLECT_END();
+
+// Reflected so the inspector surfaces the seat's account (read-only), but *not* replicated: the
+// account id stays server-local, never broadcast to world members.
+VE_REFLECT(::Veng::SeatAccount, 0xF3DBE3736F6A92EDULL)
+VE_FIELD(Account, .DisplayName = "Account", .ReadOnly = true)
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::CameraFollow, 0xF8BD924F0A0F9DB0ULL)

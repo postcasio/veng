@@ -34,6 +34,7 @@
 #include <Veng/WorldDirectory.h>
 #include <Veng/WorldRunner.h>
 
+#include <algorithm>
 #include <cstring>
 #include <deque>
 #include <unordered_map>
@@ -2502,7 +2503,7 @@ TEST_CASE("A server host stood up after its world has ticked standalone still ac
     CHECK((*host)->WorldFor(client.Client->AssignedId()).IsValid());
 }
 
-// ---- The travel payload and the world directory (planset-60 plan 01) -----------------------------
+// ---- The travel payload and the world directory ---------------------------------------------------
 
 namespace
 {
@@ -2598,9 +2599,9 @@ TEST_CASE("The travel payload reaches Authorize, Placement, and WorldFactory, an
         .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
         .Interest = InterestSettings{.Radius = 0.0f},
         .Authorize =
-            [&](ConnectionId, const WorldKey&, const TravelPayload& p)
+            [&](const JoinRequestInfo& request)
         {
-            seenAuthorize = p;
+            seenAuthorize = request.Payload;
             authorizeSeen = true;
             return true;
         },
@@ -2616,10 +2617,10 @@ TEST_CASE("The travel payload reaches Authorize, Placement, and WorldFactory, an
                                              ReplicationServer::Settings{.SnapshotInterval = 2},
                                          .Interest = InterestSettings{.Radius = 0.0f}};
         },
-        .Placement = [&](const WorldKey&, ConnectionId, const TravelPayload& p,
+        .Placement = [&](const JoinRequestInfo& request,
                          std::span<const WorldPlacement>) -> optional<WorldInstanceId>
         {
-            seenPlacement = p;
+            seenPlacement = request.Payload;
             placementSeen = true;
             return std::nullopt; // force the factory to open the world
         },
@@ -2813,10 +2814,10 @@ TEST_CASE("A payload-bucketing placement policy converges near params and splits
                                              ReplicationServer::Settings{.SnapshotInterval = 2},
                                          .Interest = InterestSettings{.Radius = 0.0f}};
         },
-        .Placement = [&](const WorldKey&, ConnectionId, const TravelPayload& request,
+        .Placement = [&](const JoinRequestInfo& request,
                          std::span<const WorldPlacement> buckets) -> optional<WorldInstanceId>
         {
-            const f32 want = PosOf(request);
+            const f32 want = PosOf(request.Payload);
             for (const WorldPlacement& bucket : buckets)
             {
                 if (std::abs(PosOf(bucket.Payload) - want) <= Radius)
@@ -2905,8 +2906,8 @@ TEST_CASE(
             .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
             .Interest = InterestSettings{.Radius = 0.0f},
             // Deny key B in the snap-back subcase; A is always allowed.
-            .Authorize = [keyB, authorizeB](ConnectionId, const WorldKey& key, const TravelPayload&)
-            { return authorizeB || !(key == keyB); },
+            .Authorize = [keyB, authorizeB](const JoinRequestInfo& request)
+            { return authorizeB || !(request.Key == keyB); },
         });
         REQUIRE(hostR.has_value());
         Unique<ServerHost> host = std::move(*hostR);
@@ -3059,9 +3060,12 @@ TEST_CASE("The world directory reaps after the dwell, reuses warm, and never rea
     });
 
     const WorldKey key = WorldKey::FromU64(0xA11CE);
+    const TravelPayload noPayload;
 
     // Travel: resolve opens the world, then present pins it.
-    const WorldResolveResult first = dir->Resolve(ConnectionId{}, key, {}, /*heldWorlds=*/0);
+    const WorldResolveResult first = dir->Resolve(
+        JoinRequestInfo{.Connection = ConnectionId{}, .Key = key, .Payload = noPayload},
+        /*heldWorlds=*/0);
     REQUIRE(first.Outcome == WorldResolveOutcome::Opened);
     const WorldInstanceId world = first.World;
     CHECK(openCount == 1);
@@ -3075,7 +3079,8 @@ TEST_CASE("The world directory reaps after the dwell, reuses warm, and never rea
     // with no fresh factory call.
     dir->Unpin(world, 10.0);
     CHECK(dir->ReapIdle(10.2).empty()); // 0.2s < 0.5s dwell
-    const WorldResolveResult reuse = dir->Resolve(ConnectionId{}, key, {}, 0);
+    const WorldResolveResult reuse = dir->Resolve(
+        JoinRequestInfo{.Connection = ConnectionId{}, .Key = key, .Payload = noPayload}, 0);
     CHECK(reuse.Outcome == WorldResolveOutcome::Placed);
     CHECK(reuse.World == world);
     CHECK(openCount == 1); // warm reuse: no second factory call
@@ -3279,8 +3284,8 @@ namespace
                 .LevelId = LevelId,
                 .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
                 .Interest = InterestSettings{.Radius = 0.0f},
-                .Authorize = [denyB](ConnectionId, const WorldKey& key, const TravelPayload&)
-                { return !denyB || !(key == AdoptKeyB); },
+                .Authorize = [denyB](const JoinRequestInfo& request)
+                { return !denyB || !(request.Key == AdoptKeyB); },
             });
             REQUIRE(host.has_value());
             Host = std::move(*host);
@@ -3838,4 +3843,592 @@ TEST_CASE("Stable-anchor adoption: a claimant-less anchored spawn falls back to 
         }
     }
     CHECK(sawState);
+}
+
+// ---- Account identity ------------------------------------------------------------------------------
+
+namespace
+{
+    // A minimal client presenting an explicit account id at the handshake. Joins are test-driven
+    // (AutoJoin off); each reply loads a fresh borrowed scene.
+    struct IdentityClient
+    {
+        TypeRegistry Types;
+        Unique<Net::Client> Client;
+        Unique<ClientHost> Host;
+        vector<Unique<Scene>> Scenes; // scenes handed to the host, kept alive here
+
+        IdentityClient(Transport& transport, const AccountId account)
+        {
+            RegisterBuiltinTypes(Types);
+            Client = *Net::Client::Connect(ClientInfo{
+                .Account = account, .TransportOverride = &transport, .Connection = FastConfig});
+            Host = ClientHost::Create(ClientHostInfo{
+                .Client = *Client,
+                .Assets = FakeAssets(),
+                .AutoJoin = false,
+                .LoadLevel = [this](AssetId) -> Scene*
+                {
+                    Scenes.push_back(Scene::Create(Types));
+                    return Scenes.back().get();
+                },
+                .ResolvePrefab = [](AssetId) -> Ref<Prefab> { return nullptr; },
+            });
+        }
+
+        void Pump(const f64 now) { Host->Pump(now); }
+    };
+}
+
+TEST_CASE("The admitted account reaches Authorize, the seat's SeatAccount, and the host accessors")
+{
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+
+    TypeRegistry serverTypes;
+    RegisterBuiltinTypes(serverTypes);
+    Unique<Scene> serverScene = Scene::Create(serverTypes);
+
+    AccountId authorizedAccount;
+    ConnectionId authorizedConnection = ServerConnectionId;
+    Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
+        .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
+        .World = *serverScene,
+        .Assets = FakeAssets(),
+        .LevelId = LevelId,
+        .Authorize =
+            [&](const JoinRequestInfo& request)
+        {
+            authorizedAccount = request.Account;
+            authorizedConnection = request.Connection;
+            return true;
+        },
+    });
+    REQUIRE(hostR.has_value());
+    Unique<ServerHost> host = std::move(*hostR);
+
+    const AccountId account{.Lo = 0xABCD, .Hi = 0x1234};
+    IdentityClient client(*clientT, account);
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    bool requested = false;
+    for (u64 tick = 1; tick <= 40 && !client.Host->IsJoined(); ++tick)
+    {
+        now += Delta;
+        serverScene->SetChangeTick(tick);
+        host->Pump(now, tick);
+        client.Pump(now);
+        if (!requested && client.Client->State() == ClientState::Connected)
+        {
+            client.Host->Join(DefaultWorldKey);
+            requested = true;
+        }
+    }
+    REQUIRE(client.Host->IsJoined());
+
+    // Authorize saw the admitted account beside the requesting connection.
+    const ConnectionId id = client.Client->AssignedId();
+    CHECK(authorizedAccount == account);
+    CHECK(authorizedConnection == id);
+
+    // The spawned seat is stamped with the account, server-local.
+    const Entity seat = host->SeatFor(id);
+    REQUIRE_FALSE(seat.IsNull());
+    REQUIRE(serverScene->Has<SeatAccount>(seat));
+    CHECK(serverScene->Get<SeatAccount>(seat).Account == account);
+
+    // The host accessors resolve both directions.
+    CHECK(host->AccountFor(id) == account);
+    CHECK(host->ConnectionFor(account) == id);
+    CHECK(host->ConnectionFor(AccountId{.Lo = 0xDEAD}) == ServerConnectionId);
+}
+
+TEST_CASE("AdmitAccount refuses or normalizes the presented account at the handshake")
+{
+    SUBCASE("nullopt refuses the connection with AccountRefused")
+    {
+        auto [serverT, clientT] = LoopbackTransport::CreatePair();
+
+        TypeRegistry serverTypes;
+        RegisterBuiltinTypes(serverTypes);
+        Unique<Scene> serverScene = Scene::Create(serverTypes);
+
+        Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
+            .Server =
+                ServerInfo{
+                    .AdmitAccount = [](ConnectionId, const AccountId&) -> optional<AccountId>
+                    { return std::nullopt; },
+                    .TransportOverride = serverT.get(),
+                    .Connection = FastConfig,
+                },
+            .World = *serverScene,
+            .Assets = FakeAssets(),
+            .LevelId = LevelId,
+        });
+        REQUIRE(hostR.has_value());
+        Unique<ServerHost> host = std::move(*hostR);
+
+        IdentityClient client(*clientT, AccountId{.Lo = 1});
+        f64 now = 0.0;
+        constexpr f32 Delta = 1.0f / 60.0f;
+        for (u64 tick = 1; tick <= 20 && client.Client->State() == ClientState::Connecting; ++tick)
+        {
+            now += Delta;
+            host->Pump(now, tick);
+            client.Pump(now);
+        }
+
+        CHECK(client.Client->State() == ClientState::Denied);
+        REQUIRE(client.Client->GetDenyReason().has_value());
+        CHECK(*client.Client->GetDenyReason() == DenyReason::AccountRefused);
+        CHECK(host->Server().Connections().empty());
+    }
+
+    SUBCASE("a normalized account is the one bound to the connection")
+    {
+        auto [serverT, clientT] = LoopbackTransport::CreatePair();
+
+        TypeRegistry serverTypes;
+        RegisterBuiltinTypes(serverTypes);
+        Unique<Scene> serverScene = Scene::Create(serverTypes);
+
+        const AccountId canonical{.Lo = 0xCA, .Hi = 0x0};
+        Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
+            .Server =
+                ServerInfo{
+                    .AdmitAccount = [canonical](ConnectionId, const AccountId&)
+                        -> optional<AccountId> { return canonical; },
+                    .TransportOverride = serverT.get(),
+                    .Connection = FastConfig,
+                },
+            .World = *serverScene,
+            .Assets = FakeAssets(),
+            .LevelId = LevelId,
+        });
+        REQUIRE(hostR.has_value());
+        Unique<ServerHost> host = std::move(*hostR);
+
+        IdentityClient client(*clientT, AccountId{.Lo = 0xFEED});
+        f64 now = 0.0;
+        constexpr f32 Delta = 1.0f / 60.0f;
+        bool requested = false;
+        for (u64 tick = 1; tick <= 40 && !client.Host->IsJoined(); ++tick)
+        {
+            now += Delta;
+            serverScene->SetChangeTick(tick);
+            host->Pump(now, tick);
+            client.Pump(now);
+            if (!requested && client.Client->State() == ClientState::Connected)
+            {
+                client.Host->Join(DefaultWorldKey);
+                requested = true;
+            }
+        }
+        REQUIRE(client.Host->IsJoined());
+
+        const ConnectionId id = client.Client->AssignedId();
+        CHECK(host->AccountFor(id) == canonical);
+        const Entity seat = host->SeatFor(id);
+        REQUIRE_FALSE(seat.IsNull());
+        CHECK(serverScene->Get<SeatAccount>(seat).Account == canonical);
+    }
+}
+
+TEST_CASE("A duplicate live account is refused; the first connection is undisturbed")
+{
+    const auto hub = CreateRef<Hub>();
+    const u32 serverEndpoint = hub->Register();
+    auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
+
+    TypeRegistry serverTypes;
+    RegisterBuiltinTypes(serverTypes);
+    Unique<Scene> serverScene = Scene::Create(serverTypes);
+
+    Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
+        .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
+        .World = *serverScene,
+        .Assets = FakeAssets(),
+        .LevelId = LevelId,
+    });
+    REQUIRE(hostR.has_value());
+    Unique<ServerHost> host = std::move(*hostR);
+
+    const AccountId account{.Lo = 0x11, .Hi = 0x22};
+
+    // The first presenter binds the account and joins.
+    auto firstT = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    IdentityClient first(*firstT, account);
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    u64 tick = 0;
+    bool requested = false;
+    while (!first.Host->IsJoined() && tick < 40)
+    {
+        ++tick;
+        now += Delta;
+        serverScene->SetChangeTick(tick);
+        host->Pump(now, tick);
+        first.Pump(now);
+        if (!requested && first.Client->State() == ClientState::Connected)
+        {
+            first.Host->Join(DefaultWorldKey);
+            requested = true;
+        }
+    }
+    REQUIRE(first.Host->IsJoined());
+    const ConnectionId firstId = first.Client->AssignedId();
+
+    // A second presenter of the same account is refused at the door with the retryable reason.
+    auto duplicateT = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    IdentityClient duplicate(*duplicateT, account);
+    while (duplicate.Client->State() == ClientState::Connecting && tick < 80)
+    {
+        ++tick;
+        now += Delta;
+        serverScene->SetChangeTick(tick);
+        host->Pump(now, tick);
+        first.Pump(now);
+        duplicate.Pump(now);
+    }
+    CHECK(duplicate.Client->State() == ClientState::Denied);
+    REQUIRE(duplicate.Client->GetDenyReason().has_value());
+    CHECK(*duplicate.Client->GetDenyReason() == DenyReason::AccountAlreadyConnected);
+
+    // The existing binding is undisturbed: the first connection stays live, joined, and bound.
+    CHECK(first.Client->State() == ClientState::Connected);
+    CHECK(first.Host->IsJoined());
+    REQUIRE(host->Server().Connections().size() == 1);
+    CHECK(host->ConnectionFor(account) == firstId);
+
+    // A distinct account is admitted alongside — the refusal was per-account, not a lockout.
+    auto otherT = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    IdentityClient other(*otherT, AccountId{.Lo = 0x33});
+    while (other.Client->State() == ClientState::Connecting && tick < 120)
+    {
+        ++tick;
+        now += Delta;
+        serverScene->SetChangeTick(tick);
+        host->Pump(now, tick);
+        first.Pump(now);
+        other.Pump(now);
+    }
+    CHECK(other.Client->State() == ClientState::Connected);
+    CHECK(host->Server().Connections().size() == 2);
+}
+
+TEST_CASE("Reconnect after a disconnect re-admits the account onto a fresh connection")
+{
+    const auto hub = CreateRef<Hub>();
+    const u32 serverEndpoint = hub->Register();
+    auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
+
+    TypeRegistry serverTypes;
+    RegisterBuiltinTypes(serverTypes);
+    Unique<Scene> serverScene = Scene::Create(serverTypes);
+
+    Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
+        .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
+        .World = *serverScene,
+        .Assets = FakeAssets(),
+        .LevelId = LevelId,
+    });
+    REQUIRE(hostR.has_value());
+    Unique<ServerHost> host = std::move(*hostR);
+
+    const AccountId account{.Lo = 0xAA, .Hi = 0xBB};
+
+    auto firstT = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    IdentityClient first(*firstT, account);
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    u64 tick = 0;
+    bool requested = false;
+    while (!first.Host->IsJoined() && tick < 40)
+    {
+        ++tick;
+        now += Delta;
+        serverScene->SetChangeTick(tick);
+        host->Pump(now, tick);
+        first.Pump(now);
+        if (!requested && first.Client->State() == ClientState::Connected)
+        {
+            first.Host->Join(DefaultWorldKey);
+            requested = true;
+        }
+    }
+    REQUIRE(first.Host->IsJoined());
+    const ConnectionId firstId = first.Client->AssignedId();
+    CHECK(host->ConnectionFor(account) == firstId);
+
+    // A graceful leave frees the binding immediately (no zombie window).
+    first.Client->Disconnect();
+    while (!host->Server().Connections().empty() && tick < 80)
+    {
+        ++tick;
+        now += Delta;
+        serverScene->SetChangeTick(tick);
+        host->Pump(now, tick);
+        first.Pump(now);
+    }
+    REQUIRE(host->Server().Connections().empty());
+    CHECK(host->ConnectionFor(account) == ServerConnectionId);
+
+    // The same account reconnects onto a fresh ConnectionId; the reverse lookup re-points.
+    auto secondT = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    IdentityClient second(*secondT, account);
+    bool rejoined = false;
+    while (!second.Host->IsJoined() && tick < 140)
+    {
+        ++tick;
+        now += Delta;
+        serverScene->SetChangeTick(tick);
+        host->Pump(now, tick);
+        second.Pump(now);
+        if (!rejoined && second.Client->State() == ClientState::Connected)
+        {
+            second.Host->Join(DefaultWorldKey);
+            rejoined = true;
+        }
+    }
+    REQUIRE(second.Host->IsJoined());
+    const ConnectionId secondId = second.Client->AssignedId();
+    CHECK(secondId != firstId);
+    CHECK(host->AccountFor(secondId) == account);
+    CHECK(host->ConnectionFor(account) == secondId);
+}
+
+TEST_CASE("A reconnect inside the zombie window is refused, then admitted once the timeout clears")
+{
+    const auto hub = CreateRef<Hub>();
+    const u32 serverEndpoint = hub->Register();
+    auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
+
+    TypeRegistry serverTypes;
+    RegisterBuiltinTypes(serverTypes);
+    Unique<Scene> serverScene = Scene::Create(serverTypes);
+
+    Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
+        .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
+        .World = *serverScene,
+        .Assets = FakeAssets(),
+        .LevelId = LevelId,
+    });
+    REQUIRE(hostR.has_value());
+    Unique<ServerHost> host = std::move(*hostR);
+
+    const AccountId account{.Lo = 0xC0FFEE};
+
+    // Bind the account, then go silent: the client is never pumped again (a crash / silent drop),
+    // so the server holds the stale binding live until its dead-connection timeout fires.
+    auto firstT = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    IdentityClient first(*firstT, account);
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    u64 tick = 0;
+    bool requested = false;
+    while (!first.Host->IsJoined() && tick < 40)
+    {
+        ++tick;
+        now += Delta;
+        serverScene->SetChangeTick(tick);
+        host->Pump(now, tick);
+        first.Pump(now);
+        if (!requested && first.Client->State() == ClientState::Connected)
+        {
+            first.Host->Join(DefaultWorldKey);
+            requested = true;
+        }
+    }
+    REQUIRE(first.Host->IsJoined());
+    const f64 silentSince = now;
+
+    // Inside the zombie window (well before FastConfig.TimeoutInterval) the reconnect is refused
+    // with the documented-retryable reason; the stale binding still holds the account.
+    auto retryT = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    IdentityClient retry(*retryT, account);
+    while (retry.Client->State() == ClientState::Connecting && now < silentSince + 1.0)
+    {
+        ++tick;
+        now += Delta;
+        serverScene->SetChangeTick(tick);
+        host->Pump(now, tick);
+        retry.Pump(now);
+    }
+    CHECK(retry.Client->State() == ClientState::Denied);
+    REQUIRE(retry.Client->GetDenyReason().has_value());
+    CHECK(*retry.Client->GetDenyReason() == DenyReason::AccountAlreadyConnected);
+    CHECK(host->Server().Connections().size() == 1);
+
+    // Advance past the timeout: the server reaps the zombie and frees the binding.
+    now = silentSince + FastConfig.TimeoutInterval + 1.0;
+    ++tick;
+    serverScene->SetChangeTick(tick);
+    host->Pump(now, tick);
+    REQUIRE(host->Server().Connections().empty());
+    CHECK(host->ConnectionFor(account) == ServerConnectionId);
+
+    // The retry-with-backoff succeeds once the window clears.
+    auto secondT = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    IdentityClient second(*secondT, account);
+    bool rejoined = false;
+    for (u64 step = 0; step < 60 && !second.Host->IsJoined(); ++step)
+    {
+        ++tick;
+        now += Delta;
+        serverScene->SetChangeTick(tick);
+        host->Pump(now, tick);
+        second.Pump(now);
+        if (!rejoined && second.Client->State() == ClientState::Connected)
+        {
+            second.Host->Join(DefaultWorldKey);
+            rejoined = true;
+        }
+    }
+    REQUIRE(second.Host->IsJoined());
+    CHECK(host->ConnectionFor(account) == second.Client->AssignedId());
+}
+
+TEST_CASE(
+    "MembersOf reports accounts across joined worlds, the local account beside connected ones")
+{
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+
+    TypeRegistry serverTypes;
+    RegisterBuiltinTypes(serverTypes);
+    Unique<Scene> sceneA = Scene::Create(serverTypes);
+    Unique<Scene> sceneB = Scene::Create(serverTypes);
+    const WorldInstanceId worldA{.Value = 1};
+    const WorldInstanceId worldB{.Value = 2};
+    const WorldKey keyA = WorldKey::FromU64(0xA);
+    const WorldKey keyB = WorldKey::FromU64(0xB);
+
+    // The host borrows the directory (the Application-shared path), so the test reads MembersOf on
+    // the same instance the host reports joins into.
+    Unique<WorldDirectory> directory = WorldDirectory::Create(WorldDirectoryInfo{});
+    Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
+        .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
+        .WorldId = worldA,
+        .Key = keyA,
+        .World = *sceneA,
+        .Assets = FakeAssets(),
+        .LevelId = LevelId,
+        .Directory = directory.get(),
+    });
+    REQUIRE(hostR.has_value());
+    Unique<ServerHost> host = std::move(*hostR);
+    host->AddWorld(ServerWorldInfo{
+        .WorldId = worldB,
+        .Key = keyB,
+        .World = *sceneB,
+        .LevelId = AssetId{0x00000000000000B2ULL},
+    });
+
+    const AccountId remote{.Lo = 0x1111};
+    IdentityClient client(*clientT, remote);
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    u64 tick = 0;
+    bool requested = false;
+    while ((!client.Host->IsJoined() || client.Host->Joins().size() < 2) && tick < 80)
+    {
+        ++tick;
+        now += Delta;
+        sceneA->SetChangeTick(tick);
+        sceneB->SetChangeTick(tick);
+        host->Pump(now, tick);
+        client.Pump(now);
+        if (!requested && client.Client->State() == ClientState::Connected)
+        {
+            client.Host->Join(keyA);
+            client.Host->Join(keyB);
+            requested = true;
+        }
+    }
+    REQUIRE(client.Host->Joins().size() == 2);
+
+    // The one account is a member of both joined worlds' keys.
+    vector<AccountId> membersA = directory->MembersOf(keyA);
+    vector<AccountId> membersB = directory->MembersOf(keyB);
+    REQUIRE(membersA.size() == 1);
+    CHECK(membersA.front() == remote);
+    REQUIRE(membersB.size() == 1);
+    CHECK(membersB.front() == remote);
+
+    // The local (connection-less) account registers per its presence like any connection's: a
+    // pinned presented world reports it beside the connected account.
+    const AccountId local{.Lo = 0x2222};
+    directory->Pin(worldA, local);
+    membersA = directory->MembersOf(keyA);
+    REQUIRE(membersA.size() == 2);
+    CHECK(std::ranges::find(membersA, remote) != membersA.end());
+    CHECK(std::ranges::find(membersA, local) != membersA.end());
+    CHECK(directory->MembersOf(keyB).size() == 1);
+
+    // Dropping each presence drops its membership: unpin removes the local account, and the
+    // client's leave removes the connected one from the left world only.
+    directory->Unpin(worldA, now, local);
+    const JoinId joinA = client.Host->Joins().front();
+    client.Host->Leave(joinA);
+    for (u64 step = 0; step < 20; ++step)
+    {
+        ++tick;
+        now += Delta;
+        sceneA->SetChangeTick(tick);
+        sceneB->SetChangeTick(tick);
+        host->Pump(now, tick);
+        client.Pump(now);
+    }
+    CHECK(directory->MembersOf(keyA).empty());
+    REQUIRE(directory->MembersOf(keyB).size() == 1);
+    CHECK(directory->MembersOf(keyB).front() == remote);
+}
+
+TEST_CASE("An unconfigured client account mints a valid, process-unique id")
+{
+    const auto hub = CreateRef<Hub>();
+    const u32 serverEndpoint = hub->Register();
+    auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
+
+    TypeRegistry serverTypes;
+    RegisterBuiltinTypes(serverTypes);
+    Unique<Scene> serverScene = Scene::Create(serverTypes);
+
+    Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
+        .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
+        .World = *serverScene,
+        .Assets = FakeAssets(),
+        .LevelId = LevelId,
+    });
+    REQUIRE(hostR.has_value());
+    Unique<ServerHost> host = std::move(*hostR);
+
+    // Neither client configures an account (the ephemeral zero-config posture): each presents a
+    // minted valid id, and the two ids are distinct.
+    auto aT = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    auto bT = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    IdentityClient a(*aT, AccountId{});
+    IdentityClient b(*bT, AccountId{});
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    for (u64 tick = 1; tick <= 40; ++tick)
+    {
+        now += Delta;
+        serverScene->SetChangeTick(tick);
+        host->Pump(now, tick);
+        a.Pump(now);
+        b.Pump(now);
+    }
+    REQUIRE(a.Client->State() == ClientState::Connected);
+    REQUIRE(b.Client->State() == ClientState::Connected);
+
+    const AccountId accountA = host->AccountFor(a.Client->AssignedId());
+    const AccountId accountB = host->AccountFor(b.Client->AssignedId());
+    CHECK(accountA.IsValid());
+    CHECK(accountB.IsValid());
+    CHECK_FALSE(accountA == accountB);
+    // The client knows the id it presented (the minted one), matching the server's binding.
+    CHECK(a.Client->GetAccount() == accountA);
+    CHECK(b.Client->GetAccount() == accountB);
 }

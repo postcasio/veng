@@ -62,6 +62,13 @@ namespace Veng
         /// dedicated host differs from a listen host only in the absence of that local seat and screen.
         bool Dedicated = false;
 
+        /// @brief The local player's name (`--name <s>`); unset means anonymous.
+        ///
+        /// An opaque launch token the engine itself never consumes: a game reads it back
+        /// (GetLaunchArguments) — typically to derive a stable account identity through
+        /// GameNetInfo::Identity, so relaunching with the same name reattaches as the same player.
+        optional<string> Name;
+
         /// @brief Connect to a server as a client (`--join <host[:port]>`); unset stays standalone/server.
         ///
         /// The client activation: the engine connects a Net::Client to the target and drives the world
@@ -81,8 +88,8 @@ namespace Veng
         ///
         /// Pure and device-free — it reads no files and touches no global state, so it is unit
         /// tested with no window. Recognises `--level=<id>` / `--level <id>`, `--server`,
-        /// `--headless`, `--dedicated` (`--server --headless`), `--join <host[:port]>`, and one leading
-        /// positional working directory.
+        /// `--headless`, `--dedicated` (`--server --headless`), `--join <host[:port]>`,
+        /// `--name <s>`, and one leading positional working directory.
         /// @param args  The argument tokens after argv[0].
         /// @return The parsed arguments, or an error string for an unknown flag, a malformed
         ///         level id, a malformed join target, or a second positional argument.

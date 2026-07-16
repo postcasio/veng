@@ -269,6 +269,17 @@ namespace Veng
 
     void Application::BootstrapWorld()
     {
+        // Resolve the local player's account once per activation: the Identity hook, or a
+        // process-random ephemeral id when unset (valid, but keyed to nothing durable). A headless
+        // dedicated launch resolves none — the host is nobody, so no local account joins anything.
+        if (!(m_Info.Headless && m_LaunchArgs.Server))
+        {
+            const GameNetInfo net = m_Info.Net.value_or(GameNetInfo{});
+            m_LocalAccount = net.Identity ? net.Identity() : Net::GenerateAccountId();
+            VE_ASSERT(m_LocalAccount.IsValid(),
+                      "GameNetInfo::Identity returned the invalid account id");
+        }
+
         // The cooked project names the packs to mount and the startup level; everything resolves
         // beside the executable so the launcher + project + packs move as one directory.
         const path projectFile = ExecutableDirectory() / m_Info.World->Project;
@@ -389,6 +400,9 @@ namespace Veng
         Result<Unique<ServerHost>> host = ServerHost::Create(ServerHostInfo{
             .Server = Net::ServerInfo{.Port = net.Port,
                                       .MaxConnections = net.MaxConnections,
+                                      // The game's account admission (verify/normalize/refuse); the
+                                      // unset default accepts as presented (the LAN-trust posture).
+                                      .AdmitAccount = net.AdmitAccount,
                                       .NetSim = m_LaunchArgs.NetSim},
             .WorldId = m_ManagedWorld,
             .World = m_WorldRunner->ResolveWorld(m_ManagedWorld)->GetScene(),
@@ -449,8 +463,14 @@ namespace Veng
             m_Net->PendingJoinWorlds.push_back(m_ManagedWorld);
         }
 
-        Result<Unique<Net::Client>> client = Net::Client::Connect(
-            Net::ClientInfo{.Host = host, .Port = port, .NetSim = m_LaunchArgs.NetSim});
+        // The local account (the Identity hook's result, resolved at bootstrap) is what this
+        // connection presents at the handshake; the server binds every seat and join to it.
+        Result<Unique<Net::Client>> client = Net::Client::Connect(Net::ClientInfo{
+            .Host = host,
+            .Port = port,
+            .Account = m_LocalAccount,
+            .NetSim = m_LaunchArgs.NetSim,
+        });
         if (!client)
         {
             // A failed connect leaves no net mode active, so the caller stays standalone (or retries).
@@ -662,18 +682,20 @@ namespace Veng
 
         const f64 now = static_cast<f64>(Time::Now());
         // Pin worlds newly present; unpin worlds that left presentation, so the dwell owns their fate.
+        // The pin carries the local account — a presented world is the local player's join, so
+        // MembersOf reports it beside connected accounts (invalid on a dedicated host, presence only).
         for (const u64 value : present)
         {
             if (!m_PinnedWorlds.contains(value))
             {
-                m_Directory->Pin(WorldInstanceId{.Value = value});
+                m_Directory->Pin(WorldInstanceId{.Value = value}, m_LocalAccount);
             }
         }
         for (auto it = m_PinnedWorlds.begin(); it != m_PinnedWorlds.end();)
         {
             if (!present.contains(*it))
             {
-                m_Directory->Unpin(WorldInstanceId{.Value = *it}, now);
+                m_Directory->Unpin(WorldInstanceId{.Value = *it}, now, m_LocalAccount);
                 it = m_PinnedWorlds.erase(it);
             }
             else
@@ -697,8 +719,13 @@ namespace Veng
 
     VoidResult Application::TravelStandalone(const TravelInfo& info)
     {
+        // A standalone resolve is the local player's own request: no connection, the local account.
         const WorldResolveResult resolve =
-            m_Directory->Resolve(Net::ConnectionId{}, info.Key, info.Payload, /*heldWorlds=*/0);
+            m_Directory->Resolve(Net::JoinRequestInfo{.Connection = Net::ConnectionId{},
+                                                      .Account = m_LocalAccount,
+                                                      .Key = info.Key,
+                                                      .Payload = info.Payload},
+                                 /*heldWorlds=*/0);
         if (resolve.Outcome == WorldResolveOutcome::Denied)
         {
             return std::unexpected(

@@ -205,6 +205,27 @@ namespace Veng
                 }
                 result.Join = *target;
             }
+            else if (arg == "--name" || arg.starts_with("--name="))
+            {
+                string_view value;
+                if (arg.starts_with("--name="))
+                {
+                    value = arg.substr(std::string_view("--name=").size());
+                }
+                else if (i + 1 < args.size())
+                {
+                    value = args[++i];
+                }
+                else
+                {
+                    return std::unexpected(string("--name requires a value"));
+                }
+                if (value.empty())
+                {
+                    return std::unexpected(string("--name requires a non-empty value"));
+                }
+                result.Name = string(value);
+            }
             else if (arg == "--netsim" || arg.starts_with("--netsim="))
             {
                 string_view value;

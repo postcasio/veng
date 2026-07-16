@@ -66,6 +66,10 @@ namespace Veng
         // consumer authors/inspects it; the net layer resolves a claimant by it at spawn time.
         registry.Register<NetAnchor>();
 
+        // The account a seat entity belongs to, stamped server-side at seat spawn. Not replicated —
+        // the id stays server-local. Net::AccountId registers transitively through its field.
+        registry.Register<SeatAccount>();
+
         // The client-side pose-sample buffer a replicated entity carries, filled by snapshots and read
         // by the View-phase RemoteInterpolationSystem. Runtime-only: it carries no reflected field, so
         // it never serializes and never rides the wire.

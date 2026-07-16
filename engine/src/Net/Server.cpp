@@ -64,6 +64,7 @@ namespace Veng::Net
             Unique<PeerLink> Link;
             Unique<Connection> Conn;
             ConnectionId Id = ServerConnectionId; // nonzero only once established
+            AccountId Account;                    // the admitted account, valid once established
             bool Established = false;
             bool Closing = false; // Disconnect() called; flush the message, then reap
             DisconnectReason CloseReason = DisconnectReason::Kicked;
@@ -190,14 +191,43 @@ namespace Veng::Net
                 return;
             }
 
+            // Account admission: the hook admits (or normalizes) the presented id; unset accepts it
+            // as presented. The id the connection will hold is assigned first so the hook sees it; a
+            // refusal burns the id, which is harmless (ids are monotonic and never reused).
             record.Id = NextId;
             NextId += 1;
+            const optional<AccountId> admitted =
+                Info.AdmitAccount ? Info.AdmitAccount(record.Id, request->Account)
+                                  : optional<AccountId>(request->Account);
+            if (!admitted.has_value() || !admitted->IsValid())
+            {
+                Log::Warn("Net::Server denying connection: account refused");
+                Deny(record, DenyReason::AccountRefused);
+                return;
+            }
+
+            // Exactly one live connection may hold an account: a duplicate is refused, the existing
+            // binding undisturbed, until the stale connection leaves or times out (the deny reason is
+            // documented retryable across that zombie window).
+            for (const Unique<PeerConnection>& other : Connections)
+            {
+                if (other->Established && !other->Remove && other->Account == *admitted)
+                {
+                    Log::Warn("Net::Server denying connection: account already connected (as {})",
+                              other->Id);
+                    Deny(record, DenyReason::AccountAlreadyConnected);
+                    return;
+                }
+            }
+
+            record.Account = *admitted;
             record.Established = true;
             // The connection accept establishes the link only; which world the client loads and which
             // seat is its own ride the per-world join reply, not this acceptance.
             const vector<u8> accept = EncodeConnectAccept(ConnectAcceptMessage{.Id = record.Id});
             (void)record.Conn->Send(Channel::ReliableOrdered, accept);
-            Events.push_back(NetEvent{.Type = NetEventType::Connected, .Id = record.Id});
+            Events.push_back(NetEvent{
+                .Type = NetEventType::Connected, .Id = record.Id, .Account = record.Account});
             Log::Info("Net::Server accepted connection {}", record.Id);
         }
 

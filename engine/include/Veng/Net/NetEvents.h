@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Veng/Net/AccountId.h>
 #include <Veng/Veng.h>
 
 // Veng/Net/NetEvents.h — the shared connection-lifecycle vocabulary.
@@ -24,8 +25,10 @@ namespace Veng::Net
     /// accept no longer bakes in a single level or seat. Version 3 threaded the opaque travel payload
     /// into the join request and its reply, added the travel-request / directed-travel / leave-notice
     /// join-tier control messages (the world-directory travel and adopt-in-place primitives), and grew
-    /// the reliable spawn record an optional anchor field (the stable-anchor binding).
-    inline constexpr u32 ProtocolVersion = 3;
+    /// the reliable spawn record an optional anchor field (the stable-anchor binding). Version 4 added
+    /// the presented AccountId to the connect request (the account-identity handshake) and the
+    /// account-tier deny reasons.
+    inline constexpr u32 ProtocolVersion = 4;
 
     /// @brief A server-assigned connection identifier: a per-session u32, never reused.
     ///
@@ -96,6 +99,16 @@ namespace Veng::Net
         ServerFull = 2,
         /// @brief The app's connect policy hook rejected the request.
         AppRefused = 3,
+        /// @brief The presented account was refused (the AdmitAccount hook, or an invalid id).
+        AccountRefused = 4,
+        /// @brief The presented account is already bound to a live connection.
+        ///
+        /// Exactly one live connection may hold an account. The refusal is **transient**: after a
+        /// client crash or silent drop the stale binding stays live until the transport's
+        /// dead-connection detection fires (Connection::TimeoutInterval), so a fast reconnect is
+        /// refused with this reason precisely when reattach matters most. A consumer's reconnect
+        /// flow treats it as retryable — retry with backoff until the timeout clears the binding.
+        AccountAlreadyConnected = 5,
     };
 
     /// @brief Why an established connection ended.
@@ -151,5 +164,7 @@ namespace Veng::Net
         DisconnectReason Reason = DisconnectReason::Timeout;
         /// @brief The joined world this event concerns; meaningful only for a WorldLeft event.
         JoinId Join = ControlJoinId;
+        /// @brief The admitted account bound to the connection; meaningful for a Connected event.
+        AccountId Account;
     };
 }

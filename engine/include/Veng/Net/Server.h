@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Veng/Net/AccountId.h>
 #include <Veng/Net/Connection.h>
 #include <Veng/Net/FaultInjectionTransport.h>
 #include <Veng/Net/NetEvents.h>
@@ -43,6 +44,16 @@ namespace Veng::Net
         ContentDigest Content;
         /// @brief Optional app connect-policy hook; returning false denies the request AppRefused.
         function<bool(const ConnectRequestInfo&)> OnConnectRequest;
+        /// @brief Admits or normalizes a presented account; unset accepts it as presented.
+        ///
+        /// Called after the parity and policy checks with the connection id being assigned and the
+        /// account the client presented; the returned id is the one bound to the connection (a hook
+        /// may normalize — map a presented identity onto a canonical id). Returning nullopt (or an
+        /// invalid id, hook set or not) refuses the connection with AccountRefused. This is where a
+        /// consumer verifies identity (a token check, an allowlist); the unset default trusts the
+        /// presented id exactly as LAN play trusts the presented connection — see Net::AccountId's
+        /// capability-token warning.
+        function<optional<AccountId>(ConnectionId, const AccountId&)> AdmitAccount;
         /// @brief Optional transport to listen on instead of a bound UdpTransport (the loopback/test seam).
         Transport* TransportOverride = nullptr;
         /// @brief Optional network simulation wrapping the bound transport (the launcher's --netsim).

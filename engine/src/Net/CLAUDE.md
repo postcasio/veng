@@ -51,15 +51,33 @@ on the main thread at frame boundaries** (receive → tick → send).
 
 `Server.h`/`Client.h` are the connection lifecycle. A `Net::Server` listens/accepts/denies; a
 `Net::Client` connects. The handshake is **two-tier** (`Handshake.h`): a **connection tier**
-establishes the process↔process link — the connect request carries `Net::ProtocolVersion` (**3**, the
-version that added the join-request travel payload + the travel-request / directed-travel join-tier
-messages atop the multiplexed wire) + the active pack's content digest, rejected loudly on a
-mismatch (the `VengModuleAbiVersion` discipline on the wire, so the wire carries only asset ids,
-never assets) — and a **per-world join tier** joins one world (below). The `ConnectAcceptMessage`
-carries **only the assigned connection id**: it no longer bakes in a single level or seat, since
-those are per-world and now ride the join reply. Connection ids are server-assigned `u32`s — the
-value `Authority::Owner` holds. There is no encryption or authentication — the scope is LAN/trusted
-networks; the `Transport` seam is where such a layer would sit.
+establishes the process↔process link — the connect request carries `Net::ProtocolVersion` (**4**, the
+version that added the account id to the connect request) + the active pack's content digest,
+rejected loudly on a mismatch (the `VengModuleAbiVersion` discipline on the wire, so the wire
+carries only asset ids, never assets) — and a **per-world join tier** joins one world (below). The
+`ConnectAcceptMessage` carries **only the assigned connection id**: it no longer bakes in a single
+level or seat, since those are per-world and now ride the join reply. Connection ids are
+server-assigned `u32`s — the value `Authority::Owner` holds.
+
+**Who a connection is, is a `Net::AccountId`** (`AccountId.h`): an opaque persistent 128-bit id the
+consumer mints and the engine only compares and hashes (the `WorldKey` discipline applied to
+identity). A client presents it once in the connect request (a cold message) — the
+`GameNetInfo::Identity` hook resolves the local player's id per process activation, an unset hook
+minting a random valid ephemeral id (`GenerateAccountId`, the zero-config posture: reattach and
+persistence then key on nothing durable). The server admits it through
+`ServerInfo::AdmitAccount` (`GameNetInfo::AdmitAccount` on the managed path): the hook may
+normalize or refuse (nullopt → `DenyReason::AccountRefused`); unset accepts-as-presented. **Exactly
+one live connection holds an account** — a duplicate presenter is refused
+`AccountAlreadyConnected`, the existing binding undisturbed. That refusal is **transient across the
+zombie window**: after a crash or silent drop the stale binding stays live until
+`Connection::TimeoutInterval` fires, so the reason is documented **retryable** and a consumer's
+reconnect flow retries with backoff until the timeout clears it (a liveness-probing takeover and
+last-in-wins displacement were both rejected — displacement rules on a spoofable transport are a
+griefing primitive). There is no encryption or authentication — the scope is LAN/trusted networks;
+the `Transport` seam is where such a layer would sit, and `AdmitAccount` is where a consumer
+verifies identity (or wires an allowlist as a stopgap). **The posture's consequence:** whoever
+presents an account id *is* that account, so once anything durable keys on it the id is a
+capability token — hosting beyond a trusted LAN is unsafe until identity is verified there.
 
 ## Replication
 
@@ -167,13 +185,17 @@ future.
 
 `Host.h` is the world glue. **`ServerHost`** wraps the lifecycle + replication halves and the world
 lifecycle. A client joins a world by presenting a `WorldKey`; the host resolves it in a fixed order —
-**authorize** (the `Authorize` hook: may this connection join/create this key? default allow-all),
-**per-connection cap** (`MaxJoinedWorldsPerConnection`, default 4), then **get-or-place** through the
-placement policy, opening a fresh bucket through the consumer `WorldFactory`
+**authorize** (the `Authorize` hook over a **`Net::JoinRequestInfo`** — the connection, its admitted
+account (always valid: admission precedes authorization), the key, and the payload; default
+allow-all), **per-connection cap** (`MaxJoinedWorldsPerConnection`, default 4), then **get-or-place**
+through the placement policy, opening a fresh bucket through the consumer `WorldFactory`
 (`WorldKey → ServerWorldResolution`) when the policy asks for one, bounded by the **server-wide cap**
 (`MaxHostedWorlds`, default 64). It then assigns a
 per-connection `JoinId`, spawns a **`Viewer` seat entity** in that world (`Authority{ Server, Owner =
-id }`, no `SeatInput` — the remote path), and replies (`JoinAcceptMessage`) with the world's level, a
+id }`, no `SeatInput` — the remote path, stamped with a **`SeatAccount`** — a builtin,
+**non-replicated** component, so the account id stays server-local and is never broadcast to world
+members; a game wanting a public identity replicates its own display component), and replies
+(`JoinAcceptMessage`) with the world's level, a
 **content digest** of the resolved world, and the seat's wire id; the game-mode spawn rule pawns the
 pawnless seat with no net awareness. Each world's stream is gated on a **per-world `ClientReady`**,
 and inbound datagrams are **demuxed by `JoinId` only to a world the connection was granted** — a tag
@@ -185,7 +207,8 @@ reaped; a **factory-opened world is refcounted by its live-join count**, held wa
 hook — so a reconnect or a briefly-emptied shared world re-converges on the warm instance. The
 per-join server surface keys by `(conn, join)` — `ReplicationForJoin` / `WorldForJoin` / `SeatFor` /
 `IsGranted` / `IsReady` / `JoinsFor` / `CurrentJoin`, with no-arg / `(conn)` forms the current-join
-convenience.
+convenience — and the identity pair `AccountFor(conn)` / `ConnectionFor(account)` (single-valued
+because one live connection holds an account; a reconnect re-points it).
 
 **The world lifetime policy is the role-neutral `WorldDirectory` (`Veng/WorldDirectory.h`).** The
 `WorldKey → live-instance` map, the get-or-place resolution order, the presence refcount, the keep-warm
@@ -195,7 +218,11 @@ caps/hooks, so a stand-alone host is unchanged), and a standalone `Application` 
 resolves its travels through it. The host reports live joins as presence (`AddJoin`/`RemoveJoin`); the
 directory's **other presence source is pins** (`Pin`/`Unpin`) — the presentation drive pins the world a
 viewport shows, so "a presented world is never reaped" and "a hosted world is refcounted by joins" are
-one refcount. A bucket at zero presence starts its dwell; past it the directory invokes the consumer
+one refcount. Both sources carry the presence's **account**: a join records the connection's admitted
+account, a pin the local player's (`Application::GetLocalAccount`, resolved through the `Identity`
+hook at bootstrap; a headless `--dedicated` host resolves none — the host is nobody), so
+**`MembersOf(WorldKey)`** unions the accounts present across a key's buckets — the membership
+primitive — with the listen host's own player a first-class member beside connected ones. A bucket at zero presence starts its dwell; past it the directory invokes the consumer
 **`CloseWorld` hook first, then `WorldRunner::CloseWorld`** — the hook-before-teardown ordering is the
 persistence capture point, guaranteed in every role.
 
@@ -275,7 +302,8 @@ pre-existing values, and frees the anchor for the next join.
 
 `Application` wiring is a launch *or runtime* decision, not a build. `ApplicationInfo::Net` (an
 `optional<GameNetInfo>` — `Port`, `MaxConnections`, `SnapshotIntervalTicks`, `InputRedundancyTicks`,
-the quantization/keyframe knobs, `InterestRadius`/`InterestPolicy`, the client `PredictionPolicy`, plus
+the quantization/keyframe knobs, `InterestRadius`/`InterestPolicy`, the client `PredictionPolicy`, the
+identity hooks `Identity` / `AdmitAccount`, plus
 the hosting hooks `WorldFactory` / `Authorize` / `Placement` / `MaxPlayersPerInstance` / `CloseWorld`
 and the `MaxHostedWorlds` / `MaxJoinedWorldsPerConnection` / `IdleKeepWarmDwell` caps) tunes the hosts;
 **activation is a launch flag or a runtime call**. `LaunchArguments` parses `--server` (listen server)
@@ -317,14 +345,21 @@ presentation in a net session, a per-seat pawn reconciler that pawns the listen 
 each connection's from the shared `netpawn` prefab, and the `OnClientPossession` / host camera
 wiring. It consumes the managed `Application` net path, so a `--server`/`--join` launch joins the
 single managed world by `Net::DefaultWorldKey` over the multiplexed transport — one joined world, one
-`JoinId` — and drives the `ServerHost` through the current-join convenience accessors. The two-world
+`JoinId` — and drives the `ServerHost` through the current-join convenience accessors. Its `--name
+<s>` launch token supplies the `Identity` hook as a stable hash of the name, so relaunching with the
+same name presents the same account; without it the process-random ephemeral default stands. The two-world
 integration suite (`tests/unit/net_two_world.cpp` — a server scene + client scene over a
 `LoopbackTransport`, and a `SimulatedTransport` for the adversity cases, stepped tick-by-tick) is the
 authoritative correctness guard and the regression net; it covers the multiplexed and adversarial
 cases too — per-world replication-state isolation with convergence, get-or-create convergence on a
 shared key, gated inbound demux, per-world ack scoping, the per-connection join cap, the
 `MaxHostedWorlds` cap, the join digest-mismatch reject, idle-world reap + warm re-join, the
-per-`JoinId` clock, and the stale-`ProtocolVersion` reject. The consolidated
+per-`JoinId` clock, the stale-`ProtocolVersion` reject, and the account-identity band (the admitted
+account through `Authorize`/`SeatAccount`/the host accessors, the `AdmitAccount` refusal and
+normalization, the duplicate-live refusal with the first connection undisturbed, reconnect
+re-binding across a fresh `ConnectionId`, the zombie-window refusal clearing on timeout,
+`MembersOf` across joined worlds with a local account beside connected ones, and the minted
+ephemeral default). The consolidated
 convergence suite (`net_reconciliation.cpp`) runs prediction + rollback + delta + quantization +
 interest under combined loss + latency and asserts byte-equal convergence (lossless wire) or
 within-quantum convergence after quiescence, with bounded history/baseline. Prediction/rollback,

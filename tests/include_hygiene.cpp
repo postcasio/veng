@@ -83,9 +83,11 @@
 #include <Veng/Module/Module.h>
 #include <Veng/Module/ModuleLoader.h>
 
+#include <Veng/Net/AccountId.h>
 #include <Veng/Net/ClockSync.h>
 #include <Veng/Net/Connection.h>
 #include <Veng/Net/FaultInjectionTransport.h>
+#include <Veng/Net/JoinRequest.h>
 #include <Veng/Net/LoopbackTransport.h>
 #include <Veng/Net/PredictionHistory.h>
 #include <Veng/Net/TravelPayload.h>

@@ -2,7 +2,9 @@
 
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Asset/Prefab.h>
+#include <Veng/Net/AccountId.h>
 #include <Veng/Net/Interest.h>
+#include <Veng/Net/JoinRequest.h>
 #include <Veng/Net/NetEvents.h>
 #include <Veng/Net/Replication.h>
 #include <Veng/Net/TravelPayload.h>
@@ -123,9 +125,11 @@ namespace Veng
         /// relies on. Unset leaves the runner teardown to the consumer's CloseWorld hook (the ServerHost
         /// test path, where the hook owns the scene's destruction).
         WorldRunner* Runner = nullptr;
-        /// @brief The authorization hook: may this connection resolve/open this key? Unset allows all.
-        function<bool(Net::ConnectionId, const Net::WorldKey&, const Net::TravelPayload&)>
-            Authorize;
+        /// @brief The authorization hook: may this requester resolve/open this key? Unset allows all.
+        ///
+        /// Sees the whole request identity (connection, account, key, payload); admission precedes
+        /// authorization, so a connection-borne request's account is always valid.
+        function<bool(const Net::JoinRequestInfo&)> Authorize;
         /// @brief The get-or-create factory: materialize a world for a key that has no placeable bucket.
         ///
         /// Called only on a placement miss, after the caps clear; returning nullopt denies with
@@ -135,12 +139,11 @@ namespace Veng
             WorldFactory;
         /// @brief The get-or-place policy: which live bucket of a key a requester lands in, or a fresh one.
         ///
-        /// Sees the key's live buckets (each with its presence and recorded payload), the requesting
-        /// connection, and the requester's payload. Returning an offered bucket's id places the requester
-        /// there; nullopt asks for a fresh bucket. Unset uses the built-in capacity policy driven by
-        /// MaxPlayersPerInstance.
-        function<optional<WorldInstanceId>(const Net::WorldKey&, Net::ConnectionId,
-                                           const Net::TravelPayload&,
+        /// Sees the request identity (connection, account, key, payload) and the key's live buckets
+        /// (each with its presence and recorded payload). Returning an offered bucket's id places the
+        /// requester there; nullopt asks for a fresh bucket. Unset uses the built-in capacity policy
+        /// driven by MaxPlayersPerInstance.
+        function<optional<WorldInstanceId>(const Net::JoinRequestInfo&,
                                            std::span<const WorldPlacement>)>
             Placement;
         /// @brief Closes a factory-opened world when it idles out; unset leaves the world's teardown to Runner.
@@ -184,36 +187,53 @@ namespace Veng
                       const Net::TravelPayload& payload = {});
 
         /// @brief Resolves a request to a bucket in the fixed order, opening a fresh one on a miss.
-        /// @param connection  The requesting connection (ConnectionId{} for a standalone resolve).
-        /// @param key         The key being resolved.
-        /// @param payload      The opaque travel payload threaded into every hook and the bucket record.
-        /// @param heldWorlds  How many worlds the connection already holds (for the per-connection cap).
+        /// @param request     The request identity (connection, account, key, payload) threaded into
+        ///                    every hook; the payload is also recorded on a freshly opened bucket.
+        /// @param heldWorlds  How many worlds the requester already holds (for the per-connection cap).
         /// @return The resolve outcome: a placed bucket, a freshly opened one, or a denial with its reason.
-        [[nodiscard]] WorldResolveResult Resolve(Net::ConnectionId connection,
-                                                 const Net::WorldKey& key,
-                                                 const Net::TravelPayload& payload, u32 heldWorlds);
+        [[nodiscard]] WorldResolveResult Resolve(const Net::JoinRequestInfo& request,
+                                                 u32 heldWorlds);
 
         /// @brief Records a live join's presence on a bucket (the ServerHost report on a grant).
-        /// @param world  The bucket a join landed in.
-        void AddJoin(WorldInstanceId world);
+        ///
+        /// A valid account is recorded as a member of the bucket (see MembersOf); the invalid id
+        /// counts presence only.
+        /// @param world    The bucket a join landed in.
+        /// @param account  The joining connection's account, or the invalid id for account-less presence.
+        void AddJoin(WorldInstanceId world, const Net::AccountId& account = {});
 
         /// @brief Drops a live join's presence from a bucket, starting the dwell if it reaches zero.
-        /// @param world  The bucket a join left.
-        /// @param now    Monotonic time in seconds; the idle-since stamp when presence reaches zero.
-        void RemoveJoin(WorldInstanceId world, f64 now);
+        /// @param world    The bucket a join left.
+        /// @param now      Monotonic time in seconds; the idle-since stamp when presence reaches zero.
+        /// @param account  The account recorded when the join was added, so its membership drops too.
+        void RemoveJoin(WorldInstanceId world, f64 now, const Net::AccountId& account = {});
 
         /// @brief Pins a bucket present (the presentation drive shows this world), holding it warm.
         ///
         /// A pin is local presence indistinguishable from a live join: a pinned world is never reaped.
         /// Application pins the world a managed viewport presents (a pending rebind's destination
-        /// counts), so a presented world is kept warm by the same counter the host's joins feed.
-        /// @param world  The bucket to pin.
-        void Pin(WorldInstanceId world);
+        /// counts), so a presented world is kept warm by the same counter the host's joins feed. A
+        /// valid account (the local player, on a standalone or listen host) is recorded as a member of
+        /// the bucket exactly like a connection's join, so MembersOf reports the local account beside
+        /// connected ones.
+        /// @param world    The bucket to pin.
+        /// @param account  The local account present through this pin, or the invalid id for none.
+        void Pin(WorldInstanceId world, const Net::AccountId& account = {});
 
         /// @brief Removes one pin from a bucket, starting the dwell if presence reaches zero.
-        /// @param world  The bucket to unpin.
-        /// @param now    Monotonic time in seconds; the idle-since stamp when presence reaches zero.
-        void Unpin(WorldInstanceId world, f64 now);
+        /// @param world    The bucket to unpin.
+        /// @param now      Monotonic time in seconds; the idle-since stamp when presence reaches zero.
+        /// @param account  The account recorded when the pin was taken, so its membership drops too.
+        void Unpin(WorldInstanceId world, f64 now, const Net::AccountId& account = {});
+
+        /// @brief Returns the accounts present across a key's live buckets — the membership primitive.
+        ///
+        /// The union of every valid account recorded by AddJoin/Pin on the key's buckets, deduplicated
+        /// (an account present in two buckets of one key, or by join and pin at once, appears once).
+        /// Empty for a key with no live buckets or only account-less presence.
+        /// @param key  The key whose members are gathered.
+        /// @return The member accounts, in no particular order.
+        [[nodiscard]] vector<Net::AccountId> MembersOf(const Net::WorldKey& key) const;
 
         /// @brief Reaps every reapable bucket presence-less past the dwell; returns the reaped ids.
         ///

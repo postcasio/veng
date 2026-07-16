@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Veng/Net/AccountId.h>
 #include <Veng/Net/NetEvents.h>
 #include <Veng/Net/TravelPayload.h>
 #include <Veng/Net/WorldKey.h>
@@ -56,6 +57,8 @@ namespace Veng::Net
         ContentDigest Content;
         /// @brief The consumer-supplied application version.
         u32 AppVersion = 0;
+        /// @brief The account id the client presents, admitted through the server's AdmitAccount hook.
+        AccountId Account;
     };
 
     /// @brief The server's acceptance of the connection: the assigned id, and nothing world-specific.

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Veng/Asset/AssetId.h>
+#include <Veng/Net/AccountId.h>
 #include <Veng/Net/Connection.h>
 #include <Veng/Net/FaultInjectionTransport.h>
 #include <Veng/Net/NetEvents.h>
@@ -33,6 +34,12 @@ namespace Veng::Net
         ContentDigest Content;
         /// @brief Consumer-supplied application version, surfaced to the server's connect hook.
         u32 AppVersion = 0;
+        /// @brief The account id to present at the handshake; invalid mints a process-random one.
+        ///
+        /// The connect request carries it once and the server's AdmitAccount hook admits (or
+        /// refuses) it. Left invalid (the default), Connect mints a random ephemeral id, so the
+        /// presented account is always valid — but derives from nothing durable across relaunches.
+        AccountId Account;
         /// @brief Optional transport to connect over instead of an opened UdpTransport (the test seam).
         Transport* TransportOverride = nullptr;
         /// @brief Optional network simulation wrapping the opened transport (the launcher's --netsim).
@@ -73,6 +80,9 @@ namespace Veng::Net
 
         /// @brief The server-assigned id once Connected, else ServerConnectionId.
         [[nodiscard]] ConnectionId AssignedId() const;
+
+        /// @brief The account id this client presented at the handshake (minted when none was configured).
+        [[nodiscard]] AccountId GetAccount() const;
 
         /// @brief The deny reason when State() is Denied, else nullopt.
         [[nodiscard]] optional<DenyReason> GetDenyReason() const;

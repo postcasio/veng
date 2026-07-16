@@ -18,8 +18,10 @@
 #include <Veng/Renderer/SwapChainCompositePass.h>
 #include <Veng/ImGui/ImGuiLayer.h>
 #include <Veng/Gui/GuiConsumer.h>
+#include <Veng/Net/AccountId.h>
 #include <Veng/Net/Host.h>
 #include <Veng/Net/Interest.h>
+#include <Veng/Net/JoinRequest.h>
 #include <Veng/Net/PredictionHistory.h>
 #include <Veng/Net/TravelPayload.h>
 #include <Veng/Task/TaskSystem.h>
@@ -159,6 +161,32 @@ namespace Veng
         /// Application::JoinWorld — each landing in its own runner world. Inert off a client.
         bool AutoJoinDefaultWorld = true;
 
+        /// @brief The local player's account identity; unset mints a process-random ephemeral id.
+        ///
+        /// Evaluated once per process activation — the standalone bootstrap, a `--join` launch, or a
+        /// runtime Connect — to resolve the account the process plays as: a client presents it at the
+        /// handshake, and a standalone or listen host registers it into directory presence per its
+        /// joins, so single-player personal worlds and saves key identically to multiplayer. The
+        /// engine never interprets the returned id (a consumer packs a config identity, a
+        /// machine-derived id, an auth-token subject). Unset mints a random valid id — reattach and
+        /// persistence then key on nothing durable across relaunches (the zero-config LAN posture). A
+        /// headless dedicated launch (`--dedicated`) never evaluates it — the host is nobody.
+        ///
+        /// @warning Whoever presents an account id *is* that account (see Net::AccountId): hosting
+        ///          beyond a trusted LAN is unsafe until AdmitAccount verifies identity.
+        function<Net::AccountId()> Identity;
+        /// @brief Server hook admitting or normalizing a presented account; unset accepts as presented.
+        ///
+        /// Threaded onto the mounted server's handshake: called with the connection id being assigned
+        /// and the account the client presented; the returned id is the one bound to the connection.
+        /// Returning nullopt refuses the connection with the "account refused" deny reason. This is
+        /// where an authentication layer verifies a token — and where a host can wire an allowlist
+        /// today as a stopgap; the unset default trusts the presented id exactly as LAN play trusts
+        /// the presented connection. A duplicate live account is refused regardless (see
+        /// Net::DenyReason::AccountAlreadyConnected — retryable across the disconnect-timeout window).
+        /// Inert off a host.
+        function<optional<Net::AccountId>(Net::ConnectionId, const Net::AccountId&)> AdmitAccount;
+
         /// @brief The get-or-place world factory the mounted ServerHost resolves a joined WorldKey through.
         ///
         /// Materializes a world for a key that has no live bucket (opening a scene through the game's own
@@ -167,13 +195,13 @@ namespace Veng
         /// by both the `--server` launch path and the runtime StartHosting call; inert off a host.
         function<optional<ServerWorldResolution>(const Net::WorldKey&, const Net::TravelPayload&)>
             WorldFactory;
-        /// @brief The authorization hook: may this connection join or create this key? Unset allows all.
+        /// @brief The authorization hook: may this requester join or create this key? Unset allows all.
         ///
-        /// Threaded into the world directory, called before any world open or JoinId assignment; the
-        /// opaque travel payload rides in so a policy may gate on arrival data. Inert off a host and in
-        /// standalone travel where the connection is ConnectionId{}.
-        function<bool(Net::ConnectionId, const Net::WorldKey&, const Net::TravelPayload&)>
-            Authorize;
+        /// Threaded into the world directory, called before any world open or JoinId assignment with
+        /// the request identity (connection, account, key, payload) — a policy may gate on who is
+        /// asking or on arrival data. A standalone travel authorizes with ConnectionId{} and the
+        /// local account; a connection-borne join carries the admitted account.
+        function<bool(const Net::JoinRequestInfo&)> Authorize;
         /// @brief Closes a factory-opened world when it idles out; unset leaves the world's runner teardown alone.
         ///
         /// The counterpart to WorldFactory: invoked with a factory-opened world's id once it has been
@@ -182,11 +210,11 @@ namespace Veng
         function<void(WorldInstanceId)> CloseWorld;
         /// @brief The get-or-place policy for a WorldKey's instances; unset uses the capacity policy.
         ///
-        /// Threaded into the world directory. Unset selects the built-in capacity policy driven by
-        /// MaxPlayersPerInstance; a game supplies its own for a different fill rule (a proximity match
-        /// comparing the requester's payload against each live bucket's recorded params).
-        function<optional<WorldInstanceId>(const Net::WorldKey&, Net::ConnectionId,
-                                           const Net::TravelPayload&,
+        /// Threaded into the world directory, called with the request identity (connection, account,
+        /// key, payload) and the key's live buckets. Unset selects the built-in capacity policy driven
+        /// by MaxPlayersPerInstance; a game supplies its own for a different fill rule (a proximity
+        /// match comparing the requester's payload against each live bucket's recorded params).
+        function<optional<WorldInstanceId>(const Net::JoinRequestInfo&,
                                            std::span<const WorldPlacement>)>
             Placement;
         /// @brief Per-instance seat cap the built-in placement policy buckets a key to; 0 = no cap (convergence).
@@ -520,6 +548,17 @@ namespace Veng
         /// app that owns no managed world.
         /// @return The managed world's handle.
         [[nodiscard]] WorldInstanceId GetManagedWorldId() const { return m_ManagedWorld; }
+
+        /// @brief Returns the local player's account, or the invalid id when the process has none.
+        ///
+        /// Resolved once at bootstrap through GameNetInfo::Identity (a process-random ephemeral id
+        /// when the hook is unset): the account a client presents at the handshake and the account a
+        /// standalone or listen host registers into directory presence per its joins — so
+        /// single-player and multiplayer key the player identically. Invalid on a headless dedicated
+        /// launch (`--dedicated` / `--server --headless`), where the host is nobody, and before the
+        /// managed-world bootstrap runs.
+        /// @return The local account id.
+        [[nodiscard]] Net::AccountId GetLocalAccount() const { return m_LocalAccount; }
 
         /// @brief Returns the process's transport-arm role: Client under `--join`, Server otherwise.
         ///
@@ -1050,6 +1089,8 @@ namespace Veng
         std::unordered_set<u64> m_PinnedWorlds;
         /// @brief The pimpl'd net hosts + input buffers; null unless a net launch mode is active.
         Unique<NetState> m_Net;
+        /// @brief The local player's account (GetLocalAccount); invalid on a dedicated host.
+        Net::AccountId m_LocalAccount;
         /// @brief The level the managed world was bootstrapped from; empty when World is unset.
         AssetHandle<Level> m_WorldLevel;
         /// @brief Per-frame view knobs pushed into the managed viewport; seeded from the level.
