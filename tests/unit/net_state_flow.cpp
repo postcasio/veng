@@ -15,6 +15,8 @@
 #include <Veng/Reflection/Serialize.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/BuiltinTypes.h>
+
+#include "support/TestComponents.h"
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/RemoteInterpolationSystem.h>
 #include <Veng/Scene/Scene.h>
@@ -136,12 +138,13 @@ TEST_CASE("A prefab-less spawn materializes the entity with full state, marked T
 {
     TypeRegistry serverTypes;
     RegisterBuiltinTypes(serverTypes);
+    serverTypes.Register<VengTest::TestScore>();
     Unique<Scene> server = Scene::Create(serverTypes);
 
     server->SetChangeTick(1);
     const Entity pawn = server->CreateEntity();
     server->Add<Transform>(pawn, Transform{.Position = vec3(1.0f, 2.0f, 3.0f)});
-    server->Add<Session>(pawn, Session{.Phase = SessionPhase::Playing, .Score = 5});
+    server->Add<VengTest::TestScore>(pawn, VengTest::TestScore{.Value = 5});
 
     NetIdAllocator allocator;
     AssignServerNetIds(*server, allocator);
@@ -149,6 +152,7 @@ TEST_CASE("A prefab-less spawn materializes the entity with full state, marked T
 
     TypeRegistry clientTypes;
     RegisterBuiltinTypes(clientTypes);
+    clientTypes.Register<VengTest::TestScore>();
     Unique<Scene> client = Scene::Create(clientTypes);
 
     ReplicationServer replServer;
@@ -162,15 +166,14 @@ TEST_CASE("A prefab-less spawn materializes the entity with full state, marked T
     REQUIRE_FALSE(clientPawn.IsNull());
     REQUIRE(client->IsAlive(clientPawn));
 
-    // The spawn's full state applies to the live components (Transform live, Session immediate).
+    // The spawn's full state applies to the live components (Transform live, discrete immediate).
     const auto* transform = client->TryGet<Transform>(clientPawn);
     REQUIRE(transform != nullptr);
     CHECK(transform->Position.x == doctest::Approx(1.0f));
     CHECK(transform->Position.z == doctest::Approx(3.0f));
-    const auto* session = client->TryGet<Session>(clientPawn);
-    REQUIRE(session != nullptr);
-    CHECK(session->Phase == SessionPhase::Playing);
-    CHECK(session->Score == 5);
+    const auto* score = client->TryGet<VengTest::TestScore>(clientPawn);
+    REQUIRE(score != nullptr);
+    CHECK(score->Value == 5);
 
     // Marked a remote mirror.
     const auto* authority = client->TryGet<Authority>(clientPawn);
@@ -230,12 +233,13 @@ TEST_CASE("Snapshots buffer Transform samples while non-spatial state applies im
 {
     TypeRegistry serverTypes;
     RegisterBuiltinTypes(serverTypes);
+    serverTypes.Register<VengTest::TestScore>();
     Unique<Scene> server = Scene::Create(serverTypes);
 
     server->SetChangeTick(1);
     const Entity pawn = server->CreateEntity();
     server->Add<Transform>(pawn, Transform{.Position = vec3(0.0f)});
-    server->Add<Session>(pawn, Session{.Phase = SessionPhase::Playing});
+    server->Add<VengTest::TestScore>(pawn, VengTest::TestScore{.Value = 1});
 
     NetIdAllocator allocator;
     AssignServerNetIds(*server, allocator);
@@ -243,6 +247,7 @@ TEST_CASE("Snapshots buffer Transform samples while non-spatial state applies im
 
     TypeRegistry clientTypes;
     RegisterBuiltinTypes(clientTypes);
+    clientTypes.Register<VengTest::TestScore>();
     Unique<Scene> client = Scene::Create(clientTypes);
 
     ReplicationServer replServer;
@@ -254,14 +259,14 @@ TEST_CASE("Snapshots buffer Transform samples while non-spatial state applies im
     const Entity clientPawn = replClient.Map().Lookup(pawnId);
     REQUIRE_FALSE(clientPawn.IsNull());
 
-    // Move + change session on tick 4, then snapshot.
+    // Move + change the discrete score on tick 4, then snapshot.
     server->SetChangeTick(4);
     server->Get<Transform>(pawn).Position.x = 9.0f;
-    server->Get<Session>(pawn).Phase = SessionPhase::Ended;
+    server->Get<VengTest::TestScore>(pawn).Value = 2;
     PumpReplication(replServer, replClient, 1, *server, *client, 4);
 
-    // The Session change applied immediately (stale-but-consistent beats interpolated for discrete state).
-    CHECK(client->Get<Session>(clientPawn).Phase == SessionPhase::Ended);
+    // The discrete change applied immediately (stale-but-consistent beats interpolated for discrete state).
+    CHECK(client->Get<VengTest::TestScore>(clientPawn).Value == 2);
 
     // The moved Transform is buffered, not snapped onto the live pose: the live Transform still holds
     // the spawn value until the View-phase system renders a sample.

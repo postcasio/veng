@@ -79,10 +79,46 @@ verifies identity (or wires an allowlist as a stopgap). **The posture's conseque
 presents an account id *is* that account, so once anything durable keys on it the id is a
 capability token — hosting beyond a trusted LAN is unsafe until identity is verified there.
 
+## The session record — reconnecting is reattaching
+
+**A session is an account's sitting with this host** (`Session.h`): a **`SessionRecord`** —
+the standing joins the account holds plus its last gameplay world as **(key, factory params,
+arrival pose)** — owned by a **`SessionRegistry`** living beside the `WorldDirectory` at the host
+tier (an `Application` constructs one, a `ServerHost` borrows it via `ServerHostInfo::Sessions` or
+builds a private one). Deliberately **not** a component: the record exists while the account is
+offline, spans worlds, and keys by account. It is maintained **as a side effect of the existing
+operations**, no consumer bookkeeping: every join/travel resolves a **durability class**
+(`SessionDurability`, via `ResolveSessionDurability`) from its `Present` flag and an explicit
+`optional<bool> Standing` override — unset resolves to *not presenting is standing*, so a
+presenting travel is the gameplay entry (params doubling as the arrival pose until a capture
+refreshes it), a non-presenting join is a standing entry (removed by its explicit leave, kept by a
+disconnect), and `Standing = false` opts a prefetch/spectate join out of the record entirely. The
+record stores the *resolved* class, so a reclassification is a call-site change, never a data
+migration. Pose freshness is the consumer's `CaptureTravelPose` hook (`GameNetInfo`), invoked at
+disconnect and the debounced save checkpoint with the gameplay join's world + seat.
+
+**Reattach**: on an admitted account with a record, the optional `TransformOnReattach` hook
+rewrites the record (the rewrite is kept), standing joins are re-issued as **non-presenting
+directed travels** with no leave arm, and the gameplay entry resolves through the directory —
+get-or-place by key, the factory re-running with the recorded **params** when the key misses (a
+reaped dynamic world re-materializes, or a placement policy re-matches a live neighbor) — then a
+presenting directed travel delivers the recorded **pose** back (`ClientHost::ArrivalPose`). A
+gameplay resolve failure (denial, caps) clears the entry with a logged reason and the client lands
+at its front door; a persisted entry whose params/pose carry a `TypeId` unknown to the type
+registry is untrusted and cleared the same way. Standalone reattach is the same registry with no
+wire: `Application` bootstrap consults the local account's record and resolves it through the
+local directory, so single-player continue and multiplayer reattach are one code path.
+
+**Durability** is the `LoadSession`/`SaveSession` hook pair (`GameNetInfo`): the blob is the
+record's reflection-binary encoding (`EncodeSessionRecord`/`DecodeSessionRecord`, schema-tolerant),
+the engine owns *when and what* (load on first admit; save on disconnect, on `StopNet`/teardown,
+and debounced at the checkpoint), the consumer owns *where*. No hooks → records live for the
+process lifetime, the zero-config LAN posture.
+
 ## Replication
 
 Replication is reflection-driven (`Replication.h`). A type opts in with a **`VE_REPLICATED`** mark
-beside its `VE_REFLECT` block (`Transform`, `Viewer`, `Possesses`, `Session` marked builtin; a game
+beside its `VE_REFLECT` block (`Transform`, `Viewer`, `Possesses` marked builtin; a game
 marks its own). A runtime **`NetIdentity`** (server-assigned `u32`, never authored/persisted) is
 the wire key; the client keeps a `NetId → Entity` map. `EncodeSnapshot`/`ApplySnapshot` are the
 entity-granular codec (per-component `WriteFields` bytes, MTU-packable, replicated `Entity` fields
@@ -121,7 +157,7 @@ form negotiated by an ack or a hash, so drift tolerance and the fixtures survive
 
 Interest management is a per-connection relevancy filter on the send loop (`Interest`).
 `Interest(conn)` = a headless-safe spatial query around the connection's pawn ∪ the
-**`AlwaysRelevant`**-marked entities (`VE_ALWAYS_RELEVANT`, on `Session` + `Viewer` builtin) ∪ the
+**`AlwaysRelevant`**-marked entities (`VE_ALWAYS_RELEVANT`, on `Viewer` builtin) ∪ the
 `GameNetInfo::InterestPolicy` hook ∪ the entities the connection owns, with hysteresis + a dwell
 floor. Set enter sends the spawn + baseline; leave sends a **despawn-with-reason**
 (`DespawnReason::Visibility` vs `Destroyed`) the client tears down side-effect-free (never a death)

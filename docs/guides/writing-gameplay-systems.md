@@ -539,9 +539,9 @@ This example reuses the real shipped pieces:
   sibling of `PatrolSystem`: both are `Phase::Sim` `Intent` producers feeding one
   movement system. Swapping the device-reading producer for an AI one is the whole
   difference — which is the point of the pattern.
-- **`SpawnPlayerRule`** in the same file shows the `OnStart`/`OnUpdate`/`OnStop`
-  lifecycle in full: it spawns the configured player prefab at `OnStart` and tears
-  it down at `OnStop`, reading the game-mode `Session` state.
+- **`SpawnPlayerRule`** in the same file shows the `OnStart`/`OnStop`
+  lifecycle in full: it spawns the configured player prefab at `OnStart` (gated on
+  the scene carrying a `GameModeConfig`) and tears it down at `OnStop`.
 - **`CameraRigSystem`** in [`CameraRig.h`](../../engine/include/Veng/Scene/CameraRig.h)
   is the `Phase::View` counterpart — it resolves each rigged camera after the Sim phase
   finalizes, deriving a purely local camera pose: a `CameraFollow` trails its target

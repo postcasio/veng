@@ -133,6 +133,7 @@ add_library(veng SHARED
         src/Net/InputFeed.cpp
         src/Net/LoopbackTransport.cpp
         src/Net/Server.cpp
+        src/Net/Session.cpp
         src/Net/UdpTransport.cpp
         src/Platform/UserPaths.cpp
         src/Task/TaskSystem.cpp

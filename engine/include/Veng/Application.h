@@ -23,6 +23,7 @@
 #include <Veng/Net/Interest.h>
 #include <Veng/Net/JoinRequest.h>
 #include <Veng/Net/PredictionHistory.h>
+#include <Veng/Net/Session.h>
 #include <Veng/Net/TravelPayload.h>
 #include <Veng/Task/TaskSystem.h>
 #include <Veng/Reflection/TypeRegistry.h>
@@ -115,7 +116,7 @@ namespace Veng
         /// @brief Interest radius in meters around a connection's pawn; 0 (the default) replicates the whole world.
         ///
         /// When positive, a connection hears only about the entities within this radius of its pawn,
-        /// plus the always-relevant marks (the session, seats) and the InterestPolicy hook — the
+        /// plus the always-relevant marks (the seats, a game's global state) and the InterestPolicy hook — the
         /// scale lever that stops bandwidth growing with world size. Zero is the planset-54 behavior,
         /// so interest is opt-in per game.
         f32 InterestRadius = 0.0f;
@@ -186,6 +187,31 @@ namespace Veng
         /// Net::DenyReason::AccountAlreadyConnected — retryable across the disconnect-timeout window).
         /// Inert off a host.
         function<optional<Net::AccountId>(Net::ConnectionId, const Net::AccountId&)> AdmitAccount;
+
+        /// @brief Rewrites an account's session record as its reattach begins; unset restores it as recorded.
+        ///
+        /// The game's one word on reconnect placement (resurface in a different regime, veto a
+        /// stale location): the returned record is what the reattach restores and what the registry
+        /// keeps. Threaded into the host-tier session registry; see
+        /// Net::SessionRegistryInfo::TransformOnReattach.
+        function<Net::SessionRecord(Net::SessionRecord)> TransformOnReattach;
+        /// @brief Encodes an account's current gameplay pose from its seat; unset keeps the last travel's.
+        ///
+        /// The engine cannot serialize game pose, so the game encodes it: invoked at disconnect and
+        /// at the save checkpoint with the account's gameplay world and its seat entity there, and
+        /// the result is delivered back on reattach. See Net::SessionRegistryInfo::CaptureTravelPose.
+        function<Net::TravelPayload(WorldInstanceId, Entity)> CaptureTravelPose;
+        /// @brief Loads an account's persisted session blob on first admit; unset keeps records process-lifetime.
+        ///
+        /// The durability hook pair's read half: the engine owns when (first admission) and what
+        /// (the record's reflection-binary encoding), the game owns where. See
+        /// Net::SessionRegistryInfo::LoadSession.
+        function<optional<vector<std::byte>>(Net::AccountId)> LoadSession;
+        /// @brief Persists an account's session blob; unset keeps records process-lifetime.
+        ///
+        /// The durability hook pair's write half: invoked on disconnect, on StopNet/teardown, and
+        /// debounced at the checkpoint. See Net::SessionRegistryInfo::SaveSession.
+        function<void(Net::AccountId, std::span<const std::byte>)> SaveSession;
 
         /// @brief The get-or-place world factory the mounted ServerHost resolves a joined WorldKey through.
         ///
@@ -305,6 +331,12 @@ namespace Veng
         usize ViewportIndex = 0;
         /// @brief True to present the destination on the viewport; false resolves/joins without presenting (data worlds).
         bool Present = true;
+        /// @brief Explicit standing choice for the session record; unset resolves to !Present.
+        ///
+        /// A presenting travel is the account's gameplay world, a non-presenting one a standing
+        /// join restored on reattach; setting this overrides (false opts the travel out of the
+        /// record entirely — a prefetch, a spectate). See Net::ResolveSessionDurability.
+        optional<bool> Standing;
     };
 
     /// @brief Base class for a veng application; subclass and override the lifecycle hooks.
@@ -621,10 +653,13 @@ namespace Veng
         /// (RebindManagedViewport) to present the joined world. Pair it with
         /// GameNetInfo::AutoJoinDefaultWorld = false to suppress the fixed auto-join and drive every join
         /// explicitly.
-        /// @param key  The opaque world to join (the server resolves it through its get-or-place policy).
+        /// @param key       The opaque world to join (the server resolves it through its get-or-place policy).
+        /// @param standing  Explicit standing choice for the session record; unset records a
+        ///                  standing join (a non-presenting join is standing), false opts out.
         /// @pre A client connection is active (a prior Connect or a `--join` launch).
         /// @return The runner world the join installs its replicated scene into.
-        [[nodiscard]] WorldInstanceId JoinWorld(const Net::WorldKey& key);
+        [[nodiscard]] WorldInstanceId JoinWorld(const Net::WorldKey& key,
+                                                optional<bool> standing = {});
 
         /// @brief Joins a world *into an existing live world's scene* — the adopt-in-place join.
         ///
@@ -635,11 +670,14 @@ namespace Veng
         /// @p key. This is the scene-preserving half of a swap: adopt the destination while the current
         /// join stays live, then LeaveWorld the old one once the destination is ready. The derived and
         /// Local-tier entities are untouched by construction.
-        /// @param key    The opaque world to join.
-        /// @param adopt  The live runner world whose scene the join binds to (installed and started).
+        /// @param key       The opaque world to join.
+        /// @param adopt     The live runner world whose scene the join binds to (installed and started).
+        /// @param standing  Explicit standing choice for the session record; unset records the
+        ///                  join as the gameplay entry when @p adopt is presented, standing otherwise.
         /// @pre A client connection is active, and @p adopt resolves to a started scene.
         /// @return @p adopt (the shared world the join now streams into).
-        WorldInstanceId JoinWorld(const Net::WorldKey& key, WorldInstanceId adopt);
+        WorldInstanceId JoinWorld(const Net::WorldKey& key, WorldInstanceId adopt,
+                                  optional<bool> standing = {});
 
         /// @brief Leaves a joined world, removing exactly that join's replicated footprint from its scene.
         ///
@@ -808,6 +846,15 @@ namespace Veng
         /// @param port  The resolved server port (the caller applies the GameNetInfo default for 0).
         /// @return Empty on success, or an error string if the connection could not be opened.
         VoidResult ConnectClient(const string& host, u16 port);
+
+        /// @brief Restores the local account's session at bootstrap — the standalone continue.
+        ///
+        /// The same registry with no wire: consults the local account's record (loading it through
+        /// the LoadSession hook) and resolves its entries through the local directory — a standing
+        /// join warms its world under a local pin, the gameplay entry present-on-ready rebinds
+        /// viewport 0. A failed gameplay resolve clears the entry, so the process lands on its
+        /// front door (the startup level). A no-op without a record or a local account.
+        void RestoreLocalSession();
 
         /// @brief Constructs the world directory from ApplicationInfo::Net, sharing the runner for teardown.
         ///
@@ -1082,6 +1129,18 @@ namespace Veng
         /// Application resolves standalone travels and drives presentation pins through it; the ServerHost
         /// consumes it (ServerHostInfo::Directory) when hosting is stood up.
         Unique<WorldDirectory> m_Directory;
+        /// @brief The host-tier session registry; built beside the directory, borrowed by a mounted host.
+        ///
+        /// Keeps each account's standing joins and last gameplay world across connections.
+        /// Application records the local player's standalone travels into it and resolves the
+        /// standalone continue at bootstrap; the ServerHost consumes it (ServerHostInfo::Sessions)
+        /// when hosting is stood up.
+        Unique<Net::SessionRegistry> m_Sessions;
+        /// @brief The standing worlds the standalone continue resolved, pinned for the local player.
+        ///
+        /// A standing join's presence standalone is a local pin (there is no connection to report a
+        /// join); held for the process lifetime — standalone has no leave operation to withdraw one.
+        vector<WorldInstanceId> m_StandingWorlds;
         /// @brief The worlds Application currently pins for presentation, keyed by WorldInstanceId value.
         ///
         /// The pin set SyncPresentationPins reconciles each frame against the managed viewports' bindings,

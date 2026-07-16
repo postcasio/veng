@@ -13,6 +13,8 @@
 #include <Veng/Net/Replication.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/BuiltinTypes.h>
+
+#include "support/TestComponents.h"
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
@@ -100,11 +102,12 @@ TEST_CASE("Always-relevant and policy arms are unconditional; radius 0 disables 
     }
 }
 
-TEST_CASE("GatherAlwaysRelevant finds the builtin session and seat marks")
+TEST_CASE("GatherAlwaysRelevant finds the seat mark and a registered always-relevant mark")
 {
     TypeRegistry types;
     RegisterBuiltinTypes(types);
-    CHECK(types.Info(TypeIdOf<Session>()).AlwaysRelevant);
+    types.Register<VengTest::TestScore>();
+    CHECK(types.Info(TypeIdOf<VengTest::TestScore>()).AlwaysRelevant);
     CHECK(types.Info(TypeIdOf<Viewer>()).AlwaysRelevant);
     CHECK_FALSE(types.Info(TypeIdOf<Transform>()).AlwaysRelevant);
 

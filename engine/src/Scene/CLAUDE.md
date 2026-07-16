@@ -264,17 +264,18 @@ dependency graph, no parallelism.
 
 ## Game modes & world config
 
-**A game mode is a `Session` state component + rule systems — no object, no registry.** A
-**`Session { Phase, Elapsed, Score }`** component (`SessionPhase { NotStarted, Playing, Ended }`)
-holds the mode's server-authoritative state on a settings entity; a **`GameModeConfig`** beside it
-names the player prefab and mode parameters (its JSON key is `"gameMode"`). The "mode" is a
-*selectable set of rule systems* (spawn-on-start, scoring, win-condition) reading and writing the
-`Session`; begin/end-play is the systems' `OnStart`/`OnStop` plus `SessionPhase` transitions.
+**A game mode is mode-state components + rule systems — no object, no registry.** A
+**`GameModeConfig`** on the level's settings entity names the player prefab (its JSON key is
+`"gameMode"`); a game authors whatever further mode-state components its own rule systems read
+and write, beside it. The "mode" is a *selectable set of rule systems* (spawn-on-start, scoring,
+win-condition) over those components; begin/end-play is the systems' `OnStart`/`OnStop`.
 Selecting a mode is choosing a config plus a registered rule set — no C++ path picks it, no
-`GameModeRegistry`, no ABI bump.
+`GameModeRegistry`, no ABI bump. The engine ships no mode-state component of its own — mode state
+is game vocabulary. (The word "session" means something else entirely: the per-account
+`Net::SessionRecord` the host tier keeps — see [../Net/CLAUDE.md](../Net/CLAUDE.md).)
 
 **World-scoped config is a component found by type, not on a designated entity.** A rule system
-reads the `Session`/`GameModeConfig` (and the engine reads `LevelRenderSettings`) through
+reads the `GameModeConfig` (and the engine reads `LevelRenderSettings`) through
 **`Scene::TryGetFirst<T>()`** — the first component of a type, or `nullptr`. So world/level config
 lives on *some* settings entity without any consumer naming a well-known one: a `Level` seeds
 level-scoped config onto one (see **Levels**), and genuinely world-scoped config (a hypothetical
@@ -326,8 +327,7 @@ world prefab and that prefab's embedded asset refs resolve as ordinary load-time
 game*: it spawns the world prefab into a fresh `Scene`, builds a `SceneSimulation` from the
 level's `SystemId` set against the catalog and **attaches it to the `Scene`**
 (`Scene::SetSimulation` — the scene owns its simulation), and **`SeedLevel`s a settings entity**
-carrying a Playing `Session` plus the level's `GameModeConfig` and `LevelRenderSettings` as
-components, returning a `LevelInstance { Unique<Scene> World; ResidencyBatch Pending; }` the app
+carrying the level's `GameModeConfig` and `LevelRenderSettings` as components, returning a `LevelInstance { Unique<Scene> World; ResidencyBatch Pending; }` the app
 ticks (via `Scene::TickSimulation`) and renders. The level's config (game mode, render settings)
 stays **authored on the `Level`** (edited as separate level-editor panels, cooked into the level
 blob) but enters the running world as scene components — so rule systems and the engine read it by

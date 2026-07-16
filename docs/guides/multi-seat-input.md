@@ -253,7 +253,7 @@ state each seat's resolve reads*, one layer below `Intent`:
   *client-local, device-facing* concern. It does not replicate anything.
 
 Replicating a human seat's input to a server — sending its `PlayerInput`, re-deriving
-its `Intent` server-side, and replicating `Session`/pawn state by `Authority` — is
+its `Intent` server-side, and replicating pawn state by `Authority` — is
 the networking layer, a separate body of work built on this same seat seam. This
 guide gets you two local players on one machine; the wire is its own step.
 

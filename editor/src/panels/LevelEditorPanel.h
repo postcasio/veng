@@ -23,7 +23,7 @@ namespace VengEditor
     /// @brief Asset editor for a Level: the world-prefab scene surface plus level-scoped wiring.
     ///
     /// A level wraps a world prefab with the data that is not reusable-recipe data — the
-    /// ordered active system set, the game-mode/Session config, and the render settings.
+    /// ordered active system set, the game-mode config, and the render settings.
     /// This editor composes the prefab editing surface (it derives from PrefabEditorPanel,
     /// so the viewport / explorer / inspector edit the world prefab without reimplementing
     /// scene editing) and adds two level-scoped children:
@@ -110,7 +110,7 @@ namespace VengEditor
         /// @brief Seeds the play clone with the level's settings entity, player prefab made resident.
         ///
         /// Drives the play clone to the same initialized state Level::LoadInto reaches at
-        /// runtime: SeedLevel adds the Playing Session, game-mode config, and render settings the
+        /// runtime: SeedLevel adds the game-mode config and render settings the
         /// systems and engine read, and the game-mode player prefab is forced resident (a
         /// LoadSync, skipped when already loaded) so the rule has something to spawn at Start.
         /// @param scene The play clone the level systems run over.
@@ -151,7 +151,7 @@ namespace VengEditor
 
         /// @brief The level's ordered active system set; Play runs exactly this.
         Veng::vector<Veng::SystemId> m_Systems;
-        /// @brief The game-mode/Session config edited through the reflection inspector.
+        /// @brief The game-mode config edited through the reflection inspector.
         Veng::GameModeConfig m_GameMode;
         /// @brief The render-settings subset edited through the reflection inspector.
         Veng::LevelRenderSettings m_Render;

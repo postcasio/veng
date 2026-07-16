@@ -24,6 +24,8 @@
 #include <Veng/Net/WorldKey.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/BuiltinTypes.h>
+
+#include "support/TestComponents.h"
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Movement.h>
@@ -3260,7 +3262,7 @@ namespace
     const WorldKey AdoptKeyB = WorldKey::FromU64(0x0ADB);
 
     // A server hosting one or two worlds (each its own scene), with a net-unaware spawn rule pawning
-    // each seat and an optional anchored authoritative entity carrying replicated Session state.
+    // each seat and an optional anchored authoritative entity carrying replicated test-score state.
     struct AdoptServer
     {
         TypeRegistry Types;
@@ -3274,6 +3276,7 @@ namespace
         explicit AdoptServer(Transport& transport, bool twoWorlds, bool denyB = false)
         {
             RegisterBuiltinTypes(Types);
+            Types.Register<VengTest::TestScore>();
             SceneA = Scene::Create(Types);
             Result<Unique<ServerHost>> host = ServerHost::Create(ServerHostInfo{
                 .Server = ServerInfo{.TransportOverride = &transport, .Connection = FastConfig},
@@ -3303,12 +3306,12 @@ namespace
         }
 
         // An anchored authoritative entity: a NetAnchor (bound across the wire) plus a replicated
-        // Session the adoption applies onto the claimant. Seeded into world A's scene.
+        // test score the adoption applies onto the claimant. Seeded into world A's scene.
         Entity SeedAnchored(u64 lo, u64 hi, i32 score)
         {
             const Entity entity = SceneA->CreateEntity();
             SceneA->Add<NetAnchor>(entity, NetAnchor{.Lo = lo, .Hi = hi});
-            SceneA->Add<Session>(entity, Session{.Phase = SessionPhase::Playing, .Score = score});
+            SceneA->Add<VengTest::TestScore>(entity, VengTest::TestScore{.Value = score});
             SceneA->Add<Authority>(entity, Authority{.Tier = Tier::Server});
             Anchored.push_back(entity);
             return entity;
@@ -3363,7 +3366,7 @@ namespace
             {
                 if (SceneA->IsAlive(entity))
                 {
-                    (void)SceneA->Get<Session>(entity);
+                    (void)SceneA->Get<VengTest::TestScore>(entity);
                 }
             }
             Host->Pump(now, tick);
@@ -3389,6 +3392,7 @@ namespace
         explicit AdoptClient(Transport& transport)
         {
             RegisterBuiltinTypes(Types);
+            Types.Register<VengTest::TestScore>();
             World = Scene::Create(Types);
             Client = *Net::Client::Connect(
                 ClientInfo{.TransportOverride = &transport, .Connection = FastConfig});
@@ -3783,13 +3787,13 @@ TEST_CASE("Stable-anchor adoption: server state lands on the live claimant, rele
     // The server state landed on the *claimant* — no duplicate anchored entity spawned.
     CHECK(client.CountAnchor(0x7ULL, 0x0ULL) == 1);
     REQUIRE(client.World->IsAlive(claimant));
-    REQUIRE(client.World->Has<Session>(claimant));
-    CHECK(client.World->Get<Session>(claimant).Score == 42);
+    REQUIRE(client.World->Has<VengTest::TestScore>(claimant));
+    CHECK(client.World->Get<VengTest::TestScore>(claimant).Value == 42);
     // The claimant stayed a derived Local entity; its pre-existing transform is untouched.
     CHECK(client.World->Get<Authority>(claimant).Tier == Tier::Local);
     CHECK(client.World->Get<Transform>(claimant).Position == vec3(2.0f, 0.0f, 0.0f));
 
-    // Leave releases the binding: the stream-added Session goes, the claimant (and its pre-existing
+    // Leave releases the binding: the stream-added score goes, the claimant (and its pre-existing
     // components) survive, re-adoptable by the next join.
     client.Host->Leave(join);
     for (u64 tick = 61; tick <= 80; ++tick)
@@ -3799,7 +3803,7 @@ TEST_CASE("Stable-anchor adoption: server state lands on the live claimant, rele
         client.Pump(now);
     }
     REQUIRE(client.World->IsAlive(claimant));
-    CHECK_FALSE(client.World->Has<Session>(claimant)); // stream-added type removed
+    CHECK_FALSE(client.World->Has<VengTest::TestScore>(claimant)); // stream-added type removed
     CHECK(client.World->Has<NetAnchor>(claimant));     // pre-existing kept
     CHECK(client.World->Get<Transform>(claimant).Position == vec3(2.0f, 0.0f, 0.0f));
     CHECK(client.CountAnchor(0x7ULL, 0x0ULL) == 1); // anchor index entry stays
@@ -3835,9 +3839,9 @@ TEST_CASE("Stable-anchor adoption: a claimant-less anchored spawn falls back to 
     // not stamp NetAnchor, so it never pollutes the claimant index.
     CHECK(client.CountAnchor(0x9ULL, 0x0ULL) == 0);
     bool sawState = false;
-    for (auto [entity, session] : client.World->View<Session>())
+    for (auto [entity, score] : client.World->View<VengTest::TestScore>())
     {
-        if (session.Score == 7 && client.World->Get<Authority>(entity).Tier == Tier::Remote)
+        if (score.Value == 7 && client.World->Get<Authority>(entity).Tier == Tier::Remote)
         {
             sawState = true;
         }
@@ -4431,4 +4435,680 @@ TEST_CASE("An unconfigured client account mints a valid, process-unique id")
     // The client knows the id it presented (the minted one), matching the server's binding.
     CHECK(a.Client->GetAccount() == accountA);
     CHECK(b.Client->GetAccount() == accountB);
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Session reattach — the per-account record (standing joins + last gameplay world) and its restore
+// on reconnect, the durability hook pair, and the pose round-trip. Device-free over the Hub
+// transport (a reconnect needs a fresh client transport against the same server endpoint).
+
+namespace
+{
+    const WorldKey GameplayKey = WorldKey::FromU64(0x6A);
+    const WorldKey DataKey = WorldKey::FromU64(0x6B);
+
+    // The consumer session/policy hooks a case threads into its SessionServer.
+    struct SessionHooks
+    {
+        function<SessionRecord(SessionRecord)> Transform;
+        function<bool(const JoinRequestInfo&)> Authorize;
+        function<optional<vector<std::byte>>(AccountId)> Load;
+        function<void(AccountId, std::span<const std::byte>)> Save;
+    };
+
+    // A server whose worlds come from a counting factory, plus the session hooks under test. The
+    // factory records each open's payload so a re-materialization can be asserted param-equal.
+    struct SessionServer
+    {
+        TypeRegistry Types;
+        Unique<Scene> Primary;
+        vector<Unique<Scene>> Opened;
+        vector<TravelPayload> FactoryPayloads;
+        Unique<ServerHost> Host;
+        u64 NextWorldId = 100;
+
+        // The capture hook's canned pose and its invocation record.
+        TravelPayload CapturedPose;
+        int Captures = 0;
+        WorldInstanceId CapturedWorld;
+        Entity CapturedSeat = Entity::Null;
+
+        explicit SessionServer(Transport& transport, SessionHooks hooks = {})
+        {
+            RegisterBuiltinTypes(Types);
+            Primary = Scene::Create(Types);
+            CapturedPose = TravelPayload{.Type = TypeIdOf<Transform>(), .Bytes = {9, 9, 9}};
+
+            Result<Unique<ServerHost>> host = ServerHost::Create(ServerHostInfo{
+                .Server = ServerInfo{.TransportOverride = &transport, .Connection = FastConfig},
+                .World = *Primary,
+                .Assets = FakeAssets(),
+                .LevelId = LevelId,
+                .IdleKeepWarmDwell = 1.0,
+                .Authorize = std::move(hooks.Authorize),
+                .WorldFactory = [this](const WorldKey&, const TravelPayload& payload)
+                    -> optional<ServerWorldResolution>
+                {
+                    Opened.push_back(Scene::Create(Types));
+                    FactoryPayloads.push_back(payload);
+                    return ServerWorldResolution{.WorldId = WorldInstanceId{.Value = NextWorldId++},
+                                                 .World = Opened.back().get(),
+                                                 .LevelId = LevelId};
+                },
+                .TransformOnReattach = std::move(hooks.Transform),
+                .CaptureTravelPose = [this](const WorldInstanceId world,
+                                            const Entity seat) -> TravelPayload
+                {
+                    ++Captures;
+                    CapturedWorld = world;
+                    CapturedSeat = seat;
+                    return CapturedPose;
+                },
+                .LoadSession = std::move(hooks.Load),
+                .SaveSession = std::move(hooks.Save),
+            });
+            REQUIRE(host.has_value());
+            Host = std::move(*host);
+        }
+
+        void Pump(f64 now, u64 tick)
+        {
+            Primary->SetChangeTick(tick);
+            for (const Unique<Scene>& scene : Opened)
+            {
+                scene->SetChangeTick(tick);
+            }
+            Host->Pump(now, tick);
+        }
+    };
+
+    // Steps a SessionServer and one IdentityClient together until the predicate holds (or the
+    // tick budget runs out), advancing the injected clock.
+    template <class Predicate>
+    void PumpUntil(SessionServer& server, IdentityClient& client, f64& now, u64& tick,
+                   const u64 budget, Predicate&& done)
+    {
+        constexpr f32 Delta = 1.0f / 60.0f;
+        const u64 limit = tick + budget;
+        while (!done() && tick < limit)
+        {
+            ++tick;
+            now += Delta;
+            server.Pump(now, tick);
+            client.Pump(now);
+        }
+    }
+}
+
+TEST_CASE("Reattach: a reconnect restores the live gameplay world and returns the captured pose")
+{
+    const auto hub = CreateRef<Hub>();
+    const u32 serverEndpoint = hub->Register();
+    auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
+    SessionServer server(*serverT);
+
+    const AccountId account{.Lo = 0x51, .Hi = 0x52};
+    const TravelPayload params{.Type = TypeIdOf<Transform>(), .Bytes = {1, 2, 3, 4}};
+
+    f64 now = 0.0;
+    u64 tick = 0;
+
+    // First sitting: a presenting join of the gameplay key (the factory opens its world).
+    auto firstT = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    {
+        IdentityClient first(*firstT, account);
+        bool requested = false;
+        PumpUntil(server, first, now, tick, 60,
+                  [&]
+                  {
+                      if (!requested && first.Client->State() == ClientState::Connected)
+                      {
+                          first.Host->Join(GameplayKey, params, /*present=*/true);
+                          requested = true;
+                      }
+                      return first.Host->IsJoined();
+                  });
+        REQUIRE(first.Host->IsJoined());
+
+        // The join recorded the gameplay entry as a side effect: key + params, pose = the arrival
+        // payload until a capture refreshes it.
+        const SessionRecord* record = server.Host->Sessions().Find(account);
+        REQUIRE(record != nullptr);
+        CHECK(record->Gameplay.Key == GameplayKey);
+        CHECK(record->Gameplay.Params == params);
+        CHECK(record->Gameplay.Pose == params);
+
+        // Disconnect: the capture hook runs against the gameplay join's world and seat, and the
+        // record's pose becomes the captured one.
+        const ConnectionId id = first.Client->AssignedId();
+        const Entity seat = server.Host->SeatFor(id);
+        const WorldInstanceId world = server.Host->WorldFor(id);
+        first.Client->Disconnect();
+        PumpUntil(server, first, now, tick, 60,
+                  [&] { return server.Host->Server().Connections().empty(); });
+        REQUIRE(server.Host->Server().Connections().empty());
+        CHECK(server.Captures == 1);
+        CHECK(server.CapturedWorld == world);
+        CHECK(server.CapturedSeat == seat);
+        REQUIRE(server.Host->Sessions().Find(account) != nullptr);
+        CHECK(server.Host->Sessions().Find(account)->Gameplay.Pose == server.CapturedPose);
+    }
+
+    // Second sitting: the bare reconnect reattaches — no join call; the directed travel restores
+    // the same live (warm) world and carries the captured pose back.
+    const usize factoryOpens = server.FactoryPayloads.size();
+    auto secondT = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    IdentityClient second(*secondT, account);
+    PumpUntil(server, second, now, tick, 80, [&] { return second.Host->IsJoined(); });
+    REQUIRE(second.Host->IsJoined());
+
+    // The world was live, so the factory did not re-run; the join converged on the warm bucket.
+    CHECK(server.FactoryPayloads.size() == factoryOpens);
+    const JoinId join = second.Host->CurrentJoinId();
+    CHECK(second.Host->IsPresenting(join));
+    CHECK(second.Host->ArrivalPose(join) == server.CapturedPose);
+    // The re-join re-recorded the gameplay entry without clobbering the captured pose.
+    const SessionRecord* record = server.Host->Sessions().Find(account);
+    REQUIRE(record != nullptr);
+    CHECK(record->Gameplay.Params == params);
+    CHECK(record->Gameplay.Pose == server.CapturedPose);
+}
+
+TEST_CASE("Reattach: a reaped gameplay world re-materializes through the factory with equal params")
+{
+    const auto hub = CreateRef<Hub>();
+    const u32 serverEndpoint = hub->Register();
+    auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
+    SessionServer server(*serverT);
+
+    const AccountId account{.Lo = 0x61};
+    const TravelPayload params{.Type = TypeIdOf<Transform>(), .Bytes = {7, 7}};
+
+    f64 now = 0.0;
+    u64 tick = 0;
+
+    auto firstT = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    WorldInstanceId firstWorld;
+    {
+        IdentityClient first(*firstT, account);
+        bool requested = false;
+        PumpUntil(server, first, now, tick, 60,
+                  [&]
+                  {
+                      if (!requested && first.Client->State() == ClientState::Connected)
+                      {
+                          first.Host->Join(GameplayKey, params, /*present=*/true);
+                          requested = true;
+                      }
+                      return first.Host->IsJoined();
+                  });
+        REQUIRE(first.Host->IsJoined());
+        firstWorld = server.Host->WorldFor(first.Client->AssignedId());
+        REQUIRE(server.FactoryPayloads.size() == 1);
+        first.Client->Disconnect();
+        PumpUntil(server, first, now, tick, 60,
+                  [&] { return server.Host->Server().Connections().empty(); });
+    }
+
+    // Idle the factory world past the keep-warm dwell so it reaps: its minted key now resolves to
+    // nothing live.
+    constexpr f32 Delta = 1.0f / 60.0f;
+    for (u64 i = 0; i < 90; ++i)
+    {
+        ++tick;
+        now += Delta;
+        server.Pump(now, tick);
+    }
+    CHECK(server.Host->HostedWorldCount() == 1); // the primary alone
+
+    // Reattach: the key misses, so the resolution re-runs the factory with the recorded params —
+    // an equivalent world re-materializes and the client lands in it.
+    auto secondT = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    IdentityClient second(*secondT, account);
+    PumpUntil(server, second, now, tick, 80, [&] { return second.Host->IsJoined(); });
+    REQUIRE(second.Host->IsJoined());
+    REQUIRE(server.FactoryPayloads.size() == 2);
+    CHECK(server.FactoryPayloads.back() == params);
+    const WorldInstanceId secondWorld = server.Host->WorldFor(second.Client->AssignedId());
+    CHECK(secondWorld.IsValid());
+    CHECK_FALSE(secondWorld == firstWorld);
+}
+
+TEST_CASE("Reattach: standing joins restore alongside the gameplay world, non-presenting")
+{
+    const auto hub = CreateRef<Hub>();
+    const u32 serverEndpoint = hub->Register();
+    auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
+    SessionServer server(*serverT);
+
+    const AccountId account{.Lo = 0x71};
+
+    f64 now = 0.0;
+    u64 tick = 0;
+
+    auto firstT = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    {
+        IdentityClient first(*firstT, account);
+        bool requested = false;
+        PumpUntil(server, first, now, tick, 80,
+                  [&]
+                  {
+                      if (!requested && first.Client->State() == ClientState::Connected)
+                      {
+                          // A non-presenting join defaults to standing (the data world); the
+                          // presenting one is the gameplay world.
+                          first.Host->Join(DataKey, {}, /*present=*/false);
+                          first.Host->Join(GameplayKey, {}, /*present=*/true);
+                          requested = true;
+                      }
+                      return first.Host->Joins().size() == 2;
+                  });
+        REQUIRE(first.Host->Joins().size() == 2);
+
+        const SessionRecord* record = server.Host->Sessions().Find(account);
+        REQUIRE(record != nullptr);
+        REQUIRE(record->StandingJoins.size() == 1);
+        CHECK(record->StandingJoins.front() == DataKey);
+        CHECK(record->Gameplay.Key == GameplayKey);
+
+        first.Client->Disconnect();
+        PumpUntil(server, first, now, tick, 60,
+                  [&] { return server.Host->Server().Connections().empty(); });
+    }
+
+    // Reattach restores both: the standing join re-issues non-presenting, the gameplay one
+    // presenting.
+    auto secondT = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    IdentityClient second(*secondT, account);
+    PumpUntil(server, second, now, tick, 100, [&] { return second.Host->Joins().size() == 2; });
+    REQUIRE(second.Host->Joins().size() == 2);
+
+    usize presenting = 0;
+    usize standing = 0;
+    for (const JoinId join : second.Host->Joins())
+    {
+        if (second.Host->IsPresenting(join))
+        {
+            ++presenting;
+        }
+        else
+        {
+            ++standing;
+        }
+    }
+    CHECK(presenting == 1);
+    CHECK(standing == 1);
+
+    // The re-joins re-recorded both entries — the record survives the round trip unchanged.
+    const SessionRecord* record = server.Host->Sessions().Find(account);
+    REQUIRE(record != nullptr);
+    REQUIRE(record->StandingJoins.size() == 1);
+    CHECK(record->StandingJoins.front() == DataKey);
+    CHECK(record->Gameplay.Key == GameplayKey);
+}
+
+TEST_CASE("Reattach: a standing join's explicit leave withdraws it from the record")
+{
+    const auto hub = CreateRef<Hub>();
+    const u32 serverEndpoint = hub->Register();
+    auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
+    SessionServer server(*serverT);
+
+    const AccountId account{.Lo = 0x72};
+
+    f64 now = 0.0;
+    u64 tick = 0;
+
+    auto clientT = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    IdentityClient client(*clientT, account);
+    bool requested = false;
+    PumpUntil(server, client, now, tick, 60,
+              [&]
+              {
+                  if (!requested && client.Client->State() == ClientState::Connected)
+                  {
+                      client.Host->Join(DataKey, {}, /*present=*/false);
+                      requested = true;
+                  }
+                  return client.Host->IsJoined();
+              });
+    REQUIRE(client.Host->IsJoined());
+    REQUIRE(server.Host->Sessions().Find(account) != nullptr);
+    REQUIRE(server.Host->Sessions().Find(account)->StandingJoins.size() == 1);
+
+    // The explicit leave (unlike a disconnect) withdraws the standing entry.
+    client.Host->Leave(client.Host->CurrentJoinId());
+    PumpUntil(server, client, now, tick, 60,
+              [&] { return server.Host->Sessions().Find(account)->StandingJoins.empty(); });
+    CHECK(server.Host->Sessions().Find(account)->StandingJoins.empty());
+}
+
+TEST_CASE("Reattach: TransformOnReattach rewrites the record before the restore")
+{
+    const auto hub = CreateRef<Hub>();
+    const u32 serverEndpoint = hub->Register();
+    auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
+
+    // The policy transform resurfaces every reattaching account in the data world instead of its
+    // recorded gameplay world — the "different regime" rewrite.
+    SessionHooks hooks;
+    hooks.Transform = [](SessionRecord record)
+    {
+        record.Gameplay.Key = DataKey;
+        return record;
+    };
+    SessionServer server(*serverT, std::move(hooks));
+
+    const AccountId account{.Lo = 0x81};
+
+    f64 now = 0.0;
+    u64 tick = 0;
+
+    auto firstT = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    {
+        IdentityClient first(*firstT, account);
+        bool requested = false;
+        PumpUntil(server, first, now, tick, 60,
+                  [&]
+                  {
+                      if (!requested && first.Client->State() == ClientState::Connected)
+                      {
+                          first.Host->Join(GameplayKey, {}, /*present=*/true);
+                          requested = true;
+                      }
+                      return first.Host->IsJoined();
+                  });
+        REQUIRE(first.Host->IsJoined());
+        first.Client->Disconnect();
+        PumpUntil(server, first, now, tick, 60,
+                  [&] { return server.Host->Server().Connections().empty(); });
+    }
+
+    auto secondT = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    IdentityClient second(*secondT, account);
+    PumpUntil(server, second, now, tick, 80, [&] { return second.Host->IsJoined(); });
+    REQUIRE(second.Host->IsJoined());
+
+    // The rewrite was honored (the restore resolved the data key, opening its world) and kept (the
+    // registry's record now names it).
+    const ConnectionId id = second.Client->AssignedId();
+    const WorldInstanceId world = server.Host->WorldFor(id);
+    CHECK(world.IsValid());
+    const SessionRecord* record = server.Host->Sessions().Find(account);
+    REQUIRE(record != nullptr);
+    CHECK(record->Gameplay.Key == DataKey);
+}
+
+TEST_CASE("Reattach: a denied gameplay resolve clears the entry and degrades to the front door")
+{
+    const auto hub = CreateRef<Hub>();
+    const u32 serverEndpoint = hub->Register();
+    auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
+
+    // The authorize hook admits the first sitting and denies the gameplay key afterwards (the
+    // world went private, say) — the reattach resolve fails, never a crash.
+    auto deny = std::make_shared<bool>(false);
+    SessionHooks hooks;
+    hooks.Authorize = [deny](const JoinRequestInfo& request)
+    { return !(*deny && request.Key == GameplayKey); };
+    SessionServer server(*serverT, std::move(hooks));
+
+    const AccountId account{.Lo = 0x91};
+
+    f64 now = 0.0;
+    u64 tick = 0;
+
+    auto firstT = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    {
+        IdentityClient first(*firstT, account);
+        bool requested = false;
+        PumpUntil(server, first, now, tick, 60,
+                  [&]
+                  {
+                      if (!requested && first.Client->State() == ClientState::Connected)
+                      {
+                          first.Host->Join(GameplayKey, {}, /*present=*/true);
+                          requested = true;
+                      }
+                      return first.Host->IsJoined();
+                  });
+        REQUIRE(first.Host->IsJoined());
+        first.Client->Disconnect();
+        PumpUntil(server, first, now, tick, 60,
+                  [&] { return server.Host->Server().Connections().empty(); });
+    }
+
+    *deny = true;
+    auto secondT = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    IdentityClient second(*secondT, account);
+    PumpUntil(server, second, now, tick, 40,
+              [&] { return second.Client->State() == ClientState::Connected; });
+    REQUIRE(second.Client->State() == ClientState::Connected);
+
+    // A few more pumps: no directed travel arrives (no join lands), and the record's gameplay
+    // entry is cleared — the next sitting starts at the front door.
+    PumpUntil(server, second, now, tick, 30, [&] { return false; });
+    CHECK(second.Host->Joins().empty());
+    const SessionRecord* record = server.Host->Sessions().Find(account);
+    REQUIRE(record != nullptr);
+    CHECK(record->Gameplay.Key == WorldKey{});
+
+    // The front door itself still works: the client joins the primary world by hand.
+    second.Host->Join(DefaultWorldKey, {}, /*present=*/true);
+    PumpUntil(server, second, now, tick, 60, [&] { return second.Host->IsJoined(); });
+    CHECK(second.Host->IsJoined());
+}
+
+TEST_CASE("Reattach: records round-trip the Load/Save hooks across a simulated host restart")
+{
+    const auto hub = CreateRef<Hub>();
+    const AccountId account{.Lo = 0xA1};
+    const TravelPayload params{.Type = TypeIdOf<Transform>(), .Bytes = {5}};
+
+    // The consumer store the hook pair reads and writes — surviving the host teardown below.
+    auto store = std::make_shared<std::unordered_map<AccountId, vector<std::byte>>>();
+    const auto makeHooks = [store]
+    {
+        SessionHooks hooks;
+        hooks.Load = [store](const AccountId id) -> optional<vector<std::byte>>
+        {
+            const auto it = store->find(id);
+            if (it == store->end())
+            {
+                return std::nullopt;
+            }
+            return it->second;
+        };
+        hooks.Save = [store](const AccountId id, const std::span<const std::byte> blob)
+        { (*store)[id] = vector<std::byte>(blob.begin(), blob.end()); };
+        return hooks;
+    };
+
+    f64 now = 0.0;
+    u64 tick = 0;
+    TravelPayload capturedPose;
+
+    // First host lifetime: join, disconnect (capture + save), tear the host down.
+    {
+        const u32 serverEndpoint = hub->Register();
+        auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
+        SessionServer server(*serverT, makeHooks());
+        capturedPose = server.CapturedPose;
+
+        auto firstT = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+        IdentityClient first(*firstT, account);
+        bool requested = false;
+        PumpUntil(server, first, now, tick, 60,
+                  [&]
+                  {
+                      if (!requested && first.Client->State() == ClientState::Connected)
+                      {
+                          first.Host->Join(GameplayKey, params, /*present=*/true);
+                          requested = true;
+                      }
+                      return first.Host->IsJoined();
+                  });
+        REQUIRE(first.Host->IsJoined());
+        first.Client->Disconnect();
+        PumpUntil(server, first, now, tick, 60,
+                  [&] { return server.Host->Server().Connections().empty(); });
+        REQUIRE(store->contains(account));
+    }
+
+    // Second host lifetime: a fresh process (fresh registry, fresh worlds) loads the record on
+    // first admit and reattaches — the world re-materializes by params and the pose returns.
+    {
+        const u32 serverEndpoint = hub->Register();
+        auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
+        SessionServer server(*serverT, makeHooks());
+
+        auto secondT = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+        IdentityClient second(*secondT, account);
+        PumpUntil(server, second, now, tick, 80, [&] { return second.Host->IsJoined(); });
+        REQUIRE(second.Host->IsJoined());
+        REQUIRE(server.FactoryPayloads.size() == 1);
+        CHECK(server.FactoryPayloads.front() == params);
+        CHECK(second.Host->ArrivalPose(second.Host->CurrentJoinId()) == capturedPose);
+    }
+}
+
+TEST_CASE("Reattach: a persisted pose with an unregistered type id degrades to the front door")
+{
+    const auto hub = CreateRef<Hub>();
+    const u32 serverEndpoint = hub->Register();
+    auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
+
+    const AccountId account{.Lo = 0xB1};
+
+    // A store whose persisted record carries a pose of a type the registry does not hold — a
+    // foreign or stale blob. Encoded with a registry that never validates; the reattach must.
+    TypeRegistry codecTypes;
+    RegisterBuiltinTypes(codecTypes);
+    SessionRecord persisted;
+    persisted.Account = account;
+    persisted.Gameplay = SessionGameplayEntry{
+        .Key = GameplayKey,
+        .Params = TravelPayload{.Type = TypeIdOf<Transform>(), .Bytes = {1}},
+        .Pose = TravelPayload{.Type = TypeId{0xDEADDEADDEADDEADULL}, .Bytes = {2}}};
+    const vector<std::byte> blob = EncodeSessionRecord(persisted, codecTypes);
+
+    SessionHooks hooks;
+    hooks.Load = [blob](const AccountId&) -> optional<vector<std::byte>> { return blob; };
+    SessionServer server(*serverT, std::move(hooks));
+
+    f64 now = 0.0;
+    u64 tick = 0;
+
+    auto clientT = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    IdentityClient client(*clientT, account);
+    PumpUntil(server, client, now, tick, 40,
+              [&] { return client.Client->State() == ClientState::Connected; });
+    REQUIRE(client.Client->State() == ClientState::Connected);
+
+    // No crash, no directed travel: the untrusted entry was cleared with a logged reason and the
+    // factory never ran.
+    PumpUntil(server, client, now, tick, 30, [&] { return false; });
+    CHECK(client.Host->Joins().empty());
+    CHECK(server.FactoryPayloads.empty());
+    const SessionRecord* record = server.Host->Sessions().Find(account);
+    REQUIRE(record != nullptr);
+    CHECK(record->Gameplay.Key == WorldKey{});
+}
+
+TEST_CASE("Reattach: an explicit Standing = false join never enters the record")
+{
+    const auto hub = CreateRef<Hub>();
+    const u32 serverEndpoint = hub->Register();
+    auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
+    SessionServer server(*serverT);
+
+    const AccountId account{.Lo = 0xC1};
+
+    f64 now = 0.0;
+    u64 tick = 0;
+
+    auto clientT = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    IdentityClient client(*clientT, account);
+    bool requested = false;
+    PumpUntil(server, client, now, tick, 80,
+              [&]
+              {
+                  if (!requested && client.Client->State() == ClientState::Connected)
+                  {
+                      // A presenting spectate and a non-presenting prefetch, both opted out.
+                      client.Host->Join(GameplayKey, {}, /*present=*/true, /*standing=*/false);
+                      client.Host->Join(DataKey, {}, /*present=*/false, /*standing=*/false);
+                      requested = true;
+                  }
+                  return client.Host->Joins().size() == 2;
+              });
+    REQUIRE(client.Host->Joins().size() == 2);
+
+    // Both joins are live, yet the account has no record at all — nothing to reattach.
+    CHECK(server.Host->Sessions().Find(account) == nullptr);
+}
+
+TEST_CASE("Standalone continue: the registry and directory restore a record with no wire")
+{
+    // The device-free half of the tmux contract: the same SessionRegistry + WorldDirectory a
+    // server reattaches through, driven directly — single-player continue is this path under an
+    // Application bootstrap.
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+
+    vector<Unique<Scene>> opened;
+    vector<TravelPayload> factoryPayloads;
+    u64 nextWorld = 500;
+    Unique<WorldDirectory> directory = WorldDirectory::Create(WorldDirectoryInfo{
+        .WorldFactory = [&](const WorldKey&,
+                            const TravelPayload& payload) -> optional<ServerWorldResolution>
+        {
+            opened.push_back(Scene::Create(types));
+            factoryPayloads.push_back(payload);
+            return ServerWorldResolution{.WorldId = WorldInstanceId{.Value = nextWorld++},
+                                         .World = opened.back().get(),
+                                         .LevelId = LevelId};
+        },
+    });
+
+    Unique<SessionRegistry> sessions =
+        SessionRegistry::Create(SessionRegistryInfo{.Types = &types});
+
+    const AccountId local{.Lo = 0xD1};
+    const TravelPayload params{.Type = TypeIdOf<Transform>(), .Bytes = {3, 3}};
+    const TravelPayload pose{.Type = TypeIdOf<Transform>(), .Bytes = {4, 4}};
+
+    // The prior sitting's side effects: a standing data world and a gameplay world.
+    sessions->RecordStandingJoin(local, DataKey);
+    sessions->RecordGameplay(local, GameplayKey, params, pose);
+
+    // The continue: begin the reattach and resolve each entry through the directory, exactly as a
+    // host does for a reconnecting account.
+    const optional<SessionRecord> record = sessions->BeginReattach(local);
+    REQUIRE(record.has_value());
+    REQUIRE(record->StandingJoins.size() == 1);
+
+    const WorldResolveResult standing = directory->Resolve(
+        JoinRequestInfo{
+            .Account = local, .Key = record->StandingJoins.front(), .Payload = TravelPayload{}},
+        0);
+    CHECK(standing.Outcome == WorldResolveOutcome::Opened);
+
+    const WorldResolveResult gameplay = directory->Resolve(
+        JoinRequestInfo{
+            .Account = local, .Key = record->Gameplay.Key, .Payload = record->Gameplay.Params},
+        0);
+    REQUIRE(gameplay.Outcome == WorldResolveOutcome::Opened);
+    CHECK(factoryPayloads.back() == params);
+    CHECK(record->Gameplay.Pose == pose);
+
+    // A second continue converges on the now-live buckets rather than re-opening.
+    const optional<SessionRecord> again = sessions->BeginReattach(local);
+    REQUIRE(again.has_value());
+    const WorldResolveResult warm = directory->Resolve(
+        JoinRequestInfo{
+            .Account = local, .Key = again->Gameplay.Key, .Payload = again->Gameplay.Params},
+        0);
+    CHECK(warm.Outcome == WorldResolveOutcome::Placed);
+    CHECK(warm.World == gameplay.World);
 }

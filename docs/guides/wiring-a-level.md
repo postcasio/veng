@@ -4,7 +4,7 @@ A **`Level`** is the unit you assemble a playable game from. It is a thin asset
 that references a **world prefab** and adds the data that is *not* reusable-recipe
 data: the ordered active system set, the game-mode config, and render settings.
 Loading a level starts the game — it spawns the world, builds the simulation from
-the system set, and seeds the game-mode `Session`. That is authored data, not
+the system set, and seeds the settings entity. That is authored data, not
 `main.cpp` code.
 
 This guide is the `Level` concept from the author's side. For how to write the
@@ -50,8 +50,7 @@ and its `*.level.json` source carries four pieces. hello-triangle's
     "0x4EBD17824A9652D8"
   ],
   "gameMode": {
-    "PlayerPrefab": "0xBB419B2104D9FE71",
-    "ScoreToWin": 0
+    "PlayerPrefab": "0xBB419B2104D9FE71"
   },
   "render": {
     "Exposure": 2.5,
@@ -72,11 +71,11 @@ and its `*.level.json` source carries four pieces. hello-triangle's
   zero-padded hex spelling in both: a `"0x…"` string in JSON, a `0x…ULL` literal in C++.
   The five above are, in
   order, the spawn rule, control, movement, spinner, and camera-rig systems.
-- **`gameMode`** — the `GameModeConfig` seeded onto the `Session` entity at load:
-  the `PlayerPrefab` a spawn rule instantiates and the mode parameters
-  (`ScoreToWin`) the rule systems read. Selecting a different mode is choosing a
-  different config plus a different registered rule set — no C++ path picks the
-  mode.
+- **`gameMode`** — the `GameModeConfig` seeded onto the settings entity at load:
+  the `PlayerPrefab` a spawn rule instantiates. Selecting a different mode is
+  choosing a different config plus a different registered rule set — no C++ path
+  picks the mode. Further mode parameters are the game's own components, authored
+  on the world prefab beside the config.
 - **`render`** — a `LevelRenderSettings` subset of the renderer's knobs (exposure,
   bloom, shadows, SSAO). These are a *reflected, tolerantly-serialized* struct, not
   a renderer type — a new field never invalidates existing level blobs, and the
@@ -88,14 +87,12 @@ and its `*.level.json` source carries four pieces. hello-triangle's
   world's `ViewState` through the same load path (including a client's join-loaded
   scene), so metering is level data rather than a value assigned in C++.
 
-The game mode itself is **rule systems over a `Session` component** — not an
-object, no registry, no ABI bump. The `Session`
-([`Components.h`](../../engine/include/Veng/Scene/Components.h)) holds the mode's
-phase/score/timer; a spawn-on-start rule, a scoring rule, a win-condition rule are
-just `Phase::Sim` systems reading and writing it. hello-triangle's
+The game mode itself is **rule systems over mode-state components** — not an
+object, no registry, no ABI bump. A game authors whatever mode-state components its
+rules read and write (a phase, a score, a timer); a spawn-on-start rule, a scoring
+rule, a win-condition rule are just `Phase::Sim` systems over them. hello-triangle's
 [`SpawnPlayerRule`](../../examples/hello-triangle/main.cpp) is the worked example:
-at `OnStart` it spawns the config's `PlayerPrefab` when the `Session` is `Playing`,
-and tears it down at `OnStop` or when the session ends.
+at `OnStart` it spawns the config's `PlayerPrefab`, and tears it down at `OnStop`.
 
 ---
 
@@ -121,7 +118,7 @@ m_BloomIntensity = render.BloomIntensity;
 
 // ... create the SceneRenderer with m_SceneSettings ...
 
-// 3. Start the game: spawn the world, build the simulation, seed the Session.
+// 3. Start the game: spawn the world, build the simulation, seed the settings.
 LevelInstance instance = level->Get()->LoadInto(GetAssetManager(), GetSystemRegistry());
 m_Scene = std::move(instance.World);
 m_Simulation = std::move(instance.Simulation);
@@ -137,8 +134,8 @@ m_Simulation->Start(*m_Scene,
 2. spawns the world prefab into it (`Prefab::SpawnInto`),
 3. builds a `SceneSimulation` from the level's ordered `SystemId` set, resolving
    each id against the catalog and honoring the Sim/View phases, and
-4. creates one `Session` entity carrying a `Playing` `Session` plus the level's
-   game-mode config.
+4. creates one settings entity carrying the level's game-mode config and render
+   settings.
 
 It returns a `LevelInstance { Unique<Scene> World; Unique<SceneSimulation> Simulation; }`
 — the bundle the app owns and drives. The simulation comes back *not yet started*;
@@ -182,4 +179,4 @@ being engine primitives and becomes an assembled, authored thing.
 - **[Writing gameplay systems](writing-gameplay-systems.md)** — the systems a
   level activates, the Sim/View phases, and the Input → Intent → Movement pattern.
 - The generated API reference (`cmake --build build --target docs`) documents
-  `Level`, `LevelInstance`, `Session`, and `GameModeConfig` in full.
+  `Level`, `LevelInstance`, and `GameModeConfig` in full.

@@ -36,6 +36,8 @@
 #include <Veng/Input/Actions.h>
 #include <Veng/Net/Host.h>
 #include <Veng/Net/Replication.h>
+#include <Veng/Net/Session.h>
+#include <Veng/Reflection/Serialize.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/InputMappingSystem.h>
 #include <Veng/Scene/AnimationSystem.h>
@@ -302,24 +304,20 @@ private:
 VE_SYSTEM(GameplayFocusSystem, 0x538985F20107EF02ULL, "Gameplay Focus");
 
 // The game mode's spawn rule: a Sim-phase system that instantiates the configured player
-// prefab when the Session is Playing, and tears it down when the session ends or play stops.
-// The player prefab authors its own Viewer/Possesses/Camera/CameraFollow wiring, so the
-// rule only picks (the GameModeConfig's PlayerPrefab) and spawns — no imperative wiring. It
-// spawns at OnStart, before the first Update, so the spawn is deterministic and the pinned
-// smoke frame (which never ticks Update) renders the authored camera pose.
+// prefab at start and tears it down when play stops. The player prefab authors its own
+// Viewer/Possesses/Camera/CameraFollow wiring, so the rule only picks (the GameModeConfig's
+// PlayerPrefab) and spawns — no imperative wiring. It spawns at OnStart, before the first
+// Update, so the spawn is deterministic and the pinned smoke frame (which never ticks Update)
+// renders the authored camera pose. A game with richer mode state authors its own components
+// beside the config and adds rule systems that read them.
 class SpawnPlayerRule final : public SceneSystem
 {
 public:
     void OnStart(Scene& scene, const SystemContext& context) override
     {
         // The game-mode config is a scene component on the level's settings entity; find it by
-        // type rather than a well-known entity (Scene::TryGetFirst).
-        const Session* session = scene.TryGetFirst<Session>();
-        if (session == nullptr || session->Phase != SessionPhase::Playing)
-        {
-            return;
-        }
-
+        // type rather than a well-known entity (Scene::TryGetFirst). A scene without one runs
+        // the rule as a no-op.
         const GameModeConfig* config = scene.TryGetFirst<GameModeConfig>();
 
         // The config's player prefab is eager-loaded as a dependency of the scene prefab,
@@ -344,19 +342,11 @@ public:
         m_Spawned = config->PlayerPrefab.Get()->SpawnInto(scene, context.Assets, options).Roots;
     }
 
-    void OnUpdate(Scene& scene, const f32, const SystemContext&) override
-    {
-        // The spawn happens once at OnStart; a scoring / win-condition rule is the obvious
-        // second system. Here the only per-tick rule action is tearing the player down when
-        // the session ends.
-        const Session* session = scene.TryGetFirst<Session>();
-        if (session != nullptr && !m_Spawned.empty() && session->Phase == SessionPhase::Ended)
-        {
-            Despawn(scene);
-        }
-    }
-
     void OnStop(Scene& scene, const SystemContext&) override { Despawn(scene); }
+
+    // The spawn happens once at OnStart and the teardown at OnStop; a scoring or win-condition
+    // rule would be a second system reading its own mode-state components.
+    void OnUpdate(Scene&, const f32, const SystemContext&) override {}
 
 private:
     void Despawn(Scene& scene)
@@ -428,10 +418,12 @@ public:
 private:
     // Wires the sample's account identity into the net knobs: a stable hash of the --name launch
     // token, so a relaunch with the same name reattaches as the same account; with no name it
-    // falls through to the engine's process-random ephemeral default. The hook captures the app
-    // because the parsed launch arguments live on it and the hook is evaluated at bootstrap, after
-    // parsing; only the pointer is taken here, never dereferenced during construction.
-    static ApplicationInfo WithIdentity(ApplicationInfo info, const HelloTriangleApp* app)
+    // falls through to the engine's process-random ephemeral default. Also supplies the session
+    // pose capture: at disconnect (and the save checkpoint) the engine asks the game to encode the
+    // departing seat's pawn pose, and delivers it back on reattach — so a returning player stands
+    // where they left, not at the spawn point. The hooks capture the app because they are evaluated
+    // after bootstrap; only the pointer is taken here, never dereferenced during construction.
+    static ApplicationInfo WithIdentity(ApplicationInfo info, HelloTriangleApp* app)
     {
         if (info.Net)
         {
@@ -440,8 +432,58 @@ private:
                 const optional<string>& name = app->GetLaunchArguments().Name;
                 return name.has_value() ? AccountFromName(*name) : Net::GenerateAccountId();
             };
+            info.Net->CaptureTravelPose = [app](const WorldInstanceId world,
+                                                const Entity seat) -> Net::TravelPayload
+            { return app->CapturePawnPose(world, seat); };
         }
         return info;
+    }
+
+    // Encodes the seat's possessed pawn Transform as the session pose payload — the game-defined
+    // half of pose durability (the engine moves the bytes, never reads them). An unpawned or gone
+    // seat yields an empty payload, leaving the record's last pose standing.
+    [[nodiscard]] Net::TravelPayload CapturePawnPose(const WorldInstanceId world, const Entity seat)
+    {
+        const World* resolved = GetWorldRunner().ResolveWorld(world);
+        if (resolved == nullptr)
+        {
+            return {};
+        }
+        const Scene& scene = resolved->GetScene();
+        if (seat.IsNull() || !scene.IsAlive(seat))
+        {
+            return {};
+        }
+        const auto* possesses = scene.TryGet<Possesses>(seat);
+        if (possesses == nullptr || possesses->Pawn.IsNull() || !scene.IsAlive(possesses->Pawn))
+        {
+            return {};
+        }
+        const auto* transform = scene.TryGet<Transform>(possesses->Pawn);
+        if (transform == nullptr)
+        {
+            return {};
+        }
+        Net::TravelPayload pose{.Type = TypeIdOf<Transform>()};
+        WriteFields(pose.Bytes, transform, GetTypeRegistry().Info(TypeIdOf<Transform>()),
+                    GetTypeRegistry());
+        return pose;
+    }
+
+    // Decodes a session pose payload back onto a freshly spawned pawn — the reattach arrival. A
+    // payload of another shape (or none) leaves the prefab's authored pose.
+    void ApplySessionPose(Scene& world, const Entity pawn, const Net::TravelPayload& pose)
+    {
+        if (pose.Type != TypeIdOf<Transform>() || pose.IsEmpty() || !world.Has<Transform>(pawn))
+        {
+            return;
+        }
+        Transform decoded;
+        if (ReadFields(pose.Bytes, &decoded, GetTypeRegistry().Info(TypeIdOf<Transform>()),
+                       GetTypeRegistry()))
+        {
+            world.Get<Transform>(pawn) = decoded;
+        }
     }
 
 protected:
@@ -546,7 +588,7 @@ protected:
             if (launch.Server || launch.Join.has_value())
             {
                 Entity settings = Entity::Null;
-                for (auto [entity, session] : scene.View<Session>())
+                for (auto [entity, config] : scene.View<GameModeConfig>())
                 {
                     settings = entity;
                     break;
@@ -1142,6 +1184,19 @@ private:
             const Net::ConnectionId owner = world.Get<Authority>(seat).Owner;
             world.Get<Authority>(pawn).Owner = owner;
             world.Get<Possesses>(seat).Pawn = pawn;
+
+            // Reattach arrival: a returning account's session record carries the pose captured at
+            // its disconnect — decode it onto the fresh pawn so the player stands where they left.
+            // A first join's record carries no pose payload, leaving the prefab's authored pose.
+            if (world.Has<SeatAccount>(seat))
+            {
+                const Net::SessionRecord* record =
+                    host.Sessions().Find(world.Get<SeatAccount>(seat).Account);
+                if (record != nullptr)
+                {
+                    ApplySessionPose(world, pawn, record->Gameplay.Pose);
+                }
+            }
 
             // Assign the pawn its wire id now: the host assigns ids in Pump, but the prefab
             // association must be set before that Pump generates the spawn for a connection.

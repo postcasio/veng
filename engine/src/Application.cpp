@@ -362,6 +362,10 @@ namespace Veng
         // rebind apply point, so the managed world is pinned by viewport #0 from the first frame.
         BuildWorldDirectory();
 
+        // Standalone continue: the local account's record restores through the same registry and
+        // directory a reconnect reattaches through — no wire, one code path.
+        RestoreLocalSession();
+
         // `--server` opens the host on the just-started world: it accepts connections, spawns a seat
         // per connection, and streams state. A game that set no ApplicationInfo::Net still hosts on the
         // zero-config defaults here.
@@ -369,6 +373,64 @@ namespace Veng
         {
             const VoidResult hosting = StartServer(startupLevel);
             VE_ASSERT(hosting, "{}", hosting.error());
+        }
+    }
+
+    void Application::RestoreLocalSession()
+    {
+        if (!m_Sessions || !m_LocalAccount.IsValid())
+        {
+            return;
+        }
+        m_Sessions->EnsureLoaded(m_LocalAccount);
+        const optional<Net::SessionRecord> record = m_Sessions->BeginReattach(m_LocalAccount);
+        if (!record.has_value())
+        {
+            return;
+        }
+
+        // Standing joins warm their worlds under a local pin — standalone presence is a pin, there
+        // being no connection to report a join. A failed resolve skips the entry and keeps the rest.
+        for (const Net::WorldKey& key : record->StandingJoins)
+        {
+            const WorldResolveResult resolve =
+                m_Directory->Resolve(Net::JoinRequestInfo{.Connection = Net::ConnectionId{},
+                                                          .Account = m_LocalAccount,
+                                                          .Key = key,
+                                                          .Payload = Net::TravelPayload{}},
+                                     /*heldWorlds=*/0);
+            if (resolve.Outcome == WorldResolveOutcome::Denied)
+            {
+                Log::Warn("standalone continue: standing join {:016X}{:016X} did not resolve "
+                          "(reason {}); skipping it",
+                          key.Hi, key.Lo, static_cast<u32>(resolve.Reason));
+                continue;
+            }
+            m_Directory->Pin(resolve.World, m_LocalAccount);
+            m_StandingWorlds.push_back(resolve.World);
+        }
+
+        if (record->Gameplay.Key == Net::WorldKey{})
+        {
+            return;
+        }
+        const WorldResolveResult resolve =
+            m_Directory->Resolve(Net::JoinRequestInfo{.Connection = Net::ConnectionId{},
+                                                      .Account = m_LocalAccount,
+                                                      .Key = record->Gameplay.Key,
+                                                      .Payload = record->Gameplay.Params},
+                                 /*heldWorlds=*/0);
+        if (resolve.Outcome == WorldResolveOutcome::Denied)
+        {
+            Log::Warn("standalone continue: the gameplay world did not resolve (reason {}); "
+                      "clearing to the front door",
+                      static_cast<u32>(resolve.Reason));
+            m_Sessions->ClearGameplay(m_LocalAccount);
+            return;
+        }
+        if (m_ManagedViewports->GetCount() > 0)
+        {
+            m_ManagedViewports->RebindWorldWhenReady(0, resolve.World);
         }
     }
 
@@ -425,9 +487,11 @@ namespace Veng
             .MaxHostedWorlds = net.MaxHostedWorlds,
             .MaxPlayersPerInstance = net.MaxPlayersPerInstance,
             .IdleKeepWarmDwell = net.IdleKeepWarmDwell,
-            // The host consumes the Application-owned directory (get-or-place, presence, dwell, reap);
-            // the policy hooks and caps already live in it, so they are not repeated here.
+            // The host consumes the Application-owned directory (get-or-place, presence, dwell, reap)
+            // and session registry (records, reattach, durability); the policy hooks and caps
+            // already live in them, so they are not repeated here.
             .Directory = m_Directory.get(),
+            .Sessions = m_Sessions.get(),
         });
         if (!host)
         {
@@ -578,7 +642,7 @@ namespace Veng
         return ConnectClient(host, resolved);
     }
 
-    WorldInstanceId Application::JoinWorld(const Net::WorldKey& key)
+    WorldInstanceId Application::JoinWorld(const Net::WorldKey& key, const optional<bool> standing)
     {
         VE_ASSERT(m_Net && m_Net->ClientHost,
                   "JoinWorld requires an active client connection (Connect or --join)");
@@ -594,11 +658,14 @@ namespace Veng
         m_Net->ClientWorlds[world.Value].Send = InputSendBuffer(
             InputSendBuffer::Settings{.Redundancy = m_Net->Info.InputRedundancyTicks});
         m_Net->PendingJoinWorlds.push_back(world);
-        m_Net->ClientHost->Join(key);
+        // JoinWorld never presents by itself (the consumer rebinds a viewport), so the unset
+        // default records a standing join — a data world held across reconnects.
+        m_Net->ClientHost->Join(key, {}, /*present=*/false, standing);
         return world;
     }
 
-    WorldInstanceId Application::JoinWorld(const Net::WorldKey& key, const WorldInstanceId adopt)
+    WorldInstanceId Application::JoinWorld(const Net::WorldKey& key, const WorldInstanceId adopt,
+                                           const optional<bool> standing)
     {
         VE_ASSERT(m_Net && m_Net->ClientHost,
                   "JoinWorld requires an active client connection (Connect or --join)");
@@ -611,7 +678,19 @@ namespace Veng
         // Adopt in place: the join binds to the existing world's live scene rather than opening a fresh
         // one and loading a level. No new WorldRole / ClientWorlds entry — the two joins share the one
         // world's per-world client state; their wire-id spaces are disjoint (kept per ReplicationClient).
-        m_Net->ClientHost->JoinInto(key, resolved->GetScene());
+        // Presentation for the session record follows the adopted world's viewport binding: a swap
+        // under a presented scene is the account's new gameplay world.
+        bool present = false;
+        const usize viewports = m_ManagedViewports->GetCount();
+        for (usize i = 0; i < viewports; ++i)
+        {
+            if (m_ManagedViewports->GetViewportWorld(i) == adopt)
+            {
+                present = true;
+                break;
+            }
+        }
+        m_Net->ClientHost->JoinInto(key, resolved->GetScene(), {}, present, standing);
         return adopt;
     }
 
@@ -626,6 +705,12 @@ namespace Veng
 
     void Application::StopNet()
     {
+        // A durability point: every dirty session record saves before the host (and its
+        // connections) go away.
+        if (m_Sessions)
+        {
+            m_Sessions->SaveAll();
+        }
         // Dropping the host closes its connections and returns the managed world to Server-tier with no
         // transport (the standalone authority model); the world scenes themselves are untouched.
         m_Net.reset();
@@ -634,6 +719,15 @@ namespace Veng
     void Application::BuildWorldDirectory()
     {
         const GameNetInfo net = m_Info.Net.value_or(GameNetInfo{});
+        // The session registry lives beside the directory in every role: standalone travels record
+        // into it, and a mounted ServerHost borrows it (ServerHostInfo::Sessions).
+        m_Sessions = Net::SessionRegistry::Create(Net::SessionRegistryInfo{
+            .Types = &m_TypeRegistry,
+            .TransformOnReattach = net.TransformOnReattach,
+            .CaptureTravelPose = net.CaptureTravelPose,
+            .LoadSession = net.LoadSession,
+            .SaveSession = net.SaveSession,
+        });
         m_Directory = WorldDirectory::Create(WorldDirectoryInfo{
             .MaxHostedWorlds = net.MaxHostedWorlds,
             .MaxJoinedWorldsPerConnection = net.MaxJoinedWorldsPerConnection,
@@ -732,6 +826,25 @@ namespace Veng
                 fmt::format("travel denied: {}", static_cast<u32>(resolve.Reason)));
         }
 
+        // The session record follows as a side effect of the travel, exactly as a hosted join's
+        // does: a presenting travel is the local account's gameplay entry (params double as the
+        // arrival pose until a capture refreshes it), a standing one enters the standing list, an
+        // opted-out one enters nothing.
+        if (m_Sessions && m_LocalAccount.IsValid())
+        {
+            switch (Net::ResolveSessionDurability(info.Present, info.Standing))
+            {
+            case Net::SessionDurability::Gameplay:
+                m_Sessions->RecordGameplay(m_LocalAccount, info.Key, info.Payload, info.Payload);
+                break;
+            case Net::SessionDurability::Standing:
+                m_Sessions->RecordStandingJoin(m_LocalAccount, info.Key);
+                break;
+            case Net::SessionDurability::None:
+                break;
+            }
+        }
+
         // Present-on-ready rebind onto the destination when presenting: the pin follows at the rebind
         // apply point (SyncPresentationPins reads the pending destination, so it is pinned immediately),
         // and the departed world is unpinned there too — the dwell then owns its fate. A non-presenting
@@ -752,7 +865,7 @@ namespace Veng
         // break). The client never self-resolves such a key.
         if (m_Net && m_Net->ClientHost != nullptr && GetNetRole() == NetRole::Client)
         {
-            m_Net->ClientHost->Travel(info.Key, info.Payload);
+            m_Net->ClientHost->Travel(info.Key, info.Payload, info.Present, info.Standing);
             return {};
         }
 
@@ -817,7 +930,8 @@ namespace Veng
             if (VoidResult result = Travel(TravelInfo{.Key = request.Destination,
                                                       .Payload = request.Payload,
                                                       .ViewportIndex = request.ViewportIndex,
-                                                      .Present = request.Present});
+                                                      .Present = request.Present,
+                                                      .Standing = request.Standing});
                 !result)
             {
                 error = std::move(result.error());
@@ -1310,6 +1424,13 @@ namespace Veng
 
         OnDispose();
 
+        // The teardown durability point: every dirty session record saves while the store hooks'
+        // captures are still valid.
+        if (m_Sessions)
+        {
+            m_Sessions->SaveAll();
+        }
+
         // Drop the net hosts before the world runner and the asset manager: a client host borrows a
         // runner-owned world's scene (whose components hold AssetHandles), and both hosts hold
         // connections that must close before the transport goes. This also releases each client world's
@@ -1370,6 +1491,13 @@ namespace Veng
         // destination included — is pinned and never reaped; a departed world is unpinned to the dwell.
         SyncPresentationPins();
         ReapDirectory();
+
+        // The standalone durability checkpoint; while hosting, the ServerHost's Pump owns the
+        // shared registry's checkpoint (with its live pose refresh), so skip it there.
+        if (m_Sessions && GetServerHost() == nullptr)
+        {
+            m_Sessions->Checkpoint(static_cast<f64>(Time::Now()));
+        }
 
         // Drain the builtin request components at the same frame-safe point: a gameplay system stamps
         // one onto its world's scene to reach an application-level operation it cannot call directly

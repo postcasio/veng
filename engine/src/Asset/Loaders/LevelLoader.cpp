@@ -114,7 +114,7 @@ namespace Veng
         }
 
         // The decoded handle carries only the raw id; rebind it to a live, resident handle so
-        // the Session entity the level seeds reports the player prefab as loaded.
+        // the settings entity the level seeds reports the player prefab as loaded.
         const AssetId playerId = gameMode.PlayerPrefab.Id();
         if (playerId.IsValid())
         {

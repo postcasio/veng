@@ -26,6 +26,8 @@
 #include <Veng/Reflection/Serialize.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/BuiltinTypes.h>
+
+#include "support/TestComponents.h"
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Movement.h>
@@ -77,6 +79,7 @@ namespace
     {
         TypeRegistry types;
         RegisterBuiltinTypes(types);
+        types.Register<VengTest::TestScore>();
         const ReconcileTolerances tol; // Position 0.01, Rotation 1e-4
 
         const TypeInfo& transformInfo = types.Info(TypeIdOf<Transform>());
@@ -98,16 +101,22 @@ namespace
         rb.Rotation = glm::angleAxis(1.0f, vec3(0.0f, 1.0f, 0.0f));
         CHECK_FALSE(ValuesMatch(&ra, &rb, transformInfo, types, tol));
 
-        // Discrete gameplay state must match exactly — no epsilon on a score or a float scalar.
-        const TypeInfo& sessionInfo = types.Info(TypeIdOf<Session>());
-        Session s1{.Phase = SessionPhase::Playing, .Elapsed = 1.0f, .Score = 5};
-        Session s2 = s1;
-        CHECK(ValuesMatch(&s1, &s2, sessionInfo, types, tol));
-        s2.Score = 6;
-        CHECK_FALSE(ValuesMatch(&s1, &s2, sessionInfo, types, tol));
-        s2 = s1;
-        s2.Elapsed = 1.0f + 1.0e-5f; // a non-spatial scalar is exact, not epsilon
-        CHECK_FALSE(ValuesMatch(&s1, &s2, sessionInfo, types, tol));
+        // Discrete gameplay state must match exactly — no epsilon on a score.
+        const TypeInfo& scoreInfo = types.Info(TypeIdOf<VengTest::TestScore>());
+        VengTest::TestScore s1{.Value = 5};
+        VengTest::TestScore s2 = s1;
+        CHECK(ValuesMatch(&s1, &s2, scoreInfo, types, tol));
+        s2.Value = 6;
+        CHECK_FALSE(ValuesMatch(&s1, &s2, scoreInfo, types, tol));
+
+        // A non-spatial float scalar is exact too, not epsilon (only Transform's spatial leaves
+        // carry a tolerance).
+        const TypeInfo& moverInfo = types.Info(TypeIdOf<Mover>());
+        Mover m1{.MoveSpeed = 1.0f};
+        Mover m2 = m1;
+        CHECK(ValuesMatch(&m1, &m2, moverInfo, types, tol));
+        m2.MoveSpeed = 1.0f + 1.0e-5f;
+        CHECK_FALSE(ValuesMatch(&m1, &m2, moverInfo, types, tol));
     }
 
     // ---- Unit: the render-residual decay + snap threshold ----------------------------------------

@@ -64,6 +64,11 @@ namespace Veng
         usize ViewportIndex = 0;
         /// @brief True to present the destination on the viewport; false opens/joins it without presenting.
         bool Present = true;
+        /// @brief Explicit standing choice for the session record; unset resolves to !Present.
+        ///
+        /// A presenting travel is the account's gameplay world, a non-presenting one a standing
+        /// join restored on reattach; setting this overrides (false opts out of the record).
+        optional<bool> Standing;
         /// @brief The engine-reported outcome; starts Pending.
         RequestStatus Status = RequestStatus::Pending;
         /// @brief The failure reason, set when Status is Failed.

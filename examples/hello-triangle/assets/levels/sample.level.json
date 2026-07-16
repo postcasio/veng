@@ -1,7 +1,6 @@
 {
   "gameMode": {
-    "PlayerPrefab": "0xBB419B2104D9FE71",
-    "ScoreToWin": 0
+    "PlayerPrefab": "0xBB419B2104D9FE71"
   },
   "render": {
     "AO": true,

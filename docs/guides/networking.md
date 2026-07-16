@@ -75,7 +75,7 @@ VE_REPLICATED(::MyGame::Health);   // now Health snapshots to clients
 ```
 
 The engine marks the builtins a networked game always needs — `Transform`,
-`Viewer`, `Possesses`, `Session` — so a pawn's pose and a seat's possession
+`Viewer`, `Possesses` — so a pawn's pose and a seat's possession
 replicate with no work from you. Mark **your own** gameplay components that carry
 server-authoritative state a client must see (health, ammo, team). Deliberately
 **not** replicated, and why:
@@ -308,8 +308,8 @@ pawn, plus every **always-relevant** entity, plus an optional `GameNetInfo::Inte
 
 - **Always-relevant** is a type mark beside `VE_REPLICATED` — **`VE_ALWAYS_RELEVANT(Type)`**. An
   entity carrying any always-relevant component is relevant to every connection regardless of
-  distance; `Session` and the seat (`Viewer`) carry it builtin, so global game state always
-  reaches every client. A connection also always sees the entities it owns (its predicted pawn).
+  distance; the seat (`Viewer`) carries it builtin, so a mark on a game's own global-state
+  component always reaches every client. A connection also always sees the entities it owns (its predicted pawn).
 - **Entering** interest sends the entity's spawn + baseline; **leaving** sends a
   despawn carrying `DespawnReason::Visibility` (versus `Destroyed`). **A visibility despawn is
   not a death** — the client tears the entity down with no game-event side effects, and a re-entry

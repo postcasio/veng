@@ -3,6 +3,7 @@
 #include <Veng/Asset/InputMappingContext.h>
 #include <Veng/Gui/Overlay.h>
 #include <Veng/Gui/Surface.h>
+#include <Veng/Net/Session.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Renderer/Atmosphere.h>
 #include <Veng/Renderer/CaptureSurface.h>
@@ -79,10 +80,15 @@ namespace Veng
         // eased to zero by the View-phase decay and applied only at the gather. Runtime-only.
         registry.Register<PredictionError>();
 
-        // Game mode as data: the replicated Session state and the per-scene config a
-        // spawn rule reads. SessionPhase registers transitively through Session.
-        registry.Register<Session>();
+        // Game mode as data: the per-scene config a spawn rule reads. A game authors whatever
+        // further mode-state components its own rule systems read.
         registry.Register<GameModeConfig>();
+
+        // The per-account session record, registered so its reflection-binary encoding (the
+        // durability blob) has a schema everywhere a SessionRegistry runs. Not a component — it
+        // lives at the host tier, keyed by account, never in a scene. Net::WorldKey and
+        // Net::TravelPayload register transitively through its fields.
+        registry.Register<Net::SessionRecord>();
 
         // Local-only runtime requests a gameplay system stamps and the engine drains at its
         // frame-safe point: travel, start-hosting, connect, stop-net, exit, and input-focus

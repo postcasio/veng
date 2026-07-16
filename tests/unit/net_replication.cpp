@@ -9,6 +9,8 @@
 #include <Veng/Net/Replication.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/BuiltinTypes.h>
+
+#include "support/TestComponents.h"
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
@@ -48,9 +50,10 @@ TEST_CASE("The Replicated mark is authored on the right builtin types")
 {
     TypeRegistry types;
     RegisterBuiltinTypes(types);
+    types.Register<VengTest::TestScore>();
 
     CHECK(types.Info(TypeIdOf<Transform>()).Replicated);
-    CHECK(types.Info(TypeIdOf<Session>()).Replicated);
+    CHECK(types.Info(TypeIdOf<VengTest::TestScore>()).Replicated);
     CHECK(types.Info(TypeIdOf<Possesses>()).Replicated);
     CHECK(types.Info(TypeIdOf<Viewer>()).Replicated);
 
@@ -108,6 +111,7 @@ TEST_CASE("Round-trip: a snapshot converges the client to field-identical replic
 {
     TypeRegistry serverTypes;
     RegisterBuiltinTypes(serverTypes);
+    serverTypes.Register<VengTest::TestScore>();
     Unique<Scene> server = Scene::Create(serverTypes);
 
     // Server state is authored "at" tick 3 so every component stamps a change tick above the fresh
@@ -117,22 +121,22 @@ TEST_CASE("Round-trip: a snapshot converges the client to field-identical replic
     server->Add<Transform>(pawn,
                            Transform{.Position = vec3(1.0f, 2.0f, 3.0f), .Scale = vec3(2.0f)});
 
-    const Entity sessionEntity = server->CreateEntity();
-    server->Add<Session>(sessionEntity,
-                         Session{.Phase = SessionPhase::Playing, .Elapsed = 4.5f, .Score = 7});
+    const Entity scoreEntity = server->CreateEntity();
+    server->Add<VengTest::TestScore>(scoreEntity, VengTest::TestScore{.Value = 7});
 
     NetIdAllocator allocator;
     AssignServerNetIds(*server, allocator);
     const NetId pawnId = server->Get<NetIdentity>(pawn).Id;
-    const NetId sessionId = server->Get<NetIdentity>(sessionEntity).Id;
+    const NetId scoreId = server->Get<NetIdentity>(scoreEntity).Id;
 
     // The client has spawned matching entities (Plan 04's flow) and bound their ids.
     TypeRegistry clientTypes;
     RegisterBuiltinTypes(clientTypes);
+    clientTypes.Register<VengTest::TestScore>();
     Unique<Scene> client = Scene::Create(clientTypes);
     NetIdMap map;
     const Entity clientPawn = SpawnClientMirror(*client, map, pawnId);
-    const Entity clientSession = SpawnClientMirror(*client, map, sessionId);
+    const Entity clientScore = SpawnClientMirror(*client, map, scoreId);
 
     const vector<u8> packet = EncodeSnapshot(*server, 3, 0);
     const SnapshotApplyResult applied = ApplySnapshot(packet, *client, map);
@@ -149,11 +153,9 @@ TEST_CASE("Round-trip: a snapshot converges the client to field-identical replic
     CHECK(pawnTransform->Position.z == doctest::Approx(3.0f));
     CHECK(pawnTransform->Scale.x == doctest::Approx(2.0f));
 
-    const auto* session = client->TryGet<Session>(clientSession);
-    REQUIRE(session != nullptr);
-    CHECK(session->Phase == SessionPhase::Playing);
-    CHECK(session->Elapsed == doctest::Approx(4.5f));
-    CHECK(session->Score == 7);
+    const auto* score = client->TryGet<VengTest::TestScore>(clientScore);
+    REQUIRE(score != nullptr);
+    CHECK(score->Value == 7);
 }
 
 TEST_CASE("Entity-field remap: a replicated reference resolves to the local handle on apply")

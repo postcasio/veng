@@ -34,6 +34,11 @@ namespace Veng::Net
             return value <= static_cast<u8>(JoinDenyReason::NoSuchWorld);
         }
 
+        [[nodiscard]] bool IsKnownSessionDurability(u8 value)
+        {
+            return value <= static_cast<u8>(SessionDurability::Standing);
+        }
+
         void WriteJoinType(vector<u8>& out, JoinMessageType type)
         {
             out.push_back(static_cast<u8>(type));
@@ -210,6 +215,7 @@ namespace Veng::Net
         WriteU64LE(out, message.Key.Hi);
         WriteU32LE(out, message.RequestToken);
         WriteTravelPayload(out, message.Payload);
+        out.push_back(static_cast<u8>(message.Durability));
         return out;
     }
 
@@ -252,6 +258,11 @@ namespace Veng::Net
         {
             return {};
         }
+        if (payload.size() < offset + 1 || !IsKnownSessionDurability(payload[offset]))
+        {
+            return {};
+        }
+        message.Durability = static_cast<SessionDurability>(payload[offset]);
         return message;
     }
 
@@ -299,6 +310,8 @@ namespace Veng::Net
         WriteU64LE(out, message.Key.Lo);
         WriteU64LE(out, message.Key.Hi);
         WriteTravelPayload(out, message.Payload);
+        out.push_back(message.Present ? 1 : 0);
+        out.push_back(static_cast<u8>(message.Durability));
         return out;
     }
 
@@ -310,6 +323,9 @@ namespace Veng::Net
         WriteU64LE(out, message.Join.Lo);
         WriteU64LE(out, message.Join.Hi);
         WriteTravelPayload(out, message.Payload);
+        WriteTravelPayload(out, message.Pose);
+        out.push_back(message.Present ? 1 : 0);
+        out.push_back(static_cast<u8>(message.Durability));
         return out;
     }
 
@@ -336,6 +352,12 @@ namespace Veng::Net
         {
             return {};
         }
+        if (payload.size() < offset + 2 || !IsKnownSessionDurability(payload[offset + 1]))
+        {
+            return {};
+        }
+        message.Present = payload[offset] != 0;
+        message.Durability = static_cast<SessionDurability>(payload[offset + 1]);
         return message;
     }
 
@@ -351,10 +373,17 @@ namespace Veng::Net
             .Join = WorldKey{.Lo = ReadU64LE(payload, 3), .Hi = ReadU64LE(payload, 11)},
         };
         usize offset = 19;
-        if (!ReadTravelPayload(payload, offset, message.Payload))
+        if (!ReadTravelPayload(payload, offset, message.Payload) ||
+            !ReadTravelPayload(payload, offset, message.Pose))
         {
             return {};
         }
+        if (payload.size() < offset + 2 || !IsKnownSessionDurability(payload[offset + 1]))
+        {
+            return {};
+        }
+        message.Present = payload[offset] != 0;
+        message.Durability = static_cast<SessionDurability>(payload[offset + 1]);
         return message;
     }
 

@@ -12,6 +12,7 @@
 #include <Veng/Net/Reconciliation.h>
 #include <Veng/Net/Replication.h>
 #include <Veng/Net/Server.h>
+#include <Veng/Net/Session.h>
 #include <Veng/Net/TravelPayload.h>
 #include <Veng/Net/WorldKey.h>
 #include <Veng/Result.h>
@@ -172,6 +173,30 @@ namespace Veng
         /// unset, the host builds a private directory from the caps and policy hooks above, so a
         /// stand-alone ServerHost keeps its self-contained behaviour.
         WorldDirectory* Directory = nullptr;
+        /// @brief The session registry the host records and reattaches through; unset builds a private one.
+        ///
+        /// When set (borrowed, must outlive the host), the host feeds account session records into
+        /// this shared registry — the path an Application takes to share one registry across its
+        /// standalone travel and its hosting. When unset, the host builds a private registry from
+        /// the session hooks below over the initial world's type registry.
+        Net::SessionRegistry* Sessions = nullptr;
+        /// @brief Rewrites an account's record as its reattach begins; unset restores it as recorded.
+        ///
+        /// Read only when Sessions is unset (a borrowed registry carries its own hooks). See
+        /// SessionRegistryInfo::TransformOnReattach.
+        function<Net::SessionRecord(Net::SessionRecord)> TransformOnReattach;
+        /// @brief Encodes an account's gameplay pose at disconnect and the save checkpoint; unset keeps the last.
+        ///
+        /// Read only when Sessions is unset. See SessionRegistryInfo::CaptureTravelPose.
+        function<Net::TravelPayload(WorldInstanceId, Entity)> CaptureTravelPose;
+        /// @brief Loads an account's persisted session blob on first admit; unset keeps records process-lifetime.
+        ///
+        /// Read only when Sessions is unset. See SessionRegistryInfo::LoadSession.
+        function<optional<vector<std::byte>>(Net::AccountId)> LoadSession;
+        /// @brief Persists an account's session blob; unset keeps records process-lifetime.
+        ///
+        /// Read only when Sessions is unset. See SessionRegistryInfo::SaveSession.
+        function<void(Net::AccountId, std::span<const std::byte>)> SaveSession;
     };
 
     /// @brief Server-side join glue: a connection joins worlds by WorldKey; readiness gates each stream.
@@ -307,13 +332,24 @@ namespace Veng
         /// the ordinary join flow, digest validation included) and, once that join is ready, leaves
         /// @p leave — make-before-break, so a denied join leaves the client where it was. A @p leave of
         /// ControlJoinId names nothing to leave (a fresh travel). Sent automatically as the reply to a
-        /// client travel request, and callable unprompted for server-driven placement.
+        /// client travel request, and callable unprompted for server-driven placement (a session
+        /// reattach directs one per restored join, the gameplay one carrying the recorded pose).
         /// @param connection  The connection to direct.
         /// @param leave       The connection's join to leave once the new one is ready, or ControlJoinId.
         /// @param key         The world the client must join.
         /// @param payload     The opaque travel payload the client carries into the join.
+        /// @param pose        The consumer-encoded arrival pose delivered to the client; empty for none.
+        /// @param present     Whether the client presents the destination.
+        /// @param standing    Explicit standing choice; unset resolves to "not presenting is standing".
         void DirectTravel(Net::ConnectionId connection, Net::JoinId leave, const Net::WorldKey& key,
-                          const Net::TravelPayload& payload);
+                          const Net::TravelPayload& payload, const Net::TravelPayload& pose = {},
+                          bool present = true, optional<bool> standing = {});
+
+        /// @brief The session registry the host records and reattaches through.
+        ///
+        /// The borrowed registry when ServerHostInfo::Sessions was set, else the host's private one.
+        /// A game reads an account's record here (e.g. its gameplay pose at pawn spawn).
+        [[nodiscard]] Net::SessionRegistry& Sessions();
 
         /// @brief The number of currently live hosted worlds (pre-registered plus factory-opened).
         [[nodiscard]] usize HostedWorldCount() const;
@@ -460,9 +496,12 @@ namespace Veng
         /// reply — validated and loaded through the info hooks — assigns the JoinId under which the
         /// world's accessors key. Presenting a key already joined is idempotent. The auto-join issues
         /// this for WorldKey on connect; a multiplexed client calls it per additional world.
-        /// @param key      The opaque world to join.
-        /// @param payload  The opaque travel payload threaded into the server's resolution; empty by default.
-        void Join(const Net::WorldKey& key, const Net::TravelPayload& payload = {});
+        /// @param key       The opaque world to join.
+        /// @param payload   The opaque travel payload threaded into the server's resolution; empty by default.
+        /// @param present   Whether this join presents (the session-record gameplay signal).
+        /// @param standing  Explicit standing choice; unset resolves to "not presenting is standing".
+        void Join(const Net::WorldKey& key, const Net::TravelPayload& payload = {},
+                  bool present = false, optional<bool> standing = {});
 
         /// @brief Requests joining a world *into an existing live scene* — the adopt-in-place join.
         ///
@@ -476,8 +515,11 @@ namespace Veng
         /// @param key         The opaque world to join.
         /// @param adoptScene  The live scene the join binds to and streams into (borrowed).
         /// @param payload     The opaque travel payload threaded into the server's resolution.
+        /// @param present     Whether this join presents; an adopted scene usually does.
+        /// @param standing    Explicit standing choice; unset resolves to "not presenting is standing".
         void JoinInto(const Net::WorldKey& key, Scene& adoptScene,
-                      const Net::TravelPayload& payload = {});
+                      const Net::TravelPayload& payload = {}, bool present = true,
+                      optional<bool> standing = {});
 
         /// @brief Requests a server-directed travel to a world by key, carrying an opaque payload.
         ///
@@ -485,9 +527,12 @@ namespace Veng
         /// world, and once ready leave the current one). Unlike Join, a travel lets the server resolve a
         /// payload-parameterized key and orchestrate the make-before-break — the client never
         /// self-resolves such a key. The reply's join runs the ordinary join flow (digest, payload).
-        /// @param key      The opaque world to travel to.
-        /// @param payload  The opaque travel payload the server resolves the key with; empty by default.
-        void Travel(const Net::WorldKey& key, const Net::TravelPayload& payload = {});
+        /// @param key       The opaque world to travel to.
+        /// @param payload   The opaque travel payload the server resolves the key with; empty by default.
+        /// @param present   Whether the destination presents (the session-record gameplay signal).
+        /// @param standing  Explicit standing choice; unset resolves to "not presenting is standing".
+        void Travel(const Net::WorldKey& key, const Net::TravelPayload& payload = {},
+                    bool present = true, optional<bool> standing = {});
 
         /// @brief Leaves a joined world without touching the scene beyond removing its footprint.
         ///
@@ -542,6 +587,21 @@ namespace Veng
         /// @param join  The JoinId to resolve.
         /// @return The echoed payload, or an empty payload.
         [[nodiscard]] const Net::TravelPayload& JoinPayload(Net::JoinId join) const;
+
+        /// @brief The consumer-encoded arrival pose a directed travel carried for a join.
+        ///
+        /// A session reattach's gameplay travel delivers the record's captured pose here; an
+        /// ordinary join carries none. Empty for an unknown join or a pose-free one.
+        /// @param join  The JoinId to resolve.
+        /// @return The arrival pose, or an empty payload.
+        [[nodiscard]] const Net::TravelPayload& ArrivalPose(Net::JoinId join) const;
+
+        /// @brief Whether a join presents (the flag its request or directed travel carried).
+        ///
+        /// False for a standing re-join (a session reattach re-issues data worlds non-presenting)
+        /// and for an unknown join.
+        /// @param join  The JoinId to test.
+        [[nodiscard]] bool IsPresenting(Net::JoinId join) const;
 
         /// @brief The prediction history for the current join's predicted set.
         [[nodiscard]] Net::PredictionHistory& History();

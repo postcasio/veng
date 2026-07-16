@@ -2,6 +2,7 @@
 
 #include <Veng/Net/AccountId.h>
 #include <Veng/Net/NetEvents.h>
+#include <Veng/Net/Session.h>
 #include <Veng/Net/TravelPayload.h>
 #include <Veng/Net/WorldKey.h>
 #include <Veng/Veng.h>
@@ -98,6 +99,8 @@ namespace Veng::Net
         u32 RequestToken = 0;
         /// @brief The opaque travel payload threaded into the server's resolution; empty is common.
         TravelPayload Payload;
+        /// @brief How the join enters the account's session record (resolved at the call site).
+        SessionDurability Durability = SessionDurability::Standing;
     };
 
     /// @brief The server's acceptance of a join: the assigned JoinId plus the world-construction payload.
@@ -142,6 +145,10 @@ namespace Veng::Net
         WorldKey Key;
         /// @brief The opaque travel payload the server resolves the key with; empty is common.
         TravelPayload Payload;
+        /// @brief Whether the client presents the destination; echoed on the directed travel.
+        bool Present = true;
+        /// @brief How the resulting join enters the session record (resolved at the call site).
+        SessionDurability Durability = SessionDurability::Gameplay;
     };
 
     /// @brief The server's directive to a client: join this world and, once ready, leave that one.
@@ -158,6 +165,12 @@ namespace Veng::Net
         WorldKey Join;
         /// @brief The opaque travel payload the client carries into the join.
         TravelPayload Payload;
+        /// @brief The consumer-encoded arrival pose (a session reattach delivers the recorded one).
+        TravelPayload Pose;
+        /// @brief Whether the client presents the destination (a standing re-join does not).
+        bool Present = true;
+        /// @brief How the resulting join enters the session record (echoed on the join request).
+        SessionDurability Durability = SessionDurability::Gameplay;
     };
 
     /// @brief A client's notice that it is leaving a joined world, so the server tears down its seat.

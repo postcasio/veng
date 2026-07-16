@@ -8,7 +8,7 @@
 // Veng/Net/Interest.h — the per-connection relevancy filter over the send loop.
 //
 // A connection hears about what matters to it, not the world: its interest set is a spatial query
-// around its pawn/viewer, unioned with the always-relevant entities (the session, seats — global
+// around its pawn/viewer, unioned with the always-relevant entities (the seats, a game's global
 // game state every client needs) and a game policy hook. Set enter/leave rides the spawn/despawn
 // machinery as connection-scoped visibility. This is the scale lever — bandwidth stops growing with
 // world size and grows with what each player can see. Radius 0 disables interest entirely (every
@@ -77,7 +77,7 @@ namespace Veng
 
         /// @brief Gathers the wire ids of entities carrying any AlwaysRelevant-marked component.
         ///
-        /// The global-state arm of the interest union (the session, seats): relevant to every
+        /// The global-state arm of the interest union (the seats, a game's global state): relevant to every
         /// connection regardless of distance. A const scene scan.
         /// @param scene  The server scene to scan.
         /// @return The always-relevant entities' NetIds.

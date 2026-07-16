@@ -144,8 +144,8 @@ namespace VengEditor
         m_PlaySimClock = SimClock();
         m_Context.PlayAlpha = 0.0f;
 
-        // Seed any document-scoped state (a level seeds its Session) before Start, so the spawn
-        // rules a system set runs at OnStart see the same initialized scene the runtime does.
+        // Seed any document-scoped state (a level seeds its settings entity) before Start, so the
+        // spawn rules a system set runs at OnStart see the same initialized scene the runtime does.
         SeedPlayScene(*m_PlayScene);
 
         if (m_Simulation == nullptr)

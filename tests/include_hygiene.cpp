@@ -90,6 +90,7 @@
 #include <Veng/Net/JoinRequest.h>
 #include <Veng/Net/LoopbackTransport.h>
 #include <Veng/Net/PredictionHistory.h>
+#include <Veng/Net/Session.h>
 #include <Veng/Net/TravelPayload.h>
 #include <Veng/Net/Transport.h>
 #include <Veng/Net/UdpTransport.h>

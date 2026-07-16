@@ -3,7 +3,8 @@
 // SystemRegistry) and checks the CookedLevelHeader (world id, system count, record sizes),
 // the system-id array, and that the gameMode/render records round-trip back through ReadFields.
 // Also covers each validation failure (unknown system id, world id resolving to a non-prefab,
-// a malformed game-mode field) and the no-module error.
+// a malformed game-mode field), the no-module error, and the tolerant decode of a pre-change
+// game-mode record carrying a field the schema no longer declares.
 
 #include <cstring>
 #include <filesystem>
@@ -116,7 +117,7 @@ namespace
         level["systems"] =
             json::array({FormatHexId(SpawnPlayerRuleId), FormatHexId(ControlSystemId),
                          FormatHexId(MovementSystemId)});
-        level["gameMode"] = {{"PlayerPrefab", FormatHexId(PlayerPrefabId)}, {"ScoreToWin", 3}};
+        level["gameMode"] = {{"PlayerPrefab", FormatHexId(PlayerPrefabId)}};
         level["render"] = {{"Exposure", 2.5}, {"Bloom", true}, {"BloomIntensity", 1.5}};
         return level;
     }
@@ -162,7 +163,6 @@ TEST_CASE("level cook: happy path — header, system ids, config record round-tr
                        module.Types)
                 .has_value());
     CHECK(gameMode.PlayerPrefab.Id().Value == PlayerPrefabId);
-    CHECK(gameMode.ScoreToWin == 3);
 
     // The render record round-trips, and an omitted field keeps its default.
     const std::span<const u8> renderRecord(cursor, header.RenderRecordBytes);
@@ -216,13 +216,51 @@ TEST_CASE("level cook: a malformed game-mode field is a located error")
     const LoadedModuleTypes module = LoadRegistry();
 
     json level = SampleLevel();
-    level["gameMode"] = {{"ScoreToWin", "not a number"}};
+    level["gameMode"] = {{"PlayerPrefab", 12345}};
     const path packJson = WriteLevelPack("level_bad_field", level);
     const path refs[] = {path(VENG_HT_ASSETS_DIR) / "sample.vengpack.json"};
 
     const Result<vector<u8>> blob = CookLevel(packJson, module, refs, AssetId{7777});
     REQUIRE_FALSE(blob.has_value());
-    CHECK(blob.error().find("ScoreToWin") != string::npos);
+    CHECK(blob.error().find("PlayerPrefab") != string::npos);
+}
+
+TEST_CASE("level cook: a pre-change game-mode record decodes tolerantly within the same version")
+{
+    // A blob cooked before a GameModeConfig field was removed still carries that field's record;
+    // the name-keyed decode skips the unknown record and fills the surviving fields, so old cooked
+    // levels load without a version bump. Hand-assemble such a record: the current PlayerPrefab
+    // plus a stale field the schema no longer declares.
+    const LoadedModuleTypes module = LoadRegistry();
+
+    const auto appendU32 = [](vector<u8>& out, const u32 value)
+    {
+        const auto* p = reinterpret_cast<const u8*>(&value);
+        out.insert(out.end(), p, p + sizeof(value));
+    };
+
+    vector<u8> record;
+    appendU32(record, 2); // record count
+    const string prefabName = "PlayerPrefab";
+    appendU32(record, static_cast<u32>(prefabName.size()));
+    record.insert(record.end(), prefabName.begin(), prefabName.end());
+    appendU32(record, sizeof(u64));
+    const u64 prefabId = PlayerPrefabId;
+    const auto* idBytes = reinterpret_cast<const u8*>(&prefabId);
+    record.insert(record.end(), idBytes, idBytes + sizeof(prefabId));
+    const string staleName = "StaleModeKnob"; // a field the schema no longer declares
+    appendU32(record, static_cast<u32>(staleName.size()));
+    record.insert(record.end(), staleName.begin(), staleName.end());
+    appendU32(record, sizeof(i32));
+    const i32 staleValue = 3;
+    const auto* staleBytes = reinterpret_cast<const u8*>(&staleValue);
+    record.insert(record.end(), staleBytes, staleBytes + sizeof(staleValue));
+
+    GameModeConfig gameMode;
+    REQUIRE(
+        ReadFields(record, &gameMode, module.Types.Info(TypeIdOf<GameModeConfig>()), module.Types)
+            .has_value());
+    CHECK(gameMode.PlayerPrefab.Id().Value == PlayerPrefabId);
 }
 
 TEST_CASE("level cook: an unknown game-mode field is a located error")

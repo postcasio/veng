@@ -59,7 +59,6 @@ namespace Veng
     void SeedLevel(Scene& scene, const GameModeConfig& gameMode, const LevelRenderSettings& render)
     {
         const Entity settings = scene.CreateEntity();
-        scene.Add<Session>(settings, Session{.Phase = SessionPhase::Playing});
         scene.Add<GameModeConfig>(settings, gameMode);
         scene.Add<LevelRenderSettings>(settings, render);
     }

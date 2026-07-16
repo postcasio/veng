@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Veng/Reflection/Reflect.h>
 #include <Veng/Veng.h>
 
 #include <functional>
@@ -44,6 +45,13 @@ namespace Veng::Net
     /// instead; this is the zero-config default that keeps the one-world path a single line.
     inline constexpr WorldKey DefaultWorldKey = WorldKey{.Lo = 1};
 }
+
+// Reflected as a plain two-u64 struct so it sits in reflected values (a session record's standing
+// joins, a game's own world-naming data) as ordinary data; the halves stay opaque to every consumer.
+VE_REFLECT(::Veng::Net::WorldKey, 0x4F7EB06F2D29EE40ULL)
+VE_FIELD(Lo, .DisplayName = "Key Lo")
+VE_FIELD(Hi, .DisplayName = "Key Hi")
+VE_REFLECT_END();
 
 namespace std
 {

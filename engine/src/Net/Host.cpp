@@ -129,8 +129,12 @@ namespace Veng
         {
             Net::JoinId Join = Net::ControlJoinId;
             WorldInstanceId World;
+            Net::WorldKey Key;
             Entity Seat = Entity::Null;
             bool Ready = false;
+            // How this join entered the account's session record, so its leave (a standing removal)
+            // and the disconnect pose capture (the gameplay join's seat) resolve without a re-lookup.
+            Net::SessionDurability Durability = Net::SessionDurability::None;
             Net::InterestState Interest;
         };
 
@@ -142,6 +146,10 @@ namespace Veng
             std::map<Net::JoinId, JoinState> Joins; // ordered, so the first is the current-join
             std::unordered_map<Net::WorldKey, Net::JoinId> KeyToJoin;
             Net::JoinId NextJoin = 1; // monotonic per connection, never reused, one reserved
+            // The gameplay entry a reattach directed the connection back to: when its join request
+            // for that key lands, the record is refreshed from here (Params and the captured Pose),
+            // not from the request payload — the round trip must not clobber the captured pose.
+            optional<Net::SessionGameplayEntry> PendingReattachGameplay;
         };
 
         Net::ServerInfo InfoServer;
@@ -158,6 +166,11 @@ namespace Veng
         // caller borrowed a shared one. Directory always points at the live one.
         Unique<WorldDirectory> OwnedDirectory;
         WorldDirectory* Directory = nullptr;
+
+        // The host-tier session registry: owned (built from the ServerHostInfo session hooks) unless
+        // the caller borrowed a shared one. Sessions always points at the live one.
+        Unique<Net::SessionRegistry> OwnedSessions;
+        Net::SessionRegistry* Sessions = nullptr;
 
         std::unordered_map<Net::ConnectionId, ConnectionState> Connections;
         vector<Net::NetEvent> Events;
@@ -427,12 +440,41 @@ namespace Veng
             {
                 world.Replication.SetEntityPrefab(seatNetId, world.SeatPrefabId);
             }
-            conn.Joins.emplace(joinId, JoinState{.Join = joinId, .World = worldId, .Seat = seat});
+            conn.Joins.emplace(joinId, JoinState{.Join = joinId,
+                                                 .World = worldId,
+                                                 .Key = request.Key,
+                                                 .Seat = seat,
+                                                 .Durability = request.Durability});
             conn.KeyToJoin.emplace(request.Key, joinId);
 
             // Report the live join as presence to the directory, which owns the refcount and dwell,
             // recording the account as a member of the bucket (the MembersOf primitive).
             Directory->AddJoin(worldId, conn.Account);
+
+            // The session record follows as a side effect of the join, per its resolved durability:
+            // a standing join enters the standing list, a gameplay join becomes the account's
+            // gameplay entry, an opted-out join enters nothing. A reattach's gameplay re-join is
+            // refreshed from the stashed entry so the round trip keeps the captured pose.
+            if (request.Durability == Net::SessionDurability::Standing)
+            {
+                Sessions->RecordStandingJoin(conn.Account, request.Key);
+            }
+            else if (request.Durability == Net::SessionDurability::Gameplay)
+            {
+                if (conn.PendingReattachGameplay.has_value() &&
+                    conn.PendingReattachGameplay->Key == request.Key)
+                {
+                    Sessions->RecordGameplay(conn.Account, request.Key,
+                                             conn.PendingReattachGameplay->Params,
+                                             conn.PendingReattachGameplay->Pose);
+                }
+                else
+                {
+                    Sessions->RecordGameplay(conn.Account, request.Key, request.Payload,
+                                             request.Payload);
+                }
+                conn.PendingReattachGameplay.reset();
+            }
 
             sendAccept(joinId, world, seatNetId);
             Log::Info("ServerHost accepted connection {} into world {} as join {}", id,
@@ -475,6 +517,12 @@ namespace Veng
             {
                 return;
             }
+            // An explicit leave of a standing join withdraws it from the record — unlike a
+            // disconnect, which keeps every entry for the reattach.
+            if (joinIt->second.Durability == Net::SessionDurability::Standing)
+            {
+                Sessions->RemoveStandingJoin(conn.Account, joinIt->second.Key);
+            }
             ReleaseJoin(id, joinIt->second, now);
             conn.Joins.erase(joinIt);
             std::erase_if(conn.KeyToJoin,
@@ -483,14 +531,91 @@ namespace Veng
                 Net::NetEvent{.Type = Net::NetEventType::WorldLeft, .Id = id, .Join = join});
         }
 
-        // Sends a directed-travel control message to a connection (a travel reply, or unprompted).
+        // Sends a directed-travel control message to a connection (a travel reply, a reattach
+        // restore, or unprompted).
         void SendDirectedTravel(Net::ConnectionId id, Net::JoinId leave, const Net::WorldKey& key,
-                                const Net::TravelPayload& payload)
+                                const Net::TravelPayload& payload, const Net::TravelPayload& pose,
+                                bool present, Net::SessionDurability durability)
         {
-            const vector<u8> message = Net::EncodeDirectedTravel(
-                Net::DirectedTravelMessage{.Leave = leave, .Join = key, .Payload = payload});
+            const vector<u8> message =
+                Net::EncodeDirectedTravel(Net::DirectedTravelMessage{.Leave = leave,
+                                                                     .Join = key,
+                                                                     .Payload = payload,
+                                                                     .Pose = pose,
+                                                                     .Present = present,
+                                                                     .Durability = durability});
             (void)Server->Get(id).Send(Net::Channel::ReliableOrdered,
                                        Net::EncodeWorldEnvelope(Net::ControlJoinId, message));
+        }
+
+        // Restores an admitted account's session on reconnect: the policy transform rewrites the
+        // record, the standing joins are re-issued as non-presenting directed travels (no leave
+        // arm), and the gameplay entry is resolved through the directory — get-or-place by key,
+        // the factory re-running with the recorded params when the key misses — then directed with
+        // the recorded pose. A gameplay resolve failure clears the entry, so the client lands
+        // wherever its front door puts it.
+        void ReattachAccount(Net::ConnectionId id, const Net::AccountId& account)
+        {
+            if (!account.IsValid())
+            {
+                return;
+            }
+            Sessions->EnsureLoaded(account);
+            const optional<Net::SessionRecord> record = Sessions->BeginReattach(account);
+            if (!record.has_value())
+            {
+                return;
+            }
+
+            for (const Net::WorldKey& key : record->StandingJoins)
+            {
+                SendDirectedTravel(id, Net::ControlJoinId, key, Net::TravelPayload{},
+                                   Net::TravelPayload{}, /*present=*/false,
+                                   Net::SessionDurability::Standing);
+            }
+
+            if (record->Gameplay.Key == Net::WorldKey{})
+            {
+                return;
+            }
+            const WorldResolveResult resolve =
+                Directory->Resolve(Net::JoinRequestInfo{.Connection = id,
+                                                        .Account = account,
+                                                        .Key = record->Gameplay.Key,
+                                                        .Payload = record->Gameplay.Params},
+                                   /*heldWorlds=*/0);
+            if (resolve.Outcome == WorldResolveOutcome::Denied)
+            {
+                Log::Warn("ServerHost reattach for connection {} denied its gameplay world "
+                          "(reason {}); clearing to the front door",
+                          id, static_cast<u32>(resolve.Reason));
+                Sessions->ClearGameplay(account);
+                return;
+            }
+            if (resolve.Outcome == WorldResolveOutcome::Opened)
+            {
+                EnsureHostedWorld(record->Gameplay.Key, *resolve.Opened);
+            }
+            Connections[id].PendingReattachGameplay = record->Gameplay;
+            SendDirectedTravel(id, Net::ControlJoinId, record->Gameplay.Key,
+                               record->Gameplay.Params, record->Gameplay.Pose, /*present=*/true,
+                               Net::SessionDurability::Gameplay);
+        }
+
+        // Refreshes every connected account's gameplay pose into the registry — the pre-save
+        // capture window the debounced checkpoint opens.
+        void RefreshGameplayPoses()
+        {
+            for (const auto& [id, conn] : Connections)
+            {
+                for (const auto& [joinId, join] : conn.Joins)
+                {
+                    if (join.Durability == Net::SessionDurability::Gameplay)
+                    {
+                        Sessions->CaptureGameplayPose(conn.Account, join.World, join.Seat);
+                    }
+                }
+            }
         }
 
         // Reaps idle buckets through the directory (its CloseWorld hook + optional runner teardown),
@@ -533,6 +658,25 @@ namespace Veng
                 .CloseWorld = info.CloseWorld,
             });
             state->Directory = state->OwnedDirectory.get();
+        }
+
+        // Consume a borrowed session registry when given one (the Application-shared path);
+        // otherwise build a private one from the info's session hooks over the initial world's
+        // type registry (the self-contained ServerHost).
+        if (info.Sessions != nullptr)
+        {
+            state->Sessions = info.Sessions;
+        }
+        else
+        {
+            state->OwnedSessions = Net::SessionRegistry::Create(Net::SessionRegistryInfo{
+                .Types = &info.World.GetTypeRegistry(),
+                .TransformOnReattach = info.TransformOnReattach,
+                .CaptureTravelPose = info.CaptureTravelPose,
+                .LoadSession = info.LoadSession,
+                .SaveSession = info.SaveSession,
+            });
+            state->Sessions = state->OwnedSessions.get();
         }
 
         state->Worlds.emplace(info.WorldId.Value,
@@ -619,12 +763,26 @@ namespace Veng
                 // Bind the admitted account for the connection's lifetime; every player-keyed
                 // decision below (authorize, seat stamp, directory membership) reads it from here.
                 s.Connections.try_emplace(event.Id).first->second.Account = event.Account;
+                // Reconnecting is reattaching: an admitted account with a record has its standing
+                // joins re-issued and its gameplay world resolved back through the directory.
+                s.ReattachAccount(event.Id, event.Account);
             }
             else if (event.Type == Net::NetEventType::Disconnected)
             {
                 const auto it = s.Connections.find(event.Id);
                 if (it != s.Connections.end())
                 {
+                    // Capture the departing account's gameplay pose before the seat is destroyed,
+                    // then save the record — the disconnect is a durability point.
+                    for (auto& [joinId, join] : it->second.Joins)
+                    {
+                        if (join.Durability == Net::SessionDurability::Gameplay)
+                        {
+                            s.Sessions->CaptureGameplayPose(it->second.Account, join.World,
+                                                            join.Seat);
+                        }
+                    }
+                    s.Sessions->Save(it->second.Account);
                     for (auto& [joinId, join] : it->second.Joins)
                     {
                         s.ReleaseJoin(event.Id, join, now);
@@ -660,16 +818,19 @@ namespace Veng
                     }
                     else if (type == Net::JoinMessageType::TravelRequest)
                     {
-                        // A client travel request: the server directs the resulting join. In this plan it
-                        // echoes the requested key; a server-driven placement would resolve a different
-                        // one. The connection leaves its current (presenting) join once the new is ready.
+                        // A client travel request: the server directs the resulting join, echoing the
+                        // requested key (a server-driven placement would resolve a different one) and
+                        // the request's presentation/durability. The connection leaves its current
+                        // (presenting) join once the new is ready.
                         if (const optional<Net::TravelRequestMessage> request =
                                 Net::DecodeTravelRequest(env->Payload))
                         {
                             const State::JoinState* current = s.CurrentJoinState(id);
                             const Net::JoinId leave =
                                 current != nullptr ? current->Join : Net::ControlJoinId;
-                            s.SendDirectedTravel(id, leave, request->Key, request->Payload);
+                            s.SendDirectedTravel(id, leave, request->Key, request->Payload,
+                                                 Net::TravelPayload{}, request->Present,
+                                                 request->Durability);
                         }
                     }
                     else if (type == Net::JoinMessageType::LeaveNotice)
@@ -693,6 +854,10 @@ namespace Veng
                 }
             }
         }
+
+        // The debounced durability checkpoint: dirty records are saved, live gameplay poses
+        // refreshed just before.
+        s.Sessions->Checkpoint(now, [&s] { s.RefreshGameplayPoses(); });
 
         s.ReapIdleWorlds(now);
     }
@@ -817,9 +982,17 @@ namespace Veng
     }
 
     void ServerHost::DirectTravel(const Net::ConnectionId connection, const Net::JoinId leave,
-                                  const Net::WorldKey& key, const Net::TravelPayload& payload)
+                                  const Net::WorldKey& key, const Net::TravelPayload& payload,
+                                  const Net::TravelPayload& pose, const bool present,
+                                  const optional<bool> standing)
     {
-        m_State->SendDirectedTravel(connection, leave, key, payload);
+        m_State->SendDirectedTravel(connection, leave, key, payload, pose, present,
+                                    Net::ResolveSessionDurability(present, standing));
+    }
+
+    Net::SessionRegistry& ServerHost::Sessions()
+    {
+        return *m_State->Sessions;
     }
 
     usize ServerHost::HostedWorldCount() const
@@ -865,6 +1038,8 @@ namespace Veng
             Net::JoinId Join = Net::ControlJoinId;
             Net::TravelPayload
                 Payload; // the params the reply echoed, for the game's reconstruction
+            Net::TravelPayload Pose; // the arrival pose a directed travel carried, or empty
+            bool Present = false;    // whether this join presents (a standing re-join does not)
             Unique<ReplicationClient> Replication;
             Scene* World = nullptr; // borrowed (a WorldRunner world); must outlive the host
             u32 SeatNetId = InvalidNetId;
@@ -885,9 +1060,15 @@ namespace Veng
             u32 Token = 0;
             Net::WorldKey Key;
             Net::TravelPayload Payload;
+            // The arrival pose a directed travel carried; empty for an ordinary join.
+            Net::TravelPayload Pose;
             Net::JoinId LeaveOnReady = Net::ControlJoinId;
             // The live scene an adopt-in-place join binds to; null for an ordinary level-loading join.
             Scene* AdoptScene = nullptr;
+            // Presentation + session-record class, resolved at the call site (or carried by the
+            // directed travel) and echoed on the join request.
+            bool Present = false;
+            Net::SessionDurability Durability = Net::SessionDurability::Standing;
             bool Sent = false;
         };
 
@@ -1051,6 +1232,8 @@ namespace Veng
             const Net::WorldKey key = pending->Key;
             const Net::JoinId leaveOnReady = pending->LeaveOnReady;
             Scene* const adoptScene = pending->AdoptScene;
+            Net::TravelPayload arrivalPose = std::move(pending->Pose);
+            const bool present = pending->Present;
             Pending.erase(pending);
 
             if (Joins.contains(accept.Join))
@@ -1083,6 +1266,8 @@ namespace Veng
             JoinClient jc;
             jc.Join = accept.Join;
             jc.Payload = accept.Payload;
+            jc.Pose = std::move(arrivalPose);
+            jc.Present = present;
             jc.SeatNetId = accept.SeatNetId;
             jc.World = scene;
             jc.TickSync = Net::TickOffsetEstimator(TickSyncSettings);
@@ -1141,29 +1326,45 @@ namespace Veng
         return Unique<ClientHost>(new ClientHost(std::move(state)));
     }
 
-    void ClientHost::Join(const Net::WorldKey& key, const Net::TravelPayload& payload)
+    void ClientHost::Join(const Net::WorldKey& key, const Net::TravelPayload& payload,
+                          const bool present, const optional<bool> standing)
     {
         State& s = *m_State;
         const u32 token = s.NextToken;
         s.NextToken += 1;
-        s.Pending.push_back(State::PendingJoin{.Token = token, .Key = key, .Payload = payload});
+        s.Pending.push_back(
+            State::PendingJoin{.Token = token,
+                               .Key = key,
+                               .Payload = payload,
+                               .Present = present,
+                               .Durability = Net::ResolveSessionDurability(present, standing)});
     }
 
     void ClientHost::JoinInto(const Net::WorldKey& key, Scene& adoptScene,
-                              const Net::TravelPayload& payload)
+                              const Net::TravelPayload& payload, const bool present,
+                              const optional<bool> standing)
     {
         State& s = *m_State;
         const u32 token = s.NextToken;
         s.NextToken += 1;
-        s.Pending.push_back(State::PendingJoin{
-            .Token = token, .Key = key, .Payload = payload, .AdoptScene = &adoptScene});
+        s.Pending.push_back(
+            State::PendingJoin{.Token = token,
+                               .Key = key,
+                               .Payload = payload,
+                               .AdoptScene = &adoptScene,
+                               .Present = present,
+                               .Durability = Net::ResolveSessionDurability(present, standing)});
     }
 
-    void ClientHost::Travel(const Net::WorldKey& key, const Net::TravelPayload& payload)
+    void ClientHost::Travel(const Net::WorldKey& key, const Net::TravelPayload& payload,
+                            const bool present, const optional<bool> standing)
     {
         State& s = *m_State;
-        const vector<u8> message =
-            Net::EncodeTravelRequest(Net::TravelRequestMessage{.Key = key, .Payload = payload});
+        const vector<u8> message = Net::EncodeTravelRequest(Net::TravelRequestMessage{
+            .Key = key,
+            .Payload = payload,
+            .Present = present,
+            .Durability = Net::ResolveSessionDurability(present, standing)});
         (void)s.Client->Server().Send(Net::Channel::ReliableOrdered,
                                       Net::EncodeWorldEnvelope(Net::ControlJoinId, message));
     }
@@ -1183,10 +1384,11 @@ namespace Veng
             return;
         }
 
-        // Auto-join the configured world once, the moment the connection is up.
+        // Auto-join the configured world once, the moment the connection is up. The single-world
+        // convenience presents its world, so the join is the account's gameplay entry.
         if (s.AutoJoin && !s.AutoJoinRequested)
         {
-            Join(s.AutoJoinKey);
+            Join(s.AutoJoinKey, {}, /*present=*/true);
             s.AutoJoinRequested = true;
         }
 
@@ -1195,8 +1397,11 @@ namespace Veng
         {
             if (!pending.Sent)
             {
-                const vector<u8> payload = Net::EncodeJoinRequest(Net::JoinRequestMessage{
-                    .Key = pending.Key, .RequestToken = pending.Token, .Payload = pending.Payload});
+                const vector<u8> payload = Net::EncodeJoinRequest(
+                    Net::JoinRequestMessage{.Key = pending.Key,
+                                            .RequestToken = pending.Token,
+                                            .Payload = pending.Payload,
+                                            .Durability = pending.Durability});
                 (void)s.Client->Server().Send(
                     Net::Channel::ReliableOrdered,
                     Net::EncodeWorldEnvelope(Net::ControlJoinId, payload));
@@ -1259,7 +1464,10 @@ namespace Veng
                         s.Pending.push_back(State::PendingJoin{.Token = token,
                                                                .Key = directed->Join,
                                                                .Payload = directed->Payload,
-                                                               .LeaveOnReady = directed->Leave});
+                                                               .Pose = directed->Pose,
+                                                               .LeaveOnReady = directed->Leave,
+                                                               .Present = directed->Present,
+                                                               .Durability = directed->Durability});
                     }
                 }
                 continue;
@@ -1371,6 +1579,19 @@ namespace Veng
         static const Net::TravelPayload empty;
         const State::JoinClient* jc = m_State->JoinClientOf(join);
         return jc != nullptr ? jc->Payload : empty;
+    }
+
+    const Net::TravelPayload& ClientHost::ArrivalPose(const Net::JoinId join) const
+    {
+        static const Net::TravelPayload empty;
+        const State::JoinClient* jc = m_State->JoinClientOf(join);
+        return jc != nullptr ? jc->Pose : empty;
+    }
+
+    bool ClientHost::IsPresenting(const Net::JoinId join) const
+    {
+        const State::JoinClient* jc = m_State->JoinClientOf(join);
+        return jc != nullptr && jc->Present;
     }
 
     Net::PredictionHistory& ClientHost::History()

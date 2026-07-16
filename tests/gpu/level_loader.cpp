@@ -1,6 +1,6 @@
 // Level loader + LoadInto: the runtime "start the game" path. Builds a Level over a
 // resident world prefab and an ordered SystemId set, then LoadInto-s it and checks the
-// loader spawned the world, seeded a Playing Session from the game-mode config, and built
+// loader spawned the world, seeded the settings entity from the game-mode config, and built
 // the simulation from exactly the named system set (proven by ticking it once and observing
 // only the named systems run). Also pins that a version-mismatched cooked blob loads as
 // AssetError::Corrupt rather than aborting.
@@ -98,12 +98,11 @@ namespace
 }
 
 TEST_CASE_FIXTURE(LevelFixture,
-                  "LoadInto spawns the world, seeds a Playing Session, and runs the named systems")
+                  "LoadInto spawns the world, seeds the settings, and runs the named systems")
 {
     const AssetHandle<Prefab> world = MakeWorld();
 
-    GameModeConfig gameMode;
-    gameMode.ScoreToWin = 7;
+    const GameModeConfig gameMode;
 
     // Name only LevelSystemB, in a one-element set, to prove LoadInto builds exactly the
     // level's set (SystemA, though registered, must not run).
@@ -126,13 +125,17 @@ TEST_CASE_FIXTURE(LevelFixture,
     }
     CHECK(sawWorldRoot);
 
-    // The loader seeded one Session entity carrying a Playing Session plus the game-mode config.
-    Entity session = Entity::Null;
-    instance.World->Each<Session, GameModeConfig>([&](Entity e, Session&, GameModeConfig&)
-                                                  { session = e; });
-    REQUIRE(session != Entity::Null);
-    CHECK(instance.World->Get<Session>(session).Phase == SessionPhase::Playing);
-    CHECK(instance.World->Get<GameModeConfig>(session).ScoreToWin == 7);
+    // The loader seeded one settings entity carrying the game-mode config + render settings.
+    Entity settings = Entity::Null;
+    usize seeded = 0;
+    instance.World->Each<GameModeConfig, LevelRenderSettings>(
+        [&](Entity e, GameModeConfig&, LevelRenderSettings&)
+        {
+            settings = e;
+            ++seeded;
+        });
+    REQUIRE(settings != Entity::Null);
+    CHECK(seeded == 1);
 
     // Ticking the simulation runs exactly the named system (B), not the unnamed one (A).
     // The counting systems never read Input, so a never-dereferenced placeholder lvalue

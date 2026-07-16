@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Veng/Reflection/Reflect.h>
 #include <Veng/Reflection/ReflectionTypes.h>
 #include <Veng/Veng.h>
 
@@ -36,3 +37,11 @@ namespace Veng::Net
         [[nodiscard]] bool operator==(const TravelPayload&) const = default;
     };
 }
+
+// Reflected as an opaque (type id, bytes) pair so it sits inside reflected values (a session
+// record's params and pose) as ordinary data; the bytes stay uninterpreted by every consumer of
+// the schema.
+VE_REFLECT(::Veng::Net::TravelPayload, 0x686E1ADA700DAE37ULL)
+VE_FIELD(Type, .DisplayName = "Type")
+VE_ARRAY_FIELD(Bytes, .DisplayName = "Bytes")
+VE_REFLECT_END();

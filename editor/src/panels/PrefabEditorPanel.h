@@ -171,7 +171,7 @@ namespace VengEditor
         ///
         /// Called by Play after cloning the edit scene and before the simulation's Start, so the
         /// clone reaches the same initialized state the runtime does. The base is a no-op (a bare
-        /// prefab has no session); the level editor overrides it to seed the Session + game-mode
+        /// prefab has no settings entity); the level editor overrides it to seed the game-mode
         /// config its spawn rule reads.
         /// @param scene The play clone the systems run over.
         virtual void SeedPlayScene(Veng::Scene& /*scene*/) {}

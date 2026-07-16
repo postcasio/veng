@@ -1,12 +1,14 @@
-// Game mode as data: a Session state component plus a Sim-phase spawn rule, driven by the
-// real SceneSimulation. Pure CPU — no Context, no Vulkan symbol touched; builds a real Scene
-// over a TypeRegistry. The spawn rule here mirrors the example's SpawnPlayerRule policy
-// (react to Session.Phase, spawn the player wiring, despawn on Stop / Ended) so the suite
-// asserts the lifecycle and phase placement without linking the game module or a device.
+// Game mode as data: a GameModeConfig settings component plus a Sim-phase spawn rule, driven
+// by the real SceneSimulation. Pure CPU — no Context, no Vulkan symbol touched; builds a real
+// Scene over a TypeRegistry. The spawn rule here mirrors the example's SpawnPlayerRule policy
+// (spawn the player wiring when the scene carries a config, despawn on Stop) so the suite
+// asserts the lifecycle placement without linking the game module or a device. A game with
+// richer mode state authors its own components beside the config and rule systems that read
+// them.
 //
 // The example's rule spawns from a cooked player prefab; spawning a prefab needs an
 // AssetManager (hence a Context). This test spawns the equivalent wiring directly so the
-// rule's Session reaction and despawn lifecycle are exercised device-free — the prefab-spawn
+// rule's config gate and despawn lifecycle are exercised device-free — the prefab-spawn
 // path itself is covered in the gpu band.
 
 #include <doctest/doctest.h>
@@ -51,18 +53,16 @@ namespace
     };
 
     // The spawn rule under test, mirroring the example's SpawnPlayerRule: a Sim-phase system
-    // that, when the Session is Playing, spawns the player wiring (a camera, a seat that
-    // possesses the pawn and views through the camera, and the pawn) and tears it down on
-    // Ended / OnStop. It picks nothing here — the wiring is fixed — but exercises the same
-    // Session reaction and despawn lifecycle.
+    // that, when the scene carries a GameModeConfig, spawns the player wiring (a camera, a seat
+    // that possesses the pawn and views through the camera, and the pawn) at start and tears it
+    // down on OnStop. It picks nothing here — the wiring is fixed — but exercises the same
+    // config gate and despawn lifecycle.
     class TestSpawnPlayerRule final : public SceneSystem
     {
     public:
         void OnStart(Scene& scene, const SystemContext&) override
         {
-            const Entity session = FindSession(scene);
-            if (session == Entity::Null ||
-                scene.Get<Session>(session).Phase != SessionPhase::Playing)
+            if (FindConfig(scene) == Entity::Null)
             {
                 return;
             }
@@ -95,24 +95,17 @@ namespace
 
         void OnStop(Scene& scene, const SystemContext&) override { Despawn(scene); }
 
-        void OnUpdate(Scene& scene, const f32, const SystemContext&) override
-        {
-            const Entity session = FindSession(scene);
-            if (session != Entity::Null && !m_Spawned.empty() &&
-                scene.Get<Session>(session).Phase == SessionPhase::Ended)
-            {
-                Despawn(scene);
-            }
-        }
+        // The spawn happens once at OnStart and the teardown at OnStop; no per-tick rule action.
+        void OnUpdate(Scene&, const f32, const SystemContext&) override {}
 
         [[nodiscard]] Entity GetSpawnedCamera() const { return m_Camera; }
 
     private:
-        static Entity FindSession(Scene& scene)
+        static Entity FindConfig(Scene& scene)
         {
             Entity found = Entity::Null;
-            scene.Each<Session, GameModeConfig>(
-                [&found](const Entity entity, Session&, GameModeConfig&) { found = entity; });
+            scene.Each<GameModeConfig>([&found](const Entity entity, GameModeConfig&)
+                                       { found = entity; });
             return found;
         }
 
@@ -133,14 +126,13 @@ namespace
         vector<Entity> m_Spawned;
     };
 
-    // Adds the well-known session entity carrying Session + its config, in the given phase.
-    Entity AddSession(Scene& scene, const SessionPhase phase)
+    // Adds the settings entity carrying the game-mode config the rule gates on.
+    Entity AddConfig(Scene& scene)
     {
-        const Entity session = scene.CreateEntity();
-        scene.Add<Session>(session, Session{.Phase = phase});
-        scene.Add<GameModeConfig>(session, GameModeConfig{});
-        scene.Add<Authority>(session, Authority{.Tier = Tier::Server});
-        return session;
+        const Entity settings = scene.CreateEntity();
+        scene.Add<GameModeConfig>(settings, GameModeConfig{});
+        scene.Add<Authority>(settings, Authority{.Tier = Tier::Server});
+        return settings;
     }
 
     // Counts entities possessing a live pawn.
@@ -161,11 +153,11 @@ namespace
 
 VE_SYSTEM(TestSpawnPlayerRule, 0xEF01A0C1C1F79775ULL, "Test Spawn Player Rule");
 
-TEST_CASE("A spawn rule instantiates the possessed player when the Session is Playing")
+TEST_CASE("A spawn rule instantiates the possessed player when the scene carries a config")
 {
     TypeRegistry registry = MakeRegistry();
     const Unique<Scene> scene = Scene::Create(registry);
-    AddSession(*scene, SessionPhase::Playing);
+    AddConfig(*scene);
 
     SystemRegistry systems;
     systems.Register<TestSpawnPlayerRule>();
@@ -189,7 +181,7 @@ TEST_CASE("Stopping the simulation despawns the spawned player")
 {
     TypeRegistry registry = MakeRegistry();
     const Unique<Scene> scene = Scene::Create(registry);
-    AddSession(*scene, SessionPhase::Playing);
+    AddConfig(*scene);
 
     SystemRegistry systems;
     systems.Register<TestSpawnPlayerRule>();
@@ -210,12 +202,12 @@ TEST_CASE("Stopping the simulation despawns the spawned player")
     CHECK(cameras == 0);
 }
 
-TEST_CASE("A scene with no Session runs the rule unchanged — nothing spawns")
+TEST_CASE("A scene with no game-mode config runs the rule unchanged — nothing spawns")
 {
     TypeRegistry registry = MakeRegistry();
     const Unique<Scene> scene = Scene::Create(registry);
 
-    // A bare static entity, no Session / GameModeConfig.
+    // A bare static entity, no GameModeConfig.
     const Entity prop = scene->CreateEntity();
     scene->Add<Transform>(prop, Transform{});
 
@@ -238,7 +230,7 @@ TEST_CASE("The spawn rule runs in the Sim phase, and its camera is trailed by th
 {
     TypeRegistry registry = MakeRegistry();
     const Unique<Scene> scene = Scene::Create(registry);
-    AddSession(*scene, SessionPhase::Playing);
+    AddConfig(*scene);
 
     // The spawn rule is Sim-phase (the default), the camera rig is View-phase, so the rig
     // trails the spawned camera in the same tick the Sim phase finalized the pawn.
