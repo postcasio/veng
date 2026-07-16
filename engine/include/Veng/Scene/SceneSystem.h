@@ -233,8 +233,11 @@ namespace Veng
         const vec3 nearWorld = vec3(nearClip) / nearClip.w;
         const vec3 farWorld = vec3(farClip) / farClip.w;
 
+        // The origin is the unprojected near-plane point, not the camera position: under an
+        // orthographic projection every pixel's ray is parallel and the camera position lies on
+        // none of them; under perspective the near point sits on the eye ray, so both agree.
         return Ray{
-            .Origin = view.Camera.GetPosition(),
+            .Origin = nearWorld,
             .Direction = glm::normalize(farWorld - nearWorld),
         };
     }

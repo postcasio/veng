@@ -383,10 +383,12 @@ TEST_CASE("SystemViewInfo pick/project helpers round-trip and match the document
     CHECK(DocumentExtent(view).y == doctest::Approx(300.0f));
 
     // ScreenToWorldRay unprojects a region-local point: unprojecting the point WorldToRegion produced
-    // yields a ray from the camera through the original world point.
+    // yields a ray through the original world point whose near-plane origin lies on the eye ray.
     const optional<Ray> ray = ScreenToWorldRay(view, *region);
     REQUIRE(ray.has_value());
-    CHECK(glm::length(ray->Origin - view.Camera.GetPosition()) == doctest::Approx(0.0f));
+    const vec3 toOrigin = ray->Origin - view.Camera.GetPosition();
+    CHECK(glm::length(glm::cross(toOrigin, ray->Direction)) ==
+          doctest::Approx(0.0f).epsilon(1e-4f));
     const vec3 toWorld = glm::normalize(world - ray->Origin);
     CHECK(glm::length(ray->Direction - toWorld) == doctest::Approx(0.0f).epsilon(0.001f));
 

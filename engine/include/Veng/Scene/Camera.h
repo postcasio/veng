@@ -4,6 +4,8 @@
 #include <Veng/Reflection/Reflect.h>
 #include <Veng/Scene/Entity.h>
 
+#include <algorithm>
+
 namespace Veng
 {
     class Scene;
@@ -90,11 +92,25 @@ namespace Veng
         f32 m_Far = 100.0f;
     };
 
+    /// @brief Which projection a Camera component resolves through.
+    enum class CameraProjection : u8
+    {
+        /// @brief Perspective projection from FovY (the default).
+        Perspective,
+        /// @brief Orthographic (parallel) projection from OrthoHeight — no foreshortening.
+        Orthographic,
+    };
+
     /// @brief Camera component for an entity whose view derives from its world transform.
     struct Camera
     {
-        /// @brief Vertical field of view in radians.
+        /// @brief The projection kind the camera resolves through (see CameraProjection).
+        CameraProjection Projection = CameraProjection::Perspective;
+        /// @brief Vertical field of view in radians (Perspective only).
         f32 FovY = glm::radians(60.0f);
+        /// @brief The view volume's full vertical extent in world units (Orthographic only);
+        ///        the horizontal extent follows the render target's aspect.
+        f32 OrthoHeight = 10.0f;
         /// @brief Near clip distance.
         f32 Near = 0.1f;
         /// @brief Far clip distance.
@@ -102,14 +118,22 @@ namespace Veng
     };
 
     /// @brief Builds a CameraView from a Camera component, an aspect ratio, and the camera entity's world matrix.
-    /// @param camera  The component supplying FovY/Near/Far.
+    /// @param camera  The component supplying the projection (FovY or OrthoHeight, Near/Far).
     /// @param aspect  Viewport width divided by height.
     /// @param world   The camera entity's world matrix (from WorldMatrix in Transforms.h).
     [[nodiscard]] inline CameraView MakeCameraView(const Camera& camera, f32 aspect,
                                                    const mat4& world)
     {
         CameraView result;
-        result.SetPerspective(camera.FovY, aspect, camera.Near, camera.Far);
+        if (camera.Projection == CameraProjection::Orthographic)
+        {
+            const f32 halfHeight = std::max(camera.OrthoHeight, 1.0e-4f) * 0.5f;
+            result.SetOrthographic(halfHeight * aspect, halfHeight, camera.Near, camera.Far);
+        }
+        else
+        {
+            result.SetPerspective(camera.FovY, aspect, camera.Near, camera.Far);
+        }
         result.SetViewFromWorld(world);
         return result;
     }
@@ -191,8 +215,15 @@ namespace Veng
     }
 }
 
+VE_ENUM(::Veng::CameraProjection, 0x2A283514BD366CA5ULL)
+VE_ENUMERATOR(Perspective)
+VE_ENUMERATOR(Orthographic)
+VE_ENUM_END();
+
 VE_REFLECT(::Veng::Camera, 0x6598EF5F5C0A7B10ULL)
+VE_FIELD(Projection, .DisplayName = "Projection")
 VE_FIELD(FovY, .DisplayName = "Field of View", .Display = {.Min = 0.01})
+VE_FIELD(OrthoHeight, .DisplayName = "Ortho Height", .Display = {.Min = 0.0001})
 VE_FIELD(Near, .DisplayName = "Near", .Display = {.Min = 0.001})
 VE_FIELD(Far, .DisplayName = "Far")
 VE_REFLECT_END();

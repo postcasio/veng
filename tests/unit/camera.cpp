@@ -155,6 +155,32 @@ TEST_CASE("MakeCameraView composes a Camera component, aspect, and world matrix"
     CHECK(made.GetFar() == doctest::Approx(component.Far));
 }
 
+TEST_CASE("MakeCameraView resolves an Orthographic component through SetOrthographic")
+{
+    // OrthoHeight is the full vertical extent; the half-width follows the aspect.
+    Camera component;
+    component.Projection = CameraProjection::Orthographic;
+    component.OrthoHeight = 9.0f;
+    component.Near = 0.5f;
+    component.Far = 60.0f;
+
+    const f32 aspect = 16.0f / 9.0f;
+    const vec3 eye{2.0f, 1.0f, 12.0f};
+    const mat4 world = glm::translate(mat4{1.0f}, eye);
+
+    const CameraView made = MakeCameraView(component, aspect, world);
+
+    CameraView expected;
+    expected.SetOrthographic(4.5f * aspect, 4.5f, component.Near, component.Far);
+    expected.SetViewFromWorld(world);
+
+    CHECK(MatrixApprox(made.Projection(), expected.Projection()));
+    CHECK(MatrixApprox(made.View(), expected.View()));
+    CHECK(VecApprox(made.GetPosition(), eye));
+    CHECK(made.GetNear() == doctest::Approx(component.Near));
+    CHECK(made.GetFar() == doctest::Approx(component.Far));
+}
+
 TEST_CASE("ProjectToScreen maps world points to top-left-origin pixels and rejects behind-camera")
 {
     // Looking down -Z from the origin: world center projects to the extent's center, a point

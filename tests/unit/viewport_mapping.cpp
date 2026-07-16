@@ -72,7 +72,7 @@ namespace
         const vec3 farWorld = vec3(farClip) / farClip.w;
 
         return Ray{
-            .Origin = camera.GetPosition(),
+            .Origin = nearWorld,
             .Direction = glm::normalize(farWorld - nearWorld),
         };
     }
@@ -156,19 +156,22 @@ TEST_CASE("WindowToViewport remaps the same under a non-zero region offset")
 TEST_CASE("ScreenToWorldRay unprojects through the retained camera")
 {
     // A camera looking down -Z from the origin, the engine's Vulkan-Y-flip
-    // projection. The ray origin is always the camera position.
+    // projection. The ray origin is the unprojected near-plane point, which
+    // under perspective lies on the eye ray.
     CameraView camera;
     camera.SetPerspective(glm::radians(60.0f), 16.0f / 9.0f, 0.1f, 100.0f);
     camera.SetView(vec3(0.0f, 0.0f, 5.0f), vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f));
 
     const ViewportRegion region{.Offset = {0, 0}, .Extent = {1600, 900}};
+    const vec3 eye(0.0f, 0.0f, 5.0f);
 
     SUBCASE("A center pixel yields a ray along the camera forward axis")
     {
         const optional<Ray> ray = ScreenToWorldRay(region, camera, {800, 450});
         REQUIRE(ray.has_value());
 
-        CHECK(VecApprox(ray->Origin, vec3(0.0f, 0.0f, 5.0f)));
+        // The origin is the near-plane point straight ahead of the eye.
+        CHECK(VecApprox(ray->Origin, vec3(0.0f, 0.0f, 4.9f)));
         // Forward is -Z (the camera looks at the origin from +Z).
         CHECK(VecApprox(ray->Direction, vec3(0.0f, 0.0f, -1.0f)));
         // The producer normalizes the direction.
@@ -177,12 +180,16 @@ TEST_CASE("ScreenToWorldRay unprojects through the retained camera")
 
     SUBCASE("An off-center pixel skews the direction off the forward axis")
     {
-        // A pixel to the right of center: the ray still starts at the camera but
-        // tilts toward +X (world right) and away from straight -Z.
+        // A pixel to the right of center: the origin sits on the eye ray (the near
+        // point) and the direction tilts toward +X (world right), away from -Z.
         const optional<Ray> ray = ScreenToWorldRay(region, camera, {1200, 450});
         REQUIRE(ray.has_value());
 
-        CHECK(VecApprox(ray->Origin, vec3(0.0f, 0.0f, 5.0f)));
+        // Under perspective the near point lies on the line through the eye: the
+        // eye-to-origin offset is collinear with the direction.
+        const vec3 toOrigin = ray->Origin - eye;
+        CHECK(glm::length(glm::cross(toOrigin, ray->Direction)) ==
+              doctest::Approx(0.0f).epsilon(1e-4f));
         CHECK(ray->Direction.x > 0.0f);
         CHECK(ray->Direction.z < 0.0f);
         CHECK(std::abs(ray->Direction.y) < 1e-4f);
@@ -194,4 +201,30 @@ TEST_CASE("ScreenToWorldRay unprojects through the retained camera")
         CHECK_FALSE(ScreenToWorldRay(region, camera, {-1, 450}).has_value());
         CHECK_FALSE(ScreenToWorldRay(region, camera, {1600, 450}).has_value());
     }
+}
+
+TEST_CASE("ScreenToWorldRay under an orthographic camera yields parallel offset rays")
+{
+    // An orthographic top-down-style camera: every pixel's ray is parallel to the
+    // view axis, and what distinguishes pixels is the ray origin, not direction.
+    CameraView camera;
+    camera.SetOrthographic(8.0f, 4.5f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 0.0f, 5.0f), vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    const ViewportRegion region{.Offset = {0, 0}, .Extent = {1600, 900}};
+
+    const optional<Ray> center = ScreenToWorldRay(region, camera, {800, 450});
+    const optional<Ray> right = ScreenToWorldRay(region, camera, {1200, 450});
+    REQUIRE(center.has_value());
+    REQUIRE(right.has_value());
+
+    // Both rays run along the view forward axis (-Z), exactly parallel.
+    CHECK(VecApprox(center->Direction, vec3(0.0f, 0.0f, -1.0f)));
+    CHECK(VecApprox(right->Direction, vec3(0.0f, 0.0f, -1.0f)));
+
+    // The center pixel's origin is on the view axis; the right-of-center pixel's
+    // origin is offset by a quarter of the view width (4 world units of the ±8
+    // half-width), not tilted toward it.
+    CHECK(VecApprox(center->Origin, vec3(0.0f, 0.0f, 4.9f)));
+    CHECK(VecApprox(right->Origin, vec3(4.0f, 0.0f, 4.9f)));
 }
