@@ -2070,7 +2070,8 @@ TEST_CASE("A join whose client-reconstructed world mismatches the echoed digest 
         .Client = *client,
         .Assets = FakeAssets(),
         // The client's own digest of the joined key disagrees with the server's echoed one.
-        .WorldDigest = [](const WorldKey&) { return ContentDigest{.Lo = 0x0}; },
+        .WorldDigest = [](const WorldKey&, const TravelPayload&)
+        { return ContentDigest{.Lo = 0x0}; },
         .LoadLevel = [&](AssetId) -> Scene*
         {
             loaded = true;
@@ -2131,7 +2132,7 @@ TEST_CASE("A join whose client-supplied per-key digest matches the echoed digest
         .Assets = FakeAssets(),
         // The per-key provider yields the digest the client expects for the key it joins; it matches
         // the server's echo for the auto-joined DefaultWorldKey, so the join is admitted.
-        .WorldDigest = [&](const WorldKey& key) -> ContentDigest
+        .WorldDigest = [&](const WorldKey& key, const TravelPayload&) -> ContentDigest
         {
             seenKey = key;
             return key == DefaultWorldKey ? ServerDigest : ContentDigest{};
@@ -2656,6 +2657,119 @@ TEST_CASE("The travel payload reaches Authorize, Placement, and WorldFactory, an
     // The reply echoed the bucket's recorded payload (here the request's), so the client's factory-
     // parameterized reconstruction has its inputs.
     CHECK(client.Host->JoinPayload(client.Host->CurrentJoinId()) == sent);
+}
+
+TEST_CASE("The client world digest folds the echoed travel payload: a matching fold joins, a "
+          "diverged one is rejected loudly")
+{
+    // A world parameterized by payload rather than key attests the payload too: the server's factory
+    // folds the opening payload into the echoed digest, and the client's WorldDigest hook receives
+    // the reply's echoed payload to fold the same way — so both peers attest the same generation
+    // inputs, key *and* payload.
+    const auto fold = [](const TravelPayload& p)
+    { return ContentDigest{.Lo = 0xF01DULL ^ static_cast<u64>(PosOf(p) * 1000.0f), .Hi = 0x9}; };
+
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+
+    TypeRegistry serverTypes;
+    RegisterBuiltinTypes(serverTypes);
+    Unique<Scene> primary = Scene::Create(serverTypes);
+    Unique<Scene> factoryScene = Scene::Create(serverTypes);
+
+    const WorldKey key = WorldKey::FromU64(0xF00D);
+    const TravelPayload sent = PosPayload(3.5f);
+
+    Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
+        .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
+        .WorldId = WorldInstanceId{.Value = 1},
+        .Key = WorldKey::FromU64(0xFFFFFFFFULL), // the primary key, presented by no client
+        .World = *primary,
+        .Assets = FakeAssets(),
+        .LevelId = LevelId,
+        .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
+        .WorldFactory = [&](const WorldKey&,
+                            const TravelPayload& p) -> optional<ServerWorldResolution>
+        {
+            return ServerWorldResolution{.WorldId = WorldInstanceId{.Value = 100},
+                                         .World = factoryScene.get(),
+                                         .LevelId = LevelId,
+                                         .Digest = fold(p),
+                                         .Replication =
+                                             ReplicationServer::Settings{.SnapshotInterval = 2}};
+        },
+    });
+    REQUIRE(hostR.has_value());
+    Unique<ServerHost> host = std::move(*hostR);
+
+    Unique<Net::Client> client = *Net::Client::Connect(
+        ClientInfo{.TransportOverride = clientT.get(), .Connection = FastConfig});
+
+    TypeRegistry clientTypes;
+    RegisterBuiltinTypes(clientTypes);
+    Unique<Scene> clientScene;
+    bool loaded = false;
+    TravelPayload seenByDigest;
+    bool matching = false;
+
+    SUBCASE("a digest folding the echoed payload matches the server's fold and joins")
+    {
+        matching = true;
+    }
+    SUBCASE("a digest folding diverged payload data mismatches and the join is rejected") {}
+
+    Unique<ClientHost> clientHost = ClientHost::Create(ClientHostInfo{
+        .Client = *client,
+        .Assets = FakeAssets(),
+        .AutoJoin = false,
+        // The matching client folds the echoed payload itself; the diverged one folds a different
+        // parameter value (a client whose reconstruction inputs disagree with the bucket's).
+        .WorldDigest = [&](const WorldKey&, const TravelPayload& p) -> ContentDigest
+        {
+            seenByDigest = p;
+            return matching ? fold(p) : fold(PosPayload(7.25f));
+        },
+        .LoadLevel = [&](AssetId) -> Scene*
+        {
+            loaded = true;
+            clientScene = Scene::Create(clientTypes);
+            return clientScene.get();
+        },
+        .ResolvePrefab = [](AssetId) -> Ref<Prefab> { return nullptr; },
+    });
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    bool requested = false;
+    for (u64 tick = 1; tick <= 40 && !clientHost->IsJoined(); ++tick)
+    {
+        now += Delta;
+        primary->SetChangeTick(tick);
+        factoryScene->SetChangeTick(tick);
+        host->Pump(now, tick);
+        clientHost->Pump(now);
+        if (!requested && client->State() == ClientState::Connected)
+        {
+            clientHost->Join(key, sent);
+            requested = true;
+        }
+    }
+
+    REQUIRE(client->State() == ClientState::Connected);
+    // Either way the hook received the reply's echoed payload to fold from.
+    CHECK(seenByDigest == sent);
+    if (matching)
+    {
+        CHECK(loaded);
+        CHECK(clientHost->IsJoined());
+    }
+    else
+    {
+        // The payload-folded digests disagree, so the join is refused before any level load or
+        // stream apply — exactly the key-mismatch fail-loud path, now payload-sensitive.
+        CHECK_FALSE(loaded);
+        CHECK_FALSE(clientHost->IsJoined());
+        CHECK(clientHost->Joins().empty());
+    }
 }
 
 TEST_CASE("A payload-bucketing placement policy converges near params and splits far ones")
@@ -3420,7 +3534,8 @@ TEST_CASE("Adopt-in-place: a digest mismatch refuses the join before any stream 
         .Client = *conn,
         .Assets = FakeAssets(),
         .AutoJoin = false,
-        .WorldDigest = [](const WorldKey&) { return ContentDigest{.Lo = 0xDEAD, .Hi = 0}; },
+        .WorldDigest = [](const WorldKey&, const TravelPayload&)
+        { return ContentDigest{.Lo = 0xDEAD, .Hi = 0}; },
         .LoadLevel = [](AssetId) -> Scene* { return nullptr; },
         .ResolvePrefab = [](AssetId) -> Ref<Prefab> { return nullptr; },
     });

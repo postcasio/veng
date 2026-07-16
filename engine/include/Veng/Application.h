@@ -133,12 +133,14 @@ namespace Veng
         /// @brief Client hook yielding the content digest the client expects for a joined WorldKey; unset validates against none.
         ///
         /// The client mirror of the server's per-key ServerWorldResolution::Digest: given a WorldKey the
-        /// client is joining, returns the digest of its own procedurally-reconstructed world, which the
-        /// mounted ClientHost compares against the join reply's echoed digest — a mismatch rejects the
-        /// join loudly. A per-key provider (a connection may join several worlds by opaque key). Unset
-        /// presents the zero digest (matching a content-free server world), the zero-config default.
-        /// Inert off a client.
-        function<Net::ContentDigest(const Net::WorldKey&)> ClientWorldDigest;
+        /// client is joining and the join reply's echoed opaque travel payload, returns the digest of
+        /// its own procedurally-reconstructed world, which the mounted ClientHost compares against the
+        /// join reply's echoed digest — a mismatch rejects the join loudly. A per-key provider (a
+        /// connection may join several worlds by opaque key); a world parameterized by payload rather
+        /// than key folds the echoed payload in. Unset presents the zero digest (matching a
+        /// content-free server world), the zero-config default. Inert off a client.
+        function<Net::ContentDigest(const Net::WorldKey&, const Net::TravelPayload&)>
+            ClientWorldDigest;
         /// @brief Client hook yielding the spatial dequantization grid a joined WorldKey decodes with; unset uses the shared envelope.
         ///
         /// The client mirror of the server's per-world ServerWorldResolution::Replication quantization:

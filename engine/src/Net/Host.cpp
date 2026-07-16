@@ -796,7 +796,7 @@ namespace Veng
         Net::WorldKey AutoJoinKey;
         bool AutoJoin = true;
         bool AutoJoinRequested = false;
-        function<Net::ContentDigest(const Net::WorldKey&)> WorldDigest;
+        function<Net::ContentDigest(const Net::WorldKey&, const Net::TravelPayload&)> WorldDigest;
         function<Scene*(AssetId)> LoadLevel;
         function<Ref<Prefab>(AssetId)> ResolvePrefab;
         function<void(Scene&, Entity)> OnPossession;
@@ -1015,7 +1015,7 @@ namespace Veng
 
             const AssetId levelId{.Value = accept.LevelId};
             const Net::ContentDigest expected =
-                WorldDigest ? WorldDigest(key) : Net::ContentDigest{};
+                WorldDigest ? WorldDigest(key, accept.Payload) : Net::ContentDigest{};
             if (!(expected == accept.WorldDigest))
             {
                 Log::Error(

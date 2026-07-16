@@ -336,12 +336,14 @@ namespace Veng
         bool AutoJoin = true;
         /// @brief Computes the digest the client validates against the join reply's echoed world digest.
         ///
-        /// Given the WorldKey being joined, returns the client's own digest of its reconstructed world;
-        /// a mismatch rejects the join loudly (no stream is applied). The client mirror of the server's
-        /// per-key ServerWorldResolution::Digest — a client joining multiple worlds by opaque key yields
-        /// a distinct expected digest per key. Unset returns the zero digest, which matches a
-        /// content-free server world.
-        function<Net::ContentDigest(const Net::WorldKey&)> WorldDigest;
+        /// Given the WorldKey being joined and the reply's echoed opaque travel payload, returns the
+        /// client's own digest of its reconstructed world; a mismatch rejects the join loudly (no
+        /// stream is applied). The client mirror of the server's per-key
+        /// ServerWorldResolution::Digest — a client joining multiple worlds by opaque key yields a
+        /// distinct expected digest per key, and a world parameterized by payload rather than key
+        /// (see Net::TravelPayload) folds the echoed payload into it. Unset returns the zero digest,
+        /// which matches a content-free server world.
+        function<Net::ContentDigest(const Net::WorldKey&, const Net::TravelPayload&)> WorldDigest;
         /// @brief Loads the joined world's level into the caller's client scene, authoritative entities skipped.
         ///
         /// Invoked per join, when the join reply arrives, with the level's AssetId — the app loads the
