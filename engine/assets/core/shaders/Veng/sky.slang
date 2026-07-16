@@ -70,6 +70,9 @@ float3 SkyViewDirection(SkyPushConstants pc, float2 uv)
     ViewConstants vc = LoadViewConstants(pc.ViewConstantsIndex);
     float2 ndcXY = uv * 2.0 - 1.0;
     float4 worldH = mul(vc.InvViewProj, float4(ndcXY, 1.0, 1.0));
-    float3 worldPos = worldH.xyz / worldH.w;
-    return normalize(worldPos - vc.CameraPosition.xyz);
+    // Homogeneous form of (worldH.xyz / worldH.w − camera): normalize cancels the 1/w scale,
+    // so w never divides. The far-plane w collapses to zero in f32 once Far/Near exceeds
+    // ~2^24 (the projection's [2][2] rounds to −1 exactly), which would turn the divided
+    // point into infinities and the direction into NaN for every background pixel.
+    return normalize(worldH.xyz - vc.CameraPosition.xyz * worldH.w);
 }

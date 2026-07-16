@@ -181,9 +181,12 @@ float4 fsMain(VSOutput input) : SV_Target0
     else
     {
         const float2 ndc = uv * 2.0 - 1.0;
+        // Reproject the homogeneous point without the intermediate world-space divide — the
+        // 1/w scale cancels in the final perspective division, and the far-plane w collapses
+        // to zero in f32 at extreme Far/Near (see Veng/sky.slang SkyViewDirection), which
+        // would send every background pixel's history UV to NaN.
         const float4 worldH = mul(vc.InvViewProj, float4(ndc, depth, 1.0));
-        const float3 world = worldH.xyz / worldH.w;
-        const float4 prevClip = mul(vc.PrevViewProj, float4(world, 1.0));
+        const float4 prevClip = mul(vc.PrevViewProj, worldH);
         prevUv = (prevClip.xy / prevClip.w) * 0.5 + 0.5;
     }
 

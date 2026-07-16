@@ -204,3 +204,63 @@ TEST_CASE("ProjectToScreen maps world points to top-left-origin pixels and rejec
 
     CHECK(!ProjectToScreen(camera, vec3(0.0f, 0.0f, 10.0f), extent).has_value());
 }
+
+TEST_CASE("far-plane view-direction reconstruction survives extreme Far/Near ratios")
+{
+    // The sky, TAA, and volume-field shaders reconstruct a background pixel's view ray as
+    // normalize(InvViewProj·(ndc, 1, 1).xyz − camera·w) — the homogeneous form. The divided
+    // form (xyz / w − camera) fails at extreme depth ranges: once Far/Near exceeds ~2^24 the
+    // projection's [2][2] rounds to −1 exactly, the far-plane w collapses to zero in f32, and
+    // the division sends every background direction to NaN. Pins both facts: the collapse is
+    // real at the extreme ratio, and the homogeneous form stays exact through it.
+    const vec3 eye{0.0f, 1.5f, 4.0f};
+    const vec3 target{-1.0f, 1.5f, 4.0f};
+    const vec2 ndc{0.30f, -0.20f};
+    const f32 far = 20000.0f;
+
+    // The f64 reference direction, from unrounded double-precision matrices end to end.
+    const auto reference = [&](f64 near) -> glm::dvec3
+    {
+        glm::dmat4 proj = glm::perspective(glm::radians(60.0), 16.0 / 9.0, near, f64{far});
+        proj[1][1] *= -1.0;
+        const glm::dmat4 view =
+            glm::lookAt(glm::dvec3(eye), glm::dvec3(target), glm::dvec3(0.0, 1.0, 0.0));
+        const glm::dvec4 worldH = glm::inverse(proj * view) * glm::dvec4(ndc, 1.0, 1.0);
+        return glm::normalize(glm::dvec3(worldH) - glm::dvec3(eye) * worldH.w);
+    };
+
+    // The f32 pipeline exactly as the renderer and shaders evaluate it: a CameraView
+    // projection, an f32 matrix inverse, and the shader's reconstruction expressions.
+    const auto reconstruct = [&](f32 ratio)
+    {
+        CameraView camera;
+        camera.SetPerspective(glm::radians(60.0f), 16.0f / 9.0f, far / ratio, far);
+        camera.SetView(eye, target, vec3(0.0f, 1.0f, 0.0f));
+        const mat4 inv = glm::inverse(camera.ViewProjection());
+        return vec4{inv * vec4(ndc, 1.0f, 1.0f)};
+    };
+    const auto degreesOff = [&](vec3 dir, glm::dvec3 truth)
+    { return glm::degrees(std::acos(glm::clamp(glm::dot(glm::dvec3(dir), truth), -1.0, 1.0))); };
+
+    // Ordinary ratio: both forms agree with the reference.
+    {
+        const f32 ratio = 1.0e4f;
+        const vec4 worldH = reconstruct(ratio);
+        const glm::dvec3 truth = reference(f64{far} / f64{ratio});
+        const vec3 divided = glm::normalize(vec3(worldH) / worldH.w - eye);
+        const vec3 homogeneous = glm::normalize(vec3(worldH) - eye * worldH.w);
+        CHECK(degreesOff(divided, truth) < 0.01);
+        CHECK(degreesOff(homogeneous, truth) < 0.01);
+    }
+
+    // Extreme ratio: the far-plane w collapses to zero, so the divided form is unusable —
+    // only the homogeneous form reconstructs the direction.
+    {
+        const f32 ratio = 6.7e7f;
+        const vec4 worldH = reconstruct(ratio);
+        const glm::dvec3 truth = reference(f64{far} / f64{ratio});
+        CHECK(worldH.w == 0.0f);
+        const vec3 homogeneous = glm::normalize(vec3(worldH) - eye * worldH.w);
+        CHECK(degreesOff(homogeneous, truth) < 0.01);
+    }
+}

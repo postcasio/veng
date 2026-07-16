@@ -56,11 +56,12 @@ float4 fsMain(VSOutput input) : SV_Target
         discard;
     }
 
-    // Unproject the far-plane point through the inverse view-projection and form the view ray.
+    // Unproject the far-plane point through the inverse view-projection and form the view ray
+    // homogeneously — dividing by worldH.w would NaN every pixel at extreme Far/Near, where
+    // the far-plane w collapses to zero in f32 (see Veng/sky.slang SkyViewDirection).
     float2 ndcXY = input.v_UV * 2.0 - 1.0;
     float4 worldH = mul(vc.InvViewProj, float4(ndcXY, 1.0, 1.0));
-    float3 worldPos = worldH.xyz / worldH.w;
-    float3 dir = normalize(worldPos - vc.CameraPosition.xyz);
+    float3 dir = normalize(worldH.xyz - vc.CameraPosition.xyz * worldH.w);
 
     float3 sky = g_Radiance.SampleLevel(g_IblSampler, dir, 0.0).rgb * g_PC.EnvIntensity;
     return float4(sky, 1.0);
