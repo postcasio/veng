@@ -89,6 +89,7 @@ namespace Veng::Renderer
             f32 ViewportWidth;
             f32 ViewportHeight;
             f32 Opacity;
+            f32 Spikes;
         };
 
         // An occluded point fades to this fraction rather than vanishing (matches the sprite frag).
@@ -975,6 +976,7 @@ namespace Veng::Renderer
                 .ViewportWidth = static_cast<f32>(renderExtent.x),
                 .ViewportHeight = static_cast<f32>(renderExtent.y),
                 .Opacity = lod.Opacity,
+                .Spikes = lod.SpriteSpikes,
             };
 
             if (!runs.empty() && state.DrewCompute)

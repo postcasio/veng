@@ -30,6 +30,7 @@ struct PushConstants
     float ViewportWidth;
     float ViewportHeight;
     float Opacity;
+    float Spikes;
 };
 
 [[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;

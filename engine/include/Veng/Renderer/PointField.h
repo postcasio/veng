@@ -220,6 +220,16 @@ namespace Veng::Renderer
         /// the resident points. Applied on top of every other photometric knob; 1 is unchanged.
         f32 Opacity = 1.0f;
 
+        /// @brief Diffraction-spike strength on resolved sprites; 0 (the default) is the plain disc.
+        ///
+        /// Above zero the sprite kernel adds four axis-aligned diffraction spikes of this relative
+        /// strength over the soft disc core — the bright-star look. The kernel renormalizes so a
+        /// sprite's integrated flux matches the plain disc at any strength, keeping the
+        /// sprite<->aggregate LOD transition brightness-stable. Spikes need drawn pixels to read:
+        /// pair a non-zero strength with a larger MaxPixels. Resolved sprites only — an aggregate
+        /// splat is an unresolved glow and never draws spikes.
+        f32 SpriteSpikes = 0.0f;
+
         /// @brief Per-cell aggregate anchor jitter, as a fraction of the cull cell size (Cloud only).
         ///
         /// A filled cell's point centroid converges on its cull-cell center, so its aggregate splat

@@ -28,6 +28,7 @@ struct PushConstants
     float ViewportWidth;
     float ViewportHeight;
     float Opacity;
+    float Spikes;
 };
 
 [[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
@@ -48,6 +49,19 @@ float4 fsMain(VSOutput input) : SV_Target
     float r = length(input.v_UV) * 2.0;
     float falloff = saturate(1.0 - r);
     falloff *= falloff;
+
+    // Optional four-point diffraction spikes over the disc core — thin axis-aligned streaks
+    // decaying toward the quad edge. Renormalized so the star kernel's integrated flux matches
+    // the plain disc's at any strength (0.1415 is the spike pair's flux relative to the disc's
+    // pi/24), keeping the sprite<->aggregate LOD transition brightness-stable.
+    if (g_PC.Spikes > 0.0)
+    {
+        float2 a = abs(input.v_UV) * 2.0;
+        float sx = saturate(1.0 - a.y * 12.0) * saturate(1.0 - a.x);
+        float sy = saturate(1.0 - a.x * 12.0) * saturate(1.0 - a.y);
+        float spike = sx * sx + sy * sy;
+        falloff = (falloff + g_PC.Spikes * spike) / (1.0 + g_PC.Spikes * 0.1415);
+    }
     if (falloff <= 0.0)
     {
         discard;
