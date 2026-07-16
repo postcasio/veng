@@ -178,6 +178,45 @@ TEST_CASE("gui widget: a Slider drag and directional nudge change the value, cla
     CHECK(doc.GetWidgetValue(slider) == doctest::Approx(9.0f));
 }
 
+TEST_CASE("gui widget: a vertical Slider maps the pointer bottom-up and nudges on up/down")
+{
+    Document doc;
+    doc.SetInteractive(true);
+
+    Element& root = doc.Root();
+    PlaceAt(root, {0, 0}, {200, 200});
+    Element& slider = doc.Add(root, ElementKind::Slider);
+    slider.Focusable = true;
+    PlaceAt(slider, {0, 0}, {20, 100});
+    slider.Bindings["min"] = "0";
+    slider.Bindings["max"] = "10";
+    slider.Bindings["step"] = "1";
+    slider.Bindings["orientation"] = "vertical";
+    doc.InitWidget(slider);
+
+    CHECK(doc.GetWidgetValue(slider) == 0.0f);
+
+    // Min sits at the bottom edge: a press 30% down from the top is 70% up the run → 7.
+    PointerEvent down{.Kind = PointerEventKind::Down, .Position = vec2(10, 30)};
+    doc.DispatchPointer(down);
+    CHECK(doc.GetWidgetValue(slider) == doctest::Approx(7.0f));
+
+    // A drag above the top edge clamps to the max.
+    PointerEvent drag{.Kind = PointerEventKind::Move, .Position = vec2(10, -50)};
+    doc.DispatchPointer(drag);
+    CHECK(doc.GetWidgetValue(slider) == doctest::Approx(10.0f));
+    PointerEvent up{.Kind = PointerEventKind::Up, .Position = vec2(10, -50)};
+    doc.DispatchPointer(up);
+
+    // Down steps the value down, up steps it up; left/right leave a vertical slider alone.
+    doc.SetFocus(&slider);
+    CHECK(doc.Navigate(NavAction::MoveDown));
+    CHECK(doc.GetWidgetValue(slider) == doctest::Approx(9.0f));
+    CHECK(doc.Navigate(NavAction::MoveUp));
+    CHECK(doc.GetWidgetValue(slider) == doctest::Approx(10.0f));
+    CHECK_FALSE(doc.Navigate(NavAction::MoveLeft));
+}
+
 TEST_CASE("gui widget: a ProgressBar reflects a one-way bound value")
 {
     Document doc;

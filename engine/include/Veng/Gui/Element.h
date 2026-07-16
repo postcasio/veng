@@ -175,6 +175,11 @@ namespace Veng::Gui
         f32 Max = 1.0f;
         /// @brief The Slider's discrete step; a non-positive step is continuous.
         f32 Step = 0.0f;
+        /// @brief Whether a Slider runs vertically (Min at the bottom, Max at the top).
+        ///
+        /// Authored as the markup `orientation="vertical"` attribute; the default is a
+        /// horizontal slider (Min at the left, Max at the right).
+        bool Vertical = false;
         /// @brief The ScrollView's content offset, in pixels (subtracted from child positions).
         vec2 ScrollOffset{0.0f};
         /// @brief The TextInput caret position, as a codepoint index into the element's Text.

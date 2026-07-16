@@ -1747,6 +1747,9 @@ namespace Veng::Gui
             element.Widget.Value =
                 ClampStep(ReadConfigScalar(element, "value", element.Widget.Min),
                           element.Widget.Min, element.Widget.Max, element.Widget.Step);
+            const auto orientation = element.Bindings.find("orientation");
+            element.Widget.Vertical =
+                orientation != element.Bindings.end() && orientation->second == "vertical";
         }
         else if (element.Kind == ElementKind::ProgressBar)
         {
@@ -1776,7 +1779,9 @@ namespace Veng::Gui
         if (element.Kind == ElementKind::Slider)
         {
             // A press or drag over the track sets the value from the pointer's fraction along the
-            // slider's width — the pointer maps linearly from Min at the left edge to Max at the right.
+            // slider's run — Min at the left edge to Max at the right for a horizontal slider, Min
+            // at the bottom edge to Max at the top for a vertical one (document y grows downward,
+            // so the vertical fraction inverts).
             if (event.Kind != PointerEventKind::Down && event.Kind != PointerEventKind::Move)
             {
                 return false;
@@ -1785,13 +1790,15 @@ namespace Veng::Gui
             {
                 return false;
             }
-            const f32 width = element.Layout.Size.x;
-            if (width <= 0.0f)
+            const f32 run = element.Widget.Vertical ? element.Layout.Size.y : element.Layout.Size.x;
+            if (run <= 0.0f)
             {
                 return false;
             }
             const f32 fraction =
-                std::clamp((event.Position.x - element.Layout.Min.x) / width, 0.0f, 1.0f);
+                element.Widget.Vertical
+                    ? std::clamp(1.0f - (event.Position.y - element.Layout.Min.y) / run, 0.0f, 1.0f)
+                    : std::clamp((event.Position.x - element.Layout.Min.x) / run, 0.0f, 1.0f);
             SetWidgetValue(element, element.Widget.Min +
                                         fraction * (element.Widget.Max - element.Widget.Min));
             return true;
@@ -1820,12 +1827,18 @@ namespace Veng::Gui
             const f32 step = element.Widget.Step > 0.0f
                                  ? element.Widget.Step
                                  : (element.Widget.Max - element.Widget.Min) * 0.05f;
-            if (action == NavAction::MoveLeft)
+            // A horizontal slider nudges on left/right; a vertical one on up/down (up is +, the
+            // physical-slider convention matching its bottom-Min paint and pointer mapping).
+            const NavAction decrease =
+                element.Widget.Vertical ? NavAction::MoveDown : NavAction::MoveLeft;
+            const NavAction increase =
+                element.Widget.Vertical ? NavAction::MoveUp : NavAction::MoveRight;
+            if (action == decrease)
             {
                 SetWidgetValue(element, element.Widget.Value - step);
                 return true;
             }
-            if (action == NavAction::MoveRight)
+            if (action == increase)
             {
                 SetWidgetValue(element, element.Widget.Value + step);
                 return true;
@@ -2285,6 +2298,26 @@ namespace Veng::Gui
                 range != 0.0f
                     ? std::clamp((element.Widget.Value - element.Widget.Min) / range, 0.0f, 1.0f)
                     : 0.0f;
+            const vec4 thumbColor =
+                faded(style.BorderStyle.Color.a > 0.0f ? style.BorderStyle.Color : style.TextColor);
+            if (element.Widget.Vertical)
+            {
+                // A vertical slider fills from the bottom (Min) toward the top (Max); the square
+                // thumb spans the track's width and rides the fill's top edge.
+                const f32 fillH = rect.Size.y * fraction;
+                if (fraction > 0.0f)
+                {
+                    const Rect track{.Min = vec2(rect.Min.x, rect.Min.y + rect.Size.y - fillH),
+                                     .Size = vec2(rect.Size.x, fillH)};
+                    list.Quad(track, faded(style.TextColor), style.Radii);
+                }
+                const f32 thumb = rect.Size.x;
+                const f32 thumbY =
+                    rect.Min.y + (1.0f - fraction) * std::max(rect.Size.y - thumb, 0.0f);
+                list.Quad(Rect{.Min = vec2(rect.Min.x, thumbY), .Size = vec2(thumb, thumb)},
+                          thumbColor, style.Radii);
+                return;
+            }
             // The filled portion of the track shows the value; a square thumb marks the position.
             const Rect track{.Min = rect.Min, .Size = vec2(rect.Size.x * fraction, rect.Size.y)};
             if (fraction > 0.0f)
@@ -2293,10 +2326,8 @@ namespace Veng::Gui
             }
             const f32 thumb = rect.Size.y;
             const f32 thumbX = rect.Min.x + fraction * std::max(rect.Size.x - thumb, 0.0f);
-            list.Quad(
-                Rect{.Min = vec2(thumbX, rect.Min.y), .Size = vec2(thumb, thumb)},
-                faded(style.BorderStyle.Color.a > 0.0f ? style.BorderStyle.Color : style.TextColor),
-                style.Radii);
+            list.Quad(Rect{.Min = vec2(thumbX, rect.Min.y), .Size = vec2(thumb, thumb)}, thumbColor,
+                      style.Radii);
             return;
         }
     }
