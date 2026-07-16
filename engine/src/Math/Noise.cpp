@@ -1,6 +1,5 @@
 #include <Veng/Math/Noise.h>
 
-#include <array>
 #include <cmath>
 
 namespace Veng
@@ -9,14 +8,17 @@ namespace Veng
     {
         // Folds an integer lattice coordinate into the hash path: floor(p) as
         // signed integers, reinterpreted as u64 lanes, combined with the seed.
+        //
+        // The three coordinates are folded directly rather than through the
+        // Hash64(std::span) overload: the span's iterator abstraction does not inline in
+        // unoptimized builds, where it dominates every noise sample. This is bit-identical
+        // to HashCombine(Hash64({x, y, z}), seed).
         u64 LatticeHash(i32 x, i32 y, i32 z, u64 seed)
         {
-            const std::array<u64, 3> coords = {
-                static_cast<u64>(static_cast<u32>(x)),
-                static_cast<u64>(static_cast<u32>(y)),
-                static_cast<u64>(static_cast<u32>(z)),
-            };
-            return HashCombine(Hash64(std::span<const u64>(coords)), seed);
+            u64 hash = HashCombine(0, static_cast<u64>(static_cast<u32>(x)));
+            hash = HashCombine(hash, static_cast<u64>(static_cast<u32>(y)));
+            hash = HashCombine(hash, static_cast<u64>(static_cast<u32>(z)));
+            return HashCombine(hash, seed);
         }
 
         // Maps a 64-bit hash to a value in [-1, 1].
