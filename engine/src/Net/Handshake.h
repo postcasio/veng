@@ -1,9 +1,10 @@
 #pragma once
 
 #include <Veng/Net/AccountId.h>
+#include <Veng/Net/Blob.h>
+#include <Veng/Net/Messages.h>
 #include <Veng/Net/NetEvents.h>
 #include <Veng/Net/Session.h>
-#include <Veng/Net/TravelPayload.h>
 #include <Veng/Net/WorldKey.h>
 #include <Veng/Veng.h>
 
@@ -47,6 +48,7 @@ namespace Veng::Net
         TravelRequest = 4,
         DirectedTravel = 5,
         LeaveNotice = 6,
+        GameMessage = 7,
     };
 
     /// @brief A client's connect request: the parity payload the server checks at the door.
@@ -173,6 +175,19 @@ namespace Veng::Net
         SessionDurability Durability = SessionDurability::Gameplay;
     };
 
+    /// @brief One decoded game message: the channel it is addressed to and its opaque blob.
+    ///
+    /// Rides the world-multiplexing envelope tagged ControlJoinId beside the join-tier messages,
+    /// framed by a MessageEnvelope (Veng/Net/Messages.h) whose Size names the blob's byte count.
+    /// The engine routes it by Envelope.Channel and never interprets the payload.
+    struct GameMessageFrame
+    {
+        /// @brief The channel id and payload size framing the blob on the wire.
+        MessageEnvelope Envelope;
+        /// @brief The opaque message payload (reflected type id + bytes).
+        Blob Payload;
+    };
+
     /// @brief A client's notice that it is leaving a joined world, so the server tears down its seat.
     ///
     /// Rides the world-multiplexing envelope tagged ControlJoinId. Names the JoinId the client is
@@ -215,6 +230,9 @@ namespace Veng::Net
     [[nodiscard]] vector<u8> EncodeDirectedTravel(const DirectedTravelMessage& message);
     /// @brief Encodes a leave notice (type byte + fields) as a join-tier payload.
     [[nodiscard]] vector<u8> EncodeLeaveNotice(const LeaveNoticeMessage& message);
+    /// @brief Encodes a game message (type byte + MessageEnvelope + blob) as a join-tier payload.
+    /// @pre payload.Bytes.size() fits MaxMessagePayloadSize (the send surfaces enforce it).
+    [[nodiscard]] vector<u8> EncodeGameMessage(ChannelId channel, const Blob& payload);
 
     /// @brief Decodes a connect request; nullopt if truncated or mistyped.
     [[nodiscard]] optional<ConnectRequestMessage> DecodeConnectRequest(std::span<const u8> message);
@@ -236,4 +254,7 @@ namespace Veng::Net
     [[nodiscard]] optional<DirectedTravelMessage> DecodeDirectedTravel(std::span<const u8> payload);
     /// @brief Decodes a leave notice; nullopt if truncated or mistyped.
     [[nodiscard]] optional<LeaveNoticeMessage> DecodeLeaveNotice(std::span<const u8> payload);
+    /// @brief Decodes a game message; nullopt if truncated, mistyped, or its size field disagrees
+    /// with the frame's actual byte count (dropped before any routing).
+    [[nodiscard]] optional<GameMessageFrame> DecodeGameMessage(std::span<const u8> payload);
 }

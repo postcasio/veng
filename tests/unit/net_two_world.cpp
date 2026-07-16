@@ -12,11 +12,13 @@
 
 #include <glm/geometric.hpp>
 
+#include <Veng/Log.h>
 #include <Veng/Net/Client.h>
 #include <Veng/Net/FaultInjectionTransport.h>
 #include <Veng/Net/Host.h>
 #include <Veng/Net/InputFeed.h>
 #include <Veng/Net/LoopbackTransport.h>
+#include <Veng/Net/Messages.h>
 #include <Veng/Net/Replication.h>
 #include <Veng/Net/Server.h>
 #include <Veng/Net/Transport.h>
@@ -5111,4 +5113,778 @@ TEST_CASE("Standalone continue: the registry and directory restore a record with
         0);
     CHECK(warm.Outcome == WorldResolveOutcome::Placed);
     CHECK(warm.World == gameplay.World);
+}
+
+// ---- The game message channel ----------------------------------------------------------------
+
+namespace
+{
+    // The tests' channel names: arbitrary nonzero values (a real consumer mints ChannelIds with
+    // the generate-id tool; the engine only compares them).
+    constexpr ChannelId ChatChannel = 0x1001;
+    constexpr ChannelId PartyChannel = 0x2002;
+
+    // Packs/unpacks a u32 counter into a message blob's opaque bytes — the game's own encoding,
+    // which the engine never interprets.
+    Blob CounterBlob(const u32 value)
+    {
+        Blob blob;
+        blob.Type = 0x61; // an arbitrary game type tag
+        blob.Bytes.resize(sizeof(u32));
+        std::memcpy(blob.Bytes.data(), &value, sizeof(u32));
+        return blob;
+    }
+
+    u32 CounterOf(const Blob& blob)
+    {
+        u32 value = 0;
+        if (blob.Bytes.size() >= sizeof(u32))
+        {
+            std::memcpy(&value, blob.Bytes.data(), sizeof(u32));
+        }
+        return value;
+    }
+
+    // True when the recorded arrivals are exactly 1..N in order — the per-channel reliable-ordered,
+    // exactly-once contract.
+    bool IsGaplessFromOne(const vector<u32>& values)
+    {
+        for (usize i = 0; i < values.size(); ++i)
+        {
+            if (values[i] != static_cast<u32>(i + 1))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // Hand-frames a game message (the wire shape: kind byte, channel, size, blob type, bytes) so
+    // the abuse cases can ship malformed or cap-bypassing frames; also pins the wire layout
+    // independently of the engine's codec.
+    vector<u8> RawGameMessage(const ChannelId channel, const u16 declaredSize,
+                              const std::span<const u8> bytes)
+    {
+        vector<u8> inner;
+        inner.push_back(7); // the game-message kind byte on the join-control tier
+        WriteU64LE(inner, channel);
+        WriteU16LE(inner, declaredSize);
+        WriteU64LE(inner, 0x61); // the blob's game type tag
+        inner.insert(inner.end(), bytes.begin(), bytes.end());
+        return EncodeWorldEnvelope(ControlJoinId, inner);
+    }
+}
+
+TEST_CASE("Messages deliver reliable-ordered per channel under drop/reorder while two worlds' "
+          "snapshots interleave")
+{
+    auto [serverT, clientTBase] = LoopbackTransport::CreatePair();
+    // The whole connection — both worlds' streams and every message channel — rides one lossy,
+    // reordering, duplicating link; the reliable-ordered contract must hold per channel anyway.
+    const FaultInjectionConfig faults{
+        .DropRate = 0.2f, .DuplicateRate = 0.1f, .ReorderRate = 0.15f, .Seed = 4242};
+    FaultInjectionTransport clientLink(*clientTBase, faults);
+
+    TypeRegistry serverTypes;
+    RegisterBuiltinTypes(serverTypes);
+    Unique<Scene> sceneA = Scene::Create(serverTypes);
+    Unique<Scene> sceneB = Scene::Create(serverTypes);
+    const WorldInstanceId worldA{.Value = 1};
+    const WorldInstanceId worldB{.Value = 2};
+    const WorldKey keyA = WorldKey::FromU64(0xA);
+    const WorldKey keyB = WorldKey::FromU64(0xB);
+
+    Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
+        .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
+        .WorldId = worldA,
+        .Key = keyA,
+        .World = *sceneA,
+        .Assets = FakeAssets(),
+        .LevelId = AssetId{0x00000000000000A1ULL},
+        .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
+        .Interest = InterestSettings{.Radius = 0.0f},
+    });
+    REQUIRE(hostR.has_value());
+    Unique<ServerHost> host = std::move(*hostR);
+    host->AddWorld(
+        ServerWorldInfo{.WorldId = worldB,
+                        .Key = keyB,
+                        .World = *sceneB,
+                        .LevelId = AssetId{0x00000000000000B2ULL},
+                        .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
+                        .Interest = InterestSettings{.Radius = 0.0f}});
+
+    // The server records each channel's arrivals; the client records the notify stream.
+    vector<u32> chatAtServer;
+    vector<u32> partyAtServer;
+    host->RegisterChannel(ChatChannel, [&](const ConnectionId, const Blob& blob)
+                          { chatAtServer.push_back(CounterOf(blob)); });
+    host->RegisterChannel(PartyChannel, [&](const ConnectionId, const Blob& blob)
+                          { partyAtServer.push_back(CounterOf(blob)); });
+
+    MultiplexClient client(clientLink);
+    vector<u32> chatAtClient;
+    client.Host->RegisterChannel(ChatChannel, [&](const Blob& blob)
+                                 { chatAtClient.push_back(CounterOf(blob)); });
+
+    const std::unordered_map<u64, Scene*> scenes{{worldA.Value, sceneA.get()},
+                                                 {worldB.Value, sceneB.get()}};
+    MovementSystem movement;
+    std::unordered_map<u64, Entity> pawnByWorld;
+    std::unordered_map<u64, InputJitterBuffer> jitter;
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    bool joined = false;
+    u32 chatSent = 0;
+    u32 partySent = 0;
+    u32 notifySent = 0;
+    for (u64 tick = 1; tick <= 620; ++tick)
+    {
+        now += Delta;
+        // Drive both worlds, then halt with a quiescent tail so the lossy latest-wins streams
+        // converge onto the stopped pose and the reliable retransmits complete.
+        const f32 speed = tick < 420 ? 1.0f : 0.0f;
+        const std::unordered_map<u64, f32> dirs{{worldA.Value, speed}, {worldB.Value, -speed}};
+        DriveWorlds(*host, scenes, dirs, movement, pawnByWorld, tick, Delta);
+
+        // Message traffic interleaves with both worlds' snapshot streams on the one connection: a
+        // counter per channel per tick each way, stopped early enough for the retransmit tail.
+        if (joined && tick <= 500)
+        {
+            REQUIRE(client.Host->Send(ChatChannel, CounterBlob(++chatSent)).has_value());
+            REQUIRE(client.Host->Send(PartyChannel, CounterBlob(++partySent)).has_value());
+            if (!host->Server().Connections().empty())
+            {
+                REQUIRE(host->Send(host->Server().Connections().front(), ChatChannel,
+                                   CounterBlob(++notifySent))
+                            .has_value());
+            }
+        }
+
+        host->Pump(now, tick);
+        IngestConnectionInputs(*host, jitter, InputJitterBuffer::Settings{}, serverTypes);
+        client.Frame(now, Delta);
+        if (!joined && client.Client->State() == ClientState::Connected)
+        {
+            client.Host->Join(keyA);
+            client.Host->Join(keyB);
+            joined = true;
+        }
+
+        // The frame-safe delivery slot, outside the pumps.
+        host->DeliverMessages();
+        client.Host->DeliverMessages();
+    }
+    REQUIRE(client.Host->Joins().size() == 2);
+    REQUIRE(chatSent > 400);
+
+    // Every message arrived exactly once, in send order, on its own channel — the reliable-ordered
+    // contract held per channel while the shared link dropped, duplicated, and reordered datagrams.
+    CHECK(chatAtServer.size() == chatSent);
+    CHECK(partyAtServer.size() == partySent);
+    CHECK(chatAtClient.size() == notifySent);
+    CHECK(IsGaplessFromOne(chatAtServer));
+    CHECK(IsGaplessFromOne(partyAtServer));
+    CHECK(IsGaplessFromOne(chatAtClient));
+
+    // The interleaved snapshots still converged both worlds — the message traffic starved neither.
+    const JoinId joinA = client.Host->Joins()[0];
+    const JoinId joinB = client.Host->Joins()[1];
+    const NetId netA = sceneA->Get<NetIdentity>(pawnByWorld.at(worldA.Value)).Id;
+    const NetId netB = sceneB->Get<NetIdentity>(pawnByWorld.at(worldB.Value)).Id;
+    const Entity aPawn = client.Host->Replication(joinA).Map().Lookup(netA);
+    const Entity bPawn = client.Host->Replication(joinB).Map().Lookup(netB);
+    REQUIRE_FALSE(aPawn.IsNull());
+    REQUIRE_FALSE(bPawn.IsNull());
+    const vec3 serverA = sceneA->Get<Transform>(pawnByWorld.at(worldA.Value)).Position;
+    const vec3 serverB = sceneB->Get<Transform>(pawnByWorld.at(worldB.Value)).Position;
+    CHECK(glm::length(client.Host->World(joinA)->Get<Transform>(aPawn).Position - serverA) < 0.25f);
+    CHECK(glm::length(client.Host->World(joinB)->Get<Transform>(bPawn).Position - serverB) < 0.25f);
+}
+
+TEST_CASE("A message reaches an account before it holds any world join (the invite shape)")
+{
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+
+    TypeRegistry serverTypes;
+    RegisterBuiltinTypes(serverTypes);
+    Unique<Scene> serverScene = Scene::Create(serverTypes);
+    Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
+        .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
+        .World = *serverScene,
+        .Assets = FakeAssets(),
+        .LevelId = LevelId,
+    });
+    REQUIRE(hostR.has_value());
+    Unique<ServerHost> host = std::move(*hostR);
+
+    const AccountId invitee{.Lo = 0x1111, .Hi = 0x2222};
+    IdentityClient client(*clientT, invitee);
+    vector<u32> received;
+    client.Host->RegisterChannel(PartyChannel,
+                                 [&](const Blob& blob) { received.push_back(CounterOf(blob)); });
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    for (u64 tick = 1; tick <= 20; ++tick)
+    {
+        now += Delta;
+        serverScene->SetChangeTick(tick);
+        host->Pump(now, tick);
+        client.Pump(now);
+    }
+    REQUIRE(client.Client->State() == ClientState::Connected);
+    REQUIRE(client.Host->Joins().empty()); // no world join held — the pre-membership shape
+
+    // Messages are connection-scoped, not join-scoped: the account is reachable the moment its
+    // connection is admitted, before it receives any world's stream.
+    REQUIRE(host->Send(invitee, PartyChannel, CounterBlob(7)).has_value());
+    for (u64 tick = 21; tick <= 40; ++tick)
+    {
+        now += Delta;
+        serverScene->SetChangeTick(tick);
+        host->Pump(now, tick);
+        client.Pump(now);
+        client.Host->DeliverMessages();
+    }
+    REQUIRE(received.size() == 1);
+    CHECK(received.front() == 7);
+    CHECK(client.Host->Joins().empty());
+}
+
+TEST_CASE("A send to an unknown or disconnected account fails immediately with its reason")
+{
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+
+    TypeRegistry serverTypes;
+    RegisterBuiltinTypes(serverTypes);
+    Unique<Scene> serverScene = Scene::Create(serverTypes);
+    Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
+        .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
+        .World = *serverScene,
+        .Assets = FakeAssets(),
+        .LevelId = LevelId,
+    });
+    REQUIRE(hostR.has_value());
+    Unique<ServerHost> host = std::move(*hostR);
+
+    // An account nobody presented: the send fails now, with the reason — no retry, no mailbox.
+    const VoidResult toNobody = host->Send(AccountId{.Lo = 9}, ChatChannel, CounterBlob(1));
+    REQUIRE_FALSE(toNobody.has_value());
+    CHECK(toNobody.error().find("no live connection") != string::npos);
+
+    // A connection id never established fails the same way.
+    const VoidResult toNoConn =
+        host->Send(static_cast<ConnectionId>(42), ChatChannel, CounterBlob(1));
+    REQUIRE_FALSE(toNoConn.has_value());
+    CHECK(toNoConn.error().find("not established") != string::npos);
+
+    // Reachable while the connection lives; failing again once it has gone.
+    const AccountId transient{.Lo = 0x7777};
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    {
+        IdentityClient client(*clientT, transient);
+        for (u64 tick = 1; tick <= 20; ++tick)
+        {
+            now += Delta;
+            host->Pump(now, tick);
+            client.Pump(now);
+        }
+        REQUIRE(client.Client->State() == ClientState::Connected);
+        CHECK(host->Send(transient, ChatChannel, CounterBlob(2)).has_value());
+        client.Client->Disconnect();
+        for (u64 tick = 21; tick <= 40; ++tick)
+        {
+            now += Delta;
+            host->Pump(now, tick);
+            client.Pump(now);
+        }
+    }
+    const VoidResult afterDrop = host->Send(transient, ChatChannel, CounterBlob(3));
+    REQUIRE_FALSE(afterDrop.has_value());
+    CHECK(afterDrop.error().find("no live connection") != string::npos);
+}
+
+TEST_CASE("The outbound queue cap fails the N+1th queued send loudly, by count and by bytes")
+{
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+
+    TypeRegistry serverTypes;
+    RegisterBuiltinTypes(serverTypes);
+    Unique<Scene> serverScene = Scene::Create(serverTypes);
+    Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
+        .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
+        .World = *serverScene,
+        .Assets = FakeAssets(),
+        .LevelId = LevelId,
+    });
+    REQUIRE(hostR.has_value());
+    Unique<ServerHost> host = std::move(*hostR);
+
+    IdentityClient client(*clientT, AccountId{.Lo = 0xC1});
+    vector<u32> received;
+    client.Host->RegisterChannel(ChatChannel,
+                                 [&](const Blob& blob) { received.push_back(CounterOf(blob)); });
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    u64 tick = 0;
+    for (u64 i = 0; i < 20; ++i)
+    {
+        ++tick;
+        now += Delta;
+        host->Pump(now, tick);
+        client.Pump(now);
+    }
+    REQUIRE(client.Client->State() == ClientState::Connected);
+    const ConnectionId id = client.Client->AssignedId();
+
+    // The count cap: exactly the cap queues; the N+1th send fails loudly, buffering nothing more.
+    for (u32 i = 0; i < MaxOutboundMessages; ++i)
+    {
+        REQUIRE(host->Send(id, ChatChannel, CounterBlob(i + 1)).has_value());
+    }
+    const VoidResult overCount = host->Send(id, ChatChannel, CounterBlob(0));
+    REQUIRE_FALSE(overCount.has_value());
+    CHECK(overCount.error().find("queue is full") != string::npos);
+
+    // A pump drains the queue (the full burst arrives in order), and sending works again.
+    for (u64 i = 0; i < 20; ++i)
+    {
+        ++tick;
+        now += Delta;
+        host->Pump(now, tick);
+        client.Pump(now);
+        client.Host->DeliverMessages();
+    }
+    CHECK(received.size() == MaxOutboundMessages);
+    CHECK(IsGaplessFromOne(received));
+    REQUIRE(host->Send(id, ChatChannel, CounterBlob(1)).has_value());
+
+    // The byte cap: max-size payloads fill the byte budget long before the count budget.
+    Blob big;
+    big.Type = 0x61;
+    big.Bytes.assign(MaxMessagePayloadSize, 0xAB);
+    u32 accepted = 1; // the probe message above is already queued
+    while (accepted < MaxOutboundMessages)
+    {
+        const VoidResult sent = host->Send(id, ChatChannel, big);
+        if (!sent.has_value())
+        {
+            CHECK(sent.error().find("queue is full") != string::npos);
+            break;
+        }
+        accepted += 1;
+    }
+    CHECK(accepted < MaxOutboundMessages);
+
+    // The client cap mirrors it: the client's N+1th queued send fails the same way.
+    for (u32 i = 0; i < MaxOutboundMessages; ++i)
+    {
+        REQUIRE(client.Host->Send(ChatChannel, CounterBlob(i + 1)).has_value());
+    }
+    const VoidResult clientOver = client.Host->Send(ChatChannel, CounterBlob(0));
+    REQUIRE_FALSE(clientOver.has_value());
+    CHECK(clientOver.error().find("queue is full") != string::npos);
+}
+
+TEST_CASE("An oversized payload fails at send; the exact bound transmits")
+{
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+
+    TypeRegistry serverTypes;
+    RegisterBuiltinTypes(serverTypes);
+    Unique<Scene> serverScene = Scene::Create(serverTypes);
+    Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
+        .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
+        .World = *serverScene,
+        .Assets = FakeAssets(),
+        .LevelId = LevelId,
+    });
+    REQUIRE(hostR.has_value());
+    Unique<ServerHost> host = std::move(*hostR);
+
+    vector<usize> receivedSizes;
+    host->RegisterChannel(ChatChannel, [&](const ConnectionId, const Blob& blob)
+                          { receivedSizes.push_back(blob.Bytes.size()); });
+
+    IdentityClient client(*clientT, AccountId{.Lo = 0xC2});
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    u64 tick = 0;
+    for (u64 i = 0; i < 20; ++i)
+    {
+        ++tick;
+        now += Delta;
+        host->Pump(now, tick);
+        client.Pump(now);
+    }
+    REQUIRE(client.Client->State() == ClientState::Connected);
+
+    // One byte past the stated bound fails at send — no fragmentation, no silent truncation.
+    Blob oversize;
+    oversize.Type = 0x61;
+    oversize.Bytes.assign(MaxMessagePayloadSize + 1, 0xCD);
+    const VoidResult tooBig = client.Host->Send(ChatChannel, oversize);
+    REQUIRE_FALSE(tooBig.has_value());
+    CHECK(tooBig.error().find("exceeds") != string::npos);
+
+    // A payload at exactly the bound is accepted and arrives whole through the datagram budget.
+    Blob maximal;
+    maximal.Type = 0x61;
+    maximal.Bytes.assign(MaxMessagePayloadSize, 0xEF);
+    REQUIRE(client.Host->Send(ChatChannel, maximal).has_value());
+    for (u64 i = 0; i < 20; ++i)
+    {
+        ++tick;
+        now += Delta;
+        host->Pump(now, tick);
+        client.Pump(now);
+        host->DeliverMessages();
+    }
+    REQUIRE(receivedSizes.size() == 1);
+    CHECK(receivedSizes.front() == MaxMessagePayloadSize);
+}
+
+TEST_CASE("A truncated or malformed message frame drops before routing; the stream stays live")
+{
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+
+    TypeRegistry serverTypes;
+    RegisterBuiltinTypes(serverTypes);
+    Unique<Scene> serverScene = Scene::Create(serverTypes);
+    Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
+        .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
+        .World = *serverScene,
+        .Assets = FakeAssets(),
+        .LevelId = LevelId,
+    });
+    REQUIRE(hostR.has_value());
+    Unique<ServerHost> host = std::move(*hostR);
+
+    vector<u32> received;
+    host->RegisterChannel(ChatChannel, [&](const ConnectionId, const Blob& blob)
+                          { received.push_back(CounterOf(blob)); });
+
+    IdentityClient client(*clientT, AccountId{.Lo = 0xC3});
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    u64 tick = 0;
+    for (u64 i = 0; i < 20; ++i)
+    {
+        ++tick;
+        now += Delta;
+        host->Pump(now, tick);
+        client.Pump(now);
+    }
+    REQUIRE(client.Client->State() == ClientState::Connected);
+
+    // Three malformed frames, hand-shipped down the reliable channel: a kind byte alone (shorter
+    // than the header), a size field overrunning its bytes, and trailing bytes past the declared
+    // size. Each must drop before any routing.
+    Connection& wire = client.Client->Server();
+    const vector<u8> stub = EncodeWorldEnvelope(ControlJoinId, vector<u8>{7});
+    REQUIRE(wire.Send(Channel::ReliableOrdered, stub).has_value());
+    const u8 one[]{0xAA};
+    REQUIRE(wire.Send(Channel::ReliableOrdered, RawGameMessage(ChatChannel, 100, one)).has_value());
+    const u8 two[]{0xAA, 0xBB};
+    REQUIRE(wire.Send(Channel::ReliableOrdered, RawGameMessage(ChatChannel, 1, two)).has_value());
+
+    // A well-formed message queued behind them still delivers on the intact connection.
+    REQUIRE(client.Host->Send(ChatChannel, CounterBlob(1)).has_value());
+    for (u64 i = 0; i < 20; ++i)
+    {
+        ++tick;
+        now += Delta;
+        host->Pump(now, tick);
+        client.Pump(now);
+        host->DeliverMessages();
+    }
+    CHECK(received == vector<u32>{1});
+    CHECK(client.Client->State() == ClientState::Connected);
+}
+
+TEST_CASE("An inbound message flood drops the flooding connection; a peer's worlds stay served")
+{
+    const auto hub = CreateRef<Hub>();
+    const u32 serverEndpoint = hub->Register();
+    auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
+    ServerWorld server(*serverT);
+
+    auto hostileT = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    auto normalT = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    IdentityClient hostile(*hostileT, AccountId{.Lo = 0xBAD});
+    ClientWorld normal(*normalT);
+
+    u32 received = 0;
+    server.Host->RegisterChannel(ChatChannel,
+                                 [&](const ConnectionId, const Blob&) { received += 1; });
+
+    const ActionState move = MoveState(vec2(1.0f, 0.0f));
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    u64 tick = 0;
+    for (u64 i = 0; i < 120; ++i)
+    {
+        ++tick;
+        now += Delta;
+        server.SimStep(tick, Delta);
+        server.NetPump(now, tick);
+        hostile.Pump(now);
+        normal.Frame(now, tick, Delta, move);
+        server.Host->DeliverMessages();
+    }
+    REQUIRE(hostile.Client->State() == ClientState::Connected);
+    REQUIRE(normal.Host->IsJoined());
+    const ConnectionId hostileId = hostile.Client->AssignedId();
+    const ConnectionId normalId = normal.Client->AssignedId();
+
+    // The flood: one burst past the per-pump budget, hand-framed to bypass the sender-side cap
+    // (a hostile peer does not run our send surface).
+    for (u32 i = 0; i < 300; ++i)
+    {
+        vector<u8> counter;
+        WriteU32LE(counter, i);
+        REQUIRE(hostile.Client->Server()
+                    .Send(Channel::ReliableOrdered, RawGameMessage(ChatChannel, 4, counter))
+                    .has_value());
+    }
+
+    bool sawDisconnect = false;
+    for (u64 i = 0; i < 120; ++i)
+    {
+        ++tick;
+        now += Delta;
+        server.SimStep(tick, Delta);
+        server.NetPump(now, tick);
+        hostile.Pump(now);
+        normal.Frame(now, tick, Delta, move);
+        server.Host->DeliverMessages();
+        for (const NetEvent& event : server.Host->Events())
+        {
+            if (event.Type == NetEventType::Disconnected && event.Id == hostileId)
+            {
+                sawDisconnect = true;
+            }
+        }
+    }
+
+    // The flooder was dropped and none of its burst delivered; the budget protected the pump.
+    CHECK(sawDisconnect);
+    CHECK(received == 0);
+    const std::span<const ConnectionId> live = server.Host->Server().Connections();
+    CHECK(std::ranges::find(live, hostileId) == live.end());
+
+    // The peer connection stayed joined and its world stayed served: its pawn kept advancing on
+    // the driven input and replicating.
+    CHECK(normal.Host->IsJoined());
+    const Entity normalPawn = server.Pawns.at(normalId);
+    CHECK(server.World->Get<Transform>(normalPawn).Position.x > 0.3f);
+    REQUIRE_FALSE(normal.OwnPawn.IsNull());
+}
+
+TEST_CASE("A message on an unregistered channel drops with a one-shot per-channel log")
+{
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+
+    TypeRegistry serverTypes;
+    RegisterBuiltinTypes(serverTypes);
+    Unique<Scene> serverScene = Scene::Create(serverTypes);
+    Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
+        .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
+        .World = *serverScene,
+        .Assets = FakeAssets(),
+        .LevelId = LevelId,
+    });
+    REQUIRE(hostR.has_value());
+    Unique<ServerHost> host = std::move(*hostR);
+
+    vector<u32> partyReceived;
+    host->RegisterChannel(PartyChannel, [&](const ConnectionId, const Blob& blob)
+                          { partyReceived.push_back(CounterOf(blob)); });
+
+    IdentityClient client(*clientT, AccountId{.Lo = 0xC4});
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    u64 tick = 0;
+    for (u64 i = 0; i < 20; ++i)
+    {
+        ++tick;
+        now += Delta;
+        host->Pump(now, tick);
+        client.Pump(now);
+    }
+    REQUIRE(client.Client->State() == ClientState::Connected);
+
+    // Count the unregistered-channel warnings; the guard restores the default sink even on a
+    // failing assertion so no later test logs into a dangling capture.
+    u32 warnings = 0;
+    struct SinkGuard
+    {
+        ~SinkGuard() { Log::SetSink(nullptr); }
+    } guard;
+    Log::SetSink(
+        [&warnings](const Log::Level level, const std::string_view message)
+        {
+            if (level == Log::Level::Warn &&
+                message.find("unregistered channel") != std::string_view::npos)
+            {
+                warnings += 1;
+            }
+        });
+
+    // Three messages on a channel nobody registered: all drop, one line logged; the registered
+    // channel beside it still delivers.
+    CHECK(client.Host->Send(ChatChannel, CounterBlob(1)).has_value());
+    CHECK(client.Host->Send(ChatChannel, CounterBlob(2)).has_value());
+    CHECK(client.Host->Send(ChatChannel, CounterBlob(3)).has_value());
+    CHECK(client.Host->Send(PartyChannel, CounterBlob(4)).has_value());
+    for (u64 i = 0; i < 20; ++i)
+    {
+        ++tick;
+        now += Delta;
+        host->Pump(now, tick);
+        client.Pump(now);
+        host->DeliverMessages();
+    }
+    CHECK(warnings == 1);
+    CHECK(partyReceived == vector<u32>{4});
+}
+
+TEST_CASE("Receipt is frame-safe: a channel handler runs only at the delivery point, never "
+          "mid-tick")
+{
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+    ServerWorld server(*serverT);
+    ClientWorld client(*clientT);
+
+    // The tick guard: held across the sim step and both net pumps; a handler firing inside either
+    // would be a mid-tick or mid-pump delivery and trips the CHECK.
+    bool inTick = false;
+    u32 delivered = 0;
+    server.Host->RegisterChannel(ChatChannel,
+                                 [&](const ConnectionId, const Blob&)
+                                 {
+                                     CHECK_FALSE(inTick);
+                                     delivered += 1;
+                                 });
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    for (u64 tick = 1; tick <= 120; ++tick)
+    {
+        now += Delta;
+        if (client.Client->State() == ClientState::Connected)
+        {
+            REQUIRE(
+                client.Host->Send(ChatChannel, CounterBlob(static_cast<u32>(tick))).has_value());
+        }
+        inTick = true;
+        server.SimStep(tick, Delta);
+        server.NetPump(now, tick); // messages arrive here — queued, never dispatched
+        client.Frame(now, tick, Delta, std::nullopt);
+        inTick = false;
+        server.Host->DeliverMessages(); // the frame-safe slot: the only place handlers run
+    }
+    CHECK(delivered > 50);
+}
+
+TEST_CASE("Account-addressed sends reach the wire, the local account loops back, and "
+          "SendToWorldMembers fans out over the membership")
+{
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+
+    TypeRegistry serverTypes;
+    RegisterBuiltinTypes(serverTypes);
+    Unique<Scene> serverScene = Scene::Create(serverTypes);
+
+    // The listen-host shape: a shared directory the host borrows, with the local player's account
+    // pinned as bucket presence (the Application path), so the key's membership unions the local
+    // account beside connected ones.
+    const AccountId localPlayer{.Lo = 0xCA11, .Hi = 0x1};
+    Unique<WorldDirectory> directory = WorldDirectory::Create(WorldDirectoryInfo{});
+    const WorldInstanceId worldId{.Value = 1};
+
+    Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
+        .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
+        .WorldId = worldId,
+        .World = *serverScene,
+        .Assets = FakeAssets(),
+        .LevelId = LevelId,
+        .LocalAccount = localPlayer,
+        .Directory = directory.get(),
+    });
+    REQUIRE(hostR.has_value());
+    Unique<ServerHost> host = std::move(*hostR);
+    directory->Pin(worldId, localPlayer);
+
+    vector<u32> localReceived;
+    vector<ConnectionId> localFrom;
+    host->RegisterChannel(PartyChannel,
+                          [&](const ConnectionId from, const Blob& blob)
+                          {
+                              localFrom.push_back(from);
+                              localReceived.push_back(CounterOf(blob));
+                          });
+
+    const AccountId remotePlayer{.Lo = 0xBEEF, .Hi = 0x2};
+    IdentityClient client(*clientT, remotePlayer);
+    vector<u32> remoteReceived;
+    client.Host->RegisterChannel(PartyChannel, [&](const Blob& blob)
+                                 { remoteReceived.push_back(CounterOf(blob)); });
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    u64 tick = 0;
+    const auto pump = [&]
+    {
+        ++tick;
+        now += Delta;
+        serverScene->SetChangeTick(tick);
+        host->Pump(now, tick);
+        client.Pump(now);
+        host->DeliverMessages();
+        client.Host->DeliverMessages();
+    };
+    for (u64 i = 0; i < 20; ++i)
+    {
+        pump();
+    }
+    REQUIRE(client.Client->State() == ClientState::Connected);
+    client.Host->Join(DefaultWorldKey);
+    for (u64 i = 0; i < 20; ++i)
+    {
+        pump();
+    }
+    REQUIRE(client.Host->IsJoined());
+
+    // A connected account rides the wire; the local account loops back to the local handler,
+    // connection-free, tagged as coming from the server itself.
+    REQUIRE(host->Send(remotePlayer, PartyChannel, CounterBlob(1)).has_value());
+    REQUIRE(host->Send(localPlayer, PartyChannel, CounterBlob(2)).has_value());
+    for (u64 i = 0; i < 20; ++i)
+    {
+        pump();
+    }
+    CHECK(remoteReceived == vector<u32>{1});
+    CHECK(localReceived == vector<u32>{2});
+    CHECK(localFrom == vector<ConnectionId>{ServerConnectionId});
+
+    // The members fan-out: the joined account and the pinned local account are both members of
+    // the world's key, so one call reaches both — the wire for one, the loopback for the other.
+    REQUIRE(host->SendToWorldMembers(worldId, PartyChannel, CounterBlob(3)).has_value());
+    for (u64 i = 0; i < 20; ++i)
+    {
+        pump();
+    }
+    CHECK(remoteReceived == (vector<u32>{1, 3}));
+    CHECK(localReceived == (vector<u32>{2, 3}));
+
+    // A members send naming no hosted world fails with its reason.
+    const VoidResult unknown =
+        host->SendToWorldMembers(WorldInstanceId{.Value = 99}, PartyChannel, CounterBlob(4));
+    REQUIRE_FALSE(unknown.has_value());
+    CHECK(unknown.error().find("not hosted") != string::npos);
 }

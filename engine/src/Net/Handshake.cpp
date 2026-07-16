@@ -116,6 +116,7 @@ namespace Veng::Net
         case JoinMessageType::TravelRequest:
         case JoinMessageType::DirectedTravel:
         case JoinMessageType::LeaveNotice:
+        case JoinMessageType::GameMessage:
             return static_cast<JoinMessageType>(payload[0]);
         }
         return {};
@@ -395,5 +396,38 @@ namespace Veng::Net
             return {};
         }
         return LeaveNoticeMessage{.Join = ReadU16LE(payload, 1)};
+    }
+
+    vector<u8> EncodeGameMessage(ChannelId channel, const Blob& payload)
+    {
+        vector<u8> out;
+        out.reserve(TypeByteSize + 8 + 2 + 8 + payload.Bytes.size());
+        WriteJoinType(out, JoinMessageType::GameMessage);
+        WriteU64LE(out, channel);
+        WriteU16LE(out, static_cast<u16>(payload.Bytes.size()));
+        WriteU64LE(out, payload.Type);
+        out.insert(out.end(), payload.Bytes.begin(), payload.Bytes.end());
+        return out;
+    }
+
+    optional<GameMessageFrame> DecodeGameMessage(std::span<const u8> payload)
+    {
+        constexpr usize headerSize = TypeByteSize + 8 + 2 + 8;
+        if (!HasJoinType(payload, JoinMessageType::GameMessage, headerSize))
+        {
+            return {};
+        }
+        const ChannelId channel = ReadU64LE(payload, 1);
+        const u16 size = ReadU16LE(payload, 9);
+        // Strict length agreement: a truncated frame (fewer bytes than Size claims) and a padded one
+        // both drop, so a malformed frame can never smuggle trailing bytes past the framing.
+        if (payload.size() != headerSize + size)
+        {
+            return {};
+        }
+        GameMessageFrame frame{.Envelope = MessageEnvelope{.Channel = channel, .Size = size}};
+        frame.Payload.Type = ReadU64LE(payload, 11);
+        frame.Payload.Bytes.assign(payload.begin() + headerSize, payload.end());
+        return frame;
     }
 }

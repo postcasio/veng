@@ -318,6 +318,41 @@ pawn, plus every **always-relevant** entity, plus an optional `GameNetInfo::Inte
 - The relevancy query is a headless-safe scene query, so a dedicated server filters interest with
   no graphics stack.
 
+## Game messages — the event complement to replicated state
+
+Replication is latest-wins by design — right for a position, structurally wrong for a chat line,
+an invite, or a question. For those, the hosts carry **named, reliable-ordered, connection-scoped
+messages**: opaque `Net::Blob`s the engine moves and never interprets (`Veng/Net/Messages.h`). The
+heuristic: *if someone who wasn't there needs it later, it is state (replicate it); if it only
+matters in the moment, it is a message.* Messages carry **no state** — a mailbox or a materialized
+copy over messages rebuilds replication by hand.
+
+```cpp
+// Both peers register against the same minted ChannelId (vengc generate-id).
+constexpr Net::ChannelId ChatChannel = 0x...ULL;
+
+// Server: receive (the sender's connection identifies who), send by connection or account.
+server.RegisterChannel(ChatChannel, [&](Net::ConnectionId from, const Net::Blob& blob) { ... });
+(void)server.Send(account, ChatChannel, MakeBlob(...));          // fails if the account is offline
+(void)server.SendToWorldMembers(world, ChatChannel, MakeBlob(...)); // one send per member account
+
+// Client: client → server only (everything routes through the host).
+client.RegisterChannel(ChatChannel, [&](const Net::Blob& blob) { ... });
+(void)client.Send(ChatChannel, MakeBlob(...));
+```
+
+- A payload packs a reflected value through the field serializer (`WriteFields`/`ReadFields`),
+  its type id named on the blob; the bound is `Net::MaxMessagePayloadSize` (~1.1 KiB — no
+  fragmentation, an oversized payload fails at send).
+- Delivery is **reliable-ordered within a live connection, at-most-once across its lifetime**;
+  every failure is loud (a `VoidResult` reason): disconnected account, outbound queue cap,
+  oversize. There is no offline queue — persistence is state, not messaging.
+- **Receipt is frame-safe**: the managed `Application` delivers queued messages at its
+  top-of-frame slot, so a handler may touch scene state freely. A host driven by hand calls
+  `DeliverMessages()` at its own frame-safe point.
+- An account-addressed send to the listen host's own player (no connection) loops back to the
+  local handler; hello-triangle's demo channel (a ping/notify round-trip) is the exemplar.
+
 ## Playing under adversity — `--netsim` and the tuning knobs
 
 The launcher ships a network-simulation flag in every build (a dev/QA tool, inert unless set):
