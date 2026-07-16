@@ -7,6 +7,7 @@
 #include <Veng/Net/JoinRequest.h>
 #include <Veng/Net/ClockSync.h>
 #include <Veng/Net/Interest.h>
+#include <Veng/Net/Messages.h>
 #include <Veng/Net/NetEvents.h>
 #include <Veng/Net/PredictionHistory.h>
 #include <Veng/Net/Reconciliation.h>
@@ -164,6 +165,13 @@ namespace Veng
         /// so the consumer can capture its persistent state; the world's runner teardown follows. Pre-
         /// registered worlds (Create + AddWorld) are never reaped — the consumer owns their lifetime.
         function<void(WorldInstanceId)> CloseWorld;
+        /// @brief The local player's account (a listen host's own player); invalid for a host with none.
+        ///
+        /// An account-addressed message send resolving to this account loops back to the host's own
+        /// registered channel handler, connection-free — the listen host's player is a first-class
+        /// message recipient beside connected ones. A dedicated host resolves no local account and
+        /// leaves it invalid.
+        Net::AccountId LocalAccount;
         /// @brief The directory the host consumes for get-or-place + lifetime; unset builds one from the hooks.
         ///
         /// When set (borrowed, must outlive the host), the host resolves joins and reports presence
@@ -314,6 +322,67 @@ namespace Veng
         /// @param payload     The opaque travel payload the client carries into the join.
         void DirectTravel(Net::ConnectionId connection, Net::JoinId leave, const Net::WorldKey& key,
                           const Net::TravelPayload& payload);
+
+        /// @brief Registers the handler for a game message channel; one handler per channel.
+        ///
+        /// Inbound messages addressed to @p channel deliver to @p onMessage at DeliverMessages with
+        /// the originating connection (ServerConnectionId for a local loopback delivery — see
+        /// ServerHostInfo::LocalAccount) and the opaque blob. Registering an already-registered
+        /// channel replaces its handler. A message on a channel with no handler drops with a
+        /// one-shot per-channel log.
+        /// @param channel    The minted channel id to receive on.
+        /// @param onMessage  The handler invoked per delivered message.
+        void RegisterChannel(Net::ChannelId channel,
+                             function<void(Net::ConnectionId, const Net::Blob&)> onMessage);
+
+        /// @brief Queues a game message to one connection on a channel; fails loudly, never silently.
+        ///
+        /// Reliable-ordered within the live connection, at-most-once across its lifetime: a message
+        /// accepted here either arrives in order or the connection has died. Fails with the reason
+        /// when the connection is unknown, the payload exceeds Net::MaxMessagePayloadSize (no
+        /// fragmentation), or the connection's outbound queue is at its cap
+        /// (Net::MaxOutboundMessages / Net::MaxOutboundMessageBytes, whichever first). Queued
+        /// messages flush on the next Pump.
+        /// @param to       The connection to deliver to.
+        /// @param channel  The channel the peer's handler is registered on.
+        /// @param payload  The opaque message blob; moved into the queue.
+        /// @return Empty on acceptance, or the failure reason.
+        VoidResult Send(Net::ConnectionId to, Net::ChannelId channel, Net::Blob payload);
+
+        /// @brief Queues a game message to an account; fails immediately when it is not reachable.
+        ///
+        /// Resolves the account's live connection (ConnectionFor) and sends there. An account with
+        /// no live connection fails with the reason — no engine retry, no offline queue — except
+        /// the host's own local account (ServerHostInfo::LocalAccount), which loops back to the
+        /// local registered handler, connection-free, delivered at DeliverMessages like any inbound
+        /// message.
+        /// @param to       The account to deliver to.
+        /// @param channel  The channel the recipient's handler is registered on.
+        /// @param payload  The opaque message blob; moved into the queue.
+        /// @return Empty on acceptance, or the failure reason.
+        VoidResult Send(Net::AccountId to, Net::ChannelId channel, Net::Blob payload);
+
+        /// @brief Queues a game message to every member account of a hosted world's key.
+        ///
+        /// Fans out over the directory's membership (WorldDirectory::MembersOf) for the world's
+        /// key — every account present across the key's buckets, the listen host's own player
+        /// included (looped back connection-free) — one account-addressed send each. Fails with the
+        /// reason when @p world names no hosted world; a member send that fails (an outbound cap)
+        /// is folded into the returned error while the remaining members still receive.
+        /// @param world    A hosted world's id; its key names the membership.
+        /// @param channel  The channel the members' handlers are registered on.
+        /// @param payload  The opaque message blob, copied per member.
+        /// @return Empty when every member send was accepted, or the failure reason(s).
+        VoidResult SendToWorldMembers(WorldInstanceId world, Net::ChannelId channel,
+                                      const Net::Blob& payload);
+
+        /// @brief Delivers queued inbound game messages to their registered channel handlers.
+        ///
+        /// Receipt is frame-safe: Pump only queues inbound messages, and this dispatches them —
+        /// call it at a point outside any scene iteration or sim tick (Application calls it at its
+        /// top-of-frame request-drain slot). Messages deliver in arrival order per connection. A
+        /// message on an unregistered channel drops with a one-shot per-channel log.
+        void DeliverMessages();
 
         /// @brief The number of currently live hosted worlds (pre-registered plus factory-opened).
         [[nodiscard]] usize HostedWorldCount() const;
@@ -503,6 +572,39 @@ namespace Veng
         /// @brief Pumps one frame: advance the connection, resolve join replies, apply each stream.
         /// @param now  Monotonic time in seconds (injected).
         void Pump(f64 now);
+
+        /// @brief Registers the handler for a game message channel; one handler per channel.
+        ///
+        /// Inbound messages addressed to @p channel deliver to @p onMessage at DeliverMessages —
+        /// the sender is always the server (the only peer), so the handler takes only the blob.
+        /// Registering an already-registered channel replaces its handler. A message on a channel
+        /// with no handler drops with a one-shot per-channel log.
+        /// @param channel    The minted channel id to receive on.
+        /// @param onMessage  The handler invoked per delivered message.
+        void RegisterChannel(Net::ChannelId channel, function<void(const Net::Blob&)> onMessage);
+
+        /// @brief Queues a game message to the server on a channel; fails loudly, never silently.
+        ///
+        /// Client → server is the only client direction (no client ↔ client; everything routes
+        /// through the host) and doubles as the write lane into host-side services: a remote
+        /// client's state-affecting request rides a channel the owning service validates and
+        /// applies. Reliable-ordered within the live connection, at-most-once across its lifetime.
+        /// Fails with the reason when the client is not connected, the payload exceeds
+        /// Net::MaxMessagePayloadSize (no fragmentation), or the outbound queue is at its cap
+        /// (Net::MaxOutboundMessages / Net::MaxOutboundMessageBytes, whichever first). Queued
+        /// messages flush on the next Pump.
+        /// @param channel  The channel the server's handler is registered on.
+        /// @param payload  The opaque message blob; moved into the queue.
+        /// @return Empty on acceptance, or the failure reason.
+        VoidResult Send(Net::ChannelId channel, Net::Blob payload);
+
+        /// @brief Delivers queued inbound game messages to their registered channel handlers.
+        ///
+        /// Receipt is frame-safe: Pump only queues inbound messages, and this dispatches them —
+        /// call it at a point outside any scene iteration or sim tick (Application calls it at its
+        /// top-of-frame request-drain slot). Messages deliver in arrival order. A message on an
+        /// unregistered channel drops with a one-shot per-channel log.
+        void DeliverMessages();
 
         /// @brief The JoinIds this client currently holds, in ascending order.
         /// @return The joined worlds' JoinIds, empty before the first join lands.

@@ -425,6 +425,9 @@ namespace Veng
             .MaxHostedWorlds = net.MaxHostedWorlds,
             .MaxPlayersPerInstance = net.MaxPlayersPerInstance,
             .IdleKeepWarmDwell = net.IdleKeepWarmDwell,
+            // The listen host's own player is an account-addressed message recipient (loopback,
+            // connection-free); a dedicated host resolves no local account and this stays invalid.
+            .LocalAccount = m_LocalAccount,
             // The host consumes the Application-owned directory (get-or-place, presence, dwell, reap);
             // the policy hooks and caps already live in it, so they are not repeated here.
             .Directory = m_Directory.get(),
@@ -1377,6 +1380,21 @@ namespace Veng
         // input snapshot and the world tick. Runs on the local Application only; requests never ride
         // the wire.
         DrainRequestComponents();
+
+        // Deliver queued inbound game messages at the same frame-safe point: the hosts' pumps only
+        // queue them, and dispatching here — outside any scene iteration, before the world tick —
+        // means a channel handler observing scene state never runs mid-tick.
+        if (m_Net)
+        {
+            if (m_Net->Server)
+            {
+                m_Net->Server->DeliverMessages();
+            }
+            if (m_Net->ClientHost)
+            {
+                m_Net->ClientHost->DeliverMessages();
+            }
+        }
 
         // Before BeginFrame: continuations that register or retire resources must
         // land before AcquireNextFrame or their GPU-state mutation is frame-ambiguous.

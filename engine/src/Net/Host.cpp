@@ -10,9 +10,11 @@
 #include <Veng/Net/WorldEnvelope.h>
 
 #include <algorithm>
+#include <deque>
 #include <map>
 #include <span>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 namespace Veng
@@ -142,6 +144,18 @@ namespace Veng
             std::map<Net::JoinId, JoinState> Joins; // ordered, so the first is the current-join
             std::unordered_map<Net::WorldKey, Net::JoinId> KeyToJoin;
             Net::JoinId NextJoin = 1; // monotonic per connection, never reused, one reserved
+            // Queued outbound game messages (already framed), flushed into the reliable stream at
+            // Pump; the send-time cap bounds them so a caller outrunning the pump fails loudly.
+            std::deque<vector<u8>> OutboundMessages;
+            usize OutboundBytes = 0;
+        };
+
+        // One inbound game message queued for the frame-safe delivery point.
+        struct InboundMessage
+        {
+            Net::ConnectionId From = Net::ServerConnectionId;
+            Net::ChannelId Channel = Net::InvalidChannelId;
+            Net::Blob Payload;
         };
 
         Net::ServerInfo InfoServer;
@@ -161,6 +175,14 @@ namespace Veng
 
         std::unordered_map<Net::ConnectionId, ConnectionState> Connections;
         vector<Net::NetEvent> Events;
+
+        // The game message channel: registered handlers, the frame-safe inbound queue, the one-shot
+        // unregistered-channel warnings, and the local account loopback sends resolve to.
+        std::unordered_map<Net::ChannelId, function<void(Net::ConnectionId, const Net::Blob&)>>
+            Channels;
+        vector<InboundMessage> Inbound;
+        std::unordered_set<Net::ChannelId> UnregisteredWarned;
+        Net::AccountId LocalAccount;
 
         HostedWorld& WorldOf(WorldInstanceId id)
         {
@@ -502,6 +524,79 @@ namespace Veng
                 Worlds.erase(id.Value);
             }
         }
+
+        // Validates and queues one outbound game message for a connection: payload bound and
+        // outbound cap enforced at send (fail-loud, never a silent cap), the framed bytes flushed
+        // into the reliable stream at Pump.
+        VoidResult QueueMessage(Net::ConnectionId to, Net::ChannelId channel, Net::Blob&& payload)
+        {
+            VE_ASSERT(channel != Net::InvalidChannelId, "game message sent on the invalid channel");
+            if (payload.Bytes.size() > Net::MaxMessagePayloadSize)
+            {
+                return std::unexpected(
+                    fmt::format("message payload of {} bytes exceeds the {}-byte bound",
+                                payload.Bytes.size(), Net::MaxMessagePayloadSize));
+            }
+            const auto it = Connections.find(to);
+            if (it == Connections.end())
+            {
+                return std::unexpected(fmt::format("connection {} is not established", to));
+            }
+            ConnectionState& conn = it->second;
+            vector<u8> frame = Net::EncodeWorldEnvelope(Net::ControlJoinId,
+                                                        Net::EncodeGameMessage(channel, payload));
+            if (conn.OutboundMessages.size() >= Net::MaxOutboundMessages ||
+                conn.OutboundBytes + frame.size() > Net::MaxOutboundMessageBytes)
+            {
+                return std::unexpected(
+                    fmt::format("connection {}'s outbound message queue is full ({} messages, {} "
+                                "bytes queued)",
+                                to, conn.OutboundMessages.size(), conn.OutboundBytes));
+            }
+            conn.OutboundBytes += frame.size();
+            conn.OutboundMessages.push_back(std::move(frame));
+            return {};
+        }
+
+        // Flushes every connection's queued game messages into its reliable-ordered stream, in send
+        // order. A connection the server no longer holds drops its queue (the connection died; the
+        // at-most-once contract stands).
+        void FlushOutboundMessages()
+        {
+            for (auto& [id, conn] : Connections)
+            {
+                if (conn.OutboundMessages.empty())
+                {
+                    continue;
+                }
+                const std::span<const Net::ConnectionId> live = Server->Connections();
+                if (std::ranges::find(live, id) == live.end())
+                {
+                    conn.OutboundMessages.clear();
+                    conn.OutboundBytes = 0;
+                    continue;
+                }
+                for (const vector<u8>& frame : conn.OutboundMessages)
+                {
+                    (void)Server->Get(id).Send(Net::Channel::ReliableOrdered, frame);
+                }
+                conn.OutboundMessages.clear();
+                conn.OutboundBytes = 0;
+            }
+        }
+
+        // Drops a connection that exceeded the per-pump inbound message budget: the flooder is
+        // disconnected with the logged reason and its queued messages are discarded, so it cannot
+        // starve the peers sharing the pump.
+        void DropFlooder(Net::ConnectionId id, u32 messages, usize bytes)
+        {
+            Log::Warn("ServerHost dropping connection {}: inbound message flood ({} messages, {} "
+                      "bytes in one pump)",
+                      id, messages, bytes);
+            (void)Server->Disconnect(id, Net::DisconnectReason::Kicked);
+            std::erase_if(Inbound,
+                          [id](const InboundMessage& message) { return message.From == id; });
+        }
     };
 
     ServerHost::ServerHost(Unique<State> state) : m_State(std::move(state)) {}
@@ -513,6 +608,7 @@ namespace Veng
         auto state = CreateUnique<State>();
         state->Assets = &info.Assets;
         state->Primary = info.WorldId;
+        state->LocalAccount = info.LocalAccount;
 
         // Consume a borrowed directory when given one (the Application-shared path); otherwise build a
         // private one from the info's caps and policy hooks (the self-contained ServerHost).
@@ -609,6 +705,10 @@ namespace Veng
             }
         }
 
+        // Flush queued game messages into each connection's reliable stream before the transport
+        // pumps, so a message accepted this frame goes out with it.
+        s.FlushOutboundMessages();
+
         // Receive + connection handshake + flush + reap dead peers.
         s.Server->Pump(now);
 
@@ -640,6 +740,10 @@ namespace Veng
         // request; a world-tagged frame is world data (the ClientReady), gated on the granted set.
         for (const Net::ConnectionId id : s.Server->Connections())
         {
+            // The per-pump inbound message budget: a connection flooding game messages is dropped
+            // (with its queued messages) rather than starving the peers sharing this pump.
+            u32 inboundMessages = 0;
+            usize inboundBytes = 0;
             for (const vector<u8>& message : s.Server->ReliableAppMessages(id))
             {
                 const optional<Net::WorldEnvelope> env = Net::DecodeWorldEnvelope(message);
@@ -650,6 +754,27 @@ namespace Veng
                 if (env->Join == Net::ControlJoinId)
                 {
                     const optional<Net::JoinMessageType> type = Net::PeekJoinType(env->Payload);
+                    if (type == Net::JoinMessageType::GameMessage)
+                    {
+                        inboundMessages += 1;
+                        inboundBytes += message.size();
+                        if (inboundMessages > Net::MaxInboundMessagesPerPump ||
+                            inboundBytes > Net::MaxInboundMessageBytesPerPump)
+                        {
+                            s.DropFlooder(id, inboundMessages, inboundBytes);
+                            break;
+                        }
+                        if (optional<Net::GameMessageFrame> frame =
+                                Net::DecodeGameMessage(env->Payload))
+                        {
+                            // Queued, not dispatched: delivery is frame-safe (DeliverMessages).
+                            s.Inbound.push_back(
+                                State::InboundMessage{.From = id,
+                                                      .Channel = frame->Envelope.Channel,
+                                                      .Payload = std::move(frame->Payload)});
+                        }
+                        continue;
+                    }
                     if (type == Net::JoinMessageType::JoinRequest)
                     {
                         if (const optional<Net::JoinRequestMessage> request =
@@ -822,6 +947,100 @@ namespace Veng
         m_State->SendDirectedTravel(connection, leave, key, payload);
     }
 
+    void ServerHost::RegisterChannel(const Net::ChannelId channel,
+                                     function<void(Net::ConnectionId, const Net::Blob&)> onMessage)
+    {
+        VE_ASSERT(channel != Net::InvalidChannelId, "RegisterChannel on the invalid channel id");
+        m_State->Channels.insert_or_assign(channel, std::move(onMessage));
+    }
+
+    VoidResult ServerHost::Send(const Net::ConnectionId to, const Net::ChannelId channel,
+                                Net::Blob payload)
+    {
+        return m_State->QueueMessage(to, channel, std::move(payload));
+    }
+
+    VoidResult ServerHost::Send(const Net::AccountId to, const Net::ChannelId channel,
+                                Net::Blob payload)
+    {
+        State& s = *m_State;
+        const Net::ConnectionId connection = ConnectionFor(to);
+        if (connection != Net::ServerConnectionId)
+        {
+            return s.QueueMessage(connection, channel, std::move(payload));
+        }
+        // The listen host's own player holds no connection; its messages loop back to the local
+        // registered handler, queued for the same frame-safe delivery as wire-borne ones.
+        if (s.LocalAccount.IsValid() && to == s.LocalAccount)
+        {
+            VE_ASSERT(channel != Net::InvalidChannelId, "game message sent on the invalid channel");
+            if (payload.Bytes.size() > Net::MaxMessagePayloadSize)
+            {
+                return std::unexpected(
+                    fmt::format("message payload of {} bytes exceeds the {}-byte bound",
+                                payload.Bytes.size(), Net::MaxMessagePayloadSize));
+            }
+            s.Inbound.push_back(State::InboundMessage{.From = Net::ServerConnectionId,
+                                                      .Channel = channel,
+                                                      .Payload = std::move(payload)});
+            return {};
+        }
+        return std::unexpected("account has no live connection");
+    }
+
+    VoidResult ServerHost::SendToWorldMembers(const WorldInstanceId world,
+                                              const Net::ChannelId channel,
+                                              const Net::Blob& payload)
+    {
+        State& s = *m_State;
+        const State::HostedWorld* hosted = s.TryWorldOf(world);
+        if (hosted == nullptr)
+        {
+            return std::unexpected(fmt::format("world {} is not hosted", world.Value));
+        }
+        usize failed = 0;
+        string firstError;
+        for (const Net::AccountId& member : s.Directory->MembersOf(hosted->Key))
+        {
+            if (VoidResult sent = Send(member, channel, payload); !sent)
+            {
+                failed += 1;
+                if (firstError.empty())
+                {
+                    firstError = std::move(sent.error());
+                }
+            }
+        }
+        if (failed > 0)
+        {
+            return std::unexpected(fmt::format("{} member send(s) failed: {}", failed, firstError));
+        }
+        return {};
+    }
+
+    void ServerHost::DeliverMessages()
+    {
+        State& s = *m_State;
+        // Swap the queue out so a handler sending (or looping back) during delivery appends to a
+        // fresh queue for the next frame rather than extending this iteration.
+        vector<State::InboundMessage> inbound = std::move(s.Inbound);
+        s.Inbound.clear();
+        for (const State::InboundMessage& message : inbound)
+        {
+            const auto it = s.Channels.find(message.Channel);
+            if (it == s.Channels.end())
+            {
+                if (s.UnregisteredWarned.insert(message.Channel).second)
+                {
+                    Log::Warn("ServerHost dropping message on unregistered channel {:016X}",
+                              message.Channel);
+                }
+                continue;
+            }
+            it->second(message.From, message.Payload);
+        }
+    }
+
     usize ServerHost::HostedWorldCount() const
     {
         return m_State->Directory->WorldCount();
@@ -895,6 +1114,22 @@ namespace Veng
         vector<PendingJoin> Pending;
         u32 NextToken = 1;
         Net::JoinId CurrentJoin = Net::ControlJoinId;
+
+        // One inbound game message queued for the frame-safe delivery point (the sender is always
+        // the server, so only the channel and blob are recorded).
+        struct InboundMessage
+        {
+            Net::ChannelId Channel = Net::InvalidChannelId;
+            Net::Blob Payload;
+        };
+
+        // The game message channel: registered handlers, the frame-safe inbound queue, the queued
+        // outbound frames (flushed at Pump, capped at send), and the one-shot warnings.
+        std::unordered_map<Net::ChannelId, function<void(const Net::Blob&)>> Channels;
+        vector<InboundMessage> Inbound;
+        std::deque<vector<u8>> OutboundMessages;
+        usize OutboundBytes = 0;
+        std::unordered_set<Net::ChannelId> UnregisteredWarned;
 
         [[nodiscard]] JoinClient* CurrentJoinClient()
         {
@@ -1173,6 +1408,64 @@ namespace Veng
         m_State->LeaveJoin(join);
     }
 
+    void ClientHost::RegisterChannel(const Net::ChannelId channel,
+                                     function<void(const Net::Blob&)> onMessage)
+    {
+        VE_ASSERT(channel != Net::InvalidChannelId, "RegisterChannel on the invalid channel id");
+        m_State->Channels.insert_or_assign(channel, std::move(onMessage));
+    }
+
+    VoidResult ClientHost::Send(const Net::ChannelId channel, Net::Blob payload)
+    {
+        State& s = *m_State;
+        VE_ASSERT(channel != Net::InvalidChannelId, "game message sent on the invalid channel");
+        if (s.Client->State() != Net::ClientState::Connected)
+        {
+            return std::unexpected("client is not connected");
+        }
+        if (payload.Bytes.size() > Net::MaxMessagePayloadSize)
+        {
+            return std::unexpected(
+                fmt::format("message payload of {} bytes exceeds the {}-byte bound",
+                            payload.Bytes.size(), Net::MaxMessagePayloadSize));
+        }
+        vector<u8> frame =
+            Net::EncodeWorldEnvelope(Net::ControlJoinId, Net::EncodeGameMessage(channel, payload));
+        if (s.OutboundMessages.size() >= Net::MaxOutboundMessages ||
+            s.OutboundBytes + frame.size() > Net::MaxOutboundMessageBytes)
+        {
+            return std::unexpected(
+                fmt::format("the outbound message queue is full ({} messages, {} bytes queued)",
+                            s.OutboundMessages.size(), s.OutboundBytes));
+        }
+        s.OutboundBytes += frame.size();
+        s.OutboundMessages.push_back(std::move(frame));
+        return {};
+    }
+
+    void ClientHost::DeliverMessages()
+    {
+        State& s = *m_State;
+        // Swap the queue out so a handler sending during delivery appends to a fresh queue for the
+        // next frame rather than extending this iteration.
+        vector<State::InboundMessage> inbound = std::move(s.Inbound);
+        s.Inbound.clear();
+        for (const State::InboundMessage& message : inbound)
+        {
+            const auto it = s.Channels.find(message.Channel);
+            if (it == s.Channels.end())
+            {
+                if (s.UnregisteredWarned.insert(message.Channel).second)
+                {
+                    Log::Warn("ClientHost dropping message on unregistered channel {:016X}",
+                              message.Channel);
+                }
+                continue;
+            }
+            it->second(message.Payload);
+        }
+    }
+
     void ClientHost::Pump(f64 now)
     {
         State& s = *m_State;
@@ -1204,6 +1497,19 @@ namespace Veng
             }
         }
 
+        // Flush queued game messages into the reliable stream, in send order.
+        for (const vector<u8>& frame : s.OutboundMessages)
+        {
+            (void)s.Client->Server().Send(Net::Channel::ReliableOrdered, frame);
+        }
+        s.OutboundMessages.clear();
+        s.OutboundBytes = 0;
+
+        // The per-pump inbound message budget: a flooding peer is dropped (with its queued
+        // messages) rather than starving the join replies and spawn stream sharing the channel.
+        u32 inboundMessages = 0;
+        usize inboundBytes = 0;
+
         // Drain the reliable channel: a join-control frame is a join reply; a world-tagged frame is
         // that world's spawn/despawn stream, demuxed to its ReplicationClient (dropped if ungranted).
         for (const vector<u8>& message : s.Client->ReliableAppMessages())
@@ -1216,6 +1522,30 @@ namespace Veng
             if (env->Join == Net::ControlJoinId)
             {
                 const optional<Net::JoinMessageType> type = Net::PeekJoinType(env->Payload);
+                if (type == Net::JoinMessageType::GameMessage)
+                {
+                    inboundMessages += 1;
+                    inboundBytes += message.size();
+                    if (inboundMessages > Net::MaxInboundMessagesPerPump ||
+                        inboundBytes > Net::MaxInboundMessageBytesPerPump)
+                    {
+                        Log::Warn("ClientHost disconnecting: inbound message flood ({} messages, "
+                                  "{} bytes in one pump)",
+                                  inboundMessages, inboundBytes);
+                        s.Client->Disconnect();
+                        s.Inbound.clear();
+                        break;
+                    }
+                    if (optional<Net::GameMessageFrame> frame =
+                            Net::DecodeGameMessage(env->Payload))
+                    {
+                        // Queued, not dispatched: delivery is frame-safe (DeliverMessages).
+                        s.Inbound.push_back(
+                            State::InboundMessage{.Channel = frame->Envelope.Channel,
+                                                  .Payload = std::move(frame->Payload)});
+                    }
+                    continue;
+                }
                 if (type == Net::JoinMessageType::JoinAccept)
                 {
                     if (const optional<Net::JoinAcceptMessage> accept =

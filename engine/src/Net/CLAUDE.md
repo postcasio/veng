@@ -245,8 +245,10 @@ server's decision, identified per-connection by the `JoinId`, and the echoed con
 across buckets of one key. A bucket that empties reaps per the idle keep-warm dwell and drops out of the
 key's list, its peers untouched.
 
-**The travel payload and server-directed travel.** `Net::TravelPayload` is an opaque
-`{ TypeId; bytes }` blob the engine **moves but never decodes**: it rides the **join request** into
+**The travel payload and server-directed travel.** `Net::Blob` (`Blob.h`) is the one opaque
+`{ TypeId; bytes }` shape for every consumer value the engine **moves but never decodes** — travel
+params and game messages alike; `Net::TravelPayload` aliases it (the travel surfaces' spelling). As
+the travel payload it rides the **join request** into
 `Authorize`/`Placement`/`WorldFactory`, is recorded on the bucket, and is **echoed in the join reply**
 so a client's factory-parameterized reconstruction has its inputs — a world can be parameterized by data
 no client-derivable key encodes (a drop-out position). A client that must let the server resolve such a
@@ -337,6 +339,36 @@ Application-level concern, not something the host drives; the per-`JoinId` clock
 exercised structurally (distinct estimators), not through a genuine different-rate end-to-end
 scenario.
 
+## The game message channel
+
+Messages are the **event complement to replicated world-state**: named, reliable-ordered,
+connection-scoped opaque `Net::Blob`s the engine moves and never interprets (`Messages.h`) — what
+state structurally cannot carry: pre-membership delivery (an invite must reach a connection before
+it holds the group's join), history a latest-wins snapshot legitimately skips (chat), and
+request/response. **Messages carry no state** — state over messages would rebuild replication by
+hand. A **`ChannelId`** (a minted `u64`, the `SystemId` id family) names each channel; the framing
+is a `MessageEnvelope { Channel, Size }` message kind on the reliable-ordered channel under
+`ControlJoinId` (the join-control tier's thin-envelope discipline; decode bounds-checked, a
+truncated or padded frame drops before routing). Channels share the connection's one reliable
+stream, so ordering is **per connection across all channels**; per-channel sequencing is a named
+future. Delivery is **reliable-ordered within a live connection, at-most-once across its
+lifetime** — no engine retry, no offline queue (a mailbox is state and belongs in a world or a
+store). Topology is client → server and server → connection(s) only — no client ↔ client; the
+client → server direction doubles as the write lane into host-side services (a remote client's
+state-world write is a channel request the owning service validates and applies). The surfaces
+live on the hosts: `RegisterChannel` (one handler per channel; an unregistered channel drops with
+a one-shot log), `ServerHost::Send` by connection or by **account** (via `ConnectionFor`; the
+listen host's own local account, `ServerHostInfo::LocalAccount`, loops back to the local handler
+connection-free), `SendToWorldMembers` (fan-out over the directory's `MembersOf`), and
+`ClientHost::Send`. Bounds fail loudly, never silently: max payload is
+`Net::MaxMessagePayloadSize` (the reliable message bound minus the framing, ~1.1 KiB — no
+fragmentation), a per-connection **outbound** queue cap (256 messages / 64 KiB, whichever first)
+fails further sends, a per-connection **inbound** per-pump budget (256 messages / 64 KiB) drops
+the flooding connection with a logged reason, and a send to an unknown or disconnected account
+fails immediately. **Receipt is frame-safe**: the pumps only queue inbound messages;
+`DeliverMessages()` dispatches them — `Application` calls it at its top-of-frame request-drain
+slot, so a handler observing scene state never runs mid-tick.
+
 ## Tests & exemplar
 
 The hello-triangle sample's opt-in multiplayer mode is the consumption exemplar: a
@@ -345,7 +377,9 @@ presentation in a net session, a per-seat pawn reconciler that pawns the listen 
 each connection's from the shared `netpawn` prefab, and the `OnClientPossession` / host camera
 wiring. It consumes the managed `Application` net path, so a `--server`/`--join` launch joins the
 single managed world by `Net::DefaultWorldKey` over the multiplexed transport — one joined world, one
-`JoinId` — and drives the `ServerHost` through the current-join convenience accessors. Its `--name
+`JoinId` — and drives the `ServerHost` through the current-join convenience accessors. It registers
+one demo message channel (a minted `ChannelId`; a ping/notify round-trip carrying a reflected value
+packed through the field serializer) as the canonical message-channel usage. Its `--name
 <s>` launch token supplies the `Identity` hook as a stable hash of the name, so relaunching with the
 same name presents the same account; without it the process-random ephemeral default stands. The two-world
 integration suite (`tests/unit/net_two_world.cpp` — a server scene + client scene over a
@@ -359,7 +393,11 @@ account through `Authorize`/`SeatAccount`/the host accessors, the `AdmitAccount`
 normalization, the duplicate-live refusal with the first connection undisturbed, reconnect
 re-binding across a fresh `ConnectionId`, the zombie-window refusal clearing on timeout,
 `MembersOf` across joined worlds with a local account beside connected ones, and the minted
-ephemeral default). The consolidated
+ephemeral default) — and the message-channel band (per-channel ordered exactly-once delivery under
+seeded drop/reorder while two worlds' snapshots interleave, pre-membership delivery, the
+disconnected-account and oversize send failures, both outbound caps, the inbound flood drop
+sparing the peer connection, the truncated-frame drop, the one-shot unregistered-channel log,
+frame-safe receipt under a tick guard, and the local-account loopback + members fan-out). The consolidated
 convergence suite (`net_reconciliation.cpp`) runs prediction + rollback + delta + quantization +
 interest under combined loss + latency and asserts byte-equal convergence (lossless wire) or
 within-quantum convergence after quiescence, with bounded history/baseline. Prediction/rollback,

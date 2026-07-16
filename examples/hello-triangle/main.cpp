@@ -35,7 +35,9 @@
 #include <Veng/Input.h>
 #include <Veng/Input/Actions.h>
 #include <Veng/Net/Host.h>
+#include <Veng/Net/Messages.h>
 #include <Veng/Net/Replication.h>
+#include <Veng/Reflection/Serialize.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/InputMappingSystem.h>
 #include <Veng/Scene/AnimationSystem.h>
@@ -91,6 +93,24 @@ struct MultiplayerMode
 };
 
 VE_TYPE(::MultiplayerMode, 0xF4220F737E702E78ULL);
+
+// The sample's one game message channel: a minted ChannelId (vengc generate-id) both peers register
+// against, carrying a ping/notify round-trip — the canonical message-channel usage. The joined
+// client sends one reflected ChannelPing; the server's handler logs it and echoes it back on the
+// same channel; the client's handler logs the notify.
+constexpr Net::ChannelId DemoChannelId = 0xE762E43AD6721580ULL;
+
+// The reflected value the demo channel carries. A message payload is an opaque Net::Blob the engine
+// never interprets; the game packs a reflected value through the shared field serializer
+// (WriteFields/ReadFields) and names its type on the blob so the receiving handler can decode it.
+struct ChannelPing
+{
+    u32 Sequence = 0;
+};
+
+VE_REFLECT(::ChannelPing, 0x98F30DB91D4AF9B7ULL)
+VE_FIELD(Sequence, .DisplayName = "Sequence")
+VE_REFLECT_END();
 
 // Derives a stable account id from the --name launch token: FNV-1a over the name into each
 // 64-bit half (differently seeded), so relaunching with the same name presents the same account
@@ -705,6 +725,92 @@ protected:
         // stand in for a menu's Host / Join / Leave buttons.
         PollNetModeRequests();
         PollSwapDemo();
+        SyncDemoChannel();
+    }
+
+    // Packs a ChannelPing into an opaque message blob through the shared field serializer, naming
+    // its reflected type so the receiving handler can discriminate and decode it.
+    Net::Blob EncodePing(const ChannelPing& ping)
+    {
+        Net::Blob blob;
+        blob.Type = TypeIdOf<ChannelPing>();
+        WriteFields(blob.Bytes, &ping, GetTypeRegistry().Info(blob.Type), GetTypeRegistry());
+        return blob;
+    }
+
+    // Decodes a demo-channel blob back into a ChannelPing; nullopt for a foreign type or bad bytes.
+    optional<ChannelPing> DecodePing(const Net::Blob& blob)
+    {
+        if (blob.Type != TypeIdOf<ChannelPing>())
+        {
+            return {};
+        }
+        ChannelPing ping;
+        if (!ReadFields(blob.Bytes, &ping, GetTypeRegistry().Info(blob.Type), GetTypeRegistry()))
+        {
+            return {};
+        }
+        return ping;
+    }
+
+    // Registers the demo message channel on whichever host is live and drives its ping/notify
+    // round-trip: the joined client sends one ChannelPing after its join lands, the server's
+    // handler logs it and echoes it back to the sending connection, and the client's handler logs
+    // the notify. Handlers run at the engine's frame-safe delivery point (never mid-tick), so they
+    // may touch scene state freely; this demo only logs. Registration re-arms when a host instance
+    // changes (a runtime host/join/stop-net cycle constructs fresh hosts).
+    void SyncDemoChannel()
+    {
+        ServerHost* const server = GetServerHost();
+        if (server != m_ChannelServer)
+        {
+            m_ChannelServer = server;
+            if (server != nullptr)
+            {
+                server->RegisterChannel(
+                    DemoChannelId,
+                    [this, server](const Net::ConnectionId from, const Net::Blob& blob)
+                    {
+                        const optional<ChannelPing> ping = DecodePing(blob);
+                        if (!ping.has_value())
+                        {
+                            return;
+                        }
+                        Log::Info("demo channel: ping {} from connection {}", ping->Sequence, from);
+                        // Echo the notify half of the round-trip back to the sender. A loopback
+                        // delivery (the listen host's own player) arrives as ServerConnectionId
+                        // and has no wire to echo down.
+                        if (from != Net::ServerConnectionId)
+                        {
+                            (void)server->Send(from, DemoChannelId, EncodePing(*ping));
+                        }
+                    });
+            }
+        }
+
+        ClientHost* const client = GetClientHost();
+        if (client != m_ChannelClient)
+        {
+            m_ChannelClient = client;
+            m_PingSent = false;
+            if (client != nullptr)
+            {
+                client->RegisterChannel(DemoChannelId,
+                                        [this](const Net::Blob& blob)
+                                        {
+                                            if (const optional<ChannelPing> ping = DecodePing(blob))
+                                            {
+                                                Log::Info("demo channel: notify {} from the server",
+                                                          ping->Sequence);
+                                            }
+                                        });
+            }
+        }
+        if (client != nullptr && !m_PingSent && client->IsJoined())
+        {
+            (void)client->Send(DemoChannelId, EncodePing(ChannelPing{.Sequence = 1}));
+            m_PingSent = true;
+        }
     }
 
     // Drives the adopt-in-place swap on a joined client: F12 hops the client between the default world
@@ -1268,6 +1374,12 @@ private:
     Net::JoinId m_SwapLeaveJoin = Net::ControlJoinId;
     Net::WorldKey m_SwapTarget;
     Net::WorldKey m_CurrentRegime = Net::DefaultWorldKey;
+
+    // Demo-channel state: the host instances the channel is registered on (re-armed when a runtime
+    // host/join cycle constructs fresh ones) and whether this session's one ping went out.
+    ServerHost* m_ChannelServer = nullptr;
+    ClientHost* m_ChannelClient = nullptr;
+    bool m_PingSent = false;
 };
 
 // Factory captures the headless flag so the launcher stays game-agnostic.
@@ -1281,6 +1393,9 @@ extern "C" void VengModuleRegister(VengModuleHost* host)
 
     // The tag the app seeds onto the settings entity to switch the spawn rule into net mode.
     host->Types.Register<MultiplayerMode>();
+
+    // The demo message channel's reflected payload, packed/decoded through the field serializer.
+    host->Types.Register<ChannelPing>();
 
     // The game-mode rule spawns the configured player prefab at the session's start, so the pawn
     // and seat exist before the control pipeline ticks.
