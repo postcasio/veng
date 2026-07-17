@@ -446,9 +446,22 @@ world's tick space (a Scene stamps a write with its own sim tick), so aligning t
 to the same space is what closes the gap; an unstamped component (change tick 0) is `≤` any baseline
 in either space, so it replicates through spawn and keyframes exactly as before. A world at or near the
 host rate is byte-identical to a host-tick stamp, since its own tick and the host tick coincide.
+
+**Snapshot emission is one per qualifying world tick, not one per host pump.** Stamping the cadence
+in the world's tick space is necessary but not sufficient on its own: `ReplicationServer::Generate`
+gates on the world's own sim tick, but `Generate` runs once per host `Pump` — faster than a sub-rate
+world advances — so a single qualifying tick persists across many consecutive pumps, and the
+`tick % SnapshotInterval == 0` gate would re-emit a fresh snapshot on every one of them (a
+`SnapshotInterval` of 1 emitting a snapshot every pump, ~60× intended; the keyframe cadence inflating
+the same way). Each connection records `LastSnapshotTick` — the world tick its last snapshot went out
+on — and skips a repeat of it, collapsing emission to **one snapshot per qualifying world tick
+regardless of pump rate**; the sentinel (never a real tick) fires the first snapshot, including one at
+tick 0. A world ticking at or above the host rate advances its tick every pump and is unaffected; a
+slow frame running zero sim steps no longer re-emits the prior tick's snapshot. So a sub-rate world's
+idle traffic converges to zero between changes rather than spending a pump-rate burst.
 `ServerHost::ReplicationBytesForWorld(WorldInstanceId)` reports a world's accumulated replication
 traffic (snapshots + spawns/despawns) over the host's lifetime — the instrument that measures a
-low-rate world spending bytes on deltas between keyframes.
+low-rate world's delta cost between keyframes and proves its idle traffic flat between changes.
 
 ## The game message channel
 
