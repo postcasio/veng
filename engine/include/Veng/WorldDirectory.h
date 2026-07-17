@@ -281,6 +281,16 @@ namespace Veng
         /// @param world  The world to query.
         [[nodiscard]] const Net::TravelPayload& PayloadOf(WorldInstanceId world) const;
 
+        /// @brief Returns the factory resolution recorded when a bucket was opened, or nullptr.
+        ///
+        /// Every factory-opened bucket records its ServerWorldResolution, so a caller that did not
+        /// run the factory itself can still wrap the bucket — a ServerHost borrowing a shared
+        /// directory hosts a bucket a local (standalone) travel opened when a remote join converges
+        /// on it. Null for a pre-registered (Register) or unknown world.
+        /// @param world  The world to query.
+        /// @return The recorded resolution, or nullptr.
+        [[nodiscard]] const ServerWorldResolution* ResolutionOf(WorldInstanceId world) const;
+
     private:
         struct State;
 

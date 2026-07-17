@@ -947,6 +947,18 @@ namespace Veng
         /// @param scene  The runner-owned scene the join loaded into @p world.
         void StartWorldScene(WorldInstanceId world, Scene& scene);
 
+        /// @brief Rebinds a managed viewport onto a presenting join's freshly installed world.
+        ///
+        /// The client arm of the present-on-ready front door: when a presenting join (its request or
+        /// directed travel carried the Present flag) installs into a fresh runner world, the managed
+        /// viewport its travel targeted (viewport 0 for an unprompted directed travel or a reattach's
+        /// gameplay restore) rebinds onto that world once it is ready — the same
+        /// RebindWorldWhenReady machinery a standalone travel presents through. A join already
+        /// presented (the auto-joined managed world) or non-presenting rebinds nothing.
+        /// @param join   The JoinId whose world just installed and started.
+        /// @param world  The runner world the join installed into.
+        void PresentJoinedWorld(Net::JoinId join, WorldInstanceId world);
+
         /// @brief Closes a joined client world by JoinId: teardown the runner world and its net state.
         ///
         /// The client-side "leave" of a make-before-break directed travel: once the destination join is
@@ -996,9 +1008,12 @@ namespace Veng
 
         /// @brief Returns whether @p world is net-active — bound by the process's transport this frame.
         ///
-        /// True only for a world in the host-side world→role map (one the mounted host hosts or has
-        /// joined). A standalone Server-tier world with no transport is not net-active, so the drive
-        /// neither pumps net for it nor threads the net input feed through its Sim steps.
+        /// True for a world in the host-side world→role map (one the mounted host hosts or has
+        /// joined) and, on a hosting process, for any live directory bucket — every bucket is
+        /// join-visible there (a standalone travel's world converges with a remote join), so its
+        /// change ticks stamp and its wire input feeds like any hosted world's. A standalone
+        /// Server-tier world with no transport is not net-active, so the drive neither pumps net
+        /// for it nor threads the net input feed through its Sim steps.
         /// @param world  The world to test.
         /// @return True when @p world is bound by a mounted host.
         [[nodiscard]] bool IsWorldNetActive(WorldInstanceId world) const;

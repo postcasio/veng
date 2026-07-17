@@ -729,6 +729,10 @@ namespace Veng
         /// @param join  The JoinId to test.
         [[nodiscard]] bool IsPresenting(Net::JoinId join) const;
 
+        /// @brief The WorldKey a join was requested and granted for, or the zero key when unknown.
+        /// @param join  The JoinId to resolve.
+        [[nodiscard]] Net::WorldKey JoinKey(Net::JoinId join) const;
+
         /// @brief The prediction history for the current join's predicted set.
         [[nodiscard]] Net::PredictionHistory& History();
 

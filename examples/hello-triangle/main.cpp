@@ -446,6 +446,14 @@ private:
     {
         if (info.Net)
         {
+            // The connect-and-enter front door (HT_ENTER=<host>): the client names the world it
+            // enters on connect rather than auto-joining the default key, so the granted join
+            // installs a fresh runner world and presents through the engine's present-on-ready
+            // rebind — a scripted stand-in for a menu's "join into world X" button.
+            if (std::getenv("HT_ENTER") != nullptr)
+            {
+                info.Net->AutoJoinDefaultWorld = false;
+            }
             info.Net->Identity = [app]() -> Net::AccountId
             {
                 const optional<string>& name = app->GetLaunchArguments().Name;
@@ -765,8 +773,28 @@ protected:
         // start-hosting / connect / stop-net operations it cannot call directly. Here the mode keys
         // stand in for a menu's Host / Join / Leave buttons.
         PollNetModeRequests();
+        PollConnectAndEnter();
         PollSwapDemo();
         SyncDemoChannel();
+    }
+
+    // Stamps the HT_ENTER connect-and-enter request once: connect to the named host and travel to
+    // the regime-B world in one ConnectRequest, exercising the front door where the presenting join
+    // lands in a fresh runner world (no default-key auto-join masking the presentation path).
+    void PollConnectAndEnter()
+    {
+        if (m_EnterStamped)
+        {
+            return;
+        }
+        const char* host = std::getenv("HT_ENTER");
+        Scene* const scene = ManagedScene();
+        if (host == nullptr || scene == nullptr)
+        {
+            return;
+        }
+        m_EnterStamped = true;
+        scene->Add(scene->CreateEntity(), ConnectRequest{.Host = host, .Join = RegimeBKey()});
     }
 
     // Packs a ChannelPing into an opaque message blob through the shared field serializer, naming
@@ -1422,6 +1450,9 @@ private:
     // once under `--server`; invalid until then).
     WorldInstanceId m_RegimeWorld;
     bool m_RegimeRegistered = false;
+
+    // Whether the one-shot HT_ENTER connect-and-enter request has been stamped.
+    bool m_EnterStamped = false;
 
     // Client swap state (the make-before-break driver): the join to leave once the adopted destination
     // is ready, the key being adopted, and the regime the client currently presents.

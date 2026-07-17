@@ -4394,6 +4394,199 @@ TEST_CASE(
     CHECK(directory->MembersOf(keyB).front() == remote);
 }
 
+TEST_CASE("A remote join converges on a bucket a local standalone travel opened, wrapped on demand")
+{
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+
+    TypeRegistry serverTypes;
+    RegisterBuiltinTypes(serverTypes);
+    Unique<Scene> primaryScene = Scene::Create(serverTypes);
+    Unique<Scene> travelScene; // opened by the factory on the local travel
+    const WorldInstanceId primaryWorld{.Value = 1};
+    const WorldInstanceId travelWorld{.Value = 2};
+    const WorldKey travelKey = WorldKey::FromU64(0x77);
+    const AssetId travelLevel{0x00000000000000B7ULL};
+    usize factoryOpens = 0;
+
+    // The Application-shared shape: the borrowed directory owns get-or-place and runs the factory.
+    // A local (standalone) travel resolves through the directory alone — no host in the call path —
+    // so the host must wrap that bucket on demand when a remote join converges on it.
+    Unique<WorldDirectory> directory = WorldDirectory::Create(WorldDirectoryInfo{
+        .WorldFactory = [&](const WorldKey&,
+                            const TravelPayload&) -> optional<ServerWorldResolution>
+        {
+            factoryOpens += 1;
+            travelScene = Scene::Create(serverTypes);
+            return ServerWorldResolution{
+                .WorldId = travelWorld, .World = travelScene.get(), .LevelId = travelLevel};
+        },
+    });
+
+    Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
+        .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
+        .WorldId = primaryWorld,
+        .World = *primaryScene,
+        .Assets = FakeAssets(),
+        .LevelId = LevelId,
+        .Directory = directory.get(),
+    });
+    REQUIRE(hostR.has_value());
+    Unique<ServerHost> host = std::move(*hostR);
+
+    // The local player's standalone travel: the connection-less resolve Application performs, which
+    // opens the bucket through the factory and pins it presented — the host never sees the open.
+    const AccountId local{.Lo = 0x10CA1};
+    const TravelPayload noPayload;
+    const WorldResolveResult travel = directory->Resolve(
+        JoinRequestInfo{
+            .Connection = ConnectionId{}, .Account = local, .Key = travelKey, .Payload = noPayload},
+        /*heldWorlds=*/0);
+    REQUIRE(travel.Outcome == WorldResolveOutcome::Opened);
+    REQUIRE(travel.World == travelWorld);
+    directory->Pin(travelWorld, local);
+
+    // A remote client joins the same key: placement converges on the live bucket and the host wraps
+    // it from the directory's recorded resolution instead of asserting on the unknown world.
+    const AccountId remote{.Lo = 0x2222};
+    IdentityClient client(*clientT, remote);
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    u64 tick = 0;
+    bool requested = false;
+    const auto pump = [&]
+    {
+        ++tick;
+        now += Delta;
+        primaryScene->SetChangeTick(tick);
+        if (travelScene)
+        {
+            travelScene->SetChangeTick(tick);
+        }
+        host->Pump(now, tick);
+        client.Pump(now);
+    };
+    while (!client.Host->IsJoined() && tick < 60)
+    {
+        pump();
+        if (!requested && client.Client->State() == ClientState::Connected)
+        {
+            client.Host->Join(travelKey);
+            requested = true;
+        }
+    }
+    REQUIRE(client.Host->IsJoined());
+    for (u64 step = 0; step < 30; ++step)
+    {
+        pump(); // let the seat spawn ride the now-open stream
+    }
+
+    // The join converged on the standalone-opened bucket — no second factory open — with its seat
+    // spawned in that scene and the reply carrying the recorded level; the spawn reached the client.
+    CHECK(factoryOpens == 1);
+    const ConnectionId id = client.Client->AssignedId();
+    CHECK(host->WorldFor(id) == travelWorld);
+    const Entity seat = host->SeatFor(id);
+    REQUIRE_FALSE(seat.IsNull());
+    CHECK(travelScene->IsAlive(seat));
+    CHECK_FALSE(client.Host->Seat(client.Host->CurrentJoinId()).IsNull());
+
+    // Presence sums the local pin and the remote join; both accounts are members of the key.
+    CHECK(directory->PresenceOf(travelWorld) == 2);
+    CHECK(directory->MembersOf(travelKey).size() == 2);
+
+    // A registered-but-unhosted bucket records no resolution, so a join of its key is refused
+    // (never a fatal assert) and the connection stays live.
+    const WorldKey orphanKey = WorldKey::FromU64(0x88);
+    directory->Register(orphanKey, WorldInstanceId{.Value = 99});
+    client.Host->Join(orphanKey);
+    for (u64 step = 0; step < 40; ++step)
+    {
+        pump();
+    }
+    CHECK(client.Host->Joins().size() == 1);
+    CHECK(client.Client->State() == ClientState::Connected);
+}
+
+TEST_CASE("A presenting travel carries its key and presentation onto the installed join")
+{
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+
+    TypeRegistry serverTypes;
+    RegisterBuiltinTypes(serverTypes);
+    Unique<Scene> sceneA = Scene::Create(serverTypes);
+    Unique<Scene> sceneB = Scene::Create(serverTypes);
+    const WorldInstanceId worldA{.Value = 1};
+    const WorldInstanceId worldB{.Value = 2};
+    const WorldKey keyB = WorldKey::FromU64(0xB0B);
+
+    Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
+        .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
+        .WorldId = worldA,
+        .World = *sceneA,
+        .Assets = FakeAssets(),
+        .LevelId = LevelId,
+    });
+    REQUIRE(hostR.has_value());
+    Unique<ServerHost> host = std::move(*hostR);
+    host->AddWorld(ServerWorldInfo{
+        .WorldId = worldB,
+        .Key = keyB,
+        .World = *sceneB,
+        .LevelId = AssetId{0x00000000000000B2ULL},
+    });
+
+    const AccountId account{.Lo = 0x3333};
+    IdentityClient client(*clientT, account);
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    u64 tick = 0;
+    const auto pump = [&]
+    {
+        ++tick;
+        now += Delta;
+        sceneA->SetChangeTick(tick);
+        sceneB->SetChangeTick(tick);
+        host->Pump(now, tick);
+        client.Pump(now);
+    };
+
+    bool requested = false;
+    while (!client.Host->IsJoined() && tick < 60)
+    {
+        pump();
+        if (!requested && client.Client->State() == ClientState::Connected)
+        {
+            client.Host->Join(DefaultWorldKey, {}, /*present=*/true);
+            requested = true;
+        }
+    }
+    REQUIRE(client.Host->IsJoined());
+
+    // The installed join carries the presentation flag and the key it was granted for — what a
+    // consumer's present-on-ready rebind keys on.
+    const JoinId joinA = client.Host->CurrentJoinId();
+    CHECK(client.Host->IsPresenting(joinA));
+    CHECK(client.Host->JoinKey(joinA) == DefaultWorldKey);
+    CHECK(client.Host->JoinKey(JoinId{999}) == WorldKey{});
+
+    // A presenting travel: the server directs the join and, once it is ready, the departed
+    // presenting join is left (make-before-break) — the surviving join carries the new key.
+    client.Host->Travel(keyB, {}, /*present=*/true);
+    while ((client.Host->Joins().size() != 1 || client.Host->CurrentJoinId() == joinA) &&
+           tick < 200)
+    {
+        pump();
+    }
+    REQUIRE(client.Host->Joins().size() == 1);
+    const JoinId joinB = client.Host->CurrentJoinId();
+    REQUIRE(joinB != joinA);
+    CHECK(client.Host->IsJoined(joinB));
+    CHECK(client.Host->IsPresenting(joinB));
+    CHECK(client.Host->JoinKey(joinB) == keyB);
+    CHECK(host->WorldForJoin(client.Client->AssignedId(), joinB) == worldB);
+}
+
 TEST_CASE("An unconfigured client account mints a valid, process-unique id")
 {
     const auto hub = CreateRef<Hub>();

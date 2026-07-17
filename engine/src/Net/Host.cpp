@@ -452,6 +452,22 @@ namespace Veng
             {
                 EnsureHostedWorld(request.Key, *resolve.Opened);
             }
+            else if (!Worlds.contains(resolve.World.Value))
+            {
+                // A converged bucket this host never wrapped — a local (standalone) travel opened it
+                // through the shared directory. Wrap it on demand from the recorded resolution so
+                // the join replicates it like any hosted world; a bucket with no record (registered
+                // outside the host) cannot be replicated and is refused.
+                if (const ServerWorldResolution* recorded = Directory->ResolutionOf(resolve.World))
+                {
+                    EnsureHostedWorld(request.Key, *recorded);
+                }
+                else
+                {
+                    deny(Net::JoinDenyReason::NoSuchWorld);
+                    return;
+                }
+            }
 
             const WorldInstanceId worldId = resolve.World;
             HostedWorld& world = WorldOf(worldId);
@@ -1261,6 +1277,7 @@ namespace Veng
         struct JoinClient
         {
             Net::JoinId Join = Net::ControlJoinId;
+            Net::WorldKey Key; // the key the join was requested and granted for
             Net::TravelPayload
                 Payload; // the params the reply echoed, for the game's reconstruction
             Net::TravelPayload Pose; // the arrival pose a directed travel carried, or empty
@@ -1519,6 +1536,7 @@ namespace Veng
 
             JoinClient jc;
             jc.Join = accept.Join;
+            jc.Key = key;
             jc.Payload = accept.Payload;
             jc.Pose = std::move(arrivalPose);
             jc.Present = present;
@@ -1950,6 +1968,12 @@ namespace Veng
     {
         const State::JoinClient* jc = m_State->JoinClientOf(join);
         return jc != nullptr && jc->Present;
+    }
+
+    Net::WorldKey ClientHost::JoinKey(const Net::JoinId join) const
+    {
+        const State::JoinClient* jc = m_State->JoinClientOf(join);
+        return jc != nullptr ? jc->Key : Net::WorldKey{};
     }
 
     Net::PredictionHistory& ClientHost::History()

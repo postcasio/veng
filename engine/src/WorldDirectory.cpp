@@ -29,6 +29,9 @@ namespace Veng
             // The per-world idle-dwell override the opening resolution named; unset inherits the
             // directory's IdleKeepWarmDwell.
             optional<f64> Dwell;
+            // The factory resolution recorded at open, so a borrowing host can wrap a bucket it did
+            // not open itself (ResolutionOf). Unset for a pre-registered bucket.
+            optional<ServerWorldResolution> Resolution;
         };
 
         u32 MaxHostedWorlds = 64;
@@ -219,7 +222,8 @@ namespace Veng
                                                      .Key = request.Key,
                                                      .Payload = request.Payload,
                                                      .Reapable = true,
-                                                     .Dwell = resolved->IdleDwell});
+                                                     .Dwell = resolved->IdleDwell,
+                                                     .Resolution = *resolved});
         s.KeyMap[request.Key].push_back(world);
         return {
             .Outcome = WorldResolveOutcome::Opened, .World = world, .Opened = std::move(resolved)};
@@ -326,5 +330,11 @@ namespace Veng
     {
         const State::Bucket* bucket = m_State->Find(world);
         return bucket != nullptr ? bucket->Payload : m_State->EmptyPayload;
+    }
+
+    const ServerWorldResolution* WorldDirectory::ResolutionOf(const WorldInstanceId world) const
+    {
+        const State::Bucket* bucket = m_State->Find(world);
+        return bucket != nullptr && bucket->Resolution.has_value() ? &*bucket->Resolution : nullptr;
     }
 }

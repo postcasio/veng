@@ -102,6 +102,10 @@ namespace Veng
         // The runner world each granted JoinId's scene lives in, rebuilt each PumpNet — so a directed
         // travel's leave can close the departed join's world after the ClientHost has dropped the join.
         unordered_map<u64, WorldInstanceId> JoinWorlds;
+        // The managed viewport a client-arm presenting travel targets, keyed by the destination
+        // WorldKey; consumed when the key's join installs. A presenting join with no entry — an
+        // unprompted directed travel, a reattach's gameplay restore — presents on viewport 0.
+        std::unordered_map<Net::WorldKey, usize> PresentTargets;
 
         // Prefabs a replicated spawn resolved, kept resident so their entities instantiate; keyed by
         // AssetId value.
@@ -146,7 +150,18 @@ namespace Veng
 
     bool Application::IsWorldNetActive(const WorldInstanceId world) const
     {
-        return m_Net && m_Net->WorldRoles.contains(world.Value);
+        if (!m_Net)
+        {
+            return false;
+        }
+        if (m_Net->WorldRoles.contains(world.Value))
+        {
+            return true;
+        }
+        // On a hosting process every live directory bucket is join-visible (a standalone travel's
+        // world converges with a remote join), so its stream rides the mounted host: change ticks
+        // stamp and wire input feeds for it like any hosted world.
+        return m_Net->Server != nullptr && m_Directory && m_Directory->Contains(world);
     }
 
     u64 Application::WorldSimTick(const WorldInstanceId world) const
@@ -422,10 +437,13 @@ namespace Veng
                                  /*heldWorlds=*/0);
         if (resolve.Outcome == WorldResolveOutcome::Denied)
         {
+            // The record is kept, not cleared: a bootstrap resolve failure is often transient (a
+            // missing pack, a factory hiccup), and persisting a cleared record would destroy the
+            // standalone continue permanently on one bad boot. This run lands at the front door;
+            // the next boot retries the same record.
             Log::Warn("standalone continue: the gameplay world did not resolve (reason {}); "
-                      "clearing to the front door",
+                      "landing at the front door, record kept for the next boot",
                       static_cast<u32>(resolve.Reason));
-            m_Sessions->ClearGameplay(m_LocalAccount);
             return;
         }
         if (m_ManagedViewports->GetCount() > 0)
@@ -869,9 +887,14 @@ namespace Veng
         VE_ASSERT(m_Directory, "Travel requires a managed world (ApplicationInfo::World)");
 
         // Client: the server resolves a payload-parameterized key and directs the join (make-before-
-        // break). The client never self-resolves such a key.
+        // break). The client never self-resolves such a key. A presenting travel records its
+        // viewport target so the directed join's install rebinds the right managed viewport.
         if (m_Net && m_Net->ClientHost != nullptr && GetNetRole() == NetRole::Client)
         {
+            if (info.Present)
+            {
+                m_Net->PresentTargets[info.Key] = info.ViewportIndex;
+            }
             m_Net->ClientHost->Travel(info.Key, info.Payload, info.Present, info.Standing);
             return {};
         }
@@ -1047,6 +1070,30 @@ namespace Veng
                                             .Role = RoleForWorld(world)});
     }
 
+    void Application::PresentJoinedWorld(const Net::JoinId join, const WorldInstanceId world)
+    {
+        if (m_Net->ClientHost == nullptr || !m_Net->ClientHost->IsPresenting(join))
+        {
+            return;
+        }
+        // The travel that requested this key recorded its viewport target; a presenting join with
+        // no record (an unprompted directed travel, a reattach's gameplay restore) fronts on 0.
+        usize index = 0;
+        if (const auto it = m_Net->PresentTargets.find(m_Net->ClientHost->JoinKey(join));
+            it != m_Net->PresentTargets.end())
+        {
+            index = it->second;
+            m_Net->PresentTargets.erase(it);
+        }
+        if (index >= m_ManagedViewports->GetCount() ||
+            m_ManagedViewports->GetViewportWorld(index) == world)
+        {
+            return;
+        }
+        Log::Info("Presenting joined world {} on managed viewport {}", world.Value, index);
+        m_ManagedViewports->RebindWorldWhenReady(index, world);
+    }
+
     void Application::CloseJoinedWorld(const Net::JoinId join)
     {
         if (!m_Net)
@@ -1189,6 +1236,7 @@ namespace Veng
             {
                 StartWorldScene(world, resolved->GetScene());
                 state.Started = true;
+                PresentJoinedWorld(join, world);
             }
         }
 
