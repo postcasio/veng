@@ -281,19 +281,21 @@ primitive — with the listen host's own player a first-class member beside conn
 **`CloseWorld` hook first, then `WorldRunner::CloseWorld`** — the hook-before-teardown ordering is the
 persistence capture point, guaranteed in every role.
 
-**Known limitation — a non-presenting *local* standing travel takes no directory presence.** A remote
-join always calls `AddJoin`, so the directory counts it. But `Application::TravelStandalone` records a
-session **standing** join for a non-presenting local (listen-host / standalone) travel *without* taking
-any directory presence — no `Pin`, no `AddJoin`. So the directory's keep-warm/reap accounting is blind
-to a host holding a data world warm through its own local standing membership. Two consequences follow
-from the same blind spot. A bucket that **only ever** held the local member sits at presence 0 forever,
-never stamps `IdleSince`, and so is never reaped (it leaks — harmless but unbounded). Worse, once a
-**remote** join churns through that bucket (presence 1 → 0 on the remote's departure), `IdleSince`
-*is* stamped and the world is reaped after the dwell — **out from under the still-present local
-member**. The trigger is a **listen host holding any data world warm via a non-presenting standing
-travel while remote members come and go**: the world vanishes under the host on the first remote
-departure. The fix is to give a local standing travel a directory presence (a local-account pin or an
-`AddJoin` equivalent) so local membership counts like a remote join's — recorded, not addressed here.
+**A non-presenting *local* standing travel counts as directory presence.** A remote join calls
+`AddJoin`, so the directory counts it; the connectionless local player has no join to report, so a
+non-presenting local (listen-host / standalone) standing travel takes a **local-account pin** instead.
+`Application::TravelStandalone`, on a **standing** durability, calls `AcquireLocalStanding` — a `Pin`
+for `GetLocalAccount` on the resolved bucket, tracked keyed by `WorldKey` (idempotent per key, matching
+`SessionRegistry::RecordStandingJoin`'s dedupe) — so the local standing membership feeds the same
+presence refcount and `MembersOf` a remote join's does. The standalone continue warms its restored
+standing joins the same way. Because the pin is the local player's, a world with both a local standing
+member and remote joins survives until **both** are gone: each remote departure decrements presence,
+but the local pin holds the bucket above zero, so `IdleSince` is never stamped under a still-present
+local member. Release is explicit — the local player has no disconnect — through
+**`Application::LeaveStanding(key)`**, the connectionless counterpart of a client leave: it `Unpin`s the
+tracked bucket and drops the key from the session's standing list, so the bucket's dwell owns its fate
+once every other presence is also gone. A bucket that only ever held the local member reaps when that
+member leaves via `LeaveStanding`; until then it is legitimately kept warm, not leaked.
 
 **Get-or-place: a `WorldKey` maps to N buckets, resolved by a placement policy.** The map is
 `WorldKey → [WorldInstance]` — a key may have several live **buckets**, each (host-side) a full instance
