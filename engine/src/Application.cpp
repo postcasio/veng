@@ -421,8 +421,7 @@ namespace Veng
                           key.Hi, key.Lo, static_cast<u32>(resolve.Reason));
                 continue;
             }
-            m_Directory->Pin(resolve.World, m_LocalAccount);
-            m_StandingWorlds.push_back(resolve.World);
+            AcquireLocalStanding(key, resolve.World);
         }
 
         if (record->Gameplay.Key == Net::WorldKey{})
@@ -851,13 +850,16 @@ namespace Veng
                 fmt::format("travel denied: {}", static_cast<u32>(resolve.Reason)));
         }
 
+        const Net::SessionDurability durability =
+            Net::ResolveSessionDurability(info.Present, info.Standing);
+
         // The session record follows as a side effect of the travel, exactly as a hosted join's
         // does: a presenting travel is the local account's gameplay entry (params double as the
         // arrival pose until a capture refreshes it), a standing one enters the standing list, an
         // opted-out one enters nothing.
         if (m_Sessions && m_LocalAccount.IsValid())
         {
-            switch (Net::ResolveSessionDurability(info.Present, info.Standing))
+            switch (durability)
             {
             case Net::SessionDurability::Gameplay:
                 m_Sessions->RecordGameplay(m_LocalAccount, info.Key, info.Payload, info.Payload);
@@ -870,6 +872,16 @@ namespace Veng
             }
         }
 
+        // A non-presenting standing travel warms its world under a local presence: with no connection
+        // to report a join, the local standing membership is a directory pin, so keep-warm accounting
+        // counts the local member and the bucket survives until every presence (this hold, remote
+        // joins) is gone. LeaveStanding withdraws it. A presenting travel takes no standing pin — its
+        // presentation pin (SyncPresentationPins) holds it instead.
+        if (durability == Net::SessionDurability::Standing)
+        {
+            AcquireLocalStanding(info.Key, resolve.World);
+        }
+
         // Present-on-ready rebind onto the destination when presenting: the pin follows at the rebind
         // apply point (SyncPresentationPins reads the pending destination, so it is pinned immediately),
         // and the departed world is unpinned there too — the dwell then owns its fate. A non-presenting
@@ -880,6 +892,39 @@ namespace Veng
             m_ManagedViewports->RebindWorldWhenReady(info.ViewportIndex, resolve.World);
         }
         return {};
+    }
+
+    void Application::AcquireLocalStanding(const Net::WorldKey& key, const WorldInstanceId world)
+    {
+        if (!m_Directory)
+        {
+            return;
+        }
+        // Idempotent per key: a repeated standing hold on a key already pinned takes no second presence,
+        // matching SessionRegistry::RecordStandingJoin's dedupe.
+        if (const auto [it, inserted] = m_LocalStandingWorlds.try_emplace(key, world); inserted)
+        {
+            m_Directory->Pin(world, m_LocalAccount);
+        }
+    }
+
+    void Application::LeaveStanding(const Net::WorldKey& key)
+    {
+        const auto it = m_LocalStandingWorlds.find(key);
+        if (it == m_LocalStandingWorlds.end())
+        {
+            return;
+        }
+        const WorldInstanceId world = it->second;
+        m_LocalStandingWorlds.erase(it);
+        if (m_Directory)
+        {
+            m_Directory->Unpin(world, static_cast<f64>(Time::Now()), m_LocalAccount);
+        }
+        if (m_Sessions && m_LocalAccount.IsValid())
+        {
+            m_Sessions->RemoveStandingJoin(m_LocalAccount, key);
+        }
     }
 
     VoidResult Application::Travel(const TravelInfo& info)

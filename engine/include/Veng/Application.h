@@ -36,6 +36,7 @@
 #include <Veng/WorldDirectory.h>
 
 #include <span>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace Veng
@@ -710,6 +711,17 @@ namespace Veng
         /// @return Empty on success, or an error string describing why the travel could not run.
         VoidResult Travel(const TravelInfo& info);
 
+        /// @brief Ends a standalone standing membership, releasing its local warm-hold on the world.
+        ///
+        /// The connectionless counterpart of a client disconnect: a non-presenting standing travel
+        /// (Travel with Present false) holds its destination warm under a local directory presence for
+        /// the local account; this drops that presence and removes the key from the session's standing
+        /// list, so the world's keep-warm accounting sees the local member leave and the dwell owns the
+        /// bucket's fate once every other presence (remote joins, other standing holds) is also gone. A
+        /// no-op for a key the process holds no standing membership on.
+        /// @param key  The standing world to leave.
+        void LeaveStanding(const Net::WorldKey& key);
+
         /// @brief Tears the net mode down, returning the process to standalone (no transport).
         ///
         /// Releases the mounted host (server or client) and clears the per-world roles, so the managed
@@ -896,6 +908,17 @@ namespace Veng
         /// @param info  The travel destination.
         /// @return Empty on success, or the directory's denial reason.
         VoidResult TravelStandalone(const TravelInfo& info);
+
+        /// @brief Takes a local directory presence for a non-presenting standing membership on a world.
+        ///
+        /// A standing travel and the standalone continue both warm their worlds this way: with no
+        /// connection to report a join, the local account's standing membership is a directory pin, so
+        /// the world's presence refcount counts the local member beside remote joins and it survives
+        /// until every presence leaves. Idempotent per key — a repeated standing hold on a key already
+        /// held takes no second presence — and released by LeaveStanding.
+        /// @param key    The standing world's key (the release handle).
+        /// @param world  The bucket the key resolved to.
+        void AcquireLocalStanding(const Net::WorldKey& key, WorldInstanceId world);
 
         /// @brief Drains the builtin request components across every open world at the frame-safe point.
         ///
@@ -1176,11 +1199,13 @@ namespace Veng
         /// standalone continue at bootstrap; the ServerHost consumes it (ServerHostInfo::Sessions)
         /// when hosting is stood up.
         Unique<Net::SessionRegistry> m_Sessions;
-        /// @brief The standing worlds the standalone continue resolved, pinned for the local player.
+        /// @brief The standing memberships the local player holds, each pinned present in the directory.
         ///
         /// A standing join's presence standalone is a local pin (there is no connection to report a
-        /// join); held for the process lifetime — standalone has no leave operation to withdraw one.
-        vector<WorldInstanceId> m_StandingWorlds;
+        /// join): the standalone continue and every non-presenting standing travel record their world
+        /// here, keyed by the world's key so LeaveStanding can withdraw exactly one. The key is the
+        /// release handle; the value is the bucket the pin was taken on.
+        unordered_map<Net::WorldKey, WorldInstanceId> m_LocalStandingWorlds;
         /// @brief The worlds Application currently pins for presentation, keyed by WorldInstanceId value.
         ///
         /// The pin set SyncPresentationPins reconciles each frame against the managed viewports' bindings,

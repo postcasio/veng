@@ -3102,6 +3102,94 @@ TEST_CASE("The world directory reaps after the dwell, reuses warm, and never rea
     CHECK(dir->WorldCount() == 0);
 }
 
+TEST_CASE("A local standing presence keeps a world warm past a remote join's departure")
+{
+    // The connectionless local player's standing membership is a directory pin on the local account
+    // (Application::AcquireLocalStanding), so the presence refcount counts it beside remote joins. The
+    // mixed world reaps only when both the remote join and the local pin are gone — proved here at the
+    // directory level, device-free, the same Pin/AddJoin/RemoveJoin/Unpin the Application drives.
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    SystemRegistry systems;
+    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+
+    u32 openCount = 0;
+    u64 nextLevel = 0x5000;
+    Unique<WorldDirectory> dir = WorldDirectory::Create(WorldDirectoryInfo{
+        .IdleKeepWarmDwell = 0.5,
+        .Runner = &runner,
+        .WorldFactory = [&](const WorldKey&, const Blob&) -> optional<ServerWorldResolution>
+        {
+            const WorldInstanceId world =
+                runner.OpenWorld(WorldOpenInfo{.SimTickRate = 60, .StartSimulation = false});
+            ++openCount;
+            return ServerWorldResolution{.WorldId = world,
+                                         .World = &runner.ResolveWorld(world)->GetScene(),
+                                         .LevelId = AssetId{.Value = nextLevel++}};
+        },
+    });
+
+    const WorldKey key = WorldKey::FromU64(0x57A11D);
+    const Blob noPayload;
+    const AccountId local{.Lo = 0x2222};
+    const AccountId remote{.Lo = 0x1111};
+
+    // The non-presenting local standing travel: resolve opens the world, then the local-account pin
+    // holds it warm (no presentation, no connection — just the standing membership).
+    const WorldResolveResult opened = dir->Resolve(
+        JoinRequestInfo{
+            .Connection = ConnectionId{}, .Account = local, .Key = key, .Payload = noPayload},
+        /*heldWorlds=*/0);
+    REQUIRE(opened.Outcome == WorldResolveOutcome::Opened);
+    const WorldInstanceId world = opened.World;
+    dir->Pin(world, local); // AcquireLocalStanding
+
+    // A remote join churns through the same bucket: presence is now the local pin plus the remote join,
+    // and MembersOf reports both accounts.
+    dir->AddJoin(world, remote);
+    CHECK(dir->PresenceOf(world) == 2);
+    CHECK(dir->MembersOf(key).size() == 2);
+
+    // The remote leaves. Presence drops to the local pin alone — still non-zero — so no idle stamp is
+    // taken and the world does NOT reap however far past the dwell. This is the bug: before the fix the
+    // directory was blind to the local member and reaped here.
+    dir->RemoveJoin(world, 10.0, remote);
+    CHECK(dir->PresenceOf(world) == 1);
+    CHECK(dir->ReapIdle(1000.0).empty());
+    CHECK(runner.ResolveWorld(world) != nullptr);
+    REQUIRE(dir->MembersOf(key).size() == 1);
+    CHECK(dir->MembersOf(key).front() == local);
+
+    // The local player leaves the standing membership (LeaveStanding): the pin drops, presence reaches
+    // zero, the dwell starts, and the world reaps once it elapses — not before.
+    dir->Unpin(world, 2000.0, local);
+    CHECK(dir->PresenceOf(world) == 0);
+    CHECK(dir->ReapIdle(2000.2).empty()); // 0.2s < 0.5s dwell
+    const vector<WorldInstanceId> reaped = dir->ReapIdle(2001.0);
+    REQUIRE(reaped.size() == 1);
+    CHECK(reaped.front() == world);
+    CHECK(dir->WorldCount() == 0);
+
+    // The solo-local case: a bucket only ever held by the local standing member is kept warm as long as
+    // the member holds it, and reaps after that member leaves and the dwell elapses.
+    const WorldKey soloKey = WorldKey::FromU64(0x50109);
+    const WorldResolveResult solo = dir->Resolve(
+        JoinRequestInfo{
+            .Connection = ConnectionId{}, .Account = local, .Key = soloKey, .Payload = noPayload},
+        0);
+    REQUIRE(solo.Outcome == WorldResolveOutcome::Opened);
+    const WorldInstanceId soloWorld = solo.World;
+    dir->Pin(soloWorld, local);        // AcquireLocalStanding, no remote join ever
+    CHECK(dir->ReapIdle(1e6).empty()); // held warm while the local member remains
+    CHECK(dir->Contains(soloWorld));
+    dir->Unpin(soloWorld, 3000.0, local); // LeaveStanding
+    CHECK(dir->ReapIdle(3000.2).empty()); // within the dwell
+    const vector<WorldInstanceId> soloReaped = dir->ReapIdle(3001.0);
+    REQUIRE(soloReaped.size() == 1);
+    CHECK(soloReaped.front() == soloWorld);
+    CHECK(dir->WorldCount() == 0);
+}
+
 TEST_CASE("Two hosted worlds with different quantization envelopes each decode on one client")
 {
     // The client-side per-key wire envelope: two worlds hosted with different spatial quantization
