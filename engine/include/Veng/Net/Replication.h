@@ -385,6 +385,15 @@ namespace Veng
             vector<SentSnapshot> InFlight;
             /// @brief Snapshots generated for this connection, driving the keyframe cadence.
             u64 SnapshotCounter = 0;
+            /// @brief The world tick this connection's last snapshot was emitted on.
+            ///
+            /// The snapshot cadence gates on the world's own sim tick, but Generate runs once per
+            /// host pump — faster than a sub-rate world advances — so the same qualifying tick would
+            /// otherwise emit a fresh snapshot on every pump it persists. Recording the tick a
+            /// snapshot was sent on, and skipping a repeat of it, collapses that to one snapshot per
+            /// qualifying world tick regardless of pump rate. The sentinel (never a real tick) fires
+            /// the first snapshot, including one at tick 0.
+            u64 LastSnapshotTick = ~u64{0};
         };
 
         Settings m_Settings;

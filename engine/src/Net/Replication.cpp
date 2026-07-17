@@ -708,8 +708,13 @@ namespace Veng
 
         // Snapshot on the interval tick: pack each connection's dirty state as ack-keyed field deltas
         // (quantized spatial leaves) into MTU-sized unreliable packets, each a self-contained snapshot.
-        if (m_Settings.SnapshotInterval != 0 && tick % m_Settings.SnapshotInterval == 0)
+        // The gate is the world's own sim tick, so a world ticking below the host pump rate holds one
+        // qualifying tick across many pumps; emitting only when the tick has advanced past the last
+        // snapshot keeps the cadence one snapshot per qualifying world tick, not one per pump.
+        if (m_Settings.SnapshotInterval != 0 && tick % m_Settings.SnapshotInterval == 0 &&
+            tick != state.LastSnapshotTick)
         {
+            state.LastSnapshotTick = tick;
             // Advance the delta baseline to the acked tick by adopting the sent states the connection
             // has now acknowledged; the newest adopted entry carries every still-dirty component's
             // value (send-until-acked), so dropping the older window entries loses nothing.
