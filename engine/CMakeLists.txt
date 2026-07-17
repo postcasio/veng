@@ -238,6 +238,8 @@ add_library(veng SHARED
         src/Renderer/TaaResolve.cpp
         src/Renderer/SsrChain.cpp
         src/Renderer/RefractionGrab.cpp
+        src/Renderer/GpuCullSystem.cpp
+        src/Renderer/PickingSystem.cpp
         src/Renderer/SkyboxScenePass.cpp
         src/Renderer/SkyCubemapBake.cpp
         src/Renderer/Passes/AtmospherePrecompute.cpp

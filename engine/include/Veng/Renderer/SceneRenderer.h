@@ -59,6 +59,8 @@ namespace Veng::Renderer
     class TaaResolve;
     class SsrChain;
     class RefractionGrab;
+    class GpuCullSystem;
+    class PickingSystem;
     class Image;
     class Sampler;
     class Buffer;
@@ -949,53 +951,12 @@ namespace Veng::Renderer
     private:
         explicit SceneRenderer(const SceneRendererInfo& info);
 
-        /// @brief Recreates the entity-id picking target + depth buffer, or releases them when off.
-        ///
-        /// Allocates the R32Uint EntityId target and its dedicated depth buffer (both at the
-        /// allocation extent) when SceneRendererSettings::Picking is set; otherwise releases any
-        /// previously-created ones. Called from Create and every Resize/Configure. The id target's
-        /// format is confirmed as a color-attachment + transfer source on the device before alloc.
-        void CreatePicking();
-
-        /// @brief Records the picking geometry pass into the graph when picking is active.
-        ///
-        /// A depth-tested pass binding the EntityId target + a dedicated depth buffer in its own
-        /// RenderingInfo (the shipping g-buffer RenderingInfo untouched), re-drawing the same static
-        /// and skinned survivors through the id-writing pipeline variants. Cleared to NoEntityId each
-        /// frame so the nearest visible surface wins per texel.
-        /// @param graph  The renderer's internal graph being rebuilt.
-        void DeclarePicking(RenderGraph& graph);
-
-        /// @brief Builds the static + skinned id-writing pipeline variants from a representative material.
-        ///
-        /// Reuses the surface material's pipeline layout + vertex module with the core entity_id
-        /// fragment, binding the EntityId target as the single color attachment + the dedicated depth
-        /// format. Built lazily on the first Execute a surface material is available (the layout is
-        /// shared across surface materials), cached thereafter.
-        /// @param staticMaterial  A loaded static surface material whose layout/vertex stage to reuse; may be null.
-        /// @param skinnedMaterial A loaded skinned surface material whose layout/vertex stage to reuse; may be null.
-        void EnsurePickingPipelines(const MaterialInstance* staticMaterial,
-                                    const MaterialInstance* skinnedMaterial);
-
         /// @brief Recreates the owned output image and view at the current extent and format.
         void CreateOutput();
         /// @brief Recreates g-buffer images/views at the current extent and (re-)registers them into bindless.
         void CreateGBuffer();
         /// @brief Loads the baked LTC lookup tables from the core pack into textures and registers them.
         void CreateLtcResources();
-        /// @brief Recreates the hi-Z pyramid image, per-mip views, and reduction descriptor sets.
-        ///
-        /// Sized to the depth target with a full mip chain; not cleared (it carries data across
-        /// frames). Called from CreateGBuffer, after the depth target exists, so the reduction's
-        /// mip-0 descriptor set can bind it.
-        void CreateHiZ();
-        /// @brief Declares the max-Z reduction compute chain into the graph after the tail passes.
-        ///
-        /// One dispatch per mip: mip 0 reads the depth target, mip n>0 reads hi-Z mip n-1, each
-        /// writing its hi-Z mip. The per-mip graph surface derives the chain's read-after-write
-        /// barriers.
-        /// @param graph  The renderer's internal graph being rebuilt.
-        void DeclareHiZReduction(RenderGraph& graph);
         /// @brief Recreates the HDR image/view at the current extent and (re-)registers it into bindless.
         void CreateHdr();
         /// @brief Builds the engine-owned fullscreen pipelines and loads the core PostProcess materials.
@@ -1038,21 +999,6 @@ namespace Veng::Renderer
         /// pass at the frame boundary (reusing the imported output, so GetOutput() stays valid).
         /// @param view  The scene to resolve the volume fields from.
         void ResolveVolumeFields(const SceneView& view);
-
-        /// @brief Sets m_ActiveCull from Settings.Cull and the device-support fallback.
-        ///
-        /// CullMode::GPU survives only where Context::IsGpuDrivenCullingSupported() is true;
-        /// otherwise it degrades to CullMode::CPU. Called at Create and on every Configure.
-        void ResolveActiveCullMode();
-
-        /// @brief Declares the GPU occlusion-cull compute pass into the graph (GPU mode only).
-        ///
-        /// Reads the previous-frame hi-Z and the uploaded candidates, writes each indirect
-        /// command's instanceCount (StorageBufferWrite on the indirect import), and the survivor
-        /// count. Declared before the geometry pass so the graph derives the
-        /// StorageBufferWrite → IndirectRead barrier.
-        /// @param graph  The renderer's internal graph being rebuilt.
-        void DeclareCullPass(RenderGraph& graph);
 
         /// @brief Fills the per-draw DrawData buffer (and, under GPU mode, the candidate buffer + groups) for this Execute.
         ///
@@ -1105,42 +1051,12 @@ namespace Veng::Renderer
         /// @brief View over m_DepthImage.
         Ref<ImageView> m_DepthView;
 
-        /// @brief Hi-Z depth pyramid: a max-Z mip chain reduced from the depth target.
-        ///
-        /// R32Sfloat, sized to the depth target with a full mip chain, Storage | Sampled.
-        /// A compute reduction (declared after tonemap) builds it at the end of each
-        /// Execute; the occlusion test samples last frame's chain. Persisted across
-        /// frames (temporal hi-Z), so it is renderer-owned, not a graph transient, and
-        /// not cleared. Recreated on Resize/Configure with the rest of the g-buffer.
-        Ref<Image> m_HiZImage;
-        /// @brief One storage view per hi-Z mip level (the reduction writes each).
-        ///
-        /// m_HiZMips[k] views exactly mip k; the reduction's k-th dispatch writes it and
-        /// the (k+1)-th reads it, so the per-mip graph surface derives a per-mip barrier.
-        vector<Ref<ImageView>> m_HiZMips;
-        /// @brief Whole-chain sampled view of the hi-Z pyramid (all mips), registered into bindless.
-        Ref<ImageView> m_HiZSampleView;
-        /// @brief Bindless slot for the whole-chain sampled hi-Z view.
-        TextureHandle m_HiZSampleHandle;
-
         /// @brief Camera world->clip captured at the end of last Execute (this frame's pyramid pairs with it).
         ///
-        /// Identity before the first Execute. The occlusion test pairs the previous-frame
-        /// pyramid with this previous-frame matrix (decision 2).
+        /// Identity before the first Execute. Packed into the shared set-0 view-constants block's
+        /// PrevViewProj unconditionally every frame, and passed to the GPU cull subsystem as the
+        /// previous-frame matrix the occlusion test screen-bounds candidates with.
         mat4 m_PreviousViewProj{1.0f};
-        /// @brief Last frame's camera state, for the history-validity comparison.
-        HiZHistoryState m_PreviousHiZState;
-        /// @brief Whether the previous-frame pyramid is valid to occlusion-test against this frame.
-        ///
-        /// Computed each Execute by IsHiZHistoryValid + the frame-0/post-resize gate; false
-        /// until the first Execute.
-        bool m_HiZHistoryValid = false;
-        /// @brief Set whenever CreateHiZ recreates the pyramid, forcing the next Execute invalid.
-        ///
-        /// Covers frame 0 (constructed true) and every Resize/Configure (both rebuild the
-        /// pyramid through CreateGBuffer → CreateHiZ), so the cleared/new pyramid is never
-        /// tested against last frame's matrix.
-        bool m_HiZHistoryReset = true;
 
         /// @brief HDR target the deferred lighting pass writes (linear, unbounded range).
         ///
@@ -1188,13 +1104,29 @@ namespace Veng::Renderer
         /// @brief Bindless slot for the LTC magnitude LUT.
         TextureHandle m_LtcMagHandle;
 
+        /// @brief The GPU occlusion-cull cluster + the hi-Z pyramid it tests against; created at Create.
+        ///
+        /// Owns the hi-Z reduce set/pipeline layouts + reduce pipeline, the pyramid image/views/sets,
+        /// the cull compute cluster (candidate/indirect/count buffers, pipeline/layout/set), the
+        /// cross-frame history-validity state, and the active cull mode. The SSR chain borrows its
+        /// hi-Z reduce layouts, so it is constructed before the SSR chain; its pyramid is recreated
+        /// from the g-buffer create/recreate tail (ResizeHiZ binds the fresh depth view).
+        Unique<GpuCullSystem> m_GpuCull;
+
         /// @brief The screen-space-reflection chain — scene-color intermediate, mip chain, min-Z pyramid, and sweep.
         ///
         /// Its blur pipeline layout reserves the bloom down/up set layout and its min-Z reduce
-        /// pipeline builds on the hi-Z reduce layout, so it is constructed after CreatePipelines
-        /// (which builds the hi-Z reduce layout) and the bloom subsystem exist; Recreate rebuilds
-        /// the chain at the SsrResolution scale after the g-buffer depth and HDR targets.
+        /// pipeline builds on the GPU cull subsystem's hi-Z reduce layout, so it is constructed after
+        /// the GPU cull subsystem and the bloom subsystem exist; Recreate rebuilds the chain at the
+        /// SsrResolution scale after the g-buffer depth and HDR targets.
         Unique<SsrChain> m_Ssr;
+
+        /// @brief The entity-id picking cluster + its request → stage → poll state machine; created at Create.
+        ///
+        /// Owns the R32Uint EntityId target + dedicated depth (allocated only while picking is on),
+        /// the lazily-built static/skinned id pipelines, and the readback ring. The renderer wires
+        /// its passes inline in Rebuild, reading this subsystem's pipeline pointers and graph ids.
+        Unique<PickingSystem> m_Picking;
 
         /// @brief The pre-translucent refraction grab — scene-color/depth intermediates and the copy pipeline.
         Unique<RefractionGrab> m_Refraction;
@@ -1254,24 +1186,6 @@ namespace Veng::Renderer
         Ref<class GraphicsPipeline> m_SsaoPipeline;
         /// @brief Layout for the SSAO pipeline.
         Ref<class PipelineLayout> m_SsaoLayout;
-
-        /// @brief Compute pipeline that reduces one depth/hi-Z mip into the next (max-Z).
-        ///
-        /// Built once at Create from the core pack's hi_z_reduce.comp. One dispatch per
-        /// mip; the per-mip descriptor sets bind that mip's source and destination views.
-        Ref<class ComputePipeline> m_HiZReducePipeline;
-        /// @brief Layout for m_HiZReducePipeline: set 1 (sampled source + storage dest) + push block.
-        Ref<class PipelineLayout> m_HiZReduceLayout;
-        /// @brief Set-1 layout for the reduction: binding 0 sampled source, binding 1 storage dest.
-        ///
-        /// Off bindless — a closed producer→consumer reduction needs no global registration, and a
-        /// dedicated set sidesteps the set-0 storage-image argument-buffer path on MoltenVK.
-        Ref<DescriptorSetLayout> m_HiZReduceSetLayout;
-        /// @brief One reduction descriptor set per destination mip, written on Rebuild.
-        ///
-        /// Set k binds mip k's source (the depth target for k=0, hi-Z mip k-1 otherwise) and
-        /// mip k's destination storage view. Recreated whenever the chain is (Resize/Configure).
-        vector<Ref<DescriptorSet>> m_HiZReduceSets;
 
         /// @brief Debug blit for the albedo channel.
         Ref<class GraphicsPipeline> m_AlbedoBlitPipeline;
@@ -1381,11 +1295,12 @@ namespace Veng::Renderer
         /// Zero before the first Execute.
         u32 m_LastDrawnCount = 0;
 
-        /// @brief Allocates the per-draw and GPU-cull buffers + their descriptor sets.
+        /// @brief Allocates the mode-independent per-draw buffers + their descriptor sets.
         ///
-        /// Sized to MaxCullCandidates × frames-in-flight. The per-draw DrawData SSBO is used by
-        /// both cull modes (the buffer-indexed surface draw); the candidate/indirect/count buffers
-        /// and the cull compute pipeline are used only under CullMode::GPU. Called once at Create.
+        /// The per-draw DrawData SSBO, the skinning palette, and the identity candidate-id buffer —
+        /// used by both cull modes (the buffer-indexed surface draw) — sized to
+        /// MaxCullCandidates × frames-in-flight. The GPU-cull candidate/indirect/count buffers and
+        /// the cull compute pipeline live on m_GpuCull. Called once at Create.
         void CreateCullResources();
 
         /// @brief Maximum per-submesh candidates a frame's per-draw / cull buffers hold.
@@ -1434,63 +1349,11 @@ namespace Veng::Renderer
         ///        previous position through it for velocity. Swapped from m_PaletteBaseByEntity each frame.
         unordered_map<u64, u32> m_PreviousPaletteBaseByEntity;
 
-        /// @brief Cull compute pipeline (occlusion test → instanceCount), GPU mode only.
-        Ref<class ComputePipeline> m_CullPipeline;
-        /// @brief Layout for m_CullPipeline: set 1 (hi-Z, candidates, commands, count) + push block.
-        Ref<class PipelineLayout> m_CullLayout;
-        /// @brief Set-1 layout for the cull pass.
-        Ref<DescriptorSetLayout> m_CullSetLayout;
-        /// @brief Descriptor set for the cull pass, written on CreateCullResources / CreateGBuffer.
-        Ref<DescriptorSet> m_CullSet;
-
-        /// @brief Uploaded camera-frustum survivors (world bounds + draw args), GPU mode only.
-        ///
-        /// Host-visible, ring-buffered; one CullCandidate record per survivor this frame.
-        Ref<Buffer> m_CullCandidateBuffer;
-        /// @brief Indirect command buffer the cull writes and the geometry pass reads.
-        ///
-        /// Device-local, Storage | Indirect | TransferSrc, ring-buffered. The compute pass writes
-        /// each VkDrawIndexedIndirectCommand's instanceCount; the geometry pass issues it.
-        Ref<Buffer> m_IndirectBuffer;
-        /// @brief GPU survivor-count buffer the cull atomically increments, read back for the stat.
-        ///
-        /// Host-visible, Storage | TransferSrc, ring-buffered; one u32 per frame region, zeroed
-        /// before the cull dispatch and read one frame late.
-        Ref<Buffer> m_CullCountBuffer;
-        /// @brief Imported buffer id for the indirect command buffer in the internal graph.
-        ResourceId m_IndirectId;
-
-        /// @brief Previous-frame camera world->clip the cull pass screen-bounds candidates with.
-        ///
-        /// The pyramid is last frame's depth, so the cull must project with last frame's matrix.
-        mat4 m_CullPrevViewProj{1.0f};
-        /// @brief mip-0 pixel extent of the hi-Z pyramid the cull samples.
-        uvec2 m_CullHiZExtent{};
-        /// @brief Candidate count, region base, count-buffer slot, and history flag the cull dispatch reads.
-        ///
-        /// Filled by PrepareDraws each GPU Execute and read by the cull pass at record time.
-        u32 m_CullCandidateCount = 0;
-        /// @brief Candidate/command region base (currentFrame * MaxCullCandidates).
-        u32 m_CullFrameBase = 0;
-        /// @brief This frame's slot in the survivor-count buffer.
-        u32 m_CullCountIndex = 0;
-        /// @brief 1 when the previous-frame pyramid is valid to occlude against, else 0 (frustum-only).
-        u32 m_CullHistoryValid = 0;
         /// @brief Reused per-frame frustum-survivor candidate ids (broadphase Cull scratch).
+        ///
+        /// Filled by PrepareDraws (the frustum descent) and iterated to lay out the draw slots for
+        /// both cull modes; the GPU cull's device-side buffers live on m_GpuCull.
         vector<u32> m_CullScratch;
-
-        /// @brief The cull mode in effect after the device-support fallback (CPU if GPU unsupported).
-        SceneRendererSettings::CullMode m_ActiveCull = SceneRendererSettings::CullMode::CPU;
-        /// @brief Set once the GPU-unsupported fallback has logged, so the WARN fires only once.
-        bool m_GpuCullWarned = false;
-        /// @brief Survivor count read back from the previous GPU Execute (the debug stat).
-        mutable u32 m_LastGpuSurvivorCount = 0;
-        /// @brief Number of candidate slots the GPU cull wrote this Execute (for the readback span).
-        u32 m_GpuCandidateCount = 0;
-        /// @brief The frame-in-flight region the previous GPU Execute wrote, for the count/flag readback.
-        u32 m_GpuReadbackRegion = 0;
-        /// @brief True once a GPU Execute has filled a region to read back.
-        bool m_GpuReadbackValid = false;
 
         /// @brief Imported resource ids re-declared on every Rebuild.
         ///
@@ -1534,10 +1397,6 @@ namespace Veng::Renderer
         MipChainId m_SsrHiZChainId;
         /// @brief Imported id for the final output target.
         ResourceId m_OutputId;
-        /// @brief Imported id for the depth source the reduction reads into hi-Z mip 0.
-        ResourceId m_HiZDepthSourceId;
-        /// @brief Per-mip subresource handle for the hi-Z chain the reduction writes.
-        MipChainId m_HiZChainId;
 
         /// @brief True when the last Rebuild wired the bloom chain (Final mode + Settings.Bloom).
         ///
@@ -1810,56 +1669,6 @@ namespace Veng::Renderer
         /// each Execute's presence so the pass inserts on the first live field and drops when the last
         /// one goes, recompiling at the frame boundary (reusing the imported output).
         bool m_VolumeFieldActive = false;
-
-        /// @brief Entity-id picking target (R32Uint), allocated only when Settings.Picking is set.
-        ///
-        /// Bound by the picking pass's own RenderingInfo as its single color attachment, never by
-        /// the shipping g-buffer pass. Cleared to Picking::NoEntityId each frame; the depth-tested
-        /// picking pass writes each drawn entity's pick id. Null when picking is off.
-        Ref<Image> m_EntityIdImage;
-        /// @brief View over m_EntityIdImage.
-        Ref<ImageView> m_EntityIdView;
-        /// @brief Dedicated depth buffer for the picking pass (so the nearest surface wins).
-        ///
-        /// Picking re-renders geometry into its own attachments; a separate depth buffer keeps it
-        /// independent of the shipping g-buffer depth's barrier domain. Null when picking is off.
-        Ref<Image> m_PickingDepthImage;
-        /// @brief View over m_PickingDepthImage.
-        Ref<ImageView> m_PickingDepthView;
-        /// @brief Imported id for the EntityId target in the internal graph.
-        ResourceId m_EntityIdId;
-        /// @brief Imported id for the picking depth buffer in the internal graph.
-        ResourceId m_PickingDepthId;
-        /// @brief True when the last Rebuild wired the picking pass (Settings.Picking).
-        bool m_PickingActive = false;
-
-        /// @brief Static + skinned id-writing pipelines; built lazily on first Execute with a material.
-        Ref<class GraphicsPipeline> m_PickingPipeline;
-        Ref<class GraphicsPipeline> m_PickingSkinnedPipeline;
-
-        /// @brief Host-visible staging buffer the picking readback copies the search window into.
-        ///
-        /// Ring-buffered for frames-in-flight: one (2*SearchRadius+1)² u32 region per frame. The
-        /// region copy lands in the current frame's region; the result is read once that frame
-        /// completes. Allocated with the picking target.
-        Ref<Buffer> m_PickReadbackBuffer;
-        /// @brief Stride in bytes between pick-readback ring regions ((2*SearchRadius+1)² u32s).
-        u32 m_PickReadbackStride = 0;
-
-        /// @brief Whether a pick request is awaiting service (RequestPick) or readback completion.
-        bool m_PickRequested = false;
-        /// @brief Whether a requested pick's region copy has been recorded and is awaiting GPU completion.
-        bool m_PickStaged = false;
-        /// @brief The requested texel (allocation pixels) the search window centers on.
-        uvec2 m_PickTexel{};
-        /// @brief Top-left texel of the staged search window (clamped into the target).
-        uvec2 m_PickWindowOrigin{};
-        /// @brief Cursor offset within the staged window (m_PickTexel - m_PickWindowOrigin).
-        uvec2 m_PickCursorInWindow{};
-        /// @brief Texel dimensions of the staged window (clamped to the target).
-        uvec2 m_PickWindowExtent{};
-        /// @brief Execute count at which the staged copy was recorded; the readback waits frames-in-flight.
-        u64 m_PickStagedFrame = 0;
 
         /// @brief Opaque compiled graph; replayed every Execute.
         ///

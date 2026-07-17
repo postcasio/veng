@@ -9,6 +9,8 @@
 #include "DrawPlan.h"
 #include "EnvironmentIbl.h"
 #include "GpuBlocks.h"
+#include "GpuCullSystem.h"
+#include "PickingSystem.h"
 #include "Passes/AtmospherePrecompute.h"
 #include "Passes/DebugBlitScenePasses.h"
 #include "Passes/DeferredLightingScenePass.h"
@@ -22,7 +24,6 @@
 #include "ShadowScenePass.h"
 #include "PunctualShadowScenePass.h"
 #include "ShadowSystem.h"
-#include "Picking.h"
 #include "RefractionGrab.h"
 #include "SkyboxScenePass.h"
 #include "SkyCubemapBake.h"
@@ -125,18 +126,6 @@ namespace Veng::Renderer
         constexpr AssetId MotionBlitFragId{0xCCD40C76935382FDULL};
         constexpr AssetId ShadowBlitFragId{0x0B61D5D42DAEF190ULL};
 
-        // The entity-id picking shaders: a minimal vertex stage (static + skinned) that emits the
-        // per-draw entity index, and the fragment that writes index + 1 into the EntityId target.
-        constexpr AssetId EntityIdFragId{0xBE08B2489A5AA07AULL};
-        constexpr AssetId EntityIdVertId{0xE21B8F492DADABE5ULL};
-        constexpr AssetId EntityIdSkinnedVertId{0x7FB330D3ABACAE0FULL};
-
-        // The hi-Z max-Z reduction compute shader.
-        constexpr AssetId HiZReduceCompId{0xCB20C4EF8A20ADBCULL};
-
-        // The GPU occlusion-cull → indirect-draw compute shader.
-        constexpr AssetId OcclusionCullCompId{0x5FE19B500FD44B52ULL};
-
         // Linear float HDR format for the lighting target and the tail's scene-color intermediates.
         // G1 uses the same format as a sampled color target, establishing RGBA16F
         // color-attachment + sampled support on the platform.
@@ -146,30 +135,6 @@ namespace Veng::Renderer
         // Single-channel unorm format for the SSAO target; the renderer builds the
         // SSAO pipeline against this format, and SsaoScenePass owns the image.
         constexpr Format SsaoFormat = Format::R8Unorm;
-
-        // Single-channel float for the hi-Z pyramid; the reduction stores max depth.
-        constexpr Format HiZFormat = Format::R32Sfloat;
-
-        // The hi-Z reduction push block: the destination and source mip extents, so a
-        // boundary invocation skips out-of-range texels and an odd parent dimension
-        // folds its dropped row/column into the max (matches hi_z_reduce.comp).
-        struct HiZReducePush
-        {
-            uvec2 DestExtent;
-            uvec2 SourceExtent;
-        };
-
-        // The cull compute push block, matching occlusion_cull.comp PushConstants.
-        struct OcclusionCullPush
-        {
-            mat4 PrevViewProj;
-            uvec2 HiZBaseExtent;
-            u32 CandidateCount;
-            u32 HistoryValid;
-            f32 DepthBias;
-            u32 FrameBase;
-            u32 CountIndex;
-        };
     }
 
     // Kept out of the header so SceneRenderer.h needs no CompiledGraph definition.
@@ -195,10 +160,9 @@ namespace Veng::Renderer
           m_Internal(CreateUnique<Internal>())
     {
         ShadowSystem::ClampResolutions(m_Context, m_Settings);
-        ResolveActiveCullMode();
-        // Frames-in-flight is spine — the renderer's own rings (draw data, palette, cull) size
-        // from it, so seed it before those are allocated below. Each subsystem derives its own
-        // ring depth from the context independently.
+        // Frames-in-flight is spine — the renderer's own rings (draw data, palette) size from it,
+        // so seed it before those are allocated below. Each subsystem derives its own ring depth
+        // from the context independently.
         m_FramesInFlight = m_Context.GetMaxFramesInFlight();
         m_Shadows = ShadowSystem::Create(m_Context, m_Settings);
         // The IBL maps + their consumer set layout exist before the pipelines so the lighting
@@ -218,12 +182,18 @@ namespace Veng::Renderer
         m_Bloom = BloomPyramid::Create(m_Context, m_Assets, m_Settings.Kernel);
         m_Taa = TaaResolve::Create(m_Context, m_Assets);
         m_Refraction = RefractionGrab::Create(m_Context, m_Assets);
+        // The GPU cull subsystem owns the hi-Z reduce layouts the SSR chain's min-Z reduce borrows,
+        // so it is constructed before the SSR chain (and resolves the active cull mode). Its hi-Z
+        // reduce pipeline creation is not frame-observable, so building it here rather than in
+        // CreatePipelines is the settled pipeline-order relaxation.
+        m_GpuCull = GpuCullSystem::Create(m_Context, m_Assets, m_Settings);
+        m_Picking = PickingSystem::Create(m_Context, m_Assets);
         CreatePipelines();
         // The SSR chain's blur pipeline layout reserves the bloom down/up set layout, and its
-        // min-Z reduce pipeline builds on the hi-Z reduce layout — both must already exist, so the
-        // chain is constructed after the bloom subsystem and CreatePipelines.
-        m_Ssr =
-            SsrChain::Create(m_Context, m_Assets, m_HiZReduceLayout, m_Bloom->GetDownUpSetLayout());
+        // min-Z reduce pipeline builds on the GPU cull subsystem's hi-Z reduce layout — both must
+        // already exist, so the chain is constructed after those subsystems and CreatePipelines.
+        m_Ssr = SsrChain::Create(m_Context, m_Assets, m_GpuCull->GetHiZReduceLayout(),
+                                 m_Bloom->GetDownUpSetLayout());
 
         CreateOutput();
         CreateGBuffer();
@@ -234,12 +204,12 @@ namespace Veng::Renderer
         // The pyramid's level-0 source and composite sets bind the fresh HDR view.
         m_Bloom->Resize(m_Extent, m_HdrView);
         // The min-Z reduce sets bind the fresh depth view from the g-buffer above.
-        m_Ssr->Recreate(m_Settings, m_Extent, m_DepthView, m_HiZReduceSetLayout,
+        m_Ssr->Recreate(m_Settings, m_Extent, m_DepthView, m_GpuCull->GetHiZReduceSetLayout(),
                         m_Bloom->GetDownUpSetLayout());
         m_Refraction->Recreate(m_Settings, m_Extent);
         // The metering set binds the HDR target, so the meter is created after CreateHdr.
         m_AutoExposure = AutoExposureMeter::Create(m_Context, m_Assets, m_HdrView);
-        CreatePicking();
+        m_Picking->Recreate(m_Settings, m_Extent);
         Rebuild();
     }
 
@@ -251,7 +221,6 @@ namespace Veng::Renderer
         bindless.Release(m_NormalHandle);
         bindless.Release(m_OrmHandle);
         bindless.Release(m_DepthHandle);
-        bindless.Release(m_HiZSampleHandle);
         bindless.Release(m_HdrHandle);
         bindless.Release(m_VelocityHandle);
         bindless.Release(m_EmissiveHandle);
@@ -518,42 +487,6 @@ namespace Veng::Renderer
                        });
         m_OrmBlitPipeline = MakePipeline("SceneRenderer ORM Blit Pipeline", m_OrmBlitLayout,
                                          ormBlitFs, m_OutputFormat);
-
-        // The hi-Z reduction compute pipeline. Set 1 (binding 0 sampled source, binding 1
-        // storage dest) is off bindless — a closed producer→consumer reduction needs no
-        // global registration, and a dedicated set sidesteps the set-0 storage-image
-        // argument-buffer path on MoltenVK.
-        const AssetHandle<Veng::Shader> hiZReduceCs =
-            LoadShader(HiZReduceCompId, "hi-Z reduce compute");
-        m_HiZReduceSetLayout = DescriptorSetLayout::Create(
-            m_Context, {
-                           .Name = "SceneRenderer HiZ Reduce Set Layout",
-                           .Bindings =
-                               {
-                                   {.Binding = 0,
-                                    .Type = DescriptorType::SampledImage,
-                                    .Count = 1,
-                                    .Stages = ShaderStage::Compute},
-                                   {.Binding = 1,
-                                    .Type = DescriptorType::StorageImage,
-                                    .Count = 1,
-                                    .Stages = ShaderStage::Compute},
-                               },
-                       });
-        m_HiZReduceLayout = PipelineLayout::Create(
-            m_Context,
-            {
-                .Name = "SceneRenderer HiZ Reduce Layout",
-                .DescriptorSetLayouts = {m_HiZReduceSetLayout},
-                .PushConstantRanges = {PushConstantRange::Of<HiZReducePush>(ShaderStage::Compute)},
-            });
-        m_HiZReducePipeline = ComputePipeline::Create(
-            m_Context,
-            {
-                .Name = "SceneRenderer HiZ Reduce Pipeline",
-                .PipelineLayout = m_HiZReduceLayout,
-                .ShaderStage = {.Stage = ShaderStage::Compute, .Module = hiZReduceCs.Get()->Module},
-            });
     }
 
     void SceneRenderer::CreateOutput()
@@ -573,136 +506,6 @@ namespace Veng::Renderer
                                                         .Name = "SceneRenderer Output View",
                                                         .Image = m_OutputImage,
                                                     });
-    }
-
-    void SceneRenderer::CreatePicking()
-    {
-        if (!m_Settings.Picking)
-        {
-            // Release any previously-allocated picking resources (a Configure turning it off);
-            // the pipelines are rebuilt lazily, so they are dropped here too.
-            m_EntityIdImage.reset();
-            m_EntityIdView.reset();
-            m_PickingDepthImage.reset();
-            m_PickingDepthView.reset();
-            m_PickReadbackBuffer.reset();
-            m_PickingPipeline.reset();
-            m_PickingSkinnedPipeline.reset();
-            m_PickRequested = false;
-            m_PickStaged = false;
-            return;
-        }
-
-        VE_ASSERT(
-            m_Context.IsFormatColorAttachmentTransferSrcSupported(Picking::EntityIdFormat),
-            "SceneRenderer: the device does not support R32Uint as a color attachment + transfer "
-            "source, required for the entity-id picking target");
-
-        m_EntityIdImage = Image::Create(m_Context, {
-                                                       .Name = "SceneRenderer EntityId",
-                                                       .Extent = {m_Extent.x, m_Extent.y, 1},
-                                                       .Format = Picking::EntityIdFormat,
-                                                       .Usage = Picking::EntityIdUsage,
-                                                   });
-        m_EntityIdView = ImageView::Create(
-            m_Context, {.Name = "SceneRenderer EntityId View", .Image = m_EntityIdImage});
-
-        m_PickingDepthImage = Image::Create(m_Context, {
-                                                           .Name = "SceneRenderer Picking Depth",
-                                                           .Extent = {m_Extent.x, m_Extent.y, 1},
-                                                           .Format = GBuffer::DepthFormat,
-                                                           .Usage = ImageUsage::DepthAttachment,
-                                                       });
-        m_PickingDepthView = ImageView::Create(
-            m_Context, {.Name = "SceneRenderer Picking Depth View", .Image = m_PickingDepthImage});
-
-        // The readback staging buffer: one search-window's worth of u32s. Only one pick is in
-        // flight at a time (a new request is dropped until the prior resolves), so the staged copy
-        // is never overwritten before the host reads it — one region suffices.
-        const u32 window = static_cast<u32>(2 * Picking::SearchRadius + 1);
-        m_PickReadbackStride = window * window * static_cast<u32>(sizeof(u32));
-        m_PickReadbackBuffer = Buffer::Create(m_Context, {
-                                                             .Name = "SceneRenderer Pick Readback",
-                                                             .Size = m_PickReadbackStride,
-                                                             .Usage = BufferUsage::TransferDst,
-                                                             .HostMapped = true,
-                                                         });
-
-        // A resize/configure recreates the id target, so an in-flight staged copy is moot.
-        m_PickStaged = false;
-    }
-
-    void SceneRenderer::EnsurePickingPipelines(const MaterialInstance* staticMaterial,
-                                               const MaterialInstance* skinnedMaterial)
-    {
-        if (!m_Settings.Picking)
-        {
-            return;
-        }
-
-        // The id-writing variants reuse the surface material's pipeline layout (set 0 bindless +
-        // set 1 DrawData [+ set 2 palette for skinned] + the SurfacePush) so the picking pass binds
-        // the same per-draw DrawData and palette the geometry pass does. They pair the dedicated
-        // entity_id vertex stages (which emit only the entity index) with the entity_id fragment,
-        // and bind the EntityId target + dedicated depth instead of the g-buffer. The layout is
-        // identical across all surface materials, so the first available one builds the cached pipeline.
-        auto LoadShader = [this](const AssetId id, const char* what) -> AssetHandle<Veng::Shader>
-        {
-            const AssetResult<AssetHandle<Veng::Shader>> result =
-                m_Assets.LoadSync<Veng::Shader>(id);
-            VE_ASSERT(result.has_value(), "SceneRenderer: {} shader load failed: {}", what,
-                      result.has_value() ? "" : result.error().Detail);
-            return *result;
-        };
-
-        if (!m_PickingPipeline && staticMaterial != nullptr)
-        {
-            const AssetHandle<Veng::Shader> vs = LoadShader(EntityIdVertId, "entity-id vertex");
-            const AssetHandle<Veng::Shader> fs = LoadShader(EntityIdFragId, "entity-id fragment");
-            m_PickingPipeline = GraphicsPipeline::Create(
-                m_Context, {
-                               .Name = "SceneRenderer Picking Pipeline",
-                               .ColorAttachments = {{.Format = Picking::EntityIdFormat}},
-                               .DepthAttachmentFormat = GBuffer::DepthFormat,
-                               .VertexBufferLayout = Mesh::CanonicalLayout(),
-                               .InstanceCandidateId = true,
-                               .PipelineLayout = staticMaterial->GetPipelineLayout(),
-                               .ShaderStages =
-                                   {
-                                       {.Stage = ShaderStage::Vertex, .Module = vs.Get()->Module},
-                                       {.Stage = ShaderStage::Fragment, .Module = fs.Get()->Module},
-                                   },
-                               .CullMode = CullMode::Back,
-                               .DepthTestEnable = true,
-                               .DepthWriteEnable = true,
-                               .DepthCompareOp = CompareOp::LessOrEqual,
-                           });
-        }
-
-        if (!m_PickingSkinnedPipeline && skinnedMaterial != nullptr)
-        {
-            const AssetHandle<Veng::Shader> vs =
-                LoadShader(EntityIdSkinnedVertId, "entity-id skinned vertex");
-            const AssetHandle<Veng::Shader> fs = LoadShader(EntityIdFragId, "entity-id fragment");
-            m_PickingSkinnedPipeline = GraphicsPipeline::Create(
-                m_Context, {
-                               .Name = "SceneRenderer Picking Skinned Pipeline",
-                               .ColorAttachments = {{.Format = Picking::EntityIdFormat}},
-                               .DepthAttachmentFormat = GBuffer::DepthFormat,
-                               .VertexBufferLayout = Mesh::SkinnedLayout(),
-                               .InstanceCandidateId = true,
-                               .PipelineLayout = skinnedMaterial->GetPipelineLayout(),
-                               .ShaderStages =
-                                   {
-                                       {.Stage = ShaderStage::Vertex, .Module = vs.Get()->Module},
-                                       {.Stage = ShaderStage::Fragment, .Module = fs.Get()->Module},
-                                   },
-                               .CullMode = CullMode::Back,
-                               .DepthTestEnable = true,
-                               .DepthWriteEnable = true,
-                               .DepthCompareOp = CompareOp::LessOrEqual,
-                           });
-        }
     }
 
     void SceneRenderer::CreateGBuffer()
@@ -795,87 +598,9 @@ namespace Veng::Renderer
         m_VelocityHandle = bindless.Register(m_VelocityView);
         m_EmissiveHandle = bindless.Register(m_EmissiveView);
 
-        CreateHiZ();
-    }
-
-    void SceneRenderer::CreateHiZ()
-    {
-        BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
-        bindless.Release(m_HiZSampleHandle);
-
-        // A full mip chain over the depth extent: floor(log2(max(w,h))) + 1 levels.
-        const u32 maxDim = std::max(m_Extent.x, m_Extent.y);
-        const u32 mipCount = maxDim == 0 ? 1 : (std::bit_width(maxDim));
-
-        m_HiZImage =
-            Image::Create(m_Context, {
-                                         .Name = "SceneRenderer HiZ",
-                                         .Extent = {m_Extent.x, m_Extent.y, 1},
-                                         .MipLevels = mipCount,
-                                         .Format = HiZFormat,
-                                         .Usage = ImageUsage::Storage | ImageUsage::Sampled,
-                                     });
-
-        // One single-mip storage view per level (the reduction writes each), plus a
-        // whole-chain sampled view for the occlusion test.
-        m_HiZMips.clear();
-        m_HiZMips.reserve(mipCount);
-        for (u32 level = 0; level < mipCount; level++)
-        {
-            m_HiZMips.push_back(ImageView::Create(
-                m_Context, {
-                               .Name = fmt::format("SceneRenderer HiZ Mip {} View", level),
-                               .Image = m_HiZImage,
-                               .BaseMipLevel = level,
-                               .MipLevels = 1,
-                           }));
-        }
-        m_HiZSampleView = ImageView::Create(m_Context, {
-                                                           .Name = "SceneRenderer HiZ Sample View",
-                                                           .Image = m_HiZImage,
-                                                           .MipLevels = mipCount,
-                                                       });
-        m_HiZSampleHandle = bindless.Register(m_HiZSampleView);
-
-        // Per-mip reduction descriptor sets: set k binds mip k's source (the depth
-        // target for k=0, hi-Z mip k-1 otherwise) and mip k's destination storage view.
-        m_HiZReduceSets.clear();
-        m_HiZReduceSets.reserve(mipCount);
-        for (u32 level = 0; level < mipCount; level++)
-        {
-            Ref<DescriptorSet> set = DescriptorSet::Create(
-                m_Context, {
-                               .Name = fmt::format("SceneRenderer HiZ Reduce Set {}", level),
-                               .Layout = m_HiZReduceSetLayout,
-                           });
-            const Ref<ImageView>& source = level == 0 ? m_DepthView : m_HiZMips[level - 1];
-            set->Write(0, source);
-            set->Write(1, m_HiZMips[level]);
-            m_HiZReduceSets.push_back(std::move(set));
-        }
-
-        // The freshly created pyramid carries no last-frame depth; the next Execute must
-        // skip occlusion rather than test against an undefined/stale chain.
-        m_HiZHistoryReset = true;
-
-        // The cull set samples the pyramid through binding 0, and the pyramid is recreated on
-        // Resize/Configure — but the live set may still be referenced by an in-flight frame's
-        // command buffer and its bindings are not update-after-bind, so bind the new view into
-        // a fresh set rather than writing the old one in place (the replaced set retires through
-        // the deferred-destruction path, and the cull pass reads the member at record time).
-        // Skipped on the first CreateHiZ, before
-        // CreateCullResources has made the set and the buffers it binds.
-        if (m_CullSet)
-        {
-            m_CullSet = DescriptorSet::Create(m_Context, {
-                                                             .Name = "SceneRenderer Cull Set",
-                                                             .Layout = m_CullSetLayout,
-                                                         });
-            m_CullSet->Write(0, m_HiZSampleView);
-            m_CullSet->Write(1, m_CullCandidateBuffer);
-            m_CullSet->Write(2, m_IndirectBuffer);
-            m_CullSet->Write(3, m_CullCountBuffer);
-        }
+        // The hi-Z pyramid's reduction sets bind the fresh depth view, so it is (re)built from the
+        // g-buffer create/recreate tail.
+        m_GpuCull->ResizeHiZ(m_Extent, m_DepthView);
     }
 
     void SceneRenderer::CreateCullResources()
@@ -949,90 +674,6 @@ namespace Veng::Renderer
                                       });
         m_CandidateIdBuffer->UploadSync(std::span<const u8>(
             reinterpret_cast<const u8*>(identity.data()), identity.size() * sizeof(u32)));
-
-        // The GPU cull path's buffers + pipeline build only where the device supports it.
-        if (!m_Context.IsGpuDrivenCullingSupported())
-        {
-            return;
-        }
-
-        const u64 candidateRegion = static_cast<u64>(MaxCullCandidates) * sizeof(GpuCullCandidate);
-        m_CullCandidateBuffer =
-            Buffer::Create(m_Context, {
-                                          .Name = "SceneRenderer Cull Candidates",
-                                          .Size = candidateRegion * m_FramesInFlight,
-                                          .Usage = BufferUsage::Storage,
-                                          .HostMapped = true,
-                                      });
-
-        const u64 indirectRegion =
-            static_cast<u64>(MaxCullCandidates) * sizeof(DrawIndexedIndirectCommand);
-        m_IndirectBuffer =
-            Buffer::Create(m_Context, {
-                                          .Name = "SceneRenderer Indirect Commands",
-                                          .Size = indirectRegion * m_FramesInFlight,
-                                          .Usage = BufferUsage::Storage | BufferUsage::Indirect,
-                                      });
-
-        m_CullCountBuffer =
-            Buffer::Create(m_Context, {
-                                          .Name = "SceneRenderer Cull Count",
-                                          .Size = static_cast<u64>(m_FramesInFlight) * sizeof(u32),
-                                          .Usage = BufferUsage::Storage | BufferUsage::TransferSrc,
-                                          .HostMapped = true,
-                                      });
-
-        const AssetResult<AssetHandle<Veng::Shader>> cullCs =
-            m_Assets.LoadSync<Veng::Shader>(OcclusionCullCompId);
-        VE_ASSERT(cullCs.has_value(), "SceneRenderer: occlusion-cull compute load failed: {}",
-                  cullCs.error().Detail);
-
-        m_CullSetLayout = DescriptorSetLayout::Create(
-            m_Context, {
-                           .Name = "SceneRenderer Cull Set Layout",
-                           .Bindings =
-                               {
-                                   {.Binding = 0,
-                                    .Type = DescriptorType::SampledImage,
-                                    .Count = 1,
-                                    .Stages = ShaderStage::Compute},
-                                   {.Binding = 1,
-                                    .Type = DescriptorType::StorageBuffer,
-                                    .Count = 1,
-                                    .Stages = ShaderStage::Compute},
-                                   {.Binding = 2,
-                                    .Type = DescriptorType::StorageBuffer,
-                                    .Count = 1,
-                                    .Stages = ShaderStage::Compute},
-                                   {.Binding = 3,
-                                    .Type = DescriptorType::StorageBuffer,
-                                    .Count = 1,
-                                    .Stages = ShaderStage::Compute},
-                               },
-                       });
-        m_CullLayout = PipelineLayout::Create(
-            m_Context, {
-                           .Name = "SceneRenderer Cull Layout",
-                           .DescriptorSetLayouts = {m_CullSetLayout},
-                           .PushConstantRanges = {PushConstantRange::Of<OcclusionCullPush>(
-                               ShaderStage::Compute)},
-                       });
-        m_CullPipeline = ComputePipeline::Create(
-            m_Context,
-            {
-                .Name = "SceneRenderer Cull Pipeline",
-                .PipelineLayout = m_CullLayout,
-                .ShaderStage = {.Stage = ShaderStage::Compute, .Module = cullCs->Get()->Module},
-            });
-
-        m_CullSet = DescriptorSet::Create(m_Context, {
-                                                         .Name = "SceneRenderer Cull Set",
-                                                         .Layout = m_CullSetLayout,
-                                                     });
-        m_CullSet->Write(0, m_HiZSampleView);
-        m_CullSet->Write(1, m_CullCandidateBuffer);
-        m_CullSet->Write(2, m_IndirectBuffer);
-        m_CullSet->Write(3, m_CullCountBuffer);
     }
 
     void SceneRenderer::CreateHdr()
@@ -1287,29 +928,23 @@ namespace Veng::Renderer
         // The GPU cull arm imports the indirect command buffer so the cull compute pass
         // (StorageBufferWrite) and the geometry pass (IndirectRead) share it through the
         // graph-derived buffer barrier.
-        m_IndirectId = ResourceId{};
-        if (m_ActiveCull == SceneRendererSettings::CullMode::GPU)
-        {
-            m_IndirectId = graph.ImportBuffer("SceneRenderer Indirect Commands");
-        }
+        const ResourceId indirectId = m_GpuCull->ImportIndirect(graph);
 
         auto gbufferPass = CreateUnique<GBufferScenePass>(m_Context, m_Extent, &m_Internal->Plan,
-                                                          m_ActiveCull, m_IndirectId);
+                                                          m_GpuCull->GetActiveCull(), indirectId);
         m_Passes.push_back(std::move(gbufferPass));
 
         // The entity-id picking pass: a depth-tested re-draw of the same survivors into the R32Uint
         // EntityId target through its own RenderingInfo (the shipping g-buffer pass above untouched).
-        // Allocated and wired only when Settings.Picking is set, so the shipping path is unchanged.
-        m_PickingActive = m_Settings.Picking && m_EntityIdImage != nullptr;
-        m_EntityIdId = ResourceId{};
-        m_PickingDepthId = ResourceId{};
-        if (m_PickingActive)
+        // Allocated and wired only when Picking is set (targets exist), so the shipping path is unchanged.
+        if (m_Picking->IsAllocated())
         {
-            m_EntityIdId = graph.Import("SceneRenderer EntityId");
-            m_PickingDepthId = graph.Import("SceneRenderer Picking Depth");
+            const ResourceId entityIdId = graph.Import("SceneRenderer EntityId");
+            const ResourceId pickingDepthId = graph.Import("SceneRenderer Picking Depth");
+            m_Picking->SetGraphIds(entityIdId, pickingDepthId);
             m_Passes.push_back(CreateUnique<PickingScenePass>(
-                m_Context, m_Extent, &m_Internal->Plan, &m_PickingPipeline,
-                &m_PickingSkinnedPipeline, m_EntityIdId, m_PickingDepthId));
+                m_Context, m_Extent, &m_Internal->Plan, m_Picking->GetStaticPipelinePointer(),
+                m_Picking->GetSkinnedPipelinePointer(), entityIdId, pickingDepthId));
 
             // The billboard id-write runs immediately after the mesh id pass — still in the
             // geometry-pass timeframe, while the EntityId target is bound — writing each pickable
@@ -1318,7 +953,11 @@ namespace Veng::Renderer
             // are untouched here; the DebugDrawScenePass still draws them after tonemap unchanged.
             m_Passes.push_back(CreateUnique<BillboardPickScenePass>(
                 m_Context, m_Assets, &m_DebugDraw, GBuffer::DepthFormat,
-                m_Context.GetMaxFramesInFlight(), m_Extent, m_EntityIdId, m_PickingDepthId));
+                m_Context.GetMaxFramesInFlight(), m_Extent, entityIdId, pickingDepthId));
+        }
+        else
+        {
+            m_Picking->SetGraphIds(ResourceId{}, ResourceId{});
         }
 
         // Created before the tail switch so ssaoHandle is set when the Final arm reads it.
@@ -1636,18 +1275,16 @@ namespace Veng::Renderer
             .Output = m_OutputId,
         };
 
-        // Import the hi-Z chain once: the GPU cull samples last frame's pyramid (declared
-        // .Sample below for the graph-derived transition into ShaderReadOnly before the cull)
-        // and the reduction at the tail writes this frame's pyramid into the same slots.
-        m_HiZChainId =
-            graph.ImportImageMips("SceneRenderer HiZ", static_cast<u32>(m_HiZMips.size()));
+        // Import the hi-Z chain once: the GPU cull samples last frame's pyramid and the reduction
+        // at the tail writes this frame's pyramid into the same slots.
+        m_GpuCull->ImportHiZChain(graph);
 
         // The GPU cull compute pass must precede the geometry pass: it writes the
         // indirect commands the geometry pass reads. Declared before the pass loop so it
         // is earlier in the graph's declaration (execution) order than the g-buffer pass.
-        if (m_ActiveCull == SceneRendererSettings::CullMode::GPU)
+        if (m_GpuCull->GetActiveCull() == SceneRendererSettings::CullMode::GPU)
         {
-            DeclareCullPass(graph);
+            m_GpuCull->DeclareCull(graph, &m_Internal->Plan);
         }
 
         // The HDR tail — SSR composite, point fields, bloom sweep — is declared just before the
@@ -1697,7 +1334,7 @@ namespace Veng::Renderer
         // The hi-Z reduction runs last so it reduces this frame's completed depth.
         // Nothing samples the pyramid yet — it is built and persisted for the
         // next-frame occlusion test — so it changes no rendered pixel.
-        DeclareHiZReduction(graph);
+        m_GpuCull->DeclareHiZReduction(graph, m_DepthId);
 
         m_Internal->Graph = graph.Compile();
     }
@@ -1895,135 +1532,13 @@ namespace Veng::Renderer
         }
     }
 
-    void SceneRenderer::DeclareHiZReduction(RenderGraph& graph)
-    {
-        const u32 mipCount = static_cast<u32>(m_HiZMips.size());
-
-        // One compute dispatch per mip. Dispatch k reads mip k's source and writes mip
-        // k; the per-mip graph surface derives the read-after-write barrier between
-        // dispatch k's write of mip k and dispatch k+1's read of it. Mip 0's source is
-        // the depth target (declared .Sample, reusing the depth import so the barrier
-        // chains off the lighting pass's read); a source mip n-1 is declared .StorageRead.
-        for (u32 level = 0; level < mipCount; level++)
-        {
-            // Mip extents (image extent >> level, floored at 1).
-            const u32 dstW = std::max(m_Extent.x >> level, 1u);
-            const u32 dstH = std::max(m_Extent.y >> level, 1u);
-            const u32 srcW = level == 0 ? m_Extent.x : std::max(m_Extent.x >> (level - 1), 1u);
-            const u32 srcH = level == 0 ? m_Extent.y : std::max(m_Extent.y >> (level - 1), 1u);
-
-            // The source (depth target or prior mip) binds as a sampled image, so it
-            // must be in ShaderReadOnly — declared .Sample, not .StorageRead. The
-            // destination is a storage write (General). A prior mip therefore goes
-            // General (its write) → ShaderReadOnly (its read as the next source), a
-            // graph-derived per-mip transition.
-            RenderGraph::PassBuilder builder =
-                graph.AddComputePass(fmt::format("HiZ Reduce Mip {}", level));
-            if (level == 0)
-            {
-                builder.Sample(m_DepthId);
-            }
-            else
-            {
-                builder.Sample(m_HiZChainId.Level(level - 1));
-            }
-            builder.StorageWrite(m_HiZChainId.Level(level));
-
-            const Ref<ComputePipeline> pipeline = m_HiZReducePipeline;
-            const Ref<DescriptorSet> set = m_HiZReduceSets[level];
-            const HiZReducePush push{
-                .DestExtent = {dstW, dstH},
-                .SourceExtent = {srcW, srcH},
-            };
-            builder.Execute(
-                [pipeline, set, push](PassContext& inner)
-                {
-                    CommandBuffer& cmd = inner.Cmd();
-                    cmd.BindPipeline(pipeline);
-                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
-                        .Sets = {set},
-                        .FirstSet = 1, // set 0 is reserved for the bindless registry
-                        .PipelineBindPoint = PipelineBindPoint::Compute,
-                    });
-                    cmd.PushConstants(push);
-                    cmd.Dispatch((push.DestExtent.x + 7) / 8, (push.DestExtent.y + 7) / 8, 1);
-                });
-        }
-    }
-
-    void SceneRenderer::ResolveActiveCullMode()
-    {
-        const bool gpuRequested = m_Settings.Cull == SceneRendererSettings::CullMode::GPU;
-        const bool gpuSupported = m_Context.IsGpuDrivenCullingSupported();
-
-        // The GPU path is an optimization, not a correctness requirement: a device lacking
-        // multiDrawIndirect / drawIndirectFirstInstance silently runs the CPU path, which
-        // renders the same image. The fallback is logged once so it is observable, and
-        // GetActiveCullMode() reports the real mode for the debug UI and tests.
-        if (gpuRequested && !gpuSupported && !m_GpuCullWarned)
-        {
-            Log::Warn("SceneRenderer: CullMode::GPU requested but the device lacks "
-                      "multiDrawIndirect / drawIndirectFirstInstance; using CullMode::CPU.");
-            m_GpuCullWarned = true;
-        }
-
-        m_ActiveCull = (gpuRequested && gpuSupported) ? SceneRendererSettings::CullMode::GPU
-                                                      : SceneRendererSettings::CullMode::CPU;
-    }
-
-    void SceneRenderer::DeclareCullPass(RenderGraph& graph)
-    {
-        // StorageBufferWrite on the indirect import drives the graph-derived
-        // StorageBufferWrite → IndirectRead barrier feeding the geometry pass.
-        RenderGraph::PassBuilder builder = graph.AddComputePass("Scene GPU Cull");
-        builder.StorageBufferWrite(m_IndirectId);
-
-        // The cull samples last frame's hi-Z pyramid (through m_CullSet, off the graph's
-        // descriptor binding). Declaring .Sample on each mip drives the graph-derived
-        // transition into ShaderReadOnly before the cull — the pyramid is a cross-frame
-        // renderer-owned resource the graph would otherwise leave in its prior layout.
-        for (u32 level = 0; level < m_HiZMips.size(); ++level)
-        {
-            builder.Sample(m_HiZChainId.Level(level));
-        }
-
-        builder.Execute(
-            [this](PassContext& inner)
-            {
-                const GBufferDrawPlan& plan = m_Internal->Plan;
-                if (plan.Cull != SceneRendererSettings::CullMode::GPU || plan.Slots.empty())
-                {
-                    return;
-                }
-
-                CommandBuffer& cmd = inner.Cmd();
-                cmd.BindPipeline(m_CullPipeline);
-                cmd.BindDescriptorSets(DescriptorSetBindInfo{
-                    .Sets = {m_CullSet},
-                    .FirstSet = 1, // set 0 is reserved for the bindless registry
-                    .PipelineBindPoint = PipelineBindPoint::Compute,
-                });
-                cmd.PushConstants(OcclusionCullPush{
-                    .PrevViewProj = m_CullPrevViewProj,
-                    .HiZBaseExtent = m_CullHiZExtent,
-                    .CandidateCount = m_CullCandidateCount,
-                    .HistoryValid = m_CullHistoryValid,
-                    // Small bias absorbing reduction quantization; a tie draws.
-                    .DepthBias = 0.001f,
-                    .FrameBase = m_CullFrameBase,
-                    .CountIndex = m_CullCountIndex,
-                });
-                cmd.Dispatch((m_CullCandidateCount + 63) / 64, 1, 1);
-            });
-    }
-
     void SceneRenderer::PrepareDraws(const SceneView& view, const u32 viewConstantsIndex)
     {
         GBufferDrawPlan& plan = m_Internal->Plan;
-        plan.Cull = m_ActiveCull;
+        plan.Cull = m_GpuCull->GetActiveCull();
         plan.DrawDataSet = m_DrawDataSet;
         plan.CandidateIdBuffer = m_CandidateIdBuffer;
-        plan.IndirectBuffer = m_IndirectBuffer;
+        plan.IndirectBuffer = m_GpuCull->GetIndirectBuffer();
         plan.PipelineMaterial = nullptr;
         plan.Slots.clear();
         plan.Groups.clear();
@@ -2093,11 +1608,9 @@ namespace Veng::Renderer
         }
 
         auto* drawData = static_cast<GpuDrawData*>(m_DrawDataBuffer->GetMappedData());
-        GpuCullCandidate* cullData =
-            m_CullCandidateBuffer
-                ? static_cast<GpuCullCandidate*>(m_CullCandidateBuffer->GetMappedData()) +
-                      static_cast<usize>(frameBase)
-                : nullptr;
+        // The GPU cull candidate span for this frame's ring region (null under CullMode::CPU); the
+        // renderer-coordinated write surface into the subsystem-owned candidate buffer.
+        GpuCullCandidate* cullData = m_GpuCull->BeginFrameUpload(frameIndex);
 
         // Skinned survivors are deferred to a second pass (they draw on the CPU-direct skinned
         // path after the static slots, which must stay contiguous from 0 for the GPU cull arrays).
@@ -2425,26 +1938,13 @@ namespace Veng::Renderer
                               return a.ViewDepth < b.ViewDepth;
                           });
 
-        // The GPU cull dispatch reads the candidate region this frame; zero its survivor
-        // count so the next-frame readback reflects only this dispatch. The push members the
-        // cull pass reads are set here (per-frame), not in the recompile-time declaration.
-        if (m_ActiveCull == SceneRendererSettings::CullMode::GPU)
+        // Arm this frame's GPU cull dispatch + survivor readback: the count is the opaque static
+        // slot count, the previous-frame view-projection screen-bounds candidates, and Occlusion
+        // gates the occlusion test (a history-invalid frame stays frustum-only inside the subsystem).
+        if (m_GpuCull->GetActiveCull() == SceneRendererSettings::CullMode::GPU)
         {
-            const u32 count = static_cast<u32>(plan.Slots.size());
-            m_CullCandidateCount = count;
-            m_CullFrameBase = frameBase;
-            m_CullCountIndex = frameIndex;
-            m_CullPrevViewProj = m_PreviousViewProj;
-            m_CullHiZExtent = m_Extent;
-            m_CullHistoryValid = (m_Settings.Occlusion && m_HiZHistoryValid) ? 1u : 0u;
-
-            auto* counts = static_cast<u32*>(m_CullCountBuffer->GetMappedData());
-            counts[frameIndex] = 0;
-
-            // Record the region the readback reads one frame late.
-            m_GpuCandidateCount = count;
-            m_GpuReadbackRegion = frameIndex;
-            m_GpuReadbackValid = true;
+            m_GpuCull->RecordFrame(static_cast<u32>(plan.Slots.size()), frameBase, frameIndex,
+                                   m_PreviousViewProj, m_Settings.Occlusion);
         }
     }
 
@@ -2461,7 +1961,7 @@ namespace Veng::Renderer
         CreateHdr();
         m_Taa->Resize(m_Extent, m_Settings.TAA);
         m_Bloom->Resize(m_Extent, m_HdrView);
-        m_Ssr->Recreate(m_Settings, m_Extent, m_DepthView, m_HiZReduceSetLayout,
+        m_Ssr->Recreate(m_Settings, m_Extent, m_DepthView, m_GpuCull->GetHiZReduceSetLayout(),
                         m_Bloom->GetDownUpSetLayout());
         m_Refraction->Recreate(m_Settings, m_Extent);
         // The HDR target moved; rebind the metering source and re-snap the adaptation so the
@@ -2469,7 +1969,7 @@ namespace Veng::Renderer
         m_AutoExposure->RebindHdr(m_HdrView);
         m_AutoExposure->RequestReset();
         m_Shadows->Reconfigure(m_Settings);
-        CreatePicking();
+        m_Picking->Recreate(m_Settings, m_Extent);
         Rebuild();
     }
 
@@ -2487,15 +1987,15 @@ namespace Veng::Renderer
     {
         m_Settings = settings;
         ShadowSystem::ClampResolutions(m_Context, m_Settings);
-        ResolveActiveCullMode();
+        m_GpuCull->ResolveActiveCullMode(m_Settings);
         m_Taa->Resize(m_Extent, m_Settings.TAA);
         // The bloom pyramid is extent-driven (unchanged here); only the kernel choice may change.
         m_Bloom->Reconfigure(m_Settings.Kernel);
-        m_Ssr->Recreate(m_Settings, m_Extent, m_DepthView, m_HiZReduceSetLayout,
+        m_Ssr->Recreate(m_Settings, m_Extent, m_DepthView, m_GpuCull->GetHiZReduceSetLayout(),
                         m_Bloom->GetDownUpSetLayout());
         m_Refraction->Recreate(m_Settings, m_Extent);
         m_Shadows->Reconfigure(m_Settings);
-        CreatePicking();
+        m_Picking->Recreate(m_Settings, m_Extent);
         Rebuild();
     }
 
@@ -2516,7 +2016,8 @@ namespace Veng::Renderer
         // sub-rect sampling yet, so each forces full resolution (correct, just no scaling).
         const bool drsSupported =
             m_Settings.Mode == DebugView::Final && !m_Settings.TAA && !m_Settings.SSR &&
-            !(m_ActiveCull == SceneRendererSettings::CullMode::GPU && m_Settings.Occlusion) &&
+            !(m_GpuCull->GetActiveCull() == SceneRendererSettings::CullMode::GPU &&
+              m_Settings.Occlusion) &&
             !(m_Settings.Bloom && m_Settings.Kernel == BloomKernel::Kawase);
         const f32 renderScale = drsSupported ? view.RenderScale : 1.0f;
         const uvec2 validExtent =
@@ -2858,11 +2359,9 @@ namespace Veng::Renderer
         }
         registry.WriteViewConstants(std::as_bytes(std::span(&viewConstants, 1)));
 
-        // Decide whether last frame's pyramid is trustworthy this frame. The reset
-        // flag (frame 0 / post-resize / post-configure) forces invalid regardless of
-        // the view delta; otherwise the device-free metric compares this frame's
-        // camera against last frame's. The result feeds the GPU cull (occlusion skipped
-        // when invalid); this plan lands it for tests and the cull to consume.
+        // Decide whether last frame's pyramid is trustworthy this frame; the GPU cull subsystem
+        // combines the reset gate (frame 0 / post-resize / post-configure) with the device-free
+        // view-delta metric. The result feeds the GPU cull (occlusion skipped when invalid).
         const mat4 invView = glm::inverse(view.Camera.View());
         const HiZHistoryState currentHiZState{
             .CameraPosition = view.Camera.GetPosition(),
@@ -2872,9 +2371,7 @@ namespace Veng::Renderer
             .Projection = view.Camera.Projection(),
         };
         const f32 sceneDiagonal = sceneBounds.IsEmpty() ? 0.0f : glm::length(sceneBounds.Size());
-        m_HiZHistoryValid =
-            !m_HiZHistoryReset && Renderer::IsHiZHistoryValid(m_PreviousHiZState, currentHiZState,
-                                                              sceneDiagonal, HiZHistorySettings{});
+        m_GpuCull->EvaluateHistory(currentHiZState, sceneDiagonal);
 
         // Pack set-1 ShadowConstants: tile-remapped cascade view-projs, splits, and
         // params. Enabled only when the shadow pass is wired AND a directional light
@@ -2908,10 +2405,9 @@ namespace Veng::Renderer
         // Read the GPU survivor count the previous Execute wrote into this frame's region
         // before PrepareDraws zeroes it again — the host-visible count is one frame late, so
         // it never gates this frame's draw. Only meaningful under the GPU path.
-        if (m_ActiveCull == SceneRendererSettings::CullMode::GPU && m_CullCountBuffer)
+        if (m_GpuCull->GetActiveCull() == SceneRendererSettings::CullMode::GPU)
         {
-            const auto* counts = static_cast<const u32*>(m_CullCountBuffer->GetMappedData());
-            m_LastGpuSurvivorCount = counts[frameIndex];
+            m_GpuCull->ReadSurvivorCount(frameIndex);
         }
 
         // Fill the per-draw DrawData buffer + (GPU) the candidate buffer and submission plan.
@@ -2922,11 +2418,8 @@ namespace Veng::Renderer
         // Build the id-writing pipeline variants on the first frame a surface material is available
         // (their layout is shared across surface materials), so the picking pass can re-draw the
         // same survivors. A no-op when picking is off or the pipelines are already built.
-        if (m_PickingActive)
-        {
-            EnsurePickingPipelines(m_Internal->Plan.PipelineMaterial,
+        m_Picking->EnsurePipelines(m_Internal->Plan.PipelineMaterial,
                                    m_Internal->Plan.SkinnedPipelineMaterial);
-        }
 
         // Expose the skinning palette + per-entity bases (filled by PrepareDraws) to the shadow
         // passes so a skinned caster casts its posed shadow.
@@ -2947,11 +2440,7 @@ namespace Veng::Renderer
         bindings.push_back({m_VelocityId, m_VelocityView});
         // Emissive (G4) is likewise a g-buffer channel written every frame, always bound.
         bindings.push_back({m_EmissiveId, m_EmissiveView});
-        if (m_PickingActive)
-        {
-            bindings.push_back({m_EntityIdId, m_EntityIdView});
-            bindings.push_back({m_PickingDepthId, m_PickingDepthView});
-        }
+        m_Picking->AppendBindings(bindings);
         if (m_ShadowActive && m_ShadowPass)
         {
             bindings.push_back({m_ShadowId, m_ShadowPass->GetShadowView()});
@@ -3002,15 +2491,17 @@ namespace Veng::Renderer
             }
         }
         // Bind each hi-Z mip's per-frame storage view to its per-mip import slot.
-        for (u32 level = 0; level < m_HiZMips.size(); level++)
+        const std::vector<Ref<ImageView>>& hiZMipViews = m_GpuCull->GetHiZMipViews();
+        for (u32 level = 0; level < hiZMipViews.size(); level++)
         {
-            bindings.push_back({m_HiZChainId.Level(level), m_HiZMips[level]});
+            bindings.push_back({m_GpuCull->GetHiZChainId().Level(level), hiZMipViews[level]});
         }
         // The GPU cull arm shares the indirect command buffer between the cull pass and the
         // geometry pass through this import (the same buffer the cull set binding 2 writes).
-        if (m_ActiveCull == SceneRendererSettings::CullMode::GPU)
+        if (m_GpuCull->GetActiveCull() == SceneRendererSettings::CullMode::GPU)
         {
-            bindings.push_back({.Id = m_IndirectId, .Buffer = m_IndirectBuffer});
+            bindings.push_back(
+                {.Id = m_GpuCull->GetIndirectId(), .Buffer = m_GpuCull->GetIndirectBuffer()});
         }
         // Image-based lighting: initialize the BRDF LUT + leave the maps in a sampled layout
         // once, then (re)generate the radiance/irradiance/prefilter maps when the bound
@@ -3031,55 +2522,22 @@ namespace Veng::Renderer
 
         m_Internal->Graph->Execute(cmd, bindings, &resolvedView);
 
-        // Service a pending pick: the picking pass left the EntityId target in ColorAttachment
-        // layout, so transition it to TransferSrc and copy the search window under the cursor into
-        // this frame's readback region. The result becomes readable once this frame's GPU work
-        // completes (PollPickId waits frames-in-flight); the copy rides the graphics queue, no stall.
-        if (m_PickRequested && !m_PickStaged && m_PickingActive && m_EntityIdImage)
-        {
-            const u32 window = static_cast<u32>(2 * Picking::SearchRadius + 1);
-            // Clamp the window into the target; the cursor's offset within it is recorded so the
-            // search-radius logic measures distance from the real cursor texel, not the clamped one.
-            const uvec2 maxOrigin = uvec2(m_Extent.x - 1, m_Extent.y - 1);
-            const uvec2 clampedTexel = glm::min(m_PickTexel, maxOrigin);
-            const uvec2 origin{
-                clampedTexel.x >= static_cast<u32>(Picking::SearchRadius)
-                    ? std::min(clampedTexel.x - static_cast<u32>(Picking::SearchRadius),
-                               m_Extent.x - window)
-                    : 0u,
-                clampedTexel.y >= static_cast<u32>(Picking::SearchRadius)
-                    ? std::min(clampedTexel.y - static_cast<u32>(Picking::SearchRadius),
-                               m_Extent.y - window)
-                    : 0u,
-            };
-            const uvec2 copyExtent{std::min(window, m_Extent.x), std::min(window, m_Extent.y)};
-
-            cmd.PrepareForAccess(m_EntityIdView, AccessKind::TransferSrc);
-            // The copy lands tightly packed at buffer byte 0 as a copyExtent.x-wide grid; the host
-            // reads it once this frame completes (PollPickId waits frames-in-flight).
-            cmd.CopyImageRegionToBuffer(m_EntityIdImage, m_PickReadbackBuffer, origin, copyExtent);
-
-            m_PickWindowOrigin = origin;
-            m_PickWindowExtent = copyExtent;
-            m_PickCursorInWindow = clampedTexel - origin;
-            m_PickStaged = true;
-            m_PickStagedFrame = m_FrameIndex;
-        }
+        // Service a pending pick: the picking subsystem transitions the EntityId target to
+        // TransferSrc and copies the search window under the cursor into its readback buffer on the
+        // graphics queue; the result becomes readable through PollPickId once this frame completes.
+        m_Picking->ServiceRequest(cmd, m_Extent, m_FrameIndex);
 
         // Capture this frame's camera + matrix for next frame's history comparison and
         // occlusion test: the reduction declared in this graph wrote the pyramid from
         // this frame's depth, so it pairs with this frame's view-projection next time.
         m_PreviousViewProj = viewProj;
-        m_PreviousHiZState = currentHiZState;
+        m_GpuCull->CommitHistory(currentHiZState);
 
         // Record this frame's sub-rect mapping: GetValidExtent reports it, and the next frame's
         // TAA resolve reprojects the history written at this scale (the zw of RenderScaleUV).
         m_ValidExtent = validExtent;
         m_PreviousRenderScaleUV = renderScaleUV;
         m_PreviousMaxValidUV = maxValidUV;
-        // The pyramid now holds this frame's depth, so the next Execute may test against
-        // it (subject to the view-delta metric).
-        m_HiZHistoryReset = false;
 
         // The history-copy pass populated the history this frame, so the next resolve may
         // reproject against it. Advance the jitter sequence regardless of the TAA toggle so
@@ -3110,31 +2568,15 @@ namespace Veng::Renderer
     }
     SceneRendererSettings::CullMode SceneRenderer::GetActiveCullMode() const
     {
-        return m_ActiveCull;
+        return m_GpuCull->GetActiveCull();
     }
     u32 SceneRenderer::GetLastGpuSurvivorCount() const
     {
-        return m_LastGpuSurvivorCount;
+        return m_GpuCull->GetLastGpuSurvivorCount();
     }
     vector<u32> SceneRenderer::ReadbackGpuSurvivorFlags() const
     {
-        if (!m_GpuReadbackValid || m_GpuCandidateCount == 0 || !m_IndirectBuffer)
-        {
-            return {};
-        }
-
-        // Download the full indirect buffer and pull each candidate command's instanceCount
-        // from this frame's region; 1 = drawn, 0 = occluded.
-        const vector<u8> bytes = m_IndirectBuffer->Download();
-        const auto* commands = reinterpret_cast<const DrawIndexedIndirectCommand*>(bytes.data());
-        const u32 base = m_GpuReadbackRegion * MaxCullCandidates;
-
-        vector<u32> flags(m_GpuCandidateCount);
-        for (u32 i = 0; i < m_GpuCandidateCount; ++i)
-        {
-            flags[i] = commands[base + i].InstanceCount;
-        }
-        return flags;
+        return m_GpuCull->ReadbackGpuSurvivorFlags();
     }
     u32 SceneRenderer::GetFrustumSurvivedCount() const
     {
@@ -3220,21 +2662,22 @@ namespace Veng::Renderer
     }
     Ref<ImageView> SceneRenderer::GetHiZView() const
     {
-        return m_HiZSampleView;
+        return m_GpuCull->GetHiZSampleView();
     }
     Ref<ImageView> SceneRenderer::GetHiZMipView(const u32 level) const
     {
-        VE_ASSERT(level < m_HiZMips.size(), "SceneRenderer::GetHiZMipView: level {} out of range",
+        const std::vector<Ref<ImageView>>& mips = m_GpuCull->GetHiZMipViews();
+        VE_ASSERT(level < mips.size(), "SceneRenderer::GetHiZMipView: level {} out of range",
                   level);
-        return m_HiZMips[level];
+        return mips[level];
     }
     u32 SceneRenderer::GetHiZMipCount() const
     {
-        return static_cast<u32>(m_HiZMips.size());
+        return static_cast<u32>(m_GpuCull->GetHiZMipViews().size());
     }
     bool SceneRenderer::IsHiZHistoryValid() const
     {
-        return m_HiZHistoryValid;
+        return m_GpuCull->IsHiZHistoryValid();
     }
     mat4 SceneRenderer::GetPreviousViewProj() const
     {
@@ -3267,77 +2710,16 @@ namespace Veng::Renderer
 
     void SceneRenderer::RequestPick(const uvec2 texel)
     {
-        if (!m_Settings.Picking)
-        {
-            return;
-        }
-        // A new request replaces any in-flight one (the latest click wins).
-        m_PickTexel = texel;
-        m_PickRequested = true;
-        m_PickStaged = false;
+        m_Picking->RequestPick(texel);
     }
 
     bool SceneRenderer::IsPickInFlight() const
     {
-        return m_PickRequested;
+        return m_Picking->IsPickInFlight();
     }
 
     optional<u32> SceneRenderer::PollPickId()
     {
-        if (!m_PickRequested || !m_PickStaged)
-        {
-            return std::nullopt;
-        }
-        // The staged copy is safe to read once its frame's GPU work has retired — at least
-        // GetMaxFramesInFlight() Executes after it was recorded (the same deferral the retire
-        // path uses). Until then the readback is still pending.
-        if (m_FrameIndex - m_PickStagedFrame < m_Context.GetMaxFramesInFlight())
-        {
-            return std::nullopt;
-        }
-
-        // Search the staged window: the exact cursor texel wins when non-zero; otherwise the
-        // nearest non-zero id to the cursor (front-most resolution rides the depth test the
-        // picking pass already applied, so a non-zero texel is already the nearest surface there).
-        const auto* ids = static_cast<const u32*>(m_PickReadbackBuffer->GetMappedData());
-        const u32 width = m_PickWindowExtent.x;
-        const u32 height = m_PickWindowExtent.y;
-
-        u32 resolved = Picking::NoEntityId;
-        const uvec2 cursor = m_PickCursorInWindow;
-        const u32 exact = (cursor.x < width && cursor.y < height) ? ids[cursor.y * width + cursor.x]
-                                                                  : Picking::NoEntityId;
-        if (exact != Picking::NoEntityId)
-        {
-            resolved = exact;
-        }
-        else
-        {
-            u64 bestDistanceSq = ~0ull;
-            for (u32 y = 0; y < height; ++y)
-            {
-                for (u32 x = 0; x < width; ++x)
-                {
-                    const u32 id = ids[y * width + x];
-                    if (id == Picking::NoEntityId)
-                    {
-                        continue;
-                    }
-                    const i64 dx = static_cast<i64>(x) - static_cast<i64>(cursor.x);
-                    const i64 dy = static_cast<i64>(y) - static_cast<i64>(cursor.y);
-                    const u64 distanceSq = static_cast<u64>(dx * dx + dy * dy);
-                    if (distanceSq < bestDistanceSq)
-                    {
-                        bestDistanceSq = distanceSq;
-                        resolved = id;
-                    }
-                }
-            }
-        }
-
-        // Consume the request: the caller takes the result.
-        m_PickRequested = false;
-        m_PickStaged = false;
-        return resolved;
+        return m_Picking->PollPickId(m_FrameIndex);
     }
 }

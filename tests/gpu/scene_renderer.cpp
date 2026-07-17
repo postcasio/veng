@@ -3854,7 +3854,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     // Runs Render until the renderer resolves a requested pick, returning the raw pick id. The
     // readback is deferred frames-in-flight; ImmediateCommands waits each frame, so a handful of
-    // Executes always suffices.
+    // Executes always suffices. The resolve is one-frame-late but never gating: it lands within
+    // frames-in-flight Executes of the request — a bound asserted here to lock that latency
+    // contract (a regression that stalled the readback an extra frame would trip it).
     auto PickId = [&](uvec2 texel) -> u32
     {
         renderer->RequestPick(texel);
@@ -3864,6 +3866,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
             const optional<u32> id = renderer->PollPickId();
             if (id)
             {
+                CHECK(i + 1 <= Context.GetMaxFramesInFlight());
                 return *id;
             }
         }
