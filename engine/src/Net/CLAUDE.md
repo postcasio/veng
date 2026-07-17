@@ -59,6 +59,17 @@ carries only asset ids, never assets) — and a **per-world join tier** joins on
 level or seat, since those are per-world and now ride the join reply. Connection ids are
 server-assigned `u32`s — the value `Authority::Owner` holds.
 
+**The stale-peer story is not a uniform loud deny — it splits on message shape.** A connect request
+that **decodes** but carries a different `ProtocolVersion` is denied loudly with
+`DenyReason::ProtocolMismatch` (the tested case: a peer whose request has the current wire layout
+but a mismatched version number). But a **genuinely older binary** — one built before the account id
+joined the connect request — sends a *shorter* request: `DecodeConnectRequest` runs out of bytes,
+returns `nullopt`, and the frame is **dropped silently as malformed**, no deny emitted, so that peer
+never sees `ProtocolMismatch` — it simply **times out** at `Connection::TimeoutInterval`. So the wire
+break fails loud only when the old and new requests are the same length; a length-changing bump (like
+the account id's) is caught by the decode as a silent drop-and-timeout. Both are safe (no stale peer
+is admitted); they differ in whether the peer is told why.
+
 **Who a connection is, is a `Net::AccountId`** (`AccountId.h`): an opaque persistent 128-bit id the
 consumer mints and the engine only compares and hashes (the `WorldKey` discipline applied to
 identity). A client presents it once in the connect request (a cold message) — the
@@ -75,9 +86,13 @@ reconnect flow retries with backoff until the timeout clears it (a liveness-prob
 last-in-wins displacement were both rejected — displacement rules on a spoofable transport are a
 griefing primitive). There is no encryption or authentication — the scope is LAN/trusted networks;
 the `Transport` seam is where such a layer would sit, and `AdmitAccount` is where a consumer
-verifies identity (or wires an allowlist as a stopgap). **The posture's consequence:** whoever
-presents an account id *is* that account, so once anything durable keys on it the id is a
-capability token — hosting beyond a trusted LAN is unsafe until identity is verified there.
+verifies identity (or wires an allowlist as a stopgap). **The posture's consequence, and it grows
+once records key on the account:** whoever presents an account id *is* that account — and with the
+session record and a durable store keyed on it, that includes **write-through to its persisted
+state** (its saved gameplay world, its standing joins, whatever a consumer persists under the id). So
+the account id is a **capability token**: possession is authority, unverified, until an
+authentication layer lands behind the `AdmitAccount` seam. Hosting beyond a trusted LAN is unsafe
+until then.
 
 ## The session record — reconnecting is reattaching
 
@@ -266,11 +281,25 @@ primitive — with the listen host's own player a first-class member beside conn
 **`CloseWorld` hook first, then `WorldRunner::CloseWorld`** — the hook-before-teardown ordering is the
 persistence capture point, guaranteed in every role.
 
+**Known limitation — a non-presenting *local* standing travel takes no directory presence.** A remote
+join always calls `AddJoin`, so the directory counts it. But `Application::TravelStandalone` records a
+session **standing** join for a non-presenting local (listen-host / standalone) travel *without* taking
+any directory presence — no `Pin`, no `AddJoin`. So the directory's keep-warm/reap accounting is blind
+to a host holding a data world warm through its own local standing membership. Two consequences follow
+from the same blind spot. A bucket that **only ever** held the local member sits at presence 0 forever,
+never stamps `IdleSince`, and so is never reaped (it leaks — harmless but unbounded). Worse, once a
+**remote** join churns through that bucket (presence 1 → 0 on the remote's departure), `IdleSince`
+*is* stamped and the world is reaped after the dwell — **out from under the still-present local
+member**. The trigger is a **listen host holding any data world warm via a non-presenting standing
+travel while remote members come and go**: the world vanishes under the host on the first remote
+departure. The fix is to give a local standing travel a directory presence (a local-account pin or an
+`AddJoin` equivalent) so local membership counts like a remote join's — recorded, not addressed here.
+
 **Get-or-place: a `WorldKey` maps to N buckets, resolved by a placement policy.** The map is
 `WorldKey → [WorldInstance]` — a key may have several live **buckets**, each (host-side) a full instance
 with its own `ReplicationServer` (replication-state isolation is structural per bucket; the buckets still
 tick serially in the host). On a join the directory offers the key's live buckets (each a `WorldPlacement`
-carrying its presence count **and its recorded `TravelPayload`**) to the `Placement` policy
+carrying its presence count **and its recorded travel payload (`Net::Blob`)**) to the `Placement` policy
 `(WorldKey, connection, payload, buckets) → optional<WorldInstanceId>`: returning an existing bucket
 converges on it, returning `nullopt` opens a fresh bucket through the `WorldFactory`
 (`(WorldKey, payload) → ServerWorldResolution`, bounded by `MaxHostedWorlds`). The **default policy is
@@ -287,7 +316,7 @@ key's list, its peers untouched.
 
 **The travel payload and server-directed travel.** `Net::Blob` (`Blob.h`) is the one opaque
 `{ TypeId; bytes }` shape for every consumer value the engine **moves but never decodes** — travel
-params and game messages alike; `Net::TravelPayload` aliases it (the travel surfaces' spelling). As
+params and game messages alike; the travel surfaces spell it `Net::Blob`. As
 the travel payload it rides the **join request** into
 `Authorize`/`Placement`/`WorldFactory`, is recorded on the bucket, and is **echoed in the join reply**
 so a client's factory-parameterized reconstruction has its inputs — a world can be parameterized by data
@@ -382,6 +411,20 @@ tick for the whole host**, so genuinely different per-world tick *rates* on one 
 Application-level concern, not something the host drives; the per-`JoinId` clock isolation is
 exercised structurally (distinct estimators), not through a genuine different-rate end-to-end
 scenario.
+
+**Known limitation — replication cadence is stamped in host-tick space, not per-world tick space.**
+`ServerHost::Pump` advances **one** host tick and stamps every hosted world's snapshot cadence and
+per-connection ack baselines against *that* counter, regardless of a world's own `SimTickRate`. For a
+world ticking far below the host pump rate — a data world at, say, 1 Hz against a 60 Hz host — two
+things follow: its writes almost never fall on a snapshot-interval tick *in host-tick space*, so they
+never qualify as delta changes and ride only the periodic **keyframe** cadence (a full record every
+few hundred host ticks — on the order of ~16 s of latency before a slow-world change reaches a
+client), and that world's join **tick estimator re-syncs essentially every frame** because the
+observed tick advances by less than one of its slow ticks per host pump (a stream of resync log
+lines). No per-world byte counter exists to *measure* the resulting replication traffic. The trigger
+is **any hosted world whose `SimTickRate` is well below the host pump rate**; a world at or near the
+host rate is unaffected. The fix is per-world cadence and ack accounting in the world's own tick
+space (and a per-world traffic counter to measure it) — recorded, not addressed here.
 
 ## The game message channel
 

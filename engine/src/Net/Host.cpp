@@ -575,8 +575,8 @@ namespace Veng
         // Sends a directed-travel control message to a connection (a travel reply, a reattach
         // restore, or unprompted).
         void SendDirectedTravel(Net::ConnectionId id, Net::JoinId leave, const Net::WorldKey& key,
-                                const Net::TravelPayload& payload, const Net::TravelPayload& pose,
-                                bool present, Net::SessionDurability durability)
+                                const Net::Blob& payload, const Net::Blob& pose, bool present,
+                                Net::SessionDurability durability)
         {
             const vector<u8> message =
                 Net::EncodeDirectedTravel(Net::DirectedTravelMessage{.Leave = leave,
@@ -610,9 +610,8 @@ namespace Veng
 
             for (const Net::WorldKey& key : record->StandingJoins)
             {
-                SendDirectedTravel(id, Net::ControlJoinId, key, Net::TravelPayload{},
-                                   Net::TravelPayload{}, /*present=*/false,
-                                   Net::SessionDurability::Standing);
+                SendDirectedTravel(id, Net::ControlJoinId, key, Net::Blob{}, Net::Blob{},
+                                   /*present=*/false, Net::SessionDurability::Standing);
             }
 
             if (record->Gameplay.Key == Net::WorldKey{})
@@ -975,7 +974,7 @@ namespace Veng
                             const Net::JoinId leave =
                                 current != nullptr ? current->Join : Net::ControlJoinId;
                             s.SendDirectedTravel(id, leave, request->Key, request->Payload,
-                                                 Net::TravelPayload{}, request->Present,
+                                                 Net::Blob{}, request->Present,
                                                  request->Durability);
                         }
                     }
@@ -1128,8 +1127,8 @@ namespace Veng
     }
 
     void ServerHost::DirectTravel(const Net::ConnectionId connection, const Net::JoinId leave,
-                                  const Net::WorldKey& key, const Net::TravelPayload& payload,
-                                  const Net::TravelPayload& pose, const bool present,
+                                  const Net::WorldKey& key, const Net::Blob& payload,
+                                  const Net::Blob& pose, const bool present,
                                   const optional<bool> standing)
     {
         m_State->SendDirectedTravel(connection, leave, key, payload, pose, present,
@@ -1254,7 +1253,7 @@ namespace Veng
         Net::WorldKey AutoJoinKey;
         bool AutoJoin = true;
         bool AutoJoinRequested = false;
-        function<Net::ContentDigest(const Net::WorldKey&, const Net::TravelPayload&)> WorldDigest;
+        function<Net::ContentDigest(const Net::WorldKey&, const Net::Blob&)> WorldDigest;
         function<Scene*(AssetId)> LoadLevel;
         function<Scene*()> OpenEmptyWorld;
         function<Ref<Prefab>(AssetId)> ResolvePrefab;
@@ -1277,11 +1276,10 @@ namespace Veng
         struct JoinClient
         {
             Net::JoinId Join = Net::ControlJoinId;
-            Net::WorldKey Key; // the key the join was requested and granted for
-            Net::TravelPayload
-                Payload; // the params the reply echoed, for the game's reconstruction
-            Net::TravelPayload Pose; // the arrival pose a directed travel carried, or empty
-            bool Present = false;    // whether this join presents (a standing re-join does not)
+            Net::WorldKey Key;    // the key the join was requested and granted for
+            Net::Blob Payload;    // the params the reply echoed, for the game's reconstruction
+            Net::Blob Pose;       // the arrival pose a directed travel carried, or empty
+            bool Present = false; // whether this join presents (a standing re-join does not)
             Unique<ReplicationClient> Replication;
             Scene* World = nullptr; // borrowed (a WorldRunner world); must outlive the host
             u32 SeatNetId = InvalidNetId;
@@ -1301,9 +1299,9 @@ namespace Veng
         {
             u32 Token = 0;
             Net::WorldKey Key;
-            Net::TravelPayload Payload;
+            Net::Blob Payload;
             // The arrival pose a directed travel carried; empty for an ordinary join.
-            Net::TravelPayload Pose;
+            Net::Blob Pose;
             Net::JoinId LeaveOnReady = Net::ControlJoinId;
             // The live scene an adopt-in-place join binds to; null for an ordinary level-loading join.
             Scene* AdoptScene = nullptr;
@@ -1490,7 +1488,7 @@ namespace Veng
             const Net::WorldKey key = pending->Key;
             const Net::JoinId leaveOnReady = pending->LeaveOnReady;
             Scene* const adoptScene = pending->AdoptScene;
-            Net::TravelPayload arrivalPose = std::move(pending->Pose);
+            Net::Blob arrivalPose = std::move(pending->Pose);
             const bool present = pending->Present;
             Pending.erase(pending);
 
@@ -1607,8 +1605,8 @@ namespace Veng
         return Unique<ClientHost>(new ClientHost(std::move(state)));
     }
 
-    void ClientHost::Join(const Net::WorldKey& key, const Net::TravelPayload& payload,
-                          const bool present, const optional<bool> standing)
+    void ClientHost::Join(const Net::WorldKey& key, const Net::Blob& payload, const bool present,
+                          const optional<bool> standing)
     {
         State& s = *m_State;
         const u32 token = s.NextToken;
@@ -1621,9 +1619,8 @@ namespace Veng
                                .Durability = Net::ResolveSessionDurability(present, standing)});
     }
 
-    void ClientHost::JoinInto(const Net::WorldKey& key, Scene& adoptScene,
-                              const Net::TravelPayload& payload, const bool present,
-                              const optional<bool> standing)
+    void ClientHost::JoinInto(const Net::WorldKey& key, Scene& adoptScene, const Net::Blob& payload,
+                              const bool present, const optional<bool> standing)
     {
         State& s = *m_State;
         const u32 token = s.NextToken;
@@ -1637,8 +1634,8 @@ namespace Veng
                                .Durability = Net::ResolveSessionDurability(present, standing)});
     }
 
-    void ClientHost::Travel(const Net::WorldKey& key, const Net::TravelPayload& payload,
-                            const bool present, const optional<bool> standing)
+    void ClientHost::Travel(const Net::WorldKey& key, const Net::Blob& payload, const bool present,
+                            const optional<bool> standing)
     {
         State& s = *m_State;
         const vector<u8> message = Net::EncodeTravelRequest(Net::TravelRequestMessage{
@@ -1950,16 +1947,16 @@ namespace Veng
         return jc != nullptr ? jc->WiredPawn : Entity::Null;
     }
 
-    const Net::TravelPayload& ClientHost::JoinPayload(const Net::JoinId join) const
+    const Net::Blob& ClientHost::JoinPayload(const Net::JoinId join) const
     {
-        static const Net::TravelPayload empty;
+        static const Net::Blob empty;
         const State::JoinClient* jc = m_State->JoinClientOf(join);
         return jc != nullptr ? jc->Payload : empty;
     }
 
-    const Net::TravelPayload& ClientHost::ArrivalPose(const Net::JoinId join) const
+    const Net::Blob& ClientHost::ArrivalPose(const Net::JoinId join) const
     {
-        static const Net::TravelPayload empty;
+        static const Net::Blob empty;
         const State::JoinClient* jc = m_State->JoinClientOf(join);
         return jc != nullptr ? jc->Pose : empty;
     }

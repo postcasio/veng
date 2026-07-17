@@ -460,7 +460,7 @@ private:
                 return name.has_value() ? AccountFromName(*name) : Net::GenerateAccountId();
             };
             info.Net->CaptureTravelPose = [app](const WorldInstanceId world,
-                                                const Entity seat) -> Net::TravelPayload
+                                                const Entity seat) -> Net::Blob
             { return app->CapturePawnPose(world, seat); };
         }
         return info;
@@ -469,7 +469,7 @@ private:
     // Encodes the seat's possessed pawn Transform as the session pose payload — the game-defined
     // half of pose durability (the engine moves the bytes, never reads them). An unpawned or gone
     // seat yields an empty payload, leaving the record's last pose standing.
-    [[nodiscard]] Net::TravelPayload CapturePawnPose(const WorldInstanceId world, const Entity seat)
+    [[nodiscard]] Net::Blob CapturePawnPose(const WorldInstanceId world, const Entity seat)
     {
         const World* resolved = GetWorldRunner().ResolveWorld(world);
         if (resolved == nullptr)
@@ -491,7 +491,7 @@ private:
         {
             return {};
         }
-        Net::TravelPayload pose{.Type = TypeIdOf<Transform>()};
+        Net::Blob pose{.Type = TypeIdOf<Transform>()};
         WriteFields(pose.Bytes, transform, GetTypeRegistry().Info(TypeIdOf<Transform>()),
                     GetTypeRegistry());
         return pose;
@@ -499,7 +499,7 @@ private:
 
     // Decodes a session pose payload back onto a freshly spawned pawn — the reattach arrival. A
     // payload of another shape (or none) leaves the prefab's authored pose.
-    void ApplySessionPose(Scene& world, const Entity pawn, const Net::TravelPayload& pose)
+    void ApplySessionPose(Scene& world, const Entity pawn, const Net::Blob& pose)
     {
         if (pose.Type != TypeIdOf<Transform>() || pose.IsEmpty() || !world.Has<Transform>(pawn))
         {

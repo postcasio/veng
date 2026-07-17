@@ -2,7 +2,7 @@
 
 #include <Veng/Net/AccountId.h>
 #include <Veng/Net/NetEvents.h>
-#include <Veng/Net/TravelPayload.h>
+#include <Veng/Net/Blob.h>
 #include <Veng/Net/WorldKey.h>
 #include <Veng/Veng.h>
 
@@ -31,6 +31,6 @@ namespace Veng::Net
         /// @brief The opaque world the request names (the engine never interprets it).
         WorldKey Key;
         /// @brief The opaque travel payload the request carries; borrowed for the hook call.
-        const TravelPayload& Payload;
+        const Blob& Payload;
     };
 }

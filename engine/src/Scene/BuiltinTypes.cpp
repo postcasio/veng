@@ -87,7 +87,7 @@ namespace Veng
         // The per-account session record, registered so its reflection-binary encoding (the
         // durability blob) has a schema everywhere a SessionRegistry runs. Not a component — it
         // lives at the host tier, keyed by account, never in a scene. Net::WorldKey and
-        // Net::TravelPayload register transitively through its fields.
+        // Net::Blob register transitively through its fields.
         registry.Register<Net::SessionRecord>();
 
         // Local-only runtime requests a gameplay system stamps and the engine drains at its

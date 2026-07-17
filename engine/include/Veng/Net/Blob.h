@@ -36,9 +36,6 @@ namespace Veng::Net
         /// @brief Value equality over the type id and the byte contents.
         [[nodiscard]] bool operator==(const Blob&) const = default;
     };
-
-    /// @brief Alias for Blob — the name the travel/join surfaces spell the payload with.
-    using TravelPayload = Blob;
 }
 
 // Reflected as an opaque (type id, bytes) pair so it sits inside reflected values (a session

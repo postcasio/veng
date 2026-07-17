@@ -14,7 +14,7 @@
 #include <Veng/Net/Replication.h>
 #include <Veng/Net/Server.h>
 #include <Veng/Net/Session.h>
-#include <Veng/Net/TravelPayload.h>
+#include <Veng/Net/Blob.h>
 #include <Veng/Net/WorldKey.h>
 #include <Veng/Result.h>
 #include <Veng/Scene/Entity.h>
@@ -159,7 +159,7 @@ namespace Veng
         /// worlds (Create + AddWorld) can be joined. A hit reuses the existing instance, so two
         /// connections presenting the same key converge on one shared world. The travel payload rides in
         /// so a world may be parameterized by data no key encodes.
-        function<optional<ServerWorldResolution>(const Net::WorldKey&, const Net::TravelPayload&)>
+        function<optional<ServerWorldResolution>(const Net::WorldKey&, const Net::Blob&)>
             WorldFactory;
         /// @brief The get-or-place policy: which live bucket of a key a joiner lands in, or a fresh one.
         ///
@@ -210,7 +210,7 @@ namespace Veng
         /// @brief Encodes an account's gameplay pose at disconnect and the save checkpoint; unset keeps the last.
         ///
         /// Read only when Sessions is unset. See SessionRegistryInfo::CaptureTravelPose.
-        function<Net::TravelPayload(WorldInstanceId, Entity)> CaptureTravelPose;
+        function<Net::Blob(WorldInstanceId, Entity)> CaptureTravelPose;
         /// @brief Loads an account's persisted session blob on first admit; unset keeps records process-lifetime.
         ///
         /// Read only when Sessions is unset. See SessionRegistryInfo::LoadSession.
@@ -364,8 +364,8 @@ namespace Veng
         /// @param present     Whether the client presents the destination.
         /// @param standing    Explicit standing choice; unset resolves to "not presenting is standing".
         void DirectTravel(Net::ConnectionId connection, Net::JoinId leave, const Net::WorldKey& key,
-                          const Net::TravelPayload& payload, const Net::TravelPayload& pose = {},
-                          bool present = true, optional<bool> standing = {});
+                          const Net::Blob& payload, const Net::Blob& pose = {}, bool present = true,
+                          optional<bool> standing = {});
 
         /// @brief The session registry the host records and reattaches through.
         ///
@@ -474,9 +474,9 @@ namespace Veng
         /// stream is applied). The client mirror of the server's per-key
         /// ServerWorldResolution::Digest — a client joining multiple worlds by opaque key yields a
         /// distinct expected digest per key, and a world parameterized by payload rather than key
-        /// (see Net::TravelPayload) folds the echoed payload into it. Unset returns the zero digest,
+        /// (see Net::Blob) folds the echoed payload into it. Unset returns the zero digest,
         /// which matches a content-free server world.
-        function<Net::ContentDigest(const Net::WorldKey&, const Net::TravelPayload&)> WorldDigest;
+        function<Net::ContentDigest(const Net::WorldKey&, const Net::Blob&)> WorldDigest;
         /// @brief Loads the joined world's level into the caller's client scene, authoritative entities skipped.
         ///
         /// Invoked per join, when the join reply arrives naming a valid level, with the level's
@@ -593,8 +593,8 @@ namespace Veng
         /// @param payload   The opaque travel payload threaded into the server's resolution; empty by default.
         /// @param present   Whether this join presents (the session-record gameplay signal).
         /// @param standing  Explicit standing choice; unset resolves to "not presenting is standing".
-        void Join(const Net::WorldKey& key, const Net::TravelPayload& payload = {},
-                  bool present = false, optional<bool> standing = {});
+        void Join(const Net::WorldKey& key, const Net::Blob& payload = {}, bool present = false,
+                  optional<bool> standing = {});
 
         /// @brief Requests joining a world *into an existing live scene* — the adopt-in-place join.
         ///
@@ -610,9 +610,8 @@ namespace Veng
         /// @param payload     The opaque travel payload threaded into the server's resolution.
         /// @param present     Whether this join presents; an adopted scene usually does.
         /// @param standing    Explicit standing choice; unset resolves to "not presenting is standing".
-        void JoinInto(const Net::WorldKey& key, Scene& adoptScene,
-                      const Net::TravelPayload& payload = {}, bool present = true,
-                      optional<bool> standing = {});
+        void JoinInto(const Net::WorldKey& key, Scene& adoptScene, const Net::Blob& payload = {},
+                      bool present = true, optional<bool> standing = {});
 
         /// @brief Requests a server-directed travel to a world by key, carrying an opaque payload.
         ///
@@ -624,8 +623,8 @@ namespace Veng
         /// @param payload   The opaque travel payload the server resolves the key with; empty by default.
         /// @param present   Whether the destination presents (the session-record gameplay signal).
         /// @param standing  Explicit standing choice; unset resolves to "not presenting is standing".
-        void Travel(const Net::WorldKey& key, const Net::TravelPayload& payload = {},
-                    bool present = true, optional<bool> standing = {});
+        void Travel(const Net::WorldKey& key, const Net::Blob& payload = {}, bool present = true,
+                    optional<bool> standing = {});
 
         /// @brief Leaves a joined world without touching the scene beyond removing its footprint.
         ///
@@ -712,7 +711,7 @@ namespace Veng
         /// procedural reconstruction of the joined world. Empty for an unknown join or a payload-free one.
         /// @param join  The JoinId to resolve.
         /// @return The echoed payload, or an empty payload.
-        [[nodiscard]] const Net::TravelPayload& JoinPayload(Net::JoinId join) const;
+        [[nodiscard]] const Net::Blob& JoinPayload(Net::JoinId join) const;
 
         /// @brief The consumer-encoded arrival pose a directed travel carried for a join.
         ///
@@ -720,7 +719,7 @@ namespace Veng
         /// ordinary join carries none. Empty for an unknown join or a pose-free one.
         /// @param join  The JoinId to resolve.
         /// @return The arrival pose, or an empty payload.
-        [[nodiscard]] const Net::TravelPayload& ArrivalPose(Net::JoinId join) const;
+        [[nodiscard]] const Net::Blob& ArrivalPose(Net::JoinId join) const;
 
         /// @brief Whether a join presents (the flag its request or directed travel carried).
         ///

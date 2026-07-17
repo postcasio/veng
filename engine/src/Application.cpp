@@ -412,7 +412,7 @@ namespace Veng
                 m_Directory->Resolve(Net::JoinRequestInfo{.Connection = Net::ConnectionId{},
                                                           .Account = m_LocalAccount,
                                                           .Key = key,
-                                                          .Payload = Net::TravelPayload{}},
+                                                          .Payload = Net::Blob{}},
                                      /*heldWorlds=*/0);
             if (resolve.Outcome == WorldResolveOutcome::Denied)
             {

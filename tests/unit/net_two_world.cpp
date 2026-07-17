@@ -1863,7 +1863,7 @@ namespace
                 .MaxPlayersPerInstance = maxPerInstance,
                 .IdleKeepWarmDwell = dwell,
                 .WorldFactory = [this](const WorldKey&,
-                                       const TravelPayload&) -> optional<ServerWorldResolution>
+                                       const Blob&) -> optional<ServerWorldResolution>
                 {
                     const u64 world = NextWorld++;
                     const u64 level = NextLevel++;
@@ -2079,8 +2079,7 @@ TEST_CASE("A join whose client-reconstructed world mismatches the echoed digest 
         .Client = *client,
         .Assets = FakeAssets(),
         // The client's own digest of the joined key disagrees with the server's echoed one.
-        .WorldDigest = [](const WorldKey&, const TravelPayload&)
-        { return ContentDigest{.Lo = 0x0}; },
+        .WorldDigest = [](const WorldKey&, const Blob&) { return ContentDigest{.Lo = 0x0}; },
         .LoadLevel = [&](AssetId) -> Scene*
         {
             loaded = true;
@@ -2141,7 +2140,7 @@ TEST_CASE("A join whose client-supplied per-key digest matches the echoed digest
         .Assets = FakeAssets(),
         // The per-key provider yields the digest the client expects for the key it joins; it matches
         // the server's echo for the auto-joined DefaultWorldKey, so the join is admitted.
-        .WorldDigest = [&](const WorldKey& key, const TravelPayload&) -> ContentDigest
+        .WorldDigest = [&](const WorldKey& key, const Blob&) -> ContentDigest
         {
             seenKey = key;
             return key == DefaultWorldKey ? ServerDigest : ContentDigest{};
@@ -2517,16 +2516,16 @@ namespace
 {
     // Packs/unpacks a 1D position into a payload's opaque bytes — the game's own encoding, which the
     // engine never interprets. Used by the proximity-match placement policy and the payload cases.
-    TravelPayload PosPayload(f32 x)
+    Blob PosPayload(f32 x)
     {
-        TravelPayload payload;
+        Blob payload;
         payload.Type = 0x51; // an arbitrary game type tag
         payload.Bytes.resize(sizeof(f32));
         std::memcpy(payload.Bytes.data(), &x, sizeof(f32));
         return payload;
     }
 
-    f32 PosOf(const TravelPayload& payload)
+    f32 PosOf(const Blob& payload)
     {
         f32 x = 0.0f;
         if (payload.Bytes.size() >= sizeof(f32))
@@ -2588,11 +2587,11 @@ TEST_CASE("The travel payload reaches Authorize, Placement, and WorldFactory, an
     Unique<Scene> factoryScene = Scene::Create(serverTypes);
 
     const WorldKey key = WorldKey::FromU64(0xBEEF);
-    const TravelPayload sent = PosPayload(3.5f);
+    const Blob sent = PosPayload(3.5f);
 
-    TravelPayload seenAuthorize;
-    TravelPayload seenPlacement;
-    TravelPayload seenFactory;
+    Blob seenAuthorize;
+    Blob seenPlacement;
+    Blob seenFactory;
     bool authorizeSeen = false;
     bool placementSeen = false;
     bool factorySeen = false;
@@ -2613,8 +2612,7 @@ TEST_CASE("The travel payload reaches Authorize, Placement, and WorldFactory, an
             authorizeSeen = true;
             return true;
         },
-        .WorldFactory = [&](const WorldKey&,
-                            const TravelPayload& p) -> optional<ServerWorldResolution>
+        .WorldFactory = [&](const WorldKey&, const Blob& p) -> optional<ServerWorldResolution>
         {
             seenFactory = p;
             factorySeen = true;
@@ -2675,7 +2673,7 @@ TEST_CASE("The client world digest folds the echoed travel payload: a matching f
     // folds the opening payload into the echoed digest, and the client's WorldDigest hook receives
     // the reply's echoed payload to fold the same way — so both peers attest the same generation
     // inputs, key *and* payload.
-    const auto fold = [](const TravelPayload& p)
+    const auto fold = [](const Blob& p)
     { return ContentDigest{.Lo = 0xF01DULL ^ static_cast<u64>(PosOf(p) * 1000.0f), .Hi = 0x9}; };
 
     auto [serverT, clientT] = LoopbackTransport::CreatePair();
@@ -2686,7 +2684,7 @@ TEST_CASE("The client world digest folds the echoed travel payload: a matching f
     Unique<Scene> factoryScene = Scene::Create(serverTypes);
 
     const WorldKey key = WorldKey::FromU64(0xF00D);
-    const TravelPayload sent = PosPayload(3.5f);
+    const Blob sent = PosPayload(3.5f);
 
     Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
         .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
@@ -2696,8 +2694,7 @@ TEST_CASE("The client world digest folds the echoed travel payload: a matching f
         .Assets = FakeAssets(),
         .LevelId = LevelId,
         .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
-        .WorldFactory = [&](const WorldKey&,
-                            const TravelPayload& p) -> optional<ServerWorldResolution>
+        .WorldFactory = [&](const WorldKey&, const Blob& p) -> optional<ServerWorldResolution>
         {
             return ServerWorldResolution{.WorldId = WorldInstanceId{.Value = 100},
                                          .World = factoryScene.get(),
@@ -2717,7 +2714,7 @@ TEST_CASE("The client world digest folds the echoed travel payload: a matching f
     RegisterBuiltinTypes(clientTypes);
     Unique<Scene> clientScene;
     bool loaded = false;
-    TravelPayload seenByDigest;
+    Blob seenByDigest;
     bool matching = false;
 
     SUBCASE("a digest folding the echoed payload matches the server's fold and joins")
@@ -2732,7 +2729,7 @@ TEST_CASE("The client world digest folds the echoed travel payload: a matching f
         .AutoJoin = false,
         // The matching client folds the echoed payload itself; the diverged one folds a different
         // parameter value (a client whose reconstruction inputs disagree with the bucket's).
-        .WorldDigest = [&](const WorldKey&, const TravelPayload& p) -> ContentDigest
+        .WorldDigest = [&](const WorldKey&, const Blob& p) -> ContentDigest
         {
             seenByDigest = p;
             return matching ? fold(p) : fold(PosPayload(7.25f));
@@ -2808,8 +2805,7 @@ TEST_CASE("A payload-bucketing placement policy converges near params and splits
         .LevelId = LevelId,
         .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
         .Interest = InterestSettings{.Radius = 0.0f},
-        .WorldFactory = [&](const WorldKey&,
-                            const TravelPayload&) -> optional<ServerWorldResolution>
+        .WorldFactory = [&](const WorldKey&, const Blob&) -> optional<ServerWorldResolution>
         {
             const u64 world = nextWorld++;
             Unique<Scene>& scene = factoryScenes[world];
@@ -3048,8 +3044,7 @@ TEST_CASE("The world directory reaps after the dwell, reuses warm, and never rea
     Unique<WorldDirectory> dir = WorldDirectory::Create(WorldDirectoryInfo{
         .IdleKeepWarmDwell = 0.5,
         .Runner = &runner,
-        .WorldFactory = [&](const WorldKey&,
-                            const TravelPayload&) -> optional<ServerWorldResolution>
+        .WorldFactory = [&](const WorldKey&, const Blob&) -> optional<ServerWorldResolution>
         {
             const WorldInstanceId world =
                 runner.OpenWorld(WorldOpenInfo{.SimTickRate = 60, .StartSimulation = false});
@@ -3068,7 +3063,7 @@ TEST_CASE("The world directory reaps after the dwell, reuses warm, and never rea
     });
 
     const WorldKey key = WorldKey::FromU64(0xA11CE);
-    const TravelPayload noPayload;
+    const Blob noPayload;
 
     // Travel: resolve opens the world, then present pins it.
     const WorldResolveResult first = dir->Resolve(
@@ -3549,7 +3544,7 @@ TEST_CASE("Adopt-in-place: a digest mismatch refuses the join before any stream 
         .Client = *conn,
         .Assets = FakeAssets(),
         .AutoJoin = false,
-        .WorldDigest = [](const WorldKey&, const TravelPayload&)
+        .WorldDigest = [](const WorldKey&, const Blob&)
         { return ContentDigest{.Lo = 0xDEAD, .Hi = 0}; },
         .LoadLevel = [](AssetId) -> Scene* { return nullptr; },
         .ResolvePrefab = [](AssetId) -> Ref<Prefab> { return nullptr; },
@@ -3810,7 +3805,7 @@ TEST_CASE("Stable-anchor adoption: server state lands on the live claimant, rele
     }
     REQUIRE(client.World->IsAlive(claimant));
     CHECK_FALSE(client.World->Has<VengTest::TestScore>(claimant)); // stream-added type removed
-    CHECK(client.World->Has<NetAnchor>(claimant));     // pre-existing kept
+    CHECK(client.World->Has<NetAnchor>(claimant));                 // pre-existing kept
     CHECK(client.World->Get<Transform>(claimant).Position == vec3(2.0f, 0.0f, 0.0f));
     CHECK(client.CountAnchor(0x7ULL, 0x0ULL) == 1); // anchor index entry stays
 }
@@ -4412,8 +4407,7 @@ TEST_CASE("A remote join converges on a bucket a local standalone travel opened,
     // A local (standalone) travel resolves through the directory alone — no host in the call path —
     // so the host must wrap that bucket on demand when a remote join converges on it.
     Unique<WorldDirectory> directory = WorldDirectory::Create(WorldDirectoryInfo{
-        .WorldFactory = [&](const WorldKey&,
-                            const TravelPayload&) -> optional<ServerWorldResolution>
+        .WorldFactory = [&](const WorldKey&, const Blob&) -> optional<ServerWorldResolution>
         {
             factoryOpens += 1;
             travelScene = Scene::Create(serverTypes);
@@ -4436,7 +4430,7 @@ TEST_CASE("A remote join converges on a bucket a local standalone travel opened,
     // The local player's standalone travel: the connection-less resolve Application performs, which
     // opens the bucket through the factory and pins it presented — the host never sees the open.
     const AccountId local{.Lo = 0x10CA1};
-    const TravelPayload noPayload;
+    const Blob noPayload;
     const WorldResolveResult travel = directory->Resolve(
         JoinRequestInfo{
             .Connection = ConnectionId{}, .Account = local, .Key = travelKey, .Payload = noPayload},
@@ -4662,12 +4656,12 @@ namespace
         TypeRegistry Types;
         Unique<Scene> Primary;
         vector<Unique<Scene>> Opened;
-        vector<TravelPayload> FactoryPayloads;
+        vector<Blob> FactoryPayloads;
         Unique<ServerHost> Host;
         u64 NextWorldId = 100;
 
         // The capture hook's canned pose and its invocation record.
-        TravelPayload CapturedPose;
+        Blob CapturedPose;
         int Captures = 0;
         WorldInstanceId CapturedWorld;
         Entity CapturedSeat = Entity::Null;
@@ -4676,7 +4670,7 @@ namespace
         {
             RegisterBuiltinTypes(Types);
             Primary = Scene::Create(Types);
-            CapturedPose = TravelPayload{.Type = TypeIdOf<Transform>(), .Bytes = {9, 9, 9}};
+            CapturedPose = Blob{.Type = TypeIdOf<Transform>(), .Bytes = {9, 9, 9}};
 
             Result<Unique<ServerHost>> host = ServerHost::Create(ServerHostInfo{
                 .Server = ServerInfo{.TransportOverride = &transport, .Connection = FastConfig},
@@ -4685,8 +4679,8 @@ namespace
                 .LevelId = LevelId,
                 .IdleKeepWarmDwell = 1.0,
                 .Authorize = std::move(hooks.Authorize),
-                .WorldFactory = [this](const WorldKey&, const TravelPayload& payload)
-                    -> optional<ServerWorldResolution>
+                .WorldFactory = [this](const WorldKey&,
+                                       const Blob& payload) -> optional<ServerWorldResolution>
                 {
                     Opened.push_back(Scene::Create(Types));
                     FactoryPayloads.push_back(payload);
@@ -4695,8 +4689,7 @@ namespace
                                                  .LevelId = LevelId};
                 },
                 .TransformOnReattach = std::move(hooks.Transform),
-                .CaptureTravelPose = [this](const WorldInstanceId world,
-                                            const Entity seat) -> TravelPayload
+                .CaptureTravelPose = [this](const WorldInstanceId world, const Entity seat) -> Blob
                 {
                     ++Captures;
                     CapturedWorld = world;
@@ -4747,7 +4740,7 @@ TEST_CASE("Reattach: a reconnect restores the live gameplay world and returns th
     SessionServer server(*serverT);
 
     const AccountId account{.Lo = 0x51, .Hi = 0x52};
-    const TravelPayload params{.Type = TypeIdOf<Transform>(), .Bytes = {1, 2, 3, 4}};
+    const Blob params{.Type = TypeIdOf<Transform>(), .Bytes = {1, 2, 3, 4}};
 
     f64 now = 0.0;
     u64 tick = 0;
@@ -4821,7 +4814,7 @@ TEST_CASE("Reattach: a reaped gameplay world re-materializes through the factory
     SessionServer server(*serverT);
 
     const AccountId account{.Lo = 0x61};
-    const TravelPayload params{.Type = TypeIdOf<Transform>(), .Bytes = {7, 7}};
+    const Blob params{.Type = TypeIdOf<Transform>(), .Bytes = {7, 7}};
 
     f64 now = 0.0;
     u64 tick = 0;
@@ -5102,7 +5095,7 @@ TEST_CASE("Reattach: records round-trip the Load/Save hooks across a simulated h
 {
     const auto hub = CreateRef<Hub>();
     const AccountId account{.Lo = 0xA1};
-    const TravelPayload params{.Type = TypeIdOf<Transform>(), .Bytes = {5}};
+    const Blob params{.Type = TypeIdOf<Transform>(), .Bytes = {5}};
 
     // The consumer store the hook pair reads and writes — surviving the host teardown below.
     auto store = std::make_shared<std::unordered_map<AccountId, vector<std::byte>>>();
@@ -5125,7 +5118,7 @@ TEST_CASE("Reattach: records round-trip the Load/Save hooks across a simulated h
 
     f64 now = 0.0;
     u64 tick = 0;
-    TravelPayload capturedPose;
+    Blob capturedPose;
 
     // First host lifetime: join, disconnect (capture + save), tear the host down.
     {
@@ -5185,10 +5178,10 @@ TEST_CASE("Reattach: a persisted pose with an unregistered type id degrades to t
     RegisterBuiltinTypes(codecTypes);
     SessionRecord persisted;
     persisted.Account = account;
-    persisted.Gameplay = SessionGameplayEntry{
-        .Key = GameplayKey,
-        .Params = TravelPayload{.Type = TypeIdOf<Transform>(), .Bytes = {1}},
-        .Pose = TravelPayload{.Type = TypeId{0xDEADDEADDEADDEADULL}, .Bytes = {2}}};
+    persisted.Gameplay =
+        SessionGameplayEntry{.Key = GameplayKey,
+                             .Params = Blob{.Type = TypeIdOf<Transform>(), .Bytes = {1}},
+                             .Pose = Blob{.Type = TypeId{0xDEADDEADDEADDEADULL}, .Bytes = {2}}};
     const vector<std::byte> blob = EncodeSessionRecord(persisted, codecTypes);
 
     SessionHooks hooks;
@@ -5256,11 +5249,10 @@ TEST_CASE("Standalone continue: the registry and directory restore a record with
     RegisterBuiltinTypes(types);
 
     vector<Unique<Scene>> opened;
-    vector<TravelPayload> factoryPayloads;
+    vector<Blob> factoryPayloads;
     u64 nextWorld = 500;
     Unique<WorldDirectory> directory = WorldDirectory::Create(WorldDirectoryInfo{
-        .WorldFactory = [&](const WorldKey&,
-                            const TravelPayload& payload) -> optional<ServerWorldResolution>
+        .WorldFactory = [&](const WorldKey&, const Blob& payload) -> optional<ServerWorldResolution>
         {
             opened.push_back(Scene::Create(types));
             factoryPayloads.push_back(payload);
@@ -5274,8 +5266,8 @@ TEST_CASE("Standalone continue: the registry and directory restore a record with
         SessionRegistry::Create(SessionRegistryInfo{.Types = &types});
 
     const AccountId local{.Lo = 0xD1};
-    const TravelPayload params{.Type = TypeIdOf<Transform>(), .Bytes = {3, 3}};
-    const TravelPayload pose{.Type = TypeIdOf<Transform>(), .Bytes = {4, 4}};
+    const Blob params{.Type = TypeIdOf<Transform>(), .Bytes = {3, 3}};
+    const Blob pose{.Type = TypeIdOf<Transform>(), .Bytes = {4, 4}};
 
     // The prior sitting's side effects: a standing data world and a gameplay world.
     sessions->RecordStandingJoin(local, DataKey);
@@ -5288,8 +5280,7 @@ TEST_CASE("Standalone continue: the registry and directory restore a record with
     REQUIRE(record->StandingJoins.size() == 1);
 
     const WorldResolveResult standing = directory->Resolve(
-        JoinRequestInfo{
-            .Account = local, .Key = record->StandingJoins.front(), .Payload = TravelPayload{}},
+        JoinRequestInfo{.Account = local, .Key = record->StandingJoins.front(), .Payload = Blob{}},
         0);
     CHECK(standing.Outcome == WorldResolveOutcome::Opened);
 
@@ -6103,10 +6094,9 @@ namespace
         int LoadLevelCalls = 0;
         int EmptyOpens = 0;
 
-        explicit DataWorldClient(
-            Transport& transport, optional<WorldKey> autoJoin = {},
-            function<ContentDigest(const WorldKey&, const TravelPayload&)> digest = {},
-            const AccountId account = {})
+        explicit DataWorldClient(Transport& transport, optional<WorldKey> autoJoin = {},
+                                 function<ContentDigest(const WorldKey&, const Blob&)> digest = {},
+                                 const AccountId account = {})
         {
             RegisterBuiltinTypes(Types);
             Types.Register<VengTest::TestScore>();
@@ -6163,8 +6153,7 @@ TEST_CASE("A level-less data world joins end to end: no LoadLevel, empty scene, 
         .World = *primary,
         .Assets = FakeAssets(),
         .LevelId = LevelId,
-        .WorldFactory = [&](const WorldKey&,
-                            const TravelPayload&) -> optional<ServerWorldResolution>
+        .WorldFactory = [&](const WorldKey&, const Blob&) -> optional<ServerWorldResolution>
         {
             // A data world: no authored level (the invalid id), a game-chosen digest.
             dataScene = Scene::Create(serverTypes);
@@ -6181,7 +6170,7 @@ TEST_CASE("A level-less data world joins end to end: no LoadLevel, empty scene, 
     // The matching client validates the data world's digest through its per-key hook.
     auto clientT = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
     DataWorldClient client(*clientT, dataKey,
-                           [&](const WorldKey&, const TravelPayload&) { return dataDigest; });
+                           [&](const WorldKey&, const Blob&) { return dataDigest; });
 
     // A projection entity the server populates the data world with once it exists; the client must
     // receive it purely from the stream.
@@ -6501,8 +6490,7 @@ TEST_CASE("A world resolved with its own IdleDwell outlives the directory defaul
         .Assets = FakeAssets(),
         .LevelId = LevelId,
         .IdleKeepWarmDwell = DefaultDwell,
-        .WorldFactory = [&](const WorldKey& key,
-                            const TravelPayload&) -> optional<ServerWorldResolution>
+        .WorldFactory = [&](const WorldKey& key, const Blob&) -> optional<ServerWorldResolution>
         {
             const u64 world = nextWorld++;
             Unique<Scene>& scene = factoryScenes[world];
@@ -6611,8 +6599,7 @@ TEST_CASE("The default join budget holds the standing-join matrix; the ninth joi
         .World = *primary,
         .Assets = FakeAssets(),
         .LevelId = LevelId,
-        .WorldFactory = [&](const WorldKey&,
-                            const TravelPayload&) -> optional<ServerWorldResolution>
+        .WorldFactory = [&](const WorldKey&, const Blob&) -> optional<ServerWorldResolution>
         {
             const u64 world = nextWorld++;
             Unique<Scene>& scene = factoryScenes[world];

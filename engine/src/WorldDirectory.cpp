@@ -19,7 +19,7 @@ namespace Veng
         {
             WorldInstanceId World;
             Net::WorldKey Key;
-            Net::TravelPayload Payload;
+            Net::Blob Payload;
             u32 Presence = 0;
             // The accounts present on this bucket, refcounted per account (one account may hold
             // several presences — a join and a pin, say). Only valid accounts are recorded.
@@ -40,7 +40,7 @@ namespace Veng
         f64 IdleKeepWarmDwell = 5.0;
         WorldRunner* Runner = nullptr;
         function<bool(const Net::JoinRequestInfo&)> Authorize;
-        function<optional<ServerWorldResolution>(const Net::WorldKey&, const Net::TravelPayload&)>
+        function<optional<ServerWorldResolution>(const Net::WorldKey&, const Net::Blob&)>
             WorldFactory;
         function<optional<WorldInstanceId>(const Net::JoinRequestInfo&,
                                            std::span<const WorldPlacement>)>
@@ -51,7 +51,7 @@ namespace Veng
         std::unordered_map<Net::WorldKey, vector<WorldInstanceId>> KeyMap;
         std::unordered_map<u64, Bucket> Buckets;
 
-        Net::TravelPayload EmptyPayload;
+        Net::Blob EmptyPayload;
 
         [[nodiscard]] Bucket* Find(WorldInstanceId world)
         {
@@ -158,7 +158,7 @@ namespace Veng
     }
 
     void WorldDirectory::Register(const Net::WorldKey& key, const WorldInstanceId world,
-                                  const Net::TravelPayload& payload)
+                                  const Net::Blob& payload)
     {
         State& s = *m_State;
         if (State::Bucket* existing = s.Find(world))
@@ -326,7 +326,7 @@ namespace Veng
         return bucket != nullptr ? bucket->Presence : 0;
     }
 
-    const Net::TravelPayload& WorldDirectory::PayloadOf(const WorldInstanceId world) const
+    const Net::Blob& WorldDirectory::PayloadOf(const WorldInstanceId world) const
     {
         const State::Bucket* bucket = m_State->Find(world);
         return bucket != nullptr ? bucket->Payload : m_State->EmptyPayload;

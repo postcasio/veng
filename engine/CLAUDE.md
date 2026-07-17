@@ -185,9 +185,15 @@ handshake (the `GameNetInfo::Identity` / `AdmitAccount` hooks) and threaded thro
 authorization, and directory membership — see [src/Net/CLAUDE.md](src/Net/CLAUDE.md). World lifetime is the role-neutral **`WorldDirectory`** (`Veng/WorldDirectory.h`) — the
 `WorldKey → live-instance` map, get-or-place, presence refcount (live joins **plus** presentation
 pins), keep-warm dwell, and idle reap — which a `ServerHost` borrows and a standalone `Application`
-constructs; travel rides an opaque **`Net::Blob`** (aliased `Net::TravelPayload`) through
+constructs; travel rides an opaque **`Net::Blob`** through
 `Authorize`/`Placement`/`WorldFactory` and the join reply, and the server can **direct** a client's
-travel (make-before-break). Beside the replicated state tier, the hosts carry the **game message
+travel (make-before-break). Beside the directory at the same host tier sits the per-account
+**`Net::SessionRegistry`** (`Veng/Net/Session.h`) — each account's standing joins and last gameplay
+world as **(key, factory params, pose)**, so **reconnecting is reattaching**: an admitted account's
+recorded worlds are restored through the directory (a reaped dynamic world re-materializing from its
+params), durable across a host restart through a `LoadSession`/`SaveSession` hook pair. It is not a
+component — it outlives the connection and keys by account, so single-player continue and multiplayer
+reattach are one code path. Beside the replicated state tier, the hosts carry the **game message
 channel**: named (`Net::ChannelId`), reliable-ordered, connection-scoped opaque blobs with
 frame-safe receipt — the event complement to world-state (invites, chat, request/response).
 See [src/Net/CLAUDE.md](src/Net/CLAUDE.md) for the full model.

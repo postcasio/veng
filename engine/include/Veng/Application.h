@@ -24,7 +24,7 @@
 #include <Veng/Net/JoinRequest.h>
 #include <Veng/Net/PredictionHistory.h>
 #include <Veng/Net/Session.h>
-#include <Veng/Net/TravelPayload.h>
+#include <Veng/Net/Blob.h>
 #include <Veng/Task/TaskSystem.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/Scene.h>
@@ -142,8 +142,7 @@ namespace Veng
         /// connection may join several worlds by opaque key); a world parameterized by payload rather
         /// than key folds the echoed payload in. Unset presents the zero digest (matching a
         /// content-free server world), the zero-config default. Inert off a client.
-        function<Net::ContentDigest(const Net::WorldKey&, const Net::TravelPayload&)>
-            ClientWorldDigest;
+        function<Net::ContentDigest(const Net::WorldKey&, const Net::Blob&)> ClientWorldDigest;
         /// @brief Client hook yielding the spatial dequantization grid a joined WorldKey decodes with; unset uses the shared envelope.
         ///
         /// The client mirror of the server's per-world ServerWorldResolution::Replication quantization:
@@ -200,7 +199,7 @@ namespace Veng
         /// The engine cannot serialize game pose, so the game encodes it: invoked at disconnect and
         /// at the save checkpoint with the account's gameplay world and its seat entity there, and
         /// the result is delivered back on reattach. See Net::SessionRegistryInfo::CaptureTravelPose.
-        function<Net::TravelPayload(WorldInstanceId, Entity)> CaptureTravelPose;
+        function<Net::Blob(WorldInstanceId, Entity)> CaptureTravelPose;
         /// @brief Loads an account's persisted session blob on first admit; unset keeps records process-lifetime.
         ///
         /// The durability hook pair's read half: the engine owns when (first admission) and what
@@ -219,7 +218,7 @@ namespace Veng
         /// runner and returning it) so a client may join a world by content, not only the pre-registered
         /// managed world. Unset means only the managed world is joinable (the single-world default). Read
         /// by both the `--server` launch path and the runtime StartHosting call; inert off a host.
-        function<optional<ServerWorldResolution>(const Net::WorldKey&, const Net::TravelPayload&)>
+        function<optional<ServerWorldResolution>(const Net::WorldKey&, const Net::Blob&)>
             WorldFactory;
         /// @brief The authorization hook: may this requester join or create this key? Unset allows all.
         ///
@@ -333,7 +332,7 @@ namespace Veng
         /// @brief The opaque world to travel to (the directory / server resolves it).
         Net::WorldKey Key;
         /// @brief Opaque arrival data threaded into the destination; empty is valid.
-        Net::TravelPayload Payload;
+        Net::Blob Payload;
         /// @brief The managed viewport index that presents the destination.
         usize ViewportIndex = 0;
         /// @brief True to present the destination on the viewport; false resolves/joins without presenting (data worlds).

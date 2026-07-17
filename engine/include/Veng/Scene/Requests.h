@@ -2,7 +2,7 @@
 
 #include <Veng/Veng.h>
 #include <Veng/InputRouter.h>
-#include <Veng/Net/TravelPayload.h>
+#include <Veng/Net/Blob.h>
 #include <Veng/Net/WorldKey.h>
 #include <Veng/Reflection/Reflect.h>
 #include <Veng/Scene/Entity.h>
@@ -59,7 +59,7 @@ namespace Veng
         /// @brief The world to travel to.
         Net::WorldKey Destination;
         /// @brief Opaque arrival data threaded into the destination; empty is valid.
-        Net::TravelPayload Payload;
+        Net::Blob Payload;
         /// @brief The managed viewport index that presents the destination.
         usize ViewportIndex = 0;
         /// @brief True to present the destination on the viewport; false opens/joins it without presenting.
@@ -102,7 +102,7 @@ namespace Veng
         /// @brief An optional world to travel to after connecting; a default (invalid) key is connect-only.
         Net::WorldKey Join = {};
         /// @brief Opaque arrival data for the post-connect travel; empty is valid.
-        Net::TravelPayload Payload;
+        Net::Blob Payload;
         /// @brief The engine-reported outcome; starts Pending.
         RequestStatus Status = RequestStatus::Pending;
         /// @brief The failure reason, set when Status is Failed.

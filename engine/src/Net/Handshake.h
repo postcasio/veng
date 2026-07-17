@@ -100,7 +100,7 @@ namespace Veng::Net
         /// @brief A client-assigned token echoed in the reply so the client can match it to this request.
         u32 RequestToken = 0;
         /// @brief The opaque travel payload threaded into the server's resolution; empty is common.
-        TravelPayload Payload;
+        Blob Payload;
         /// @brief How the join enters the account's session record (resolved at the call site).
         SessionDurability Durability = SessionDurability::Standing;
     };
@@ -130,7 +130,7 @@ namespace Veng::Net
         /// ticks, never a shared 60 Hz default's).
         u32 SimTickRate = 60;
         /// @brief The travel payload echoed back so the client's factory-parameterized reconstruction has its inputs.
-        TravelPayload Payload;
+        Blob Payload;
     };
 
     /// @brief The server's refusal of a join, carrying the request token and the reason.
@@ -152,7 +152,7 @@ namespace Veng::Net
         /// @brief The opaque world the client asks to travel to.
         WorldKey Key;
         /// @brief The opaque travel payload the server resolves the key with; empty is common.
-        TravelPayload Payload;
+        Blob Payload;
         /// @brief Whether the client presents the destination; echoed on the directed travel.
         bool Present = true;
         /// @brief How the resulting join enters the session record (resolved at the call site).
@@ -172,9 +172,9 @@ namespace Veng::Net
         /// @brief The opaque world the client must join.
         WorldKey Join;
         /// @brief The opaque travel payload the client carries into the join.
-        TravelPayload Payload;
+        Blob Payload;
         /// @brief The consumer-encoded arrival pose (a session reattach delivers the recorded one).
-        TravelPayload Pose;
+        Blob Pose;
         /// @brief Whether the client presents the destination (a standing re-join does not).
         bool Present = true;
         /// @brief How the resulting join enters the session record (echoed on the join request).

@@ -7,7 +7,7 @@
 #include <Veng/Net/JoinRequest.h>
 #include <Veng/Net/NetEvents.h>
 #include <Veng/Net/Replication.h>
-#include <Veng/Net/TravelPayload.h>
+#include <Veng/Net/Blob.h>
 #include <Veng/Net/WorldKey.h>
 #include <Veng/Veng.h>
 #include <Veng/World.h>
@@ -91,7 +91,7 @@ namespace Veng
         /// @brief The bucket's current presence — its live joins plus pins, the capacity metric.
         u32 LiveSeats = 0;
         /// @brief The opaque travel payload recorded when this bucket was opened (its factory params).
-        Net::TravelPayload Payload;
+        Net::Blob Payload;
     };
 
     /// @brief How a directory resolve turned out: an existing bucket, a freshly opened one, or a denial.
@@ -157,7 +157,7 @@ namespace Veng
         /// Called only on a placement miss, after the caps clear; returning nullopt denies with
         /// NoSuchWorld. Unset means only pre-registered worlds (Register) can be resolved. The travel
         /// payload rides in so a world may be parameterized by data no key encodes.
-        function<optional<ServerWorldResolution>(const Net::WorldKey&, const Net::TravelPayload&)>
+        function<optional<ServerWorldResolution>(const Net::WorldKey&, const Net::Blob&)>
             WorldFactory;
         /// @brief The get-or-place policy: which live bucket of a key a requester lands in, or a fresh one.
         ///
@@ -206,7 +206,7 @@ namespace Veng
         /// @param world    The world instance id to register.
         /// @param payload  The travel payload recorded for the bucket (its factory params); empty by default.
         void Register(const Net::WorldKey& key, WorldInstanceId world,
-                      const Net::TravelPayload& payload = {});
+                      const Net::Blob& payload = {});
 
         /// @brief Resolves a request to a bucket in the fixed order, opening a fresh one on a miss.
         /// @param request     The request identity (connection, account, key, payload) threaded into
@@ -279,7 +279,7 @@ namespace Veng
 
         /// @brief Returns a bucket's recorded travel payload, or an empty payload for an unknown world.
         /// @param world  The world to query.
-        [[nodiscard]] const Net::TravelPayload& PayloadOf(WorldInstanceId world) const;
+        [[nodiscard]] const Net::Blob& PayloadOf(WorldInstanceId world) const;
 
         /// @brief Returns the factory resolution recorded when a bucket was opened, or nullptr.
         ///

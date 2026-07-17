@@ -63,7 +63,7 @@ namespace Veng::Net
 
         // Whether a payload's type id can be interpreted by the schema registry. An empty type id
         // (no payload shape declared) is trusted — there is nothing to interpret.
-        [[nodiscard]] bool IsPayloadTypeKnown(const TravelPayload& payload) const
+        [[nodiscard]] bool IsPayloadTypeKnown(const Blob& payload) const
         {
             return payload.Type == InvalidTypeId || Info.Types->IsRegistered(payload.Type);
         }
@@ -156,7 +156,7 @@ namespace Veng::Net
     }
 
     void SessionRegistry::RecordGameplay(const AccountId& account, const WorldKey& key,
-                                         const TravelPayload& params, const TravelPayload& pose)
+                                         const Blob& params, const Blob& pose)
     {
         if (!account.IsValid())
         {

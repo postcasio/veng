@@ -1,7 +1,7 @@
 #pragma once
 
 #include <Veng/Net/AccountId.h>
-#include <Veng/Net/TravelPayload.h>
+#include <Veng/Net/Blob.h>
 #include <Veng/Net/WorldKey.h>
 #include <Veng/Reflection/Reflect.h>
 #include <Veng/Scene/Entity.h>
@@ -46,9 +46,9 @@ namespace Veng::Net
         /// @brief The gameplay world's key; the invalid (zero) key means none — the front door.
         WorldKey Key;
         /// @brief The opaque factory params that (re)materialize the world on a key miss.
-        TravelPayload Params;
+        Blob Params;
         /// @brief The consumer-encoded arrival pose, delivered back on reattach.
-        TravelPayload Pose;
+        Blob Pose;
     };
 
     /// @brief One account's session with this host: its standing joins and last gameplay world.
@@ -133,7 +133,7 @@ namespace Veng::Net
         /// and at the save checkpoint with the account's gameplay world and its seat entity there;
         /// the result overwrites the record's Gameplay.Pose. Unset, the pose stays the last
         /// travel's (arrival) pose.
-        function<TravelPayload(WorldInstanceId, Entity)> CaptureTravelPose;
+        function<Blob(WorldInstanceId, Entity)> CaptureTravelPose;
         /// @brief Loads an account's persisted durability blob; unset keeps records process-lifetime.
         ///
         /// Invoked once per account on its first admission; nullopt means no persisted record. The
@@ -193,8 +193,8 @@ namespace Veng::Net
         /// @param key      The gameplay world's key.
         /// @param params   The opaque factory params that (re)materialize the world.
         /// @param pose     The consumer-encoded arrival pose.
-        void RecordGameplay(const AccountId& account, const WorldKey& key,
-                            const TravelPayload& params, const TravelPayload& pose);
+        void RecordGameplay(const AccountId& account, const WorldKey& key, const Blob& params,
+                            const Blob& pose);
 
         /// @brief Refreshes an account's gameplay pose through the CaptureTravelPose hook.
         ///

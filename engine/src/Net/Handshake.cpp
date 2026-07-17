@@ -54,7 +54,7 @@ namespace Veng::Net
         // byte-blob length (u32). The blob follows inline.
         constexpr usize PayloadHeaderSize = 8 + 4;
 
-        void WriteTravelPayload(vector<u8>& out, const TravelPayload& payload)
+        void WriteBlob(vector<u8>& out, const Blob& payload)
         {
             WriteU64LE(out, payload.Type);
             WriteU32LE(out, static_cast<u32>(payload.Bytes.size()));
@@ -63,8 +63,7 @@ namespace Veng::Net
 
         // Reads a travel payload at @p offset, bounds-checked. On success fills @p out and advances
         // @p offset past the blob; returns false (leaving both untouched) if the message is truncated.
-        [[nodiscard]] bool ReadTravelPayload(std::span<const u8> message, usize& offset,
-                                             TravelPayload& out)
+        [[nodiscard]] bool ReadBlob(std::span<const u8> message, usize& offset, Blob& out)
         {
             if (message.size() < offset + PayloadHeaderSize)
             {
@@ -215,7 +214,7 @@ namespace Veng::Net
         WriteU64LE(out, message.Key.Lo);
         WriteU64LE(out, message.Key.Hi);
         WriteU32LE(out, message.RequestToken);
-        WriteTravelPayload(out, message.Payload);
+        WriteBlob(out, message.Payload);
         out.push_back(static_cast<u8>(message.Durability));
         return out;
     }
@@ -231,7 +230,7 @@ namespace Veng::Net
         WriteU64LE(out, message.WorldDigest.Hi);
         WriteU32LE(out, message.SeatNetId);
         WriteU32LE(out, message.SimTickRate);
-        WriteTravelPayload(out, message.Payload);
+        WriteBlob(out, message.Payload);
         return out;
     }
 
@@ -256,7 +255,7 @@ namespace Veng::Net
             .RequestToken = ReadU32LE(payload, 17),
         };
         usize offset = 21;
-        if (!ReadTravelPayload(payload, offset, message.Payload))
+        if (!ReadBlob(payload, offset, message.Payload))
         {
             return {};
         }
@@ -285,7 +284,7 @@ namespace Veng::Net
             .SimTickRate = ReadU32LE(payload, 35),
         };
         usize offset = 39;
-        if (!ReadTravelPayload(payload, offset, message.Payload))
+        if (!ReadBlob(payload, offset, message.Payload))
         {
             return {};
         }
@@ -312,7 +311,7 @@ namespace Veng::Net
         WriteJoinType(out, JoinMessageType::TravelRequest);
         WriteU64LE(out, message.Key.Lo);
         WriteU64LE(out, message.Key.Hi);
-        WriteTravelPayload(out, message.Payload);
+        WriteBlob(out, message.Payload);
         out.push_back(message.Present ? 1 : 0);
         out.push_back(static_cast<u8>(message.Durability));
         return out;
@@ -325,8 +324,8 @@ namespace Veng::Net
         WriteU16LE(out, message.Leave);
         WriteU64LE(out, message.Join.Lo);
         WriteU64LE(out, message.Join.Hi);
-        WriteTravelPayload(out, message.Payload);
-        WriteTravelPayload(out, message.Pose);
+        WriteBlob(out, message.Payload);
+        WriteBlob(out, message.Pose);
         out.push_back(message.Present ? 1 : 0);
         out.push_back(static_cast<u8>(message.Durability));
         return out;
@@ -351,7 +350,7 @@ namespace Veng::Net
             .Key = WorldKey{.Lo = ReadU64LE(payload, 1), .Hi = ReadU64LE(payload, 9)},
         };
         usize offset = 17;
-        if (!ReadTravelPayload(payload, offset, message.Payload))
+        if (!ReadBlob(payload, offset, message.Payload))
         {
             return {};
         }
@@ -376,8 +375,7 @@ namespace Veng::Net
             .Join = WorldKey{.Lo = ReadU64LE(payload, 3), .Hi = ReadU64LE(payload, 11)},
         };
         usize offset = 19;
-        if (!ReadTravelPayload(payload, offset, message.Payload) ||
-            !ReadTravelPayload(payload, offset, message.Pose))
+        if (!ReadBlob(payload, offset, message.Payload) || !ReadBlob(payload, offset, message.Pose))
         {
             return {};
         }
