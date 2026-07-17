@@ -236,6 +236,8 @@ add_library(veng SHARED
         src/Renderer/BloomPyramid.cpp
         src/Renderer/AutoExposureMeter.cpp
         src/Renderer/TaaResolve.cpp
+        src/Renderer/SsrChain.cpp
+        src/Renderer/RefractionGrab.cpp
         src/Renderer/SkyboxScenePass.cpp
         src/Renderer/SkyCubemapBake.cpp
         src/Renderer/Passes/AtmospherePrecompute.cpp

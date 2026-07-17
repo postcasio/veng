@@ -15,7 +15,6 @@
 #include "Passes/GBufferScenePass.h"
 #include "Passes/PickingScenePass.h"
 #include "Passes/PointFieldScenePass.h"
-#include "Passes/SceneColorCopyScenePass.h"
 #include "Passes/SkyScenePass.h"
 #include "Passes/TaaScenePass.h"
 #include "Passes/TranslucentScenePass.h"
@@ -24,9 +23,11 @@
 #include "PunctualShadowScenePass.h"
 #include "ShadowSystem.h"
 #include "Picking.h"
+#include "RefractionGrab.h"
 #include "SkyboxScenePass.h"
 #include "SkyCubemapBake.h"
 #include "SsaoScenePass.h"
+#include "SsrChain.h"
 #include "TaaResolve.h"
 
 #include <algorithm>
@@ -130,29 +131,17 @@ namespace Veng::Renderer
         constexpr AssetId EntityIdVertId{0xE21B8F492DADABE5ULL};
         constexpr AssetId EntityIdSkinnedVertId{0x7FB330D3ABACAE0FULL};
 
-        // The refraction scene-color copy fragment shader.
-        constexpr AssetId SceneColorCopyFragId{0xBE7002B7B8E9BE5AULL};
-
         // The hi-Z max-Z reduction compute shader.
         constexpr AssetId HiZReduceCompId{0xCB20C4EF8A20ADBCULL};
 
         // The GPU occlusion-cull → indirect-draw compute shader.
         constexpr AssetId OcclusionCullCompId{0x5FE19B500FD44B52ULL};
 
-        constexpr AssetId SsrTraceFragId{0xBDBD7BC71B2B1E74ULL};
-        constexpr AssetId SsrBlurDownCompId{0xEE0EED485023A7F6ULL};
-        constexpr AssetId SsrCompositeFragId{0x50D9ECEAE45E31A1ULL};
-        constexpr AssetId SsrHiZReduceCompId{0x93DA6E42B3B5479AULL};
-
         // Linear float HDR format for the lighting target and the tail's scene-color intermediates.
         // G1 uses the same format as a sampled color target, establishing RGBA16F
         // color-attachment + sampled support on the platform.
         constexpr Format HdrFormat = Format::RGBA16Sfloat;
         constexpr ImageUsage HdrUsage = ImageUsage::ColorAttachment | ImageUsage::Sampled;
-
-        // The SSR reflection mip chain stops this many levels short of 1×1 — a rough reflection
-        // needs no 1-px mip. The same pyramid-depth heuristic the bloom pyramid uses internally.
-        constexpr u32 BloomTileShift = 3;
 
         // Single-channel unorm format for the SSAO target; the renderer builds the
         // SSAO pipeline against this format, and SsaoScenePass owns the image.
@@ -168,53 +157,6 @@ namespace Veng::Renderer
         {
             uvec2 DestExtent;
             uvec2 SourceExtent;
-        };
-
-        // The SSR trace push block, matching ssr_trace.frag PushConstants: the scene-color
-        // and g-buffer bindless slots, the shared sampler, the view-constants region, the
-        // reflection extent, and the ray parameters (max distance, hit thickness, roughness
-        // cutoff, step count).
-        struct SsrTracePush
-        {
-            u32 SceneColorTexture;
-            u32 DepthTexture;
-            u32 NormalTexture;
-            u32 OrmTexture;
-            u32 HiZTexture;
-            u32 Sampler;
-            u32 ViewConstantsIndex;
-            u32 HiZLevels;
-            uvec2 Extent;
-            f32 MaxDistance;
-            f32 Thickness;
-            f32 MaxRoughness;
-            u32 MaxSteps;
-        };
-
-        // The SSR reflection blur-downsample push, matching ssr_blur_down.comp: the
-        // destination mip extent.
-        struct SsrBlurPush
-        {
-            uvec2 DestExtent;
-        };
-
-        // The SSR composite push, matching ssr_composite.frag PushConstants: the scene-color,
-        // reflection, and g-buffer slots, the shared + reflection samplers, the view-constants
-        // region, the reflection mix, and the reflection mip count (roughness → LOD).
-        struct SsrCompositePush
-        {
-            u32 SceneColorTexture;
-            u32 ReflectionTexture;
-            u32 AlbedoTexture;
-            u32 NormalTexture;
-            u32 OrmTexture;
-            u32 DepthTexture;
-            u32 Sampler;
-            u32 ReflectionSampler;
-            u32 ViewConstantsIndex;
-            f32 Intensity;
-            u32 MipCount;
-            u32 Pad0;
         };
 
         // The cull compute push block, matching occlusion_cull.comp PushConstants.
@@ -270,13 +212,18 @@ namespace Veng::Renderer
         // at HdrFormat (the scene-color format) so its radiance round-trips the skybox sampler.
         m_SkyBake =
             SkyCubemapBake::Create(m_Context, m_Ibl->GetSetLayout(), HdrFormat, SkyBakeFaceSize);
-        // Bloom is constructed before the pipelines because its down/up set layout is reserved by
-        // the SSR blur pipeline layout CreatePipelines builds; its extent-sized pyramid is built by
-        // Resize below (after the HDR target). TAA is grouped with it; both build their pipelines
-        // in their constructors.
+        // Bloom's down/up set layout is reserved by the SSR chain's blur pipeline layout, so bloom
+        // is constructed before the SSR chain; its extent-sized pyramid is built by Resize below
+        // (after the HDR target). TAA is grouped with it; both build their pipelines in their ctors.
         m_Bloom = BloomPyramid::Create(m_Context, m_Assets, m_Settings.Kernel);
         m_Taa = TaaResolve::Create(m_Context, m_Assets);
+        m_Refraction = RefractionGrab::Create(m_Context, m_Assets);
         CreatePipelines();
+        // The SSR chain's blur pipeline layout reserves the bloom down/up set layout, and its
+        // min-Z reduce pipeline builds on the hi-Z reduce layout — both must already exist, so the
+        // chain is constructed after the bloom subsystem and CreatePipelines.
+        m_Ssr =
+            SsrChain::Create(m_Context, m_Assets, m_HiZReduceLayout, m_Bloom->GetDownUpSetLayout());
 
         CreateOutput();
         CreateGBuffer();
@@ -286,8 +233,10 @@ namespace Veng::Renderer
         m_Taa->Resize(m_Extent, m_Settings.TAA);
         // The pyramid's level-0 source and composite sets bind the fresh HDR view.
         m_Bloom->Resize(m_Extent, m_HdrView);
-        CreateSsr();
-        CreateRefraction();
+        // The min-Z reduce sets bind the fresh depth view from the g-buffer above.
+        m_Ssr->Recreate(m_Settings, m_Extent, m_DepthView, m_HiZReduceSetLayout,
+                        m_Bloom->GetDownUpSetLayout());
+        m_Refraction->Recreate(m_Settings, m_Extent);
         // The metering set binds the HDR target, so the meter is created after CreateHdr.
         m_AutoExposure = AutoExposureMeter::Create(m_Context, m_Assets, m_HdrView);
         CreatePicking();
@@ -306,12 +255,6 @@ namespace Veng::Renderer
         bindless.Release(m_HdrHandle);
         bindless.Release(m_VelocityHandle);
         bindless.Release(m_EmissiveHandle);
-        bindless.Release(m_SsrSceneHandle);
-        bindless.Release(m_SsrReflectionSampleHandle);
-        bindless.Release(m_SsrReflectionSamplerHandle);
-        bindless.Release(m_SsrHiZSampleHandle);
-        bindless.Release(m_RefractionSceneHandle);
-        bindless.Release(m_RefractionDepthHandle);
         bindless.Release(m_LtcMatHandle);
         bindless.Release(m_LtcMagHandle);
         bindless.Release(m_SamplerHandle);
@@ -487,30 +430,6 @@ namespace Veng::Renderer
         m_SsaoPipeline =
             MakePipeline("SceneRenderer SSAO Pipeline", m_SsaoLayout, ssaoFs, SsaoFormat);
 
-        // The refraction scene-color copy writes the intermediate translucent materials sample.
-        const AssetHandle<Veng::Shader> sceneColorCopyFs =
-            LoadShader(SceneColorCopyFragId, "scene-color copy fragment");
-        m_SceneColorCopyLayout = PipelineLayout::Create(
-            m_Context, {
-                           .Name = "SceneRenderer Scene Color Copy Layout",
-                           .PushConstantRanges = {PushConstantRange::Of<SceneColorCopyPush>(
-                               ShaderStage::Fragment)},
-                       });
-        // Two attachments (the scene-color grab + the depth copy), so the single-format
-        // MakePipeline convenience does not apply.
-        m_SceneColorCopyPipeline = GraphicsPipeline::Create(
-            m_Context,
-            {
-                .Name = "SceneRenderer Scene Color Copy Pipeline",
-                .ColorAttachments = {{.Format = HdrFormat}, {.Format = Format::R32Sfloat}},
-                .PipelineLayout = m_SceneColorCopyLayout,
-                .ShaderStages =
-                    {
-                        {.Stage = ShaderStage::Vertex, .Module = vs.Get()->Module},
-                        {.Stage = ShaderStage::Fragment, .Module = sceneColorCopyFs.Get()->Module},
-                    },
-            });
-
         // Loaded resident so the PostProcessScenePass builds its pipeline against the output format.
         // The tonemap material's cooked zero-override default instance — its parent supplies the
         // PostProcess pipeline and exposed schema.
@@ -634,60 +553,6 @@ namespace Veng::Renderer
                 .Name = "SceneRenderer HiZ Reduce Pipeline",
                 .PipelineLayout = m_HiZReduceLayout,
                 .ShaderStage = {.Stage = ShaderStage::Compute, .Module = hiZReduceCs.Get()->Module},
-            });
-
-        // SSR pipelines. The trace and composite are fullscreen graphics passes reading the
-        // scene/g-buffer through set-0 bindless (so set 0 is auto-reserved, no extra sets); the
-        // blur reuses the bloom down/up set layout (sampled source + linear sampler + storage dest).
-        const AssetHandle<Veng::Shader> ssrTraceFs =
-            LoadShader(SsrTraceFragId, "SSR trace fragment");
-        const AssetHandle<Veng::Shader> ssrCompositeFs =
-            LoadShader(SsrCompositeFragId, "SSR composite fragment");
-        const AssetHandle<Veng::Shader> ssrBlurCs =
-            LoadShader(SsrBlurDownCompId, "SSR blur downsample");
-        // The min-Z reduction reuses the hi-Z reduce layout/set layout (sampled source +
-        // storage dest + the HiZReducePush) — only the reduce operator (min vs max) differs.
-        const AssetHandle<Veng::Shader> ssrHiZReduceCs =
-            LoadShader(SsrHiZReduceCompId, "SSR min-Z reduce");
-        m_SsrHiZReducePipeline = ComputePipeline::Create(
-            m_Context, {
-                           .Name = "SceneRenderer SSR MinZ Reduce Pipeline",
-                           .PipelineLayout = m_HiZReduceLayout,
-                           .ShaderStage = {.Stage = ShaderStage::Compute,
-                                           .Module = ssrHiZReduceCs.Get()->Module},
-                       });
-
-        m_SsrTraceLayout = PipelineLayout::Create(
-            m_Context,
-            {
-                .Name = "SceneRenderer SSR Trace Layout",
-                .PushConstantRanges = {PushConstantRange::Of<SsrTracePush>(ShaderStage::Fragment)},
-            });
-        m_SsrTracePipeline = MakePipeline("SceneRenderer SSR Trace Pipeline", m_SsrTraceLayout,
-                                          ssrTraceFs, HdrFormat);
-
-        m_SsrCompositeLayout = PipelineLayout::Create(
-            m_Context, {
-                           .Name = "SceneRenderer SSR Composite Layout",
-                           .PushConstantRanges = {PushConstantRange::Of<SsrCompositePush>(
-                               ShaderStage::Fragment)},
-                       });
-        m_SsrCompositePipeline = MakePipeline("SceneRenderer SSR Composite Pipeline",
-                                              m_SsrCompositeLayout, ssrCompositeFs, HdrFormat);
-
-        m_SsrBlurLayout = PipelineLayout::Create(
-            m_Context,
-            {
-                .Name = "SceneRenderer SSR Blur Layout",
-                .DescriptorSetLayouts = {m_Bloom->GetDownUpSetLayout()},
-                .PushConstantRanges = {PushConstantRange::Of<SsrBlurPush>(ShaderStage::Compute)},
-            });
-        m_SsrBlurPipeline = ComputePipeline::Create(
-            m_Context,
-            {
-                .Name = "SceneRenderer SSR Blur Pipeline",
-                .PipelineLayout = m_SsrBlurLayout,
-                .ShaderStage = {.Stage = ShaderStage::Compute, .Module = ssrBlurCs.Get()->Module},
             });
     }
 
@@ -1187,231 +1052,6 @@ namespace Veng::Renderer
         m_HdrHandle = bindless.Register(m_HdrView);
     }
 
-    uvec2 SceneRenderer::SsrRenderExtent() const
-    {
-        if (m_Settings.SsrResolutionScale == SceneRendererSettings::SsrResolution::Half)
-        {
-            return glm::max(uvec2(1), m_Extent / 2u);
-        }
-        if (m_Settings.SsrResolutionScale == SceneRendererSettings::SsrResolution::Quarter)
-        {
-            return glm::max(uvec2(1), m_Extent / 4u);
-        }
-        return m_Extent;
-    }
-
-    void SceneRenderer::CreateRefraction()
-    {
-        BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
-        bindless.Release(m_RefractionSceneHandle);
-        bindless.Release(m_RefractionDepthHandle);
-        m_RefractionSceneHandle = {};
-        m_RefractionDepthHandle = {};
-
-        if (!m_Settings.Refraction)
-        {
-            m_RefractionSceneImage.reset();
-            m_RefractionSceneView.reset();
-            m_RefractionDepthImage.reset();
-            m_RefractionDepthView.reset();
-            return;
-        }
-
-        // The pre-translucent scene color and opaque depth the copy pass fills each frame;
-        // translucent materials sample them through the view block's SceneColor handles.
-        m_RefractionSceneImage =
-            Image::Create(m_Context, {
-                                         .Name = "SceneRenderer Refraction Scene",
-                                         .Extent = {m_Extent.x, m_Extent.y, 1},
-                                         .Format = HdrFormat,
-                                         .Usage = HdrUsage,
-                                     });
-        m_RefractionSceneView =
-            ImageView::Create(m_Context, {.Name = "SceneRenderer Refraction Scene View",
-                                          .Image = m_RefractionSceneImage});
-        m_RefractionSceneHandle = bindless.Register(m_RefractionSceneView);
-
-        m_RefractionDepthImage =
-            Image::Create(m_Context, {
-                                         .Name = "SceneRenderer Refraction Depth",
-                                         .Extent = {m_Extent.x, m_Extent.y, 1},
-                                         .Format = Format::R32Sfloat,
-                                         .Usage = HdrUsage,
-                                     });
-        m_RefractionDepthView =
-            ImageView::Create(m_Context, {.Name = "SceneRenderer Refraction Depth View",
-                                          .Image = m_RefractionDepthImage});
-        m_RefractionDepthHandle = bindless.Register(m_RefractionDepthView);
-    }
-
-    void SceneRenderer::CreateSsr()
-    {
-        BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
-        bindless.Release(m_SsrSceneHandle);
-        bindless.Release(m_SsrReflectionSampleHandle);
-        bindless.Release(m_SsrReflectionSamplerHandle);
-        bindless.Release(m_SsrHiZSampleHandle);
-        m_SsrSceneHandle = {};
-        m_SsrReflectionSampleHandle = {};
-        m_SsrReflectionSamplerHandle = {};
-        m_SsrHiZSampleHandle = {};
-
-        // SSR targets exist only when SSR runs (the toggle or the Reflections debug arm).
-        const bool ssrWanted = m_Settings.SSR || m_Settings.Mode == DebugView::Reflections;
-        if (!ssrWanted)
-        {
-            m_SsrSceneImage.reset();
-            m_SsrSceneView.reset();
-            m_SsrReflectionImage.reset();
-            m_SsrReflectionMips.clear();
-            m_SsrReflectionSampleView.reset();
-            m_SsrReflectionSampler.reset();
-            m_SsrBlurSets.clear();
-            m_SsrHiZImage.reset();
-            m_SsrHiZMips.clear();
-            m_SsrHiZSampleView.reset();
-            m_SsrHiZReduceSets.clear();
-            return;
-        }
-
-        // The lit scene color SSR reads: lighting/TAA writes here, the composite reflects into
-        // it and writes the HDR target, so the bloom/tonemap tail is unchanged.
-        m_SsrSceneImage = Image::Create(m_Context, {
-                                                       .Name = "SceneRenderer SSR Scene",
-                                                       .Extent = {m_Extent.x, m_Extent.y, 1},
-                                                       .Format = HdrFormat,
-                                                       .Usage = HdrUsage,
-                                                   });
-        m_SsrSceneView = ImageView::Create(
-            m_Context, {.Name = "SceneRenderer SSR Scene View", .Image = m_SsrSceneImage});
-        m_SsrSceneHandle = bindless.Register(m_SsrSceneView);
-
-        // The trace, min-Z pyramid, and blur chain run at the SSR resolution (the scene color
-        // above stays full-res: the trace samples it by reflected UV, the composite by logical UV).
-        const uvec2 ssrExtent = SsrRenderExtent();
-
-        // The reflection mip chain: mip 0 the trace writes, coarser mips the blur produces. The
-        // chain stops BloomTileShift levels short of 1×1 (a rough reflection needs no 1-px mip).
-        const u32 maxDim = std::max(ssrExtent.x, ssrExtent.y);
-        const u32 mipCount =
-            maxDim == 0 ? 1u : std::max(1u, std::bit_width(maxDim) - BloomTileShift);
-
-        m_SsrReflectionImage =
-            Image::Create(m_Context, {
-                                         .Name = "SceneRenderer SSR Reflection",
-                                         .Extent = {ssrExtent.x, ssrExtent.y, 1},
-                                         .MipLevels = mipCount,
-                                         .Format = HdrFormat,
-                                         .Usage = ImageUsage::ColorAttachment |
-                                                  ImageUsage::Storage | ImageUsage::Sampled,
-                                     });
-
-        m_SsrReflectionMips.clear();
-        m_SsrReflectionMips.reserve(mipCount);
-        for (u32 level = 0; level < mipCount; level++)
-        {
-            m_SsrReflectionMips.push_back(ImageView::Create(
-                m_Context,
-                {
-                    .Name = fmt::format("SceneRenderer SSR Reflection Mip {} View", level),
-                    .Image = m_SsrReflectionImage,
-                    .BaseMipLevel = level,
-                    .MipLevels = 1,
-                }));
-        }
-        m_SsrReflectionSampleView =
-            ImageView::Create(m_Context, {
-                                             .Name = "SceneRenderer SSR Reflection Sample View",
-                                             .Image = m_SsrReflectionImage,
-                                             .MipLevels = mipCount,
-                                         });
-        m_SsrReflectionSampleHandle = bindless.Register(m_SsrReflectionSampleView);
-
-        // Trilinear over the chain so the composite's roughness LOD blends between mips smoothly.
-        m_SsrReflectionSampler =
-            Sampler::Create(m_Context, {
-                                           .Name = "SceneRenderer SSR Reflection Sampler",
-                                           .MagFilter = Filter::Linear,
-                                           .MinFilter = Filter::Linear,
-                                           .MipmapMode = MipmapMode::Linear,
-                                           .AddressModeU = AddressMode::ClampToEdge,
-                                           .AddressModeV = AddressMode::ClampToEdge,
-                                           .AddressModeW = AddressMode::ClampToEdge,
-                                           .AnisotropyEnabled = false,
-                                           .MaxLod = static_cast<f32>(mipCount),
-                                       });
-        m_SsrReflectionSamplerHandle = bindless.Register(m_SsrReflectionSampler);
-
-        // Per-level blur sets (the bloom down/up set layout: sampled source + sampler + storage
-        // dest). Set k reads mip k-1 and writes mip k; index 0 produces mip 1.
-        m_SsrBlurSets.clear();
-        if (mipCount > 1)
-        {
-            m_SsrBlurSets.reserve(mipCount - 1);
-            for (u32 level = 1; level < mipCount; level++)
-            {
-                Ref<DescriptorSet> set = DescriptorSet::Create(
-                    m_Context, {
-                                   .Name = fmt::format("SceneRenderer SSR Blur Set {}", level),
-                                   .Layout = m_Bloom->GetDownUpSetLayout(),
-                               });
-                set->Write(0, m_SsrReflectionMips[level - 1]);
-                set->Write(1, m_SsrReflectionSampler);
-                set->Write(2, m_SsrReflectionMips[level]);
-                m_SsrBlurSets.push_back(std::move(set));
-            }
-        }
-
-        // Min-Z depth pyramid (mirrors CreateHiZ, opposite reduction): a full mip chain the
-        // trace marches through to skip empty space. Reduced from this frame's depth before the
-        // trace; distinct from the occlusion-culling max-Z pyramid.
-        const u32 hizMips = maxDim == 0 ? 1u : std::bit_width(maxDim);
-        m_SsrHiZImage =
-            Image::Create(m_Context, {
-                                         .Name = "SceneRenderer SSR MinZ",
-                                         .Extent = {ssrExtent.x, ssrExtent.y, 1},
-                                         .MipLevels = hizMips,
-                                         .Format = HiZFormat,
-                                         .Usage = ImageUsage::Storage | ImageUsage::Sampled,
-                                     });
-        m_SsrHiZMips.clear();
-        m_SsrHiZMips.reserve(hizMips);
-        for (u32 level = 0; level < hizMips; level++)
-        {
-            m_SsrHiZMips.push_back(ImageView::Create(
-                m_Context, {
-                               .Name = fmt::format("SceneRenderer SSR MinZ Mip {} View", level),
-                               .Image = m_SsrHiZImage,
-                               .BaseMipLevel = level,
-                               .MipLevels = 1,
-                           }));
-        }
-        m_SsrHiZSampleView =
-            ImageView::Create(m_Context, {
-                                             .Name = "SceneRenderer SSR MinZ Sample View",
-                                             .Image = m_SsrHiZImage,
-                                             .MipLevels = hizMips,
-                                         });
-        m_SsrHiZSampleHandle = bindless.Register(m_SsrHiZSampleView);
-
-        // Per-mip reduction sets (the hi-Z reduce set layout): set k binds mip k's source (the
-        // depth target for k=0, min-Z mip k-1 otherwise) and mip k's destination storage view.
-        m_SsrHiZReduceSets.clear();
-        m_SsrHiZReduceSets.reserve(hizMips);
-        for (u32 level = 0; level < hizMips; level++)
-        {
-            Ref<DescriptorSet> set = DescriptorSet::Create(
-                m_Context, {
-                               .Name = fmt::format("SceneRenderer SSR MinZ Reduce Set {}", level),
-                               .Layout = m_HiZReduceSetLayout,
-                           });
-            const Ref<ImageView>& source = level == 0 ? m_DepthView : m_SsrHiZMips[level - 1];
-            set->Write(0, source);
-            set->Write(1, m_SsrHiZMips[level]);
-            m_SsrHiZReduceSets.push_back(std::move(set));
-        }
-    }
-
     void SceneRenderer::Rebuild()
     {
         // Final is the full deferred chain; debug modes terminate after the g-buffer with one blit.
@@ -1555,10 +1195,10 @@ namespace Veng::Renderer
         if (ssrActive)
         {
             m_SsrSceneId = graph.Import("SceneRenderer SSR Scene");
-            m_SsrReflectionChainId = graph.ImportImageMips(
-                "SceneRenderer SSR Reflection", static_cast<u32>(m_SsrReflectionMips.size()));
-            m_SsrHiZChainId = graph.ImportImageMips("SceneRenderer SSR MinZ",
-                                                    static_cast<u32>(m_SsrHiZMips.size()));
+            m_SsrReflectionChainId = graph.ImportImageMips("SceneRenderer SSR Reflection",
+                                                           m_Ssr->GetReflectionMipCount());
+            m_SsrHiZChainId =
+                graph.ImportImageMips("SceneRenderer SSR MinZ", m_Ssr->GetHiZMipCount());
         }
         const ResourceId sceneColorId = ssrActive ? m_SsrSceneId : hdrId;
         const ResourceId lightingTargetId = taaActive ? litId : sceneColorId;
@@ -1573,7 +1213,7 @@ namespace Veng::Renderer
             m_RefractionDepthId = graph.Import("SceneRenderer Refraction Depth");
         }
         const TextureHandle lightingTargetHandle =
-            taaActive ? m_Taa->GetLitHandle() : (ssrActive ? m_SsrSceneHandle : m_HdrHandle);
+            taaActive ? m_Taa->GetLitHandle() : (ssrActive ? m_Ssr->GetSceneHandle() : m_HdrHandle);
 
         ResourceId shadowId{};
         if (shadowActive)
@@ -1759,10 +1399,9 @@ namespace Veng::Renderer
             // the lit scene color first so a translucent fragment can sample the scene behind it.
             if (refractionActive)
             {
-                m_Passes.push_back(CreateUnique<SceneColorCopyScenePass>(
-                    m_Context, m_SceneColorCopyPipeline, lightingTargetId, lightingTargetHandle,
-                    depthId, m_DepthHandle, m_RefractionSceneId, m_RefractionDepthId,
-                    m_SamplerHandle, m_Extent));
+                m_Refraction->Declare(m_Passes, lightingTargetId, lightingTargetHandle, depthId,
+                                      m_DepthHandle, m_RefractionSceneId, m_RefractionDepthId,
+                                      m_SamplerHandle, m_Extent);
             }
             m_Passes.push_back(CreateUnique<TranslucentScenePass>(
                 m_Context, m_Extent, &m_Internal->TranslucentPlan, lightingTargetId, depthId,
@@ -1921,10 +1560,9 @@ namespace Veng::Renderer
             // the pyramid blooms the scene the Final view blooms — including the refraction grab.
             if (refractionActive)
             {
-                m_Passes.push_back(CreateUnique<SceneColorCopyScenePass>(
-                    m_Context, m_SceneColorCopyPipeline, lightingTargetId, lightingTargetHandle,
-                    depthId, m_DepthHandle, m_RefractionSceneId, m_RefractionDepthId,
-                    m_SamplerHandle, m_Extent));
+                m_Refraction->Declare(m_Passes, lightingTargetId, lightingTargetHandle, depthId,
+                                      m_DepthHandle, m_RefractionSceneId, m_RefractionDepthId,
+                                      m_SamplerHandle, m_Extent);
             }
             m_Passes.push_back(CreateUnique<TranslucentScenePass>(
                 m_Context, m_Extent, &m_Internal->TranslucentPlan, lightingTargetId, depthId,
@@ -1987,7 +1625,7 @@ namespace Veng::Renderer
             .GBufferEmissive = emissiveId,
             .EmissiveHandle = m_EmissiveHandle,
             .SsrReflection = ssrActive ? m_SsrReflectionChainId.Level(0) : ResourceId{},
-            .SsrReflectionHandle = m_SsrReflectionSampleHandle,
+            .SsrReflectionHandle = m_Ssr->GetReflectionSampleHandle(),
             .SamplerHandle = m_SamplerHandle,
             .LtcMatHandle = m_LtcMatHandle,
             .LtcMagHandle = m_LtcMagHandle,
@@ -2030,7 +1668,9 @@ namespace Veng::Renderer
                 // accumulate over that; the bloom sweep then reads the finished HDR.
                 if (ssrActive)
                 {
-                    DeclareSsr(graph);
+                    m_Ssr->Declare(graph, m_SsrSceneId, m_SsrReflectionChainId, m_SsrHiZChainId,
+                                   m_NormalId, m_OrmId, m_DepthId, m_HdrId, m_DepthHandle,
+                                   m_NormalHandle, m_OrmHandle, m_AlbedoHandle, m_SamplerHandle);
                 }
                 if (m_PointFieldPass != nullptr)
                 {
@@ -2307,216 +1947,6 @@ namespace Veng::Renderer
                     });
                     cmd.PushConstants(push);
                     cmd.Dispatch((push.DestExtent.x + 7) / 8, (push.DestExtent.y + 7) / 8, 1);
-                });
-        }
-    }
-
-    void SceneRenderer::DeclareSsr(RenderGraph& graph)
-    {
-        const u32 mipCount = static_cast<u32>(m_SsrReflectionMips.size());
-        const u32 hizMips = static_cast<u32>(m_SsrHiZMips.size());
-        const uvec2 ssrExtent = SsrRenderExtent();
-
-        // Min-Z reduction: build this frame's closest-surface pyramid from the depth target
-        // before the trace. One dispatch per mip; mip 0 ingests the full-res depth target into
-        // the SSR-resolution pyramid (a downsample when SSR runs below full res, a 1:1 copy at
-        // Full), deeper mips halve the prior. The per-mip graph surface derives the
-        // read-after-write barriers; the trace then reads the whole chain. Mirrors
-        // DeclareHiZReduction with the min-Z pipeline.
-        for (u32 level = 0; level < hizMips; level++)
-        {
-            const u32 dstW = std::max(ssrExtent.x >> level, 1u);
-            const u32 dstH = std::max(ssrExtent.y >> level, 1u);
-            const u32 srcW = level == 0 ? m_Extent.x : std::max(ssrExtent.x >> (level - 1), 1u);
-            const u32 srcH = level == 0 ? m_Extent.y : std::max(ssrExtent.y >> (level - 1), 1u);
-
-            RenderGraph::PassBuilder builder =
-                graph.AddComputePass(fmt::format("SSR MinZ Reduce Mip {}", level));
-            if (level == 0)
-            {
-                builder.Sample(m_DepthId);
-            }
-            else
-            {
-                builder.Sample(m_SsrHiZChainId.Level(level - 1));
-            }
-            builder.StorageWrite(m_SsrHiZChainId.Level(level));
-
-            const Ref<ComputePipeline> pipeline = m_SsrHiZReducePipeline;
-            const Ref<DescriptorSet> set = m_SsrHiZReduceSets[level];
-            const HiZReducePush push{
-                .DestExtent = {dstW, dstH},
-                .SourceExtent = {srcW, srcH},
-            };
-            builder.Execute(
-                [pipeline, set, push](PassContext& inner)
-                {
-                    CommandBuffer& cmd = inner.Cmd();
-                    cmd.BindPipeline(pipeline);
-                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
-                        .Sets = {set},
-                        .FirstSet = 1, // set 0 is reserved for the bindless registry
-                        .PipelineBindPoint = PipelineBindPoint::Compute,
-                    });
-                    cmd.PushConstants(push);
-                    cmd.Dispatch((push.DestExtent.x + 7) / 8, (push.DestExtent.y + 7) / 8, 1);
-                });
-        }
-
-        // Trace: reflect the view vector about the g-buffer normal, march the depth buffer, and
-        // write the reflected scene radiance + a confidence mask into the reflection chain's mip 0.
-        {
-            const TextureHandle sceneHandle = m_SsrSceneHandle;
-            const TextureHandle depthHandle = m_DepthHandle;
-            const TextureHandle normalHandle = m_NormalHandle;
-            const TextureHandle ormHandle = m_OrmHandle;
-            const TextureHandle hizHandle = m_SsrHiZSampleHandle;
-            const SamplerHandle samplerHandle = m_SamplerHandle;
-
-            RenderGraph::PassBuilder traceBuilder = graph.AddPass("SSR Trace");
-            traceBuilder
-                .Color({
-                    .Resource = m_SsrReflectionChainId.Level(0),
-                    .Load = LoadOp::Clear,
-                    .Store = StoreOp::Store,
-                    .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 0.0f},
-                })
-                .Sample(m_SsrSceneId)
-                .Sample(m_NormalId)
-                .Sample(m_OrmId)
-                .Sample(m_DepthId);
-            // The trace Loads the whole min-Z chain by bindless handle; declaring each mip
-            // sampled drives the graph-derived General → ShaderReadOnly transition after the
-            // reduction wrote it.
-            for (u32 level = 0; level < hizMips; level++)
-            {
-                traceBuilder.Sample(m_SsrHiZChainId.Level(level));
-            }
-            traceBuilder.Execute(
-                [this, sceneHandle, depthHandle, normalHandle, ormHandle, hizHandle, hizMips,
-                 samplerHandle, ssrExtent](PassContext& inner)
-                {
-                    CommandBuffer& cmd = inner.Cmd();
-                    const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
-                    const auto* viewPtr = static_cast<const SceneView*>(inner.UserData());
-                    VE_ASSERT(viewPtr != nullptr, "SSR trace pass: null SceneView");
-                    const SceneView& view = *viewPtr;
-                    // The trace writes the SSR-resolution reflection target, so it marches and
-                    // steps at the SSR extent; the g-buffer it reads stays full-res, sampled by
-                    // logical UV. SSR disables the dynamic-resolution sub-rect, so RenderExtent
-                    // is the full extent the SSR extent derives from.
-                    const uvec2 renderExtent = ssrExtent;
-
-                    cmd.BindPipeline(m_SsrTracePipeline);
-                    cmd.SetViewport({0, 0}, renderExtent);
-                    cmd.SetScissor({0, 0}, renderExtent);
-                    registry.Bind(cmd);
-                    cmd.PushConstants(SsrTracePush{
-                        .SceneColorTexture = sceneHandle.Index,
-                        .DepthTexture = depthHandle.Index,
-                        .NormalTexture = normalHandle.Index,
-                        .OrmTexture = ormHandle.Index,
-                        .HiZTexture = hizHandle.Index,
-                        .Sampler = samplerHandle.Index,
-                        .ViewConstantsIndex = registry.GetCurrentViewConstantsIndex(),
-                        .HiZLevels = hizMips,
-                        .Extent = renderExtent,
-                        .MaxDistance = view.SsrMaxDistance,
-                        .Thickness = view.SsrThickness,
-                        .MaxRoughness = view.SsrMaxRoughness,
-                        .MaxSteps = 256,
-                    });
-                    cmd.DrawFullscreenTriangle();
-                });
-        }
-
-        // Blur down-sweep: build the roughness mip chain (mip k averages mip k-1). The per-mip
-        // graph surface derives the read-after-write barrier between writing mip k and reading it.
-        const uvec2 allocExtent = ssrExtent;
-        for (u32 level = 1; level < mipCount; level++)
-        {
-            const u32 dstW = std::max(allocExtent.x >> level, 1u);
-            const u32 dstH = std::max(allocExtent.y >> level, 1u);
-            const Ref<ComputePipeline> pipeline = m_SsrBlurPipeline;
-            const Ref<DescriptorSet> set = m_SsrBlurSets[level - 1];
-
-            graph.AddComputePass(fmt::format("SSR Blur Mip {}", level))
-                .Sample(m_SsrReflectionChainId.Level(level - 1))
-                .StorageWrite(m_SsrReflectionChainId.Level(level))
-                .Execute(
-                    [pipeline, set, dstW, dstH](PassContext& inner)
-                    {
-                        CommandBuffer& cmd = inner.Cmd();
-                        cmd.BindPipeline(pipeline);
-                        cmd.BindDescriptorSets(DescriptorSetBindInfo{
-                            .Sets = {set},
-                            .FirstSet = 1, // set 0 is reserved for the bindless registry
-                            .PipelineBindPoint = PipelineBindPoint::Compute,
-                        });
-                        cmd.PushConstants(SsrBlurPush{.DestExtent = {dstW, dstH}});
-                        cmd.Dispatch((dstW + 7) / 8, (dstH + 7) / 8, 1);
-                    });
-        }
-
-        // Composite: fold the (roughness-LOD) reflection into the scene color and write the HDR
-        // target the bloom/tonemap tail reads.
-        {
-            const TextureHandle sceneHandle = m_SsrSceneHandle;
-            const TextureHandle reflectionHandle = m_SsrReflectionSampleHandle;
-            const TextureHandle albedoHandle = m_AlbedoHandle;
-            const TextureHandle normalHandle = m_NormalHandle;
-            const TextureHandle ormHandle = m_OrmHandle;
-            const TextureHandle depthHandle = m_DepthHandle;
-            const SamplerHandle samplerHandle = m_SamplerHandle;
-            const SamplerHandle reflSamplerHandle = m_SsrReflectionSamplerHandle;
-
-            RenderGraph::PassBuilder builder = graph.AddPass("SSR Composite");
-            builder
-                .Color({
-                    .Resource = m_HdrId,
-                    .Load = LoadOp::Clear,
-                    .Store = StoreOp::Store,
-                    .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
-                })
-                .Sample(m_SsrSceneId)
-                .Sample(m_NormalId)
-                .Sample(m_OrmId)
-                .Sample(m_DepthId);
-            // Every reflection mip the composite's LOD sampling may read must be ShaderReadOnly.
-            for (u32 level = 0; level < mipCount; level++)
-            {
-                builder.Sample(m_SsrReflectionChainId.Level(level));
-            }
-
-            builder.Execute(
-                [this, sceneHandle, reflectionHandle, albedoHandle, normalHandle, ormHandle,
-                 depthHandle, samplerHandle, reflSamplerHandle, mipCount](PassContext& inner)
-                {
-                    CommandBuffer& cmd = inner.Cmd();
-                    const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
-                    const auto* viewPtr = static_cast<const SceneView*>(inner.UserData());
-                    VE_ASSERT(viewPtr != nullptr, "SSR composite pass: null SceneView");
-                    const SceneView& view = *viewPtr;
-                    const uvec2 renderExtent = view.RenderExtent;
-
-                    cmd.BindPipeline(m_SsrCompositePipeline);
-                    cmd.SetViewport({0, 0}, renderExtent);
-                    cmd.SetScissor({0, 0}, renderExtent);
-                    registry.Bind(cmd);
-                    cmd.PushConstants(SsrCompositePush{
-                        .SceneColorTexture = sceneHandle.Index,
-                        .ReflectionTexture = reflectionHandle.Index,
-                        .AlbedoTexture = albedoHandle.Index,
-                        .NormalTexture = normalHandle.Index,
-                        .OrmTexture = ormHandle.Index,
-                        .DepthTexture = depthHandle.Index,
-                        .Sampler = samplerHandle.Index,
-                        .ReflectionSampler = reflSamplerHandle.Index,
-                        .ViewConstantsIndex = registry.GetCurrentViewConstantsIndex(),
-                        .Intensity = view.SsrIntensity,
-                        .MipCount = mipCount,
-                    });
-                    cmd.DrawFullscreenTriangle();
                 });
         }
     }
@@ -3031,8 +2461,9 @@ namespace Veng::Renderer
         CreateHdr();
         m_Taa->Resize(m_Extent, m_Settings.TAA);
         m_Bloom->Resize(m_Extent, m_HdrView);
-        CreateSsr();
-        CreateRefraction();
+        m_Ssr->Recreate(m_Settings, m_Extent, m_DepthView, m_HiZReduceSetLayout,
+                        m_Bloom->GetDownUpSetLayout());
+        m_Refraction->Recreate(m_Settings, m_Extent);
         // The HDR target moved; rebind the metering source and re-snap the adaptation so the
         // resized frame is not mis-exposed off a stale ring value.
         m_AutoExposure->RebindHdr(m_HdrView);
@@ -3060,8 +2491,9 @@ namespace Veng::Renderer
         m_Taa->Resize(m_Extent, m_Settings.TAA);
         // The bloom pyramid is extent-driven (unchanged here); only the kernel choice may change.
         m_Bloom->Reconfigure(m_Settings.Kernel);
-        CreateSsr();
-        CreateRefraction();
+        m_Ssr->Recreate(m_Settings, m_Extent, m_DepthView, m_HiZReduceSetLayout,
+                        m_Bloom->GetDownUpSetLayout());
+        m_Refraction->Recreate(m_Settings, m_Extent);
         m_Shadows->Reconfigure(m_Settings);
         CreatePicking();
         Rebuild();
@@ -3416,8 +2848,8 @@ namespace Veng::Renderer
             // reads one consistent value; the delta is this view's.
             .TimeParams = vec4(Time::GetFrameTime(), view.Delta, 0.0f, 0.0f),
             .ExtentParams = vec4(vec2(validExtent), vec2(m_Extent)),
-            .SceneColor = uvec4(m_RefractionSceneHandle.Index, m_SamplerHandle.Index,
-                                m_RefractionActive ? 1u : 0u, m_RefractionDepthHandle.Index),
+            .SceneColor = uvec4(m_Refraction->GetSceneHandle().Index, m_SamplerHandle.Index,
+                                m_RefractionActive ? 1u : 0u, m_Refraction->GetDepthHandle().Index),
         };
         for (u32 i = 0; i < ShCoefficientCount; ++i)
         {
@@ -3550,22 +2982,23 @@ namespace Veng::Renderer
         }
         if (m_RefractionActive)
         {
-            bindings.push_back({m_RefractionSceneId, m_RefractionSceneView});
-            bindings.push_back({m_RefractionDepthId, m_RefractionDepthView});
+            bindings.push_back({m_RefractionSceneId, m_Refraction->GetSceneView()});
+            bindings.push_back({m_RefractionDepthId, m_Refraction->GetDepthView()});
         }
         if (m_SsrActive)
         {
-            bindings.push_back({m_SsrSceneId, m_SsrSceneView});
+            bindings.push_back({m_SsrSceneId, m_Ssr->GetSceneView()});
             // Each reflection mip binds its per-frame view to its per-mip import slot (the trace
             // writes mip 0, the blur the rest).
-            for (u32 level = 0; level < m_SsrReflectionMips.size(); level++)
+            const std::vector<Ref<ImageView>>& reflectionMips = m_Ssr->GetReflectionMipViews();
+            for (u32 level = 0; level < reflectionMips.size(); level++)
             {
-                bindings.push_back(
-                    {m_SsrReflectionChainId.Level(level), m_SsrReflectionMips[level]});
+                bindings.push_back({m_SsrReflectionChainId.Level(level), reflectionMips[level]});
             }
-            for (u32 level = 0; level < m_SsrHiZMips.size(); level++)
+            const std::vector<Ref<ImageView>>& hiZMips = m_Ssr->GetHiZMipViews();
+            for (u32 level = 0; level < hiZMips.size(); level++)
             {
-                bindings.push_back({m_SsrHiZChainId.Level(level), m_SsrHiZMips[level]});
+                bindings.push_back({m_SsrHiZChainId.Level(level), hiZMips[level]});
             }
         }
         // Bind each hi-Z mip's per-frame storage view to its per-mip import slot.

@@ -57,6 +57,8 @@ namespace Veng::Renderer
     class BloomPyramid;
     class AutoExposureMeter;
     class TaaResolve;
+    class SsrChain;
+    class RefractionGrab;
     class Image;
     class Sampler;
     class Buffer;
@@ -994,34 +996,6 @@ namespace Veng::Renderer
         /// barriers.
         /// @param graph  The renderer's internal graph being rebuilt.
         void DeclareHiZReduction(RenderGraph& graph);
-        /// @brief Recreates the SSR scene-color intermediate, reflection mip chain, and min-Z pyramid.
-        ///
-        /// Allocates the targets and per-level descriptor sets when Settings.SSR is set; otherwise
-        /// releases any previously-created ones. The reflection blur chain mirrors the bloom
-        /// pyramid, the min-Z pyramid CreateHiZ. Called from Create and every Resize/Configure.
-        void CreateSsr();
-        /// @brief Recreates the refraction scene-color intermediate translucent materials sample.
-        ///
-        /// Allocates the full-resolution HdrFormat target and registers it into bindless when
-        /// Settings.Refraction is set; otherwise releases any previously-created one. Called from
-        /// Create and every Resize/Configure.
-        void CreateRefraction();
-        /// @brief Declares the SSR min-Z reduction, trace, blur, and composite passes into the graph.
-        ///
-        /// Reduces this frame's depth to a min-Z pyramid, traces reflections against it into the
-        /// reflection chain's mip 0, blurs the chain for rough reflections, then composites the
-        /// reflection into the HDR target the bloom/tonemap tail reads. Declared between the lighting
-        /// pass and the bloom sweep.
-        /// @param graph  The renderer's internal graph being rebuilt.
-        void DeclareSsr(RenderGraph& graph);
-        /// @brief The pixel extent the SSR trace/min-Z/blur chain runs at.
-        ///
-        /// Folds Settings.SsrResolutionScale onto the render extent (Half halves each axis, Quarter
-        /// quarters it, each clamped to at least 1). The single source of truth CreateSsr sizes
-        /// resources to and DeclareSsr dispatches against; the g-buffer and composite stay at the
-        /// full extent.
-        /// @return The SSR working extent in texels.
-        [[nodiscard]] uvec2 SsrRenderExtent() const;
         /// @brief Recreates the HDR image/view at the current extent and (re-)registers it into bindless.
         void CreateHdr();
         /// @brief Builds the engine-owned fullscreen pipelines and loads the core PostProcess materials.
@@ -1214,88 +1188,16 @@ namespace Veng::Renderer
         /// @brief Bindless slot for the LTC magnitude LUT.
         TextureHandle m_LtcMagHandle;
 
-        /// @brief Lit scene-color intermediate the SSR trace samples and the composite adds onto.
+        /// @brief The screen-space-reflection chain — scene-color intermediate, mip chain, min-Z pyramid, and sweep.
         ///
-        /// When SSR is active the lighting pass (or the TAA resolve) writes here instead of the HDR
-        /// target; the SSR composite reflects into it and writes the HDR target, so the bloom/tonemap
-        /// tail is unchanged (SSR slots in exactly where TAA does). Null when SSR is off. HdrFormat,
-        /// full extent; recreated on Resize/Configure.
-        Ref<Image> m_SsrSceneImage;
-        /// @brief View over m_SsrSceneImage.
-        Ref<ImageView> m_SsrSceneView;
-        /// @brief Bindless slot for the scene-color intermediate (trace + composite sample it).
-        TextureHandle m_SsrSceneHandle;
+        /// Its blur pipeline layout reserves the bloom down/up set layout and its min-Z reduce
+        /// pipeline builds on the hi-Z reduce layout, so it is constructed after CreatePipelines
+        /// (which builds the hi-Z reduce layout) and the bloom subsystem exist; Recreate rebuilds
+        /// the chain at the SsrResolution scale after the g-buffer depth and HDR targets.
+        Unique<SsrChain> m_Ssr;
 
-        /// @brief SSR reflection mip chain: mip 0 the trace writes, coarser mips the blur produces.
-        ///
-        /// HdrFormat, sized to m_Extent with a mip chain (ColorAttachment | Storage | Sampled). The
-        /// composite samples it by a roughness-selected LOD (a coarser mip is a blurrier reflection).
-        /// Null when SSR is off. Recreated on Resize/Configure.
-        Ref<Image> m_SsrReflectionImage;
-        /// @brief One single-mip view per reflection level (mip 0 a color target, deeper mips storage dests).
-        vector<Ref<ImageView>> m_SsrReflectionMips;
-        /// @brief Whole-chain sampled view of the reflection pyramid; the composite samples it by LOD.
-        Ref<ImageView> m_SsrReflectionSampleView;
-        /// @brief Bindless slot for the reflection sample view.
-        TextureHandle m_SsrReflectionSampleHandle;
-        /// @brief Trilinear clamp-to-edge sampler over the reflection mip chain (roughness LOD).
-        Ref<Sampler> m_SsrReflectionSampler;
-        /// @brief Bindless slot for the reflection sampler.
-        SamplerHandle m_SsrReflectionSamplerHandle;
-        /// @brief One blur-downsample set per produced level k (reads mip k-1, writes mip k).
-        vector<Ref<DescriptorSet>> m_SsrBlurSets;
-
-        /// @brief SSR min-Z depth pyramid: the closest-surface mip chain the hi-Z trace marches.
-        ///
-        /// R32Sfloat, sized to the depth target with a full mip chain (Storage | Sampled). A compute
-        /// reduction (min operator) builds it from this frame's depth before the trace; distinct from
-        /// the occlusion-culling max-Z pyramid (opposite reduction, this-frame timing). Null when SSR
-        /// is off. Recreated on Resize/Configure.
-        Ref<Image> m_SsrHiZImage;
-        /// @brief One single-mip storage view per min-Z level (the reduction writes each).
-        vector<Ref<ImageView>> m_SsrHiZMips;
-        /// @brief Whole-chain sampled view of the min-Z pyramid; the trace Loads levels from it.
-        Ref<ImageView> m_SsrHiZSampleView;
-        /// @brief Bindless slot for the min-Z sample view.
-        TextureHandle m_SsrHiZSampleHandle;
-        /// @brief One reduction set per min-Z level (binds the source and destination mip views).
-        vector<Ref<DescriptorSet>> m_SsrHiZReduceSets;
-
-        /// @brief SSR trace pipeline (fullscreen, writes the reflection chain's mip 0) + layout.
-        Ref<class GraphicsPipeline> m_SsrTracePipeline;
-        Ref<class PipelineLayout> m_SsrTraceLayout;
-        /// @brief SSR composite pipeline (fullscreen, writes the HDR target) + layout.
-        Ref<class GraphicsPipeline> m_SsrCompositePipeline;
-        Ref<class PipelineLayout> m_SsrCompositeLayout;
-        /// @brief SSR reflection blur-downsample compute pipeline (reuses the bloom down/up set layout) + layout.
-        Ref<class ComputePipeline> m_SsrBlurPipeline;
-        Ref<class PipelineLayout> m_SsrBlurLayout;
-        /// @brief SSR min-Z reduction compute pipeline (reuses the hi-Z reduce layout/set layout).
-        Ref<class ComputePipeline> m_SsrHiZReducePipeline;
-
-        /// @brief Refraction scene-color intermediate translucent materials sample.
-        ///
-        /// The lit scene color (lighting + sky + emissive) copied ahead of the translucent pass,
-        /// reached by a translucent fragment through the view block's SceneColor handles. Null
-        /// when Settings.Refraction is off. HdrFormat, full allocation extent, recreated on
-        /// Resize/Configure.
-        Ref<Image> m_RefractionSceneImage;
-        /// @brief View over m_RefractionSceneImage.
-        Ref<ImageView> m_RefractionSceneView;
-        /// @brief Bindless handle of m_RefractionSceneView, written into the view-constants block.
-        TextureHandle m_RefractionSceneHandle;
-        /// @brief Refraction scene-depth intermediate: the opaque depth copied beside the scene
-        /// color, so a translucent material depth-tests its distorted samples against the
-        /// geometry that produced them. R32Sfloat; null when Settings.Refraction is off.
-        Ref<Image> m_RefractionDepthImage;
-        /// @brief View over m_RefractionDepthImage.
-        Ref<ImageView> m_RefractionDepthView;
-        /// @brief Bindless handle of m_RefractionDepthView, written into the view-constants block.
-        TextureHandle m_RefractionDepthHandle;
-        /// @brief Scene-color copy pipeline (sub-rect-mapped passthrough), writing HdrFormat.
-        Ref<class GraphicsPipeline> m_SceneColorCopyPipeline;
-        /// @brief Layout for m_SceneColorCopyPipeline: a texture + sampler + sub-rect push block.
-        Ref<class PipelineLayout> m_SceneColorCopyLayout;
+        /// @brief The pre-translucent refraction grab — scene-color/depth intermediates and the copy pipeline.
+        Unique<RefractionGrab> m_Refraction;
 
         /// @brief Shared sampler fullscreen passes use to sample the g-buffer and HDR target.
         Ref<Sampler> m_Sampler;
