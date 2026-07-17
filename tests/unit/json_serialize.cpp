@@ -58,6 +58,7 @@ namespace
         f32 Amount = 0.0f;
         i32 Count = 0;
         u32 Index = 0;
+        u8 Level = 0;
         u64 BigId = 0;
         vec3 Position{0.0f};
         quat Rotation{1.0f, 0.0f, 0.0f, 0.0f};
@@ -98,6 +99,7 @@ VE_FIELD(Flag)
 VE_FIELD(Amount)
 VE_FIELD(Count)
 VE_FIELD(Index)
+VE_FIELD(Level)
 VE_FIELD(BigId)
 VE_FIELD(Position)
 VE_FIELD(Rotation)
@@ -139,7 +141,8 @@ namespace
 
     bool FieldwiseEqual(const Fixture& a, const Fixture& b)
     {
-        if (a.Flag != b.Flag || a.Count != b.Count || a.Index != b.Index || a.BigId != b.BigId)
+        if (a.Flag != b.Flag || a.Count != b.Count || a.Index != b.Index || a.Level != b.Level ||
+            a.BigId != b.BigId)
         {
             return false;
         }
@@ -223,6 +226,7 @@ TEST_CASE("Every FieldClass round-trips through JsonWriteFields -> JsonReadField
     src.Amount = 3.5f;
     src.Count = -7;
     src.Index = 42;
+    src.Level = 200;
     src.BigId = 0xABCDEF0123456789ULL;
     src.Position = vec3{1.0f, 2.0f, 3.0f};
     src.Rotation = quat{0.7071f, 0.0f, 0.7071f, 0.0f};
@@ -297,6 +301,34 @@ TEST_CASE("A null AssetHandle and null Reference round-trip as JSON null")
     dst.Target = Entity{.Index = 3, .Generation = 1}; // pre-populate, must be overwritten
     REQUIRE(JsonReadFields(&dst, info, doc, registry, hooks));
     CHECK(dst.Target == Entity::Null);
+}
+
+// ---- u8 scalar leaf pinned --------------------------------------------------
+
+TEST_CASE("A u8 field writes as a plain JSON number and round-trips byte-comparably")
+{
+    const TypeRegistry registry = MakeRegistry();
+    const JsonFieldHooks hooks = StubHooks();
+    const TypeInfo& info = registry.Info(registry.IdOf<Fixture>());
+
+    Fixture src;
+    src.Level = 255; // the widest u8 value
+
+    const Json doc = JsonWriteFields(&src, info, registry, hooks);
+
+    // Represented like the other small integer scalars (i32/u32): a bare JSON number,
+    // not the string form the 64-bit widths use.
+    REQUIRE(doc["Level"].is_number_unsigned());
+    CHECK(doc["Level"] == 255);
+
+    Fixture dst;
+    dst.Level = 7; // pre-populate, must be overwritten
+    REQUIRE(JsonReadFields(&dst, info, doc, registry, hooks));
+    CHECK(dst.Level == src.Level);
+
+    // A second write of the read-back value reproduces the same document byte-for-byte.
+    const Json roundTripped = JsonWriteFields(&dst, info, registry, hooks);
+    CHECK(roundTripped.dump() == doc.dump());
 }
 
 // ---- Enum cases pinned ------------------------------------------------------

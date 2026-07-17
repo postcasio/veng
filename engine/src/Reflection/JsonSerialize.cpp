@@ -102,7 +102,7 @@ namespace Veng
             // it as a u64 (a string or number), so it authors as a hex-id string exactly like a
             // minted id. Handled before the number/boolean guard the narrower scalars require.
             if (type != TypeIdOf<bool>() && type != TypeIdOf<f32>() && type != TypeIdOf<i32>() &&
-                type != TypeIdOf<u32>())
+                type != TypeIdOf<u32>() && type != TypeIdOf<u8>())
             {
                 const Result<u64> v = ReadInteger64<u64>(value, path);
                 if (!v)
@@ -139,6 +139,12 @@ namespace Veng
             if (type == TypeIdOf<u32>())
             {
                 const u32 v = value.get<u32>();
+                std::memcpy(fieldPtr, &v, sizeof(v));
+                return {};
+            }
+            if (type == TypeIdOf<u8>())
+            {
+                const u8 v = value.get<u8>();
                 std::memcpy(fieldPtr, &v, sizeof(v));
                 return {};
             }
@@ -440,6 +446,14 @@ namespace Veng
             if (type == TypeIdOf<u32>())
             {
                 u32 v = 0;
+                std::memcpy(&v, fieldPtr, sizeof(v));
+                return v;
+            }
+            if (type == TypeIdOf<u8>())
+            {
+                // A small integer that fits IEEE-754-double losslessly, so it authors as a plain
+                // JSON number exactly as i32/u32 do (not a string, which the 64-bit widths need).
+                u8 v = 0;
                 std::memcpy(&v, fieldPtr, sizeof(v));
                 return v;
             }
