@@ -202,6 +202,14 @@ add_library(veng SHARED
         src/Gui/UIDocument.cpp
         src/Gui/YogaTree.cpp
         src/Renderer/Passes/GuiScenePass.cpp
+        src/Renderer/Passes/GBufferScenePass.cpp
+        src/Renderer/Passes/PickingScenePass.cpp
+        src/Renderer/Passes/TranslucentScenePass.cpp
+        src/Renderer/Passes/SceneColorCopyScenePass.cpp
+        src/Renderer/Passes/DeferredLightingScenePass.cpp
+        src/Renderer/Passes/TaaScenePass.cpp
+        src/Renderer/Passes/DebugBlitScenePasses.cpp
+        src/Renderer/PostProcessScenePass.cpp
         src/Renderer/DebugDraw.cpp
         src/Renderer/DebugDrawScenePass.cpp
         src/Renderer/PointField.cpp

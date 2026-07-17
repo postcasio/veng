@@ -1,5 +1,7 @@
 #include "PointFieldScenePass.h"
 
+#include "../GpuBlocks.h"
+
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Shader.h>
 #include <Veng/Math/Frustum.h>
@@ -32,20 +34,6 @@ namespace Veng::Renderer
         constexpr AssetId PointAggregateVertId{0x7876DE17593B6A1CULL};
         constexpr AssetId PointAggregateFragId{0xA0E92CDBACECE971ULL};
         constexpr AssetId PointSpriteExpandId{0xF617689FC99BB623ULL};
-
-        // VkDrawIndexedIndirectCommand laid out by hand (20 bytes), the record the sprite indirect
-        // draw issues over; the compute pass writes one per field into the field's args buffer.
-        struct DrawIndexedIndirectCommand
-        {
-            u32 IndexCount;
-            u32 InstanceCount;
-            u32 FirstIndex;
-            i32 VertexOffset;
-            u32 FirstInstance;
-        };
-
-        static_assert(sizeof(DrawIndexedIndirectCommand) == 20,
-                      "DrawIndexedIndirectCommand must match VkDrawIndexedIndirectCommand");
 
         // The expansion compute push block (matches point_sprite_expand.comp PushConstants). All the
         // per-point photometric knobs fold in compute, so the raster path carries none of them.
