@@ -140,6 +140,8 @@
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/ScenePass.h>
 #include <Veng/Renderer/SceneRenderer.h>
+#include <Veng/Renderer/SceneRendererSettings.h>
+#include <Veng/Renderer/SceneView.h>
 #include <Veng/Renderer/Sampler.h>
 #include <Veng/Renderer/ShadowCascades.h>
 #include <Veng/Renderer/Semaphore.h>

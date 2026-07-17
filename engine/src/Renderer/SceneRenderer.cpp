@@ -56,6 +56,7 @@
 #include <Veng/Renderer/DescriptorSetLayout.h>
 #include <Veng/Renderer/GBuffer.h>
 #include <Veng/Renderer/GraphicsPipeline.h>
+#include <Veng/Renderer/HiZHistory.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/LightPacking.h>
@@ -70,6 +71,7 @@
 #include <Veng/Math/AABB.h>
 #include <Veng/Math/Ease.h>
 #include <Veng/Math/Frustum.h>
+#include <Veng/Math/SphericalHarmonics.h>
 
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Environment.h>
@@ -116,6 +118,38 @@ namespace Veng::Renderer
         // Single-channel unorm format for the SSAO target; the renderer builds the
         // SSAO pipeline against this format, and SsaoScenePass owns the image.
         constexpr Format SsaoFormat = Format::R8Unorm;
+
+        // Packs the set-1 ShadowConstants block from the fitted cascades: the tile-remapped
+        // cascade view-projections, splits, texel sizes, depth ranges, and the ShadowParams
+        // (inverse resolution, blend band, cascade count, enabled flag). shadowEnabled is set
+        // only when the shadow pass is wired and a directional light exists this frame; otherwise
+        // the lighting pass reads full visibility.
+        ShadowConstantsBlock PackShadowConstants(const SceneRendererSettings& settings,
+                                                 const CascadeData& cascades,
+                                                 const bool shadowEnabled)
+        {
+            const ShadowAtlasGrid grid = ComputeShadowAtlasGrid(settings.CascadeCount);
+
+            ShadowConstantsBlock shadowConstants{};
+            for (u32 k = 0; k < cascades.Count && k < MaxCascades; ++k)
+            {
+                shadowConstants.CascadeViewProj[k] =
+                    ComposeTileRemap(cascades.ViewProj[k], k, grid.Columns, grid.Rows);
+                shadowConstants.CascadeSplits[k] = cascades.SplitFar[k];
+                shadowConstants.CascadeTexelSize[k] = cascades.TexelWorldSize[k];
+                shadowConstants.CascadeDepthRange[k] = cascades.DepthRange[k];
+            }
+            // Blend band: a view-space distance before each cascade's far split where the
+            // lighting pass cross-fades into the next cascade. Sized from the first (smallest)
+            // cascade so the band never exceeds any cascade's own range.
+            const f32 firstSplit = cascades.Count > 0 ? cascades.SplitFar[0] : 0.0f;
+            const f32 blendBand = firstSplit * 0.1f;
+
+            shadowConstants.ShadowParams =
+                vec4(1.0f / static_cast<f32>(settings.ShadowResolution), blendBand,
+                     static_cast<f32>(cascades.Count), shadowEnabled ? 1.0f : 0.0f);
+            return shadowConstants;
+        }
     }
 
     // Kept out of the header so SceneRenderer.h needs no CompiledGraph definition.
@@ -129,6 +163,129 @@ namespace Veng::Renderer
         // the translucent pass reads at record time.
         TranslucentDrawPlan TranslucentPlan;
     };
+
+    // The fullscreen debug-blit pipelines for the non-Final DebugView arms, folded out of the
+    // header. Each arm's terminal blit selects one of these; the layouts are held only to keep the
+    // pipelines' descriptor/push-constant declarations alive. Built once at Create.
+    struct SceneRenderer::DebugBlitPipelines
+    {
+        // Blits the albedo g-buffer channel; reused for the Bloom, Emissive, and Reflections
+        // sources (the source is a push value, the pipeline the same fullscreen blit).
+        Ref<GraphicsPipeline> Albedo;
+        Ref<PipelineLayout> AlbedoLayout;
+        // Blits the world-normal g-buffer channel.
+        Ref<GraphicsPipeline> Normal;
+        Ref<PipelineLayout> NormalLayout;
+        // Blits the depth buffer as a linear grey scale.
+        Ref<GraphicsPipeline> Depth;
+        Ref<PipelineLayout> DepthLayout;
+        // Blits a packed-ORM channel (Roughness/Metallic/Occlusion), the channel a push value.
+        Ref<GraphicsPipeline> Orm;
+        Ref<PipelineLayout> OrmLayout;
+        // Blits the SSAO target.
+        Ref<GraphicsPipeline> Ao;
+        Ref<PipelineLayout> AoLayout;
+        // Blits the per-object velocity target colorized as an optical-flow field.
+        Ref<GraphicsPipeline> Motion;
+        Ref<PipelineLayout> MotionLayout;
+        // Blits the directional shadow atlas raw depth; reads through a dedicated set 1, not bindless.
+        Ref<GraphicsPipeline> Shadow;
+        Ref<PipelineLayout> ShadowLayout;
+
+        // Builds every debug-blit pipeline over the shared fullscreen vertex stage, writing the
+        // output format. shadowBlitSetLayout is the shadow system's dedicated blit set the shadow
+        // blit samples raw depth through.
+        static Unique<DebugBlitPipelines>
+        Create(Context& context, AssetManager& assets, Format outputFormat,
+               const Ref<DescriptorSetLayout>& shadowBlitSetLayout);
+    };
+
+    Unique<SceneRenderer::DebugBlitPipelines>
+    SceneRenderer::DebugBlitPipelines::Create(Context& context, AssetManager& assets,
+                                              const Format outputFormat,
+                                              const Ref<DescriptorSetLayout>& shadowBlitSetLayout)
+    {
+        auto LoadShader = [&](const AssetId id, const char* what) -> AssetHandle<Veng::Shader>
+        {
+            const AssetResult<AssetHandle<Veng::Shader>> result = assets.LoadSync<Veng::Shader>(id);
+            VE_ASSERT(result.has_value(), "SceneRenderer: {} shader load failed: {}", what,
+                      result.error().Detail);
+            return *result;
+        };
+
+        const AssetHandle<Veng::Shader> vs = LoadShader(FullscreenVertId, "fullscreen vertex");
+
+        // Builds a fullscreen pipeline (shared vertex stage) over a layout, writing the output format.
+        auto MakePipeline = [&](const char* name, const Ref<PipelineLayout>& layout,
+                                const AssetHandle<Veng::Shader>& fs) -> Ref<GraphicsPipeline>
+        {
+            return GraphicsPipeline::Create(
+                context, {
+                             .Name = name,
+                             .ColorAttachments = {{.Format = outputFormat}},
+                             .PipelineLayout = layout,
+                             .ShaderStages =
+                                 {
+                                     {.Stage = ShaderStage::Vertex, .Module = vs.Get()->Module},
+                                     {.Stage = ShaderStage::Fragment, .Module = fs.Get()->Module},
+                                 },
+                         });
+        };
+
+        // The g-buffer debug blits share the BlitPushConstants layout; only the fragment differs.
+        const PushConstantRange blitRange =
+            PushConstantRange::Of<BlitPushConstants>(ShaderStage::Fragment);
+        auto MakeBlitLayout = [&](const char* name) -> Ref<PipelineLayout>
+        {
+            return PipelineLayout::Create(context,
+                                          {.Name = name, .PushConstantRanges = {blitRange}});
+        };
+
+        Unique<DebugBlitPipelines> blits = CreateUnique<DebugBlitPipelines>();
+
+        blits->AlbedoLayout = MakeBlitLayout("SceneRenderer Albedo Blit Layout");
+        blits->Albedo = MakePipeline("SceneRenderer Albedo Blit Pipeline", blits->AlbedoLayout,
+                                     LoadShader(AlbedoBlitFragId, "albedo-blit fragment"));
+
+        blits->NormalLayout = MakeBlitLayout("SceneRenderer Normal Blit Layout");
+        blits->Normal = MakePipeline("SceneRenderer Normal Blit Pipeline", blits->NormalLayout,
+                                     LoadShader(NormalBlitFragId, "normal-blit fragment"));
+
+        blits->DepthLayout = MakeBlitLayout("SceneRenderer Depth Blit Layout");
+        blits->Depth = MakePipeline("SceneRenderer Depth Blit Pipeline", blits->DepthLayout,
+                                    LoadShader(DepthBlitFragId, "depth-blit fragment"));
+
+        blits->AoLayout = MakeBlitLayout("SceneRenderer AO Blit Layout");
+        blits->Ao = MakePipeline("SceneRenderer AO Blit Pipeline", blits->AoLayout,
+                                 LoadShader(AoBlitFragId, "AO-blit fragment"));
+
+        // Motion-vector blit: samples the velocity target through the same texture+sampler push.
+        blits->MotionLayout = MakeBlitLayout("SceneRenderer Motion Blit Layout");
+        blits->Motion = MakePipeline("SceneRenderer Motion Blit Pipeline", blits->MotionLayout,
+                                     LoadShader(MotionBlitFragId, "motion-vector-blit fragment"));
+
+        // Shadow blit reads raw depth through a dedicated set 1, not bindless, so its layout carries
+        // that set and no push block.
+        blits->ShadowLayout =
+            PipelineLayout::Create(context, {
+                                                .Name = "SceneRenderer Shadow Blit Layout",
+                                                .DescriptorSetLayouts = {shadowBlitSetLayout},
+                                            });
+        blits->Shadow = MakePipeline("SceneRenderer Shadow Blit Pipeline", blits->ShadowLayout,
+                                     LoadShader(ShadowBlitFragId, "shadow-blit fragment"));
+
+        // The channel select for the ORM blit is a push value, not a separate pipeline.
+        blits->OrmLayout = PipelineLayout::Create(
+            context, {
+                         .Name = "SceneRenderer ORM Blit Layout",
+                         .PushConstantRanges = {PushConstantRange::Of<OrmBlitPushConstants>(
+                             ShaderStage::Fragment)},
+                     });
+        blits->Orm = MakePipeline("SceneRenderer ORM Blit Pipeline", blits->OrmLayout,
+                                  LoadShader(OrmBlitFragId, "ORM-blit fragment"));
+
+        return blits;
+    }
 
     Unique<SceneRenderer> SceneRenderer::Create(const SceneRendererInfo& info)
     {
@@ -189,7 +346,11 @@ namespace Veng::Renderer
 
     SceneRenderer::~SceneRenderer()
     {
-        // Release bindless slots before their images retire.
+        // Invariant: this hand-list holds only the spine handles the renderer registers directly —
+        // the g-buffer channels, HDR, LTC LUTs, and the shared sampler. Every battery subsystem
+        // (shadows, bloom, SSR, GPU cull, picking, sky, ...) owns and releases its own bindless
+        // handles in its own destructor, so a new subsystem handle never has to be appended here.
+        // Released before their images retire.
         BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
         bindless.Release(m_AlbedoHandle);
         bindless.Release(m_NormalHandle);
@@ -269,18 +430,6 @@ namespace Veng::Renderer
         const AssetHandle<Veng::Shader> cascadeDebugFs =
             LoadShader(DeferredLightingCascadesFragId, "deferred-lighting cascade-debug fragment");
         const AssetHandle<Veng::Shader> ssaoFs = LoadShader(SsaoFragId, "SSAO fragment");
-        const AssetHandle<Veng::Shader> albedoBlitFs =
-            LoadShader(AlbedoBlitFragId, "albedo-blit fragment");
-        const AssetHandle<Veng::Shader> normalBlitFs =
-            LoadShader(NormalBlitFragId, "normal-blit fragment");
-        const AssetHandle<Veng::Shader> depthBlitFs =
-            LoadShader(DepthBlitFragId, "depth-blit fragment");
-        const AssetHandle<Veng::Shader> ormBlitFs = LoadShader(OrmBlitFragId, "ORM-blit fragment");
-        const AssetHandle<Veng::Shader> aoBlitFs = LoadShader(AoBlitFragId, "AO-blit fragment");
-        const AssetHandle<Veng::Shader> motionBlitFs =
-            LoadShader(MotionBlitFragId, "motion-vector-blit fragment");
-        const AssetHandle<Veng::Shader> shadowBlitFs =
-            LoadShader(ShadowBlitFragId, "shadow-blit fragment");
 
         // Builds a fullscreen pipeline (shared vertex stage) over a layout, naming the
         // color-target format the pass writes.
@@ -395,72 +544,10 @@ namespace Veng::Renderer
             .Overrides = {},
         });
 
-        // The g-buffer debug blits share the BlitPushConstants layout; only the
-        // fragment shader differs.
-        const PushConstantRange blitRange =
-            PushConstantRange::Of<BlitPushConstants>(ShaderStage::Fragment);
-
-        m_AlbedoBlitLayout =
-            PipelineLayout::Create(m_Context, {
-                                                  .Name = "SceneRenderer Albedo Blit Layout",
-                                                  .PushConstantRanges = {blitRange},
-                                              });
-        m_AlbedoBlitPipeline = MakePipeline("SceneRenderer Albedo Blit Pipeline",
-                                            m_AlbedoBlitLayout, albedoBlitFs, m_OutputFormat);
-
-        m_NormalBlitLayout =
-            PipelineLayout::Create(m_Context, {
-                                                  .Name = "SceneRenderer Normal Blit Layout",
-                                                  .PushConstantRanges = {blitRange},
-                                              });
-        m_NormalBlitPipeline = MakePipeline("SceneRenderer Normal Blit Pipeline",
-                                            m_NormalBlitLayout, normalBlitFs, m_OutputFormat);
-
-        m_DepthBlitLayout =
-            PipelineLayout::Create(m_Context, {
-                                                  .Name = "SceneRenderer Depth Blit Layout",
-                                                  .PushConstantRanges = {blitRange},
-                                              });
-        m_DepthBlitPipeline = MakePipeline("SceneRenderer Depth Blit Pipeline", m_DepthBlitLayout,
-                                           depthBlitFs, m_OutputFormat);
-
-        // AO blit: same push shape as the g-buffer blits.
-        m_AoBlitLayout =
-            PipelineLayout::Create(m_Context, {
-                                                  .Name = "SceneRenderer AO Blit Layout",
-                                                  .PushConstantRanges = {blitRange},
-                                              });
-        m_AoBlitPipeline = MakePipeline("SceneRenderer AO Blit Pipeline", m_AoBlitLayout, aoBlitFs,
-                                        m_OutputFormat);
-
-        // Motion-vector blit: samples the velocity target through the same texture+sampler
-        // push as the g-buffer blits.
-        m_MotionBlitLayout =
-            PipelineLayout::Create(m_Context, {
-                                                  .Name = "SceneRenderer Motion Blit Layout",
-                                                  .PushConstantRanges = {blitRange},
-                                              });
-        m_MotionBlitPipeline = MakePipeline("SceneRenderer Motion Blit Pipeline",
-                                            m_MotionBlitLayout, motionBlitFs, m_OutputFormat);
-
-        // Shadow blit reads raw depth through a dedicated set 1, not bindless,
-        // so its layout carries that set and no push block.
-        m_ShadowBlitLayout = PipelineLayout::Create(
-            m_Context, {
-                           .Name = "SceneRenderer Shadow Blit Layout",
-                           .DescriptorSetLayouts = {m_Shadows->GetBlitSetLayout()},
-                       });
-        m_ShadowBlitPipeline = MakePipeline("SceneRenderer Shadow Blit Pipeline",
-                                            m_ShadowBlitLayout, shadowBlitFs, m_OutputFormat);
-
-        m_OrmBlitLayout = PipelineLayout::Create(
-            m_Context, {
-                           .Name = "SceneRenderer ORM Blit Layout",
-                           .PushConstantRanges = {PushConstantRange::Of<OrmBlitPushConstants>(
-                               ShaderStage::Fragment)},
-                       });
-        m_OrmBlitPipeline = MakePipeline("SceneRenderer ORM Blit Pipeline", m_OrmBlitLayout,
-                                         ormBlitFs, m_OutputFormat);
+        // The fullscreen debug-blit pipelines (albedo/normal/depth/ORM/SSAO/motion/shadow) each
+        // non-Final DebugView arm selects, folded into one aggregate.
+        m_DebugBlits = DebugBlitPipelines::Create(m_Context, m_Assets, m_OutputFormat,
+                                                  m_Shadows->GetBlitSetLayout());
     }
 
     void SceneRenderer::CreateOutput()
@@ -1091,45 +1178,45 @@ namespace Veng::Renderer
         }
         case DebugView::Albedo:
             m_Passes.push_back(
-                CreateUnique<FullscreenBlitScenePass>(m_Context, m_AlbedoBlitPipeline, m_Extent,
+                CreateUnique<FullscreenBlitScenePass>(m_Context, m_DebugBlits->Albedo, m_Extent,
                                                       FullscreenBlitScenePass::Source::Albedo));
             break;
         case DebugView::Normal:
             m_Passes.push_back(
-                CreateUnique<FullscreenBlitScenePass>(m_Context, m_NormalBlitPipeline, m_Extent,
+                CreateUnique<FullscreenBlitScenePass>(m_Context, m_DebugBlits->Normal, m_Extent,
                                                       FullscreenBlitScenePass::Source::Normal));
             break;
         case DebugView::Depth:
             m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
-                m_Context, m_DepthBlitPipeline, m_Extent, FullscreenBlitScenePass::Source::Depth));
+                m_Context, m_DebugBlits->Depth, m_Extent, FullscreenBlitScenePass::Source::Depth));
             break;
         case DebugView::Occlusion:
-            m_Passes.push_back(CreateUnique<OrmBlitScenePass>(m_Context, m_OrmBlitPipeline,
+            m_Passes.push_back(CreateUnique<OrmBlitScenePass>(m_Context, m_DebugBlits->Orm,
                                                               m_Extent, /*channel=*/0));
             break;
         case DebugView::Roughness:
-            m_Passes.push_back(CreateUnique<OrmBlitScenePass>(m_Context, m_OrmBlitPipeline,
+            m_Passes.push_back(CreateUnique<OrmBlitScenePass>(m_Context, m_DebugBlits->Orm,
                                                               m_Extent, /*channel=*/1));
             break;
         case DebugView::Metallic:
-            m_Passes.push_back(CreateUnique<OrmBlitScenePass>(m_Context, m_OrmBlitPipeline,
+            m_Passes.push_back(CreateUnique<OrmBlitScenePass>(m_Context, m_DebugBlits->Orm,
                                                               m_Extent, /*channel=*/2));
             break;
         case DebugView::AO:
             m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
-                m_Context, m_AoBlitPipeline, m_Extent, FullscreenBlitScenePass::Source::Ao));
+                m_Context, m_DebugBlits->Ao, m_Extent, FullscreenBlitScenePass::Source::Ao));
             break;
         case DebugView::Shadows:
             // Reads the cascade atlas through the dedicated set (raw depth), not bindless.
             m_Passes.push_back(CreateUnique<ShadowBlitScenePass>(
-                m_Context, m_ShadowBlitPipeline, m_Extent, m_Shadows->GetBlitSet(),
+                m_Context, m_DebugBlits->Shadow, m_Extent, m_Shadows->GetBlitSet(),
                 ShadowBlitScenePass::Source::Directional));
             break;
         case DebugView::PunctualShadows:
             // Reads the punctual atlas through the dedicated set; binding 0 is
             // rewritten below after the pass set is chosen.
             m_Passes.push_back(CreateUnique<ShadowBlitScenePass>(
-                m_Context, m_ShadowBlitPipeline, m_Extent, m_Shadows->GetBlitSet(),
+                m_Context, m_DebugBlits->Shadow, m_Extent, m_Shadows->GetBlitSet(),
                 ShadowBlitScenePass::Source::Punctual));
             break;
         case DebugView::Cascades:
@@ -1186,13 +1273,13 @@ namespace Veng::Renderer
                 m_Context, m_Extent, &m_Internal->TranslucentPlan, lightingTargetId, depthId,
                 m_RefractionSceneId, m_RefractionDepthId, HdrFormat));
             m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
-                m_Context, m_AlbedoBlitPipeline, m_Extent, FullscreenBlitScenePass::Source::Bloom));
+                m_Context, m_DebugBlits->Albedo, m_Extent, FullscreenBlitScenePass::Source::Bloom));
             break;
         case DebugView::MotionVectors:
             // The g-buffer pass writes the velocity target (G3); this blit colorizes it as an
             // optical-flow field.
             m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
-                m_Context, m_MotionBlitPipeline, m_Extent,
+                m_Context, m_DebugBlits->Motion, m_Extent,
                 FullscreenBlitScenePass::Source::MotionVectors));
             break;
         case DebugView::Reflections:
@@ -1204,14 +1291,14 @@ namespace Veng::Renderer
                 m_SkyResolver->GetIbl().GetSet(), m_SkyResolver->GetIbl().GetPrefilterMipCount(),
                 skylightWanted, iblAllowed));
             m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
-                m_Context, m_AlbedoBlitPipeline, m_Extent,
+                m_Context, m_DebugBlits->Albedo, m_Extent,
                 FullscreenBlitScenePass::Source::Reflections));
             break;
         case DebugView::Emissive:
             // The g-buffer pass writes the emissive channel (G4); this blit shows the authored
             // emissive contribution alone, the channel inspectable like every other g-buffer arm.
             m_Passes.push_back(
-                CreateUnique<FullscreenBlitScenePass>(m_Context, m_AlbedoBlitPipeline, m_Extent,
+                CreateUnique<FullscreenBlitScenePass>(m_Context, m_DebugBlits->Albedo, m_Extent,
                                                       FullscreenBlitScenePass::Source::Emissive));
             break;
         }
@@ -1870,20 +1957,10 @@ namespace Veng::Renderer
 
         // Dynamic resolution: render into the top-left round(allocExtent * scale) sub-rect of the
         // (high-water-mark-allocated) targets; the terminal tonemap upscales it to the full output.
-        // Scale applies only on the Final path with the sub-rect-aware battery set: a debug view, the
-        // TAA resolve, the GPU hi-Z occlusion test, and the Dual-Kawase bloom kernel do not carry the
-        // sub-rect sampling yet, so each forces full resolution (correct, just no scaling).
-        const bool drsSupported =
-            m_Settings.Mode == DebugView::Final && !m_Settings.TAA && !m_Settings.SSR &&
-            !(m_GpuCull->GetActiveCull() == SceneRendererSettings::CullMode::GPU &&
-              m_Settings.Occlusion) &&
-            !(m_Settings.Bloom && m_Settings.Kernel == BloomKernel::Kawase);
-        const f32 renderScale = drsSupported ? view.RenderScale : 1.0f;
-        const uvec2 validExtent =
-            glm::clamp(uvec2(glm::round(vec2(m_Extent) * renderScale)), uvec2(1), m_Extent);
-        const vec2 renderScaleUV = vec2(validExtent) / vec2(m_Extent);
-        // Half-texel inset so a bilinear tap at the valid edge never reads past it.
-        const vec2 maxValidUV = (vec2(validExtent) - 0.5f) / vec2(m_Extent);
+        const FrameScale scale = ResolveRenderScale(view);
+        const uvec2 validExtent = scale.ValidExtent;
+        const vec2 renderScaleUV = scale.RenderScaleUV;
+        const vec2 maxValidUV = scale.MaxValidUV;
 
         // Auto-exposure: the meter reads the histogram a completed frame wrote, eases the adapted
         // luminance, and resolves the exposure the tonemap uses (SceneView::Exposure directly when
@@ -1958,48 +2035,13 @@ namespace Veng::Renderer
 
         // Fixed-timestep render interpolation: blend each candidate's world transform between the
         // scene's last two Sim-tick snapshots by the frame's alpha, so a 60 Hz sim renders smoothly
-        // at a higher frame rate. The broadphase tree stays built from the current-tick transforms
-        // (its cull is conservative, so a sub-tick offset never drops a visible submesh); only the
-        // drawn worlds interpolate. A static scene reports no motion history and skips the copy, so
-        // its draw is byte-identical to the un-interpolated path.
-        if (view.Alpha != 0.0f && view.World.HasTransformInterpolation())
-        {
-            const std::span<const VisibleMesh> candidates = m_Broadphase.GetCandidates();
-            m_InterpolatedCandidates.assign(candidates.begin(), candidates.end());
-            for (VisibleMesh& candidate : m_InterpolatedCandidates)
-            {
-                candidate.World =
-                    view.World.GetInterpolatedWorldTransform(candidate.Owner, view.Alpha);
-                candidate.WorldBounds = candidate.Mesh->GetBounds().Transformed(candidate.World);
-            }
-            resolvedView.Visible = m_InterpolatedCandidates;
-        }
+        // at a higher frame rate.
+        ApplyTransformInterpolation(view, resolvedView);
 
-        // Resolve the scene's one Sky component into this frame's sky fields — the lights model,
-        // the renderer reading the component off the scene the way it reads the lights. A resolved
-        // source-kind or lighting-tier change recompiles the pass set at this frame boundary,
-        // reusing the imported output so GetOutput() stays valid (only Resize/Configure recreate it).
-        m_SkyResolver->Resolve(resolvedView);
-        if (m_SkyResolver->NeedsRecompile())
-        {
-            Rebuild();
-        }
-
-        // Resolve the scene's point-field components into this Execute's live field set the same
-        // way — the pass inserts on the first live field and drops when the last one goes.
-        ResolvePointFields(resolvedView);
-
-        // Resolve the scene's volume-field components the same way — the volume march pass inserts on
-        // the first live field and drops when the last one goes.
-        ResolveVolumeFields(resolvedView);
-
-        // Forward the resolved authored sky material to the sky-material pass (a no-op when the pass
-        // is absent or no material is bound). The game has already written the material's own
-        // params/handles (e.g. SetStorageBufferHandle) before Render.
-        if (m_SkyMaterialPass != nullptr)
-        {
-            m_SkyMaterialPass->SetMaterial(resolvedView.SkyMaterial);
-        }
+        // Resolve the scene's sky / point-field / volume-field components into this Execute — the
+        // lights model, recompiling the pass set at this frame boundary on a sky source/tier change
+        // or a field appearing/disappearing (reusing the imported output so GetOutput() stays valid).
+        ResolveScenePasses(resolvedView);
 
         BindlessRegistry& registry = m_Context.GetBindlessRegistry();
 
@@ -2085,26 +2127,8 @@ namespace Veng::Renderer
         // params. Enabled only when the shadow pass is wired AND a directional light
         // exists this frame; otherwise the lighting pass reads full visibility.
         const bool shadowEnabled = m_ShadowActive && m_ShadowPass && packed.HaveDirectional;
-        const ShadowAtlasGrid grid = ComputeShadowAtlasGrid(m_Settings.CascadeCount);
-
-        ShadowConstantsBlock shadowConstants{};
-        for (u32 k = 0; k < cascades.Count && k < MaxCascades; ++k)
-        {
-            shadowConstants.CascadeViewProj[k] =
-                ComposeTileRemap(cascades.ViewProj[k], k, grid.Columns, grid.Rows);
-            shadowConstants.CascadeSplits[k] = cascades.SplitFar[k];
-            shadowConstants.CascadeTexelSize[k] = cascades.TexelWorldSize[k];
-            shadowConstants.CascadeDepthRange[k] = cascades.DepthRange[k];
-        }
-        // Blend band: a view-space distance before each cascade's far split where the
-        // lighting pass cross-fades into the next cascade. Sized from the first (smallest)
-        // cascade so the band never exceeds any cascade's own range.
-        const f32 firstSplit = cascades.Count > 0 ? cascades.SplitFar[0] : 0.0f;
-        const f32 blendBand = firstSplit * 0.1f;
-
-        shadowConstants.ShadowParams =
-            vec4(1.0f / static_cast<f32>(m_Settings.ShadowResolution), blendBand,
-                 static_cast<f32>(cascades.Count), shadowEnabled ? 1.0f : 0.0f);
+        const ShadowConstantsBlock shadowConstants =
+            PackShadowConstants(m_Settings, cascades, shadowEnabled);
 
         // Write this frame's shadow + punctual ring regions (not yet submitted; safe).
         const u32 frameIndex = m_Context.GetCurrentFrameInFlight();
@@ -2134,6 +2158,108 @@ namespace Veng::Renderer
         resolvedView.SkinningPalette = m_PaletteSet;
         resolvedView.SkinnedPaletteBases = &m_PaletteBaseByEntity;
 
+        // Assemble this frame's graph import bindings — the always-bound targets plus the
+        // conditionally-declared battery imports, matched to the compiled graph's declared imports.
+        const vector<RenderGraph::ImportBinding> bindings = BuildImportBindings();
+
+        // Image-based lighting: the sky-resolve subsystem initializes the BRDF LUT + leaves the maps
+        // in a sampled layout once, then (re)generates the radiance/irradiance/prefilter maps when
+        // the bound environment changes — recorded into cmd after the import bindings are built and
+        // before the graph the lighting pass samples them through.
+        m_SkyResolver->RecordPreReplay(cmd, resolvedView);
+
+        // The atmosphere LUTs were generated ahead of the atmosphere bake, before the frame's
+        // BeginView (a baked atmosphere reads them per face); nothing more to record here.
+
+        m_Internal->Graph->Execute(cmd, bindings, &resolvedView);
+
+        // Service a pending pick: the picking subsystem transitions the EntityId target to
+        // TransferSrc and copies the search window under the cursor into its readback buffer on the
+        // graphics queue; the result becomes readable through PollPickId once this frame completes.
+        m_Picking->ServiceRequest(cmd, m_Extent, m_FrameIndex);
+
+        // Commit this frame's hi-Z history state: the reduction declared in this graph wrote the
+        // pyramid from this frame's depth, so it pairs with this frame's view-projection next time.
+        m_GpuCull->CommitHistory(currentHiZState);
+
+        // Record this frame's view-projection, sub-rect mapping, and per-entity history for the
+        // next frame's reprojection and velocity channel.
+        RecordFrameHistory(viewProj, scale);
+    }
+
+    SceneRenderer::FrameScale SceneRenderer::ResolveRenderScale(const SceneView& view) const
+    {
+        // Scale applies only on the Final path with the sub-rect-aware battery set: a debug view, the
+        // TAA resolve, the GPU hi-Z occlusion test, and the Dual-Kawase bloom kernel do not carry the
+        // sub-rect sampling yet, so each forces full resolution (correct, just no scaling).
+        const bool drsSupported =
+            m_Settings.Mode == DebugView::Final && !m_Settings.TAA && !m_Settings.SSR &&
+            !(m_GpuCull->GetActiveCull() == SceneRendererSettings::CullMode::GPU &&
+              m_Settings.Occlusion) &&
+            !(m_Settings.Bloom && m_Settings.Kernel == BloomKernel::Kawase);
+        const f32 renderScale = drsSupported ? view.RenderScale : 1.0f;
+        const uvec2 validExtent =
+            glm::clamp(uvec2(glm::round(vec2(m_Extent) * renderScale)), uvec2(1), m_Extent);
+        // Half-texel inset so a bilinear tap at the valid edge never reads past it.
+        return {
+            .ValidExtent = validExtent,
+            .RenderScaleUV = vec2(validExtent) / vec2(m_Extent),
+            .MaxValidUV = (vec2(validExtent) - 0.5f) / vec2(m_Extent),
+        };
+    }
+
+    void SceneRenderer::ApplyTransformInterpolation(const SceneView& view, SceneView& resolvedView)
+    {
+        // The broadphase tree stays built from the current-tick transforms (its cull is
+        // conservative, so a sub-tick offset never drops a visible submesh); only the drawn worlds
+        // interpolate. A static scene reports no motion history and skips the copy, so its draw is
+        // byte-identical to the un-interpolated path.
+        if (view.Alpha == 0.0f || !view.World.HasTransformInterpolation())
+        {
+            return;
+        }
+
+        const std::span<const VisibleMesh> candidates = m_Broadphase.GetCandidates();
+        m_InterpolatedCandidates.assign(candidates.begin(), candidates.end());
+        for (VisibleMesh& candidate : m_InterpolatedCandidates)
+        {
+            candidate.World = view.World.GetInterpolatedWorldTransform(candidate.Owner, view.Alpha);
+            candidate.WorldBounds = candidate.Mesh->GetBounds().Transformed(candidate.World);
+        }
+        resolvedView.Visible = m_InterpolatedCandidates;
+    }
+
+    void SceneRenderer::ResolveScenePasses(SceneView& resolvedView)
+    {
+        // Resolve the scene's one Sky component into this frame's sky fields — the lights model,
+        // the renderer reading the component off the scene the way it reads the lights. A resolved
+        // source-kind or lighting-tier change recompiles the pass set at this frame boundary,
+        // reusing the imported output so GetOutput() stays valid (only Resize/Configure recreate it).
+        m_SkyResolver->Resolve(resolvedView);
+        if (m_SkyResolver->NeedsRecompile())
+        {
+            Rebuild();
+        }
+
+        // Resolve the scene's point-field components into this Execute's live field set the same
+        // way — the pass inserts on the first live field and drops when the last one goes.
+        ResolvePointFields(resolvedView);
+
+        // Resolve the scene's volume-field components the same way — the volume march pass inserts on
+        // the first live field and drops when the last one goes.
+        ResolveVolumeFields(resolvedView);
+
+        // Forward the resolved authored sky material to the sky-material pass (a no-op when the pass
+        // is absent or no material is bound). The game has already written the material's own
+        // params/handles (e.g. SetStorageBufferHandle) before Render.
+        if (m_SkyMaterialPass != nullptr)
+        {
+            m_SkyMaterialPass->SetMaterial(resolvedView.SkyMaterial);
+        }
+    }
+
+    vector<RenderGraph::ImportBinding> SceneRenderer::BuildImportBindings()
+    {
         // Bloom and SSAO imports are appended only when active (they are only declared then).
         vector<RenderGraph::ImportBinding> bindings = {
             {m_AlbedoId, m_AlbedoView}, {m_NormalId, m_NormalView}, {m_OrmId, m_OrmView},
@@ -2211,33 +2337,20 @@ namespace Veng::Renderer
             bindings.push_back(
                 {.Id = m_GpuCull->GetIndirectId(), .Buffer = m_GpuCull->GetIndirectBuffer()});
         }
-        // Image-based lighting: the sky-resolve subsystem initializes the BRDF LUT + leaves the maps
-        // in a sampled layout once, then (re)generates the radiance/irradiance/prefilter maps when
-        // the bound environment changes — recorded into cmd after the import bindings are built and
-        // before the graph the lighting pass samples them through.
-        m_SkyResolver->RecordPreReplay(cmd, resolvedView);
+        return bindings;
+    }
 
-        // The atmosphere LUTs were generated ahead of the atmosphere bake, before the frame's
-        // BeginView (a baked atmosphere reads them per face); nothing more to record here.
-
-        m_Internal->Graph->Execute(cmd, bindings, &resolvedView);
-
-        // Service a pending pick: the picking subsystem transitions the EntityId target to
-        // TransferSrc and copies the search window under the cursor into its readback buffer on the
-        // graphics queue; the result becomes readable through PollPickId once this frame completes.
-        m_Picking->ServiceRequest(cmd, m_Extent, m_FrameIndex);
-
-        // Capture this frame's camera + matrix for next frame's history comparison and
-        // occlusion test: the reduction declared in this graph wrote the pyramid from
-        // this frame's depth, so it pairs with this frame's view-projection next time.
+    void SceneRenderer::RecordFrameHistory(const mat4& viewProj, const FrameScale& scale)
+    {
+        // Capture this frame's camera view-projection for next frame's history comparison and
+        // occlusion test (paired with this frame's reduced pyramid).
         m_PreviousViewProj = viewProj;
-        m_GpuCull->CommitHistory(currentHiZState);
 
         // Record this frame's sub-rect mapping: GetValidExtent reports it, and the next frame's
         // TAA resolve reprojects the history written at this scale (the zw of RenderScaleUV).
-        m_ValidExtent = validExtent;
-        m_PreviousRenderScaleUV = renderScaleUV;
-        m_PreviousMaxValidUV = maxValidUV;
+        m_ValidExtent = scale.ValidExtent;
+        m_PreviousRenderScaleUV = scale.RenderScaleUV;
+        m_PreviousMaxValidUV = scale.MaxValidUV;
 
         // The history-copy pass populated the history this frame, so the next resolve may
         // reproject against it. Advance the jitter sequence regardless of the TAA toggle so

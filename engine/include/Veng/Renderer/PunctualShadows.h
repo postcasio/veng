@@ -19,6 +19,32 @@ namespace Veng::Renderer
     /// direction: +X, -X, +Y, -Y, +Z, -Z.
     inline constexpr u32 CubeFaceCount = 6;
 
+    /// @brief Per-shadowed-light GPU record uploaded to set 1 binding 3.
+    ///
+    /// glm-only — no backend types — so it lives in a public header, beside the punctual
+    /// view math that fills it. Its layout is std140/std430-identical to the shader's
+    /// PunctualShadowRecord, so the same struct serves a uniform or SSBO binding.
+    struct PunctualShadowRecord
+    {
+        /// @brief World → light-clip transforms with atlas tile-remap baked in (384 bytes).
+        ///
+        /// [0] for a spot's single perspective view; [0..5] for a point's six cube faces
+        /// in CubeFace order. A lit fragment projected by ViewProj[f] lands in this
+        /// light's atlas tile f, so the lighting pass samples the correct tile.
+        mat4 ViewProj[CubeFaceCount];
+
+        /// @brief World position (xyz) and falloff range (w) (16 bytes).
+        ///
+        /// xyz is the light's world position for cube-face selection and depth
+        /// linearization; w is the range the depth pass projects to.
+        vec4 PositionRange;
+
+        /// @brief Type (x), near (y), far (z), depth bias (w) (16 bytes).
+        ///
+        /// x encodes the light type: 1 = point, 2 = spot, 0 = unused/zeroed slot.
+        vec4 Params;
+    };
+
     /// @brief A spot light's single perspective shadow view.
     ///
     /// ViewProj maps a world point to the light's clip space (Vulkan ZO, Y-flipped to

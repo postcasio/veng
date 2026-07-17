@@ -45,6 +45,40 @@ offscreen target, renders a `Scene` from a `Camera` through an **internal compil
 of reusable `ScenePass` units, and hands back a sampleable result. It is **`Unique`,
 single-owner** (nothing holds a `Ref` to one); `Create(const SceneRendererInfo&)` is the factory.
 
+### File layout — the shape a new battery lands in
+
+The renderer is split along two conventions, and a new battery follows both:
+
+- **A pass lives in its own file under `Passes/`.** Every `ScenePass` — the g-buffer, deferred
+  lighting, translucent, picking, TAA, scene-color copy, the sky/point-field/volume passes, and
+  the debug blits — is a `.h/.cpp` pair in `src/Renderer/Passes/`. The renderer holds them in
+  `m_Passes` and wires them in `Rebuild`; each pass owns its own sizing, declared reads/writes,
+  and recording.
+- **A battery's resources live on an owned internal subsystem.** Each cluster of images /
+  pipelines / descriptor sets / bindless handles / per-frame work is a renderer-owned `Unique<>`
+  object in `src/Renderer/` (forward-declared in `SceneRenderer.h`), on the `EnvironmentIbl`
+  precedent: `ShadowSystem`, `BloomPyramid`, `AutoExposureMeter`, `TaaResolve`, `SsrChain`,
+  `RefractionGrab`, `GpuCullSystem`, `PickingSystem`, and `SkyResolver` (which itself owns the
+  three sky radiance-cube helpers `EnvironmentIbl` / `AtmospherePrecompute` / `SkyCubemapBake`).
+  A subsystem owns its full vertical slice — its `Create`/recreate path, its `Declare*`
+  contribution, its per-frame work — and **releases its own bindless handles in its own
+  destructor**, so `~SceneRenderer`'s hand-list holds only the spine handles.
+
+What **stays on the renderer** is the wiring and orchestration, not a battery: `Rebuild()` (the
+wiring hub — reads top-to-bottom as the pipeline order), `Execute()` (the frame orchestrator,
+decomposed into named phase helpers — `ResolveRenderScale`, `ApplyTransformInterpolation`,
+`ResolveScenePasses`, `BuildImportBindings`, `RecordFrameHistory` — around the inline resolve
+core), `PrepareDraws` (the cross-plan draw/cull/skinning coordinator), the Create/Resize/
+Configure/Execute lifetime split, the debug-blit pipeline aggregate (`DebugBlitPipelines`), and
+the shared **spine** every battery reads: the output target, the g-buffer (albedo/normal/ORM/
+depth + velocity/emissive), the HDR target, the LTC LUTs, the shared sampler, and the
+previous-frame view state (packed into the set-0 view-constants block every frame). The public
+types split across three headers — `SceneRendererSettings.h` (the topology/sizing knobs, the
+`DebugView` vocabulary), `SceneView.h` (the per-frame input + `SceneRendererInfo`), and
+`SceneRenderer.h` (the class) — with the last re-including the first two, so a settings panel
+includes only what it needs. `SceneRenderer::Internal` (opaque, `.cpp`-private) holds the
+compiled graph and the draw plans.
+
 ### The lifetime split
 
 Its surface is a **lifetime split** keyed on how often each piece of state changes:

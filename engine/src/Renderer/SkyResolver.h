@@ -3,6 +3,8 @@
 #include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Veng.h>
 
+#include <Veng/Math/SphericalHarmonics.h>
+
 namespace Veng
 {
     class AssetManager;

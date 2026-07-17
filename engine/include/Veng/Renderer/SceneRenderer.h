@@ -2,25 +2,18 @@
 
 #include <Veng/Veng.h>
 #include <Veng/Asset/AssetHandle.h>
-#include <Veng/Renderer/Atmosphere.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/DebugDraw.h>
 #include <Veng/Renderer/Types.h>
-#include <Veng/Renderer/Tonemapper.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/RenderGraph.h>
-#include <Veng/Renderer/HiZHistory.h>
 #include <Veng/Renderer/PointField.h>
-#include <Veng/Renderer/PunctualShadows.h>
+#include <Veng/Renderer/SceneRendererSettings.h>
+#include <Veng/Renderer/SceneView.h>
 #include <Veng/Renderer/VolumeMarch.h>
-#include <Veng/Renderer/ShadowCascades.h>
 
-#include <Veng/Math/SphericalHarmonics.h>
-
-#include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/SceneBroadphase.h>
-#include <Veng/Scene/Visibility.h>
 
 #include <array>
 #include <span>
@@ -68,605 +61,6 @@ namespace Veng::Renderer
     class DescriptorSetLayout;
     class SkyResolver;
     class PointField;
-
-    /// @brief Maximum number of simultaneously shadowed point/spot lights.
-    ///
-    /// The first N shadow-casting punctual lights (by per-frame selection) receive a
-    /// shadow map; the rest are lit without shadows. A point light costs six cube-face
-    /// redraws of its caster set, so N bounds the punctual shadow atlas and the lighting
-    /// loop's sample set at 6N depth tiles.
-    inline constexpr u32 MaxShadowedPunctual = 4;
-
-    /// @brief Per-shadowed-light GPU record uploaded to set 1 binding 3.
-    ///
-    /// glm-only — no backend types — so it lives in a public header. Its layout is
-    /// std140/std430-identical to the shader's PunctualShadowRecord, so the same struct
-    /// serves a uniform or SSBO binding.
-    struct PunctualShadowRecord
-    {
-        /// @brief World → light-clip transforms with atlas tile-remap baked in (384 bytes).
-        ///
-        /// [0] for a spot's single perspective view; [0..5] for a point's six cube faces
-        /// in CubeFace order. A lit fragment projected by ViewProj[f] lands in this
-        /// light's atlas tile f, so the lighting pass samples the correct tile.
-        mat4 ViewProj[CubeFaceCount];
-
-        /// @brief World position (xyz) and falloff range (w) (16 bytes).
-        ///
-        /// xyz is the light's world position for cube-face selection and depth
-        /// linearization; w is the range the depth pass projects to.
-        vec4 PositionRange;
-
-        /// @brief Type (x), near (y), far (z), depth bias (w) (16 bytes).
-        ///
-        /// x encodes the light type: 1 = point, 2 = spot, 0 = unused/zeroed slot.
-        vec4 Params;
-    };
-
-    /// @brief Selects which result the renderer produces, re-wiring the pass set.
-    ///
-    /// Final is the full deferred chain (g-buffer → lighting → tonemap). All other
-    /// values terminate the chain after the g-buffer with a single fullscreen debug blit
-    /// of one channel or target. A change here is a topology change driven through
-    /// Configure → recompile.
-    ///
-    /// Roughness/Metallic/Occlusion read the packed G2 ORM channels (R=occlusion,
-    /// G=roughness, B=metallic). AO reads the SSAO target and Shadows the directional
-    /// shadow map; the producing pass is force-wired in those modes regardless of the
-    /// Settings.AO / Settings.Shadows toggle. Cascades tints each fragment by the
-    /// cascade its view-space depth selects (0 red, 1 green, 2 blue, 3 yellow),
-    /// force-wiring the shadow pass so cascade constants are present. PunctualShadows
-    /// blits the punctual shadow atlas (raw depth), force-wiring the punctual shadow pass.
-    /// Bloom runs the lighting pass and the bloom pyramid sweep, then blits pyramid mip 0
-    /// after the up-sweep — the accumulated bloom contribution before composite —
-    /// force-wiring the bloom pass regardless of the Settings.Bloom toggle. MotionVectors blits
-    /// the per-object velocity g-buffer channel (G3, written by the surface pass every frame)
-    /// colorized as an optical-flow field. Emissive blits the HDR emissive g-buffer channel (G4,
-    /// written by the surface pass every frame) — the authored emissive contribution alone,
-    /// independent of lighting.
-    enum class DebugView : u8
-    {
-        /// @brief Full deferred pipeline output.
-        Final,
-        /// @brief G0 base color channel.
-        Albedo,
-        /// @brief G1 world-space normal channel.
-        Normal,
-        /// @brief Depth buffer visualized as a linear grey scale.
-        Depth,
-        /// @brief G2 roughness channel (green).
-        Roughness,
-        /// @brief G2 metallic channel (blue).
-        Metallic,
-        /// @brief G2 ambient occlusion channel (red).
-        Occlusion,
-        /// @brief SSAO target (force-wires the SSAO pass).
-        AO,
-        /// @brief Directional shadow atlas raw depth (force-wires the shadow pass).
-        Shadows,
-        /// @brief Per-fragment cascade tint (force-wires the shadow pass).
-        Cascades,
-        /// @brief Punctual shadow atlas raw depth (force-wires the punctual shadow pass).
-        PunctualShadows,
-        /// @brief Accumulated bloom pyramid mip 0 after the up-sweep (force-wires the bloom pass).
-        Bloom,
-        /// @brief Per-object velocity (g-buffer channel G3) as an optical-flow field.
-        MotionVectors,
-        /// @brief Raw SSR reflection target (rgb radiance, force-wires the SSR pass).
-        Reflections,
-        /// @brief The authored emissive g-buffer channel (G4) alone.
-        Emissive,
-    };
-
-    /// @brief Display names for the DebugView arms, indexed by enum value.
-    ///
-    /// The single source of truth for the "View" combo in both the engine debug panel and the
-    /// editor viewport: entry N is the name of DebugView N, so a combo's selected index casts
-    /// straight to the enum. The static_assert below keeps it in lockstep with the enum.
-    inline constexpr std::array<string_view, 15> DebugViewNames{
-        "Final",          "Albedo",      "Normal",  "Depth",    "Roughness",        "Metallic",
-        "Occlusion",      "AO",          "Shadows", "Cascades", "Punctual shadows", "Bloom",
-        "Motion vectors", "Reflections", "Emissive"};
-    static_assert(DebugViewNames.size() == static_cast<usize>(DebugView::Emissive) + 1,
-                  "DebugViewNames must list every DebugView arm in declaration order.");
-
-    /// @brief Selects the bloom pyramid's down/up filter kernel.
-    ///
-    /// The kernel choice changes the per-level compute shader, so it is a topology knob
-    /// (a Configure recompile), like the Bloom toggle. Cod is the reference filter the
-    /// golden is blessed against; Kawase is the bandwidth-optimized alternative.
-    enum class BloomKernel : u8
-    {
-        /// @brief Call of Duty / Jimenez 13-tap downsample + 3×3 tent upsample dual filter.
-        Cod,
-        /// @brief Dual Kawase 5-tap downsample + 8-tap upsample bilinear filter (Bjørge),
-        ///        designed for the bandwidth-bound tile-based GPUs veng primarily targets.
-        Kawase,
-    };
-
-    /// @brief Topology and sizing knobs for SceneRenderer.
-    ///
-    /// A change to any field here is a Configure → recompile. Knobs that turn a pass
-    /// on/off or re-wire the pass set live here; per-frame values belong on SceneView.
-    struct SceneRendererSettings
-    {
-        /// @brief Selects whether culling and draw submission run CPU-side or GPU-driven.
-        ///
-        /// CPU is the BVH frustum descent plus direct per-submesh DrawIndexed calls — the
-        /// default and the fallback where multiDrawIndirect / drawIndirectFirstInstance is
-        /// unavailable. GPU keeps the same BVH frustum descent (the upload source) but runs
-        /// the hi-Z occlusion test in a compute pass that writes each indirect command's
-        /// instanceCount, then issues the survivors through vkCmdDrawIndexedIndirect. Both
-        /// modes drive the same buffer-indexed surface shader — they differ only in
-        /// submission and in who writes instanceCount. Nested to avoid the name collision
-        /// with Renderer::CullMode (the rasterizer face-cull mode).
-        enum class CullMode : u8
-        {
-            /// @brief BVH frustum descent + direct per-submesh DrawIndexed.
-            CPU,
-            /// @brief BVH frustum descent + GPU hi-Z occlusion + vkCmdDrawIndexedIndirect.
-            GPU,
-        };
-
-        /// @brief Resolution the SSR trace, min-Z pyramid, and blur chain run at.
-        ///
-        /// The trace is SSR's dominant cost; running it at a fraction of the render
-        /// resolution cuts that roughly quadratically. The g-buffer it reads stays
-        /// full-resolution (sampled by normalized UV) and the composite upsamples the
-        /// reflection back to full resolution, so only the reflection working set shrinks.
-        enum class SsrResolution : u8
-        {
-            /// @brief Trace at the full render resolution.
-            Full,
-            /// @brief Trace at half the render resolution per axis (quarter the pixels).
-            Half,
-            /// @brief Trace at a quarter of the render resolution per axis (a sixteenth the pixels).
-            Quarter,
-        };
-
-        /// @brief Selects which result the renderer produces; re-wires the pass set on change.
-        DebugView Mode = DebugView::Final;
-
-        /// @brief Whether the compute mip-pyramid bloom runs ahead of tonemap.
-        ///
-        /// A topology change: it inserts/removes the bloom down/up/composite compute sweep.
-        /// BloomThreshold, BloomIntensity, and BloomRadius are per-frame values on SceneView
-        /// and do not trigger a recompile.
-        bool Bloom = true;
-
-        /// @brief Selects the bloom pyramid's down/up filter kernel.
-        ///
-        /// A topology change: it selects the compiled down/up compute pipeline. The Cod
-        /// default is the golden's kernel; Kawase is the bandwidth-optimized alternative.
-        BloomKernel Kernel = BloomKernel::Cod;
-
-        /// @brief Whether temporal anti-aliasing resolves the lit image.
-        ///
-        /// A topology change: it jitters the projection, inserts the TAA resolve and
-        /// history-copy passes between lighting and tonemap, and routes lighting into a
-        /// separate target the resolve reads. Off by default. Motion vectors are per-object,
-        /// read from the g-buffer velocity channel (G3) the surface pass writes every frame
-        /// (camera and object motion combined), so dynamic objects reproject correctly too.
-        bool TAA = false;
-
-        /// @brief Whether the directional light casts a shadow.
-        ///
-        /// A topology change: it inserts/removes the depth-only ShadowScenePass and the
-        /// lighting pass's shadow sample. When off, the lighting pass reads full
-        /// visibility for the directional term.
-        bool Shadows = true;
-
-        /// @brief Whether the bounded set of point/spot lights cast shadows.
-        ///
-        /// A topology change: it inserts/removes the depth-only PunctualShadowScenePass
-        /// and the lighting pass's per-light sample. When off, the per-light selection
-        /// writes slot -1 to every light and the lighting pass reads full visibility for
-        /// every punctual term. MaxShadowedPunctual caps the number of shadowed lights
-        /// when enabled.
-        bool PunctualShadows = true;
-
-        /// @brief Per-cascade shadow tile edge length in texels.
-        ///
-        /// Changing this recreates the shadow atlas and recompiles. A default 4-cascade
-        /// atlas at 1024 is 2048² — the same footprint as a single 2048 map. Values
-        /// above GetMaxShadowResolution() are clamped before any atlas is sized.
-        u32 ShadowResolution = 1024;
-
-        /// @brief Per-tile edge length in texels of the punctual shadow atlas.
-        ///
-        /// A spot uses one tile; a point uses six cube-face tiles. Changing this recreates
-        /// the punctual atlas and recompiles. The atlas is MaxShadowedPunctual·CubeFaceCount
-        /// tiles of this resolution. Values above GetMaxPunctualShadowResolution() are
-        /// clamped.
-        u32 PunctualShadowResolution = 1024;
-
-        /// @brief Number of shadow cascades the directional light's frustum is split into.
-        ///
-        /// Clamped to [1, MaxCascades]. Sizing: it sizes the atlas tile grid
-        /// (min(Count,2)×ceil(Count/2)), so it recreates the atlas and recompiles.
-        u32 CascadeCount = MaxCascades;
-
-        /// @brief PSSM split blend factor (0 = uniform splits, 1 = logarithmic).
-        ///
-        /// Recompile-safe: it changes the cascade fit, not the atlas size or topology.
-        f32 CascadeSplitLambda = 0.85f;
-
-        /// @brief View-space cap on the directional-shadow range, in world units; 0 = uncapped.
-        ///
-        /// The cascade far split is fitted to the visible scene and then clamped to this
-        /// distance, so a large scene (or a distant camera far plane) cannot spread the
-        /// cascades thin — texel density near the camera is preserved and shadows fade out
-        /// approaching the cap rather than ending at a hard edge. Recompile-safe: it changes
-        /// the cascade fit, not the atlas size or topology.
-        f32 MaxShadowDistance = 100.0f;
-
-        /// @brief Whether screen-space reflections run.
-        ///
-        /// A topology change: it inserts the SSR min-Z reduction, trace, blur, and composite
-        /// passes between lighting and the bloom/tonemap tail and routes the lit scene color
-        /// through an intermediate the SSR composite reflects into. SsrIntensity / SsrMaxDistance
-        /// / SsrThickness / SsrMaxRoughness are per-frame values on SceneView and do not recompile.
-        /// Off by default (like TAA). SSR disables the dynamic-resolution sub-rect path while
-        /// active (the g-buffer renders at full resolution); SsrResolutionScale sizes the SSR
-        /// trace itself.
-        bool SSR = false;
-
-        /// @brief Resolution the SSR trace/min-Z/blur chain runs at relative to the render target.
-        ///
-        /// A topology change: it resizes the SSR reflection chain and min-Z pyramid, so a change
-        /// recompiles. Defaults to Half — the trace cost falls ~4x and the composite upsamples the
-        /// reflection, with little visible loss on the rough/glossy surfaces SSR targets. Ignored
-        /// when SSR is inactive.
-        SsrResolution SsrResolutionScale = SsrResolution::Half;
-
-        /// @brief Whether translucent materials can sample the scene color behind them.
-        ///
-        /// A topology change: it allocates a full-resolution scene-color intermediate and inserts
-        /// a copy of the lit scene color (lighting + sky + emissive) ahead of the translucent
-        /// pass, exposing it to translucent fragments through the view block's SceneColor handles
-        /// (see Veng/translucent.slang) — the grab pass a refractive or distorting material
-        /// (glass, water, heat haze, a lens) samples the scene behind itself through. The copy
-        /// predates the translucent pass, so one translucent surface never refracts another. Off
-        /// by default: the copy costs a full-resolution pass per frame whether or not any material
-        /// samples it.
-        bool Refraction = false;
-
-        /// @brief Whether the screen-space ambient occlusion pass runs.
-        ///
-        /// A topology change: it inserts/removes the fullscreen SsaoScenePass and
-        /// selects the lighting pipeline variant that folds the AO target into the
-        /// ambient term. SSAO modulates the ambient/indirect term only; kernel constants
-        /// (radius/intensity/bias) are fixed in the SSAO shader.
-        bool AO = true;
-
-        /// @brief Whether automatic exposure metering drives the tonemap exposure.
-        ///
-        /// A topology change: it inserts a compute pass that builds a log-luminance histogram of the
-        /// lit HDR target each frame, which the renderer averages a frame later (excluding the black
-        /// bin) and eases an internal adapted exposure toward (temporal eye adaptation). Metering on
-        /// the histogram's lit bins keeps a predominantly-black scene from collapsing exposure to the
-        /// floor. With it on, the tonemap
-        /// exposure is the adapted value scaled by SceneView::Exposure (a manual bias over the
-        /// automatic result); with it off, SceneView::Exposure is used directly. Off by default,
-        /// so the shipping path is unchanged. AutoExposureKey / AutoExposureMinLuminance /
-        /// AutoExposureMaxLuminance / AutoExposureSpeed are per-frame SceneView values that tune it
-        /// without a recompile.
-        bool AutoExposure = false;
-
-        /// @brief Whether scene passes cull by frustum.
-        ///
-        /// The g-buffer pass tests each mesh's world bound against the camera frustum;
-        /// the shadow pass tests it against each cascade's light frustum. When off both
-        /// record every resident mesh. A toggle drives a recompile (the same passes
-        /// record fewer draws), so it still invalidates GetOutput() like any Configure.
-        bool FrustumCull = true;
-
-        /// @brief Selects CPU direct draws or the GPU-driven occlusion-cull → indirect-draw path.
-        ///
-        /// GPU is honored only where Context::IsGpuDrivenCullingSupported() is true; otherwise
-        /// the renderer falls back to the CPU path. A change recompiles (the GPU path is a
-        /// different pass topology).
-        CullMode Cull = CullMode::CPU;
-
-        /// @brief Whether the GPU path runs the hi-Z occlusion test (GPU mode only).
-        ///
-        /// When off, the GPU path issues every camera-frustum survivor (frustum-only). When on,
-        /// the cull compute pass drops the provably-occluded against the previous-frame pyramid.
-        /// Ignored under CullMode::CPU. A history-invalid frame is frustum-only regardless.
-        bool Occlusion = true;
-
-        /// @brief Whether the immediate-mode debug-draw pass runs (off by default).
-        ///
-        /// A topology change: it inserts the DebugDrawScenePass after the terminal tonemap (Final
-        /// mode only), flushing the renderer's DebugDraw accumulator (GetDebugDraw()) into the LDR
-        /// scene color. The pass samples the g-buffer depth for a depth-aware occluded fade rather
-        /// than hardware depth-testing. Off by default, so the default render is unchanged.
-        bool DebugDraw = false;
-
-        /// @brief Whether the entity-id picking pass runs (off by default).
-        ///
-        /// A topology change: it allocates an R32Uint EntityId target plus a dedicated depth
-        /// buffer and inserts a depth-tested geometry pass writing each drawn entity's pick id
-        /// (packed slot index + 1) into the id target. Allocated only while set, so the shipping
-        /// deferred path is byte-identical and smoke_golden never moves. An authoring concern (the
-        /// editor enables it for a viewport's lifetime), never a runtime one. The pass early-outs
-        /// on a frame with no pending pick request, so its amortized cost is near zero.
-        bool Picking = false;
-    };
-
-    /// @brief Construction parameters for SceneRenderer.
-    struct SceneRendererInfo
-    {
-        /// @brief The Vulkan context for resource creation.
-        Context& Context;
-        /// @brief Asset manager used to load engine shaders (lighting pass, fullscreen blit).
-        ///
-        /// Must outlive the renderer.
-        AssetManager& Assets;
-        /// @brief Pixel format of the owned output target.
-        Format OutputFormat = Format::Undefined;
-        /// @brief Initial render extent.
-        uvec2 Extent = {};
-        /// @brief Initial topology and sizing knobs.
-        SceneRendererSettings Settings;
-    };
-
-    /// @brief Per-frame input for SceneRenderer::Execute.
-    ///
-    /// Not owned by the renderer; World and Camera are borrowed references. The renderer
-    /// overwrites the output fields (LightCount, CascadeViewProj, etc.) on every Execute
-    /// — a caller's values in those fields are ignored.
-    ///
-    /// The renderer reads the scene's lights itself: on every Execute it walks
-    /// View<Transform, Light> up to MaxLights, packs each into the ring-buffered light
-    /// buffer, and the lighting pass loops over the live count. A scene with no Light
-    /// renders flat-ambient.
-    struct SceneView
-    {
-        /// @brief The scene to render.
-        const Scene& World;
-        /// @brief The viewpoint to render from.
-        const CameraView& Camera;
-        /// @brief Frame delta time in seconds.
-        f32 Delta = 0.0f;
-
-        /// @brief Interpolation fraction into the next Sim tick, in [0, 1).
-        ///
-        /// The gather blends each candidate's world transform between the scene's last two Sim-tick
-        /// snapshots by this (Scene::GetInterpolatedWorldTransform) before the passes consume it, so a
-        /// fixed-rate simulation renders smoothly above its tick rate. Zero (or a scene with no motion
-        /// history) renders the current pose, byte-identical to the un-interpolated path.
-        f32 Alpha = 0.0f;
-
-        /// @brief Dynamic-resolution multiplier on the allocated extent for this frame.
-        ///
-        /// The renderer's targets are allocated at a high-water-mark extent; each Execute renders
-        /// into the top-left round(allocExtent * RenderScale) sub-rect of them and the result is
-        /// upscaled by the consumer. (0,1] renders below the allocation (dynamic resolution
-        /// scaling); a value that would exceed the current allocation grows it (a one-time
-        /// resize). 1.0 renders at full allocation. A debug view (Mode != Final) forces 1.0.
-        /// Clamped to a valid range by the renderer; the realized sub-rect is GetValidExtent().
-        f32 RenderScale = 1.0f;
-
-        /// @brief This frame's render-target sub-rect extent; set by the renderer each Execute.
-        ///
-        /// round(allocExtent * RenderScale), clamped to [1, allocExtent]. Every pass sizes its
-        /// viewport/scissor and compute dispatch to it; a caller's value is overwritten.
-        uvec2 RenderExtent = {};
-
-        /// @brief Live light count this frame; set by the renderer on every Execute.
-        ///
-        /// The number of (Transform, Light) entities packed, capped at MaxLights. The
-        /// lighting pass loops [0, LightCount). A caller's value is overwritten.
-        u32 LightCount = 0;
-
-        /// @brief Maximum number of lights the renderer packs per frame.
-        static constexpr u32 MaxLights = BindlessRegistry::MaxLights;
-
-        /// @brief Exposure scale applied before the tone curve; written into the tonemap material's param block each Execute.
-        ///
-        /// Read fresh every Execute, so tuning it never triggers a recompile. With
-        /// SceneRendererSettings::AutoExposure on this is a manual bias multiplied onto the
-        /// metered/adapted exposure rather than the exposure itself.
-        f32 Exposure = 1.0f;
-
-        /// @brief The tone curve the terminal tonemap pass maps the exposed HDR through.
-        ///
-        /// Written into the tonemap material's param block each Execute (as a float), so switching
-        /// it never triggers a recompile.
-        Tonemapper Tonemapper = ::Veng::Renderer::Tonemapper::ACES;
-
-        /// @brief Auto-exposure target key: the mid-grey the adapted average luminance maps to.
-        ///
-        /// The exposure the metering resolves to is Key / adaptedLuminance, so a larger key
-        /// brightens the auto-exposed image. Ignored when SceneRendererSettings::AutoExposure is
-        /// off.
-        f32 AutoExposureKey = 0.18f;
-
-        /// @brief Auto-exposure lower clamp on the adapted average luminance, in cd-equivalent HDR units.
-        ///
-        /// Bounds how bright the metering can drive a very dark scene (a small value = a brighter
-        /// cap in the dark). Ignored when auto-exposure is off.
-        f32 AutoExposureMinLuminance = 0.002f;
-
-        /// @brief Auto-exposure upper clamp on the adapted average luminance.
-        ///
-        /// Bounds how dark the metering can drive a very bright scene. Ignored when auto-exposure
-        /// is off.
-        f32 AutoExposureMaxLuminance = 8.0f;
-
-        /// @brief Auto-exposure adaptation rate per second (the eye-adaptation speed).
-        ///
-        /// The internal adapted luminance eases toward each frame's metered luminance at this
-        /// exponential rate, so a larger value adapts faster (0 freezes the current adaptation).
-        /// Ignored when auto-exposure is off.
-        f32 AutoExposureSpeed = 2.5f;
-
-        /// @brief Lower percentile of the lit-pixel histogram the metering averages from, in [0, 1].
-        ///
-        /// The metering averages log-luminance over the histogram slice between the low and high
-        /// percentiles of lit pixels, discarding the tails outside them. The default 0..1 band
-        /// meters every lit pixel; a raised low percentile makes a bimodal scene (a sun-lit
-        /// surface against a near-black sky) meter on its bright content instead of the mean of
-        /// both. Ignored when auto-exposure is off.
-        f32 AutoExposureLowPercentile = 0.0f;
-
-        /// @brief Upper percentile of the lit-pixel histogram the metering averages to, in [0, 1].
-        ///
-        /// See AutoExposureLowPercentile; lowering it excludes extreme highlights (a star disc)
-        /// from the meter. Ignored when auto-exposure is off.
-        f32 AutoExposureHighPercentile = 1.0f;
-
-        /// @brief Environment map for the skybox and image-based lighting; empty for none.
-        ///
-        /// The renderer fills this from the resolved Sky component each Execute (its source is an
-        /// EnvironmentSky) — never pushed by a consumer. When resident, the renderer (re)generates
-        /// its IBL maps on change and the lighting pass replaces the flat ambient term with
-        /// split-sum IBL; empty falls back to the flat ambient.
-        AssetHandle<EnvironmentMap> Environment;
-
-        /// @brief Scales the IBL ambient + skybox radiance; read by the lighting + skybox passes each Execute.
-        ///
-        /// Filled from the resolved Sky component's Intensity. Ignored when no environment is bound.
-        f32 EnvironmentIntensity = 1.0f;
-
-        /// @brief Scales the procedural atmosphere sky + sun disk; read by the SkyScenePass each Execute.
-        ///
-        /// Filled from the resolved Sky component's Intensity. Ignored when the atmosphere sky is off.
-        f32 AtmosphereIntensity = 1.0f;
-
-        /// @brief Scales the dynamic SH skylight ambient; read by the lighting pass each Execute.
-        ///
-        /// Filled from the resolved Sky component's Intensity. Effective only when the resolved sky
-        /// lights the scene via SH and no environment is bound (the second ambient arm, below IBL).
-        f32 SkylightIntensity = 1.0f;
-
-        /// @brief Whether the procedural atmosphere sky renders this frame.
-        ///
-        /// Set by the renderer when the resolved Sky component's source is an AtmosphereSky, so the
-        /// SkyScenePass (present in that topology) fills the background; else false. The sky pass
-        /// discards every pixel when this is false.
-        bool AtmosphereEnabled = false;
-
-        /// @brief Normalized direction toward the sun for the procedural atmosphere (world up +Y).
-        ///
-        /// Derived by the renderer from the scene's first directional light. Drives the sky color
-        /// and the sun-disk placement; a day/night cycle animates it with no precompute (a runtime
-        /// LUT-sample parameter, never a precompute input). Ignored when the atmosphere sky is off.
-        vec3 SunDirection{0.0f, 1.0f, 0.0f};
-
-        /// @brief Procedural-atmosphere parameters; the LUTs regenerate when these change.
-        ///
-        /// Filled from the resolved Sky component's AtmosphereSky source. Compared field-for-field
-        /// against the last-generated set each Execute; a change records the (one-time) LUT
-        /// regeneration before the graph. Ignored when the atmosphere sky is off.
-        Atmosphere Atmosphere;
-
-        /// @brief Authored Sky-domain material rendered as the background sky; empty for none.
-        ///
-        /// Filled from the resolved Sky component's MaterialSky source. The SkyMaterialScenePass
-        /// (present in that topology) runs it fullscreen in the sky slot, compositing its radiance
-        /// over the lit scene color; empty leaves the sky slot empty (the lit color shows through).
-        /// The material owns its own params and any buffers/textures it reads (a game binds a storage
-        /// buffer via MaterialInstance::SetStorageBufferHandle); the engine supplies only the view
-        /// ray and the g-buffer depth mask. It fills the background only — it feeds no lighting.
-        AssetHandle<MaterialInstance> SkyMaterial;
-
-        /// @brief Bloom bright-pass luminance knee; pushed to the downsample compute each Execute.
-        ///
-        /// The soft-knee threshold the HDR → mip 0 downsample applies, display-referred: it is
-        /// divided by the frame's resolved exposure (manual or metered), so 1.0 sits at the
-        /// post-exposure white point and blooms what the tone curve cannot show regardless of the
-        /// lighting regime. Tuning this rides the compute push, so it does not trigger a
-        /// recompile. Ignored when bloom is inactive.
-        f32 BloomThreshold = 1.0f;
-        /// @brief Bloom composite mix intensity; pushed to the composite compute each Execute.
-        ///
-        /// Scales the accumulated bloom added back into the HDR. Tuning this rides the compute
-        /// push, so it does not trigger a recompile. Ignored when bloom is inactive.
-        f32 BloomIntensity = 1.0f;
-        /// @brief Bloom upsample spread; pushed to the upsample compute each Execute.
-        ///
-        /// Scales each tent up-step's contribution as it accumulates back up the pyramid, so a
-        /// larger value spreads the glow wider. Rides the compute push (no recompile). Ignored
-        /// when bloom is inactive.
-        f32 BloomRadius = 1.0f;
-
-        /// @brief SSR reflection mix scale; pushed to the SSR composite each Execute.
-        ///
-        /// Scales the Fresnel-weighted reflection added back into the scene color. Rides the push
-        /// (no recompile). Ignored when SSR is inactive.
-        f32 SsrIntensity = 1.0f;
-        /// @brief SSR maximum ray length in view-space units; pushed to the SSR trace each Execute.
-        f32 SsrMaxDistance = 12.0f;
-        /// @brief SSR view-space depth thickness accepted as a ray hit; pushed to the SSR trace.
-        f32 SsrThickness = 0.5f;
-        /// @brief SSR roughness cutoff; surfaces rougher than this trace no reflection ray.
-        f32 SsrMaxRoughness = 0.8f;
-
-        /// @brief RAW (non-tile-remapped) per-cascade world → light-clip transforms this frame.
-        ///
-        /// Computed by the renderer on every Execute from the first directional light (identity
-        /// when there is none). The shadow pass renders cascade k with CascadeViewProj[k] pushed
-        /// and the viewport placing it in its atlas tile. Only [0, CascadeCount) are valid. The
-        /// lighting pass reads the tile-remapped matrices from the set-1 ShadowConstants buffer.
-        /// A caller's values are overwritten.
-        std::array<mat4, MaxCascades> CascadeViewProj{};
-        /// @brief RAW per-cascade caster-cull transforms this frame; near-extended toward the light.
-        ///
-        /// The shadow pass culls casters against these (a caster between the light and the
-        /// slice must survive) but renders through CascadeViewProj, whose tight near plane the
-        /// depth-clamped pipeline pancakes those casters onto. Identical to CascadeViewProj on
-        /// a device without depth clamp. Only [0, CascadeCount) are valid; a caller's values
-        /// are overwritten.
-        std::array<mat4, MaxCascades> CascadeCullViewProj{};
-        /// @brief Number of valid entries in CascadeViewProj; set by the renderer each Execute.
-        u32 CascadeCount = 0;
-
-        /// @brief Shadowed punctual lights selected this frame (the first MaxShadowedPunctual shadow-casting lights).
-        ///
-        /// The punctual shadow pass renders each record's views into the atlas; the lighting pass
-        /// samples Records[slot]. PunctualShadowCount records are valid. A caller's values are
-        /// overwritten by the renderer each Execute.
-        std::array<PunctualShadowRecord, MaxShadowedPunctual> PunctualShadows{};
-        /// @brief Number of valid entries in PunctualShadows.
-        u32 PunctualShadowCount = 0;
-
-        /// @brief RAW (non-tile-remapped) per-record/per-face world → light-clip transforms this frame.
-        ///
-        /// Parallel to PunctualShadows; computed by the renderer on every Execute. A spot fills
-        /// [slot][0]; a point fills [slot][0..5]. The punctual shadow pass renders each view with
-        /// this raw matrix pushed and the viewport placing it in the record's atlas tile, and culls
-        /// against the raw (not tile-remapped) frustum. Only [0, PunctualShadowCount) are valid; a
-        /// caller's values are overwritten.
-        std::array<std::array<mat4, CubeFaceCount>, MaxShadowedPunctual>
-            PunctualShadowRawViewProj{};
-
-        /// @brief Resident mesh candidates for this frame; set by the renderer on every Execute.
-        ///
-        /// The g-buffer pass culls this span against the camera frustum; the shadow pass culls it
-        /// against each cascade's light frustum. Borrowed broadphase-cached scratch valid only for
-        /// the Execute that produced it. A caller's value is overwritten.
-        std::span<const VisibleMesh> Visible;
-
-        /// @brief The renderer's spatial broadphase; set on every Execute.
-        ///
-        /// A pass queries it (Cull) for the candidate indices its frustum touches; returned ids
-        /// index Visible. A caller's value is overwritten.
-        const SceneBroadphase* Broadphase = nullptr;
-
-        /// @brief The per-instance skinning palette descriptor set; set by the renderer each Execute.
-        ///
-        /// Bound by the shadow passes for skinned casters (and the geometry pass for skinned
-        /// draws). Holds the same buffer the geometry pass fills in PrepareDraws.
-        Ref<DescriptorSet> SkinningPalette;
-
-        /// @brief This frame's PaletteBase per skinned entity (packed Entity → base); set each Execute.
-        ///
-        /// Filled by the geometry-pass draw preparation; a shadow pass looks up a skinned caster's
-        /// palette base here so it casts its posed shadow. Borrowed; valid only for this Execute.
-        const unordered_map<u64, u32>* SkinnedPaletteBases = nullptr;
-    };
 
     /// @brief Long-lived deferred render pipeline owning an offscreen target.
     ///
@@ -995,6 +389,62 @@ namespace Veng::Renderer
         /// @param viewConstantsIndex  This frame's view-constants ring region.
         void PrepareDraws(const SceneView& view, u32 viewConstantsIndex);
 
+        /// @brief This frame's dynamic-resolution sub-rect and its UV mapping into the allocation.
+        struct FrameScale
+        {
+            /// @brief round(m_Extent * scale), clamped to [1, m_Extent] — the rendered sub-rect.
+            uvec2 ValidExtent;
+            /// @brief ValidExtent / m_Extent — the fraction of the allocation this frame fills.
+            vec2 RenderScaleUV;
+            /// @brief (ValidExtent - 0.5) / m_Extent — the half-texel-inset clamp for a bilinear tap.
+            vec2 MaxValidUV;
+        };
+
+        /// @brief Resolves this Execute's dynamic-resolution sub-rect from the view's render scale.
+        ///
+        /// A debug view, TAA, SSR, GPU hi-Z occlusion, or the Kawase bloom kernel each force full
+        /// resolution (they do not carry the sub-rect sampling), so the scale applies only on the
+        /// plain Final path.
+        /// @param view  The frame's scene view (its RenderScale is the requested multiplier).
+        /// @return The sub-rect extent and its UV mapping into the allocation.
+        [[nodiscard]] FrameScale ResolveRenderScale(const SceneView& view) const;
+
+        /// @brief Blends the candidate transforms between the last two Sim ticks by the frame alpha.
+        ///
+        /// Fills m_InterpolatedCandidates and points @p resolvedView.Visible at it only on a frame
+        /// that interpolates (nonzero alpha and a scene with motion history); a static or
+        /// tick-aligned frame leaves the broadphase's current-tick candidates in place.
+        /// @param view          The frame's scene view (its Alpha and World drive the blend).
+        /// @param resolvedView  The working view whose Visible span is repointed on interpolation.
+        void ApplyTransformInterpolation(const SceneView& view, SceneView& resolvedView);
+
+        /// @brief Resolves the scene's sky / point-field / volume-field components for this Execute.
+        ///
+        /// Resolves the one Sky component (recompiling the pass set at the frame boundary on a
+        /// source-kind/tier/bake change), then the live point-field and volume-field sets, and
+        /// forwards the resolved sky material to the sky-material pass. The lights model — the
+        /// renderer reads the components off the scene rather than a consumer pushing them.
+        /// @param resolvedView  The working view the resolved sky/field state is written into.
+        void ResolveScenePasses(SceneView& resolvedView);
+
+        /// @brief Builds this Execute's graph import bindings from the active targets and subsystems.
+        ///
+        /// The always-bound g-buffer / HDR / output / velocity / emissive imports plus the
+        /// conditionally-declared battery imports (TAA, picking, shadows, bloom, auto-exposure,
+        /// SSAO, refraction, SSR, hi-Z, and the GPU-cull indirect buffer) — appended only when the
+        /// matching pass was wired, so the binding set matches the compiled graph's declared imports.
+        /// @return The per-frame import bindings passed to CompiledGraph::Execute.
+        [[nodiscard]] vector<RenderGraph::ImportBinding> BuildImportBindings();
+
+        /// @brief Records this frame's view-projection, sub-rect mapping, and per-entity history.
+        ///
+        /// Captures the camera view-projection and sub-rect UVs for next frame's TAA reprojection,
+        /// clears the TAA history-reset gate, advances the jitter frame index, and swaps this
+        /// frame's worlds/palette bases into the previous-frame maps the velocity channel reads.
+        /// @param viewProj  This frame's unjittered camera world→clip matrix.
+        /// @param scale     This frame's resolved sub-rect and UV mapping.
+        void RecordFrameHistory(const mat4& viewProj, const FrameScale& scale);
+
         /// @brief Vulkan context for all resource creation.
         Context& m_Context;
         /// @brief Asset manager for engine shader loading.
@@ -1173,30 +623,14 @@ namespace Veng::Renderer
         /// @brief Layout for the SSAO pipeline.
         Ref<class PipelineLayout> m_SsaoLayout;
 
-        /// @brief Debug blit for the albedo channel.
-        Ref<class GraphicsPipeline> m_AlbedoBlitPipeline;
-        Ref<class PipelineLayout> m_AlbedoBlitLayout;
-        /// @brief Debug blit for the normal channel.
-        Ref<class GraphicsPipeline> m_NormalBlitPipeline;
-        Ref<class PipelineLayout> m_NormalBlitLayout;
-        /// @brief Debug blit for the depth buffer.
-        Ref<class GraphicsPipeline> m_DepthBlitPipeline;
-        Ref<class PipelineLayout> m_DepthBlitLayout;
-
-        /// @brief ORM-channel blit shared by the Roughness/Metallic/Occlusion arms.
+        /// @brief The fullscreen debug-blit pipelines for the non-Final DebugView arms.
         ///
-        /// The channel select is a push value, not a separate pipeline. Writes the output format.
-        Ref<class GraphicsPipeline> m_OrmBlitPipeline;
-        Ref<class PipelineLayout> m_OrmBlitLayout;
-        /// @brief Debug blit for the SSAO target.
-        Ref<class GraphicsPipeline> m_AoBlitPipeline;
-        Ref<class PipelineLayout> m_AoBlitLayout;
-        /// @brief Debug blit colorizing the per-object velocity target (DebugView::MotionVectors).
-        Ref<class GraphicsPipeline> m_MotionBlitPipeline;
-        Ref<class PipelineLayout> m_MotionBlitLayout;
-        /// @brief Debug blit for the directional shadow atlas.
-        Ref<class GraphicsPipeline> m_ShadowBlitPipeline;
-        Ref<class PipelineLayout> m_ShadowBlitLayout;
+        /// One aggregate owning the g-buffer/channel/target blit pipeline+layout pairs
+        /// (albedo, normal, depth, packed-ORM, SSAO, motion, directional shadow) each arm's
+        /// terminal blit selects. Built once at Create beside the core pipelines. Held behind
+        /// an opaque pointer so this header stays free of the pipeline aggregate's definition.
+        struct DebugBlitPipelines;
+        Unique<DebugBlitPipelines> m_DebugBlits;
 
         /// @brief The set-1 shadow descriptor system + punctual atlas + constants rings; created at Create.
         ///
