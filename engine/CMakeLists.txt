@@ -242,6 +242,7 @@ add_library(veng SHARED
         src/Renderer/PickingSystem.cpp
         src/Renderer/SkyboxScenePass.cpp
         src/Renderer/SkyCubemapBake.cpp
+        src/Renderer/SkyResolver.cpp
         src/Renderer/Passes/AtmospherePrecompute.cpp
         src/Renderer/Passes/SkyScenePass.cpp
         src/Renderer/SsaoScenePass.cpp

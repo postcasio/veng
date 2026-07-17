@@ -66,9 +66,7 @@ namespace Veng::Renderer
     class Buffer;
     class DescriptorSet;
     class DescriptorSetLayout;
-    class EnvironmentIbl;
-    class AtmospherePrecompute;
-    class SkyCubemapBake;
+    class SkyResolver;
     class PointField;
 
     /// @brief Maximum number of simultaneously shadowed point/spot lights.
@@ -968,18 +966,6 @@ namespace Veng::Renderer
         /// @brief Rebuilds the pass set from Settings.Mode and recompiles the RenderGraph.
         void Rebuild();
 
-        /// @brief Resolves the scene's Sky component into the SceneView's sky fields for this Execute.
-        ///
-        /// Reads the first Sky component off view.World (warning once if several exist), fills the
-        /// renderer-owned sky fields (environment/atmosphere/material handles, intensity, and — from
-        /// the first directional light — the toward-sun direction) onto @p view, and returns the
-        /// resolved source kind and lighting tier so Execute can drive an internal Rebuild when
-        /// either changed. An absent or empty Sky resolves to None and clears the fields (the flat
-        /// fallback). A source × tier whose lighting is not yet active degrades to background-only,
-        /// logging once. The one internal reader of the scene the way the light walk is.
-        /// @param view  The internal SceneView whose sky fields this fills in place.
-        void ResolveSky(SceneView& view);
-
         /// @brief Resolves the scene's PointField components into this Execute's live field set.
         ///
         /// Walks View<PointField> off @p view.World, applies each component's authored Lod to its
@@ -1464,105 +1450,6 @@ namespace Veng::Renderer
         /// Execute forwards the resolved SceneView::SkyMaterial to it before the graph runs.
         class SkyMaterialScenePass* m_SkyMaterialPass = nullptr;
 
-        /// @brief The kind of the sky source the renderer resolved from the scene's Sky component.
-        ///
-        /// Drives the sky pass topology in Rebuild: no sky, the cubemap skybox (environment source),
-        /// the procedural atmosphere, or an authored Sky-domain material. A resolved change to this
-        /// kind between Executes triggers an internal Rebuild — the lights model, driven by the
-        /// component rather than a consumer Configure.
-        enum class SkySourceKind : u8
-        {
-            /// @brief No Sky component (or an empty source): the flat fallback, no sky pass.
-            None,
-            /// @brief An EnvironmentSky source: the cubemap SkyboxScenePass samples its radiance cube.
-            Environment,
-            /// @brief An AtmosphereSky source: the procedural SkyScenePass fills the background.
-            Atmosphere,
-            /// @brief A MaterialSky source: the SkyMaterialScenePass runs the authored material.
-            Material,
-        };
-
-        /// @brief The resolved sky kind the current pass set was built for; gates the internal Rebuild.
-        ///
-        /// Compared against each Execute's freshly-resolved kind; a change recompiles the pass set at
-        /// the frame boundary (reusing the imported output, so GetOutput() stays valid). Initialized
-        /// to None so a first-frame environment/atmosphere/material sky triggers the initial wiring.
-        SkySourceKind m_ResolvedSkyKind = SkySourceKind::None;
-
-        /// @brief The resolved lighting tier the current pass set was built for; gates the internal Rebuild.
-        ///
-        /// A change to whether the resolved sky lights the scene via SH (the lighting pass's second
-        /// ambient arm) recompiles the pass set the same way a source-kind change does.
-        SkyLighting m_ResolvedSkyLighting = SkyLighting::None;
-
-        /// @brief Whether the resolved sky bakes to a radiance cube the skybox path samples.
-        ///
-        /// True for a MaterialSky or AtmosphereSky source in SkyMode::Baked: the skybox pass is
-        /// wired at the bake target and the direct per-pixel pass (SkyMaterialScenePass or
-        /// SkyScenePass) is absent. False for a direct sky (the per-pixel pass), an environment
-        /// (its own radiance cube), and no sky. A resolved change recompiles the pass set at the
-        /// frame boundary, the same internal recompile a source-kind change drives — the two modes
-        /// render the same sky, so output identity is preserved.
-        bool m_ResolvedSkyBaked = false;
-
-        /// @brief The material a baked material sky last baked; gates the once-per-change re-bake.
-        ///
-        /// Non-owning — the resolved Sky component keeps the instance resident. The bake re-records
-        /// when this frame's material differs, mirroring the atmosphere LUTs' dirty gate. Cleared
-        /// when the resolved sky is not a baked material.
-        const MaterialInstance* m_LastBakedSkyMaterial = nullptr;
-
-        /// @brief The revision of m_LastBakedSkyMaterial at the last bake; a change re-bakes.
-        ///
-        /// A material sky reused in place (its params/handles rewritten, the instance pointer
-        /// unchanged) advances its revision, so comparing it detects an in-place content change the
-        /// pointer compare misses — the material analogue of the atmosphere's param dirty gate.
-        u32 m_LastBakedSkyMaterialRevision = 0;
-
-        /// @brief Whether the current bake cube's IBL convolution is up to date; gates re-convolution.
-        ///
-        /// On the same dirty signal as the bake, a baked source lit via IBL runs GenerateFromCube
-        /// over the bake cube; this flag keeps it once-per-change. Cleared when the resolved sky is
-        /// not a baked source lit via IBL, so re-entering the tier re-convolves.
-        bool m_SkyCubeConvolved = false;
-
-        /// @brief The atmosphere params the baked atmosphere cube was last baked from; gates the re-bake.
-        ///
-        /// A baked atmosphere re-bakes when this frame's params or sun direction differ (both feed
-        /// the baked sky radiance + disc), mirroring the direct atmosphere's LUT dirty gate.
-        Atmosphere m_LastBakedAtmosphere;
-
-        /// @brief The sun direction the baked atmosphere cube was last baked from; gates the re-bake.
-        vec3 m_LastBakedAtmosphereSun{0.0f, 1.0f, 0.0f};
-
-        /// @brief Whether m_LastBakedAtmosphere holds a baked set (false until the first bake).
-        bool m_BakedAtmosphereValid = false;
-
-        /// @brief The environment the cube-projected skylight SH was last built from; gates re-projection.
-        ///
-        /// Non-owning. An environment sky lit via SH projects its radiance cube to the skylight SH
-        /// on the environment-change signal; this gate keeps it once-per-change. Cleared when the
-        /// resolved sky is not an environment lit via SH.
-        const EnvironmentMap* m_LastSkyShEnvironment = nullptr;
-
-        /// @brief Whether the last Rebuild wired the SH skylight ambient arm into the lighting pass.
-        ///
-        /// True when the resolved sky is an atmosphere lit via SH. Gates the per-frame CPU
-        /// project-and-upload in Execute, the way the retired Skylight toggle did.
-        bool m_SkylightActive = false;
-
-        /// @brief Whether the "multiple Sky components" ambiguity warning has already logged.
-        ///
-        /// The renderer resolves the first walked Sky and warns once; a persistent second component
-        /// does not re-log every frame.
-        bool m_MultipleSkyWarned = false;
-
-        /// @brief Whether the unsupported-tier degrade warning has already logged.
-        ///
-        /// A source × tier combination whose lighting machinery is not yet active degrades to
-        /// background-only and logs once, not every frame.
-        bool m_UnsupportedTierWarned = false;
-
         /// @brief True when the last Rebuild wired the SSR passes (Final mode + Settings.SSR, or the
         ///        Reflections debug arm). Execute binds the SSR imports only when true.
         bool m_SsrActive = false;
@@ -1572,55 +1459,15 @@ namespace Veng::Renderer
         ///        the view block's SceneColor handles only when true.
         bool m_RefractionActive = false;
 
-        /// @brief Image-based-lighting maps + their generation pipelines; created at Create.
+        /// @brief The sky-resolve state machine and the three sky radiance-cube helpers; created at Create.
         ///
-        /// Owns the radiance/irradiance/prefilter cubemaps, the BRDF LUT, and the consumer set
-        /// (set 2) the lighting pass binds. The lighting layout reserves its set layout, so it
-        /// exists before the pipelines.
-        Unique<EnvironmentIbl> m_Ibl;
-
-        /// @brief Bakes a baked-mode material sky into a radiance cube the skybox path samples; created at Create.
-        ///
-        /// Owns one radiance cube (at a fixed face resolution), the 1×1 far-plane stand-in depth,
-        /// and a consumer set matching the IBL radiance binding. Bake records on the sky dirty
-        /// signal (material swapped/changed); the skybox pass binds GetSet() when the resolved sky
-        /// is a baked material.
-        Unique<SkyCubemapBake> m_SkyBake;
-
-        /// @brief The environment the IBL maps were last generated from; gates regeneration.
-        ///
-        /// Generation re-runs only when the bound environment differs from this. Non-owning —
-        /// the AssetHandle keeps the EnvironmentMap alive.
-        const EnvironmentMap* m_LastEnvironment = nullptr;
-
-        /// @brief Procedural-atmosphere LUTs (transmittance/scattering/irradiance); created at Create.
-        ///
-        /// Owns the precompute pipelines + the consumer set (set 1) the sky pass binds. Created
-        /// before the sky pipeline so the sky layout can reserve its set layout.
-        Unique<AtmospherePrecompute> m_Atmosphere;
-
-        /// @brief The atmosphere the LUTs were last generated from; gates regeneration.
-        ///
-        /// Generation re-runs only when this frame's Atmosphere differs from this (a field-wise
-        /// compare), and only while the atmosphere sky is active — the once-per-change contract.
-        Atmosphere m_LastAtmosphere;
-
-        /// @brief Whether m_LastAtmosphere holds a generated set (false until the first Generate).
-        bool m_AtmosphereGenerated = false;
-
-        /// @brief Whether the atmosphere LUTs regenerated during the most recent Execute (diagnostic).
-        bool m_AtmosphereRegeneratedLastFrame = false;
-
-        /// @brief The cosine-convolved sky irradiance SH uploaded to the lighting constants.
-        ///
-        /// Projected from the resolved sky's one radiance cube (an environment's, or a baked
-        /// material/atmosphere's) and cached; re-projected on that source's dirty signal. Zeroed
-        /// until the first projection. Read every Execute the skylight is active to fill the
-        /// SkyShCoeffs.
-        Sh9 m_SkySh = Sh9::Zero();
-
-        /// @brief Whether m_SkySh holds a projected set (false until the first projection).
-        bool m_SkyShValid = false;
+        /// Owns the image-based-lighting maps (set 2 for the lighting pass), the procedural-atmosphere
+        /// LUTs (set 1 for the sky pass), and the baked-sky cube, plus the whole resolve state machine
+        /// (resolved source-kind/tier/bake-mode, the once-per-change dirty gates, the projected
+        /// skylight SH). Created before CreatePipelines so the lighting and sky layouts reserve its
+        /// consumer set layouts; Rebuild reaches the sets/layouts and the resolved kind/tier through
+        /// its getters.
+        Unique<SkyResolver> m_SkyResolver;
 
         /// @brief Immediate-mode debug-draw accumulator flushed by the DebugDrawScenePass.
         ///
