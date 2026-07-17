@@ -783,7 +783,10 @@ namespace Veng
         /// @brief The highest client tick consumed or dropped so far (0 before the first Consume).
         [[nodiscard]] u64 LastConsumedTick() const { return m_LastConsumedTick; }
 
-        /// @brief Total consume calls (Consume + ConsumeForTick) since construction.
+        /// @brief Consumes that yielded an input to feed the seat (a non-nullopt Consume/ConsumeForTick
+        /// return, whether a fresh buffered tick or a coasted underrun) since construction. Empty polls
+        /// before the first input has ever arrived — the only nullopt returns — are not counted, so this
+        /// tracks actual inputs consumed rather than idle calls.
         [[nodiscard]] u64 ConsumeCount() const { return m_ConsumeCount; }
 
         /// @brief Consume calls that underran — coasted on the last input rather than a fresh one.

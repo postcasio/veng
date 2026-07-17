@@ -351,8 +351,6 @@ namespace Veng
 
     optional<ActionState> InputJitterBuffer::Consume()
     {
-        ++m_ConsumeCount;
-
         // Overrun: drop the oldest buffered ticks so at most TargetDepth remain after this consume,
         // bounding the latency the buffer holds. A dropped tick advances the consumed front, so a
         // later redundant copy of it is rejected on Ingest.
@@ -365,6 +363,7 @@ namespace Veng
 
         if (!m_Buffer.empty())
         {
+            ++m_ConsumeCount;
             auto oldest = m_Buffer.extract(m_Buffer.begin());
             m_LastConsumedTick = oldest.key();
             m_Last = oldest.mapped();
@@ -376,6 +375,7 @@ namespace Veng
         // never repeats). nullopt only before the first input has ever arrived.
         if (m_Started)
         {
+            ++m_ConsumeCount;
             ++m_UnderrunCount;
             m_Last = DecayInputPhases(*m_Last);
             return m_Last;
@@ -385,8 +385,6 @@ namespace Veng
 
     optional<ActionState> InputJitterBuffer::ConsumeForTick(u64 tick)
     {
-        ++m_ConsumeCount;
-
         // Drop any buffered tick older than the scheduled one: the server has advanced past it, so it
         // can never be consumed (a later redundant copy is rejected on Ingest).
         while (!m_Buffer.empty() && m_Buffer.begin()->first < tick)
@@ -398,6 +396,7 @@ namespace Veng
 
         if (const auto it = m_Buffer.find(tick); it != m_Buffer.end())
         {
+            ++m_ConsumeCount;
             auto node = m_Buffer.extract(it);
             m_LastConsumedTick = tick;
             m_Last = node.mapped();
@@ -409,6 +408,7 @@ namespace Veng
         // packet was lost). Coast on the last input with edge phases decayed, exactly as Consume does.
         if (m_Started)
         {
+            ++m_ConsumeCount;
             ++m_UnderrunCount;
             m_LastConsumedTick = tick;
             m_Last = DecayInputPhases(*m_Last);

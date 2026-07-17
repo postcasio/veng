@@ -264,6 +264,33 @@ TEST_CASE("The jitter buffer duplicates the last input with decayed phases on un
     CHECK_FALSE(empty.Consume().has_value());
 }
 
+TEST_CASE("ConsumeCount counts only consumes that yield an input, not empty polls")
+{
+    InputJitterBuffer jitter;
+
+    // Empty polls before the first input has ever arrived return nullopt and must not be counted:
+    // ConsumeCount is an actual-inputs-consumed / idle-cost metric, not a call count.
+    CHECK_FALSE(jitter.Consume().has_value());
+    CHECK_FALSE(jitter.Consume().has_value());
+    CHECK(jitter.ConsumeCount() == 0);
+    CHECK(jitter.UnderrunCount() == 0);
+
+    InputPacket packet;
+    packet.Inputs.push_back(TickedInput{.ClientTick = 1, .State = MakeState(vec2(1.0f, 0.0f))});
+    jitter.Ingest(packet);
+
+    // A fresh buffered tick is a real consume: counted, and not an underrun.
+    REQUIRE(jitter.Consume().has_value());
+    CHECK(jitter.ConsumeCount() == 1);
+    CHECK(jitter.UnderrunCount() == 0);
+
+    // A coasted underrun still feeds the seat a (decayed) input, so it counts as an actual consume —
+    // and as an underrun. Both counters advance together on this path.
+    REQUIRE(jitter.Consume().has_value());
+    CHECK(jitter.ConsumeCount() == 2);
+    CHECK(jitter.UnderrunCount() == 1);
+}
+
 TEST_CASE("The jitter buffer drops the oldest on overrun to bound latency")
 {
     InputJitterBuffer jitter(InputJitterBuffer::Settings{.TargetDepth = 2});
