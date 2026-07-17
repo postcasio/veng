@@ -155,9 +155,16 @@ namespace Veng
         /// @brief The get-or-create factory: materialize a world for a key that has no placeable bucket.
         ///
         /// Called only on a placement miss, after the caps clear; returning nullopt denies with
-        /// NoSuchWorld. Unset means only pre-registered worlds (Register) can be resolved. The travel
-        /// payload rides in so a world may be parameterized by data no key encodes.
-        function<optional<ServerWorldResolution>(const Net::WorldKey&, const Net::Blob&)>
+        /// NoSuchWorld. Unset means only pre-registered worlds (Register) can be resolved. The key and
+        /// the travel payload ride in so a world may be parameterized by data no key encodes, and the
+        /// requesting JoinRequestInfo rides in so a world may project the requester's account (its Key
+        /// and Payload match the trailing two arguments). A resolve not driven by a particular join —
+        /// a warm pre-open, a placement the consumer primes — passes a requester-less request:
+        /// ConnectionId{} and the invalid account (Net::AccountId::IsValid() is false), so a factory
+        /// keying off the requester treats the invalid account as "no specific requester" rather than a
+        /// real player.
+        function<optional<ServerWorldResolution>(const Net::JoinRequestInfo&, const Net::WorldKey&,
+                                                 const Net::Blob&)>
             WorldFactory;
         /// @brief The get-or-place policy: which live bucket of a key a requester lands in, or a fresh one.
         ///

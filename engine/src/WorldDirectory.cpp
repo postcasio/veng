@@ -40,7 +40,8 @@ namespace Veng
         f64 IdleKeepWarmDwell = 5.0;
         WorldRunner* Runner = nullptr;
         function<bool(const Net::JoinRequestInfo&)> Authorize;
-        function<optional<ServerWorldResolution>(const Net::WorldKey&, const Net::Blob&)>
+        function<optional<ServerWorldResolution>(const Net::JoinRequestInfo&, const Net::WorldKey&,
+                                                 const Net::Blob&)>
             WorldFactory;
         function<optional<WorldInstanceId>(const Net::JoinRequestInfo&,
                                            std::span<const WorldPlacement>)>
@@ -210,7 +211,8 @@ namespace Veng
             return {.Outcome = WorldResolveOutcome::Denied,
                     .Reason = Net::JoinDenyReason::NoSuchWorld};
         }
-        optional<ServerWorldResolution> resolved = s.WorldFactory(request.Key, request.Payload);
+        optional<ServerWorldResolution> resolved =
+            s.WorldFactory(request, request.Key, request.Payload);
         if (!resolved || resolved->World == nullptr)
         {
             return {.Outcome = WorldResolveOutcome::Denied,

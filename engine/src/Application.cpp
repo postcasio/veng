@@ -927,6 +927,54 @@ namespace Veng
         }
     }
 
+    VoidResult Application::HoldWorldWarm(const Net::WorldKey& key)
+    {
+        VE_ASSERT(m_Directory, "HoldWorldWarm requires a managed world (ApplicationInfo::World)");
+
+        // Idempotent per key: a repeated hold on a key already warm-pinned takes no second pin.
+        if (m_WarmPinnedWorlds.contains(key))
+        {
+            return {};
+        }
+
+        // A requester-less resolve: no connection and the invalid account, since this hold belongs to
+        // the process infrastructure, not a player. A factory keying off the requester reads the
+        // invalid account as "no specific requester" (see WorldDirectoryInfo::WorldFactory).
+        const Net::Blob empty;
+        const WorldResolveResult resolve =
+            m_Directory->Resolve(Net::JoinRequestInfo{.Connection = Net::ConnectionId{},
+                                                      .Account = Net::AccountId{},
+                                                      .Key = key,
+                                                      .Payload = empty},
+                                 /*heldWorlds=*/0);
+        if (resolve.Outcome == WorldResolveOutcome::Denied)
+        {
+            return std::unexpected(
+                fmt::format("warm hold denied: {}", static_cast<u32>(resolve.Reason)));
+        }
+
+        // An accountless pin — presence with no recorded member — so keep-warm accounting holds the
+        // bucket resident beside any joins, and MembersOf never reports the hold.
+        m_WarmPinnedWorlds.emplace(key, resolve.World);
+        m_Directory->Pin(resolve.World);
+        return {};
+    }
+
+    void Application::ReleaseWorldWarm(const Net::WorldKey& key)
+    {
+        const auto it = m_WarmPinnedWorlds.find(key);
+        if (it == m_WarmPinnedWorlds.end())
+        {
+            return;
+        }
+        const WorldInstanceId world = it->second;
+        m_WarmPinnedWorlds.erase(it);
+        if (m_Directory)
+        {
+            m_Directory->Unpin(world, static_cast<f64>(Time::Now()));
+        }
+    }
+
     VoidResult Application::Travel(const TravelInfo& info)
     {
         VE_ASSERT(m_Directory, "Travel requires a managed world (ApplicationInfo::World)");

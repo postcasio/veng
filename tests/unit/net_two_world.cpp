@@ -1862,7 +1862,7 @@ namespace
                 .MaxHostedWorlds = maxHosted,
                 .MaxPlayersPerInstance = maxPerInstance,
                 .IdleKeepWarmDwell = dwell,
-                .WorldFactory = [this](const WorldKey&,
+                .WorldFactory = [this](const JoinRequestInfo&, const WorldKey&,
                                        const Blob&) -> optional<ServerWorldResolution>
                 {
                     const u64 world = NextWorld++;
@@ -2612,7 +2612,8 @@ TEST_CASE("The travel payload reaches Authorize, Placement, and WorldFactory, an
             authorizeSeen = true;
             return true;
         },
-        .WorldFactory = [&](const WorldKey&, const Blob& p) -> optional<ServerWorldResolution>
+        .WorldFactory = [&](const JoinRequestInfo&, const WorldKey&,
+                            const Blob& p) -> optional<ServerWorldResolution>
         {
             seenFactory = p;
             factorySeen = true;
@@ -2694,7 +2695,8 @@ TEST_CASE("The client world digest folds the echoed travel payload: a matching f
         .Assets = FakeAssets(),
         .LevelId = LevelId,
         .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
-        .WorldFactory = [&](const WorldKey&, const Blob& p) -> optional<ServerWorldResolution>
+        .WorldFactory = [&](const JoinRequestInfo&, const WorldKey&,
+                            const Blob& p) -> optional<ServerWorldResolution>
         {
             return ServerWorldResolution{.WorldId = WorldInstanceId{.Value = 100},
                                          .World = factoryScene.get(),
@@ -2805,7 +2807,8 @@ TEST_CASE("A payload-bucketing placement policy converges near params and splits
         .LevelId = LevelId,
         .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
         .Interest = InterestSettings{.Radius = 0.0f},
-        .WorldFactory = [&](const WorldKey&, const Blob&) -> optional<ServerWorldResolution>
+        .WorldFactory = [&](const JoinRequestInfo&, const WorldKey&,
+                            const Blob&) -> optional<ServerWorldResolution>
         {
             const u64 world = nextWorld++;
             Unique<Scene>& scene = factoryScenes[world];
@@ -3044,7 +3047,8 @@ TEST_CASE("The world directory reaps after the dwell, reuses warm, and never rea
     Unique<WorldDirectory> dir = WorldDirectory::Create(WorldDirectoryInfo{
         .IdleKeepWarmDwell = 0.5,
         .Runner = &runner,
-        .WorldFactory = [&](const WorldKey&, const Blob&) -> optional<ServerWorldResolution>
+        .WorldFactory = [&](const JoinRequestInfo&, const WorldKey&,
+                            const Blob&) -> optional<ServerWorldResolution>
         {
             const WorldInstanceId world =
                 runner.OpenWorld(WorldOpenInfo{.SimTickRate = 60, .StartSimulation = false});
@@ -3118,7 +3122,8 @@ TEST_CASE("A local standing presence keeps a world warm past a remote join's dep
     Unique<WorldDirectory> dir = WorldDirectory::Create(WorldDirectoryInfo{
         .IdleKeepWarmDwell = 0.5,
         .Runner = &runner,
-        .WorldFactory = [&](const WorldKey&, const Blob&) -> optional<ServerWorldResolution>
+        .WorldFactory = [&](const JoinRequestInfo&, const WorldKey&,
+                            const Blob&) -> optional<ServerWorldResolution>
         {
             const WorldInstanceId world =
                 runner.OpenWorld(WorldOpenInfo{.SimTickRate = 60, .StartSimulation = false});
@@ -4495,7 +4500,8 @@ TEST_CASE("A remote join converges on a bucket a local standalone travel opened,
     // A local (standalone) travel resolves through the directory alone — no host in the call path —
     // so the host must wrap that bucket on demand when a remote join converges on it.
     Unique<WorldDirectory> directory = WorldDirectory::Create(WorldDirectoryInfo{
-        .WorldFactory = [&](const WorldKey&, const Blob&) -> optional<ServerWorldResolution>
+        .WorldFactory = [&](const JoinRequestInfo&, const WorldKey&,
+                            const Blob&) -> optional<ServerWorldResolution>
         {
             factoryOpens += 1;
             travelScene = Scene::Create(serverTypes);
@@ -4767,7 +4773,7 @@ namespace
                 .LevelId = LevelId,
                 .IdleKeepWarmDwell = 1.0,
                 .Authorize = std::move(hooks.Authorize),
-                .WorldFactory = [this](const WorldKey&,
+                .WorldFactory = [this](const JoinRequestInfo&, const WorldKey&,
                                        const Blob& payload) -> optional<ServerWorldResolution>
                 {
                     Opened.push_back(Scene::Create(Types));
@@ -5340,7 +5346,8 @@ TEST_CASE("Standalone continue: the registry and directory restore a record with
     vector<Blob> factoryPayloads;
     u64 nextWorld = 500;
     Unique<WorldDirectory> directory = WorldDirectory::Create(WorldDirectoryInfo{
-        .WorldFactory = [&](const WorldKey&, const Blob& payload) -> optional<ServerWorldResolution>
+        .WorldFactory = [&](const JoinRequestInfo&, const WorldKey&,
+                            const Blob& payload) -> optional<ServerWorldResolution>
         {
             opened.push_back(Scene::Create(types));
             factoryPayloads.push_back(payload);
@@ -6241,7 +6248,8 @@ TEST_CASE("A level-less data world joins end to end: no LoadLevel, empty scene, 
         .World = *primary,
         .Assets = FakeAssets(),
         .LevelId = LevelId,
-        .WorldFactory = [&](const WorldKey&, const Blob&) -> optional<ServerWorldResolution>
+        .WorldFactory = [&](const JoinRequestInfo&, const WorldKey&,
+                            const Blob&) -> optional<ServerWorldResolution>
         {
             // A data world: no authored level (the invalid id), a game-chosen digest.
             dataScene = Scene::Create(serverTypes);
@@ -6734,7 +6742,8 @@ TEST_CASE("A world resolved with its own IdleDwell outlives the directory defaul
         .Assets = FakeAssets(),
         .LevelId = LevelId,
         .IdleKeepWarmDwell = DefaultDwell,
-        .WorldFactory = [&](const WorldKey& key, const Blob&) -> optional<ServerWorldResolution>
+        .WorldFactory = [&](const JoinRequestInfo&, const WorldKey& key,
+                            const Blob&) -> optional<ServerWorldResolution>
         {
             const u64 world = nextWorld++;
             Unique<Scene>& scene = factoryScenes[world];
@@ -6843,7 +6852,8 @@ TEST_CASE("The default join budget holds the standing-join matrix; the ninth joi
         .World = *primary,
         .Assets = FakeAssets(),
         .LevelId = LevelId,
-        .WorldFactory = [&](const WorldKey&, const Blob&) -> optional<ServerWorldResolution>
+        .WorldFactory = [&](const JoinRequestInfo&, const WorldKey&,
+                            const Blob&) -> optional<ServerWorldResolution>
         {
             const u64 world = nextWorld++;
             Unique<Scene>& scene = factoryScenes[world];

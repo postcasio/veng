@@ -218,8 +218,13 @@ namespace Veng
         /// Materializes a world for a key that has no live bucket (opening a scene through the game's own
         /// runner and returning it) so a client may join a world by content, not only the pre-registered
         /// managed world. Unset means only the managed world is joinable (the single-world default). Read
-        /// by both the `--server` launch path and the runtime StartHosting call; inert off a host.
-        function<optional<ServerWorldResolution>(const Net::WorldKey&, const Net::Blob&)>
+        /// by both the `--server` launch path and the runtime StartHosting call; inert off a host. The
+        /// requesting JoinRequestInfo rides in ahead of the key and payload (which it also carries), so a
+        /// world can project the requester's account at open — per-account state for the joining player.
+        /// A resolve not driven by a particular join (an Application::HoldWorldWarm pre-open) passes a
+        /// requester-less request: the invalid account, which a factory treats as "no specific requester".
+        function<optional<ServerWorldResolution>(const Net::JoinRequestInfo&, const Net::WorldKey&,
+                                                 const Net::Blob&)>
             WorldFactory;
         /// @brief The authorization hook: may this requester join or create this key? Unset allows all.
         ///
@@ -722,6 +727,30 @@ namespace Veng
         /// @param key  The standing world to leave.
         void LeaveStanding(const Net::WorldKey& key);
 
+        /// @brief Holds a world warm by key under an accountless infrastructure pin, resolving it first.
+        ///
+        /// Resolves @p key through the world directory (get-or-place, opening a world through the game's
+        /// factory on a miss — a requester-less resolve, so a factory keying off the requester sees the
+        /// invalid account), then takes an accountless directory pin on the resolved bucket so it is
+        /// never idle-reaped while held. The infrastructure counterpart of a standing join: unlike
+        /// LeaveStanding's account-scoped standing-join presence (a Travel with Present false, which
+        /// records the local account as a member), this pin belongs to no account — MembersOf never
+        /// reports it — so it holds a data world resident for the process itself rather than a player.
+        /// It composes with the presence refcount: a world with a warm pin and any joins stays warm
+        /// until every pin and join is gone. Idempotent per key — a repeated hold on a key already held
+        /// takes no second pin. Prefer this to inflating a world's IdleDwell to keep it resident.
+        /// @param key  The world to resolve and hold warm (the release handle for ReleaseWorldWarm).
+        /// @return Empty on success, or an error string carrying the directory's denial reason.
+        [[nodiscard]] VoidResult HoldWorldWarm(const Net::WorldKey& key);
+
+        /// @brief Releases a warm hold taken by HoldWorldWarm, letting the dwell own the world's fate.
+        ///
+        /// Drops the accountless pin HoldWorldWarm took on @p key, so the world's keep-warm accounting
+        /// sees the infrastructure hold leave; once every other presence (joins, other pins) is also
+        /// gone the world reaps after its dwell. A no-op for a key the process holds no warm pin on.
+        /// @param key  The warm-held world to release.
+        void ReleaseWorldWarm(const Net::WorldKey& key);
+
         /// @brief Tears the net mode down, returning the process to standalone (no transport).
         ///
         /// Releases the mounted host (server or client) and clears the per-world roles, so the managed
@@ -1206,6 +1235,13 @@ namespace Veng
         /// here, keyed by the world's key so LeaveStanding can withdraw exactly one. The key is the
         /// release handle; the value is the bucket the pin was taken on.
         unordered_map<Net::WorldKey, WorldInstanceId> m_LocalStandingWorlds;
+        /// @brief The worlds HoldWorldWarm holds warm, each under an accountless directory pin.
+        ///
+        /// Keyed by the world's key so ReleaseWorldWarm withdraws exactly one pin and a repeated hold
+        /// on a held key is idempotent. Distinct from m_LocalStandingWorlds: those pins carry the local
+        /// account (a standing membership), these carry none (an infrastructure hold). The value is the
+        /// bucket the pin was taken on.
+        unordered_map<Net::WorldKey, WorldInstanceId> m_WarmPinnedWorlds;
         /// @brief The worlds Application currently pins for presentation, keyed by WorldInstanceId value.
         ///
         /// The pin set SyncPresentationPins reconciles each frame against the managed viewports' bindings,

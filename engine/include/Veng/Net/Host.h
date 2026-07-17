@@ -157,9 +157,12 @@ namespace Veng
         /// Called only on a miss, after the caps clear, to open a new world through the consumer's
         /// runner; returning nullopt denies the join NoSuchWorld. Unset means only pre-registered
         /// worlds (Create + AddWorld) can be joined. A hit reuses the existing instance, so two
-        /// connections presenting the same key converge on one shared world. The travel payload rides in
-        /// so a world may be parameterized by data no key encodes.
-        function<optional<ServerWorldResolution>(const Net::WorldKey&, const Net::Blob&)>
+        /// connections presenting the same key converge on one shared world. The requesting
+        /// JoinRequestInfo rides in ahead of the key and payload (which it also carries), so a world can
+        /// project the requesting connection's account at open. A resolve not driven by a particular
+        /// join passes a requester-less request (the invalid account) — "no specific requester".
+        function<optional<ServerWorldResolution>(const Net::JoinRequestInfo&, const Net::WorldKey&,
+                                                 const Net::Blob&)>
             WorldFactory;
         /// @brief The get-or-place policy: which live bucket of a key a joiner lands in, or a fresh one.
         ///

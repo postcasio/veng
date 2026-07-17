@@ -297,6 +297,20 @@ tracked bucket and drops the key from the session's standing list, so the bucket
 once every other presence is also gone. A bucket that only ever held the local member reaps when that
 member leaves via `LeaveStanding`; until then it is legitimately kept warm, not leaked.
 
+**A consumer holds a world warm by key with an accountless infrastructure pin.**
+**`Application::HoldWorldWarm(key)`** resolves the key through the directory (get-or-place, opening
+through the factory on a miss — a **requester-less** resolve, so a factory keying off the requester
+sees the invalid account) and takes an **accountless `Pin`** on the resolved bucket, tracked keyed by
+`WorldKey` and idempotent per key. It is the infrastructure counterpart of the account-scoped
+standing-join pin above: `LeaveStanding`'s pin carries the local account (a standing *membership*, so
+`MembersOf` reports it), while a warm pin **belongs to no account** and is never a member — it holds a
+data world resident for the process itself, not a player. Both feed the one presence refcount, so a
+world with a warm pin and any joins stays warm until every pin and join is gone.
+**`Application::ReleaseWorldWarm(key)`** drops the pin and lets the dwell own the world's fate once
+every other presence is gone. This is the sanctioned way to keep a data world resident — preferred
+over inflating `ServerWorldResolution::IdleDwell` toward infinity, which only stretches the reap
+window rather than expressing an explicit hold.
+
 **Get-or-place: a `WorldKey` maps to N buckets, resolved by a placement policy.** The map is
 `WorldKey → [WorldInstance]` — a key may have several live **buckets**, each (host-side) a full instance
 with its own `ReplicationServer` (replication-state isolation is structural per bucket; the buckets still
@@ -304,7 +318,12 @@ tick serially in the host). On a join the directory offers the key's live bucket
 carrying its presence count **and its recorded travel payload (`Net::Blob`)**) to the `Placement` policy
 `(WorldKey, connection, payload, buckets) → optional<WorldInstanceId>`: returning an existing bucket
 converges on it, returning `nullopt` opens a fresh bucket through the `WorldFactory`
-(`(WorldKey, payload) → ServerWorldResolution`, bounded by `MaxHostedWorlds`). The **default policy is
+(`(JoinRequestInfo, WorldKey, payload) → ServerWorldResolution`, bounded by `MaxHostedWorlds`). The
+factory receives the resolving **`Net::JoinRequestInfo`** ahead of the key and payload it also carries,
+so a world can **project the requester's account at open** — per-account state materialized for the
+joining player. A resolve not driven by a particular join (an `Application::HoldWorldWarm` warm
+pre-open) passes a **requester-less** request — the invalid account — which a factory reads as "no
+specific requester" rather than a real player. The **default policy is
 convergence** — one bucket per key — so a host that sets no capacity is byte-identical to a 1:1
 get-or-create map. The built-in **capacity policy** is driven by one knob, **`MaxPlayersPerInstance`**
 (`0` = no max, the default = pure convergence): a value > 0 places a joiner into the first bucket under

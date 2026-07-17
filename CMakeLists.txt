@@ -554,6 +554,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/net_join_flow.cpp
             tests/unit/net_world_drive.cpp
             tests/unit/net_two_world.cpp
+            tests/unit/world_directory.cpp
             tests/unit/net_clock_sync.cpp
             tests/unit/net_prediction_history.cpp
             tests/unit/net_prediction.cpp
