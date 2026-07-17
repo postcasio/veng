@@ -4247,4 +4247,130 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     std::filesystem::remove(outArchive);
 }
 
+// The screen-space-reflection proof. A brightly lit, rough-dielectric cube stands on a smooth
+// metal floor; with Settings.SSR on, the SSR trace reflects the cube's view about the floor
+// normal, marches the depth buffer to the cube, and samples its lit scene color, so the SSR
+// composite folds that radiance into the floor in front of the cube. Because the metal floor
+// has no environment to reflect, its own shading there is near-black — so the floor band below
+// the cube is measurably brighter with SSR on than off, and the lift is the traced reflection,
+// not a lighting change. Reconfiguring with SSR off drops the trace/composite from the topology
+// and the same band falls back to the bare floor. SSR is off in the golden and had no automated
+// coverage before this case.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: screen-space reflections mirror a lit object into a "
+                  "reflective floor")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const path outArchive = CookAndMountBrick(assets, "veng_gpu_ssr.vengpack");
+
+    // The reflected object: the default brick instance is a rough dielectric, bright and
+    // diffuse when lit — the radiance the trace samples off the cube.
+    const AssetResult<AssetHandle<MaterialInstance>> brick =
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443});
+    REQUIRE(brick.has_value());
+    REQUIRE(brick->IsLoaded());
+
+    // The reflector: a runtime MID over the brick parent, driven to a smooth metal so its
+    // roughness clears the SSR trace cutoff and its metallic F0 reflects strongly.
+    const AssetResult<AssetHandle<Material>> parent = assets.LoadSync<Material>(AssetId{0x232B});
+    REQUIRE(parent.has_value());
+    REQUIRE(parent->IsLoaded());
+    const AssetHandle<MaterialInstance> floorMaterial = assets.BuildSync<MaterialInstance>(
+        MaterialInstanceInfo{.Name = "SSR Floor", .Context = &Context, .Parent = *parent});
+    REQUIRE(floorMaterial.IsLoaded());
+    {
+        auto& mat = const_cast<MaterialInstance&>(*floorMaterial.Get());
+        mat.SetParam("RoughnessFactor", 0.05f);
+        mat.SetParam("MetallicFactor", 1.0f);
+    }
+
+    constexpr uvec2 extent{128, 128};
+
+    const Ref<Mesh> floor = Mesh::BuildSync(
+        Context, Primitives::Plane(vec2(20.0f), uvec2(1), floorMaterial), "SSR Floor Plane");
+    const Ref<Mesh> cube = Mesh::BuildSync(Context, Primitives::Cube(1.0f, *brick), "SSR Cube");
+
+    const Unique<Scene> scene = Scene::Create(Types);
+
+    const Entity floorEntity = scene->CreateEntity();
+    scene->Add<Transform>(floorEntity).Position = vec3(0.0f, -0.5f, 0.0f);
+    scene->Add<MeshRenderer>(floorEntity).Mesh = assets.Adopt(floor);
+
+    const Entity cubeEntity = scene->CreateEntity();
+    scene->Add<Transform>(cubeEntity).Position = vec3(0.0f, 0.0f, -1.0f);
+    scene->Add<MeshRenderer>(cubeEntity).Mesh = assets.Adopt(cube);
+
+    // A strong light onto the cube's camera-facing (+Z) face, so the reflection the floor
+    // samples off the cube is bright.
+    const Entity lightEntity = scene->CreateEntity();
+    scene->Add<Light>(lightEntity) = Light{
+        .Direction = vec3(0.0f, -0.3f, -1.0f),
+        .Color = vec3(1.0f, 1.0f, 1.0f),
+        .Intensity = 5.0f,
+    };
+
+    CameraView camera;
+    camera.SetPerspective(glm::radians(50.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 2.0f, 3.5f), vec3(0.0f, 0.0f, -0.5f), vec3(0.0f, 1.0f, 0.0f));
+
+    const SceneRendererSettings ssrOn{
+        .Mode = DebugView::Final, .Bloom = false, .Shadows = false, .SSR = true, .AO = false};
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = ssrOn,
+    });
+
+    auto Render = [&]() -> vector<u8>
+    {
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer->Execute(
+                    cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
+            });
+        const vector<u8> pixels = renderer->GetOutput()->GetImage()->Download();
+        REQUIRE(pixels.size() == static_cast<size_t>(extent.x) * extent.y * 8);
+        return pixels;
+    };
+
+    // Mean luminance over a floor band below the cube — where the cube's reflection lands.
+    auto FloorBandLuma = [&](const vector<u8>& pixels) -> f64
+    {
+        f64 sum = 0.0;
+        u32 count = 0;
+        for (u32 y = extent.y * 58 / 100; y < extent.y * 92 / 100; ++y)
+        {
+            for (u32 x = extent.x * 28 / 100; x < extent.x * 72 / 100; ++x)
+            {
+                const vec3 c = DecodeTexel(pixels, extent.x, x, y);
+                sum += 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+                ++count;
+            }
+        }
+        return count == 0 ? 0.0 : sum / count;
+    };
+
+    // SSR on: the floor band carries the reflected cube.
+    const vector<u8> ssrPixels = Render();
+    const f64 ssrBand = FloorBandLuma(ssrPixels);
+
+    // SSR off: the same band falls back to the bare metal floor (no environment to reflect).
+    SceneRendererSettings ssrOff = ssrOn;
+    ssrOff.SSR = false;
+    renderer->Configure(ssrOff);
+    const vector<u8> noSsrPixels = Render();
+    const f64 noSsrBand = FloorBandLuma(noSsrPixels);
+
+    // The reflection adds real radiance the composite folds in, so the floor band is
+    // measurably brighter with SSR on. The env-less metal floor is near-black there without it.
+    CHECK(ssrBand > noSsrBand + 0.02);
+
+    std::filesystem::remove(outArchive);
+}
+
 #endif // GPU_GBUFFER_FIXTURE_DIR
