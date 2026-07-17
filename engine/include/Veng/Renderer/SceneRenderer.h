@@ -54,6 +54,9 @@ namespace Veng::Renderer
     class ShadowScenePass;
     class PunctualShadowScenePass;
     class ShadowSystem;
+    class BloomPyramid;
+    class AutoExposureMeter;
+    class TaaResolve;
     class Image;
     class Sampler;
     class Buffer;
@@ -991,37 +994,11 @@ namespace Veng::Renderer
         /// barriers.
         /// @param graph  The renderer's internal graph being rebuilt.
         void DeclareHiZReduction(RenderGraph& graph);
-        /// @brief Declares the bloom down/up/composite compute sweep into the graph ahead of tonemap.
-        ///
-        /// Down-sweep (level 0..N-1, barrier between levels), in-place tent up-sweep (level N-2..0,
-        /// barrier between levels), then the composite into the result. Per-frame Threshold /
-        /// Intensity / Radius ride the compute push, read from the SceneView at record time.
-        /// @param graph  The renderer's internal graph being rebuilt.
-        void DeclareBloom(RenderGraph& graph);
-        /// @brief Declares the auto-exposure metering compute pass into the graph ahead of tonemap.
-        ///
-        /// One thread per lit-HDR texel scatters into this frame's log-luminance histogram ring
-        /// region (StorageBufferWrite, so the pass is scheduled and not culled). Declared only while
-        /// Settings.AutoExposure is set.
-        /// @param graph  The renderer's internal graph being rebuilt.
-        void DeclareAutoExposure(RenderGraph& graph);
-        /// @brief Creates the auto-exposure metering pipeline, buffer, sampler, and descriptor set.
-        ///
-        /// Called once at Create. The descriptor set is rebuilt by WriteAutoExposureHdrBinding
-        /// whenever the HDR target is recreated.
-        void CreateAutoExposure();
-        /// @brief Rebuilds the metering descriptor set against the live HDR target.
-        ///
-        /// Allocates a fresh set rather than rewriting the old one, which an in-flight frame's
-        /// command buffer may still reference (the bindings are not update-after-bind); the
-        /// replaced set retires through the deferred-destruction path. Called from
-        /// CreateAutoExposure and every Resize, ahead of the Rebuild that recaptures the set.
-        void WriteAutoExposureHdrBinding();
         /// @brief Recreates the SSR scene-color intermediate, reflection mip chain, and min-Z pyramid.
         ///
         /// Allocates the targets and per-level descriptor sets when Settings.SSR is set; otherwise
-        /// releases any previously-created ones. Mirrors CreateBloom (the reflection blur chain) and
-        /// CreateHiZ (the min-Z pyramid). Called from Create and every Resize/Configure.
+        /// releases any previously-created ones. The reflection blur chain mirrors the bloom
+        /// pyramid, the min-Z pyramid CreateHiZ. Called from Create and every Resize/Configure.
         void CreateSsr();
         /// @brief Recreates the refraction scene-color intermediate translucent materials sample.
         ///
@@ -1047,19 +1024,6 @@ namespace Veng::Renderer
         [[nodiscard]] uvec2 SsrRenderExtent() const;
         /// @brief Recreates the HDR image/view at the current extent and (re-)registers it into bindless.
         void CreateHdr();
-        /// @brief Recreates the TAA lit + history targets, or releases them when TAA is off.
-        ///
-        /// Allocates m_LitImage and m_TaaHistoryImage (both HdrFormat, full extent) and
-        /// registers their bindless slots when Settings.TAA is set; otherwise releases any
-        /// previously-created ones. Sets m_TaaHistoryReset so the next resolve ignores the
-        /// freshly-created history. Called from Create and every Resize/Configure.
-        void CreateTaa();
-        /// @brief Recreates the bloom mip-pyramid + result image, their views, and the per-level sets.
-        ///
-        /// Builds m_BloomImage (one HDR mip chain), the per-mip storage views, the whole-chain
-        /// sampled view, the linear sampler, and the per-level down/up + composite descriptor sets,
-        /// mirroring CreateHiZ. The result view registers into bindless for the tonemap sample.
-        void CreateBloom();
         /// @brief Builds the engine-owned fullscreen pipelines and loads the core PostProcess materials.
         ///
         /// Called once at Create; the lighting pipeline writes the HDR format, the debug-blit pipelines
@@ -1213,30 +1177,6 @@ namespace Veng::Renderer
         /// @brief View over m_HdrImage.
         Ref<ImageView> m_HdrView;
 
-        /// @brief Lighting target when TAA is active (the resolve's current-frame input).
-        ///
-        /// HdrFormat, full extent. With TAA on, the lighting pass writes here and the TAA
-        /// resolve reads it as the current frame; the resolve then writes m_HdrImage, so
-        /// bloom and tonemap read the resolved result unchanged. Null when TAA is off
-        /// (lighting writes m_HdrImage directly). Recreated on Resize/Configure.
-        Ref<Image> m_LitImage;
-        /// @brief View over m_LitImage.
-        Ref<ImageView> m_LitView;
-        /// @brief Bindless slot for the lit view; the resolve samples the current frame through it.
-        TextureHandle m_LitHandle;
-
-        /// @brief Persisted previous-frame resolved HDR the TAA resolve reprojects against.
-        ///
-        /// HdrFormat, full extent, carried across frames (not cleared per frame): the
-        /// history-copy pass refreshes it from m_HdrImage at the end of each Execute.
-        /// Null when TAA is off. Recreated on Resize/Configure, which invalidates its
-        /// contents (m_TaaHistoryReset forces the next resolve to ignore it).
-        Ref<Image> m_TaaHistoryImage;
-        /// @brief View over m_TaaHistoryImage.
-        Ref<ImageView> m_TaaHistoryView;
-        /// @brief Bindless slot for the history view; the resolve samples it at the reprojected UV.
-        TextureHandle m_TaaHistoryHandle;
-
         /// @brief Per-object screen-space motion vector target — g-buffer channel G3.
         ///
         /// RG16Sfloat, full extent. The surface pass writes it as SV_Target3 alongside the
@@ -1273,30 +1213,6 @@ namespace Veng::Renderer
         Ref<ImageView> m_LtcMagView;
         /// @brief Bindless slot for the LTC magnitude LUT.
         TextureHandle m_LtcMagHandle;
-
-        /// @brief Bloom mip-pyramid image: an HDR mip chain the compute down/up sweep operates on.
-        ///
-        /// HdrFormat, sized to m_Extent with a mip chain stopping ~3 levels short of 1×1
-        /// (Storage | Sampled). The down-sweep produces each coarser level; the up-sweep
-        /// accumulates back up. Recreated on Resize/Configure through the retire path.
-        Ref<Image> m_BloomImage;
-        /// @brief One single-mip storage view per pyramid level (the down/up dispatches write each).
-        ///
-        /// m_BloomMips[k] views exactly mip k; storage and sampled access to one mip need distinct
-        /// views, so the reads go through m_BloomSampleView and the writes through these.
-        vector<Ref<ImageView>> m_BloomMips;
-        /// @brief Whole-chain sampled view of the bloom pyramid; the down/up dispatches read a level by LOD.
-        Ref<ImageView> m_BloomSampleView;
-        /// @brief Clamp-to-edge linear sampler for the bilinear down/up taps.
-        ///
-        /// Off bindless, bound on the bloom compute set 1. Bloom's bilinear taps need linear
-        /// filtering (hi-Z's point Load does not), so HdrFormat must advertise
-        /// SampledImageFilterLinear — asserted at CreateBloom.
-        Ref<Sampler> m_BloomSampler;
-        /// @brief Bloom composite result image (full m_Extent); the tonemap samples it when bloom is on.
-        Ref<Image> m_BloomResultImage;
-        /// @brief View over m_BloomResultImage.
-        Ref<ImageView> m_BloomResultView;
 
         /// @brief Lit scene-color intermediate the SSR trace samples and the composite adds onto.
         ///
@@ -1400,19 +1316,6 @@ namespace Veng::Renderer
         /// @brief Bindless slot for the shared sampler.
         SamplerHandle m_SamplerHandle;
 
-        /// @brief Bindless slot for the bloom composite result view; registered in CreateBloom.
-        ///
-        /// The tonemap samples the composite through this handle when bloom is on. The pyramid
-        /// itself (mips + sample view) is bound off bindless on the bloom compute set 1.
-        TextureHandle m_BloomResultHandle;
-
-        /// @brief Bindless slot for the bloom pyramid mip 0 view; registered in CreateBloom.
-        ///
-        /// The DebugView::Bloom arm blits the accumulated bloom contribution through this handle —
-        /// pyramid mip 0 after the up-sweep, before composite. Registered alongside the result so
-        /// the debug blit reads it like any other bindless source.
-        TextureHandle m_BloomMip0Handle;
-
         /// @brief Engine-owned lighting pipeline writing the HDR format.
         ///
         /// Built once at Create from the core pack's shaders. The pass set Mode references the
@@ -1445,15 +1348,6 @@ namespace Veng::Renderer
         /// @brief Layout for m_SkyPipeline: the atmosphere set (set 1) + the sky push block.
         Ref<class PipelineLayout> m_SkyLayout;
 
-        /// @brief TAA resolve pipeline (reproject + neighborhood-clip + blend), writing HdrFormat.
-        Ref<class GraphicsPipeline> m_TaaResolvePipeline;
-        /// @brief Layout for m_TaaResolvePipeline: the resolve push block (no extra sets).
-        Ref<class PipelineLayout> m_TaaResolveLayout;
-        /// @brief TAA history-copy pipeline (unclamped passthrough into the history), writing HdrFormat.
-        Ref<class GraphicsPipeline> m_TaaCopyPipeline;
-        /// @brief Layout for m_TaaCopyPipeline: a texture + sampler push block.
-        Ref<class PipelineLayout> m_TaaCopyLayout;
-
         /// @brief SSAO fullscreen pipeline writing the R8 AO target.
         Ref<class GraphicsPipeline> m_SsaoPipeline;
         /// @brief Layout for the SSAO pipeline.
@@ -1476,72 +1370,6 @@ namespace Veng::Renderer
         /// Set k binds mip k's source (the depth target for k=0, hi-Z mip k-1 otherwise) and
         /// mip k's destination storage view. Recreated whenever the chain is (Resize/Configure).
         vector<Ref<DescriptorSet>> m_HiZReduceSets;
-
-        /// @brief Cod bloom downsample pipeline (bright-pass + Karis on mip 0, 13-tap below).
-        Ref<class ComputePipeline> m_BloomDownPipeline;
-        /// @brief Cod bloom upsample-accumulate pipeline (3×3 tent into the finer level).
-        Ref<class ComputePipeline> m_BloomUpPipeline;
-        /// @brief Kawase bloom downsample pipeline (bright-pass + Karis on mip 0, 5-tap below).
-        Ref<class ComputePipeline> m_BloomDownKawasePipeline;
-        /// @brief Kawase bloom upsample-accumulate pipeline (8-tap bilinear into the finer level).
-        Ref<class ComputePipeline> m_BloomUpKawasePipeline;
-        /// @brief Bloom composite compute pipeline (hdr + mip0 * Intensity → result).
-        Ref<class ComputePipeline> m_BloomCompositePipeline;
-        /// @brief Shared layout for the down/up pipelines (the shared down/up set + push block).
-        Ref<class PipelineLayout> m_BloomDownUpLayout;
-        /// @brief Layout for the composite pipeline (the distinct composite set + push block).
-        Ref<class PipelineLayout> m_BloomCompositeLayout;
-        /// @brief Set-1 layout shared by down/up: sampled source (0) + linear sampler (1) + storage dest (2).
-        ///
-        /// Off bindless — the closed bloom chain needs no global registration, and a dedicated set
-        /// sidesteps the set-0 storage-image argument-buffer path on MoltenVK.
-        Ref<DescriptorSetLayout> m_BloomDownUpSetLayout;
-        /// @brief Set-1 layout for composite: two sampled inputs (0,1) + linear sampler (2) + storage dest (3).
-        Ref<DescriptorSetLayout> m_BloomCompositeSetLayout;
-        /// @brief One downsample set per level k, binding level k's source and destination.
-        ///
-        /// Set 0 binds the HDR target as the source; set k>0 binds mip k-1. Recreated with the
-        /// pyramid (Resize/Configure).
-        vector<Ref<DescriptorSet>> m_BloomDownSets;
-        /// @brief One upsample set per finer level k, binding the coarser source (k+1) and dest (k).
-        ///
-        /// Indexed by the destination (finer) level; m_BloomUpSets[k] reads mip k+1 and writes
-        /// mip k. Recreated with the pyramid (Resize/Configure).
-        vector<Ref<DescriptorSet>> m_BloomUpSets;
-        /// @brief Composite set: HDR + bloom mip 0 sampled inputs and the result storage dest.
-        Ref<DescriptorSet> m_BloomCompositeSet;
-
-        /// @brief Auto-exposure metering compute pipeline (HDR → log-luminance histogram buffer).
-        Ref<class ComputePipeline> m_AutoExposurePipeline;
-        /// @brief Layout for the metering pipeline (its set + push block).
-        Ref<class PipelineLayout> m_AutoExposureLayout;
-        /// @brief Set-1 layout for metering: sampled HDR (0) + linear sampler (1) + histogram buffer (2).
-        Ref<DescriptorSetLayout> m_AutoExposureSetLayout;
-        /// @brief Metering set binding the HDR source, the linear sampler, and the histogram buffer.
-        ///
-        /// The HDR binding is rewritten whenever the HDR target is recreated (Resize/Configure).
-        Ref<DescriptorSet> m_AutoExposureSet;
-        /// @brief Clamp-to-edge linear sampler the metering pass reads the HDR through.
-        Ref<Sampler> m_AutoExposureSampler;
-        /// @brief Host-mapped ring buffer (framesInFlight histogram regions) the metering fills.
-        ///
-        /// The renderer reads and re-zeroes the region a completed frame wrote (framesInFlight ago),
-        /// so no host read races a device write in flight.
-        Ref<Buffer> m_AutoExposureBuffer;
-        /// @brief Byte stride between the histogram buffer's per-frame ring regions.
-        u32 m_AutoExposureStride = 0;
-        /// @brief The internal adapted luminance the exposure derives from; eased toward the metered value.
-        f32 m_AdaptedLuminance = 0.18f;
-        /// @brief The exposure this Execute resolved (manual, or metered under auto-exposure).
-        ///
-        /// Written before the graph replays, so a recorded pass (the bloom bright-pass) can scale
-        /// a display-referred knob into HDR units with the same exposure the tonemap will apply.
-        f32 m_ResolvedExposure = 1.0f;
-        /// @brief Whether the next adaptation snaps to the metered value rather than easing toward it.
-        ///
-        /// Set at Create and whenever the readback ring is stale (Resize/Configure/enable), so the
-        /// image opens correctly exposed instead of ramping up from the seed over the first seconds.
-        bool m_AutoExposureReset = true;
 
         /// @brief Debug blit for the albedo channel.
         Ref<class GraphicsPipeline> m_AlbedoBlitPipeline;
@@ -1577,10 +1405,22 @@ namespace Veng::Renderer
         /// set through RebuildSets.
         Unique<ShadowSystem> m_Shadows;
 
+        /// @brief The compute mip-pyramid bloom battery — pyramid, pipelines, sets, and the sweep.
+        ///
+        /// Its down/up set layout is reserved by the SSR blur pipeline layout, so it is constructed
+        /// before CreatePipelines; Resize rebuilds the extent-sized pyramid after the HDR target.
+        Unique<BloomPyramid> m_Bloom;
+
+        /// @brief The auto-exposure metering battery — histogram pipeline, ring, and adaptation state.
+        Unique<AutoExposureMeter> m_AutoExposure;
+
+        /// @brief The TAA resolve battery — resolve/copy pipelines, lit/history targets, reset gate.
+        Unique<TaaResolve> m_Taa;
+
         /// @brief Number of frames-in-flight the renderer-owned rings are sized for.
         ///
         /// Seeded at construction (before the ring allocations below) and read by the draw-data,
-        /// skinning-palette, cull, and auto-exposure rings.
+        /// skinning-palette, and cull rings.
         u32 m_FramesInFlight = 0;
 
         /// @brief Core tonemap PostProcess material, loaded once at Create.
@@ -1813,13 +1653,6 @@ namespace Veng::Renderer
         /// Execute jitters the projection, binds the lit/history imports, and pushes the
         /// resolve's history-validity flag only when true.
         bool m_TaaActive = false;
-
-        /// @brief Forces the next resolve to ignore history (frame 0 and after Resize/Configure).
-        ///
-        /// The history image holds undefined or stale-extent content after creation, so the
-        /// resolve must fall back to the current color until one frame has populated it. Set
-        /// by CreateTaa, cleared after each Execute, mirroring m_HiZHistoryReset.
-        bool m_TaaHistoryReset = true;
 
         /// @brief Monotonic frame counter driving the Halton jitter sequence.
         ///

@@ -3,6 +3,8 @@
 #include <Veng/Renderer/LtcLut.h>
 #include <Veng/Asset/RawAsset.h>
 
+#include "AutoExposureMeter.h"
+#include "BloomPyramid.h"
 #include "DebugDrawScenePass.h"
 #include "DrawPlan.h"
 #include "EnvironmentIbl.h"
@@ -25,6 +27,7 @@
 #include "SkyboxScenePass.h"
 #include "SkyCubemapBake.h"
 #include "SsaoScenePass.h"
+#include "TaaResolve.h"
 
 #include <algorithm>
 #include <array>
@@ -127,10 +130,6 @@ namespace Veng::Renderer
         constexpr AssetId EntityIdVertId{0xE21B8F492DADABE5ULL};
         constexpr AssetId EntityIdSkinnedVertId{0x7FB330D3ABACAE0FULL};
 
-        // The TAA resolve and history-copy fragment shaders.
-        constexpr AssetId TaaResolveFragId{0xF277BB65AEDAC33EULL};
-        constexpr AssetId TaaHistoryCopyFragId{0x07F31C1EC98A29BFULL};
-
         // The refraction scene-color copy fragment shader.
         constexpr AssetId SceneColorCopyFragId{0xBE7002B7B8E9BE5AULL};
 
@@ -140,34 +139,19 @@ namespace Veng::Renderer
         // The GPU occlusion-cull → indirect-draw compute shader.
         constexpr AssetId OcclusionCullCompId{0x5FE19B500FD44B52ULL};
 
-        // The core bloom compute shaders (downsample, upsample-accumulate, composite).
-        constexpr AssetId BloomDownCompId{0x5B8811BEAC5D9C3BULL};
-        constexpr AssetId BloomUpCompId{0x4F28282A720BC9F2ULL};
-        constexpr AssetId BloomCompositeCompId{0x533236398AB7654FULL};
-
-        // The auto-exposure metering compute shader (HDR → log-luminance histogram).
-        constexpr AssetId AutoExposureCompId{0x9BF9CB926D0595B1ULL};
-
-        // The Dual Kawase variants of the down/up sweep.
-        constexpr AssetId BloomDownKawaseCompId{0xCB1AA796A1E3BBEFULL};
-        constexpr AssetId BloomUpKawaseCompId{0x0C269FA0D5F353D2ULL};
-
         constexpr AssetId SsrTraceFragId{0xBDBD7BC71B2B1E74ULL};
         constexpr AssetId SsrBlurDownCompId{0xEE0EED485023A7F6ULL};
         constexpr AssetId SsrCompositeFragId{0x50D9ECEAE45E31A1ULL};
         constexpr AssetId SsrHiZReduceCompId{0x93DA6E42B3B5479AULL};
 
-        // Linear float HDR format for the lighting target and bloom pyramid.
+        // Linear float HDR format for the lighting target and the tail's scene-color intermediates.
         // G1 uses the same format as a sampled color target, establishing RGBA16F
         // color-attachment + sampled support on the platform.
         constexpr Format HdrFormat = Format::RGBA16Sfloat;
         constexpr ImageUsage HdrUsage = ImageUsage::ColorAttachment | ImageUsage::Sampled;
 
-        // The bloom pyramid's image usage: a compute-written, compute-read mip chain.
-        constexpr ImageUsage BloomPyramidUsage = ImageUsage::Storage | ImageUsage::Sampled;
-
-        // The coarsest pyramid level holds a ~8 px edge (2^3) rather than a degenerate
-        // 1×1 contributing nothing: the chain stops BloomTileShift levels short.
+        // The SSR reflection mip chain stops this many levels short of 1×1 — a rough reflection
+        // needs no 1-px mip. The same pyramid-depth heuristic the bloom pyramid uses internally.
         constexpr u32 BloomTileShift = 3;
 
         // Single-channel unorm format for the SSAO target; the renderer builds the
@@ -185,56 +169,6 @@ namespace Veng::Renderer
             uvec2 DestExtent;
             uvec2 SourceExtent;
         };
-
-        // The bloom downsample push: the destination mip extent, a level-0 bright-pass
-        // flag (1.0 enables bright-pass + Karis), and the soft-knee threshold. Matches
-        // bloom_down.comp.
-        struct BloomDownPush
-        {
-            uvec2 DestExtent;
-            vec2 SourceScaleUV; // source validExtent/allocExtent (dynamic-resolution sub-rect)
-            vec2 SourceMaxUV;   // source (validExtent-0.5)/allocExtent (bilinear-tap clamp)
-            f32 BrightPass;
-            f32 Threshold;
-        };
-
-        // The bloom upsample push: the destination (finer) mip extent, the source sub-rect
-        // mapping, and the spread scale. Matches bloom_up.comp.
-        struct BloomUpPush
-        {
-            uvec2 DestExtent;
-            vec2 SourceScaleUV;
-            vec2 SourceMaxUV;
-            f32 Radius;
-        };
-
-        // The bloom composite push: the result extent, the source sub-rect mapping (shared by
-        // the HDR and bloom-mip-0 inputs, both at mip-0 scale), and the bloom mix. Matches
-        // bloom_composite.comp.
-        struct BloomCompositePush
-        {
-            uvec2 DestExtent;
-            vec2 SourceScaleUV;
-            vec2 SourceMaxUV;
-            f32 Intensity;
-        };
-
-        // The auto-exposure metering push block, matching auto_exposure.comp PushConstants: the
-        // dynamic-resolution sub-rect mapping, the valid extent, the log-luminance histogram
-        // bounds, and the base element of the ring region this frame accumulates into.
-        struct AutoExposurePush
-        {
-            vec2 SourceScaleUV;
-            vec2 SourceMaxUV;
-            uvec2 ValidExtent;
-            f32 MinLogLum;
-            f32 MaxLogLum;
-            u32 HistogramBase;
-        };
-
-        // Log-luminance histogram resolution: bin 0 is the excluded black bin, bins 1..255 span
-        // [MinLogLum, MaxLogLum]. Matches BinCount in auto_exposure.comp.
-        constexpr u32 AutoExposureBinCount = 256;
 
         // The SSR trace push block, matching ssr_trace.frag PushConstants: the scene-color
         // and g-buffer bindless slots, the shared sampler, the view-constants region, the
@@ -320,9 +254,9 @@ namespace Veng::Renderer
     {
         ShadowSystem::ClampResolutions(m_Context, m_Settings);
         ResolveActiveCullMode();
-        // Frames-in-flight is spine — the renderer's own rings (draw data, palette, cull,
-        // auto-exposure) size from it, so seed it before those are allocated below. The shadow
-        // system derives its own ring depth from the context independently.
+        // Frames-in-flight is spine — the renderer's own rings (draw data, palette, cull) size
+        // from it, so seed it before those are allocated below. Each subsystem derives its own
+        // ring depth from the context independently.
         m_FramesInFlight = m_Context.GetMaxFramesInFlight();
         m_Shadows = ShadowSystem::Create(m_Context, m_Settings);
         // The IBL maps + their consumer set layout exist before the pipelines so the lighting
@@ -336,6 +270,12 @@ namespace Veng::Renderer
         // at HdrFormat (the scene-color format) so its radiance round-trips the skybox sampler.
         m_SkyBake =
             SkyCubemapBake::Create(m_Context, m_Ibl->GetSetLayout(), HdrFormat, SkyBakeFaceSize);
+        // Bloom is constructed before the pipelines because its down/up set layout is reserved by
+        // the SSR blur pipeline layout CreatePipelines builds; its extent-sized pyramid is built by
+        // Resize below (after the HDR target). TAA is grouped with it; both build their pipelines
+        // in their constructors.
+        m_Bloom = BloomPyramid::Create(m_Context, m_Assets, m_Settings.Kernel);
+        m_Taa = TaaResolve::Create(m_Context, m_Assets);
         CreatePipelines();
 
         CreateOutput();
@@ -343,11 +283,13 @@ namespace Veng::Renderer
         CreateLtcResources();
         CreateCullResources();
         CreateHdr();
-        CreateTaa();
-        CreateBloom();
+        m_Taa->Resize(m_Extent, m_Settings.TAA);
+        // The pyramid's level-0 source and composite sets bind the fresh HDR view.
+        m_Bloom->Resize(m_Extent, m_HdrView);
         CreateSsr();
         CreateRefraction();
-        CreateAutoExposure();
+        // The metering set binds the HDR target, so the meter is created after CreateHdr.
+        m_AutoExposure = AutoExposureMeter::Create(m_Context, m_Assets, m_HdrView);
         CreatePicking();
         Rebuild();
     }
@@ -362,12 +304,8 @@ namespace Veng::Renderer
         bindless.Release(m_DepthHandle);
         bindless.Release(m_HiZSampleHandle);
         bindless.Release(m_HdrHandle);
-        bindless.Release(m_LitHandle);
-        bindless.Release(m_TaaHistoryHandle);
         bindless.Release(m_VelocityHandle);
         bindless.Release(m_EmissiveHandle);
-        bindless.Release(m_BloomResultHandle);
-        bindless.Release(m_BloomMip0Handle);
         bindless.Release(m_SsrSceneHandle);
         bindless.Release(m_SsrReflectionSampleHandle);
         bindless.Release(m_SsrReflectionSamplerHandle);
@@ -445,10 +383,6 @@ namespace Veng::Renderer
         const AssetHandle<Veng::Shader> cascadeDebugFs =
             LoadShader(DeferredLightingCascadesFragId, "deferred-lighting cascade-debug fragment");
         const AssetHandle<Veng::Shader> ssaoFs = LoadShader(SsaoFragId, "SSAO fragment");
-        const AssetHandle<Veng::Shader> taaResolveFs =
-            LoadShader(TaaResolveFragId, "TAA resolve fragment");
-        const AssetHandle<Veng::Shader> taaCopyFs =
-            LoadShader(TaaHistoryCopyFragId, "TAA history-copy fragment");
         const AssetHandle<Veng::Shader> albedoBlitFs =
             LoadShader(AlbedoBlitFragId, "albedo-blit fragment");
         const AssetHandle<Veng::Shader> normalBlitFs =
@@ -552,27 +486,6 @@ namespace Veng::Renderer
                        });
         m_SsaoPipeline =
             MakePipeline("SceneRenderer SSAO Pipeline", m_SsaoLayout, ssaoFs, SsaoFormat);
-
-        // TAA resolve writes the HDR target (the resolved color the rest of the chain reads);
-        // its push carries the bindless slots, view-constants region, history flag, and extent.
-        m_TaaResolveLayout = PipelineLayout::Create(
-            m_Context, {
-                           .Name = "SceneRenderer TAA Resolve Layout",
-                           .PushConstantRanges = {PushConstantRange::Of<TaaResolvePush>(
-                               ShaderStage::Fragment)},
-                       });
-        m_TaaResolvePipeline = MakePipeline("SceneRenderer TAA Resolve Pipeline",
-                                            m_TaaResolveLayout, taaResolveFs, HdrFormat);
-
-        // TAA history-copy writes the persisted history target (HDR, unclamped).
-        m_TaaCopyLayout = PipelineLayout::Create(
-            m_Context,
-            {
-                .Name = "SceneRenderer TAA History Copy Layout",
-                .PushConstantRanges = {PushConstantRange::Of<TaaCopyPush>(ShaderStage::Fragment)},
-            });
-        m_TaaCopyPipeline = MakePipeline("SceneRenderer TAA History Copy Pipeline", m_TaaCopyLayout,
-                                         taaCopyFs, HdrFormat);
 
         // The refraction scene-color copy writes the intermediate translucent materials sample.
         const AssetHandle<Veng::Shader> sceneColorCopyFs =
@@ -723,114 +636,6 @@ namespace Veng::Renderer
                 .ShaderStage = {.Stage = ShaderStage::Compute, .Module = hiZReduceCs.Get()->Module},
             });
 
-        // The bloom compute pipelines. Set 1 is off bindless (the closed bloom chain needs
-        // no global registration, and a dedicated set sidesteps the set-0 storage-image
-        // argument-buffer path on MoltenVK). Down/up share one set layout (sampled source +
-        // linear sampler + storage dest); composite needs a distinct one (two sampled inputs).
-        const AssetHandle<Veng::Shader> bloomDownCs =
-            LoadShader(BloomDownCompId, "bloom downsample");
-        const AssetHandle<Veng::Shader> bloomUpCs = LoadShader(BloomUpCompId, "bloom upsample");
-        const AssetHandle<Veng::Shader> bloomDownKawaseCs =
-            LoadShader(BloomDownKawaseCompId, "bloom downsample (Kawase)");
-        const AssetHandle<Veng::Shader> bloomUpKawaseCs =
-            LoadShader(BloomUpKawaseCompId, "bloom upsample (Kawase)");
-        const AssetHandle<Veng::Shader> bloomCompositeCs =
-            LoadShader(BloomCompositeCompId, "bloom composite");
-
-        m_BloomDownUpSetLayout = DescriptorSetLayout::Create(
-            m_Context, {
-                           .Name = "SceneRenderer Bloom DownUp Set Layout",
-                           .Bindings =
-                               {
-                                   {.Binding = 0,
-                                    .Type = DescriptorType::SampledImage,
-                                    .Count = 1,
-                                    .Stages = ShaderStage::Compute},
-                                   {.Binding = 1,
-                                    .Type = DescriptorType::Sampler,
-                                    .Count = 1,
-                                    .Stages = ShaderStage::Compute},
-                                   {.Binding = 2,
-                                    .Type = DescriptorType::StorageImage,
-                                    .Count = 1,
-                                    .Stages = ShaderStage::Compute},
-                               },
-                       });
-        m_BloomCompositeSetLayout = DescriptorSetLayout::Create(
-            m_Context, {
-                           .Name = "SceneRenderer Bloom Composite Set Layout",
-                           .Bindings =
-                               {
-                                   {.Binding = 0,
-                                    .Type = DescriptorType::SampledImage,
-                                    .Count = 1,
-                                    .Stages = ShaderStage::Compute},
-                                   {.Binding = 1,
-                                    .Type = DescriptorType::SampledImage,
-                                    .Count = 1,
-                                    .Stages = ShaderStage::Compute},
-                                   {.Binding = 2,
-                                    .Type = DescriptorType::Sampler,
-                                    .Count = 1,
-                                    .Stages = ShaderStage::Compute},
-                                   {.Binding = 3,
-                                    .Type = DescriptorType::StorageImage,
-                                    .Count = 1,
-                                    .Stages = ShaderStage::Compute},
-                               },
-                       });
-
-        m_BloomDownUpLayout = PipelineLayout::Create(
-            m_Context,
-            {
-                .Name = "SceneRenderer Bloom DownUp Layout",
-                .DescriptorSetLayouts = {m_BloomDownUpSetLayout},
-                .PushConstantRanges = {PushConstantRange::Of<BloomDownPush>(ShaderStage::Compute)},
-            });
-        m_BloomCompositeLayout = PipelineLayout::Create(
-            m_Context, {
-                           .Name = "SceneRenderer Bloom Composite Layout",
-                           .DescriptorSetLayouts = {m_BloomCompositeSetLayout},
-                           .PushConstantRanges = {PushConstantRange::Of<BloomCompositePush>(
-                               ShaderStage::Compute)},
-                       });
-
-        m_BloomDownPipeline = ComputePipeline::Create(
-            m_Context,
-            {
-                .Name = "SceneRenderer Bloom Down Pipeline",
-                .PipelineLayout = m_BloomDownUpLayout,
-                .ShaderStage = {.Stage = ShaderStage::Compute, .Module = bloomDownCs.Get()->Module},
-            });
-        m_BloomUpPipeline = ComputePipeline::Create(
-            m_Context,
-            {
-                .Name = "SceneRenderer Bloom Up Pipeline",
-                .PipelineLayout = m_BloomDownUpLayout,
-                .ShaderStage = {.Stage = ShaderStage::Compute, .Module = bloomUpCs.Get()->Module},
-            });
-        m_BloomDownKawasePipeline = ComputePipeline::Create(
-            m_Context, {
-                           .Name = "SceneRenderer Bloom Down Kawase Pipeline",
-                           .PipelineLayout = m_BloomDownUpLayout,
-                           .ShaderStage = {.Stage = ShaderStage::Compute,
-                                           .Module = bloomDownKawaseCs.Get()->Module},
-                       });
-        m_BloomUpKawasePipeline = ComputePipeline::Create(
-            m_Context, {
-                           .Name = "SceneRenderer Bloom Up Kawase Pipeline",
-                           .PipelineLayout = m_BloomDownUpLayout,
-                           .ShaderStage = {.Stage = ShaderStage::Compute,
-                                           .Module = bloomUpKawaseCs.Get()->Module},
-                       });
-        m_BloomCompositePipeline = ComputePipeline::Create(
-            m_Context, {
-                           .Name = "SceneRenderer Bloom Composite Pipeline",
-                           .PipelineLayout = m_BloomCompositeLayout,
-                           .ShaderStage = {.Stage = ShaderStage::Compute,
-                                           .Module = bloomCompositeCs.Get()->Module},
-                       });
-
         // SSR pipelines. The trace and composite are fullscreen graphics passes reading the
         // scene/g-buffer through set-0 bindless (so set 0 is auto-reserved, no extra sets); the
         // blur reuses the bloom down/up set layout (sampled source + linear sampler + storage dest).
@@ -874,7 +679,7 @@ namespace Veng::Renderer
             m_Context,
             {
                 .Name = "SceneRenderer SSR Blur Layout",
-                .DescriptorSetLayouts = {m_BloomDownUpSetLayout},
+                .DescriptorSetLayouts = {m_Bloom->GetDownUpSetLayout()},
                 .PushConstantRanges = {PushConstantRange::Of<SsrBlurPush>(ShaderStage::Compute)},
             });
         m_SsrBlurPipeline = ComputePipeline::Create(
@@ -1191,9 +996,9 @@ namespace Veng::Renderer
         // The cull set samples the pyramid through binding 0, and the pyramid is recreated on
         // Resize/Configure — but the live set may still be referenced by an in-flight frame's
         // command buffer and its bindings are not update-after-bind, so bind the new view into
-        // a fresh set rather than writing the old one in place (the WriteAutoExposureHdrBinding
-        // pattern; the replaced set retires through the deferred-destruction path, and the cull
-        // pass reads the member at record time). Skipped on the first CreateHiZ, before
+        // a fresh set rather than writing the old one in place (the replaced set retires through
+        // the deferred-destruction path, and the cull pass reads the member at record time).
+        // Skipped on the first CreateHiZ, before
         // CreateCullResources has made the set and the buffers it binds.
         if (m_CullSet)
         {
@@ -1382,268 +1187,6 @@ namespace Veng::Renderer
         m_HdrHandle = bindless.Register(m_HdrView);
     }
 
-    void SceneRenderer::CreateTaa()
-    {
-        BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
-
-        // Recreating (or releasing) invalidates the persisted history, so the next resolve
-        // must ignore it until a frame repopulates it.
-        m_TaaHistoryReset = true;
-
-        bindless.Release(m_LitHandle);
-        bindless.Release(m_TaaHistoryHandle);
-        m_LitHandle = {};
-        m_TaaHistoryHandle = {};
-
-        if (m_Settings.TAA)
-        {
-            m_LitImage = Image::Create(m_Context, {
-                                                      .Name = "SceneRenderer Lit",
-                                                      .Extent = {m_Extent.x, m_Extent.y, 1},
-                                                      .Format = HdrFormat,
-                                                      .Usage = HdrUsage,
-                                                  });
-            m_LitView = ImageView::Create(m_Context,
-                                          {.Name = "SceneRenderer Lit View", .Image = m_LitImage});
-            m_LitHandle = bindless.Register(m_LitView);
-
-            m_TaaHistoryImage = Image::Create(m_Context, {
-                                                             .Name = "SceneRenderer TAA History",
-                                                             .Extent = {m_Extent.x, m_Extent.y, 1},
-                                                             .Format = HdrFormat,
-                                                             .Usage = HdrUsage,
-                                                         });
-            m_TaaHistoryView = ImageView::Create(
-                m_Context, {.Name = "SceneRenderer TAA History View", .Image = m_TaaHistoryImage});
-            m_TaaHistoryHandle = bindless.Register(m_TaaHistoryView);
-        }
-        else
-        {
-            // Drop the resolve targets when TAA is off so the memory is not held for an unused path.
-            m_LitImage.reset();
-            m_LitView.reset();
-            m_TaaHistoryImage.reset();
-            m_TaaHistoryView.reset();
-        }
-    }
-
-    void SceneRenderer::CreateBloom()
-    {
-        // Bloom operates in linear HDR space before tonemap, sampling bilinearly: the wide
-        // COD/tent taps land between texels, so the pyramid's HdrFormat must advertise linear
-        // filtering — a capability the point-Load hi-Z reduction never exercises.
-        VE_ASSERT(m_Context.IsFormatLinearFilterSupported(HdrFormat),
-                  "SceneRenderer: bloom needs SampledImageFilterLinear on the HDR format");
-
-        BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
-        bindless.Release(m_BloomResultHandle);
-        bindless.Release(m_BloomMip0Handle);
-
-        // The pyramid stops BloomTileShift levels short of 1×1 so the coarsest level holds a
-        // ~8 px edge; the max(1u, …) floor guards a tiny extent (mirroring hi-Z's guard).
-        const u32 maxDim = std::max(m_Extent.x, m_Extent.y);
-        const u32 mipCount =
-            maxDim == 0 ? 1u : std::max(1u, std::bit_width(maxDim) - BloomTileShift);
-
-        m_BloomImage = Image::Create(m_Context, {
-                                                    .Name = "SceneRenderer Bloom Pyramid",
-                                                    .Extent = {m_Extent.x, m_Extent.y, 1},
-                                                    .MipLevels = mipCount,
-                                                    .Format = HdrFormat,
-                                                    .Usage = BloomPyramidUsage,
-                                                });
-
-        // One single-mip storage view per level (the down/up dispatches write each), plus a
-        // whole-chain sampled view for the bilinear reads. Storage and sampled access to one
-        // mip need distinct views.
-        m_BloomMips.clear();
-        m_BloomMips.reserve(mipCount);
-        for (u32 level = 0; level < mipCount; level++)
-        {
-            m_BloomMips.push_back(ImageView::Create(
-                m_Context, {
-                               .Name = fmt::format("SceneRenderer Bloom Mip {} View", level),
-                               .Image = m_BloomImage,
-                               .BaseMipLevel = level,
-                               .MipLevels = 1,
-                           }));
-        }
-        m_BloomSampleView =
-            ImageView::Create(m_Context, {
-                                             .Name = "SceneRenderer Bloom Sample View",
-                                             .Image = m_BloomImage,
-                                             .MipLevels = mipCount,
-                                         });
-
-        // Clamp-to-edge linear sampler for the bilinear taps; MaxLod covers every level so a
-        // per-mip sampled source view's level 0 always resolves.
-        m_BloomSampler = Sampler::Create(m_Context, {
-                                                        .Name = "SceneRenderer Bloom Sampler",
-                                                        .MagFilter = Filter::Linear,
-                                                        .MinFilter = Filter::Linear,
-                                                        .MipmapMode = MipmapMode::Nearest,
-                                                        .AddressModeU = AddressMode::ClampToEdge,
-                                                        .AddressModeV = AddressMode::ClampToEdge,
-                                                        .AddressModeW = AddressMode::ClampToEdge,
-                                                        .AnisotropyEnabled = false,
-                                                        .MaxLod = static_cast<f32>(mipCount),
-                                                    });
-
-        // The full-resolution composite result the tonemap samples; registered into bindless.
-        m_BloomResultImage = Image::Create(m_Context, {
-                                                          .Name = "SceneRenderer Bloom Result",
-                                                          .Extent = {m_Extent.x, m_Extent.y, 1},
-                                                          .Format = HdrFormat,
-                                                          .Usage = HdrUsage | ImageUsage::Storage,
-                                                      });
-        m_BloomResultView = ImageView::Create(
-            m_Context, {.Name = "SceneRenderer Bloom Result", .Image = m_BloomResultImage});
-        m_BloomResultHandle = bindless.Register(m_BloomResultView);
-
-        // The DebugView::Bloom arm samples pyramid mip 0 (post up-sweep) as a bindless source.
-        m_BloomMip0Handle = bindless.Register(m_BloomMips[0]);
-
-        // Per-level descriptor sets. A down step binds the source (HDR for level 0, mip k-1
-        // otherwise) + sampler + the destination mip; an up step binds the coarser mip k+1 +
-        // sampler + the finer destination mip k. The HDR source is bound per Execute by the
-        // down-set-0 write below (it re-registers each Resize/Configure too).
-        m_BloomDownSets.clear();
-        m_BloomDownSets.reserve(mipCount);
-        for (u32 level = 0; level < mipCount; level++)
-        {
-            Ref<DescriptorSet> set = DescriptorSet::Create(
-                m_Context, {
-                               .Name = fmt::format("SceneRenderer Bloom Down Set {}", level),
-                               .Layout = m_BloomDownUpSetLayout,
-                           });
-            const Ref<ImageView>& source = level == 0 ? m_HdrView : m_BloomMips[level - 1];
-            set->Write(0, source);
-            set->Write(1, m_BloomSampler);
-            set->Write(2, m_BloomMips[level]);
-            m_BloomDownSets.push_back(std::move(set));
-        }
-
-        // Up sets indexed by the finer destination level k (0..mipCount-2): read mip k+1,
-        // write mip k.
-        m_BloomUpSets.clear();
-        if (mipCount > 1)
-        {
-            m_BloomUpSets.reserve(mipCount - 1);
-            for (u32 level = 0; level + 1 < mipCount; level++)
-            {
-                Ref<DescriptorSet> set = DescriptorSet::Create(
-                    m_Context, {
-                                   .Name = fmt::format("SceneRenderer Bloom Up Set {}", level),
-                                   .Layout = m_BloomDownUpSetLayout,
-                               });
-                set->Write(0, m_BloomMips[level + 1]);
-                set->Write(1, m_BloomSampler);
-                set->Write(2, m_BloomMips[level]);
-                m_BloomUpSets.push_back(std::move(set));
-            }
-        }
-
-        // Composite: HDR + bloom mip 0 sampled inputs, the linear sampler, and the result dest.
-        m_BloomCompositeSet =
-            DescriptorSet::Create(m_Context, {
-                                                 .Name = "SceneRenderer Bloom Composite Set",
-                                                 .Layout = m_BloomCompositeSetLayout,
-                                             });
-        m_BloomCompositeSet->Write(0, m_HdrView);
-        m_BloomCompositeSet->Write(1, m_BloomMips[0]);
-        m_BloomCompositeSet->Write(2, m_BloomSampler);
-        m_BloomCompositeSet->Write(3, m_BloomResultView);
-    }
-
-    void SceneRenderer::CreateAutoExposure()
-    {
-        const AssetResult<AssetHandle<Veng::Shader>> meterCs =
-            m_Assets.LoadSync<Veng::Shader>(AutoExposureCompId);
-        VE_ASSERT(meterCs.has_value(), "SceneRenderer: auto-exposure shader load failed: {}",
-                  meterCs.error().Detail);
-
-        // A host-mapped storage ring: one histogram region per frame-in-flight. The metering pass
-        // accumulates the current frame's region; the renderer reads the region a completed frame
-        // wrote (framesInFlight ago) and re-zeroes it before this frame's pass, so a host read
-        // never races a device write still in flight.
-        m_AutoExposureStride = AutoExposureBinCount * sizeof(u32);
-        m_AutoExposureBuffer = Buffer::Create(
-            m_Context, {
-                           .Name = "SceneRenderer AutoExposure Histogram",
-                           .Size = static_cast<u64>(m_AutoExposureStride) * m_FramesInFlight,
-                           .Usage = BufferUsage::Storage,
-                           .HostMapped = true,
-                       });
-        std::memset(m_AutoExposureBuffer->GetMappedData(), 0,
-                    static_cast<usize>(m_AutoExposureStride) * m_FramesInFlight);
-
-        m_AutoExposureSampler =
-            Sampler::Create(m_Context, {
-                                           .Name = "SceneRenderer AutoExposure Sampler",
-                                           .MagFilter = Filter::Linear,
-                                           .MinFilter = Filter::Linear,
-                                           .MipmapMode = MipmapMode::Nearest,
-                                           .AddressModeU = AddressMode::ClampToEdge,
-                                           .AddressModeV = AddressMode::ClampToEdge,
-                                           .AddressModeW = AddressMode::ClampToEdge,
-                                           .AnisotropyEnabled = false,
-                                       });
-
-        m_AutoExposureSetLayout = DescriptorSetLayout::Create(
-            m_Context, {
-                           .Name = "SceneRenderer AutoExposure Set Layout",
-                           .Bindings =
-                               {
-                                   {.Binding = 0,
-                                    .Type = DescriptorType::SampledImage,
-                                    .Count = 1,
-                                    .Stages = ShaderStage::Compute},
-                                   {.Binding = 1,
-                                    .Type = DescriptorType::Sampler,
-                                    .Count = 1,
-                                    .Stages = ShaderStage::Compute},
-                                   {.Binding = 2,
-                                    .Type = DescriptorType::StorageBuffer,
-                                    .Count = 1,
-                                    .Stages = ShaderStage::Compute},
-                               },
-                       });
-        m_AutoExposureLayout = PipelineLayout::Create(
-            m_Context, {
-                           .Name = "SceneRenderer AutoExposure Layout",
-                           .DescriptorSetLayouts = {m_AutoExposureSetLayout},
-                           .PushConstantRanges = {PushConstantRange::Of<AutoExposurePush>(
-                               ShaderStage::Compute)},
-                       });
-        m_AutoExposurePipeline = ComputePipeline::Create(
-            m_Context, {
-                           .Name = "SceneRenderer AutoExposure Pipeline",
-                           .PipelineLayout = m_AutoExposureLayout,
-                           .ShaderStage = {.Stage = ShaderStage::Compute,
-                                           .Module = meterCs.value().Get()->Module},
-                       });
-
-        WriteAutoExposureHdrBinding();
-    }
-
-    void SceneRenderer::WriteAutoExposureHdrBinding()
-    {
-        // The HDR target is recreated on every Resize, but the live set may still be referenced
-        // by an in-flight frame's command buffer, and its bindings are not update-after-bind —
-        // so bind the new view into a fresh set rather than writing the old one in place. The
-        // replaced set retires through the deferred-destruction path (the compiled graph's pass
-        // capture keeps it alive through its last recorded use), and the Rebuild that follows a
-        // Resize recaptures this member.
-        m_AutoExposureSet =
-            DescriptorSet::Create(m_Context, {
-                                                 .Name = "SceneRenderer AutoExposure Set",
-                                                 .Layout = m_AutoExposureSetLayout,
-                                             });
-        m_AutoExposureSet->Write(0, m_HdrView);
-        m_AutoExposureSet->Write(1, m_AutoExposureSampler);
-        m_AutoExposureSet->Write(2, m_AutoExposureBuffer);
-    }
-
     uvec2 SceneRenderer::SsrRenderExtent() const
     {
         if (m_Settings.SsrResolutionScale == SceneRendererSettings::SsrResolution::Half)
@@ -1810,7 +1353,7 @@ namespace Veng::Renderer
                 Ref<DescriptorSet> set = DescriptorSet::Create(
                     m_Context, {
                                    .Name = fmt::format("SceneRenderer SSR Blur Set {}", level),
-                                   .Layout = m_BloomDownUpSetLayout,
+                                   .Layout = m_Bloom->GetDownUpSetLayout(),
                                });
                 set->Write(0, m_SsrReflectionMips[level - 1]);
                 set->Write(1, m_SsrReflectionSampler);
@@ -1887,7 +1430,7 @@ namespace Veng::Renderer
             m_Settings.Mode == DebugView::Final && m_Settings.AutoExposure;
         if (autoExposureActive && !m_AutoExposureActive)
         {
-            m_AutoExposureReset = true;
+            m_AutoExposure->RequestReset();
         }
         m_AutoExposureActive = autoExposureActive;
 
@@ -2030,7 +1573,7 @@ namespace Veng::Renderer
             m_RefractionDepthId = graph.Import("SceneRenderer Refraction Depth");
         }
         const TextureHandle lightingTargetHandle =
-            taaActive ? m_LitHandle : (ssrActive ? m_SsrSceneHandle : m_HdrHandle);
+            taaActive ? m_Taa->GetLitHandle() : (ssrActive ? m_SsrSceneHandle : m_HdrHandle);
 
         ResourceId shadowId{};
         if (shadowActive)
@@ -2050,8 +1593,8 @@ namespace Veng::Renderer
         {
             // The pyramid imports one per-mip slot per level (the down/up sweep declares
             // per-level access on these); the result is a single full-resolution import.
-            m_BloomChainId = graph.ImportImageMips("SceneRenderer Bloom Pyramid",
-                                                   static_cast<u32>(m_BloomMips.size()));
+            m_BloomChainId =
+                graph.ImportImageMips("SceneRenderer Bloom Pyramid", m_Bloom->GetMipCount());
             m_BloomResultId = graph.Import("SceneRenderer Bloom Result");
         }
 
@@ -2232,9 +1775,10 @@ namespace Veng::Renderer
                 // The resolve writes the scene-color target SSR reads (the HDR target directly
                 // when SSR is off); the SSR composite then writes the HDR target.
                 m_Passes.push_back(CreateUnique<TaaScenePass>(
-                    m_Context, m_TaaResolvePipeline, m_TaaCopyPipeline, litId, taaHistoryId,
-                    sceneColorId, depthId, velocityId, m_LitHandle, m_TaaHistoryHandle,
-                    m_VelocityHandle, &m_TaaHistoryReset, m_Extent));
+                    m_Context, m_Taa->GetResolvePipeline(), m_Taa->GetCopyPipeline(), litId,
+                    taaHistoryId, sceneColorId, depthId, velocityId, m_Taa->GetLitHandle(),
+                    m_Taa->GetHistoryHandle(), m_VelocityHandle, m_Taa->GetHistoryResetPointer(),
+                    m_Extent));
             }
 
             // The point-field pass accumulates the scene's live fields into the final HDR color
@@ -2260,7 +1804,7 @@ namespace Veng::Renderer
                 // The bloom down/up/composite compute sweep is declared into the graph by
                 // the tail anchor in the pass loop; here the tonemap just reads its result.
                 tonemapSourceId = m_BloomResultId;
-                tonemapSourceHandle = m_BloomResultHandle;
+                tonemapSourceHandle = m_Bloom->GetResultHandle();
             }
 
             // The HDR tail declares just before the tonemap — never after it, even when a
@@ -2345,7 +1889,7 @@ namespace Veng::Renderer
             // run first — lighting (which adds the g-buffer emissive channel), then the
             // sky/atmosphere composites (each gated on its own toggle, writing the lit target before
             // the tail) — so the pyramid blooms the scene the Final view blooms. The force-wired
-            // bloom sweep (DeclareBloom, after the last pass)
+            // bloom sweep (BloomPyramid::Declare, after the last pass)
             // writes the pyramid, and the terminal blit shows mip 0 after the up-sweep — the
             // accumulated bloom before composite.
             m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
@@ -2437,7 +1981,7 @@ namespace Veng::Renderer
             .Ssao = m_SsaoId,
             .SsaoHandle = ssaoHandle,
             .BloomMip0 = bloomActive ? m_BloomChainId.Level(0) : ResourceId{},
-            .BloomMip0Handle = m_BloomMip0Handle,
+            .BloomMip0Handle = m_Bloom->GetMip0Handle(),
             .Velocity = velocityId,
             .VelocityHandle = m_VelocityHandle,
             .GBufferEmissive = emissiveId,
@@ -2498,11 +2042,12 @@ namespace Veng::Renderer
                 }
                 if (bloomActive)
                 {
-                    DeclareBloom(graph);
+                    m_Bloom->Declare(graph, m_HdrId, m_BloomChainId, m_BloomResultId,
+                                     *m_AutoExposure);
                 }
                 if (autoExposureActive)
                 {
-                    DeclareAutoExposure(graph);
+                    m_AutoExposure->Declare(graph, m_HdrId, m_AutoExposureId, m_Extent);
                 }
             }
 
@@ -2764,213 +2309,6 @@ namespace Veng::Renderer
                     cmd.Dispatch((push.DestExtent.x + 7) / 8, (push.DestExtent.y + 7) / 8, 1);
                 });
         }
-    }
-
-    namespace
-    {
-        // The dynamic-resolution sub-rect mapping for one mip level of a high-water-mark-allocated
-        // chain: the valid extent at that level, and the (scale, clamp) UVs mapping a [0,1] valid
-        // UV into the level's valid region. At full resolution ScaleUV is 1 and MaxUV ~1.
-        struct MipSubRect
-        {
-            uvec2 ValidExtent;
-            vec2 ScaleUV;
-            vec2 MaxUV;
-        };
-
-        MipSubRect ComputeMipSubRect(uvec2 validBase, uvec2 allocBase, u32 level)
-        {
-            const uvec2 valid{std::max(validBase.x >> level, 1u),
-                              std::max(validBase.y >> level, 1u)};
-            const uvec2 alloc{std::max(allocBase.x >> level, 1u),
-                              std::max(allocBase.y >> level, 1u)};
-            return {
-                .ValidExtent = valid,
-                .ScaleUV = vec2(valid) / vec2(alloc),
-                .MaxUV = (vec2(valid) - 0.5f) / vec2(alloc),
-            };
-        }
-    }
-
-    void SceneRenderer::DeclareBloom(RenderGraph& graph)
-    {
-        const u32 mipCount = static_cast<u32>(m_BloomMips.size());
-
-        // Down-sweep: dispatch k samples level k's source (HDR for k=0, mip k-1 otherwise)
-        // and writes mip k. Mip 0 fuses the bright-pass + Karis; deeper levels are the plain
-        // 13-tap. The per-mip graph surface derives the read-after-write barrier between
-        // dispatch k's write and dispatch k+1's read.
-        const uvec2 allocExtent = m_Extent;
-        for (u32 level = 0; level < mipCount; level++)
-        {
-            RenderGraph::PassBuilder builder =
-                graph.AddComputePass(fmt::format("Bloom Down Mip {}", level));
-            if (level == 0)
-            {
-                builder.Sample(m_HdrId);
-            }
-            else
-            {
-                builder.Sample(m_BloomChainId.Level(level - 1));
-            }
-            builder.StorageWrite(m_BloomChainId.Level(level));
-
-            const Ref<ComputePipeline> pipeline = m_Settings.Kernel == BloomKernel::Kawase
-                                                      ? m_BloomDownKawasePipeline
-                                                      : m_BloomDownPipeline;
-            const Ref<DescriptorSet> set = m_BloomDownSets[level];
-            const f32 brightPass = level == 0 ? 1.0f : 0.0f;
-            // The source is mip level-1 (the HDR for level 0); its dynamic-resolution sub-rect
-            // ratio is at the source's level. Computed at record time from this frame's extent.
-            const u32 srcLevel = level == 0 ? 0u : level - 1;
-            builder.Execute(
-                [this, pipeline, set, level, srcLevel, allocExtent, brightPass](PassContext& inner)
-                {
-                    const auto* view = static_cast<const SceneView*>(inner.UserData());
-                    VE_ASSERT(view != nullptr, "Bloom down pass: null SceneView");
-                    const MipSubRect dst =
-                        ComputeMipSubRect(view->RenderExtent, allocExtent, level);
-                    const MipSubRect src =
-                        ComputeMipSubRect(view->RenderExtent, allocExtent, srcLevel);
-                    CommandBuffer& cmd = inner.Cmd();
-                    cmd.BindPipeline(pipeline);
-                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
-                        .Sets = {set},
-                        .FirstSet = 1, // set 0 is reserved for the bindless registry
-                        .PipelineBindPoint = PipelineBindPoint::Compute,
-                    });
-                    cmd.PushConstants(BloomDownPush{
-                        .DestExtent = dst.ValidExtent,
-                        .SourceScaleUV = src.ScaleUV,
-                        .SourceMaxUV = src.MaxUV,
-                        .BrightPass = brightPass,
-                        // The authored threshold is display-referred (1.0 = the post-exposure
-                        // white point); dividing by the frame's resolved exposure moves it into
-                        // HDR units, so it tracks the metered exposure across lighting regimes.
-                        .Threshold = view->BloomThreshold / std::max(m_ResolvedExposure, 1e-5f),
-                    });
-                    cmd.Dispatch((dst.ValidExtent.x + 7) / 8, (dst.ValidExtent.y + 7) / 8, 1);
-                });
-        }
-
-        // Up-sweep: from the coarsest finer level down to mip 0, dispatch k samples the
-        // coarser mip k+1 (ShaderReadOnly) and read-modify-writes mip k (General) — two
-        // subresources of one image in one pass. The pass declares both a Sample on mip k+1
-        // and a StorageWrite on mip k; the StorageWrite orders it after the down-sweep that
-        // wrote mip k (a General→General write-after-write barrier the graph derives), and a
-        // per-level barrier before the next finer up-step reads mip k.
-        for (u32 level = mipCount - 1; level-- > 0;)
-        {
-            RenderGraph::PassBuilder builder =
-                graph.AddComputePass(fmt::format("Bloom Up Mip {}", level));
-            builder.Sample(m_BloomChainId.Level(level + 1));
-            builder.StorageWrite(m_BloomChainId.Level(level));
-
-            const Ref<ComputePipeline> pipeline = m_Settings.Kernel == BloomKernel::Kawase
-                                                      ? m_BloomUpKawasePipeline
-                                                      : m_BloomUpPipeline;
-            const Ref<DescriptorSet> set = m_BloomUpSets[level];
-            const u32 srcLevel = level + 1;
-            builder.Execute(
-                [pipeline, set, level, srcLevel, allocExtent](PassContext& inner)
-                {
-                    const auto* view = static_cast<const SceneView*>(inner.UserData());
-                    VE_ASSERT(view != nullptr, "Bloom up pass: null SceneView");
-                    const MipSubRect dst =
-                        ComputeMipSubRect(view->RenderExtent, allocExtent, level);
-                    const MipSubRect src =
-                        ComputeMipSubRect(view->RenderExtent, allocExtent, srcLevel);
-                    CommandBuffer& cmd = inner.Cmd();
-                    cmd.BindPipeline(pipeline);
-                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
-                        .Sets = {set},
-                        .FirstSet = 1,
-                        .PipelineBindPoint = PipelineBindPoint::Compute,
-                    });
-                    cmd.PushConstants(BloomUpPush{
-                        .DestExtent = dst.ValidExtent,
-                        .SourceScaleUV = src.ScaleUV,
-                        .SourceMaxUV = src.MaxUV,
-                        .Radius = view->BloomRadius,
-                    });
-                    cmd.Dispatch((dst.ValidExtent.x + 7) / 8, (dst.ValidExtent.y + 7) / 8, 1);
-                });
-        }
-
-        // Composite over the valid sub-rect: result = hdr + mip0 * Intensity. Samples the HDR
-        // target and bloom mip 0 (both at mip-0 sub-rect scale) and stores into the result the
-        // terminal tonemap upscales.
-        {
-            RenderGraph::PassBuilder builder = graph.AddComputePass("Bloom Composite");
-            builder.Sample(m_HdrId);
-            builder.Sample(m_BloomChainId.Level(0));
-            builder.StorageWrite(m_BloomResultId);
-
-            const Ref<ComputePipeline> pipeline = m_BloomCompositePipeline;
-            const Ref<DescriptorSet> set = m_BloomCompositeSet;
-            builder.Execute(
-                [pipeline, set, allocExtent](PassContext& inner)
-                {
-                    const auto* view = static_cast<const SceneView*>(inner.UserData());
-                    VE_ASSERT(view != nullptr, "Bloom composite pass: null SceneView");
-                    const MipSubRect r = ComputeMipSubRect(view->RenderExtent, allocExtent, 0);
-                    CommandBuffer& cmd = inner.Cmd();
-                    cmd.BindPipeline(pipeline);
-                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
-                        .Sets = {set},
-                        .FirstSet = 1,
-                        .PipelineBindPoint = PipelineBindPoint::Compute,
-                    });
-                    cmd.PushConstants(BloomCompositePush{
-                        .DestExtent = r.ValidExtent,
-                        .SourceScaleUV = r.ScaleUV,
-                        .SourceMaxUV = r.MaxUV,
-                        .Intensity = view->BloomIntensity,
-                    });
-                    cmd.Dispatch((r.ValidExtent.x + 7) / 8, (r.ValidExtent.y + 7) / 8, 1);
-                });
-        }
-    }
-
-    void SceneRenderer::DeclareAutoExposure(RenderGraph& graph)
-    {
-        // One thread per lit-HDR texel scatters into a log-luminance histogram. The
-        // StorageBufferWrite on the histogram import schedules the pass (it has no image output)
-        // and orders it after the HDR write via the graph-derived barrier; the host reads and
-        // re-zeroes the histogram a frame later.
-        RenderGraph::PassBuilder builder = graph.AddComputePass("Auto Exposure Metering");
-        builder.Sample(m_HdrId);
-        builder.StorageBufferWrite(m_AutoExposureId);
-
-        const Ref<ComputePipeline> pipeline = m_AutoExposurePipeline;
-        const Ref<DescriptorSet> set = m_AutoExposureSet;
-        const uvec2 allocExtent = m_Extent;
-        const u32 stride = m_AutoExposureStride;
-        builder.Execute(
-            [this, pipeline, set, allocExtent, stride](PassContext& inner)
-            {
-                const auto* view = static_cast<const SceneView*>(inner.UserData());
-                VE_ASSERT(view != nullptr, "Auto exposure pass: null SceneView");
-                // Map pixel-center UVs into the HDR's valid sub-rect (identity at full res).
-                const MipSubRect r = ComputeMipSubRect(view->RenderExtent, allocExtent, 0);
-                const u32 frameIndex = m_Context.GetCurrentFrameInFlight();
-                CommandBuffer& cmd = inner.Cmd();
-                cmd.BindPipeline(pipeline);
-                cmd.BindDescriptorSets(DescriptorSetBindInfo{
-                    .Sets = {set},
-                    .FirstSet = 1,
-                    .PipelineBindPoint = PipelineBindPoint::Compute,
-                });
-                cmd.PushConstants(AutoExposurePush{
-                    .SourceScaleUV = r.ScaleUV,
-                    .SourceMaxUV = r.MaxUV,
-                    .ValidExtent = r.ValidExtent,
-                    .MinLogLum = std::log2(std::max(view->AutoExposureMinLuminance, 1e-5f)),
-                    .MaxLogLum = std::log2(std::max(view->AutoExposureMaxLuminance, 1e-4f)),
-                    .HistogramBase = frameIndex * (stride / static_cast<u32>(sizeof(u32))),
-                });
-                cmd.Dispatch((r.ValidExtent.x + 15) / 16, (r.ValidExtent.y + 15) / 16, 1);
-            });
     }
 
     void SceneRenderer::DeclareSsr(RenderGraph& graph)
@@ -3691,14 +3029,14 @@ namespace Veng::Renderer
         CreateOutput();
         CreateGBuffer();
         CreateHdr();
-        CreateTaa();
-        CreateBloom();
+        m_Taa->Resize(m_Extent, m_Settings.TAA);
+        m_Bloom->Resize(m_Extent, m_HdrView);
         CreateSsr();
         CreateRefraction();
         // The HDR target moved; rebind the metering source and re-snap the adaptation so the
         // resized frame is not mis-exposed off a stale ring value.
-        WriteAutoExposureHdrBinding();
-        m_AutoExposureReset = true;
+        m_AutoExposure->RebindHdr(m_HdrView);
+        m_AutoExposure->RequestReset();
         m_Shadows->Reconfigure(m_Settings);
         CreatePicking();
         Rebuild();
@@ -3719,7 +3057,9 @@ namespace Veng::Renderer
         m_Settings = settings;
         ShadowSystem::ClampResolutions(m_Context, m_Settings);
         ResolveActiveCullMode();
-        CreateTaa();
+        m_Taa->Resize(m_Extent, m_Settings.TAA);
+        // The bloom pyramid is extent-driven (unchanged here); only the kernel choice may change.
+        m_Bloom->Reconfigure(m_Settings.Kernel);
         CreateSsr();
         CreateRefraction();
         m_Shadows->Reconfigure(m_Settings);
@@ -3753,90 +3093,10 @@ namespace Veng::Renderer
         // Half-texel inset so a bilinear tap at the valid edge never reads past it.
         const vec2 maxValidUV = (vec2(validExtent) - 0.5f) / vec2(m_Extent);
 
-        // Auto-exposure: average the log-luminance histogram a completed frame metered (the
-        // current frame-in-flight's ring region, written framesInFlight ago and fenced), ease the
-        // internal adapted luminance toward it (eye adaptation), and resolve the exposure the
-        // tonemap uses. The average excludes bin 0 (the black bin), so a predominantly-black scene
-        // with sparse highlights meters on its lit content instead of collapsing to the floor.
-        // SceneView::Exposure biases the automatic result. With auto-exposure off, it is the
-        // exposure directly.
-        f32 exposure = view.Exposure;
-        if (m_AutoExposureActive)
-        {
-            const u32 frameIndex = m_Context.GetCurrentFrameInFlight();
-            auto* region =
-                reinterpret_cast<u32*>(static_cast<u8*>(m_AutoExposureBuffer->GetMappedData()) +
-                                       static_cast<usize>(frameIndex) * m_AutoExposureStride);
-
-            // Weighted average of bins 1..255 (bin centers in log2 space), skipping the black bin
-            // and the lit pixels outside the [low, high] percentile band — trimming the tails
-            // makes a bimodal frame (a sun-lit surface against a near-black sky) meter on the
-            // band rather than the mean of both. The default 0..1 band meters every lit pixel.
-            const f32 minLogLum = std::log2(std::max(view.AutoExposureMinLuminance, 1e-5f));
-            const f32 maxLogLum = std::log2(std::max(view.AutoExposureMaxLuminance, 1e-4f));
-            const f32 logRange = maxLogLum - minLogLum;
-            u64 litTotal = 0;
-            for (u32 bin = 1; bin < AutoExposureBinCount; ++bin)
-            {
-                litTotal += region[bin];
-            }
-            const f32 lowPercentile = std::clamp(view.AutoExposureLowPercentile, 0.0f, 1.0f);
-            const f32 highPercentile =
-                std::clamp(view.AutoExposureHighPercentile, lowPercentile, 1.0f);
-            const f64 lowRank = static_cast<f64>(litTotal) * lowPercentile;
-            const f64 highRank = static_cast<f64>(litTotal) * highPercentile;
-            f64 weightedLog = 0.0;
-            f64 count = 0.0;
-            f64 rank = 0.0;
-            for (u32 bin = 1; bin < AutoExposureBinCount; ++bin)
-            {
-                const u32 binCount = region[bin];
-                if (binCount == 0)
-                {
-                    continue;
-                }
-                // The portion of this bin inside the percentile band (bins straddling an edge
-                // contribute fractionally, so the band boundaries do not snap to bins).
-                const f64 binLow = rank;
-                rank += binCount;
-                const f64 inBand =
-                    std::max(0.0, std::min(rank, highRank) - std::max(binLow, lowRank));
-                if (inBand <= 0.0)
-                {
-                    continue;
-                }
-                const f32 t =
-                    (static_cast<f32>(bin) - 0.5f) / static_cast<f32>(AutoExposureBinCount - 1);
-                weightedLog += static_cast<f64>(minLogLum + t * logRange) * inBand;
-                count += inBand;
-            }
-
-            // Zero this slot before this frame's metering pass accumulates into it (host-coherent,
-            // recorded before the graph submit below).
-            std::memset(region, 0, AutoExposureBinCount * sizeof(u32));
-
-            // A frame with no lit content (count == 0) leaves the adaptation and reset pending
-            // untouched, so the exposure holds rather than blowing up on an empty meter.
-            if (count > 0.0)
-            {
-                const f32 meteredLuminance = std::exp2(static_cast<f32>(weightedLog / count));
-                if (m_AutoExposureReset)
-                {
-                    m_AdaptedLuminance = meteredLuminance;
-                    m_AutoExposureReset = false;
-                }
-                else
-                {
-                    m_AdaptedLuminance =
-                        ExpApproach(m_AdaptedLuminance, meteredLuminance, view.Delta,
-                                    std::max(view.AutoExposureSpeed, 0.0f));
-                }
-            }
-            const f32 clamped = std::clamp(m_AdaptedLuminance, view.AutoExposureMinLuminance,
-                                           view.AutoExposureMaxLuminance);
-            exposure = (view.AutoExposureKey / std::max(clamped, 1e-5f)) * view.Exposure;
-        }
-        m_ResolvedExposure = exposure;
+        // Auto-exposure: the meter reads the histogram a completed frame wrote, eases the adapted
+        // luminance, and resolves the exposure the tonemap uses (SceneView::Exposure directly when
+        // metering is inactive). The bloom bright-pass later reads the same resolved exposure.
+        const f32 exposure = m_AutoExposure->ResolveExposure(view, m_AutoExposureActive);
 
         // Per-frame param writes land in the ring-buffered block's current region (no stall).
         if (m_TonemapMaterial.IsLoaded())
@@ -4248,8 +3508,8 @@ namespace Veng::Renderer
         };
         if (m_TaaActive)
         {
-            bindings.push_back({m_LitId, m_LitView});
-            bindings.push_back({m_TaaHistoryId, m_TaaHistoryView});
+            bindings.push_back({m_LitId, m_Taa->GetLitView()});
+            bindings.push_back({m_TaaHistoryId, m_Taa->GetHistoryView()});
         }
         // Velocity is a g-buffer channel the surface pass writes every frame, so it is always bound.
         bindings.push_back({m_VelocityId, m_VelocityView});
@@ -4272,15 +3532,17 @@ namespace Veng::Renderer
         {
             // Each pyramid mip binds its per-frame storage view to its per-mip import slot
             // (the down/up sweep declared per-level access on these); the result is one slot.
-            for (u32 level = 0; level < m_BloomMips.size(); level++)
+            const std::vector<Ref<ImageView>>& bloomMips = m_Bloom->GetMipViews();
+            for (u32 level = 0; level < bloomMips.size(); level++)
             {
-                bindings.push_back({m_BloomChainId.Level(level), m_BloomMips[level]});
+                bindings.push_back({m_BloomChainId.Level(level), bloomMips[level]});
             }
-            bindings.push_back({m_BloomResultId, m_BloomResultView});
+            bindings.push_back({m_BloomResultId, m_Bloom->GetResultView()});
         }
         if (m_AutoExposureActive)
         {
-            bindings.push_back({.Id = m_AutoExposureId, .Buffer = m_AutoExposureBuffer});
+            bindings.push_back(
+                {.Id = m_AutoExposureId, .Buffer = m_AutoExposure->GetHistogramBuffer()});
         }
         if (m_SsaoActive && m_SsaoPass != nullptr)
         {
@@ -4389,7 +3651,7 @@ namespace Veng::Renderer
         // The history-copy pass populated the history this frame, so the next resolve may
         // reproject against it. Advance the jitter sequence regardless of the TAA toggle so
         // enabling it mid-run does not restart the phase.
-        m_TaaHistoryReset = false;
+        m_Taa->ClearHistoryReset();
         ++m_FrameIndex;
 
         // This frame's worlds + skinning-palette bases become next frame's "previous" for the
@@ -4551,11 +3813,11 @@ namespace Veng::Renderer
     }
     Ref<ImageView> SceneRenderer::GetBloomResultView() const
     {
-        return m_BloomResultView;
+        return m_Bloom->GetResultView();
     }
     Ref<ImageView> SceneRenderer::GetTaaHistoryView() const
     {
-        return m_TaaHistoryView;
+        return m_Taa->GetHistoryView();
     }
     Ref<ImageView> SceneRenderer::GetVelocityView() const
     {
