@@ -406,25 +406,28 @@ a server with no transport** — one authority model always, no offline/online f
 only add remote connections.
 
 **The honest per-world-clock guarantee.** Each join keeps its own tick-offset estimator, so a client
-joining two worlds keeps a distinct tick lead per world. But `ServerHost::Pump` takes **one server
-tick for the whole host**, so genuinely different per-world tick *rates* on one host are an
-Application-level concern, not something the host drives; the per-`JoinId` clock isolation is
-exercised structurally (distinct estimators), not through a genuine different-rate end-to-end
-scenario.
+joining two worlds keeps a distinct tick lead per world. `ServerHost::Pump` stamps each hosted world's
+snapshot cadence and ack baselines in **that world's own sim tick** — its Scene's change tick, the
+tick its writes were stamped at — so worlds of genuinely different `SimTickRate`s share one host with
+each clock isolated end to end: a 1 Hz world and a 60 Hz world on one host each advance their own
+cadence, baselines, and header ticks, and the two-world suite exercises the different-rate case, not
+only the structural estimator isolation.
 
-**Known limitation — replication cadence is stamped in host-tick space, not per-world tick space.**
-`ServerHost::Pump` advances **one** host tick and stamps every hosted world's snapshot cadence and
-per-connection ack baselines against *that* counter, regardless of a world's own `SimTickRate`. For a
-world ticking far below the host pump rate — a data world at, say, 1 Hz against a 60 Hz host — two
-things follow: its writes almost never fall on a snapshot-interval tick *in host-tick space*, so they
-never qualify as delta changes and ride only the periodic **keyframe** cadence (a full record every
-few hundred host ticks — on the order of ~16 s of latency before a slow-world change reaches a
-client), and that world's join **tick estimator re-syncs essentially every frame** because the
-observed tick advances by less than one of its slow ticks per host pump (a stream of resync log
-lines). No per-world byte counter exists to *measure* the resulting replication traffic. The trigger
-is **any hosted world whose `SimTickRate` is well below the host pump rate**; a world at or near the
-host rate is unaffected. The fix is per-world cadence and ack accounting in the world's own tick
-space (and a per-world traffic counter to measure it) — recorded, not addressed here.
+**Replication cadence stamps in per-world tick space.** `Pump` reads each hosted world's own change
+tick and stamps its snapshot cadence and per-connection ack baselines against it, regardless of the
+host pump rate. A world ticking far below the host pump rate — a data world at, say, 1 Hz against a
+60 Hz host — has its writes fall on a snapshot-interval tick *in its own tick space*, so they qualify
+as delta changes against its own advancing baseline and ride the ordinary delta cadence rather than
+only the periodic **keyframe** cadence; and that world's join **tick estimator tracks the world's own
+clock**, because the header tick it observes advances in the world's tick space, matching the client
+world's `SimClock`, so it does not re-sync per host frame. Component change ticks already live in the
+world's tick space (a Scene stamps a write with its own sim tick), so aligning the baseline and header
+to the same space is what closes the gap; an unstamped component (change tick 0) is `≤` any baseline
+in either space, so it replicates through spawn and keyframes exactly as before. A world at or near the
+host rate is byte-identical to a host-tick stamp, since its own tick and the host tick coincide.
+`ServerHost::ReplicationBytesForWorld(WorldInstanceId)` reports a world's accumulated replication
+traffic (snapshots + spawns/despawns) over the host's lifetime — the instrument that measures a
+low-rate world spending bytes on deltas between keyframes.
 
 ## The game message channel
 

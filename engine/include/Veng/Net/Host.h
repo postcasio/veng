@@ -261,10 +261,14 @@ namespace Veng
         /// each ready (connection, join)'s replication messages (each wrapped in its JoinId envelope),
         /// pumps the transport, resolves inbound join requests (authorize → caps → get-or-create →
         /// seat + JoinId + reply), folds each per-world ClientReady into its readiness gate, tears down
-        /// a disconnected connection's seats, and reaps idle factory worlds. The caller sets each
-        /// world's change tick for @p tick before calling.
+        /// a disconnected connection's seats, and reaps idle factory worlds. Each hosted world's
+        /// snapshot cadence and per-connection ack baselines stamp in that world's own sim tick — its
+        /// Scene's change tick, the tick its writes were stamped at — so a world running below the host
+        /// pump rate qualifies its writes as deltas against its own tick and its join's client-side
+        /// estimator tracks its own clock. The caller advances each world's Scene change tick before
+        /// calling (a Scene ticked at its SimTickRate does so through its sim step).
         /// @param now   Monotonic time in seconds (injected).
-        /// @param tick  The current server sim tick (the snapshot cadence and header time).
+        /// @param tick  Unused: each world stamps in its own Scene change tick, read per world.
         void Pump(f64 now, u64 tick);
 
         /// @brief The underlying server (for LocalPort, Connections, an app's own traffic).
@@ -288,6 +292,16 @@ namespace Veng
         /// @brief The replication server for a specific hosted world.
         /// @param world  A hosted world's id (from Create, AddWorld, or the factory).
         [[nodiscard]] ReplicationServer& ReplicationForWorld(WorldInstanceId world);
+
+        /// @brief The total replication bytes emitted for a hosted world, over the host's lifetime.
+        ///
+        /// The running sum of every replication message's payload size — snapshots and spawn/despawn
+        /// records — queued for every connection joined to the world, accumulated each Pump. The
+        /// per-world traffic instrument: comparing a low-rate world's byte growth between keyframes
+        /// shows whether its writes ride deltas or only the keyframe cadence. Never reset; monotonic.
+        /// @param world  A hosted world's id (from Create, AddWorld, or the factory).
+        /// @return The accumulated bytes, or 0 for an unknown world id.
+        [[nodiscard]] u64 ReplicationBytesForWorld(WorldInstanceId world) const;
 
         /// @brief The world a connection's current (first) join resolves to, or an invalid id if none.
         /// @param id  The connection to resolve.

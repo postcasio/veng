@@ -6380,6 +6380,162 @@ TEST_CASE("The join reply carries each world's SimTickRate; each join's estimato
     CHECK(slowStanding == 1);
 }
 
+TEST_CASE("A world below the host pump rate stamps cadence in its own tick space: its writes ride "
+          "deltas between keyframes and its observed server tick tracks its own clock")
+{
+    // The E1 guard. A data world at 1 Hz is hosted while its ServerHost is pumped every host frame
+    // (60 per second). The world's Scene change tick advances once per 60 host frames and its writes
+    // are stamped at that slow tick; the host is pumped with the host frame counter as the (ignored)
+    // tick argument. Because the world's snapshot cadence and ack baselines stamp in the world's own
+    // tick space — its Scene change tick — its writes qualify as deltas against its own advancing
+    // baseline and reach the client without a keyframe, and its join's observed server tick advances
+    // in the slow tick space (so the client-side estimator tracks its own clock rather than
+    // re-syncing every host frame). Keyframes are disabled (an unreachable interval) so that every
+    // post-spawn update the client receives can only have arrived as a delta. Were cadence stamped in
+    // host-tick space, the world's small-numbered change ticks would never exceed the host-space
+    // baseline and no post-spawn write would ever replicate.
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+
+    TypeRegistry serverTypes;
+    RegisterBuiltinTypes(serverTypes);
+    serverTypes.Register<VengTest::TestScore>();
+    Unique<Scene> slowScene = Scene::Create(serverTypes);
+    const WorldInstanceId slowWorld{.Value = 1};
+
+    Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
+        .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
+        .WorldId = slowWorld,
+        .World = *slowScene,
+        .Assets = FakeAssets(),
+        .LevelId = AssetId{}, // level-less data world, joined through the default key
+        .SimTickRate = 1,
+        // Snapshot every 2 slow ticks; a keyframe interval far past this run, so no full re-send ever
+        // fires after the spawn — a post-spawn update reaches the client only if deltas carry it.
+        .Replication =
+            ReplicationServer::Settings{.SnapshotInterval = 2, .KeyframeInterval = 1000000},
+    });
+    REQUIRE(hostR.has_value());
+    Unique<ServerHost> host = std::move(*hostR);
+
+    DataWorldClient client(*clientT, DefaultWorldKey);
+    InputSendBuffer send(InputSendBuffer::Settings{.Redundancy = 3});
+    std::unordered_map<u64, InputJitterBuffer> jitter;
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    constexpr u64 FramesPerSlowTick = 30; // the world ticks far below the host pump rate
+    u64 hostFrame = 0;
+    u64 slowTick = 0;
+    Entity record = Entity::Null;
+
+    // One host frame: optionally advance the slow world's tick (stamping the frame's slow-tick writes
+    // into the world's own tick space), pump the host with the host frame as the ignored tick, fold
+    // the client's ack, pump the client, and return its per-world ack for the server to ingest next
+    // frame. onSlowTick runs after the change tick advances, so its writes stamp at the new slow tick.
+    const auto frame = [&](bool advanceSlow, const function<void()>& onSlowTick)
+    {
+        ++hostFrame;
+        now += Delta;
+        if (advanceSlow)
+        {
+            ++slowTick;
+            slowScene->SetChangeTick(slowTick);
+            if (onSlowTick)
+            {
+                onSlowTick();
+            }
+        }
+        host->Pump(now, hostFrame); // the host frame counter — the fix reads each world's own tick
+        IngestConnectionInputs(*host, jitter, InputJitterBuffer::Settings{}, serverTypes);
+        client.Pump(now);
+        if (client.Client->State() == ClientState::Connected &&
+            client.Host->CurrentJoinId() != ControlJoinId)
+        {
+            (void)client.Client->Server().Send(
+                Channel::UnreliableSequenced,
+                EncodeWorldEnvelope(client.Host->CurrentJoinId(),
+                                    send.Encode(client.Host->LastServerTick(), serverTypes)));
+        }
+    };
+
+    // The projection the client must track purely through the stream: a non-spatial replicated value
+    // (a data world runs no interpolation, so a plain component is the honest carrier). Spawn it at
+    // the first slow tick, then settle enough slow ticks for the join, spawn, and delta baseline to
+    // reach steady state (the client caught up, its ack adopted as the server's baseline).
+    const auto spawnRecord = [&]
+    {
+        if (record.IsNull())
+        {
+            record = slowScene->CreateEntity();
+            slowScene->Add<VengTest::TestScore>(record, VengTest::TestScore{.Value = 5});
+            slowScene->Add<Authority>(record, Authority{.Tier = Tier::Server});
+        }
+    };
+    for (u64 slow = 0; slow < 10; ++slow)
+    {
+        for (u64 f = 0; f < FramesPerSlowTick; ++f)
+        {
+            frame(f == 0, slow == 0 ? spawnRecord : function<void()>{});
+        }
+    }
+
+    REQUIRE(client.Host->IsJoined());
+    Scene* clientScene = client.Host->World();
+    REQUIRE(clientScene != nullptr);
+    REQUIRE(slowScene->IsAlive(record));
+    const NetId recordNet = slowScene->Get<NetIdentity>(record).Id;
+    const Entity clientRecord = client.Host->Replication().Map().Lookup(recordNet);
+    REQUIRE_FALSE(clientRecord.IsNull());
+    // The spawn carried the baseline value; no update has been written yet.
+    REQUIRE(clientScene->Has<VengTest::TestScore>(clientRecord));
+    CHECK(clientScene->Get<VengTest::TestScore>(clientRecord).Value == 5);
+
+    // The observed server tick is in the world's own tick space, not the host's: it never exceeds the
+    // world's own advanced tick, though the host has pumped FramesPerSlowTick times as often. Under a
+    // host-tick stamp it would be ~hostFrame, so the client-world clock (running at the slow rate)
+    // would read a massive drift and hard-snap every host frame — the resync spam this rules out.
+    CHECK(client.Host->LastServerTick() <= slowTick);
+    CHECK(hostFrame > slowTick * (FramesPerSlowTick - 1));
+
+    // An idle stretch spends no replication bytes: with nothing changed and no keyframe, no snapshot
+    // record is emitted, so the per-world byte counter is flat — the baseline against which the delta
+    // traffic below stands out.
+    const u64 bytesBeforeIdle = host->ReplicationBytesForWorld(slowWorld);
+    for (u64 slow = 0; slow < 3; ++slow)
+    {
+        for (u64 f = 0; f < FramesPerSlowTick; ++f)
+        {
+            frame(f == 0, {});
+        }
+    }
+    const u64 bytesAfterIdle = host->ReplicationBytesForWorld(slowWorld);
+    CHECK(bytesAfterIdle == bytesBeforeIdle);
+
+    // Now write the projection's value at a slow tick and advance a few slow ticks — fewer than a
+    // keyframe interval away. With cadence in the world's own tick space the write qualifies as a
+    // delta against the world's baseline and reaches the client; the byte counter grows by that delta
+    // traffic, off the (unreachable) keyframe cadence.
+    for (u64 slow = 0; slow < 4; ++slow)
+    {
+        for (u64 f = 0; f < FramesPerSlowTick; ++f)
+        {
+            frame(
+                f == 0,
+                slow == 0
+                    ? function<void()>{[&]
+                                       { slowScene->Get<VengTest::TestScore>(record).Value = 777; }}
+                    : function<void()>{});
+        }
+    }
+
+    CHECK(clientScene->Get<VengTest::TestScore>(clientRecord).Value == 777);
+    CHECK(host->ReplicationBytesForWorld(slowWorld) > bytesAfterIdle);
+    // The observed tick still tracks the world's clock after the update cadence.
+    CHECK(client.Host->LastServerTick() <= slowTick);
+    // An unknown world id reports zero, never a stale or asserting read.
+    CHECK(host->ReplicationBytesForWorld(WorldInstanceId{.Value = 999}) == 0);
+}
+
 TEST_CASE("A seatless data world's pump grows no input state, and a sparse snapshot cadence "
           "starves no clock sync")
 {

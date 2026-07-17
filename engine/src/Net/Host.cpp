@@ -124,6 +124,9 @@ namespace Veng
             NetIdAllocator Allocator;
             Net::InterestSettings InterestSettings;
             Net::InterestPolicy InterestPolicy;
+            // Total replication bytes emitted for this world (snapshots + spawns/despawns), summed
+            // across every connection over the host's lifetime — the per-world traffic instrument.
+            u64 ReplicationBytes = 0;
         };
 
         // One (connection, join): the joined world, the seat spawned in it, the readiness gate, and
@@ -837,7 +840,7 @@ namespace Veng
         m_State->Directory->Register(world.Key, world.WorldId);
     }
 
-    void ServerHost::Pump(f64 now, u64 tick)
+    void ServerHost::Pump(f64 now, u64 /*tick*/)
     {
         State& s = *m_State;
         s.Events.clear();
@@ -845,7 +848,10 @@ namespace Veng
         // Assign wire ids to entities the spawn rule added this tick (the pawns), per world from its
         // own allocator, then generate and queue each ready (connection, join)'s stream from its
         // world's replication instance — each message wrapped in its JoinId envelope so the peer
-        // demuxes it to the right world.
+        // demuxes it to the right world. Each world's snapshot cadence and ack baselines stamp in
+        // that world's own sim tick (its Scene's change tick, the tick its writes were stamped at),
+        // not a shared host tick, so a world running below the host pump rate qualifies its writes
+        // as deltas against its own tick and its join's client-side estimator tracks its own clock.
         for (auto& [value, world] : s.Worlds)
         {
             AssignServerNetIds(*world.World, world.Allocator);
@@ -859,10 +865,12 @@ namespace Veng
                     continue;
                 }
                 State::HostedWorld& world = s.WorldOf(join.World);
+                const u64 worldTick = world.World->GetChangeTick();
                 const optional<set<NetId>> interest = s.ComputeInterest(world, id, join);
                 for (const ReplicationMessage& message : world.Replication.Generate(
-                         id, *world.World, tick, interest ? &*interest : nullptr))
+                         id, *world.World, worldTick, interest ? &*interest : nullptr))
                 {
+                    world.ReplicationBytes += message.Bytes.size();
                     (void)s.Server->Get(id).Send(message.Channel,
                                                  Net::EncodeWorldEnvelope(joinId, message.Bytes));
                 }
@@ -1032,6 +1040,12 @@ namespace Veng
     ReplicationServer& ServerHost::ReplicationForWorld(WorldInstanceId world)
     {
         return m_State->WorldOf(world).Replication;
+    }
+
+    u64 ServerHost::ReplicationBytesForWorld(WorldInstanceId world) const
+    {
+        const State::HostedWorld* hosted = m_State->TryWorldOf(world);
+        return hosted != nullptr ? hosted->ReplicationBytes : 0;
     }
 
     WorldInstanceId ServerHost::WorldFor(Net::ConnectionId id) const
