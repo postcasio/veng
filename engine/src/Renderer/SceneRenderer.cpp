@@ -20,6 +20,7 @@
 #include "Passes/VolumeScenePass.h"
 #include "ShadowScenePass.h"
 #include "PunctualShadowScenePass.h"
+#include "ShadowSystem.h"
 #include "Picking.h"
 #include "SkyboxScenePass.h"
 #include "SkyCubemapBake.h"
@@ -293,13 +294,6 @@ namespace Veng::Renderer
             u32 FrameBase;
             u32 CountIndex;
         };
-
-        // The punctual shadow atlas tile grid: CubeFaceCount columns × MaxShadowedPunctual
-        // rows of PunctualShadowResolution² tiles. A shadowed light's slot s, face f maps
-        // to tile (column f, row s) — linear index s·CubeFaceCount + f — so a spot uses
-        // tile (0, s) and a point uses the whole of row s.
-        constexpr u32 PunctualAtlasColumns = CubeFaceCount;
-        constexpr u32 PunctualAtlasRows = MaxShadowedPunctual;
     }
 
     // Kept out of the header so SceneRenderer.h needs no CompiledGraph definition.
@@ -324,9 +318,13 @@ namespace Veng::Renderer
           m_Extent(info.Extent), m_ValidExtent(info.Extent), m_Settings(info.Settings),
           m_Internal(CreateUnique<Internal>())
     {
-        ClampShadowResolutions();
+        ShadowSystem::ClampResolutions(m_Context, m_Settings);
         ResolveActiveCullMode();
-        CreateShadowSystem();
+        // Frames-in-flight is spine — the renderer's own rings (draw data, palette, cull,
+        // auto-exposure) size from it, so seed it before those are allocated below. The shadow
+        // system derives its own ring depth from the context independently.
+        m_FramesInFlight = m_Context.GetMaxFramesInFlight();
+        m_Shadows = ShadowSystem::Create(m_Context, m_Settings);
         // The IBL maps + their consumer set layout exist before the pipelines so the lighting
         // layout can reserve the set (set 2).
         m_Ibl = EnvironmentIbl::Create(m_Context, m_Assets);
@@ -488,24 +486,26 @@ namespace Veng::Renderer
         // sampler). Set 0 is the reserved registry slot prepended by PipelineLayout, so the
         // shadow set is index 1 and the IBL set index 2.
         m_LightingLayout = PipelineLayout::Create(
-            m_Context, {
-                           .Name = "SceneRenderer Lighting Layout",
-                           .DescriptorSetLayouts = {m_ShadowSetLayout, m_Ibl->GetSetLayout()},
-                           .PushConstantRanges = {PushConstantRange::Of<LightingPushConstants>(
-                               ShaderStage::Fragment)},
-                       });
+            m_Context,
+            {
+                .Name = "SceneRenderer Lighting Layout",
+                .DescriptorSetLayouts = {m_Shadows->GetSetLayout(), m_Ibl->GetSetLayout()},
+                .PushConstantRanges = {PushConstantRange::Of<LightingPushConstants>(
+                    ShaderStage::Fragment)},
+            });
         m_LightingPipeline = MakePipeline("SceneRenderer Deferred Lighting Pipeline",
                                           m_LightingLayout, lightingFs, HdrFormat);
 
         // SSAO-enabled lighting variant: wider push block (adds the AO slot) and
         // the AO-fold fragment shader. Same set-1 shadow + set-2 IBL layout.
         m_SsaoLightingLayout = PipelineLayout::Create(
-            m_Context, {
-                           .Name = "SceneRenderer SSAO Lighting Layout",
-                           .DescriptorSetLayouts = {m_ShadowSetLayout, m_Ibl->GetSetLayout()},
-                           .PushConstantRanges = {PushConstantRange::Of<SsaoLightingPushConstants>(
-                               ShaderStage::Fragment)},
-                       });
+            m_Context,
+            {
+                .Name = "SceneRenderer SSAO Lighting Layout",
+                .DescriptorSetLayouts = {m_Shadows->GetSetLayout(), m_Ibl->GetSetLayout()},
+                .PushConstantRanges = {PushConstantRange::Of<SsaoLightingPushConstants>(
+                    ShaderStage::Fragment)},
+            });
         m_SsaoLightingPipeline = MakePipeline("SceneRenderer Deferred Lighting SSAO Pipeline",
                                               m_SsaoLightingLayout, ssaoLightingFs, HdrFormat);
 
@@ -670,11 +670,11 @@ namespace Veng::Renderer
 
         // Shadow blit reads raw depth through a dedicated set 1, not bindless,
         // so its layout carries that set and no push block.
-        m_ShadowBlitLayout =
-            PipelineLayout::Create(m_Context, {
-                                                  .Name = "SceneRenderer Shadow Blit Layout",
-                                                  .DescriptorSetLayouts = {m_ShadowBlitSetLayout},
-                                              });
+        m_ShadowBlitLayout = PipelineLayout::Create(
+            m_Context, {
+                           .Name = "SceneRenderer Shadow Blit Layout",
+                           .DescriptorSetLayouts = {m_Shadows->GetBlitSetLayout()},
+                       });
         m_ShadowBlitPipeline = MakePipeline("SceneRenderer Shadow Blit Pipeline",
                                             m_ShadowBlitLayout, shadowBlitFs, m_OutputFormat);
 
@@ -884,244 +884,6 @@ namespace Veng::Renderer
                 .PipelineLayout = m_SsrBlurLayout,
                 .ShaderStage = {.Stage = ShaderStage::Compute, .Module = ssrBlurCs.Get()->Module},
             });
-    }
-
-    void SceneRenderer::CreateShadowSystem()
-    {
-        m_FramesInFlight = m_Context.GetMaxFramesInFlight();
-
-        // Immutable comparison sampler for hardware SampleCmp: LESS-or-equal, linear
-        // filter for the hardware 2×2 PCF. The MoltenVK argument-buffer restriction
-        // applies only to set-0 bindless arrays; a dedicated set 1 sampler is fine.
-        m_ComparisonSampler =
-            Sampler::Create(m_Context, {
-                                           .Name = "SceneRenderer Shadow Comparison Sampler",
-                                           .MagFilter = Filter::Linear,
-                                           .MinFilter = Filter::Linear,
-                                           .MipmapMode = MipmapMode::Nearest,
-                                           .AddressModeU = AddressMode::ClampToEdge,
-                                           .AddressModeV = AddressMode::ClampToEdge,
-                                           .AddressModeW = AddressMode::ClampToEdge,
-                                           .AnisotropyEnabled = false,
-                                           .CompareEnable = true,
-                                           .CompareOp = CompareOp::LessOrEqual,
-                                           .BorderColor = BorderColor::OpaqueWhite,
-                                       });
-
-        // Set 1 — the shadow system:
-        //   0: directional cascade atlas (SampledImage)
-        //   1: shared immutable comparison sampler (baked into the layout)
-        //   2: ShadowConstants dynamic uniform (ring-buffered)
-        //   3: PunctualShadowBlock dynamic uniform (ring-buffered)
-        //   4: punctual shadow atlas (SampledImage)
-        // The comparison sampler is shared across cascade and punctual tiles; binding 1
-        // is immutable, so descriptor writes supply only bindings 0, 4 and buffers 2, 3.
-        m_ShadowSetLayout = DescriptorSetLayout::Create(
-            m_Context, {
-                           .Name = "SceneRenderer Shadow Set Layout",
-                           .Bindings =
-                               {
-                                   {.Binding = 0,
-                                    .Type = DescriptorType::SampledImage,
-                                    .Count = 1,
-                                    .Stages = ShaderStage::Fragment},
-                                   {.Binding = 1,
-                                    .Type = DescriptorType::Sampler,
-                                    .Count = 1,
-                                    .Stages = ShaderStage::Fragment,
-                                    .ImmutableSamplers = {m_ComparisonSampler}},
-                                   {.Binding = 2,
-                                    .Type = DescriptorType::UniformBufferDynamic,
-                                    .Count = 1,
-                                    .Stages = ShaderStage::Fragment},
-                                   {.Binding = 3,
-                                    .Type = DescriptorType::UniformBufferDynamic,
-                                    .Count = 1,
-                                    .Stages = ShaderStage::Fragment},
-                                   {.Binding = 4,
-                                    .Type = DescriptorType::SampledImage,
-                                    .Count = 1,
-                                    .Stages = ShaderStage::Fragment},
-                               },
-                       });
-
-        // Debug shadow-blit set: atlas (binding 0) + ordinary sampler (binding 1) for raw depth.
-        m_ShadowBlitSetLayout = DescriptorSetLayout::Create(
-            m_Context, {
-                           .Name = "SceneRenderer Shadow Blit Set Layout",
-                           .Bindings =
-                               {
-                                   {.Binding = 0,
-                                    .Type = DescriptorType::SampledImage,
-                                    .Count = 1,
-                                    .Stages = ShaderStage::Fragment},
-                                   {.Binding = 1,
-                                    .Type = DescriptorType::Sampler,
-                                    .Count = 1,
-                                    .Stages = ShaderStage::Fragment},
-                               },
-                       });
-        // Ordinary clamp sampler for raw-depth debug reads; rewritten into each rebuilt blit set.
-        m_ShadowBlitSampler =
-            Sampler::Create(m_Context, {
-                                           .Name = "SceneRenderer Shadow Blit Sampler",
-                                           .MagFilter = Filter::Nearest,
-                                           .MinFilter = Filter::Nearest,
-                                           .MipmapMode = MipmapMode::Nearest,
-                                           .AddressModeU = AddressMode::ClampToEdge,
-                                           .AddressModeV = AddressMode::ClampToEdge,
-                                           .AddressModeW = AddressMode::ClampToEdge,
-                                           .AnisotropyEnabled = false,
-                                       });
-
-        // 1×1 D32 dummy atlas cleared to depth = 1 (full visibility), bound when no
-        // shadow pass is wired so the layout is always satisfied. Transitioned to
-        // ShaderReadOnly immediately so the lighting pass samples a valid layout even
-        // when it does not declare .Sample on it.
-        m_DummyShadowImage =
-            Image::Create(m_Context, {
-                                         .Name = "SceneRenderer Dummy Shadow",
-                                         .Extent = {1, 1, 1},
-                                         .Format = Format::D32Sfloat,
-                                         .Usage = ImageUsage::DepthAttachment | ImageUsage::Sampled,
-                                     });
-        m_DummyShadowView =
-            ImageView::Create(m_Context, {
-                                             .Name = "SceneRenderer Dummy Shadow View",
-                                             .Image = m_DummyShadowImage,
-                                         });
-        m_Context.ImmediateCommands(
-            [&](CommandBuffer& cmd)
-            {
-                RenderGraph graph(m_Context);
-                const ResourceId target = graph.Import("Dummy Shadow");
-                graph.AddPass("Clear Dummy Shadow")
-                    .Depth({
-                        .Resource = target,
-                        .Load = LoadOp::Clear,
-                        .Store = StoreOp::Store,
-                        .Clear = ClearDepth{.Depth = 1.0f, .Stencil = 0},
-                    })
-                    .Execute([](PassContext&) {});
-                const RenderGraph::ImportBinding binding{.Id = target, .View = m_DummyShadowView};
-                graph.Compile()->Execute(cmd, {&binding, 1});
-                cmd.PrepareForAccess(m_DummyShadowView, AccessKind::Sample);
-            });
-
-        // ShadowConstants ring: framesInFlight regions, each aligned to
-        // minUniformBufferOffsetAlignment. Dynamic offset at bind time = frame * stride.
-        const u64 minAlign =
-            GetVkPhysicalDevice(m_Context).getProperties().limits.minUniformBufferOffsetAlignment;
-        const u64 blockSize = sizeof(ShadowConstantsBlock);
-        const u64 alignment = minAlign == 0 ? 1 : minAlign;
-        m_ShadowRingStride =
-            static_cast<u32>(((blockSize + alignment - 1) / alignment) * alignment);
-        VE_ASSERT(m_ShadowRingStride % alignment == 0,
-                  "ShadowConstants ring stride {} is not a multiple of "
-                  "minUniformBufferOffsetAlignment {}",
-                  m_ShadowRingStride, alignment);
-
-        m_ShadowConstantsBuffer = Buffer::Create(
-            m_Context, {
-                           .Name = "SceneRenderer ShadowConstants",
-                           .Size = static_cast<u64>(m_ShadowRingStride) * m_FramesInFlight,
-                           .Usage = BufferUsage::Uniform,
-                           .HostMapped = true,
-                       });
-
-        // Zero all regions: w = 0 in ShadowParams means shadows disabled.
-        std::memset(m_ShadowConstantsBuffer->GetMappedData(), 0,
-                    static_cast<usize>(m_ShadowRingStride) * m_FramesInFlight);
-
-        // PunctualShadowBlock ring: same alignment and frame*stride dynamic offset as
-        // the ShadowConstants ring.
-        const u64 punctualBlockSize = sizeof(PunctualShadowBlock);
-        m_PunctualRingStride =
-            static_cast<u32>(((punctualBlockSize + alignment - 1) / alignment) * alignment);
-        VE_ASSERT(m_PunctualRingStride % alignment == 0,
-                  "PunctualShadowBlock ring stride {} is not a multiple of "
-                  "minUniformBufferOffsetAlignment {}",
-                  m_PunctualRingStride, alignment);
-
-        m_PunctualShadowBuffer = Buffer::Create(
-            m_Context, {
-                           .Name = "SceneRenderer PunctualShadows",
-                           .Size = static_cast<u64>(m_PunctualRingStride) * m_FramesInFlight,
-                           .Usage = BufferUsage::Uniform,
-                           .HostMapped = true,
-                       });
-
-        // Zero all regions: Params.x type = 0 means "no map", so all lights read full visibility.
-        std::memset(m_PunctualShadowBuffer->GetMappedData(), 0,
-                    static_cast<usize>(m_PunctualRingStride) * m_FramesInFlight);
-
-        CreatePunctualShadowAtlas();
-    }
-
-    void SceneRenderer::CreatePunctualShadowAtlas()
-    {
-        // 2D depth atlas of CubeFaceCount × MaxShadowedPunctual tiles.
-        const u32 res = m_Settings.PunctualShadowResolution;
-        const uvec2 atlasExtent{PunctualAtlasColumns * res, PunctualAtlasRows * res};
-
-        m_PunctualShadowImage =
-            Image::Create(m_Context, {
-                                         .Name = "SceneRenderer Punctual Shadow Atlas",
-                                         .Extent = {atlasExtent.x, atlasExtent.y, 1},
-                                         .Format = Format::D32Sfloat,
-                                         .Usage = ImageUsage::DepthAttachment | ImageUsage::Sampled,
-                                     });
-        m_PunctualShadowView =
-            ImageView::Create(m_Context, {
-                                             .Name = "SceneRenderer Punctual Shadow Atlas View",
-                                             .Image = m_PunctualShadowImage,
-                                         });
-
-        // Clear to depth = 1 (full visibility) and transition to ShaderReadOnly so
-        // binding 4 is in a valid sampleable layout before the punctual pass runs.
-        m_Context.ImmediateCommands(
-            [&](CommandBuffer& cmd)
-            {
-                RenderGraph graph(m_Context);
-                const ResourceId target = graph.Import("Clear Punctual Atlas");
-                graph.AddPass("Clear Punctual Shadow Atlas")
-                    .Depth({
-                        .Resource = target,
-                        .Load = LoadOp::Clear,
-                        .Store = StoreOp::Store,
-                        .Clear = ClearDepth{.Depth = 1.0f, .Stencil = 0},
-                    })
-                    .Execute([](PassContext&) {});
-                const RenderGraph::ImportBinding binding{.Id = target,
-                                                         .View = m_PunctualShadowView};
-                graph.Compile()->Execute(cmd, {&binding, 1});
-                cmd.PrepareForAccess(m_PunctualShadowView, AccessKind::Sample);
-            });
-    }
-
-    void SceneRenderer::CreateShadowSets(const Ref<ImageView>& atlasView)
-    {
-        // Fresh sets every rebuild: the prior sets may still be referenced by an
-        // in-flight command buffer, and the bindings carry no update-after-bind flags
-        // (set 1 stays out of Metal argument buffers for the comparison sampler), so
-        // they are never updated in place. The old sets retire through the per-frame
-        // bin once their last frame's fence signals.
-        m_ShadowSet = DescriptorSet::Create(m_Context, {
-                                                           .Name = "SceneRenderer Shadow Set",
-                                                           .Layout = m_ShadowSetLayout,
-                                                       });
-        m_ShadowSet->Write(0, atlasView);
-        m_ShadowSet->Write(2, m_ShadowConstantsBuffer, 0, sizeof(ShadowConstantsBlock));
-        m_ShadowSet->Write(3, m_PunctualShadowBuffer, 0, sizeof(PunctualShadowBlock));
-        m_ShadowSet->Write(4, m_PunctualShadowView);
-
-        m_ShadowBlitSet =
-            DescriptorSet::Create(m_Context, {
-                                                 .Name = "SceneRenderer Shadow Blit Set",
-                                                 .Layout = m_ShadowBlitSetLayout,
-                                             });
-        m_ShadowBlitSet->Write(0, atlasView);
-        m_ShadowBlitSet->Write(1, m_ShadowBlitSampler);
     }
 
     void SceneRenderer::CreateOutput()
@@ -2337,7 +2099,7 @@ namespace Veng::Renderer
 
         // Recreate the shadow sets against the wired atlas, or the dummy when shadows
         // are off, before the passes below copy their Refs.
-        CreateShadowSets(shadowActive ? shadowAtlasView : m_DummyShadowView);
+        m_Shadows->RebuildSets(shadowActive ? shadowAtlasView : m_Shadows->GetDummyView());
 
         // The GPU cull arm imports the indirect command buffer so the cull compute pass
         // (StorageBufferWrite) and the geometry pass (IndirectRead) share it through the
@@ -2392,8 +2154,9 @@ namespace Veng::Renderer
         {
             m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
                 m_Context, ssaoFold ? m_SsaoLightingPipeline : m_LightingPipeline, m_Extent,
-                ssaoFold, m_ShadowSet, m_ShadowRingStride, m_PunctualRingStride, m_Ibl->GetSet(),
-                m_Ibl->GetPrefilterMipCount(), skylightWanted, iblAllowed));
+                ssaoFold, m_Shadows->GetSet(), m_Shadows->GetConstantsRingStride(),
+                m_Shadows->GetPunctualRingStride(), m_Ibl->GetSet(), m_Ibl->GetPrefilterMipCount(),
+                skylightWanted, iblAllowed));
 
             // The resolved sky source wires exactly one fullscreen sky pass in the shared sky slot,
             // before the TAA/SSR/bloom tail so the sky resolves, reflects, and tonemaps with the
@@ -2559,22 +2322,23 @@ namespace Veng::Renderer
         case DebugView::Shadows:
             // Reads the cascade atlas through the dedicated set (raw depth), not bindless.
             m_Passes.push_back(CreateUnique<ShadowBlitScenePass>(
-                m_Context, m_ShadowBlitPipeline, m_Extent, m_ShadowBlitSet,
+                m_Context, m_ShadowBlitPipeline, m_Extent, m_Shadows->GetBlitSet(),
                 ShadowBlitScenePass::Source::Directional));
             break;
         case DebugView::PunctualShadows:
             // Reads the punctual atlas through the dedicated set; binding 0 is
             // rewritten below after the pass set is chosen.
             m_Passes.push_back(CreateUnique<ShadowBlitScenePass>(
-                m_Context, m_ShadowBlitPipeline, m_Extent, m_ShadowBlitSet,
+                m_Context, m_ShadowBlitPipeline, m_Extent, m_Shadows->GetBlitSet(),
                 ShadowBlitScenePass::Source::Punctual));
             break;
         case DebugView::Cascades:
             // Tints fragments by cascade selection and writes the output directly (no tonemap tail).
             m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
-                m_Context, m_CascadeDebugPipeline, m_Extent, /*useSsao=*/false, m_ShadowSet,
-                m_ShadowRingStride, m_PunctualRingStride, m_Ibl->GetSet(),
-                m_Ibl->GetPrefilterMipCount(), skylightWanted, iblAllowed, /*writeToOutput=*/true));
+                m_Context, m_CascadeDebugPipeline, m_Extent, /*useSsao=*/false, m_Shadows->GetSet(),
+                m_Shadows->GetConstantsRingStride(), m_Shadows->GetPunctualRingStride(),
+                m_Ibl->GetSet(), m_Ibl->GetPrefilterMipCount(), skylightWanted, iblAllowed,
+                /*writeToOutput=*/true));
             break;
         case DebugView::Bloom:
             // Bloom samples the composited HDR, so the same contributors the Final arm folds into it
@@ -2586,8 +2350,9 @@ namespace Veng::Renderer
             // accumulated bloom before composite.
             m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
                 m_Context, ssaoFold ? m_SsaoLightingPipeline : m_LightingPipeline, m_Extent,
-                ssaoFold, m_ShadowSet, m_ShadowRingStride, m_PunctualRingStride, m_Ibl->GetSet(),
-                m_Ibl->GetPrefilterMipCount(), skylightWanted, iblAllowed));
+                ssaoFold, m_Shadows->GetSet(), m_Shadows->GetConstantsRingStride(),
+                m_Shadows->GetPunctualRingStride(), m_Ibl->GetSet(), m_Ibl->GetPrefilterMipCount(),
+                skylightWanted, iblAllowed));
             if (skyboxWanted)
             {
                 m_Passes.push_back(CreateUnique<SkyboxScenePass>(
@@ -2634,9 +2399,9 @@ namespace Veng::Renderer
             // Lighting writes the scene-color intermediate the force-wired SSR trace reflects
             // (DeclareSsr, before this blit); the blit shows the raw reflection target.
             m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
-                m_Context, m_LightingPipeline, m_Extent, /*useSsao=*/false, m_ShadowSet,
-                m_ShadowRingStride, m_PunctualRingStride, m_Ibl->GetSet(),
-                m_Ibl->GetPrefilterMipCount(), skylightWanted, iblAllowed));
+                m_Context, m_LightingPipeline, m_Extent, /*useSsao=*/false, m_Shadows->GetSet(),
+                m_Shadows->GetConstantsRingStride(), m_Shadows->GetPunctualRingStride(),
+                m_Ibl->GetSet(), m_Ibl->GetPrefilterMipCount(), skylightWanted, iblAllowed));
             m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
                 m_Context, m_AlbedoBlitPipeline, m_Extent,
                 FullscreenBlitScenePass::Source::Reflections));
@@ -2655,7 +2420,7 @@ namespace Veng::Renderer
         // rebuild and not yet bound).
         if (debugPunctual)
         {
-            m_ShadowBlitSet->Write(0, m_PunctualShadowView);
+            m_Shadows->GetBlitSet()->Write(0, m_Shadows->GetPunctualView());
         }
 
         const PassIO io{
@@ -2685,7 +2450,7 @@ namespace Veng::Renderer
             .ShadowMap = shadowId,
             .ShadowView = shadowAtlasView,
             .PunctualShadowMap = punctualShadowId,
-            .PunctualShadowView = m_PunctualShadowView,
+            .PunctualShadowView = m_Shadows->GetPunctualView(),
             .Output = m_OutputId,
         };
 
@@ -3934,45 +3699,30 @@ namespace Veng::Renderer
         // resized frame is not mis-exposed off a stale ring value.
         WriteAutoExposureHdrBinding();
         m_AutoExposureReset = true;
-        CreatePunctualShadowAtlas();
+        m_Shadows->Reconfigure(m_Settings);
         CreatePicking();
         Rebuild();
     }
 
     u32 SceneRenderer::GetMaxShadowResolution() const
     {
-        // The directional atlas is widest at the largest cascade grid (2×2 at four
-        // cascades), so a tile larger than the device limit / 2 would overflow it.
-        const ShadowAtlasGrid grid = ComputeShadowAtlasGrid(MaxCascades);
-        const u32 factor = std::max(grid.Columns, grid.Rows);
-        return m_Context.GetMaxImageDimension2D() / factor;
+        return ShadowSystem::GetMaxShadowResolution(m_Context);
     }
 
     u32 SceneRenderer::GetMaxPunctualShadowResolution() const
     {
-        // The punctual atlas tiles CubeFaceCount columns × MaxShadowedPunctual rows,
-        // so its widest side is CubeFaceCount · resolution.
-        const u32 factor = std::max(CubeFaceCount, MaxShadowedPunctual);
-        return m_Context.GetMaxImageDimension2D() / factor;
-    }
-
-    void SceneRenderer::ClampShadowResolutions()
-    {
-        m_Settings.ShadowResolution =
-            std::min(m_Settings.ShadowResolution, GetMaxShadowResolution());
-        m_Settings.PunctualShadowResolution =
-            std::min(m_Settings.PunctualShadowResolution, GetMaxPunctualShadowResolution());
+        return ShadowSystem::GetMaxPunctualShadowResolution(m_Context);
     }
 
     void SceneRenderer::Configure(const SceneRendererSettings& settings)
     {
         m_Settings = settings;
-        ClampShadowResolutions();
+        ShadowSystem::ClampResolutions(m_Context, m_Settings);
         ResolveActiveCullMode();
         CreateTaa();
         CreateSsr();
         CreateRefraction();
-        CreatePunctualShadowAtlas();
+        m_Shadows->Reconfigure(m_Settings);
         CreatePicking();
         Rebuild();
     }
@@ -4459,19 +4209,9 @@ namespace Veng::Renderer
             vec4(1.0f / static_cast<f32>(m_Settings.ShadowResolution), blendBand,
                  static_cast<f32>(cascades.Count), shadowEnabled ? 1.0f : 0.0f);
 
-        // Write only the current frame's region (not yet submitted; safe). These rings are
-        // renderer-owned and framesInFlight-deep, so they index by the frame-in-flight — not the
-        // shared view-constants slot; the bind selects it via dynamic offset frame * stride.
+        // Write this frame's shadow + punctual ring regions (not yet submitted; safe).
         const u32 frameIndex = m_Context.GetCurrentFrameInFlight();
-        std::memcpy(static_cast<u8*>(m_ShadowConstantsBuffer->GetMappedData()) +
-                        static_cast<usize>(frameIndex) * m_ShadowRingStride,
-                    &shadowConstants, sizeof(ShadowConstantsBlock));
-
-        // Flush punctual records into this frame's binding-3 region (same safe write).
-        // Unused slots stay zeroed → type 0 = "no map".
-        std::memcpy(static_cast<u8*>(m_PunctualShadowBuffer->GetMappedData()) +
-                        static_cast<usize>(frameIndex) * m_PunctualRingStride,
-                    &punctualBlock, sizeof(PunctualShadowBlock));
+        m_Shadows->WriteFrameConstants(frameIndex, shadowConstants, punctualBlock);
 
         // Read the GPU survivor count the previous Execute wrote into this frame's region
         // before PrepareDraws zeroes it again — the host-visible count is one frame late, so
@@ -4526,7 +4266,7 @@ namespace Veng::Renderer
         }
         if (m_PunctualShadowActive && m_PunctualShadowPass)
         {
-            bindings.push_back({m_PunctualShadowId, m_PunctualShadowView});
+            bindings.push_back({m_PunctualShadowId, m_Shadows->GetPunctualView()});
         }
         if (m_BloomActive)
         {
@@ -4823,7 +4563,7 @@ namespace Veng::Renderer
     }
     Ref<ImageView> SceneRenderer::GetPunctualShadowView() const
     {
-        return m_PunctualShadowView;
+        return m_Shadows->GetPunctualView();
     }
     DebugDraw& SceneRenderer::GetDebugDraw() const
     {

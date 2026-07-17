@@ -53,6 +53,7 @@ namespace Veng::Renderer
     class ScenePass;
     class ShadowScenePass;
     class PunctualShadowScenePass;
+    class ShadowSystem;
     class Image;
     class Sampler;
     class Buffer;
@@ -1065,34 +1066,6 @@ namespace Veng::Renderer
         /// write the output format.
         void CreatePipelines();
 
-        /// @brief Allocates the directional-shadow set-1 descriptor system once at Create.
-        ///
-        /// Covers the comparison sampler, the set-1 layout, the dummy atlas, and the
-        /// ShadowConstants ring buffer. All are long-lived past any Configure; the descriptor
-        /// sets themselves are per-rebuild (see CreateShadowSets).
-        void CreateShadowSystem();
-
-        /// @brief Clamps m_Settings shadow resolutions to the device-supported maxima.
-        ///
-        /// Called before any atlas is sized (at construction and before Configure) so an over-large
-        /// request degrades to the largest valid atlas rather than a fatal driver error.
-        void ClampShadowResolutions();
-
-        /// @brief Recreates the punctual shadow atlas image and view.
-        ///
-        /// Sized at PunctualShadowResolution × (MaxShadowedPunctual·CubeFaceCount) tiles.
-        /// Called at Create and on every Resize/Configure; the following Rebuild binds the
-        /// new view into the recreated shadow set (binding 4).
-        void CreatePunctualShadowAtlas();
-
-        /// @brief Recreates the set-1 shadow set and the debug-blit set, writing every binding.
-        ///
-        /// Supplies either the wired shadow pass's atlas or the dummy when shadows are off.
-        /// Called from Rebuild after the shadow passes are chosen: a rebuild can land while a
-        /// prior frame's command buffer still references the old sets, and the bindings carry
-        /// no update-after-bind flags, so the sets are replaced (the old ones retiring through
-        /// the per-frame bin) rather than updated in place.
-        void CreateShadowSets(const Ref<ImageView>& atlasView);
         /// @brief Rebuilds the pass set from Settings.Mode and recompiles the RenderGraph.
         void Rebuild();
 
@@ -1595,72 +1568,20 @@ namespace Veng::Renderer
         Ref<class GraphicsPipeline> m_ShadowBlitPipeline;
         Ref<class PipelineLayout> m_ShadowBlitLayout;
 
-        /// @brief Layout of the directional-shadow set-1 descriptor set. Long-lived past any Configure.
-        Ref<DescriptorSetLayout> m_ShadowSetLayout;
-        /// @brief Directional-shadow set-1 descriptor set (both lighting pipelines).
+        /// @brief The set-1 shadow descriptor system + punctual atlas + constants rings; created at Create.
         ///
-        /// Binding 0: shadow atlas (sampled image). Binding 1: immutable comparison sampler
-        /// (hardware SampleCmp). Bindings 2–3: the ShadowConstants and PunctualShadowBlock dynamic
-        /// uniforms, ringed per frame-in-flight and region-selected by the dynamic offset at bind.
-        /// Binding 4: punctual shadow atlas. Recreated by every Rebuild (CreateShadowSets) — a
-        /// rebuild can land while an in-flight command buffer still references the prior set, so
-        /// the set is replaced, never updated in place.
-        Ref<DescriptorSet> m_ShadowSet;
-        /// @brief Immutable hardware comparison sampler for SampleCmp.
-        Ref<Sampler> m_ComparisonSampler;
+        /// Owns the comparison sampler, the set-1 layout/set, the debug-blit layout/set/sampler,
+        /// the dummy and punctual atlases, and both constants rings. The lighting layout reserves
+        /// its set layout, so it exists before the pipelines. The directional cascade atlas is not
+        /// owned here — ShadowScenePass owns it and Rebuild binds its view (or the dummy) into the
+        /// set through RebuildSets.
+        Unique<ShadowSystem> m_Shadows;
 
-        /// @brief Layout of the debug shadow-atlas blit set. Long-lived past any Configure.
-        Ref<DescriptorSetLayout> m_ShadowBlitSetLayout;
-        /// @brief Debug shadow-atlas blit's dedicated descriptor set.
+        /// @brief Number of frames-in-flight the renderer-owned rings are sized for.
         ///
-        /// Set 1 of the shadow-blit pipeline: binding 0 the atlas, binding 1 an ordinary sampler
-        /// (raw depth read, not SampleCmp). Separate layout/set so DebugView::Shadows visualizes
-        /// stored depth values. Recreated by every Rebuild alongside m_ShadowSet.
-        Ref<DescriptorSet> m_ShadowBlitSet;
-        /// @brief Ordinary clamp sampler for the debug blit's raw depth reads.
-        Ref<Sampler> m_ShadowBlitSampler;
-
-        /// @brief 1×1 D32 dummy atlas cleared to depth = 1 (full visibility).
-        ///
-        /// Bound into set 1 binding 0 whenever no shadow pass is wired, so the layout is always
-        /// satisfied and a SampleCmp returns full visibility.
-        Ref<Image> m_DummyShadowImage;
-        /// @brief View over m_DummyShadowImage.
-        Ref<ImageView> m_DummyShadowView;
-
-        /// @brief ShadowConstants ring buffer (set 1 binding 2).
-        ///
-        /// Host-visible, persistently mapped; framesInFlight regions of m_ShadowRingStride bytes
-        /// (align_up(sizeof(ShadowConstantsBlock), minUniformBufferOffsetAlignment)). A per-frame
-        /// write touches only the current (not-yet-submitted) region; the dynamic offset at bind
-        /// selects it.
-        Ref<Buffer> m_ShadowConstantsBuffer;
-        /// @brief Stride in bytes between ShadowConstants ring regions.
-        u32 m_ShadowRingStride = 0;
-        /// @brief Number of frames-in-flight the ring is sized for.
+        /// Seeded at construction (before the ring allocations below) and read by the draw-data,
+        /// skinning-palette, cull, and auto-exposure rings.
         u32 m_FramesInFlight = 0;
-
-        /// @brief Punctual shadow atlas (set 1 binding 4).
-        ///
-        /// A 2D D32 atlas of MaxShadowedPunctual·CubeFaceCount tiles at PunctualShadowResolution²
-        /// (a spot uses one tile, a point six). DepthAttachment | Sampled — the punctual shadow
-        /// pass writes per-tile viewports; the lighting pass SampleCmps through the shared
-        /// comparison sampler. Off bindless: a comparison-sampled image bars set-0 bindless on
-        /// MoltenVK, and a closed producer→consumer resource needs no global registration.
-        /// Cleared to depth = 1 at creation so it is always in a valid sampleable layout.
-        Ref<Image> m_PunctualShadowImage;
-        /// @brief View over m_PunctualShadowImage.
-        Ref<ImageView> m_PunctualShadowView;
-
-        /// @brief Per-light punctual shadow records (set 1 binding 3).
-        ///
-        /// A std140 dynamic uniform ringed for framesInFlight regions of m_PunctualRingStride bytes,
-        /// beside the ShadowConstants ring. Host-visible + persistently mapped; a per-frame write
-        /// touches only the current (not-yet-submitted) region. Zeroed regions read as "no map"
-        /// (every record Params.x type = 0), so a frame with no shadowed lights is fully lit.
-        Ref<Buffer> m_PunctualShadowBuffer;
-        /// @brief Stride in bytes between punctual ring regions.
-        u32 m_PunctualRingStride = 0;
 
         /// @brief Core tonemap PostProcess material, loaded once at Create.
         ///
@@ -1930,7 +1851,7 @@ namespace Veng::Renderer
         /// @brief True when the last Rebuild wired the punctual shadow pass.
         ///
         /// Execute binds the punctual atlas import only when true. The pass renders the
-        /// renderer-owned punctual atlas (m_PunctualShadowView).
+        /// shadow system's punctual atlas (m_Shadows->GetPunctualView()).
         bool m_PunctualShadowActive = false;
         /// @brief Imported id for the punctual shadow atlas.
         ResourceId m_PunctualShadowId;
