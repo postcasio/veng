@@ -259,9 +259,10 @@ family registers from the editor side.
   event a platform character callback raises, so a driven run reaches a focused text field down the
   same path a typing user does; a `key_down` raises no character and never fills a field). Each
   resolves to a `Veng::Event` and folds into the app's input through the `McpHost::InjectInput`
-  closure at the mutation-safe pump point — a game fills it from `GetInputRouter()::Dispatch` (or
-  `GetInput()::ApplyEvent`), so an injected event is **indistinguishable from a real window
-  event** and the action/mapping layer resolves it naturally on the next tick. It **validates the
+  closure at the mutation-safe pump point — a game fills it from
+  `GetInputRouter()::PostInjectedEvent`, which queues every foldable kind (key/button down·up,
+  move, scroll, text) for paced release at the frame's pre-tick input point, so an injected event
+  is **indistinguishable from a real window event** and the action/mapping layer resolves it naturally on the next tick. It **validates the
   batch shape up front** (a non-empty array within `MaxInputBatchSize` (64), each event
   well-formed with a known type/key/button) and rejects a structural error as the whole call
   before any event applies (the batch verbs' validate-then-apply discipline); a host that leaves

@@ -244,9 +244,14 @@ namespace Veng
                 InjectedEvent{.Kind = InjectedKind::Scroll,
                               .Vector = static_cast<const MouseScrolledEvent&>(event).GetOffset()});
             break;
+        case EventType::KeyTyped:
+            m_InjectedQueue.push_back(InjectedEvent{
+                .Kind = InjectedKind::Text,
+                .Codepoint = static_cast<const KeyTypedEvent&>(event).GetCodepoint()});
+            break;
         default:
-            // Not one of the six foldable input kinds an injected batch carries; ignore it rather
-            // than route a non-input event through the synthetic path.
+            // Not one of the foldable input kinds an injected batch carries; ignore it rather than
+            // route a non-input event through the synthetic path.
             break;
         }
     }
@@ -291,6 +296,12 @@ namespace Veng
             Dispatch(event);
             break;
         }
+        case InjectedKind::Text:
+        {
+            KeyTypedEvent event(injected.Codepoint);
+            Dispatch(event);
+            break;
+        }
         }
     }
 
@@ -330,6 +341,7 @@ namespace Veng
                 break;
             case InjectedKind::MouseMove:
             case InjectedKind::Scroll:
+            case InjectedKind::Text:
                 break;
             }
             if (reverses)
@@ -356,6 +368,7 @@ namespace Veng
                 break;
             case InjectedKind::MouseMove:
             case InjectedKind::Scroll:
+            case InjectedKind::Text:
                 break;
             }
         }
