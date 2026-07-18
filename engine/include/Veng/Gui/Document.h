@@ -436,6 +436,19 @@ namespace Veng::Gui
         [[nodiscard]] vec2 MeasureElementText(const Element& element,
                                               optional<f32> availableWidth) const;
 
+        /// @brief Measures an arbitrary run against a resolved style, the same way an element is.
+        ///
+        /// Uses the installed text measurer when one is set, otherwise shapes the run through the
+        /// style's resident font; returns a zero size when neither is available. Measuring a run
+        /// that is not an element's whole text is what a caret offset needs — the width of the
+        /// value's prefix up to the edit position.
+        /// @param text            The run to measure.
+        /// @param style           The resolved style whose font and size to shape against.
+        /// @param availableWidth  The width to wrap within, or nullopt for an unconstrained measure.
+        /// @return The measured text block size, in pixels.
+        [[nodiscard]] vec2 MeasureStyledText(string_view text, const Style& style,
+                                             optional<f32> availableWidth) const;
+
         /// @brief Sets a Slider's or Checkbox's scalar value, clamping, stepping, and notifying.
         ///
         /// Clamps the value to the control's `[Min, Max]` range and snaps it to Step when the step is
@@ -557,6 +570,11 @@ namespace Veng::Gui
         ///
         /// The opacity is the element's composited subtree opacity, folded into each part's alpha.
         void BuildWidget(const Element& element, DrawList& list, f32 opacity) const;
+
+        /// @brief Emits a TextInput's own value run and, while it holds focus, its caret bar.
+        ///
+        /// The opacity is the element's composited subtree opacity, folded into both alphas.
+        void BuildTextInput(const Element& element, DrawList& list, f32 opacity) const;
 
         /// @brief Collects every focusable, visible element into m_FocusOrder in tree order.
         void GatherFocusables(Element& element, vector<Element*>& out) const;

@@ -254,7 +254,10 @@ family registers from the editor side.
   input mutates app state, so it rides the same write gate as the mutation verbs) — `input.send`
   applies an **ordered batch** of synthetic input events so an agent can drive a running app:
   `key_down` / `key_up` (by engine `Key` enumerator name), `mouse_down` / `mouse_up` (`Left` /
-  `Right` / `Middle`), `mouse_move` (window-space `{ x, y }`), `scroll` (`{ dx, dy }`). Each
+  `Right` / `Middle`), `mouse_move` (window-space `{ x, y }`), `scroll` (`{ dx, dy }`), `text` (a
+  UTF-8 `{ text }` run, up to 256 codepoints, expanded to one `KeyTypedEvent` per codepoint — the
+  event a platform character callback raises, so a driven run reaches a focused text field down the
+  same path a typing user does; a `key_down` raises no character and never fills a field). Each
   resolves to a `Veng::Event` and folds into the app's input through the `McpHost::InjectInput`
   closure at the mutation-safe pump point — a game fills it from `GetInputRouter()::Dispatch` (or
   `GetInput()::ApplyEvent`), so an injected event is **indistinguishable from a real window
@@ -406,7 +409,8 @@ httplib stays PRIVATE and `veng-config` already carries `find_dependency(nlohman
 - **`mcp_mutation`** — the mutation tools behind `AllowMutations`, including the routed
   `ApplyMutation` hook and the batch delete verbs' per-item / over-limit result model.
 - **`mcp_input`** — `input.send` behind `AllowMutations` over a headless `Input`: key/button/move/
-  scroll events land in the snapshot through `InjectInput`, the batch shape-validation errors are
+  scroll events land in the snapshot through `InjectInput`, a `text` run reaches a live
+  `Gui::Document`'s focused `TextInput` and edits its value, the batch shape-validation errors are
   whole-call, a rejected batch applies nothing, a read-only server omits the tool, and a null
   `InjectInput` host reports it unavailable.
 - **`mcp_client`** — the client transport smoke: stand a server up in-process, drive

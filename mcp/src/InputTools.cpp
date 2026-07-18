@@ -12,6 +12,7 @@
 #include <fmt/format.h>
 
 #include <array>
+#include <utility>
 
 namespace Veng::Mcp
 {
@@ -24,6 +25,12 @@ namespace Veng::Mcp
         /// Mirrors the mutation batch cap: a context-volume convention for a single trusted local
         /// client, not a DoS defense. A batch over this size is a whole-call located error.
         constexpr usize MaxInputBatchSize = 64;
+
+        /// @brief The most codepoints one 'text' event carries.
+        ///
+        /// A text event expands to one KeyTypedEvent per codepoint, so this bounds the fan-out a
+        /// single batch entry produces — the same context-volume convention as the batch cap.
+        constexpr usize MaxTextCodepoints = 256;
 
         /// @brief A name → Key row, so an agent names a key ("W", "Space") rather than a code.
         struct KeyName
@@ -149,6 +156,63 @@ namespace Veng::Mcp
             return std::nullopt;
         }
 
+        /// @brief Decodes a UTF-8 run to codepoints, or nullopt when the encoding is malformed.
+        ///
+        /// A text event names what a user types, so the argument is ordinary UTF-8 rather than a
+        /// codepoint array; rejecting a malformed run up front keeps the batch's validate-then-apply
+        /// discipline (a bad run fails the whole call, never half-types).
+        optional<vector<u32>> DecodeUtf8(string_view text)
+        {
+            vector<u32> codepoints;
+            for (usize i = 0; i < text.size();)
+            {
+                const auto lead = static_cast<u8>(text[i]);
+                usize length = 0;
+                u32 codepoint = 0;
+                if (lead < 0x80)
+                {
+                    length = 1;
+                    codepoint = lead;
+                }
+                else if ((lead & 0xE0) == 0xC0)
+                {
+                    length = 2;
+                    codepoint = lead & 0x1Fu;
+                }
+                else if ((lead & 0xF0) == 0xE0)
+                {
+                    length = 3;
+                    codepoint = lead & 0x0Fu;
+                }
+                else if ((lead & 0xF8) == 0xF0)
+                {
+                    length = 4;
+                    codepoint = lead & 0x07u;
+                }
+                else
+                {
+                    return std::nullopt;
+                }
+
+                if (i + length > text.size())
+                {
+                    return std::nullopt;
+                }
+                for (usize k = 1; k < length; ++k)
+                {
+                    const auto continuation = static_cast<u8>(text[i + k]);
+                    if ((continuation & 0xC0) != 0x80)
+                    {
+                        return std::nullopt;
+                    }
+                    codepoint = (codepoint << 6) | (continuation & 0x3Fu);
+                }
+                codepoints.push_back(codepoint);
+                i += length;
+            }
+            return codepoints;
+        }
+
         /// @brief Reads a required numeric field as f32, or nullopt when absent/not a number.
         optional<f32> ReadNumber(const Json& event, const char* field)
         {
@@ -175,6 +239,7 @@ namespace Veng::Mcp
                 MouseUp,
                 MouseMove,
                 Scroll,
+                Text,
             } Which = Kind::KeyDown;
 
             /// @brief The key for KeyDown/KeyUp.
@@ -183,6 +248,8 @@ namespace Veng::Mcp
             MouseButton Button = MouseButton::Left;
             /// @brief The position (MouseMove) or scroll offset (Scroll), in window pixels.
             vec2 Vector = {};
+            /// @brief The decoded codepoints for Text, applied one KeyTypedEvent each in order.
+            vector<u32> Codepoints;
         };
 
         /// @brief Validates and resolves one event object, or returns a located error naming its index.
@@ -265,6 +332,34 @@ namespace Veng::Mcp
             {
                 return vectorEvent(ResolvedEvent::Kind::Scroll, "dx", "dy");
             }
+            if (type == "text")
+            {
+                if (!event.contains("text") || !event["text"].is_string())
+                {
+                    return std::unexpected(
+                        fmt::format("events[{}] 'text' needs a string 'text'", index));
+                }
+                const string run = event["text"].get<string>();
+                optional<vector<u32>> codepoints = DecodeUtf8(run);
+                if (!codepoints)
+                {
+                    return std::unexpected(
+                        fmt::format("events[{}] 'text' is not valid UTF-8", index));
+                }
+                if (codepoints->empty())
+                {
+                    return std::unexpected(
+                        fmt::format("events[{}] 'text' must name at least one character", index));
+                }
+                if (codepoints->size() > MaxTextCodepoints)
+                {
+                    return std::unexpected(
+                        fmt::format("events[{}] 'text' exceeds the limit of {} characters", index,
+                                    MaxTextCodepoints));
+                }
+                return ResolvedEvent{.Which = ResolvedEvent::Kind::Text,
+                                     .Codepoints = std::move(*codepoints)};
+            }
             return std::unexpected(fmt::format("events[{}] unknown type '{}'", index, type));
         }
 
@@ -313,6 +408,18 @@ namespace Veng::Mcp
                 host.InjectInput(event);
                 break;
             }
+            case ResolvedEvent::Kind::Text:
+            {
+                // Text entry rides KeyTypedEvent — the same event the platform layer raises from a
+                // character callback and the sole path a focused text field reads — so a driven run
+                // lands through exactly the code a typing user does.
+                for (const u32 codepoint : resolved.Codepoints)
+                {
+                    KeyTypedEvent event(codepoint);
+                    host.InjectInput(event);
+                }
+                break;
+            }
             }
         }
     }
@@ -329,14 +436,19 @@ namespace Veng::Mcp
                 "of: { type: 'key_down'|'key_up', key: <name> }, { type: "
                 "'mouse_down'|'mouse_up', button: 'Left'|'Right'|'Middle' }, { type: "
                 "'mouse_move', x: <px>, y: <px> } (window-space position), { type: 'scroll', dx: "
-                "<n>, dy: <n> }. Key names match the engine Key enumerators (e.g. 'W', 'Space', "
-                "'LeftShift', 'F1'). Events apply in order at the frame's input point, so the "
-                "action layer resolves them as real input. Up to 64 events per call.";
+                "<n>, dy: <n> }, { type: 'text', text: <utf8 string> }. Key names match the engine "
+                "Key enumerators (e.g. 'W', 'Space', 'LeftShift', 'F1'). A 'text' event types its "
+                "characters into whatever holds text focus, one character event per codepoint, the "
+                "same path a keyboard's character callback drives — that is how to fill a text "
+                "field; a key_down does not produce characters. Up to 256 characters per text "
+                "event. Events apply in order at the frame's input point, so the action layer "
+                "resolves them as real input. Up to 64 events per call.";
             tool.InputSchemaJson =
                 R"({"type":"object","required":["events"],"properties":{"events":{"type":"array",)"
                 R"("items":{"type":"object","required":["type"],"properties":{)"
                 R"("type":{"type":"string","enum":["key_down","key_up","mouse_down","mouse_up",)"
-                R"("mouse_move","scroll"]},"key":{"type":"string"},"button":{"type":"string"},)"
+                R"("mouse_move","scroll","text"]},"key":{"type":"string"},)"
+                R"("button":{"type":"string"},"text":{"type":"string"},)"
                 R"("x":{"type":"number"},"y":{"type":"number"},"dx":{"type":"number"},)"
                 R"("dy":{"type":"number"}}}}}})";
             tool.Handler = [&host](string_view argsJson) -> Result<string>
@@ -372,7 +484,7 @@ namespace Veng::Mcp
                     {
                         return std::unexpected(one.error());
                     }
-                    resolved.push_back(*one);
+                    resolved.push_back(std::move(*one));
                 }
 
                 for (const ResolvedEvent& event : resolved)

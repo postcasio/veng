@@ -839,7 +839,8 @@ if (VENG_BUILD_TESTS)
     # The input-injection proof: stand an McpServer up (AllowMutations, an InjectInput closure over a
     # headless Veng::Input), pump it on a background thread that rolls Input::BeginFrame each frame,
     # and drive input.send over loopback — key/mouse-button/move/scroll events land in the Input
-    # snapshot, the batch shape-validation errors are whole-call, a rejected batch applies nothing,
+    # snapshot, a text run types into a live Gui::Document's focused TextInput one codepoint at a
+    # time, the batch shape-validation errors are whole-call, a rejected batch applies nothing,
     # a read-only server omits input.send, and a null-InjectInput host reports it unavailable.
     # Device-free (a null-window Input, no Assets), so it runs in the default band.
     add_executable(veng_test_mcp_input tests/mcp_input.cpp)

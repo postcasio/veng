@@ -3,12 +3,14 @@
 // and geometry pinned, plus a reflected in-test view-model for value and List bindings. No ICD and no
 // font resource is needed — a widget's logic is pure CPU. Button activation fires onClick; Checkbox
 // toggles Checked and its bound value; Slider drag/nudge changes the value and clamps; ProgressBar
-// reflects a bound value; TextInput inserts/backspaces codepoints; ScrollView clips and offsets its
-// children on scroll; a List instantiates N item elements from a bound array and re-syncs on change.
+// reflects a bound value; TextInput inserts/backspaces codepoints and paints its own value and
+// caret; ScrollView clips and offsets its children on scroll; a List instantiates N item elements
+// from a bound array and re-syncs on change.
 
 #include <doctest/doctest.h>
 
 #include <Veng/Gui/BindingContext.h>
+#include <Veng/Gui/DrawList.h>
 #include <Veng/Gui/Document.h>
 #include <Veng/Gui/InputEvent.h>
 #include <Veng/Reflection/Reflect.h>
@@ -280,6 +282,65 @@ TEST_CASE("gui widget: a TextInput inserts and backspaces codepoints into its te
     CHECK(doc.DispatchText(0x08));
     CHECK(input.Text.empty());
     CHECK_FALSE(doc.DispatchText(0x08));
+}
+
+TEST_CASE("gui widget: a TextInput paints its own value and a caret at the edit position")
+{
+    Document doc;
+    doc.SetInteractive(true);
+
+    // A device-free measurer stands in for a resident font: every codepoint is eight pixels wide on
+    // a sixteen-pixel line, so a painted offset is exactly the prefix's codepoint count times eight.
+    doc.SetTextMeasurer([](string_view text, const Style&, optional<f32>)
+                        { return vec2(static_cast<f32>(text.size()) * 8.0f, 16.0f); });
+
+    Element& root = doc.Root();
+    PlaceAt(root, {0, 0}, {200, 200});
+    Element& input = doc.Add(root, ElementKind::TextInput);
+    PlaceAt(input, {10, 20}, {120, 24});
+    doc.SetText(input, "Hi");
+    doc.InitWidget(input);
+
+    // The value's glyph run needs a resident font (the GPU band covers that); the caret is a plain
+    // quad, so the device-free draw list carries the field's own painted geometry and nothing else.
+    // Unfocused, the field paints no caret at all.
+    DrawList idle;
+    doc.Build(idle);
+    CHECK(idle.GetVertices().empty());
+
+    // Focused, the caret sits at the content origin plus the width of the value up to the caret —
+    // InitWidget leaves it past the last codepoint, so two codepoints in at sixteen pixels — and
+    // rides the middle of the twenty-four-pixel box on the style's sixteen-pixel line.
+    doc.SetFocus(&input);
+    const f32 top = 20.0f + (24.0f - 16.0f) * 0.5f;
+    {
+        DrawList painted;
+        doc.Build(painted);
+        REQUIRE(painted.GetVertices().size() == 4);
+        CHECK(painted.GetVertices()[0].Position.x == doctest::Approx(10.0f + 16.0f));
+        CHECK(painted.GetVertices()[0].Position.y == doctest::Approx(top));
+    }
+
+    // Typing advances the value and the caret it paints together — the field's presentation tracks
+    // its own content with no companion element mirroring it.
+    CHECK(doc.DispatchText('!'));
+    CHECK(input.Text == "Hi!");
+    {
+        DrawList painted;
+        doc.Build(painted);
+        REQUIRE(painted.GetVertices().size() == 4);
+        CHECK(painted.GetVertices()[0].Position.x == doctest::Approx(10.0f + 24.0f));
+    }
+
+    // A backspace walks the caret back with the value it deleted.
+    CHECK(doc.DispatchText(0x08));
+    CHECK(input.Text == "Hi");
+    {
+        DrawList painted;
+        doc.Build(painted);
+        REQUIRE(painted.GetVertices().size() == 4);
+        CHECK(painted.GetVertices()[0].Position.x == doctest::Approx(10.0f + 16.0f));
+    }
 }
 
 TEST_CASE("gui widget: a ScrollView clips and offsets its children on scroll")

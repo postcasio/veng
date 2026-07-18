@@ -159,8 +159,12 @@ The write family also includes **`input.send`** (a game reaches it by setting `I
 the host): an ordered batch of synthetic input events that drive the running app as if from
 the keyboard/mouse — `{ events: [ … ] }`, each `{ type: "key_down"|"key_up", key: <name> }`,
 `{ type: "mouse_down"|"mouse_up", button: "Left"|"Right"|"Middle" }`, `{ type: "mouse_move", x, y }`
-(window-space), or `{ type: "scroll", dx, dy }`. Key names are the engine `Key` enumerators (`"W"`,
-`"Space"`, `"LeftShift"`, `"F1"`). Events apply in order at the frame's input point, so the
+(window-space), `{ type: "scroll", dx, dy }`, or `{ type: "text", text: "…" }`. Key names are the
+engine `Key` enumerators (`"W"`, `"Space"`, `"LeftShift"`, `"F1"`). A `text` event is how a text
+field gets filled: its UTF-8 run (up to 256 codepoints) expands to one character event per
+codepoint — the event a platform character callback raises — so it reaches whatever holds text
+focus down the same path a typing user does, while a `key_down` raises no character at all.
+Events apply in order at the frame's input point, so the
 action/mapping layer resolves them exactly as it would a human's input. The batch is capped at 64
 events and its shape is validated up front — a malformed event rejects the whole call before any
 event lands.
