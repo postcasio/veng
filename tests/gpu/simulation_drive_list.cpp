@@ -96,12 +96,15 @@ namespace
 {
     // A headless application driven by two closures: InitFn (from OnInitialize, engine ready) and
     // StepFn (each OnUpdate, with the frame index). Viewports live on the app so any still open at
-    // teardown drop from OnDispose while the engine state is alive; worlds are runner-owned and the
+    // teardown drop from ~DriveApp while the engine state is alive; worlds are runner-owned and the
     // runner drops them at teardown.
     class DriveApp final : public Application
     {
     public:
         using Application::Application;
+
+        // Runs before ~Application, while the engine state is alive, so open viewports self-unregister.
+        ~DriveApp() override { Viewports.clear(); }
 
         function<void(DriveApp&)> InitFn;
         function<void(DriveApp&, int)> StepFn;
@@ -168,8 +171,6 @@ namespace
                 RequestExit();
             }
         }
-
-        void OnDispose() override { Viewports.clear(); }
     };
 
     ApplicationInfo HeadlessInfo()

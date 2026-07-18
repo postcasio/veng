@@ -70,6 +70,9 @@ namespace VengEditor
     public:
         /// @brief Constructs and returns an EditorHost from the given parameters.
         static Veng::Unique<EditorHost> Create(const EditorHostInfo& info);
+
+        /// @brief Destroys the host, releasing its panels, pending panels, asset sources, and status
+        ///        tracker while the base engine services are still alive.
         ~EditorHost() override;
 
         /// @brief Resolves the asset's registered editor and queues the panel for
@@ -206,8 +209,6 @@ namespace VengEditor
         /// panels' Offscreen viewports before this runs, and the managed gather/composite tail
         /// runs after ImGuiLayer::Render with zero Presented placements.
         void OnRender() override;
-        /// @brief Releases all panels and GPU resources before the context is torn down.
-        void OnDispose() override;
 
     private:
         /// @brief Owned registries, constructed before this Application so the base

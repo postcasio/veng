@@ -1579,55 +1579,24 @@ namespace Veng
             Frame();
         }
 
-        m_RenderContext.WaitIdle();
+        // Run ends at its operations — work that must complete while the app is fully alive, in order.
+        // The release that follows is the members' destruction, which reverse-declaration order
+        // sequences (see the member declarations); Run does none of it.
 
-        // Drain in-flight jobs before OnDispose: continuations that hand resources
-        // back to the app must complete before teardown touches engine state.
+        // Quiesce: drain the GPU and the worker pool so no in-flight continuation lands a resource on
+        // an app member after teardown begins.
+        m_RenderContext.WaitIdle();
         m_TaskSystem->WaitForAll();
 
-        OnDispose();
+        // The app's own shutdown operations, run while every engine service is still alive.
+        OnShutdown();
 
-        // The teardown durability point: every dirty session record saves while the store hooks'
-        // captures are still valid.
+        // The durability operation: flush every dirty session record through the SaveSession hook,
+        // which dereferences derived-class state — so it cannot move to a destructor.
         if (m_Sessions)
         {
             m_Sessions->SaveAll();
         }
-
-        // Drop the net hosts before the world runner and the asset manager: a client host borrows a
-        // runner-owned world's scene (whose components hold AssetHandles), and both hosts hold
-        // connections that must close before the transport goes. This also releases each client world's
-        // retained level handle and its held spawn residency (normally released once the world starts,
-        // but held here for a client torn down after a level loaded but before its deferred start ran) —
-        // while the asset manager and context are still live, so their refs never outlive the allocator.
-        m_Net.reset();
-
-        // Drop the world runner (and every world it owns) before the asset manager so its worlds'
-        // components' AssetHandles (the sky's environment/material, the level handle) retire through
-        // the deferred path.
-        m_WorldRunner.reset();
-        m_WorldLevel = {};
-
-        // Release the compositor's gather + composite tail (GPU resources) and its placement cache
-        // before dropping the managed viewports, so the viewports' outputs retire rather than
-        // outliving the context's allocator. A subclass's panel-owned viewports are released in
-        // OnDispose above, so the compositor's drive-list is empty (or holds only the managed
-        // viewports) by here; each managed viewport self-unregisters from the still-live drive-list.
-        m_Compositor.Dispose();
-        m_ManagedViewports.reset();
-
-        // The router borrows the window, input, and ImGui layer; drop it before any of them.
-        m_InputRouter.reset();
-
-        // Shut ImGui down before the context: its backend, descriptor pool and
-        // offscreen target must be released while the device is still alive.
-        m_ImGuiLayer.reset();
-
-        // Drop all cached assets so their GPU resources retire before DisposeResources() drains the bins.
-        m_AssetManager.reset();
-
-        // Workers must stop after the AssetManager: a live load worker holds Context& and AssetManager state.
-        m_TaskSystem.reset();
     }
 
     void Application::Frame()

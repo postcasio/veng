@@ -19,7 +19,18 @@ namespace Veng::Renderer
 {
     ViewportCompositor::ViewportCompositor(Context& context) : m_Context(context) {}
 
-    ViewportCompositor::~ViewportCompositor() = default;
+    ViewportCompositor::~ViewportCompositor()
+    {
+        // Release the tail's GPU resources while the context is still live. The placement cache retains
+        // a Ref to each Presented viewport's output view for change-detection; clearing it here — after
+        // the managed viewports have already dropped, since they are declared after the compositor —
+        // releases those outputs so the images retire rather than outliving the context's allocator.
+        m_CompositeGraph.reset();
+        m_Composite.reset();
+        m_GatherGraph.reset();
+        m_Gather.reset();
+        m_GatheredPlacements.clear();
+    }
 
     void ViewportCompositor::InitializeTail(AssetManager& assets, ImGuiLayer& imgui)
     {
@@ -173,17 +184,5 @@ namespace Veng::Renderer
                 viewport->SetUiScale(uiScale);
             }
         }
-    }
-
-    void ViewportCompositor::Dispose()
-    {
-        // Release the tail's GPU resources before the context disposes. The placement cache retains a
-        // Ref to each Presented viewport's output view for change-detection; clear it so dropping the
-        // viewports releases their outputs and the images retire rather than outliving the allocator.
-        m_CompositeGraph.reset();
-        m_Composite.reset();
-        m_GatherGraph.reset();
-        m_Gather.reset();
-        m_GatheredPlacements.clear();
     }
 }

@@ -180,8 +180,6 @@ private:
         }
     }
 
-    void OnDispose() override { m_Overlay.reset(); }
-
     // Opens the overlay level over the running frame: a fresh owned world simulated concurrently, its
     // own seat taking input while the managed world's is suspended, and — naming the managed world as
     // the covered world — that world's simulation frozen for the modal's lifetime. The populate hook

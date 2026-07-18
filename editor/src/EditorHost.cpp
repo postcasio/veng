@@ -599,7 +599,16 @@ namespace VengEditor
     {
     }
 
-    EditorHost::~EditorHost() = default;
+    EditorHost::~EditorHost()
+    {
+        // Runs before ~Application, while the base router/assets/context are still alive. Panels drop
+        // their owned Offscreen viewports here (each self-unregisters from the base drive-list), then
+        // the pending panels, the asset sources, and the status tracker, in that order.
+        m_Panels.clear();
+        m_PendingPanels.clear();
+        m_Sources.reset();
+        m_Status.reset();
+    }
 
     void EditorHost::OpenAssetEditor(AssetType type, AssetId id)
     {
@@ -1253,15 +1262,5 @@ namespace VengEditor
         // the Window menu can reopen them. Done after Draw so the panel that handled the close this
         // frame is torn down between frames, not mid-iteration.
         std::erase_if(m_Panels, [](const PanelSlot& slot) { return slot.Document && !slot.Open; });
-    }
-
-    void EditorHost::OnDispose()
-    {
-        // Panels drop their owned Offscreen viewports here (each self-unregisters from the
-        // base drive-list) before the base tears the context down.
-        m_Panels.clear();
-        m_PendingPanels.clear();
-        m_Sources.reset();
-        m_Status.reset();
     }
 }

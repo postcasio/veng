@@ -136,11 +136,19 @@ namespace
 
     // A headless application driven by two closures: InitFn (from OnInitialize, engine ready) and
     // StepFn (each OnUpdate, with the frame index). Overlays live on the app so any still open at
-    // teardown are dropped from OnDispose, while the router/assets/context are still alive.
+    // teardown are dropped from ~OverlayApp, while the router/assets/context are still alive.
     class OverlayApp final : public Application
     {
     public:
         using Application::Application;
+
+        // Runs before ~Application, while the router/assets/context are alive. B is the later overlay,
+        // dropped first (overlays unwind LIFO).
+        ~OverlayApp() override
+        {
+            B.reset();
+            A.reset();
+        }
 
         function<void(OverlayApp&)> InitFn;
         function<void(OverlayApp&, int)> StepFn;
@@ -169,12 +177,6 @@ namespace
             {
                 RequestExit();
             }
-        }
-
-        void OnDispose() override
-        {
-            B.reset();
-            A.reset();
         }
     };
 
@@ -655,9 +657,10 @@ TEST_CASE("A PiP overlay renders at its sub-region over a live managed primary")
 TEST_CASE("Tearing down the Context with an overlay world still open retires cleanly")
 {
     // The two-hop WorldRunner -> World -> overlay-viewport ownership chain at teardown: the overlay
-    // is opened and never explicitly closed mid-run, so it is still open when OnDispose drops it
-    // during Run()'s teardown (the runner and managed set reset before the Context disposes). Its
-    // viewport must retire against the still-live viewport registry and its world drop cleanly.
+    // is opened and never explicitly closed mid-run, so it is still open when ~OverlayApp drops it
+    // (before ~Application tears the base down, the runner and managed set destructing before the
+    // Context). Its viewport must retire against the still-live viewport registry and its world drop
+    // cleanly.
     TypeRegistry types;
     RegisterBuiltinTypes(types);
     SystemRegistry systems;
@@ -674,7 +677,7 @@ TEST_CASE("Tearing down the Context with an overlay world still open retires cle
         {
             a.A = LevelOverlay::Open(a, LevelOverlayInfo{.Source = level});
             CHECK(a.A->GetWorld().IsValid());
-            // Left open deliberately: OnDispose (not this step) closes it during teardown.
+            // Left open deliberately: ~OverlayApp (not this step) closes it during teardown.
         }
     };
 

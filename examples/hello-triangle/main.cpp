@@ -966,15 +966,11 @@ protected:
         }
     }
 
-    void OnDispose() override
-    {
-        // Drop the server first: its destructor stops the listener thread and closes the socket, so
-        // no in-flight tool handler can touch engine state while the rest of the app tears down.
-        m_McpServer.reset();
-        m_SceneTexture.reset();
-        m_SceneSampler.reset();
-        m_VolumeField.reset();
-    }
+    // Runs before ~Application, while every engine service is still alive. Drop the MCP server first:
+    // its destructor stops the listener thread and closes the socket, so no in-flight tool handler can
+    // touch engine state while the rest of the app tears down. The remaining resources are members and
+    // retire in declaration order.
+    ~HelloTriangleApp() override { m_McpServer.reset(); }
 
 private:
     // Constructs the MCP server when HT_MCP=<port> is set (HT_MCP=0 picks an ephemeral port), so the
@@ -1418,8 +1414,8 @@ private:
 
     // The optional MCP server and the provider seam it captures by reference. m_McpHost holds the
     // TypeRegistry/AssetManager references and the per-frame world/viewport closures; it must
-    // outlive m_McpServer, so it is declared first (destroyed last) and reset after the server in
-    // OnDispose. Both stay empty unless HT_MCP is set.
+    // outlive m_McpServer, so it is declared first (destroyed last), while the destructor resets the
+    // server first. Both stay empty unless HT_MCP is set.
     optional<Mcp::McpHost> m_McpHost;
     Unique<Mcp::McpServer> m_McpServer;
 

@@ -1084,6 +1084,11 @@ if (VENG_BUILD_TESTS)
             # runner and asserting the engine's tick/pause/view/capture drive semantics (it needs a
             # Context for the Application, so it rides the gpu band though it pins no pixels).
             tests/gpu/simulation_drive_list.cpp
+            # application_shutdown.cpp drives a headless managed-world Application through Run() and
+            # asserts the shutdown-operation order OnShutdown -> session SaveAll -> member teardown —
+            # the non-GPU durability operation the -L validation gate cannot see (it needs a Context
+            # for the Application, so it rides the gpu band though it pins no pixels).
+            tests/gpu/application_shutdown.cpp
             # managed_viewport_set.cpp drives a headless Application, binding managed viewports to
             # worlds by handle and asserting the multi-world camera pull, split-screen reconfigure,
             # closed-world cleared target, and set teardown order (it needs a Context for the

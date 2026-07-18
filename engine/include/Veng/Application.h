@@ -827,11 +827,15 @@ namespace Veng
         /// @brief Called once per frame to record draw commands.
         virtual void OnRender() {}
 
-        /// @brief Called after the main loop exits and the GPU is idle, before context teardown.
+        /// @brief Runs the app's shutdown operations while every engine service is still alive.
         ///
-        /// Release every engine resource held by the application here (reset Refs/Uniques,
-        /// AssetHandles included) — resources that outlive the context fail on destruction.
-        virtual void OnDispose() {}
+        /// Called once after the main loop exits and the GPU is idle, immediately before the engine's
+        /// own session SaveAll — the seam for shutdown work that must run while the app is fully alive
+        /// and interleave with the engine's own operations (an exit checkpoint that must precede the
+        /// durability save). It is *not* for resource release: an app releases its resources in its own
+        /// destructor, which runs while every engine service is still live, so most apps need no
+        /// override. Default is a no-op.
+        virtual void OnShutdown() {}
 
         /// @brief Called in client mode when the own seat's possessed pawn changes (or clears).
         ///
@@ -1153,81 +1157,110 @@ namespace Veng
         /// @brief Borrowed host-owned GuiDriver catalog, or null; must outlive this app if set.
         GuiDriverRegistry* m_GuiDriverRegistry = nullptr;
 
+        /// @brief The application window; null when Headless.
+        ///
+        /// First of the ordered lifetime members below: they are declared so reverse-declaration
+        /// destruction runs the teardown sequence — each releases while every service it borrows is
+        /// still alive. Run() ends at its operations (quiesce, OnShutdown, SaveAll) and does no
+        /// explicit release; destruction owns the release.
         Unique<Window> m_Window;
 
-        /// @brief Frame-coherent input; borrows m_Window, so constructed after and reset before it.
+        /// @brief Frame-coherent input; borrows m_Window, so declared after it (destructs first).
         Unique<Input> m_Input;
 
         Renderer::Context m_RenderContext;
 
+        /// @brief Worker pool; declared before m_AssetManager so it destructs after it — the workers
+        ///        stop last, since a live load worker holds Context& and AssetManager state.
+        Unique<TaskSystem> m_TaskSystem;
+
+        /// @brief Owns every cached asset; borrows m_RenderContext, so declared after it and destructs
+        ///        first, retiring each asset's GPU resources while the context is still live.
+        Unique<AssetManager> m_AssetManager;
+
+        /// @brief The ImGui integration; borrows m_RenderContext, so declared after it — its backend,
+        ///        descriptor pool, and offscreen target release while the device is still alive.
+        Unique<ImGuiLayer> m_ImGuiLayer;
+
+        /// @brief Routes window events to ImGui + Input by focus; borrows the window, input, and ImGui
+        ///        layer, so it is declared after all three (destructs before them).
+        Unique<InputRouter> m_InputRouter;
+
         /// @brief Renders the registered viewports and composites them to the swapchain each frame.
         ///
         /// Owns the render-order viewport drive-list, the capture drive-list, and the gather +
-        /// composite tail. Declared after m_RenderContext so it destructs first, retiring its
-        /// registered viewports against the still-live Context registry.
+        /// composite tail (whose passes hold shader AssetHandles). Borrows m_RenderContext at
+        /// construction, so it is declared after m_RenderContext (its tail retires before the context)
+        /// and after m_AssetManager (its tail's AssetHandles release while the manager is live).
+        /// Declared before m_GuiConsumer and m_ManagedViewports, which borrow its drive-list, so it
+        /// destructs after them: they self-unregister from the still-live drive-list, and the placement
+        /// cache's retained output Refs keep their outputs alive until ~ViewportCompositor clears them.
         Renderer::ViewportCompositor m_Compositor;
 
-        /// @brief Routes window events to ImGui + Input by focus; borrows the window, input, and
-        ///        ImGui layer, so it is constructed after them and reset before them.
-        Unique<InputRouter> m_InputRouter;
-
-        /// @brief The per-seat request-driven focus tokens the FocusRequest drain owns.
-        ///
-        /// One token per seat a system has captured gameplay focus for through a FocusRequest; the
-        /// engine holds it across frames on the stampers' behalf (they cannot) and pops it when a
-        /// UI FocusRequest releases the seat. It only ever holds/pops its own tokens, so it composes
-        /// with overlay / SeatFocusScope focus tokens without disturbing them.
-        unordered_map<Entity, FocusToken> m_FocusRequestTokens;
-
-        /// @brief Worker pool; destroyed after m_AssetManager to avoid tearing down live workers.
-        Unique<TaskSystem> m_TaskSystem;
-
-        /// @brief Constructed after m_RenderContext; reset before teardown so assets retire safely.
-        Unique<AssetManager> m_AssetManager;
-
-        Unique<ImGuiLayer> m_ImGuiLayer;
-
         /// @brief The Gui router consumer, registered second (behind ImGui) so attached documents
-        ///        receive UI-owned input. Borrows the router/input/window and the compositor's
-        ///        viewport drive-list, so it is declared after them (destroyed before them, since it
-        ///        is registered on the router).
+        ///        receive UI-owned input. Borrows the router/input/window and the compositor's viewport
+        ///        drive-list, so it is declared after them (destructs before them).
         Unique<Gui::GuiConsumer> m_GuiConsumer;
-
-        /// @brief The sim-domain scheduler owning and ticking every open world.
-        ///
-        /// Constructed in Initialize over the borrowed registries, asset manager, and context. Reset
-        /// before the asset manager at teardown so its worlds' component AssetHandles retire through
-        /// the deferred path. The managed world is opened here as world #0 at bootstrap; overlays adopt
-        /// their scenes into it.
-        Unique<WorldRunner> m_WorldRunner;
 
         /// @brief The engine-owned managed-viewport policy; empty when no managed viewport is configured.
         ///
         /// Index 0 is the primary. Constructed in Initialize over the compositor/router, built from
         /// ApplicationInfo, and rebuilt by a deferred reconfigure at the top of a frame. Declared after
-        /// m_RenderContext (and the compositor, router, asset manager, and world runner it borrows) so
-        /// it destructs first — retiring its viewports against the still-live Context registry and
-        /// self-unregistering from the still-live compositor drive-list (the teardown-order invariant).
+        /// the compositor, router, and asset manager it borrows so it destructs first — retiring its
+        /// viewports against the still-live Context registry and self-unregistering from the still-live
+        /// compositor drive-list.
         Unique<ManagedViewportSet> m_ManagedViewports;
+
+        /// @brief The level the managed world was bootstrapped from; empty when World is unset.
+        ///
+        /// An AssetHandle, so declared after m_AssetManager: it retires through the deferred path while
+        /// the asset manager and context are still live.
+        AssetHandle<Level> m_WorldLevel;
+
+        /// @brief The sim-domain scheduler owning and ticking every open world.
+        ///
+        /// Constructed in Initialize over the borrowed registries, asset manager, and context. Declared
+        /// after m_AssetManager so it destructs first — its worlds' component AssetHandles (the sky's
+        /// environment/material, the level handle) retire through the deferred path while the asset
+        /// manager is still live. The managed world is opened here as world #0 at bootstrap; overlays
+        /// adopt their scenes into it.
+        Unique<WorldRunner> m_WorldRunner;
+
+        /// @brief The host-tier session registry; built beside the directory, borrowed by a mounted host.
+        ///
+        /// Keeps each account's standing joins and last gameplay world across connections. Application
+        /// records the local player's standalone travels into it and resolves the standalone continue at
+        /// bootstrap; the ServerHost consumes it (ServerHostInfo::Sessions) when hosting is stood up. The
+        /// SaveSession hook fires from Run's SaveAll operation while the app is fully alive.
+        Unique<Net::SessionRegistry> m_Sessions;
+
+        /// @brief The role-neutral world directory; built when World is set, borrowed by a mounted host.
+        ///
+        /// Owns the get-or-place map, presence refcount, keep-warm dwell, and idle reap in every role.
+        /// Holds Runner = m_WorldRunner.get(), so declared after m_WorldRunner (destructs before it).
+        /// Application resolves standalone travels and drives presentation pins through it; the ServerHost
+        /// consumes it (ServerHostInfo::Directory) when hosting is stood up.
+        Unique<WorldDirectory> m_Directory;
+
+        /// @brief The pimpl'd net hosts + input buffers; null unless a net launch mode is active.
+        ///
+        /// The hosts borrow m_Directory and m_Sessions, and a client host borrows a runner-owned world's
+        /// scene (whose components hold AssetHandles) and holds each client world's retained level handle
+        /// and spawn residency. Declared last of the ordered members so it destructs first — closing its
+        /// connections and releasing those borrows before the directory, sessions, world runner, and
+        /// asset manager it depends on.
+        Unique<NetState> m_Net;
 
         /// @brief The engine-managed world's handle (world #0); invalid when World is unset.
         ///
         /// Opened at bootstrap and bound to the managed viewport. The world the net host binds to and
-        /// whose camera the managed viewport presents in this plan; a bare app leaves it invalid.
+        /// whose camera the managed viewport presents; a bare app leaves it invalid. Inert at teardown,
+        /// so its declaration order among the trailing plain-data members is immaterial.
         WorldInstanceId m_ManagedWorld;
-        /// @brief The role-neutral world directory; built when World is set, borrowed by a mounted host.
-        ///
-        /// Owns the get-or-place map, presence refcount, keep-warm dwell, and idle reap in every role.
-        /// Application resolves standalone travels and drives presentation pins through it; the ServerHost
-        /// consumes it (ServerHostInfo::Directory) when hosting is stood up.
-        Unique<WorldDirectory> m_Directory;
-        /// @brief The host-tier session registry; built beside the directory, borrowed by a mounted host.
-        ///
-        /// Keeps each account's standing joins and last gameplay world across connections.
-        /// Application records the local player's standalone travels into it and resolves the
-        /// standalone continue at bootstrap; the ServerHost consumes it (ServerHostInfo::Sessions)
-        /// when hosting is stood up.
-        Unique<Net::SessionRegistry> m_Sessions;
+
+        /// @brief The local player's account (GetLocalAccount); invalid on a dedicated host.
+        Net::AccountId m_LocalAccount;
+
         /// @brief The standing memberships the local player holds, each pinned present in the directory.
         ///
         /// A standing join's presence standalone is a local pin (there is no connection to report a
@@ -1235,6 +1268,7 @@ namespace Veng
         /// here, keyed by the world's key so LeaveStanding can withdraw exactly one. The key is the
         /// release handle; the value is the bucket the pin was taken on.
         unordered_map<Net::WorldKey, WorldInstanceId> m_LocalStandingWorlds;
+
         /// @brief The worlds HoldWorldWarm holds warm, each under an accountless directory pin.
         ///
         /// Keyed by the world's key so ReleaseWorldWarm withdraws exactly one pin and a repeated hold
@@ -1242,17 +1276,21 @@ namespace Veng
         /// account (a standing membership), these carry none (an infrastructure hold). The value is the
         /// bucket the pin was taken on.
         unordered_map<Net::WorldKey, WorldInstanceId> m_WarmPinnedWorlds;
+
         /// @brief The worlds Application currently pins for presentation, keyed by WorldInstanceId value.
         ///
         /// The pin set SyncPresentationPins reconciles each frame against the managed viewports' bindings,
         /// so a pin is added/removed exactly once as a world enters/leaves presentation.
         std::unordered_set<u64> m_PinnedWorlds;
-        /// @brief The pimpl'd net hosts + input buffers; null unless a net launch mode is active.
-        Unique<NetState> m_Net;
-        /// @brief The local player's account (GetLocalAccount); invalid on a dedicated host.
-        Net::AccountId m_LocalAccount;
-        /// @brief The level the managed world was bootstrapped from; empty when World is unset.
-        AssetHandle<Level> m_WorldLevel;
+
+        /// @brief The per-seat request-driven focus tokens the FocusRequest drain owns.
+        ///
+        /// One token per seat a system has captured gameplay focus for through a FocusRequest; the
+        /// engine holds it across frames on the stampers' behalf (they cannot) and pops it when a
+        /// UI FocusRequest releases the seat. A FocusToken is a plain id, so dropping the map is inert;
+        /// the router owns the actual focus stack.
+        unordered_map<Entity, FocusToken> m_FocusRequestTokens;
+
         /// @brief Per-frame view knobs pushed into the managed viewport; seeded from the level.
         Renderer::ViewState m_WorldView;
 

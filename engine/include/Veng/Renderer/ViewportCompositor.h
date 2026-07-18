@@ -41,10 +41,13 @@ namespace Veng::Renderer
         /// @param context  The render context, borrowed for the swapchain and command buffer; must outlive the compositor.
         explicit ViewportCompositor(Context& context);
 
-        /// @brief Destroys the compositor and its gather + composite tail.
+        /// @brief Destroys the compositor, releasing its gather + composite tail.
         ///
-        /// The drive-lists are non-owning, so no registered viewport or capture is destroyed; each
-        /// self-unregisters when its own owner drops it.
+        /// Resets the gather, composite, and compiled graphs and clears the placement cache (which
+        /// retains a Ref to each Presented viewport's output view), so the outputs retire once their
+        /// viewports drop rather than outliving the context's allocator; the context it borrows must
+        /// still be live. The drive-lists are non-owning, so no registered viewport or capture is
+        /// destroyed; each self-unregisters when its own owner drops it.
         ~ViewportCompositor();
 
         ViewportCompositor(const ViewportCompositor&) = delete;
@@ -117,14 +120,6 @@ namespace Veng::Renderer
         /// A viewport with an absolute region is untouched. Called at registration and as the
         /// swapchain-invalidation reaction, so window-tracking viewports need no per-frame re-apply.
         void ResolveTrackingLayouts();
-
-        /// @brief Releases the gather + composite tail's GPU resources ahead of context teardown.
-        ///
-        /// Resets the gather, composite, and compiled graphs and clears the placement cache (which
-        /// retains a Ref to each Presented viewport's output view), so the outputs retire once their
-        /// viewports drop rather than outliving the context's allocator. Called before the context
-        /// disposes its resources.
-        void Dispose();
 
     private:
         /// @brief Borrowed render context for the swapchain and per-frame command buffer.
