@@ -237,8 +237,8 @@ namespace Veng
         /// BeginFrame rolls it away before any tick reads it). Queuing instead lets DrainInjectedEvents
         /// replay it at the same pre-tick point a window event lands, and **paces** the queue so a
         /// press and its release straddle a tick and repeated taps of one control do not collapse into
-        /// a single held frame. Only the six foldable input kinds (key/button down·up, move, scroll)
-        /// are queued; any other event kind is ignored. Call on the render thread (the pump point).
+        /// a single held frame. Only the foldable input kinds (key/button down·up, move, scroll, text
+        /// entry) are queued; any other event kind is ignored. Call on the render thread (the pump point).
         /// @param event  The synthetic event to queue; decoded to its kind + payload, not retained.
         void PostInjectedEvent(const Event& event);
 
@@ -249,8 +249,8 @@ namespace Veng
         /// level already set this call — a release of a control just pressed, or a press of one just
         /// released — so each level change straddles a frame and is observed for at least one tick
         /// (and two rapid taps of one control stay distinct). Distinct controls (a chord) apply
-        /// together; a move/scroll never gates. Each applied event routes through Dispatch exactly as
-        /// a real window event. Empty queue is a no-op.
+        /// together; a move, scroll, or text event never gates. Each applied event routes through
+        /// Dispatch exactly as a real window event. Empty queue is a no-op.
         void DrainInjectedEvents();
 
         /// @brief Associates a Presented viewport's region with the seat it feeds pointer input to.
@@ -353,7 +353,9 @@ namespace Veng
             /// @brief A cursor-move event, carrying Vector as the window-space position.
             MouseMove,
             /// @brief A scroll event, carrying Vector as the offset.
-            Scroll
+            Scroll,
+            /// @brief A text-entry event, carrying Codepoint.
+            Text
         };
 
         /// @brief One queued synthetic event: its kind and the single payload that kind reads.
@@ -367,6 +369,8 @@ namespace Veng
             MouseButton Button = MouseButton::Left;
             /// @brief The position (MouseMove) or scroll offset (Scroll), in window pixels.
             vec2 Vector = {};
+            /// @brief The Unicode codepoint for Text.
+            u32 Codepoint = 0;
         };
 
         /// @brief Rebuilds a queued event into its concrete Veng::Event and routes it through Dispatch.

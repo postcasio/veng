@@ -301,6 +301,76 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "gui typography: a text field inherits its font and reserves a line for it")
+{
+    // Typography inherits, so a control needs no font of its own: the font declared once on an
+    // ancestor serves every text-bearing descendant. Resolving a font needs a real atlas, so this
+    // pairs with the font fixture; the layout half it proves (an empty field still holds one line
+    // open) is what keeps a field from clipping the value it paints.
+    const path fixtureDir = path(GPU_COOKER_FIXTURE_DIR);
+    const path packJson = fixtureDir / "font_pack.json";
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_gui_inherited_font.vengpack";
+
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    REQUIRE(cooker.CookPack(packJson, outArchive).has_value());
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(outArchive).has_value());
+
+    const AssetResult<AssetHandle<Font>> fontHandle = assets.LoadSync<Font>(FontId);
+    REQUIRE(fontHandle.has_value());
+
+    Gui::Document document;
+    document.SetInteractive(true);
+
+    // The font is declared on the container only — nothing on the field or the label names one.
+    Gui::Style rootStyle;
+    rootStyle.TextFont = *fontHandle;
+    rootStyle.TextSize = 20.0f;
+    document.SetStyle(document.Root(), rootStyle);
+
+    Gui::Element& field = document.Add(document.Root(), Gui::ElementKind::TextInput);
+    document.SetText(field, "AVA");
+    document.InitWidget(field);
+
+    Gui::Element& label = document.Add(document.Root(), Gui::ElementKind::Text);
+    document.SetText(label, "AVA");
+
+    Gui::Element& empty = document.Add(document.Root(), Gui::ElementKind::TextInput);
+    document.InitWidget(empty);
+
+    document.Solve(vec2(200.0f, 200.0f));
+
+    // The field sizes itself to the run it will paint, exactly as the Text leaf beside it does.
+    CHECK_FALSE(field.ComputedStyle.TextFont.IsLoaded());
+    CHECK(field.Layout.Size.y > 0.0f);
+    CHECK(field.Layout.Size.y == doctest::Approx(label.Layout.Size.y));
+
+    // A field with no value still holds one line of its typography open, so it does not collapse
+    // and later grow as the first codepoint arrives.
+    CHECK(empty.Layout.Size.y == doctest::Approx(field.Layout.Size.y));
+
+    const auto glyphRuns = [](const Gui::DrawList& list)
+    {
+        return std::ranges::count_if(list.GetRuns(), [](const Gui::DrawRun& run)
+                                     { return run.Pipeline == Gui::GuiPipeline::Msdf; });
+    };
+
+    Gui::DrawList painted;
+    document.Build(painted);
+    CHECK(glyphRuns(painted) >= 1);
+
+    // The container's font is the only one in the tree: dropping it leaves both leaves unpainted,
+    // so the run above came from the inheritance and nothing else.
+    rootStyle.TextFont = {};
+    document.SetStyle(document.Root(), rootStyle);
+    Gui::DrawList unstyled;
+    document.Build(unstyled);
+    CHECK(glyphRuns(unstyled) == 0);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                   "gui golden: a hand-built draw list renders and matches the committed golden")
 {
     const path fixtureDir = path(GPU_COOKER_FIXTURE_DIR);

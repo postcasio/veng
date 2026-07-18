@@ -436,6 +436,16 @@ namespace Veng::Gui
         [[nodiscard]] vec2 MeasureElementText(const Element& element,
                                               optional<f32> availableWidth) const;
 
+        /// @brief The font an element shapes and paints its text through.
+        ///
+        /// Typography inherits: an element uses the font its own style declares, and otherwise the
+        /// nearest ancestor that declares one — so a container's `font` serves every text-bearing
+        /// descendant that does not override it, and a control needs no font of its own to render.
+        /// Null when no element on the ancestor chain has a resident font.
+        /// @param element  The element whose font to resolve.
+        /// @return The resolved font, or nullptr when the chain declares none.
+        [[nodiscard]] const Font* ResolveFont(const Element& element) const;
+
         /// @brief Measures an arbitrary run against a resolved style, the same way an element is.
         ///
         /// Uses the installed text measurer when one is set, otherwise shapes the run through the
@@ -553,6 +563,28 @@ namespace Veng::Gui
 
         /// @brief Resolves a List item subtree's bindings against one array element's fields.
         void ResolveItemBindings(Element& element, void* itemBase, TypeId itemType);
+
+        /// @brief Shapes one run through an explicit font and returns its pixel extent.
+        ///
+        /// The single measure path behind MeasureElementText and MeasureStyledText: the installed
+        /// text measurer when one is set, otherwise the font's own shaping — so a measured extent
+        /// and a drawn layout always agree.
+        /// @param text            The run to measure.
+        /// @param font            The font to shape through; nullptr measures nothing.
+        /// @param style           The resolved style whose text size the run shapes at.
+        /// @param availableWidth  The width to wrap within, or nullopt for an unconstrained measure.
+        /// @param emptyLineBox    Whether an empty run still reserves one line of the font's height,
+        ///                        the line box a text-entry field holds open while it has no value.
+        /// @return The measured text block size, in pixels.
+        [[nodiscard]] vec2 MeasureRun(string_view text, const Font* font, const Style& style,
+                                      optional<f32> availableWidth, bool emptyLineBox) const;
+
+        /// @brief Marks every text-measured node in an element's subtree for re-measurement.
+        ///
+        /// Typography inherits, so a font change on one element moves the measured size of every
+        /// descendant that takes its font from it, not just the element's own node.
+        /// @param element  The subtree root whose measured nodes to dirty.
+        void MarkSubtreeTextDirty(const Element& element);
 
         /// @brief Sets whether an element takes focus by kind, marking the interactive controls.
         void ApplyWidgetFocusability(Element& element);

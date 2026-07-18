@@ -90,6 +90,12 @@ background/border/text/image/widget primitives, clip-pushed where an element cli
 
 ## Styling
 
+**Typography inherits; nothing else does.** An element shapes and paints its text through the
+`font` its own style declares, and otherwise through the nearest ancestor that declares one — so a
+document names its font once on the root and every text-bearing descendant (a `Text`, a `Button`
+label, a `TextInput`'s value and caret) resolves it, at measure and at paint alike. A font declared
+lower overrides it for that subtree. Every other property resolves per element with no inheritance.
+
 Styling flattens at cook time; the runtime interpolates among variants. The cooker matches the
 USS-like selectors (type / class / id / pseudo-state, no full-CSS specificity cascade) and emits
 each element's resolved base style plus a handful of state variants. The runtime never runs a
@@ -163,7 +169,7 @@ otherwise hand-rolls is one engine seam.
 ## Widgets
 
 The built-in, markup-authorable, styleable, focusable controls on the primitives: `Panel` (a styled
-flex box), `Text` (a shaped MSDF leaf), `Image` (a textured box — a `src` texture with an optional
+flex box), `Text` (a shaped MSDF leaf, sized by its own shaped run), `Image` (a textured box — a `src` texture with an optional
 `tint`/`uv`, sized by style and composing with `corner-radius`/border on the `DrawList::Texture`
 path; the `Image` widget has no 9-slice or texture-intrinsic sizing), `Button` (`onClick`),
 `Checkbox` (`value`/`checked`/`onChange`, driving the `:checked` variant), `Slider`
@@ -171,7 +177,9 @@ path; the `Image` widget has no 9-slice or texture-intrinsic sizing), `Button` (
 (`value`/`onChange` — it **paints its own value**: the run draws vertically centred in its content
 box in the style's `text-color`/`text-size`/font, clipped to the field's box, with a caret bar at
 the edit position while it holds focus, so a bound `{value}` is visible with no companion `Text`
-element), `ScrollView` (a clipped, scrollable region), `List` (a data-bound repeater —
+element. It is a **text-measured leaf** like `Text` and `Button`: it takes its intrinsic size from
+the run it paints and holds **one line box open while empty**, so a field sizes itself with no
+authored `min-height` and never clips the value it draws), `ScrollView` (a clipped, scrollable region), `List` (a data-bound repeater —
 its authored children are an item template cloned once per element of a bound array), and `Table`
 (a column-aligning row container: each direct child is a row, and the k-th in-flow cell of every
 row widens to the column's widest cell via a measured min-width between the Solve's two layout

@@ -1,18 +1,22 @@
 // Headless proof for the veng::mcp input-injection tool (input.send).
 //
-// Constructs an McpServer with AllowMutations = true and an McpHost whose InjectInput closure
-// folds each fabricated event into a headless Veng::Input (constructed with a null window, the
-// documented neutral-state seam) via Input::ApplyEvent — the same seam the app's InputRouter uses.
-// The pump loop calls Input::BeginFrame() before each Pump() so an injected key edge is visible in
-// the same frame, mirroring the real run loop. Over loopback it drives input.send with:
+// Constructs an McpServer with AllowMutations = true and an McpHost whose InjectInput closure hands
+// each fabricated event to InputRouter::PostInjectedEvent — the wiring an application uses, so the
+// whole production route is under test rather than a shortcut around it. The router folds the
+// drained event into a headless Veng::Input (constructed with a null window, the documented
+// neutral-state seam) and offers it to its consumer registry, where a stand-in for the viewport-
+// owning Gui consumer turns a KeyTyped into Document::DispatchText exactly as that consumer does.
+// The pump loop calls Input::BeginFrame() then InputRouter::DrainInjectedEvents() before each
+// Pump(), mirroring the real run loop's pre-tick input point. Because the drain is paced, an
+// injected event lands a frame or more after the tool call returns, so the assertions poll.
+// Over loopback it drives input.send with:
 //   - a key_down batch, asserting the key reads down through Input::IsKeyDown.
 //   - a key_up, asserting it clears.
 //   - a mouse_move, asserting Input::GetMousePosition tracks it.
 //   - a mouse_down/up pair and a scroll, asserting the button + scroll state.
 //   - a text run, asserting it types into a live Gui::Document's focused TextInput one codepoint at
-//     a time (multi-byte codepoints and U+0008 backspace included) — the closure hands a KeyTyped
-//     event to the document the way a viewport's GuiConsumer does, so the codepoint path from there
-//     down is the engine's own.
+//     a time (multi-byte codepoints and U+0008 backspace included) — routed through the router and
+//     its consumer registry, so the whole path from the tool to the field's edit is the engine's.
 //   - the shape-validation errors (empty batch, over-limit, an unknown key, an unknown type, an
 //     empty / absent / over-limit text run, a malformed event) as whole-call isError results, and
 //     confirms no event applied on a rejected batch (the validate-then-apply discipline).
@@ -29,8 +33,11 @@
 #include <Veng/Gui/DrawList.h>
 #include <Veng/Gui/Element.h>
 #include <Veng/Input.h>
+#include <Veng/Input/InputConsumer.h>
 #include <Veng/InputEvents.h>
+#include <Veng/InputRouter.h>
 #include <Veng/Reflection/TypeRegistry.h>
+#include <Veng/Renderer/ViewportRegistry.h>
 
 #include <nlohmann/json.hpp>
 
@@ -88,6 +95,43 @@ namespace
         return result.is_object() && result.value("isError", false);
     }
 
+    // Stands in for the viewport-owning Gui consumer: a routed KeyTyped becomes the same
+    // Document::DispatchText call that consumer makes. Registering it in the router's consumer
+    // registry is the only text sink, so an injected run reaches the field the way a typed one does.
+    class TextConsumer final : public InputConsumer
+    {
+    public:
+        explicit TextConsumer(Gui::Document& document) : m_Document(document) {}
+
+        bool ForwardEvent(const Event& event) override
+        {
+            if (event.GetEventType() != EventType::KeyTyped)
+            {
+                return false;
+            }
+            return m_Document.DispatchText(static_cast<const KeyTypedEvent&>(event).GetCodepoint());
+        }
+
+    private:
+        Gui::Document& m_Document;
+    };
+
+    // The injected queue drains on the pump thread's frame boundary, so an assertion waits for the
+    // state it expects rather than racing the tool call's return.
+    template <class PredicateT>
+    bool WaitFor(PredicateT&& predicate)
+    {
+        for (int i = 0; i < 1000; ++i)
+        {
+            if (predicate())
+            {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        return false;
+    }
+
     std::set<std::string> ToolNames(httplib::Client& client)
     {
         const Json list = Post(client, Json{{"jsonrpc", "2.0"},
@@ -108,16 +152,19 @@ int main()
     TypeRegistry registry;
 
     // A headless Input: null window reports the neutral all-zeros state until events are applied,
-    // the documented test/injection contract. m_Input access is guarded so the injecting pump
-    // thread and the asserting main thread never race — a real app touches Input on one thread.
+    // the documented test/injection contract. Snapshot and document access is guarded so the
+    // draining pump thread and the asserting main thread never race — a real app drains on one
+    // thread.
     Input input(nullptr);
     std::mutex inputMutex;
+    const Renderer::ViewportRegistry viewports;
+    InputRouter router(nullptr, input, viewports);
 
     // A live Gui::Document with one focused TextInput — the text-entry oracle. In an app the
     // GuiConsumer routes a KeyTyped through the seat's viewports into each attached document; a
-    // headless proof has no viewport, so the injection closure below hands the same event straight
-    // to the document. Everything from the codepoint down (DispatchText -> the field's own edit) is
-    // the engine's real text path, so a driven run exercises exactly what a typing user does.
+    // headless proof has no viewport, so the consumer below stands in for it in the same registry.
+    // Everything from the router down (Dispatch -> the consumer -> DispatchText -> the field's own
+    // edit) is the engine's real text path, so a driven run exercises what a typing user does.
     // A device-free measurer stands in for a resident font (eight pixels per codepoint), so the
     // field's painted caret is a checkable oracle for what a driven run put on screen.
     Gui::Document document;
@@ -130,6 +177,9 @@ int main()
     document.InitWidget(field);
     document.SetFocus(&field);
 
+    TextConsumer consumer(document);
+    router.RegisterConsumer(consumer);
+
     // The x the field's caret paints at: the width of its value up to the edit position.
     const auto caretX = [&document]
     {
@@ -141,6 +191,8 @@ int main()
     // The input tools never touch Assets or a Scene; bind a never-dereferenced AssetManager, as the
     // other headless mcp tests do.
     AssetManager* assets = nullptr;
+    // The wiring an application uses: the tool's event is queued on the router and released at the
+    // frame's pre-tick point, so nothing here shortcuts around the routing under test.
     const Mcp::McpHost host{
         .Types = registry,
         .Assets = *assets,
@@ -148,12 +200,7 @@ int main()
             [&](Event& event)
         {
             const std::scoped_lock lock(inputMutex);
-            input.ApplyEvent(event);
-            if (event.GetEventType() == EventType::KeyTyped)
-            {
-                static_cast<void>(
-                    document.DispatchText(static_cast<const KeyTypedEvent&>(event).GetCodepoint()));
-            }
+            router.PostInjectedEvent(event);
         },
     };
 
@@ -165,6 +212,9 @@ int main()
     const u16 port = server->GetPort();
     Check(port != 0, "GetPort resolved an ephemeral port");
 
+    // The per-frame scroll delta the drain folded in, accumulated across frames.
+    f32 scrollY = 0.0f;
+
     std::atomic<bool> done{false};
     std::thread pump(
         [&]
@@ -172,10 +222,13 @@ int main()
             while (!done.load())
             {
                 {
-                    // Roll the snapshot forward each pump so an injected edge is this frame's,
-                    // exactly as the run loop calls BeginFrame before the event drain.
+                    // Roll the snapshot forward and release one paced segment of the injected
+                    // queue, exactly as the run loop does at its pre-tick input point. A scroll
+                    // delta lives for one frame, so latch it as it lands.
                     const std::scoped_lock lock(inputMutex);
                     input.BeginFrame();
+                    router.DrainInjectedEvents();
+                    scrollY = scrollY + input.GetScrollDelta().y;
                 }
                 server->Pump();
                 std::this_thread::sleep_for(std::chrono::milliseconds(2));
@@ -196,20 +249,26 @@ int main()
             client, "input.send",
             Json{{"events", Json::array({Json{{"type", "key_down"}, {"key", "W"}}})}});
         Check(!IsError(down), "key_down batch succeeded");
-        {
-            const std::scoped_lock lock(inputMutex);
-            Check(input.IsKeyDown(Key::W), "injected key_down set the key down");
-        }
+        Check(WaitFor(
+                  [&]
+                  {
+                      const std::scoped_lock lock(inputMutex);
+                      return input.IsKeyDown(Key::W);
+                  }),
+              "injected key_down set the key down");
 
         // key_up: the key clears.
         const Json up =
             CallToolResult(client, "input.send",
                            Json{{"events", Json::array({Json{{"type", "key_up"}, {"key", "W"}}})}});
         Check(!IsError(up), "key_up batch succeeded");
-        {
-            const std::scoped_lock lock(inputMutex);
-            Check(!input.IsKeyDown(Key::W), "injected key_up cleared the key");
-        }
+        Check(WaitFor(
+                  [&]
+                  {
+                      const std::scoped_lock lock(inputMutex);
+                      return !input.IsKeyDown(Key::W);
+                  }),
+              "injected key_up cleared the key");
 
         // mouse_move: the position tracks. (Two moves so a non-zero position accumulates; the
         // first seeds m_HavePosition.)
@@ -218,12 +277,14 @@ int main()
             Json{{"events",
                   Json::array({Json{{"type", "mouse_move"}, {"x", 10.0f}, {"y", 20.0f}},
                                Json{{"type", "mouse_move"}, {"x", 42.0f}, {"y", 84.0f}}})}});
-        {
-            const std::scoped_lock lock(inputMutex);
-            const vec2 pos = input.GetMousePosition();
-            Check(std::abs(pos.x - 42.0f) < 1e-3f && std::abs(pos.y - 84.0f) < 1e-3f,
-                  "injected mouse_move tracked the position");
-        }
+        Check(WaitFor(
+                  [&]
+                  {
+                      const std::scoped_lock lock(inputMutex);
+                      const vec2 pos = input.GetMousePosition();
+                      return std::abs(pos.x - 42.0f) < 1e-3f && std::abs(pos.y - 84.0f) < 1e-3f;
+                  }),
+              "injected mouse_move tracked the position");
 
         // A mouse button down/up pair plus a scroll in one ordered batch.
         const Json mixed = CallToolResult(
@@ -231,13 +292,20 @@ int main()
             Json{{"events", Json::array({Json{{"type", "mouse_down"}, {"button", "Right"}},
                                          Json{{"type", "scroll"}, {"dx", 0.0f}, {"dy", 3.0f}}})}});
         Check(!IsError(mixed), "mixed batch succeeded");
-        {
-            const std::scoped_lock lock(inputMutex);
-            Check(input.IsMouseButtonDown(MouseButton::Right),
-                  "injected mouse_down set the button");
-            Check(std::abs(input.GetScrollDelta().y - 3.0f) < 1e-3f,
-                  "injected scroll accumulated dy");
-        }
+        Check(WaitFor(
+                  [&]
+                  {
+                      const std::scoped_lock lock(inputMutex);
+                      return input.IsMouseButtonDown(MouseButton::Right);
+                  }),
+              "injected mouse_down set the button");
+        Check(WaitFor(
+                  [&]
+                  {
+                      const std::scoped_lock lock(inputMutex);
+                      return std::abs(scrollY - 3.0f) < 1e-3f;
+                  }),
+              "injected scroll accumulated dy");
 
         // text: the run types into whatever holds text focus, one character event per codepoint,
         // and the field owns the resulting value.
@@ -245,11 +313,17 @@ int main()
             CallToolResult(client, "input.send",
                            Json{{"events", Json::array({Json{{"type", "text"}, {"text", "Hi"}}})}});
         Check(!IsError(typed), "text batch succeeded");
+        Check(WaitFor(
+                  [&]
+                  {
+                      const std::scoped_lock lock(inputMutex);
+                      return field.Text == "Hi";
+                  }),
+              "an injected text run typed into the focused TextInput");
         {
-            const std::scoped_lock lock(inputMutex);
-            Check(field.Text == "Hi", "an injected text run typed into the focused TextInput");
             // And the field paints what it now holds: the caret sits two codepoints in, so the
             // drive is observable in the draw list with no companion element mirroring the value.
+            const std::scoped_lock lock(inputMutex);
             Check(std::abs(caretX() - 16.0f) < 1e-3f,
                   "the driven value moved the caret the field paints");
         }
@@ -259,16 +333,22 @@ int main()
         CallToolResult(client, "input.send",
                        Json{{"events", Json::array({Json{{"type", "text"}, {"text", "é"}},
                                                     Json{{"type", "text"}, {"text", "!"}}})}});
-        {
-            const std::scoped_lock lock(inputMutex);
-            Check(field.Text == "Hié!", "a multi-byte codepoint typed as one character");
-        }
+        Check(WaitFor(
+                  [&]
+                  {
+                      const std::scoped_lock lock(inputMutex);
+                      return field.Text == "Hié!";
+                  }),
+              "a multi-byte codepoint typed as one character");
         CallToolResult(client, "input.send",
                        Json{{"events", Json::array({Json{{"type", "text"}, {"text", "\b"}}})}});
-        {
-            const std::scoped_lock lock(inputMutex);
-            Check(field.Text == "Hié", "an injected backspace deleted one codepoint");
-        }
+        Check(WaitFor(
+                  [&]
+                  {
+                      const std::scoped_lock lock(inputMutex);
+                      return field.Text == "Hié";
+                  }),
+              "an injected backspace deleted one codepoint");
 
         // Shape-validation errors, each a whole-call isError.
         Check(IsError(CallToolResult(
@@ -312,6 +392,17 @@ int main()
         CallToolResult(client, "input.send",
                        Json{{"events", Json::array({Json{{"type", "key_down"}, {"key", "Q"}},
                                                     Json{{"type", "key_down"}}})}});
+        // A later well-formed batch is the ordering sentinel: once its key is down, the rejected
+        // batch has had every chance to drain, so Q staying up is a real negative.
+        CallToolResult(client, "input.send",
+                       Json{{"events", Json::array({Json{{"type", "key_down"}, {"key", "R"}}})}});
+        Check(WaitFor(
+                  [&]
+                  {
+                      const std::scoped_lock lock(inputMutex);
+                      return input.IsKeyDown(Key::R);
+                  }),
+              "the sentinel batch drained");
         {
             const std::scoped_lock lock(inputMutex);
             Check(!input.IsKeyDown(Key::Q),

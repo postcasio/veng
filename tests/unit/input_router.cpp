@@ -5,13 +5,51 @@
 
 #include <doctest/doctest.h>
 
+#include <Veng/Gui/Document.h>
+#include <Veng/Gui/Element.h>
 #include <Veng/Input.h>
+#include <Veng/Input/InputConsumer.h>
 #include <Veng/InputEvents.h>
 #include <Veng/InputRouter.h>
 #include <Veng/Renderer/ViewportRegistry.h>
 #include <Veng/WindowEvents.h>
 
 using namespace Veng;
+
+namespace
+{
+    // Stands in for the viewport-owning Gui consumer: it turns a routed KeyTyped into the same
+    // Document::DispatchText call that consumer makes, so a text event reaching the consumer list
+    // reaches the focused field's edit. A consumer registry entry is the router's only text sink,
+    // injected and window-sourced alike.
+    class TextConsumer final : public InputConsumer
+    {
+    public:
+        explicit TextConsumer(Gui::Document& document) : m_Document(document) {}
+
+        bool ForwardEvent(const Event& event) override
+        {
+            if (event.GetEventType() != EventType::KeyTyped)
+            {
+                return false;
+            }
+            return m_Document.DispatchText(static_cast<const KeyTypedEvent&>(event).GetCodepoint());
+        }
+
+    private:
+        Gui::Document& m_Document;
+    };
+
+    // A document holding one focused, interactive text field — the text sink under test.
+    Gui::Element& FocusedField(Gui::Document& document)
+    {
+        document.SetInteractive(true);
+        Gui::Element& field = document.Add(document.Root(), Gui::ElementKind::TextInput);
+        document.InitWidget(field);
+        document.SetFocus(&field);
+        return field;
+    }
+}
 
 TEST_CASE("InputRouter: defaults to UI focus")
 {
@@ -204,4 +242,63 @@ TEST_CASE("InputRouter: an injected scroll is queued and applies on the next dra
     // The drain folds it into the snapshot at the pre-tick point, so a tick this frame reads it.
     router.DrainInjectedEvents();
     CHECK(input.GetScrollDelta().y == doctest::Approx(3.0f));
+}
+
+TEST_CASE("InputRouter: an injected text event types into the focused field")
+{
+    Input input(nullptr);
+    const Renderer::ViewportRegistry registry;
+    InputRouter router(nullptr, input, registry);
+
+    Gui::Document document;
+    Gui::Element& field = FocusedField(document);
+    TextConsumer consumer(document);
+    router.RegisterConsumer(consumer);
+
+    const KeyTypedEvent typed('H');
+    router.PostInjectedEvent(typed);
+
+    // Queued like every other injected kind: nothing is typed until the drain.
+    CHECK(field.Text.empty());
+
+    input.BeginFrame(true);
+    router.DrainInjectedEvents();
+    CHECK(field.Text == "H");
+}
+
+TEST_CASE("InputRouter: injected text takes the same route as window-sourced text")
+{
+    Input input(nullptr);
+    const Renderer::ViewportRegistry registry;
+    InputRouter router(nullptr, input, registry);
+
+    Gui::Document injected;
+    Gui::Element& injectedField = FocusedField(injected);
+    TextConsumer injectedConsumer(injected);
+
+    Gui::Document windowed;
+    Gui::Element& windowedField = FocusedField(windowed);
+    TextConsumer windowedConsumer(windowed);
+
+    // Two routers so each document is the sole consumer of its own run.
+    InputRouter windowRouter(nullptr, input, registry);
+    router.RegisterConsumer(injectedConsumer);
+    windowRouter.RegisterConsumer(windowedConsumer);
+
+    // A multi-byte codepoint, so the route carries a codepoint rather than a byte.
+    for (const u32 codepoint : {static_cast<u32>('H'), 0x00E9U, static_cast<u32>('!')})
+    {
+        const KeyTypedEvent typed(codepoint);
+        router.PostInjectedEvent(typed);
+
+        KeyTypedEvent window(codepoint);
+        windowRouter.Dispatch(window);
+    }
+
+    input.BeginFrame(true);
+    router.DrainInjectedEvents();
+
+    // U+00E9 arrives as one codepoint and lands as its two UTF-8 bytes, not as two edits.
+    CHECK(injectedField.Text == "H\xc3\xa9!");
+    CHECK(injectedField.Text == windowedField.Text);
 }
