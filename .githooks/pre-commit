@@ -43,7 +43,7 @@ done
 staged_tus=$(git diff --cached --name-only --diff-filter=ACM -- '*.cpp' '*.cc')
 
 if command -v clang-tidy >/dev/null 2>&1 && [ -n "$tidy_db" ] && [ -n "$staged_tus" ]; then
-    # The compile DB carries AppleClang's flags, which omit the implicit macOS SDK
+    # The compile DB carries the configured compiler's flags, which omit the implicit macOS SDK
     # and Vulkan include paths LLVM's clang-tidy needs. Supply them by env so no
     # per-file --extra-arg plumbing is required; both are no-ops off macOS.
     sdk=$(xcrun --show-sdk-path 2>/dev/null || true)
@@ -51,8 +51,31 @@ if command -v clang-tidy >/dev/null 2>&1 && [ -n "$tidy_db" ] && [ -n "$staged_t
     vk=$(grep -m1 '^Vulkan_INCLUDE_DIR:' "$tidy_db/CMakeCache.txt" 2>/dev/null | cut -d= -f2 || true)
     [ -n "$vk" ] && export CPATH="${vk}${CPATH:+:$CPATH}"
 
+    # A precompiled header is rejected outright by a clang-tidy built from a different toolchain
+    # than the compiler that wrote it, which aborts the run before a single check evaluates. CMake
+    # emits `-include <header>` beside `-include-pch`, so dropping the PCH pair leaves the same
+    # headers in the translation unit, merely uncached. The filtered copy lives in a temp dir this
+    # run owns, so the build's own DB is untouched.
+    tidy_tmp=$(mktemp -d)
+    trap 'rm -rf "$tidy_tmp"' EXIT
+    sed -e 's/ -Xclang -include-pch -Xclang [^ "]*//g' \
+        -e 's/ -Xclang -fno-pch-timestamp//g' \
+        -e 's/ -Winvalid-pch//g' \
+        "$tidy_db/compile_commands.json" > "$tidy_tmp/compile_commands.json"
+
     tidy_out=$(printf '%s\n' "$staged_tus" | tr '\n' '\0' \
-        | xargs -0 clang-tidy -p "$tidy_db" --quiet 2>/dev/null || true)
+        | xargs -0 clang-tidy -p "$tidy_tmp" --quiet 2>&1 || true)
+
+    # A run that evaluated no checks must fail loudly rather than read as a clean tree. clang-tidy
+    # reports a toolchain or compile failure without the `file:line: severity:` shape a finding
+    # carries, so a grep for findings alone cannot tell "nothing to report" from "nothing ran".
+    if printf '%s\n' "$tidy_out" | grep -qE '^error:|Error while processing'; then
+        echo "pre-commit: clang-tidy could not run, so nothing was checked." >&2
+        echo "This is a tooling failure, not a clean tree. Cause below." >&2
+        echo "------------------------------------------------------------------" >&2
+        printf '%s\n' "$tidy_out" | grep -E '^error:|Error while processing' >&2
+        exit 1
+    fi
     if printf '%s\n' "$tidy_out" | grep -qE ': (warning|error):'; then
         echo "pre-commit: clang-tidy flagged staged C/C++ changes." >&2
         echo "Fix the findings below or justify with NOLINT, then re-stage and commit." >&2
