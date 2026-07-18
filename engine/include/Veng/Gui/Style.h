@@ -164,6 +164,33 @@ namespace Veng::Gui
         Absolute,
     };
 
+    /// @brief How an element treats content overflowing its box, per axis.
+    ///
+    /// The axes are independent, so a vertical list scrolls down while staying clipped sideways.
+    /// Clipping is a whole-box scissor: an element whose either axis is non-Visible clips its
+    /// content rect, since a scissor cannot clip one axis alone.
+    enum class Overflow : u8
+    {
+        /// @brief Content overflows the box and paints outside it (the default).
+        Visible,
+        /// @brief Content is clipped to the box and cannot be scrolled.
+        Hidden,
+        /// @brief Content is clipped to the box and the axis scrolls, with a scrollbar.
+        Scroll,
+    };
+
+    /// @brief Whether a scrollbar floats over the content or reserves layout space beside it.
+    enum class ScrollbarLayout : u8
+    {
+        /// @brief The bar floats over the content, reserving no space (the default).
+        Overlay,
+        /// @brief The content box shrinks by the bar's styled width, reserving a stable gutter.
+        ///
+        /// The space is reserved whether or not the axis currently overflows, which is the point:
+        /// reserving only while scrollable is what makes the content jump as it grows past the box.
+        Gutter,
+    };
+
     /// @brief Whether an element (and its subtree) participates in pointer hit-testing.
     enum class PointerEvents : u8
     {
@@ -291,8 +318,16 @@ namespace Veng::Gui
         ///          clips remain axis-aligned scissors.
         f32 Rotation = 0.0f;
 
-        /// @brief Whether content outside the element's box is clipped to it.
-        bool ClipContent = false;
+        /// @brief How content overflowing the box is treated horizontally.
+        Overflow OverflowX = Overflow::Visible;
+        /// @brief How content overflowing the box is treated vertically.
+        Overflow OverflowY = Overflow::Visible;
+
+        /// @brief Whether this element's scrollbars overlay the content or reserve a gutter.
+        ///
+        /// Read only on a scrollable element (one whose OverflowX or OverflowY is Scroll); the
+        /// reserved width is the element's own ScrollBar child's styled width.
+        ScrollbarLayout Scrollbar = ScrollbarLayout::Overlay;
 
         /// @brief Whether the element (and its subtree) takes part in pointer hit-testing.
         PointerEvents Pointer = PointerEvents::Auto;

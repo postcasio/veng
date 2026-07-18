@@ -468,11 +468,12 @@ namespace Veng::Cook
                 }
 
                 // A closed set of widget-config attributes carries a literal (not a `{binding}`):
-                // a control's range/step, its initial value, and a Slider's orientation. They are
-                // stored on the element's binding table verbatim; the runtime widget layer reads
-                // them at instantiate time.
+                // a control's range/step, its initial value, a Slider's orientation, and an item
+                // host's selection mode. They are stored on the element's binding table verbatim;
+                // the runtime widget layer reads them at instantiate time.
                 if (name == "min" || name == "max" || name == "step" || name == "value" ||
-                    name == "checked" || name == "items" || name == "orientation")
+                    name == "checked" || name == "items" || name == "orientation" ||
+                    name == "selection")
                 {
                     CookedUIBinding binding{};
                     binding.Property = build.Strings.Add(name);

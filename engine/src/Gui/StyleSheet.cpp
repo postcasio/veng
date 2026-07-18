@@ -134,8 +134,19 @@ namespace Veng::Gui
         case StyleProperty::TextAlign:
             style.TextAlignment = static_cast<TextAlign>(declaration.Unit);
             return;
-        case StyleProperty::ClipContent:
-            style.ClipContent = declaration.Values.x != 0.0f;
+        case StyleProperty::Overflow:
+            // The shorthand carries both axes; the longhands below each carry one in Unit.
+            style.OverflowX = static_cast<Overflow>(static_cast<i32>(declaration.Values.x));
+            style.OverflowY = static_cast<Overflow>(static_cast<i32>(declaration.Values.y));
+            return;
+        case StyleProperty::OverflowX:
+            style.OverflowX = static_cast<Overflow>(declaration.Unit);
+            return;
+        case StyleProperty::OverflowY:
+            style.OverflowY = static_cast<Overflow>(declaration.Unit);
+            return;
+        case StyleProperty::ScrollbarLayout:
+            style.Scrollbar = static_cast<ScrollbarLayout>(declaration.Unit);
             return;
         case StyleProperty::InsetLeft:
             style.Inset.Left = declaration.Values.x;

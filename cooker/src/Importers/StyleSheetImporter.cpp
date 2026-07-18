@@ -60,6 +60,10 @@ namespace Veng::Cook
             {
                 return Gui::ElementState::Checked;
             }
+            if (name == "selected")
+            {
+                return Gui::ElementState::Selected;
+            }
             return std::nullopt;
         }
 

@@ -736,13 +736,15 @@ namespace Veng
     /// @brief The current stylesheet-format version.
     ///
     /// Bumped on any CookedStyleSheetHeader/CookedStyleRule/CookedStyleProperty/
-    /// CookedStyleAnimation/CookedStyleKeyframe/CookedStyleGradient/CookedStyleVariable layout change;
+    /// CookedStyleAnimation/CookedStyleKeyframe/CookedStyleGradient/CookedStyleVariable layout change,
+    /// and on any renumbering of the StyleProperty enumerators a CookedStyleProperty stores by ordinal;
     /// the loader rejects a blob whose Version != this. v2 added the @keyframes animation tables; v3
     /// added the gradient table and its baked ramp region; v4 widened a gradient's geometry to
     /// explicit endpoints (P0/P1) and an elliptical radial radius; v5 added the queryable variable
     /// table; v6 widened the gradient ramp from RGBA8 to RGBA16Sfloat half-float texels so a stop can
-    /// hold an HDR (> 1) color.
-    inline constexpr u32 CookedStyleSheetVersion = 6u;
+    /// hold an HDR (> 1) color; v7 renumbered the StyleProperty enumerators, replacing the single clip
+    /// flag with the per-axis overflow properties and the scrollbar layout.
+    inline constexpr u32 CookedStyleSheetVersion = 7u;
 
     /// @brief Maximum byte length (including nul terminator) for a selector's class/id/type name.
     ///
@@ -909,8 +911,10 @@ namespace Veng
     /// @brief The current UI-document-format version.
     ///
     /// Bumped on any CookedUIDocumentHeader/CookedUIElement/inline-property/blob-region layout
-    /// change; the loader rejects a blob whose Version != this.
-    inline constexpr u32 CookedUIDocumentVersion = 2u;
+    /// change, and on any renumbering of the StyleProperty enumerators the inline-property table
+    /// stores by ordinal; the loader rejects a blob whose Version != this. v3 renumbered them for
+    /// the per-axis overflow properties.
+    inline constexpr u32 CookedUIDocumentVersion = 3u;
 
     /// @brief Cooked header for a UI-document asset.
     ///

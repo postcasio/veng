@@ -46,6 +46,20 @@ namespace Veng::Gui
         /// it right-anchor to the rows' shared right edge. With an `items` binding it repeats
         /// its authored row template per bound array element, exactly as a List does.
         Table,
+        /// @brief One axis's scrollbar track of a scrollable element — widget-owned, not authorable.
+        ///
+        /// The widget layer creates a ScrollBar (and its ScrollBarThumb child) for each scrollable
+        /// axis of an element whose `overflow` names Scroll; markup cannot author one, so a
+        /// `<ScrollBar>` tag is a cook error. It is a real element purely so it styles through the
+        /// ordinary cascade — `ScrollBar { width: 10px; }` is a plain type selector, and the element
+        /// carries its own background, corner radius, border, gradient, variants, and transitions.
+        ScrollBar,
+        /// @brief The draggable thumb inside a ScrollBar — widget-owned, not authorable.
+        ///
+        /// Sized and positioned from its bar's scroll fraction on each Solve. It hit-tests and drags
+        /// through the ordinary pointer path, so `ScrollBarThumb:hover` and `:active` resolve on it
+        /// exactly as they do on any other element.
+        ScrollBarThumb,
     };
 
     /// @brief Transient interaction-state bits an element carries for styling and events.
@@ -67,6 +81,13 @@ namespace Veng::Gui
         Disabled = 1u << 3,
         /// @brief The element is in a checked/on state.
         Checked = 1u << 4,
+        /// @brief The element is a selected item of a selectable item host.
+        ///
+        /// Set on each item root an item host's selection covers, so a `:selected` style variant
+        /// paints the whole item subtree as selected. Distinct from Checked, which is a Checkbox's
+        /// own two-state value: an item carries Selected because its host's selection names its
+        /// index, not because the item holds a value of its own.
+        Selected = 1u << 5,
     };
 
     /// @brief Returns the union of two interaction-state masks.
@@ -157,6 +178,30 @@ namespace Veng::Gui
 
     class Document;
 
+    /// @brief How many items of a selectable item host may be selected at once, and by what chord.
+    ///
+    /// An item host (a List, or a Table repeating a bound array) selects over **item slots**, not
+    /// over elements: one slot is the whole authored item subtree an array element instantiates, so
+    /// an item may contain any elements at all and still be one selectable unit.
+    enum class SelectionMode : u8
+    {
+        /// @brief The host selects nothing — a plain display repeater, and the default.
+        None,
+        /// @brief Exactly one item is selected; a click or a focus move replaces the selection.
+        Single,
+        /// @brief Any number of items are selected, and a plain click toggles one.
+        ///
+        /// The modifier-free multi-select a gamepad or touch surface needs, where no chord is
+        /// available: every activation flips its own item and leaves the rest alone.
+        Multiple,
+        /// @brief Any number of items are selected, by the desktop chord convention.
+        ///
+        /// A plain click replaces the selection with the clicked item, Control (or Meta) toggles
+        /// one item, and Shift extends a range from the anchor — the shape a mouse-and-keyboard
+        /// file list has.
+        Extended,
+    };
+
     /// @brief The per-element runtime state the widget layer maintains behind a control's kind.
     ///
     /// A control element carries a scalar Value plus the range and step the widget interprets it
@@ -186,6 +231,25 @@ namespace Veng::Gui
         u32 Caret = 0;
         /// @brief The bound-array context version a List last synced its item children against.
         u64 SyncVersion = 0;
+
+        /// @brief Whether the element currently owns scrollbar parts, so a resolve re-syncs only on a change.
+        bool HasScrollBars = false;
+
+        /// @brief An item host's selection mode; None (the default) leaves the host unselectable.
+        ///
+        /// Authored as the markup `selection="single|multiple|extended"` attribute and read at
+        /// Instantiate. Meaningful only on an item host (a List, or a Table repeating an array).
+        SelectionMode Selection = SelectionMode::None;
+        /// @brief The item slots an item host has selected, as ascending unique slot indices.
+        ///
+        /// The authority the Selected state bits are projected from: a slot index addresses the
+        /// bound array element (and its instantiated item subtree), so the selection survives a
+        /// re-sync that rebuilds the item elements. Empty on every non-host element.
+        vector<u32> SelectedItems;
+        /// @brief The slot a Shift-extended range grows from, valid while HasSelectionAnchor.
+        u32 SelectionAnchor = 0;
+        /// @brief Whether an anchor has been set, i.e. whether a range extend has somewhere to grow from.
+        bool HasSelectionAnchor = false;
     };
 
     /// @brief One in-flight property tween: the property, its source value, and elapsed time.

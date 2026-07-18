@@ -298,9 +298,64 @@ namespace Veng::Gui
                 return "List";
             case ElementKind::Table:
                 return "Table";
+            case ElementKind::ScrollBar:
+                return "ScrollBar";
+            case ElementKind::ScrollBarThumb:
+                return "ScrollBarThumb";
             }
             return "Panel";
         }
+
+        // Whether an axis scrolls: clipped content the user can move. Hidden clips without moving.
+        bool ScrollsAxis(Overflow overflow)
+        {
+            return overflow == Overflow::Scroll;
+        }
+
+        // Whether an element scrolls on either axis — the style-driven successor to the
+        // `Kind == ScrollView` check. A ScrollView is simply an element whose overflow defaults to
+        // Scroll, so a List, Table, or Panel styled `overflow-y: scroll` scrolls identically.
+        bool IsScrollable(const Style& style)
+        {
+            return ScrollsAxis(style.OverflowX) || ScrollsAxis(style.OverflowY);
+        }
+
+        // Whether an element clips its content. A scissor is a whole-box rect, so either axis
+        // being non-Visible clips the box.
+        bool ClipsContent(const Style& style)
+        {
+            return style.OverflowX != Overflow::Visible || style.OverflowY != Overflow::Visible;
+        }
+
+        // Whether an element is a widget-owned scrollbar part rather than authored content.
+        bool IsScrollBarPart(ElementKind kind)
+        {
+            return kind == ElementKind::ScrollBar || kind == ElementKind::ScrollBarThumb;
+        }
+
+        // An element's authored content children, excluding the widget-owned scrollbar parts.
+        //
+        // Scrollbars live in Children so they inherit the layout mirror, the cascade, the paint
+        // order, and hit-testing rather than needing parallel paths — but they are not content, so
+        // every content-shaped walk (item slots, focus order, template capture, table columns, the
+        // list shrink, the scroll extent) goes through this one accessor rather than each testing
+        // the kind itself. The parts are always appended after the content, so trimming the tail
+        // is the whole exclusion.
+        std::span<Element* const> ContentChildren(const Element& element)
+        {
+            usize count = element.Children.size();
+            while (count > 0 && IsScrollBarPart(element.Children[count - 1]->Kind))
+            {
+                --count;
+            }
+            return std::span<Element* const>(element.Children).first(count);
+        }
+
+        /// @brief The scrollbar thickness used when a bar's style declares no explicit width.
+        constexpr f32 DefaultScrollBarThickness = 10.0f;
+
+        /// @brief The shortest a thumb is allowed to become on a very long scroll range, in pixels.
+        constexpr f32 MinScrollThumbLength = 24.0f;
 
         // A rule's selector matches an element when each constrained axis (type/class/id) agrees
         // and an unconstrained (empty) axis is a wildcard. A class constraint matches if the tag
@@ -329,8 +384,11 @@ namespace Veng::Gui
         // An `animation` declaration is element state, not a Style field: it copies the referenced
         // sheet clip's keyframes onto the element (a later declaration replaces an earlier one, the
         // cascade's last-wins), so the live document never borrows the sheet.
+        // Cascades the sheets onto an element, then its inline style over the top. `recipe` is
+        // null for a widget-owned element, which has neither an authored identity nor inline style
+        // — only the sheet rules its kind and classes match.
         void ResolveElementStyle(
-            Element& element, const UIElementRecipe& recipe,
+            Element& element, const UIElementRecipe* recipe,
             const vector<const StyleSheet*>& sheets, AssetManager* assets,
             const function<optional<ResolvedGradient>(const StyleSheet&, u32)>& resolveGradient)
         {
@@ -385,9 +443,12 @@ namespace Veng::Gui
                 }
             }
 
-            for (const StyleDeclaration& declaration : recipe.InlineStyle)
+            if (recipe != nullptr)
             {
-                ApplyDeclaration(element.BaseStyle, declaration, assets);
+                for (const StyleDeclaration& declaration : recipe->InlineStyle)
+                {
+                    ApplyDeclaration(element.BaseStyle, declaration, assets);
+                }
             }
 
             element.ComputedStyle = element.BaseStyle;
@@ -678,9 +739,10 @@ namespace Veng::Gui
             return document;
         }
 
+        document->m_StyleSheets = recipe.GetStyleSheets();
         vector<const StyleSheet*> sheets;
-        sheets.reserve(recipe.GetStyleSheets().size());
-        for (const AssetHandle<StyleSheet>& handle : recipe.GetStyleSheets())
+        sheets.reserve(document->m_StyleSheets.size());
+        for (const AssetHandle<StyleSheet>& handle : document->m_StyleSheets)
         {
             if (handle.IsLoaded())
             {
@@ -691,7 +753,7 @@ namespace Veng::Gui
         // A gradient declaration's ramp uploads through the borrowed manager into a small ramp
         // texture, cached per (sheet, gradient) so elements sharing one gradient share one texture.
         // The AssetHandle kept on each element's Style keeps the texture resident for its lifetime.
-        std::unordered_map<const StyleGradient*, ResolvedGradient> gradientCache;
+        auto& gradientCache = document->m_GradientCache;
         const function<optional<ResolvedGradient>(const StyleSheet&, u32)> resolveGradient =
             [&assets, &gradientCache](const StyleSheet& sheet,
                                       const u32 index) -> optional<ResolvedGradient>
@@ -736,7 +798,7 @@ namespace Veng::Gui
             const UIElementRecipe& node = elements[cursor];
             ++cursor;
             PopulateElement(live, node);
-            ResolveElementStyle(live, node, sheets, &assets, resolveGradient);
+            ResolveElementStyle(live, &node, sheets, &assets, resolveGradient);
             ResolveElementImage(live, node, assets);
             document->InitWidget(live);
             for (u32 i = 0; i < node.ChildCount; ++i)
@@ -841,6 +903,18 @@ namespace Veng::Gui
     {
         auto owned = CreateUnique<Element>();
         owned->Kind = kind;
+
+        // ScrollView is the named preset over the overflow property: it is a Panel whose overflow
+        // defaults to Scroll on both axes. Seeding the default here rather than forcing it at paint
+        // means an authored `overflow-x: hidden` still wins, since the cascade runs over this base.
+        if (kind == ElementKind::ScrollView)
+        {
+            owned->BaseStyle.OverflowX = Overflow::Scroll;
+            owned->BaseStyle.OverflowY = Overflow::Scroll;
+            owned->ComputedStyle.OverflowX = Overflow::Scroll;
+            owned->ComputedStyle.OverflowY = Overflow::Scroll;
+        }
+
         Element& element = *owned;
         m_Elements.push_back(std::move(owned));
 
@@ -860,7 +934,15 @@ namespace Veng::Gui
     {
         Element& child = CreateElement(kind);
         child.Parent = &parent;
-        parent.Children.push_back(&child);
+
+        // Scrollbar parts are a trailing tail of the child list, so they paint over the content and
+        // ContentChildren can exclude them by trimming the end. A bar can be created before the
+        // content it scrolls (InitWidget runs ahead of a List's first item sync), so content
+        // inserts ahead of the tail rather than appending after it.
+        const usize insertAt =
+            IsScrollBarPart(kind) ? parent.Children.size() : ContentChildren(parent).size();
+        parent.Children.insert(parent.Children.begin() + static_cast<std::ptrdiff_t>(insertAt),
+                               &child);
 
         const YGNodeRef parentNode = m_Yoga->Get(parent);
         const YGNodeRef childNode = m_Yoga->Get(child);
@@ -875,7 +957,8 @@ namespace Veng::Gui
         {
             YGNodeSetMeasureFunc(parentNode, nullptr);
         }
-        YGNodeInsertChild(parentNode, childNode, YGNodeGetChildCount(parentNode));
+        YGNodeInsertChild(parentNode, childNode,
+                          std::min(insertAt, YGNodeGetChildCount(parentNode)));
 
         m_Dirty = true;
         return child;
@@ -890,6 +973,10 @@ namespace Veng::Gui
         }
 
         m_Yoga->Destroy(element);
+
+        // Drop any item template the element held: the map is keyed by element address, so a
+        // stale entry would be re-adopted by whichever element the allocator next puts there.
+        m_ListTemplates.erase(&element);
 
         const auto it = std::ranges::find_if(m_Elements, [&](const Unique<Element>& owned)
                                              { return owned.get() == &element; });
@@ -1062,17 +1149,23 @@ namespace Veng::Gui
             case StyleProperty::TextColor:
             case StyleProperty::Opacity:
             case StyleProperty::Rotation:
-            case StyleProperty::ClipContent:
             case StyleProperty::PointerEvents:
             case StyleProperty::Animation:
             case StyleProperty::TextAlign:
                 return false;
+            // An overflow axis and the scrollbar layout move layout inputs: a gutter takes its
+            // width out of the content box, and turning an axis scrollable re-clamps the offset.
+            case StyleProperty::Overflow:
+            case StyleProperty::OverflowX:
+            case StyleProperty::OverflowY:
+            case StyleProperty::ScrollbarLayout:
+                return true;
             }
             return false;
         }
 
         // Whether a property's value type interpolates continuously: colors, scalars, corner radii,
-        // edge insets, and same-kind lengths. Enums, fonts, and the clip flag snap.
+        // edge insets, and same-kind lengths. Enums, fonts, and the overflow keywords snap.
         bool IsAnimatableProperty(StyleProperty property)
         {
             switch (property)
@@ -1110,7 +1203,10 @@ namespace Veng::Gui
             case StyleProperty::FlexWrap:
             case StyleProperty::Position:
             case StyleProperty::TextFont:
-            case StyleProperty::ClipContent:
+            case StyleProperty::Overflow:
+            case StyleProperty::OverflowX:
+            case StyleProperty::OverflowY:
+            case StyleProperty::ScrollbarLayout:
             case StyleProperty::PointerEvents:
             case StyleProperty::Animation:
             case StyleProperty::BackgroundGradient:
@@ -1559,6 +1655,30 @@ namespace Veng::Gui
         {
             UpdateElement(*owned, delta);
         }
+        SyncAllScrollBars();
+    }
+
+    void Document::SyncAllScrollBars()
+    {
+        // A variant or transition can move the overflow, so the bars follow the resolved style
+        // rather than only the authored one. Collect first: SyncScrollBars adds and removes
+        // elements, which reallocates m_Elements and would strand a walk over it — the same reason
+        // SyncLists collects its repeaters up front. The cached flag keeps the scan an O(1) test
+        // per element, so the child walk runs only on a frame an axis actually changes.
+        vector<Element*> moved;
+        for (const Unique<Element>& owned : m_Elements)
+        {
+            if (IsScrollable(owned->ComputedStyle) != owned->Widget.HasScrollBars)
+            {
+                moved.push_back(owned.get());
+            }
+        }
+        for (Element* element : moved)
+        {
+            SyncScrollBars(*element);
+            element->Widget.HasScrollBars = IsScrollable(element->ComputedStyle);
+            m_Dirty = true;
+        }
     }
 
     bool Document::IsAnimating() const
@@ -1651,6 +1771,33 @@ namespace Veng::Gui
         // Whether an element kind is a focusable, interactive control — the widget layer sets
         // Element::Focusable on these so directional/Tab navigation and Confirm reach them, and a
         // plain Panel/Text/Image stays a non-stop.
+        // Whether an element's direct children are addressable item slots — the containers a
+        // selection can be defined over. Both repeat an authored template when they carry an
+        // `items` binding and hold hand-authored children when they do not; either way each slot
+        // is a whole item subtree, so an item may contain any elements at all.
+        bool IsSelectionHost(ElementKind kind)
+        {
+            return kind == ElementKind::List || kind == ElementKind::Table;
+        }
+
+        // Maps a markup `selection` attribute value to its mode; an unrecognized value is None.
+        SelectionMode ParseSelectionMode(string_view value)
+        {
+            if (value == "single")
+            {
+                return SelectionMode::Single;
+            }
+            if (value == "multiple")
+            {
+                return SelectionMode::Multiple;
+            }
+            if (value == "extended")
+            {
+                return SelectionMode::Extended;
+            }
+            return SelectionMode::None;
+        }
+
         bool IsFocusableWidget(ElementKind kind)
         {
             switch (kind)
@@ -1667,6 +1814,8 @@ namespace Veng::Gui
             case ElementKind::ProgressBar:
             case ElementKind::List:
             case ElementKind::Table:
+            case ElementKind::ScrollBar:
+            case ElementKind::ScrollBarThumb:
                 return false;
             }
             return false;
@@ -1737,25 +1886,215 @@ namespace Veng::Gui
 
     void Document::ScrollBy(Element& element, vec2 delta)
     {
-        if (element.Kind != ElementKind::ScrollView)
+        const Style& style = element.ComputedStyle;
+        if (!IsScrollable(style))
         {
             return;
         }
 
         // The scrollable extent is how far the content overflows the viewport; clamp so the offset
-        // never scrolls the content past its own bounds.
-        vec2 content(0.0f);
-        for (const Element* child : element.Children)
-        {
-            content = glm::max(content, child->Layout.Max() - element.Layout.Min);
-        }
-        const vec2 overflow = glm::max(content - element.Layout.Size, vec2(0.0f));
+        // never scrolls the content past its own bounds. The widget-owned scrollbars are pinned to
+        // the element's edges rather than carried by the content, so they never extend it.
+        const vec2 overflow = ScrollRange(element);
 
         const vec2 next = glm::clamp(element.Widget.ScrollOffset + delta, vec2(0.0f), overflow);
         if (next != element.Widget.ScrollOffset)
         {
             element.Widget.ScrollOffset = next;
             m_Dirty = true;
+        }
+    }
+
+    void Document::CascadeWidgetElement(Element& element)
+    {
+        vector<const StyleSheet*> sheets;
+        sheets.reserve(m_StyleSheets.size());
+        for (const AssetHandle<StyleSheet>& handle : m_StyleSheets)
+        {
+            if (handle.IsLoaded())
+            {
+                sheets.push_back(handle.Get());
+            }
+        }
+        if (sheets.empty())
+        {
+            return;
+        }
+
+        AssetManager* const assets = m_Assets;
+        auto& cache = m_GradientCache;
+        const function<optional<ResolvedGradient>(const StyleSheet&, u32)> resolveGradient =
+            [assets, &cache](const StyleSheet& sheet, const u32 index) -> optional<ResolvedGradient>
+        {
+            const vector<StyleGradient>& gradients = sheet.GetGradients();
+            if (index >= gradients.size() || assets == nullptr)
+            {
+                return std::nullopt;
+            }
+            const StyleGradient& source = gradients[index];
+            if (const auto it = cache.find(&source); it != cache.end())
+            {
+                return it->second;
+            }
+            const TextureData data{
+                .Name = "gui-gradient-ramp",
+                .Extent = uvec2(source.Width, 1),
+                .Format = Renderer::Format::RGBA16Sfloat,
+                .MipLevels = 1,
+                .Pixels = source.Ramp,
+                .Sampler =
+                    Renderer::SamplerInfo{.AddressModeU = Renderer::AddressMode::ClampToEdge,
+                                          .AddressModeV = Renderer::AddressMode::ClampToEdge,
+                                          .AddressModeW = Renderer::AddressMode::ClampToEdge},
+            };
+            const ResolvedGradient resolved{.Kind = source.Kind,
+                                            .P0 = source.P0,
+                                            .P1 = source.P1,
+                                            .AngleOffset = source.AngleOffset,
+                                            .Ramp = assets->BuildSync<Texture>(data)};
+            cache.emplace(&source, resolved);
+            return resolved;
+        };
+
+        ResolveElementStyle(element, nullptr, sheets, m_Assets, resolveGradient);
+    }
+
+    Element* Document::FindScrollBar(const Element& element, const bool vertical) const
+    {
+        for (Element* child : element.Children)
+        {
+            if (child->Kind == ElementKind::ScrollBar && child->Widget.Vertical == vertical)
+            {
+                return child;
+            }
+        }
+        return nullptr;
+    }
+
+    f32 Document::ScrollBarThickness(const Element& element) const
+    {
+        // A bar's thickness is its own styled cross-axis length, so `ScrollBar { width: 6px }`
+        // narrows both the bar and — under a gutter — the space reserved for it, from one value.
+        const Length& length =
+            element.Widget.Vertical ? element.ComputedStyle.Width : element.ComputedStyle.Height;
+        if (length.Kind == LengthKind::Points && length.Value > 0.0f)
+        {
+            return length.Value;
+        }
+        return DefaultScrollBarThickness;
+    }
+
+    void Document::SyncScrollBars(Element& element)
+    {
+        const Style& style = element.ComputedStyle;
+        for (const bool vertical : {false, true})
+        {
+            const bool wanted = ScrollsAxis(vertical ? style.OverflowY : style.OverflowX);
+            Element* bar = FindScrollBar(element, vertical);
+            if (wanted == (bar != nullptr))
+            {
+                continue;
+            }
+            if (!wanted)
+            {
+                Remove(*bar);
+                continue;
+            }
+
+            // The bar and its thumb are appended after the content and take no part in the flex
+            // flow — LayoutScrollBars writes their rects directly against the solved box.
+            Element& created = Add(element, ElementKind::ScrollBar);
+            created.Widget.Vertical = vertical;
+            created.Classes.emplace_back(vertical ? "vertical" : "horizontal");
+            created.BaseStyle.Position = PositionType::Absolute;
+            CascadeWidgetElement(created);
+            created.BaseStyle.Position = PositionType::Absolute;
+            created.ComputedStyle.Position = PositionType::Absolute;
+
+            Element& thumb = Add(created, ElementKind::ScrollBarThumb);
+            thumb.Widget.Vertical = vertical;
+            thumb.Classes.emplace_back(vertical ? "vertical" : "horizontal");
+            CascadeWidgetElement(thumb);
+            thumb.BaseStyle.Position = PositionType::Absolute;
+            thumb.ComputedStyle.Position = PositionType::Absolute;
+        }
+    }
+
+    vec2 Document::ScrollRange(const Element& element) const
+    {
+        const Style& style = element.ComputedStyle;
+        vec2 content(0.0f);
+        for (const Element* child : ContentChildren(element))
+        {
+            content = glm::max(content, child->Layout.Max() - element.Layout.Min);
+        }
+        vec2 range = glm::max(content - element.Layout.Size, vec2(0.0f));
+        range.x = ScrollsAxis(style.OverflowX) ? range.x : 0.0f;
+        range.y = ScrollsAxis(style.OverflowY) ? range.y : 0.0f;
+        return range;
+    }
+
+    void Document::LayoutScrollBars(Element& element)
+    {
+        const vec2 range = ScrollRange(element);
+        const Rect& box = element.Layout;
+
+        for (const bool vertical : {false, true})
+        {
+            Element* const bar = FindScrollBar(element, vertical);
+            if (bar == nullptr)
+            {
+                continue;
+            }
+
+            // An axis with no travel hides its bar rather than dropping it: presence is decided by
+            // the style, visibility by whether there is anything to scroll, so content growing past
+            // the box reveals the bar with no structural change.
+            const f32 travel = vertical ? range.y : range.x;
+            bar->Visible = travel > 0.0f;
+            if (!bar->Visible)
+            {
+                continue;
+            }
+
+            const f32 thickness = ScrollBarThickness(*bar);
+            // When both axes scroll, each bar stops short of the other's corner so they do not
+            // overlap at the inner corner.
+            const Element* const other = FindScrollBar(element, !vertical);
+            const f32 inset =
+                other != nullptr && other->Visible ? ScrollBarThickness(*other) : 0.0f;
+
+            bar->Layout = vertical ? Rect{.Min = vec2(box.Max().x - thickness, box.Min.y),
+                                          .Size = vec2(thickness, box.Size.y - inset)}
+                                   : Rect{.Min = vec2(box.Min.x, box.Max().y - thickness),
+                                          .Size = vec2(box.Size.x - inset, thickness)};
+
+            if (bar->Children.empty())
+            {
+                continue;
+            }
+            Element& thumb = *bar->Children.front();
+            thumb.Visible = true;
+
+            // The thumb's length is the visible fraction of the content, floored so a very long
+            // list still leaves something grabbable; its travel maps the scroll offset onto the
+            // slack left in the track.
+            const f32 track = vertical ? bar->Layout.Size.y : bar->Layout.Size.x;
+            const f32 viewport = vertical ? box.Size.y : box.Size.x;
+            const f32 content = viewport + travel;
+            const f32 length = content > 0.0f
+                                   ? std::clamp(track * (viewport / content),
+                                                std::min(MinScrollThumbLength, track), track)
+                                   : track;
+            const f32 offset =
+                vertical ? element.Widget.ScrollOffset.y : element.Widget.ScrollOffset.x;
+            const f32 slide = travel > 0.0f ? (offset / travel) * (track - length) : 0.0f;
+
+            thumb.Layout = vertical
+                               ? Rect{.Min = vec2(bar->Layout.Min.x, bar->Layout.Min.y + slide),
+                                      .Size = vec2(bar->Layout.Size.x, length)}
+                               : Rect{.Min = vec2(bar->Layout.Min.x + slide, bar->Layout.Min.y),
+                                      .Size = vec2(length, bar->Layout.Size.y)};
         }
     }
 
@@ -1770,6 +2109,8 @@ namespace Veng::Gui
     void Document::InitWidget(Element& element)
     {
         ApplyWidgetFocusability(element);
+        SyncScrollBars(element);
+        element.Widget.HasScrollBars = IsScrollable(element.ComputedStyle);
 
         if (element.Kind == ElementKind::Slider)
         {
@@ -1804,6 +2145,13 @@ namespace Veng::Gui
         {
             element.Widget.Caret = static_cast<u32>(DecodeUtf8(element.Text).size());
         }
+        else if (IsSelectionHost(element.Kind))
+        {
+            const auto selection = element.Bindings.find("selection");
+            element.Widget.Selection = selection == element.Bindings.end()
+                                           ? SelectionMode::None
+                                           : ParseSelectionMode(selection->second);
+        }
     }
 
     bool Document::DriveWidgetPointer(Element& element, const PointerEvent& event)
@@ -1836,9 +2184,65 @@ namespace Veng::Gui
             return true;
         }
 
-        if (element.Kind == ElementKind::ScrollView)
+        if (element.Kind == ElementKind::ScrollBarThumb)
         {
-            // A drag with the press captured on the scroll view pans its content by the pointer delta.
+            // Dragging the thumb moves the content by the pointer delta scaled through the track:
+            // the thumb crosses the track's slack while the content crosses its whole range, so a
+            // short track drags a long list proportionally.
+            if (event.Kind != PointerEventKind::Move || m_PressTarget != &element)
+            {
+                return false;
+            }
+            Element* const bar = element.Parent;
+            Element* const view = bar != nullptr ? bar->Parent : nullptr;
+            if (view == nullptr)
+            {
+                return false;
+            }
+            const bool vertical = element.Widget.Vertical;
+            const f32 track = vertical ? bar->Layout.Size.y : bar->Layout.Size.x;
+            const f32 length = vertical ? element.Layout.Size.y : element.Layout.Size.x;
+            const f32 slack = track - length;
+            const vec2 moved = event.Position - m_LastScrollPointer;
+            m_LastScrollPointer = event.Position;
+            if (slack <= 0.0f)
+            {
+                return true;
+            }
+            const f32 travel = vertical ? ScrollRange(*view).y : ScrollRange(*view).x;
+            const f32 delta = (vertical ? moved.y : moved.x) / slack * travel;
+            ScrollBy(*view, vertical ? vec2(0.0f, delta) : vec2(delta, 0.0f));
+            return true;
+        }
+
+        if (element.Kind == ElementKind::ScrollBar)
+        {
+            // A press on the track pages one viewport toward the pointer — the thumb itself hits
+            // first, so reaching the bar means the pointer landed beside it.
+            if (event.Kind != PointerEventKind::Down || element.Children.empty())
+            {
+                return false;
+            }
+            Element* const view = element.Parent;
+            if (view == nullptr)
+            {
+                return false;
+            }
+            const bool vertical = element.Widget.Vertical;
+            const Rect& thumb = element.Children.front()->Layout;
+            const f32 pointer = vertical ? event.Position.y : event.Position.x;
+            const f32 near = vertical ? thumb.Min.y : thumb.Min.x;
+            const f32 far = vertical ? thumb.Max().y : thumb.Max().x;
+            const f32 page = vertical ? view->Layout.Size.y : view->Layout.Size.x;
+            const f32 step = pointer < near ? -page : (pointer > far ? page : 0.0f);
+            ScrollBy(*view, vertical ? vec2(0.0f, step) : vec2(step, 0.0f));
+            return true;
+        }
+
+        if (IsScrollable(element.ComputedStyle))
+        {
+            // A drag with the press captured on the scrollable element pans its content by the
+            // pointer delta.
             if (event.Kind != PointerEventKind::Move || m_PressTarget != &element)
             {
                 return false;
@@ -1878,7 +2282,7 @@ namespace Veng::Gui
             return false;
         }
 
-        if (element.Kind == ElementKind::ScrollView)
+        if (IsScrollable(element.ComputedStyle))
         {
             const f32 line =
                 element.ComputedStyle.TextSize > 0.0f ? element.ComputedStyle.TextSize : 16.0f;
@@ -2042,7 +2446,28 @@ namespace Veng::Gui
             [&] { YGNodeStyleSetMaxHeight(node, YGUndefined); });
 
         ApplyEdgeInsets(node, style.Margin, &YGNodeStyleSetMargin);
-        ApplyEdgeInsets(node, style.Padding, &YGNodeStyleSetPadding);
+
+        // A gutter reserves each scrollable axis's bar thickness out of the content box, as extra
+        // padding on the edge the bar sits against — so the content never flows under the bar. The
+        // space is held whether or not the axis currently overflows, which is what keeps the
+        // content from shifting the moment it grows past the box. An overlay reserves nothing.
+        Insets padding = style.Padding;
+        if (style.Scrollbar == ScrollbarLayout::Gutter && IsScrollable(style))
+        {
+            if (const Element* const bar = FindScrollBar(element, true); bar != nullptr)
+            {
+                padding.Right += ScrollBarThickness(*bar);
+            }
+            if (const Element* const bar = FindScrollBar(element, false); bar != nullptr)
+            {
+                padding.Bottom += ScrollBarThickness(*bar);
+            }
+        }
+        ApplyEdgeInsets(node, padding, &YGNodeStyleSetPadding);
+
+        YGNodeStyleSetOverflow(node, IsScrollable(style)   ? YGOverflowScroll
+                                     : ClipsContent(style) ? YGOverflowHidden
+                                                           : YGOverflowVisible);
 
         YGNodeStyleSetPositionType(node, style.Position == PositionType::Absolute
                                              ? YGPositionTypeAbsolute
@@ -2089,15 +2514,22 @@ namespace Veng::Gui
             .Size = size,
         };
 
-        // A ScrollView shifts its children by its scroll offset, so the child origin is the view's
-        // top-left minus the offset — the content slides under the clip the ScrollView paints with.
-        const vec2 childOrigin = element.Kind == ElementKind::ScrollView
+        // A scrollable element shifts its content by its scroll offset, so the child origin is its
+        // top-left minus the offset — the content slides under the clip it paints with.
+        const vec2 childOrigin = IsScrollable(element.ComputedStyle)
                                      ? absoluteMin - element.Widget.ScrollOffset
                                      : absoluteMin;
 
         for (Element* child : element.Children)
         {
             ReadLayout(*child, childOrigin);
+        }
+
+        // The bars are pinned to the element's own box, so they are placed after the content is
+        // read and are unaffected by the scroll shift the content rode in on.
+        if (IsScrollable(element.ComputedStyle))
+        {
+            LayoutScrollBars(element);
         }
     }
 
@@ -2151,7 +2583,7 @@ namespace Veng::Gui
 
             // Column k's width is the widest k-th cell margin box across the table's rows.
             vector<f32> columns;
-            for (const Element* row : owned->Children)
+            for (const Element* row : ContentChildren(*owned))
             {
                 if (!inFlow(*row))
                 {
@@ -2184,7 +2616,7 @@ namespace Veng::Gui
 
             // Raise each cell's min-width to its column's width less its own margins. The styled
             // min-width was pushed by ApplyStyle, so only a genuinely wider column moves a node.
-            for (Element* row : owned->Children)
+            for (Element* row : ContentChildren(*owned))
             {
                 if (!inFlow(*row))
                 {
@@ -2288,11 +2720,11 @@ namespace Veng::Gui
             list.Quad(rect, border.Color, style.Radii, border);
         }
 
-        // A ScrollView always clips its content to its box (the overflow it scrolls through), and a
-        // TextInput clips to its box so a value wider than the field stops at the frame instead of
-        // spilling across its neighbours; every other kind clips only when styled to.
-        const bool clip = style.ClipContent || element.Kind == ElementKind::ScrollView ||
-                          element.Kind == ElementKind::TextInput;
+        // An element clips when its overflow says so on either axis (a scrollable element always
+        // does — the overflow is what it scrolls through), and a TextInput clips to its box
+        // unconditionally so a value wider than the field stops at the frame instead of spilling
+        // across its neighbours.
+        const bool clip = ClipsContent(style) || element.Kind == ElementKind::TextInput;
         if (clip)
         {
             list.PushClip(rect);
@@ -2516,7 +2948,7 @@ namespace Veng::Gui
         }
 
         optional<Rect> childClip = clip;
-        if (element.ComputedStyle.ClipContent)
+        if (ClipsContent(element.ComputedStyle))
         {
             childClip = clip ? clip->Intersect(element.Layout) : element.Layout;
         }
@@ -2739,7 +3171,8 @@ namespace Veng::Gui
         if (m_ListTemplates.find(&list) == m_ListTemplates.end())
         {
             ListTemplate captured;
-            const vector<Element*> authored = list.Children;
+            const std::span<Element* const> content = ContentChildren(list);
+            const vector<Element*> authored(content.begin(), content.end());
             const YGNodeRef listNode = m_Yoga->Get(list);
             for (Element* child : authored)
             {
@@ -2755,7 +3188,11 @@ namespace Veng::Gui
                 }
                 captured.Roots.push_back(DetachTemplate(*child, captured.Owned));
             }
-            list.Children.clear();
+            // Only the content is lifted into the template; a scrollbar the widget layer already
+            // created sits in the tail and stays a live child of the list.
+            list.Children.erase(list.Children.begin(),
+                                list.Children.begin() +
+                                    static_cast<std::ptrdiff_t>(authored.size()));
             m_ListTemplates.emplace(&list, std::move(captured));
         }
 
@@ -2770,7 +3207,7 @@ namespace Veng::Gui
         const usize count = field->Field->ArraySize(field->Ptr);
         const vector<Element*>& roots = m_ListTemplates.at(&list).Roots;
         const usize perItem = roots.size();
-        const usize haveItems = perItem == 0 ? 0 : list.Children.size() / perItem;
+        const usize haveItems = perItem == 0 ? 0 : ContentChildren(list).size() / perItem;
 
         // Grow: append a fresh clone of each template root per new array element.
         for (usize i = haveItems; i < count; ++i)
@@ -2785,8 +3222,20 @@ namespace Veng::Gui
         {
             for (usize k = 0; k < perItem; ++k)
             {
-                Remove(*list.Children.back());
+                // The content tail, not Children.back() — a scrollbar sits after the items.
+                const std::span<Element* const> content = ContentChildren(list);
+                Remove(*content.back());
             }
+        }
+
+        // The selection indexes the bound array, so it survives a re-sync — but a shrink drops the
+        // items it named and every item element was rebuilt, so it is re-clamped and its state bits
+        // re-projected here. A re-sync is model-driven rather than a user act, so it notifies no
+        // handler: the game already knows its own array changed.
+        ApplyItemFocusability(list);
+        if (list.Widget.Selection != SelectionMode::None)
+        {
+            WriteSelection(list, list.Widget.SelectedItems, false);
         }
 
         // Resolve each item's per-item bindings against its array element.
@@ -2795,7 +3244,7 @@ namespace Veng::Gui
             void* itemPtr = field->Field->ArrayElement(field->Ptr, i);
             for (usize k = 0; k < perItem; ++k)
             {
-                Element& itemRoot = *list.Children[i * perItem + k];
+                Element& itemRoot = *ContentChildren(list)[i * perItem + k];
                 ResolveItemBindings(itemRoot, itemPtr, field->Field->ElementType);
             }
         }
@@ -2925,6 +3374,295 @@ namespace Veng::Gui
         }
     }
 
+    Element* Document::GetItemHost(const Element& element) const
+    {
+        for (Element* e = element.Parent; e != nullptr; e = e->Parent)
+        {
+            if (IsSelectionHost(e->Kind))
+            {
+                return e;
+            }
+        }
+        return nullptr;
+    }
+
+    u32 Document::ItemStride(const Element& host) const
+    {
+        // A host repeating a bound array instantiates one clone of each template root per array
+        // element, so a slot is that many children wide; a host with no template holds its
+        // authored children one per slot.
+        const auto it = m_ListTemplates.find(&host);
+        if (it == m_ListTemplates.end() || it->second.Roots.empty())
+        {
+            return 1;
+        }
+        return static_cast<u32>(it->second.Roots.size());
+    }
+
+    u32 Document::GetItemCount(const Element& host) const
+    {
+        if (!IsSelectionHost(host.Kind))
+        {
+            return 0;
+        }
+        return static_cast<u32>(ContentChildren(host).size()) / ItemStride(host);
+    }
+
+    Element* Document::GetItemElement(const Element& host, const u32 index) const
+    {
+        if (!IsSelectionHost(host.Kind))
+        {
+            return nullptr;
+        }
+        const std::span<Element* const> content = ContentChildren(host);
+        const usize slot = static_cast<usize>(index) * ItemStride(host);
+        return slot < content.size() ? content[slot] : nullptr;
+    }
+
+    optional<u32> Document::GetItemIndex(const Element& element) const
+    {
+        const Element* const host = GetItemHost(element);
+        if (host == nullptr)
+        {
+            return std::nullopt;
+        }
+
+        // Walk back down to the host's own child on the path — the item root the element sits
+        // under, whatever depth inside the item template it was found at.
+        const Element* item = &element;
+        while (item->Parent != host)
+        {
+            item = item->Parent;
+        }
+        const std::span<Element* const> content = ContentChildren(*host);
+        const auto it = std::ranges::find(content, item);
+        if (it == content.end())
+        {
+            return std::nullopt;
+        }
+        return static_cast<u32>(it - content.begin()) / ItemStride(*host);
+    }
+
+    bool Document::IsItemSelected(const Element& host, const u32 index) const
+    {
+        return std::ranges::binary_search(host.Widget.SelectedItems, index);
+    }
+
+    void Document::RefreshItemSelectionStates(Element& host)
+    {
+        const u32 stride = ItemStride(host);
+        const std::span<Element* const> content = ContentChildren(host);
+        for (usize slot = 0; slot < content.size(); ++slot)
+        {
+            // Every element of a slot carries the bit, so a multi-root item paints as one
+            // selected unit rather than only its first root.
+            Element& item = *content[slot];
+            const bool selected = IsItemSelected(host, static_cast<u32>(slot / stride));
+            SetState(item, WithBit(item.State, ElementState::Selected, selected));
+        }
+    }
+
+    void Document::ApplyItemFocusability(Element& host)
+    {
+        const bool selectable = host.Widget.Selection != SelectionMode::None;
+        const u32 stride = ItemStride(host);
+        const std::span<Element* const> content = ContentChildren(host);
+        for (usize slot = 0; slot < content.size(); ++slot)
+        {
+            // One focus stop per item, on the slot's first element. An item root that is itself a
+            // focusable control keeps its own focusability when the host is not selectable, so
+            // turning selection off never demotes a Button item to unfocusable.
+            Element& item = *content[slot];
+            item.Focusable = (selectable && slot % stride == 0) || IsFocusableWidget(item.Kind);
+        }
+    }
+
+    void Document::WriteSelection(Element& host, vector<u32> indices, const bool notify)
+    {
+        const u32 count = GetItemCount(host);
+        std::erase_if(indices, [count](const u32 index) { return index >= count; });
+        std::ranges::sort(indices);
+        const auto duplicates = std::ranges::unique(indices);
+        indices.erase(duplicates.begin(), duplicates.end());
+        if (host.Widget.Selection == SelectionMode::Single && indices.size() > 1)
+        {
+            indices.resize(1);
+        }
+
+        const bool changed = indices != host.Widget.SelectedItems;
+        host.Widget.SelectedItems = std::move(indices);
+        RefreshItemSelectionStates(host);
+        if (changed && notify)
+        {
+            static_cast<void>(FireHandler(host, "onSelectionChanged"));
+        }
+    }
+
+    bool Document::ActivateItem(Element& host, const u32 index, const InputModifiers modifiers)
+    {
+        const SelectionMode mode = host.Widget.Selection;
+        if (mode == SelectionMode::None || index >= GetItemCount(host))
+        {
+            return false;
+        }
+
+        const bool toggle =
+            mode == SelectionMode::Multiple ||
+            (mode == SelectionMode::Extended && (HasModifier(modifiers, InputModifiers::Control) ||
+                                                 HasModifier(modifiers, InputModifiers::Meta)));
+        const bool extend = mode == SelectionMode::Extended &&
+                            HasModifier(modifiers, InputModifiers::Shift) &&
+                            host.Widget.HasSelectionAnchor;
+
+        vector<u32> next;
+        if (extend)
+        {
+            // A range grows from the standing anchor, which therefore does not move — so a run of
+            // Shift-clicks re-extends from the same origin rather than walking it forward.
+            const u32 from = std::min(host.Widget.SelectionAnchor, index);
+            const u32 to = std::max(host.Widget.SelectionAnchor, index);
+            for (u32 i = from; i <= to; ++i)
+            {
+                next.push_back(i);
+            }
+        }
+        else
+        {
+            if (toggle)
+            {
+                next = host.Widget.SelectedItems;
+                if (const auto it = std::ranges::find(next, index); it != next.end())
+                {
+                    next.erase(it);
+                }
+                else
+                {
+                    next.push_back(index);
+                }
+            }
+            else
+            {
+                next.push_back(index);
+            }
+            host.Widget.SelectionAnchor = index;
+            host.Widget.HasSelectionAnchor = true;
+        }
+
+        WriteSelection(host, std::move(next), true);
+        return true;
+    }
+
+    void Document::FocusItem(Element& item, const InputModifiers modifiers)
+    {
+        Element* const host = GetItemHost(item);
+        if (host == nullptr || host->Widget.Selection == SelectionMode::None)
+        {
+            return;
+        }
+        const optional<u32> index = GetItemIndex(item);
+        if (!index)
+        {
+            return;
+        }
+
+        // Single-select follows focus, and so does an unmodified Extended move — arrowing through
+        // the list carries the selection with it. Control (or Meta) held moves focus alone, which
+        // is what lets a user travel to an item and then toggle it; Multiple always moves focus
+        // alone, since with no chord available its activation is the toggle.
+        const SelectionMode mode = host->Widget.Selection;
+        const bool detached = HasModifier(modifiers, InputModifiers::Control) ||
+                              HasModifier(modifiers, InputModifiers::Meta);
+        if (mode == SelectionMode::Single || (mode == SelectionMode::Extended && !detached))
+        {
+            static_cast<void>(ActivateItem(*host, *index, modifiers & InputModifiers::Shift));
+        }
+    }
+
+    void Document::SetSelectionMode(Element& host, const SelectionMode mode)
+    {
+        if (!IsSelectionHost(host.Kind) || host.Widget.Selection == mode)
+        {
+            return;
+        }
+        host.Widget.Selection = mode;
+        ApplyItemFocusability(host);
+
+        // Narrowing the mode narrows what the standing selection may hold: None clears it and
+        // Single keeps its first item. WriteSelection applies the truncation and re-projects the
+        // state bits either way.
+        vector<u32> retained =
+            mode == SelectionMode::None ? vector<u32>{} : host.Widget.SelectedItems;
+        WriteSelection(host, std::move(retained), true);
+    }
+
+    void Document::SetSelectedItems(Element& host, const std::span<const u32> indices)
+    {
+        if (!IsSelectionHost(host.Kind))
+        {
+            return;
+        }
+        WriteSelection(host, vector<u32>(indices.begin(), indices.end()), false);
+    }
+
+    void Document::SelectItem(Element& host, const u32 index, const bool selected)
+    {
+        if (!IsSelectionHost(host.Kind))
+        {
+            return;
+        }
+
+        vector<u32> next;
+        if (!selected)
+        {
+            next = host.Widget.SelectedItems;
+            std::erase(next, index);
+        }
+        else if (host.Widget.Selection == SelectionMode::Single)
+        {
+            next.push_back(index);
+        }
+        else
+        {
+            next = host.Widget.SelectedItems;
+            next.push_back(index);
+        }
+        WriteSelection(host, std::move(next), false);
+    }
+
+    void Document::ClearSelection(Element& host)
+    {
+        if (IsSelectionHost(host.Kind))
+        {
+            WriteSelection(host, {}, false);
+        }
+    }
+
+    void Document::ScrollIntoView(const Element& element)
+    {
+        Element* view = nullptr;
+        for (Element* e = element.Parent; e != nullptr; e = e->Parent)
+        {
+            if (IsScrollable(e->ComputedStyle))
+            {
+                view = e;
+                break;
+            }
+        }
+        if (view == nullptr)
+        {
+            return;
+        }
+
+        // Layout rects already carry the view's scroll offset, so the shortfall past each edge is
+        // exactly the delta to add. Pulling the near edge in wins when the element is taller than
+        // the view and overflows both, which is the edge a reader reads from.
+        const vec2 under = element.Layout.Min - view->Layout.Min;
+        const vec2 over = element.Layout.Max() - view->Layout.Max();
+        const auto axis = [](const f32 nearEdge, const f32 farEdge)
+        { return nearEdge < 0.0f ? nearEdge : std::max(farEdge, 0.0f); };
+        ScrollBy(*view, vec2(axis(under.x, over.x), axis(under.y, over.y)));
+    }
+
     bool Document::FireHandler(Element& element, string_view event)
     {
         if (m_Context == nullptr)
@@ -3018,12 +3756,20 @@ namespace Veng::Gui
 
         if (event.Kind == PointerEventKind::Down && target != nullptr)
         {
-            // A ScrollView claims a press that lands on one of its children — the first-handler-wins
-            // capture that lets a drag started over a list item pan the view rather than the item.
+            // A scrollable element claims a press that lands on one of its children — the
+            // first-handler-wins capture that lets a drag started over a list item pan the
+            // container rather than the item.
             Element* pressTarget = target;
             for (Element* e = target; e != nullptr; e = e->Parent)
             {
-                if (e->Kind == ElementKind::ScrollView)
+                // A scrollbar part sits inside the very element it scrolls, so it has to claim the
+                // press before the walk reaches that element and turns the drag into a content pan.
+                if (IsScrollBarPart(e->Kind))
+                {
+                    pressTarget = e;
+                    break;
+                }
+                if (IsScrollable(e->ComputedStyle))
                 {
                     pressTarget = e;
                     break;
@@ -3044,6 +3790,22 @@ namespace Veng::Gui
             }
             // A press on a Slider sets its value from where the pointer landed.
             static_cast<void>(DriveWidgetPointer(*pressTarget, event));
+
+            // A press anywhere inside a selectable host's item focuses the item root, so the
+            // keyboard picks up where the pointer left off. The hit target is usually a leaf deep
+            // inside the item template, and pointer capture stays with whatever claimed it above —
+            // a ScrollView still pans — because focus and capture are separate.
+            if (Element* const host = GetItemHost(*target);
+                host != nullptr && host->Widget.Selection != SelectionMode::None)
+            {
+                if (const optional<u32> index = GetItemIndex(*target))
+                {
+                    if (Element* const item = GetItemElement(*host, *index))
+                    {
+                        SetFocus(item);
+                    }
+                }
+            }
         }
 
         // A drag over a captured Slider/ScrollView updates its value/offset before the routing below.
@@ -3073,8 +3835,21 @@ namespace Veng::Gui
                 PointerEvent click{.Kind = PointerEventKind::Click,
                                    .Button = event.Button,
                                    .Position = event.Position,
+                                   .Modifiers = event.Modifiers,
                                    .Target = target};
                 RoutePointerPath(click);
+
+                // A click inside a selectable host's item applies the selection chord before the
+                // item's own activation below, so a Button inside an item both selects its row and
+                // fires its onClick.
+                if (Element* const host = GetItemHost(*target);
+                    host != nullptr && event.Button == PointerButton::Primary)
+                {
+                    if (const optional<u32> index = GetItemIndex(*target))
+                    {
+                        static_cast<void>(ActivateItem(*host, *index, event.Modifiers));
+                    }
+                }
                 // A Checkbox click toggles its bound value (which fires onChange); every other kind
                 // fires onClick. A completed click is consumed whether or not a handler was
                 // registered — the press was already claimed by this document on the Down.
@@ -3136,7 +3911,7 @@ namespace Veng::Gui
         return false;
     }
 
-    bool Document::Navigate(NavAction action)
+    bool Document::Navigate(NavAction action, InputModifiers modifiers)
     {
         if (!m_Interactive)
         {
@@ -3149,6 +3924,18 @@ namespace Veng::Gui
             {
                 return false;
             }
+            // A Confirm on a selectable host's item applies the selection chord, then falls
+            // through to the item's own activation — so an item template rooted at a Button both
+            // selects its row and fires its onClick, and a gamepad toggles a Multiple list with
+            // no chord to press.
+            bool selected = false;
+            if (Element* const host = GetItemHost(*m_Focused); host != nullptr)
+            {
+                if (const optional<u32> index = GetItemIndex(*m_Focused))
+                {
+                    selected = ActivateItem(*host, *index, modifiers);
+                }
+            }
             // A Checkbox Confirm toggles its bound value the same way a click does — one path.
             if (m_Focused->Kind == ElementKind::Checkbox)
             {
@@ -3159,17 +3946,17 @@ namespace Veng::Gui
             SetState(*m_Focused, WithBit(m_Focused->State, ElementState::Active, true));
             const bool fired = FireHandler(*m_Focused, "onClick");
             SetState(*m_Focused, WithBit(m_Focused->State, ElementState::Active, false));
-            return fired;
+            return fired || selected;
         }
         if (action == NavAction::Cancel)
         {
             return m_Focused != nullptr && FireHandler(*m_Focused, "onCancel");
         }
 
-        // A directional action on a focused Slider nudges its value, and on a ScrollView scrolls it,
-        // rather than moving focus off it.
+        // A directional action on a focused Slider nudges its value, and on a scrollable element
+        // scrolls it, rather than moving focus off it.
         if (m_Focused != nullptr &&
-            (m_Focused->Kind == ElementKind::Slider || m_Focused->Kind == ElementKind::ScrollView))
+            (m_Focused->Kind == ElementKind::Slider || IsScrollable(m_Focused->ComputedStyle)))
         {
             if (DriveWidgetNavigation(*m_Focused, action))
             {
@@ -3184,10 +3971,22 @@ namespace Veng::Gui
             return false;
         }
 
+        // Every focus move runs the same tail: an item that takes focus applies its host's
+        // follow-focus selection rule, and a focused element inside a ScrollView is revealed.
+        const auto moveFocusTo = [&](Element* element)
+        {
+            SetFocus(element);
+            if (m_Focused != nullptr)
+            {
+                FocusItem(*m_Focused, modifiers);
+                ScrollIntoView(*m_Focused);
+            }
+        };
+
         // With nothing focused, any navigation lands on the first focusable.
         if (m_Focused == nullptr)
         {
-            SetFocus(focusables.front());
+            moveFocusTo(focusables.front());
             return true;
         }
 
@@ -3198,7 +3997,7 @@ namespace Veng::Gui
             const usize count = focusables.size();
             const usize next =
                 action == NavAction::Next ? (index + 1) % count : (index + count - 1) % count;
-            SetFocus(focusables[next]);
+            moveFocusTo(focusables[next]);
             return true;
         }
 
@@ -3260,7 +4059,7 @@ namespace Veng::Gui
         {
             return false;
         }
-        SetFocus(best);
+        moveFocusTo(best);
         return true;
     }
 
@@ -3319,7 +4118,7 @@ namespace Veng::Gui
         {
             out.push_back(&element);
         }
-        for (Element* child : element.Children)
+        for (Element* child : ContentChildren(element))
         {
             GatherFocusables(*child, out);
         }

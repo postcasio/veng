@@ -79,8 +79,16 @@ namespace Veng::Gui
         TextFont,
         /// @brief The element's opacity multiplier (Style::Opacity); value is a scalar.
         Opacity,
-        /// @brief Whether content is clipped to the element's box (Style::ClipContent); value is a boolean scalar.
-        ClipContent,
+        /// @brief Both overflow axes at once (Style::OverflowX and OverflowY); Values x/y are Overflow ordinals.
+        ///
+        /// The shorthand form, standing to OverflowX/OverflowY as Inset does to InsetLeft/InsetTop/…
+        Overflow,
+        /// @brief The horizontal overflow axis alone (Style::OverflowX); Unit is an Overflow ordinal.
+        OverflowX,
+        /// @brief The vertical overflow axis alone (Style::OverflowY); Unit is an Overflow ordinal.
+        OverflowY,
+        /// @brief Whether scrollbars overlay content or reserve a gutter (Style::Scrollbar); Unit is a ScrollbarLayout ordinal.
+        ScrollbarLayout,
         /// @brief The absolute left inset alone (Style::Inset.Left); value is a scalar.
         InsetLeft,
         /// @brief The absolute top inset alone (Style::Inset.Top); value is a scalar.

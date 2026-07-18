@@ -20,6 +20,53 @@ namespace Veng::Gui
         Middle,
     };
 
+    /// @brief The modifier keys held while a pointer or navigation action was raised.
+    ///
+    /// The bits are a bitmask (combine with the bitwise operators). They carry the chord a
+    /// selection model reads — Control (or Meta on a platform whose convention is the command key)
+    /// toggles one item, Shift extends a range from the anchor — so the input seam maps the
+    /// physical keys once and the document applies the meaning.
+    enum class InputModifiers : u8
+    {
+        /// @brief No modifier key was held.
+        None = 0,
+        /// @brief The shift key was held.
+        Shift = 1u << 0,
+        /// @brief The control key was held.
+        Control = 1u << 1,
+        /// @brief The alt/option key was held.
+        Alt = 1u << 2,
+        /// @brief The meta (command/super/windows) key was held.
+        Meta = 1u << 3,
+    };
+
+    /// @brief Returns the union of two modifier masks.
+    /// @param a  The first mask.
+    /// @param b  The second mask.
+    /// @return The bitwise-or of the two masks.
+    constexpr InputModifiers operator|(InputModifiers a, InputModifiers b)
+    {
+        return static_cast<InputModifiers>(static_cast<u8>(a) | static_cast<u8>(b));
+    }
+
+    /// @brief Returns the intersection of two modifier masks.
+    /// @param a  The first mask.
+    /// @param b  The second mask.
+    /// @return The bitwise-and of the two masks.
+    constexpr InputModifiers operator&(InputModifiers a, InputModifiers b)
+    {
+        return static_cast<InputModifiers>(static_cast<u8>(a) & static_cast<u8>(b));
+    }
+
+    /// @brief Returns whether every bit of a modifier is set in a mask.
+    /// @param mask      The mask to test.
+    /// @param modifier  The modifier bit (or bits) to look for.
+    /// @return True when the mask carries the modifier.
+    constexpr bool HasModifier(InputModifiers mask, InputModifiers modifier)
+    {
+        return (mask & modifier) == modifier;
+    }
+
     /// @brief The kind of pointer transition a pointer event reports.
     ///
     /// Move retargets hover; Down/Up drive the pressed state and, when a Down and its Up land on
@@ -56,6 +103,8 @@ namespace Veng::Gui
         PointerButton Button = PointerButton::Primary;
         /// @brief The pointer position, in document-space pixels.
         vec2 Position{0.0f};
+        /// @brief The modifier keys held when the transition was raised.
+        InputModifiers Modifiers = InputModifiers::None;
         /// @brief The element the routing reached; the hit-test target, or the entered/left element.
         Element* Target = nullptr;
         /// @brief Set by a handler to consume the event and stop further propagation.
