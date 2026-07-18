@@ -43,6 +43,11 @@ offline cook in [cooker/CLAUDE.md](../cooker/CLAUDE.md); the archive format in
 Subclass `Application`, override `OnInitialize` / `OnUpdate(delta)` / `OnRender` (and
 `OnShutdown` for an engine-alive shutdown operation), and `Run(args)`. ImGui is opt-in (on by default; `nullopt` to skip), and a `Headless` flag runs
 windowless to `RequestExit()` instead of a window close — that's the CI/smoke path.
+`Run` returns the process exit status: 0 unless the app called `RequestExit(status)`, which the
+launcher's `main` returns so a headless or server-shaped consumer can report a failed start.
+Calling `RequestExit(status)` from `OnInitialize` is the fatal-startup-failure path — the world
+bootstrap is skipped and the run loop never starts, while `OnShutdown`, the session save, and
+every destructor still run.
 `Application` owns the `AssetManager` (`GetAssetManager()`), the render `Context`, and the
 `TaskSystem` (`GetTaskSystem()`), and threads them explicitly into each other (per-worker
 transfer pools in the `Context`, the manager's loaders on the task system). The `TaskSystem` — a

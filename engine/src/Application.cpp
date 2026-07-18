@@ -273,6 +273,14 @@ namespace Veng
 
         OnInitialize();
 
+        // A subclass that hit a fatal startup failure calls RequestExit(status) from OnInitialize;
+        // initialization stops here rather than bootstrapping a world the app has already given up
+        // on, and Run skips the loop entirely. Teardown still runs in full.
+        if (m_ShouldExit)
+        {
+            return;
+        }
+
         // The engine-managed game world bootstraps after OnInitialize, so a subclass has already
         // set up its ImGui surface and read the managed viewport. It renders through the managed
         // viewport, so it is gated on one being present.
@@ -1564,7 +1572,7 @@ namespace Veng
         return m_WorldView;
     }
 
-    void Application::Run(vector<string> arguments)
+    i32 Application::Run(vector<string> arguments)
     {
         // Parse argv (without the program name) once; the engine consumes the recognised options
         // itself and a game can read them back through GetLaunchArguments(). The app object is
@@ -1623,6 +1631,9 @@ namespace Veng
         {
             m_Sessions->SaveAll();
         }
+
+        // The status a RequestExit(i32) named, or 0 for a run that ended without naming one.
+        return m_ExitStatus;
     }
 
     void Application::Frame()

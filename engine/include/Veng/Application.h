@@ -388,9 +388,15 @@ namespace Veng
         /// destruction site in the translation unit.
         virtual ~Application();
 
-        /// @brief Enter the main loop, blocking until the app exits.
+        /// @brief Enter the main loop, blocking until the app exits, and report the exit status.
+        ///
+        /// Returns the status set through RequestExit(i32) — 0 when the app never set one, so a run
+        /// that simply ends reports success. The launcher returns this value from main, making a
+        /// failed start distinguishable from a completed run to a supervisor or a script. Not
+        /// [[nodiscard]]: a host that only needs the app to run may ignore the status.
         /// @param arguments  Command-line arguments forwarded from the launcher.
-        void Run(vector<string> arguments);
+        /// @return The process exit status: 0 for a clean run, otherwise the requested status.
+        i32 Run(vector<string> arguments);
 
         /// @brief Returns the application window.
         [[nodiscard]] Window& GetWindow() const { return *m_Window; }
@@ -893,10 +899,30 @@ namespace Veng
         /// @param pawn   The pawn the own seat now possesses, or Entity::Null.
         virtual void OnClientPossession(Scene& world, Entity pawn) {}
 
-        /// @brief Signals the run loop to exit after the current frame.
+        /// @brief Signals the run loop to exit after the current frame, leaving the exit status.
         ///
-        /// The only way to stop a headless app; also works for windowed apps.
+        /// The only way to stop a headless app; also works for windowed apps. The status Run
+        /// returns is unchanged, so an ordinary quit reports whatever status is already set —
+        /// 0 unless RequestExit(i32) named a failure earlier.
         void RequestExit() { m_ShouldExit = true; }
+
+        /// @brief Signals the run loop to exit after the current frame with the given exit status.
+        ///
+        /// The status becomes Run's return value and, under the launcher, the process exit status;
+        /// a non-zero value marks the run as failed. Called from OnInitialize this is the
+        /// fatal-startup-failure path: the engine skips the world bootstrap and never enters the
+        /// run loop, so no further initialization proceeds. Teardown is unaffected either way —
+        /// OnShutdown, the session save, and every destructor still run, which is what this offers
+        /// over terminating the process outright. A later call replaces the status.
+        /// @param status  The status Run returns; 0 means success.
+        void RequestExit(i32 status)
+        {
+            m_ExitStatus = status;
+            m_ShouldExit = true;
+        }
+
+        /// @brief Returns the exit status Run will report; 0 until RequestExit(i32) sets one.
+        [[nodiscard]] i32 GetExitStatus() const { return m_ExitStatus; }
 
     private:
         /// @brief The pimpl'd network state (hosts + input buffers); defined in Application.cpp.
@@ -1344,5 +1370,8 @@ namespace Veng
         bool m_PreviousFrameLatchedInput = false;
 
         bool m_ShouldExit = false;
+
+        /// @brief The status Run returns; 0 until RequestExit(i32) names a failure.
+        i32 m_ExitStatus = 0;
     };
 }

@@ -74,7 +74,8 @@ int main(const int argc, char** argv)
     // Hand the app the populated driver catalog before Run so its managed viewports drive
     // component-authored GuiOverlay drivers.
     app->SetGuiDriverRegistry(&drivers);
-    app->Run(Veng::vector<Veng::string>(argv, argv + argc));
 
-    return 0;
+    // The app's exit status becomes the process's, so a supervisor or a script can tell a failed
+    // start from a run that completed. An app that never sets one exits 0.
+    return app->Run(Veng::vector<Veng::string>(argv, argv + argc));
 }

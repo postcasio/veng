@@ -315,7 +315,5 @@ int main(const int argc, char** argv)
     }
 #endif
 
-    host->Run({args.front()});
-
-    return 0;
+    return host->Run({args.front()});
 }

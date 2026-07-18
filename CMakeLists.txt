@@ -1087,7 +1087,9 @@ if (VENG_BUILD_TESTS)
             tests/gpu/simulation_drive_list.cpp
             # application_shutdown.cpp drives a headless managed-world Application through Run() and
             # asserts the shutdown-operation order OnShutdown -> session SaveAll -> member teardown —
-            # the non-GPU durability operation the -L validation gate cannot see (it needs a Context
+            # the non-GPU durability operation the -L validation gate cannot see — and the exit-status
+            # contract: a run that names no status returns 0, while one that fails in OnInitialize
+            # returns its status without bootstrapping a world or running a frame (it needs a Context
             # for the Application, so it rides the gpu band though it pins no pixels).
             tests/gpu/application_shutdown.cpp
             # application_boot_restore.cpp drives a headless managed-world Application through Run()
