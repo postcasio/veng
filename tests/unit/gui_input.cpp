@@ -84,7 +84,8 @@ TEST_CASE("gui hit-test: a clipping element hides the clipped-away part of its c
     // A clipping element with a child that extends past the clip; a point in the clipped-away region
     // does not hit the child (it falls through to the root, which no other element covers).
     Element& clipper = doc.Add(root, ElementKind::Panel);
-    clipper.ComputedStyle.ClipContent = true;
+    clipper.ComputedStyle.OverflowX = Overflow::Hidden;
+    clipper.ComputedStyle.OverflowY = Overflow::Hidden;
     PlaceAt(clipper, {0, 0}, {40, 40});
     Element& child = doc.Add(clipper, ElementKind::Panel);
     PlaceAt(child, {0, 0}, {120, 120}); // extends past the 40×40 clip

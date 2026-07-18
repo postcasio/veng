@@ -46,6 +46,20 @@ namespace Veng::Gui
         /// it right-anchor to the rows' shared right edge. With an `items` binding it repeats
         /// its authored row template per bound array element, exactly as a List does.
         Table,
+        /// @brief One axis's scrollbar track of a scrollable element — widget-owned, not authorable.
+        ///
+        /// The widget layer creates a ScrollBar (and its ScrollBarThumb child) for each scrollable
+        /// axis of an element whose `overflow` names Scroll; markup cannot author one, so a
+        /// `<ScrollBar>` tag is a cook error. It is a real element purely so it styles through the
+        /// ordinary cascade — `ScrollBar { width: 10px; }` is a plain type selector, and the element
+        /// carries its own background, corner radius, border, gradient, variants, and transitions.
+        ScrollBar,
+        /// @brief The draggable thumb inside a ScrollBar — widget-owned, not authorable.
+        ///
+        /// Sized and positioned from its bar's scroll fraction on each Solve. It hit-tests and drags
+        /// through the ordinary pointer path, so `ScrollBarThumb:hover` and `:active` resolve on it
+        /// exactly as they do on any other element.
+        ScrollBarThumb,
     };
 
     /// @brief Transient interaction-state bits an element carries for styling and events.
@@ -217,6 +231,9 @@ namespace Veng::Gui
         u32 Caret = 0;
         /// @brief The bound-array context version a List last synced its item children against.
         u64 SyncVersion = 0;
+
+        /// @brief Whether the element currently owns scrollbar parts, so a resolve re-syncs only on a change.
+        bool HasScrollBars = false;
 
         /// @brief An item host's selection mode; None (the default) leaves the host unselectable.
         ///

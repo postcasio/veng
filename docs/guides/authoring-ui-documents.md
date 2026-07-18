@@ -291,6 +291,53 @@ ids: `Document::FindAllByClass("tick")` returns every element carrying the class
 so the game resolves the whole pool once and drives it by index. `hello-triangle`'s HUD authors
 its numbered tick strip this way.
 
+### Scrolling: `overflow` and styleable scrollbars
+
+Scrolling is a **style property**, not an element type — any element can scroll:
+
+```css
+.track-list {
+    overflow-x: hidden;    /* visible | hidden | scroll */
+    overflow-y: scroll;
+    scrollbar: gutter;     /* overlay (default) | gutter */
+}
+```
+
+`overflow` is the CSS two-value shorthand (`overflow: hidden scroll`, or one keyword for both).
+Set the axes independently so a vertical list can't drift sideways when one row runs long.
+
+`<ScrollView>` still exists as the **preset** — a `Panel` whose overflow defaults to `scroll` on
+both axes — so existing markup is unchanged, and a `ScrollView` styled `overflow-x: hidden` still
+takes the authored value. But a `<List>` no longer needs wrapping in one; style it and it scrolls.
+
+**Scrollable content must hold its size.** A flex child shrinks to fit by default, so nothing ever
+overflows to scroll. Give the content `flex-shrink: 0` (or an explicit size), exactly as you would
+in CSS.
+
+**The scrollbar is made of real elements, so you style it with ordinary selectors:**
+
+```css
+ScrollBar             { background: #00000040; }
+ScrollBar.vertical    { width: 8px; }
+ScrollBarThumb        { background: #ffffff60; corner-radius: 4px; transition: background 0.15s; }
+ScrollBarThumb:hover  { background: #ffffffa0; }
+List > ScrollBar      { width: 6px; }
+```
+
+A scrollable axis gets a `ScrollBar` carrying a `ScrollBarThumb`, tagged `horizontal` or
+`vertical`. They take backgrounds, borders, corner radii, gradients, pseudo-state variants, and
+transitions like any other element. You **cannot author them** — a `<ScrollBar>` tag is a cook
+error — they exist only as the widget layer's own children.
+
+A bar exists while its axis is styled `scroll` and hides itself when there's nothing to scroll, so
+content growing past the box reveals it with no layout change. Drag the thumb, or click the track
+to page.
+
+`scrollbar: gutter` reserves the bar's width out of the content box instead of letting it overlay,
+and holds that space whether or not the content currently overflows — which is what stops the
+content jumping the moment it grows past the box. The reserved width **is** the bar's own styled
+width, so `ScrollBar { width: 6px }` narrows both from one value.
+
 ### A selectable list view: `selection` and `:selected`
 
 Give a `<List>` (or a `<Table>` repeating an array) a `selection` attribute and it becomes a

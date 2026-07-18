@@ -17,6 +17,7 @@
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
 #include <Veng/Gui/Element.h>
+#include <Veng/Gui/StyleProperty.h>
 
 using namespace Veng;
 using namespace Veng::Cook;
@@ -149,6 +150,90 @@ TEST_CASE("Cooker: a selectable List and a :selected rule cook through the autho
         }
         CHECK(foundSelected);
         CHECK(foundHover);
+
+        // The widget-owned scrollbar parts are selected by ordinary type and type.class selectors,
+        // and take a pseudo-state variant like any other element — the whole point of making them
+        // real elements rather than painted-in widget internals.
+        bool foundBar = false;
+        bool foundNarrowBar = false;
+        bool foundThumbHover = false;
+        for (const CookedStyleRule& rule : rules)
+        {
+            if (string(rule.Type) == "ScrollBar" && string(rule.Class).empty())
+            {
+                foundBar = true;
+            }
+            if (string(rule.Type) == "ScrollBar" && string(rule.Class) == "vertical")
+            {
+                foundNarrowBar = true;
+            }
+            if (string(rule.Type) == "ScrollBarThumb" &&
+                rule.State == static_cast<u32>(Gui::ElementState::Hovered))
+            {
+                foundThumbHover = true;
+            }
+        }
+        CHECK(foundBar);
+        CHECK(foundNarrowBar);
+        CHECK(foundThumbHover);
+    }
+
+    SUBCASE("the per-axis overflow longhands and the scrollbar layout cook onto the list rule")
+    {
+        const optional<ArchiveEntry> sheetEntry = reader->Find(StyleSheetId);
+        REQUIRE(sheetEntry.has_value());
+
+        const std::span<const u8> blob = sheetEntry->Blob;
+        CookedStyleSheetHeader header{};
+        std::memcpy(&header, blob.data(), sizeof(header));
+
+        vector<CookedStyleRule> rules(header.RuleCount);
+        usize offset = sizeof(CookedStyleSheetHeader);
+        for (CookedStyleRule& rule : rules)
+        {
+            std::memcpy(&rule, blob.data() + offset, sizeof(rule));
+            offset += sizeof(rule);
+        }
+        vector<CookedStyleProperty> properties(header.PropertyCount);
+        for (CookedStyleProperty& property : properties)
+        {
+            std::memcpy(&property, blob.data() + offset, sizeof(property));
+            offset += sizeof(property);
+        }
+
+        // `.track-list` authors the axes independently — the case a single `overflow` keyword
+        // cannot express, and the reason a vertical list does not drift sideways.
+        optional<u32> overflowX;
+        optional<u32> overflowY;
+        optional<u32> scrollbar;
+        for (const CookedStyleRule& rule : rules)
+        {
+            if (string(rule.Class) != "track-list")
+            {
+                continue;
+            }
+            for (u32 i = 0; i < rule.PropertyCount; ++i)
+            {
+                const CookedStyleProperty& property = properties[rule.FirstProperty + i];
+                switch (static_cast<Gui::StyleProperty>(property.Property))
+                {
+                case Gui::StyleProperty::OverflowX:
+                    overflowX = property.Unit;
+                    break;
+                case Gui::StyleProperty::OverflowY:
+                    overflowY = property.Unit;
+                    break;
+                case Gui::StyleProperty::ScrollbarLayout:
+                    scrollbar = property.Unit;
+                    break;
+                default:
+                    break;
+                }
+            }
+        }
+        CHECK(overflowX == optional<u32>(static_cast<u32>(Gui::Overflow::Hidden)));
+        CHECK(overflowY == optional<u32>(static_cast<u32>(Gui::Overflow::Scroll)));
+        CHECK(scrollbar == optional<u32>(static_cast<u32>(Gui::ScrollbarLayout::Gutter)));
     }
 
     std::filesystem::remove(outArchive);

@@ -686,6 +686,45 @@ namespace Veng::Gui
         /// @brief Returns how many elements one item slot of a host holds (its template root count).
         [[nodiscard]] u32 ItemStride(const Element& host) const;
 
+        /// @brief Cascades the document's stylesheets onto a widget-owned element.
+        ///
+        /// The shadow-element counterpart to the instantiate-time resolve: a ScrollBar or
+        /// ScrollBarThumb has no recipe and no inline style, so only the sheet rules apply — which
+        /// is what makes `ScrollBar { … }` and `ScrollBarThumb:hover { … }` reach it.
+        void CascadeWidgetElement(Element& element);
+
+        /// @brief Re-syncs every element whose resolved overflow no longer matches its scrollbar parts.
+        ///
+        /// Runs as its own pass after the style resolve, never inside it: creating a bar appends to
+        /// the element store, which would strand a walk over it.
+        void SyncAllScrollBars();
+
+        /// @brief Creates, removes, and re-cascades an element's scrollbar parts to match its overflow.
+        ///
+        /// A scrollable axis owns one ScrollBar (carrying one ScrollBarThumb), appended after the
+        /// element's content children and tagged with a `horizontal`/`vertical` class. The parts are
+        /// structural in the style, not in the content: they exist while the axis is styled Scroll,
+        /// and hide themselves when the axis has no travel.
+        void SyncScrollBars(Element& element);
+
+        /// @brief Places an element's scrollbar parts against its solved box and scroll offset.
+        ///
+        /// Runs after the layout read, writing each part's Layout rect directly rather than through
+        /// the flex solve, so dragging a thumb re-places it with no re-solve.
+        void LayoutScrollBars(Element& element);
+
+        /// @brief Returns an element's scroll travel per axis: how far its content overflows its box.
+        ///
+        /// Zero on an axis that does not scroll or whose content fits, which is also the signal a
+        /// scrollbar reads to hide itself.
+        [[nodiscard]] vec2 ScrollRange(const Element& element) const;
+
+        /// @brief Returns the pixel thickness a scrollbar occupies, from its own styled width.
+        [[nodiscard]] f32 ScrollBarThickness(const Element& element) const;
+
+        /// @brief Returns an element's scrollbar for an axis, or nullptr when it has none.
+        [[nodiscard]] Element* FindScrollBar(const Element& element, bool vertical) const;
+
         /// @brief Applies a user activation of one item slot under the host's selection mode.
         ///
         /// The one place the mode's meaning lives: Single replaces, Multiple toggles, Extended
@@ -831,6 +870,19 @@ namespace Veng::Gui
 
         /// @brief Per-List detached item templates, keyed by the List element.
         map<const Element*, ListTemplate> m_ListTemplates;
+
+        /// @brief The stylesheets this document cascaded from, kept resident for later cascades.
+        ///
+        /// Instantiate copies the recipe's handles here so a widget-owned element created after
+        /// instantiate — a scrollbar appearing when an axis is styled scrollable — resolves against
+        /// the same sheets the authored tree did, without the recipe having to outlive the document.
+        vector<AssetHandle<StyleSheet>> m_StyleSheets;
+
+        /// @brief Resolved gradient ramps, shared by every cascade this document runs.
+        ///
+        /// Keyed by the cooked gradient, so elements sharing one `background-gradient` share one
+        /// ramp texture whether they were cascaded at instantiate or later.
+        map<const StyleGradient*, ResolvedGradient> m_GradientCache;
 
         /// @brief The element a pointer press landed on, awaiting a release to complete a click.
         Element* m_PressTarget = nullptr;

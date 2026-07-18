@@ -366,6 +366,64 @@ namespace Veng::Cook
             return std::nullopt;
         }
 
+        // Splits a value on runs of whitespace, for the keyword shorthands.
+        vector<std::string_view> SplitWhitespace(std::string_view value)
+        {
+            vector<std::string_view> parts;
+            usize i = 0;
+            const usize n = value.size();
+            while (i < n)
+            {
+                while (i < n && std::isspace(static_cast<unsigned char>(value[i])) != 0)
+                {
+                    ++i;
+                }
+                const usize start = i;
+                while (i < n && std::isspace(static_cast<unsigned char>(value[i])) == 0)
+                {
+                    ++i;
+                }
+                if (i > start)
+                {
+                    parts.push_back(value.substr(start, i - start));
+                }
+            }
+            return parts;
+        }
+
+        // The CSS `overflow` keyword set. `clip` is accepted as a synonym for `hidden` and `auto`
+        // for `scroll`: veng shows a scrollbar only on a scrollable axis whose content overflows,
+        // so the CSS auto/scroll distinction (always-visible bar) has no separate meaning here.
+        optional<u32> ParseOverflow(std::string_view v)
+        {
+            if (v == "visible")
+            {
+                return static_cast<u32>(Gui::Overflow::Visible);
+            }
+            if (v == "hidden" || v == "clip")
+            {
+                return static_cast<u32>(Gui::Overflow::Hidden);
+            }
+            if (v == "scroll" || v == "auto")
+            {
+                return static_cast<u32>(Gui::Overflow::Scroll);
+            }
+            return std::nullopt;
+        }
+
+        optional<u32> ParseScrollbarLayout(std::string_view v)
+        {
+            if (v == "overlay")
+            {
+                return static_cast<u32>(Gui::ScrollbarLayout::Overlay);
+            }
+            if (v == "gutter")
+            {
+                return static_cast<u32>(Gui::ScrollbarLayout::Gutter);
+            }
+            return std::nullopt;
+        }
+
         optional<u32> ParseTextAlign(std::string_view v)
         {
             if (v == "left")
@@ -494,6 +552,36 @@ namespace Veng::Cook
             return EnumProperty(property, ParsePointerEvents(v), v, located);
         case StyleProperty::TextAlign:
             return EnumProperty(property, ParseTextAlign(v), v, located);
+        case StyleProperty::OverflowX:
+        case StyleProperty::OverflowY:
+            return EnumProperty(property, ParseOverflow(v), v, located);
+        case StyleProperty::ScrollbarLayout:
+            return EnumProperty(property, ParseScrollbarLayout(v), v, located);
+
+        case StyleProperty::Overflow:
+        {
+            // The CSS two-value shorthand: `overflow: <x> <y>`, one value applying to both axes.
+            // Both ordinals ride Values (not Unit, which holds a single enumerator), so the
+            // runtime writes the pair in one declaration.
+            const vector<std::string_view> parts = SplitWhitespace(v);
+            if (parts.empty() || parts.size() > 2)
+            {
+                return std::unexpected(fmt::format("{}: 'overflow' expects 1 or 2 keywords, got {}",
+                                                   located, parts.size()));
+            }
+            const optional<u32> x = ParseOverflow(parts[0]);
+            const optional<u32> y = ParseOverflow(parts.size() == 2 ? parts[1] : parts[0]);
+            if (!x || !y)
+            {
+                return std::unexpected(
+                    fmt::format("{}: '{}' is not a valid value for 'overflow'", located, v));
+            }
+            CookedStyleProperty cp{};
+            cp.Property = static_cast<u32>(property);
+            cp.Values[0] = static_cast<f32>(*x);
+            cp.Values[1] = static_cast<f32>(*y);
+            return cp;
+        }
 
         case StyleProperty::FlexGrow:
         case StyleProperty::FlexShrink:
@@ -538,16 +626,6 @@ namespace Veng::Cook
             CookedStyleProperty cp{};
             cp.Property = static_cast<u32>(property);
             cp.Handle = id->Value;
-            return cp;
-        }
-
-        case StyleProperty::ClipContent:
-        {
-            // The `overflow` keyword: `hidden`/`clip` clips, `visible`/`scroll` does not.
-            const bool clips = v == "hidden" || v == "clip";
-            CookedStyleProperty cp{};
-            cp.Property = static_cast<u32>(property);
-            cp.Values[0] = clips ? 1.0f : 0.0f;
             return cp;
         }
 

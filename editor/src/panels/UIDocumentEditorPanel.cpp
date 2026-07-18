@@ -57,6 +57,10 @@ namespace VengEditor
                 return "List";
             case Gui::ElementKind::Table:
                 return "Table";
+            case Gui::ElementKind::ScrollBar:
+                return "ScrollBar";
+            case Gui::ElementKind::ScrollBarThumb:
+                return "ScrollBarThumb";
             }
             return "Element";
         }

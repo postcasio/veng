@@ -58,8 +58,14 @@ namespace Veng::Gui
             return "font";
         case StyleProperty::Opacity:
             return "opacity";
-        case StyleProperty::ClipContent:
+        case StyleProperty::Overflow:
             return "overflow";
+        case StyleProperty::OverflowX:
+            return "overflow-x";
+        case StyleProperty::OverflowY:
+            return "overflow-y";
+        case StyleProperty::ScrollbarLayout:
+            return "scrollbar";
         case StyleProperty::InsetLeft:
             return "inset-left";
         case StyleProperty::InsetTop:
@@ -192,7 +198,19 @@ namespace Veng::Gui
         }
         if (name == "overflow")
         {
-            return StyleProperty::ClipContent;
+            return StyleProperty::Overflow;
+        }
+        if (name == "overflow-x")
+        {
+            return StyleProperty::OverflowX;
+        }
+        if (name == "overflow-y")
+        {
+            return StyleProperty::OverflowY;
+        }
+        if (name == "scrollbar")
+        {
+            return StyleProperty::ScrollbarLayout;
         }
         if (name == "inset-left")
         {

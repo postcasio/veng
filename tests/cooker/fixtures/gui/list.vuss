@@ -24,3 +24,29 @@
     background: #2266ccff;
     color: #ffffffff;
 }
+
+/* The scrollable list view and its widget-owned bars: the parts are ordinary elements, so they
+   style through plain type/class selectors and pseudo-state variants. */
+
+.track-list {
+    overflow-x: hidden;
+    overflow-y: scroll;
+    scrollbar: gutter;
+}
+
+ScrollBar {
+    background: #00000040;
+}
+
+ScrollBar.vertical {
+    width: 8px;
+}
+
+ScrollBarThumb {
+    background: #ffffff60;
+    corner-radius: 4px;
+}
+
+ScrollBarThumb:hover {
+    background: #ffffffa0;
+}

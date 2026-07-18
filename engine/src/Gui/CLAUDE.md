@@ -203,6 +203,44 @@ as a List does). A numeric Table column pairs with the `text-align` Text style p
 attributes (`min`/`max`/`step`/`value`/`checked`/`orientation`/`selection`) are read at `Instantiate` and its `{value}`
 binding is one-way (the model drives the widget without firing `onChange`).
 
+**Scrolling is a style property, and `ScrollView` is its preset.** `overflow-x` / `overflow-y`
+(`visible` / `hidden` / `scroll`, with `overflow` as the CSS two-value shorthand) decide per axis
+whether content is clipped and whether it scrolls — so a `List`, `Table`, or bare `Panel` styled
+`overflow-y: scroll` scrolls with no wrapper element, and a vertical list styled `overflow-x: hidden`
+cannot drift sideways when one row runs long. `ScrollView` remains as the named preset: it is a
+`Panel` whose base style seeds `scroll` on both axes, so the cascade still lets an authored
+`overflow-x: hidden` win. Every scroll behavior — the clip, the child origin shift, the drag capture,
+the directional scroll, `ScrollIntoView` — reads the resolved style rather than the kind. The
+property is mirrored onto the Yoga node (`YGOverflowScroll`), without which a flex child shrinks to
+fit and nothing ever overflows to scroll.
+
+**A scrollbar is real elements, so it styles through the ordinary cascade.** A scrollable axis owns a
+widget-created `ScrollBar` carrying a `ScrollBarThumb`, tagged with a `horizontal`/`vertical` class.
+They are `ElementKind`s rather than reserved class names, so `ScrollBar.vertical { width: 8px; }` and
+`ScrollBarThumb:hover { … }` are plain type selectors with no new selector vocabulary — and the parts
+carry their own background, corner radius, border, gradient, variants, and transitions. They are
+**not authorable**: the cooker's tag table does not accept them, so a `<ScrollBar>` tag is a cook
+error. Presence and visibility are separate: a bar *exists* while its axis is styled `scroll` and
+*hides* when the axis has no travel, so content growing past the box reveals it with no structural
+change. Dragging the thumb scales the pointer delta through the track's slack, and a press on the
+track pages one viewport.
+
+**`scrollbar: overlay | gutter`** decides whether the bars float over the content (the default,
+reserving nothing) or the content box shrinks to reserve a stable gutter. The reserved width is the
+bar's *own* styled thickness, so `ScrollBar { width: 6px }` narrows both the bar and its gutter from
+one value; the gutter is held whether or not the axis currently overflows, since reserving only
+while scrollable is what makes content jump as it grows.
+
+**The scrollbar parts live in `Children`, as a trailing tail.** That buys the layout mirror, the
+cascade, paint order, and hit-testing with no parallel paths — a bar is drawn and hit like any
+element. The cost is that they are not *content*, so every content-shaped walk (item slots, the
+`Selected` projection, focus order, template capture, table columns, the list grow/shrink, the
+scroll extent) goes through the single **`ContentChildren`** accessor, which trims the tail, rather
+than each testing the kind itself. `Document::Add` maintains the invariant by inserting content
+*ahead* of the tail — a bar is created before the content it scrolls whenever `InitWidget` runs
+before a `List`'s first item sync, and without that one funnel the parts interleave and a repeater
+captures a scrollbar as part of its item template.
+
 **An item host selects over item slots, not over elements.** A `List` — and a `Table` — takes a
 `selection` attribute (`single` / `multiple` / `extended`, absent = unselectable, the default and the
 status quo) that makes it a **list view**: a selectable container whose unit of selection is one
