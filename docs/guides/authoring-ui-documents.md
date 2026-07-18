@@ -102,6 +102,26 @@ solved box, meaningful when the box is wider than the run, e.g. a Table cell). C
 are hex `#rrggbb` or `#rrggbbaa`, resolved sRGB→linear at cook time. Register the
 stylesheet in the pack as type `StyleSheet`.
 
+**Edge order.** `margin`, `padding`, and `inset` take one to four lengths and follow the
+CSS shorthand rules exactly. Four values run clockwise from the top — **top, right,
+bottom, left**:
+
+```css
+.card {
+    margin: 1px 2px 3px 4px;  /* top 1, right 2, bottom 3, left 4 */
+    padding: 8px;             /* all four edges 8 */
+    padding: 8px 16px;        /* top/bottom 8, left/right 16 */
+    padding: 8px 16px 4px;    /* top 8, left/right 16, bottom 4 */
+}
+```
+
+One value applies to all four edges; two set top/bottom then left/right; three set top,
+then left/right, then bottom. `corner-radius` takes the same one-to-four form but names
+corners rather than edges, clockwise from the top-left — **top-left, top-right,
+bottom-right, bottom-left** — matching CSS `border-radius`. The per-edge longhands
+`inset-left`/`inset-top`/`inset-right`/`inset-bottom` each take a single length and are
+unambiguous.
+
 A `background-gradient` fills the element with a multi-stop gradient instead of a flat
 color (it wins over `background` when both are set, and composes with `corner-radius`
 and a border). The multi-stop color is baked into a ramp at cook time; the shape is one
