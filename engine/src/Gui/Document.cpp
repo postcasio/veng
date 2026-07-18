@@ -334,6 +334,15 @@ namespace Veng::Gui
         // Whether an element is a widget-owned part rather than authored content — a scrollbar
         // track or thumb, a slider's fill or handle. A part is a real element so it styles through
         // the ordinary cascade, but it is not content and never appears in a content walk.
+        // Whether a part carries a drag of its own. A scrollbar thumb does — it maps a pointer
+        // delta through the track's slack — so it must claim a press before the walk reaches the
+        // element it scrolls. A slider's parts do not: the Slider already maps pointer position to
+        // value, so a press on its fill or thumb belongs to the Slider itself.
+        bool IsScrollBarPart(ElementKind kind)
+        {
+            return kind == ElementKind::ScrollBar || kind == ElementKind::ScrollBarThumb;
+        }
+
         bool IsWidgetPart(ElementKind kind)
         {
             switch (kind)
@@ -3856,7 +3865,9 @@ namespace Veng::Gui
             {
                 // A scrollbar part sits inside the very element it scrolls, so it has to claim the
                 // press before the walk reaches that element and turns the drag into a content pan.
-                if (IsWidgetPart(e->Kind))
+                // A slider part deliberately does not claim: the walk continues to its Slider,
+                // which maps the pointer to a value itself.
+                if (IsScrollBarPart(e->Kind))
                 {
                     pressTarget = e;
                     break;

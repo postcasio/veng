@@ -392,3 +392,79 @@ TEST_CASE("gui widget parts: a scrollbar inherits its host's classes beside its 
     CHECK(std::ranges::find(bar->Classes, "panel") != bar->Classes.end());
     CHECK(std::ranges::find(bar->Classes, "vertical") != bar->Classes.end());
 }
+
+TEST_CASE("gui widget parts: pressing a Slider's thumb drives the slider, not the thumb")
+{
+    // The thumb is a part *inside* the control it belongs to, and unlike a scrollbar thumb it has
+    // no drag of its own — the Slider already maps pointer position to value. So a press on it has
+    // to reach the Slider rather than being claimed by the part the pointer happened to land on.
+    Document doc;
+    doc.SetInteractive(true);
+
+    Element& slider = doc.Add(doc.Root(), ElementKind::Slider);
+    Style style;
+    style.Width = Points(100.0f);
+    style.Height = Points(10.0f);
+    doc.SetStyle(slider, style);
+    slider.Bindings["min"] = "0";
+    slider.Bindings["max"] = "100";
+    doc.InitWidget(slider);
+    doc.Update(0.0f);
+    doc.Solve(vec2(200.0f, 200.0f));
+    doc.SetWidgetValue(slider, 50.0f);
+
+    const Element* thumb = nullptr;
+    for (const Element* child : slider.Children)
+    {
+        if (child->Kind == ElementKind::SliderThumb)
+        {
+            thumb = child;
+        }
+    }
+    REQUIRE(thumb != nullptr);
+
+    // Press squarely on the thumb, then drag toward the track's start.
+    PointerEvent down{.Kind = PointerEventKind::Down, .Position = thumb->Layout.Center()};
+    CHECK(doc.DispatchPointer(down));
+    PointerEvent move{.Kind = PointerEventKind::Move,
+                      .Position = vec2(slider.Layout.Min.x + 10.0f, thumb->Layout.Center().y)};
+    doc.DispatchPointer(move);
+    CHECK(doc.GetWidgetValue(slider) == doctest::Approx(10.0f));
+}
+
+TEST_CASE("gui widget parts: pressing a vertical Slider's thumb drives it bottom-up")
+{
+    Document doc;
+    doc.SetInteractive(true);
+
+    Element& slider = doc.Add(doc.Root(), ElementKind::Slider);
+    Style style;
+    style.Width = Points(10.0f);
+    style.Height = Points(100.0f);
+    doc.SetStyle(slider, style);
+    slider.Bindings["min"] = "0";
+    slider.Bindings["max"] = "100";
+    slider.Bindings["orientation"] = "vertical";
+    doc.InitWidget(slider);
+    doc.Update(0.0f);
+    doc.Solve(vec2(200.0f, 200.0f));
+    doc.SetWidgetValue(slider, 50.0f);
+
+    const Element* thumb = nullptr;
+    for (const Element* child : slider.Children)
+    {
+        if (child->Kind == ElementKind::SliderThumb)
+        {
+            thumb = child;
+        }
+    }
+    REQUIRE(thumb != nullptr);
+
+    PointerEvent down{.Kind = PointerEventKind::Down, .Position = thumb->Layout.Center()};
+    CHECK(doc.DispatchPointer(down));
+    // Near the bottom edge is Min on a vertical slider.
+    PointerEvent move{.Kind = PointerEventKind::Move,
+                      .Position = vec2(thumb->Layout.Center().x, slider.Layout.Max().y - 10.0f)};
+    doc.DispatchPointer(move);
+    CHECK(doc.GetWidgetValue(slider) == doctest::Approx(10.0f));
+}
