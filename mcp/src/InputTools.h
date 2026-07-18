@@ -8,7 +8,8 @@ namespace Veng::Mcp
     /// @brief Registers the input-injection tools into the server, capturing the host by reference.
     ///
     /// Adds input.send — an ordered batch of synthetic input events (key/mouse-button down and up,
-    /// mouse move, scroll) fed into the running app so an agent can drive it. Registered only when
+    /// mouse move, scroll, and a UTF-8 text run typed one character event per codepoint) fed into
+    /// the running app so an agent can drive it. Registered only when
     /// McpServerInfo::AllowMutations is set — injecting input mutates app state, so a read-only
     /// server exposes none of it and tools/list honestly reflects the server's write capability.
     ///

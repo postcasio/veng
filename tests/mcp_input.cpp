@@ -9,9 +9,13 @@
 //   - a key_up, asserting it clears.
 //   - a mouse_move, asserting Input::GetMousePosition tracks it.
 //   - a mouse_down/up pair and a scroll, asserting the button + scroll state.
-//   - the shape-validation errors (empty batch, over-limit, an unknown key, an unknown type, a
-//     malformed event) as whole-call isError results, and confirms no event applied on a rejected
-//     batch (the validate-then-apply discipline).
+//   - a text run, asserting it types into a live Gui::Document's focused TextInput one codepoint at
+//     a time (multi-byte codepoints and U+0008 backspace included) — the closure hands a KeyTyped
+//     event to the document the way a viewport's GuiConsumer does, so the codepoint path from there
+//     down is the engine's own.
+//   - the shape-validation errors (empty batch, over-limit, an unknown key, an unknown type, an
+//     empty / absent / over-limit text run, a malformed event) as whole-call isError results, and
+//     confirms no event applied on a rejected batch (the validate-then-apply discipline).
 // A second server with AllowMutations = false asserts input.send is absent from tools/list. A
 // third with a null InjectInput asserts the tool reports injection unavailable. Pure logic +
 // loopback, no GPU, so it runs in the default band.
@@ -20,7 +24,12 @@
 #include <Veng/Mcp/McpServer.h>
 #include <Veng/Mcp/McpServerInfo.h>
 
+#include <Veng/Event.h>
+#include <Veng/Gui/Document.h>
+#include <Veng/Gui/DrawList.h>
+#include <Veng/Gui/Element.h>
 #include <Veng/Input.h>
+#include <Veng/InputEvents.h>
 #include <Veng/Reflection/TypeRegistry.h>
 
 #include <nlohmann/json.hpp>
@@ -104,6 +113,31 @@ int main()
     Input input(nullptr);
     std::mutex inputMutex;
 
+    // A live Gui::Document with one focused TextInput — the text-entry oracle. In an app the
+    // GuiConsumer routes a KeyTyped through the seat's viewports into each attached document; a
+    // headless proof has no viewport, so the injection closure below hands the same event straight
+    // to the document. Everything from the codepoint down (DispatchText -> the field's own edit) is
+    // the engine's real text path, so a driven run exercises exactly what a typing user does.
+    // A device-free measurer stands in for a resident font (eight pixels per codepoint), so the
+    // field's painted caret is a checkable oracle for what a driven run put on screen.
+    Gui::Document document;
+    document.SetInteractive(true);
+    document.SetTextMeasurer([](string_view text, const Gui::Style&, optional<f32>)
+                             { return vec2(static_cast<f32>(text.size()) * 8.0f, 16.0f); });
+    document.Root().Layout = Gui::Rect{.Min = {0.0f, 0.0f}, .Size = {200.0f, 200.0f}};
+    Gui::Element& field = document.Add(document.Root(), Gui::ElementKind::TextInput);
+    field.Layout = Gui::Rect{.Min = {0.0f, 0.0f}, .Size = {160.0f, 16.0f}};
+    document.InitWidget(field);
+    document.SetFocus(&field);
+
+    // The x the field's caret paints at: the width of its value up to the edit position.
+    const auto caretX = [&document]
+    {
+        Gui::DrawList painted;
+        document.Build(painted);
+        return painted.GetVertices().empty() ? -1.0f : painted.GetVertices()[0].Position.x;
+    };
+
     // The input tools never touch Assets or a Scene; bind a never-dereferenced AssetManager, as the
     // other headless mcp tests do.
     AssetManager* assets = nullptr;
@@ -115,6 +149,11 @@ int main()
         {
             const std::scoped_lock lock(inputMutex);
             input.ApplyEvent(event);
+            if (event.GetEventType() == EventType::KeyTyped)
+            {
+                static_cast<void>(
+                    document.DispatchText(static_cast<const KeyTypedEvent&>(event).GetCodepoint()));
+            }
         },
     };
 
@@ -200,7 +239,54 @@ int main()
                   "injected scroll accumulated dy");
         }
 
+        // text: the run types into whatever holds text focus, one character event per codepoint,
+        // and the field owns the resulting value.
+        const Json typed =
+            CallToolResult(client, "input.send",
+                           Json{{"events", Json::array({Json{{"type", "text"}, {"text", "Hi"}}})}});
+        Check(!IsError(typed), "text batch succeeded");
+        {
+            const std::scoped_lock lock(inputMutex);
+            Check(field.Text == "Hi", "an injected text run typed into the focused TextInput");
+            // And the field paints what it now holds: the caret sits two codepoints in, so the
+            // drive is observable in the draw list with no companion element mirroring the value.
+            Check(std::abs(caretX() - 16.0f) < 1e-3f,
+                  "the driven value moved the caret the field paints");
+        }
+
+        // A multi-byte codepoint arrives as one character event, not as its UTF-8 bytes, and a
+        // U+0008 run backspaces — both prove the run rides the engine's own codepoint edit path.
+        CallToolResult(client, "input.send",
+                       Json{{"events", Json::array({Json{{"type", "text"}, {"text", "é"}},
+                                                    Json{{"type", "text"}, {"text", "!"}}})}});
+        {
+            const std::scoped_lock lock(inputMutex);
+            Check(field.Text == "Hié!", "a multi-byte codepoint typed as one character");
+        }
+        CallToolResult(client, "input.send",
+                       Json{{"events", Json::array({Json{{"type", "text"}, {"text", "\b"}}})}});
+        {
+            const std::scoped_lock lock(inputMutex);
+            Check(field.Text == "Hié", "an injected backspace deleted one codepoint");
+        }
+
         // Shape-validation errors, each a whole-call isError.
+        Check(IsError(CallToolResult(
+                  client, "input.send",
+                  Json{{"events", Json::array({Json{{"type", "text"}, {"text", ""}}})}})),
+              "an empty text run is a whole-call error");
+
+        Check(IsError(CallToolResult(
+                  client, "input.send",
+                  Json{{"events", Json::array({Json{{"type", "text"}, {"key", "A"}}})}})),
+              "a text event with no 'text' string is a whole-call error");
+
+        Check(IsError(CallToolResult(
+                  client, "input.send",
+                  Json{{"events",
+                        Json::array({Json{{"type", "text"}, {"text", std::string(257, 'x')}}})}})),
+              "an over-limit text run is a whole-call error");
+
         Check(IsError(CallToolResult(client, "input.send", Json{{"events", Json::array()}})),
               "an empty events array is a whole-call error");
 
