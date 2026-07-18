@@ -1,5 +1,6 @@
 #include <Veng/LaunchArguments.h>
 
+#include <algorithm>
 #include <charconv>
 
 #include <fmt/format.h>
@@ -134,7 +135,8 @@ namespace Veng
         }
     }
 
-    Result<LaunchArguments> LaunchArguments::Parse(const std::span<const string> args)
+    Result<LaunchArguments> LaunchArguments::Parse(const std::span<const string> args,
+                                                   const std::span<const LaunchOptionInfo> options)
     {
         LaunchArguments result;
 
@@ -251,7 +253,44 @@ namespace Veng
             }
             else if (arg.starts_with("--"))
             {
-                return std::unexpected(fmt::format("unknown argument '{}'", arg));
+                // An application-declared option widens the known set. The engine's own flags are
+                // matched above, so a name shared with one resolves to the engine flag.
+                const string_view body = arg.substr(2);
+                const usize equals = body.find('=');
+                const string_view name = body.substr(0, equals);
+                const auto declared =
+                    std::ranges::find_if(options, [name](const LaunchOptionInfo& option)
+                                         { return option.Name == name; });
+                if (declared == options.end())
+                {
+                    return std::unexpected(fmt::format("unknown argument '{}'", arg));
+                }
+
+                if (!declared->TakesValue)
+                {
+                    if (equals != string_view::npos)
+                    {
+                        return std::unexpected(fmt::format("--{} takes no value", name));
+                    }
+                    result.GameOptions[string(name)] = string();
+                }
+                else
+                {
+                    string_view value;
+                    if (equals != string_view::npos)
+                    {
+                        value = body.substr(equals + 1);
+                    }
+                    else if (i + 1 < args.size())
+                    {
+                        value = args[++i];
+                    }
+                    else
+                    {
+                        return std::unexpected(fmt::format("--{} requires a value", name));
+                    }
+                    result.GameOptions[string(name)] = string(value);
+                }
             }
             else if (!result.WorkingDirectory)
             {

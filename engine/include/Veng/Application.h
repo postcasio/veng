@@ -340,6 +340,13 @@ namespace Veng
         /// game with Net unset still hosts on the defaults when launched `--server`. Offline (no net
         /// flag) it is inert. Requires World to be set (net drives the managed world).
         optional<GameNetInfo> Net = std::nullopt;
+        /// @brief Command-line options this application accepts, surfaced in LaunchArguments::GameOptions.
+        ///
+        /// The launch parser consumes each declared option into GameOptions, which the application
+        /// reads back through GetLaunchArguments(). An *undeclared* `--flag` remains a hard error, so
+        /// a misspelled engine or application flag is caught rather than silently ignored. An engine
+        /// flag of the same name wins; declaring nothing leaves parsing to the engine flags alone.
+        vector<LaunchOptionInfo> LaunchOptions;
     };
 
     /// @brief The destination of an Application::Travel: the key, arrival payload, and presentation choice.

@@ -1567,10 +1567,11 @@ namespace Veng
     void Application::Run(vector<string> arguments)
     {
         // Parse argv (without the program name) once; the engine consumes the recognised options
-        // itself and a game can read them back through GetLaunchArguments().
+        // itself and a game can read them back through GetLaunchArguments(). The app object is
+        // constructed before Run, so m_Info's declared options are available to widen the parse.
         const std::span<const string> tokens =
             arguments.empty() ? std::span<const string>{} : std::span(arguments).subspan(1);
-        Result<LaunchArguments> parsed = LaunchArguments::Parse(tokens);
+        Result<LaunchArguments> parsed = LaunchArguments::Parse(tokens, m_Info.LaunchOptions);
         VE_ASSERT(parsed, "{}", parsed.error());
         m_LaunchArgs = std::move(*parsed);
 

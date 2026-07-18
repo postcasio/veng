@@ -17,6 +17,16 @@ namespace
         const vector<string> args(tokens);
         return LaunchArguments::Parse(args);
     }
+
+    // Parses a fixed token list against an application's declared options, mirroring how Run hands
+    // Parse the app's ApplicationInfo::LaunchOptions.
+    Result<LaunchArguments> ParseTokens(std::initializer_list<string> tokens,
+                                        std::initializer_list<LaunchOptionInfo> options)
+    {
+        const vector<string> args(tokens);
+        const vector<LaunchOptionInfo> declared(options);
+        return LaunchArguments::Parse(args, declared);
+    }
 }
 
 TEST_CASE("LaunchArguments: no arguments yields all-unset")
@@ -198,4 +208,80 @@ TEST_CASE("LaunchArguments: no --netsim leaves the link clean")
     const Result<LaunchArguments> parsed = ParseTokens({"--server"});
     REQUIRE(parsed.has_value());
     CHECK_FALSE(parsed->NetSim.has_value());
+}
+
+TEST_CASE("LaunchArguments: a declared value-taking option consumes its value")
+{
+    const Result<LaunchArguments> separated =
+        ParseTokens({"--foo", "bar"}, {{.Name = "foo", .TakesValue = true}});
+    REQUIRE(separated.has_value());
+    REQUIRE(separated->GameOptions.contains("foo"));
+    CHECK(separated->GameOptions.at("foo") == "bar");
+
+    const Result<LaunchArguments> joined =
+        ParseTokens({"--foo=bar"}, {{.Name = "foo", .TakesValue = true}});
+    REQUIRE(joined.has_value());
+    REQUIRE(joined->GameOptions.contains("foo"));
+    CHECK(joined->GameOptions.at("foo") == "bar");
+}
+
+TEST_CASE("LaunchArguments: a declared value-less option maps to an empty string")
+{
+    const Result<LaunchArguments> parsed =
+        ParseTokens({"--verbose"}, {{.Name = "verbose", .TakesValue = false}});
+    REQUIRE(parsed.has_value());
+    REQUIRE(parsed->GameOptions.contains("verbose"));
+    CHECK(parsed->GameOptions.at("verbose").empty());
+}
+
+TEST_CASE("LaunchArguments: a declared option absent from the command line has no entry")
+{
+    const Result<LaunchArguments> parsed =
+        ParseTokens({"--server"}, {{.Name = "foo", .TakesValue = true}});
+    REQUIRE(parsed.has_value());
+    CHECK(parsed->GameOptions.empty());
+}
+
+TEST_CASE("LaunchArguments: an undeclared flag is still rejected alongside a declared one")
+{
+    CHECK_FALSE(ParseTokens({"--nope"}, {{.Name = "foo", .TakesValue = true}}).has_value());
+    CHECK_FALSE(
+        ParseTokens({"--foo", "bar", "--nope"}, {{.Name = "foo", .TakesValue = true}}).has_value());
+}
+
+TEST_CASE("LaunchArguments: a declared option missing its value is rejected")
+{
+    CHECK_FALSE(ParseTokens({"--foo"}, {{.Name = "foo", .TakesValue = true}}).has_value());
+    CHECK_FALSE(
+        ParseTokens({"--verbose=1"}, {{.Name = "verbose", .TakesValue = false}}).has_value());
+}
+
+TEST_CASE("LaunchArguments: an engine flag of the same name wins over a declared option")
+{
+    const Result<LaunchArguments> parsed =
+        ParseTokens({"--level=42"}, {{.Name = "level", .TakesValue = true}});
+    REQUIRE(parsed.has_value());
+    REQUIRE(parsed->Level.has_value());
+    CHECK(parsed->Level->Value == 42ULL);
+    CHECK(parsed->GameOptions.empty());
+}
+
+TEST_CASE("LaunchArguments: declaring no options leaves the engine grammar unchanged")
+{
+    const std::initializer_list<string> tokens = {"/work",  "--level=42", "--server",
+                                                  "--name", "ada",        "--join=example.lan"};
+    const Result<LaunchArguments> bare = ParseTokens(tokens);
+    const Result<LaunchArguments> declared = ParseTokens(tokens, {});
+    REQUIRE(bare.has_value());
+    REQUIRE(declared.has_value());
+    CHECK(*bare->WorkingDirectory == *declared->WorkingDirectory);
+    CHECK(bare->Level->Value == declared->Level->Value);
+    CHECK(bare->Server == declared->Server);
+    CHECK(*bare->Name == *declared->Name);
+    CHECK(bare->Join->Host == declared->Join->Host);
+    CHECK(bare->GameOptions.empty());
+    CHECK(declared->GameOptions.empty());
+
+    // With nothing declared, every `--` token is still unknown.
+    CHECK_FALSE(ParseTokens({"--foo", "bar"}, {}).has_value());
 }

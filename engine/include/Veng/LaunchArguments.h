@@ -24,6 +24,18 @@ namespace Veng
         u16 Port = 0;
     };
 
+    /// @brief A command-line option an application accepts, beyond the engine's own flags.
+    ///
+    /// Declared through ApplicationInfo::LaunchOptions and consumed by Parse into
+    /// LaunchArguments::GameOptions. An engine flag of the same name always wins.
+    struct LaunchOptionInfo
+    {
+        /// @brief The option's long name, without the leading `--`.
+        string Name;
+        /// @brief Whether the option consumes a value (`--opt <v>` or `--opt=<v>`) rather than standing alone.
+        bool TakesValue = true;
+    };
+
     struct LaunchArguments
     {
         /// @brief Working directory to switch to before running; unset leaves it unchanged.
@@ -84,15 +96,28 @@ namespace Veng
         /// loss/dup/reorder are percentages (mapped to [0,1] rates), latency/jitter milliseconds.
         optional<Net::FaultInjectionConfig> NetSim;
 
+        /// @brief Values for the application-declared launch options present on the command line.
+        ///
+        /// Keyed by option name without the leading `--`. A declared value-less option that appeared
+        /// maps to an empty string; a declared option absent from the command line has no entry.
+        /// Read back through Application::GetLaunchArguments().
+        map<string, string> GameOptions;
+
         /// @brief Parses launcher arguments (argv without the program name) into a LaunchArguments.
         ///
         /// Pure and device-free — it reads no files and touches no global state, so it is unit
         /// tested with no window. Recognises `--level=<id>` / `--level <id>`, `--server`,
         /// `--headless`, `--dedicated` (`--server --headless`), `--join <host[:port]>`,
-        /// `--name <s>`, and one leading positional working directory.
-        /// @param args  The argument tokens after argv[0].
-        /// @return The parsed arguments, or an error string for an unknown flag, a malformed
-        ///         level id, a malformed join target, or a second positional argument.
-        [[nodiscard]] static VE_API Result<LaunchArguments> Parse(std::span<const string> args);
+        /// `--name <s>`, one leading positional working directory, and each option in `options`.
+        /// A `--` token matching neither an engine flag nor a declared option is an error, so a
+        /// misspelled flag is caught rather than ignored.
+        /// @param args     The argument tokens after argv[0].
+        /// @param options  The application's declared options, consumed into GameOptions. Empty
+        ///                 (the default) recognises the engine flags alone.
+        /// @return The parsed arguments, or an error string for an unknown flag, a declared option
+        ///         missing its value, a malformed level id, a malformed join target, or a second
+        ///         positional argument.
+        [[nodiscard]] static VE_API Result<LaunchArguments>
+        Parse(std::span<const string> args, std::span<const LaunchOptionInfo> options = {});
     };
 }
