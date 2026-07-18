@@ -54,6 +54,30 @@ namespace Veng::Gui
                 return std::nullopt;
             }
         }
+
+        // Maps an editing key to its TextEditAction, or nullopt when the key edits no text. These
+        // are the keys that carry no character, so they never reach a field through the typed-text
+        // route and need this key-press mapping to reach it at all.
+        optional<TextEditAction> ToTextEditAction(Key key)
+        {
+            switch (key)
+            {
+            case Key::Backspace:
+                return TextEditAction::DeleteBackward;
+            case Key::Delete:
+                return TextEditAction::DeleteForward;
+            case Key::Left:
+                return TextEditAction::CaretLeft;
+            case Key::Right:
+                return TextEditAction::CaretRight;
+            case Key::Home:
+                return TextEditAction::CaretHome;
+            case Key::End:
+                return TextEditAction::CaretEnd;
+            default:
+                return std::nullopt;
+            }
+        }
     }
 
     GuiConsumer::GuiConsumer(InputRouter& router, Input& input, Window* window,
@@ -146,11 +170,34 @@ namespace Veng::Gui
             return false;
         }
 
-        // A navigation key drives focus in the interactive documents of the cursor seat's
-        // viewports; text input reaches the focused element's onText handler.
+        // An editing key is offered to the focused text field first, then a navigation key drives
+        // focus in the interactive documents of the cursor seat's viewports; text input reaches the
+        // focused element's onText handler.
         if (type == EventType::KeyPressed)
         {
             const auto& key = static_cast<const KeyPressedEvent&>(event);
+
+            // A focused text field owns the editing keys: Backspace and Delete edit around its
+            // caret, Left/Right/Home/End move it. Left and Right are also focus-navigation keys, so
+            // this offer comes first and the field claims them while it holds focus; only when no
+            // field is focused does the arrow fall through to the navigation route below.
+            if (const optional<TextEditAction> edit = ToTextEditAction(key.GetKey()))
+            {
+                for (Renderer::Viewport* viewport : m_Viewports)
+                {
+                    const std::span<Gui::Document* const> documents =
+                        viewport->GetAttachedDocuments();
+                    for (auto it = documents.rbegin(); it != documents.rend(); ++it)
+                    {
+                        Gui::Document* document = *it;
+                        if (document->IsInteractive() && document->DispatchTextEdit(*edit))
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
+
             const bool shift = (key.GetMods() & 0x0001) != 0;
             const optional<NavAction> action = ToNavAction(key.GetKey(), shift);
             if (!action)

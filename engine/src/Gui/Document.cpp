@@ -1949,6 +1949,51 @@ namespace Veng::Gui
         return true;
     }
 
+    bool Document::DriveWidgetTextEdit(Element& element, TextEditAction action)
+    {
+        if (element.Kind != ElementKind::TextInput)
+        {
+            return false;
+        }
+
+        // A delete is the same edit a typed control character performs, so both routes share one
+        // implementation and one onChange.
+        if (action == TextEditAction::DeleteBackward)
+        {
+            return DriveWidgetText(element, 0x08);
+        }
+        if (action == TextEditAction::DeleteForward)
+        {
+            return DriveWidgetText(element, 0x7F);
+        }
+
+        // The caret indexes codepoints, so a move steps one decoded codepoint — never into the
+        // middle of a multi-byte glyph — and clamps at both ends of the value. A clamped move still
+        // consumes the action: the field owns its caret keys whether or not the caret can travel,
+        // so an arrow at either end does not leak out and move focus.
+        const auto length = static_cast<u32>(DecodeUtf8(element.Text).size());
+        const u32 caret = std::min(element.Widget.Caret, length);
+
+        switch (action)
+        {
+        case TextEditAction::CaretLeft:
+            element.Widget.Caret = caret > 0 ? caret - 1 : 0;
+            break;
+        case TextEditAction::CaretRight:
+            element.Widget.Caret = caret < length ? caret + 1 : length;
+            break;
+        case TextEditAction::CaretHome:
+            element.Widget.Caret = 0;
+            break;
+        case TextEditAction::CaretEnd:
+            element.Widget.Caret = length;
+            break;
+        default:
+            break;
+        }
+        return true;
+    }
+
     void Document::ApplyStyle(Element& element)
     {
         const YGNodeRef node = m_Yoga->Get(element);
@@ -3253,6 +3298,15 @@ namespace Veng::Gui
         (*handler)(*m_Focused);
         m_PendingCodepoint = 0;
         return true;
+    }
+
+    bool Document::DispatchTextEdit(TextEditAction action)
+    {
+        if (!m_Interactive || m_Focused == nullptr || m_Focused->Kind != ElementKind::TextInput)
+        {
+            return false;
+        }
+        return DriveWidgetTextEdit(*m_Focused, action);
     }
 
     void Document::GatherFocusables(Element& element, vector<Element*>& out) const

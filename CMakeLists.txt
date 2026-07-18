@@ -1065,6 +1065,10 @@ if (VENG_BUILD_TESTS)
             tests/gpu/sh_consistency.cpp
             tests/gpu/environment_ibl.cpp
             tests/gpu/gui_surface.cpp
+            # gui_editing_keys.cpp routes real KeyPressed events (Backspace/Delete/arrows/Home/End)
+            # through InputRouter and the real GuiConsumer into a document attached to a live
+            # viewport; it needs the GPU band only because Viewport::Create needs a Context.
+            tests/gpu/gui_editing_keys.cpp
             # capture_surface.cpp cooks a capture fixture pack and drives the CaptureSurface
             # component end to end: the entity's material samples the scene captured from the
             # entity (a backdrop out of the camera's direct view), the refresh policy (on-demand

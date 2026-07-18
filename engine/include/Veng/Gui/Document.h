@@ -382,6 +382,21 @@ namespace Veng::Gui
         /// @return True when the codepoint was delivered to a handler.
         bool DispatchText(u32 codepoint);
 
+        /// @brief Applies a text-editing action to the focused text field.
+        ///
+        /// The counterpart to DispatchText for the keys that carry no character: a caret move
+        /// (Left/Right/Home/End) or a delete around the caret (Backspace/forward Delete). Only a
+        /// focused TextInput consumes one — a focused button or slider returns false, which is what
+        /// lets an input seam offer an arrow key here first and fall back to focus navigation when
+        /// no text field holds focus. The caret indexes codepoints, so a move steps one whole glyph
+        /// and a delete removes one whole glyph of the UTF-8 value. A caret move that is already
+        /// clamped still consumes the action, so an arrow at either end of a focused field never
+        /// leaks out and moves focus instead. A delete fires `onChange` so a two-way binding writes
+        /// back; a caret move changes no text and fires nothing.
+        /// @param action  The editing action to apply.
+        /// @return True when a focused text field consumed the action.
+        bool DispatchTextEdit(TextEditAction action);
+
         /// @brief Returns the codepoint being delivered while an `onText` handler runs, else zero.
         ///
         /// DispatchText sets this for the duration of the handler call so a bare EventHandler (which
@@ -597,6 +612,9 @@ namespace Veng::Gui
 
         /// @brief Inserts or backspaces a codepoint into the focused TextInput's bound text.
         bool DriveWidgetText(Element& element, u32 codepoint);
+
+        /// @brief Moves the caret of, or deletes around the caret of, a TextInput.
+        bool DriveWidgetTextEdit(Element& element, TextEditAction action);
 
         /// @brief Emits a control's own painted parts (a Slider track/thumb, a ProgressBar fill).
         ///

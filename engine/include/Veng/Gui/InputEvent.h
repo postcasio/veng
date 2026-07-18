@@ -87,4 +87,27 @@ namespace Veng::Gui
         /// @brief Raise a cancel a menu can consume (routes as an event, no default).
         Cancel,
     };
+
+    /// @brief A logical text-editing action a key raises against the focused text field.
+    ///
+    /// Editing is expressed in these abstract actions for the same reason the focus model is: the
+    /// key-to-action mapping lives at the input seam and the document applies the action. Every
+    /// action operates on the caret, which indexes **codepoints** of the field's UTF-8 value, so a
+    /// move steps one whole glyph and a delete removes one whole glyph. There is no selection, so
+    /// each action addresses exactly the caret or the codepoint adjacent to it.
+    enum class TextEditAction : u8
+    {
+        /// @brief Move the caret one codepoint toward the start, clamping at the start.
+        CaretLeft,
+        /// @brief Move the caret one codepoint toward the end, clamping at the end.
+        CaretRight,
+        /// @brief Move the caret to the start of the value.
+        CaretHome,
+        /// @brief Move the caret to the end of the value.
+        CaretEnd,
+        /// @brief Delete the codepoint before the caret (Backspace).
+        DeleteBackward,
+        /// @brief Delete the codepoint after the caret (forward Delete).
+        DeleteForward,
+    };
 }

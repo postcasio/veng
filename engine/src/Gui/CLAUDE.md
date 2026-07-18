@@ -166,6 +166,17 @@ association, restored in inverse order on destruction) and flipping `SetInteract
 input consumer then routes that seat's devices into the document. The takeover every game screen
 otherwise hand-rolls is one engine seam.
 
+**A focused text field claims the editing keys before focus navigation sees them.** Backspace,
+Delete, the arrows and Home/End produce no character, so they reach a field only as key presses:
+the consumer maps each to a `TextEditAction` and offers it to `Document::DispatchTextEdit` first.
+Only a focused `TextInput` consumes one, so Left/Right move its caret while it holds focus and fall
+through to directional focus navigation when any other element (or nothing) does — the precedence
+is decided by what holds focus, not by the key. A caret move that is already clamped at either end
+still consumes the key, so an arrow never leaks out of a field and moves focus instead. The caret
+indexes **codepoints**, so a move steps one whole glyph and a delete removes one whole glyph of the
+UTF-8 value. There is no selection anchor: every action addresses the caret or the codepoint
+adjacent to it.
+
 ## Widgets
 
 The built-in, markup-authorable, styleable, focusable controls on the primitives: `Panel` (a styled
