@@ -60,6 +60,17 @@ namespace Veng::Gui
         /// through the ordinary pointer path, so `ScrollBarThumb:hover` and `:active` resolve on it
         /// exactly as they do on any other element.
         ScrollBarThumb,
+        /// @brief The filled portion of a Slider's track — widget-owned, not authorable.
+        ///
+        /// Spans the track from its Min edge to the value's fraction along it. Styled as an element
+        /// (`SliderFill { background: … }`) rather than through the Slider's own text color.
+        SliderFill,
+        /// @brief The draggable handle of a Slider — widget-owned, not authorable.
+        ///
+        /// Rides the value's fraction along the track. Styled as an element
+        /// (`SliderThumb { background: … }`, `SliderThumb:hover { … }`) rather than through the
+        /// Slider's border color, so a Slider's border and its thumb are independent.
+        SliderThumb,
     };
 
     /// @brief Transient interaction-state bits an element carries for styling and events.

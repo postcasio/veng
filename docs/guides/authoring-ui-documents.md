@@ -321,13 +321,19 @@ ScrollBar             { background: #00000040; }
 ScrollBar.vertical    { width: 8px; }
 ScrollBarThumb        { background: #ffffff60; corner-radius: 4px; transition: background 0.15s; }
 ScrollBarThumb:hover  { background: #ffffffa0; }
-List > ScrollBar      { width: 6px; }
+ScrollBar.inventory   { width: 6px; }   /* only the bars of `class="inventory"` elements */
 ```
 
 A scrollable axis gets a `ScrollBar` carrying a `ScrollBarThumb`, tagged `horizontal` or
 `vertical`. They take backgrounds, borders, corner radii, gradients, pseudo-state variants, and
 transitions like any other element. You **cannot author them** — a `<ScrollBar>` tag is a cook
 error — they exist only as the widget layer's own children.
+
+**To style one instance's bar, use its host's class.** Selectors are a single compound
+(type + class + id + pseudo-state) with **no descendant combinator**, so `.inventory ScrollBar`
+does not parse. Instead a widget part **inherits its host's classes**: a `<List class="inventory">`
+gives its bar the `inventory` class, so `ScrollBar.inventory { … }` targets exactly that list's
+bar.
 
 A bar exists while its axis is styled `scroll` and hides itself when there's nothing to scroll, so
 content growing past the box reveals it with no layout change. Drag the thumb, or click the track
@@ -337,6 +343,21 @@ to page.
 and holds that space whether or not the content currently overflows — which is what stops the
 content jumping the moment it grows past the box. The reserved width **is** the bar's own styled
 width, so `ScrollBar { width: 6px }` narrows both from one value.
+
+### Styling a `Slider`
+
+A `Slider`'s moving pieces are widget parts too, on the same mechanism:
+
+```css
+.volume            { height: 6px; background: #223; corner-radius: 3px; }  /* the track */
+SliderFill.volume  { background: #2a6df4; corner-radius: 3px; }           /* value portion */
+SliderThumb.volume { background: #f2f4f8; corner-radius: 8px; }           /* the handle */
+SliderThumb.volume:hover { background: #ffffff; }
+```
+
+The `Slider` element itself is the track — its `background`, `border`, and `corner-radius` are
+its own. The `SliderFill` and `SliderThumb` parts carry the rest, so a slider's border colour and
+its thumb colour are finally independent, and the thumb can take a hover state.
 
 ### A selectable list view: `selection` and `:selected`
 

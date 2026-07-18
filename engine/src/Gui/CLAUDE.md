@@ -218,7 +218,10 @@ fit and nothing ever overflows to scroll.
 widget-created `ScrollBar` carrying a `ScrollBarThumb`, tagged with a `horizontal`/`vertical` class.
 They are `ElementKind`s rather than reserved class names, so `ScrollBar.vertical { width: 8px; }` and
 `ScrollBarThumb:hover { … }` are plain type selectors with no new selector vocabulary — and the parts
-carry their own background, corner radius, border, gradient, variants, and transitions. They are
+carry their own background, corner radius, border, gradient, variants, and transitions. **A part
+inherits its host's classes**, which is what makes it addressable per instance: the selector engine
+matches one compound selector with **no descendant combinator**, so `ScrollBar.inventory` reaches a
+particular list's bar where `.inventory ScrollBar` would not parse. They are
 **not authorable**: the cooker's tag table does not accept them, so a `<ScrollBar>` tag is a cook
 error. Presence and visibility are separate: a bar *exists* while its axis is styled `scroll` and
 *hides* when the axis has no travel, so content growing past the box reveals it with no structural
@@ -231,9 +234,16 @@ bar's *own* styled thickness, so `ScrollBar { width: 6px }` narrows both the bar
 one value; the gutter is held whether or not the axis currently overflows, since reserving only
 while scrollable is what makes content jump as it grows.
 
-**The scrollbar parts live in `Children`, as a trailing tail.** That buys the layout mirror, the
-cascade, paint order, and hit-testing with no parallel paths — a bar is drawn and hit like any
-element. The cost is that they are not *content*, so every content-shaped walk (item slots, the
+**A `Slider`'s fill and thumb are widget parts on the same mechanism.** The `Slider` element is the
+track (its own background, border, and radius); `SliderFill` and `SliderThumb` are parts placed from
+the value fraction against the host's solved box. This retires the overload where a slider's fill was
+its `color` and its thumb its `border-color` — one color per part, no hover state, and a border that
+could not differ from the handle. A value change re-places the parts **directly** rather than
+dirtying the tree, so dragging a slider does not re-run the flex solve per pointer move.
+
+**The widget parts live in `Children`, as a trailing tail.** That buys the layout mirror, the
+cascade, paint order, and hit-testing with no parallel paths — a bar or thumb is drawn and hit like
+any element. The cost is that they are not *content*, so every content-shaped walk (item slots, the
 `Selected` projection, focus order, template capture, table columns, the list grow/shrink, the
 scroll extent) goes through the single **`ContentChildren`** accessor, which trims the tail, rather
 than each testing the kind itself. `Document::Add` maintains the invariant by inserting content

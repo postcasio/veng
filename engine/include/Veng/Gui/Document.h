@@ -725,6 +725,23 @@ namespace Veng::Gui
         /// @brief Returns an element's scrollbar for an axis, or nullptr when it has none.
         [[nodiscard]] Element* FindScrollBar(const Element& element, bool vertical) const;
 
+        /// @brief Returns an element's first child of a kind, or nullptr when it has none.
+        [[nodiscard]] Element* FindPart(const Element& element, ElementKind kind) const;
+
+        /// @brief Creates one widget-owned part under a host, cascaded and pinned out of flow.
+        ///
+        /// The part inherits the host's classes plus an optional tag of its own, which is what
+        /// makes it addressable per instance: the selector engine matches one compound selector
+        /// with no descendant combinator, so `ScrollBar.track-list` reaches a particular host's
+        /// bar where `.track-list ScrollBar` would not parse.
+        Element& CreateWidgetPart(Element& host, ElementKind kind, string_view tag);
+
+        /// @brief Creates a Slider's fill and thumb parts, once, if it has none.
+        void SyncSliderParts(Element& element);
+
+        /// @brief Places a Slider's fill and thumb against its solved box and value fraction.
+        void LayoutSliderParts(Element& element);
+
         /// @brief Applies a user activation of one item slot under the host's selection mode.
         ///
         /// The one place the mode's meaning lives: Single replaces, Multiple toggles, Extended

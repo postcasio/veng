@@ -61,6 +61,10 @@ namespace VengEditor
                 return "ScrollBar";
             case Gui::ElementKind::ScrollBarThumb:
                 return "ScrollBarThumb";
+            case Gui::ElementKind::SliderFill:
+                return "SliderFill";
+            case Gui::ElementKind::SliderThumb:
+                return "SliderThumb";
             }
             return "Element";
         }

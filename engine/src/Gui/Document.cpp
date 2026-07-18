@@ -302,6 +302,10 @@ namespace Veng::Gui
                 return "ScrollBar";
             case ElementKind::ScrollBarThumb:
                 return "ScrollBarThumb";
+            case ElementKind::SliderFill:
+                return "SliderFill";
+            case ElementKind::SliderThumb:
+                return "SliderThumb";
             }
             return "Panel";
         }
@@ -327,15 +331,26 @@ namespace Veng::Gui
             return style.OverflowX != Overflow::Visible || style.OverflowY != Overflow::Visible;
         }
 
-        // Whether an element is a widget-owned scrollbar part rather than authored content.
-        bool IsScrollBarPart(ElementKind kind)
+        // Whether an element is a widget-owned part rather than authored content — a scrollbar
+        // track or thumb, a slider's fill or handle. A part is a real element so it styles through
+        // the ordinary cascade, but it is not content and never appears in a content walk.
+        bool IsWidgetPart(ElementKind kind)
         {
-            return kind == ElementKind::ScrollBar || kind == ElementKind::ScrollBarThumb;
+            switch (kind)
+            {
+            case ElementKind::ScrollBar:
+            case ElementKind::ScrollBarThumb:
+            case ElementKind::SliderFill:
+            case ElementKind::SliderThumb:
+                return true;
+            default:
+                return false;
+            }
         }
 
-        // An element's authored content children, excluding the widget-owned scrollbar parts.
+        // An element's authored content children, excluding the widget-owned parts.
         //
-        // Scrollbars live in Children so they inherit the layout mirror, the cascade, the paint
+        // The parts live in Children so they inherit the layout mirror, the cascade, the paint
         // order, and hit-testing rather than needing parallel paths — but they are not content, so
         // every content-shaped walk (item slots, focus order, template capture, table columns, the
         // list shrink, the scroll extent) goes through this one accessor rather than each testing
@@ -344,7 +359,7 @@ namespace Veng::Gui
         std::span<Element* const> ContentChildren(const Element& element)
         {
             usize count = element.Children.size();
-            while (count > 0 && IsScrollBarPart(element.Children[count - 1]->Kind))
+            while (count > 0 && IsWidgetPart(element.Children[count - 1]->Kind))
             {
                 --count;
             }
@@ -356,6 +371,12 @@ namespace Veng::Gui
 
         /// @brief The shortest a thumb is allowed to become on a very long scroll range, in pixels.
         constexpr f32 MinScrollThumbLength = 24.0f;
+
+        /// @brief The fill color a SliderFill paints with when no rule styles it.
+        constexpr vec4 DefaultSliderFill{0.35f, 0.42f, 0.52f, 1.0f};
+
+        /// @brief The fill color a SliderThumb paints with when no rule styles it.
+        constexpr vec4 DefaultSliderThumb{0.85f, 0.88f, 0.92f, 1.0f};
 
         // A rule's selector matches an element when each constrained axis (type/class/id) agrees
         // and an unconstrained (empty) axis is a wildcard. A class constraint matches if the tag
@@ -824,6 +845,7 @@ namespace Veng::Gui
             }
             for (Element* child : element.Children)
             {
+                // NOLINTNEXTLINE(misc-const-correctness): the pointee is returned as a mutable Element*.
                 if (Element* const found = FindByIdRecursive(*child, id); found != nullptr)
                 {
                     return found;
@@ -940,7 +962,7 @@ namespace Veng::Gui
         // content it scrolls (InitWidget runs ahead of a List's first item sync), so content
         // inserts ahead of the tail rather than appending after it.
         const usize insertAt =
-            IsScrollBarPart(kind) ? parent.Children.size() : ContentChildren(parent).size();
+            IsWidgetPart(kind) ? parent.Children.size() : ContentChildren(parent).size();
         parent.Children.insert(parent.Children.begin() + static_cast<std::ptrdiff_t>(insertAt),
                                &child);
 
@@ -1078,7 +1100,7 @@ namespace Veng::Gui
 
     void Document::SetPlacement(Element& element, const vec2 topLeft, const vec2 size)
     {
-        Style& base = element.BaseStyle;
+        const Style& base = element.BaseStyle;
         const bool unchanged =
             base.Position == PositionType::Absolute && base.Inset.Left == topLeft.x &&
             base.Inset.Top == topLeft.y && !PositionInsets::IsSet(base.Inset.Right) &&
@@ -1816,6 +1838,8 @@ namespace Veng::Gui
             case ElementKind::Table:
             case ElementKind::ScrollBar:
             case ElementKind::ScrollBarThumb:
+            case ElementKind::SliderFill:
+            case ElementKind::SliderThumb:
                 return false;
             }
             return false;
@@ -1876,6 +1900,14 @@ namespace Veng::Gui
         if (element.Kind == ElementKind::Checkbox)
         {
             SetState(element, WithBit(element.State, ElementState::Checked, clamped != 0.0f));
+        }
+
+        // The fill and thumb are placed from the value against the host's already-solved box, so a
+        // value change re-places them directly rather than dirtying the tree — dragging a slider
+        // must not re-run the flex solve every pointer move.
+        if (element.Kind == ElementKind::Slider)
+        {
+            LayoutSliderParts(element);
         }
 
         if (changed && element.Kind != ElementKind::ProgressBar)
@@ -1959,8 +1991,110 @@ namespace Veng::Gui
         ResolveElementStyle(element, nullptr, sheets, m_Assets, resolveGradient);
     }
 
+    Element& Document::CreateWidgetPart(Element& host, const ElementKind kind,
+                                        const string_view tag)
+    {
+        Element& part = Add(host, kind);
+
+        // A part inherits its host's classes, then adds its own tag. The selector engine matches a
+        // single compound selector with no descendant combinator, so this is what makes a part
+        // addressable per instance: `ScrollBar.track-list` or `SliderThumb.slice-slider` reaches
+        // one host's parts, where `.track-list ScrollBar` would not parse.
+        part.Classes = host.Classes;
+        if (!tag.empty())
+        {
+            part.Classes.emplace_back(tag);
+        }
+
+        // A part is placed by the widget layer against the host's solved box, never by the flex
+        // flow, so it is absolute both before and after the cascade — a rule may style a part's
+        // paint but not take it back into flow.
+        part.BaseStyle.Position = PositionType::Absolute;
+        CascadeWidgetElement(part);
+        part.BaseStyle.Position = PositionType::Absolute;
+        part.ComputedStyle.Position = PositionType::Absolute;
+        return part;
+    }
+
+    Element* Document::FindPart(const Element& element, const ElementKind kind) const
+    {
+        // NOLINTNEXTLINE(misc-const-correctness): the pointee is returned as a mutable Element*.
+        for (Element* child : element.Children)
+        {
+            if (child->Kind == kind)
+            {
+                return child;
+            }
+        }
+        return nullptr;
+    }
+
+    void Document::SyncSliderParts(Element& element)
+    {
+        if (element.Kind != ElementKind::Slider || FindPart(element, ElementKind::SliderFill))
+        {
+            return;
+        }
+
+        // The Slider element itself is the track; the fill and thumb are parts over it, so a
+        // slider's own background/border stay its own rather than doubling as the handle's color.
+        Element& fill = CreateWidgetPart(element, ElementKind::SliderFill, {});
+        if (fill.BaseStyle.Background.a == 0.0f)
+        {
+            fill.BaseStyle.Background = DefaultSliderFill;
+            fill.ComputedStyle.Background = DefaultSliderFill;
+        }
+        Element& thumb = CreateWidgetPart(element, ElementKind::SliderThumb, {});
+        if (thumb.BaseStyle.Background.a == 0.0f)
+        {
+            thumb.BaseStyle.Background = DefaultSliderThumb;
+            thumb.ComputedStyle.Background = DefaultSliderThumb;
+        }
+    }
+
+    void Document::LayoutSliderParts(Element& element)
+    {
+        Element* const fill = FindPart(element, ElementKind::SliderFill);
+        Element* const thumb = FindPart(element, ElementKind::SliderThumb);
+        if (fill == nullptr || thumb == nullptr)
+        {
+            return;
+        }
+
+        const Rect& box = element.Layout;
+        const f32 range = element.Widget.Max - element.Widget.Min;
+        const f32 fraction =
+            range != 0.0f
+                ? std::clamp((element.Widget.Value - element.Widget.Min) / range, 0.0f, 1.0f)
+                : 0.0f;
+
+        if (element.Widget.Vertical)
+        {
+            // A vertical slider fills from the bottom (Min) toward the top (Max); the square thumb
+            // spans the track's width and rides the fill's top edge.
+            const f32 filled = box.Size.y * fraction;
+            fill->Layout = Rect{.Min = vec2(box.Min.x, box.Min.y + box.Size.y - filled),
+                                .Size = vec2(box.Size.x, filled)};
+            const f32 size = box.Size.x;
+            thumb->Layout =
+                Rect{.Min = vec2(box.Min.x,
+                                 box.Min.y + (1.0f - fraction) * std::max(box.Size.y - size, 0.0f)),
+                     .Size = vec2(size, size)};
+        }
+        else
+        {
+            fill->Layout = Rect{.Min = box.Min, .Size = vec2(box.Size.x * fraction, box.Size.y)};
+            const f32 size = box.Size.y;
+            thumb->Layout = Rect{
+                .Min = vec2(box.Min.x + fraction * std::max(box.Size.x - size, 0.0f), box.Min.y),
+                .Size = vec2(size, size)};
+        }
+        fill->Visible = fraction > 0.0f;
+    }
+
     Element* Document::FindScrollBar(const Element& element, const bool vertical) const
     {
+        // NOLINTNEXTLINE(misc-const-correctness): the pointee is returned as a mutable Element*.
         for (Element* child : element.Children)
         {
             if (child->Kind == ElementKind::ScrollBar && child->Widget.Vertical == vertical)
@@ -2003,20 +2137,11 @@ namespace Veng::Gui
 
             // The bar and its thumb are appended after the content and take no part in the flex
             // flow — LayoutScrollBars writes their rects directly against the solved box.
-            Element& created = Add(element, ElementKind::ScrollBar);
+            const string_view axis = vertical ? "vertical" : "horizontal";
+            Element& created = CreateWidgetPart(element, ElementKind::ScrollBar, axis);
             created.Widget.Vertical = vertical;
-            created.Classes.emplace_back(vertical ? "vertical" : "horizontal");
-            created.BaseStyle.Position = PositionType::Absolute;
-            CascadeWidgetElement(created);
-            created.BaseStyle.Position = PositionType::Absolute;
-            created.ComputedStyle.Position = PositionType::Absolute;
-
-            Element& thumb = Add(created, ElementKind::ScrollBarThumb);
+            Element& thumb = CreateWidgetPart(created, ElementKind::ScrollBarThumb, axis);
             thumb.Widget.Vertical = vertical;
-            thumb.Classes.emplace_back(vertical ? "vertical" : "horizontal");
-            CascadeWidgetElement(thumb);
-            thumb.BaseStyle.Position = PositionType::Absolute;
-            thumb.ComputedStyle.Position = PositionType::Absolute;
         }
     }
 
@@ -2110,6 +2235,7 @@ namespace Veng::Gui
     {
         ApplyWidgetFocusability(element);
         SyncScrollBars(element);
+        SyncSliderParts(element);
         element.Widget.HasScrollBars = IsScrollable(element.ComputedStyle);
 
         if (element.Kind == ElementKind::Slider)
@@ -2193,7 +2319,7 @@ namespace Veng::Gui
             {
                 return false;
             }
-            Element* const bar = element.Parent;
+            const Element* const bar = element.Parent;
             Element* const view = bar != nullptr ? bar->Parent : nullptr;
             if (view == nullptr)
             {
@@ -2531,6 +2657,10 @@ namespace Veng::Gui
         {
             LayoutScrollBars(element);
         }
+        if (element.Kind == ElementKind::Slider)
+        {
+            LayoutSliderParts(element);
+        }
     }
 
     void Document::Solve(vec2 available)
@@ -2616,14 +2746,14 @@ namespace Veng::Gui
 
             // Raise each cell's min-width to its column's width less its own margins. The styled
             // min-width was pushed by ApplyStyle, so only a genuinely wider column moves a node.
-            for (Element* row : ContentChildren(*owned))
+            for (const Element* row : ContentChildren(*owned))
             {
                 if (!inFlow(*row))
                 {
                     continue;
                 }
                 usize index = 0;
-                for (Element* cell : row->Children)
+                for (const Element* cell : row->Children)
                 {
                     if (!inFlow(*cell))
                     {
@@ -2808,46 +2938,6 @@ namespace Veng::Gui
             }
             return;
         }
-
-        if (element.Kind == ElementKind::Slider)
-        {
-            const f32 range = element.Widget.Max - element.Widget.Min;
-            const f32 fraction =
-                range != 0.0f
-                    ? std::clamp((element.Widget.Value - element.Widget.Min) / range, 0.0f, 1.0f)
-                    : 0.0f;
-            const vec4 thumbColor =
-                faded(style.BorderStyle.Color.a > 0.0f ? style.BorderStyle.Color : style.TextColor);
-            if (element.Widget.Vertical)
-            {
-                // A vertical slider fills from the bottom (Min) toward the top (Max); the square
-                // thumb spans the track's width and rides the fill's top edge.
-                const f32 fillH = rect.Size.y * fraction;
-                if (fraction > 0.0f)
-                {
-                    const Rect track{.Min = vec2(rect.Min.x, rect.Min.y + rect.Size.y - fillH),
-                                     .Size = vec2(rect.Size.x, fillH)};
-                    list.Quad(track, faded(style.TextColor), style.Radii);
-                }
-                const f32 thumb = rect.Size.x;
-                const f32 thumbY =
-                    rect.Min.y + (1.0f - fraction) * std::max(rect.Size.y - thumb, 0.0f);
-                list.Quad(Rect{.Min = vec2(rect.Min.x, thumbY), .Size = vec2(thumb, thumb)},
-                          thumbColor, style.Radii);
-                return;
-            }
-            // The filled portion of the track shows the value; a square thumb marks the position.
-            const Rect track{.Min = rect.Min, .Size = vec2(rect.Size.x * fraction, rect.Size.y)};
-            if (fraction > 0.0f)
-            {
-                list.Quad(track, faded(style.TextColor), style.Radii);
-            }
-            const f32 thumb = rect.Size.y;
-            const f32 thumbX = rect.Min.x + fraction * std::max(rect.Size.x - thumb, 0.0f);
-            list.Quad(Rect{.Min = vec2(thumbX, rect.Min.y), .Size = vec2(thumb, thumb)}, thumbColor,
-                      style.Radii);
-            return;
-        }
     }
 
     namespace
@@ -2957,6 +3047,7 @@ namespace Veng::Gui
         // under the point is the topmost — walk children back-to-front for front-to-back hit order.
         for (auto it = element.Children.rbegin(); it != element.Children.rend(); ++it)
         {
+            // NOLINTNEXTLINE(misc-const-correctness): the pointee is returned as a mutable Element*.
             if (Element* hit = HitTestElement(**it, point, childClip))
             {
                 return hit;
@@ -3376,6 +3467,7 @@ namespace Veng::Gui
 
     Element* Document::GetItemHost(const Element& element) const
     {
+        // NOLINTNEXTLINE(misc-const-correctness): the pointee is assigned to a mutable Element*.
         for (Element* e = element.Parent; e != nullptr; e = e->Parent)
         {
             if (IsSelectionHost(e->Kind))
@@ -3764,7 +3856,7 @@ namespace Veng::Gui
             {
                 // A scrollbar part sits inside the very element it scrolls, so it has to claim the
                 // press before the walk reaches that element and turns the drag into a content pan.
-                if (IsScrollBarPart(e->Kind))
+                if (IsWidgetPart(e->Kind))
                 {
                     pressTarget = e;
                     break;
@@ -3795,7 +3887,7 @@ namespace Veng::Gui
             // keyboard picks up where the pointer left off. The hit target is usually a leaf deep
             // inside the item template, and pointer capture stays with whatever claimed it above —
             // a ScrollView still pans — because focus and capture are separate.
-            if (Element* const host = GetItemHost(*target);
+            if (const Element* const host = GetItemHost(*target);
                 host != nullptr && host->Widget.Selection != SelectionMode::None)
             {
                 if (const optional<u32> index = GetItemIndex(*target))
@@ -3878,6 +3970,7 @@ namespace Veng::Gui
 
         // The ancestor path root→target; capture walks it forward, bubble reverse.
         vector<Element*> path;
+        // NOLINTNEXTLINE(misc-const-correctness): the pointee is vector<Element*>.
         for (Element* e = event.Target; e != nullptr; e = e->Parent)
         {
             path.push_back(e);

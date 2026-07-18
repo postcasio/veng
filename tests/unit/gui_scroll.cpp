@@ -2,7 +2,8 @@
 // property replacing the kind (any element styled `overflow: scroll` scrolls; ScrollView is the
 // preset that defaults it on), per-axis independence, the ScrollBar/ScrollBarThumb shadow elements
 // and their geometry, thumb drag, gutter-vs-overlay reservation, and the invariant that the parts
-// stay out of every content-shaped walk (item slots, focus order, list sync).
+// stay out of every content-shaped walk (item slots, focus order, list sync). Also covers the
+// Slider's fill and thumb, which are widget-owned parts on the same mechanism.
 
 #include <algorithm>
 
@@ -66,9 +67,9 @@ namespace
             Doc.Solve(vec2(400.0f, 400.0f));
         }
 
-        [[nodiscard]] Element* Bar(bool vertical) const
+        [[nodiscard]] const Element* Bar(bool vertical) const
         {
-            for (Element* child : View->Children)
+            for (const Element* child : View->Children)
             {
                 if (child->Kind == ElementKind::ScrollBar && child->Widget.Vertical == vertical)
                 {
@@ -97,8 +98,8 @@ TEST_CASE("gui scroll: any element styled overflow: scroll scrolls, with no Scro
 TEST_CASE("gui scroll: ScrollView is the preset, and an authored axis still overrides it")
 {
     // The kind seeds the base style, so it scrolls with nothing authored.
-    ScrollFixture preset(Overflow::Scroll, Overflow::Scroll, ScrollbarLayout::Overlay,
-                         ElementKind::ScrollView);
+    const ScrollFixture preset(Overflow::Scroll, Overflow::Scroll, ScrollbarLayout::Overlay,
+                               ElementKind::ScrollView);
     CHECK(preset.Bar(true) != nullptr);
 
     // A ScrollView whose style names an axis takes the authored value — the seed is a default the
@@ -131,7 +132,7 @@ TEST_CASE("gui scroll: a scrollable axis owns a ScrollBar carrying a ScrollBarTh
 {
     ScrollFixture fixture(Overflow::Hidden, Overflow::Scroll);
 
-    Element* const bar = fixture.Bar(true);
+    const Element* const bar = fixture.Bar(true);
     REQUIRE(bar != nullptr);
     REQUIRE(bar->Children.size() == 1);
     CHECK(bar->Children.front()->Kind == ElementKind::ScrollBarThumb);
@@ -186,9 +187,9 @@ TEST_CASE("gui scroll: turning the axis un-scrollable drops the bar entirely")
 TEST_CASE("gui scroll: dragging the thumb scrolls the content through the track's slack")
 {
     ScrollFixture fixture(Overflow::Hidden, Overflow::Scroll);
-    Element* const bar = fixture.Bar(true);
+    const Element* const bar = fixture.Bar(true);
     REQUIRE(bar != nullptr);
-    Element& thumb = *bar->Children.front();
+    const Element& thumb = *bar->Children.front();
 
     // Press on the thumb, then drag down a third of the track; the content travels the matching
     // fraction of its own range rather than the raw pixel delta.
@@ -206,8 +207,8 @@ TEST_CASE("gui scroll: dragging the thumb scrolls the content through the track'
 
 TEST_CASE("gui scroll: a gutter narrows the content box while an overlay does not")
 {
-    ScrollFixture overlay(Overflow::Hidden, Overflow::Scroll, ScrollbarLayout::Overlay);
-    ScrollFixture gutter(Overflow::Hidden, Overflow::Scroll, ScrollbarLayout::Gutter);
+    const ScrollFixture overlay(Overflow::Hidden, Overflow::Scroll, ScrollbarLayout::Overlay);
+    const ScrollFixture gutter(Overflow::Hidden, Overflow::Scroll, ScrollbarLayout::Gutter);
 
     // The content fills whatever width its container offers, so the reservation is visible in its
     // solved width: the gutter takes the bar's thickness out of it and the overlay takes nothing.
@@ -304,4 +305,90 @@ TEST_CASE("gui scroll: a scrollable List's bars stay out of its item slots and f
     CHECK(doc.Navigate(NavAction::MoveDown));
     CHECK(doc.GetFocused() == list.Children[1]);
     CHECK(doc.GetFocused()->Kind != ElementKind::ScrollBar);
+}
+
+TEST_CASE("gui widget parts: a Slider's fill and thumb are elements placed from its value")
+{
+    Document doc;
+    Element& slider = doc.Add(doc.Root(), ElementKind::Slider);
+    Style style;
+    style.Width = Points(100.0f);
+    style.Height = Points(10.0f);
+    doc.SetStyle(slider, style);
+    slider.Bindings["min"] = "0";
+    slider.Bindings["max"] = "100";
+    doc.InitWidget(slider);
+
+    doc.SetWidgetValue(slider, 50.0f);
+    doc.Update(0.0f);
+    doc.Solve(vec2(200.0f, 200.0f));
+
+    const Element* fill = nullptr;
+    const Element* thumb = nullptr;
+    for (const Element* child : slider.Children)
+    {
+        if (child->Kind == ElementKind::SliderFill)
+        {
+            fill = child;
+        }
+        if (child->Kind == ElementKind::SliderThumb)
+        {
+            thumb = child;
+        }
+    }
+    REQUIRE(fill != nullptr);
+    REQUIRE(thumb != nullptr);
+
+    // The fill spans the value's fraction of the track; the square thumb rides it.
+    CHECK(fill->Layout.Size.x == doctest::Approx(50.0f));
+    CHECK(thumb->Layout.Size.x == doctest::Approx(10.0f));
+    CHECK(thumb->Layout.Min.x == doctest::Approx(45.0f));
+
+    // Moving the value re-places both immediately, with no re-solve: a dragged slider must not
+    // re-run the flex solve on every pointer move.
+    doc.SetWidgetValue(slider, 0.0f);
+    CHECK(!doc.IsDirty());
+    CHECK(thumb->Layout.Min.x == doctest::Approx(slider.Layout.Min.x));
+    CHECK(!fill->Visible);
+}
+
+TEST_CASE("gui widget parts: a part inherits its host's classes so it is addressable per instance")
+{
+    // The selector engine matches one compound selector with no descendant combinator, so a part
+    // carrying its host's classes is what makes `SliderThumb.volume` reach one slider's thumb.
+    Document doc;
+    Element& slider = doc.Add(doc.Root(), ElementKind::Slider);
+    slider.Classes.emplace_back("volume");
+    doc.InitWidget(slider);
+
+    Element* thumb = nullptr;
+    for (Element* child : slider.Children)
+    {
+        if (child->Kind == ElementKind::SliderThumb)
+        {
+            thumb = child;
+        }
+    }
+    REQUIRE(thumb != nullptr);
+    CHECK(std::ranges::find(thumb->Classes, "volume") != thumb->Classes.end());
+}
+
+TEST_CASE("gui widget parts: a scrollbar inherits its host's classes beside its axis tag")
+{
+    ScrollFixture fixture(Overflow::Hidden, Overflow::Scroll);
+    fixture.View->Classes.emplace_back("panel");
+
+    // Re-create the bar now the host carries the class, the way an instantiated tree would have.
+    Style style = fixture.View->BaseStyle;
+    style.OverflowY = Overflow::Hidden;
+    fixture.Doc.SetStyle(*fixture.View, style);
+    fixture.Settle();
+    style.OverflowY = Overflow::Scroll;
+    fixture.Doc.SetStyle(*fixture.View, style);
+    fixture.Settle();
+
+    const Element* const bar = fixture.Bar(true);
+    REQUIRE(bar != nullptr);
+    CHECK(std::ranges::find(bar->Classes, "panel") != bar->Classes.end());
+    CHECK(std::ranges::find(bar->Classes, "vertical") != bar->Classes.end());
 }
