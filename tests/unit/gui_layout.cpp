@@ -428,3 +428,35 @@ TEST_CASE("gui layout: a hidden subtree collapses to a zero box and emits nothin
     REQUIRE(list.GetRuns().size() == 1);
     CHECK(list.GetIndices().size() == 6);
 }
+
+TEST_CASE("gui layout: a TextInput takes its intrinsic height from its own text")
+{
+    Document doc;
+    // The injected measurer stands in for a resident font: eight pixels per codepoint, sixteen
+    // tall — the same seam the Text leaf measures through.
+    doc.SetTextMeasurer([](string_view text, const Style&, optional<f32>)
+                        { return vec2(static_cast<f32>(text.size()) * 8.0f, 16.0f); });
+
+    Style fieldStyle;
+    fieldStyle.Padding = Insets{.Left = 4.0f, .Top = 3.0f, .Right = 4.0f, .Bottom = 3.0f};
+    // Start-aligned so the cross axis reports the measured width rather than the stretched one.
+    fieldStyle.AlignSelf = Align::FlexStart;
+
+    Element& field = doc.Add(doc.Root(), ElementKind::TextInput);
+    doc.SetStyle(field, fieldStyle);
+    doc.SetText(field, "Name");
+
+    doc.Solve(vec2(200.0f, 200.0f));
+
+    // No height and no min-height are authored: the field's own text metrics size it, so the box
+    // holds the line it paints plus its padding, and the value is never clipped.
+    CHECK(field.Layout.Size.y == doctest::Approx(22.0f).epsilon(Eps));
+    CHECK(field.Layout.Size.x == doctest::Approx(40.0f).epsilon(Eps));
+
+    // A Text leaf of the same value and box decoration measures identically — one measure path.
+    Element& label = doc.Add(doc.Root(), ElementKind::Text);
+    doc.SetStyle(label, fieldStyle);
+    doc.SetText(label, "Name");
+    doc.Solve(vec2(200.0f, 200.0f));
+    CHECK(label.Layout.Size.y == doctest::Approx(field.Layout.Size.y).epsilon(Eps));
+}

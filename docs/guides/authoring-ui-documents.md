@@ -213,7 +213,9 @@ re-solve. `hello-triangle`'s HUD spins a conic-gradient loading arc this way.
 
 A `*.vui.xml` is a tree of elements. The **root** element carries a `stylesheets`
 attribute — a space-separated list of `StyleSheet` asset ids — and any element references
-a font through the `font:` inline-style property (an asset id). Element attributes are
+a font through the `font:` inline-style property (an asset id). **A font inherits**: declaring it
+once on the root serves every text-bearing element beneath it, and an element that declares its own
+overrides it for its subtree. Element attributes are
 class/id tags, inline `style`, `{obj.field}` **bindings**, and `on*` **handlers**:
 
 ```xml

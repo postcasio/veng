@@ -845,9 +845,11 @@ namespace Veng::Gui
         m_Elements.push_back(std::move(owned));
 
         const YGNodeRef node = m_Yoga->Create(element);
-        // Text and Button are label leaves: their intrinsic size is their shaped text, so both
-        // carry the text measure. (A measured node cannot take children — Yoga asserts loudly.)
-        if (kind == ElementKind::Text || kind == ElementKind::Button)
+        // Text, Button, and TextInput are text-sized leaves: each paints a run inside its own box,
+        // so its intrinsic size is that run's shaped extent and it carries the text measure. (A
+        // measured node cannot take children — Yoga asserts loudly.)
+        if (kind == ElementKind::Text || kind == ElementKind::Button ||
+            kind == ElementKind::TextInput)
         {
             YGNodeSetMeasureFunc(node, &MeasureText);
         }
@@ -865,10 +867,11 @@ namespace Veng::Gui
         VE_ASSERT(parentNode != nullptr && childNode != nullptr,
                   "Gui::Document::Add: parent element does not belong to this document");
 
-        // A Button is a label leaf (text-measured) until it takes a child, at which point it
+        // A Button or TextInput is a text-measured leaf until it takes a child, at which point it
         // becomes a container sized by its children like a Panel — a measured Yoga node cannot
         // hold children. Text stays a hard leaf.
-        if (parent.Kind == ElementKind::Button && YGNodeHasMeasureFunc(parentNode))
+        if ((parent.Kind == ElementKind::Button || parent.Kind == ElementKind::TextInput) &&
+            YGNodeHasMeasureFunc(parentNode))
         {
             YGNodeSetMeasureFunc(parentNode, nullptr);
         }
@@ -947,11 +950,7 @@ namespace Veng::Gui
         element.BaseStyle = style;
         element.ComputedStyle = style;
         element.Tweens.clear();
-        if (const YGNodeRef node = m_Yoga->Get(element);
-            node != nullptr && YGNodeHasMeasureFunc(node))
-        {
-            YGNodeMarkDirty(node);
-        }
+        MarkSubtreeTextDirty(element);
         m_Dirty = true;
     }
 
@@ -1532,18 +1531,22 @@ namespace Veng::Gui
             }
         }
         // A font swap is a layout move ReadProperty does not see (a font has no numeric payload).
-        if (element.ComputedStyle.TextFont.Id().Value != live.TextFont.Id().Value)
-        {
-            layoutMoved = true;
-        }
+        const bool fontMoved =
+            element.ComputedStyle.TextFont.Id().Value != live.TextFont.Id().Value;
+        layoutMoved = layoutMoved || fontMoved;
 
         element.ComputedStyle = live;
 
         if (layoutMoved)
         {
             m_Dirty = true;
-            if (const YGNodeRef node = m_Yoga->Get(element);
-                node != nullptr && YGNodeHasMeasureFunc(node))
+            // A font moves every descendant that inherits it, so the whole subtree re-measures.
+            if (fontMoved)
+            {
+                MarkSubtreeTextDirty(element);
+            }
+            else if (const YGNodeRef node = m_Yoga->Get(element);
+                     node != nullptr && YGNodeHasMeasureFunc(node))
             {
                 YGNodeMarkDirty(node);
             }
@@ -1581,41 +1584,65 @@ namespace Veng::Gui
     void Document::SetTextMeasurer(TextMeasurer measurer)
     {
         m_Measurer = std::move(measurer);
-        for (const Unique<Element>& owned : m_Elements)
+        MarkSubtreeTextDirty(*m_Root);
+        m_Dirty = true;
+    }
+
+    void Document::MarkSubtreeTextDirty(const Element& element)
+    {
+        if (const YGNodeRef node = m_Yoga->Get(element);
+            node != nullptr && YGNodeHasMeasureFunc(node))
         {
-            if (owned->Kind != ElementKind::Text)
+            YGNodeMarkDirty(node);
+        }
+        for (const Element* child : element.Children)
+        {
+            MarkSubtreeTextDirty(*child);
+        }
+    }
+
+    const Font* Document::ResolveFont(const Element& element) const
+    {
+        for (const Element* cursor = &element; cursor != nullptr; cursor = cursor->Parent)
+        {
+            if (cursor->ComputedStyle.TextFont.IsLoaded())
             {
-                continue;
-            }
-            if (const YGNodeRef node = m_Yoga->Get(*owned); node != nullptr)
-            {
-                YGNodeMarkDirty(node);
+                return cursor->ComputedStyle.TextFont.Get();
             }
         }
-        m_Dirty = true;
+        return nullptr;
     }
 
     vec2 Document::MeasureElementText(const Element& element, optional<f32> availableWidth) const
     {
-        return MeasureStyledText(element.Text, element.ComputedStyle, availableWidth);
+        // A TextInput is a line box: it holds one line of its typography open even with no value,
+        // so the field reserves room for the run it paints at every value, empty included.
+        return MeasureRun(element.Text, ResolveFont(element), element.ComputedStyle, availableWidth,
+                          element.Kind == ElementKind::TextInput);
     }
 
     vec2 Document::MeasureStyledText(string_view text, const Style& style,
                                      const optional<f32> availableWidth) const
+    {
+        return MeasureRun(text, style.TextFont.IsLoaded() ? style.TextFont.Get() : nullptr, style,
+                          availableWidth, false);
+    }
+
+    vec2 Document::MeasureRun(const string_view text, const Font* const font, const Style& style,
+                              const optional<f32> availableWidth, const bool emptyLineBox) const
     {
         if (m_Measurer)
         {
             return m_Measurer(text, style, availableWidth);
         }
 
-        if (!style.TextFont.IsLoaded() || text.empty())
+        if (font == nullptr || (text.empty() && !emptyLineBox))
         {
             return vec2(0.0f);
         }
 
         const vector<u32> codepoints = DecodeUtf8(text);
-        const ShapeResult shaped =
-            style.TextFont.Get()->ShapeRun(codepoints, style.TextSize, availableWidth);
+        const ShapeResult shaped = font->ShapeRun(codepoints, style.TextSize, availableWidth);
         return shaped.Size;
     }
 
@@ -2230,7 +2257,8 @@ namespace Veng::Gui
         // TextInput's value and caret) between its background and its children.
         BuildWidget(element, list, opacity);
 
-        if (!element.Text.empty() && style.TextFont.IsLoaded() &&
+        const Font* const font = ResolveFont(element);
+        if (!element.Text.empty() && font != nullptr &&
             (element.Kind == ElementKind::Text || element.Kind == ElementKind::Button))
         {
             // A Text leaf draws at its content-box origin (inside the border and padding, the box
@@ -2256,7 +2284,7 @@ namespace Veng::Gui
             }
             vec4 textColor = style.TextColor;
             textColor.a *= opacity;
-            list.Text(origin, *style.TextFont.Get(), element.Text, style.TextSize, textColor);
+            list.Text(origin, *font, element.Text, style.TextSize, textColor);
         }
 
         for (const Element* child : element.Children)
@@ -2357,21 +2385,23 @@ namespace Veng::Gui
         const Rect& rect = element.Layout;
 
         // The value draws inside the content box (past the border and padding) and rides the middle
-        // of it: a single-line field is sized by its style rather than by its text, so centering the
-        // line in whatever height the style gives keeps the run off the frame at any box height.
+        // of it. The line box is one line of the field's typography — the same extent the measure
+        // reserves — so an intrinsically sized field centers with no slack and a taller styled box
+        // keeps the run off its frame.
+        const Font* const font = ResolveFont(element);
         const f32 inset = style.BorderStyle.Width;
         const vec2 contentMin =
             rect.Min + vec2(inset + style.Padding.Left, inset + style.Padding.Top);
         const f32 contentHeight =
             rect.Size.y - 2.0f * inset - style.Padding.Top - style.Padding.Bottom;
-        const f32 line = style.TextSize;
+        const f32 line = MeasureRun("", font, style, std::nullopt, true).y;
         const vec2 origin(contentMin.x, contentMin.y + std::max(contentHeight - line, 0.0f) * 0.5f);
 
-        if (!element.Text.empty() && style.TextFont.IsLoaded())
+        if (!element.Text.empty() && font != nullptr)
         {
             vec4 textColor = style.TextColor;
             textColor.a *= opacity;
-            list.Text(origin, *style.TextFont.Get(), element.Text, style.TextSize, textColor);
+            list.Text(origin, *font, element.Text, style.TextSize, textColor);
         }
 
         // The caret marks the edit position while the field holds focus: a thin bar at the width of
@@ -2392,10 +2422,9 @@ namespace Veng::Gui
 
         vec4 caretColor = style.TextColor;
         caretColor.a *= opacity;
-        list.Quad(
-            Rect{.Min = vec2(origin.x + MeasureStyledText(prefix, style, std::nullopt).x, origin.y),
-                 .Size = vec2(CaretWidth, line)},
-            caretColor);
+        const f32 caretX = MeasureRun(prefix, font, style, std::nullopt, false).x;
+        list.Quad(Rect{.Min = vec2(origin.x + caretX, origin.y), .Size = vec2(CaretWidth, line)},
+                  caretColor);
     }
 
     void Document::Build(DrawList& list) const
