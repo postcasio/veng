@@ -175,6 +175,10 @@ namespace Veng
             {
                 result.Headless = true;
             }
+            else if (arg == "--no-render")
+            {
+                result.NoRender = true;
+            }
             else if (arg == "--dedicated")
             {
                 // The first-class dedicated-server flag: a headless listen host with no window, no

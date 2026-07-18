@@ -114,6 +114,27 @@ TEST_CASE("LaunchArguments: --server --headless is the dedicated-server pair")
     CHECK(parsed->Headless);
 }
 
+TEST_CASE("LaunchArguments: --no-render is an independent flag, off by default")
+{
+    const Result<LaunchArguments> bare = ParseTokens({"--headless"});
+    REQUIRE(bare.has_value());
+    // A headless run renders unless it says otherwise: the flag is the opt-out, not the default.
+    CHECK(bare->Headless);
+    CHECK_FALSE(bare->NoRender);
+
+    const Result<LaunchArguments> parsed =
+        ParseTokens({"--headless", "--no-render", "--join", "h"});
+    REQUIRE(parsed.has_value());
+    CHECK(parsed->Headless);
+    CHECK(parsed->NoRender);
+    CHECK(parsed->Join.has_value());
+
+    // --dedicated already implies no render tail, so it leaves the explicit flag clear.
+    const Result<LaunchArguments> dedicated = ParseTokens({"--dedicated"});
+    REQUIRE(dedicated.has_value());
+    CHECK_FALSE(dedicated->NoRender);
+}
+
 TEST_CASE("LaunchArguments: --dedicated is a first-class synonym for --server --headless")
 {
     const Result<LaunchArguments> parsed = ParseTokens({"--dedicated"});

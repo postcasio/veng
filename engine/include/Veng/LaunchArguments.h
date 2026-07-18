@@ -66,6 +66,14 @@ namespace Veng
         /// the dedicated server (accumulator + net pump, no View/render tail) from a windowed game exe.
         bool Headless = false;
 
+        /// @brief Record no per-frame render tail (`--no-render`), clearing ApplicationInfo::HeadlessRendering.
+        ///
+        /// The command-line half of that flag, for a headless run whose frames nothing reads — a
+        /// scripted client, a simulation harness. It drops the capture/viewport/composite recording
+        /// only: the fixed-step simulation, the View phase, and the net pump still run, so the
+        /// process keeps converging. Inert without `--headless` (a windowed run presents its frames).
+        bool NoRender = false;
+
         /// @brief Boot a dedicated server (`--dedicated`): a headless listen host with no local seat.
         ///
         /// The first-class dedicated-server flag and the honest name for the `--server --headless`
@@ -107,7 +115,7 @@ namespace Veng
         ///
         /// Pure and device-free — it reads no files and touches no global state, so it is unit
         /// tested with no window. Recognises `--level=<id>` / `--level <id>`, `--server`,
-        /// `--headless`, `--dedicated` (`--server --headless`), `--join <host[:port]>`,
+        /// `--headless`, `--no-render`, `--dedicated` (`--server --headless`), `--join <host[:port]>`,
         /// `--name <s>`, one leading positional working directory, and each option in `options`.
         /// A `--` token matching neither an engine flag nor a declared option is an error, so a
         /// misspelled flag is caught rather than ignored.

@@ -183,6 +183,15 @@ defaults. The knobs are inert until a launch flag activates a mode:
 | `--server --headless` | `Server` | A **dedicated server**: the Sim phase + net pump with no render tail. |
 | `--join <host[:port]>` | `Client` | Connects, loads the accepted level (server-authoritative entities skipped), and displays the stream. |
 
+A **headless client** (`--headless --join <host[:port]>`) is not a dedicated server: it has no
+`ServerHost`, so it keeps the full render tail and renders every frame into its off-screen target.
+When nothing reads those frames — a scripted client, a soak harness — add **`--no-render`**
+(`ApplicationInfo::HeadlessRendering = false`) to drop the capture/viewport/composite recording. The
+Sim phase, the View phase, and the net pump are untouched, so the client still ticks, converges, and
+presents its joined world; only the frames go unrecorded. On a validation-layered debug build the
+render tail dominates such a process's frame budget, and leaving it on can starve the net pump
+enough that the client never converges.
+
 `Application` mounts the hosts and drives the pump for you: it receives, ticks the
 Sim phase (feeding each connection's buffered input into its seat first), and sends
 this frame's snapshot + spawn stream. A game reaches the machinery through

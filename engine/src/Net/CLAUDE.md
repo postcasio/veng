@@ -427,7 +427,9 @@ the hosting hooks `WorldFactory` / `Authorize` / `Placement` / `MaxPlayersPerIns
 and the `MaxHostedWorlds` / `MaxJoinedWorldsPerConnection` / `IdleKeepWarmDwell` caps) tunes the hosts;
 **activation is a launch flag or a runtime call**. `LaunchArguments` parses `--server` (listen server)
 `[--headless]` (dedicated — Sim + net pump, no render tail), the first-class **`--dedicated`** (the
-honest name for `--server --headless`), `--join <host[:port]>` (client), and **`--netsim
+honest name for `--server --headless`), `--join <host[:port]>` (client), **`--no-render`** (drop the
+render tail on a headless run whose frames nothing reads — a headless *client* has no `ServerHost` and
+so otherwise renders every frame, which on a debug build can starve the net pump), and **`--netsim
 latency=100,jitter=20,loss=5,dup=1,reorder=2`** wraps the constructed transport in a seeded
 `SimulatedTransport` for playable adversity — a dev/QA tool shipped in every build, inert unless set.
 The same host construction is exposed as runtime operations for a menu-driven flow: **`StartHosting()`**

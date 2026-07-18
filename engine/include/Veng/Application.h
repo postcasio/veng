@@ -300,6 +300,19 @@ namespace Veng
         optional<ImGuiLayerInfo> ImGui = ImGuiLayerInfo{};
         /// @brief Run without a window, using an off-screen context; exits on RequestExit().
         bool Headless = false;
+        /// @brief Whether a Headless run records the per-frame render tail; ignored windowed.
+        ///
+        /// A headless run still builds the whole render path and renders every registered capture
+        /// and viewport into its off-screen target, so a consumer that reads frames back (an
+        /// image-comparison harness, a smoke run) gets them. A consumer that observes no frame pays
+        /// that cost for output nobody reads — on a validation-layered debug build enough of the
+        /// frame budget to starve the fixed-step and network pumps that share the loop. Clearing
+        /// this drops the capture, viewport, and composite recording; the simulation, the View
+        /// phase, and the net pump are untouched, so a frameless client still ticks and converges.
+        /// The engine already infers this for a dedicated server (Headless with a live ServerHost),
+        /// which additionally has no client-local presentation to drive; this is the declaration for
+        /// every other frameless run. `--no-render` clears it from the command line.
+        bool HeadlessRendering = true;
         /// @brief Requested display output mode for the swapchain (a preference; see DisplayMode).
         ///
         /// Defaults to picking the best available HDR mode, falling back to SDR. The resolved

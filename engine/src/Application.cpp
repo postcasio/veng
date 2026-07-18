@@ -1591,6 +1591,13 @@ namespace Veng
             m_Info.Headless = true;
         }
 
+        // `--no-render` clears the render tail for a headless run whose frames nothing reads. Applied
+        // beside Headless so the whole frame policy is settled before Initialize.
+        if (m_LaunchArgs.NoRender)
+        {
+            m_Info.HeadlessRendering = false;
+        }
+
         // A leading positional argument selects the working directory (launcher convention).
         if (m_LaunchArgs.WorkingDirectory)
         {
@@ -1798,6 +1805,13 @@ namespace Veng
         // consumer for. A windowed (listen) server keeps them for its local seats.
         const bool dedicatedServer = m_Info.Headless && GetServerHost() != nullptr;
 
+        // Whether this frame records a render tail at all. A dedicated server never does — it has no
+        // client-local presentation. A headless run that declared ApplicationInfo::HeadlessRendering
+        // false does not either: its frames reach no consumer, so the capture, viewport, and composite
+        // recording is work for nothing. It keeps the View phase and the view pushes, so the viewport
+        // bindings and presentation state stay exactly as a rendering run leaves them.
+        const bool renderTail = !dedicatedServer && (!m_Info.Headless || m_Info.HeadlessRendering);
+
         // Drive every world through the runner in id order: each world's fixed Sim steps (0..N, its
         // own accumulator's step count) then one View pass with its interpolation alpha. The pointer
         // routing is scoped to one scene, so a world's Sim gets it only when the pointer's owning
@@ -1887,9 +1901,9 @@ namespace Veng
 
         Renderer::CommandBuffer& cmd = m_RenderContext.GetCurrentCommandBuffer();
 
-        // A dedicated server ends the frame here: the accumulator and net pump have run, and there is
-        // no client-local presentation to render.
-        if (dedicatedServer)
+        // A frameless run ends the frame here: the accumulator, the net pump, and (outside a dedicated
+        // server) the View phase have run, and no consumer reads what the tail would record.
+        if (!renderTail)
         {
             m_RenderContext.EndFrame();
             return;
