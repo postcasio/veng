@@ -50,7 +50,9 @@ namespace Veng
         /// @brief A gamepad was connected to a slot.
         GamepadConnected,
         /// @brief A gamepad was disconnected from a slot.
-        GamepadDisconnected
+        GamepadDisconnected,
+        /// @brief A key already down was re-asserted by the platform's auto-repeat.
+        KeyRepeat
     };
 
     /// @brief Abstract base for all engine events.

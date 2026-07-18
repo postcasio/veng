@@ -23,6 +23,7 @@ namespace Veng
             {
             case EventType::KeyPressed:
             case EventType::KeyReleased:
+            case EventType::KeyRepeat:
             case EventType::KeyTyped:
             case EventType::MouseButtonPressed:
             case EventType::MouseButtonReleased:
@@ -224,6 +225,11 @@ namespace Veng
                 InjectedEvent{.Kind = InjectedKind::KeyUp,
                               .KeyCode = static_cast<const KeyReleasedEvent&>(event).GetKey()});
             break;
+        case EventType::KeyRepeat:
+            m_InjectedQueue.push_back(
+                InjectedEvent{.Kind = InjectedKind::KeyRepeat,
+                              .KeyCode = static_cast<const KeyRepeatEvent&>(event).GetKey()});
+            break;
         case EventType::MouseButtonPressed:
             m_InjectedQueue.push_back(InjectedEvent{
                 .Kind = InjectedKind::MouseDown,
@@ -269,6 +275,12 @@ namespace Veng
         case InjectedKind::KeyUp:
         {
             KeyReleasedEvent event(injected.KeyCode, 0, 0);
+            Dispatch(event);
+            break;
+        }
+        case InjectedKind::KeyRepeat:
+        {
+            KeyRepeatEvent event(injected.KeyCode, 0, 0);
             Dispatch(event);
             break;
         }
@@ -339,6 +351,7 @@ namespace Veng
             case InjectedKind::MouseUp:
                 reverses = contains(pressedButtons, injected.Button);
                 break;
+            case InjectedKind::KeyRepeat:
             case InjectedKind::MouseMove:
             case InjectedKind::Scroll:
             case InjectedKind::Text:
@@ -366,6 +379,7 @@ namespace Veng
             case InjectedKind::MouseUp:
                 releasedButtons.push_back(injected.Button);
                 break;
+            case InjectedKind::KeyRepeat:
             case InjectedKind::MouseMove:
             case InjectedKind::Scroll:
             case InjectedKind::Text:

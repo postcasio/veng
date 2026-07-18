@@ -143,6 +143,13 @@ namespace Veng
             m_ScrollDelta += static_cast<const MouseScrolledEvent&>(event).GetOffset();
             break;
         }
+        case EventType::KeyRepeat:
+            // A repeat re-asserts a key that is already down, so it changes nothing here: the level
+            // is already true and the pressed-since-roll gate already set. Folding it in as a press
+            // would re-arm the edge, making WasKeyPressed fire again on a key that never went up —
+            // a held key would look like a stream of discrete presses. The snapshot is level and
+            // edge state only, so repetition is a consumer's concern, never the snapshot's.
+            break;
         default:
             break;
         }

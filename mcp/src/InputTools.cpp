@@ -235,6 +235,7 @@ namespace Veng::Mcp
             {
                 KeyDown,
                 KeyUp,
+                KeyRepeat,
                 MouseDown,
                 MouseUp,
                 MouseMove,
@@ -242,7 +243,7 @@ namespace Veng::Mcp
                 Text,
             } Which = Kind::KeyDown;
 
-            /// @brief The key for KeyDown/KeyUp.
+            /// @brief The key for KeyDown/KeyUp/KeyRepeat.
             Key KeyCode = Key::Space;
             /// @brief The button for MouseDown/MouseUp.
             MouseButton Button = MouseButton::Left;
@@ -316,6 +317,10 @@ namespace Veng::Mcp
             {
                 return keyEvent(ResolvedEvent::Kind::KeyUp);
             }
+            if (type == "key_repeat")
+            {
+                return keyEvent(ResolvedEvent::Kind::KeyRepeat);
+            }
             if (type == "mouse_down")
             {
                 return buttonEvent(ResolvedEvent::Kind::MouseDown);
@@ -384,6 +389,12 @@ namespace Veng::Mcp
                 host.InjectInput(event);
                 break;
             }
+            case ResolvedEvent::Kind::KeyRepeat:
+            {
+                KeyRepeatEvent event(resolved.KeyCode, 0, 0);
+                host.InjectInput(event);
+                break;
+            }
             case ResolvedEvent::Kind::MouseDown:
             {
                 MouseButtonPressedEvent event(resolved.Button, 0);
@@ -433,21 +444,26 @@ namespace Veng::Mcp
             tool.Description =
                 "Sends an ordered batch of synthetic input events to drive the running app, as "
                 "if produced by the keyboard/mouse. Argument: { events: [ ... ] }, each event one "
-                "of: { type: 'key_down'|'key_up', key: <name> }, { type: "
+                "of: { type: 'key_down'|'key_up'|'key_repeat', key: <name> }, { type: "
                 "'mouse_down'|'mouse_up', button: 'Left'|'Right'|'Middle' }, { type: "
                 "'mouse_move', x: <px>, y: <px> } (window-space position), { type: 'scroll', dx: "
                 "<n>, dy: <n> }, { type: 'text', text: <utf8 string> }. Key names match the engine "
                 "Key enumerators (e.g. 'W', 'Space', 'LeftShift', 'F1'). A 'text' event types its "
                 "characters into whatever holds text focus, one character event per codepoint, the "
                 "same path a keyboard's character callback drives — that is how to fill a text "
-                "field; a key_down does not produce characters. Up to 256 characters per text "
-                "event. Events apply in order at the frame's input point, so the action layer "
+                "field; a key_down does not produce characters. A 'key_repeat' event is the "
+                "platform auto-repeat of a key already held: send one per repetition to drive a "
+                "repeating action such as caret movement or deletion in a focused text field. It "
+                "never re-arms a one-shot press query, so it cannot fire a discrete action twice. "
+                "Up to 256 characters per text event. Events apply in order at the frame's input "
+                "point, so the action layer "
                 "resolves them as real input. Up to 64 events per call.";
             tool.InputSchemaJson =
                 R"({"type":"object","required":["events"],"properties":{"events":{"type":"array",)"
                 R"("items":{"type":"object","required":["type"],"properties":{)"
-                R"("type":{"type":"string","enum":["key_down","key_up","mouse_down","mouse_up",)"
-                R"("mouse_move","scroll","text"]},"key":{"type":"string"},)"
+                R"("type":{"type":"string","enum":["key_down","key_up","key_repeat",)"
+                R"("mouse_down","mouse_up","mouse_move","scroll","text"]},)"
+                R"("key":{"type":"string"},)"
                 R"("button":{"type":"string"},"text":{"type":"string"},)"
                 R"("x":{"type":"number"},"y":{"type":"number"},"dx":{"type":"number"},)"
                 R"("dy":{"type":"number"}}}}}})";

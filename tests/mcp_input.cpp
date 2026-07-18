@@ -17,6 +17,8 @@
 //   - a text run, asserting it types into a live Gui::Document's focused TextInput one codepoint at
 //     a time (multi-byte codepoints and U+0008 backspace included) — routed through the router and
 //     its consumer registry, so the whole path from the tool to the field's edit is the engine's.
+//   - a key_repeat batch, asserting the platform auto-repeat of a held key reaches the consumer
+//     registry and drives one edit per repetition, while leaving the snapshot's edge state alone.
 //   - the shape-validation errors (empty batch, over-limit, an unknown key, an unknown type, an
 //     empty / absent / over-limit text run, a malformed event) as whole-call isError results, and
 //     confirms no event applied on a rejected batch (the validate-then-apply discipline).
@@ -32,6 +34,7 @@
 #include <Veng/Gui/Document.h>
 #include <Veng/Gui/DrawList.h>
 #include <Veng/Gui/Element.h>
+#include <Veng/Gui/InputEvent.h>
 #include <Veng/Input.h>
 #include <Veng/Input/InputConsumer.h>
 #include <Veng/InputEvents.h>
@@ -105,6 +108,19 @@ namespace
 
         bool ForwardEvent(const Event& event) override
         {
+            // Backspace takes the editing route on both a press and a repeat, the same mapping
+            // Veng::Gui::GuiConsumer applies (that mapping itself is proved in the GPU band); here
+            // it establishes that the tool's key_repeat reaches a consumer at all.
+            if (event.GetEventType() == EventType::KeyPressed &&
+                static_cast<const KeyPressedEvent&>(event).GetKey() == Key::Backspace)
+            {
+                return m_Document.DispatchTextEdit(Gui::TextEditAction::DeleteBackward);
+            }
+            if (event.GetEventType() == EventType::KeyRepeat &&
+                static_cast<const KeyRepeatEvent&>(event).GetKey() == Key::Backspace)
+            {
+                return m_Document.DispatchTextEdit(Gui::TextEditAction::DeleteBackward);
+            }
             if (event.GetEventType() != EventType::KeyTyped)
             {
                 return false;
@@ -349,6 +365,48 @@ int main()
                       return field.Text == "Hié";
                   }),
               "an injected backspace deleted one codepoint");
+
+        // key_repeat: the platform auto-repeat of a held key. Each repetition drives one edit, so a
+        // held Backspace erases character by character; and because a repeat is not a press, it
+        // never re-arms the snapshot's one-shot press query.
+        CallToolResult(client, "input.send",
+                       Json{{"events", Json::array({Json{{"type", "text"}, {"text", "wxyz"}}})}});
+        Check(WaitFor(
+                  [&]
+                  {
+                      const std::scoped_lock lock(inputMutex);
+                      return field.Text == "Hi\xc3\xa9wxyz";
+                  }),
+              "seeded the field for the repeat run");
+
+        const Json repeated = CallToolResult(
+            client, "input.send",
+            Json{{"events", Json::array({Json{{"type", "key_down"}, {"key", "Backspace"}},
+                                         Json{{"type", "key_repeat"}, {"key", "Backspace"}},
+                                         Json{{"type", "key_repeat"}, {"key", "Backspace"}}})}});
+        Check(!IsError(repeated), "key_repeat batch succeeded");
+        Check(WaitFor(
+                  [&]
+                  {
+                      const std::scoped_lock lock(inputMutex);
+                      return field.Text == "Hi\xc3\xa9w";
+                  }),
+              "a key_down plus two key_repeats deleted three codepoints");
+        {
+            // The held key reads down from the press alone; the repeats added no press edge.
+            const std::scoped_lock lock(inputMutex);
+            Check(input.IsKeyDown(Key::Backspace), "the held key reads down");
+        }
+        CallToolResult(
+            client, "input.send",
+            Json{{"events", Json::array({Json{{"type", "key_up"}, {"key", "Backspace"}}})}});
+        Check(WaitFor(
+                  [&]
+                  {
+                      const std::scoped_lock lock(inputMutex);
+                      return !input.IsKeyDown(Key::Backspace);
+                  }),
+              "releasing the held key cleared it");
 
         // Shape-validation errors, each a whole-call isError.
         Check(IsError(CallToolResult(

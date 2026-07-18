@@ -427,6 +427,12 @@ namespace Veng
                                        GLFW_RELEASE, key.GetMods());
             break;
         }
+        case EventType::KeyRepeat:
+            // ImGui derives its own repeat from each key's held duration, so a platform repeat is
+            // not forwarded: the backend would either discard it or double the repetition ImGui
+            // already synthesizes. The KeyPressed/KeyReleased pair above is the whole held state
+            // ImGui needs.
+            break;
         case EventType::KeyTyped:
             ImGui_ImplGlfw_CharCallback(handle,
                                         static_cast<const KeyTypedEvent&>(event).GetCodepoint());

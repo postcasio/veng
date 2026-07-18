@@ -74,6 +74,49 @@ namespace Veng
         const i32 m_Mods;
     };
 
+    /// @brief Fired when the platform's auto-repeat re-asserts a key that is already down.
+    ///
+    /// Carries no state transition — the key was down before this event and stays down after — so it
+    /// is a *distinct type* from KeyPressed rather than a flag on it. That separation is the contract:
+    /// the Input snapshot ignores repeats outright, so an edge query (WasKeyPressed) still fires
+    /// exactly once per physical press however long the key is held, and a consumer opts in to
+    /// repetition by handling this type. Only actions that are meaningful to repeat should read it —
+    /// caret movement and deletion in a focused text field — never a discrete action.
+    ///
+    /// Cadence is the platform's: the initial delay and the rate are the ones the operating system's
+    /// keyboard settings define, so the engine holds no repeat timer and matches every other
+    /// application on the machine. Repeats arrive only while the window holds keyboard focus.
+    class KeyRepeatEvent final : public Event
+    {
+    public:
+        /// @brief Constructs the event.
+        /// @param key       The key the platform re-asserted; already down.
+        /// @param scancode  Platform-specific scancode (GLFW-native).
+        /// @param mods      GLFW modifier-key bitfield.
+        KeyRepeatEvent(Key key, i32 scancode, i32 mods)
+            : m_Key(key), m_Scancode(scancode), m_Mods(mods)
+        {
+        }
+
+        /// @brief Injects this event's type-identity members (see the EVENT macro).
+        EVENT(KeyRepeat);
+
+        /// @brief Returns the key the platform re-asserted.
+        [[nodiscard]] Key GetKey() const { return m_Key; }
+        /// @brief Returns the platform-specific scancode.
+        [[nodiscard]] i32 GetScancode() const { return m_Scancode; }
+        /// @brief Returns the GLFW modifier-key bitfield.
+        [[nodiscard]] i32 GetMods() const { return m_Mods; }
+
+    private:
+        /// @brief The key the platform re-asserted.
+        const Key m_Key;
+        /// @brief Platform-specific scancode (GLFW-native).
+        const i32 m_Scancode;
+        /// @brief GLFW modifier-key bitfield.
+        const i32 m_Mods;
+    };
+
     /// @brief Fired when text input produces a Unicode codepoint.
     ///
     /// Distinct from KeyPressed: this is the layout-resolved character a text field consumes,

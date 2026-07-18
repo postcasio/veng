@@ -126,8 +126,15 @@ namespace Veng
                     window->m_Events.push_back(
                         CreateUnique<KeyReleasedEvent>(code, scancode, mods));
                 }
-                // GLFW_REPEAT carries no state change: the key stays down and the ImGui
-                // backend tracks held state itself, so no event is produced for it.
+                else if (action == GLFW_REPEAT)
+                {
+                    // GLFW_REPEAT re-asserts a key that is already down, at the cadence the OS
+                    // keyboard settings define. It carries no state transition, so it becomes a
+                    // KeyRepeatEvent rather than a second KeyPressedEvent: the Input snapshot
+                    // ignores that type, keeping every edge query one-per-physical-press, and a
+                    // consumer opts in where repetition is meaningful.
+                    window->m_Events.push_back(CreateUnique<KeyRepeatEvent>(code, scancode, mods));
+                }
             });
 
         glfwSetCharCallback(m_Handle,

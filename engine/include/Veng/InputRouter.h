@@ -237,8 +237,8 @@ namespace Veng
         /// BeginFrame rolls it away before any tick reads it). Queuing instead lets DrainInjectedEvents
         /// replay it at the same pre-tick point a window event lands, and **paces** the queue so a
         /// press and its release straddle a tick and repeated taps of one control do not collapse into
-        /// a single held frame. Only the foldable input kinds (key/button down·up, move, scroll, text
-        /// entry) are queued; any other event kind is ignored. Call on the render thread (the pump point).
+        /// a single held frame. Only the foldable input kinds (key/button down·up, key repeat, move,
+        /// scroll, text entry) are queued; any other event kind is ignored. Call on the render thread (the pump point).
         /// @param event  The synthetic event to queue; decoded to its kind + payload, not retained.
         void PostInjectedEvent(const Event& event);
 
@@ -249,7 +249,8 @@ namespace Veng
         /// level already set this call — a release of a control just pressed, or a press of one just
         /// released — so each level change straddles a frame and is observed for at least one tick
         /// (and two rapid taps of one control stay distinct). Distinct controls (a chord) apply
-        /// together; a move, scroll, or text event never gates. Each applied event routes through
+        /// together; a move, scroll, text, or key-repeat event never gates — a repeat re-asserts a
+        /// level rather than reversing one, so a run of them applies in a single drain. Each applied event routes through
         /// Dispatch exactly as a real window event. Empty queue is a no-op.
         void DrainInjectedEvents();
 
@@ -346,6 +347,8 @@ namespace Veng
             KeyDown,
             /// @brief A key-release event, carrying KeyCode.
             KeyUp,
+            /// @brief A key auto-repeat event, carrying KeyCode.
+            KeyRepeat,
             /// @brief A mouse-button-press event, carrying Button.
             MouseDown,
             /// @brief A mouse-button-release event, carrying Button.
@@ -363,7 +366,7 @@ namespace Veng
         {
             /// @brief The event kind, selecting which payload member is meaningful.
             InjectedKind Kind = InjectedKind::KeyDown;
-            /// @brief The key for KeyDown/KeyUp.
+            /// @brief The key for KeyDown/KeyUp/KeyRepeat.
             Key KeyCode = Key::Space;
             /// @brief The button for MouseDown/MouseUp.
             MouseButton Button = MouseButton::Left;
