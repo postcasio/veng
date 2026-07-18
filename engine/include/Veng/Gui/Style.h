@@ -201,6 +201,13 @@ namespace Veng::Gui
         /// A display-only overlay piece (a cursor-following label) styled None never occludes
         /// the content underneath it: Document::HitTest and the pointer event path pass through.
         None,
+        /// @brief The element itself is transparent to hit-testing, but its children are not.
+        ///
+        /// The pass-through backdrop: a full-bleed HUD root styled Children never claims the
+        /// pointer itself, so gameplay under it keeps receiving one, while the panels and controls
+        /// inside it hit-test normally. None is the stronger form that also skips the subtree —
+        /// which is what a decorative group wants, and what a backdrop with live controls does not.
+        Children,
     };
 
     /// @brief The absolute-position insets: per-edge offsets from the parent's edges, each optional.

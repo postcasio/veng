@@ -854,7 +854,6 @@ namespace Veng::Gui
             }
             for (Element* child : element.Children)
             {
-                // NOLINTNEXTLINE(misc-const-correctness): the pointee is returned as a mutable Element*.
                 if (Element* const found = FindByIdRecursive(*child, id); found != nullptr)
                 {
                     return found;
@@ -2027,7 +2026,6 @@ namespace Veng::Gui
 
     Element* Document::FindPart(const Element& element, const ElementKind kind) const
     {
-        // NOLINTNEXTLINE(misc-const-correctness): the pointee is returned as a mutable Element*.
         for (Element* child : element.Children)
         {
             if (child->Kind == kind)
@@ -2103,7 +2101,6 @@ namespace Veng::Gui
 
     Element* Document::FindScrollBar(const Element& element, const bool vertical) const
     {
-        // NOLINTNEXTLINE(misc-const-correctness): the pointee is returned as a mutable Element*.
         for (Element* child : element.Children)
         {
             if (child->Kind == ElementKind::ScrollBar && child->Widget.Vertical == vertical)
@@ -3056,14 +3053,16 @@ namespace Veng::Gui
         // under the point is the topmost — walk children back-to-front for front-to-back hit order.
         for (auto it = element.Children.rbegin(); it != element.Children.rend(); ++it)
         {
-            // NOLINTNEXTLINE(misc-const-correctness): the pointee is returned as a mutable Element*.
             if (Element* hit = HitTestElement(**it, point, childClip))
             {
                 return hit;
             }
         }
 
-        if (Contains(element.Layout, point))
+        // Children were tested above, so a pointer-events:children element only has to decline
+        // itself: the backdrop passes the pointer through while its controls still claim it.
+        if (element.ComputedStyle.Pointer != PointerEvents::Children &&
+            Contains(element.Layout, point))
         {
             return &element;
         }
@@ -3476,7 +3475,6 @@ namespace Veng::Gui
 
     Element* Document::GetItemHost(const Element& element) const
     {
-        // NOLINTNEXTLINE(misc-const-correctness): the pointee is assigned to a mutable Element*.
         for (Element* e = element.Parent; e != nullptr; e = e->Parent)
         {
             if (IsSelectionHost(e->Kind))
@@ -3981,7 +3979,6 @@ namespace Veng::Gui
 
         // The ancestor path root→target; capture walks it forward, bubble reverse.
         vector<Element*> path;
-        // NOLINTNEXTLINE(misc-const-correctness): the pointee is vector<Element*>.
         for (Element* e = event.Target; e != nullptr; e = e->Parent)
         {
             path.push_back(e);

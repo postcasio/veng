@@ -291,6 +291,33 @@ ids: `Document::FindAllByClass("tick")` returns every element carrying the class
 so the game resolves the whole pool once and drives it by index. `hello-triangle`'s HUD authors
 its numbered tick strip this way.
 
+### Letting the pointer through: `pointer-events`
+
+A HUD that covers the screen would otherwise swallow every click, since its root box spans the
+whole region. `pointer-events` decides what an element does with a pointer over it:
+
+| value | the element | its children |
+| --- | --- | --- |
+| `auto` | hit-tests (default) | hit-test |
+| `children` | **passes through** | **still hit-test** |
+| `none` | passes through | skipped too |
+
+```css
+#hud-root { pointer-events: children; }   /* backdrop: gameplay under it keeps the pointer */
+.cursor-label { pointer-events: none; }   /* decorative group: it and its labels are inert */
+```
+
+Reach for `children` on a container that exists only to lay its contents out — a full-bleed HUD
+root, a spacer column — so the panels and controls inside it still work while the pointer passes
+through everywhere else. Reach for `none` on decoration that should be wholly inert, like a
+cursor-following label: it skips the subtree, which is both what you want and cheaper.
+
+This is what lets gameplay tell whether the UI owns the pointer. A camera that orbits on a held
+mouse button reads the button through the action pipeline, which the UI never sees — so consuming
+a pointer *event* does not suppress a held-button *action*, and the camera has to ask. It asks
+through `SystemContext::Pointer.IsOverUi()`, which is true exactly when the pointer is over an
+element that hit-tests.
+
 ### Scrolling: `overflow` and styleable scrollbars
 
 Scrolling is a **style property**, not an element type — any element can scroll:

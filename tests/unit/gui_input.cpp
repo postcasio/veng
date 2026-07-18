@@ -355,3 +355,33 @@ TEST_CASE("gui interactivity: a display-only document hit-tests but routes no in
     doc.DispatchPointer(up);
     CHECK(clicks == 1);
 }
+
+TEST_CASE("gui input: pointer-events children passes the element through but keeps its children")
+{
+    Document doc;
+    doc.SetInteractive(true);
+
+    Element& root = doc.Root();
+    PlaceAt(root, {0, 0}, {200, 200});
+
+    // A full-bleed backdrop over the whole region, holding one small control.
+    Element& backdrop = doc.Add(root, ElementKind::Panel);
+    PlaceAt(backdrop, {0, 0}, {200, 200});
+    Element& control = doc.Add(backdrop, ElementKind::Button);
+    PlaceAt(control, {10, 10}, {40, 40});
+
+    // Auto: the backdrop claims every point its box covers, including away from the control.
+    CHECK(doc.HitTest(vec2(100, 100)) == &backdrop);
+    CHECK(doc.HitTest(vec2(20, 20)) == &control);
+
+    // Children: the backdrop declines itself, so a point away from the control falls through to
+    // the root — while the control inside it still hit-tests.
+    backdrop.ComputedStyle.Pointer = PointerEvents::Children;
+    CHECK(doc.HitTest(vec2(100, 100)) == &root);
+    CHECK(doc.HitTest(vec2(20, 20)) == &control);
+
+    // None remains the stronger form: the subtree goes with it, control included.
+    backdrop.ComputedStyle.Pointer = PointerEvents::None;
+    CHECK(doc.HitTest(vec2(100, 100)) == &root);
+    CHECK(doc.HitTest(vec2(20, 20)) == &root);
+}

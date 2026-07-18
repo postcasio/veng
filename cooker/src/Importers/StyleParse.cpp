@@ -363,6 +363,10 @@ namespace Veng::Cook
             {
                 return static_cast<u32>(Gui::PointerEvents::None);
             }
+            if (v == "children")
+            {
+                return static_cast<u32>(Gui::PointerEvents::Children);
+            }
             return std::nullopt;
         }
 

@@ -203,6 +203,22 @@ as a List does). A numeric Table column pairs with the `text-align` Text style p
 attributes (`min`/`max`/`step`/`value`/`checked`/`orientation`/`selection`) are read at `Instantiate` and its `{value}`
 binding is one-way (the model drives the widget without firing `onChange`).
 
+**`pointer-events` is three-valued, splitting "not me" from "not us".** `auto` hit-tests, `none`
+makes the element *and its subtree* transparent, and `children` makes only the element itself
+transparent while its descendants still hit-test. The third value is what makes a full-bleed HUD
+root expressible: a backdrop that lays out its contents without claiming the pointer everywhere it
+covers. The hit-test already walks children before self, so `children` only suppresses the self-hit;
+`none` keeps its subtree prune, which is the cheaper form a decorative group wants. The enumerator is
+**appended**, so `None` keeps its ordinal and no cooked blob version moves.
+
+**Gameplay asks whether the UI owns the pointer through `PointerRouting::OverUi`.** Consuming a
+pointer *event* does not suppress a held-button *action* — a camera orbiting on a held mouse button
+reads the action pipeline, which the Gui never sees — so the router publishes the answer instead:
+`Viewport::IsPointerOverDocument` hit-tests the attached interactive documents and the routing
+carries the result to `SystemContext::Pointer`. It is the retained-UI counterpart of the
+immediate-mode `UI::WantCaptureMouse()`, and it is only meaningful because `pointer-events: children`
+lets a backdrop decline the pointer it visually covers.
+
 **Scrolling is a style property, and `ScrollView` is its preset.** `overflow-x` / `overflow-y`
 (`visible` / `hidden` / `scroll`, with `overflow` as the CSS two-value shorthand) decide per axis
 whether content is clipped and whether it scrolls — so a `List`, `Table`, or bare `Panel` styled
