@@ -26,6 +26,15 @@
     to { opacity: 1.0; }
 }
 
+/* Four distinct values per edge shorthand, so a test can tell every edge apart and pin the
+   CSS order (top, right, bottom, left) the parser resolves them in. */
+.edge-order {
+    margin: 1px 2px 3px 4px;
+    padding: 5px 6px 7px 8px;
+    inset: 9px 10px 11px 12px;
+    corner-radius: 13px 14px 15px 16px;
+}
+
 /* Redefinition: a later use sees the new value; the runtime table keeps the final value. */
 --panel: #204080;
 

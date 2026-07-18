@@ -14,22 +14,24 @@ namespace Veng::Gui
                           .Value = declaration.Values.x};
         }
 
-        // Reads a declaration's four-edge payload (L/T/R/B) into an Insets.
+        // Reads a declaration's four-edge payload into an Insets. The cooked components run in
+        // the CSS edge order — top, right, bottom, left — as xyzw.
         Insets InsetsFrom(const StyleDeclaration& declaration)
         {
-            return Insets{.Left = declaration.Values.x,
-                          .Top = declaration.Values.y,
-                          .Right = declaration.Values.z,
-                          .Bottom = declaration.Values.w};
+            return Insets{.Left = declaration.Values.w,
+                          .Top = declaration.Values.x,
+                          .Right = declaration.Values.y,
+                          .Bottom = declaration.Values.z};
         }
 
-        // Reads a declaration's four-edge payload into a PositionInsets, all edges set.
+        // Reads a declaration's four-edge payload into a PositionInsets, all edges set. The
+        // cooked components run in the CSS edge order — top, right, bottom, left — as xyzw.
         PositionInsets PositionInsetsFrom(const StyleDeclaration& declaration)
         {
-            return PositionInsets{.Left = declaration.Values.x,
-                                  .Top = declaration.Values.y,
-                                  .Right = declaration.Values.z,
-                                  .Bottom = declaration.Values.w};
+            return PositionInsets{.Left = declaration.Values.w,
+                                  .Top = declaration.Values.x,
+                                  .Right = declaration.Values.y,
+                                  .Bottom = declaration.Values.z};
         }
     }
 

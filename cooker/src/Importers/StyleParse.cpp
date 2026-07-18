@@ -232,8 +232,9 @@ namespace Veng::Cook
                 return std::unexpected(fmt::format(
                     "{}: expected 1 to 4 space-separated lengths, got {}", located, parts.size()));
             }
-            // Map to L/T/R/B for insets and TL/TR/BR/BL for radii — both are the CSS box order
-            // top/right/bottom/left, which the cooked payload stores in xyzw as authored.
+            // The components stay in the order they are authored, which the runtime reads as the
+            // CSS box order: top/right/bottom/left for the edge shorthands, and top-left,
+            // top-right, bottom-right, bottom-left for corner-radius.
             switch (parts.size())
             {
             case 1:

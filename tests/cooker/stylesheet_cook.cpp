@@ -360,3 +360,60 @@ TEST_CASE("Cooker: an rgb() gradient bakes an HDR ramp preserving >1 stops")
 
     std::filesystem::remove(source);
 }
+
+TEST_CASE("Cooker: an edge shorthand resolves top, right, bottom, left — the CSS order")
+{
+    const path fixtureDir = path(VENG_COOKER_TEST_FIXTURE_DIR);
+    const path packJson = fixtureDir / "style_pack.json";
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_cooker_style_edges.vengpack";
+
+    Cooker cooker;
+    RegisterBuiltinImporters(cooker);
+    const VoidResult cookResult = cooker.CookPack(packJson, outArchive, {}, nullptr, nullptr);
+    REQUIRE(cookResult.has_value());
+
+    const Result<ArchiveReader> reader = ArchiveReader::Open(outArchive);
+    REQUIRE(reader.has_value());
+    const optional<ArchiveEntry> sheetEntry = reader->Find(MainSheetId);
+    REQUIRE(sheetEntry.has_value());
+
+    const AssetResult<Detail::DecodedStyleSheet> decoded =
+        Detail::DecodeStyleSheet(MainSheetId, sheetEntry->Blob);
+    REQUIRE(decoded.has_value());
+
+    const Gui::StyleRule* rule = FindRuleByClass(decoded->Rules, "edge-order");
+    REQUIRE(rule != nullptr);
+
+    // Resolve through the same ApplyDeclaration the runtime uses, so the assertion covers the
+    // whole authored-text-to-Style path rather than the cooked payload's raw component order.
+    Gui::Style style{};
+    for (const Gui::StyleDeclaration& declaration : rule->Declarations)
+    {
+        Gui::ApplyDeclaration(style, declaration, nullptr);
+    }
+
+    // margin: 1px 2px 3px 4px
+    CHECK(style.Margin.Top == doctest::Approx(1.0f));
+    CHECK(style.Margin.Right == doctest::Approx(2.0f));
+    CHECK(style.Margin.Bottom == doctest::Approx(3.0f));
+    CHECK(style.Margin.Left == doctest::Approx(4.0f));
+
+    // padding: 5px 6px 7px 8px
+    CHECK(style.Padding.Top == doctest::Approx(5.0f));
+    CHECK(style.Padding.Right == doctest::Approx(6.0f));
+    CHECK(style.Padding.Bottom == doctest::Approx(7.0f));
+    CHECK(style.Padding.Left == doctest::Approx(8.0f));
+
+    // inset: 9px 10px 11px 12px
+    CHECK(style.Inset.Top == doctest::Approx(9.0f));
+    CHECK(style.Inset.Right == doctest::Approx(10.0f));
+    CHECK(style.Inset.Bottom == doctest::Approx(11.0f));
+    CHECK(style.Inset.Left == doctest::Approx(12.0f));
+
+    // corner-radius: 13px 14px 15px 16px — the radius shorthand runs clockwise from the top-left
+    // corner, matching CSS border-radius, and is unaffected by the edge order.
+    CHECK(style.Radii.TopLeft == doctest::Approx(13.0f));
+    CHECK(style.Radii.TopRight == doctest::Approx(14.0f));
+    CHECK(style.Radii.BottomRight == doctest::Approx(15.0f));
+    CHECK(style.Radii.BottomLeft == doctest::Approx(16.0f));
+}
