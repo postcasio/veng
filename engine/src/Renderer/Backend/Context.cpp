@@ -386,7 +386,7 @@ namespace Veng::Renderer
         m_Native->DrainTransferRetireList();
         m_Native->Disposed = true;
 
-        // Workers have been joined by Application before Dispose, so destroying
+        // Workers have been joined by Application before teardown, so destroying
         // the per-worker transfer pools here is unraced.
         for (auto& transferPool : m_Native->TransferPools)
         {

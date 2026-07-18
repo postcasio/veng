@@ -489,8 +489,15 @@ and are not `Ref`s: an `AssetHandle` is refcounted indirection into the
 `Ref` lives in the `BindlessRegistry`. Both release through the same per-frame
 retire path; the GPU `Ref`s *inside* an asset still follow the rule above.
 
-Apps must release every engine resource in `Application::OnDispose()` (reset all
-Refs/Uniques) — resources outliving the context fail on destruction.
+An app's engine resources are its members, released by its destructor — which runs
+before the engine's own members (`AssetManager`, `TaskSystem`, `Context`, the
+registries) tear down, so every service the release touches is still alive; member
+declaration order (and explicit destructor logic) encodes any intra-app ordering. A
+shutdown *operation* that is not a resource release — one that must run while the app
+is fully alive, e.g. flushing state ahead of the engine's own durability save — goes
+in the app's `OnShutdown()` override, which `Run` invokes before teardown begins. A
+resource that outlives the context still fails loudly: the `Disposed` tripwire (set in
+`~Context`) asserts on any handle retiring after teardown.
 
 ### The Native idiom (public/backend split)
 

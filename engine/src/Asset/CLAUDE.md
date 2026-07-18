@@ -110,8 +110,9 @@ and the app still runs — only `smoke_golden` (gated to skip on a non-ASTC devi
 ## Meshes
 
 - **`AssetHandle<T>` is refcounted indirection into the manager's cache**, not a `Ref` to a GPU
-  resource (see the root CLAUDE.md ownership rule). Apps drop their handles in `OnDispose()` like
-  any other engine resource; `CollectGarbage()` evicts entries no handle references, retiring
+  resource (see the root CLAUDE.md ownership rule). Apps hold their handles as members the app
+  destructor frees like any other engine resource; `CollectGarbage()` evicts entries no handle
+  references, retiring
   their GPU resources through the per-frame deferred-destruction path.
   **`AssetManager::Adopt<T>(Ref<T>)`** wraps an already-resident, runtime-created resource in an
   `AssetHandle<T>` so it is usable everywhere a cooked, `AssetId`-loaded handle is. The adopted

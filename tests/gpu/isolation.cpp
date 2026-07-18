@@ -1,6 +1,6 @@
 // Per-case isolation proof. Two TEST_CASE_FIXTUREs each create a Buffer with
 // the *same* name and size on their *own* GpuFixture (and therefore their own
-// Context::Initialize/Dispose lifecycle), upload a distinct deterministic byte
+// Context init/teardown lifecycle), upload a distinct deterministic byte
 // pattern, and verify it round-trips correctly.
 //
 // Because doctest default-constructs the fixture per test case and destroys

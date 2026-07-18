@@ -398,8 +398,8 @@ namespace Veng::Renderer
         ///
         /// The ViewportId -> Viewport map every Viewport mints into at Create and retires from at
         /// destruction. Standalone-constructible and independent of the Vulkan device, so it is
-        /// valid for the whole Context lifetime, not only between Initialize() and Dispose(). See
-        /// ViewportRegistry.h.
+        /// valid for the whole Context lifetime, not only from the end of Initialize() until the
+        /// context is destroyed. See ViewportRegistry.h.
         [[nodiscard]] ViewportRegistry& GetViewportRegistry() { return m_ViewportRegistry; }
 
         /// @brief Queues a one-time graphics-queue acquire and shader-read transition for a

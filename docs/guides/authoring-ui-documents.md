@@ -381,7 +381,8 @@ void OnUpdate(f32 delta) override
 }
 ```
 
-Release the document in `OnDispose` (`m_Hud.reset()`) before the context tears down.
+Hold the document as a member (`m_Hud`); the app destructor frees it before the context
+tears down.
 
 > A UI-only viewport must render over *something*: `Viewport::Render` composites a
 > document only when the viewport has a scene to render over, so a viewport with no game

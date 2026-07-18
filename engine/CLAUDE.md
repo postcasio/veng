@@ -40,8 +40,8 @@ offline cook in [cooker/CLAUDE.md](../cooker/CLAUDE.md); the archive format in
 
 ## Application
 
-Subclass `Application`, override `OnInitialize` / `OnUpdate(delta)` / `OnRender` / `OnDispose`,
-and `Run(args)`. ImGui is opt-in (on by default; `nullopt` to skip), and a `Headless` flag runs
+Subclass `Application`, override `OnInitialize` / `OnUpdate(delta)` / `OnRender` (and
+`OnShutdown` for an engine-alive shutdown operation), and `Run(args)`. ImGui is opt-in (on by default; `nullopt` to skip), and a `Headless` flag runs
 windowless to `RequestExit()` instead of a window close — that's the CI/smoke path.
 `Application` owns the `AssetManager` (`GetAssetManager()`), the render `Context`, and the
 `TaskSystem` (`GetTaskSystem()`), and threads them explicitly into each other (per-worker

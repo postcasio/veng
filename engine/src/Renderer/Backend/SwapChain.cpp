@@ -292,11 +292,6 @@ namespace Veng::Renderer
 
     SwapChain::~SwapChain()
     {
-        Dispose();
-    }
-
-    void SwapChain::Dispose()
-    {
         // Safe to destroy directly: RenderExtentChanged (the only recreate path) is
         // always reached after a device WaitIdle, so no submit or present still holds
         // these semaphores.

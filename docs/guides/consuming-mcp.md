@@ -100,9 +100,9 @@ void OnUpdate(float delta) override
 }
 ```
 
-Member order matters: declare `m_McpHost` before `m_McpServer` (so it is destroyed last),
-and reset the server before the host in `OnDispose`. Dropping the `Unique<McpServer>` stops
-the listener thread and closes the socket.
+Member order matters: declare `m_McpHost` before `m_McpServer`, so the destructor frees the
+server before the host. Dropping the `Unique<McpServer>` stops the listener thread and closes
+the socket.
 
 `McpServerInfo` fields:
 

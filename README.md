@@ -90,7 +90,15 @@ protected:
     void OnInitialize() override { /* load assets, build your scene */ }
     void OnUpdate(f32 delta) override { /* advance game state */ }
     void OnRender() override { /* render your scene */ }
-    void OnDispose() override { /* release your resources */ }
+
+    // A shutdown operation that must run while the app is still alive (not a
+    // resource release) goes here; Run calls it before teardown. Most apps
+    // need none — resources are members, freed by ~MyApp.
+    void OnShutdown() override { /* optional: flush state, checkpoint, ... */ }
+
+private:
+    // Your engine resources are members here; the destructor frees them, in
+    // reverse declaration order, before the engine's own members tear down.
 };
 
 // The launcher calls this once to discover your application.

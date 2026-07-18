@@ -183,7 +183,7 @@ namespace Veng
         m_Context.AddSwapChainInvalidationCallback(
             [this]
             {
-                DisposeResources();
+                ReleaseResources();
                 CreateResources();
             });
     }
@@ -335,7 +335,7 @@ namespace Veng
         ImNodes::DestroyContext();
         ImGui::DestroyContext();
 
-        DisposeResources();
+        ReleaseResources();
         m_DescriptorPool.reset();
     }
 
@@ -360,7 +360,7 @@ namespace Veng
                                                    });
     }
 
-    void ImGuiLayer::DisposeResources()
+    void ImGuiLayer::ReleaseResources()
     {
         m_ImageView.reset();
         m_Image.reset();

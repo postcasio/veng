@@ -115,7 +115,7 @@ namespace Veng
         void CreateResources();
 
         /// @brief Releases the descriptor pool and offscreen image.
-        void DisposeResources();
+        void ReleaseResources();
 
         /// @brief Deferred texture removal: a descriptor set freed while command buffers that
         ///        reference it are still in flight; the free runs after the retire window elapses.

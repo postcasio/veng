@@ -161,7 +161,5 @@ namespace Veng::Renderer
         /// @brief Re-queries device surface support and resolves the format/color space
         ///        for the requested mode into the member state.
         void ResolveSurfaceFormat();
-
-        void Dispose();
     };
 }

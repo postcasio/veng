@@ -24,8 +24,8 @@ namespace Veng
     /// level's ordered system set (Scene::GetSimulation / TickSimulation). Pending is the world
     /// spawn's residency batch (its recipe-built meshes streaming in). The app ticks the scene's
     /// simulation and renders the scene, optionally waiting on Pending before a deterministic
-    /// capture; it drops the Scene in OnDispose like any other engine resource. The Scene outlives
-    /// nothing it was built from except the TypeRegistry, which must outlive it.
+    /// capture; it drops the Scene by destroying this member like any other engine resource. The
+    /// Scene outlives nothing it was built from except the TypeRegistry, which must outlive it.
     struct LevelInstance
     {
         /// @brief The runtime ECS world the level spawned its world prefab into, with its
