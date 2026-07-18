@@ -30,6 +30,30 @@ namespace Veng::Gui
             return PointerButton::Primary;
         }
 
+        // Maps a GLFW modifier bitfield to the Gui modifier vocabulary. The bits are GLFW's own
+        // (SHIFT/CONTROL/ALT/SUPER), the same field the ImGui sink reads.
+        InputModifiers ToInputModifiers(i32 mods)
+        {
+            InputModifiers result = InputModifiers::None;
+            if ((mods & 0x0001) != 0)
+            {
+                result = result | InputModifiers::Shift;
+            }
+            if ((mods & 0x0002) != 0)
+            {
+                result = result | InputModifiers::Control;
+            }
+            if ((mods & 0x0004) != 0)
+            {
+                result = result | InputModifiers::Alt;
+            }
+            if ((mods & 0x0008) != 0)
+            {
+                result = result | InputModifiers::Meta;
+            }
+            return result;
+        }
+
         // Maps a navigation key to its NavAction, or nullopt when the key is not a navigation key.
         optional<NavAction> ToNavAction(Key key, bool shift)
         {
@@ -140,15 +164,17 @@ namespace Veng::Gui
                 }
                 else if (type == EventType::MouseButtonPressed)
                 {
+                    const auto& pressed = static_cast<const MouseButtonPressedEvent&>(event);
                     pointer.Kind = PointerEventKind::Down;
-                    pointer.Button = ToPointerButton(
-                        static_cast<const MouseButtonPressedEvent&>(event).GetButton());
+                    pointer.Button = ToPointerButton(pressed.GetButton());
+                    pointer.Modifiers = ToInputModifiers(pressed.GetMods());
                 }
                 else
                 {
+                    const auto& released = static_cast<const MouseButtonReleasedEvent&>(event);
                     pointer.Kind = PointerEventKind::Up;
-                    pointer.Button = ToPointerButton(
-                        static_cast<const MouseButtonReleasedEvent&>(event).GetButton());
+                    pointer.Button = ToPointerButton(released.GetButton());
+                    pointer.Modifiers = ToInputModifiers(released.GetMods());
                 }
 
                 const std::span<Gui::Document* const> documents = viewport->GetAttachedDocuments();
@@ -215,7 +241,8 @@ namespace Veng::Gui
             }
 
             const i32 mods = static_cast<const KeyPressedEvent&>(event).GetMods();
-            const bool shift = (mods & 0x0001) != 0;
+            const InputModifiers modifiers = ToInputModifiers(mods);
+            const bool shift = HasModifier(modifiers, InputModifiers::Shift);
             const optional<NavAction> action = ToNavAction(code, shift);
             if (!action)
             {
@@ -227,7 +254,7 @@ namespace Veng::Gui
                 for (auto it = documents.rbegin(); it != documents.rend(); ++it)
                 {
                     Gui::Document* document = *it;
-                    if (document->IsInteractive() && document->Navigate(*action))
+                    if (document->IsInteractive() && document->Navigate(*action, modifiers))
                     {
                         return true;
                     }

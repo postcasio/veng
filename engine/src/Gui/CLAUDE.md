@@ -35,7 +35,7 @@ TTF/OTF; the runtime decodes nothing and shapes crisp text at any scale from the
 
 `AssetType::StyleSheet` (`Veng/Gui/StyleSheet.h`) is a reusable cooked stylesheet — **resolved**
 rules (type/class/id selectors matched at cook time) plus their
-`:hover`/`:active`/`:focus`/`:disabled`/`:checked` state variants, colors resolved sRGB→linear, and
+`:hover`/`:active`/`:focus`/`:disabled`/`:checked`/`:selected` state variants, colors resolved sRGB→linear, and
 a **gradient table** (each `background-gradient` baked at cook time to a shape + box-space geometry
 — linear endpoints `P0`/`P1`, elliptical radial radii, conic center + turn — plus an N×1 ramp LUT
 the instantiate resolve uploads through the borrowed AssetManager). At draw the gradient geometry
@@ -191,7 +191,8 @@ the edit position while it holds focus, so a bound `{value}` is visible with no 
 element. It is a **text-measured leaf** like `Text` and `Button`: it takes its intrinsic size from
 the run it paints and holds **one line box open while empty**, so a field sizes itself with no
 authored `min-height` and never clips the value it draws), `ScrollView` (a clipped, scrollable region), `List` (a data-bound repeater —
-its authored children are an item template cloned once per element of a bound array), and `Table`
+its authored children are an item template cloned once per element of a bound array, and with a
+`selection` attribute a selectable list view; see below), and `Table`
 (a column-aligning row container: each direct child is a row, and the k-th in-flow cell of every
 row widens to the column's widest cell via a measured min-width between the Solve's two layout
 passes; a flex-grow cell is an elastic filler that absorbs row slack instead of becoming a column,
@@ -199,8 +200,40 @@ right-anchoring the columns after it; with an `items` binding it repeats its row
 as a List does). A numeric Table column pairs with the `text-align` Text style property
 (`left`/`center`/`right`, a paint-only glyph alignment inside the solved box). Each is an
 `ElementKind` the cooker recognizes and the widget layer gives behavior; a control's literal config
-attributes (`min`/`max`/`step`/`value`/`checked`) are read at `Instantiate` and its `{value}`
+attributes (`min`/`max`/`step`/`value`/`checked`/`orientation`/`selection`) are read at `Instantiate` and its `{value}`
 binding is one-way (the model drives the widget without firing `onChange`).
+
+**An item host selects over item slots, not over elements.** A `List` — and a `Table` — takes a
+`selection` attribute (`single` / `multiple` / `extended`, absent = unselectable, the default and the
+status quo) that makes it a **list view**: a selectable container whose unit of selection is one
+**item slot**, the whole authored item subtree an array element instantiates. So an item may contain
+any elements at all — a row of `Text` + `Image` + `Button` is one selectable unit, exactly as a bare
+`Text` item is — and nothing about selection is text-shaped. The three modes are distinct input
+grammars, not degrees of one: **`single`** keeps exactly one item and replaces it on each activation;
+**`multiple`** toggles one item per activation with **no chord**, which is what a gamepad or touch
+surface has; **`extended`** is the desktop convention — a plain click replaces, `Control` (or `Meta`)
+toggles, `Shift` extends a contiguous range from the **anchor**, which a range extend deliberately
+leaves standing so a run of Shift-clicks re-extends from one origin rather than walking it forward.
+
+Selection is **state, style, and geometry through the paths that already exist**. An item slot's
+elements carry the `ElementState::Selected` bit, so `:selected` is a cooked style variant folded by
+the same `Update` pass as `:hover` — there is no selection-specific paint path. A selectable host's
+item roots become **focus stops**, so directional navigation walks the items and `ScrollIntoView`
+reveals the focused one inside a `ScrollView` ancestor; `Single` and an unmodified `Extended` move
+carry the selection with focus, `Control` detaches focus from it, and `Confirm` applies the chord
+before the item's own activation, so an item template rooted at a `Button` both selects its row and
+fires its `onClick`. The chord itself reaches the document as `Gui::InputModifiers` on
+`PointerEvent` and as `Navigate`'s second argument, mapped once at the input seam.
+
+**The selection is over the bound array, so it survives a re-sync.** `Document::GetSelectedItems`
+returns **array indices**, not elements — the indices a game indexes its own model with — and a
+`SyncList` that grows or shrinks the items re-clamps the set and re-projects the state bits rather
+than losing it. The user-driven path fires the host's `onSelectionChanged`; the programmatic setters
+(`SetSelectedItems` / `SelectItem` / `ClearSelection`) are **one-way** like a `{value}` binding, so a
+game writing its model's selection back each frame never re-enters its own handler.
+`Document::GetItemIndex(element)` closes the loop the composite item opens: a handler that receives
+the `Button` from row 3 can ask which row raised it, which a repeater whose items are arbitrary
+subtrees otherwise cannot answer. It resolves on any `List`/`Table` descendant, selectable or not.
 
 **`List` is the runtime-varying repeater; `count` is the fixed authored pool.** `count="N"` on a
 markup element is a **cook-time** unroll — it replicates the element's subtree N times with

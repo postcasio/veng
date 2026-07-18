@@ -1,0 +1,10 @@
+<Panel class="screen" stylesheets="0x9EF58640F59CF646">
+  <List id="tracks" class="track-list" items="{playlist.tracks}" selection="extended"
+        onSelectionChanged="TracksSelected">
+    <Panel class="row">
+      <Text class="title" text="{title}"/>
+      <Image class="art" src="0x4DE87D318251BC1E"/>
+      <Button class="remove" onClick="RemoveTrack">Remove</Button>
+    </Panel>
+  </List>
+</Panel>

@@ -1,0 +1,26 @@
+/* A selectable track list: the row is a composite item (text + art + a button), and `:selected`
+   scopes the row's fill the way `:hover` scopes any other element's. */
+
+.screen {
+    width: 100%;
+    height: 100%;
+}
+
+.track-list {
+    flex-direction: column;
+}
+
+.row {
+    flex-direction: row;
+    height: 32px;
+    background: #202020ff;
+}
+
+.row:hover {
+    background: #303030ff;
+}
+
+.row:selected {
+    background: #2266ccff;
+    color: #ffffffff;
+}

@@ -9,6 +9,8 @@
 #include <Veng/Gui/StyleSheet.h>
 #include <Veng/Reflection/TypeId.h>
 
+#include <span>
+
 namespace Veng
 {
     class AssetManager;
@@ -369,9 +371,10 @@ namespace Veng::Gui
         /// `onClick` whether clicked or confirmed); Cancel fires the focused element's `onCancel`
         /// handler if present. Directional moves pick the nearest focusable in the pressed direction
         /// by laid-out geometry; Next/Previous walk tree order.
-        /// @param action  The navigation action to apply.
+        /// @param action     The navigation action to apply.
+        /// @param modifiers  The modifier keys held, read by a selectable item host's selection model.
         /// @return True when the action moved focus or fired a handler.
-        bool Navigate(NavAction action);
+        bool Navigate(NavAction action, InputModifiers modifiers = InputModifiers::None);
 
         /// @brief Delivers a typed Unicode codepoint to the focused element.
         ///
@@ -503,6 +506,107 @@ namespace Veng::Gui
         /// @param delta    The scroll delta, in pixels (positive scrolls content up/left).
         void ScrollBy(Element& element, vec2 delta);
 
+        /// @brief Scrolls the nearest ScrollView ancestor so an element's box is fully in view.
+        ///
+        /// Adjusts the ancestor's scroll offset by the smallest delta that brings the element's
+        /// laid-out rect inside the view's own rect, on both axes; an element already in view is a
+        /// no-op, as is an element with no ScrollView ancestor. This runs against the last Solve's
+        /// rects, so an item created this frame scrolls into view on the next one.
+        /// @param element  The element to reveal.
+        void ScrollIntoView(const Element& element);
+
+        /// @brief Sets an item host's selection mode, re-applying item focusability.
+        ///
+        /// The imperative sibling of the markup `selection="…"` attribute. Switching a host to None
+        /// clears its selection (firing `onSelectionChanged` when it was non-empty); switching to
+        /// Single truncates a multi-item selection to its first item. A no-op on an element that is
+        /// not an item host.
+        /// @param host  The item host (a List, or a Table repeating a bound array).
+        /// @param mode  The new selection mode.
+        void SetSelectionMode(Element& host, SelectionMode mode);
+
+        /// @brief Returns an item host's selection mode (None on any non-host element).
+        /// @param host  The element to query.
+        /// @return The mode the host selects under.
+        [[nodiscard]] SelectionMode GetSelectionMode(const Element& host) const
+        {
+            return host.Widget.Selection;
+        }
+
+        /// @brief Returns an item host's selected slot indices, ascending.
+        ///
+        /// A slot index addresses the bound array element the item was instantiated from, so it is
+        /// the index a game indexes its own model with. The span is valid until the next selection
+        /// change or list re-sync.
+        /// @param host  The item host to query.
+        /// @return The selected slot indices, ascending; empty when nothing is selected.
+        [[nodiscard]] std::span<const u32> GetSelectedItems(const Element& host) const
+        {
+            return host.Widget.SelectedItems;
+        }
+
+        /// @brief Returns whether an item host has a given slot index selected.
+        /// @param host   The item host to query.
+        /// @param index  The slot index to test.
+        /// @return True when the index is in the host's selection.
+        [[nodiscard]] bool IsItemSelected(const Element& host, u32 index) const;
+
+        /// @brief Replaces an item host's selection with a set of slot indices.
+        ///
+        /// The programmatic path a game drives its own model through: the indices are sorted,
+        /// de-duplicated, clamped to the host's item count, and truncated to one item under
+        /// SelectionMode::Single. Like a `{value}` binding this is **one-way** — it does not fire
+        /// `onSelectionChanged`, so writing the model's selection back each frame never re-enters
+        /// the game's own handler.
+        /// @param host     The item host whose selection to replace.
+        /// @param indices  The slot indices to select.
+        void SetSelectedItems(Element& host, std::span<const u32> indices);
+
+        /// @brief Adds or removes one slot index from an item host's selection.
+        ///
+        /// Selecting under SelectionMode::Single replaces the whole selection. Like
+        /// SetSelectedItems this is one-way and fires no `onSelectionChanged`.
+        /// @param host      The item host whose selection to change.
+        /// @param index     The slot index to add or remove.
+        /// @param selected  True to select the index, false to deselect it.
+        void SelectItem(Element& host, u32 index, bool selected);
+
+        /// @brief Clears an item host's selection, firing no `onSelectionChanged`.
+        /// @param host  The item host to clear.
+        void ClearSelection(Element& host);
+
+        /// @brief Returns the slot index of the item subtree an element belongs to.
+        ///
+        /// Walks up to the nearest item host and reports which of its slots the element sits in —
+        /// what a handler on a control *inside* an item template needs, since an item may hold any
+        /// elements and a `onClick` on a button in row 3 otherwise cannot say it was row 3.
+        /// @param element  The element to locate; may be the item root or any descendant of it.
+        /// @return The slot index, or nullopt when the element is not inside an item host.
+        [[nodiscard]] optional<u32> GetItemIndex(const Element& element) const;
+
+        /// @brief Returns the item host an element sits inside, or nullptr when it sits in none.
+        /// @param element  The element to locate.
+        /// @return The nearest ancestor item host, or nullptr.
+        [[nodiscard]] Element* GetItemHost(const Element& element) const;
+
+        /// @brief Returns an item host's number of item slots.
+        ///
+        /// One slot per bound array element for a synced host; one per direct child for a List with
+        /// no `items` binding, whose authored children are its items.
+        /// @param host  The item host to measure.
+        /// @return The slot count, or zero on a non-host element.
+        [[nodiscard]] u32 GetItemCount(const Element& host) const;
+
+        /// @brief Returns the first element of an item host's slot, or nullptr when out of range.
+        ///
+        /// A slot holds one clone of each of the host's template roots, so this returns the first
+        /// of them — the slot's focus stop. The Selected state bit is set on every element of the
+        /// slot, so a multi-root item paints as one selected unit.
+        /// @param host   The item host to index.
+        /// @param index  The slot index.
+        /// @return The slot's first item element, or nullptr.
+        [[nodiscard]] Element* GetItemElement(const Element& host, u32 index) const;
+
         /// @brief Initializes a control's widget state from its authored config and kind.
         ///
         /// Reads the control's config attributes off its Bindings map — a Slider's `min`/`max`/
@@ -578,6 +682,37 @@ namespace Veng::Gui
 
         /// @brief Resolves a List item subtree's bindings against one array element's fields.
         void ResolveItemBindings(Element& element, void* itemBase, TypeId itemType);
+
+        /// @brief Returns how many elements one item slot of a host holds (its template root count).
+        [[nodiscard]] u32 ItemStride(const Element& host) const;
+
+        /// @brief Applies a user activation of one item slot under the host's selection mode.
+        ///
+        /// The one place the mode's meaning lives: Single replaces, Multiple toggles, Extended
+        /// replaces / toggles on Control-or-Meta / range-extends from the anchor on Shift. Refreshes
+        /// the Selected state bits and fires `onSelectionChanged` when the selection actually moved.
+        /// @return True when the host consumed the activation (i.e. it is selectable).
+        bool ActivateItem(Element& host, u32 index, InputModifiers modifiers);
+
+        /// @brief Writes a host's new selection, refreshing state bits and optionally notifying.
+        ///
+        /// The single write path behind every selection change: it sorts and de-duplicates the
+        /// indices, drops any past the host's item count, truncates under Single, projects the
+        /// result onto the item elements' Selected bits, and — when notify is set and the set
+        /// actually changed — fires the host's `onSelectionChanged` handler.
+        void WriteSelection(Element& host, vector<u32> indices, bool notify);
+
+        /// @brief Re-projects a host's selection onto its item elements' Selected state bits.
+        void RefreshItemSelectionStates(Element& host);
+
+        /// @brief Marks a selectable host's item roots focusable, and an unselectable host's not.
+        void ApplyItemFocusability(Element& host);
+
+        /// @brief Applies the selection consequence of focus landing on an item, if any.
+        ///
+        /// Single moves the selection with focus and Extended extends its range while Shift is
+        /// held; every other mode leaves the selection alone and only the focus moves.
+        void FocusItem(Element& item, InputModifiers modifiers);
 
         /// @brief Shapes one run through an explicit font and returns its pixel extent.
         ///
@@ -695,7 +830,7 @@ namespace Veng::Gui
         };
 
         /// @brief Per-List detached item templates, keyed by the List element.
-        map<Element*, ListTemplate> m_ListTemplates;
+        map<const Element*, ListTemplate> m_ListTemplates;
 
         /// @brief The element a pointer press landed on, awaiting a release to complete a click.
         Element* m_PressTarget = nullptr;

@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "0x4DE87D318251BC1E",
+      "type": "Texture",
+      "source": "textures/texture.tex.json"
+    },
+    {
+      "id": "0x9EF58640F59CF646",
+      "type": "StyleSheet",
+      "source": "gui/list.vuss"
+    },
+    {
+      "id": "0xFA23CAC896AC45A8",
+      "type": "UIDocument",
+      "source": "gui/list.vui.xml"
+    }
+  ]
+}

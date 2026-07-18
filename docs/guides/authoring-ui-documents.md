@@ -68,7 +68,7 @@ Mint the id with `vengc generate-id` — never hand-invent one.
 ## 2. Author the stylesheet
 
 A `*.vuss` is a USS-like subset: **type**, **class** (`.name`), and **id** (`#name`)
-selectors, plus pseudo-states (`:hover`/`:active`/`:focus`/`:disabled`/`:checked`). No
+selectors, plus pseudo-states (`:hover`/`:active`/`:focus`/`:disabled`/`:checked`/`:selected`). No
 full-CSS specificity cascade, no floats — the cooker matches selectors offline and emits
 each element's resolved style plus its state variants, so the runtime never runs a
 selector engine.
@@ -249,7 +249,8 @@ class/id tags, inline `style`, `{obj.field}` **bindings**, and `on*` **handlers*
 The widget set: `Panel` (flex box), `Text`, `Image`, `Button` (`onClick`), `Checkbox`
 (`value`/`checked`/`onChange`), `Slider` (`min`/`max`/`step`/`value`/`onChange`),
 `ProgressBar` (`value`), `TextInput` (`value`/`onChange`), `ScrollView`, `List` (a
-data-bound repeater whose single child is the item template), and `Table` (a
+data-bound repeater whose single child is the item template, and with `selection` a
+selectable list view — see below), and `Table` (a
 column-aligning row container — see below). Register the document in the pack as type
 `UIDocument`; its font and stylesheet resolve as ordinary cook/load dependencies.
 
@@ -289,6 +290,78 @@ by hand — lighting up the active tick, filling the charged slots — use `coun
 ids: `Document::FindAllByClass("tick")` returns every element carrying the class in tree order,
 so the game resolves the whole pool once and drives it by index. `hello-triangle`'s HUD authors
 its numbered tick strip this way.
+
+### A selectable list view: `selection` and `:selected`
+
+Give a `<List>` (or a `<Table>` repeating an array) a `selection` attribute and it becomes a
+**list view** — a container the player picks items out of:
+
+```xml
+<List id="tracks" items="{Playlist.Tracks}" selection="extended"
+      onSelectionChanged="TracksPicked">
+  <Panel class="row">                            <!-- the item: a whole subtree -->
+    <Image class="art" src="0x…"/>
+    <Text class="title" text="{Title}"/>
+    <Button class="remove" onClick="RemoveTrack">Remove</Button>
+  </Panel>
+</List>
+```
+
+```css
+.row          { flex-direction: row; height: 32px; background: #202020; }
+.row:hover    { background: #303030; }
+.row:selected { background: #2266cc; color: #ffffff; }
+```
+
+**The unit of selection is the item, not a line of text.** An item is the whole authored
+template subtree, so the row above — art, title, and a per-row button — is one selectable
+thing, and `:selected` scopes its style exactly the way `:hover` scopes any other element's.
+Clicking anywhere inside the row selects the row.
+
+Pick the mode by the input device the screen is for:
+
+| `selection` | A plain activation | Chords |
+| --- | --- | --- |
+| absent | nothing — a display repeater (the default) | — |
+| `single` | replaces the one selected item | — |
+| `multiple` | **toggles** that item | — (built for gamepad/touch, where there is no chord) |
+| `extended` | replaces the selection | `Control`/`Meta` toggles one, `Shift` extends a range from the anchor |
+
+A selectable list's items are **focus stops**, so arrow keys and a d-pad walk them, a focused
+item inside a `<ScrollView>` scrolls itself into view, and confirm applies the mode's meaning.
+Under `single` and an unmodified `extended` move the selection travels with focus; `Control` +
+arrow moves focus alone so the player can reach an item and then toggle it.
+
+Read the result back by **array index**, which is what the game already indexes its model with:
+
+```cpp
+for (const u32 index : document.GetSelectedItems(*document.FindById("tracks")))
+{
+    playlist.Tracks[index].Queued = true;
+}
+```
+
+`GetSelectedItems` survives a re-sync — grow or shrink the bound array and the selection still
+names the same rows, minus any the shrink removed. `SetSelectedItems` / `SelectItem` /
+`ClearSelection` drive it from the model and deliberately fire **no** `onSelectionChanged`, so
+pushing the model's selection into the document each frame never re-enters your own handler.
+
+For the per-row button above, the handler receives the `Button` — ask the document which row it
+came from:
+
+```cpp
+context.SetHandler("RemoveTrack", [&](Gui::Element& button)
+{
+    if (const optional<u32> row = document.GetItemIndex(button))
+    {
+        playlist.Tracks.erase(playlist.Tracks.begin() + *row);
+        context.Invalidate();
+    }
+});
+```
+
+`GetItemIndex` works on any descendant of a `List`/`Table`, selectable or not — it is how a
+control inside an item template says which item it belongs to.
 
 ### `Table` — column-aligned rows
 

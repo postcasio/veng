@@ -891,6 +891,10 @@ namespace Veng::Gui
 
         m_Yoga->Destroy(element);
 
+        // Drop any item template the element held: the map is keyed by element address, so a
+        // stale entry would be re-adopted by whichever element the allocator next puts there.
+        m_ListTemplates.erase(&element);
+
         const auto it = std::ranges::find_if(m_Elements, [&](const Unique<Element>& owned)
                                              { return owned.get() == &element; });
         if (it != m_Elements.end())
@@ -1651,6 +1655,33 @@ namespace Veng::Gui
         // Whether an element kind is a focusable, interactive control — the widget layer sets
         // Element::Focusable on these so directional/Tab navigation and Confirm reach them, and a
         // plain Panel/Text/Image stays a non-stop.
+        // Whether an element's direct children are addressable item slots — the containers a
+        // selection can be defined over. Both repeat an authored template when they carry an
+        // `items` binding and hold hand-authored children when they do not; either way each slot
+        // is a whole item subtree, so an item may contain any elements at all.
+        bool IsSelectionHost(ElementKind kind)
+        {
+            return kind == ElementKind::List || kind == ElementKind::Table;
+        }
+
+        // Maps a markup `selection` attribute value to its mode; an unrecognized value is None.
+        SelectionMode ParseSelectionMode(string_view value)
+        {
+            if (value == "single")
+            {
+                return SelectionMode::Single;
+            }
+            if (value == "multiple")
+            {
+                return SelectionMode::Multiple;
+            }
+            if (value == "extended")
+            {
+                return SelectionMode::Extended;
+            }
+            return SelectionMode::None;
+        }
+
         bool IsFocusableWidget(ElementKind kind)
         {
             switch (kind)
@@ -1803,6 +1834,13 @@ namespace Veng::Gui
         else if (element.Kind == ElementKind::TextInput)
         {
             element.Widget.Caret = static_cast<u32>(DecodeUtf8(element.Text).size());
+        }
+        else if (IsSelectionHost(element.Kind))
+        {
+            const auto selection = element.Bindings.find("selection");
+            element.Widget.Selection = selection == element.Bindings.end()
+                                           ? SelectionMode::None
+                                           : ParseSelectionMode(selection->second);
         }
     }
 
@@ -2789,6 +2827,16 @@ namespace Veng::Gui
             }
         }
 
+        // The selection indexes the bound array, so it survives a re-sync — but a shrink drops the
+        // items it named and every item element was rebuilt, so it is re-clamped and its state bits
+        // re-projected here. A re-sync is model-driven rather than a user act, so it notifies no
+        // handler: the game already knows its own array changed.
+        ApplyItemFocusability(list);
+        if (list.Widget.Selection != SelectionMode::None)
+        {
+            WriteSelection(list, list.Widget.SelectedItems, false);
+        }
+
         // Resolve each item's per-item bindings against its array element.
         for (usize i = 0; i < count && perItem != 0; ++i)
         {
@@ -2925,6 +2973,291 @@ namespace Veng::Gui
         }
     }
 
+    Element* Document::GetItemHost(const Element& element) const
+    {
+        for (Element* e = element.Parent; e != nullptr; e = e->Parent)
+        {
+            if (IsSelectionHost(e->Kind))
+            {
+                return e;
+            }
+        }
+        return nullptr;
+    }
+
+    u32 Document::ItemStride(const Element& host) const
+    {
+        // A host repeating a bound array instantiates one clone of each template root per array
+        // element, so a slot is that many children wide; a host with no template holds its
+        // authored children one per slot.
+        const auto it = m_ListTemplates.find(&host);
+        if (it == m_ListTemplates.end() || it->second.Roots.empty())
+        {
+            return 1;
+        }
+        return static_cast<u32>(it->second.Roots.size());
+    }
+
+    u32 Document::GetItemCount(const Element& host) const
+    {
+        if (!IsSelectionHost(host.Kind))
+        {
+            return 0;
+        }
+        return static_cast<u32>(host.Children.size()) / ItemStride(host);
+    }
+
+    Element* Document::GetItemElement(const Element& host, const u32 index) const
+    {
+        if (!IsSelectionHost(host.Kind))
+        {
+            return nullptr;
+        }
+        const usize slot = static_cast<usize>(index) * ItemStride(host);
+        return slot < host.Children.size() ? host.Children[slot] : nullptr;
+    }
+
+    optional<u32> Document::GetItemIndex(const Element& element) const
+    {
+        const Element* const host = GetItemHost(element);
+        if (host == nullptr)
+        {
+            return std::nullopt;
+        }
+
+        // Walk back down to the host's own child on the path — the item root the element sits
+        // under, whatever depth inside the item template it was found at.
+        const Element* item = &element;
+        while (item->Parent != host)
+        {
+            item = item->Parent;
+        }
+        const auto it = std::ranges::find(host->Children, item);
+        if (it == host->Children.end())
+        {
+            return std::nullopt;
+        }
+        return static_cast<u32>(it - host->Children.begin()) / ItemStride(*host);
+    }
+
+    bool Document::IsItemSelected(const Element& host, const u32 index) const
+    {
+        return std::ranges::binary_search(host.Widget.SelectedItems, index);
+    }
+
+    void Document::RefreshItemSelectionStates(Element& host)
+    {
+        const u32 stride = ItemStride(host);
+        for (usize slot = 0; slot < host.Children.size(); ++slot)
+        {
+            // Every element of a slot carries the bit, so a multi-root item paints as one
+            // selected unit rather than only its first root.
+            Element& item = *host.Children[slot];
+            const bool selected = IsItemSelected(host, static_cast<u32>(slot / stride));
+            SetState(item, WithBit(item.State, ElementState::Selected, selected));
+        }
+    }
+
+    void Document::ApplyItemFocusability(Element& host)
+    {
+        const bool selectable = host.Widget.Selection != SelectionMode::None;
+        const u32 stride = ItemStride(host);
+        for (usize slot = 0; slot < host.Children.size(); ++slot)
+        {
+            // One focus stop per item, on the slot's first element. An item root that is itself a
+            // focusable control keeps its own focusability when the host is not selectable, so
+            // turning selection off never demotes a Button item to unfocusable.
+            Element& item = *host.Children[slot];
+            item.Focusable = (selectable && slot % stride == 0) || IsFocusableWidget(item.Kind);
+        }
+    }
+
+    void Document::WriteSelection(Element& host, vector<u32> indices, const bool notify)
+    {
+        const u32 count = GetItemCount(host);
+        std::erase_if(indices, [count](const u32 index) { return index >= count; });
+        std::ranges::sort(indices);
+        const auto duplicates = std::ranges::unique(indices);
+        indices.erase(duplicates.begin(), duplicates.end());
+        if (host.Widget.Selection == SelectionMode::Single && indices.size() > 1)
+        {
+            indices.resize(1);
+        }
+
+        const bool changed = indices != host.Widget.SelectedItems;
+        host.Widget.SelectedItems = std::move(indices);
+        RefreshItemSelectionStates(host);
+        if (changed && notify)
+        {
+            static_cast<void>(FireHandler(host, "onSelectionChanged"));
+        }
+    }
+
+    bool Document::ActivateItem(Element& host, const u32 index, const InputModifiers modifiers)
+    {
+        const SelectionMode mode = host.Widget.Selection;
+        if (mode == SelectionMode::None || index >= GetItemCount(host))
+        {
+            return false;
+        }
+
+        const bool toggle =
+            mode == SelectionMode::Multiple ||
+            (mode == SelectionMode::Extended && (HasModifier(modifiers, InputModifiers::Control) ||
+                                                 HasModifier(modifiers, InputModifiers::Meta)));
+        const bool extend = mode == SelectionMode::Extended &&
+                            HasModifier(modifiers, InputModifiers::Shift) &&
+                            host.Widget.HasSelectionAnchor;
+
+        vector<u32> next;
+        if (extend)
+        {
+            // A range grows from the standing anchor, which therefore does not move — so a run of
+            // Shift-clicks re-extends from the same origin rather than walking it forward.
+            const u32 from = std::min(host.Widget.SelectionAnchor, index);
+            const u32 to = std::max(host.Widget.SelectionAnchor, index);
+            for (u32 i = from; i <= to; ++i)
+            {
+                next.push_back(i);
+            }
+        }
+        else
+        {
+            if (toggle)
+            {
+                next = host.Widget.SelectedItems;
+                if (const auto it = std::ranges::find(next, index); it != next.end())
+                {
+                    next.erase(it);
+                }
+                else
+                {
+                    next.push_back(index);
+                }
+            }
+            else
+            {
+                next.push_back(index);
+            }
+            host.Widget.SelectionAnchor = index;
+            host.Widget.HasSelectionAnchor = true;
+        }
+
+        WriteSelection(host, std::move(next), true);
+        return true;
+    }
+
+    void Document::FocusItem(Element& item, const InputModifiers modifiers)
+    {
+        Element* const host = GetItemHost(item);
+        if (host == nullptr || host->Widget.Selection == SelectionMode::None)
+        {
+            return;
+        }
+        const optional<u32> index = GetItemIndex(item);
+        if (!index)
+        {
+            return;
+        }
+
+        // Single-select follows focus, and so does an unmodified Extended move — arrowing through
+        // the list carries the selection with it. Control (or Meta) held moves focus alone, which
+        // is what lets a user travel to an item and then toggle it; Multiple always moves focus
+        // alone, since with no chord available its activation is the toggle.
+        const SelectionMode mode = host->Widget.Selection;
+        const bool detached = HasModifier(modifiers, InputModifiers::Control) ||
+                              HasModifier(modifiers, InputModifiers::Meta);
+        if (mode == SelectionMode::Single || (mode == SelectionMode::Extended && !detached))
+        {
+            static_cast<void>(ActivateItem(*host, *index, modifiers & InputModifiers::Shift));
+        }
+    }
+
+    void Document::SetSelectionMode(Element& host, const SelectionMode mode)
+    {
+        if (!IsSelectionHost(host.Kind) || host.Widget.Selection == mode)
+        {
+            return;
+        }
+        host.Widget.Selection = mode;
+        ApplyItemFocusability(host);
+
+        // Narrowing the mode narrows what the standing selection may hold: None clears it and
+        // Single keeps its first item. WriteSelection applies the truncation and re-projects the
+        // state bits either way.
+        vector<u32> retained =
+            mode == SelectionMode::None ? vector<u32>{} : host.Widget.SelectedItems;
+        WriteSelection(host, std::move(retained), true);
+    }
+
+    void Document::SetSelectedItems(Element& host, const std::span<const u32> indices)
+    {
+        if (!IsSelectionHost(host.Kind))
+        {
+            return;
+        }
+        WriteSelection(host, vector<u32>(indices.begin(), indices.end()), false);
+    }
+
+    void Document::SelectItem(Element& host, const u32 index, const bool selected)
+    {
+        if (!IsSelectionHost(host.Kind))
+        {
+            return;
+        }
+
+        vector<u32> next;
+        if (!selected)
+        {
+            next = host.Widget.SelectedItems;
+            std::erase(next, index);
+        }
+        else if (host.Widget.Selection == SelectionMode::Single)
+        {
+            next.push_back(index);
+        }
+        else
+        {
+            next = host.Widget.SelectedItems;
+            next.push_back(index);
+        }
+        WriteSelection(host, std::move(next), false);
+    }
+
+    void Document::ClearSelection(Element& host)
+    {
+        if (IsSelectionHost(host.Kind))
+        {
+            WriteSelection(host, {}, false);
+        }
+    }
+
+    void Document::ScrollIntoView(const Element& element)
+    {
+        Element* view = nullptr;
+        for (Element* e = element.Parent; e != nullptr; e = e->Parent)
+        {
+            if (e->Kind == ElementKind::ScrollView)
+            {
+                view = e;
+                break;
+            }
+        }
+        if (view == nullptr)
+        {
+            return;
+        }
+
+        // Layout rects already carry the view's scroll offset, so the shortfall past each edge is
+        // exactly the delta to add. Pulling the near edge in wins when the element is taller than
+        // the view and overflows both, which is the edge a reader reads from.
+        const vec2 under = element.Layout.Min - view->Layout.Min;
+        const vec2 over = element.Layout.Max() - view->Layout.Max();
+        const auto axis = [](const f32 nearEdge, const f32 farEdge)
+        { return nearEdge < 0.0f ? nearEdge : std::max(farEdge, 0.0f); };
+        ScrollBy(*view, vec2(axis(under.x, over.x), axis(under.y, over.y)));
+    }
+
     bool Document::FireHandler(Element& element, string_view event)
     {
         if (m_Context == nullptr)
@@ -3044,6 +3377,22 @@ namespace Veng::Gui
             }
             // A press on a Slider sets its value from where the pointer landed.
             static_cast<void>(DriveWidgetPointer(*pressTarget, event));
+
+            // A press anywhere inside a selectable host's item focuses the item root, so the
+            // keyboard picks up where the pointer left off. The hit target is usually a leaf deep
+            // inside the item template, and pointer capture stays with whatever claimed it above —
+            // a ScrollView still pans — because focus and capture are separate.
+            if (Element* const host = GetItemHost(*target);
+                host != nullptr && host->Widget.Selection != SelectionMode::None)
+            {
+                if (const optional<u32> index = GetItemIndex(*target))
+                {
+                    if (Element* const item = GetItemElement(*host, *index))
+                    {
+                        SetFocus(item);
+                    }
+                }
+            }
         }
 
         // A drag over a captured Slider/ScrollView updates its value/offset before the routing below.
@@ -3073,8 +3422,21 @@ namespace Veng::Gui
                 PointerEvent click{.Kind = PointerEventKind::Click,
                                    .Button = event.Button,
                                    .Position = event.Position,
+                                   .Modifiers = event.Modifiers,
                                    .Target = target};
                 RoutePointerPath(click);
+
+                // A click inside a selectable host's item applies the selection chord before the
+                // item's own activation below, so a Button inside an item both selects its row and
+                // fires its onClick.
+                if (Element* const host = GetItemHost(*target);
+                    host != nullptr && event.Button == PointerButton::Primary)
+                {
+                    if (const optional<u32> index = GetItemIndex(*target))
+                    {
+                        static_cast<void>(ActivateItem(*host, *index, event.Modifiers));
+                    }
+                }
                 // A Checkbox click toggles its bound value (which fires onChange); every other kind
                 // fires onClick. A completed click is consumed whether or not a handler was
                 // registered — the press was already claimed by this document on the Down.
@@ -3136,7 +3498,7 @@ namespace Veng::Gui
         return false;
     }
 
-    bool Document::Navigate(NavAction action)
+    bool Document::Navigate(NavAction action, InputModifiers modifiers)
     {
         if (!m_Interactive)
         {
@@ -3149,6 +3511,18 @@ namespace Veng::Gui
             {
                 return false;
             }
+            // A Confirm on a selectable host's item applies the selection chord, then falls
+            // through to the item's own activation — so an item template rooted at a Button both
+            // selects its row and fires its onClick, and a gamepad toggles a Multiple list with
+            // no chord to press.
+            bool selected = false;
+            if (Element* const host = GetItemHost(*m_Focused); host != nullptr)
+            {
+                if (const optional<u32> index = GetItemIndex(*m_Focused))
+                {
+                    selected = ActivateItem(*host, *index, modifiers);
+                }
+            }
             // A Checkbox Confirm toggles its bound value the same way a click does — one path.
             if (m_Focused->Kind == ElementKind::Checkbox)
             {
@@ -3159,7 +3533,7 @@ namespace Veng::Gui
             SetState(*m_Focused, WithBit(m_Focused->State, ElementState::Active, true));
             const bool fired = FireHandler(*m_Focused, "onClick");
             SetState(*m_Focused, WithBit(m_Focused->State, ElementState::Active, false));
-            return fired;
+            return fired || selected;
         }
         if (action == NavAction::Cancel)
         {
@@ -3184,10 +3558,22 @@ namespace Veng::Gui
             return false;
         }
 
+        // Every focus move runs the same tail: an item that takes focus applies its host's
+        // follow-focus selection rule, and a focused element inside a ScrollView is revealed.
+        const auto moveFocusTo = [&](Element* element)
+        {
+            SetFocus(element);
+            if (m_Focused != nullptr)
+            {
+                FocusItem(*m_Focused, modifiers);
+                ScrollIntoView(*m_Focused);
+            }
+        };
+
         // With nothing focused, any navigation lands on the first focusable.
         if (m_Focused == nullptr)
         {
-            SetFocus(focusables.front());
+            moveFocusTo(focusables.front());
             return true;
         }
 
@@ -3198,7 +3584,7 @@ namespace Veng::Gui
             const usize count = focusables.size();
             const usize next =
                 action == NavAction::Next ? (index + 1) % count : (index + count - 1) % count;
-            SetFocus(focusables[next]);
+            moveFocusTo(focusables[next]);
             return true;
         }
 
@@ -3260,7 +3646,7 @@ namespace Veng::Gui
         {
             return false;
         }
-        SetFocus(best);
+        moveFocusTo(best);
         return true;
     }
 
