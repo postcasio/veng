@@ -15,7 +15,11 @@
 //       leaks out into focus navigation;
 //   (d) Delete forward-deletes and Home/End jump the caret;
 //   (e) the precedence rule both ways — an arrow moves the caret while a field is focused, and
-//       still moves focus when a non-text element holds it.
+//       still moves focus when a non-text element holds it;
+//   (f) holding a key repeats the edit — the platform's auto-repeat arrives as KeyRepeatEvent and
+//       drives the same deletion/caret step, so a held Backspace empties the field and a held arrow
+//       walks the caret;
+//   (g) a repeat drives editing only — it never walks focus, which is a discrete step.
 
 #include <doctest/doctest.h>
 
@@ -64,6 +68,14 @@ namespace
         void Press(Key key)
         {
             KeyPressedEvent event(key, 0, 0);
+            Router.Dispatch(event);
+        }
+
+        // One tick of the platform's auto-repeat on a key already held, the way the window's GLFW
+        // key callback shapes a GLFW_REPEAT: a KeyRepeatEvent through the same router.
+        void Repeat(Key key)
+        {
+            KeyRepeatEvent event(key, 0, 0);
             Router.Dispatch(event);
         }
 
@@ -246,4 +258,127 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     route.Press(Key::Left);
     CHECK(document.GetFocused() == &field);
     CHECK(field.Widget.Caret == 1);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "gui editing keys: a held Backspace repeats the deletion")
+{
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(path(TEST_SHADER_PACK)).has_value());
+
+    KeyRoute route(Context, assets);
+    Gui::Document document;
+    Gui::Element& field = AttachFocusedField(route, document, "Hello\xc3\xa9");
+    CHECK(field.Widget.Caret == 6);
+
+    // The physical press deletes the first codepoint, exactly as before.
+    route.Press(Key::Backspace);
+    CHECK(field.Text == "Hello");
+    CHECK(field.Widget.Caret == 5);
+
+    // The key stays down, so the platform repeats it. Each repeat must delete another codepoint —
+    // the whole point of holding Backspace — rather than requiring a fresh press per character.
+    route.Repeat(Key::Backspace);
+    CHECK(field.Text == "Hell");
+    CHECK(field.Widget.Caret == 4);
+
+    route.Repeat(Key::Backspace);
+    route.Repeat(Key::Backspace);
+    route.Repeat(Key::Backspace);
+    CHECK(field.Text == "H");
+    CHECK(field.Widget.Caret == 1);
+
+    route.Repeat(Key::Backspace);
+    CHECK(field.Text.empty());
+    CHECK(field.Widget.Caret == 0);
+
+    // An empty field's repeat deletes nothing, and holding past the start is not an error.
+    route.Repeat(Key::Backspace);
+    CHECK(field.Text.empty());
+    CHECK(field.Widget.Caret == 0);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "gui editing keys: a held arrow walks the caret")
+{
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(path(TEST_SHADER_PACK)).has_value());
+
+    KeyRoute route(Context, assets);
+    Gui::Document document;
+    Gui::Element& field = AttachFocusedField(route, document, "Hi\xc3\xa9!");
+    CHECK(field.Widget.Caret == 4);
+
+    // Hold Left: the press steps once, then every repeat steps one more codepoint — the multi-byte
+    // glyph included — until the caret clamps at the start.
+    route.Press(Key::Left);
+    CHECK(field.Widget.Caret == 3);
+    route.Repeat(Key::Left);
+    CHECK(field.Widget.Caret == 2);
+    route.Repeat(Key::Left);
+    CHECK(field.Widget.Caret == 1);
+    route.Repeat(Key::Left);
+    CHECK(field.Widget.Caret == 0);
+
+    // Clamped, still claimed by the field: a held arrow that runs off the end does not leak into
+    // focus navigation.
+    route.Repeat(Key::Left);
+    CHECK(field.Widget.Caret == 0);
+    CHECK(document.GetFocused() == &field);
+
+    // The same holds the other way.
+    route.Press(Key::Right);
+    route.Repeat(Key::Right);
+    route.Repeat(Key::Right);
+    CHECK(field.Widget.Caret == 3);
+    CHECK(document.GetFocused() == &field);
+
+    // Delete repeats too: held forward-delete eats the rest of the value.
+    route.Press(Key::Home);
+    route.Press(Key::Delete);
+    route.Repeat(Key::Delete);
+    route.Repeat(Key::Delete);
+    CHECK(field.Text == "!");
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "gui editing keys: a repeat never walks focus")
+{
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(path(TEST_SHADER_PACK)).has_value());
+
+    KeyRoute route(Context, assets);
+    Gui::Document document;
+    InstallMeasurer(document);
+    document.SetInteractive(true);
+
+    // Three buttons in a row, the leftmost focused. Focus navigation is a discrete step, so holding
+    // an arrow must not skate through them the way a held arrow walks a caret.
+    Gui::Element& left = document.Add(document.Root(), Gui::ElementKind::Button);
+    Gui::Element& middle = document.Add(document.Root(), Gui::ElementKind::Button);
+    Gui::Element& right = document.Add(document.Root(), Gui::ElementKind::Button);
+    document.InitWidget(left);
+    document.InitWidget(middle);
+    document.InitWidget(right);
+    left.Layout = Gui::Rect{.Min = {0.0f, 0.0f}, .Size = {40.0f, 20.0f}};
+    middle.Layout = Gui::Rect{.Min = {60.0f, 0.0f}, .Size = {40.0f, 20.0f}};
+    right.Layout = Gui::Rect{.Min = {120.0f, 0.0f}, .Size = {40.0f, 20.0f}};
+    document.SetFocus(&left);
+    route.View->AttachDocument(document);
+
+    // The press moves focus one step, as it always has.
+    route.Press(Key::Right);
+    CHECK(document.GetFocused() == &middle);
+
+    // Holding it does not carry focus onward.
+    route.Repeat(Key::Right);
+    route.Repeat(Key::Right);
+    route.Repeat(Key::Right);
+    CHECK(document.GetFocused() == &middle);
+
+    // Nor do the other navigation keys repeat: Tab, Enter and Escape are discrete choices.
+    route.Repeat(Key::Tab);
+    route.Repeat(Key::Tab);
+    CHECK(document.GetFocused() == &middle);
+
+    // A fresh press still steps, so nothing about the discrete route was lost.
+    route.Press(Key::Right);
+    CHECK(document.GetFocused() == &right);
 }

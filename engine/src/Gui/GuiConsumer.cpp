@@ -173,15 +173,24 @@ namespace Veng::Gui
         // An editing key is offered to the focused text field first, then a navigation key drives
         // focus in the interactive documents of the cursor seat's viewports; text input reaches the
         // focused element's onText handler.
-        if (type == EventType::KeyPressed)
+        //
+        // A platform auto-repeat takes the editing route and only the editing route. Repetition is
+        // meaningful where an action has a per-press increment to accumulate — a caret step, a
+        // codepoint deletion — so holding the key walks or erases the way every text field on the
+        // machine does. Focus navigation is a discrete choice of which element is focused, so a held
+        // key must not skate through the focus order; a repeat therefore stops here and never
+        // reaches the navigation route.
+        if (type == EventType::KeyPressed || type == EventType::KeyRepeat)
         {
-            const auto& key = static_cast<const KeyPressedEvent&>(event);
+            const bool repeat = type == EventType::KeyRepeat;
+            const Key code = repeat ? static_cast<const KeyRepeatEvent&>(event).GetKey()
+                                    : static_cast<const KeyPressedEvent&>(event).GetKey();
 
             // A focused text field owns the editing keys: Backspace and Delete edit around its
             // caret, Left/Right/Home/End move it. Left and Right are also focus-navigation keys, so
             // this offer comes first and the field claims them while it holds focus; only when no
             // field is focused does the arrow fall through to the navigation route below.
-            if (const optional<TextEditAction> edit = ToTextEditAction(key.GetKey()))
+            if (const optional<TextEditAction> edit = ToTextEditAction(code))
             {
                 for (Renderer::Viewport* viewport : m_Viewports)
                 {
@@ -198,8 +207,16 @@ namespace Veng::Gui
                 }
             }
 
-            const bool shift = (key.GetMods() & 0x0001) != 0;
-            const optional<NavAction> action = ToNavAction(key.GetKey(), shift);
+            // Navigation is a discrete step, so a repeat that no field claimed ends here rather
+            // than walking focus for as long as the key is held.
+            if (repeat)
+            {
+                return false;
+            }
+
+            const i32 mods = static_cast<const KeyPressedEvent&>(event).GetMods();
+            const bool shift = (mods & 0x0001) != 0;
+            const optional<NavAction> action = ToNavAction(code, shift);
             if (!action)
             {
                 return false;

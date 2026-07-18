@@ -34,6 +34,13 @@ namespace Veng::Gui
     /// split-screen a seat's menu owns only that seat's devices — the consumer routes a pointer to a
     /// viewport only when the viewport's inherited seat is the one the pointer belongs to this frame.
     ///
+    /// A key press routes to the focused text field's editing actions first and to focus navigation
+    /// second. A **key repeat** — the platform's auto-repeat of a key still held — takes the editing
+    /// route and only the editing route: a caret step or a codepoint deletion has a per-press
+    /// increment worth accumulating, so a held key walks or erases the way any text field does,
+    /// while focus navigation is a discrete choice of element and never repeats. A repeat no field
+    /// claims falls through unconsumed.
+    ///
     /// The consumer borrows the router, the input snapshot, the window, and the viewport drive-list
     /// it walks (the Application-owned, registration-ordered list that self-cleans on a viewport's
     /// destruction). All four must outlive the consumer.
