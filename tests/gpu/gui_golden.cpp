@@ -6,6 +6,10 @@
 //
 // Set VENG_GUI_GOLDEN_DUMP=<path.ppm> to write the capture instead of comparing — the way the
 // golden is (re)generated: dump, sips the PPM to tests/golden/gui_overlay.png, commit.
+//
+// The same font fixture backs one non-rendering case here: a TextInput built with a resident font
+// emits its own value as a glyph run, which needs a real atlas and so cannot live in the
+// device-free widget suite.
 
 #include <array>
 #include <cstdlib>
@@ -237,6 +241,63 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(bottom.r < 60);
     CHECK(middle.r > 40);
     CHECK(middle.b > 40);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "gui text input: a TextInput emits its own value as a glyph run")
+{
+    // The one case here that needs a resident font but no render: the device-free widget suite can
+    // pin a TextInput's caret geometry, but a glyph run needs a real atlas, so the proof that the
+    // field paints its own value — with no companion Text element in the tree — lives with the font
+    // fixture.
+    const path fixtureDir = path(GPU_COOKER_FIXTURE_DIR);
+    const path packJson = fixtureDir / "font_pack.json";
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_gui_text_input.vengpack";
+
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    REQUIRE(cooker.CookPack(packJson, outArchive).has_value());
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(outArchive).has_value());
+
+    const AssetResult<AssetHandle<Font>> fontHandle = assets.LoadSync<Font>(FontId);
+    REQUIRE(fontHandle.has_value());
+
+    Gui::Document document;
+    document.SetInteractive(true);
+    Gui::Element& root = document.Root();
+    root.Layout = Gui::Rect{.Min = {0.0f, 0.0f}, .Size = {200.0f, 200.0f}};
+
+    Gui::Element& field = document.Add(root, Gui::ElementKind::TextInput);
+    field.Layout = Gui::Rect{.Min = {10.0f, 10.0f}, .Size = {160.0f, 28.0f}};
+    // Both styles: the base is what a state change (focus) re-resolves the computed style from.
+    field.BaseStyle.TextFont = *fontHandle;
+    field.BaseStyle.TextSize = 20.0f;
+    field.ComputedStyle = field.BaseStyle;
+    document.SetText(field, "AVA");
+    document.InitWidget(field);
+
+    Gui::DrawList painted;
+    document.Build(painted);
+
+    // The field is a leaf — nothing else in the tree could have drawn the value.
+    CHECK(field.Children.empty());
+    CHECK(root.Children.size() == 1);
+    const auto glyphRuns =
+        std::ranges::count_if(painted.GetRuns(), [](const Gui::DrawRun& run)
+                              { return run.Pipeline == Gui::GuiPipeline::Msdf; });
+    CHECK(glyphRuns == 1);
+
+    // Typing through the document's own text path grows the run it paints.
+    const usize before = painted.GetVertices().size();
+    document.SetFocus(&field);
+    CHECK(document.DispatchText('V'));
+    CHECK(field.Text == "AVAV");
+
+    Gui::DrawList retyped;
+    document.Build(retyped);
+    CHECK(retyped.GetVertices().size() > before);
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,

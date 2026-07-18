@@ -168,7 +168,10 @@ flex box), `Text` (a shaped MSDF leaf), `Image` (a textured box — a `src` text
 path; the `Image` widget has no 9-slice or texture-intrinsic sizing), `Button` (`onClick`),
 `Checkbox` (`value`/`checked`/`onChange`, driving the `:checked` variant), `Slider`
 (`min`/`max`/`step`/`value`/`onChange`), `ProgressBar` (a `[0,1]` fill), `TextInput`
-(`value`/`onChange`), `ScrollView` (a clipped, scrollable region), `List` (a data-bound repeater —
+(`value`/`onChange` — it **paints its own value**: the run draws vertically centred in its content
+box in the style's `text-color`/`text-size`/font, clipped to the field's box, with a caret bar at
+the edit position while it holds focus, so a bound `{value}` is visible with no companion `Text`
+element), `ScrollView` (a clipped, scrollable region), `List` (a data-bound repeater —
 its authored children are an item template cloned once per element of a bound array), and `Table`
 (a column-aligning row container: each direct child is a row, and the k-th in-flow cell of every
 row widens to the column's widest cell via a measured min-width between the Solve's two layout

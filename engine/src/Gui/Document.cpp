@@ -1597,18 +1597,23 @@ namespace Veng::Gui
 
     vec2 Document::MeasureElementText(const Element& element, optional<f32> availableWidth) const
     {
+        return MeasureStyledText(element.Text, element.ComputedStyle, availableWidth);
+    }
+
+    vec2 Document::MeasureStyledText(string_view text, const Style& style,
+                                     const optional<f32> availableWidth) const
+    {
         if (m_Measurer)
         {
-            return m_Measurer(element.Text, element.ComputedStyle, availableWidth);
+            return m_Measurer(text, style, availableWidth);
         }
 
-        const Style& style = element.ComputedStyle;
-        if (!style.TextFont.IsLoaded() || element.Text.empty())
+        if (!style.TextFont.IsLoaded() || text.empty())
         {
             return vec2(0.0f);
         }
 
-        const vector<u32> codepoints = DecodeUtf8(element.Text);
+        const vector<u32> codepoints = DecodeUtf8(text);
         const ShapeResult shaped =
             style.TextFont.Get()->ShapeRun(codepoints, style.TextSize, availableWidth);
         return shaped.Size;
@@ -2211,16 +2216,18 @@ namespace Veng::Gui
             list.Quad(rect, border.Color, style.Radii, border);
         }
 
-        // A ScrollView always clips its content to its box (the overflow it scrolls through), whether
-        // or not the style requested it; every other kind clips only when styled to.
-        const bool clip = style.ClipContent || element.Kind == ElementKind::ScrollView;
+        // A ScrollView always clips its content to its box (the overflow it scrolls through), and a
+        // TextInput clips to its box so a value wider than the field stops at the frame instead of
+        // spilling across its neighbours; every other kind clips only when styled to.
+        const bool clip = style.ClipContent || element.Kind == ElementKind::ScrollView ||
+                          element.Kind == ElementKind::TextInput;
         if (clip)
         {
             list.PushClip(rect);
         }
 
-        // A control paints its own parts (a Slider's track and thumb, a ProgressBar's fill) between
-        // its background and its children.
+        // A control paints its own parts (a Slider's track and thumb, a ProgressBar's fill, a
+        // TextInput's value and caret) between its background and its children.
         BuildWidget(element, list, opacity);
 
         if (!element.Text.empty() && style.TextFont.IsLoaded() &&
@@ -2278,6 +2285,12 @@ namespace Veng::Gui
             return color;
         };
 
+        if (element.Kind == ElementKind::TextInput)
+        {
+            BuildTextInput(element, list, opacity);
+            return;
+        }
+
         if (element.Kind == ElementKind::ProgressBar)
         {
             // The fill is the [0,1] value across the bar's width, drawn in the text color over the
@@ -2330,6 +2343,59 @@ namespace Veng::Gui
                       style.Radii);
             return;
         }
+    }
+
+    namespace
+    {
+        /// @brief The painted width of a TextInput's caret bar, in pixels.
+        constexpr f32 CaretWidth = 1.0f;
+    }
+
+    void Document::BuildTextInput(const Element& element, DrawList& list, const f32 opacity) const
+    {
+        const Style& style = element.ComputedStyle;
+        const Rect& rect = element.Layout;
+
+        // The value draws inside the content box (past the border and padding) and rides the middle
+        // of it: a single-line field is sized by its style rather than by its text, so centering the
+        // line in whatever height the style gives keeps the run off the frame at any box height.
+        const f32 inset = style.BorderStyle.Width;
+        const vec2 contentMin =
+            rect.Min + vec2(inset + style.Padding.Left, inset + style.Padding.Top);
+        const f32 contentHeight =
+            rect.Size.y - 2.0f * inset - style.Padding.Top - style.Padding.Bottom;
+        const f32 line = style.TextSize;
+        const vec2 origin(contentMin.x, contentMin.y + std::max(contentHeight - line, 0.0f) * 0.5f);
+
+        if (!element.Text.empty() && style.TextFont.IsLoaded())
+        {
+            vec4 textColor = style.TextColor;
+            textColor.a *= opacity;
+            list.Text(origin, *style.TextFont.Get(), element.Text, style.TextSize, textColor);
+        }
+
+        // The caret marks the edit position while the field holds focus: a thin bar at the width of
+        // the value's prefix up to the caret's codepoint index. It is a plain quad, so an empty
+        // field still shows where the next codepoint lands.
+        if ((element.State & ElementState::Focused) == ElementState::None)
+        {
+            return;
+        }
+
+        const vector<u32> codepoints = DecodeUtf8(element.Text);
+        const u32 caret = std::min(element.Widget.Caret, static_cast<u32>(codepoints.size()));
+        string prefix;
+        for (u32 i = 0; i < caret; ++i)
+        {
+            AppendUtf8(prefix, codepoints[i]);
+        }
+
+        vec4 caretColor = style.TextColor;
+        caretColor.a *= opacity;
+        list.Quad(
+            Rect{.Min = vec2(origin.x + MeasureStyledText(prefix, style, std::nullopt).x, origin.y),
+                 .Size = vec2(CaretWidth, line)},
+            caretColor);
     }
 
     void Document::Build(DrawList& list) const
@@ -2502,7 +2568,9 @@ namespace Veng::Gui
             {
                 if (*resolved != element.Text)
                 {
-                    element.Widget.Caret = 0;
+                    // A model-driven value lands with the caret past its last codepoint, the same
+                    // place InitWidget puts it, so typing into a prefilled field appends.
+                    element.Widget.Caret = static_cast<u32>(DecodeUtf8(*resolved).size());
                     SetText(element, *resolved);
                 }
             }
