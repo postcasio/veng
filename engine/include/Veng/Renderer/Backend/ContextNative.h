@@ -199,7 +199,7 @@ namespace Veng::Renderer
         /// last referenced by the previously submitted frame's command buffer, so binning it
         /// against the frame about to record (a strictly later fence) is what keeps it alive
         /// long enough. Retirements outside any frame loop (init, post-WaitIdle) are caught by
-        /// the shutdown drain-all in DisposeResources/Dispose.
+        /// the shutdown drain-all in ~Context.
         struct RetireBin
         {
             vector<std::pair<vk::Buffer, VmaAllocation>> Buffers;

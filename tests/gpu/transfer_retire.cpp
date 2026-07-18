@@ -85,8 +85,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                   "teardown drains the transfer-retire list (upload-then-immediate-dispose)")
 {
     // No frame is ever rendered here: a buffer is released into the transfer
-    // list and the fixture's destructor (WaitIdle -> DisposeResources ->
-    // Dispose) must reclaim it without leaking or tripping the Disposed assert.
+    // list and ~Context (WaitIdle -> drain retire bins + transfer scratch) must
+    // reclaim it without leaking or tripping the Disposed assert.
     auto buffer = MakeScratch(Context);
     const auto released = ReleaseBuffer(*buffer);
     buffer.reset();

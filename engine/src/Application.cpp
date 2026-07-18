@@ -1153,7 +1153,7 @@ namespace Veng
         // deferred gap between the client level load and this start; the spawned scene's components
         // now hold those handles, so release the batch's redundant cache-entry refs. Keeping it would
         // pin every join-loaded GPU resource for the whole session and leave the last ref in this
-        // state — dropped only after Context::Dispose destroys the VMA allocator, tripping its leak
+        // state — dropped only after ~Context destroys the VMA allocator, tripping its leak
         // assert. The standalone path's batch is a local that dies here for the same reason.
         state.Pending = ResidencyBatch{};
 
@@ -1628,13 +1628,6 @@ namespace Veng
 
         // Workers must stop after the AssetManager: a live load worker holds Context& and AssetManager state.
         m_TaskSystem.reset();
-
-        m_RenderContext.DisposeResources();
-        m_RenderContext.Dispose();
-
-        // Input borrows the window, so drop it before the window it points at.
-        m_Input.reset();
-        m_Window.reset();
     }
 
     void Application::Frame()

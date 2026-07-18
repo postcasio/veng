@@ -19,10 +19,10 @@
 
 namespace Veng::Test
 {
-    // RAII headless Context: Initialize()s in the constructor (off-screen, no
-    // window) and runs the WaitIdle/DisposeResources/Dispose teardown sequence
-    // in the destructor. Construct this *after* checking HasVulkanDriver() —
-    // it has no skip path of its own.
+    // Headless Context convenience: Initialize()s in the constructor (off-screen,
+    // no window). Teardown is ~Context's own — dropping this wrapper destroys the
+    // held Context, which waits the device idle and releases everything. Construct
+    // this *after* checking HasVulkanDriver() — it has no skip path of its own.
     //
     // Context can't be copied or moved (it owns a Unique<Native>), so this
     // wrapper holds it by value and is itself non-movable/non-copyable.
@@ -40,13 +40,6 @@ namespace Veng::Test
                     .HeadlessExtent = extent,
                 },
                 nullptr);
-        }
-
-        ~GpuContext()
-        {
-            m_Context.WaitIdle();
-            m_Context.DisposeResources();
-            m_Context.Dispose();
         }
 
         GpuContext(const GpuContext&) = delete;

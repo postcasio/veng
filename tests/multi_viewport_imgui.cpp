@@ -444,13 +444,8 @@ int main()
         std::filesystem::remove(outArchive);
     }
 
-    // Teardown mirrors Application::Dispose: drain in-flight work, then release the
-    // ImGui layer and task system before the context disposes its resources.
-    context.WaitIdle();
-    imgui.reset();
-    tasks.reset();
-    context.DisposeResources();
-    context.Dispose();
-
+    // Teardown is by reverse declaration order (imgui, tasks, context, window), so
+    // the ImGui layer and task system release before ~Context; every submit here was
+    // synchronous, so the device is idle when the ImGui layer's backend shuts down.
     return g_Failures == 0 ? 0 : 1;
 }

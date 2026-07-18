@@ -86,7 +86,16 @@ namespace Veng::Renderer
     public:
         /// @brief Constructs a context; call Initialize to set up Vulkan.
         Context();
-        /// @brief Destructor; all GPU resources must be released before this runs.
+
+        /// @brief Destroys the context, running the full GPU teardown sequence.
+        ///
+        /// Waits the device idle, drains the deferred-destruction retire bins and the
+        /// transfer scratch, drops the bindless registry, tears down the transfer pools,
+        /// descriptor/command pools, swap chain, and allocator, persists the pipeline cache
+        /// when a path is configured, and destroys the device and instance.
+        /// Uninitialized-safe — a context that never completed Initialize() destroys as a
+        /// no-op — and terminal: every app-owned GPU resource must already be released, since
+        /// a resource retiring after teardown trips the Disposed assert.
         ~Context();
 
         /// @brief Initializes the Vulkan instance, device, and swap chain.
@@ -98,20 +107,14 @@ namespace Veng::Renderer
         /// @param window Borrowed window, or nullptr for headless.
         void Initialize(const ContextInfo& info, Window* window);
 
-        /// @brief Releases all GPU resources held by the context.
-        void DisposeResources();
-
-        /// @brief Tears down the Vulkan instance and device.
-        void Dispose();
-
         /// @brief Creates one transfer command pool per worker, indexed by worker index.
         ///
         /// VkCommandPool is single-thread, so a worker may only ever touch its own pool;
         /// storing the pools on the Context (not thread_local) ties their lifetime to the
         /// device for clean teardown. Called by Application after the TaskSystem is
         /// constructed and before any upload is submitted; a headless/test Context with no
-        /// TaskSystem simply has no transfer pools. The pools are torn down in Dispose(),
-        /// by which point every worker has been joined.
+        /// TaskSystem simply has no transfer pools. The pools are torn down by the
+        /// destructor, by which point every worker has been joined.
         /// @param taskSystem The application's task system.
         void InitializeTransferPools(TaskSystem& taskSystem);
 
@@ -388,7 +391,7 @@ namespace Veng::Renderer
 
         /// @brief Returns the global bindless descriptor registry (set 0).
         ///
-        /// Valid from the end of Initialize() until Dispose(). See BindlessRegistry.h.
+        /// Valid from the end of Initialize() until the context is destroyed. See BindlessRegistry.h.
         [[nodiscard]] BindlessRegistry& GetBindlessRegistry() const;
 
         /// @brief Returns the render-domain viewport identity registry.
@@ -419,6 +422,18 @@ namespace Veng::Renderer
         [[nodiscard]] Native& GetNative() const;
 
     private:
+        /// @brief Drains the retire bins and transfer scratch and releases the per-frame sync state.
+        ///
+        /// The first half of the destructor's teardown; runs with the device idle.
+        void ReleaseFrameResources();
+
+        /// @brief Tears down the device-scoped state and the device/instance themselves.
+        ///
+        /// Drops the bindless registry, drains once more and flips the Disposed tripwire, destroys
+        /// the transfer/descriptor/command pools, swap chain, and allocator, persists the pipeline
+        /// cache when a path is configured, then destroys the device, surface, and instance.
+        void DestroyDevice();
+
         /// @brief Borrowed from the application in Initialize(); never owned.
         Window* m_Window = nullptr;
 

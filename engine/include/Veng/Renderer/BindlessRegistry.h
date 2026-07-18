@@ -90,8 +90,8 @@ namespace Veng::Renderer
     /// @brief The global bindless descriptor set: set 0, reserved in every
     /// PipelineLayout so it can be bound once and never rebound for the rest of a pass.
     ///
-    /// Owned by Context — created during Initialize() and destroyed in Dispose() —
-    /// and reachable via Context::GetBindlessRegistry().
+    /// Owned by Context — created during Initialize() and destroyed when the context is
+    /// torn down — and reachable via Context::GetBindlessRegistry().
     ///
     /// Provides four arrayed, partiallyBound + updateAfterBind bindings (sampled
     /// images, samplers, storage images, byte-address storage buffers). Register() allocates a free-list slot,

@@ -44,7 +44,19 @@ namespace Veng::Renderer
 
     Context::Context() : m_Native(CreateUnique<Native>()) {}
 
-    Context::~Context() = default;
+    Context::~Context()
+    {
+        // Uninitialized-safe: a context that never completed Initialize has no
+        // device and nothing to tear down.
+        if (!m_Native->Device)
+        {
+            return;
+        }
+
+        WaitIdle();
+        ReleaseFrameResources();
+        DestroyDevice();
+    }
 
     Context::Native& Context::GetNative() const
     {
@@ -340,14 +352,14 @@ namespace Veng::Renderer
         }
     }
 
-    void Context::DisposeResources()
+    void Context::ReleaseFrameResources()
     {
         // Pending bindless acquires that never reached a frame retire into the
         // current bin; the drain below reclaims them while the device is alive.
         m_PendingBindlessAcquires.clear();
 
-        // GPU is idle (Application::Run already waited). Drain all retire bins
-        // before the sync frames and their command buffers go away.
+        // The device is idle (~Context waited). Drain all retire bins before the
+        // sync frames and their command buffers go away.
         m_Native->DrainAllRetireBins();
 
         // The transfer timeline may have upload scratch that was never reclaimed
@@ -359,9 +371,9 @@ namespace Veng::Renderer
         m_Native->SynchronizationFrames.clear();
     }
 
-    void Context::Dispose()
+    void Context::DestroyDevice()
     {
-        Log::Info("Disposing rendering context...");
+        Log::Info("Tearing down rendering context...");
 
         // Drop bindless first — its destructors retire handles into the bins,
         // which the drain below cleans up while the device is still alive.
