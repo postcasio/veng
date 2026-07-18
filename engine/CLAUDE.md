@@ -129,6 +129,30 @@ open seeds the managed viewport's topology + per-frame view from the spawned sce
 binds world #0 to managed viewport #0 (`SetViewportWorld`). Each `Frame` the runner ticks every
 world and `ManagedViewportSet::PushViews` pulls each viewport's camera and pushes it.
 
+**The boot session restore is opt-out, and the restore is consumer-triggerable.**
+`GameWorldInfo::RestoreLocalSessionOnBoot` (default `true`) has the bootstrap resume the local
+account's saved gameplay world once world #0 is bound — the continue-style posture, zero consumer
+code. Set `false` and the bootstrap runs no restore at all: world #0 (the startup level) stays
+presented and the consumer drives the identical path through the public
+**`Application::RestoreLocalSession()`**, once it has opened the store the record lives in. That is
+what a consumer whose front end owns the first travel wants (nothing races its own first world
+open), and what a player-less headless host — which has no local account to restore — sets. The
+restore is reversible: **`Application::ReleaseLocalSession()`** drops the pins it took and evicts
+the cached record, so one process can switch stores without relaunching. See
+[src/Net/CLAUDE.md](src/Net/CLAUDE.md) for the session-record model and the failure contract.
+
+**An application declares the command-line options it accepts.** The launch parser recognizes the
+engine's own flags and fatally rejects every other `--` token before `OnInitialize`, and `Run` is
+non-virtual and called from the SDK-owned launcher main — so `ApplicationInfo::LaunchOptions` is how
+an application takes an argument of its own. Each `LaunchOptionInfo { Name, TakesValue }` is
+consumed by the parser into the **`LaunchArguments::GameOptions`** map (`name → value`; a declared
+value-less option that appeared maps to an empty string, a declared option absent from the command
+line has no entry), read back through `GetLaunchArguments()`. The unknown-argument guard is intact:
+an *undeclared* `--flag` still errors, so a typo is caught rather than ignored. Engine flags are
+matched first, so a shared name resolves to the engine flag, and a declared option missing its value
+is a parse error with the engine flags' diagnostic shape. Declaring nothing leaves the grammar
+exactly as it was.
+
 **Worlds are flat peers addressed by `WorldInstanceId`.** There is no privileged primary world and
 no engine code path special-cases world #0 — it is privileged only in that bootstrap opens it
 first. Every world API is handle-keyed: `GetWorldRunner()` reaches the runner (a game opens further

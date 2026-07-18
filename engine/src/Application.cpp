@@ -440,12 +440,12 @@ namespace Veng
                                  /*heldWorlds=*/0);
         if (resolve.Outcome == WorldResolveOutcome::Denied)
         {
-            // The record is kept, not cleared: a bootstrap resolve failure is often transient (a
+            // The record is kept, not cleared: a standalone resolve failure is often transient (a
             // missing pack, a factory hiccup), and persisting a cleared record would destroy the
-            // standalone continue permanently on one bad boot. This run lands at the front door;
-            // the next boot retries the same record.
+            // continue permanently on one bad run. The currently presented world stays up and the
+            // next restore retries the same record.
             Log::Warn("standalone continue: the gameplay world did not resolve (reason {}); "
-                      "landing at the front door, record kept for the next boot",
+                      "leaving the current world presented, record kept for the next restore",
                       static_cast<u32>(resolve.Reason));
             return;
         }

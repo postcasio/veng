@@ -124,6 +124,16 @@ registry is untrusted and cleared the same way. Standalone reattach is the same 
 wire: `Application` consults the local account's record and resolves it through the
 local directory, so single-player continue and multiplayer reattach are one code path.
 
+The two paths **differ on failure, deliberately**. A hosted reattach *clears* the denied gameplay
+entry (`SessionRegistry::ClearGameplay`) — the connection is live, so the client is directed to its
+front door and the stale entry is not worth retrying. `Application::RestoreLocalSession` **keeps**
+the record: it logs the reason, leaves the currently presented world up (at bootstrap that is world
+#0, the startup level) and returns, so the next restore retries the same record. A standalone
+resolve failure is typically transient — an unmounted pack, a factory that has not been installed
+yet — and persisting a cleared record would destroy the continue permanently on one bad run. A
+denied *standing* entry is skipped individually and the remaining entries still resolve, on both
+paths.
+
 **When the standalone restore runs is the consumer's call.** `GameWorldInfo::RestoreLocalSessionOnBoot`
 (default `true`) runs it at bootstrap — the continue-style posture, zero game code. Set `false`, world
 #0 (the startup level) stays presented and the game drives the identical path itself through the public
