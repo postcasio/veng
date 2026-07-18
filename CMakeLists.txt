@@ -1089,6 +1089,14 @@ if (VENG_BUILD_TESTS)
             # the non-GPU durability operation the -L validation gate cannot see (it needs a Context
             # for the Application, so it rides the gpu band though it pins no pixels).
             tests/gpu/application_shutdown.cpp
+            # application_boot_restore.cpp drives a headless managed-world Application through Run()
+            # and pins the GameWorldInfo::RestoreLocalSessionOnBoot gate: cleared, the bootstrap runs
+            # no restore at all (world #0 stays presented, the record is never read), and the
+            # consumer's own RestoreLocalSession does the rebind instead; left at its default, the
+            # boot rebinds managed viewport 0 onto the recorded gameplay world. The branch lives in
+            # BootstrapWorld, so only a real Application reaches it (it needs a Context, so it rides
+            # the gpu band though it pins no pixels).
+            tests/gpu/application_boot_restore.cpp
             # managed_viewport_set.cpp drives a headless Application, binding managed viewports to
             # worlds by handle and asserting the multi-world camera pull, split-screen reconfigure,
             # closed-world cleared target, and set teardown order (it needs a Context for the

@@ -20,17 +20,11 @@
 
 #include <doctest/doctest.h>
 
-#include "support/TempPath.h"
-
-#include <fmt/format.h>
+#include "support/BootstrapFixture.h"
 
 #include <Veng/Application.h>
-#include <Veng/Asset/Archive.h>
-#include <Veng/Asset/CookedBlobs.h>
-#include <Veng/Asset/CookedProject.h>
 #include <Veng/Net/AccountId.h>
 #include <Veng/Net/WorldKey.h>
-#include <Veng/Reflection/Serialize.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Components.h>
@@ -40,60 +34,7 @@ using namespace Veng;
 
 namespace
 {
-    template <class T>
-    void PushPod(vector<u8>& out, const T& value)
-    {
-        const auto* p = reinterpret_cast<const u8*>(&value);
-        out.insert(out.end(), p, p + sizeof(value));
-    }
-
-    // Writes a minimal cooked world (an empty world prefab + a level referencing it, no systems) into
-    // a .vengpack, plus a .vengproj naming the pack and the startup level. Every path is absolute, so
-    // the bootstrap's ExecutableDirectory()-relative resolve (ExecutableDirectory() / absolute ==
-    // absolute) lands on these temp files. Returns the project path to feed ApplicationInfo::World.
-    path WriteBootstrapFixture(const TypeRegistry& types, const char* tag)
-    {
-        const AssetId prefabId{0x51D0000000000001ULL};
-        const AssetId levelId{0x51D0000000000002ULL};
-
-        vector<u8> prefab;
-        PushPod(prefab, CookedPrefabHeader{.Version = CookedPrefabVersion});
-
-        const GameModeConfig gameMode;
-        vector<u8> gameModeRecord;
-        WriteFields(gameModeRecord, &gameMode, types.Info(TypeIdOf<GameModeConfig>()), types);
-        const LevelRenderSettings renderSettings;
-        vector<u8> renderRecord;
-        WriteFields(renderRecord, &renderSettings, types.Info(TypeIdOf<LevelRenderSettings>()),
-                    types);
-
-        vector<u8> level;
-        PushPod(level, CookedLevelHeader{
-                           .Version = CookedLevelVersion,
-                           .WorldPrefabId = prefabId.Value,
-                           .SystemCount = 0,
-                           .GameModeRecordBytes = static_cast<u32>(gameModeRecord.size()),
-                           .RenderRecordBytes = static_cast<u32>(renderRecord.size()),
-                       });
-        level.insert(level.end(), gameModeRecord.begin(), gameModeRecord.end());
-        level.insert(level.end(), renderRecord.begin(), renderRecord.end());
-
-        ArchiveWriter writer;
-        writer.Add(prefabId, AssetType::Prefab, prefab);
-        writer.Add(levelId, AssetType::Level, level);
-
-        const path packPath =
-            TestSupport::TempDir() / fmt::format("veng_shutdown_{}.vengpack", tag);
-        REQUIRE(writer.Write(packPath).has_value());
-
-        CookedProject project;
-        project.StartupLevel = levelId;
-        project.PackMountNames = {packPath.string()};
-        const path projectPath =
-            TestSupport::TempDir() / fmt::format("veng_shutdown_{}.vengproj", tag);
-        REQUIRE(WriteCookedProject(projectPath, project).has_value());
-        return projectPath;
-    }
+    using TestSupport::WriteBootstrapFixture;
 
     // A headless managed-world Application whose OnShutdown, SaveSession hook, and a member probe each
     // append a marker to a shared log, so the log records the shutdown sequence in execution order.
