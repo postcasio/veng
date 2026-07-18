@@ -5398,6 +5398,231 @@ TEST_CASE("Standalone continue: the registry and directory restore a record with
     CHECK(warm.World == gameplay.World);
 }
 
+// ---- Boot-controlled restore -----------------------------------------------------------------
+
+namespace
+{
+    // The keys the boot-control cases name: a gameplay world and a standing data world per store.
+    const WorldKey StoreOneGameplay = WorldKey::FromU64(0x71);
+    const WorldKey StoreOneStanding = WorldKey::FromU64(0x72);
+    const WorldKey StoreTwoGameplay = WorldKey::FromU64(0x73);
+
+    // The standalone session drive, device-free: the SessionRegistry + WorldDirectory pair
+    // Application resolves the local account's record against, with the presented viewport binding
+    // and the standing-join local pins modelled as plain state. Restore and Release run the same
+    // orchestration as Application::RestoreLocalSession / ReleaseLocalSession, so the boot gate,
+    // the on-demand entry, and the release are exercisable with no device.
+    struct LocalSessionDrive
+    {
+        SessionRegistry& Sessions;
+        WorldDirectory& Directory;
+        AccountId Account;
+
+        // The world managed viewport 0 presents: the startup level's world #0 until a restore
+        // rebinds it onto the record's gameplay world.
+        WorldInstanceId Presented;
+        // The pose the last restore delivered back, empty when none did.
+        Blob RestoredPose;
+        // The standing memberships the restore holds, each under a local directory pin.
+        std::unordered_map<WorldKey, WorldInstanceId> StandingPins;
+
+        void Restore()
+        {
+            Sessions.EnsureLoaded(Account);
+            const optional<SessionRecord> record = Sessions.BeginReattach(Account);
+            if (!record.has_value())
+            {
+                return;
+            }
+            for (const WorldKey& key : record->StandingJoins)
+            {
+                const WorldResolveResult resolve = Directory.Resolve(
+                    JoinRequestInfo{.Account = Account, .Key = key, .Payload = Blob{}}, 0);
+                if (resolve.Outcome == WorldResolveOutcome::Denied)
+                {
+                    continue;
+                }
+                if (StandingPins.try_emplace(key, resolve.World).second)
+                {
+                    Directory.Pin(resolve.World, Account);
+                }
+            }
+            if (record->Gameplay.Key == WorldKey{})
+            {
+                return;
+            }
+            const WorldResolveResult resolve =
+                Directory.Resolve(JoinRequestInfo{.Account = Account,
+                                                  .Key = record->Gameplay.Key,
+                                                  .Payload = record->Gameplay.Params},
+                                  0);
+            if (resolve.Outcome == WorldResolveOutcome::Denied)
+            {
+                return;
+            }
+            Presented = resolve.World;
+            RestoredPose = record->Gameplay.Pose;
+        }
+
+        void Release(const f64 now)
+        {
+            for (const auto& [key, world] : StandingPins)
+            {
+                Directory.Unpin(world, now, Account);
+            }
+            StandingPins.clear();
+            Sessions.Evict(Account);
+        }
+    };
+}
+
+TEST_CASE("Boot-controlled restore: the opt-out holds world #0, and the on-demand restore lands "
+          "exactly where the boot path would have")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+
+    vector<Unique<Scene>> opened;
+    u64 nextWorld = 701;
+    std::unordered_map<u64, WorldKey> keyOfWorld;
+    Unique<WorldDirectory> directory = WorldDirectory::Create(WorldDirectoryInfo{
+        .WorldFactory = [&](const JoinRequestInfo&, const WorldKey& key,
+                            const Blob&) -> optional<ServerWorldResolution>
+        {
+            opened.push_back(Scene::Create(types));
+            const WorldInstanceId world{.Value = nextWorld++};
+            keyOfWorld.emplace(world.Value, key);
+            return ServerWorldResolution{
+                .WorldId = world, .World = opened.back().get(), .LevelId = LevelId};
+        },
+    });
+
+    const AccountId local{.Lo = 0xE1};
+    const Blob params{.Type = TypeIdOf<Transform>(), .Bytes = {7, 7}};
+    const Blob pose{.Type = TypeIdOf<Transform>(), .Bytes = {8, 8}};
+
+    // The store the record lives in: the LoadSession hook reads it on first admit, exactly as a
+    // consumer's save store does.
+    const SessionRecord persisted{
+        .Account = local,
+        .StandingJoins = {StoreOneStanding},
+        .Gameplay = SessionGameplayEntry{.Key = StoreOneGameplay, .Params = params, .Pose = pose}};
+    const vector<std::byte> blob = EncodeSessionRecord(persisted, types);
+    u32 loads = 0;
+    Unique<SessionRegistry> sessions = SessionRegistry::Create(SessionRegistryInfo{
+        .Types = &types,
+        .LoadSession = [&](const AccountId&) -> optional<vector<std::byte>>
+        {
+            ++loads;
+            return blob;
+        },
+    });
+
+    // World #0, the startup level, bound to managed viewport 0 by the bootstrap.
+    const WorldInstanceId startupWorld{.Value = 700};
+    LocalSessionDrive drive{.Sessions = *sessions,
+                            .Directory = *directory,
+                            .Account = local,
+                            .Presented = startupWorld};
+
+    // RestoreLocalSessionOnBoot false: the bootstrap runs no restore, so it performs no gameplay
+    // rebind at all — the record is not even read, world #0 stays presented, nothing is pinned.
+    CHECK(drive.Presented == startupWorld);
+    CHECK(drive.StandingPins.empty());
+    CHECK(loads == 0);
+    CHECK(sessions->Find(local) == nullptr);
+
+    // The on-demand entry, once the game has opened the store its record lives in: the identical
+    // path the boot restore runs — the standing world warms under a local pin, the gameplay world
+    // resolves with its recorded params, and the recorded pose comes back.
+    drive.Restore();
+    CHECK(loads == 1);
+    REQUIRE(drive.Presented != startupWorld);
+    REQUIRE(drive.StandingPins.size() == 1);
+    const WorldInstanceId gameplayWorld = drive.Presented;
+    const WorldInstanceId standingWorld = drive.StandingPins.at(StoreOneStanding);
+    CHECK(keyOfWorld.at(gameplayWorld.Value) == StoreOneGameplay);
+    CHECK(keyOfWorld.at(standingWorld.Value) == StoreOneStanding);
+    CHECK(drive.RestoredPose == pose);
+    CHECK(directory->PresenceOf(standingWorld) == 1);
+    CHECK(directory->MembersOf(StoreOneStanding) == vector<AccountId>{local});
+}
+
+TEST_CASE("Boot-controlled restore: release then restore against a swapped store rebinds the "
+          "second world and leaks no pin from the first")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+
+    vector<Unique<Scene>> opened;
+    u64 nextWorld = 801;
+    std::unordered_map<u64, WorldKey> keyOfWorld;
+    Unique<WorldDirectory> directory = WorldDirectory::Create(WorldDirectoryInfo{
+        .WorldFactory = [&](const JoinRequestInfo&, const WorldKey& key,
+                            const Blob&) -> optional<ServerWorldResolution>
+        {
+            opened.push_back(Scene::Create(types));
+            const WorldInstanceId world{.Value = nextWorld++};
+            keyOfWorld.emplace(world.Value, key);
+            return ServerWorldResolution{
+                .WorldId = world, .World = opened.back().get(), .LevelId = LevelId};
+        },
+    });
+
+    const AccountId local{.Lo = 0xE2};
+    const Blob poseOne{.Type = TypeIdOf<Transform>(), .Bytes = {1}};
+    const Blob poseTwo{.Type = TypeIdOf<Transform>(), .Bytes = {2}};
+
+    const SessionRecord recordOne{
+        .Account = local,
+        .StandingJoins = {StoreOneStanding},
+        .Gameplay = SessionGameplayEntry{.Key = StoreOneGameplay, .Pose = poseOne}};
+    const SessionRecord recordTwo{
+        .Account = local,
+        .Gameplay = SessionGameplayEntry{.Key = StoreTwoGameplay, .Pose = poseTwo}};
+
+    // The open store the LoadSession hook reads: swapped between the two restores, which is exactly
+    // what the eviction has to make visible — the registry caches a record on first load and would
+    // otherwise resolve the second restore against the first store's.
+    vector<std::byte> openStore = EncodeSessionRecord(recordOne, types);
+    Unique<SessionRegistry> sessions = SessionRegistry::Create(SessionRegistryInfo{
+        .Types = &types,
+        .LoadSession = [&](const AccountId&) -> optional<vector<std::byte>> { return openStore; },
+    });
+
+    const WorldInstanceId startupWorld{.Value = 800};
+    LocalSessionDrive drive{.Sessions = *sessions,
+                            .Directory = *directory,
+                            .Account = local,
+                            .Presented = startupWorld};
+
+    drive.Restore();
+    REQUIRE(drive.StandingPins.size() == 1);
+    const WorldInstanceId firstGameplay = drive.Presented;
+    const WorldInstanceId firstStanding = drive.StandingPins.at(StoreOneStanding);
+    CHECK(keyOfWorld.at(firstGameplay.Value) == StoreOneGameplay);
+    CHECK(directory->PresenceOf(firstStanding) == 1);
+
+    // Leaving the save: the local pins drop and the cached record is evicted, so nothing from the
+    // first store survives into the next one.
+    drive.Release(/*now=*/10.0);
+    CHECK(drive.StandingPins.empty());
+    CHECK(directory->PresenceOf(firstStanding) == 0);
+    CHECK(directory->MembersOf(StoreOneStanding).empty());
+    CHECK(sessions->Find(local) == nullptr);
+    CHECK(sessions->Count() == 0);
+
+    // The next save opens; the restore reloads through LoadSession and lands in the second store's
+    // gameplay world with its own pose, holding no standing membership the first store recorded.
+    openStore = EncodeSessionRecord(recordTwo, types);
+    drive.Restore();
+    REQUIRE(drive.Presented != firstGameplay);
+    CHECK(keyOfWorld.at(drive.Presented.Value) == StoreTwoGameplay);
+    CHECK(drive.RestoredPose == poseTwo);
+    CHECK(drive.StandingPins.empty());
+    CHECK(directory->PresenceOf(firstStanding) == 0);
+}
+
 // ---- The game message channel ----------------------------------------------------------------
 
 namespace

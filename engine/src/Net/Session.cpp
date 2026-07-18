@@ -238,6 +238,32 @@ namespace Veng::Net
         }
     }
 
+    void SessionRegistry::Evict(const AccountId& account)
+    {
+        State::Entry* entry = m_State->FindEntry(account);
+        if (entry == nullptr)
+        {
+            return;
+        }
+        if (entry->Dirty)
+        {
+            m_State->SaveEntry(*entry);
+        }
+        m_State->Records.erase(account);
+    }
+
+    void SessionRegistry::Clear()
+    {
+        for (auto& [account, entry] : m_State->Records)
+        {
+            if (entry.Dirty)
+            {
+                m_State->SaveEntry(entry);
+            }
+        }
+        m_State->Records.clear();
+    }
+
     void SessionRegistry::SaveAll()
     {
         for (auto& [account, entry] : m_State->Records)

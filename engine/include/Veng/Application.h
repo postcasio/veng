@@ -80,6 +80,16 @@ namespace Veng
         /// monotonic tick number, decoupling simulation from the frame rate; the View phase and render
         /// still run per frame, interpolating between the last two ticks. Must be positive.
         u32 SimTickRate = 60;
+        /// @brief Whether the bootstrap restores the local account's session once world #0 is bound.
+        ///
+        /// True (the default) is the continue-style posture: the bootstrap consults the local
+        /// account's session record and, when it carries a gameplay world, present-on-ready rebinds
+        /// managed viewport 0 onto it — a saved sitting resumes with no game code. False suppresses
+        /// that entirely: world #0 (the startup level) stays presented and the game decides when to
+        /// restore, calling Application::RestoreLocalSession itself once it has opened the store the
+        /// record lives in — the posture a front-end that owns the first travel, or a player-less
+        /// dedicated host with no local account, wants. The restore path is identical either way.
+        bool RestoreLocalSessionOnBoot = true;
     };
 
     /// @brief Opt-in networking knobs for the engine-managed world; activation is a launch decision.
@@ -751,6 +761,35 @@ namespace Veng
         /// @param key  The warm-held world to release.
         void ReleaseWorldWarm(const Net::WorldKey& key);
 
+        /// @brief Restores the local account's session — the standalone continue, on demand.
+        ///
+        /// The same registry a reconnect reattaches through, with no wire: consults the local
+        /// account's record (loading it through the LoadSession hook) and resolves its entries
+        /// against the local directory — a standing join warms its world under a local pin, the
+        /// gameplay entry present-on-ready rebinds managed viewport 0 and delivers the recorded
+        /// pose. A denied gameplay resolve keeps the record and leaves the current world presented,
+        /// so the process lands at its front door and the next attempt retries the same record. A
+        /// no-op without a record or a local account.
+        ///
+        /// The bootstrap calls this itself unless GameWorldInfo::RestoreLocalSessionOnBoot is
+        /// false; a game that opted out calls it once the store its record lives in is open. Pair a
+        /// restore with ReleaseLocalSession before opening a different store, so the next restore
+        /// resolves against that store's record rather than the cached one.
+        void RestoreLocalSession();
+
+        /// @brief Tears down the restored local session, so a later restore reloads from scratch.
+        ///
+        /// The inverse of RestoreLocalSession: drops every standing-join local pin the restore took
+        /// (the worlds' dwells then own their fate once no other presence remains) and evicts the
+        /// local account's cached record from the session registry, saving it first when dirty. The
+        /// path a consumer takes when it leaves the store the record was loaded from: a subsequent
+        /// RestoreLocalSession then reloads through LoadSession against whatever store is open, and
+        /// carries no presence from the released one. The record's standing list is untouched — this
+        /// releases the process's hold on the worlds, it does not resign the account's memberships
+        /// (LeaveStanding does that). The presented world is left as it is; the game chooses what to
+        /// present next. A no-op when nothing is restored.
+        void ReleaseLocalSession();
+
         /// @brief Tears the net mode down, returning the process to standalone (no transport).
         ///
         /// Releases the mounted host (server or client) and clears the per-world roles, so the managed
@@ -897,15 +936,6 @@ namespace Veng
         /// @param port  The resolved server port (the caller applies the GameNetInfo default for 0).
         /// @return Empty on success, or an error string if the connection could not be opened.
         VoidResult ConnectClient(const string& host, u16 port);
-
-        /// @brief Restores the local account's session at bootstrap — the standalone continue.
-        ///
-        /// The same registry with no wire: consults the local account's record (loading it through
-        /// the LoadSession hook) and resolves its entries through the local directory — a standing
-        /// join warms its world under a local pin, the gameplay entry present-on-ready rebinds
-        /// viewport 0. A failed gameplay resolve clears the entry, so the process lands on its
-        /// front door (the startup level). A no-op without a record or a local account.
-        void RestoreLocalSession();
 
         /// @brief Constructs the world directory from ApplicationInfo::Net, sharing the runner for teardown.
         ///

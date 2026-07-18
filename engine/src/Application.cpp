@@ -378,8 +378,12 @@ namespace Veng
         BuildWorldDirectory();
 
         // Standalone continue: the local account's record restores through the same registry and
-        // directory a reconnect reattaches through — no wire, one code path.
-        RestoreLocalSession();
+        // directory a reconnect reattaches through — no wire, one code path. Opted out, world #0
+        // stays presented and the game calls RestoreLocalSession itself once its store is open.
+        if (m_Info.World->RestoreLocalSessionOnBoot)
+        {
+            RestoreLocalSession();
+        }
 
         // `--server` opens the host on the just-started world: it accepts connections, spawns a seat
         // per connection, and streams state. A game that set no ApplicationInfo::Net still hosts on the
@@ -393,7 +397,7 @@ namespace Veng
 
     void Application::RestoreLocalSession()
     {
-        if (!m_Sessions || !m_LocalAccount.IsValid())
+        if (!m_Sessions || !m_Directory || !m_LocalAccount.IsValid())
         {
             return;
         }
@@ -448,6 +452,27 @@ namespace Veng
         if (m_ManagedViewports->GetCount() > 0)
         {
             m_ManagedViewports->RebindWorldWhenReady(0, resolve.World);
+        }
+    }
+
+    void Application::ReleaseLocalSession()
+    {
+        // The standing pins are the process's hold on the restored worlds, not the account's
+        // memberships: dropped without touching the record's standing list, so the record persists
+        // intact and the worlds' dwells own their fate once no other presence remains.
+        const f64 now = static_cast<f64>(Time::Now());
+        for (const auto& [key, world] : m_LocalStandingWorlds)
+        {
+            if (m_Directory)
+            {
+                m_Directory->Unpin(world, now, m_LocalAccount);
+            }
+        }
+        m_LocalStandingWorlds.clear();
+
+        if (m_Sessions && m_LocalAccount.IsValid())
+        {
+            m_Sessions->Evict(m_LocalAccount);
         }
     }
 

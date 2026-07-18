@@ -121,8 +121,21 @@ presenting directed travel delivers the recorded **pose** back (`ClientHost::Arr
 gameplay resolve failure (denial, caps) clears the entry with a logged reason and the client lands
 at its front door; a persisted entry whose params/pose carry a `TypeId` unknown to the type
 registry is untrusted and cleared the same way. Standalone reattach is the same registry with no
-wire: `Application` bootstrap consults the local account's record and resolves it through the
+wire: `Application` consults the local account's record and resolves it through the
 local directory, so single-player continue and multiplayer reattach are one code path.
+
+**When the standalone restore runs is the consumer's call.** `GameWorldInfo::RestoreLocalSessionOnBoot`
+(default `true`) runs it at bootstrap — the continue-style posture, zero game code. Set `false`, world
+#0 (the startup level) stays presented and the game drives the identical path itself through the public
+**`Application::RestoreLocalSession()`** once the store its record lives in is open — what a front-end
+that owns the first travel wants, and what a player-less dedicated host (no local account to restore)
+sets. The restore is **reversible**, not merely idempotent: **`Application::ReleaseLocalSession()`**
+drops the standing-join local pins the restore took and evicts the account's cached record
+(`SessionRegistry::Evict`, saving a dirty record first; `Clear` does every account), so a subsequent
+restore reloads through `LoadSession` against whatever store is now open and carries no presence from
+the released one. The record's standing list is untouched — release ends the process's *hold* on the
+worlds, not the account's memberships (`LeaveStanding` does that) — so *open store → restore → … →
+release → open next store → restore* is clean.
 
 **Durability** is the `LoadSession`/`SaveSession` hook pair (`GameNetInfo`): the blob is the
 record's reflection-binary encoding (`EncodeSessionRecord`/`DecodeSessionRecord`, schema-tolerant),

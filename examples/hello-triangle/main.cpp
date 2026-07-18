@@ -517,6 +517,7 @@ protected:
     void OnInitialize() override
     {
         m_SmokeOutput = std::getenv("HT_SMOKE");
+        m_DeferRestore = std::getenv("HT_DEFER_RESTORE") != nullptr;
 
         StartMcpServerIfRequested();
 
@@ -732,6 +733,16 @@ protected:
         if (m_McpServer)
         {
             m_McpServer->Pump();
+        }
+
+        // The deferred-restore path (HT_DEFER_RESTORE): boot suppressed the auto-restore, so the
+        // startup level is what came up, and the game triggers the identical restore itself once it
+        // would have opened the save its record lives in — the shape a front-end that owns the first
+        // travel takes. ReleaseLocalSession is the inverse, run before opening a different save.
+        if (m_DeferRestore && !m_RestoredLocalSession)
+        {
+            m_RestoredLocalSession = true;
+            RestoreLocalSession();
         }
 
         // Hosting: pawn each seat that lacks one (the listen host's own and each connection's) and
@@ -1412,6 +1423,11 @@ private:
     u32 m_FrameCount = 0;
     const char* m_SmokeOutput = nullptr;
 
+    // Whether the boot auto-restore was opted out (HT_DEFER_RESTORE), making the sample drive
+    // Application::RestoreLocalSession itself, and whether it has already done so.
+    bool m_DeferRestore = false;
+    bool m_RestoredLocalSession = false;
+
     // The optional MCP server and the provider seam it captures by reference. m_McpHost holds the
     // TypeRegistry/AssetManager references and the per-frame world/viewport closures; it must
     // outlive m_McpServer, so it is declared first (destroyed last), while the destructor resets the
@@ -1553,7 +1569,15 @@ extern "C" void VengModuleRegister(VengModuleHost* host)
                     // The engine bootstraps the world: it reads the cooked project, mounts its
                     // packs, loads the startup level, owns the running scene + simulation, and ticks
                     // + pushes the view each frame. The sample customizes the world in OnWorldLoaded.
-                    .World = GameWorldInfo{.Project = "project.vengproj"},
+                    .World =
+                        GameWorldInfo{
+                            .Project = "project.vengproj",
+                            // Both restore postures are exercised from one sample: the default
+                            // resumes the local account's saved sitting at boot, while
+                            // HT_DEFER_RESTORE opts out so the startup level comes up untouched and
+                            // OnUpdate drives Application::RestoreLocalSession on demand.
+                            .RestoreLocalSessionOnBoot = std::getenv("HT_DEFER_RESTORE") == nullptr,
+                        },
                     // Opt into networking with the zero-config defaults: setting Net only tunes the
                     // hosts the engine mounts when a net launch flag activates one, so this stays
                     // inert with no flag (the default run is offline and byte-identical) and turns

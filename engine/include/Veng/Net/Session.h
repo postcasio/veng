@@ -224,6 +224,20 @@ namespace Veng::Net
         /// @param account  The account to save.
         void Save(const AccountId& account);
 
+        /// @brief Drops an account's in-memory record, saving it first when dirty.
+        ///
+        /// The inverse of EnsureLoaded: the cached record is written through SaveSession (when
+        /// dirty and the hook is set), then removed, so the next EnsureLoaded reads the account
+        /// afresh through LoadSession. The path a consumer takes when the store the record was
+        /// loaded from is being swapped for another. A no-op for an account with no record.
+        /// @param account  The account whose record is evicted.
+        void Evict(const AccountId& account);
+
+        /// @brief Drops every in-memory record, saving the dirty ones first.
+        ///
+        /// Evict across every account the registry holds; Count() is zero afterwards.
+        void Clear();
+
         /// @brief Saves every dirty record now (teardown, StopNet).
         void SaveAll();
 
