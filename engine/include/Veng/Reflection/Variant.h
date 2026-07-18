@@ -58,9 +58,7 @@ namespace Veng
         /// @return Pointer to the activated member's storage, or nullptr if `id` is none of Ts.
         void* SetActive(TypeId id)
         {
-            // The result is the writable storage the caller mutates, so the pointee
-            // stays non-const despite never being written through inside this function.
-            void* result = nullptr; // NOLINT(misc-const-correctness)
+            void* result = nullptr;
             (
                 [&]
                 {

@@ -6,7 +6,8 @@
 # finding is a real regression. The checks enforce mechanical conventions that are
 # tedious to police by hand:
 #
-#   misc-const-correctness               - locals that are never mutated are declared const.
+#   misc-const-correctness               - locals that are never mutated are declared const
+#                                          (values and references only; see CheckOptions below).
 #   modernize-use-auto                   - auto when a cast already names the type.
 #   modernize-use-designated-initializers- aggregate init uses designated .Field = form.
 #   modernize-use-emplace                - emplace_back over push_back(T{...}).
@@ -27,6 +28,14 @@ Checks: >
   modernize-use-scoped-lock,
   readability-braces-around-statements,
   readability-redundant-member-init
+
+# Pointer locals are exempt from misc-const-correctness. WarnPointersAsPointers asks whether a
+# pointee is written through inside the function body and nothing more: it proposes `const T*`
+# without checking that the pointer does not escape as a mutable `T*`, so on a pointer that is
+# returned, stored into a vector<T*>, or handed to a C API the suggested const does not compile.
+# Value and reference analysis is unaffected and stays on.
+CheckOptions:
+  misc-const-correctness.WarnPointersAsPointers: false
 
 # Only diagnose veng's own headers; third-party headers (build/_deps, the Vulkan
 # SDK, system headers) are never flagged.

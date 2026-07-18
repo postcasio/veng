@@ -200,7 +200,7 @@ namespace Veng::Cook
                                 astcenc_get_error_string(allocStatus)));
             }
 
-            void* slice = rgba; // NOLINT(misc-const-correctness)
+            void* slice = rgba;
             astcenc_image image{
                 .dim_x = width,
                 .dim_y = height,

@@ -59,9 +59,7 @@ namespace VengEditor
         EditorPanel* FindPanel(const EditorMcpHost& host, const string& title)
         {
             const string_view wanted = StripUnsavedMarker(title);
-            // The returned panel is mutated by the caller (GetInspectables / OnInspectableChanged
-            // are non-const), so the loop pointee stays mutable.
-            for (EditorPanel* panel : host.Panels()) // NOLINT(misc-const-correctness)
+            for (EditorPanel* panel : host.Panels())
             {
                 if (panel != nullptr && StripUnsavedMarker(panel->GetTitle()) == wanted)
                 {

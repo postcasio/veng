@@ -100,6 +100,15 @@ git config core.hooksPath .githooks
 The hook skips cleanly when `clang-format` is absent. To reformat staged changes
 the hook flagged, run `git clang-format --staged`, then re-stage and commit.
 
+**Checking format by hand needs no toolchain setup** — `clang-format` parses the file
+against `.clang-format` and never consults the build, so the tool on `PATH` is the
+right one and no compile DB, SDK, or PCH is involved:
+
+```sh
+clang-format --dry-run -Werror <files>   # non-zero exit + a diagnostic per offending line
+git clang-format --staged --diff         # only the staged lines — what the hook checks
+```
+
 **A pre-existing format or lint finding you surface is yours to fix — inline, as
 part of the same work.** When a `clang-format` or `clang-tidy` finding turns up on a
 file while you work — even one you didn't otherwise change, or one pulled in
@@ -120,7 +129,12 @@ finding is a real regression. These checks enforce mechanical conventions and ar
 
 - `readability-braces-around-statements` — **every control-flow body is braced**,
   even a single statement (`if (x) { return; }`, never `if (x) return;`).
-- `misc-const-correctness` — **a local that is never mutated is declared `const`**.
+- `misc-const-correctness` — **a local that is never mutated is declared `const`**. Values
+  and references only: `WarnPointersAsPointers` is **off**, so a pointer local is never
+  flagged. That option asks whether a pointee is written through inside the function body
+  and nothing more — it proposes `const T*` without checking that the pointer does not
+  escape as a mutable `T*`, so on a pointer that is returned, stored into a `vector<T*>`,
+  or handed to a C API the suggested `const` does not compile.
 - `readability-redundant-member-init` — drop a redundant `{}` on a member whose type
   already default-constructs (`vector`/`optional`/`Ref`).
 - `modernize-use-designated-initializers` — aggregate init uses the designated
@@ -136,7 +150,7 @@ churn not worth the diff. Re-enabling any is a deliberate, separately-scoped pas
 **Identifier naming is not enforced by clang-tidy** either; the house naming rules
 are reviewed by hand. Findings are warnings, never build-breaking.
 
-Two ways to run it, both opt-in:
+Three ways to run it, all opt-in:
 
 - **In-build:** configure with `-DVENG_ENABLE_CLANG_TIDY=ON` and clang-tidy runs
   per-TU during the build. It is wired only onto veng's own targets, so third-party
@@ -144,10 +158,61 @@ Two ways to run it, both opt-in:
   a `Checks: '-*'` override (`engine/src/Vendor/.clang-tidy`) and the generated
   core-pack embed is `SKIP_LINTING`. The option degrades to a warning if clang-tidy
   is not found.
-- **Pre-commit:** the same `.githooks/pre-commit` hook runs a second stage that
-  tidies **only the changed lines** of staged C/C++ via `clang-tidy-diff.py`
-  against `build/compile_commands.json` (exported unconditionally). It skips
-  cleanly when clang-tidy, the diff driver, or a compile DB is missing.
+- **Pre-commit:** the same `.githooks/pre-commit` hook runs a second stage that lints
+  **each staged `.cpp`/`.cc` in full** — the tree is kept clean against the allowlist,
+  so any finding on a touched TU is a regression and no changed-line diffing is needed.
+  It resolves a compile DB from `build/`, `build-debug/`, or `cmake-build-debug/`
+  (exported unconditionally) and applies the toolchain fixes below. A changed *header*
+  is checked transitively through a staged TU that includes it; a header-only commit
+  drives no TU, so use the in-build run for those. Skips cleanly when clang-tidy or a
+  compile DB is missing.
+- **By hand:** `scripts/tidy.sh <sources>` checks the named files against the ordinary
+  `build-debug` compile DB — no separate lint build tree, and no rebuild between edits
+  (clang-tidy reads the source from disk; the DB supplies only flags). Use it to check
+  a file you are working on without a tidy-enabled rebuild.
+
+```sh
+scripts/tidy.sh engine/src/Gui/Document.cpp
+```
+
+**Do not invoke `clang-tidy -p build-debug` directly — it fails without reporting
+findings, which reads as a clean tree.** macOS ships no `clang-tidy`, so the tool is
+Homebrew LLVM's, and it runs as libTooling rather than as the compiler driver. Three
+things in an ordinary build's compile DB break it, and the script exists to handle them:
+
+- **The PCH.** libTooling cannot consume the PCH CMake built — *not* merely because a
+  different toolchain wrote it: it is rejected the same way when the build and the tool
+  are the same LLVM, because the two compute different module flags (`builtin headers
+  belong to system modules ... disabled in precompiled file but is currently enabled`).
+  No `--extra-arg` reconciles it. The script strips the `-include-pch` pair from a
+  *copy* of the DB; CMake emits `-include <header>` beside it, so the translation unit
+  is unchanged, merely uncached.
+- **The Vulkan headers.** They sit on a path the configured compiler searches
+  implicitly, so CMake records no `-I` for them and a backend TU dies on
+  `'vulkan/vulkan.hpp' file not found`. The script exports `CPATH` from the build's
+  own `Vulkan_INCLUDE_DIR`.
+- **The sysroot.** This one is fixed at configure time, not in the script: the build
+  tree is configured with **`CMAKE_OSX_SYSROOT`** so the DB records `-isysroot`. It is
+  empty by CMake's default, and the compiler resolves the SDK implicitly as a driver
+  where libTooling does not — so without it every TU dies on `'cstdint' file not found`
+  or a libc++ `mbstate_t` error. Configure any tree you lint against with it:
+
+  ```sh
+  cmake -B build-debug -S . -DVE_DEBUG=ON -DCMAKE_OSX_SYSROOT="$(xcrun --show-sdk-path)"
+  ```
+
+  It records what the compiler already does implicitly, so it changes no build
+  behavior — and it fixes the identical failure in **clangd** and other libTooling-based
+  editor integrations. `scripts/tidy.sh` refuses to run against a DB missing it rather
+  than emit a misleading result.
+
+**Confirm a run actually ran before believing a clean result.** A toolchain or compile
+failure prints `error:` / `Error while processing` **and no findings**, which is
+indistinguishable from a clean tree if you only grep for warnings — as is a run whose
+file argument does not exist. `scripts/tidy.sh` and `.githooks/pre-commit` both gate on
+exactly that ("could not run, so nothing was checked"); preserve it in anything that
+wraps clang-tidy, and treat total silence from a hand-rolled invocation as unproven
+until you have seen it flag something.
 
 ### Consuming veng — three modes through one `veng-config`
 
