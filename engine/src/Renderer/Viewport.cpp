@@ -484,7 +484,7 @@ namespace Veng::Renderer
 
             // The panel binds onto its sibling MeshRenderer's first material (the mesh it draws onto).
             MaterialInstance* material = nullptr;
-            if (const MeshRenderer* mesh = world.TryGet<MeshRenderer>(entity); mesh != nullptr)
+            if (const auto* mesh = world.TryGet<MeshRenderer>(entity); mesh != nullptr)
             {
                 if (mesh->Mesh.IsLoaded())
                 {
@@ -547,7 +547,7 @@ namespace Veng::Renderer
         // and stamps request/view-output components, so hand Drive a mutable scene here. The render
         // gather already ran (Execute, above), and a driver stamps no GuiOverlay, so mutating other
         // component pools now cannot disturb this View<GuiOverlay> walk.
-        Scene& world = const_cast<Scene&>(*m_ViewState.World);
+        auto& world = const_cast<Scene&>(*m_ViewState.World);
         for (auto [entity, overlay] : world.View<GuiOverlay>())
         {
             if (ClaimsOverlay(world, entity, overlay))
@@ -659,6 +659,32 @@ namespace Veng::Renderer
     ViewportRole Viewport::GetRole() const
     {
         return m_Role;
+    }
+
+    bool Viewport::IsPointerOverDocument(const ivec2 windowPoint) const
+    {
+        const optional<vec2> normalized = WindowToViewport(windowPoint);
+        if (!normalized)
+        {
+            return false;
+        }
+
+        // Document space is logical points under the viewport's UI scale — the extent a document is
+        // solved at — so the region point divides by it, exactly as the Gui input consumer does.
+        const f32 scale = m_UiScale > 0.0f ? m_UiScale : 1.0f;
+        const vec2 documentPoint = *normalized * vec2(m_Region.Extent) / scale;
+
+        // Top-first: the topmost layer owns the pointer, matching the routing order.
+        for (auto it = m_Documents.rbegin(); it != m_Documents.rend(); ++it)
+        {
+            Gui::Document* const document = it->Document;
+            if (document != nullptr && document->IsInteractive() &&
+                document->HitTest(documentPoint) != nullptr)
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     optional<vec2> Viewport::WindowToViewport(ivec2 windowPoint) const

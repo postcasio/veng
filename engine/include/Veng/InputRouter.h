@@ -73,8 +73,24 @@ namespace Veng
         /// when Owner is null, and unused under capture (look reads raw delta, not position).
         vec2 LocalPosition = {};
 
+        /// @brief Whether the pointer is over an interactive Gui element of the owner's viewport.
+        ///
+        /// The retained-UI counterpart of the immediate-mode `UI::WantCaptureMouse()`: the Gui
+        /// input consumer hit-tests the owner's interactive documents as it drives hover, and
+        /// publishes the result here so gameplay can decline a pointer the UI is already using.
+        /// A camera that orbits on a held mouse button reads it to avoid swinging while the player
+        /// drags a slider — the button is held either way, so consuming the pointer *event* does
+        /// not (and should not) suppress the held-button *action*.
+        ///
+        /// False when the pointer is over no interactive element, when no document is interactive,
+        /// and in headless — so a game that never asks is unaffected.
+        bool OverUi = false;
+
         /// @brief The seat that owns the pointer this frame, or Entity::Null when none does.
         [[nodiscard]] Entity OwnerThisFrame() const { return Owner; }
+
+        /// @brief Whether the pointer is over interactive UI this frame.
+        [[nodiscard]] bool IsOverUi() const { return OverUi; }
     };
 
     /// @brief A Presented viewport's region paired with the seat its pointer input routes to.

@@ -14,6 +14,7 @@
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
+#include <Veng/Gui/Document.h>
 #include <Veng/Renderer/Viewport.h>
 
 #include <Veng/Scene/BuiltinTypes.h>
@@ -403,4 +404,47 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const vec2 extent = viewport->GetDocumentExtent();
     CHECK(extent.x == doctest::Approx(static_cast<f32>(region.x) / 2.0f));
     CHECK(extent.y == doctest::Approx(static_cast<f32>(region.y) / 2.0f));
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "viewport: the pointer-over-UI query sees interactive documents only")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+
+    constexpr uvec2 region{200, 100};
+    const Unique<Viewport> viewport = Viewport::Create({
+        .Context = Context,
+        .Assets = assets,
+        .Region = {.Offset = {0, 0}, .Extent = region},
+        .Role = ViewportRole::Offscreen,
+    });
+
+    // A document with one 40x40 panel pinned at the origin; the rest of the region is bare.
+    const Unique<Gui::Document> document = CreateUnique<Gui::Document>();
+    Gui::Element& panel = document->Add(document->Root(), Gui::ElementKind::Panel);
+    document->Root().Layout = Gui::Rect{.Min = vec2(0.0f), .Size = vec2(region)};
+    panel.Layout = Gui::Rect{.Min = vec2(0.0f), .Size = vec2(40.0f, 40.0f)};
+    viewport->AttachDocument(*document, 0);
+
+    // Display-only by default: the document draws but owns no pointer, so gameplay keeps it.
+    CHECK(!document->IsInteractive());
+    CHECK(!viewport->IsPointerOverDocument(ivec2(20, 20)));
+
+    // Interactive: the pointer over the panel now belongs to the UI.
+    document->SetInteractive(true);
+    CHECK(viewport->IsPointerOverDocument(ivec2(20, 20)));
+
+    // Any element counts, including a full-bleed root — a hit is a hit. A HUD whose root spans the
+    // region therefore claims the whole pointer, so a document that means to pass the pointer
+    // through must say so with `pointer-events: none` rather than relying on being mostly empty.
+    CHECK(viewport->IsPointerOverDocument(ivec2(120, 80)));
+
+    // A root that opts out passes the pointer through along with its subtree.
+    document->Root().ComputedStyle.Pointer = Gui::PointerEvents::None;
+    CHECK(!viewport->IsPointerOverDocument(ivec2(20, 20)));
+    CHECK(!viewport->IsPointerOverDocument(ivec2(120, 80)));
+
+    // A point outside the viewport's own region belongs to no document of this viewport.
+    CHECK(!viewport->IsPointerOverDocument(ivec2(500, 500)));
 }

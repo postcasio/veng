@@ -453,7 +453,20 @@ namespace Veng
             regions.emplace_back(
                 PointerRegionSeat{.Region = viewport->GetRegion(), .Viewer = association.Viewer});
         }
-        return SelectPointerOwner(regions, pointerWindowPoint);
+        PointerRouting routing = SelectPointerOwner(regions, pointerWindowPoint);
+
+        // Publish whether the UI already owns the pointer, so gameplay can decline it. The owning
+        // viewport is the one whose region won the hit-test above, resolved the same way.
+        if (routing.Owner != Entity::Null)
+        {
+            if (const Renderer::Viewport* const viewport =
+                    ResolvePointerViewport(pointerWindowPoint, false);
+                viewport != nullptr)
+            {
+                routing.OverUi = viewport->IsPointerOverDocument(pointerWindowPoint);
+            }
+        }
+        return routing;
     }
 
     const Renderer::Viewport* InputRouter::ResolvePointerViewport(ivec2 pointerWindowPoint,

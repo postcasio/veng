@@ -453,6 +453,20 @@ namespace Veng::Renderer
         ///         lies outside the region (or the region has a zero extent).
         [[nodiscard]] optional<vec2> WindowToViewport(ivec2 windowPoint) const;
 
+        /// @brief Returns whether a window point lands on an interactive attached document's element.
+        ///
+        /// Maps the point through WindowToViewport and the UI scale into document space, then
+        /// hit-tests each attached **interactive** document top-first. A display-only document is
+        /// skipped (it takes no input, so it does not own the pointer), as is an element styled
+        /// `pointer-events: none` — the hit-test already passes through those.
+        ///
+        /// This is what lets gameplay decline a pointer the UI is using: consuming a pointer
+        /// *event* does not suppress a held-button *action*, so a camera that orbits while a button
+        /// is down has to ask.
+        /// @param windowPoint  The pointer position in window framebuffer pixels.
+        /// @return True when an interactive document has an element under the point.
+        [[nodiscard]] bool IsPointerOverDocument(ivec2 windowPoint) const;
+
         /// @brief Unprojects a window point into a world-space ray through the retained camera.
         ///
         /// Composes WindowToViewport with the camera retained from the last SetViewState: maps
