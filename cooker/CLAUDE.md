@@ -291,8 +291,11 @@ file/entity/component context. A field absent from the source keeps its
 default-constructed value (schema tolerance): omission is allowed, type-mismatch is
 not. What is genuinely the importer's own is supplied as `JsonFieldHooks`:
 `ValidateAssetId` runs the pack-resolve type check
-(`AssetTypeForHandleField`/`AssetTypeAccepted` against the resolver, reporting the
-expected asset type **by name**) and `ReadReference` maps a JSON value to the
+(`AssetTypeRegistry::FindByHandleField` to turn the field's reflected leaf `TypeId` into
+the asset type it references, then `AssetHandleFieldAccepts` against the resolver,
+reporting the expected asset type **by name**). A leaf no registered asset type claims is
+itself a located error — the type's registration failed to set `HandleFieldType`, and
+skipping the check would let the field accept an id of any type. `ReadReference` maps a JSON value to the
 prefab-local entity index. Everything else — the entity/component table walk, `TypeId`
 resolution against the registry, and the `WriteFields` blob emission — stays the
 importer's own.

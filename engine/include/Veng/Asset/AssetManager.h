@@ -24,10 +24,13 @@ namespace Veng
     /// @brief Construction parameters for AssetManager.
     struct AssetManagerInfo
     {
-        /// @brief Host-owned asset-type identities, used to name a type in a diagnostic.
+        /// @brief Host-owned asset-type identities merged on top of the manager's own builtins.
         ///
-        /// Null (the default) leaves the manager naming types by their hex id. Type *dispatch*
-        /// keys on the id value and never consults this. Must outlive the manager.
+        /// Null (the default) means no module-defined asset types; the manager still knows every
+        /// builtin, because it fills its own registry before merging this one. Registrations
+        /// already present under the same id are skipped, so pointing this at a registry the host
+        /// pre-filled with the builtins is the normal case rather than a collision. Type
+        /// *dispatch* keys on the id value and never consults a registry.
         const AssetTypeRegistry* AssetTypes = nullptr;
         /// @brief Host-owned loader factories a module registered, instantiated at construction.
         ///
@@ -299,6 +302,31 @@ namespace Veng
             return Adopt<T>(Detail::BuildAssetSync(m_Context, std::forward<Args>(args)...));
         }
 
+        /// @brief Asynchronous load naming the asset type as a value rather than a template argument.
+        ///
+        /// What Load<T> is written on top of, exposed for the loaders that discover a dependency's
+        /// type at runtime — a prefab resolving the AssetHandle fields of its components has an
+        /// AssetTypeId in hand and no concrete T to name. Returns null on a resolution failure,
+        /// exactly as Load<T> returns an empty handle.
+        ///
+        /// The caller owns the type contract: the entry is typed by @p type, and wrapping it in an
+        /// AssetHandle<T> whose AssetTypeTrait<T>::Type differs is undefined. Prefer Load<T>
+        /// wherever the type is known statically.
+        /// @param type  The asset type to resolve and load as.
+        /// @param id    The asset to load.
+        /// @return The cache entry, or null when the id does not resolve.
+        [[nodiscard]] Ref<Detail::AssetCacheEntry> LoadUntyped(AssetTypeId type, AssetId id);
+
+        /// @brief Blocking sibling of LoadUntyped, returning a resident entry or a structured error.
+        ///
+        /// Carries the same caller-owned type contract as LoadUntyped. Prefer LoadSync<T> wherever
+        /// the type is known statically.
+        /// @param type  The asset type to resolve and load as.
+        /// @param id    The asset to load.
+        /// @return The resident cache entry, or the load error.
+        [[nodiscard]] AssetResult<Ref<Detail::AssetCacheEntry>> LoadSyncUntyped(AssetTypeId type,
+                                                                                AssetId id);
+
         /// @brief Returns the cache entry for an id, or null if it is not cached.
         ///
         /// Untyped — the prefab loader uses it to rehydrate an embedded handle without naming
@@ -329,6 +357,13 @@ namespace Veng
 
         /// @brief Returns the type registry the prefab loader and editor reflect components through.
         [[nodiscard]] TypeRegistry& GetTypeRegistry() const { return m_Types; }
+
+        /// @brief Returns the asset types this manager knows: every builtin, plus any the host merged in.
+        ///
+        /// Always populated — the manager fills it with the builtins at construction — so a
+        /// consumer resolving an AssetHandle field's leaf TypeId, or naming a type in a
+        /// diagnostic, never has to handle a missing registry.
+        [[nodiscard]] const AssetTypeRegistry& GetAssetTypes() const { return m_AssetTypes; }
 
         /// @brief Returns the render context the manager builds and uploads GPU resources through.
         [[nodiscard]] Renderer::Context& GetContext() const { return m_Context; }
@@ -415,10 +450,6 @@ namespace Veng
         /// freed once the last handle drops — mirroring an async Load's deferred-failure behavior.
         void FailPendingCreate(const Ref<Detail::AssetCacheEntry>& entry, const string& error);
 
-        [[nodiscard]] Ref<Detail::AssetCacheEntry> LoadUntyped(AssetTypeId type, AssetId id);
-        [[nodiscard]] AssetResult<Ref<Detail::AssetCacheEntry>> LoadSyncUntyped(AssetTypeId type,
-                                                                                AssetId id);
-
         /// @brief Resolves an id to a loader and cooked blob, validating type against the archive entry.
         ///
         /// Shared by the async and sync load paths.
@@ -436,15 +467,15 @@ namespace Veng
 
         void RegisterLoader(Unique<AssetLoader> loader);
 
-        /// @brief Names an asset type through the host registry, or renders its hex id without one.
+        /// @brief Names an asset type for a diagnostic, falling back to its hex id when unregistered.
         [[nodiscard]] string TypeName(AssetTypeId type) const;
 
         Renderer::Context& m_Context;
         TaskSystem& m_Tasks;
         /// @brief Borrowed; the prefab loader reflects component fields through it.
         TypeRegistry& m_Types;
-        /// @brief Borrowed host-owned asset-type names, or null when the host registered none.
-        const AssetTypeRegistry* m_AssetTypes = nullptr;
+        /// @brief Owned: the builtins, plus whatever AssetManagerInfo::AssetTypes added.
+        AssetTypeRegistry m_AssetTypes;
 
         vector<MountedArchive> m_Mounts;
         vector<MemoryMount> m_MemoryMounts;

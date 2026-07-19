@@ -115,6 +115,24 @@ engine *mounts* archives and resolves assets against them.
   @warning The registries hold owned polymorphic objects whose code lives in a `dlclose`-able
   image, so the module handle must outlive them *and* the `AssetManager` built from them. Hosts
   enforce this structurally, by declaring the handle first in the owning struct.
+- **`AssetHandle<T>` on a component resolves through `AssetTypeInfo::HandleFieldType`.** A
+  reflected field is a leaf `TypeId`, not an asset type, so something must map the two. That
+  something is the asset type's own registration: `HandleFieldType` carries the reflection
+  `TypeId` of the `AssetHandle<T>` leaf that references it (a bare `u64`, since assetpack takes
+  no reflection dependency), and `AssetTypeRegistry::FindByHandleField` is the reverse index.
+  The prefab loader's dependency collection, the cooker's prefab and table validation hooks, and
+  the editor's asset picker all go through that one lookup, so none of them can answer
+  differently. A game therefore does three things for `AssetHandle<MyType>` to work on a
+  component: `VE_LEAF` the handle leaf with a minted `TypeId`, register the component type that
+  holds it, and set `HandleFieldType` to that same leaf id on the `AssetTypeInfo` it registers.
+  A leaf no registered type claims is an **error** at both load and cook — never a skipped check.
+  The eight builtins with no reflected handle leaf (`Font`, `Skeleton`, `Level`, `StyleSheet`,
+  `Shader`, `VertexLayout`, `DataTable`, `TableSchema`) leave it 0 and cannot sit on a component.
+- **The `AssetManager` always owns a complete `AssetTypeRegistry`.** It fills its own with
+  `RegisterBuiltinAssetTypes` at construction and merges `AssetManagerInfo::AssetTypes` on top —
+  the same shape as the builtin-then-module loader registration beside it. `GetAssetTypes()` is
+  therefore never empty, which is what lets a prefab full of `AssetHandle<Texture>` fields load
+  in a host that registers no game types at all.
 - **Build-order edge: `veng_add_asset_pack(... MODULE <lib>)`.** A pack containing prefabs names
   its game module; the build graph grows a `lib → cook → bundle` edge so the pack cooks after its
   lib is built. Packs without prefabs stay module-independent. `veng_add_game` wires the example's
