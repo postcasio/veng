@@ -161,10 +161,9 @@ Three ways to run it, all opt-in:
 - **Pre-commit:** the same `.githooks/pre-commit` hook runs a second stage that lints
   **each staged `.cpp`/`.cc` in full** — the tree is kept clean against the allowlist,
   so any finding on a touched TU is a regression and no changed-line diffing is needed.
-  It resolves a compile DB from `build-debug/`, `build/`, or `cmake-build-debug/`
-  (exported unconditionally) — the debug tree first, since that is the one the project
-  configures by default, where `build/` is optional and routinely stale — skipping any
-  tree whose `CMAKE_HOME_DIRECTORY` names a different checkout, and applies the
+  Name the compile DB with `$VENG_TIDY_DB` (see below); absent that it falls back to
+  searching `build-debug/`, `build/`, then `cmake-build-debug/`, skipping any tree whose
+  `CMAKE_HOME_DIRECTORY` names a different checkout. It applies the
   toolchain fixes below. A changed *header*
   is checked transitively through a staged TU that includes it; a header-only commit
   drives no TU, so use the in-build run for those. Skips cleanly when clang-tidy or a
@@ -174,25 +173,31 @@ Three ways to run it, all opt-in:
   flags rather than declining it, and that failure poisons the rest of the batch, so
   filtering is what keeps the run meaningful. A commit whose every staged TU is out of
   tree therefore lints nothing, says so, and is allowed through.
-- **By hand:** `scripts/tidy.sh <sources>` checks the named files against the ordinary
-  `build-debug` compile DB — no separate lint build tree, and no rebuild between edits
+- **By hand:** `scripts/tidy.sh --db <build-dir> <sources>` checks the named files against
+  that tree's compile DB — no separate lint build tree, and no rebuild between edits
   (clang-tidy reads the source from disk; the DB supplies only flags). Use it to check
   a file you are working on without a tidy-enabled rebuild.
 
 ```sh
-scripts/tidy.sh engine/src/Gui/Document.cpp
-scripts/tidy.sh --db build-asan engine/src/Gui/Document.cpp   # a tree outside the three
-VENG_TIDY_DB=build-asan scripts/tidy.sh engine/src/Gui/Document.cpp
+scripts/tidy.sh --db build-debug engine/src/Gui/Document.cpp
+VENG_TIDY_DB=build-debug scripts/tidy.sh engine/src/Gui/Document.cpp   # same, by env
+VENG_TIDY_DB=build-debug git commit                                    # the hook
 ```
 
-**Naming a build tree explicitly** overrides the search in both the script (`-p` / `--db`,
-or `$VENG_TIDY_DB`) and the hook (`$VENG_TIDY_DB` only — git runs a hook with no
-arguments). A tree named this way is used as given or not at all: if it has no
+**Always name the build tree explicitly — including when it is one of the three the
+search would have found.** The script takes `-p` / `--db`; both the script and the hook
+read `$VENG_TIDY_DB` (the hook reads only that, since git runs a hook with no arguments).
+A checkout routinely carries several build trees — a debug tree, an optional
+validation-OFF `build/`, a coverage or sanitizer tree, a worktree's own — and the search
+returns the first that exists, which is not necessarily the one your work is built
+against. Naming it removes that guess. This matters most for automated work, where a
+lint silently run against the wrong tree reads as a clean result.
+
+A tree named this way is used as given or not at all: if it has no
 `compile_commands.json`, or was configured for a different checkout, the run **fails**
 rather than falling back to the search, because a silent fallback would lint against a
 different tree than the one asked for and report the result as if it were the one
-requested. Use it for a tree that is not `build-debug`/`build`/`cmake-build-debug` — a
-sanitizer or per-configuration tree, or a worktree's own build.
+requested. **The search is a fallback for convenience, not the intended path.**
 
 **Do not invoke `clang-tidy -p build-debug` directly — it fails without reporting
 findings, which reads as a clean tree.** macOS ships no `clang-tidy`, so the tool is

@@ -50,9 +50,11 @@ while [ $# -gt 0 ]; do
 done
 
 if [ $# -eq 0 ]; then
-    echo "usage: scripts/tidy.sh [-p|--db <build-dir>] <source> [source ...]" >&2
-    echo "       the build directory also comes from \$VENG_TIDY_DB; otherwise it is" >&2
-    echo "       resolved from build-debug/, build/, cmake-build-debug/ in that order." >&2
+    echo "usage: scripts/tidy.sh --db <build-dir> <source> [source ...]" >&2
+    echo "       Name the build tree (-p/--db, or \$VENG_TIDY_DB) — a checkout carries" >&2
+    echo "       several, and the tree your work is built against is the one to lint" >&2
+    echo "       against. Absent that, build-debug/, build/, cmake-build-debug/ are" >&2
+    echo "       searched in order and the first that exists wins, which is a guess." >&2
     exit 2
 fi
 
@@ -89,6 +91,10 @@ if [ -z "$db" ]; then
     echo "tidy: no usable compile_commands.json in build-debug/, build/, or cmake-build-debug/." >&2
     echo "      Name one explicitly with --db <dir> if it lives elsewhere." >&2
     exit 1
+fi
+if [ -z "$db_arg" ]; then
+    echo "tidy: no build tree named, falling back to $db — pass --db <dir> to be sure this" >&2
+    echo "      is the tree your work is built against." >&2
 fi
 
 # A tree configured for a different checkout carries entries whose paths no longer resolve, so
