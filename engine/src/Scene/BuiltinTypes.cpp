@@ -1,5 +1,6 @@
 #include <Veng/Scene/BuiltinTypes.h>
 
+#include <Veng/Asset/AssetHandleType.h>
 #include <Veng/Asset/InputMappingContext.h>
 #include <Veng/Gui/Overlay.h>
 #include <Veng/Gui/Surface.h>
@@ -136,5 +137,36 @@ namespace Veng
         // output sampled by the entity's material. Renderer::CaptureShape and CaptureRefresh register
         // transitively through its fields; the runtime-only Unique carries no reflected field.
         registry.Register<Renderer::CaptureSurface>();
+
+        // Every leaf type the engine declares, whether or not a builtin component happens to
+        // reference one. They are the vocabulary a consumer names a type *by* — a data table
+        // declares each column's type this way — so the registry must hold them all rather than
+        // only those a builtin component drags in transitively.
+        registry.Register<bool>();
+        registry.Register<u8>();
+        registry.Register<i32>();
+        registry.Register<u32>();
+        registry.Register<i64>();
+        registry.Register<u64>();
+        registry.Register<f32>();
+        registry.Register<vec2>();
+        registry.Register<vec3>();
+        registry.Register<vec4>();
+        registry.Register<uvec2>();
+        registry.Register<quat>();
+        registry.Register<mat4>();
+        registry.Register<string>();
+        registry.Register<Entity>();
+
+        registry.Register<AssetHandle<Texture>>();
+        registry.Register<AssetHandle<Mesh>>();
+        registry.Register<AssetHandle<Material>>();
+        registry.Register<AssetHandle<MaterialInstance>>();
+        registry.Register<AssetHandle<Prefab>>();
+        registry.Register<AssetHandle<Animation>>();
+        registry.Register<AssetHandle<EnvironmentMap>>();
+        registry.Register<AssetHandle<InputMappingContext>>();
+        registry.Register<AssetHandle<Gui::UIDocument>>();
+        registry.Register<AssetHandle<RawAsset>>();
     }
 }

@@ -16,45 +16,23 @@ namespace Veng::Cook
             return fmt::format("table schema: '{}': {}", file.string(), reason);
         }
 
-        optional<TableColumnKind> ParseColumnKind(const string& name)
+        // Column types are named by the registry's fully-qualified spelling, the same key a
+        // variant alternative's "type" tag matches against — one spelling for a reflected type in
+        // authored JSON, not two.
+        const TypeInfo* FindTypeByName(const TypeRegistry& types, const string& name)
         {
-            if (name == "Bool")
+            for (const auto& [id, info] : types.All())
             {
-                return TableColumnKind::Bool;
+                if (TypeNameMatches(info, name))
+                {
+                    return &info;
+                }
             }
-            if (name == "Int")
-            {
-                return TableColumnKind::Int;
-            }
-            if (name == "Float")
-            {
-                return TableColumnKind::Float;
-            }
-            if (name == "Vec2")
-            {
-                return TableColumnKind::Vec2;
-            }
-            if (name == "Vec3")
-            {
-                return TableColumnKind::Vec3;
-            }
-            if (name == "Vec4")
-            {
-                return TableColumnKind::Vec4;
-            }
-            if (name == "String")
-            {
-                return TableColumnKind::String;
-            }
-            if (name == "AssetRef")
-            {
-                return TableColumnKind::AssetRef;
-            }
-            return std::nullopt;
+            return nullptr;
         }
     }
 
-    Result<TableSchemaSource> ParseTableSchema(const path& file, const AssetTypeRegistry& types)
+    Result<TableSchemaSource> ParseTableSchema(const path& file, const TypeRegistry& types)
     {
         const Result<json> docResult = ReadJsonFile(file, "table schema");
         if (!docResult)
@@ -69,7 +47,10 @@ namespace Veng::Cook
         }
 
         TableSchemaSource schema;
-        u32 offset = 0;
+        u32 cursor = 0;
+        bool arithmetic = true;
+        bool allFixed = true;
+
         for (const json& columnJson : doc["columns"])
         {
             if (!columnJson.is_object())
@@ -98,55 +79,49 @@ namespace Veng::Cook
                     Located(file, fmt::format("column '{}' is declared more than once", name)));
             }
 
-            if (!columnJson.contains("kind") || !columnJson["kind"].is_string())
-            {
-                return std::unexpected(
-                    Located(file, fmt::format("column '{}' is missing a string 'kind'", name)));
-            }
-            const string kindName = columnJson["kind"].get<string>();
-            const optional<TableColumnKind> kind = ParseColumnKind(kindName);
-            if (!kind)
-            {
-                return std::unexpected(
-                    Located(file, fmt::format("column '{}': unknown kind '{}'", name, kindName)));
-            }
-
-            AssetTypeId referencedType;
-            if (*kind == TableColumnKind::AssetRef)
-            {
-                if (!columnJson.contains("assetType") || !columnJson["assetType"].is_string())
-                {
-                    return std::unexpected(Located(
-                        file,
-                        fmt::format("AssetRef column '{}' is missing a string 'assetType'", name)));
-                }
-                const string typeName = columnJson["assetType"].get<string>();
-                const optional<AssetTypeId> resolved = types.FindByName(typeName);
-                if (!resolved)
-                {
-                    return std::unexpected(
-                        Located(file, fmt::format("AssetRef column '{}': unknown asset type '{}'",
-                                                  name, typeName)));
-                }
-                referencedType = *resolved;
-            }
-            else if (columnJson.contains("assetType"))
+            if (!columnJson.contains("type") || !columnJson["type"].is_string())
             {
                 return std::unexpected(Located(
-                    file, fmt::format("column '{}' is kind '{}' but declares an 'assetType'", name,
-                                      kindName)));
+                    file, fmt::format("column '{}' is missing a string 'type' naming a reflected "
+                                      "type",
+                                      name)));
+            }
+            const string typeName = columnJson["type"].get<string>();
+            const TypeInfo* const info = FindTypeByName(types, typeName);
+            if (info == nullptr)
+            {
+                return std::unexpected(Located(
+                    file, fmt::format("column '{}': no reflected type named '{}' is registered",
+                                      name, typeName)));
+            }
+            if (info->Class == FieldClass::Reference)
+            {
+                return std::unexpected(Located(
+                    file, fmt::format("column '{}': type '{}' is an intra-scene entity reference, "
+                                      "which no table row can resolve",
+                                      name, info->QualifiedName)));
             }
 
-            const u32 alignment = TableCellAlignment(*kind);
-            offset = (offset + alignment - 1) / alignment * alignment;
+            const bool fixed = TableCellIsFixedSize(info->Class);
+            allFixed = allFixed && fixed;
+
+            u32 offset = CookedTableColumnOffsetUnresolved;
+            if (arithmetic && fixed)
+            {
+                offset = cursor;
+                cursor += TableCellEncodedSize(info->Class, *info);
+            }
+            else
+            {
+                arithmetic = false;
+            }
+
             schema.Columns.push_back(TableSchemaSourceColumn{
-                .Name = name, .Kind = *kind, .Offset = offset, .ReferencedType = referencedType});
-            offset += TableCellSize(*kind);
+                .Name = name, .Type = info->Id, .Class = info->Class, .Offset = offset});
         }
 
-        // Rows are indexed by a byte stride, so pad to the widest cell alignment: every column's
-        // cell then sits on its own alignment in every row, not just the first.
-        schema.RowStride = (offset + 7) / 8 * 8;
+        schema.FixedStride = allFixed;
+        schema.RowStride = allFixed ? cursor : 0;
 
         if (!doc.contains("key") || !doc["key"].is_string())
         {
@@ -160,11 +135,17 @@ namespace Veng::Cook
             return std::unexpected(
                 Located(file, fmt::format("key column '{}' is not declared", keyName)));
         }
-        if (keyIt->Kind != TableColumnKind::Int && keyIt->Kind != TableColumnKind::String)
+
+        const optional<TableKeyKind> keyKind = TableKeyKindForType(keyIt->Type, keyIt->Class);
+        if (!keyKind)
         {
             return std::unexpected(Located(
-                file, fmt::format("key column '{}' must be kind 'Int' or 'String'", keyName)));
+                file, fmt::format("key column '{}' has type '{}'; a key column must be an integer "
+                                  "or a string, the only types with a total order and a stable "
+                                  "cooked encoding",
+                                  keyName, types.Info(keyIt->Type).QualifiedName)));
         }
+        schema.KeyKind = *keyKind;
         schema.KeyColumn = static_cast<u32>(std::distance(schema.Columns.begin(), keyIt));
 
         return schema;

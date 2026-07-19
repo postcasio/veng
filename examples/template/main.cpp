@@ -191,9 +191,11 @@ private:
         }
     }
 
-    // Reads the app's tuning row out of the cooked table: one key lookup, then typed accessors
-    // resolved once each. The AssetRef cell yields a bare AssetId — the table holds no handle to
-    // the icon texture and never loads it, so reading the row costs nothing beyond the row itself.
+    // Reads the app's tuning row out of the cooked table: one key lookup, then accessors resolved
+    // once each. The fixed-size columns come back through the zero-copy view; the string column is
+    // read out of the row itself. The asset-handle cell yields a bare AssetId — the table holds no
+    // handle to the icon texture and never loads it, so reading the row costs nothing beyond the
+    // row itself.
     void LoadTuning()
     {
         const AssetResult<AssetHandle<DataTable>> tuning =
@@ -209,11 +211,16 @@ private:
             return;
         }
 
-        const TableColumn<std::string_view> label = (*tuning)->GetColumn<std::string_view>("label");
         const TableColumn<f32> spinSpeed = (*tuning)->GetColumn<f32>("spinSpeed");
-        const TableColumn<AssetId> icon = (*tuning)->GetColumn<AssetId>("icon");
+        const TableColumn<AssetId> icon = (*tuning)->GetAssetIdColumn("icon");
+        const Result<std::string_view> label = (*tuning)->GetStringCell(*row, "label");
+        if (!label)
+        {
+            Log::Error("Template: {}", label.error());
+            return;
+        }
 
-        m_TuningLabel = string(label[*row]);
+        m_TuningLabel = string(*label);
         Log::Info("Template: tuning row {} is '{}' at {:.2f} rad/s, icon {:#018x}", TuningRowKey,
                   m_TuningLabel, spinSpeed[*row], icon[*row].Value);
     }

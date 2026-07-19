@@ -22,18 +22,6 @@ namespace Veng::Cook
 {
     namespace
     {
-        // Whether `actual` is an acceptable source type for an AssetHandle field expecting
-        // `expected`. The default-instance rule lets a MaterialInstance field accept a bare
-        // Material id (resolved to the parent's zero-override default instance at load).
-        bool AssetTypeAccepted(AssetTypeId expected, AssetTypeId actual)
-        {
-            if (actual == expected)
-            {
-                return true;
-            }
-            return expected == AssetTypes::MaterialInstance && actual == AssetTypes::Material;
-        }
-
         // Located-error prefix for a field within an entity's component.
         string Located(const string& file, usize entityIndex, const string& entityName,
                        const string& typeName, const string& reason)
@@ -56,7 +44,7 @@ namespace Veng::Cook
                 const optional<ResolvedSource> resolved = resolve(AssetId{.Value = id});
                 // Resolve only validates ids present in this pack (or a --reference pack);
                 // a non-resident id is accepted as-is (residency is the runtime's job).
-                if (resolved && expected && !AssetTypeAccepted(*expected, resolved->Type))
+                if (resolved && expected && !AssetHandleFieldAccepts(*expected, resolved->Type))
                 {
                     return std::unexpected(fmt::format(
                         "asset {} resolves to type {} but the field expects type {}", id,

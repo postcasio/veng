@@ -4,6 +4,7 @@
 #include <Veng/Result.h>
 #include <Veng/Reflection/TypeRegistry.h>
 
+#include <new>
 #include <span>
 
 namespace Veng
@@ -26,6 +27,52 @@ namespace Veng
     // AssetHandle-stores-AssetId-at-offset-0 assumption is pinned by a
     // static_assert in AssetHandle.h); rehydration to a resident handle is the
     // loader's job.
+
+    /// @brief A default-constructed instance of a runtime-typed reflected value, correctly aligned.
+    ///
+    /// The storage a walker needs when the value's type is known only as a TypeInfo: a caller
+    /// binding one field at a time, or one that must decode a value purely to advance a cursor
+    /// past it. Non-copyable and non-movable — the address is handed to walkers that write
+    /// through it, so it must not relocate.
+    class ReflectedStorage
+    {
+    public:
+        /// @brief Allocates aligned storage for the type and default-constructs it in place.
+        /// @param info  The reflected type to instantiate.
+        explicit ReflectedStorage(const TypeInfo& info) : m_Info(&info)
+        {
+            m_Storage = ::operator new(info.Size, std::align_val_t{info.Align});
+            info.DefaultConstruct(m_Storage);
+        }
+
+        /// @brief Not copyable; the storage address is handed out to walkers.
+        ReflectedStorage(const ReflectedStorage&) = delete;
+        /// @brief Not copy-assignable.
+        ReflectedStorage& operator=(const ReflectedStorage&) = delete;
+        /// @brief Not movable; the storage address is handed out to walkers.
+        ReflectedStorage(ReflectedStorage&&) = delete;
+        /// @brief Not move-assignable.
+        ReflectedStorage& operator=(ReflectedStorage&&) = delete;
+
+        /// @brief Destructs the value and releases its storage.
+        ~ReflectedStorage()
+        {
+            m_Info->Destruct(m_Storage);
+            ::operator delete(m_Storage, std::align_val_t{m_Info->Align});
+        }
+
+        /// @brief Returns the value's storage.
+        [[nodiscard]] void* Get() const { return m_Storage; }
+
+        /// @brief Returns the reflected type occupying the storage.
+        [[nodiscard]] const TypeInfo& GetType() const { return *m_Info; }
+
+    private:
+        /// @brief The reflected type occupying the storage.
+        const TypeInfo* m_Info;
+        /// @brief The aligned storage holding the constructed value.
+        void* m_Storage = nullptr;
+    };
 
     /// @brief Appends obj's fields to out per the type's descriptors.
     /// @param out      Destination buffer; fields are appended.
