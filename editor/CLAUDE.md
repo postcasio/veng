@@ -93,14 +93,14 @@ across the whole project's one AssetId namespace, not just its own pack.
   its own registered `Offscreen` viewport, so there is no render forwarding.
 - **`EditorRegistry`** is defined in `libveng_editor` and **forward-declared** in
   `engine/include/Veng/Module/Module.h` (so `libveng` stays clean). It holds the
-  `AssetType`→editor-factory map (double-click an asset opens its editor), `RegisterPanel` for
+  `AssetTypeId`→editor-factory map (double-click an asset opens its editor), `RegisterPanel` for
   game-contributed panels, and `RegisterFieldWidget(TypeId, FieldWidgetFn)` for custom inspector
   widgets. It is non-null in `VengModuleHost` only in the editor host.
 
 ## Scene editing: the prefab and level editors
 
 - **The prefab editor is the scene-editing surface.** `PrefabEditorPanel` (registered for
-  `AssetType::Prefab`) loads + `SpawnInto`s the prefab into a document-owned live `Scene` (adding
+  `AssetTypes::Prefab`) loads + `SpawnInto`s the prefab into a document-owned live `Scene` (adding
   a default directional light when the prefab carries none) and hosts three children over one
   shared `PrefabEditContext` (`Scene*` + `AssetManager*` + a multi-entity `Selection` + the
   `Active` entity + the `EntityPayload` drag tag + a `ResolveEntity` helper): `SceneViewportPanel`
@@ -131,7 +131,7 @@ across the whole project's one AssetId namespace, not just its own pack.
   `Entity` back to a prefab-local index, the inverse of the importer's `ReadReference`; enums come
   out as enumerator names, matching what the cooker's `JsonReadFields`-based read requires.
 - **The level editor is the game-wiring surface.** `LevelEditorPanel` (registered for
-  `AssetType::Level`) **derives from** `PrefabEditorPanel`, so the viewport / explorer / inspector
+  `AssetTypes::Level`) **derives from** `PrefabEditorPanel`, so the viewport / explorer / inspector
   edit the level's **world prefab** with no scene-editing reimplemented, and adds two level-scoped
   children over the same dockspace: a **systems panel** listing the `SystemRegistry` catalog with
   a per-system enable toggle, phase labels, and drag-reorder over the active set — writing the
@@ -213,8 +213,12 @@ across the whole project's one AssetId namespace, not just its own pack.
   browser's drag stand-in and the inspector's `AssetHandle` widget — which shows the type icon
   plus the asset's name / type / id, accepts a same-type asset dropped from the browser, and
   doubles as a selector: clicking it opens a searchable popup over the `AssetSourceIndex` entries
-  of the field's `AssetType` (with a "(none)" clear). The `AssetTypeName` / `AssetTypeGlyph` /
-  `AssetTypeColor` type-metadata helpers live beside it, shared by the browser's badges.
+  of the field's `AssetTypeId` (with a "(none)" clear). The `AssetTypeName` / `AssetTypeGlyph` /
+  `AssetTypeColor` type-metadata helpers live beside it, shared by the browser's badges; the
+  first two read the host-owned `AssetTypeRegistry` the `AssetSourceIndex` was parsed against
+  (reached through `AssetSourceIndex::GetAssetTypes()`), so a game-registered type displays under
+  its registered name, while the colour table covers only the engine's own types and anything
+  else takes a neutral grey.
 
 ## Cook-on-demand and the single-asset editors
 
@@ -232,7 +236,7 @@ across the whole project's one AssetId namespace, not just its own pack.
   configuration ("→ ASTC4x4Srgb for 'macos'"), so the artist picks intent and reads the platform's
   codec without choosing one.
 - **The material-instance inspector is the cheap-override authoring surface.**
-  `MaterialInstanceEditorPanel` (registered for `AssetType::MaterialInstance`) edits a
+  `MaterialInstanceEditorPanel` (registered for `AssetTypes::MaterialInstance`) edits a
   `*.vmatinst.json`: a **parent picker** (an `AssetChip` drop target of type `Material`) plus a
   **per-field override toggle** over the parent's exposed `GetFields()` — toggling a field on adds
   it to the sparse override set, off reverts it to the parent default — so the authored surface
@@ -244,7 +248,7 @@ across the whole project's one AssetId namespace, not just its own pack.
   handle. Changing the parent reloads the schema and drops the prior overrides. Save writes the
   `*.vmatinst.json`.
 - **The input-map editor is near-free.** `InputMappingEditorPanel` (registered for
-  `AssetType::InputMap`) draws a `.inputmap.json`'s reflected document — its
+  `AssetTypes::InputMap`) draws a `.inputmap.json`'s reflected document — its
   `vector<InputAction>` actions and its `vector<Binding>` bindings — through the shared reflection
   inspector (`DrawFields` over the same `FieldClass::Array` path the project-settings panel uses),
   so the binding table is add/remove/edit-able with **no** bespoke widget code. The one custom

@@ -37,16 +37,16 @@ namespace Veng
             /// @brief The asset's identity.
             AssetId Id;
             /// @brief The asset's type (used to validate typed handle downcasts).
-            AssetType Type;
+            AssetTypeId Type;
             /// @brief Null until load + finalize completes.
             RefAny Resource;
         };
     }
 
-    /// @brief Maps an asset C++ type T to its AssetType enum value.
+    /// @brief Maps an asset C++ type T to its AssetTypeId enum value.
     ///
     /// Each concrete asset type specializes this trait. `AssetManager::LoadSync<T>`/`Get<T>`
-    /// use it to derive the AssetType for a typed request.
+    /// use it to derive the AssetTypeId for a typed request.
     template <typename T>
     struct AssetTypeTrait;
 

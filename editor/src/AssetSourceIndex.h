@@ -20,7 +20,7 @@ namespace VengEditor
         struct Entry
         {
             /// @brief Asset type of this entry.
-            Veng::AssetType Type{};
+            Veng::AssetTypeId Type{};
             /// @brief Absolute path to the per-asset JSON source (e.g. brick.tex.json).
             Veng::path Source;
             /// @brief Source path as written in the manifest, relative to its directory.
@@ -36,7 +36,10 @@ namespace VengEditor
         /// are resolved to absolute paths here. An unreadable or malformed manifest
         /// yields an empty index (logged via Log::Error).
         /// @param manifestPath Path to the .vengpack.json manifest.
-        static AssetSourceIndex Parse(const Veng::path& manifestPath);
+        /// @param types        Registry each entry's "type" name resolves through; an entry
+        ///                     naming an unregistered type is skipped.
+        static AssetSourceIndex Parse(const Veng::path& manifestPath,
+                                      const Veng::AssetTypeRegistry& types);
 
         /// @brief Parses several manifests and returns their merged index.
         ///
@@ -44,7 +47,9 @@ namespace VengEditor
         /// entry for the same id wins). Used by the editor host to index every pack the project
         /// owns from one AssetId→source map.
         /// @param manifestPaths The pack manifests to merge.
-        static AssetSourceIndex ParsePacks(std::span<const Veng::path> manifestPaths);
+        /// @param types         Registry each entry's "type" name resolves through.
+        static AssetSourceIndex ParsePacks(std::span<const Veng::path> manifestPaths,
+                                           const Veng::AssetTypeRegistry& types);
 
         /// @brief Returns the source entry for an id, or nullptr when not in the manifest.
         [[nodiscard]] const Entry* Find(Veng::AssetId id) const;
@@ -53,7 +58,7 @@ namespace VengEditor
         ///
         /// Returned by value so the caller can sort/filter without holding the index's storage.
         /// Used by the inspector's AssetHandle picker to enumerate candidates.
-        [[nodiscard]] Veng::vector<Veng::AssetId> EntriesOfType(Veng::AssetType type) const;
+        [[nodiscard]] Veng::vector<Veng::AssetId> EntriesOfType(Veng::AssetTypeId type) const;
 
         /// @brief Invokes @p fn for every manifest entry, in unspecified order.
         ///
@@ -61,7 +66,15 @@ namespace VengEditor
         /// @param fn  Visitor called with each entry's id and its Entry record.
         void ForEachEntry(const Veng::function<void(Veng::AssetId, const Entry&)>& fn) const;
 
+        /// @brief Returns the asset-type registry the index was built against.
+        ///
+        /// The index is the display surface's carrier for it: every site that renders a type
+        /// already holds the index the type came from.
+        [[nodiscard]] const Veng::AssetTypeRegistry& GetAssetTypes() const { return *m_Types; }
+
     private:
         Veng::unordered_map<Veng::u64, Entry> m_Entries;
+        /// @brief The registry the entries' types were resolved through; never null after a Parse.
+        const Veng::AssetTypeRegistry* m_Types = nullptr;
     };
 }

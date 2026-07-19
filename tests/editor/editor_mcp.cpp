@@ -372,7 +372,10 @@ TEST_CASE("editor MCP host tools: list_assets, set_panel_visible, open_asset, co
     RegisterBuiltinTypes(registry);
 
     const Veng::path manifest = WriteTempManifest();
-    const VengEditor::AssetSourceIndex sources = VengEditor::AssetSourceIndex::Parse(manifest);
+    Veng::AssetTypeRegistry assetTypes;
+    Veng::RegisterBuiltinAssetTypes(assetTypes);
+    const VengEditor::AssetSourceIndex sources =
+        VengEditor::AssetSourceIndex::Parse(manifest, assetTypes);
 
     TestToolPanel console;
     bool consoleOpen = true;

@@ -15,124 +15,41 @@ namespace VengEditor
 {
     using namespace Veng;
 
-    const char* AssetTypeName(AssetType type)
+    string AssetTypeName(const AssetTypeRegistry& types, AssetTypeId type)
     {
-        switch (type)
-        {
-        case AssetType::Raw:
-            return "Raw";
-        case AssetType::Texture:
-            return "Texture";
-        case AssetType::Mesh:
-            return "Mesh";
-        case AssetType::Shader:
-            return "Shader";
-        case AssetType::Material:
-            return "Material";
-        case AssetType::MaterialInstance:
-            return "MaterialInstance";
-        case AssetType::VertexLayout:
-            return "VertexLayout";
-        case AssetType::Prefab:
-            return "Prefab";
-        case AssetType::Level:
-            return "Level";
-        case AssetType::Skeleton:
-            return "Skeleton";
-        case AssetType::Animation:
-            return "Animation";
-        case AssetType::Environment:
-            return "EnvironmentMap";
-        case AssetType::InputMap:
-            return "InputMap";
-        case AssetType::Font:
-            return "Font";
-        case AssetType::StyleSheet:
-            return "StyleSheet";
-        case AssetType::UIDocument:
-            return "UIDocument";
-        }
-        return "Unknown";
+        return types.GetDisplayName(type);
     }
 
-    const char* AssetTypeGlyph(AssetType type)
+    string AssetTypeGlyph(const AssetTypeRegistry& types, AssetTypeId type)
     {
-        switch (type)
-        {
-        case AssetType::Raw:
-            return "RAW";
-        case AssetType::Texture:
-            return "TEX";
-        case AssetType::Mesh:
-            return "MSH";
-        case AssetType::Shader:
-            return "SHD";
-        case AssetType::Material:
-            return "MAT";
-        case AssetType::MaterialInstance:
-            return "MTI";
-        case AssetType::VertexLayout:
-            return "VTX";
-        case AssetType::Prefab:
-            return "PFB";
-        case AssetType::Level:
-            return "LVL";
-        case AssetType::Skeleton:
-            return "SKL";
-        case AssetType::Animation:
-            return "ANM";
-        case AssetType::Environment:
-            return "ENV";
-        case AssetType::InputMap:
-            return "INP";
-        case AssetType::Font:
-            return "FNT";
-        case AssetType::StyleSheet:
-            return "USS";
-        case AssetType::UIDocument:
-            return "VUI";
-        }
-        return "?";
+        return types.GetGlyph(type);
     }
 
-    vec4 AssetTypeColor(AssetType type)
+    vec4 AssetTypeColor(AssetTypeId type)
     {
-        switch (type)
-        {
-        case AssetType::Texture:
-            return {0.85f, 0.55f, 0.25f, 1.0f};
-        case AssetType::Mesh:
-            return {0.30f, 0.55f, 0.85f, 1.0f};
-        case AssetType::Material:
-            return {0.40f, 0.70f, 0.40f, 1.0f};
-        case AssetType::MaterialInstance:
-            return {0.45f, 0.80f, 0.50f, 1.0f};
-        case AssetType::Shader:
-            return {0.60f, 0.45f, 0.80f, 1.0f};
-        case AssetType::Prefab:
-            return {0.30f, 0.70f, 0.70f, 1.0f};
-        case AssetType::Level:
-            return {0.75f, 0.45f, 0.55f, 1.0f};
-        case AssetType::VertexLayout:
-            return {0.55f, 0.55f, 0.60f, 1.0f};
-        case AssetType::Skeleton:
-            return {0.80f, 0.40f, 0.40f, 1.0f};
-        case AssetType::Animation:
-            return {0.50f, 0.65f, 0.30f, 1.0f};
-        case AssetType::Environment:
-            return {0.35f, 0.50f, 0.75f, 1.0f};
-        case AssetType::InputMap:
-            return {0.70f, 0.60f, 0.35f, 1.0f};
-        case AssetType::Font:
-            return {0.65f, 0.35f, 0.65f, 1.0f};
-        case AssetType::StyleSheet:
-            return {0.40f, 0.60f, 0.75f, 1.0f};
-        case AssetType::UIDocument:
-            return {0.75f, 0.55f, 0.40f, 1.0f};
-        case AssetType::Raw:
-            return {0.50f, 0.50f, 0.50f, 1.0f};
-        }
-        return {0.50f, 0.50f, 0.50f, 1.0f};
+        // Badge tints for the engine's own types. A game-registered type has no authored tint
+        // and falls through to the neutral grey, so the badge still reads as a badge.
+        static const std::unordered_map<AssetTypeId, vec4> s_Colors{
+            {AssetTypes::Texture, {0.85f, 0.55f, 0.25f, 1.0f}},
+            {AssetTypes::Mesh, {0.30f, 0.55f, 0.85f, 1.0f}},
+            {AssetTypes::Material, {0.40f, 0.70f, 0.40f, 1.0f}},
+            {AssetTypes::MaterialInstance, {0.45f, 0.80f, 0.50f, 1.0f}},
+            {AssetTypes::Shader, {0.60f, 0.45f, 0.80f, 1.0f}},
+            {AssetTypes::Prefab, {0.30f, 0.70f, 0.70f, 1.0f}},
+            {AssetTypes::Level, {0.75f, 0.45f, 0.55f, 1.0f}},
+            {AssetTypes::VertexLayout, {0.55f, 0.55f, 0.60f, 1.0f}},
+            {AssetTypes::Skeleton, {0.80f, 0.40f, 0.40f, 1.0f}},
+            {AssetTypes::Animation, {0.50f, 0.65f, 0.30f, 1.0f}},
+            {AssetTypes::Environment, {0.35f, 0.50f, 0.75f, 1.0f}},
+            {AssetTypes::InputMap, {0.70f, 0.60f, 0.35f, 1.0f}},
+            {AssetTypes::Font, {0.65f, 0.35f, 0.65f, 1.0f}},
+            {AssetTypes::StyleSheet, {0.40f, 0.60f, 0.75f, 1.0f}},
+            {AssetTypes::UIDocument, {0.75f, 0.55f, 0.40f, 1.0f}},
+            {AssetTypes::Raw, {0.50f, 0.50f, 0.50f, 1.0f}},
+        };
+
+        const auto it = s_Colors.find(type);
+        return it == s_Colors.end() ? vec4{0.50f, 0.50f, 0.50f, 1.0f} : it->second;
     }
 
     namespace
@@ -216,13 +133,14 @@ namespace VengEditor
         // @p origin (drawn over the already-reserved box item). The cursor is left on the last
         // text line — a final SetCursorPos must never close the region, so the box's reserving
         // item below sets its layout height.
-        void OverlayChipContent(vec2 origin, AssetId id, AssetType type, string_view name,
-                                const ChipMetrics& metrics)
+        void OverlayChipContent(vec2 origin, AssetId id, AssetTypeId type, string_view name,
+                                const ChipMetrics& metrics, const AssetTypeRegistry& types)
         {
             const f32 lineHeight = UI::GetTextLineHeight();
 
             UI::SetCursorPos(vec2{origin.x + ChipPad, origin.y + ChipPad});
-            UI::Badge(AssetTypeGlyph(type), AssetTypeColor(type), vec2{metrics.Tile, metrics.Tile});
+            UI::Badge(AssetTypeGlyph(types, type), AssetTypeColor(type),
+                      vec2{metrics.Tile, metrics.Tile});
 
             const f32 textX = origin.x + ChipPad + metrics.Tile + ChipPad;
             UI::SetCursorPos(vec2{textX, origin.y + ChipPad});
@@ -235,25 +153,27 @@ namespace VengEditor
                 UI::TextDisabled("(none)");
             }
             UI::SetCursorPos(vec2{textX, origin.y + ChipPad + lineHeight});
-            UI::TextDisabled(AssetTypeName(type));
+            UI::TextDisabled(AssetTypeName(types, type));
             UI::SetCursorPos(vec2{textX, origin.y + ChipPad + (lineHeight * 2.0f)});
             UI::TextDisabled(id.IsValid() ? fmt::format("0x{:X}", id.Value) : string{"—"});
         }
 
         // Draws a self-contained chip preview (border + badge + text) for a drag tooltip; a
         // Dummy reserves the box rectangle that the content overlays.
-        void DrawChipPreview(AssetId id, AssetType type, string_view name, f32 width)
+        void DrawChipPreview(AssetId id, AssetTypeId type, string_view name, f32 width,
+                             const AssetTypeRegistry& types)
         {
             const ChipMetrics metrics = MeasureChip(width);
             const vec2 origin = UI::CursorPos();
             UI::Dummy(vec2{metrics.Width, metrics.Height});
             UI::ItemBorder(ChipBorderColor, 1.0f);
-            OverlayChipContent(origin, id, type, name, metrics);
+            OverlayChipContent(origin, id, type, name, metrics, types);
         }
     }
 
     optional<AssetId> DrawAssetChip(const AssetChipInfo& info, const AssetSourceIndex& sources)
     {
+        const AssetTypeRegistry& types = sources.GetAssetTypes();
         const string scope(info.IdScope);
         auto idScope = UI::PushId(scope);
 
@@ -283,7 +203,7 @@ namespace VengEditor
             {
                 const AssetDragPayload payload{.Id = info.Id, .Type = info.Type};
                 UI::SetDragDropPayload(AssetPayload, &payload, sizeof(payload));
-                DrawChipPreview(info.Id, info.Type, name, 220.0f);
+                DrawChipPreview(info.Id, info.Type, name, 220.0f, types);
             }
         }
 
@@ -304,7 +224,7 @@ namespace VengEditor
             }
         }
 
-        OverlayChipContent(boxOrigin, info.Id, info.Type, name, metrics);
+        OverlayChipContent(boxOrigin, info.Id, info.Type, name, metrics, types);
 
         // Reserve the full outer rectangle (margin + box + margin) as the final layout item, so
         // the row grows to include the bottom margin and the cursor lands below it. The Dummy is
@@ -348,7 +268,7 @@ namespace VengEditor
                         {
                             continue;
                         }
-                        UI::Badge(AssetTypeGlyph(info.Type), AssetTypeColor(info.Type));
+                        UI::Badge(AssetTypeGlyph(types, info.Type), AssetTypeColor(info.Type));
                         UI::SameLine();
                         const bool selected = candidate.Value == info.Id.Value;
                         if (UI::Selectable(

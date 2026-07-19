@@ -145,11 +145,11 @@ namespace Veng
         bool m_Registered = false;
     };
 
-    /// @brief AssetTypeTrait specialization mapping Texture to AssetType::Texture.
+    /// @brief AssetTypeTrait specialization mapping Texture to AssetTypes::Texture.
     template <>
     struct AssetTypeTrait<Texture>
     {
         /// @brief The asset type tag for Texture.
-        static constexpr AssetType Type = AssetType::Texture;
+        static constexpr AssetTypeId Type = AssetTypes::Texture;
     };
 }

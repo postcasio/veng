@@ -126,11 +126,11 @@ namespace Veng::Cook
         if (context.Resolve)
         {
             const optional<ResolvedSource> resolved = context.Resolve(AssetId{.Value = worldId});
-            if (resolved && resolved->Type != AssetType::Prefab)
+            if (resolved && resolved->Type != AssetTypes::Prefab)
             {
                 return std::unexpected(fmt::format(
                     "level importer: '{}': 'world' id {} resolves to type {}, not a prefab", file,
-                    worldId, static_cast<u32>(resolved->Type)));
+                    worldId, context.AssetTypes->GetName(resolved->Type)));
             }
         }
 

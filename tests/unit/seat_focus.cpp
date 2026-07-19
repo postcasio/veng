@@ -65,7 +65,7 @@ namespace
         const Ref<InputMappingContext> resource = InputMappingContext::Create({}, {});
         auto entry = CreateRef<Detail::AssetCacheEntry>(
             Detail::AssetCacheEntry{.Id = AssetId{.Value = id},
-                                    .Type = AssetType::InputMap,
+                                    .Type = AssetTypes::InputMap,
                                     .Resource = Detail::RefAny(resource)});
 
         AssetHandle<InputMappingContext> handle;
@@ -88,7 +88,7 @@ namespace
                      .Scale = 1.0f}});
         auto entry = CreateRef<Detail::AssetCacheEntry>(
             Detail::AssetCacheEntry{.Id = AssetId{.Value = id},
-                                    .Type = AssetType::InputMap,
+                                    .Type = AssetTypes::InputMap,
                                     .Resource = Detail::RefAny(resource)});
         AssetHandle<InputMappingContext> handle;
         Detail::RehydrateHandleField(&handle, AssetId{.Value = id}, std::move(entry));

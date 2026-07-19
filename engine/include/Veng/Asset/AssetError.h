@@ -15,7 +15,7 @@ namespace Veng
     {
         /// @brief Id not present in any mounted archive.
         NotFound,
-        /// @brief Id resolves, but to a different AssetType than requested.
+        /// @brief Id resolves, but to a different AssetTypeId than requested.
         WrongType,
         /// @brief Cooked blob failed to parse (malformed header/payload).
         Corrupt,

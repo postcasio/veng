@@ -12,8 +12,8 @@ namespace Veng
     class AnimationLoader final : public AssetLoader
     {
     public:
-        /// @brief Returns AssetType::Animation.
-        [[nodiscard]] AssetType Type() const override { return AssetType::Animation; }
+        /// @brief Returns AssetTypes::Animation.
+        [[nodiscard]] AssetTypeId Type() const override { return AssetTypes::Animation; }
 
         /// @brief Decodes a cooked animation blob into a Ref<Animation>.
         [[nodiscard]] AssetResult<Detail::LoadJob> Load(AssetManager& manager,

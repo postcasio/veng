@@ -236,7 +236,8 @@ namespace VengEditor
                         continue;
                     }
                     const bool selected = m_Selected && m_Selected->Value == asset.Id.Value;
-                    UI::Badge(AssetTypeGlyph(asset.Type), AssetTypeColor(asset.Type));
+                    UI::Badge(AssetTypeGlyph(m_Sources.GetAssetTypes(), asset.Type),
+                              AssetTypeColor(asset.Type));
                     UI::SameLine();
                     const bool clicked =
                         UI::Selectable(fmt::format("{}##asset_{}", asset.Name, asset.Id.Value),
@@ -289,7 +290,7 @@ namespace VengEditor
                         activateAsset(asset, clicked);
                         dragAsset(asset);
                         UI::TableNextColumn();
-                        UI::Text(AssetTypeName(asset.Type));
+                        UI::Text(AssetTypeName(m_Sources.GetAssetTypes(), asset.Type));
                         UI::TableNextColumn();
                         UI::Text(fmt::format("{}", asset.Size));
                         UI::TableNextColumn();
@@ -348,10 +349,10 @@ namespace VengEditor
                             continue;
                         }
                         const bool selected = m_Selected && m_Selected->Value == asset.Id.Value;
-                        activateAsset(asset,
-                                      cell(fmt::format("asset_{}", asset.Id.Value),
-                                           AssetTypeGlyph(asset.Type), AssetTypeColor(asset.Type),
-                                           asset.Name, selected, &asset));
+                        activateAsset(
+                            asset, cell(fmt::format("asset_{}", asset.Id.Value),
+                                        AssetTypeGlyph(m_Sources.GetAssetTypes(), asset.Type),
+                                        AssetTypeColor(asset.Type), asset.Name, selected, &asset));
                     }
                 }
                 break;

@@ -25,13 +25,13 @@ namespace Veng::Cook
         // Whether `actual` is an acceptable source type for an AssetHandle field expecting
         // `expected`. The default-instance rule lets a MaterialInstance field accept a bare
         // Material id (resolved to the parent's zero-override default instance at load).
-        bool AssetTypeAccepted(AssetType expected, AssetType actual)
+        bool AssetTypeAccepted(AssetTypeId expected, AssetTypeId actual)
         {
             if (actual == expected)
             {
                 return true;
             }
-            return expected == AssetType::MaterialInstance && actual == AssetType::Material;
+            return expected == AssetTypes::MaterialInstance && actual == AssetTypes::Material;
         }
 
         // Located-error prefix for a field within an entity's component.
@@ -45,21 +45,22 @@ namespace Veng::Cook
         // Builds the JsonFieldHooks for one component bind: AssetId validation against the
         // pack resolver, and Reference resolution to a prefab-local entity index.
         JsonFieldHooks MakeHooks(usize entityCount,
-                                 const function<optional<ResolvedSource>(AssetId)>& resolve)
+                                 const function<optional<ResolvedSource>(AssetId)>& resolve,
+                                 const AssetTypeRegistry& assetTypes)
         {
             JsonFieldHooks hooks;
 
-            hooks.ValidateAssetId = [resolve](u64 id, TypeId fieldType) -> VoidResult
+            hooks.ValidateAssetId = [resolve, &assetTypes](u64 id, TypeId fieldType) -> VoidResult
             {
-                const optional<AssetType> expected = AssetTypeForHandleField(fieldType);
+                const optional<AssetTypeId> expected = AssetTypeForHandleField(fieldType);
                 const optional<ResolvedSource> resolved = resolve(AssetId{.Value = id});
                 // Resolve only validates ids present in this pack (or a --reference pack);
                 // a non-resident id is accepted as-is (residency is the runtime's job).
                 if (resolved && expected && !AssetTypeAccepted(*expected, resolved->Type))
                 {
-                    return std::unexpected(
-                        fmt::format("asset {} resolves to type {} but the field expects type {}",
-                                    id, ToString(resolved->Type), ToString(*expected)));
+                    return std::unexpected(fmt::format(
+                        "asset {} resolves to type {} but the field expects type {}", id,
+                        assetTypes.GetName(resolved->Type), assetTypes.GetName(*expected)));
                 }
                 return {};
             };
@@ -257,7 +258,8 @@ namespace Veng::Cook
                     typeInfo.DefaultConstruct(instance.data());
 
                     // --- 2c. Bind each JSON field through the shared walker, validating it ---
-                    const JsonFieldHooks hooks = MakeHooks(entityCount, resolve);
+                    const JsonFieldHooks hooks =
+                        MakeHooks(entityCount, resolve, *context.AssetTypes);
                     VoidResult bindResult =
                         JsonReadFields(instance.data(), typeInfo, fieldsJson, registry, hooks);
                     if (!bindResult)

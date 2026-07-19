@@ -1,6 +1,6 @@
 // Device-free cases for AssetSourceIndex's type-filtered enumeration: the
 // candidate set the inspector's AssetHandle picker offers. Writes a small temp
-// manifest, parses it, and checks EntriesOfType filters by AssetType.
+// manifest, parses it, and checks EntriesOfType filters by AssetTypeId.
 
 #include <doctest/doctest.h>
 #include "support/TempPath.h"
@@ -13,7 +13,8 @@
 #include <fstream>
 
 using namespace VengEditor;
-using Veng::AssetType;
+using Veng::AssetTypeId;
+namespace AssetTypes = Veng::AssetTypes;
 
 namespace
 {
@@ -44,24 +45,26 @@ namespace
 TEST_CASE("AssetSourceIndex: EntriesOfType filters candidates by asset type")
 {
     const Veng::path manifest = WriteTempManifest();
-    const AssetSourceIndex index = AssetSourceIndex::Parse(manifest);
+    Veng::AssetTypeRegistry assetTypes;
+    Veng::RegisterBuiltinAssetTypes(assetTypes);
+    const AssetSourceIndex index = AssetSourceIndex::Parse(manifest, assetTypes);
 
-    const Veng::vector<Veng::AssetId> textures = index.EntriesOfType(AssetType::Texture);
+    const Veng::vector<Veng::AssetId> textures = index.EntriesOfType(AssetTypes::Texture);
     CHECK(textures.size() == 2);
     CHECK(Contains(textures, 1001));
     CHECK(Contains(textures, 1002));
     CHECK_FALSE(Contains(textures, 2001));
 
-    const Veng::vector<Veng::AssetId> materials = index.EntriesOfType(AssetType::Material);
+    const Veng::vector<Veng::AssetId> materials = index.EntriesOfType(AssetTypes::Material);
     CHECK(materials.size() == 1);
     CHECK(Contains(materials, 2001));
 
-    const Veng::vector<Veng::AssetId> meshes = index.EntriesOfType(AssetType::Mesh);
+    const Veng::vector<Veng::AssetId> meshes = index.EntriesOfType(AssetTypes::Mesh);
     CHECK(meshes.size() == 1);
     CHECK(Contains(meshes, 3001));
 
     // A type with no manifest entries yields an empty candidate set.
-    CHECK(index.EntriesOfType(AssetType::Shader).empty());
+    CHECK(index.EntriesOfType(AssetTypes::Shader).empty());
 
     std::error_code ec;
     std::filesystem::remove(manifest, ec);

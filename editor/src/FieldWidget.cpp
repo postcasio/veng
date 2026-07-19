@@ -27,39 +27,39 @@ namespace VengEditor
 {
     using namespace Veng;
 
-    optional<AssetType> AssetTypeOfHandle(TypeId type)
+    optional<AssetTypeId> AssetTypeOfHandle(TypeId type)
     {
         if (type == TypeIdOf<AssetHandle<Texture>>())
         {
-            return AssetType::Texture;
+            return AssetTypes::Texture;
         }
         if (type == TypeIdOf<AssetHandle<Mesh>>())
         {
-            return AssetType::Mesh;
+            return AssetTypes::Mesh;
         }
         if (type == TypeIdOf<AssetHandle<Material>>())
         {
-            return AssetType::Material;
+            return AssetTypes::Material;
         }
         if (type == TypeIdOf<AssetHandle<MaterialInstance>>())
         {
-            return AssetType::MaterialInstance;
+            return AssetTypes::MaterialInstance;
         }
         if (type == TypeIdOf<AssetHandle<Prefab>>())
         {
-            return AssetType::Prefab;
+            return AssetTypes::Prefab;
         }
         if (type == TypeIdOf<AssetHandle<Animation>>())
         {
-            return AssetType::Animation;
+            return AssetTypes::Animation;
         }
         if (type == TypeIdOf<AssetHandle<EnvironmentMap>>())
         {
-            return AssetType::Environment;
+            return AssetTypes::Environment;
         }
         if (type == TypeIdOf<AssetHandle<Gui::UIDocument>>())
         {
-            return AssetType::UIDocument;
+            return AssetTypes::UIDocument;
         }
         return std::nullopt;
     }
@@ -81,13 +81,13 @@ namespace VengEditor
             u64 currentId = 0;
             std::memcpy(&currentId, fieldPtr, sizeof(currentId));
 
-            // A handle type the picker can't enumerate (no AssetType mapping) draws as a static
+            // A handle type the picker can't enumerate (no AssetTypeId mapping) draws as a static
             // chip; an enumerable one is an interactive drop target / selector.
-            const optional<AssetType> assetType = AssetTypeOfHandle(field.Type);
+            const optional<AssetTypeId> assetType = AssetTypeOfHandle(field.Type);
 
             const AssetChipInfo chip{
                 .Id = AssetId{currentId},
-                .Type = assetType.value_or(AssetType::Raw),
+                .Type = assetType.value_or(AssetTypes::Raw),
                 .IdScope = label,
                 .DropTarget = assetType.has_value() && !field.ReadOnly,
             };

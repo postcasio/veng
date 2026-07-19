@@ -35,7 +35,7 @@ TEST_CASE("Cooker: cooks a texture pack into a CookedTextureHeader + RGBA8 pixel
 
     const optional<ArchiveEntry> entry = reader->Find(AssetId{0x7D1});
     REQUIRE(entry.has_value());
-    CHECK(entry->Type == AssetType::Texture);
+    CHECK(entry->Type == AssetTypes::Texture);
 
     REQUIRE(entry->Blob.size() >= sizeof(CookedTextureHeader));
 
@@ -88,7 +88,7 @@ TEST_CASE("Cooker: generates a full mip chain by default and packs it largest-fi
 
     const optional<ArchiveEntry> entry = reader->Find(AssetId{0x6725A9A1089EF916});
     REQUIRE(entry.has_value());
-    CHECK(entry->Type == AssetType::Texture);
+    CHECK(entry->Type == AssetTypes::Texture);
 
     REQUIRE(entry->Blob.size() >= sizeof(CookedTextureHeader));
 
@@ -141,7 +141,7 @@ TEST_CASE("Cooker: cooks a BC7 texture to Format 21/22 with the expected per-lev
 
     const optional<ArchiveEntry> entry = reader->Find(AssetId{0x3B7ECB6D353F7974ULL});
     REQUIRE(entry.has_value());
-    CHECK(entry->Type == AssetType::Texture);
+    CHECK(entry->Type == AssetTypes::Texture);
 
     REQUIRE(entry->Blob.size() >= sizeof(CookedTextureHeader));
 
@@ -201,7 +201,7 @@ TEST_CASE("Cooker: cooks an ASTC texture to Format 23/24 with the expected per-l
 
     const optional<ArchiveEntry> entry = reader->Find(AssetId{0xD8C88B8D55FEEB1BULL});
     REQUIRE(entry.has_value());
-    CHECK(entry->Type == AssetType::Texture);
+    CHECK(entry->Type == AssetTypes::Texture);
 
     REQUIRE(entry->Blob.size() >= sizeof(CookedTextureHeader));
 

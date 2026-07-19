@@ -7,7 +7,7 @@
 
 namespace Veng
 {
-    /// @brief AssetType::StyleSheet loader.
+    /// @brief AssetTypes::StyleSheet loader.
     ///
     /// Decodes a CookedStyleSheetHeader + rule table + property table into a Gui::StyleSheet, and
     /// resolves each font declaration's AssetId as a load-time dependency (kept resident). The sheet
@@ -16,8 +16,8 @@ namespace Veng
     class StyleSheetLoader final : public AssetLoader
     {
     public:
-        /// @brief Returns AssetType::StyleSheet.
-        [[nodiscard]] AssetType Type() const override { return AssetType::StyleSheet; }
+        /// @brief Returns AssetTypes::StyleSheet.
+        [[nodiscard]] AssetTypeId Type() const override { return AssetTypes::StyleSheet; }
 
         /// @brief Decodes the cooked stylesheet blob into a LoadJob producing a resident Gui::StyleSheet.
         [[nodiscard]] AssetResult<Detail::LoadJob> Load(AssetManager& manager,

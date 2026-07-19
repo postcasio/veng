@@ -77,10 +77,10 @@ namespace VengEditor
 
         /// @brief Resolves the asset's registered editor and queues the panel for
         /// adoption into the panel set at the next safe point in the frame.
-        void OpenAssetEditor(Veng::AssetType type, Veng::AssetId id) override;
+        void OpenAssetEditor(Veng::AssetTypeId type, Veng::AssetId id) override;
 
         /// @brief Returns whether the editor registry has a factory for the asset type.
-        [[nodiscard]] bool HasAssetEditor(Veng::AssetType type) const override;
+        [[nodiscard]] bool HasAssetEditor(Veng::AssetTypeId type) const override;
 
         /// @brief Cooks a source asset on demand through the injected cook backend
         /// and shadow-mounts the result so Load<T>(request.TargetId) resolves it.
@@ -188,6 +188,9 @@ namespace VengEditor
         /// parse), which the tool reports as an empty asset list.
         [[nodiscard]] const AssetSourceIndex* GetAssetSources() const { return m_Sources.get(); }
 
+        /// @brief Returns the asset-type registry manifest type names and type display resolve through.
+        [[nodiscard]] const Veng::AssetTypeRegistry& GetAssetTypes() const { return m_AssetTypes; }
+
         /// @brief Shows or hides an open panel by title, or opens/closes a document panel.
         ///
         /// Flips the panel slot's Open flag (the programmatic Window-menu toggle). A tool panel
@@ -268,6 +271,12 @@ namespace VengEditor
         /// @brief Declared after the modules so it is destroyed first; its
         /// ApplicationRegistry holds closures whose code lives in the game module.
         Veng::Unique<Registries> m_Registries;
+
+        /// @brief The asset-type identities this editor recognizes, pre-filled with the builtins.
+        ///
+        /// Host-owned and threaded by reference — assetpack is static, so a global would give
+        /// each linked image its own divergent copy. Declared ahead of m_Sources, which borrows it.
+        Veng::AssetTypeRegistry m_AssetTypes;
 
         /// @brief AssetId to source-file index, parsed once from the manifest.
         /// nullptr when no manifest path is configured.

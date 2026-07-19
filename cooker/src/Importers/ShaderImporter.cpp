@@ -521,13 +521,13 @@ namespace Veng::Cook
                                     sourcePath.string(), entryName, vertexLayoutAssetId));
                 }
 
-                if (resolved->Type != AssetType::VertexLayout)
+                if (resolved->Type != AssetTypes::VertexLayout)
                 {
                     return std::unexpected(
                         fmt::format("shader importer: '{}': entry point '{}': asset {} referenced "
                                     "as vertex_layout but has type {}",
                                     sourcePath.string(), entryName, vertexLayoutAssetId,
-                                    static_cast<u32>(resolved->Type)));
+                                    FormatHexId(resolved->Type.Value)));
                 }
 
                 const Result<vector<CookedVertexLayoutElement>> layoutElements =

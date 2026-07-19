@@ -141,11 +141,11 @@ namespace Veng
     /// @param render    The render settings the engine resolves onto the renderer.
     void SeedLevel(Scene& scene, const GameModeConfig& gameMode, const LevelRenderSettings& render);
 
-    /// @brief AssetTypeTrait specialization mapping Level to AssetType::Level.
+    /// @brief AssetTypeTrait specialization mapping Level to AssetTypes::Level.
     template <>
     struct AssetTypeTrait<Level>
     {
         /// @brief The asset type tag for Level.
-        static constexpr AssetType Type = AssetType::Level;
+        static constexpr AssetTypeId Type = AssetTypes::Level;
     };
 }

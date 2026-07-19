@@ -29,7 +29,7 @@ namespace VengEditor
         /// @brief AssetId the cooked result will be mounted under.
         Veng::AssetId TargetId;
         /// @brief Asset type, used to select the correct importer.
-        Veng::AssetType Type{};
+        Veng::AssetTypeId Type{};
 
         /// @brief Project source-pack manifests, used to resolve cross-asset references
         /// (e.g. a material's shaders and textures) by AssetId during the cook.

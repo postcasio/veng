@@ -22,7 +22,7 @@ namespace Veng::Cook
         /// @brief The asset identifier this blob is stored under.
         AssetId Id;
         /// @brief The asset type of the blob.
-        AssetType Type{};
+        AssetTypeId Type{};
         /// @brief How the stored bytes are encoded (Stored or Zstd).
         ArchiveCodec Codec = ArchiveCodec::Stored;
         /// @brief The inflated blob length; equals the stored size for a Stored blob.
@@ -42,7 +42,7 @@ namespace Veng::Cook
         /// @brief The asset identifier this blob is stored under.
         AssetId Id;
         /// @brief The asset type of the blob.
-        AssetType Type{};
+        AssetTypeId Type{};
         /// @brief How the stored bytes are encoded (Stored or Zstd).
         ArchiveCodec Codec = ArchiveCodec::Stored;
         /// @brief The stored (on-disk) byte length of the blob.

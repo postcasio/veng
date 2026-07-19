@@ -21,7 +21,7 @@ namespace
 {
     // The cook cache's own format version. Folded into the tool tag so a change to the cache file
     // layout or the manifest schema invalidates every cached entry without a manual sweep.
-    constexpr u32 CookCacheFormatVersion = 2;
+    constexpr u32 CookCacheFormatVersion = 3;
 
     void PrintUsage()
     {
@@ -34,6 +34,7 @@ namespace
                            "[--cache-dir <dir>] [--depfile <out.d>]\n"
                            "  vengc generate-id [--reference <pack.json>]...\n"
                            "  vengc generate-type-id [--module <lib>]\n"
+                           "  vengc generate-asset-type [--module <lib>]\n"
                            "  vengc verify <archive.vengpack>\n");
     }
 
@@ -501,6 +502,9 @@ int main(int argc, char** argv)
     // -------------------------------------------------------------------
     if (subcommand == "generate-id")
     {
+        AssetTypeRegistry assetTypes;
+        RegisterBuiltinAssetTypes(assetTypes);
+
         vector<path> referencePacks;
 
         for (usize i = 1; i < args.size(); ++i)
@@ -525,7 +529,7 @@ int main(int argc, char** argv)
         packs.reserve(referencePacks.size());
         for (const path& refPath : referencePacks)
         {
-            Result<AssetPack> packResult = ParseAssetPack(refPath);
+            Result<AssetPack> packResult = ParseAssetPack(refPath, assetTypes);
             if (!packResult)
             {
                 fmt::print(stderr, "vengc: {}\n", packResult.error());
@@ -601,6 +605,58 @@ int main(int argc, char** argv)
         // Hex for C++ literals, decimal for JSON packs (JSON has no hex literal).
         fmt::print("hex (C++):      0x{:X}ULL\n", id);
         fmt::print("decimal (JSON): {}\n", id);
+        return 0;
+    }
+
+    // -------------------------------------------------------------------
+    // vengc generate-asset-type
+    // -------------------------------------------------------------------
+    if (subcommand == "generate-asset-type")
+    {
+        optional<path> modulePath;
+
+        for (usize i = 1; i < args.size(); ++i)
+        {
+            if (args[i] == "--module")
+            {
+                if (i + 1 >= args.size())
+                {
+                    fmt::print(stderr, "vengc: --module requires an argument\n");
+                    return 1;
+                }
+                modulePath = path(args[++i]);
+            }
+            else
+            {
+                fmt::print(stderr, "vengc: unexpected argument '{}'\n", args[i]);
+                return 1;
+            }
+        }
+
+        // There is deliberately no --reference: a pack manifest carries type *names*, so it has
+        // no minted type id to collide with. The id space lives in the builtin table and in the
+        // registrations a loaded module contributes.
+        AssetTypeRegistry assetTypes;
+        RegisterBuiltinAssetTypes(assetTypes);
+
+        // The module image must outlive the registry it populates.
+        optional<LoadedModuleTypes> moduleTypes;
+        if (modulePath)
+        {
+            Result<LoadedModuleTypes> loaded = LoadModuleTypes(*modulePath);
+            if (!loaded)
+            {
+                fmt::print(stderr, "vengc: {}\n", loaded.error());
+                return 1;
+            }
+            moduleTypes = std::move(*loaded);
+        }
+
+        const AssetTypeId id = GenerateAssetTypeId(assetTypes);
+        // One canonical spelling: a zero-padded 16-digit hex literal in C++, the same string
+        // quoted in JSON.
+        fmt::print("hex (C++):   0x{:016X}ULL\n", id.Value);
+        fmt::print("hex (JSON):  \"0x{:016X}\"\n", id.Value);
         return 0;
     }
 

@@ -15,8 +15,8 @@ namespace Veng::Cook
     class FontImporter final : public AssetImporter
     {
     public:
-        /// @brief Returns AssetType::Font.
-        [[nodiscard]] AssetType Type() const override { return AssetType::Font; }
+        /// @brief Returns AssetTypes::Font.
+        [[nodiscard]] AssetTypeId Type() const override { return AssetTypes::Font; }
 
         /// @brief Cooks the font described by `entry` into a binary blob.
         [[nodiscard]] Result<vector<u8>> Cook(const CookContext& context,

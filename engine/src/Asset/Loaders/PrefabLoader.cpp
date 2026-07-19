@@ -9,6 +9,7 @@
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/CookedBlobs.h>
 #include <Veng/Asset/Environment.h>
+#include <Veng/Asset/HexId.h>
 #include <Veng/Asset/InputMappingContext.h>
 #include <Veng/Asset/Material.h>
 #include <Veng/Asset/MaterialInstance.h>
@@ -33,7 +34,7 @@ namespace Veng
         // Load one embedded dependency by id + type, returning its cache entry.
         AssetResult<Ref<Detail::AssetCacheEntry>> LoadDependency(AssetManager& manager,
                                                                  AssetId parentId, AssetId depId,
-                                                                 AssetType type, bool async)
+                                                                 AssetTypeId type, bool async)
         {
             auto load = [&]<class T>() -> AssetResult<Ref<Detail::AssetCacheEntry>>
             {
@@ -59,34 +60,50 @@ namespace Veng
                 return AssetManager::EntryOf(*handle);
             };
 
-            switch (type)
+            if (type == AssetTypes::Texture)
             {
-            case AssetType::Texture:
                 return load.operator()<Texture>();
-            case AssetType::Mesh:
-                return load.operator()<Mesh>();
-            case AssetType::Material:
-                return load.operator()<Material>();
-            case AssetType::MaterialInstance:
-                return load.operator()<MaterialInstance>();
-            case AssetType::Prefab:
-                return load.operator()<Prefab>();
-            case AssetType::Animation:
-                return load.operator()<Animation>();
-            case AssetType::Environment:
-                return load.operator()<EnvironmentMap>();
-            case AssetType::InputMap:
-                return load.operator()<InputMappingContext>();
-            case AssetType::UIDocument:
-                return load.operator()<Gui::UIDocument>();
-            case AssetType::Raw:
-                return load.operator()<RawAsset>();
-            default:
-                return std::unexpected(Corrupt(
-                    parentId,
-                    fmt::format("prefab {}: embedded handle field has unsupported asset type {}",
-                                parentId.Value, static_cast<u32>(type))));
             }
+            if (type == AssetTypes::Mesh)
+            {
+                return load.operator()<Mesh>();
+            }
+            if (type == AssetTypes::Material)
+            {
+                return load.operator()<Material>();
+            }
+            if (type == AssetTypes::MaterialInstance)
+            {
+                return load.operator()<MaterialInstance>();
+            }
+            if (type == AssetTypes::Prefab)
+            {
+                return load.operator()<Prefab>();
+            }
+            if (type == AssetTypes::Animation)
+            {
+                return load.operator()<Animation>();
+            }
+            if (type == AssetTypes::Environment)
+            {
+                return load.operator()<EnvironmentMap>();
+            }
+            if (type == AssetTypes::InputMap)
+            {
+                return load.operator()<InputMappingContext>();
+            }
+            if (type == AssetTypes::UIDocument)
+            {
+                return load.operator()<Gui::UIDocument>();
+            }
+            if (type == AssetTypes::Raw)
+            {
+                return load.operator()<RawAsset>();
+            }
+            return std::unexpected(Corrupt(
+                parentId, fmt::format("prefab {}: embedded handle field has unsupported asset "
+                                      "type {}",
+                                      parentId.Value, FormatHexId(type.Value))));
         }
 
         // An embedded handle dependency: its id and the asset type its field
@@ -94,7 +111,7 @@ namespace Veng
         struct HandleDep
         {
             u64 Id = 0;
-            AssetType Type = AssetType::Raw;
+            AssetTypeId Type = AssetTypes::Raw;
         };
 
         // Collect (id, type) for every embedded AssetHandle field, recursing into struct fields.
@@ -115,7 +132,7 @@ namespace Veng
                         continue;
                     }
 
-                    const optional<AssetType> assetType = AssetTypeForHandleField(field.Type);
+                    const optional<AssetTypeId> assetType = AssetTypeForHandleField(field.Type);
                     if (!assetType)
                     {
                         return std::unexpected(fmt::format(
@@ -165,7 +182,7 @@ namespace Veng
                             {
                                 continue;
                             }
-                            const optional<AssetType> assetType =
+                            const optional<AssetTypeId> assetType =
                                 AssetTypeForHandleField(field.ElementType);
                             if (!assetType)
                             {

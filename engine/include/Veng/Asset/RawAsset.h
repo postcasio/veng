@@ -22,11 +22,11 @@ namespace Veng
         vector<u8> Bytes;
     };
 
-    /// @brief AssetTypeTrait specialization mapping RawAsset to AssetType::Raw.
+    /// @brief AssetTypeTrait specialization mapping RawAsset to AssetTypes::Raw.
     template <>
     struct AssetTypeTrait<RawAsset>
     {
         /// @brief The asset type tag for RawAsset.
-        static constexpr AssetType Type = AssetType::Raw;
+        static constexpr AssetTypeId Type = AssetTypes::Raw;
     };
 }

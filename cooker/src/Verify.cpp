@@ -76,11 +76,16 @@ namespace Veng::Cook
             return 1;
         }
 
+        // Names the builtin types for a readable report; a type the engine does not define
+        // prints as its hex id.
+        AssetTypeRegistry assetTypes;
+        RegisterBuiltinAssetTypes(assetTypes);
+
         usize mismatches = 0;
         for (const VerifiedAsset& asset : report.Assets)
         {
-            fmt::print("{:<8} {:>5}  0x{:016X}\n", asset.Ok ? "OK" : "MISMATCH",
-                       ToString(asset.Type), asset.Id.Value);
+            fmt::print("{:<8} {:>16}  0x{:016X}\n", asset.Ok ? "OK" : "MISMATCH",
+                       assetTypes.GetName(asset.Type), asset.Id.Value);
             if (!asset.Ok)
             {
                 ++mismatches;

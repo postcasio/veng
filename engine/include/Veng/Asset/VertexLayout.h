@@ -22,11 +22,11 @@ namespace Veng
         [[nodiscard]] const Renderer::VertexBufferLayout& GetLayout() const { return Layout; }
     };
 
-    /// @brief AssetTypeTrait specialization mapping VertexLayout to AssetType::VertexLayout.
+    /// @brief AssetTypeTrait specialization mapping VertexLayout to AssetTypes::VertexLayout.
     template <>
     struct AssetTypeTrait<VertexLayout>
     {
         /// @brief The asset type tag for VertexLayout.
-        static constexpr AssetType Type = AssetType::VertexLayout;
+        static constexpr AssetTypeId Type = AssetTypes::VertexLayout;
     };
 }

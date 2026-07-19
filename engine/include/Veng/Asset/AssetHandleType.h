@@ -7,7 +7,7 @@
 
 namespace Veng
 {
-    /// @brief The AssetType an embedded AssetHandle<T> field resolves to, keyed by the field's leaf
+    /// @brief The AssetTypeId an embedded AssetHandle<T> field resolves to, keyed by the field's leaf
     ///        TypeId.
     ///
     /// The single mapping shared by the runtime prefab loader (which loads a set handle's dependency)
@@ -16,47 +16,47 @@ namespace Veng
     /// returns nullopt — an AssetHandle of a type the engine does not recognize.
     /// @param fieldType  The reflected leaf TypeId of the AssetHandle<T> field.
     /// @return The asset type the handle resolves to, or nullopt for an unrecognized handle type.
-    [[nodiscard]] inline optional<AssetType> AssetTypeForHandleField(TypeId fieldType)
+    [[nodiscard]] inline optional<AssetTypeId> AssetTypeForHandleField(TypeId fieldType)
     {
         if (fieldType == TypeIdOf<AssetHandle<Texture>>())
         {
-            return AssetType::Texture;
+            return AssetTypes::Texture;
         }
         if (fieldType == TypeIdOf<AssetHandle<Mesh>>())
         {
-            return AssetType::Mesh;
+            return AssetTypes::Mesh;
         }
         if (fieldType == TypeIdOf<AssetHandle<Material>>())
         {
-            return AssetType::Material;
+            return AssetTypes::Material;
         }
         if (fieldType == TypeIdOf<AssetHandle<MaterialInstance>>())
         {
-            return AssetType::MaterialInstance;
+            return AssetTypes::MaterialInstance;
         }
         if (fieldType == TypeIdOf<AssetHandle<Prefab>>())
         {
-            return AssetType::Prefab;
+            return AssetTypes::Prefab;
         }
         if (fieldType == TypeIdOf<AssetHandle<Animation>>())
         {
-            return AssetType::Animation;
+            return AssetTypes::Animation;
         }
         if (fieldType == TypeIdOf<AssetHandle<EnvironmentMap>>())
         {
-            return AssetType::Environment;
+            return AssetTypes::Environment;
         }
         if (fieldType == TypeIdOf<AssetHandle<InputMappingContext>>())
         {
-            return AssetType::InputMap;
+            return AssetTypes::InputMap;
         }
         if (fieldType == TypeIdOf<AssetHandle<Gui::UIDocument>>())
         {
-            return AssetType::UIDocument;
+            return AssetTypes::UIDocument;
         }
         if (fieldType == TypeIdOf<AssetHandle<RawAsset>>())
         {
-            return AssetType::Raw;
+            return AssetTypes::Raw;
         }
         return std::nullopt;
     }

@@ -317,7 +317,7 @@ namespace VengEditor
         m_Cooking = true;
         m_CookError.reset();
 
-        m_Cook({.SourcePath = m_TempPath, .TargetId = m_Id, .Type = AssetType::MaterialInstance},
+        m_Cook({.SourcePath = m_TempPath, .TargetId = m_Id, .Type = AssetTypes::MaterialInstance},
                [this](Result<MountHandle> mount)
                {
                    m_Cooking = false;
@@ -409,7 +409,7 @@ namespace VengEditor
             UI::Text("Parent");
             const AssetChipInfo parentChip{
                 .Id = m_ParentId,
-                .Type = AssetType::Material,
+                .Type = AssetTypes::Material,
                 .IdScope = "instparent",
                 .DropTarget = true,
             };
@@ -453,7 +453,7 @@ namespace VengEditor
                 {
                     const AssetChipInfo texChip{
                         .Id = slot.Texture,
-                        .Type = AssetType::Texture,
+                        .Type = AssetTypes::Texture,
                         .IdScope = "insttex",
                         .DropTarget = slot.Overridden,
                     };

@@ -16,8 +16,9 @@
 //     ContentHash archiveDigest   // xxh3-128 over the serialized TOC bytes
 //   TOC[count]                    // sorted by AssetId for binary-search lookup
 //     u64         id              // AssetId
-//     u32         type            // AssetType
+//     u64         type            // AssetTypeId
 //     u32         codec           // ArchiveCodec: 0 = stored, 1 = zstd
+//     u32         pad             // written zeroed; keeps the entry deterministic at 64 bytes
 //     u64         offset          // from start of blob region
 //     u64         size            // stored (on-disk) blob byte length
 //     ContentHash hash            // xxh3-128 over this entry's stored bytes
@@ -35,7 +36,7 @@ namespace Veng
     ///
     /// A mismatch produces a clean VersionMismatch error (see AssetError.h), not a crash.
     /// Bump on any layout change.
-    inline constexpr u32 ArchiveFormatVersion = 5;
+    inline constexpr u32 ArchiveFormatVersion = 6;
 
     /// @brief How a blob is stored in the archive's blob region.
     ///
@@ -70,7 +71,7 @@ namespace Veng
         /// @brief The asset's unique identifier.
         AssetId Id;
         /// @brief The asset type, matching the TOC entry's type field.
-        AssetType Type;
+        AssetTypeId Type;
         /// @brief View into the reader's storage; valid for the reader's lifetime.
         std::span<const u8> Blob;
     };
@@ -83,7 +84,7 @@ namespace Veng
         /// @brief The asset's unique identifier.
         AssetId Id;
         /// @brief The asset type.
-        AssetType Type;
+        AssetTypeId Type;
         /// @brief Codec the blob is stored under.
         ArchiveCodec Codec = ArchiveCodec::Stored;
         /// @brief Stored (on-disk) byte size of the cooked blob.
@@ -104,7 +105,7 @@ namespace Veng
         /// @brief The asset identifier.
         AssetId Id;
         /// @brief The asset type.
-        AssetType Type{};
+        AssetTypeId Type{};
         /// @brief Codec the stored bytes are under.
         ArchiveCodec Codec = ArchiveCodec::Stored;
         /// @brief Stored (on-disk) blob byte length.
@@ -184,7 +185,7 @@ namespace Veng
         /// @param uncompressedSize  The inflated length of the blob. Defaulted to the blob's stored
         ///                          size, which is correct for a Stored blob; a Zstd caller passes
         ///                          the original length.
-        void Add(AssetId id, AssetType type, std::span<const u8> blob, ContentHash hash = {},
+        void Add(AssetId id, AssetTypeId type, std::span<const u8> blob, ContentHash hash = {},
                  ArchiveCodec codec = ArchiveCodec::Stored,
                  optional<u64> uncompressedSize = std::nullopt);
 
@@ -214,7 +215,7 @@ namespace Veng
             /// @brief Asset identifier.
             AssetId Id;
             /// @brief Asset type.
-            AssetType Type;
+            AssetTypeId Type;
             /// @brief Stored blob bytes.
             vector<u8> Blob;
             /// @brief xxh3-128 content hash of the stored bytes; zero if unhashed.
@@ -299,7 +300,7 @@ namespace Veng
             /// @brief Asset identifier.
             AssetId Id;
             /// @brief Asset type.
-            AssetType Type;
+            AssetTypeId Type;
             /// @brief Absolute byte offset of the stored blob within m_Storage.
             u64 Offset = 0;
             /// @brief Stored (on-disk) blob byte size.

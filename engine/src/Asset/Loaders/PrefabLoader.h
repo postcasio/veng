@@ -5,7 +5,7 @@
 
 namespace Veng
 {
-    /// @brief AssetType::Prefab loader.
+    /// @brief AssetTypes::Prefab loader.
     ///
     /// Decodes a CookedPrefabHeader + entity/component table + concatenated WriteFields
     /// records into a Veng::Prefab holding the decoded value tree. Embedded AssetHandle
@@ -15,8 +15,8 @@ namespace Veng
     class PrefabLoader final : public AssetLoader
     {
     public:
-        /// @brief Returns AssetType::Prefab.
-        [[nodiscard]] AssetType Type() const override { return AssetType::Prefab; }
+        /// @brief Returns AssetTypes::Prefab.
+        [[nodiscard]] AssetTypeId Type() const override { return AssetTypes::Prefab; }
 
         /// @brief Decodes the cooked prefab blob into a LoadJob producing a resident Veng::Prefab.
         [[nodiscard]] AssetResult<Detail::LoadJob> Load(AssetManager& manager,

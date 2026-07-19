@@ -17,8 +17,8 @@ namespace Veng::Cook
     class UIDocumentImporter final : public AssetImporter
     {
     public:
-        /// @brief Returns AssetType::UIDocument.
-        [[nodiscard]] AssetType Type() const override { return AssetType::UIDocument; }
+        /// @brief Returns AssetTypes::UIDocument.
+        [[nodiscard]] AssetTypeId Type() const override { return AssetTypes::UIDocument; }
 
         /// @brief Cooks the UI document described by `entry` into a binary blob.
         [[nodiscard]] Result<vector<u8>> Cook(const CookContext& context,

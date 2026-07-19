@@ -20,8 +20,8 @@ namespace Veng::Cook
     class MaterialImporter final : public AssetImporter
     {
     public:
-        /// @brief Returns AssetType::Material.
-        [[nodiscard]] AssetType Type() const override { return AssetType::Material; }
+        /// @brief Returns AssetTypes::Material.
+        [[nodiscard]] AssetTypeId Type() const override { return AssetTypes::Material; }
 
         /// @brief Cooks the material described by `entry` into a binary blob.
         [[nodiscard]] Result<vector<u8>> Cook(const CookContext& context,

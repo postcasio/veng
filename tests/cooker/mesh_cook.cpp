@@ -34,7 +34,7 @@ TEST_CASE("Cooker: cooks a mesh pack into a CookedMeshHeader + buffers + submesh
 
     const optional<ArchiveEntry> entry = reader->Find(AssetId{0xBB9});
     REQUIRE(entry.has_value());
-    CHECK(entry->Type == AssetType::Mesh);
+    CHECK(entry->Type == AssetTypes::Mesh);
 
     REQUIRE(entry->Blob.size() >= sizeof(CookedMeshHeader));
 

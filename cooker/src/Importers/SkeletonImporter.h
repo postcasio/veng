@@ -14,8 +14,8 @@ namespace Veng::Cook
     class SkeletonImporter final : public AssetImporter
     {
     public:
-        /// @brief Returns AssetType::Skeleton.
-        [[nodiscard]] AssetType Type() const override { return AssetType::Skeleton; }
+        /// @brief Returns AssetTypes::Skeleton.
+        [[nodiscard]] AssetTypeId Type() const override { return AssetTypes::Skeleton; }
 
         /// @brief Cooks the skeleton described by `entry` into a binary blob.
         [[nodiscard]] Result<vector<u8>> Cook(const CookContext& context,

@@ -21,7 +21,7 @@ namespace VengEditor
         /// this from inside OnUI is safe. A no-op for a type with no registered editor.
         /// @param type The asset type determining which editor factory to use.
         /// @param id   The asset to open in the editor.
-        virtual void OpenAssetEditor(Veng::AssetType type, Veng::AssetId id) = 0;
+        virtual void OpenAssetEditor(Veng::AssetTypeId type, Veng::AssetId id) = 0;
 
         /// @brief Returns whether an asset type has a registered editor.
         ///
@@ -29,6 +29,6 @@ namespace VengEditor
         /// type with no editor opens nothing.
         /// @param type The asset type to query.
         /// @return True when a factory is registered for the type.
-        [[nodiscard]] virtual bool HasAssetEditor(Veng::AssetType type) const = 0;
+        [[nodiscard]] virtual bool HasAssetEditor(Veng::AssetTypeId type) const = 0;
     };
 }

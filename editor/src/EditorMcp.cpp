@@ -319,7 +319,8 @@ namespace VengEditor
             tool.Name = "editor.list_assets";
             tool.Description =
                 "Lists the project's assets from the source index: each id, name, type, and source "
-                "path. Argument: { type?: <AssetType name>, limit?, cursor? }. 'type' filters by a "
+                "path. Argument: { type?: <asset type name>, limit?, cursor? }. 'type' filters by "
+                "a "
                 "canonical type name (Texture, Material, Prefab, Level, …). Paginated: returns "
                 "{ assets, nextCursor? } — page the tail through nextCursor.";
             tool.InputSchemaJson = R"({"type":"object","properties":{"type":{"type":"string"},)"
@@ -328,21 +329,21 @@ namespace VengEditor
             {
                 const Json args = Json::parse(argsJson, nullptr, false);
 
-                optional<AssetType> filter;
-                if (args.is_object() && args.contains("type") && args["type"].is_string())
-                {
-                    const string typeName = args["type"].get<string>();
-                    filter = ParseAssetType(typeName);
-                    if (!filter)
-                    {
-                        return std::unexpected(fmt::format("unknown asset type '{}'", typeName));
-                    }
-                }
-
                 const AssetSourceIndex* sources = host.AssetSources ? host.AssetSources() : nullptr;
                 if (sources == nullptr)
                 {
                     return Json{{"assets", Json::array()}}.dump();
+                }
+
+                optional<AssetTypeId> filter;
+                if (args.is_object() && args.contains("type") && args["type"].is_string())
+                {
+                    const string typeName = args["type"].get<string>();
+                    filter = sources->GetAssetTypes().FindByName(typeName);
+                    if (!filter)
+                    {
+                        return std::unexpected(fmt::format("unknown asset type '{}'", typeName));
+                    }
                 }
 
                 // Collect the matching (id, entry) pairs, then sort by id so the cursor is a stable
@@ -371,10 +372,11 @@ namespace VengEditor
                 for (; index < rows.size() && assets.size() < limit; ++index)
                 {
                     const Row& row = rows[index];
-                    assets.push_back(Json{{"id", FormatAssetId(row.Id)},
-                                          {"name", row.Entry->RelativeSource.string()},
-                                          {"type", ToString(row.Entry->Type)},
-                                          {"source", row.Entry->Source.string()}});
+                    assets.push_back(
+                        Json{{"id", FormatAssetId(row.Id)},
+                             {"name", row.Entry->RelativeSource.string()},
+                             {"type", sources->GetAssetTypes().GetName(row.Entry->Type)},
+                             {"source", row.Entry->Source.string()}});
                 }
 
                 Json result{{"assets", std::move(assets)}};

@@ -12,8 +12,8 @@ namespace Veng
     class InputMapLoader final : public AssetLoader
     {
     public:
-        /// @brief Returns AssetType::InputMap.
-        [[nodiscard]] AssetType Type() const override { return AssetType::InputMap; }
+        /// @brief Returns AssetTypes::InputMap.
+        [[nodiscard]] AssetTypeId Type() const override { return AssetTypes::InputMap; }
 
         /// @brief Decodes a cooked input-map blob into a Ref<InputMappingContext>.
         [[nodiscard]] AssetResult<Detail::LoadJob> Load(AssetManager& manager,

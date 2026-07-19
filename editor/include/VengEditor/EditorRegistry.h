@@ -14,7 +14,7 @@
 /// this header supplies its full definition, seen only by libveng_editor and the
 /// editor modules that register into it. A non-editor host passes Editor = nullptr.
 ///
-/// A loaded game editor module registers: per-AssetType editor factories,
+/// A loaded game editor module registers: per-AssetTypeId editor factories,
 /// game-contributed custom panels, and per-TypeId custom inspector widgets.
 
 namespace Veng
@@ -36,7 +36,7 @@ namespace Veng
     /// Overrides the inspector's built-in widget for a given TypeId.
     using FieldWidgetFn = function<void(void* fieldPtr, const FieldDescriptor& field)>;
 
-    /// @brief Holds the per-AssetType editor factories, game-contributed panels,
+    /// @brief Holds the per-AssetTypeId editor factories, game-contributed panels,
     /// and per-TypeId inspector widget overrides registered by a game editor module.
     class EditorRegistry
     {
@@ -47,7 +47,7 @@ namespace Veng
         /// First-write-wins: a game module's factory takes precedence over built-ins.
         /// @param type    The asset type to bind this factory to.
         /// @param factory The factory instance; ownership is transferred.
-        void RegisterAssetEditor(AssetType type, Unique<AssetEditorFactory> factory)
+        void RegisterAssetEditor(AssetTypeId type, Unique<AssetEditorFactory> factory)
         {
             m_AssetEditors.try_emplace(type, std::move(factory));
         }
@@ -71,7 +71,7 @@ namespace Veng
         }
 
         /// @brief Returns the factory for an asset type, or nullptr when none is registered.
-        [[nodiscard]] AssetEditorFactory* AssetEditorFor(AssetType type) const
+        [[nodiscard]] AssetEditorFactory* AssetEditorFor(AssetTypeId type) const
         {
             const auto it = m_AssetEditors.find(type);
             return it == m_AssetEditors.end() ? nullptr : it->second.get();
@@ -79,7 +79,7 @@ namespace Veng
 
         /// @brief Creates an editor panel for an asset, or nullptr when its type has
         /// no registered factory.
-        [[nodiscard]] Unique<VengEditor::EditorPanel> CreateEditorFor(AssetType type,
+        [[nodiscard]] Unique<VengEditor::EditorPanel> CreateEditorFor(AssetTypeId type,
                                                                       AssetId id) const
         {
             AssetEditorFactory* factory = AssetEditorFor(type);
@@ -97,7 +97,7 @@ namespace Veng
         [[nodiscard]] vector<Unique<VengEditor::EditorPanel>>& Panels() { return m_Panels; }
 
     private:
-        unordered_map<AssetType, Unique<AssetEditorFactory>> m_AssetEditors;
+        unordered_map<AssetTypeId, Unique<AssetEditorFactory>> m_AssetEditors;
         vector<Unique<VengEditor::EditorPanel>> m_Panels;
         unordered_map<TypeId, FieldWidgetFn> m_FieldWidgets;
     };

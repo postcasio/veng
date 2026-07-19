@@ -5,7 +5,7 @@
 
 namespace Veng
 {
-    /// @brief AssetType::VertexLayout loader.
+    /// @brief AssetTypes::VertexLayout loader.
     ///
     /// Decodes a CookedVertexLayoutHeader + CookedVertexLayoutElement array into a
     /// Veng::VertexLayout (VertexBufferLayout), bridging the cooked underlying-integer
@@ -13,8 +13,8 @@ namespace Veng
     class VertexLayoutLoader final : public AssetLoader
     {
     public:
-        /// @brief Returns AssetType::VertexLayout.
-        [[nodiscard]] AssetType Type() const override { return AssetType::VertexLayout; }
+        /// @brief Returns AssetTypes::VertexLayout.
+        [[nodiscard]] AssetTypeId Type() const override { return AssetTypes::VertexLayout; }
 
         /// @brief Decodes the cooked vertex-layout blob into a LoadJob producing a resident Veng::VertexLayout.
         [[nodiscard]] AssetResult<Detail::LoadJob> Load(AssetManager& manager,

@@ -13,8 +13,8 @@ namespace Veng::Cook
     class TextureImporter final : public AssetImporter
     {
     public:
-        /// @brief Returns AssetType::Texture.
-        [[nodiscard]] AssetType Type() const override { return AssetType::Texture; }
+        /// @brief Returns AssetTypes::Texture.
+        [[nodiscard]] AssetTypeId Type() const override { return AssetTypes::Texture; }
 
         /// @brief Cooks the texture described by `entry` into a binary blob.
         [[nodiscard]] Result<vector<u8>> Cook(const CookContext& context,

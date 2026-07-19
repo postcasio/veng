@@ -66,11 +66,11 @@ namespace Veng
         void ComputeBindPoseMatrices(vector<mat4>& out) const;
     };
 
-    /// @brief AssetTypeTrait specialization mapping Skeleton to AssetType::Skeleton.
+    /// @brief AssetTypeTrait specialization mapping Skeleton to AssetTypes::Skeleton.
     template <>
     struct AssetTypeTrait<Skeleton>
     {
         /// @brief The asset type tag for Skeleton.
-        static constexpr AssetType Type = AssetType::Skeleton;
+        static constexpr AssetTypeId Type = AssetTypes::Skeleton;
     };
 }

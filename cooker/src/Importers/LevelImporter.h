@@ -16,8 +16,8 @@ namespace Veng::Cook
     class LevelImporter : public AssetImporter
     {
     public:
-        /// @brief Returns AssetType::Level.
-        [[nodiscard]] AssetType Type() const override { return AssetType::Level; }
+        /// @brief Returns AssetTypes::Level.
+        [[nodiscard]] AssetTypeId Type() const override { return AssetTypes::Level; }
 
         /// @brief Cooks the level described by `entry` into a binary blob.
         [[nodiscard]] Result<vector<u8>> Cook(const CookContext& context,

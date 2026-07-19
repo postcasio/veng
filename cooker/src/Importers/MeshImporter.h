@@ -15,8 +15,8 @@ namespace Veng::Cook
     class MeshImporter final : public AssetImporter
     {
     public:
-        /// @brief Returns AssetType::Mesh.
-        [[nodiscard]] AssetType Type() const override { return AssetType::Mesh; }
+        /// @brief Returns AssetTypes::Mesh.
+        [[nodiscard]] AssetTypeId Type() const override { return AssetTypes::Mesh; }
 
         /// @brief Cooks the mesh described by `entry` into a binary blob.
         [[nodiscard]] Result<vector<u8>> Cook(const CookContext& context,

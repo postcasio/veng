@@ -402,21 +402,21 @@ namespace Veng
         /// freed once the last handle drops — mirroring an async Load's deferred-failure behavior.
         void FailPendingCreate(const Ref<Detail::AssetCacheEntry>& entry, const string& error);
 
-        [[nodiscard]] Ref<Detail::AssetCacheEntry> LoadUntyped(AssetType type, AssetId id);
-        [[nodiscard]] AssetResult<Ref<Detail::AssetCacheEntry>> LoadSyncUntyped(AssetType type,
+        [[nodiscard]] Ref<Detail::AssetCacheEntry> LoadUntyped(AssetTypeId type, AssetId id);
+        [[nodiscard]] AssetResult<Ref<Detail::AssetCacheEntry>> LoadSyncUntyped(AssetTypeId type,
                                                                                 AssetId id);
 
         /// @brief Resolves an id to a loader and cooked blob, validating type against the archive entry.
         ///
         /// Shared by the async and sync load paths.
-        [[nodiscard]] AssetResult<std::pair<AssetLoader*, ArchiveEntry>> Resolve(AssetType type,
+        [[nodiscard]] AssetResult<std::pair<AssetLoader*, ArchiveEntry>> Resolve(AssetTypeId type,
                                                                                  AssetId id);
 
         /// @brief Resolves and runs the loader for a (type, id).
         ///
         /// The archive entry's type must match the requested type exactly; a mismatch is a
         /// WrongType error. Shared by the async and sync load paths.
-        [[nodiscard]] AssetResult<Detail::LoadJob> RunLoader(AssetType type, AssetId id,
+        [[nodiscard]] AssetResult<Detail::LoadJob> RunLoader(AssetTypeId type, AssetId id,
                                                              bool async);
 
         [[nodiscard]] optional<ArchiveEntry> Find(AssetId id) const;
@@ -431,7 +431,7 @@ namespace Veng
         vector<MountedArchive> m_Mounts;
         vector<MemoryMount> m_MemoryMounts;
         u64 m_NextMemoryToken = 1;
-        unordered_map<AssetType, Unique<AssetLoader>> m_Loaders;
+        unordered_map<AssetTypeId, Unique<AssetLoader>> m_Loaders;
         std::unordered_map<AssetId, Ref<Detail::AssetCacheEntry>> m_Cache;
         vector<PendingLoad> m_Pending;
     };

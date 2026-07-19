@@ -244,7 +244,7 @@ namespace VengEditor
         m_Cooking = true;
         m_CookError.reset();
 
-        m_Cook({.SourcePath = m_SourcePath, .TargetId = m_Id, .Type = AssetType::InputMap},
+        m_Cook({.SourcePath = m_SourcePath, .TargetId = m_Id, .Type = AssetTypes::InputMap},
                [this](Result<MountHandle> mount)
                {
                    m_Cooking = false;

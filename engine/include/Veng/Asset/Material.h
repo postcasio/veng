@@ -255,12 +255,12 @@ namespace Veng
         bool m_Finalized = false;
     };
 
-    /// @brief AssetTypeTrait specialization mapping Material to AssetType::Material.
+    /// @brief AssetTypeTrait specialization mapping Material to AssetTypes::Material.
     template <>
     struct AssetTypeTrait<Material>
     {
         /// @brief The asset type tag for Material.
-        static constexpr AssetType Type = AssetType::Material;
+        static constexpr AssetTypeId Type = AssetTypes::Material;
     };
 }
 

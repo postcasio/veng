@@ -1,5 +1,5 @@
 // AssetManager unit cases: mount/resolve/load/cache/GC, exercised against the
-// built-in AssetType::Raw loader so the path is testable (no GPU). No Vulkan
+// built-in AssetTypes::Raw loader so the path is testable (no GPU). No Vulkan
 // call is made —
 // Context is default-constructed (not Initialize()d) and never touched by the
 // Raw loader, so this runs with no ICD present.
@@ -29,9 +29,9 @@ namespace
     path WriteFixtureArchive()
     {
         ArchiveWriter writer;
-        writer.Add(AssetId{0x3E9}, AssetType::Raw, Bytes({1, 2, 3, 4}));
-        writer.Add(AssetId{0x3EA}, AssetType::Texture, Bytes({0xAB}));
-        writer.Add(AssetId{0x3EB}, AssetType::Raw, Bytes({9}));
+        writer.Add(AssetId{0x3E9}, AssetTypes::Raw, Bytes({1, 2, 3, 4}));
+        writer.Add(AssetId{0x3EA}, AssetTypes::Texture, Bytes({0xAB}));
+        writer.Add(AssetId{0x3EB}, AssetTypes::Raw, Bytes({9}));
 
         const path archivePath = Veng::TestSupport::TempDir() / "veng_asset_manager_unit.vengpack";
         const VoidResult written = writer.Write(archivePath);
@@ -76,7 +76,7 @@ TEST_CASE("AssetManager: LoadSync error kinds — NotFound and WrongType")
     CHECK(missing.error().Kind == AssetError::NotFound);
     CHECK(missing.error().Id == AssetId{0x270F});
 
-    // 0x3EA is cooked as AssetType::Texture; requesting it as RawAsset (Raw) is
+    // 0x3EA is cooked as AssetTypes::Texture; requesting it as RawAsset (Raw) is
     // a type mismatch.
     const AssetResult<AssetHandle<RawAsset>> wrongType = manager.LoadSync<RawAsset>(AssetId{0x3EA});
     REQUIRE_FALSE(wrongType.has_value());

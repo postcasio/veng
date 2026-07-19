@@ -375,7 +375,7 @@ TEST_CASE_FIXTURE(PrefabFixture,
 
     ArchiveWriter writer;
     const vector<u8> blob = TruncatedPrefabBlob(Types.IdOf<Transform>());
-    writer.Add(prefabId, AssetType::Prefab, blob);
+    writer.Add(prefabId, AssetTypes::Prefab, blob);
 
     const MountHandle mount = Assets->MountMemory(writer.Build(), "truncated_prefab");
 
@@ -393,7 +393,7 @@ TEST_CASE_FIXTURE(PrefabFixture, "A prefab's embedded RawAsset handle loads as a
 
     // Mount the opaque blob the prefab will reference, and take a handle carrying its id.
     ArchiveWriter rawWriter;
-    rawWriter.Add(rawId, AssetType::Raw, vector<u8>{7, 8, 9});
+    rawWriter.Add(rawId, AssetTypes::Raw, vector<u8>{7, 8, 9});
     const MountHandle rawMount = Assets->MountMemory(rawWriter.Build(), "raw_dep");
     const AssetResult<AssetHandle<RawAsset>> raw = Assets->LoadSync<RawAsset>(rawId);
     REQUIRE(raw.has_value());
@@ -406,7 +406,7 @@ TEST_CASE_FIXTURE(PrefabFixture, "A prefab's embedded RawAsset handle loads as a
     // resolve it, rather than rejecting the field as an unknown asset type.
     ArchiveWriter prefabWriter;
     const Prefab::Component component = MakeComponent(Types, holder);
-    prefabWriter.Add(prefabId, AssetType::Prefab,
+    prefabWriter.Add(prefabId, AssetTypes::Prefab,
                      OneComponentPrefabBlob(component.Type, component.Record));
     const MountHandle prefabMount = Assets->MountMemory(prefabWriter.Build(), "raw_prefab");
 

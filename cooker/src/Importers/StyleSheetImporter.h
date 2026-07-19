@@ -16,8 +16,8 @@ namespace Veng::Cook
     class StyleSheetImporter final : public AssetImporter
     {
     public:
-        /// @brief Returns AssetType::StyleSheet.
-        [[nodiscard]] AssetType Type() const override { return AssetType::StyleSheet; }
+        /// @brief Returns AssetTypes::StyleSheet.
+        [[nodiscard]] AssetTypeId Type() const override { return AssetTypes::StyleSheet; }
 
         /// @brief Cooks the stylesheet described by `entry` into a binary blob.
         [[nodiscard]] Result<vector<u8>> Cook(const CookContext& context,

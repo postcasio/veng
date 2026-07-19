@@ -36,7 +36,7 @@ TEST_CASE("Cooker: cooks a vertex_layout asset and produces correct blob")
     // The shader_pack.json has vertex_layout asset at id 7001.
     const optional<ArchiveEntry> entry = reader->Find(AssetId{0x1B59});
     REQUIRE(entry.has_value());
-    CHECK(entry->Type == AssetType::VertexLayout);
+    CHECK(entry->Type == AssetTypes::VertexLayout);
 
     REQUIRE(entry->Blob.size() >= sizeof(CookedVertexLayoutHeader));
 
@@ -115,7 +115,7 @@ TEST_CASE("Cooker: a shader resolves a vertex layout declared in a sibling pack"
     REQUIRE(reader.has_value());
     const optional<ArchiveEntry> shader = reader->Find(AssetId{0x0FA1}); // 4001
     REQUIRE(shader.has_value());
-    CHECK(shader->Type == AssetType::Shader);
+    CHECK(shader->Type == AssetTypes::Shader);
 
     std::filesystem::remove(outArchive);
 }

@@ -229,7 +229,7 @@ namespace VengEditor
         m_Cooking = true;
         m_CookError.reset();
 
-        m_Cook({.SourcePath = m_SourcePath, .TargetId = m_Id, .Type = AssetType::UIDocument},
+        m_Cook({.SourcePath = m_SourcePath, .TargetId = m_Id, .Type = AssetTypes::UIDocument},
                [this](Result<MountHandle> mount)
                {
                    m_Cooking = false;
@@ -398,7 +398,7 @@ namespace VengEditor
             UI::TextDisabled("Image source");
             const AssetChipInfo chip{
                 .Id = element.Image.Id(),
-                .Type = AssetType::Texture,
+                .Type = AssetTypes::Texture,
                 .IdScope = "uidocimagesrc",
                 .DropTarget = true,
             };

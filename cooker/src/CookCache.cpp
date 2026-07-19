@@ -207,9 +207,13 @@ namespace Veng::Cook
             {
                 return std::nullopt;
             }
+            if (!blob["type"].is_string() || !ParseHexId(blob["type"].get<string>()))
+            {
+                return std::nullopt;
+            }
             meta.Blobs.push_back(CachedBlobMeta{
                 .Id = *id,
-                .Type = static_cast<AssetType>(blob["type"].get<u32>()),
+                .Type = AssetTypeId{.Value = *ParseHexId(blob["type"].get<string>())},
                 .Codec = static_cast<ArchiveCodec>(blob["codec"].get<u32>()),
                 .Size = blob["size"].get<u64>(),
                 .UncompressedSize = blob["usize"].get<u64>(),
@@ -279,7 +283,7 @@ namespace Veng::Cook
         {
             json b;
             b["id"] = FormatAssetId(blob.Id);
-            b["type"] = static_cast<u32>(blob.Type);
+            b["type"] = FormatHexId(blob.Type.Value);
             b["codec"] = static_cast<u32>(blob.Codec);
             b["size"] = blob.Bytes.size();
             b["usize"] = blob.UncompressedSize;

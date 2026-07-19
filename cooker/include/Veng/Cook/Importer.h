@@ -16,13 +16,13 @@ namespace Veng::Cook
     /// @brief Result of resolving an AssetId to its uncooked source file.
     ///
     /// The absolute path is `pack.Dir / entry.Source`; Type is carried for validation
-    /// (e.g. the ShaderImporter checks that a vertex_layout reference is AssetType::VertexLayout).
+    /// (e.g. the ShaderImporter checks that a vertex_layout reference is AssetTypes::VertexLayout).
     struct ResolvedSource
     {
         /// @brief Absolute path to the uncooked source file (`pack.Dir / entry.Source`).
         path AbsolutePath;
         /// @brief Asset type of the resolved entry.
-        AssetType Type{};
+        AssetTypeId Type{};
     };
 
     /// @brief Cook context shared across all entries cooked from one pack.
@@ -36,6 +36,11 @@ namespace Veng::Cook
         path PackDir;
         /// @brief Resolves an AssetId to its uncooked source path and type, or nullopt if unknown.
         function<optional<ResolvedSource>(AssetId)> Resolve;
+        /// @brief The asset-type identities this cook recognizes; always set by the cooker.
+        ///
+        /// An importer reads it to name a type in a diagnostic; type *dispatch* keys on the id
+        /// value and never consults it.
+        const AssetTypeRegistry* AssetTypes = nullptr;
         /// @brief Reflected module type descriptors; non-null only on a `--module` cook.
         ///
         /// The prefab importer uses this to validate component schemas; other importers ignore it.
@@ -65,7 +70,7 @@ namespace Veng::Cook
         function<void(const path&)> RecordDependency;
     };
 
-    /// @brief Offline, Vulkan-free importer interface: one implementation per AssetType.
+    /// @brief Offline, Vulkan-free importer interface: one implementation per AssetTypeId.
     ///
     /// Registered into a Cooker and dispatched per pack entry. Cook() turns a pack entry's
     /// JSON (plus any files it references on disk) into cooked blob bytes for ArchiveWriter::Add.
@@ -75,8 +80,8 @@ namespace Veng::Cook
         /// @brief Virtual destructor.
         virtual ~AssetImporter() = default;
 
-        /// @brief Returns the AssetType this importer handles.
-        [[nodiscard]] virtual AssetType Type() const = 0;
+        /// @brief Returns the AssetTypeId this importer handles.
+        [[nodiscard]] virtual AssetTypeId Type() const = 0;
 
         /// @brief Cooks one pack entry's JSON into cooked blob bytes.
         /// @param context  Cook context providing the pack directory, asset resolver, and dependency recorder.

@@ -71,8 +71,8 @@ namespace Veng::TestSupport
         level.insert(level.end(), renderRecord.begin(), renderRecord.end());
 
         ArchiveWriter writer;
-        writer.Add(prefabId, AssetType::Prefab, prefab);
-        writer.Add(levelId, AssetType::Level, level);
+        writer.Add(prefabId, AssetTypes::Prefab, prefab);
+        writer.Add(levelId, AssetTypes::Level, level);
 
         const path packPath = TempDir() / fmt::format("veng_bootstrap_{}.vengpack", tag);
         REQUIRE(writer.Write(packPath).has_value());

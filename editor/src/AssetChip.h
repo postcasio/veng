@@ -9,19 +9,25 @@ namespace VengEditor
     class AssetSourceIndex;
 
     /// @brief Human-readable name of an asset type ("Texture", "Mesh", …).
-    /// @param type  The asset type.
-    /// @return A static, never-null display string.
-    [[nodiscard]] const char* AssetTypeName(Veng::AssetType type);
+    /// @param types  Registry supplying the type's display metadata.
+    /// @param type   The asset type.
+    /// @return The registered display name, or the id's hex spelling when unregistered.
+    [[nodiscard]] Veng::string AssetTypeName(const Veng::AssetTypeRegistry& types,
+                                             Veng::AssetTypeId type);
 
-    /// @brief Short three-letter badge glyph for an asset type ("TEX", "MSH", …).
-    /// @param type  The asset type.
-    /// @return A static, never-null glyph string.
-    [[nodiscard]] const char* AssetTypeGlyph(Veng::AssetType type);
+    /// @brief Short badge glyph for an asset type ("TEX", "MSH", …).
+    /// @param types  Registry supplying the type's display metadata.
+    /// @param type   The asset type.
+    /// @return The registered glyph, or "?" when unregistered.
+    [[nodiscard]] Veng::string AssetTypeGlyph(const Veng::AssetTypeRegistry& types,
+                                              Veng::AssetTypeId type);
 
     /// @brief Per-type badge fill color, authored sRGB.
+    ///
+    /// Only the engine's own types carry an authored tint; anything else takes a neutral grey.
     /// @param type  The asset type.
     /// @return The badge color for the type.
-    [[nodiscard]] Veng::vec4 AssetTypeColor(Veng::AssetType type);
+    [[nodiscard]] Veng::vec4 AssetTypeColor(Veng::AssetTypeId type);
 
     /// @brief Display name of an asset, resolved from the manifest source index.
     ///
@@ -44,7 +50,7 @@ namespace VengEditor
         /// @brief The asset shown; a null id renders as "(none)".
         Veng::AssetId Id;
         /// @brief The asset's type — drives the icon badge and (for a drop target) the picker filter.
-        Veng::AssetType Type{};
+        Veng::AssetTypeId Type{};
         /// @brief Disambiguating id suffix, unique per chip site (keeps the ImGui id distinct).
         Veng::string_view IdScope;
         /// @brief Display-name override; resolved from the source index when empty.

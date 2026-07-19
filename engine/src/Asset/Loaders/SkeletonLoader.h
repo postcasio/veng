@@ -11,8 +11,8 @@ namespace Veng
     class SkeletonLoader final : public AssetLoader
     {
     public:
-        /// @brief Returns AssetType::Skeleton.
-        [[nodiscard]] AssetType Type() const override { return AssetType::Skeleton; }
+        /// @brief Returns AssetTypes::Skeleton.
+        [[nodiscard]] AssetTypeId Type() const override { return AssetTypes::Skeleton; }
 
         /// @brief Decodes a cooked skeleton blob into a Ref<Skeleton>.
         [[nodiscard]] AssetResult<Detail::LoadJob> Load(AssetManager& manager,

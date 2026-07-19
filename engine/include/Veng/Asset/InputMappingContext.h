@@ -79,12 +79,12 @@ namespace Veng
         ResolvedContext m_Resolved;
     };
 
-    /// @brief AssetTypeTrait specialization mapping InputMappingContext to AssetType::InputMap.
+    /// @brief AssetTypeTrait specialization mapping InputMappingContext to AssetTypes::InputMap.
     template <>
     struct AssetTypeTrait<InputMappingContext>
     {
         /// @brief The asset type tag for InputMappingContext.
-        static constexpr AssetType Type = AssetType::InputMap;
+        static constexpr AssetTypeId Type = AssetTypes::InputMap;
     };
 }
 

@@ -27,7 +27,7 @@ TEST_CASE("Cooker: CookSource produces a mountable in-memory archive for a textu
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
 
-    const Result<vector<u8>> bytes = cooker.CookSource(source, targetId, AssetType::Texture);
+    const Result<vector<u8>> bytes = cooker.CookSource(source, targetId, AssetTypes::Texture);
     REQUIRE(bytes.has_value());
     CHECK_FALSE(bytes->empty());
 
@@ -36,7 +36,7 @@ TEST_CASE("Cooker: CookSource produces a mountable in-memory archive for a textu
 
     const optional<ArchiveEntry> entry = reader->Find(targetId);
     REQUIRE(entry.has_value());
-    CHECK(entry->Type == AssetType::Texture);
+    CHECK(entry->Type == AssetTypes::Texture);
     CHECK_FALSE(entry->Blob.empty());
 }
 
@@ -56,7 +56,7 @@ TEST_CASE("Cooker: CookSource threads the active configuration into role resolut
     const auto cookedFormat = [&](const BuildConfiguration* config) -> u32
     {
         const Result<vector<u8>> bytes =
-            cooker.CookSource(source, targetId, AssetType::Texture, {}, nullptr, nullptr, config);
+            cooker.CookSource(source, targetId, AssetTypes::Texture, {}, nullptr, nullptr, config);
         REQUIRE(bytes.has_value());
 
         const Result<ArchiveReader> reader = ArchiveReader::FromBytes(*bytes);
@@ -90,7 +90,7 @@ TEST_CASE("Cooker: CookSource on a missing source reports a located error")
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
 
-    const Result<vector<u8>> bytes = cooker.CookSource(missing, AssetId{0x1}, AssetType::Texture);
+    const Result<vector<u8>> bytes = cooker.CookSource(missing, AssetId{0x1}, AssetTypes::Texture);
     CHECK_FALSE(bytes.has_value());
 }
 
@@ -114,7 +114,7 @@ TEST_CASE("Cooker: CookSource resolves a material's shaders and textures against
         // The brick fragment shader `#include`s the engine header; the cook needs the engine
         // core shader dir on its Slang search path to resolve the cross-pack include.
         const Result<vector<u8>> bytes =
-            cooker.CookSource(source, targetId, AssetType::Material, refs, nullptr, nullptr,
+            cooker.CookSource(source, targetId, AssetTypes::Material, refs, nullptr, nullptr,
                               nullptr, path(VENG_CORE_SHADER_DIR));
         REQUIRE(bytes.has_value());
 
@@ -123,13 +123,13 @@ TEST_CASE("Cooker: CookSource resolves a material's shaders and textures against
 
         const optional<ArchiveEntry> entry = reader->Find(targetId);
         REQUIRE(entry.has_value());
-        CHECK(entry->Type == AssetType::Material);
+        CHECK(entry->Type == AssetTypes::Material);
         CHECK_FALSE(entry->Blob.empty());
     }
 
     SUBCASE("without it the unresolved shader is a located error")
     {
-        const Result<vector<u8>> bytes = cooker.CookSource(source, targetId, AssetType::Material);
+        const Result<vector<u8>> bytes = cooker.CookSource(source, targetId, AssetTypes::Material);
         CHECK_FALSE(bytes.has_value());
     }
 }

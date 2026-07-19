@@ -193,7 +193,7 @@ TEST_CASE("Cooker: a material instance overriding an exposed vec4 + texture cook
 
     const optional<ArchiveEntry> inst = reader->Find(AssetId{7006});
     REQUIRE(inst.has_value());
-    CHECK(inst->Type == AssetType::MaterialInstance);
+    CHECK(inst->Type == AssetTypes::MaterialInstance);
     REQUIRE(inst->Blob.size() >= sizeof(CookedMaterialInstanceHeader));
 
     CookedMaterialInstanceHeader header{};

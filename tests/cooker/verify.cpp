@@ -23,12 +23,12 @@ namespace
 {
     // On-disk layout offsets (Archive.h): a 32-byte header — magic[8],
     // version@8, count@12, archiveDigest(16)@16 — then count
-    // 56-byte TOC entries: id@0, type@8, codec@12, offset@16, size@24, hash(16)@32,
-    // uncompressedSize@48.
+    // 64-byte TOC entries: id@0, type@8, codec@16, pad@20, offset@24, size@32,
+    // hash(16)@40, uncompressedSize@56.
     constexpr usize HeaderSize = 32;
     constexpr usize ArchiveDigestOffset = 16;
-    constexpr usize TocEntrySize = 56;
-    constexpr usize TocEntryHashOffset = 32;
+    constexpr usize TocEntrySize = 64;
+    constexpr usize TocEntryHashOffset = 40;
 
     vector<u8> ReadFile(const path& filePath)
     {

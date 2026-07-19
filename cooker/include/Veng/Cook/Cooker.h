@@ -24,7 +24,10 @@ namespace Veng::Cook
     /// Used for cross-pack resolution and AssetId generation.
     /// Errors are located: `"pack '<path>': <reason>"`.
     /// @param packJson  Path to the pack JSON file.
-    [[nodiscard]] Result<AssetPack> ParseAssetPack(const path& packJson);
+    /// @param types     Registry each entry's `"type"` name is resolved through; a name it does
+    ///                  not carry is a located error.
+    [[nodiscard]] Result<AssetPack> ParseAssetPack(const path& packJson,
+                                                   const AssetTypeRegistry& types);
 
     /// @brief Mints a collision-free AssetId checked against the packs at the given manifest paths.
     ///
@@ -32,8 +35,10 @@ namespace Veng::Cook
     /// entries — the in-process form of `vengc generate-id --reference`, so an editor-authored
     /// id is the same kind of mint the CLI produces against the same references.
     /// @param referencePackPaths  Pack manifest paths whose ids the minted id must avoid.
+    /// @param types               Registry the reference manifests' type names resolve through.
     /// @return A fresh, collision-free AssetId, or a located parse error.
-    [[nodiscard]] Result<AssetId> GenerateAssetId(std::span<const path> referencePackPaths);
+    [[nodiscard]] Result<AssetId> GenerateAssetId(std::span<const path> referencePackPaths,
+                                                  const AssetTypeRegistry& types);
 
     /// @brief Hand-parses a `*.buildcfg` JSON authoring file into a BuildConfiguration.
     ///
@@ -91,9 +96,22 @@ namespace Veng::Cook
     class Cooker
     {
     public:
-        /// @brief Registers an importer for its declared AssetType, replacing any prior registration.
+        /// @brief Constructs a cooker whose asset-type registry carries the engine builtins.
+        Cooker();
+
+        /// @brief Registers an importer for its declared AssetTypeId, replacing any prior registration.
         /// @param importer  The importer to register.
         void Register(Unique<AssetImporter> importer);
+
+        /// @brief Returns the asset-type registry this cooker resolves manifest type names through.
+        ///
+        /// Owned per instance rather than globally: assetpack is a static library linked into the
+        /// cooker, the bootstrap cooker, and the editor, so a shared instance is impossible and a
+        /// global would diverge per image.
+        [[nodiscard]] const AssetTypeRegistry& GetAssetTypes() const { return m_AssetTypes; }
+
+        /// @brief Returns the asset-type registry for mutation, so a host can add its own types.
+        [[nodiscard]] AssetTypeRegistry& GetAssetTypes() { return m_AssetTypes; }
 
         /// @brief Parses packJson, cooks every entry through its registered importer, and writes the archive.
         ///
@@ -148,7 +166,7 @@ namespace Veng::Cook
         ///                         path so a consumer shader resolves `#include "Veng/surface.slang"`;
         ///                         empty for a cook that ships no engine shader header.
         [[nodiscard]] Result<vector<u8>> CookSource(const path& sourcePath, AssetId id,
-                                                    AssetType type,
+                                                    AssetTypeId type,
                                                     std::span<const path> referencePacks = {},
                                                     const TypeRegistry* types = nullptr,
                                                     const SystemRegistry* systems = nullptr,
@@ -165,7 +183,9 @@ namespace Veng::Cook
                                            std::set<u64>& seenIds, vector<CachedBlob>& outBlobs,
                                            int level) const;
 
-        /// @brief Registered importers keyed by AssetType.
-        std::unordered_map<AssetType, Unique<AssetImporter>> m_Importers;
+        /// @brief Registered importers keyed by AssetTypeId.
+        std::unordered_map<AssetTypeId, Unique<AssetImporter>> m_Importers;
+        /// @brief Asset-type identities this cooker recognizes, pre-filled with the engine builtins.
+        AssetTypeRegistry m_AssetTypes;
     };
 }

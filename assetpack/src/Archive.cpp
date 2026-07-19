@@ -30,15 +30,16 @@ namespace Veng
         struct OnDiskTocEntry
         {
             u64 Id;
-            u32 Type;
+            u64 Type;
             u32 Codec; // ArchiveCodec: 0 = stored, 1 = zstd
+            u32 Pad;   // written zeroed; spelled explicitly so the entry stays deterministic
             u64 Offset;
             u64 Size;   // stored (on-disk) blob byte length
             u64 HashLo; // ContentHash over this entry's stored bytes
             u64 HashHi;
             u64 UncompressedSize; // inflated blob byte length (== Size when stored)
         };
-        static_assert(sizeof(OnDiskTocEntry) == 56);
+        static_assert(sizeof(OnDiskTocEntry) == 64);
 
         constexpr char ArchiveMagic[8] = {'V', 'E', 'N', 'G', 'P', 'A', 'C', 'K'};
 
@@ -75,8 +76,9 @@ namespace Veng
             {
                 const OnDiskTocEntry entry{
                     .Id = d.Id.Value,
-                    .Type = static_cast<u32>(d.Type),
+                    .Type = d.Type.Value,
                     .Codec = static_cast<u32>(d.Codec),
+                    .Pad = 0,
                     .Offset = blobOffset,
                     .Size = d.Size,
                     .HashLo = d.Hash.Lo,
@@ -140,8 +142,8 @@ namespace Veng
                                .TotalSize = static_cast<u64>(size)};
     }
 
-    void ArchiveWriter::Add(AssetId id, AssetType type, std::span<const u8> blob, ContentHash hash,
-                            ArchiveCodec codec, optional<u64> uncompressedSize)
+    void ArchiveWriter::Add(AssetId id, AssetTypeId type, std::span<const u8> blob,
+                            ContentHash hash, ArchiveCodec codec, optional<u64> uncompressedSize)
     {
         m_Entries.push_back(Entry{
             .Id = id,
@@ -270,7 +272,7 @@ namespace Veng
             }
 
             const AssetId id{.Value = onDisk.Id};
-            const auto type = static_cast<AssetType>(onDisk.Type);
+            const AssetTypeId type{.Value = onDisk.Type};
             const auto codec = static_cast<ArchiveCodec>(onDisk.Codec);
             const ContentHash hash{.Lo = onDisk.HashLo, .Hi = onDisk.HashHi};
 

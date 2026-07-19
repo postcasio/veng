@@ -179,11 +179,11 @@ namespace Veng
         Ref<Texture> m_Atlas;
     };
 
-    /// @brief AssetTypeTrait specialization mapping Font to AssetType::Font.
+    /// @brief AssetTypeTrait specialization mapping Font to AssetTypes::Font.
     template <>
     struct AssetTypeTrait<Font>
     {
         /// @brief The asset type tag for Font.
-        static constexpr AssetType Type = AssetType::Font;
+        static constexpr AssetTypeId Type = AssetTypes::Font;
     };
 }

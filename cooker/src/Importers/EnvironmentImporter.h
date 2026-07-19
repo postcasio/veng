@@ -15,8 +15,8 @@ namespace Veng::Cook
     class EnvironmentImporter final : public AssetImporter
     {
     public:
-        /// @brief Returns AssetType::Environment.
-        [[nodiscard]] AssetType Type() const override { return AssetType::Environment; }
+        /// @brief Returns AssetTypes::Environment.
+        [[nodiscard]] AssetTypeId Type() const override { return AssetTypes::Environment; }
 
         /// @brief Cooks the environment described by `entry` into a binary blob.
         [[nodiscard]] Result<vector<u8>> Cook(const CookContext& context,

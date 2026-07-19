@@ -5,7 +5,7 @@
 
 namespace Veng
 {
-    /// @brief AssetType::Font loader.
+    /// @brief AssetTypes::Font loader.
     ///
     /// Decodes a CookedFontHeader + glyph/kerning tables + MSDF atlas texels into a Veng::Font.
     /// The atlas image is created and uploaded through the ordinary texture path (worker-legal);
@@ -14,8 +14,8 @@ namespace Veng
     class FontLoader final : public AssetLoader
     {
     public:
-        /// @brief Returns AssetType::Font.
-        [[nodiscard]] AssetType Type() const override { return AssetType::Font; }
+        /// @brief Returns AssetTypes::Font.
+        [[nodiscard]] AssetTypeId Type() const override { return AssetTypes::Font; }
 
         /// @brief Decodes the cooked font blob into a LoadJob producing a resident Veng::Font.
         [[nodiscard]] AssetResult<Detail::LoadJob> Load(AssetManager& manager,

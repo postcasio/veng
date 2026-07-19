@@ -209,11 +209,11 @@ namespace Veng::Gui
 
 namespace Veng
 {
-    /// @brief AssetTypeTrait specialization mapping Gui::StyleSheet to AssetType::StyleSheet.
+    /// @brief AssetTypeTrait specialization mapping Gui::StyleSheet to AssetTypes::StyleSheet.
     template <>
     struct AssetTypeTrait<Gui::StyleSheet>
     {
         /// @brief The asset type tag for StyleSheet.
-        static constexpr AssetType Type = AssetType::StyleSheet;
+        static constexpr AssetTypeId Type = AssetTypes::StyleSheet;
     };
 }

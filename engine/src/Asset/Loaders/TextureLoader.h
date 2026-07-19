@@ -5,7 +5,7 @@
 
 namespace Veng
 {
-    /// @brief AssetType::Texture loader.
+    /// @brief AssetTypes::Texture loader.
     ///
     /// Decodes a CookedTextureHeader + pixel data into a Veng::Texture. Image creation
     /// and upload are worker-legal; bindless registration is deferred to the main-thread
@@ -13,8 +13,8 @@ namespace Veng
     class TextureLoader final : public AssetLoader
     {
     public:
-        /// @brief Returns AssetType::Texture.
-        [[nodiscard]] AssetType Type() const override { return AssetType::Texture; }
+        /// @brief Returns AssetTypes::Texture.
+        [[nodiscard]] AssetTypeId Type() const override { return AssetTypes::Texture; }
 
         /// @brief Decodes the cooked texture blob into a LoadJob producing a resident Veng::Texture.
         [[nodiscard]] AssetResult<Detail::LoadJob> Load(AssetManager& manager,

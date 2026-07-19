@@ -15,9 +15,11 @@ namespace VengEditor
 {
     using namespace Veng;
 
-    AssetSourceIndex AssetSourceIndex::Parse(const path& manifestPath)
+    AssetSourceIndex AssetSourceIndex::Parse(const path& manifestPath,
+                                             const AssetTypeRegistry& types)
     {
         AssetSourceIndex index;
+        index.m_Types = &types;
 
         const optional<nlohmann::json> manifestResult = ReadJsonObject(manifestPath);
         if (!manifestResult)
@@ -42,7 +44,7 @@ namespace VengEditor
                 continue;
             }
 
-            const optional<AssetType> type = ParseAssetType(entry["type"].get<std::string>());
+            const optional<AssetTypeId> type = types.FindByName(entry["type"].get<std::string>());
             if (!type)
             {
                 continue;
@@ -67,12 +69,14 @@ namespace VengEditor
         return index;
     }
 
-    AssetSourceIndex AssetSourceIndex::ParsePacks(std::span<const path> manifestPaths)
+    AssetSourceIndex AssetSourceIndex::ParsePacks(std::span<const path> manifestPaths,
+                                                  const AssetTypeRegistry& types)
     {
         AssetSourceIndex index;
+        index.m_Types = &types;
         for (const path& manifestPath : manifestPaths)
         {
-            const AssetSourceIndex one = Parse(manifestPath);
+            const AssetSourceIndex one = Parse(manifestPath, types);
             for (const auto& [id, entry] : one.m_Entries)
             {
                 index.m_Entries[id] = entry;
@@ -87,7 +91,7 @@ namespace VengEditor
         return it == m_Entries.end() ? nullptr : &it->second;
     }
 
-    vector<AssetId> AssetSourceIndex::EntriesOfType(AssetType type) const
+    vector<AssetId> AssetSourceIndex::EntriesOfType(AssetTypeId type) const
     {
         vector<AssetId> ids;
         for (const auto& [id, entry] : m_Entries)

@@ -53,8 +53,8 @@ namespace Veng
     public:
         virtual ~AssetLoader() = default;
 
-        /// @brief Returns the AssetType this loader handles.
-        [[nodiscard]] virtual AssetType Type() const = 0;
+        /// @brief Returns the AssetTypeId this loader handles.
+        [[nodiscard]] virtual AssetTypeId Type() const = 0;
 
         /// @brief Decodes a cooked blob into a LoadJob containing the unregistered resource and its finalize step.
         ///

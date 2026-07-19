@@ -5,7 +5,7 @@
 
 namespace Veng
 {
-    /// @brief AssetType::Level loader.
+    /// @brief AssetTypes::Level loader.
     ///
     /// Decodes a CookedLevelHeader + system-id array + the two tolerant WriteFields records
     /// (game-mode config, render settings) into a Veng::Level. Resolves the world prefab and
@@ -15,8 +15,8 @@ namespace Veng
     class LevelLoader final : public AssetLoader
     {
     public:
-        /// @brief Returns AssetType::Level.
-        [[nodiscard]] AssetType Type() const override { return AssetType::Level; }
+        /// @brief Returns AssetTypes::Level.
+        [[nodiscard]] AssetTypeId Type() const override { return AssetTypes::Level; }
 
         /// @brief Decodes the cooked level blob into a LoadJob producing a resident Veng::Level.
         [[nodiscard]] AssetResult<Detail::LoadJob> Load(AssetManager& manager,

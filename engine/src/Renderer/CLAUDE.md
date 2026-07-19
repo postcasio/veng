@@ -249,7 +249,7 @@ to the irradiance SH the lighting pass folds into its ambient arm
 split-sum maps (`EnvironmentIbl::GenerateFromCube`) — one cube→SH / cube→IBL path for every
 source, no per-source special case. `SceneView::EnvironmentIntensity`/`AtmosphereIntensity` are
 per-frame push values (no recompile). (The cooked `EnvironmentMap` asset — the
-radiance/irradiance/prefiltered/BRDF maps — is `AssetType::Environment`; the `EnvironmentSky`
+radiance/irradiance/prefiltered/BRDF maps — is `AssetTypes::Environment`; the `EnvironmentSky`
 source is the scene-authoring front-end that references it.)
 
 ### View constants: the ring-buffered set-0 block

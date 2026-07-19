@@ -56,7 +56,7 @@ TEST_CASE("Cooker: cooks a shader from .slang source via Slang reflection")
 
     const optional<ArchiveEntry> entry = reader->Find(AssetId{0xFA1});
     REQUIRE(entry.has_value());
-    CHECK(entry->Type == AssetType::Shader);
+    CHECK(entry->Type == AssetTypes::Shader);
 
     REQUIRE(entry->Blob.size() >= sizeof(CookedShaderHeader));
 
@@ -105,7 +105,7 @@ TEST_CASE("Cooker: cooks a fragment shader from .slang source via Slang reflecti
 
     const optional<ArchiveEntry> entry = reader->Find(AssetId{0xFA2});
     REQUIRE(entry.has_value());
-    CHECK(entry->Type == AssetType::Shader);
+    CHECK(entry->Type == AssetTypes::Shader);
 
     REQUIRE(entry->Blob.size() >= sizeof(CookedShaderHeader));
 

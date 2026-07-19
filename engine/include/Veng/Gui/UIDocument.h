@@ -114,11 +114,11 @@ namespace Veng::Gui
 
 namespace Veng
 {
-    /// @brief AssetTypeTrait specialization mapping Gui::UIDocument to AssetType::UIDocument.
+    /// @brief AssetTypeTrait specialization mapping Gui::UIDocument to AssetTypes::UIDocument.
     template <>
     struct AssetTypeTrait<Gui::UIDocument>
     {
         /// @brief The asset type tag for UIDocument.
-        static constexpr AssetType Type = AssetType::UIDocument;
+        static constexpr AssetTypeId Type = AssetTypes::UIDocument;
     };
 }

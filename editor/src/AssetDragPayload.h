@@ -21,6 +21,6 @@ namespace VengEditor
         /// @brief The dragged asset's id.
         Veng::AssetId Id;
         /// @brief The dragged asset's type.
-        Veng::AssetType Type{};
+        Veng::AssetTypeId Type{};
     };
 }

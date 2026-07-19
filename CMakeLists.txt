@@ -544,6 +544,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/shader_interface.cpp
             tests/unit/transient_allocation.cpp
             tests/unit/asset_archive.cpp
+            tests/unit/asset_type_registry.cpp
             tests/unit/hex_id.cpp
             tests/unit/cooked_project.cpp
             tests/unit/launch_arguments.cpp

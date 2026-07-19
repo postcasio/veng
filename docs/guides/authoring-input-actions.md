@@ -72,7 +72,7 @@ sides agree only by the id.
 
 ## 2. Write the `*.inputmap.json`
 
-An `InputMappingContext` (`AssetType::InputMap`) declares its **actions** (id +
+An `InputMappingContext` (`AssetTypes::InputMap`) declares its **actions** (id +
 name + kind) and its **bindings** (raw source → action). It is an ordinary cooked
 asset: a `*.inputmap.json` source the `InputMapImporter` validates and cooks, loaded
 at runtime by `AssetId`. hello-triangle's
@@ -298,7 +298,7 @@ but do nothing yet.
 
 ## The editor
 
-The **`InputMappingEditorPanel`** (registered for `AssetType::InputMap`) opens a
+The **`InputMappingEditorPanel`** (registered for `AssetTypes::InputMap`) opens a
 `*.inputmap.json` and draws its actions + bindings through the reflection inspector,
 so the binding table is add/remove/edit-able with no bespoke widget code. It shows
 each binding's action by name (an `ActionId` combo scoped to the document's declared

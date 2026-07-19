@@ -143,7 +143,7 @@ which a game-specific control system reads to produce the abstract `Intent` game
 
 - **The action-mapping layer** (`Veng/Input/`). An **`ActionId`** is a minted `u64` leaf (authored
   like `AssetId`/`TypeId`); an action *exists* by being declared in a context, so there is no
-  registry. An **`InputMappingContext`** (`AssetType::InputMap`) declares its actions
+  registry. An **`InputMappingContext`** (`AssetTypes::InputMap`) declares its actions
   (id + name + `ActionKind`) and a `vector<Binding>` (raw `InputSource` → action, with a signed
   scale + axis-component modifier). **`ResolveActions(activeContexts, raw, previous) →
   ActionState`** (`Veng/Input/Actions.h`) is the pure, device-free core — bindings × the active
@@ -312,7 +312,7 @@ reflected-system-config mechanism.
 ## Levels
 
 **A `Level` is the authored wiring artifact — a thin wrapper by reference.** A **`Level`** asset
-(`AssetType::Level`, `Veng/Asset/Level.h`) does not embed world entities: it *references* a
+(`AssetTypes::Level`, `Veng/Asset/Level.h`) does not embed world entities: it *references* a
 **world prefab** by `AssetId` and adds the data that is not reusable-recipe data — the ordered
 active `SystemId` set, the `GameModeConfig`, and a tolerant **`LevelRenderSettings`** subset (the
 view-wide post/pipeline knobs — exposure, bloom, shadow/AO toggles the app maps onto its

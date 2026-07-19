@@ -16,8 +16,8 @@ namespace Veng::Cook
     class InputMapImporter final : public AssetImporter
     {
     public:
-        /// @brief Returns AssetType::InputMap.
-        [[nodiscard]] AssetType Type() const override { return AssetType::InputMap; }
+        /// @brief Returns AssetTypes::InputMap.
+        [[nodiscard]] AssetTypeId Type() const override { return AssetTypes::InputMap; }
 
         /// @brief Cooks the input map described by `entry` into a binary blob.
         [[nodiscard]] Result<vector<u8>> Cook(const CookContext& context,

@@ -39,4 +39,20 @@ namespace Veng::Cook
             }
         }
     }
+
+    AssetTypeId GenerateAssetTypeId(const AssetTypeRegistry& existing)
+    {
+        std::random_device rd;
+        std::mt19937_64 rng(rd());
+        std::uniform_int_distribution<u64> dist(1, UINT64_MAX);
+
+        while (true)
+        {
+            const AssetTypeId id{.Value = dist(rng)};
+            if (id.IsValid() && !existing.IsRegistered(id))
+            {
+                return id;
+            }
+        }
+    }
 }

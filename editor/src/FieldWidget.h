@@ -16,11 +16,11 @@ namespace VengEditor
 {
     class AssetSourceIndex;
 
-    /// @brief Returns the AssetType a FieldClass::AssetHandle field references, or
+    /// @brief Returns the AssetTypeId a FieldClass::AssetHandle field references, or
     /// nullopt for a handle type the picker has no enumeration for.
     ///
     /// Used to filter manifest candidates in the asset picker.
-    [[nodiscard]] Veng::optional<Veng::AssetType> AssetTypeOfHandle(Veng::TypeId type);
+    [[nodiscard]] Veng::optional<Veng::AssetTypeId> AssetTypeOfHandle(Veng::TypeId type);
 
     /// @brief Writes a chosen AssetId back through an AssetHandle field pointer.
     ///

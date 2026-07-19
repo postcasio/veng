@@ -46,9 +46,9 @@ namespace
 TEST_CASE("ArchiveWriter/Reader: byte-exact multi-entry round trip")
 {
     ArchiveWriter writer;
-    writer.Add(AssetId{0x3E9}, AssetType::Texture, Bytes({1, 2, 3, 4, 5}));
-    writer.Add(AssetId{0x3EA}, AssetType::Mesh, Bytes({10, 20, 30}));
-    writer.Add(AssetId{0x3EB}, AssetType::Material, Bytes({}));
+    writer.Add(AssetId{0x3E9}, AssetTypes::Texture, Bytes({1, 2, 3, 4, 5}));
+    writer.Add(AssetId{0x3EA}, AssetTypes::Mesh, Bytes({10, 20, 30}));
+    writer.Add(AssetId{0x3EB}, AssetTypes::Material, Bytes({}));
 
     const vector<u8> archive = writer.Build();
 
@@ -59,24 +59,24 @@ TEST_CASE("ArchiveWriter/Reader: byte-exact multi-entry round trip")
 
     const optional<ArchiveEntry> texture = reader->Find(AssetId{0x3E9});
     REQUIRE(texture.has_value());
-    CHECK(texture->Type == AssetType::Texture);
+    CHECK(texture->Type == AssetTypes::Texture);
     CHECK(std::ranges::equal(texture->Blob, Bytes({1, 2, 3, 4, 5})));
 
     const optional<ArchiveEntry> mesh = reader->Find(AssetId{0x3EA});
     REQUIRE(mesh.has_value());
-    CHECK(mesh->Type == AssetType::Mesh);
+    CHECK(mesh->Type == AssetTypes::Mesh);
     CHECK(std::ranges::equal(mesh->Blob, Bytes({10, 20, 30})));
 
     const optional<ArchiveEntry> material = reader->Find(AssetId{0x3EB});
     REQUIRE(material.has_value());
-    CHECK(material->Type == AssetType::Material);
+    CHECK(material->Type == AssetTypes::Material);
     CHECK(material->Blob.empty());
 }
 
 TEST_CASE("ArchiveReader::Find: hits and misses")
 {
     ArchiveWriter writer;
-    writer.Add(AssetId{0x2A}, AssetType::Raw, Bytes({0xAB}));
+    writer.Add(AssetId{0x2A}, AssetTypes::Raw, Bytes({0xAB}));
 
     const Result<ArchiveReader> reader = ArchiveReader::FromBytes(writer.Build());
     REQUIRE(reader.has_value());
@@ -104,7 +104,7 @@ TEST_CASE("ArchiveReader: rejects bad magic")
 TEST_CASE("ArchiveReader: rejects version mismatch")
 {
     ArchiveWriter writer;
-    writer.Add(AssetId{0x1}, AssetType::Raw, Bytes({1}));
+    writer.Add(AssetId{0x1}, AssetTypes::Raw, Bytes({1}));
 
     vector<u8> archive = writer.Build();
 
@@ -131,7 +131,7 @@ TEST_CASE("ArchiveReader: sorted TOC and Find over a large id set")
     ArchiveWriter writer;
     for (const u64 id : ids)
     {
-        writer.Add(AssetId{id}, AssetType::Raw, Bytes({static_cast<u8>(id & 0xFF)}));
+        writer.Add(AssetId{id}, AssetTypes::Raw, Bytes({static_cast<u8>(id & 0xFF)}));
     }
 
     const Result<ArchiveReader> reader = ArchiveReader::FromBytes(writer.Build());
@@ -159,7 +159,7 @@ TEST_CASE("ArchiveReader: a zstd entry inflates back to the original bytes")
     REQUIRE(compressed.size() < original.size());
 
     ArchiveWriter writer;
-    writer.Add(AssetId{0x100}, AssetType::Texture, compressed, ContentHash{}, ArchiveCodec::Zstd,
+    writer.Add(AssetId{0x100}, AssetTypes::Texture, compressed, ContentHash{}, ArchiveCodec::Zstd,
                original.size());
 
     const vector<u8> archive = writer.Build();
@@ -193,7 +193,7 @@ TEST_CASE("ArchiveReader: a stored entry keeps the zero-copy raw bytes")
     const vector<u8> incompressible = Bytes({0x01, 0xFF, 0x42, 0x9C});
 
     ArchiveWriter writer;
-    writer.Add(AssetId{0x200}, AssetType::Mesh, incompressible);
+    writer.Add(AssetId{0x200}, AssetTypes::Mesh, incompressible);
 
     const Result<ArchiveReader> reader = ArchiveReader::FromBytes(writer.Build());
     REQUIRE(reader.has_value());
@@ -214,9 +214,9 @@ TEST_CASE("ArchiveReader: a span held across a later inflating Find stays valid"
     vector<u8> secondBlob(2048, 0xC3);
 
     ArchiveWriter writer;
-    writer.Add(AssetId{0x300}, AssetType::Texture, ZstdCompress(firstBlob), ContentHash{},
+    writer.Add(AssetId{0x300}, AssetTypes::Texture, ZstdCompress(firstBlob), ContentHash{},
                ArchiveCodec::Zstd, firstBlob.size());
-    writer.Add(AssetId{0x301}, AssetType::Texture, ZstdCompress(secondBlob), ContentHash{},
+    writer.Add(AssetId{0x301}, AssetTypes::Texture, ZstdCompress(secondBlob), ContentHash{},
                ArchiveCodec::Zstd, secondBlob.size());
 
     const Result<ArchiveReader> reader = ArchiveReader::FromBytes(writer.Build());
@@ -238,7 +238,7 @@ TEST_CASE("ArchiveReader: a span held across a later inflating Find stays valid"
 TEST_CASE("ArchiveReader: rejects a v2 archive")
 {
     ArchiveWriter writer;
-    writer.Add(AssetId{0x1}, AssetType::Raw, Bytes({1}));
+    writer.Add(AssetId{0x1}, AssetTypes::Raw, Bytes({1}));
 
     vector<u8> archive = writer.Build();
 
@@ -249,4 +249,39 @@ TEST_CASE("ArchiveReader: rejects a v2 archive")
     const Result<ArchiveReader> reader = ArchiveReader::FromBytes(archive);
     REQUIRE_FALSE(reader.has_value());
     CHECK(reader.error().find("version") != string::npos);
+}
+
+TEST_CASE("ArchiveReader: an archive at an older format version is rejected loudly")
+{
+    ArchiveWriter writer;
+    writer.Add(AssetId{0x3E9}, AssetTypes::Texture, Bytes({1, 2, 3}));
+    vector<u8> archive = writer.Build();
+
+    // The version field sits immediately after the 8-byte magic. Stamping the previous
+    // format version leaves a well-formed-looking file that must still refuse to load:
+    // archives are build artifacts, recooked from source, so there is no migration path.
+    const u32 previousVersion = ArchiveFormatVersion - 1;
+    std::memcpy(archive.data() + 8, &previousVersion, sizeof(previousVersion));
+
+    const Result<ArchiveReader> reader = ArchiveReader::FromBytes(archive);
+    REQUIRE_FALSE(reader.has_value());
+    CHECK(reader.error().find("version mismatch") != string::npos);
+}
+
+TEST_CASE("ArchiveWriter/Reader: a minted asset type survives the TOC's full 64-bit width")
+{
+    // The TOC type field is a u64, so an id with its high bits set round-trips intact —
+    // the property the v5 u32 field could not carry.
+    const AssetTypeId wide{0xF1DBE163FAA8AA8DULL};
+
+    ArchiveWriter writer;
+    writer.Add(AssetId{0x3E9}, wide, Bytes({7, 7, 7}));
+
+    const Result<ArchiveReader> reader = ArchiveReader::FromBytes(writer.Build());
+    REQUIRE(reader.has_value());
+
+    const optional<ArchiveEntry> entry = reader->Find(AssetId{0x3E9});
+    REQUIRE(entry.has_value());
+    CHECK(entry->Type == wide);
+    CHECK(reader->Entries()[0].Type == wide);
 }

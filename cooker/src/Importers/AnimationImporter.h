@@ -15,8 +15,8 @@ namespace Veng::Cook
     class AnimationImporter final : public AssetImporter
     {
     public:
-        /// @brief Returns AssetType::Animation.
-        [[nodiscard]] AssetType Type() const override { return AssetType::Animation; }
+        /// @brief Returns AssetTypes::Animation.
+        [[nodiscard]] AssetTypeId Type() const override { return AssetTypes::Animation; }
 
         /// @brief Cooks the animation described by `entry` into a binary blob.
         [[nodiscard]] Result<vector<u8>> Cook(const CookContext& context,

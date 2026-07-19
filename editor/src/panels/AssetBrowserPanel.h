@@ -49,7 +49,7 @@ namespace VengEditor
             /// @brief The asset's id.
             Veng::AssetId Id;
             /// @brief The asset's type.
-            Veng::AssetType Type = Veng::AssetType::Raw;
+            Veng::AssetTypeId Type = Veng::AssetTypes::Raw;
             /// @brief Byte size of the cooked blob, from the TOC.
             Veng::u64 Size = 0;
             /// @brief Display name (source filename with the cooked extension stripped).

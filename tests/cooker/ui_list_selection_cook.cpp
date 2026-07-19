@@ -48,7 +48,7 @@ TEST_CASE("Cooker: a selectable List and a :selected rule cook through the autho
     {
         const optional<ArchiveEntry> docEntry = reader->Find(UIDocumentId);
         REQUIRE(docEntry.has_value());
-        CHECK(docEntry->Type == AssetType::UIDocument);
+        CHECK(docEntry->Type == AssetTypes::UIDocument);
 
         const std::span<const u8> blob = docEntry->Blob;
         CookedUIDocumentHeader header{};
@@ -112,7 +112,7 @@ TEST_CASE("Cooker: a selectable List and a :selected rule cook through the autho
     {
         const optional<ArchiveEntry> sheetEntry = reader->Find(StyleSheetId);
         REQUIRE(sheetEntry.has_value());
-        CHECK(sheetEntry->Type == AssetType::StyleSheet);
+        CHECK(sheetEntry->Type == AssetTypes::StyleSheet);
 
         const std::span<const u8> blob = sheetEntry->Blob;
         CookedStyleSheetHeader header{};

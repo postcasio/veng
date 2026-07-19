@@ -17,8 +17,8 @@ namespace Veng::Cook
     class ShaderImporter final : public AssetImporter
     {
     public:
-        /// @brief Returns AssetType::Shader.
-        [[nodiscard]] AssetType Type() const override { return AssetType::Shader; }
+        /// @brief Returns AssetTypes::Shader.
+        [[nodiscard]] AssetTypeId Type() const override { return AssetTypes::Shader; }
 
         /// @brief Cooks the shader described by `entry` into a binary blob.
         [[nodiscard]] Result<vector<u8>> Cook(const CookContext& context,

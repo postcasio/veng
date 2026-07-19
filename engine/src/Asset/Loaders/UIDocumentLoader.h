@@ -7,7 +7,7 @@
 
 namespace Veng
 {
-    /// @brief AssetType::UIDocument loader.
+    /// @brief AssetTypes::UIDocument loader.
     ///
     /// Decodes a CookedUIDocumentHeader + stylesheet id list + element tree + inline-property table
     /// + string region into a Gui::UIDocument recipe, resolving the referenced stylesheets and the
@@ -17,8 +17,8 @@ namespace Veng
     class UIDocumentLoader final : public AssetLoader
     {
     public:
-        /// @brief Returns AssetType::UIDocument.
-        [[nodiscard]] AssetType Type() const override { return AssetType::UIDocument; }
+        /// @brief Returns AssetTypes::UIDocument.
+        [[nodiscard]] AssetTypeId Type() const override { return AssetTypes::UIDocument; }
 
         /// @brief Decodes the cooked UI-document blob into a LoadJob producing a resident Gui::UIDocument.
         [[nodiscard]] AssetResult<Detail::LoadJob> Load(AssetManager& manager,

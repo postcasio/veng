@@ -163,7 +163,7 @@ TEST_CASE_FIXTURE(LevelFixture, "A version-mismatched cooked level loads as Asse
     std::memcpy(blob.data(), &header, sizeof(header));
 
     ArchiveWriter writer;
-    writer.Add(levelId, AssetType::Level, blob);
+    writer.Add(levelId, AssetTypes::Level, blob);
     const MountHandle mount = Assets->MountMemory(writer.Build(), "stale_level");
 
     const AssetResult<AssetHandle<Level>> result = Assets->LoadSync<Level>(levelId);

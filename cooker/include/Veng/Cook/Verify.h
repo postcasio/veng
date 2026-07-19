@@ -20,7 +20,7 @@ namespace Veng::Cook
         /// @brief The asset's unique identifier.
         AssetId Id;
         /// @brief The asset's type.
-        AssetType Type;
+        AssetTypeId Type;
         /// @brief True when the re-hashed blob matches the stored per-blob Hash.
         bool Ok = false;
     };

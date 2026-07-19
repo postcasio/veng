@@ -505,7 +505,7 @@ namespace VengEditor
 
         m_Cook({.SourcePath = m_ShaderJsonPath,
                 .TargetId = m_FragmentShader,
-                .Type = AssetType::Shader},
+                .Type = AssetTypes::Shader},
                [this](Result<MountHandle> mount)
                {
                    if (!mount)
@@ -523,7 +523,7 @@ namespace VengEditor
     void MaterialEditorPanel::CookMaterial()
     {
         m_Cooking = true;
-        m_Cook({.SourcePath = m_TempPath, .TargetId = m_Id, .Type = AssetType::Material},
+        m_Cook({.SourcePath = m_TempPath, .TargetId = m_Id, .Type = AssetTypes::Material},
                [this](Result<MountHandle> mount)
                {
                    m_Cooking = false;

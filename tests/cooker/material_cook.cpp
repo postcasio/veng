@@ -60,7 +60,7 @@ TEST_CASE("Cooker: cooks a material and validates the cooked blob layout")
 
     const optional<ArchiveEntry> entry = reader->Find(AssetId{0xBB9});
     REQUIRE(entry.has_value());
-    CHECK(entry->Type == AssetType::Material);
+    CHECK(entry->Type == AssetTypes::Material);
 
     REQUIRE(entry->Blob.size() >= sizeof(CookedMaterialHeader));
 

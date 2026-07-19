@@ -54,7 +54,7 @@ namespace Veng::Cook
         // bytes, so verify re-hashes exactly what is on disk; an already incompressible blob keeps
         // the raw, zero-copy resolve path. This is the one place a blob is considered for
         // compression, so both the fresh-cook and cache-store paths agree on the stored bytes.
-        CachedBlob MakeStoredBlob(AssetId id, AssetType type, std::span<const u8> blob, int level)
+        CachedBlob MakeStoredBlob(AssetId id, AssetTypeId type, std::span<const u8> blob, int level)
         {
             const usize bound = ZSTD_compressBound(blob.size());
             vector<u8> compressed(bound);
@@ -121,7 +121,7 @@ namespace Veng::Cook
         }
     }
 
-    Result<AssetPack> ParseAssetPack(const path& packJson)
+    Result<AssetPack> ParseAssetPack(const path& packJson, const AssetTypeRegistry& types)
     {
         const Result<json> packResult = ReadAndValidatePack(packJson);
         if (!packResult)
@@ -174,7 +174,7 @@ namespace Veng::Cook
             }
 
             const string typeStr = entry["type"].get<string>();
-            const optional<AssetType> type = ParseAssetType(typeStr);
+            const optional<AssetTypeId> type = types.FindByName(typeStr);
             if (!type)
             {
                 return std::unexpected(fmt::format("pack '{}': asset[{}]: unknown type '{}'",
@@ -197,13 +197,14 @@ namespace Veng::Cook
         return result;
     }
 
-    Result<AssetId> GenerateAssetId(std::span<const path> referencePackPaths)
+    Result<AssetId> GenerateAssetId(std::span<const path> referencePackPaths,
+                                    const AssetTypeRegistry& types)
     {
         vector<AssetPack> packs;
         packs.reserve(referencePackPaths.size());
         for (const path& refPath : referencePackPaths)
         {
-            Result<AssetPack> packResult = ParseAssetPack(refPath);
+            Result<AssetPack> packResult = ParseAssetPack(refPath, types);
             if (!packResult)
             {
                 return std::unexpected(packResult.error());
@@ -390,9 +391,14 @@ namespace Veng::Cook
                                std::span(reinterpret_cast<const u8*>(out.data()), out.size()));
     }
 
+    Cooker::Cooker()
+    {
+        RegisterBuiltinAssetTypes(m_AssetTypes);
+    }
+
     void Cooker::Register(Unique<AssetImporter> importer)
     {
-        const AssetType type = importer->Type();
+        const AssetTypeId type = importer->Type();
         m_Importers[type] = std::move(importer);
     }
 
@@ -432,7 +438,7 @@ namespace Veng::Cook
             }
         }
 
-        const Result<AssetPack> mainPackResult = ParseAssetPack(packJson);
+        const Result<AssetPack> mainPackResult = ParseAssetPack(packJson, m_AssetTypes);
         if (!mainPackResult)
         {
             return std::unexpected(mainPackResult.error());
@@ -442,7 +448,7 @@ namespace Veng::Cook
         refPacks.reserve(referencePacks.size());
         for (const path& refPath : referencePacks)
         {
-            Result<AssetPack> refPackResult = ParseAssetPack(refPath);
+            Result<AssetPack> refPackResult = ParseAssetPack(refPath, m_AssetTypes);
             if (!refPackResult)
             {
                 return std::unexpected(fmt::format("pack '{}': reference pack error: {}",
@@ -527,6 +533,7 @@ namespace Veng::Cook
         const CookContext context{
             .PackDir = packJson.parent_path(),
             .Resolve = resolve,
+            .AssetTypes = &m_AssetTypes,
             .Types = types,
             .Systems = systems,
             .Config = config,
@@ -812,7 +819,7 @@ namespace Veng::Cook
         return {};
     }
 
-    Result<vector<u8>> Cooker::CookSource(const path& sourcePath, AssetId id, AssetType type,
+    Result<vector<u8>> Cooker::CookSource(const path& sourcePath, AssetId id, AssetTypeId type,
                                           std::span<const path> referencePacks,
                                           const TypeRegistry* types, const SystemRegistry* systems,
                                           const BuildConfiguration* config,
@@ -829,7 +836,7 @@ namespace Veng::Cook
         refPacks.reserve(referencePacks.size());
         for (const path& refPath : referencePacks)
         {
-            Result<AssetPack> refPackResult = ParseAssetPack(refPath);
+            Result<AssetPack> refPackResult = ParseAssetPack(refPath, m_AssetTypes);
             if (!refPackResult)
             {
                 return std::unexpected(fmt::format("cook '{}': reference pack error: {}",
@@ -860,6 +867,7 @@ namespace Veng::Cook
         const CookContext context{
             .PackDir = sourcePath.parent_path(),
             .Resolve = resolve,
+            .AssetTypes = &m_AssetTypes,
             .Types = types,
             .Systems = systems,
             .Config = config,
@@ -928,7 +936,7 @@ namespace Veng::Cook
         }
 
         const string typeStr = entry["type"].get<string>();
-        const optional<AssetType> type = ParseAssetType(typeStr);
+        const optional<AssetTypeId> type = m_AssetTypes.FindByName(typeStr);
         if (!type)
         {
             return std::unexpected(fmt::format("unknown type '{}'", typeStr));
@@ -958,7 +966,8 @@ namespace Veng::Cook
         // zero-override MaterialInstance at that id, so every direct reference names a real instance
         // archive entry. The id lives in the material source, not the pack manifest, so the material
         // editor mints and writes it through the same `.vmat` round-trip it already owns.
-        if (*type == AssetType::Material && entry.contains("source") && entry["source"].is_string())
+        if (*type == AssetTypes::Material && entry.contains("source") &&
+            entry["source"].is_string())
         {
             const path vmatPath = context.PackDir / entry["source"].get<string>();
             const std::ifstream vmatFile(vmatPath, std::ios::binary);
@@ -1003,7 +1012,7 @@ namespace Veng::Cook
                 }
 
                 outBlobs.push_back(MakeStoredBlob(AssetId{.Value = defaultInstanceId},
-                                                  AssetType::MaterialInstance, *instanceBlob,
+                                                  AssetTypes::MaterialInstance, *instanceBlob,
                                                   level));
             }
         }

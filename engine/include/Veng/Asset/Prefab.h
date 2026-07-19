@@ -112,11 +112,11 @@ namespace Veng
         vector<Ref<Detail::AssetCacheEntry>> m_Dependencies;
     };
 
-    /// @brief AssetTypeTrait specialization mapping Prefab to AssetType::Prefab.
+    /// @brief AssetTypeTrait specialization mapping Prefab to AssetTypes::Prefab.
     template <>
     struct AssetTypeTrait<Prefab>
     {
         /// @brief The asset type tag for Prefab.
-        static constexpr AssetType Type = AssetType::Prefab;
+        static constexpr AssetTypeId Type = AssetTypes::Prefab;
     };
 }

@@ -15,8 +15,8 @@ namespace Veng::Cook
     class PrefabImporter : public AssetImporter
     {
     public:
-        /// @brief Returns AssetType::Prefab.
-        [[nodiscard]] AssetType Type() const override { return AssetType::Prefab; }
+        /// @brief Returns AssetTypes::Prefab.
+        [[nodiscard]] AssetTypeId Type() const override { return AssetTypes::Prefab; }
 
         /// @brief Cooks the prefab described by `entry` into a binary blob.
         [[nodiscard]] Result<vector<u8>> Cook(const CookContext& context,

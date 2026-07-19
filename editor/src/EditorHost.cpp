@@ -597,6 +597,7 @@ namespace VengEditor
           m_ProjectFile(info.ProjectPath.value_or(path{})), m_BuildDir(std::move(buildDir)),
           m_CorePackManifest(std::move(corePackManifest))
     {
+        RegisterBuiltinAssetTypes(m_AssetTypes);
     }
 
     EditorHost::~EditorHost()
@@ -610,7 +611,7 @@ namespace VengEditor
         m_Status.reset();
     }
 
-    void EditorHost::OpenAssetEditor(AssetType type, AssetId id)
+    void EditorHost::OpenAssetEditor(AssetTypeId type, AssetId id)
     {
         if (Unique<EditorPanel> panel = m_Registries->Editor.CreateEditorFor(type, id))
         {
@@ -618,7 +619,7 @@ namespace VengEditor
         }
     }
 
-    bool EditorHost::HasAssetEditor(AssetType type) const
+    bool EditorHost::HasAssetEditor(AssetTypeId type) const
     {
         return m_Registries->Editor.AssetEditorFor(type) != nullptr;
     }
@@ -695,8 +696,8 @@ namespace VengEditor
 
         // Built from the union of the project's pack manifests; an empty index when no project is
         // configured keeps the picker candidate-free rather than absent.
-        m_Sources =
-            CreateUnique<AssetSourceIndex>(AssetSourceIndex::ParsePacks(m_ProjectSettings.Packs));
+        m_Sources = CreateUnique<AssetSourceIndex>(
+            AssetSourceIndex::ParsePacks(m_ProjectSettings.Packs, m_AssetTypes));
 
         m_Status = CreateUnique<StatusTracker>();
 
@@ -707,7 +708,7 @@ namespace VengEditor
         // A prefab is edited live in a spawned Scene, so its editor needs no manifest
         // source; register it unconditionally.
         m_Registries->Editor.RegisterAssetEditor(
-            AssetType::Prefab,
+            AssetTypes::Prefab,
             CreateUnique<PrefabEditorFactory>(*this, GetAssetManager(), *GetImGuiLayer(),
                                               GetTypeRegistry(), m_Registries->Editor, *m_Sources,
                                               GetInput(), GetInputRouter(), GetSystemRegistry()));
@@ -723,36 +724,36 @@ namespace VengEditor
             };
 
             m_Registries->Editor.RegisterAssetEditor(
-                AssetType::Texture,
+                AssetTypes::Texture,
                 CreateUnique<TextureEditorFactory>(
                     *m_Sources, GetRenderContext(), GetAssetManager(), *GetImGuiLayer(), cookFor(),
                     [this] { return GetActiveConfiguration(); },
                     [this] { return GetPreviewConfiguration(); }));
 
             m_Registries->Editor.RegisterAssetEditor(
-                AssetType::Material,
+                AssetTypes::Material,
                 CreateUnique<MaterialEditorFactory>(*m_Sources, *this, GetAssetManager(),
                                                     *GetImGuiLayer(), m_Registries->Editor,
                                                     cookFor(), [this] { return MintAssetId(); }));
 
             m_Registries->Editor.RegisterAssetEditor(
-                AssetType::MaterialInstance,
+                AssetTypes::MaterialInstance,
                 CreateUnique<MaterialInstanceEditorFactory>(*m_Sources, *this, GetAssetManager(),
                                                             *GetImGuiLayer(), cookFor()));
 
             m_Registries->Editor.RegisterAssetEditor(
-                AssetType::Level, CreateUnique<LevelEditorFactory>(
-                                      *m_Sources, *this, GetAssetManager(), *GetImGuiLayer(),
-                                      GetTypeRegistry(), m_Registries->Editor, GetInput(),
-                                      GetInputRouter(), GetSystemRegistry(), cookFor()));
+                AssetTypes::Level, CreateUnique<LevelEditorFactory>(
+                                       *m_Sources, *this, GetAssetManager(), *GetImGuiLayer(),
+                                       GetTypeRegistry(), m_Registries->Editor, GetInput(),
+                                       GetInputRouter(), GetSystemRegistry(), cookFor()));
 
             m_Registries->Editor.RegisterAssetEditor(
-                AssetType::InputMap,
+                AssetTypes::InputMap,
                 CreateUnique<InputMapEditorFactory>(*m_Sources, GetAssetManager(),
                                                     m_Registries->Editor, GetInput(), cookFor()));
 
             m_Registries->Editor.RegisterAssetEditor(
-                AssetType::UIDocument,
+                AssetTypes::UIDocument,
                 CreateUnique<UIDocumentEditorFactory>(*m_Sources, *this, GetAssetManager(),
                                                       *GetImGuiLayer(), cookFor()));
         }
@@ -782,7 +783,7 @@ namespace VengEditor
         // project with no startup level opens nothing.
         if (m_ProjectSettings.StartupLevel.IsValid())
         {
-            OpenAssetEditor(AssetType::Level, m_ProjectSettings.StartupLevel);
+            OpenAssetEditor(AssetTypes::Level, m_ProjectSettings.StartupLevel);
         }
 
         // The engine systems (asset manager, task system) now exist; wiring that binds them by

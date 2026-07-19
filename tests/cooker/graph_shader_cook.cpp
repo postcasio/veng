@@ -277,7 +277,7 @@ TEST_CASE("Cooker: an exposed Param graph cooks a generated fragment + a field w
     // The generated fragment shader cooked to a real shader blob.
     const optional<ArchiveEntry> shader = reader->Find(AssetId{8802});
     REQUIRE(shader.has_value());
-    CHECK(shader->Type == AssetType::Shader);
+    CHECK(shader->Type == AssetTypes::Shader);
 
     // The material binds the generated fragment and packs the exposed default.
     const optional<ArchiveEntry> mat = reader->Find(AssetId{8803});
@@ -322,7 +322,7 @@ TEST_CASE("Cooker: a graph mixing math/swizzle nodes cooks a fragment that compi
 
     const optional<ArchiveEntry> shader = reader->Find(AssetId{8802});
     REQUIRE(shader.has_value());
-    CHECK(shader->Type == AssetType::Shader);
+    CHECK(shader->Type == AssetTypes::Shader);
 
     const optional<ArchiveEntry> mat = reader->Find(AssetId{8803});
     REQUIRE(mat.has_value());

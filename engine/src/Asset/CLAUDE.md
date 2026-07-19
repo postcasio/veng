@@ -19,7 +19,7 @@ executable** whose unqualified `vengc` name `veng-config` recreates, so `$<TARGE
 resolves either way) turns a hand-written JSON **asset pack** into a single `.vengpack` archive; the
 engine *mounts* archives and resolves assets against them.
 
-- **`.vengpack` archives (format v5) carry content hashes.** Every cooked blob gets a content hash
+- **`.vengpack` archives (format v6) carry content hashes.** Every cooked blob gets a content hash
   and the table of contents gets a digest (over the serialized TOC bytes), cooker-written via
   xxh3-128 and checkable with **`vengc verify`** (it re-hashes the blobs + digest and exits nonzero
   on any mismatch). **The loader never verifies** — hashing is tooling, not the hot path; the
@@ -33,7 +33,7 @@ engine *mounts* archives and resolves assets against them.
   source file (`*.tex.json` / `*.mesh.json` / `*.shader.json` / `*.vmat.json` / `*.prefab.json`)
   that the manifest entry points at; the sampler settings, import options, shader source/entry,
   material fields, and prefab entities/components live in those files.
-- **`AssetType::InputMap` — an `InputMappingContext`, a CPU-only asset** (like
+- **`AssetTypes::InputMap` — an `InputMappingContext`, a CPU-only asset** (like
   `Skeleton`/`Animation`/`Level`, no GPU resource). Its `*.inputmap.json` source declares the
   actions a scheme defines (id + name + `ActionKind`) and its raw-source → action bindings; the
   cook validates every binding against the declared actions. The runtime loads it by `AssetId`
@@ -183,7 +183,7 @@ and the app still runs — only `smoke_golden` (gated to skip on a non-ASTC devi
 ## Prefabs
 
 **Cooked prefabs load like every other asset; a `Scene` is what you spawn into.** A `*.prefab.json`
-(entities + components + field values) cooks into an `AssetType::Prefab` blob and loads through the
+(entities + components + field values) cooks into an `AssetTypes::Prefab` blob and loads through the
 **identical** `AssetManager::Load`/`LoadSync` path — a cached `AssetHandle<Prefab>` whose embedded
 asset references (a `MeshRenderer`'s mesh, a `Material`, …) are resolved as ordinary load-time
 dependencies, exactly as a `Material` resolves its textures and shaders. The cooked blob **is** the
@@ -215,11 +215,11 @@ A material (`*.vmat.json`) references its vertex/fragment shaders by `AssetId` a
 shader's reflected parameters.
 
 **A material is split into a parent and an instance — the standard cross-engine division.** A
-**`Material`** (`AssetType::Material`) is the **parent**: it owns the expensive half — the
+**`Material`** (`AssetTypes::Material`) is the **parent**: it owns the expensive half — the
 graphics pipeline, the pipeline layout, the resident shader/texture dependencies, the reflected
 `MaterialField` **schema** (`GetFields()`), and a cooked **default parameter block** (held as
 bytes, its bindless handle slots patched at `Finalize`). A parent owns **no** per-draw SSBO slot
-and **no** per-instance mutators. A **`MaterialInstance`** (`AssetType::MaterialInstance`) is a
+and **no** per-instance mutators. A **`MaterialInstance`** (`AssetTypes::MaterialInstance`) is a
 cheap **override** over a parent: an `AssetHandle<Material> Parent` kept resident, **one**
 per-material SSBO slot seeded from the parent's default block and patched by its overrides, its
 resident texture overrides, and the ring-buffered

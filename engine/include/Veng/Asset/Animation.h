@@ -52,11 +52,11 @@ namespace Veng
         vector<AnimationChannel> Channels;
     };
 
-    /// @brief AssetTypeTrait specialization mapping Animation to AssetType::Animation.
+    /// @brief AssetTypeTrait specialization mapping Animation to AssetTypes::Animation.
     template <>
     struct AssetTypeTrait<Animation>
     {
         /// @brief The asset type tag for Animation.
-        static constexpr AssetType Type = AssetType::Animation;
+        static constexpr AssetTypeId Type = AssetTypes::Animation;
     };
 }

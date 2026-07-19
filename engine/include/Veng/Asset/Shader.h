@@ -21,11 +21,11 @@ namespace Veng
         Renderer::ShaderInterface Interface;
     };
 
-    /// @brief AssetTypeTrait specialization mapping Shader to AssetType::Shader.
+    /// @brief AssetTypeTrait specialization mapping Shader to AssetTypes::Shader.
     template <>
     struct AssetTypeTrait<Shader>
     {
         /// @brief The asset type tag for Shader.
-        static constexpr AssetType Type = AssetType::Shader;
+        static constexpr AssetTypeId Type = AssetTypes::Shader;
     };
 }

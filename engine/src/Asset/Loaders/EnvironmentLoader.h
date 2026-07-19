@@ -5,7 +5,7 @@
 
 namespace Veng
 {
-    /// @brief AssetType::Environment loader.
+    /// @brief AssetTypes::Environment loader.
     ///
     /// Decodes a CookedEnvironmentHeader + HDR panorama pixels into a Veng::EnvironmentMap.
     /// Image creation and upload are worker-legal; bindless registration is deferred to the
@@ -13,8 +13,8 @@ namespace Veng
     class EnvironmentLoader final : public AssetLoader
     {
     public:
-        /// @brief Returns AssetType::Environment.
-        [[nodiscard]] AssetType Type() const override { return AssetType::Environment; }
+        /// @brief Returns AssetTypes::Environment.
+        [[nodiscard]] AssetTypeId Type() const override { return AssetTypes::Environment; }
 
         /// @brief Decodes the cooked environment blob into a LoadJob producing a resident Veng::EnvironmentMap.
         [[nodiscard]] AssetResult<Detail::LoadJob> Load(AssetManager& manager,

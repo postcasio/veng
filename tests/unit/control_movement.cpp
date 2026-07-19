@@ -147,7 +147,7 @@ namespace
             vector<InputAction>(context.Actions.begin(), context.Actions.end()),
             vector<Binding>(context.Bindings.begin(), context.Bindings.end()));
         auto entry = CreateRef<Detail::AssetCacheEntry>(Detail::AssetCacheEntry{
-            .Id = AssetId{}, .Type = AssetType::InputMap, .Resource = Detail::RefAny(resource)});
+            .Id = AssetId{}, .Type = AssetTypes::InputMap, .Resource = Detail::RefAny(resource)});
 
         AssetHandle<InputMappingContext> handle;
         Detail::RehydrateHandleField(&handle, AssetId{}, std::move(entry));

@@ -5,7 +5,7 @@
 
 namespace Veng
 {
-    /// @brief AssetType::MaterialInstance loader.
+    /// @brief AssetTypes::MaterialInstance loader.
     ///
     /// Decodes a CookedMaterialInstanceHeader + override table into a Veng::MaterialInstance:
     /// resolves the parent Material as a dependency, copies its default block, applies the
@@ -19,8 +19,8 @@ namespace Veng
     class MaterialInstanceLoader final : public AssetLoader
     {
     public:
-        /// @brief Returns AssetType::MaterialInstance.
-        [[nodiscard]] AssetType Type() const override { return AssetType::MaterialInstance; }
+        /// @brief Returns AssetTypes::MaterialInstance.
+        [[nodiscard]] AssetTypeId Type() const override { return AssetTypes::MaterialInstance; }
 
         /// @brief Decodes a cooked material-instance blob into a LoadJob producing a resident MaterialInstance.
         [[nodiscard]] AssetResult<Detail::LoadJob> Load(AssetManager& manager,

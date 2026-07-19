@@ -169,7 +169,7 @@ namespace VengEditor
         // host-clamped preview config in RequestCook.
         m_PreviewConfigName = m_PreviewConfig ? m_PreviewConfig().Name : string{};
 
-        m_Cook({.SourcePath = m_SourcePath, .TargetId = m_Id, .Type = AssetType::Texture},
+        m_Cook({.SourcePath = m_SourcePath, .TargetId = m_Id, .Type = AssetTypes::Texture},
                [this](Result<MountHandle> mount)
                {
                    m_Cooking = false;

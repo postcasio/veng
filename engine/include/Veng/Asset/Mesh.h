@@ -275,11 +275,11 @@ namespace Veng
         AssetHandle<Skeleton> m_Skeleton;
     };
 
-    /// @brief AssetTypeTrait specialization mapping Mesh to AssetType::Mesh.
+    /// @brief AssetTypeTrait specialization mapping Mesh to AssetTypes::Mesh.
     template <>
     struct AssetTypeTrait<Mesh>
     {
         /// @brief The asset type tag for Mesh.
-        static constexpr AssetType Type = AssetType::Mesh;
+        static constexpr AssetTypeId Type = AssetTypes::Mesh;
     };
 }

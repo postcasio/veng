@@ -5,7 +5,7 @@
 
 namespace Veng
 {
-    /// @brief AssetType::Mesh loader.
+    /// @brief AssetTypes::Mesh loader.
     ///
     /// Decodes a CookedMeshHeader + attribute descriptor + submesh table + interleaved
     /// vertex/index buffers into a Veng::Mesh with two GPU buffers, after validating
@@ -13,8 +13,8 @@ namespace Veng
     class MeshLoader final : public AssetLoader
     {
     public:
-        /// @brief Returns AssetType::Mesh.
-        [[nodiscard]] AssetType Type() const override { return AssetType::Mesh; }
+        /// @brief Returns AssetTypes::Mesh.
+        [[nodiscard]] AssetTypeId Type() const override { return AssetTypes::Mesh; }
 
         /// @brief Decodes the cooked mesh blob into a LoadJob producing a resident Veng::Mesh.
         [[nodiscard]] AssetResult<Detail::LoadJob> Load(AssetManager& manager,

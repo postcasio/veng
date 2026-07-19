@@ -96,7 +96,7 @@ TEST_CASE_FIXTURE(
     const vec4 green(0.0f, 1.0f, 0.0f, 1.0f);
     ArchiveWriter writer;
     const vector<u8> instanceBlob = BuildInstanceBlob(green);
-    writer.Add(InstanceId, AssetType::MaterialInstance, instanceBlob);
+    writer.Add(InstanceId, AssetTypes::MaterialInstance, instanceBlob);
     const MountHandle instanceMount = assets.MountMemory(writer.Build(), "<test instance>");
 
     // The explicit instance.

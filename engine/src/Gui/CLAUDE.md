@@ -29,11 +29,11 @@ editor's existing cook-on-demand hot-reload serves UI with no new machinery. The
 
 ## The cooked assets
 
-`AssetType::Font` (`Veng/Asset/Font.h`) is an **MSDF glyph atlas** (a bindless atlas texture + a
+`AssetTypes::Font` (`Veng/Asset/Font.h`) is an **MSDF glyph atlas** (a bindless atlas texture + a
 CPU metrics table — advance, bearing, atlas rect, kerning) cooked from a `*.font.json` naming a
 TTF/OTF; the runtime decodes nothing and shapes crisp text at any scale from the one small atlas.
 
-`AssetType::StyleSheet` (`Veng/Gui/StyleSheet.h`) is a reusable cooked stylesheet — **resolved**
+`AssetTypes::StyleSheet` (`Veng/Gui/StyleSheet.h`) is a reusable cooked stylesheet — **resolved**
 rules (type/class/id selectors matched at cook time) plus their
 `:hover`/`:active`/`:focus`/`:disabled`/`:checked`/`:selected` state variants, colors resolved sRGB→linear, and
 a **gradient table** (each `background-gradient` baked at cook time to a shape + box-space geometry
@@ -50,7 +50,7 @@ palette the rules were flattened from rather than restating it. Token substituti
 a pure cook-time transform ahead of the flatten — the runtime sees no `var()`; see
 [cooker/CLAUDE.md](../../../cooker/CLAUDE.md).
 
-`AssetType::UIDocument` (`Veng/Gui/UIDocument.h`) is the cooked markup: a **pre-order recipe
+`AssetTypes::UIDocument` (`Veng/Gui/UIDocument.h`) is the cooked markup: a **pre-order recipe
 element tree** (each element carrying its kind, id, classes, text, inline style, unresolved
 `{obj.field}` bindings, and named handlers) plus the `StyleSheet` handles it references and its
 font/texture dependencies (kept resident). All three load through the ordinary

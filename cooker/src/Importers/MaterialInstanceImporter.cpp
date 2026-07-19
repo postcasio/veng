@@ -73,7 +73,7 @@ namespace Veng::Cook
 
             const optional<ResolvedSource> fragmentResolved =
                 context.Resolve(AssetId{.Value = fragmentShaderId});
-            if (!fragmentResolved || fragmentResolved->Type != AssetType::Shader ||
+            if (!fragmentResolved || fragmentResolved->Type != AssetTypes::Shader ||
                 fragmentResolved->AbsolutePath.empty())
             {
                 return std::unexpected(fmt::format(
@@ -245,12 +245,12 @@ namespace Veng::Cook
                                                "found in pack or reference packs",
                                                parentId));
         }
-        if (parentResolved->Type != AssetType::Material)
+        if (parentResolved->Type != AssetTypes::Material)
         {
             return std::unexpected(
                 fmt::format("material instance importer: asset {} referenced as parent but has "
                             "type {} (expected Material)",
-                            parentId, static_cast<u32>(parentResolved->Type)));
+                            parentId, FormatHexId(parentResolved->Type.Value)));
         }
         if (parentResolved->AbsolutePath.empty())
         {
@@ -347,12 +347,12 @@ namespace Veng::Cook
                             "not found in pack or reference packs",
                             label, textureId, name));
                     }
-                    if (texResolved->Type != AssetType::Texture)
+                    if (texResolved->Type != AssetTypes::Texture)
                     {
                         return std::unexpected(fmt::format(
                             "material instance importer: '{}': asset {} for field '{}' has type {} "
                             "(expected Texture)",
-                            label, textureId, name, static_cast<u32>(texResolved->Type)));
+                            label, textureId, name, FormatHexId(texResolved->Type.Value)));
                     }
 
                     co.Kind = 1; // texture

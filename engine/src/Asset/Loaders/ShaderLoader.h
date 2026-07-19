@@ -5,7 +5,7 @@
 
 namespace Veng
 {
-    /// @brief AssetType::Shader loader.
+    /// @brief AssetTypes::Shader loader.
     ///
     /// Decodes a CookedShaderHeader + reflected interface + SPIR-V into a Veng::Shader
     /// (ShaderModule + ShaderInterface), bridging the cooked underlying-integer enum
@@ -13,8 +13,8 @@ namespace Veng
     class ShaderLoader final : public AssetLoader
     {
     public:
-        /// @brief Returns AssetType::Shader.
-        [[nodiscard]] AssetType Type() const override { return AssetType::Shader; }
+        /// @brief Returns AssetTypes::Shader.
+        [[nodiscard]] AssetTypeId Type() const override { return AssetTypes::Shader; }
 
         /// @brief Decodes the cooked shader blob into a LoadJob producing a resident Veng::Shader.
         [[nodiscard]] AssetResult<Detail::LoadJob> Load(AssetManager& manager,

@@ -44,11 +44,11 @@ TEST_CASE("Cooker: an <Image src=…> cooks and records the texture on the recip
     // The source texture is a real archive entry (the runtime loader eager-loads it as a dependency).
     const optional<ArchiveEntry> textureEntry = reader->Find(TextureId);
     REQUIRE(textureEntry.has_value());
-    CHECK(textureEntry->Type == AssetType::Texture);
+    CHECK(textureEntry->Type == AssetTypes::Texture);
 
     const optional<ArchiveEntry> docEntry = reader->Find(UIDocumentId);
     REQUIRE(docEntry.has_value());
-    CHECK(docEntry->Type == AssetType::UIDocument);
+    CHECK(docEntry->Type == AssetTypes::UIDocument);
 
     const std::span<const u8> blob = docEntry->Blob;
     REQUIRE(blob.size() >= sizeof(CookedUIDocumentHeader));

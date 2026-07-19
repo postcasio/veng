@@ -88,7 +88,7 @@ TEST_CASE("Cooker: stylesheet variables substitute, redefine last-wins, and fill
     REQUIRE(reader.has_value());
     const optional<ArchiveEntry> sheetEntry = reader->Find(MainSheetId);
     REQUIRE(sheetEntry.has_value());
-    CHECK(sheetEntry->Type == AssetType::StyleSheet);
+    CHECK(sheetEntry->Type == AssetTypes::StyleSheet);
 
     const std::span<const u8> blob = sheetEntry->Blob;
     REQUIRE(blob.size() >= sizeof(CookedStyleSheetHeader));
@@ -199,7 +199,8 @@ TEST_CASE("Cooker: a stylesheet var() naming an undefined variable is a located 
     const path source = path(VENG_COOKER_TEST_FIXTURE_DIR) / "style" / "err_undefined.vuss";
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
-    const Result<vector<u8>> bytes = cooker.CookSource(source, AssetId{0x1}, AssetType::StyleSheet);
+    const Result<vector<u8>> bytes =
+        cooker.CookSource(source, AssetId{0x1}, AssetTypes::StyleSheet);
     REQUIRE_FALSE(bytes.has_value());
     CHECK(bytes.error().find("undefined variable") != string::npos);
 }
@@ -209,7 +210,8 @@ TEST_CASE("Cooker: a '--' variable declared inside a rule is a located error")
     const path source = path(VENG_COOKER_TEST_FIXTURE_DIR) / "style" / "err_var_in_rule.vuss";
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
-    const Result<vector<u8>> bytes = cooker.CookSource(source, AssetId{0x1}, AssetType::StyleSheet);
+    const Result<vector<u8>> bytes =
+        cooker.CookSource(source, AssetId{0x1}, AssetTypes::StyleSheet);
     REQUIRE_FALSE(bytes.has_value());
     CHECK(bytes.error().find("file-scope") != string::npos);
 }
@@ -219,7 +221,8 @@ TEST_CASE("Cooker: an @use after a rule is a located error")
     const path source = path(VENG_COOKER_TEST_FIXTURE_DIR) / "style" / "err_use_after_rule.vuss";
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
-    const Result<vector<u8>> bytes = cooker.CookSource(source, AssetId{0x1}, AssetType::StyleSheet);
+    const Result<vector<u8>> bytes =
+        cooker.CookSource(source, AssetId{0x1}, AssetTypes::StyleSheet);
     REQUIRE_FALSE(bytes.has_value());
     CHECK(bytes.error().find("@use") != string::npos);
 }
@@ -229,7 +232,8 @@ TEST_CASE("Cooker: an @use naming a missing file is a located error")
     const path source = path(VENG_COOKER_TEST_FIXTURE_DIR) / "style" / "err_use_missing.vuss";
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
-    const Result<vector<u8>> bytes = cooker.CookSource(source, AssetId{0x1}, AssetType::StyleSheet);
+    const Result<vector<u8>> bytes =
+        cooker.CookSource(source, AssetId{0x1}, AssetTypes::StyleSheet);
     REQUIRE_FALSE(bytes.has_value());
     CHECK(bytes.error().find("cannot be opened") != string::npos);
 }
@@ -318,7 +322,7 @@ TEST_CASE("Cooker: an rgb() gradient bakes an HDR ramp preserving >1 stops")
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
     const AssetId sheetId{0x1};
-    const Result<vector<u8>> bytes = cooker.CookSource(source, sheetId, AssetType::StyleSheet);
+    const Result<vector<u8>> bytes = cooker.CookSource(source, sheetId, AssetTypes::StyleSheet);
     REQUIRE(bytes.has_value());
 
     // CookSource yields an in-memory archive; unwrap the sheet entry's cooked blob to decode.

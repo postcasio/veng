@@ -288,7 +288,12 @@ int main(const int argc, char** argv)
         // The cooker's id-generator, run in-process against the project's reference packs.
         .MintId = [](std::span<const Veng::path> references) -> Veng::AssetId
         {
-            const Veng::Result<Veng::AssetId> id = Veng::Cook::GenerateAssetId(references);
+            // The reference manifests are re-parsed per mint, so their type names resolve against
+            // a registry built here rather than the host's.
+            Veng::AssetTypeRegistry assetTypes;
+            Veng::RegisterBuiltinAssetTypes(assetTypes);
+            const Veng::Result<Veng::AssetId> id =
+                Veng::Cook::GenerateAssetId(references, assetTypes);
             if (!id)
             {
                 Veng::Log::Error("editor: AssetId mint failed: {}", id.error());

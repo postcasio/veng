@@ -34,7 +34,7 @@ resolves `--reference` / `--shader-include` against the installed core-data sour
 under `share/veng/core/` (`veng_CORE_PACK_JSON` / `veng_CORE_SHADER_DIR`).
 
 The **content-hash function lives only here** (and in `vengc verify`): the cooker
-writes each blob's xxh3-128 hash and the TOC digest into a `.vengpack` (format v5),
+writes each blob's xxh3-128 hash and the TOC digest into a `.vengpack` (format v6),
 so `assetpack` stores the raw 16 bytes and computes nothing, and `libveng` gains no
 hash dependency. The loader never verifies — hashing is tooling, not the hot path.
 
@@ -121,7 +121,7 @@ at cook time:
   + a value region of the param overrides' raw bytes); the instance owns no shader or pipeline — the
   parent supplies those. The importer is in the **core** set (it links only the Slang reflection +
   the graph-shader resolver hook, never libveng), so a bare-parent cook stays graph-aware.
-- **Input maps** (`*.inputmap.json`) cook an `InputMappingContext` (`AssetType::InputMap`)
+- **Input maps** (`*.inputmap.json`) cook an `InputMappingContext` (`AssetTypes::InputMap`)
   through the **`InputMapImporter`**. The source declares its `"actions"` (each an unsigned
   `id`, a `name`, and an enum `kind`) and its `"bindings"` (a raw `source` device/control, a
   target `action` id, an `axis` component, and a `scale`); the importer decodes them into an
@@ -327,6 +327,11 @@ so the cooker and the runtime loader share one encoder.
   over `ParseAssetPack` + the `AssetPack`-checking overload) — so the editor mints the
   `defaultInstance` id without shelling out to the CLI.
 - **`generate-type-id`** — the `TypeId` analogue of `generate-id`.
+- **`generate-asset-type`** — mints a collision-free `AssetTypeId` (the same two spellings),
+  checked against the engine builtins and, with `--module <lib>`, a module's own registrations.
+  There is deliberately **no `--reference`**: a pack manifest carries type *names*, not minted
+  type ids, so a pack has nothing to check against. `GenerateAssetTypeId(const AssetTypeRegistry&)`
+  (`Cook/AssetPack.h`) is the in-process form.
 - The tool can also emit a **type manifest**.
 
 ## Build wiring

@@ -117,11 +117,11 @@ namespace Veng
         bool m_Registered = false;
     };
 
-    /// @brief AssetTypeTrait specialization mapping EnvironmentMap to AssetType::Environment.
+    /// @brief AssetTypeTrait specialization mapping EnvironmentMap to AssetTypes::Environment.
     template <>
     struct AssetTypeTrait<EnvironmentMap>
     {
         /// @brief The asset type tag for EnvironmentMap.
-        static constexpr AssetType Type = AssetType::Environment;
+        static constexpr AssetTypeId Type = AssetTypes::Environment;
     };
 }

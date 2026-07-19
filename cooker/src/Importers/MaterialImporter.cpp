@@ -199,11 +199,11 @@ namespace Veng::Cook
                 "material importer: vertex shader {} not found in pack or reference packs",
                 vertexShaderId));
         }
-        if (vertexResolved->Type != AssetType::Shader)
+        if (vertexResolved->Type != AssetTypes::Shader)
         {
             return std::unexpected(fmt::format(
                 "material importer: asset {} referenced as vertex shader but has type {}",
-                vertexShaderId, static_cast<u32>(vertexResolved->Type)));
+                vertexShaderId, FormatHexId(vertexResolved->Type.Value)));
         }
 
         const optional<ResolvedSource> fragmentResolved =
@@ -214,11 +214,11 @@ namespace Veng::Cook
                 "material importer: fragment shader {} not found in pack or reference packs",
                 fragmentShaderId));
         }
-        if (fragmentResolved->Type != AssetType::Shader)
+        if (fragmentResolved->Type != AssetTypes::Shader)
         {
             return std::unexpected(fmt::format(
                 "material importer: asset {} referenced as fragment shader but has type {}",
-                fragmentShaderId, static_cast<u32>(fragmentResolved->Type)));
+                fragmentShaderId, FormatHexId(fragmentResolved->Type.Value)));
         }
 
         // The fragment shader supplies the param-block layout, so it must resolve
@@ -604,13 +604,13 @@ namespace Veng::Cook
                                             "found in pack or reference packs",
                                             decl.TextureAssetId, decl.Name));
                         }
-                        if (texResolved->Type != AssetType::Texture)
+                        if (texResolved->Type != AssetTypes::Texture)
                         {
                             return std::unexpected(
                                 fmt::format("material importer: asset {} referenced as texture for "
                                             "field '{}' but has type {}",
                                             decl.TextureAssetId, decl.Name,
-                                            static_cast<u32>(texResolved->Type)));
+                                            FormatHexId(texResolved->Type.Value)));
                         }
                     }
 

@@ -229,11 +229,11 @@ namespace Veng
         mutable u32 m_Revision = 0;
     };
 
-    /// @brief AssetTypeTrait specialization mapping MaterialInstance to AssetType::MaterialInstance.
+    /// @brief AssetTypeTrait specialization mapping MaterialInstance to AssetTypes::MaterialInstance.
     template <>
     struct AssetTypeTrait<MaterialInstance>
     {
         /// @brief The asset type tag for MaterialInstance.
-        static constexpr AssetType Type = AssetType::MaterialInstance;
+        static constexpr AssetTypeId Type = AssetTypes::MaterialInstance;
     };
 }

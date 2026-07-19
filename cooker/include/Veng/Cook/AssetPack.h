@@ -14,7 +14,7 @@ namespace Veng::Cook
         /// @brief The asset's unique identifier.
         AssetId Id;
         /// @brief The asset type (texture, mesh, shader, …).
-        AssetType Type{};
+        AssetTypeId Type{};
         /// @brief Source path as written in the pack JSON, relative to the pack directory.
         string Source;
     };
@@ -40,4 +40,14 @@ namespace Veng::Cook
     /// @param packs  Packs to check for collisions.
     /// @return A fresh, collision-free AssetId.
     [[nodiscard]] AssetId GenerateAssetId(std::span<const AssetPack* const> packs);
+
+    /// @brief Mints a random non-zero AssetTypeId that collides with nothing in `existing`.
+    ///
+    /// The AssetTypeId analogue of GenerateAssetId, and the in-process form of
+    /// `vengc generate-asset-type`. Pass a registry pre-filled with the engine builtins (and, for
+    /// a host that has loaded one, a module's registrations) so the minted id avoids every type
+    /// already claimed.
+    /// @param existing  The registry the minted id must not collide with.
+    /// @return A fresh, collision-free AssetTypeId.
+    [[nodiscard]] AssetTypeId GenerateAssetTypeId(const AssetTypeRegistry& existing);
 }

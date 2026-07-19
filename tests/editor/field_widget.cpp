@@ -37,10 +37,10 @@ namespace
 TEST_CASE("FieldWidget: AssetTypeOfHandle maps handle leaf types to asset types")
 {
     CHECK(AssetTypeOfHandle(TypeIdOf<Veng::AssetHandle<Veng::Texture>>()) ==
-          Veng::AssetType::Texture);
-    CHECK(AssetTypeOfHandle(TypeIdOf<Veng::AssetHandle<Veng::Mesh>>()) == Veng::AssetType::Mesh);
+          Veng::AssetTypes::Texture);
+    CHECK(AssetTypeOfHandle(TypeIdOf<Veng::AssetHandle<Veng::Mesh>>()) == Veng::AssetTypes::Mesh);
     CHECK(AssetTypeOfHandle(TypeIdOf<Veng::AssetHandle<Veng::Material>>()) ==
-          Veng::AssetType::Material);
+          Veng::AssetTypes::Material);
 
     // A non-handle leaf has no asset type.
     CHECK_FALSE(AssetTypeOfHandle(TypeIdOf<Veng::f32>()).has_value());

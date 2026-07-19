@@ -1,6 +1,7 @@
 #include <Veng/Asset/AssetManager.h>
 
 #include <Veng/Assert.h>
+#include <Veng/Asset/HexId.h>
 #include <Veng/Log.h>
 #include <Veng/Task/TaskSystem.h>
 
@@ -118,7 +119,7 @@ namespace Veng
 
     void AssetManager::RegisterLoader(Unique<AssetLoader> loader)
     {
-        const AssetType type = loader->Type();
+        const AssetTypeId type = loader->Type();
         m_Loaders[type] = std::move(loader);
     }
 
@@ -202,7 +203,7 @@ namespace Veng
         return std::nullopt;
     }
 
-    AssetResult<std::pair<AssetLoader*, ArchiveEntry>> AssetManager::Resolve(AssetType type,
+    AssetResult<std::pair<AssetLoader*, ArchiveEntry>> AssetManager::Resolve(AssetTypeId type,
                                                                              AssetId id)
     {
         const optional<ArchiveEntry> found = Find(id);
@@ -220,8 +221,8 @@ namespace Veng
             return std::unexpected(AssetLoadError{
                 .Kind = AssetError::WrongType,
                 .Id = id,
-                .Detail = fmt::format("asset {} is a {}, not {}", id.Value, ToString(found->Type),
-                                      ToString(type)),
+                .Detail = fmt::format("asset {} is asset type {}, not {}", id.Value,
+                                      FormatHexId(found->Type.Value), FormatHexId(type.Value)),
             });
         }
 
@@ -231,14 +232,15 @@ namespace Veng
             return std::unexpected(AssetLoadError{
                 .Kind = AssetError::LoadFailed,
                 .Id = id,
-                .Detail = fmt::format("no loader registered for AssetType {}", ToString(type)),
+                .Detail =
+                    fmt::format("no loader registered for asset type {}", FormatHexId(type.Value)),
             });
         }
 
         return std::pair{loaderIt->second.get(), *found};
     }
 
-    AssetResult<Detail::LoadJob> AssetManager::RunLoader(AssetType type, AssetId id, bool async)
+    AssetResult<Detail::LoadJob> AssetManager::RunLoader(AssetTypeId type, AssetId id, bool async)
     {
         const AssetResult<std::pair<AssetLoader*, ArchiveEntry>> resolved = Resolve(type, id);
         if (!resolved)
@@ -250,7 +252,7 @@ namespace Veng
                                      async);
     }
 
-    Ref<Detail::AssetCacheEntry> AssetManager::LoadUntyped(AssetType type, AssetId id)
+    Ref<Detail::AssetCacheEntry> AssetManager::LoadUntyped(AssetTypeId type, AssetId id)
     {
         // A cache hit (resident or pending) returns the existing entry. One id names one asset of
         // one type, so a cached entry of a different type is a failed load, not a reinterpret.
@@ -258,8 +260,8 @@ namespace Veng
         {
             if (it->second->Type != type)
             {
-                Log::Error("AssetManager::Load: asset {} is a {}, not {}", id.Value,
-                           ToString(it->second->Type), ToString(type));
+                Log::Error("AssetManager::Load: asset {} is asset type {}, not {}", id.Value,
+                           FormatHexId(it->second->Type.Value), FormatHexId(type.Value));
                 return nullptr;
             }
             return it->second;
@@ -386,7 +388,7 @@ namespace Veng
                       [&entry](const PendingLoad& pending) { return pending.Entry == entry; });
     }
 
-    AssetResult<Ref<Detail::AssetCacheEntry>> AssetManager::LoadSyncUntyped(AssetType type,
+    AssetResult<Ref<Detail::AssetCacheEntry>> AssetManager::LoadSyncUntyped(AssetTypeId type,
                                                                             AssetId id)
     {
         if (const auto it = m_Cache.find(id); it != m_Cache.end())
@@ -398,8 +400,9 @@ namespace Veng
                 return std::unexpected(AssetLoadError{
                     .Kind = AssetError::WrongType,
                     .Id = id,
-                    .Detail = fmt::format("asset {} is a {}, not {}", id.Value,
-                                          ToString(it->second->Type), ToString(type)),
+                    .Detail =
+                        fmt::format("asset {} is asset type {}, not {}", id.Value,
+                                    FormatHexId(it->second->Type.Value), FormatHexId(type.Value)),
                 });
             }
 

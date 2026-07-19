@@ -21,8 +21,8 @@ namespace Veng::Cook
     class MaterialInstanceImporter final : public AssetImporter
     {
     public:
-        /// @brief Returns AssetType::MaterialInstance.
-        [[nodiscard]] AssetType Type() const override { return AssetType::MaterialInstance; }
+        /// @brief Returns AssetTypes::MaterialInstance.
+        [[nodiscard]] AssetTypeId Type() const override { return AssetTypes::MaterialInstance; }
 
         /// @brief Cooks the material instance described by `entry` into a binary blob.
         [[nodiscard]] Result<vector<u8>> Cook(const CookContext& context,
