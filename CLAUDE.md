@@ -181,7 +181,18 @@ Three ways to run it, all opt-in:
 
 ```sh
 scripts/tidy.sh engine/src/Gui/Document.cpp
+scripts/tidy.sh --db build-asan engine/src/Gui/Document.cpp   # a tree outside the three
+VENG_TIDY_DB=build-asan scripts/tidy.sh engine/src/Gui/Document.cpp
 ```
+
+**Naming a build tree explicitly** overrides the search in both the script (`-p` / `--db`,
+or `$VENG_TIDY_DB`) and the hook (`$VENG_TIDY_DB` only — git runs a hook with no
+arguments). A tree named this way is used as given or not at all: if it has no
+`compile_commands.json`, or was configured for a different checkout, the run **fails**
+rather than falling back to the search, because a silent fallback would lint against a
+different tree than the one asked for and report the result as if it were the one
+requested. Use it for a tree that is not `build-debug`/`build`/`cmake-build-debug` — a
+sanitizer or per-configuration tree, or a worktree's own build.
 
 **Do not invoke `clang-tidy -p build-debug` directly — it fails without reporting
 findings, which reads as a clean tree.** macOS ships no `clang-tidy`, so the tool is

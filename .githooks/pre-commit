@@ -32,6 +32,11 @@ fi
 # so use -DVENG_ENABLE_CLANG_TIDY=ON or CI for those. Needs a compile DB
 # (compile_commands.json, exported unconditionally into build/). Skips cleanly when
 # clang-tidy or a DB is absent, or when nothing relevant is staged.
+# git runs a hook with no arguments, so $VENG_TIDY_DB is the way to name a build tree that is
+# not one of the three searched below — the same variable scripts/tidy.sh reads. A named tree
+# is used as given or not at all: falling back to a guess would lint against a different tree
+# than the one asked for and report the result as if it were the one requested.
+#
 # build-debug is searched first because it is the tree the project configures and builds by
 # default; build/ is the optional validation-OFF tree and is routinely absent or stale. A DB
 # whose CMakeCache names a different source directory belongs to a moved or renamed checkout:
@@ -39,17 +44,26 @@ fi
 # and the run silently checks nothing. Match scripts/tidy.sh's order, and skip such a tree.
 tidy_root=$(git rev-parse --show-toplevel)
 tidy_db=""
-for d in build-debug build cmake-build-debug; do
-    if [ -f "$d/compile_commands.json" ]; then
-        tidy_home=$(grep -m1 '^CMAKE_HOME_DIRECTORY:' "$d/CMakeCache.txt" 2>/dev/null | cut -d= -f2 || true)
-        if [ -n "$tidy_home" ] && [ "$tidy_home" != "$tidy_root" ]; then
-            echo "pre-commit: $d was configured for $tidy_home, not $tidy_root — skipping it." >&2
-            continue
-        fi
-        tidy_db="$d"
-        break
+if [ -n "${VENG_TIDY_DB:-}" ]; then
+    if [ -f "${VENG_TIDY_DB}/compile_commands.json" ]; then
+        tidy_db="$VENG_TIDY_DB"
+    else
+        echo "pre-commit: VENG_TIDY_DB=$VENG_TIDY_DB has no compile_commands.json." >&2
+        exit 1
     fi
-done
+else
+    for d in build-debug build cmake-build-debug; do
+        if [ -f "$d/compile_commands.json" ]; then
+            tidy_home=$(grep -m1 '^CMAKE_HOME_DIRECTORY:' "$d/CMakeCache.txt" 2>/dev/null | cut -d= -f2 || true)
+            if [ -n "$tidy_home" ] && [ "$tidy_home" != "$tidy_root" ]; then
+                echo "pre-commit: $d was configured for $tidy_home, not $tidy_root — skipping it." >&2
+                continue
+            fi
+            tidy_db="$d"
+            break
+        fi
+    done
+fi
 
 staged_tus=$(git diff --cached --name-only --diff-filter=ACM -- '*.cpp' '*.cc')
 

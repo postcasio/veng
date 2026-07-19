@@ -24,8 +24,35 @@
 # stripping while the compiler stops searching, and the cooker fails to find slang.h.
 set -euo pipefail
 
+db_arg="${VENG_TIDY_DB:-}"
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -p | --db)
+            db_arg="${2:-}"
+            if [ -z "$db_arg" ]; then
+                echo "tidy: $1 needs a build directory." >&2
+                exit 2
+            fi
+            shift 2
+            ;;
+        --)
+            shift
+            break
+            ;;
+        -*)
+            echo "tidy: unknown option: $1" >&2
+            exit 2
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
 if [ $# -eq 0 ]; then
-    echo "usage: scripts/tidy.sh <source> [source ...]" >&2
+    echo "usage: scripts/tidy.sh [-p|--db <build-dir>] <source> [source ...]" >&2
+    echo "       the build directory also comes from \$VENG_TIDY_DB; otherwise it is" >&2
+    echo "       resolved from build-debug/, build/, cmake-build-debug/ in that order." >&2
     exit 2
 fi
 
@@ -34,15 +61,44 @@ if ! command -v clang-tidy >/dev/null 2>&1; then
     exit 1
 fi
 
+# An explicitly named tree is used as given or not at all: falling back to a guess would run
+# the lint against a different tree than the one asked for and report the result as if it were
+# the one requested. Auto-resolution applies only when no tree is named.
+root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 db=""
-for d in build-debug build cmake-build-debug; do
-    if [ -f "$d/compile_commands.json" ]; then
-        db="$d"
-        break
+if [ -n "$db_arg" ]; then
+    if [ ! -f "$db_arg/compile_commands.json" ]; then
+        echo "tidy: $db_arg has no compile_commands.json." >&2
+        exit 1
     fi
-done
+    db="$db_arg"
+else
+    for d in build-debug build cmake-build-debug; do
+        if [ -f "$d/compile_commands.json" ]; then
+            home=$(grep -m1 '^CMAKE_HOME_DIRECTORY:' "$d/CMakeCache.txt" 2>/dev/null | cut -d= -f2 || true)
+            if [ -n "$home" ] && [ "$home" != "$root" ]; then
+                echo "tidy: $d was configured for $home, not $root — skipping it." >&2
+                continue
+            fi
+            db="$d"
+            break
+        fi
+    done
+fi
 if [ -z "$db" ]; then
-    echo "tidy: no compile_commands.json in build-debug/, build/, or cmake-build-debug/." >&2
+    echo "tidy: no usable compile_commands.json in build-debug/, build/, or cmake-build-debug/." >&2
+    echo "      Name one explicitly with --db <dir> if it lives elsewhere." >&2
+    exit 1
+fi
+
+# A tree configured for a different checkout carries entries whose paths no longer resolve, so
+# every argument reads as absent from it. Report that as the stale tree it is rather than as a
+# file that belongs to no target.
+db_home=$(grep -m1 '^CMAKE_HOME_DIRECTORY:' "$db/CMakeCache.txt" 2>/dev/null | cut -d= -f2 || true)
+if [ -n "$db_home" ] && [ "$db_home" != "$root" ]; then
+    echo "tidy: $db was configured for $db_home, not $root — its entries name paths that do" >&2
+    echo "      not exist here, so nothing would be checked. Reconfigure it, or pass a tree" >&2
+    echo "      configured for this checkout with --db <dir>." >&2
     exit 1
 fi
 
