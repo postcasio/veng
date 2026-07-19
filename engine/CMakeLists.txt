@@ -139,6 +139,7 @@ add_library(veng SHARED
         src/Net/Session.cpp
         src/Net/UdpTransport.cpp
         src/Platform/UserPaths.cpp
+        src/Task/ParallelFor.cpp
         src/Task/TaskSystem.cpp
         src/Time.cpp
         src/Window.cpp

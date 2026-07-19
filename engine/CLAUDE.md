@@ -55,6 +55,15 @@ fixed worker pool draining a work queue and returning `Task<T>` handles — is p
 frame: `Frame()` calls `TaskSystem::PumpMainThread()` at the top, before `BeginFrame()` advances
 the frame, so off-thread continuations land on the main thread.
 
+**`Veng::ParallelFor(count, body)`** (`Veng/Task/ParallelFor.h`) is the data-parallel complement to
+the pool: it splits `[0, count)` into contiguous ranges across short-lived threads it owns for the
+call, the caller participating in one range, and blocks until all finish. Because it owns its
+threads rather than re-entering the pool, it is safe to call from *any* thread — including a
+`TaskSystem` worker, where recursing into the pool could starve it — so a job already running off
+the main thread can still fan a coarse inner loop across cores. It is for occasional, CPU-bound
+batch work (a one-shot bake, a bulk transform), not per-frame hot paths; steady per-frame work
+submits to the pool.
+
 **`Application` is a composition root that delegates to collaborators.** It owns the services
 above and three collaborators it drives each frame:
 

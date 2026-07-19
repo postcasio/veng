@@ -631,6 +631,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/animation.cpp
             tests/unit/pure_logic.cpp
             tests/unit/task_system.cpp
+            tests/unit/parallel_for.cpp
             tests/unit/type_mapping.cpp
             tests/unit/format_info.cpp
             tests/unit/barrier_decision.cpp
