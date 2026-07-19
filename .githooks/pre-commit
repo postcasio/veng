@@ -32,9 +32,20 @@ fi
 # so use -DVENG_ENABLE_CLANG_TIDY=ON or CI for those. Needs a compile DB
 # (compile_commands.json, exported unconditionally into build/). Skips cleanly when
 # clang-tidy or a DB is absent, or when nothing relevant is staged.
+# build-debug is searched first because it is the tree the project configures and builds by
+# default; build/ is the optional validation-OFF tree and is routinely absent or stale. A DB
+# whose CMakeCache names a different source directory belongs to a moved or renamed checkout:
+# its entries reference paths that no longer exist, so every staged TU reads as absent from it
+# and the run silently checks nothing. Match scripts/tidy.sh's order, and skip such a tree.
+tidy_root=$(git rev-parse --show-toplevel)
 tidy_db=""
-for d in build build-debug cmake-build-debug; do
+for d in build-debug build cmake-build-debug; do
     if [ -f "$d/compile_commands.json" ]; then
+        tidy_home=$(grep -m1 '^CMAKE_HOME_DIRECTORY:' "$d/CMakeCache.txt" 2>/dev/null | cut -d= -f2 || true)
+        if [ -n "$tidy_home" ] && [ "$tidy_home" != "$tidy_root" ]; then
+            echo "pre-commit: $d was configured for $tidy_home, not $tidy_root — skipping it." >&2
+            continue
+        fi
         tidy_db="$d"
         break
     fi

@@ -161,8 +161,11 @@ Three ways to run it, all opt-in:
 - **Pre-commit:** the same `.githooks/pre-commit` hook runs a second stage that lints
   **each staged `.cpp`/`.cc` in full** — the tree is kept clean against the allowlist,
   so any finding on a touched TU is a regression and no changed-line diffing is needed.
-  It resolves a compile DB from `build/`, `build-debug/`, or `cmake-build-debug/`
-  (exported unconditionally) and applies the toolchain fixes below. A changed *header*
+  It resolves a compile DB from `build-debug/`, `build/`, or `cmake-build-debug/`
+  (exported unconditionally) — the debug tree first, since that is the one the project
+  configures by default, where `build/` is optional and routinely stale — skipping any
+  tree whose `CMAKE_HOME_DIRECTORY` names a different checkout, and applies the
+  toolchain fixes below. A changed *header*
   is checked transitively through a staged TU that includes it; a header-only commit
   drives no TU, so use the in-build run for those. Skips cleanly when clang-tidy or a
   compile DB is missing. A staged TU the DB carries no entry for — a source belonging to
