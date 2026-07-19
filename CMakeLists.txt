@@ -545,6 +545,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/transient_allocation.cpp
             tests/unit/asset_archive.cpp
             tests/unit/asset_type_registry.cpp
+            tests/unit/asset_handle_type.cpp
             tests/unit/hex_id.cpp
             tests/unit/cooked_project.cpp
             tests/unit/launch_arguments.cpp
@@ -1400,6 +1401,7 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle)
             tests/cooker/level_cook.cpp
             tests/cooker/input_map_cook.cpp
             tests/cooker/table_cook.cpp
+            tests/cooker/asset_handle_leaf_deps.cpp
             tests/cooker/cook_source.cpp
             tests/cooker/ui_document_cook.cpp
             tests/cooker/ui_list_selection_cook.cpp

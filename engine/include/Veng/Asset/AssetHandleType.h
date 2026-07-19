@@ -18,10 +18,16 @@ namespace Veng
     static_assert(AssetHandleFieldTypes::MaterialInstance ==
                   TypeIdOf<AssetHandle<MaterialInstance>>());
     static_assert(AssetHandleFieldTypes::Prefab == TypeIdOf<AssetHandle<Prefab>>());
+    static_assert(AssetHandleFieldTypes::Level == TypeIdOf<AssetHandle<Level>>());
+    static_assert(AssetHandleFieldTypes::Skeleton == TypeIdOf<AssetHandle<Skeleton>>());
     static_assert(AssetHandleFieldTypes::Animation == TypeIdOf<AssetHandle<Animation>>());
     static_assert(AssetHandleFieldTypes::Environment == TypeIdOf<AssetHandle<EnvironmentMap>>());
     static_assert(AssetHandleFieldTypes::InputMap == TypeIdOf<AssetHandle<InputMappingContext>>());
+    static_assert(AssetHandleFieldTypes::Font == TypeIdOf<AssetHandle<Font>>());
+    static_assert(AssetHandleFieldTypes::StyleSheet == TypeIdOf<AssetHandle<Gui::StyleSheet>>());
     static_assert(AssetHandleFieldTypes::UIDocument == TypeIdOf<AssetHandle<Gui::UIDocument>>());
+    static_assert(AssetHandleFieldTypes::TableSchema == TypeIdOf<AssetHandle<TableSchema>>());
+    static_assert(AssetHandleFieldTypes::DataTable == TypeIdOf<AssetHandle<DataTable>>());
 
     /// @brief Whether an asset of type @p actual may fill an AssetHandle field expecting @p expected.
     ///

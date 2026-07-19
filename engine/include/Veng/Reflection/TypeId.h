@@ -15,13 +15,19 @@ namespace Veng
     class Material;
     class MaterialInstance;
     class Prefab;
+    class Level;
+    struct Skeleton;
     struct Animation;
     class EnvironmentMap;
     class InputMappingContext;
+    class Font;
+    class TableSchema;
+    class DataTable;
     struct RawAsset;
     namespace Gui
     {
         class UIDocument;
+        class StyleSheet;
     }
     class TypeRegistry;
 
@@ -118,13 +124,23 @@ VE_LEAF(::Veng::AssetHandle<::Veng::MaterialInstance>, 0xB47397CC23B08FDEULL,
         ::Veng::FieldClass::AssetHandle);
 VE_LEAF(::Veng::AssetHandle<::Veng::Prefab>, 0xF71230AEA9060D83ULL,
         ::Veng::FieldClass::AssetHandle);
+VE_LEAF(::Veng::AssetHandle<::Veng::Level>, 0xED75AEF99D36E43BULL, ::Veng::FieldClass::AssetHandle);
+VE_LEAF(::Veng::AssetHandle<::Veng::Skeleton>, 0xCF758350A84A3CE1ULL,
+        ::Veng::FieldClass::AssetHandle);
 VE_LEAF(::Veng::AssetHandle<::Veng::Animation>, 0xED6B03478BD050CEULL,
         ::Veng::FieldClass::AssetHandle);
 VE_LEAF(::Veng::AssetHandle<::Veng::EnvironmentMap>, 0x4E2499935571083DULL,
         ::Veng::FieldClass::AssetHandle);
 VE_LEAF(::Veng::AssetHandle<::Veng::InputMappingContext>, 0xA6CA03617AA27317ULL,
         ::Veng::FieldClass::AssetHandle);
+VE_LEAF(::Veng::AssetHandle<::Veng::Font>, 0x1FE6D744331DABE7ULL, ::Veng::FieldClass::AssetHandle);
+VE_LEAF(::Veng::AssetHandle<::Veng::Gui::StyleSheet>, 0x29CA592C9355A65AULL,
+        ::Veng::FieldClass::AssetHandle);
 VE_LEAF(::Veng::AssetHandle<::Veng::Gui::UIDocument>, 0xC591D0D0452797E1ULL,
+        ::Veng::FieldClass::AssetHandle);
+VE_LEAF(::Veng::AssetHandle<::Veng::TableSchema>, 0x2879BAC5F35A3945ULL,
+        ::Veng::FieldClass::AssetHandle);
+VE_LEAF(::Veng::AssetHandle<::Veng::DataTable>, 0xCC431A7163938F1DULL,
         ::Veng::FieldClass::AssetHandle);
 VE_LEAF(::Veng::AssetHandle<::Veng::RawAsset>, 0x05A5061C9E34F8D3ULL,
         ::Veng::FieldClass::AssetHandle);
