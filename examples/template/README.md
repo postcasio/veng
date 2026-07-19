@@ -58,8 +58,13 @@ runtime class, and loader live in `MarkerSet.h` / `MarkerSet.cpp`, and whose imp
 `MarkerSetImporter.cpp`. That importer is built into a separate **cook module**
 (`COOK_SOURCES` on `veng_add_game`, emitting `libtemplate_cook`) that `vengc` and the editor load
 beside `libtemplate` and nothing at runtime loads. `VengModuleRegister` registers the type id, its
-manifest name, and a loader factory; `assets/markers/template.markers.json` authors the data;
-`TemplateApp::OnWorldLoaded` loads it through the ordinary `LoadSync<MarkerSet>` path. The full
+manifest name, a handle-leaf mapping, and a loader factory; `assets/markers/template.markers.json`
+authors the data. Both ways of reaching it are shown: `TemplateApp::OnWorldLoaded` loads one
+directly through `LoadSync<MarkerSet>`, and the scene prefab authors a `MarkerBeacon` component
+whose `AssetHandle<MarkerSet>` field the engine resolves as an ordinary load-time prefab
+dependency — the path a game actually uses. The importer also folds every authored marker name
+through `Template::NormalizeMarkerName`, an out-of-line function compiled into `libtemplate`, so
+the cook module's link against the runtime library shares real code and not only layouts. The full
 walkthrough is [`docs/guides/custom-asset-types.md`](../../docs/guides/custom-asset-types.md).
 
 Because the pack carries a prefab and a level, the cook reflects `libtemplate`'s types
@@ -85,6 +90,10 @@ cmake --build build --target template-launcher
 
 Point `find_package` at an installed prefix instead with
 `-DCMAKE_PREFIX_PATH=<prefix>` in place of `-Dveng_ROOT`.
+
+Setting `TEMPLATE_SMOKE=1` runs it windowless for a fixed handful of frames and exits 0 — the
+display-free path the SDK conformance tests drive it through, checking the exit status and the
+marker line it logs once its prefab-authored game-defined asset resolved.
 
 For the richer surface — the batteries, the debug UI, build configurations, custom
 components and systems, gameplay — read `examples/hello-triangle` and the editor's

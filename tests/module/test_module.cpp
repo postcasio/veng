@@ -1,7 +1,7 @@
 // A minimal game module: exports the ABI version + VengModuleRegister, and on
 // registration registers a game component into the host's TypeRegistry, a game-defined asset
-// type and its loader factory into the host's asset registries, stores a
-// trivial Application factory (never invoked here, so no Context/Window is
+// type — identity, handle-leaf mapping, and loader factory — into the host's asset registries,
+// stores a trivial Application factory (never invoked here, so no Context/Window is
 // constructed), and asserts the host's Editor slot is null.
 
 #include <Veng/Application.h>
@@ -25,7 +25,8 @@ namespace
     };
 
     // The runtime half of the module-defined asset type. Registered as a factory, so no Context
-    // or AssetManager need exist when VengModuleRegister runs; loader_test never invokes it.
+    // or AssetManager need exist when VengModuleRegister runs; the tests instantiate it by
+    // building an AssetManager over these registries and loading a cooked probe blob.
     class ProbeAssetLoader final : public Veng::AssetLoader
     {
     public:
@@ -35,7 +36,17 @@ namespace
         Load(Veng::AssetManager&, Veng::Renderer::Context&, Veng::TaskSystem&, Veng::TypeRegistry&,
              Veng::AssetId id, std::span<const Veng::u8> cooked, bool) const override
         {
-            auto asset = Veng::CreateRef<Veng::vector<Veng::u8>>(cooked.begin(), cooked.end());
+            // An empty blob stands in for a malformed one: a decode failure is recoverable, so
+            // the tests can drive the error path without aborting the process.
+            if (cooked.empty())
+            {
+                return std::unexpected(Veng::AssetLoadError{.Kind = Veng::AssetError::Corrupt,
+                                                            .Id = id,
+                                                            .Detail = "probe asset blob is empty"});
+            }
+
+            auto asset = Veng::CreateRef<ProbeAsset>();
+            asset->Bytes.assign(cooked.begin(), cooked.end());
             return Veng::Detail::LoadJob{
                 .Resource = std::static_pointer_cast<void>(std::move(asset)),
                 .Dependencies = {},
@@ -54,10 +65,15 @@ extern "C" VE_MODULE_EXPORT void VengModuleRegister(Veng::VengModuleHost* host)
 
     host->Types.Register<Probe>();
 
-    host->AssetTypes.Register(Veng::AssetTypeInfo{.Id = ProbeAssetType,
-                                                  .Name = ProbeAssetTypeName,
-                                                  .DisplayName = "Probe Asset",
-                                                  .Glyph = "PRB"});
+    // HandleFieldType is what makes Probe::Asset resolvable: the prefab loader, the cooker's
+    // handle validation, and the editor's picker all turn that field's leaf TypeId back into
+    // this asset type through it. Only the module knows the pairing for its own type.
+    host->AssetTypes.Register(
+        Veng::AssetTypeInfo{.Id = ProbeAssetType,
+                            .Name = ProbeAssetTypeName,
+                            .DisplayName = "Probe Asset",
+                            .Glyph = "PRB",
+                            .HandleFieldType = Veng::TypeIdOf<Veng::AssetHandle<ProbeAsset>>()});
     host->AssetLoaders.Register(
         ProbeAssetType, [] { return Veng::Unique<Veng::AssetLoader>(new ProbeAssetLoader()); });
 

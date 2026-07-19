@@ -201,6 +201,17 @@
     {
       "components": {
         "::Veng::Name": {
+          "Value": "Beacon"
+        },
+        "MarkerBeacon": {
+          "Markers": "0x4A433D1EA2E5ACF2",
+          "Marker": "overlook"
+        }
+      }
+    },
+    {
+      "components": {
+        "::Veng::Name": {
           "Value": "HUD"
         },
         "::Veng::GuiOverlay": {

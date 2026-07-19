@@ -7,11 +7,23 @@
 
 #include <doctest/doctest.h>
 
+#include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/Prefab.h>
+#include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/CookModule.h>
 #include <Veng/Cook/Cooker.h>
 #include <Veng/Cook/ModuleTypes.h>
 #include <Veng/Cook/Verify.h>
+#include <Veng/Module/ApplicationRegistry.h>
+#include <Veng/Module/Module.h>
+#include <Veng/Module/ModuleLoader.h>
+#include <Veng/Renderer/Context.h>
+#include <Veng/Scene/BuiltinSystems.h>
+#include <Veng/Scene/BuiltinTypes.h>
+#include <Veng/Scene/Scene.h>
+#include <Veng/Task/TaskSystem.h>
 
+#include <filesystem>
 #include <fstream>
 
 #include "module/probe_component.h"
@@ -140,6 +152,101 @@ TEST_CASE("cook module: both halves together cook a game type and the archive ve
     CHECK(report.Ok());
     REQUIRE(report.Assets.size() == 1);
     CHECK(report.Assets.front().Type == ProbeAssetType);
+}
+
+namespace
+{
+    // Everything a host holds around a loaded game module, in the order a host must declare it:
+    // the module handle first, so dlclose runs after the registries whose contents live in its
+    // image. The launcher's own shape, small enough to build inside a test case.
+    struct ModuleHost
+    {
+        // Optional only because LoadedModule has no default constructor; declared first so it
+        // is destroyed last, after the registries whose contents live in its image.
+        optional<LoadedModule> Module;
+        ApplicationRegistry Apps;
+        TypeRegistry Types;
+        SystemRegistry Systems;
+        AssetTypeRegistry AssetTypes;
+        AssetLoaderRegistry AssetLoaders;
+    };
+
+    // Fills a host exactly as launcher_main does — builtins first, then the module's own
+    // registrations. Unlike LoadModuleTypes this keeps the loader registry, which is what an
+    // AssetManager needs to dispatch the module's asset type.
+    void InitHost(ModuleHost& host)
+    {
+        Result<LoadedModule> loaded = ModuleLoader::Load(path{VENG_TEST_MODULE_PATH});
+        REQUIRE_MESSAGE(loaded.has_value(),
+                        "module load failed: ", loaded ? string{} : loaded.error());
+        host.Module.emplace(std::move(*loaded));
+
+        RegisterBuiltinTypes(host.Types);
+        RegisterBuiltinSystems(host.Systems);
+        RegisterBuiltinAssetTypes(host.AssetTypes);
+
+        VengModuleHost moduleHost{.App = host.Apps,
+                                  .Types = host.Types,
+                                  .Systems = host.Systems,
+                                  .AssetTypes = host.AssetTypes,
+                                  .AssetLoaders = host.AssetLoaders,
+                                  .Drivers = nullptr,
+                                  .Editor = nullptr};
+        host.Module->Register(moduleHost);
+    }
+}
+
+TEST_CASE("cook module: a game-typed asset is referenced from a component, cooked, and loaded back")
+{
+    // The whole custom-type seam in one case: a component's AssetHandle field naming a
+    // game-defined asset type is validated at cook time against the module's registered
+    // handle-leaf mapping, then resolved at load time through the same mapping, dispatched to
+    // the module's own loader, and rehydrated into the spawned component.
+    ModuleHost host;
+    InitHost(host);
+    Result<LoadedCookModule> cookModule = LoadCookModule(path{VENG_TEST_COOK_MODULE_PATH});
+    REQUIRE(cookModule.has_value());
+
+    const path outPath = Veng::TestSupport::TempDir() / "veng_cook_module_prefab.vengpack";
+    {
+        Cooker cooker;
+        RegisterBuiltinImporters(cooker);
+        MergeAssetTypes(host.AssetTypes, cooker.GetAssetTypes());
+        cookModule->Importers.MoveInto(cooker);
+
+        const VoidResult result =
+            cooker.CookPack(path(VENG_COOKER_TEST_FIXTURE_DIR) / "probe_prefab_pack.json", outPath,
+                            {}, &host.Types);
+        REQUIRE_MESSAGE(result.has_value(), "cook failed: ", result ? string{} : result.error());
+    }
+
+    Renderer::Context context;
+    TaskSystem tasks;
+    AssetManager manager(
+        context, tasks, host.Types,
+        AssetManagerInfo{.AssetTypes = &host.AssetTypes, .Loaders = &host.AssetLoaders});
+    REQUIRE(manager.Mount(outPath).has_value());
+
+    // Loading the prefab pulls the game-typed asset in as an ordinary load-time dependency:
+    // the leaf TypeId resolves through the registered mapping and dispatches to the module.
+    const AssetResult<AssetHandle<Prefab>> prefab = manager.LoadSync<Prefab>(AssetId{0x2042});
+    REQUIRE_MESSAGE(prefab.has_value(),
+                    "prefab load failed: ", prefab ? string{} : prefab.error().Detail);
+    CHECK(manager.Get<ProbeAsset>(AssetId{0x2041}).has_value());
+
+    // Spawn rehydrates the field, so the component holds a resident handle to the blob the
+    // cook module produced — the reference a game authors, end to end.
+    const Veng::Unique<Scene> scene = Scene::Create(host.Types);
+    const Prefab::SpawnResult spawned = (*prefab)->SpawnInto(*scene, manager);
+    REQUIRE(spawned.Roots.size() == 1);
+
+    const Probe* const probe = scene->TryGet<Probe>(spawned.Roots.front());
+    REQUIRE(probe != nullptr);
+    CHECK(probe->Value == doctest::Approx(2.5f));
+    REQUIRE(probe->Asset.IsLoaded());
+    CHECK(probe->Asset->Bytes == vector<u8>{0x78, 0x56, 0x34, 0x12});
+
+    std::filesystem::remove(outPath);
 }
 
 TEST_CASE("generate-asset-type: --module mints against the module's registered asset types")

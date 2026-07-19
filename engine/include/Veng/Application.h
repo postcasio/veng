@@ -360,12 +360,17 @@ namespace Veng
         /// a misspelled engine or application flag is caught rather than silently ignored. An engine
         /// flag of the same name wins; declaring nothing leaves parsing to the engine flags alone.
         vector<LaunchOptionInfo> LaunchOptions;
-        /// @brief Host-owned asset-type identities the AssetManager names types through.
+        /// @brief Host-owned asset-type identities merged into the AssetManager's own builtins.
         ///
         /// A module registers its own asset types into the host's registry through
         /// VengModuleHost::AssetTypes and points this at the same registry from its Application
-        /// factory. Null (the default) means no module-defined asset types — the manager then
-        /// names a type by its hex id.
+        /// factory. Null (the default) means no module-defined asset types; the manager still
+        /// knows every builtin, so a game registering none leaves this and AssetLoaders unset.
+        ///
+        /// Deliberately *not* pushed in by the launcher the way SetGuiDriverRegistry pushes the
+        /// driver catalog: only a module that defines asset types needs these, and that module is
+        /// already building the ApplicationInfo, so it has the registries in hand. A second
+        /// setter would be a second way to say the same thing, with last-writer-wins between them.
         /// @warning Borrowed. The module handle must outlive the Application.
         const AssetTypeRegistry* AssetTypes = nullptr;
         /// @brief Host-owned AssetLoader factories the AssetManager instantiates at construction.

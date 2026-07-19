@@ -10,8 +10,10 @@
 # succeeding is the core assertion — it exercises the installed/exported vengc cook, the
 # veng_add_project / veng_add_game helpers, the imported-target aliases, and the mode-resolved
 # path vars; a broken install/export fails the configure or the build, failing the test. It
-# then asserts the launcher's relocatable set landed beside the launcher and runs the installed
-# veng-editor --version to exit 0 (covering the editor exe's own INSTALL_RPATH resolution).
+# then asserts the launcher's relocatable set landed beside the launcher, runs the launcher
+# itself headless and checks both its exit status and the marker it logs once its world resolved,
+# and runs the installed veng-editor --version to exit 0 (covering the editor exe's own
+# INSTALL_RPATH resolution).
 #
 # Modes:
 #   install   — cmake --install the engine build to a throwaway prefix, then configure the
@@ -122,6 +124,34 @@ foreach (ARTIFACT
     endif ()
 endforeach ()
 
+# ---- Run the launcher --------------------------------------------------------
+# The build proves the SDK's *build* surface; this proves the artifacts it produced actually
+# run. TEMPLATE_SMOKE makes the app windowless, tick a fixed handful of frames, and exit — so
+# the run is a CI-safe assertion rather than an interactive session.
+#
+# The template renders no golden, so "ran correctly" is defined as: exit status 0, plus the
+# marker line the app logs once its world is loaded. That line is emitted only after the
+# prefab-authored AssetHandle<MarkerSet> resolved and was rehydrated, so it witnesses the whole
+# custom-asset-type seam — cook module, runtime module, registered handle mapping, module
+# loader — through the shipped launcher path. An exit-code-only check would pass on an app that
+# started and quit having loaded nothing.
+execute_process(
+    COMMAND ${CMAKE_COMMAND} -E env "TEMPLATE_SMOKE=1" "${LAUNCHER}"
+    WORKING_DIRECTORY "${BUILD_DIR}"
+    RESULT_VARIABLE LAUNCHER_RESULT
+    OUTPUT_VARIABLE LAUNCHER_OUTPUT
+    ERROR_VARIABLE LAUNCHER_ERROR
+)
+message(STATUS "sdk_conformance(${VENG_MODE}): launcher output:\n${LAUNCHER_OUTPUT}${LAUNCHER_ERROR}")
+if (NOT LAUNCHER_RESULT EQUAL 0)
+    message(FATAL_ERROR "sdk_conformance(${VENG_MODE}): template-launcher exited ${LAUNCHER_RESULT}")
+endif ()
+if (NOT LAUNCHER_OUTPUT MATCHES "MarkerBeacon resolved")
+    message(FATAL_ERROR
+        "sdk_conformance(${VENG_MODE}): template-launcher exited 0 but never resolved its "
+        "prefab-authored game-defined asset")
+endif ()
+
 # ---- Smoke the editor exe's own runtime resolution --------------------------
 # --version prints and exits before any window or device, so it covers the editor exe's
 # INSTALL_RPATH resolution (libveng_editor / libveng_graph / Slang) with no project or GPU.
@@ -136,4 +166,4 @@ if (NOT EDITOR_RESULT EQUAL 0)
     message(FATAL_ERROR "sdk_conformance(${VENG_MODE}): veng-editor --version exited ${EDITOR_RESULT}")
 endif ()
 
-message(STATUS "sdk_conformance(${VENG_MODE}): out-of-tree template built and editor ran.")
+message(STATUS "sdk_conformance(${VENG_MODE}): out-of-tree template built, launcher and editor ran.")

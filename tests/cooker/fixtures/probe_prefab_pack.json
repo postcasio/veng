@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "0x0000000000002041",
+      "type": "ProbeAsset",
+      "value": 305419896
+    },
+    {
+      "id": "0x0000000000002042",
+      "type": "Prefab",
+      "source": "prefabs/probe.prefab.json"
+    }
+  ]
+}

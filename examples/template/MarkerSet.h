@@ -4,6 +4,26 @@
 #include <Veng/Asset/AssetHandle.h>
 #include <Veng/Asset/AssetLoader.h>
 #include <Veng/Asset/AssetType.h>
+#include <Veng/Reflection/TypeId.h>
+
+/// @brief Export annotation for the out-of-line symbols libtemplate shares with libtemplate_cook.
+///
+/// The cook module links the runtime library, so an importer may call code the runtime defines —
+/// but only if that symbol is importable across the two images. On macOS/Linux default visibility
+/// makes it so; on Windows a symbol must be `dllexport`ed by the defining DLL and `dllimport`ed
+/// by the consumer, and veng's own VE_MODULE_EXPORT is unconditionally `dllexport` (it annotates
+/// the module's own C-ABI entry, which is never imported). So a game that shares out-of-line code
+/// between its two images needs its own two-sided macro; CMake defines `<target>_EXPORTS` while
+/// compiling the target itself, which is the side that must export.
+#if defined(_WIN32)
+#if defined(template_EXPORTS)
+#define TEMPLATE_API __declspec(dllexport)
+#else
+#define TEMPLATE_API __declspec(dllimport)
+#endif
+#else
+#define TEMPLATE_API __attribute__((visibility("default")))
+#endif
 
 /// @brief A game-defined asset type end to end: identity, cooked layout, runtime class, loader.
 ///
@@ -52,6 +72,18 @@ namespace Template
 
     /// @brief Cooked layout version; the loader rejects any other value.
     inline constexpr Veng::u32 MarkerSetVersion = 1;
+
+    /// @brief Folds an authored marker name to the single spelling both halves of the type agree on.
+    ///
+    /// Trims surrounding whitespace and lowercases, so a source file may author "Overlook " and a
+    /// lookup may ask for "overlook". Deliberately out of line and defined in the runtime library:
+    /// the importer calls it while writing the name heap and MarkerSet::Find calls it while
+    /// reading, so the two images cannot disagree about what a name means — and a game sharing
+    /// real code (not just layouts) across the seam is exactly what COOK_SOURCES' link makes
+    /// possible.
+    /// @param name  The authored name.
+    /// @return The folded spelling.
+    [[nodiscard]] TEMPLATE_API Veng::string NormalizeMarkerName(Veng::string_view name);
 
     /// @brief One decoded marker: a name and a position.
     struct Marker
@@ -108,3 +140,10 @@ namespace Veng
         static constexpr AssetTypeId Type = Template::MarkerSetAssetType;
     };
 }
+
+// The reflected leaf for AssetHandle<MarkerSet>, minted with `vengc generate-type-id`. Without it
+// the handle cannot appear on a component at all; with it — and with the matching
+// AssetTypeInfo::HandleFieldType the module registers — a prefab authors a reference to a
+// consumer-defined asset exactly as it authors one to a builtin.
+VE_LEAF(::Veng::AssetHandle<::Template::MarkerSet>, 0x45F12CEFFB288CDDULL,
+        ::Veng::FieldClass::AssetHandle);

@@ -24,6 +24,7 @@
 #include <fmt/format.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <optional>
 
 #include "MarkerSet.h"
@@ -131,6 +132,23 @@ constexpr i64 TuningRowKey = 20;
 // type id and a loader factory; the engine has no compile-time knowledge of it.
 constexpr AssetId MarkerSetId{0x4A433D1EA2E5ACF2ULL};
 
+// The component that puts a consumer-defined asset type where a game actually puts one: on a
+// prefab, behind a reflected AssetHandle field. Authored on the scene prefab with a plain hex id,
+// it is collected as a load-time prefab dependency, loaded through the module's own loader, and
+// rehydrated into the spawned component — the path every builtin asset already takes, reached by
+// a type the engine has never heard of. The direct LoadSync below covers loading one from code;
+// this covers referencing one from data, which is the case that had no exemplar at all.
+struct MarkerBeacon
+{
+    AssetHandle<Template::MarkerSet> Markers;
+    string Marker = "overlook";
+};
+
+VE_REFLECT(::MarkerBeacon, 0xDEAF7B4317113B8AULL)
+VE_FIELD(Markers)
+VE_FIELD(Marker)
+VE_REFLECT_END();
+
 // The smallest veng game that also authors a HUD and opens a live sub-scene: the bare managed-world
 // app (a rotating cube driven entirely by cooked data) grows a minimal Application subclass. Its
 // jobs are the primary HUD's data binding (the one thing the engine cannot do from data alone) and
@@ -139,7 +157,15 @@ constexpr AssetId MarkerSetId{0x4A433D1EA2E5ACF2ULL};
 class TemplateApp final : public Application
 {
 public:
-    using Application::Application;
+    // Smoke mode runs the app windowless for a fixed handful of frames and exits 0, so a CI job
+    // (the SDK conformance test) can assert the launcher *ran* — loaded its project, spawned its
+    // world, and resolved its assets — rather than only that it linked. The template renders no
+    // golden, so its correctness signal is the exit status plus what it logged.
+    TemplateApp(const ApplicationInfo& info, TypeRegistry& types, SystemRegistry& systems,
+                const bool smoke)
+        : Application(info, types, systems), m_Smoke(smoke)
+    {
+    }
 
 private:
     // The world is loaded here; find the prefab-authored primary GuiOverlay and bind it the
@@ -170,11 +196,32 @@ private:
                   markers ? string{} : markers.error().Detail);
         m_Markers = *markers;
 
-        const Template::Marker* const overlook = m_Markers->Find("overlook");
-        VE_ASSERT(overlook != nullptr, "template: marker set declares no 'overlook' marker");
-        Log::Info("template: marker set loaded, {} markers, 'overlook' at ({}, {}, {})",
-                  m_Markers->Markers.size(), overlook->Position.x, overlook->Position.y,
-                  overlook->Position.z);
+        ReportBeacon(world);
+    }
+
+    // Reads the prefab-authored reference to the game-defined asset and reports what it resolved
+    // to. Nothing here loads anything: the prefab named the marker set through a reflected
+    // AssetHandle, so the engine had already loaded it as a load-time dependency and rehydrated
+    // the field before this entity existed. The line it prints is what the SDK conformance test
+    // reads back off the launcher's stdout — the assertion that the seam ran, not merely built.
+    void ReportBeacon(Scene& world)
+    {
+        usize found = 0;
+        for (auto [entity, beacon] : world.View<MarkerBeacon>())
+        {
+            VE_ASSERT(beacon.Markers.IsLoaded(),
+                      "template: the prefab-authored marker-set handle did not resolve");
+
+            const Template::Marker* const marker = beacon.Markers->Find(beacon.Marker);
+            VE_ASSERT(marker != nullptr, "template: marker set declares no '{}' marker",
+                      beacon.Marker);
+            Log::Info("template: MarkerBeacon resolved {} markers, '{}' at ({}, {}, {})",
+                      beacon.Markers->Markers.size(), beacon.Marker, marker->Position.x,
+                      marker->Position.y, marker->Position.z);
+            ++found;
+        }
+        VE_ASSERT(found == 1, "template: expected exactly one prefab-authored MarkerBeacon, saw {}",
+                  found);
     }
 
     // Feed the primary HUD's bound fields, toggle the overlay on Tab, and — while it is open — tick it
@@ -182,6 +229,12 @@ private:
     // bindings and composites the HUD, so the game writes no layout or attach code.
     void OnUpdate(const f32 delta) override
     {
+        if (m_Smoke && ++m_Frame >= SmokeFrames)
+        {
+            RequestExit();
+            return;
+        }
+
         m_Model.Caption =
             fmt::format("{} — {:.0f} fps", m_TuningLabel, delta > 0.0f ? 1.0f / delta : 0.0f);
         m_Model.Level = std::clamp(delta > 0.0f ? (1.0f / delta) / 120.0f : 0.0f, 0.0f, 1.0f);
@@ -287,6 +340,13 @@ private:
 
     // The game-defined asset, held resident for the app's lifetime.
     AssetHandle<Template::MarkerSet> m_Markers;
+
+    // Enough frames for the world load, the first spawn, and a couple of rendered frames to
+    // settle before smoke mode exits.
+    static constexpr u32 SmokeFrames = 8;
+
+    const bool m_Smoke = false;
+    u32 m_Frame = 0;
 };
 
 extern "C" void VengModuleRegister(VengModuleHost* host)
@@ -294,6 +354,9 @@ extern "C" void VengModuleRegister(VengModuleHost* host)
     host->Types.Register<TemplateHud>();
     host->Types.Register<OverlaySnapshot>();
     host->Types.Register<OverlayControl>();
+    // Registered like any other component; its AssetHandle field needs no special treatment
+    // beyond the type's own HandleFieldType registration below.
+    host->Types.Register<MarkerBeacon>();
     // The overlay HUD's presentation binding is a per-instance driver named on its GuiOverlay, not a
     // per-world system: the engine instantiates it with the document and drives it each frame.
     if (host->Drivers != nullptr)
@@ -305,28 +368,41 @@ extern "C" void VengModuleRegister(VengModuleHost* host)
     // every host (launcher, cooker, editor), so one registration serves all three. The cook module
     // contributes only the importer — registering the id from both seams would deliver it twice in
     // the editor, where both images load, and a duplicate id is fatal.
-    host->AssetTypes.Register(AssetTypeInfo{.Id = Template::MarkerSetAssetType,
-                                            .Name = Template::MarkerSetTypeName,
-                                            .DisplayName = "Marker Set",
-                                            .Glyph = "MRK"});
+    // HandleFieldType is the third and last thing a game does for a referenceable type: it pairs
+    // the reflected AssetHandle<MarkerSet> leaf back to this asset type, which is what lets the
+    // prefab loader collect MarkerBeacon::Markers as a dependency, the cooker type-check the id
+    // authored there, and the editor offer a picker for it. Without it, a prefab carrying that
+    // component is a located cook error.
+    host->AssetTypes.Register(
+        AssetTypeInfo{.Id = Template::MarkerSetAssetType,
+                      .Name = Template::MarkerSetTypeName,
+                      .DisplayName = "Marker Set",
+                      .Glyph = "MRK",
+                      .HandleFieldType = TypeIdOf<AssetHandle<Template::MarkerSet>>()});
     host->AssetLoaders.Register(Template::MarkerSetAssetType, []
                                 { return Unique<AssetLoader>(new Template::MarkerSetLoader()); });
 
     // The registries are host-owned and outlive this module, so the factory captures them and
     // points the app's AssetManager at them — the ApplicationInfo fields are how a module-defined
     // loader reaches the running manager.
+    // Smoke mode: no window or swapchain, a fixed handful of frames, then exit — the display-free
+    // CI path the SDK conformance test drives the launcher through.
+    const bool smoke = std::getenv("TEMPLATE_SMOKE") != nullptr;
+
     host->App.RegisterApplication(
-        [assetTypes = &host->AssetTypes,
+        [smoke, assetTypes = &host->AssetTypes,
          assetLoaders = &host->AssetLoaders](TypeRegistry& types, SystemRegistry& systems)
         {
             return Unique<Application>(new TemplateApp(
                 ApplicationInfo{
                     .Name = "Template",
+                    .HeadlessExtent = {1280, 720},
                     .WindowInfo =
                         {
                             .Extent = {1280, 720},
                             .Title = "veng — Template",
                         },
+                    .Headless = smoke,
                     // The engine owns the primary viewport (its SceneRenderer + the gather +
                     // composite tail) and drives the managed world: it reads the cooked project,
                     // mounts its packs, loads the startup level, ticks the simulation, and pushes
@@ -337,7 +413,7 @@ extern "C" void VengModuleRegister(VengModuleHost* host)
                     .AssetTypes = assetTypes,
                     .AssetLoaders = assetLoaders,
                 },
-                types, systems));
+                types, systems, smoke));
         });
 }
 

@@ -81,7 +81,10 @@ namespace
                                     sourcePath.string(), marker["name"].get<string>()));
                 }
 
-                const string name = marker["name"].get<string>();
+                // Folded through the runtime library's own out-of-line function — the importer
+                // calls real code from libtemplate, not just its layouts, so the name a lookup
+                // asks for and the name written into the heap cannot drift apart.
+                const string name = Template::NormalizeMarkerName(marker["name"].get<string>());
                 Template::CookedMarkerRecord record{
                     .Position = {},
                     .NameOffset = static_cast<u32>(nameHeap.size()),

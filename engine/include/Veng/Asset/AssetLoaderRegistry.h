@@ -17,9 +17,13 @@ namespace Veng
     /// therefore GPU-free, which is what lets it ride the module ABI beside the reflected type
     /// descriptors.
     ///
-    /// @warning The factories — and the loaders they produce — are code living in a dlclose-able
-    ///          module image, so the module handle must outlive both this registry and any
-    ///          AssetManager built from it. Declare the handle before them in the owning struct.
+    /// @warning An AssetManager borrows this registry for its whole life, so **the registry must
+    ///          outlive every AssetManager built from it** — a fixture or harness that declares
+    ///          them in the wrong order gets a dangling read at teardown, with no module involved
+    ///          at all. When the registrations came from a loaded module, the module handle must
+    ///          in turn outlive the registry, since the factories and the loaders they produce are
+    ///          code in a dlclose-able image. Declaring them outermost-first — module handle,
+    ///          registry, manager — satisfies both.
     class AssetLoaderRegistry
     {
     public:

@@ -40,8 +40,11 @@ The smallest correct app a new developer copies, and the **out-of-tree** consump
 **standalone** project that discovers veng with `find_package(veng)` and is **removed from the
 engine build** (`add_subdirectory(template)` is not called) — only the SDK conformance tests
 (`sdk_conformance_install` / `sdk_conformance_buildtree`, the `gpu` band) build it, so a template
-breakage surfaces there, not in a plain `cmake --build`. It has no smoke/PPM path; its
-conformance tests configure + build it standalone and probe `veng-editor --version`.
+breakage surfaces there, not in a plain `cmake --build`. It renders no golden, so instead of a
+smoke/PPM capture its conformance tests configure + build it standalone, **run
+`template-launcher` under `TEMPLATE_SMOKE`** (windowless, a fixed handful of frames, exit 0) and
+require the marker line it logs once its prefab-authored game-defined asset resolved, then probe
+`veng-editor --version`.
 
 The engine bootstraps everything from cooked data — it reads the cooked project, mounts the packs
 it names, loads the **startup level** (a world `Prefab`: a `Camera`, a directional `Light`, a

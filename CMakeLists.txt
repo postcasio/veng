@@ -989,6 +989,9 @@ if (VENG_BUILD_TESTS)
 
     add_executable(veng_test_loader tests/module/loader_test.cpp)
     target_link_libraries(veng_test_loader PRIVATE veng::veng)
+    # tests/ is on the include path for the shared per-process scratch dir the runtime-load
+    # case writes its archive into.
+    target_include_directories(veng_test_loader PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
     add_dependencies(veng_test_loader veng_test_module veng_test_bad_version_module)
     target_compile_definitions(veng_test_loader PRIVATE
             VENG_TEST_MODULE_PATH="$<TARGET_FILE:veng_test_module>"
@@ -1604,10 +1607,12 @@ endif ()
 
 # SDK conformance: the out-of-tree find_package(veng) consumer proof. Each test discovers
 # veng as a CMake package (an install prefix, or the build-tree export), then configures +
-# builds the standalone examples/template against it and runs veng-editor --version — the
-# build-time analogue of the relocatable-trio test, catching a broken install/export surface
-# in ctest rather than a downstream first build. The in-tree consumption mode is covered
-# separately by hello_triangle_launcher_smoke, so the template never builds in-tree.
+# builds the standalone examples/template against it, runs the built template-launcher headless
+# and checks what it logged, and runs veng-editor --version — the build-time analogue of the
+# relocatable-trio test, catching a broken install/export surface in ctest rather than a
+# downstream first build, and the only place the template's own code is executed at all. The
+# in-tree consumption mode is covered separately by hello_triangle_launcher_smoke, so the
+# template never builds in-tree.
 #
 # Registered only when veng builds the full SDK (the imported vengc / veng-editor the template
 # resolves come from this build's install/export). Labelled gpu with SKIP_RETURN_CODE 77 — the

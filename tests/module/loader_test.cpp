@@ -7,23 +7,37 @@
 // GPU-free + idempotently, that the host registry reflects the module's
 // component with the expected descriptors with NO Context constructed, that a
 // wrong-version module is a recoverable Result error whose entry is never
-// called, and that a nonexistent path is a recoverable Result error. Driver-free
-// — no Context/Window is constructed (the registered factory is stored, never
-// invoked).
+// called, and that a nonexistent path is a recoverable Result error.
+//
+// It then runs the *runtime* half of the asset seam the registrations exist for: a real
+// AssetManager built over the module's registries mounts an archive carrying a
+// module-typed blob and loads it, so dispatch on a non-builtin AssetTypeId, the
+// AssetTypeTrait binding, and the module loader's own decode are all executed rather than
+// merely registered. Driver-free throughout: Renderer::Context is default-constructed and
+// never initialized, and no loader on this path touches a device.
 
 #include <cstdio>
 
+#include <Veng/Asset/Archive.h>
+#include <Veng/Asset/AssetHandle.h>
 #include <Veng/Asset/AssetLoaderRegistry.h>
+#include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/AssetType.h>
 #include <Veng/Module/ApplicationRegistry.h>
 #include <Veng/Module/Module.h>
 #include <Veng/Module/ModuleLoader.h>
 #include <Veng/Reflection/TypeRegistry.h>
+#include <Veng/Renderer/Context.h>
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/SystemRegistry.h>
+#include <Veng/Task/TaskSystem.h>
+
+#include <algorithm>
+#include <filesystem>
 
 #include "probe_component.h"
+#include "support/TempPath.h"
 
 using namespace Veng;
 
@@ -127,16 +141,71 @@ int main()
                       factory->second()->Type() == ProbeAssetType,
                   "game loader factory produces a loader for its own asset type");
 
+            // The registered handle-leaf mapping: the reverse index resolves the component's
+            // AssetHandle field back to the module's own asset type. Without it a prefab
+            // carrying that component is a load error and a cook error, which is exactly the
+            // defect this fixture exists to catch.
+            Check(assetTypes.FindByHandleField(TypeIdOf<AssetHandle<ProbeAsset>>()) ==
+                      optional<AssetTypeId>(ProbeAssetType),
+                  "game asset type claims its AssetHandle leaf type");
+
             if (types.IsRegistered(TypeIdOf<Probe>()))
             {
                 const TypeInfo& info = types.Info(TypeIdOf<Probe>());
                 Check(info.Name == "Probe", "reflected component has expected name");
-                Check(info.Fields.size() == 1, "reflected component has one field");
+                Check(info.Fields.size() == 2, "reflected component has two fields");
                 Check(!info.Fields.empty() && info.Fields[0].Name == "Value",
-                      "reflected component's field is 'Value'");
+                      "reflected component's first field is 'Value'");
+                Check(info.Fields.size() > 1 && info.Fields[1].Name == "Asset" &&
+                          info.Fields[1].Class == FieldClass::AssetHandle &&
+                          info.Fields[1].Type == TypeIdOf<AssetHandle<ProbeAsset>>(),
+                      "reflected component's second field is an AssetHandle of the game type");
             }
             // The module asserts host.Editor == nullptr internally; reaching here
             // without aborting confirms it observed the null Editor slot.
+
+            // The runtime half: a real AssetManager over the module's registries dispatches a
+            // non-builtin AssetTypeId to the module's loader and decodes its blob. Everything
+            // above proves registration landed; only this proves the seam runs.
+            {
+                const vector<u8> blob{0x11, 0x22, 0x33, 0x44};
+
+                ArchiveWriter writer;
+                writer.Add(AssetId{0x2041}, ProbeAssetType, blob);
+                writer.Add(AssetId{0x2042}, ProbeAssetType, vector<u8>{});
+                const path archivePath =
+                    Veng::TestSupport::TempDir() / "veng_loader_probe_asset.vengpack";
+                Check(writer.Write(archivePath).has_value(), "probe archive writes");
+
+                Renderer::Context context;
+                TaskSystem tasks;
+                TypeRegistry assetTypesForManager;
+                AssetManager manager(
+                    context, tasks, assetTypesForManager,
+                    AssetManagerInfo{.AssetTypes = &assetTypes, .Loaders = &assetLoaders});
+
+                Check(manager.Mount(archivePath).has_value(), "probe archive mounts");
+
+                const AssetResult<AssetHandle<ProbeAsset>> loaded =
+                    manager.LoadSync<ProbeAsset>(AssetId{0x2041});
+                Check(loaded.has_value(), "LoadSync of a module-defined type resolves");
+                Check(loaded.has_value() && loaded->IsLoaded() &&
+                          std::ranges::equal((*loaded)->Bytes, blob),
+                      "the module's loader decoded the cooked blob");
+
+                // The manager knows the type by the name the module registered, not by a bare
+                // hex id — the diagnostic a developer meets when a load goes wrong.
+                Check(manager.GetAssetTypes().GetName(ProbeAssetType) == ProbeAssetTypeName,
+                      "the manager's registry carries the module's type name");
+
+                // A decode failure in a module loader is recoverable, not fatal.
+                const AssetResult<AssetHandle<ProbeAsset>> corrupt =
+                    manager.LoadSync<ProbeAsset>(AssetId{0x2042});
+                Check(!corrupt.has_value() && corrupt.error().Kind == AssetError::Corrupt,
+                      "a module loader's decode error is a recoverable AssetError");
+
+                std::filesystem::remove(archivePath);
+            }
         }
     }
 

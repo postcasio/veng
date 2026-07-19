@@ -675,8 +675,9 @@ the plans' direction). Per plan:
    `gpu` band), not in a plain build.
 3. Verify against the default debug build only (clean `build-debug`, `ctest` green,
    `hello_triangle-launcher` under `HT_SMOKE` writes a correct-sized PPM) — don't
-   also do a separate release build. The template has no smoke/PPM path; its conformance
-   tests configure + build it standalone and probe `veng-editor --version`.
+   also do a separate release build. The template renders no golden; its conformance tests
+   configure + build it standalone, run `template-launcher` under `TEMPLATE_SMOKE` and check
+   both its exit status and what it logged, then probe `veng-editor --version`.
 4. Update the plan's status column in the roadmap (at the workspace root).
 5. Commit the code, one commit per plan in this repo: `Plan NN: <summary>`, with a
    `Co-Authored-By` trailer. Roadmap-only edits — status columns, planset drafts — live at

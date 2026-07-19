@@ -281,6 +281,17 @@ target_include_directories(veng PRIVATE
 
 target_compile_definitions(veng PRIVATE VE_BUILD_SHARED)
 
+# libveng records the Vulkan loader as @rpath/libvulkan.1.dylib (an SDK-relative install name),
+# so the directory it actually lives in has to be on an rpath of libveng itself — CMake supplies
+# that in the build tree and strips it on install, leaving an installed SDK whose every consumer
+# fails to start with a dyld "Library not loaded" before main. Pin it explicitly so an installed
+# veng resolves the loader exactly as the build tree does. Unix-only: Windows has no rpath and
+# resolves the loader through the search path.
+if (NOT WIN32 AND Vulkan_LIBRARY)
+    get_filename_component(VENG_VULKAN_LIBDIR "${Vulkan_LIBRARY}" DIRECTORY)
+    set_target_properties(veng PROPERTIES INSTALL_RPATH "${VENG_VULKAN_LIBDIR}")
+endif ()
+
 # The VE_API dllexport annotations cover only part of the public surface (the Windows
 # port is in progress), while macOS/Linux export everything via default visibility. On
 # MSVC, auto-export every symbol so the shared library matches that behaviour and its

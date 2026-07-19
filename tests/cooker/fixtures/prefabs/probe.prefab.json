@@ -1,0 +1,13 @@
+{
+  "entities": [
+    {
+      "name": "Probe",
+      "components": {
+        "Probe": {
+          "Value": 2.5,
+          "Asset": "0x0000000000002041"
+        }
+      }
+    }
+  ]
+}

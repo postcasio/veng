@@ -5,16 +5,43 @@
 #include <fmt/format.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cstring>
 
 namespace Template
 {
     using namespace Veng;
 
+    string NormalizeMarkerName(const string_view name)
+    {
+        const auto isSpace = [](const char c)
+        { return std::isspace(static_cast<unsigned char>(c)) != 0; };
+
+        usize begin = 0;
+        while (begin < name.size() && isSpace(name[begin]))
+        {
+            ++begin;
+        }
+        usize end = name.size();
+        while (end > begin && isSpace(name[end - 1]))
+        {
+            --end;
+        }
+
+        string folded(name.substr(begin, end - begin));
+        std::ranges::transform(
+            folded, folded.begin(), [](const char c)
+            { return static_cast<char>(std::tolower(static_cast<unsigned char>(c))); });
+        return folded;
+    }
+
     const Marker* MarkerSet::Find(const string_view name) const
     {
+        // Both sides fold through the same out-of-line function, so a lookup matches whatever
+        // spelling the source authored.
+        const string key = NormalizeMarkerName(name);
         const auto it =
-            std::ranges::find_if(Markers, [name](const Marker& m) { return m.Name == name; });
+            std::ranges::find_if(Markers, [&key](const Marker& m) { return m.Name == key; });
         return it != Markers.end() ? &*it : nullptr;
     }
 

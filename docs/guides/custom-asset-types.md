@@ -1,11 +1,12 @@
 # Defining your own asset type
 
-veng ships sixteen asset types, but the type space is open: an asset type is a minted `u64`, not
-an enum case, so a game defines its own without touching the engine. A complete custom type is
-three pieces — an **identity**, an **importer** that cooks a source file into a blob, and a
-**loader** that decodes that blob at runtime — registered through two seams. This guide walks the
-whole path. The worked example is `examples/template`, which carries a small `MarkerSet` type end
-to end; every file named below is real and readable there.
+veng ships a set of builtin asset types, but the type space is open: an asset type is a minted
+`u64`, not an enum case, so a game defines its own without touching the engine. A complete custom
+type is three pieces — an **identity**, an **importer** that cooks a source file into a blob, and a
+**loader** that decodes that blob at runtime — registered through two seams, plus one more
+registration if you want to reference it from a component. This guide walks the whole path. The
+worked example is `examples/template`, which carries a small `MarkerSet` type end to end; every
+file named below is real and readable there, and the SDK conformance test builds and runs it.
 
 ## The shape of it
 
@@ -117,10 +118,12 @@ It then points the app's `ApplicationInfo` at the host-owned registries, which i
 ```cpp
 extern "C" void VengModuleRegister(VengModuleHost* host)
 {
-    host->AssetTypes.Register(AssetTypeInfo{.Id = MarkerSetAssetType,
-                                            .Name = MarkerSetTypeName,
-                                            .DisplayName = "Marker Set",
-                                            .Glyph = "MRK"});
+    host->AssetTypes.Register(
+        AssetTypeInfo{.Id = MarkerSetAssetType,
+                      .Name = MarkerSetTypeName,
+                      .DisplayName = "Marker Set",
+                      .Glyph = "MRK",
+                      .HandleFieldType = TypeIdOf<AssetHandle<MarkerSet>>()});
     host->AssetLoaders.Register(MarkerSetAssetType,
                                 [] { return Unique<AssetLoader>(new MarkerSetLoader()); });
 
@@ -142,13 +145,61 @@ extern "C" void VengModuleRegister(VengModuleHost* host)
 `DisplayName` and `Glyph` are editor metadata: your type browses and chips under that name. Badge
 *colour* is an editor-local table, so a game-registered type shows the neutral grey fallback.
 
-> **Lifetime.** These registries hold owned polymorphic objects whose vtables live in a
-> `dlclose`-able image. The module handle must outlive the registries *and* the `AssetManager`
-> built from them. Every veng host enforces this structurally — the handle is declared first in
-> the owning struct, so it destructs last. Do the same in yours.
+`HandleFieldType` is what makes the type *referenceable* — see the next section. Leave it 0 if
+your type is only ever loaded by id from code.
+
+> **Lifetime — an ownership-order requirement, not just a `dlclose` one.** `AssetManager` borrows
+> the registries for its whole life, so **the registries must outlive every `AssetManager` built
+> from them** even in a process that never loaded a module: a test fixture or editor harness that
+> declares a manager before the registry it points at gets a dangling read at teardown. When the
+> registrations came from a module, the module handle must in turn outlive the registries, because
+> they hold owned polymorphic objects whose vtables live in a `dlclose`-able image. One
+> outermost-first declaration order satisfies both — module handle, registries, manager — and
+> every veng host is written that way. Do the same in yours.
 
 Registering a loader for a type the **engine** already handles is fatal: override semantics for
 builtin types stay engine-owned.
+
+Note the launcher does **not** push the asset registries into your app the way it pushes the
+`GuiDriverRegistry`. Only a module that defines asset types needs them, and that module is already
+writing the `ApplicationInfo`, so `ApplicationInfo::AssetTypes` / `::AssetLoaders` is the single
+seam. A game that registers no asset type leaves both null and still gets every builtin.
+
+## 4b. Reference it from a component
+
+Loading by id from code is the easy half. What a game actually authors is a component field:
+
+```cpp
+struct MarkerBeacon
+{
+    AssetHandle<MarkerSet> Markers;
+};
+
+VE_REFLECT(::MarkerBeacon, 0x…ULL)
+VE_FIELD(Markers)
+VE_REFLECT_END();
+```
+
+That takes three things, and **all three** are required — miss the last and a prefab carrying the
+component is a located cook error:
+
+1. A `VE_LEAF` for the handle itself, at global scope, fully qualified, with its own minted
+   reflection `TypeId` (`vengc generate-type-id`):
+   ```cpp
+   VE_LEAF(::Veng::AssetHandle<::MyGame::MarkerSet>, 0x…ULL, ::Veng::FieldClass::AssetHandle);
+   ```
+2. `host->Types.Register<MarkerBeacon>()` — the component registers like any other.
+3. `.HandleFieldType = TypeIdOf<AssetHandle<MarkerSet>>()` on the `AssetTypeInfo` above.
+
+Step 3 is the pairing: the prefab loader, the cooker's cook-time handle validation, and the
+editor's asset picker all turn a field's leaf `TypeId` back into an asset type through it, and only
+your module knows the pairing for your type. With it in place the field is authored as a plain hex
+id, collected as a load-time prefab dependency, and rehydrated at spawn — exactly what a builtin
+`AssetHandle<Texture>` does:
+
+```json
+"MarkerBeacon": { "Markers": "0x4A433D1EA2E5ACF2" }
+```
 
 ## 5. Wire the build
 
@@ -166,8 +217,45 @@ veng_add_game(my_game
 ```
 
 `COOK_SOURCES` emits `libmy_game_cook` beside `libmy_game`, linking `veng::cook_interface`,
-`veng::veng`, and `libmy_game` itself — so an importer shares the game's own format headers with
-the loader that reads what it writes.
+`veng::veng`, and `libmy_game` itself.
+
+### Sharing code, not just layouts, across the two images
+
+Because the cook module links the runtime library, an importer can share more than headers with
+the loader — but only if the symbols it calls are importable across the image boundary. Two
+patterns work, and the choice is yours:
+
+- **Header-only.** Anything `inline`, `constexpr`, or template — the shared header's asset-type id,
+  its cooked struct layouts, small helpers. Each image gets its own copy; nothing has to be
+  exported. This is the default and needs no ceremony.
+- **An explicit export macro** for out-of-line functions defined in `lib<game>` and called from
+  `lib<game>_cook`. Declare a two-sided macro of your own, like veng's `VE_API`:
+
+  ```cpp
+  #if defined(_WIN32)
+  #if defined(my_game_EXPORTS)      // CMake defines <target>_EXPORTS while compiling the target
+  #define MY_GAME_API __declspec(dllexport)
+  #else
+  #define MY_GAME_API __declspec(dllimport)
+  #endif
+  #else
+  #define MY_GAME_API __attribute__((visibility("default")))
+  #endif
+
+  MY_GAME_API string NormalizeMarkerName(string_view name);
+  ```
+
+  `examples/template` does exactly this: its importer folds every authored marker name through
+  `Template::NormalizeMarkerName`, an out-of-line function compiled into `libtemplate`, so the two
+  halves cannot disagree about what a name means.
+
+**The Windows hazard.** On macOS and Linux veng builds with default visibility, so an out-of-line
+symbol in `libmy_game` is importable from `libmy_game_cook` with no annotation at all — which is
+exactly why the macro is easy to forget. On Windows it is not: a symbol not `dllexport`ed by
+`my_game.dll` cannot be linked by `my_game_cook.dll`, and the failure is a link error in the cook
+module. Do not reach for `VE_MODULE_EXPORT` here — it is unconditionally `dllexport`, correct only
+for the C-ABI entry point a module defines and no one imports. There is no Windows CI, so this
+paragraph is reasoned from toolchain rules rather than observed.
 
 `COOK_MODULE` on `veng_add_project` is the build-order edge and nothing more: `vengc` finds the
 module on its own, beside `--module`'s argument. It is named explicitly because the cook is an
@@ -191,6 +279,10 @@ At runtime it is an ordinary typed load — no special path:
 const auto markers = GetAssetManager().LoadSync<MarkerSet>(MarkerSetId);
 ```
 
+More often you will not write that at all: with the handle-field registration from §4b in place,
+the prefab that names the asset resolves it as a load-time dependency and the spawned component
+holds a resident handle before your code runs.
+
 ## What you get, and what you don't
 
 The editor browses game-typed assets under their registered display names and recooks them on
@@ -210,3 +302,4 @@ Out of scope for this seam: **editor panels** from game code, **cook-module hot 
 | `exports no VengCookModuleAbiVersion` | The library is not a cook module, or `VE_EXPORT_COOK_MODULE_ABI()` is missing. |
 | `built against ABI vN, host expects vM` | Stale module — rebuild it against this engine. |
 | `no loader registered for asset type X` at runtime | The module registered the id but not a loader factory, or `ApplicationInfo::AssetLoaders` was left null. |
+| `field 'F' is an AssetHandle whose leaf type … no asset type claims` | The `AssetTypeInfo` for the referenced type left `HandleFieldType` at 0, or the `VE_LEAF` id and the `TypeIdOf` in the registration disagree. Reported at cook and again at load. |
