@@ -1,6 +1,7 @@
 #include "UIDocumentEditorPanel.h"
 
 #include "AssetChip.h"
+#include "EditorIcons.h"
 
 #include <Veng/Application.h>
 #include <Veng/Asset/HexId.h>
@@ -19,9 +20,6 @@
 #include <Veng/UI/UI.h>
 
 #include "AssetSourceIndex.h"
-
-#include <fstream>
-#include <sstream>
 
 namespace VengEditor
 {
@@ -114,58 +112,6 @@ namespace VengEditor
             walk(root, walk);
             return result;
         }
-
-        // Sets the `src` attribute of the `n`-th `<Image>` start tag (pre-order) to `idHex`,
-        // inserting the attribute when the tag has none. Returns nullopt when the tag or its
-        // start-tag terminator cannot be located — the mutation is abandoned rather than guessed.
-        optional<string> SetNthImageSrc(string text, usize n, const string& idHex)
-        {
-            usize pos = text.find("<Image");
-            for (usize i = 0; i < n && pos != string::npos; ++i)
-            {
-                pos = text.find("<Image", pos + 6);
-            }
-            if (pos == string::npos)
-            {
-                return std::nullopt;
-            }
-            const usize tagEnd = text.find('>', pos);
-            if (tagEnd == string::npos)
-            {
-                return std::nullopt;
-            }
-            const usize srcPos = text.find("src=\"", pos);
-            if (srcPos != string::npos && srcPos < tagEnd)
-            {
-                const usize valStart = srcPos + 5;
-                const usize valEnd = text.find('"', valStart);
-                if (valEnd == string::npos || valEnd > tagEnd)
-                {
-                    return std::nullopt;
-                }
-                text.replace(valStart, valEnd - valStart, idHex);
-            }
-            else
-            {
-                text.insert(pos + 6, fmt::format(" src=\"{}\"", idHex));
-            }
-            return text;
-        }
-
-        // Appends a new `<Image>` as the document root's last child by inserting it before the
-        // final closing tag (the outermost element closes last). Returns nullopt when no closing
-        // tag is present.
-        optional<string> AppendImage(string text)
-        {
-            const usize close = text.rfind("</");
-            if (close == string::npos)
-            {
-                return std::nullopt;
-            }
-            text.insert(close,
-                        "  <Image style=\"width: 48px; height: 48px; background: #33445588;\"/>\n");
-            return text;
-        }
     }
 
     UIDocumentEditorPanel::UIDocumentEditorPanel(AssetId id, path sourcePath,
@@ -204,6 +150,12 @@ namespace VengEditor
                            .AddressModeW = Renderer::AddressMode::ClampToEdge,
                        });
 
+        if (const VoidResult loaded = m_Source.Load(m_SourcePath); !loaded)
+        {
+            Log::Error("UI document editor: {}", loaded.error());
+        }
+        // Cook once on open so the asset is addressable behind the shadow mount; this reads the
+        // source as authored and writes nothing.
         TriggerCook();
     }
 
@@ -221,44 +173,57 @@ namespace VengEditor
 
     void UIDocumentEditorPanel::TriggerCook()
     {
-        if (m_Cooking)
+        m_Gate.Request(
+            [this]
+            {
+                m_CookError.reset();
+
+                m_Cook(
+                    {.SourcePath = m_SourcePath, .TargetId = m_Id, .Type = AssetTypes::UIDocument},
+                    [this](Result<MountHandle> mount)
+                    {
+                        if (!mount)
+                        {
+                            m_CookError = mount.error();
+                            m_Gate.Complete();
+                            return;
+                        }
+
+                        // Swap the mount behind the stable handle, then force a re-resolve: drop
+                        // the prior document (and its recipe handle) and collect garbage so the
+                        // stale cache entry evicts, letting the re-fetch resolve the recooked
+                        // recipe through the new shadow mount. The recipe is small CPU data, so
+                        // LoadSync resolves inline; RebuildDocument runs next OnUI frame once
+                        // m_DocumentDirty is observed.
+                        m_Mount = std::move(*mount);
+                        m_Document.reset();
+                        m_Handle = {};
+                        m_Assets.CollectGarbage();
+
+                        const AssetResult<AssetHandle<Gui::UIDocument>> handle =
+                            m_Assets.LoadSync<Gui::UIDocument>(m_Id);
+                        if (!handle)
+                        {
+                            m_CookError = handle.error().Detail;
+                            m_Gate.Complete();
+                            return;
+                        }
+                        m_Handle = *handle;
+                        m_DocumentDirty = true;
+                        m_Gate.Complete();
+                    });
+            });
+    }
+
+    void UIDocumentEditorPanel::ReloadSource()
+    {
+        if (const VoidResult loaded = m_Source.Load(m_SourcePath); !loaded)
         {
+            Log::Error("UI document editor: {}", loaded.error());
             return;
         }
-
-        m_Cooking = true;
-        m_CookError.reset();
-
-        m_Cook({.SourcePath = m_SourcePath, .TargetId = m_Id, .Type = AssetTypes::UIDocument},
-               [this](Result<MountHandle> mount)
-               {
-                   m_Cooking = false;
-                   if (!mount)
-                   {
-                       m_CookError = mount.error();
-                       return;
-                   }
-
-                   // Swap the mount behind the stable handle, then force a re-resolve: drop the
-                   // prior document (and its recipe handle) and collect garbage so the stale cache
-                   // entry evicts, letting the re-fetch resolve the recooked recipe through the new
-                   // shadow mount. The recipe is small CPU data, so LoadSync resolves inline;
-                   // RebuildDocument runs next OnUI frame once m_DocumentDirty is observed.
-                   m_Mount = std::move(*mount);
-                   m_Document.reset();
-                   m_Handle = {};
-                   m_Assets.CollectGarbage();
-
-                   const AssetResult<AssetHandle<Gui::UIDocument>> handle =
-                       m_Assets.LoadSync<Gui::UIDocument>(m_Id);
-                   if (!handle)
-                   {
-                       m_CookError = handle.error().Detail;
-                       return;
-                   }
-                   m_Handle = *handle;
-                   m_DocumentDirty = true;
-               });
+        m_Dirty = false;
+        TriggerCook();
     }
 
     void UIDocumentEditorPanel::RebuildDocument()
@@ -279,32 +244,16 @@ namespace VengEditor
 
     void UIDocumentEditorPanel::EditSource(const function<optional<string>(const string&)>& edit)
     {
-        std::ifstream in(m_SourcePath, std::ios::binary);
-        if (!in)
+        if (m_Source.Edit(edit))
         {
-            Log::Error("UI document editor: cannot read source {}", m_SourcePath.string());
-            return;
+            m_Dirty = true;
         }
-        std::ostringstream buffer;
-        buffer << in.rdbuf();
-        in.close();
+    }
 
-        const optional<string> edited = edit(buffer.str());
-        if (!edited)
-        {
-            return;
-        }
-
-        std::ofstream out(m_SourcePath, std::ios::binary | std::ios::trunc);
-        if (!out)
-        {
-            Log::Error("UI document editor: cannot write source {}", m_SourcePath.string());
-            return;
-        }
-        out << *edited;
-        out.close();
-
-        TriggerCook();
+    VoidResult UIDocumentEditorPanel::Save()
+    {
+        return SaveAssetSource([this] { return m_Source.Write(m_SourcePath); }, m_Dirty,
+                               [this] { TriggerCook(); });
     }
 
     void UIDocumentEditorPanel::AddImageElement()
@@ -443,28 +392,49 @@ namespace VengEditor
         }
         else
         {
-            UI::Text(m_Cooking ? "Cooking..." : "Loading...");
+            UI::Text(m_Gate.IsCooking() ? "Cooking..." : "Loading...");
         }
 
         if (m_CookError)
         {
             UI::TextColored({0.9f, 0.3f, 0.3f, 1.0f}, fmt::format("Cook error: {}", *m_CookError));
         }
+        if (m_Dirty)
+        {
+            // The cook reads the file, so the canvas above is the last saved markup.
+            UI::TextDisabled("Unsaved edits; the canvas updates on save.");
+        }
 
         UI::Separator();
 
-        if (UI::Button("Recook"))
+        if (auto bar = UI::Toolbar("##uidoc-toolbar"))
         {
-            TriggerCook();
-        }
-        UI::Tooltip("Re-cook the source and hot-reload the document behind its stable handle");
+            {
+                const UI::DisabledScope disabled = UI::Disabled(!m_Dirty);
+                if (UI::IconButton(Icons::Save))
+                {
+                    if (const VoidResult saved = Save(); !saved)
+                    {
+                        Log::Error("UI document editor: save failed: {}", saved.error());
+                    }
+                }
+                UI::Tooltip("Save the markup to its .vui.xml and recook");
+            }
+            UI::SameLine();
+            if (UI::IconButton(Icons::Revert))
+            {
+                ReloadSource();
+            }
+            UI::Tooltip("Discard edits and reload the markup from disk, then recook");
 
-        UI::SameLine();
-        if (UI::Button("Add Image"))
-        {
-            AddImageElement();
+            UI::SameLine();
+            if (UI::IconButton(Icons::Add))
+            {
+                AddImageElement();
+            }
+            UI::Tooltip("Append a new <Image> under the document root, then assign its texture "
+                        "below");
         }
-        UI::Tooltip("Append a new <Image> under the document root, then assign its texture below");
 
         UI::SeparatorText("Outline");
         if (m_Document)

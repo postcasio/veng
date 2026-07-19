@@ -930,6 +930,7 @@ if (VENG_BUILD_TESTS)
             tests/editor/status_tracker.cpp
             tests/editor/table_document.cpp
             tests/editor/asset_save_model.cpp
+            tests/editor/ui_document_source.cpp
             tests/editor/editor_mcp.cpp
             ${VENG_EDITOR_MCP}
     )
