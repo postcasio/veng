@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <string_view>
 
 #include <fmt/format.h>
 #include <xxhash.h>
@@ -16,6 +17,10 @@ namespace Veng::Cook
 {
     namespace
     {
+        // The cache's own format version. Folded into the tool tag so a change to the cache file
+        // layout or the manifest schema invalidates every cached entry without a manual sweep.
+        constexpr u32 CookCacheFormatVersion = 3;
+
         // Renders a 128-bit hash as a fixed 32-char lowercase hex string, the basename form used
         // for both cache keys and content-addressed blob files.
         string HexOf(ContentHash h)
@@ -92,6 +97,36 @@ namespace Veng::Cook
                                static_cast<u32>(config.Formats.GetFormat(role)));
         }
         return out;
+    }
+
+    string ComputeCookToolTag(const path& toolExe, const path& modulePath,
+                              const path& cookModulePath)
+    {
+        // Each image contributes `<label>=<path>` plus, when it can be stat'd, its size and mtime.
+        // The path is emitted even for an unstattable image so it never drops out of the tag
+        // silently — two cooks differing only in which module they loaded must still key apart.
+        const auto append = [](string& tag, std::string_view label, const path& file)
+        {
+            if (file.empty())
+            {
+                return;
+            }
+            std::error_code ec;
+            const path canonical = std::filesystem::weakly_canonical(file, ec);
+            const path& resolved = ec ? file : canonical;
+            tag += fmt::format(";{}={}", label, resolved.string());
+            if (const optional<FileStat> stat = StatFile(resolved))
+            {
+                tag +=
+                    fmt::format(";{}_size={};{}_mtime={}", label, stat->Size, label, stat->Mtime);
+            }
+        };
+
+        string tag = fmt::format("cachefmt={}", CookCacheFormatVersion);
+        append(tag, "exe", toolExe);
+        append(tag, "module", modulePath);
+        append(tag, "cookmodule", cookModulePath);
+        return tag;
     }
 
     Result<CookCache> CookCache::Open(const path& cacheDir, string toolTag)

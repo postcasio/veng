@@ -3,7 +3,9 @@
 // properties: a cache hit is byte-identical to a fresh cook (including a multi-blob material entry
 // and its resolved dependencies); the depfile stays complete across a hit; a source edit is not a
 // false hit; a touch (mtime moved, content unchanged) still hits via the content-hash fallback; and
-// two build configurations sharing one cache dir never contaminate each other.
+// two build configurations sharing one cache dir never contaminate each other. It also pins the
+// tool tag: a blob's bytes come from code as well as data, so rebuilding an image the cook runs an
+// importer from must invalidate what that image produced.
 
 #include <doctest/doctest.h>
 
@@ -19,8 +21,12 @@
 #include <Veng/Asset/Archive.h>
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/CookCache.h>
+#include <Veng/Cook/CookModule.h>
 #include <Veng/Cook/Cooker.h>
+#include <Veng/Cook/ModuleTypes.h>
 #include <Veng/Project/BuildConfiguration.h>
+
+#include "module/probe_component.h"
 
 using namespace Veng;
 using namespace Veng::Cook;
@@ -48,6 +54,41 @@ namespace
         Result<CookCache> cache = CookCache::Open(UniqueDir("cache"), "test-tool-tag");
         REQUIRE(cache.has_value());
         return std::move(*cache);
+    }
+
+    // The asset the probe pack declares; the importer cooks its "value" into four bytes.
+    constexpr AssetId ProbeAsset{0x0000000000002041};
+
+    // Cooks the probe pack through the importer in @p cookModulePath, against a cache in @p cacheDir
+    // opened exactly as vengc opens it — with the tool tag that module identity produces. Returns
+    // the blob the resulting archive carries, which is what the two images must disagree on.
+    vector<u8> CookProbeThrough(const path& cookModulePath, const path& cacheDir,
+                                const path& packJson, const path& out)
+    {
+        // Both module handles outlive the Cooker the importers move into: their code lives in the
+        // dlopened images.
+        Result<LoadedModuleTypes> moduleTypes = LoadModuleTypes(path{VENG_TEST_MODULE_PATH});
+        REQUIRE(moduleTypes.has_value());
+        Result<LoadedCookModule> cookModule = LoadCookModule(cookModulePath);
+        REQUIRE(cookModule.has_value());
+
+        Result<CookCache> cache = CookCache::Open(
+            cacheDir, ComputeCookToolTag({}, path{VENG_TEST_MODULE_PATH}, cookModulePath));
+        REQUIRE(cache.has_value());
+
+        Cooker cooker;
+        MergeAssetTypes(moduleTypes->AssetTypes, cooker.GetAssetTypes());
+        cookModule->Importers.MoveInto(cooker);
+
+        REQUIRE(
+            cooker.CookPack(packJson, out, {}, nullptr, nullptr, nullptr, nullptr, {}, {}, &*cache)
+                .has_value());
+
+        const Result<ArchiveReader> reader = ArchiveReader::Open(out);
+        REQUIRE(reader.has_value());
+        const optional<ArchiveEntry> entry = reader->Find(ProbeAsset);
+        REQUIRE(entry.has_value());
+        return vector<u8>(entry->Blob.begin(), entry->Blob.end());
     }
 }
 
@@ -275,4 +316,56 @@ TEST_CASE("CookCache: two build configurations share a cache dir without contami
                           fixtureDir / "windows.buildcfg", {}, &cache)
                 .has_value());
     CHECK(ReadBytes(bc7A) == ReadBytes(bc7B));
+}
+
+TEST_CASE("CookCache: a rebuilt cook module's importer is not replayed from the previous build")
+{
+    const path packDir = UniqueDir("modkeypack");
+    const path packJson = packDir / "pack.json";
+    {
+        std::ofstream out(packJson);
+        out << R"({ "version": 1, "assets": [ { "id": "0x0000000000002041", "type": ")"
+            << ProbeAssetTypeName << R"(", "value": 305419896 } ] })";
+    }
+
+    // One cache dir across both cooks — the warm cache is the whole point.
+    const path cacheDir = UniqueDir("modkeycache");
+
+    const vector<u8> first = CookProbeThrough(path{VENG_TEST_COOK_MODULE_PATH}, cacheDir, packJson,
+                                              UniqueDir("modkey1") / "out.vengpack");
+    CHECK(first == vector<u8>{0x78, 0x56, 0x34, 0x12});
+
+    // The same unchanged source, cooked against the warm cache by a different image of the cook
+    // module whose importer emits the value in the opposite byte order. Nothing the old key covered
+    // moved, so a cache blind to the image that produced a blob replays the first build's bytes.
+    const vector<u8> second = CookProbeThrough(path{VENG_TEST_COOK_MODULE_REVERSED_PATH}, cacheDir,
+                                               packJson, UniqueDir("modkey2") / "out.vengpack");
+    CHECK(second == vector<u8>{0x12, 0x34, 0x56, 0x78});
+}
+
+TEST_CASE("CookCache: the tool tag follows a module image's contents, not only its path")
+{
+    const path dir = UniqueDir("tooltag");
+    const path image = dir / "module.bin";
+    {
+        std::ofstream out(image, std::ios::binary);
+        out << "FIRST-BUILD";
+    }
+    const string before = ComputeCookToolTag({}, {}, image);
+
+    // A rebuild lands new bytes at the same path — what an incremental build does every time, and
+    // the case a path-only fingerprint cannot see.
+    {
+        std::ofstream out(image, std::ios::binary | std::ios::trunc);
+        out << "SECOND-BUILD-IS-LONGER";
+    }
+    CHECK(before != ComputeCookToolTag({}, {}, image));
+
+    // The two module slots key separately, so a runtime-module change is never mistaken for a
+    // cook-module change (or vice versa) by an accidental fingerprint collision.
+    CHECK(ComputeCookToolTag({}, image, {}) != ComputeCookToolTag({}, {}, image));
+
+    // A cook that loads no module at all keys as it always did — the format version alone.
+    CHECK(ComputeCookToolTag({}, {}, {}) == ComputeCookToolTag({}, {}, {}));
+    CHECK(ComputeCookToolTag({}, {}, {}) != ComputeCookToolTag({}, {}, image));
 }

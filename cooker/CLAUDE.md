@@ -231,8 +231,11 @@ tree** — `build-debug/` and `build/` never share one.
   produces a **byte-identical** archive to a fresh cook — `MakeStoredBlob` is the one place a blob's
   stored form is chosen, so the compressed bytes agree whether freshly encoded or replayed.
 - **It is ccache-style: a direct key selects a per-entry manifest, which is then validated.** The
-  key folds the tool tag (cache-format version + the `vengc` executable's own size/mtime, so any
-  rebuild of the cooker invalidates everything), the manifest entry JSON, the pack directory, the
+  key folds the tool tag (the cache-format version plus a path/size/mtime fingerprint of **every
+  image the cook runs code from** — the `vengc` executable, the `--module` runtime module whose
+  reflected field layouts the prefab/level/table encoders walk, and the cook module supplying a
+  game type's importer — so rebuilding any of them invalidates everything), the manifest entry
+  JSON, the pack directory, the
   active configuration's fingerprint, and the shader-include dir. A hit is trusted only after every
   recorded **source dependency** is confirmed unchanged **and** every recorded cross-asset
   **resolution** (`AssetId → source path`) still maps identically — the id→source-remap check a
@@ -400,7 +403,10 @@ fails to load, or any image that fails the handshake, is fatal.
 `veng_add_asset_pack(... MODULE <lib>)` grows a `lib → cook → bundle` build-order edge so a
 pack containing prefabs cooks after its game module is built; packs without prefabs
 stay module-independent. `veng_add_game` wires the example's prefab pack to depend on
-`libhello_triangle`.
+`libhello_triangle`. An optional `COOK_MODULE <lib>` adds the same ordering edge for the sibling
+cook module (`veng_add_project` takes the same keyword): the cooker finds it by path and needs no
+flag, but without the edge a cook can run before the cook module exists and fail as
+`no importer registered for type 'X'` — the wrong cause, varying by build order.
 
 `veng_add_project(... PROJECT <project.veng> OUTPUT_DIR <dir>)` (`cmake/Project.cmake`) is the
 game-project entry: it reads `packs` + `configurations` from `project.veng` at configure

@@ -971,6 +971,14 @@ if (VENG_BUILD_TESTS)
     target_link_libraries(veng_test_cook_module PRIVATE veng::cook_interface veng::veng)
     target_include_directories(veng_test_cook_module PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 
+    # A second, current-ABI cook module whose importer emits the same value in the opposite byte
+    # order: the stand-in for a rebuilt importer, so the cook cache can be shown to re-cook when the
+    # image supplying an importer changes rather than replaying the previous image's blob.
+    add_library(veng_test_cook_module_reversed SHARED tests/cooker/test_cook_module.cpp)
+    target_link_libraries(veng_test_cook_module_reversed PRIVATE veng::cook_interface veng::veng)
+    target_include_directories(veng_test_cook_module_reversed PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    target_compile_definitions(veng_test_cook_module_reversed PRIVATE VENG_TEST_PROBE_REVERSED)
+
     add_library(veng_test_bad_cook_module SHARED tests/cooker/test_cook_module.cpp)
     target_link_libraries(veng_test_bad_cook_module PRIVATE veng::cook_interface veng::veng)
     target_include_directories(veng_test_bad_cook_module PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
@@ -1404,13 +1412,15 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle)
             ${CMAKE_CURRENT_SOURCE_DIR}/cooker/src
             ${CMAKE_CURRENT_SOURCE_DIR}/tests)
     add_dependencies(veng_test_cooker hello_triangle veng_test_bad_version_module
-            veng_test_module veng_test_cook_module veng_test_bad_cook_module)
+            veng_test_module veng_test_cook_module veng_test_cook_module_reversed
+            veng_test_bad_cook_module)
     target_compile_definitions(veng_test_cooker PRIVATE
             VENG_COOKER_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/cooker/fixtures"
             VENG_HELLO_TRIANGLE_MODULE_PATH="$<TARGET_FILE:hello_triangle>"
             VENG_BAD_VERSION_MODULE_PATH="$<TARGET_FILE:veng_test_bad_version_module>"
             VENG_TEST_MODULE_PATH="$<TARGET_FILE:veng_test_module>"
             VENG_TEST_COOK_MODULE_PATH="$<TARGET_FILE:veng_test_cook_module>"
+            VENG_TEST_COOK_MODULE_REVERSED_PATH="$<TARGET_FILE:veng_test_cook_module_reversed>"
             VENG_BAD_VERSION_COOK_MODULE_PATH="$<TARGET_FILE:veng_test_bad_cook_module>"
             VENG_HT_ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples/hello-triangle/assets"
             VENG_CORE_PACK_JSON="${VENG_CORE_PACK_JSON}"

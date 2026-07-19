@@ -2,6 +2,10 @@
 // importer for the asset type veng_test_module registers the identity of. It links
 // veng::cook_interface — the importer contract as headers only — proving a cook module needs
 // nothing from the static libveng_cook.
+//
+// Built twice. VENG_TEST_PROBE_REVERSED emits the same value most-significant byte first, giving a
+// second image whose importer produces different bytes from identical sources — the stand-in for a
+// rebuilt importer that the cook-cache keying test swaps in.
 
 #include <Veng/Cook/CookModule.h>
 
@@ -25,10 +29,18 @@ namespace
             }
 
             const Veng::u32 value = entry["value"].get<Veng::u32>();
-            return Veng::vector<Veng::u8>{static_cast<Veng::u8>(value & 0xFFU),
-                                          static_cast<Veng::u8>((value >> 8) & 0xFFU),
-                                          static_cast<Veng::u8>((value >> 16) & 0xFFU),
-                                          static_cast<Veng::u8>((value >> 24) & 0xFFU)};
+#ifdef VENG_TEST_PROBE_REVERSED
+            const Veng::u32 shifts[] = {24U, 16U, 8U, 0U};
+#else
+            const Veng::u32 shifts[] = {0U, 8U, 16U, 24U};
+#endif
+            Veng::vector<Veng::u8> blob;
+            blob.reserve(4);
+            for (const Veng::u32 shift : shifts)
+            {
+                blob.push_back(static_cast<Veng::u8>((value >> shift) & 0xFFU));
+            }
+            return blob;
         }
     };
 }

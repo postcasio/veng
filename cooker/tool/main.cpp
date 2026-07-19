@@ -20,10 +20,6 @@ using namespace Veng::Cook;
 
 namespace
 {
-    // The cook cache's own format version. Folded into the tool tag so a change to the cache file
-    // layout or the manifest schema invalidates every cached entry without a manual sweep.
-    constexpr u32 CookCacheFormatVersion = 3;
-
     void PrintUsage()
     {
         fmt::print(stderr, "usage:\n"
@@ -41,42 +37,19 @@ namespace
                            "  vengc verify <archive.vengpack>\n");
     }
 
-    // A fingerprint of this cooker binary, so any rebuild of vengc (an importer or format change
-    // relinks it) invalidates the whole cache — no manual version bump per importer needed. Folds
-    // the cache-format version with the executable's own path, size, and mtime; the size/mtime are
-    // dropped when the executable cannot be stat'd (a bare-name PATH launch), leaving the format
-    // version as the guaranteed component.
-    string ComputeToolTag(const char* argv0)
-    {
-        string tag = fmt::format("cachefmt={}", CookCacheFormatVersion);
-        std::error_code ec;
-        const path exe = std::filesystem::weakly_canonical(path(argv0), ec);
-        if (!ec && std::filesystem::exists(exe, ec))
-        {
-            const auto size = std::filesystem::file_size(exe, ec);
-            if (!ec)
-            {
-                const auto mtime = std::filesystem::last_write_time(exe, ec);
-                if (!ec)
-                {
-                    tag += fmt::format(";exe={};size={};mtime={}", exe.string(), size,
-                                       mtime.time_since_epoch().count());
-                }
-            }
-        }
-        return tag;
-    }
-
-    // Opens the cooked-blob cache at `cacheDir` with the tool tag derived from `argv0`. Returns
-    // nullopt (no caching) when `cacheDir` is unset; a real open failure is fatal so a broken cache
-    // dir surfaces loudly rather than silently disabling the cache.
-    optional<CookCache> OpenCache(const optional<path>& cacheDir, const char* argv0)
+    // Opens the cooked-blob cache at `cacheDir`, keyed on every image this cook runs code from.
+    // Returns nullopt (no caching) when `cacheDir` is unset; a real open failure is fatal so a
+    // broken cache dir surfaces loudly rather than silently disabling the cache.
+    optional<CookCache> OpenCache(const optional<path>& cacheDir, const char* argv0,
+                                  const optional<path>& modulePath, const path& cookModulePath)
     {
         if (!cacheDir)
         {
             return std::nullopt;
         }
-        Result<CookCache> opened = CookCache::Open(*cacheDir, ComputeToolTag(argv0));
+        string toolTag =
+            ComputeCookToolTag(path(argv0), modulePath ? *modulePath : path{}, cookModulePath);
+        Result<CookCache> opened = CookCache::Open(*cacheDir, std::move(toolTag));
         if (!opened)
         {
             fmt::print(stderr, "vengc: {}\n", opened.error());
@@ -85,28 +58,34 @@ namespace
         return std::move(*opened);
     }
 
-    // Resolves and loads the game's optional cook module. An explicit --cook-module replaces the
-    // sibling lookup entirely, so a path that does not load is fatal; an absent sibling simply
-    // means the game defines no importers of its own. A module that loads but fails its ABI
-    // handshake is fatal either way — a silently skipped stale cook module would surface as an
-    // unregistered-type cook error a long way from its cause.
-    optional<LoadedCookModule> LoadGameCookModule(const optional<path>& modulePath,
-                                                  const optional<path>& cookModulePath)
+    // The cook module this invocation will load, or an empty path when there is none. An explicit
+    // --cook-module replaces the sibling lookup entirely (so a path that does not exist is still
+    // returned, and fails loudly at load); an absent sibling simply means the game defines no
+    // importers of its own. Resolved once so the cache key and the load agree on one path.
+    path ResolveCookModulePath(const optional<path>& modulePath,
+                               const optional<path>& cookModulePath)
     {
-        path resolved;
         if (cookModulePath)
         {
-            resolved = *cookModulePath;
+            return *cookModulePath;
         }
-        else if (modulePath)
+        if (modulePath)
         {
-            resolved = SiblingCookModulePath(*modulePath);
-            if (!std::filesystem::exists(resolved))
+            const path sibling = SiblingCookModulePath(*modulePath);
+            if (std::filesystem::exists(sibling))
             {
-                return std::nullopt;
+                return sibling;
             }
         }
-        else
+        return {};
+    }
+
+    // Loads the game's optional cook module from an already-resolved path. A module that loads but
+    // fails its ABI handshake is fatal — a silently skipped stale cook module would surface as an
+    // unregistered-type cook error a long way from its cause.
+    optional<LoadedCookModule> LoadGameCookModule(const path& resolved)
+    {
+        if (resolved.empty())
         {
             return std::nullopt;
         }
@@ -285,7 +264,8 @@ int main(int argc, char** argv)
 
         // Declared before the Cooker so it is destroyed after it: the importers move into the
         // cooker, and their code lives in this image.
-        optional<LoadedCookModule> cookModule = LoadGameCookModule(modulePath, cookModulePath);
+        const path cookModuleFile = ResolveCookModulePath(modulePath, cookModulePath);
+        optional<LoadedCookModule> cookModule = LoadGameCookModule(cookModuleFile);
 
         // The resolved build configuration drives the texture role → format resolution, the
         // archive compression level, and is recorded as a central depfile input. Absent --config
@@ -316,7 +296,8 @@ int main(int argc, char** argv)
             cookModule->Importers.MoveInto(cooker);
         }
 
-        const optional<CookCache> cache = OpenCache(cacheDirPath, argv[0]);
+        const optional<CookCache> cache =
+            OpenCache(cacheDirPath, argv[0], modulePath, cookModuleFile);
 
         vector<path> dependencies;
         const VoidResult result = cooker.CookPack(
@@ -500,7 +481,8 @@ int main(int argc, char** argv)
 
         // Declared before the Cooker so it is destroyed after it: the importers move into the
         // cooker, and their code lives in this image.
-        optional<LoadedCookModule> cookModule = LoadGameCookModule(modulePath, cookModulePath);
+        const path cookModuleFile = ResolveCookModulePath(modulePath, cookModulePath);
+        optional<LoadedCookModule> cookModule = LoadGameCookModule(cookModuleFile);
 
         Cooker cooker;
         RegisterBuiltinImporters(cooker);
@@ -513,7 +495,8 @@ int main(int argc, char** argv)
             cookModule->Importers.MoveInto(cooker);
         }
 
-        const optional<CookCache> cache = OpenCache(cacheDirPath, argv[0]);
+        const optional<CookCache> cache =
+            OpenCache(cacheDirPath, argv[0], modulePath, cookModuleFile);
 
         // Cook each pack under the selected configuration and collect both the runtime mount names
         // (un-suffixed, the names the launcher mounts) and every source for one combined depfile.

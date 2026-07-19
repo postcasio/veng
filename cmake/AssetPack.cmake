@@ -5,6 +5,7 @@
 #     [DEPENDS   <source files...>]        # optional extra re-cook triggers
 #     [REFERENCE <reference pack.json...>] # packs whose ids the cook may resolve
 #     [MODULE    <lib target>]             # game module to dlopen for prefab reflection
+#     [COOK_MODULE <lib target>]           # cook module supplying game-defined importers
 # )
 #
 # Cooks a JSON asset pack with vengc into OUTPUT and wraps it in a custom target:
@@ -21,6 +22,10 @@
 # cooks against: the cook gains `--module $<TARGET_FILE:lib>` and the custom
 # command DEPENDS on the lib, so the build graph adds `lib -> cook`. Packs with no
 # MODULE are independent of any lib.
+# COOK_MODULE names the sibling cook-module target supplying the game's own
+# importers. vengc discovers it beside MODULE's argument, so it needs no flag —
+# only the build-order edge, without which a cook can run before the cook module
+# exists and fails as `no importer registered for type 'X'`, naming the wrong cause.
 #
 # CONFIG names a `*.buildcfg` build configuration. Its OutputSuffix (read from the
 # file, the single source of truth) is appended to the output filename, so each
@@ -34,7 +39,7 @@
 # in the parent scope as ${TARGET_NAME}_TARGET, so a caller threading the
 # host-default CONFIG does not need to know the suffix to depend on the target.
 function(veng_add_asset_pack TARGET_NAME)
-    cmake_parse_arguments(ARG "" "PACK;OUTPUT;MODULE;CONFIG" "DEPENDS;REFERENCE" ${ARGN})
+    cmake_parse_arguments(ARG "" "PACK;OUTPUT;MODULE;COOK_MODULE;CONFIG" "DEPENDS;REFERENCE" ${ARGN})
 
     if (NOT ARG_PACK)
         message(FATAL_ERROR "veng_add_asset_pack(${TARGET_NAME}): PACK is required")
@@ -105,6 +110,11 @@ function(veng_add_asset_pack TARGET_NAME)
     if (ARG_MODULE)
         set(MODULE_ARGS --module $<TARGET_FILE:${ARG_MODULE}>)
         set(MODULE_DEP ${ARG_MODULE})
+    endif ()
+    # vengc discovers the cook module beside --module's argument, so no extra flag is needed —
+    # only the build-order edge, which must sit on the cook command itself.
+    if (ARG_COOK_MODULE)
+        list(APPEND MODULE_DEP ${ARG_COOK_MODULE})
     endif ()
 
     # vengc writes a depfile naming every source it read (the manifest, each
