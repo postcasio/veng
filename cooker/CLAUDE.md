@@ -138,9 +138,11 @@ at cook time:
   fully-qualified name** (`"Veng::i64"`, `"Veng::vec4"`, `"Veng::AssetHandle<Texture>"`,
   `"MyGame::Cadence"`), the same spelling a variant alternative's `"type"` tag matches against —
   plus the `"key"` column, whose type must have a total order and a stable cooked encoding (the
-  integer scalars, or string). The **`TableSchemaImporter`** runs the layout pass: cells are
-  packed in declaration order at their encoded widths, and a column keeps a constant offset only
-  while every preceding column is fixed-size. A `*.table.json` (`AssetTypes::DataTable`) names its
+  integer scalars, or string). The **`TableSchemaImporter`** resolves each column's type name and
+  then hands the set to libveng's **`LayOutTableSchema`**, which owns the validation *and* the
+  layout pass: cells are packed in declaration order at their encoded widths, and a column keeps a
+  constant offset only while every preceding column is fixed-size. That function is engine-tier
+  precisely so the editor's schema panel enforces the same rules without linking the cooker. A `*.table.json` (`AssetTypes::DataTable`) names its
   `"schema"` by hex id and lists its `"rows"`; the **`DataTableImporter`** resolves that schema
   through `CookContext::Resolve`, re-parses it, and binds every cell with `JsonReadFieldValue`
   then encodes it with `WriteFieldValue` — the shared walkers, not a table-specific codec — so a

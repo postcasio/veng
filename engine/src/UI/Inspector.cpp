@@ -532,6 +532,21 @@ namespace Veng::UI
         return DrawValueWidget(fieldPtr, field, valueLabel, hooks);
     }
 
+    bool DrawFieldValue(void* fieldPtr, const FieldDescriptor& field, const InspectorHooks& hooks)
+    {
+        VE_ASSERT(hooks.Registry != nullptr, "InspectorHooks::Registry is required");
+
+        if (field.Hidden || field.Class == FieldClass::Struct ||
+            field.Class == FieldClass::Variant || field.Class == FieldClass::Array)
+        {
+            return false;
+        }
+
+        const string valueLabel = "##" + field.Name;
+        auto id = UI::PushId(valueLabel);
+        return DrawValueWidget(fieldPtr, field, valueLabel, hooks);
+    }
+
     namespace
     {
         bool DrawValueWidget(void* fieldPtr, const FieldDescriptor& field, string_view valueLabel,

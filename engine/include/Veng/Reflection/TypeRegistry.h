@@ -322,6 +322,27 @@ namespace Veng
         }
         return key == info.QualifiedName;
     }
+
+    /// @brief Finds a registered type by the fully-qualified spelling authored JSON names it with.
+    ///
+    /// The lookup behind every authored type reference — a variant alternative's `"type"` tag, a
+    /// table column's `"type"` — so one spelling resolves a reflected type everywhere. Matching is
+    /// TypeNameMatches: strict, tolerating only a leading "::".
+    /// @param registry  The registry to search.
+    /// @param name      The authored fully-qualified spelling.
+    /// @return The matching type's info, or nullptr when no registered type carries that name.
+    [[nodiscard]] inline const TypeInfo* FindTypeByName(const TypeRegistry& registry,
+                                                        std::string_view name)
+    {
+        for (const auto& [id, info] : registry.All())
+        {
+            if (TypeNameMatches(info, name))
+            {
+                return &info;
+            }
+        }
+        return nullptr;
+    }
 }
 
 /// @brief Declares a fieldless struct/component's identity by specialising VengReflect\<T\>.

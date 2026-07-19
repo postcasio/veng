@@ -48,6 +48,15 @@ namespace VengEditor::Icons
     /// @brief Remove/close glyph (cross).
     inline const char* const Remove = Glyph(ICON_FA_XMARK);
 
+    /// @brief Duplicate glyph (stacked pages).
+    inline const char* const Duplicate = Glyph(ICON_FA_COPY);
+    /// @brief Move-earlier glyph (up arrow).
+    inline const char* const MoveUp = Glyph(ICON_FA_ARROW_UP);
+    /// @brief Move-later glyph (down arrow).
+    inline const char* const MoveDown = Glyph(ICON_FA_ARROW_DOWN);
+    /// @brief Warning glyph (exclamation triangle).
+    inline const char* const Warning = Glyph(ICON_FA_TRIANGLE_EXCLAMATION);
+
     /// @brief Detail-list view-mode glyph.
     inline const char* const ViewList = Glyph(ICON_FA_LIST);
     /// @brief Columns view-mode glyph.

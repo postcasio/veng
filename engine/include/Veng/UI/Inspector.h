@@ -86,4 +86,21 @@ namespace Veng::UI
     /// @return True when this edit changed the field (including any nested/variant member).
     /// @pre Called inside an open `UI::PropertyTable` scope.
     bool DrawFieldWidget(void* fieldPtr, const FieldDescriptor& field, const InspectorHooks& hooks);
+
+    /// @brief Draws only a field's value widget, with no label and no property-table row.
+    ///
+    /// The same per-FieldClass widget DrawFieldWidget draws in a row's value column, minus the
+    /// label — what a caller laying its own grid out needs, where the column header already names
+    /// the value and a row advance would break the layout. A table cell is the motivating case: it
+    /// draws the widget for the column's reflected type, so an enum cell gets the named combo and
+    /// an asset-handle cell the picker, with no per-cell widget written.
+    ///
+    /// Composite classes (Struct, Variant, Array) draw nothing and return false: they expand into
+    /// several rows and cannot render as a single value. A caller wanting those must open a
+    /// property table and use DrawFieldWidget.
+    /// @param fieldPtr Pointer to the field bytes.
+    /// @param field    Descriptor giving the field's type, class, and metadata.
+    /// @param hooks    Registry + owner base + the consumer's drawing hooks.
+    /// @return True when this edit changed the value.
+    bool DrawFieldValue(void* fieldPtr, const FieldDescriptor& field, const InspectorHooks& hooks);
 }

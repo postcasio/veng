@@ -148,7 +148,7 @@ namespace Veng::Cook
         blob.reserve(sizeof(CookedTableSchemaHeader) +
                      schema.Columns.size() * sizeof(CookedTableColumn));
         Append(blob, header);
-        for (const TableSchemaSourceColumn& column : schema.Columns)
+        for (const TableColumnDescriptor& column : schema.Columns)
         {
             CookedTableColumn cooked{};
             CopyName(cooked.Name, column.Name);
@@ -245,8 +245,7 @@ namespace Veng::Cook
 
             for (const auto& [key, unused] : rowJson.items())
             {
-                if (std::ranges::none_of(schema.Columns,
-                                         [&key](const TableSchemaSourceColumn& column)
+                if (std::ranges::none_of(schema.Columns, [&key](const TableColumnDescriptor& column)
                                          { return column.Name == key; }))
                 {
                     return std::unexpected(LocatedTable(
@@ -260,7 +259,7 @@ namespace Veng::Cook
 
             for (u32 columnIndex = 0; columnIndex < schema.Columns.size(); ++columnIndex)
             {
-                const TableSchemaSourceColumn& column = schema.Columns[columnIndex];
+                const TableColumnDescriptor& column = schema.Columns[columnIndex];
                 const string located = fmt::format("row {}: column '{}'", rowIndex, column.Name);
                 // The bind path is the dotted prefix the walker descends from, so a malformed
                 // field inside a struct or array cell is located down to that inner field.

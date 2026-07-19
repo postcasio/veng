@@ -53,7 +53,12 @@ engine *mounts* archives and resolves assets against them.
   `FindRow(key)` is an allocation-free binary search over that index, which stays a **separate**
   structure from the directory: the two answer different questions (key → row index; row index →
   bytes). A key column is restricted to the ordered, stably-encoded types — the integer scalars
-  and string (`TableKeyKindForType`).
+  and string (`TableKeyKindForType`). **What makes a set of columns a legal schema is one function,
+  `LayOutTableSchema`** (`Veng/Asset/DataTable.h`): unique non-empty names within the cooked name
+  capacity, every type registered and not a `Reference`, a key column that exists and can be
+  ordered — plus the offset assignment itself. The cooker's `ParseTableSchema` and the editor's
+  schema panel both call it, so a schema the editor accepts is one the cook accepts and neither
+  carries a second copy of the rules.
   **Rows are variable-size**, addressed through a `u32` row directory; when every column's type
   encodes to a constant width the importer omits the directory and records a stride instead, and
   addressing is arithmetic. That is a property of the cooked blob, not of the format contract —

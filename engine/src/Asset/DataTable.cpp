@@ -31,6 +31,98 @@ namespace Veng
         }
     }
 
+    Result<TableSchemaLayout> LayOutTableSchema(const std::span<TableColumnDescriptor> columns,
+                                                const std::string_view keyName,
+                                                const TypeRegistry& types)
+    {
+        if (columns.empty())
+        {
+            return std::unexpected(string{"a schema declares no columns"});
+        }
+
+        TableSchemaLayout layout;
+        u32 cursor = 0;
+        bool arithmetic = true;
+        bool allFixed = true;
+
+        for (usize i = 0; i < columns.size(); ++i)
+        {
+            TableColumnDescriptor& column = columns[i];
+
+            if (column.Name.empty())
+            {
+                return std::unexpected(fmt::format("column {} has an empty name", i));
+            }
+            // A cooked column name is a fixed-capacity char array, so an over-long name would be
+            // silently truncated into a name no row could address.
+            if (column.Name.size() >= ShaderNameCapacity)
+            {
+                return std::unexpected(fmt::format("column '{}' name exceeds {} bytes", column.Name,
+                                                   ShaderNameCapacity - 1));
+            }
+            for (usize j = 0; j < i; ++j)
+            {
+                if (columns[j].Name == column.Name)
+                {
+                    return std::unexpected(
+                        fmt::format("column '{}' is declared more than once", column.Name));
+                }
+            }
+
+            if (!types.IsRegistered(column.Type))
+            {
+                return std::unexpected(
+                    fmt::format("column '{}' has no registered reflected type", column.Name));
+            }
+            const TypeInfo& info = types.Info(column.Type);
+            if (info.Class == FieldClass::Reference)
+            {
+                return std::unexpected(
+                    fmt::format("column '{}': type '{}' is an intra-scene entity reference, which "
+                                "no table row can resolve",
+                                column.Name, info.QualifiedName));
+            }
+
+            column.Class = info.Class;
+
+            const bool fixed = TableCellIsFixedSize(info.Class);
+            allFixed = allFixed && fixed;
+
+            if (arithmetic && fixed)
+            {
+                column.Offset = cursor;
+                cursor += TableCellEncodedSize(info.Class, info);
+            }
+            else
+            {
+                column.Offset = CookedTableColumnOffsetUnresolved;
+                arithmetic = false;
+            }
+        }
+
+        layout.FixedStride = allFixed;
+        layout.RowStride = allFixed ? cursor : 0;
+
+        const auto key = std::ranges::find(columns, keyName, &TableColumnDescriptor::Name);
+        if (key == columns.end())
+        {
+            return std::unexpected(fmt::format("key column '{}' is not declared", keyName));
+        }
+
+        const optional<TableKeyKind> keyKind = TableKeyKindForType(key->Type, key->Class);
+        if (!keyKind)
+        {
+            return std::unexpected(fmt::format(
+                "key column '{}' has type '{}'; a key column must be an integer or a "
+                "string, the only types with a total order and a stable cooked encoding",
+                keyName, types.Info(key->Type).QualifiedName));
+        }
+        layout.KeyKind = *keyKind;
+        layout.KeyColumn = static_cast<u32>(std::distance(columns.begin(), key));
+
+        return layout;
+    }
+
     Ref<TableSchema> TableSchema::Create(vector<TableColumnDescriptor> columns, const u32 keyColumn,
                                          const TableKeyKind keyKind, const bool fixedStride,
                                          const u32 rowStride)

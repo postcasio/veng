@@ -168,4 +168,9 @@ namespace VengEditor
     {
         return UI::DrawFieldWidget(fieldPtr, field, MakeHooks(ctx));
     }
+
+    bool DrawFieldValue(void* fieldPtr, const FieldDescriptor& field, const FieldWidgetContext& ctx)
+    {
+        return UI::DrawFieldValue(fieldPtr, field, MakeHooks(ctx));
+    }
 }

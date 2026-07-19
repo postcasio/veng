@@ -7,19 +7,6 @@
 
 namespace Veng::Cook
 {
-    /// @brief One column parsed from a `*.tableschema.json` source, with its resolved cell offset.
-    struct TableSchemaSourceColumn
-    {
-        /// @brief The authored column name; unique within the schema.
-        string Name;
-        /// @brief The column's reflected type, resolved from its authored qualified name.
-        TypeId Type = InvalidTypeId;
-        /// @brief The column type's meta-kind, denormalised from its TypeInfo.
-        FieldClass Class = FieldClass::Scalar;
-        /// @brief Byte offset of the cell within a row, or CookedTableColumnOffsetUnresolved.
-        u32 Offset = CookedTableColumnOffsetUnresolved;
-    };
-
     /// @brief A parsed `*.tableschema.json`: its columns, key column, and computed row layout.
     ///
     /// Shared by the schema importer (which serializes it) and the table importer (which
@@ -27,8 +14,8 @@ namespace Veng::Cook
     /// two cannot disagree about a cell's offset.
     struct TableSchemaSource
     {
-        /// @brief The columns in authored declaration order.
-        vector<TableSchemaSourceColumn> Columns;
+        /// @brief The columns in authored declaration order, with their resolved cell offsets.
+        vector<TableColumnDescriptor> Columns;
         /// @brief Index of the key column within Columns.
         u32 KeyColumn = 0;
         /// @brief The ordering the key index is built under, derived from the key column's type.

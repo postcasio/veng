@@ -78,4 +78,17 @@ namespace VengEditor
     /// @pre Called inside an open `UI::PropertyTable` scope.
     bool DrawFields(void* base, std::span<const Veng::FieldDescriptor> fields,
                     const FieldWidgetContext& ctx);
+
+    /// @brief Draws only a field's value widget — no label, no property-table row.
+    ///
+    /// The editor-hooked form of `Veng::UI::DrawFieldValue`, so a caller laying out its own grid
+    /// gets the asset picker and the registered custom widgets in a cell without a label column.
+    /// Composite classes (Struct, Variant, Array) draw nothing and return false — they expand into
+    /// several rows and have no single-value rendering.
+    /// @param fieldPtr Pointer to the field bytes.
+    /// @param field    Descriptor giving the field's type, class, and metadata.
+    /// @param ctx      Dependencies: asset manager, source index, editor registry.
+    /// @return True when this edit changed the value.
+    bool DrawFieldValue(void* fieldPtr, const Veng::FieldDescriptor& field,
+                        const FieldWidgetContext& ctx);
 }

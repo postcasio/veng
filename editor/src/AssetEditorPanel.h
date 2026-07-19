@@ -30,7 +30,13 @@ namespace VengEditor
     class AssetEditorPanel : public EditorPanel
     {
     public:
-        /// @brief Submits the document window, its dockspace, and the child windows.
+        /// @brief Submits the document window (with its dockspace and children) and the close prompt.
+        ///
+        /// An editor that added children hosts its private dockspace; a childless one is a plain
+        /// single window. Either way, closing a document reporting HasUnsavedChanges() takes the
+        /// close back and raises a Save / Discard / Cancel prompt rather than dropping the edits —
+        /// the host destroys a panel whose open flag clears, so this is the only place to ask.
+        /// @param open  The host's visibility flag; cleared only once a close is confirmed.
         void Draw(bool* open) override;
 
         /// @brief The document body drawn inside the dockspace host window, above the dockspace.
@@ -105,9 +111,10 @@ namespace VengEditor
         ///
         /// Called only when the dockspace has no layout to restore — the first run, or
         /// after a layout reset — never when imgui.ini supplied one. The subclass splits
-        /// @p dockspaceId into nodes and docks each child with DockChildWindow.
+        /// @p dockspaceId into nodes and docks each child with DockChildWindow. The default
+        /// is a no-op: an editor that adds no children hosts no dockspace and has no layout.
         /// @param dockspaceId  The editor's dock node id to partition.
-        virtual void BuildDefaultLayout(Veng::u32 dockspaceId) = 0;
+        virtual void BuildDefaultLayout(Veng::u32 dockspaceId) { (void)dockspaceId; }
 
     private:
         /// @brief One docked child panel and its visibility flag.
@@ -121,13 +128,35 @@ namespace VengEditor
             bool Open = true;
         };
 
+        /// @brief Submits the document window, its private dockspace, and the docked children.
+        /// @param open  The host's visibility flag, forwarded to the window's close control.
+        void DrawDockedWindow(bool* open);
+
+        /// @brief Submits the single-window body of a childless editor.
+        ///
+        /// A childless editor hosts no dockspace: nothing could dock into it, and an empty
+        /// DockSpace would eat the window's content region. Its OnUI fills the window directly.
+        /// @param open  The host's visibility flag, forwarded to the window's close control.
+        void DrawSingleWindow(bool* open);
+
+        /// @brief Submits the close-with-unsaved-changes prompt and resolves the pending close.
+        ///
+        /// Called at top level (outside any window scope) so the popup's id stack matches the
+        /// OpenPopup that armed it.
+        /// @param open  The host's visibility flag, cleared once the close is confirmed.
+        void ResolvePendingClose(bool* open);
+
         /// @brief Per-instance id disambiguating window names and the dock class across editors.
         Veng::u32 m_InstanceId;
         /// @brief ImGui id string of this editor's dockspace.
         Veng::string m_DockSpaceName;
         /// @brief The child panels, in add order.
         Veng::vector<Child> m_Children;
+        /// @brief ImGui id string of this editor's close-confirmation popup.
+        Veng::string m_ClosePromptName;
         /// @brief Whether this document (its window or a docked child) holds keyboard focus this frame.
         bool m_Focused = false;
+        /// @brief A close was requested and is held pending the unsaved-changes prompt's answer.
+        bool m_ClosePending = false;
     };
 }

@@ -28,6 +28,7 @@ add_library(veng_editor SHARED
         src/StatusTracker.cpp
         src/panels/AssetBrowserPanel.cpp
         src/panels/ConsolePanel.cpp
+        src/panels/DataTableEditorPanel.cpp
         src/panels/InputMappingEditorPanel.cpp
         src/panels/InspectorPanel.cpp
         src/panels/LevelEditorPanel.cpp
@@ -37,6 +38,8 @@ add_library(veng_editor SHARED
         src/panels/PrefabExplorerPanel.cpp
         src/panels/ProjectSettingsPanel.cpp
         src/panels/SceneViewportPanel.cpp
+        src/panels/TableDocument.cpp
+        src/panels/TableSchemaEditorPanel.cpp
         src/panels/TextureEditorPanel.cpp
         src/panels/UIDocumentEditorPanel.cpp
         src/FieldWidget.cpp

@@ -1,5 +1,6 @@
 #include "AssetEditorPanel.h"
 
+#include <Veng/Log.h>
 #include <Veng/UI/UI.h>
 #include <Veng/Vendor/ImGuiInternal.h>
 
@@ -18,7 +19,8 @@ namespace VengEditor
 
     AssetEditorPanel::AssetEditorPanel()
         : m_InstanceId(s_NextInstanceId.fetch_add(1)),
-          m_DockSpaceName(fmt::format("##assetdock{}", m_InstanceId))
+          m_DockSpaceName(fmt::format("##assetdock{}", m_InstanceId)),
+          m_ClosePromptName(fmt::format("Unsaved changes##close{}", m_InstanceId))
     {
     }
 
@@ -35,7 +37,96 @@ namespace VengEditor
         ImGui::DockBuilderDockWindow(m_Children[index].WindowName.c_str(), node);
     }
 
+    void AssetEditorPanel::DrawSingleWindow(bool* open)
+    {
+        m_Focused = false;
+
+        const UI::WindowFlags flags =
+            HasUnsavedChanges() ? UI::WindowFlags::UnsavedDocument : UI::WindowFlags::None;
+        if (auto window = UI::Window(GetTitle(), open, flags))
+        {
+            if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))
+            {
+                m_Focused = true;
+            }
+            OnUI();
+        }
+    }
+
+    void AssetEditorPanel::ResolvePendingClose(bool* open)
+    {
+        if (!m_ClosePending)
+        {
+            return;
+        }
+
+        if (auto popup = UI::Popup(m_ClosePromptName))
+        {
+            UI::Text(fmt::format("Save changes to {} before closing?", GetTitle()));
+            UI::Separator();
+
+            if (UI::Button("Save"))
+            {
+                const VoidResult saved = Save();
+                if (saved)
+                {
+                    m_ClosePending = false;
+                    *open = false;
+                }
+                else
+                {
+                    // A failed save must not discard the edits it could not write; the document
+                    // stays open with the error reported through the panel's own surface.
+                    m_ClosePending = false;
+                    Log::Error("editor: save failed: {}", saved.error());
+                }
+                UI::CloseCurrentPopup();
+            }
+            UI::SameLine();
+            if (UI::Button("Discard"))
+            {
+                m_ClosePending = false;
+                *open = false;
+                UI::CloseCurrentPopup();
+            }
+            UI::SameLine();
+            if (UI::Button("Cancel"))
+            {
+                m_ClosePending = false;
+                UI::CloseCurrentPopup();
+            }
+            return;
+        }
+
+        // Dismissing the popup by clicking away is a cancel: the document stays open and dirty.
+        m_ClosePending = false;
+    }
+
     void AssetEditorPanel::Draw(bool* open)
+    {
+        // The host clears *open when the window's ✕ is clicked and destroys the panel after the
+        // frame, so a dirty document must take the close back and ask first.
+        const bool wasOpen = open != nullptr && *open;
+
+        if (m_Children.empty())
+        {
+            DrawSingleWindow(open);
+        }
+        else
+        {
+            DrawDockedWindow(open);
+        }
+
+        if (wasOpen && !*open && HasUnsavedChanges())
+        {
+            *open = true;
+            m_ClosePending = true;
+            UI::OpenPopup(m_ClosePromptName);
+        }
+        ResolvePendingClose(open);
+    }
+
+    void AssetEditorPanel::DrawDockedWindow(bool* open)
     {
         // Restrict docking to this editor's own children: the dockspace adopts this
         // class, and each child window is tagged with it, so a child cannot dock into

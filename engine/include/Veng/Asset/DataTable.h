@@ -124,6 +124,37 @@ namespace Veng
         u32 Offset = CookedTableColumnOffsetUnresolved;
     };
 
+    /// @brief The row layout and key placement a validated set of columns resolves to.
+    struct TableSchemaLayout
+    {
+        /// @brief Index of the key column within the laid-out columns.
+        u32 KeyColumn = 0;
+        /// @brief The ordering the key index is built under, derived from the key column's type.
+        TableKeyKind KeyKind = TableKeyKind::Integer;
+        /// @brief Whether every column's type encodes to a constant byte count.
+        bool FixedStride = false;
+        /// @brief Byte size of one row; meaningful only when FixedStride.
+        u32 RowStride = 0;
+    };
+
+    /// @brief Validates a schema's columns and key column and assigns each column its cell offset.
+    ///
+    /// The one implementation of what makes a set of columns a legal schema, shared by the importer
+    /// that cooks a `*.tableschema.json` and by the editor that authors one — so a schema the editor
+    /// reports as valid is exactly a schema the cook accepts. Each column's Class is denormalised
+    /// from its TypeInfo and its Offset assigned in declaration order, staying a constant only while
+    /// every preceding column is fixed-size.
+    ///
+    /// The error strings are bare reasons carrying no file or line, so a caller prefixes its own
+    /// location.
+    /// @param columns  The columns in declaration order; Class and Offset are written by this call.
+    /// @param keyName  Name of the column rows are keyed by.
+    /// @param types    Registry each column's type resolves through.
+    /// @return The resolved row layout, or the reason the columns are not a legal schema.
+    [[nodiscard]] VE_API Result<TableSchemaLayout>
+    LayOutTableSchema(std::span<TableColumnDescriptor> columns, std::string_view keyName,
+                      const TypeRegistry& types);
+
     /// @brief A declared set of reflected columns plus the key column rows are addressed by.
     ///
     /// Cooked from a `*.tableschema.json` source and loaded by AssetId like any asset. A DataTable

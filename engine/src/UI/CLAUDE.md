@@ -27,7 +27,12 @@ editor framework for a debug slider.)
   gets reflection-driven property editing linking only `libveng`, and the **editor** builds its
   asset-chip / entity-drop / registry inspector on the same walk (see
   [editor/CLAUDE.md](../../../editor/CLAUDE.md)) rather than duplicating it. Caller opens the
-  `PropertyTable`; the inspector fills the rows.
+  `PropertyTable`; the inspector fills the rows. **`DrawFieldValue` is the same widget without the
+  row** — no label, no row advance — for a caller laying out its own grid, where the column header
+  already names the value; the editor's data-table cells are what it exists for. Struct, Variant,
+  and Array draw nothing there and return false: they expand into several rows and have no
+  single-value rendering, so a caller wanting them opens a property table and uses
+  `DrawFieldWidget`.
 - **Every editable widget returns `[[nodiscard]] bool`** ("changed"), keeping immediate-mode
   semantics.
 - **Text is preformatted `string_view`, not printf varargs** — a caller writes

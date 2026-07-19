@@ -26,6 +26,7 @@
 #include "StatusTracker.h"
 #include "panels/AssetBrowserPanel.h"
 #include "panels/ConsolePanel.h"
+#include "panels/DataTableEditorPanel.h"
 #include "panels/InputMappingEditorPanel.h"
 #include "panels/InspectorPanel.h"
 #include "panels/LevelEditorPanel.h"
@@ -33,6 +34,7 @@
 #include "panels/MaterialInstanceEditorPanel.h"
 #include "panels/PrefabEditorPanel.h"
 #include "panels/ProjectSettingsPanel.h"
+#include "panels/TableSchemaEditorPanel.h"
 #include "panels/TextureEditorPanel.h"
 #include "panels/UIDocumentEditorPanel.h"
 
@@ -413,6 +415,71 @@ namespace VengEditor
             VengEditor::CookDriver m_Cook;
         };
 
+        // Resolves a TableSchema AssetId to its .tableschema.json source through the manifest
+        // index, then opens a TableSchemaEditorPanel against the host's reflected type registry.
+        class TableSchemaEditorFactory final : public AssetEditorFactory
+        {
+        public:
+            TableSchemaEditorFactory(const AssetSourceIndex& index, const TypeRegistry& types,
+                                     VengEditor::CookDriver cook)
+                : m_Index(index), m_Types(types), m_Cook(std::move(cook))
+            {
+            }
+
+            [[nodiscard]] Unique<EditorPanel> OpenEditor(AssetId id) override
+            {
+                const AssetSourceIndex::Entry* entry = m_Index.Find(id);
+                if (!entry)
+                {
+                    Log::Error("Table schema editor: no source manifest entry for asset 0x{:X}",
+                               id.Value);
+                    return nullptr;
+                }
+
+                return CreateUnique<TableSchemaEditorPanel>(id, entry->Source, m_Types, m_Cook);
+            }
+
+        private:
+            const AssetSourceIndex& m_Index;
+            const TypeRegistry& m_Types;
+            VengEditor::CookDriver m_Cook;
+        };
+
+        // Resolves a DataTable AssetId to its .table.json source through the manifest index, then
+        // opens a DataTableEditorPanel wired to the host's engine refs and its OpenAssetEditor.
+        class DataTableEditorFactory final : public AssetEditorFactory
+        {
+        public:
+            DataTableEditorFactory(const AssetSourceIndex& index, AssetManager& assets,
+                                   const EditorRegistry& editors, VengEditor::CookDriver cook,
+                                   VengEditor::AssetOpener openAsset)
+                : m_Index(index), m_Assets(assets), m_Editors(editors), m_Cook(std::move(cook)),
+                  m_OpenAsset(std::move(openAsset))
+            {
+            }
+
+            [[nodiscard]] Unique<EditorPanel> OpenEditor(AssetId id) override
+            {
+                const AssetSourceIndex::Entry* entry = m_Index.Find(id);
+                if (!entry)
+                {
+                    Log::Error("Data table editor: no source manifest entry for asset 0x{:X}",
+                               id.Value);
+                    return nullptr;
+                }
+
+                return CreateUnique<DataTableEditorPanel>(id, entry->Source, m_Index, m_Assets,
+                                                          m_Editors, m_Cook, m_OpenAsset);
+            }
+
+        private:
+            const AssetSourceIndex& m_Index;
+            AssetManager& m_Assets;
+            const EditorRegistry& m_Editors;
+            VengEditor::CookDriver m_Cook;
+            VengEditor::AssetOpener m_OpenAsset;
+        };
+
         // Opens a PrefabEditorPanel that spawns the prefab into a live Scene for editing.
         // Needs no manifest source: the prefab is edited in-scene, not recooked.
         class PrefabEditorFactory final : public AssetEditorFactory
@@ -767,6 +834,17 @@ namespace VengEditor
                 AssetTypes::InputMap,
                 CreateUnique<InputMapEditorFactory>(*m_Sources, GetAssetManager(),
                                                     m_Registries->Editor, GetInput(), cookFor()));
+
+            m_Registries->Editor.RegisterAssetEditor(
+                AssetTypes::TableSchema,
+                CreateUnique<TableSchemaEditorFactory>(*m_Sources, GetTypeRegistry(), cookFor()));
+
+            m_Registries->Editor.RegisterAssetEditor(
+                AssetTypes::DataTable,
+                CreateUnique<DataTableEditorFactory>(
+                    *m_Sources, GetAssetManager(), m_Registries->Editor, cookFor(),
+                    [this](const AssetTypeId type, const AssetId id)
+                    { OpenAssetEditor(type, id); }));
 
             m_Registries->Editor.RegisterAssetEditor(
                 AssetTypes::UIDocument,

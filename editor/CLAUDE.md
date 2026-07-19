@@ -83,6 +83,19 @@ across the whole project's one AssetId namespace, not just its own pack.
   region (from the ImGui content rect) in `OnUI`, and samples the ready output as a `UI::Image`.
   The host drives each open panel and owns its visibility. Top-level host panels: asset browser,
   console/log, and the per-asset editors below.
+- **An editor writes the user's files only on an explicit save.** No auto-save and no debounced
+  recook: edits accumulate in the panel's in-memory document, and `Save()` is what performs the
+  preserve-unknown-keys merge write, then the recook, then the hot reload — **in that order**, so a
+  cook that fails leaves the saved source on disk and reports in-panel rather than reverting the
+  edit. `AssetEditorPanel` carries the whole contract: `HasUnsavedChanges()` drives the window's
+  unsaved marker and the Save action's enabled state, `EditorHost` dispatches the File-menu item and
+  Ctrl/Cmd+S to the focused document, and `AssetEditorPanel::Draw` **takes back a close** on a dirty
+  document and raises a Save / Discard / Cancel prompt (the host destroys a panel whose open flag
+  clears, so that is the only place to ask). A recook arriving while one is in flight is **queued**,
+  not dropped — the in-flight cook read an older source, so a save landing behind it must re-cook
+  once it lands. The table and prefab/level editors follow this; the four settings panels
+  (texture, material, material-instance, input-mapping) still auto-recook on a 300 ms debounce and
+  do not derive from `AssetEditorPanel`, which is the one remaining divergence.
 - **`AssetEditorPanel` hosts a private, class-restricted dockspace.** An asset editor is a
   top-level panel whose window hosts a per-instance ImGui dockspace; its child panels are
   submitted as separate windows tagged with a per-instance `ImGuiWindowClass`, so only that
@@ -90,7 +103,10 @@ across the whole project's one AssetId namespace, not just its own pack.
   of the same asset stay isolated by a monotonic instance id). A subclass adds children with
   `AddChild` and arranges the initial split in `BuildDefaultLayout`; it overrides `Draw` to submit
   the document window + dockspace + the class-tagged children. A child that renders a scene owns
-  its own registered `Offscreen` viewport, so there is no render forwarding.
+  its own registered `Offscreen` viewport, so there is no render forwarding. An editor that adds
+  **no** children hosts no dockspace at all — nothing could dock into it, and an empty `DockSpace`
+  would eat the window's content region — so its `OnUI` fills a plain single window and
+  `BuildDefaultLayout` (defaulted to a no-op) is never reached.
 - **`EditorRegistry`** is defined in `libveng_editor` and **forward-declared** in
   `engine/include/Veng/Module/Module.h` (so `libveng` stays clean). It holds the
   `AssetTypeId`→editor-factory map (double-click an asset opens its editor), `RegisterPanel` for
@@ -183,6 +199,11 @@ across the whole project's one AssetId namespace, not just its own pack.
   delegates to the engine walk. A bare game passes no hooks, so AssetHandle/Reference fields draw
   the engine's read-only fallbacks. The entity inspector and the node-property inspector both call
   `DrawFieldWidget`, so the two share identical widget behavior.
+- **`DrawFieldValue` is the same widget without the row.** `DrawFieldWidget` emits a property-table
+  row (label in column 0, value in column 1); a caller laying out its own grid needs only the value,
+  where the grid's column header already names it and a row advance would break the layout. The data
+  table's cells are the motivating case. Composite classes (Struct / Variant / Array) draw nothing
+  and return false — they expand into several rows and have no single-value rendering.
 - **`InspectorPanel`** edits `PrefabEditContext::Active`: an editable name header, a searchable
   **Add Component** picker (every registered `FieldClass::Struct` type not already present, minus
   the hierarchy-owned `Hierarchy`), and per-component remove / reset-to-default — remove offered
@@ -260,6 +281,29 @@ across the whole project's one AssetId namespace, not just its own pack.
   launching the game. It is deliberately **basic by design**: no press-a-key-to-bind capture, no
   drag-reorder, no undo (the single-asset editors have none), matching the texture/material editor
   idiom.
+- **The table editors author a schema and its rows, both on the explicit-save contract.** They are
+  the two `AssetEditorPanel` subclasses that host no dockspace. `TableSchemaEditorPanel`
+  (`AssetTypes::TableSchema`) edits a `*.tableschema.json`'s column list — add / remove / rename /
+  retype (a searchable picker over every registered non-`Reference` type) / reorder — plus the key
+  column, whose combo is restricted to types a key index can order (`TableKeyKindForType`). It shows
+  the resolved row layout and every validation failure live, and warns (without blocking) that a
+  removed or retyped column invalidates tables already cooked against the schema — which is the
+  *table's* cook error to surface. `DataTableEditorPanel` (`AssetTypes::DataTable`) is the grid: one
+  column per schema column, **each cell drawn by the inspector widget for the column's reflected
+  type** through `DrawFieldValue` — the label-less form of the shared field walk — so an enum column
+  gets the named combo and an asset-handle column the asset picker with no per-column widget written
+  here. A composite column (struct / variant / array) expands into several inspector rows and so
+  cannot render inside one cell; it opens a popup holding a real `PropertyTable` and the ordinary
+  `DrawFieldWidget` instead. Rows add / remove / duplicate / reorder, key cells are marked live when
+  they duplicate an earlier row's, and the row body virtualizes through an `ImGuiListClipper`.
+- **Both table panels validate through the importer's own rules, not a copy.** The panel documents
+  live in `panels/TableDocument.{h,cpp}`, free of any UI dependency: `TableSchemaDocument::Resolve`
+  calls **`Veng::LayOutTableSchema`** (the engine-tier function the cooker's `ParseTableSchema` also
+  calls) and a cell binds through **`JsonReadFieldValue`** against a `ReflectedStorage`, so the
+  diagnostics a panel shows are the cook's, character for character. The editor never links
+  `libveng_cook`, so it re-parses the *authored* `*.tableschema.json` a table names rather than
+  reading a cooked schema. Keeping the documents UI-free is also what makes the column/row
+  operations and the whole save contract testable in the device-free `editor_unit` band.
 
 ## Project settings and preview capability
 
