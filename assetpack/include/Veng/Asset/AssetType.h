@@ -107,14 +107,26 @@ namespace Veng
         inline constexpr u64 MaterialInstance = 0xB47397CC23B08FDEULL;
         /// @brief TypeId of AssetHandle\<Prefab\>.
         inline constexpr u64 Prefab = 0xF71230AEA9060D83ULL;
+        /// @brief TypeId of AssetHandle\<Level\>.
+        inline constexpr u64 Level = 0xED75AEF99D36E43BULL;
+        /// @brief TypeId of AssetHandle\<Skeleton\>.
+        inline constexpr u64 Skeleton = 0xCF758350A84A3CE1ULL;
         /// @brief TypeId of AssetHandle\<Animation\>.
         inline constexpr u64 Animation = 0xED6B03478BD050CEULL;
         /// @brief TypeId of AssetHandle\<EnvironmentMap\>.
         inline constexpr u64 Environment = 0x4E2499935571083DULL;
         /// @brief TypeId of AssetHandle\<InputMappingContext\>.
         inline constexpr u64 InputMap = 0xA6CA03617AA27317ULL;
+        /// @brief TypeId of AssetHandle\<Font\>.
+        inline constexpr u64 Font = 0x1FE6D744331DABE7ULL;
+        /// @brief TypeId of AssetHandle\<Gui::StyleSheet\>.
+        inline constexpr u64 StyleSheet = 0x29CA592C9355A65AULL;
         /// @brief TypeId of AssetHandle\<Gui::UIDocument\>.
         inline constexpr u64 UIDocument = 0xC591D0D0452797E1ULL;
+        /// @brief TypeId of AssetHandle\<TableSchema\>.
+        inline constexpr u64 TableSchema = 0x2879BAC5F35A3945ULL;
+        /// @brief TypeId of AssetHandle\<DataTable\>.
+        inline constexpr u64 DataTable = 0xCC431A7163938F1DULL;
     }
 
     /// @brief What a registry records about one asset type.
@@ -135,7 +147,7 @@ namespace Veng
         /// What makes an `AssetHandle<T>` field on a reflected component resolvable: the prefab
         /// loader, the cooker's validation hooks, and the editor's asset picker all turn a field's
         /// leaf TypeId back into an asset type through this. A type with no reflected handle leaf
-        /// (a Font, a Shader) leaves it 0 and simply cannot sit on a component.
+        /// (a Shader, a VertexLayout) leaves it 0 and simply cannot sit on a component.
         ///
         /// Declared as a bare u64 rather than a Veng::TypeId because assetpack carries no
         /// reflection dependency; TypeId is an alias for exactly this type.

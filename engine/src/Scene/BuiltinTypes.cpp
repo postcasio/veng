@@ -163,10 +163,16 @@ namespace Veng
         registry.Register<AssetHandle<Material>>();
         registry.Register<AssetHandle<MaterialInstance>>();
         registry.Register<AssetHandle<Prefab>>();
+        registry.Register<AssetHandle<Level>>();
+        registry.Register<AssetHandle<Skeleton>>();
         registry.Register<AssetHandle<Animation>>();
         registry.Register<AssetHandle<EnvironmentMap>>();
         registry.Register<AssetHandle<InputMappingContext>>();
+        registry.Register<AssetHandle<Font>>();
+        registry.Register<AssetHandle<Gui::StyleSheet>>();
         registry.Register<AssetHandle<Gui::UIDocument>>();
+        registry.Register<AssetHandle<TableSchema>>();
+        registry.Register<AssetHandle<DataTable>>();
         registry.Register<AssetHandle<RawAsset>>();
     }
 }

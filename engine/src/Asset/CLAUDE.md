@@ -131,8 +131,10 @@ engine *mounts* archives and resolves assets against them.
   component: `VE_LEAF` the handle leaf with a minted `TypeId`, register the component type that
   holds it, and set `HandleFieldType` to that same leaf id on the `AssetTypeInfo` it registers.
   A leaf no registered type claims is an **error** at both load and cook — never a skipped check.
-  The eight builtins with no reflected handle leaf (`Font`, `Skeleton`, `Level`, `StyleSheet`,
-  `Shader`, `VertexLayout`, `DataTable`, `TableSchema`) leave it 0 and cannot sit on a component.
+  Sixteen of the eighteen builtins claim a leaf. The two that do not — `Shader` and
+  `VertexLayout` — are wiring inside the material system: a draw binds a `MaterialInstance`, and
+  nothing outside that system can consume a bare shader or vertex layout, so a reference to one
+  would be authorable but unusable. They leave `HandleFieldType` 0 and cannot sit on a component.
 - **The `AssetManager` always owns a complete `AssetTypeRegistry`.** It fills its own with
   `RegisterBuiltinAssetTypes` at construction and merges `AssetManagerInfo::AssetTypes` on top —
   the same shape as the builtin-then-module loader registration beside it. `GetAssetTypes()` is

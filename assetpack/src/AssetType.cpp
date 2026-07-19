@@ -145,12 +145,16 @@ namespace Veng
                            .DisplayName = "Prefab",
                            .Glyph = "PFB",
                            .HandleFieldType = AssetHandleFieldTypes::Prefab});
-        registry.Register(
-            {.Id = AssetTypes::Level, .Name = "Level", .DisplayName = "Level", .Glyph = "LVL"});
+        registry.Register({.Id = AssetTypes::Level,
+                           .Name = "Level",
+                           .DisplayName = "Level",
+                           .Glyph = "LVL",
+                           .HandleFieldType = AssetHandleFieldTypes::Level});
         registry.Register({.Id = AssetTypes::Skeleton,
                            .Name = "Skeleton",
                            .DisplayName = "Skeleton",
-                           .Glyph = "SKL"});
+                           .Glyph = "SKL",
+                           .HandleFieldType = AssetHandleFieldTypes::Skeleton});
         registry.Register({.Id = AssetTypes::Animation,
                            .Name = "Animation",
                            .DisplayName = "Animation",
@@ -166,12 +170,16 @@ namespace Veng
                            .DisplayName = "InputMap",
                            .Glyph = "INP",
                            .HandleFieldType = AssetHandleFieldTypes::InputMap});
-        registry.Register(
-            {.Id = AssetTypes::Font, .Name = "Font", .DisplayName = "Font", .Glyph = "FNT"});
+        registry.Register({.Id = AssetTypes::Font,
+                           .Name = "Font",
+                           .DisplayName = "Font",
+                           .Glyph = "FNT",
+                           .HandleFieldType = AssetHandleFieldTypes::Font});
         registry.Register({.Id = AssetTypes::StyleSheet,
                            .Name = "StyleSheet",
                            .DisplayName = "StyleSheet",
-                           .Glyph = "USS"});
+                           .Glyph = "USS",
+                           .HandleFieldType = AssetHandleFieldTypes::StyleSheet});
         registry.Register({.Id = AssetTypes::UIDocument,
                            .Name = "UIDocument",
                            .DisplayName = "UIDocument",
@@ -180,10 +188,12 @@ namespace Veng
         registry.Register({.Id = AssetTypes::TableSchema,
                            .Name = "TableSchema",
                            .DisplayName = "TableSchema",
-                           .Glyph = "TSC"});
+                           .Glyph = "TSC",
+                           .HandleFieldType = AssetHandleFieldTypes::TableSchema});
         registry.Register({.Id = AssetTypes::DataTable,
                            .Name = "DataTable",
                            .DisplayName = "DataTable",
-                           .Glyph = "TBL"});
+                           .Glyph = "TBL",
+                           .HandleFieldType = AssetHandleFieldTypes::DataTable});
     }
 }
