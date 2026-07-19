@@ -425,6 +425,11 @@ add_library(libveng_cook STATIC
         src/Importers/StyleSheetImporter.cpp
         src/Importers/CssTokenizer.cpp
         src/Importers/StyleParse.cpp
+        # The table importers compute their row layout from libveng's DataTable cell vocabulary,
+        # so they live here rather than in veng_cook_objs (kept veng-free for the core-pack
+        # bootstrap, which cooks no tables).
+        src/Importers/TableImporters.cpp
+        src/Importers/TableSchemaSource.cpp
         # The graph-sourced shader resolver runs the veng::graph emit walk, so it lives
         # here (links graph + veng) rather than in veng_cook_objs (kept veng-free for the
         # core-pack bootstrap). RegisterBuiltinImporters installs it as the resolver hook

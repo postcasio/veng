@@ -549,6 +549,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/cooked_project.cpp
             tests/unit/launch_arguments.cpp
             tests/unit/asset_manager.cpp
+            tests/unit/data_table.cpp
             tests/unit/primitives.cpp
             tests/unit/bounds.cpp
             tests/unit/visibility.cpp
@@ -1368,6 +1369,7 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle)
             tests/cooker/prefab_save_roundtrip.cpp
             tests/cooker/level_cook.cpp
             tests/cooker/input_map_cook.cpp
+            tests/cooker/table_cook.cpp
             tests/cooker/cook_source.cpp
             tests/cooker/ui_document_cook.cpp
             tests/cooker/ui_list_selection_cook.cpp

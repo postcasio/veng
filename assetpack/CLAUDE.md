@@ -22,14 +22,14 @@ the format and its serialization — neither importer nor loader.
 - **An asset *type* is a minted `AssetTypeId`, not an enum.** `AssetTypeId` is the `AssetId`
   discipline applied to types: an author-owned non-zero `u64`, hex-spelled, collision-fatal, and
   a **separate space from the reflection `TypeId`** (not every asset type has a reflected runtime
-  struct, and assetpack stays reflection-free). The engine's sixteen types are minted constants in
+  struct, and assetpack stays reflection-free). The engine's eighteen types are minted constants in
   the **`Veng::AssetTypes`** namespace (`AssetTypes::Texture`, `AssetTypes::Prefab`, …); anything
   else mints its own with `vengc generate-asset-type`. Dispatch tables key on the id value and
   consult nothing; the **`AssetTypeRegistry`** carries name ↔ id ↔ display metadata for the two
   jobs that need it — decoding a pack manifest's `"type"` string and naming a type for a human.
   It is a **host-owned instance threaded by reference**, never a global: assetpack is static and
   linked into libveng, the cooker, the bootstrap cooker, and the editor, so a global would give
-  each image its own divergent copy. `RegisterBuiltinAssetTypes` pre-fills the sixteen builtins.
+  each image its own divergent copy. `RegisterBuiltinAssetTypes` pre-fills the eighteen builtins.
 - **An archive is built from a pure `{ id, type, source }` manifest.** The format
   carries no per-asset settings — those live in the per-asset JSON sources the
   manifest points at, consumed by the cooker, not by this library.

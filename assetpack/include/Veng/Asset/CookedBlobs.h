@@ -1040,4 +1040,131 @@ namespace Veng
         /// @brief The unresolved handler name string span (e.g. "OpenMenu").
         CookedUIStringSpan Handler;
     };
+
+    /// @brief The cell type of one table column.
+    ///
+    /// A closed vocabulary shared by the schema cook, the schema loader, and the table cook.
+    /// Int is always i64 and Float always f32, so a column kind fixes both the storage width and
+    /// the authoring range — unlike the engine's FieldClass, which distinguishes neither.
+    enum class CookedTableColumnKind : u32
+    {
+        /// @brief A boolean cell, stored as a u32 (0 or 1).
+        Bool = 0,
+        /// @brief A 64-bit signed integer cell.
+        Int = 1,
+        /// @brief A 32-bit float cell.
+        Float = 2,
+        /// @brief Two f32 components.
+        Vec2 = 3,
+        /// @brief Three f32 components.
+        Vec3 = 4,
+        /// @brief Four f32 components.
+        Vec4 = 5,
+        /// @brief A CookedTableStringSpan into the table's string heap.
+        String = 6,
+        /// @brief A u64 AssetId referencing another asset; 0 is the unset reference.
+        AssetRef = 7,
+    };
+
+    /// @brief The current table-schema-format version.
+    ///
+    /// Bumped on any CookedTableSchemaHeader/CookedTableColumn layout change; the loader rejects
+    /// a blob whose Version != this.
+    inline constexpr u32 CookedTableSchemaVersion = 1u;
+
+    /// @brief Cooked header for a table-schema asset.
+    ///
+    /// The blob is, in order:
+    ///   CookedTableSchemaHeader
+    ///   CookedTableColumn[ColumnCount]     — in authored declaration order
+    ///
+    /// RowStride is computed by the schema cook from the column kinds (each cell aligned to its
+    /// natural alignment, the stride rounded up to 8) and is the single authority a DataTable
+    /// blob is checked against, so a schema edit that moves a cell invalidates every table
+    /// cooked against the old layout rather than misreading it.
+    struct CookedTableSchemaHeader
+    {
+        /// @brief Must equal CookedTableSchemaVersion; the loader rejects mismatches.
+        u32 Version = 0;
+        /// @brief Number of CookedTableColumn entries following this header.
+        u32 ColumnCount = 0;
+        /// @brief Index of the key column within the column array.
+        u32 KeyColumn = 0;
+        /// @brief Byte size of one row record laid out against these columns.
+        u32 RowStride = 0;
+    };
+
+    /// @brief One column of a cooked table schema.
+    struct CookedTableColumn
+    {
+        /// @brief Nul-terminated column name, at most ShaderNameCapacity - 1 bytes.
+        char Name[ShaderNameCapacity] = {};
+        /// @brief Cell type; underlying CookedTableColumnKind integer.
+        u32 Kind = 0;
+        /// @brief Byte offset of this column's cell within a row record.
+        u32 Offset = 0;
+        /// @brief For an AssetRef column, the AssetTypeId value its cells must reference; 0 otherwise.
+        u64 ReferencedType = 0;
+    };
+
+    /// @brief A string cell: a byte range within a data table's string heap.
+    struct CookedTableStringSpan
+    {
+        /// @brief Byte offset of the first character within the string heap.
+        u32 Offset = 0;
+        /// @brief Length in bytes; the heap stores no terminator.
+        u32 Length = 0;
+    };
+
+    /// @brief One entry of a data table's sorted key index.
+    ///
+    /// Sorted ascending on the key's logical order — numeric for an Int key column, byte-wise
+    /// lexicographic over the heap strings for a String key column — so a lookup is a binary
+    /// search with no allocation. Keys are unique; the table cook rejects a duplicate.
+    struct CookedTableKey
+    {
+        /// @brief The key value of an Int key column; 0 under a String key column.
+        i64 IntKey = 0;
+        /// @brief The heap span of a String key column; zero-length under an Int key column.
+        CookedTableStringSpan StringKey;
+        /// @brief Index of the row this key addresses.
+        u32 RowIndex = 0;
+        /// @brief Explicit pad keeping the entry at a deterministic 24 bytes.
+        u32 Pad = 0;
+    };
+
+    /// @brief The current data-table-format version.
+    ///
+    /// Bumped on any CookedDataTableHeader/CookedTableKey/row layout change; the loader rejects
+    /// a blob whose Version != this.
+    inline constexpr u32 CookedDataTableVersion = 1u;
+
+    /// @brief Cooked header for a data-table asset.
+    ///
+    /// The blob is, in order:
+    ///   CookedDataTableHeader
+    ///   CookedTableKey[RowCount]           — the sorted key index
+    ///   row records                        — RowCount * RowStride bytes, row-major
+    ///   string heap                        — StringHeapBytes bytes
+    ///
+    /// KeyKind is stored here rather than read from the schema so a key lookup is self-describing:
+    /// the table resolves a row without consulting its schema handle, which matters because the
+    /// schema is an ordinary streamed dependency.
+    struct CookedDataTableHeader
+    {
+        /// @brief Must equal CookedDataTableVersion; the loader rejects mismatches.
+        u32 Version = 0;
+        /// @brief Number of rows, and of key-index entries.
+        u32 RowCount = 0;
+        /// @brief Byte size of one row record; must match the schema's RowStride.
+        u32 RowStride = 0;
+        /// @brief Byte size of the trailing string heap.
+        u32 StringHeapBytes = 0;
+        /// @brief AssetId of the TableSchema these rows were cooked against.
+        u64 SchemaId = 0;
+        /// @brief Key column's cell type; underlying CookedTableColumnKind integer (Int or String).
+        u32 KeyKind = 0;
+        /// @brief Explicit pad keeping the header at a deterministic 32 bytes.
+        u32 Pad = 0;
+    };
 }

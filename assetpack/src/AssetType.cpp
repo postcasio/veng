@@ -138,5 +138,13 @@ namespace Veng
                            .Name = "UIDocument",
                            .DisplayName = "UIDocument",
                            .Glyph = "VUI"});
+        registry.Register({.Id = AssetTypes::TableSchema,
+                           .Name = "TableSchema",
+                           .DisplayName = "TableSchema",
+                           .Glyph = "TSC"});
+        registry.Register({.Id = AssetTypes::DataTable,
+                           .Name = "DataTable",
+                           .DisplayName = "DataTable",
+                           .Glyph = "TBL"});
     }
 }

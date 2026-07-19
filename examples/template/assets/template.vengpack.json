@@ -95,6 +95,16 @@
       "id": "0x88B360A2DD16632E",
       "type": "Level",
       "source": "levels/overlay.level.json"
+    },
+    {
+      "id": "0x611C84D6F60F2E72",
+      "type": "TableSchema",
+      "source": "tables/tuning.tableschema.json"
+    },
+    {
+      "id": "0x3FDB8FFFCC00B911",
+      "type": "DataTable",
+      "source": "tables/tuning.table.json"
     }
   ]
 }

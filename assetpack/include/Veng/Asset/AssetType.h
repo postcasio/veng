@@ -78,6 +78,10 @@ namespace Veng
         inline constexpr AssetTypeId StyleSheet{0xF1DBE163FAA8AA8DULL};
         /// @brief A binary UI element tree referencing its fonts, textures, and stylesheets (see CookedUIDocumentHeader).
         inline constexpr AssetTypeId UIDocument{0xD73125F4E6330F4CULL};
+        /// @brief A typed column declaration with a key column, describing a DataTable's rows (see CookedTableSchemaHeader).
+        inline constexpr AssetTypeId TableSchema{0xC1B0EAF8E201936DULL};
+        /// @brief Rows of structured data cooked and validated against a TableSchema (see CookedDataTableHeader).
+        inline constexpr AssetTypeId DataTable{0x29EAA6FA75196517ULL};
     }
 
     /// @brief What a registry records about one asset type.
@@ -157,7 +161,7 @@ namespace Veng
         std::unordered_map<string, AssetTypeId> m_ByName;
     };
 
-    /// @brief Pre-fills a registry with the sixteen asset types the engine defines.
+    /// @brief Pre-fills a registry with the eighteen asset types the engine defines.
     ///
     /// Every host calls this on the registry it owns before any other registration, so a
     /// manifest naming a builtin resolves without the consumer re-declaring it.

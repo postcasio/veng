@@ -22,6 +22,8 @@ namespace Veng
     using i32 = int32_t;
     /// @brief Unsigned 32-bit integer.
     using u32 = uint32_t;
+    /// @brief Signed 64-bit integer.
+    using i64 = int64_t;
     /// @brief Unsigned 64-bit integer.
     using u64 = uint64_t;
     /// @brief Platform-native unsigned size type.

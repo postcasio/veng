@@ -69,4 +69,14 @@ namespace Veng::Cook
     /// wants the core set plus only this importer.
     /// @param cooker  The cooker to register into.
     void RegisterUIDocumentImporter(Cooker& cooker);
+
+    /// @brief Registers the table-schema and data-table importers.
+    ///
+    /// References libveng's DataTable column vocabulary (the cell-size and alignment rules the
+    /// row layout is computed from), so it is absent from the veng-free bootstrap cooker — which
+    /// needs it for nothing, the embedded core pack carrying no tables. Folded into
+    /// RegisterBuiltinImporters; exposed individually for a cooker that wants the core set plus
+    /// only these importers.
+    /// @param cooker  The cooker to register into.
+    void RegisterTableImporters(Cooker& cooker);
 }

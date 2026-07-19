@@ -73,6 +73,7 @@ add_library(veng SHARED
         src/Application.cpp
         src/Assert.cpp
         src/Asset/AssetManager.cpp
+        src/Asset/DataTable.cpp
         src/Asset/DynamicMesh.cpp
         src/Asset/Level.cpp
         src/Asset/Material.cpp
@@ -87,6 +88,8 @@ add_library(veng SHARED
         src/Asset/Skeleton.cpp
         src/Asset/Texture.cpp
         src/Asset/Loaders/AnimationLoader.cpp
+        src/Asset/Loaders/DataTableLoader.cpp
+        src/Asset/Loaders/TableSchemaLoader.cpp
         src/Asset/Loaders/EnvironmentLoader.cpp
         src/Asset/Loaders/FontLoader.cpp
         src/Asset/Loaders/InputMapLoader.cpp

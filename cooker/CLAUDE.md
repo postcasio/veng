@@ -133,6 +133,22 @@ at cook time:
   `MaterialImporter` applies to `.vmat` fields and the `PrefabImporter` to components. It
   references only engine builtins (`InputAction`/`Binding` and their enums), so it needs no
   game module.
+- **Tables** cook as a pair. A `*.tableschema.json` (`AssetTypes::TableSchema`) declares
+  `"columns"` — each a `name` and a `kind` from `Bool`/`Int`/`Float`/`Vec2`/`Vec3`/`Vec4`/
+  `String`/`AssetRef`, an `AssetRef` column adding the `assetType` name its cells must reference
+  — plus the `"key"` column, which must be `Int` or `String`. The **`TableSchemaImporter`** runs
+  the layout pass: each cell is placed on its natural alignment and the row stride padded to
+  eight, so the schema is the single authority for where a cell sits. A `*.table.json`
+  (`AssetTypes::DataTable`) names its `"schema"` by hex id and lists its `"rows"`; the
+  **`DataTableImporter`** resolves that schema through `CookContext::Resolve`, re-parses it, and
+  validates every row against it — an unknown column, a missing column, a kind mismatch, a
+  duplicate key, an unresolvable `AssetRef` and an `AssetRef` whose target is the wrong asset type
+  are all **located cook errors**. Every `AssetRef` cell resolves through `Resolve` too, which is
+  what puts the schema and each referenced asset into the cooked dependency graph; the runtime
+  never loads what a cell names. The blob is fixed-stride row records over an interned string
+  heap, preceded by a sorted, unique key index. Both importers live in `libveng_cook` (they read
+  libveng's cell-size and alignment vocabulary), which is legal because the embedded core pack
+  carries no tables.
 - **Skinned meshes, skeletons, and animations** come from a rigged model (FBX, via the
   enabled assimp FBX importer). The `MeshImporter` emits the skinned vertex layout when the
   `*.mesh.json` names a `"skeleton"` id: it caps each vertex to four normalized influences

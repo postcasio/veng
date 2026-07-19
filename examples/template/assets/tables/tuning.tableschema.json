@@ -1,0 +1,11 @@
+{
+  "columns": [
+    { "name": "id", "kind": "Int" },
+    { "name": "label", "kind": "String" },
+    { "name": "spinSpeed", "kind": "Float" },
+    { "name": "tint", "kind": "Vec4" },
+    { "name": "enabled", "kind": "Bool" },
+    { "name": "icon", "kind": "AssetRef", "assetType": "Texture" }
+  ],
+  "key": "id"
+}

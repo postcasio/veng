@@ -41,6 +41,17 @@ engine *mounts* archives and resolves assets against them.
   `InputContextStack` references one or more by id, and `InputMappingSystem` resolves the active
   set against the raw snapshot — the gameplay control flow is
   [../Scene/CLAUDE.md](../Scene/CLAUDE.md).
+- **`AssetTypes::TableSchema` + `AssetTypes::DataTable` — structured game data**, both CPU-only.
+  A `TableSchema` is the loaded column set (names, kinds, row offsets, the key column); a
+  `DataTable` holds a handle to the schema it was cooked against — an ordinary streamed
+  dependency — plus the resident row block, the interned string heap, and a sorted key index.
+  `FindRow(key)` is an allocation-free binary search; `GetColumn<T>(name)` resolves a column once
+  into a `TableColumn<T>` indexed per row, with a **fatal** kind check (API misuse) where a
+  malformed blob is instead rejected by the loader as `AssetError::Corrupt`. Tables are sized for
+  full residency — 10 MB is a normal large table, 100 MB the working extreme — so an `AssetRef`
+  cell yields a bare `AssetId` and the table **never** loads what it references; the consumer
+  decides. `FieldClassForColumnKind` is the explicit column-kind → `FieldClass` mapping, since a
+  column's `Int` is always i64 and its `Float` always f32 while `FieldClass` distinguishes neither.
 - **Load is by opaque `u64` `AssetId`** through mounted archives.
   `AssetManager::Load<T>(AssetId)` is **async by default**: it returns a not-yet-resident
   `AssetHandle<T>` immediately and runs the decode + GPU upload on the task system (transfer

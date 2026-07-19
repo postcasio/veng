@@ -18,5 +18,6 @@ namespace Veng::Cook
         RegisterInputMapImporter(cooker);
         RegisterStyleSheetImporter(cooker);
         RegisterUIDocumentImporter(cooker);
+        RegisterTableImporters(cooker);
     }
 }

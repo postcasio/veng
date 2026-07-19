@@ -2,6 +2,7 @@
 #include <Veng/Module/Module.h>
 
 #include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/DataTable.h>
 #include <Veng/Asset/Level.h>
 #include <Veng/Gui/BindingContext.h>
 #include <Veng/Gui/Document.h>
@@ -11,6 +12,7 @@
 #include <Veng/Gui/Overlay.h>
 #include <Veng/Input.h>
 #include <Veng/LevelOverlay.h>
+#include <Veng/Log.h>
 #include <Veng/Reflection/Reflect.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/SceneSystem.h>
@@ -113,6 +115,12 @@ VE_GUI_DRIVER(TemplateOverlayDriver, 0xE9906144475EB699ULL, "Template Overlay");
 // builtin input systems plus TemplateOverlaySystem.
 constexpr AssetId OverlayLevelId{0x88B360A2DD16632EULL};
 
+// The cooked tuning table and the row this app reads out of it. Structured configuration lives in
+// a keyed DataTable validated against its schema at cook time, so the code looks a row up by key
+// instead of parsing a blob and re-checking its shape at startup.
+constexpr AssetId TuningTableId{0x3FDB8FFFCC00B911ULL};
+constexpr i64 TuningRowKey = 20;
+
 // The smallest veng game that also authors a HUD and opens a live sub-scene: the bare managed-world
 // app (a rotating cube driven entirely by cooked data) grows a minimal Application subclass. Its
 // jobs are the primary HUD's data binding (the one thing the engine cannot do from data alone) and
@@ -136,6 +144,8 @@ private:
             overlay.SetContext(&m_Context);
         }
 
+        LoadTuning();
+
         // Hold the overlay level asset resident so opening it is a spawn, not a load. Open still
         // waits on the spawn's residency (WaitForResidency), accepting the first-open hitch.
         if (const auto level = GetAssetManager().LoadSync<Level>(OverlayLevelId))
@@ -149,7 +159,8 @@ private:
     // bindings and composites the HUD, so the game writes no layout or attach code.
     void OnUpdate(const f32 delta) override
     {
-        m_Model.Caption = fmt::format("{:.0f} fps", delta > 0.0f ? 1.0f / delta : 0.0f);
+        m_Model.Caption =
+            fmt::format("{} — {:.0f} fps", m_TuningLabel, delta > 0.0f ? 1.0f / delta : 0.0f);
         m_Model.Level = std::clamp(delta > 0.0f ? (1.0f / delta) / 120.0f : 0.0f, 0.0f, 1.0f);
         m_Context.Invalidate();
 
@@ -178,6 +189,33 @@ private:
                 m_Overlay.reset();
             }
         }
+    }
+
+    // Reads the app's tuning row out of the cooked table: one key lookup, then typed accessors
+    // resolved once each. The AssetRef cell yields a bare AssetId — the table holds no handle to
+    // the icon texture and never loads it, so reading the row costs nothing beyond the row itself.
+    void LoadTuning()
+    {
+        const AssetResult<AssetHandle<DataTable>> tuning =
+            GetAssetManager().LoadSync<DataTable>(TuningTableId);
+        if (!tuning)
+        {
+            return;
+        }
+
+        const optional<u32> row = (*tuning)->FindRow(TuningRowKey);
+        if (!row)
+        {
+            return;
+        }
+
+        const TableColumn<std::string_view> label = (*tuning)->GetColumn<std::string_view>("label");
+        const TableColumn<f32> spinSpeed = (*tuning)->GetColumn<f32>("spinSpeed");
+        const TableColumn<AssetId> icon = (*tuning)->GetColumn<AssetId>("icon");
+
+        m_TuningLabel = string(label[*row]);
+        Log::Info("Template: tuning row {} is '{}' at {:.2f} rad/s, icon {:#018x}", TuningRowKey,
+                  m_TuningLabel, spinSpeed[*row], icon[*row].Value);
     }
 
     // Opens the overlay level over the running frame: a fresh owned world simulated concurrently, its
@@ -209,6 +247,9 @@ private:
 
     TemplateHud m_Model;
     Gui::BindingContext m_Context;
+
+    // The label read out of the tuning table at startup, shown alongside the frame rate.
+    string m_TuningLabel = "untuned";
 
     // The overlay level asset, held resident from OnWorldLoaded, and the live handle while it is open.
     AssetHandle<Level> m_OverlayLevel;

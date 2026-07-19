@@ -45,6 +45,8 @@ namespace VengEditor
             {AssetTypes::Font, {0.65f, 0.35f, 0.65f, 1.0f}},
             {AssetTypes::StyleSheet, {0.40f, 0.60f, 0.75f, 1.0f}},
             {AssetTypes::UIDocument, {0.75f, 0.55f, 0.40f, 1.0f}},
+            {AssetTypes::TableSchema, {0.45f, 0.65f, 0.55f, 1.0f}},
+            {AssetTypes::DataTable, {0.35f, 0.75f, 0.65f, 1.0f}},
             {AssetTypes::Raw, {0.50f, 0.50f, 0.50f, 1.0f}},
         };
 

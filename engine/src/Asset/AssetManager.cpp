@@ -6,6 +6,7 @@
 #include <Veng/Task/TaskSystem.h>
 
 #include "Loaders/AnimationLoader.h"
+#include "Loaders/DataTableLoader.h"
 #include "Loaders/EnvironmentLoader.h"
 #include "Loaders/FontLoader.h"
 #include "Loaders/InputMapLoader.h"
@@ -17,6 +18,7 @@
 #include "Loaders/RawAssetLoader.h"
 #include "Loaders/ShaderLoader.h"
 #include "Loaders/SkeletonLoader.h"
+#include "Loaders/TableSchemaLoader.h"
 #include "Loaders/StyleSheetLoader.h"
 #include "Loaders/TextureLoader.h"
 #include "Loaders/UIDocumentLoader.h"
@@ -52,6 +54,8 @@ namespace Veng
         RegisterLoader(CreateUnique<InputMapLoader>());
         RegisterLoader(CreateUnique<StyleSheetLoader>());
         RegisterLoader(CreateUnique<UIDocumentLoader>());
+        RegisterLoader(CreateUnique<TableSchemaLoader>());
+        RegisterLoader(CreateUnique<DataTableLoader>());
 
 #ifdef VENG_HAS_CORE_PACK
         const VoidResult coreMount = MountBytes(
