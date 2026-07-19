@@ -960,7 +960,20 @@ if (VENG_BUILD_TESTS)
     target_link_libraries(veng_test_bad_version_module PRIVATE veng::veng)
     # ABI 5 is the version immediately before the GuiDriverRegistry member landed (ABI 6): a module
     # built against it must be rejected at load, never entered.
-    target_compile_definitions(veng_test_bad_version_module PRIVATE VENG_MODULE_ABI_VERSION=5u)
+    target_compile_definitions(veng_test_bad_version_module PRIVATE VENG_MODULE_ABI_VERSION=6u)
+
+    # The cook-module pair, mirroring the runtime pair above: one good module registering an
+    # importer for the asset type veng_test_module registers the identity of, one forced onto a
+    # stale cook ABI so the second handshake is proven to reject independently of the first. Both
+    # link veng::cook_interface, never libveng_cook — the layering the seam exists to enforce.
+    add_library(veng_test_cook_module SHARED tests/cooker/test_cook_module.cpp)
+    target_link_libraries(veng_test_cook_module PRIVATE veng::cook_interface veng::veng)
+    target_include_directories(veng_test_cook_module PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+
+    add_library(veng_test_bad_cook_module SHARED tests/cooker/test_cook_module.cpp)
+    target_link_libraries(veng_test_bad_cook_module PRIVATE veng::cook_interface veng::veng)
+    target_include_directories(veng_test_bad_cook_module PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    target_compile_definitions(veng_test_bad_cook_module PRIVATE VENG_COOK_MODULE_ABI_VERSION=0u)
 
     add_executable(veng_test_loader tests/module/loader_test.cpp)
     target_link_libraries(veng_test_loader PRIVATE veng::veng)
@@ -1363,6 +1376,7 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle)
             tests/cooker/vertex_layout_cook.cpp
             tests/cooker/verify.cpp
             tests/cooker/module_reflect.cpp
+            tests/cooker/cook_module.cpp
             tests/cooker/prefab_cook.cpp
             tests/cooker/prefab_variant_cook.cpp
             tests/cooker/prefab_save_roundtrip.cpp
@@ -1387,11 +1401,15 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle)
             ${CMAKE_CURRENT_SOURCE_DIR}/engine/src
             ${CMAKE_CURRENT_SOURCE_DIR}/cooker/src
             ${CMAKE_CURRENT_SOURCE_DIR}/tests)
-    add_dependencies(veng_test_cooker hello_triangle veng_test_bad_version_module)
+    add_dependencies(veng_test_cooker hello_triangle veng_test_bad_version_module
+            veng_test_module veng_test_cook_module veng_test_bad_cook_module)
     target_compile_definitions(veng_test_cooker PRIVATE
             VENG_COOKER_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/cooker/fixtures"
             VENG_HELLO_TRIANGLE_MODULE_PATH="$<TARGET_FILE:hello_triangle>"
             VENG_BAD_VERSION_MODULE_PATH="$<TARGET_FILE:veng_test_bad_version_module>"
+            VENG_TEST_MODULE_PATH="$<TARGET_FILE:veng_test_module>"
+            VENG_TEST_COOK_MODULE_PATH="$<TARGET_FILE:veng_test_cook_module>"
+            VENG_BAD_VERSION_COOK_MODULE_PATH="$<TARGET_FILE:veng_test_bad_cook_module>"
             VENG_HT_ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples/hello-triangle/assets"
             VENG_CORE_PACK_JSON="${VENG_CORE_PACK_JSON}"
             # A material cook reflects a fragment that `#include`s the engine header; the

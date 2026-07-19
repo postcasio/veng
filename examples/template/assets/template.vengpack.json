@@ -95,6 +95,11 @@
       "id": "0x88B360A2DD16632E",
       "type": "Level",
       "source": "levels/overlay.level.json"
+    },
+    {
+      "id": "0x4A433D1EA2E5ACF2",
+      "type": "MarkerSet",
+      "source": "markers/template.markers.json"
     }
   ]
 }

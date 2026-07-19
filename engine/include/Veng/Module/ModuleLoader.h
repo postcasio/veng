@@ -30,6 +30,16 @@ namespace Veng
         /// @param host  Host registries the module writes into.
         void Register(VengModuleHost& host) const;
 
+        /// @brief Resolves an exported symbol by name, or null when the module exports none.
+        ///
+        /// The generic entry resolver behind Register: a host defining its own C-ABI entry
+        /// (the cooker's importer-registration entry) resolves it through this rather than
+        /// reimplementing the platform loader. The returned pointer is valid only while this
+        /// handle is alive.
+        /// @param symbol  The exported symbol name to resolve.
+        /// @return The symbol's address, or nullptr when the module exports no such name.
+        [[nodiscard]] void* Resolve(const char* symbol) const;
+
     private:
         friend class ModuleLoader;
         LoadedModule() = default;
@@ -46,8 +56,15 @@ namespace Veng
         ///
         /// A missing/unloadable file, a missing version symbol, or a version mismatch
         /// is returned as a Result error — the launcher reports it and exits.
-        /// @param modulePath  Path to the shared library to load.
+        /// The version symbol and expected value are parameters so a second C-ABI contract
+        /// carried by the same image (the cooker's importer entry) gets its own independent
+        /// handshake without a second platform loader.
+        /// @param modulePath      Path to the shared library to load.
+        /// @param versionSymbol   Exported no-argument function returning the module's ABI version.
+        /// @param expectedVersion The version the host was built against.
         /// @return The loaded module on success, or an error string on failure.
-        [[nodiscard]] static Result<LoadedModule> Load(const path& modulePath);
+        [[nodiscard]] static Result<LoadedModule>
+        Load(const path& modulePath, const char* versionSymbol = "VengModuleAbiVersion",
+             u32 expectedVersion = VENG_MODULE_ABI_VERSION);
     };
 }

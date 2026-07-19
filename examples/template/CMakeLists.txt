@@ -27,6 +27,10 @@ veng_add_project(template_assets
         # The pack carries a prefab + level, so the cook reflects libtemplate's types and
         # systems via --module (here only the engine builtins).
         MODULE     template
+        # The pack also carries a MarkerSet — an asset type the engine does not define — so the
+        # cook is ordered behind the cook module that contributes its importer. vengc finds the
+        # module itself, beside --module's argument; this only sequences the build.
+        COOK_MODULE template_cook
         # The material's vertex shader references the core canonical vertex layout by
         # AssetId; resolve it from the engine core pack (mode-resolved by the package).
         REFERENCE  ${veng_CORE_PACK_JSON})
@@ -41,8 +45,13 @@ veng_add_project(template_assets
 # wants the --connect client in its ship exe — a template still MCP-free would leave the opt-in
 # untested through the out-of-tree package path. Note this opts in only the launcher's *client*;
 # the template links no veng::mcp server (an MCP server is not part of "the smallest correct app").
+#
+# COOK_SOURCES emits libtemplate_cook, the tool-only cook module carrying the importer for the
+# template's own asset type. vengc and the editor load it beside libtemplate; nothing at runtime
+# does, so it is not part of the relocatable set the launcher needs.
 veng_add_game(template
-        SOURCES main.cpp
+        SOURCES      main.cpp MarkerSet.cpp
+        COOK_SOURCES MarkerSetImporter.cpp
         PROJECT ${template_assets_HOST_TARGET}
         MCP)
 

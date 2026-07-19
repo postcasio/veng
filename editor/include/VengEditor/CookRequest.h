@@ -79,6 +79,11 @@ namespace VengEditor
     /// Mints a collision-free id checked against the given reference pack manifests — the
     /// in-process form of `vengc generate-id --reference`, so an editor-authored id is the
     /// same kind of mint the CLI produces. Null leaves authored materials on the hand-mint floor.
+    /// The host passes its own asset-type registry rather than the minter building one: a
+    /// project pack naming a game-defined type parses only against the registry the loaded game
+    /// module wrote into.
     /// @param referencePacks  Pack manifests whose ids the minted id must avoid.
-    using AssetIdMinter = Veng::function<Veng::AssetId(std::span<const Veng::path>)>;
+    /// @param assetTypes      Registry the reference manifests' type names resolve through.
+    using AssetIdMinter =
+        Veng::function<Veng::AssetId(std::span<const Veng::path>, const Veng::AssetTypeRegistry&)>;
 }

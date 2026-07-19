@@ -300,15 +300,18 @@ so the cooker and the runtime loader share one encoder.
 ## `vengc` subcommands
 
 - **`cook`** — build a `.vengpack` from a single manifest (`--module <lib>` to reflect a
-  game module's types **and systems** for prefab and level validation; `--config <file>`
+  game module's types **and systems** for prefab and level validation, which also loads the
+  sibling cook module for the game's own importers — see [Cook
+  modules](#cook-modules--a-games-own-importers); `--cook-module <lib>` to name that module
+  explicitly instead; `--config <file>`
   to select the build configuration whose role → format table the texture cook resolves
   through; `--shader-include <dir>` to add the engine core shader dir to every Slang session's
   search path so a consumer shader resolves `#include "Veng/surface.slang"`; `--cache-dir <dir>` to
   serve unchanged assets from the cook cache instead of re-encoding them, see [The cook
   cache](#the-cook-cache)). Engine-internal packs (the core pack, the editor icons) cook this way.
 - **`cook-project`** — cook a whole **project** for one configuration: `vengc cook-project
-  <project.veng> --config <name> --out-dir <dir> [--module <lib>] [--reference <pack>]...
-  [--shader-include <dir>] [--cache-dir <dir>]`.
+  <project.veng> --config <name> --out-dir <dir> [--module <lib>] [--cook-module <lib>]
+  [--reference <pack>]... [--shader-include <dir>] [--cache-dir <dir>]`.
   `ParseProject` hand-parses the project's `packs`, `configurations`, and `startupLevel`;
   the named configuration is matched by `BuildConfiguration.Name`; each pack cooks into
   `<stem><suffix>.vengpack` and a `<projstem><suffix>.vengproj` (`WriteCookedProject`) names
@@ -322,7 +325,8 @@ so the cooker and the runtime loader share one encoder.
   mismatch.
 - **`generate-id`** — mint a collision-free `AssetId` (prints the zero-padded hex in both
   spellings: `0x{:016X}ULL` for C++ literals and `"0x{:016X}"` for JSON packs;
-  `--reference <pack.json>` to avoid existing ids). The same mint is a
+  `--reference <pack.json>` to avoid existing ids; `--module <lib>` when a reference pack names a
+  game-defined asset type, whose name resolves only against that module's registrations). The same mint is a
   callable in-process API — `GenerateAssetId(span<const path> referencePackPaths)` (`Cooker.h`,
   over `ParseAssetPack` + the `AssetPack`-checking overload) — so the editor mints the
   `defaultInstance` id without shelling out to the CLI.
@@ -333,6 +337,40 @@ so the cooker and the runtime loader share one encoder.
   type ids, so a pack has nothing to check against. `GenerateAssetTypeId(const AssetTypeRegistry&)`
   (`Cook/AssetPack.h`) is the in-process form.
 - The tool can also emit a **type manifest**.
+
+## Cook modules — a game's own importers
+
+A game defines whole asset types of its own, and the offline half arrives through a second
+dlopened image: **`lib<game>_cook`**, emitted by `veng_add_game(... COOK_SOURCES ...)`. Both
+`cook` and `cook-project` load it beside `--module`'s argument (`SiblingCookModulePath`: same
+directory, same extension, stem suffixed `_cook`); `--cook-module <path>` replaces that lookup
+entirely. An absent sibling simply means the game defines no importers; an explicit path that
+fails to load, or any image that fails the handshake, is fatal.
+
+- **It must not link `libveng_cook`.** That static library carries the cooker's machinery and its
+  process-wide state — the Slang session, the graph-shader resolver hook — and a second copy of
+  both would ride into the dlopened image beside the tool's own. The cook module links
+  **`veng::cook_interface`** instead: an INTERFACE target carrying the importer contract as
+  headers only (`Cook/Importer.h`, `Cook/CookModule.h`, nlohmann-json, `veng::assetpack`,
+  `JSON_NOEXCEPTION`). `libveng_cook` consumes the same headers, so there is one contract and no
+  duplicated machinery. `AssetImporterRegistry::Register` is inline for exactly this reason — an
+  out-of-line definition would be an unresolved symbol in the module.
+- **Its own ABI, versioned independently.** `VengCookModuleRegister(VengCookModuleHost*)` with a
+  `VengCookModuleAbiVersion` handshake (`VENG_COOK_MODULE_ABI_VERSION`, currently 1), so a change
+  to the importer surface never invalidates every runtime module. `ModuleLoader::Load` is
+  parameterized on the version symbol and expected value, so both contracts share one platform
+  loader.
+- **It registers importers only.** The asset type's *identity* — id, manifest name, display
+  metadata — registers through the runtime module's `VengModuleRegister`, which every host
+  reaches. Registering from both seams would deliver the same id twice in the editor, where both
+  images load, and duplicate ids abort. The cooker merges the runtime module's asset types into
+  its own registry (`MergeAssetTypes`) so a manifest entry naming a game type resolves.
+- **Lifetime.** `LoadedCookModule` declares its `LoadedModule` handle before the importers it
+  collected, so the handle destructs last; anything the importers move into (a `Cooker`) must
+  likewise be declared after the handle. The **bootstrap cooker never loads cook modules** — the
+  veng-free edge is untouched.
+- The editor loads the same sibling per cook request (`CookSession`), so a game-typed source
+  recooks in-editor and hot-reloads.
 
 ## Build wiring
 

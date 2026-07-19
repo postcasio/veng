@@ -13,6 +13,8 @@
 
 #include <cstdio>
 
+#include <Veng/Asset/AssetLoaderRegistry.h>
+#include <Veng/Asset/AssetType.h>
 #include <Veng/Module/ApplicationRegistry.h>
 #include <Veng/Module/Module.h>
 #include <Veng/Module/ModuleLoader.h>
@@ -77,21 +79,53 @@ int main()
             ApplicationRegistry app;
             TypeRegistry types;
             SystemRegistry systems;
+            AssetTypeRegistry assetTypes;
+            AssetLoaderRegistry assetLoaders;
             RegisterBuiltinTypes(types);
+            RegisterBuiltinAssetTypes(assetTypes);
             VengModuleHost host{.App = app,
                                 .Types = types,
                                 .Systems = systems,
+                                .AssetTypes = assetTypes,
+                                .AssetLoaders = assetLoaders,
                                 .Drivers = nullptr,
                                 .Editor = nullptr};
 
             Check(!app.HasApplication(), "no Application before Register");
             Check(!types.IsRegistered(TypeIdOf<Probe>()), "game component absent before Register");
+            Check(assetTypes.IsRegistered(AssetTypes::Texture),
+                  "builtin asset type present before Register");
+            Check(!assetTypes.IsRegistered(ProbeAssetType),
+                  "game asset type absent before Register");
+            Check(!assetLoaders.IsRegistered(ProbeAssetType),
+                  "game loader factory absent before Register");
 
             loaded->Register(host);
 
             Check(app.HasApplication(), "Application factory registered after Register");
             Check(types.IsRegistered(TypeIdOf<Probe>()),
                   "game component registered after Register");
+
+            // The asset-type seam: identity + display metadata and an inert loader factory both
+            // land with no Context, AssetManager, or device anywhere in the process.
+            Check(assetTypes.IsRegistered(ProbeAssetType),
+                  "game asset type registered after Register");
+            Check(assetTypes.GetName(ProbeAssetType) == ProbeAssetTypeName,
+                  "game asset type resolves to its registered manifest name");
+            Check(assetTypes.FindByName(ProbeAssetTypeName) ==
+                      optional<AssetTypeId>(ProbeAssetType),
+                  "game asset type resolves by manifest name");
+            Check(assetTypes.GetDisplayName(ProbeAssetType) == "Probe Asset",
+                  "game asset type carries its editor display name");
+            Check(assetLoaders.IsRegistered(ProbeAssetType),
+                  "game loader factory registered after Register");
+
+            // The factory produces a loader claiming exactly the type it was registered under —
+            // the invariant the AssetManager asserts when it instantiates the registry.
+            const auto factory = assetLoaders.All().find(ProbeAssetType);
+            Check(factory != assetLoaders.All().end() && factory->second() != nullptr &&
+                      factory->second()->Type() == ProbeAssetType,
+                  "game loader factory produces a loader for its own asset type");
 
             if (types.IsRegistered(TypeIdOf<Probe>()))
             {

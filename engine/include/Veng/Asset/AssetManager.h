@@ -7,6 +7,7 @@
 #include <Veng/Asset/AssetHandle.h>
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Asset/AssetLoader.h>
+#include <Veng/Asset/AssetLoaderRegistry.h>
 #include <Veng/Asset/AssetType.h>
 #include <Veng/Task/TaskSystem.h>
 
@@ -23,6 +24,18 @@ namespace Veng
     /// @brief Construction parameters for AssetManager.
     struct AssetManagerInfo
     {
+        /// @brief Host-owned asset-type identities, used to name a type in a diagnostic.
+        ///
+        /// Null (the default) leaves the manager naming types by their hex id. Type *dispatch*
+        /// keys on the id value and never consults this. Must outlive the manager.
+        const AssetTypeRegistry* AssetTypes = nullptr;
+        /// @brief Host-owned loader factories a module registered, instantiated at construction.
+        ///
+        /// Null (the default) means no module-defined asset types. Each factory produces one
+        /// loader for a type the engine does not itself handle; claiming a builtin type is fatal.
+        /// @warning The factories and the loaders they produce live in the module image, so the
+        ///          module handle must outlive this manager.
+        const AssetLoaderRegistry* Loaders = nullptr;
     };
 
     /// @brief RAII token for an in-memory archive mounted via MountMemory.
@@ -423,10 +436,15 @@ namespace Veng
 
         void RegisterLoader(Unique<AssetLoader> loader);
 
+        /// @brief Names an asset type through the host registry, or renders its hex id without one.
+        [[nodiscard]] string TypeName(AssetTypeId type) const;
+
         Renderer::Context& m_Context;
         TaskSystem& m_Tasks;
         /// @brief Borrowed; the prefab loader reflects component fields through it.
         TypeRegistry& m_Types;
+        /// @brief Borrowed host-owned asset-type names, or null when the host registered none.
+        const AssetTypeRegistry* m_AssetTypes = nullptr;
 
         vector<MountedArchive> m_Mounts;
         vector<MemoryMount> m_MemoryMounts;

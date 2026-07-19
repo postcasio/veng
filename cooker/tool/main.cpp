@@ -2,6 +2,7 @@
 #include <Veng/Cook/AssetPack.h>
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/CookCache.h>
+#include <Veng/Cook/CookModule.h>
 #include <Veng/Cook/Cooker.h>
 #include <Veng/Cook/ModuleTypes.h>
 #include <Veng/Cook/Verify.h>
@@ -27,12 +28,14 @@ namespace
     {
         fmt::print(stderr, "usage:\n"
                            "  vengc cook <pack.json> [-o <out.vengpack>] [--reference "
-                           "<pack.json>]... [--module <lib>] [--config <file.buildcfg>] "
+                           "<pack.json>]... [--module <lib>] [--cook-module <lib>] "
+                           "[--config <file.buildcfg>] "
                            "[--shader-include <dir>] [--cache-dir <dir>] [--depfile <out.d>]\n"
                            "  vengc cook-project <project.veng> --config <name> --out-dir <dir> "
-                           "[--reference <pack.json>]... [--module <lib>] [--shader-include <dir>] "
+                           "[--reference <pack.json>]... [--module <lib>] [--cook-module <lib>] "
+                           "[--shader-include <dir>] "
                            "[--cache-dir <dir>] [--depfile <out.d>]\n"
-                           "  vengc generate-id [--reference <pack.json>]...\n"
+                           "  vengc generate-id [--reference <pack.json>]... [--module <lib>]\n"
                            "  vengc generate-type-id [--module <lib>]\n"
                            "  vengc generate-asset-type [--module <lib>]\n"
                            "  vengc verify <archive.vengpack>\n");
@@ -82,6 +85,41 @@ namespace
         return std::move(*opened);
     }
 
+    // Resolves and loads the game's optional cook module. An explicit --cook-module replaces the
+    // sibling lookup entirely, so a path that does not load is fatal; an absent sibling simply
+    // means the game defines no importers of its own. A module that loads but fails its ABI
+    // handshake is fatal either way — a silently skipped stale cook module would surface as an
+    // unregistered-type cook error a long way from its cause.
+    optional<LoadedCookModule> LoadGameCookModule(const optional<path>& modulePath,
+                                                  const optional<path>& cookModulePath)
+    {
+        path resolved;
+        if (cookModulePath)
+        {
+            resolved = *cookModulePath;
+        }
+        else if (modulePath)
+        {
+            resolved = SiblingCookModulePath(*modulePath);
+            if (!std::filesystem::exists(resolved))
+            {
+                return std::nullopt;
+            }
+        }
+        else
+        {
+            return std::nullopt;
+        }
+
+        Result<LoadedCookModule> loaded = LoadCookModule(resolved);
+        if (!loaded)
+        {
+            fmt::print(stderr, "vengc: {}\n", loaded.error());
+            std::exit(1);
+        }
+        return std::move(*loaded);
+    }
+
     // Prints the loaded type table as a name → TypeId manifest (stdout, not persisted).
     void PrintTypeManifest(const TypeRegistry& types)
     {
@@ -125,6 +163,7 @@ int main(int argc, char** argv)
         optional<path> outPath;
         vector<path> referencePacks;
         optional<path> modulePath;
+        optional<path> cookModulePath;
         optional<path> configPath;
         optional<path> shaderIncludePath;
         optional<path> cacheDirPath;
@@ -167,6 +206,15 @@ int main(int argc, char** argv)
                     return 1;
                 }
                 modulePath = path(args[++i]);
+            }
+            else if (args[i] == "--cook-module")
+            {
+                if (i + 1 >= args.size())
+                {
+                    fmt::print(stderr, "vengc: --cook-module requires an argument\n");
+                    return 1;
+                }
+                cookModulePath = path(args[++i]);
             }
             else if (args[i] == "--config")
             {
@@ -235,6 +283,10 @@ int main(int argc, char** argv)
         const TypeRegistry* types = moduleTypes ? &moduleTypes->Types : nullptr;
         const SystemRegistry* systems = moduleTypes ? &moduleTypes->Systems : nullptr;
 
+        // Declared before the Cooker so it is destroyed after it: the importers move into the
+        // cooker, and their code lives in this image.
+        optional<LoadedCookModule> cookModule = LoadGameCookModule(modulePath, cookModulePath);
+
         // The resolved build configuration drives the texture role → format resolution, the
         // archive compression level, and is recorded as a central depfile input. Absent --config
         // the cook is the zero-config ASTC default.
@@ -252,6 +304,17 @@ int main(int argc, char** argv)
 
         Cooker cooker;
         RegisterBuiltinImporters(cooker);
+        // The game module's asset-type names must reach the cooker's registry before the manifest
+        // is parsed, or an entry naming a game type resolves to nothing; its importers come from
+        // the cook module.
+        if (moduleTypes)
+        {
+            MergeAssetTypes(moduleTypes->AssetTypes, cooker.GetAssetTypes());
+        }
+        if (cookModule)
+        {
+            cookModule->Importers.MoveInto(cooker);
+        }
 
         const optional<CookCache> cache = OpenCache(cacheDirPath, argv[0]);
 
@@ -289,6 +352,7 @@ int main(int argc, char** argv)
         optional<string> configName;
         optional<path> outDir;
         optional<path> modulePath;
+        optional<path> cookModulePath;
         optional<path> shaderIncludePath;
         optional<path> cacheDirPath;
         optional<path> depfilePath;
@@ -340,6 +404,15 @@ int main(int argc, char** argv)
                     return 1;
                 }
                 modulePath = path(args[++i]);
+            }
+            else if (args[i] == "--cook-module")
+            {
+                if (i + 1 >= args.size())
+                {
+                    fmt::print(stderr, "vengc: --cook-module requires an argument\n");
+                    return 1;
+                }
+                cookModulePath = path(args[++i]);
             }
             else if (args[i] == "--reference")
             {
@@ -425,8 +498,20 @@ int main(int argc, char** argv)
         const TypeRegistry* types = moduleTypes ? &moduleTypes->Types : nullptr;
         const SystemRegistry* systems = moduleTypes ? &moduleTypes->Systems : nullptr;
 
+        // Declared before the Cooker so it is destroyed after it: the importers move into the
+        // cooker, and their code lives in this image.
+        optional<LoadedCookModule> cookModule = LoadGameCookModule(modulePath, cookModulePath);
+
         Cooker cooker;
         RegisterBuiltinImporters(cooker);
+        if (moduleTypes)
+        {
+            MergeAssetTypes(moduleTypes->AssetTypes, cooker.GetAssetTypes());
+        }
+        if (cookModule)
+        {
+            cookModule->Importers.MoveInto(cooker);
+        }
 
         const optional<CookCache> cache = OpenCache(cacheDirPath, argv[0]);
 
@@ -502,10 +587,8 @@ int main(int argc, char** argv)
     // -------------------------------------------------------------------
     if (subcommand == "generate-id")
     {
-        AssetTypeRegistry assetTypes;
-        RegisterBuiltinAssetTypes(assetTypes);
-
         vector<path> referencePacks;
+        optional<path> modulePath;
 
         for (usize i = 1; i < args.size(); ++i)
         {
@@ -518,6 +601,15 @@ int main(int argc, char** argv)
                 }
                 referencePacks.emplace_back(args[++i]);
             }
+            else if (args[i] == "--module")
+            {
+                if (i + 1 >= args.size())
+                {
+                    fmt::print(stderr, "vengc: --module requires an argument\n");
+                    return 1;
+                }
+                modulePath = path(args[++i]);
+            }
             else
             {
                 fmt::print(stderr, "vengc: unexpected argument '{}'\n", args[i]);
@@ -525,11 +617,30 @@ int main(int argc, char** argv)
             }
         }
 
+        // A reference manifest naming a module-defined type only parses once that module's type
+        // names are known, so --module is required whenever a reference pack carries one. The
+        // module image must outlive the registry it populates.
+        AssetTypeRegistry builtins;
+        RegisterBuiltinAssetTypes(builtins);
+        optional<LoadedModuleTypes> moduleTypes;
+        const AssetTypeRegistry* assetTypes = &builtins;
+        if (modulePath)
+        {
+            Result<LoadedModuleTypes> loaded = LoadModuleTypes(*modulePath);
+            if (!loaded)
+            {
+                fmt::print(stderr, "vengc: {}\n", loaded.error());
+                return 1;
+            }
+            moduleTypes = std::move(*loaded);
+            assetTypes = &moduleTypes->AssetTypes;
+        }
+
         vector<AssetPack> packs;
         packs.reserve(referencePacks.size());
         for (const path& refPath : referencePacks)
         {
-            Result<AssetPack> packResult = ParseAssetPack(refPath, assetTypes);
+            Result<AssetPack> packResult = ParseAssetPack(refPath, *assetTypes);
             if (!packResult)
             {
                 fmt::print(stderr, "vengc: {}\n", packResult.error());
@@ -636,11 +747,12 @@ int main(int argc, char** argv)
         // There is deliberately no --reference: a pack manifest carries type *names*, so it has
         // no minted type id to collide with. The id space lives in the builtin table and in the
         // registrations a loaded module contributes.
-        AssetTypeRegistry assetTypes;
-        RegisterBuiltinAssetTypes(assetTypes);
+        AssetTypeRegistry builtins;
+        RegisterBuiltinAssetTypes(builtins);
 
         // The module image must outlive the registry it populates.
         optional<LoadedModuleTypes> moduleTypes;
+        const AssetTypeRegistry* assetTypes = &builtins;
         if (modulePath)
         {
             Result<LoadedModuleTypes> loaded = LoadModuleTypes(*modulePath);
@@ -650,9 +762,10 @@ int main(int argc, char** argv)
                 return 1;
             }
             moduleTypes = std::move(*loaded);
+            assetTypes = &moduleTypes->AssetTypes;
         }
 
-        const AssetTypeId id = GenerateAssetTypeId(assetTypes);
+        const AssetTypeId id = GenerateAssetTypeId(*assetTypes);
         // One canonical spelling: a zero-padded 16-digit hex literal in C++, the same string
         // quoted in JSON.
         fmt::print("hex (C++):   0x{:016X}ULL\n", id.Value);

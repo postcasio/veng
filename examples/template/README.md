@@ -52,6 +52,16 @@ The world is authored as **cooked assets** under `assets/`, not built in code:
 - `materials/cube.vmat.json` + `shaders/flat.frag.slang` — the cube's flat surface
   material and its fragment shader.
 
+It also carries one asset type the **engine does not define**, as the in-repo exemplar of the
+custom-asset seam: a `MarkerSet` — a named list of positions — whose identity, cooked layout,
+runtime class, and loader live in `MarkerSet.h` / `MarkerSet.cpp`, and whose importer lives in
+`MarkerSetImporter.cpp`. That importer is built into a separate **cook module**
+(`COOK_SOURCES` on `veng_add_game`, emitting `libtemplate_cook`) that `vengc` and the editor load
+beside `libtemplate` and nothing at runtime loads. `VengModuleRegister` registers the type id, its
+manifest name, and a loader factory; `assets/markers/template.markers.json` authors the data;
+`TemplateApp::OnWorldLoaded` loads it through the ordinary `LoadSync<MarkerSet>` path. The full
+walkthrough is [`docs/guides/custom-asset-types.md`](../../docs/guides/custom-asset-types.md).
+
 Because the pack carries a prefab and a level, the cook reflects `libtemplate`'s types
 and systems (`MODULE template` in `CMakeLists.txt`) — here only the engine builtins.
 It ships a `project.veng` at the example root (listing its pack under `assets/` and a

@@ -33,8 +33,8 @@ namespace Veng
 namespace Veng
 {
     AssetManager::AssetManager(Renderer::Context& context, TaskSystem& tasks, TypeRegistry& types,
-                               const AssetManagerInfo& /*info*/)
-        : m_Context(context), m_Tasks(tasks), m_Types(types)
+                               const AssetManagerInfo& info)
+        : m_Context(context), m_Tasks(tasks), m_Types(types), m_AssetTypes(info.AssetTypes)
     {
         RegisterLoader(CreateUnique<RawAssetLoader>());
         RegisterLoader(CreateUnique<TextureLoader>());
@@ -52,6 +52,29 @@ namespace Veng
         RegisterLoader(CreateUnique<InputMapLoader>());
         RegisterLoader(CreateUnique<StyleSheetLoader>());
         RegisterLoader(CreateUnique<UIDocumentLoader>());
+
+        // Module-registered loaders come last, so a factory claiming a type the engine already
+        // handles is caught rather than silently shadowing the builtin — override semantics for
+        // builtin types stay engine-owned.
+        if (info.Loaders != nullptr)
+        {
+            for (const auto& [type, factory] : info.Loaders->All())
+            {
+                VE_ASSERT(!m_Loaders.contains(type),
+                          "AssetManager: a module registered a loader for asset type {}, which the "
+                          "engine already handles",
+                          TypeName(type));
+                Unique<AssetLoader> loader = factory();
+                VE_ASSERT(loader != nullptr,
+                          "AssetManager: loader factory for asset type {} produced null",
+                          TypeName(type));
+                VE_ASSERT(loader->Type() == type,
+                          "AssetManager: loader factory registered for asset type {} produced a "
+                          "loader claiming {}",
+                          TypeName(type), TypeName(loader->Type()));
+                RegisterLoader(std::move(loader));
+            }
+        }
 
 #ifdef VENG_HAS_CORE_PACK
         const VoidResult coreMount = MountBytes(
@@ -121,6 +144,11 @@ namespace Veng
     {
         const AssetTypeId type = loader->Type();
         m_Loaders[type] = std::move(loader);
+    }
+
+    string AssetManager::TypeName(AssetTypeId type) const
+    {
+        return m_AssetTypes != nullptr ? m_AssetTypes->GetName(type) : FormatHexId(type.Value);
     }
 
     MountHandle::~MountHandle()
@@ -222,7 +250,7 @@ namespace Veng
                 .Kind = AssetError::WrongType,
                 .Id = id,
                 .Detail = fmt::format("asset {} is asset type {}, not {}", id.Value,
-                                      FormatHexId(found->Type.Value), FormatHexId(type.Value)),
+                                      TypeName(found->Type), TypeName(type)),
             });
         }
 
@@ -232,8 +260,7 @@ namespace Veng
             return std::unexpected(AssetLoadError{
                 .Kind = AssetError::LoadFailed,
                 .Id = id,
-                .Detail =
-                    fmt::format("no loader registered for asset type {}", FormatHexId(type.Value)),
+                .Detail = fmt::format("no loader registered for asset type {}", TypeName(type)),
             });
         }
 

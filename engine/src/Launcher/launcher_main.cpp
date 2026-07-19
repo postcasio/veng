@@ -4,6 +4,8 @@
 #include <Veng/Module/ApplicationRegistry.h>
 #include <Veng/Module/Module.h>
 #include <Veng/Module/ModuleLoader.h>
+#include <Veng/Asset/AssetLoaderRegistry.h>
+#include <Veng/Asset/AssetType.h>
 #include <Veng/Gui/DriverRegistry.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/BuiltinSystems.h>
@@ -58,15 +60,24 @@ int main(const int argc, char** argv)
     Veng::ApplicationRegistry apps;
     Veng::TypeRegistry types;
     Veng::SystemRegistry systems;
+    Veng::AssetTypeRegistry assetTypes;
+    Veng::AssetLoaderRegistry assetLoaders;
     Veng::GuiDriverRegistry drivers;
 
     // Builtins must be present before the module registers its own: game components may reference
-    // builtin types, and a level names the builtin systems the engine pre-registers here.
+    // builtin types, a level names the builtin systems, and a module's asset type must not collide
+    // with an engine one — all pre-registered here.
     Veng::RegisterBuiltinTypes(types);
     Veng::RegisterBuiltinSystems(systems);
+    Veng::RegisterBuiltinAssetTypes(assetTypes);
 
-    Veng::VengModuleHost host{
-        .App = apps, .Types = types, .Systems = systems, .Drivers = &drivers, .Editor = nullptr};
+    Veng::VengModuleHost host{.App = apps,
+                              .Types = types,
+                              .Systems = systems,
+                              .AssetTypes = assetTypes,
+                              .AssetLoaders = assetLoaders,
+                              .Drivers = &drivers,
+                              .Editor = nullptr};
     module->Register(host);
 
     Veng::Unique<Veng::Application> app = apps.Create(types, systems);

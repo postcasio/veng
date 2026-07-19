@@ -76,23 +76,28 @@ namespace Veng
         return *this;
     }
 
+    void* LoadedModule::Resolve(const char* symbol) const
+    {
+#if defined(_WIN32)
+        return reinterpret_cast<void*>(GetProcAddress(static_cast<HMODULE>(m_Handle), symbol));
+#else
+        return dlsym(m_Handle, symbol);
+#endif
+    }
+
     void LoadedModule::Register(VengModuleHost& host) const
     {
         using EntryFn = void (*)(VengModuleHost*);
 
-#if defined(_WIN32)
-        auto entry = reinterpret_cast<EntryFn>(
-            GetProcAddress(static_cast<HMODULE>(m_Handle), "VengModuleRegister"));
-#else
-        auto entry = reinterpret_cast<EntryFn>(dlsym(m_Handle, "VengModuleRegister"));
-#endif
+        auto entry = reinterpret_cast<EntryFn>(Resolve("VengModuleRegister"));
 
         VE_ASSERT(entry != nullptr,
                   "module is version-matched but exports no VengModuleRegister entry");
         entry(&host);
     }
 
-    Result<LoadedModule> ModuleLoader::Load(const path& modulePath)
+    Result<LoadedModule> ModuleLoader::Load(const path& modulePath, const char* versionSymbol,
+                                            const u32 expectedVersion)
     {
         using VersionFn = u32 (*)();
 
@@ -104,8 +109,7 @@ namespace Veng
                                                modulePath.string(), LastLoaderError()));
         }
 
-        auto versionSymbol =
-            reinterpret_cast<VersionFn>(GetProcAddress(handle, "VengModuleAbiVersion"));
+        auto versionFn = reinterpret_cast<VersionFn>(GetProcAddress(handle, versionSymbol));
 #else
         void* handle = dlopen(modulePath.c_str(), RTLD_NOW | RTLD_LOCAL);
         if (!handle)
@@ -116,10 +120,10 @@ namespace Veng
                                                error ? error : "unknown error"));
         }
 
-        auto versionSymbol = reinterpret_cast<VersionFn>(dlsym(handle, "VengModuleAbiVersion"));
+        auto versionFn = reinterpret_cast<VersionFn>(dlsym(handle, versionSymbol));
 #endif
 
-        if (!versionSymbol)
+        if (!versionFn)
         {
 #if defined(_WIN32)
             FreeLibrary(handle);
@@ -127,13 +131,13 @@ namespace Veng
             dlclose(handle);
 #endif
             return std::unexpected(
-                fmt::format("module '{}' exports no VengModuleAbiVersion — not a veng module "
-                            "(engine expects ABI v{})",
-                            modulePath.string(), VENG_MODULE_ABI_VERSION));
+                fmt::format("module '{}' exports no {} — not a veng module of this kind "
+                            "(host expects ABI v{})",
+                            modulePath.string(), versionSymbol, expectedVersion));
         }
 
-        const u32 moduleVersion = versionSymbol();
-        if (moduleVersion != VENG_MODULE_ABI_VERSION)
+        const u32 moduleVersion = versionFn();
+        if (moduleVersion != expectedVersion)
         {
 #if defined(_WIN32)
             FreeLibrary(handle);
@@ -141,8 +145,8 @@ namespace Veng
             dlclose(handle);
 #endif
             return std::unexpected(
-                fmt::format("module '{}' built against ABI v{}, engine expects v{}",
-                            modulePath.string(), moduleVersion, VENG_MODULE_ABI_VERSION));
+                fmt::format("module '{}' built against ABI v{}, host expects v{}",
+                            modulePath.string(), moduleVersion, expectedVersion));
         }
 
         LoadedModule module;

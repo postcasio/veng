@@ -360,6 +360,21 @@ namespace Veng
         /// a misspelled engine or application flag is caught rather than silently ignored. An engine
         /// flag of the same name wins; declaring nothing leaves parsing to the engine flags alone.
         vector<LaunchOptionInfo> LaunchOptions;
+        /// @brief Host-owned asset-type identities the AssetManager names types through.
+        ///
+        /// A module registers its own asset types into the host's registry through
+        /// VengModuleHost::AssetTypes and points this at the same registry from its Application
+        /// factory. Null (the default) means no module-defined asset types — the manager then
+        /// names a type by its hex id.
+        /// @warning Borrowed. The module handle must outlive the Application.
+        const AssetTypeRegistry* AssetTypes = nullptr;
+        /// @brief Host-owned AssetLoader factories the AssetManager instantiates at construction.
+        ///
+        /// The runtime half of a module-defined asset type: registered through
+        /// VengModuleHost::AssetLoaders before any Context exists, instantiated once the manager
+        /// is built. Null (the default) means no module-defined loaders.
+        /// @warning Borrowed. The module handle must outlive the Application.
+        const AssetLoaderRegistry* AssetLoaders = nullptr;
     };
 
     /// @brief The destination of an Application::Travel: the key, arrival payload, and presentation choice.

@@ -1,8 +1,11 @@
 #include <Veng/Application.h>
 #include <Veng/Module/Module.h>
 
+#include <Veng/Asset/AssetLoaderRegistry.h>
 #include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/AssetType.h>
 #include <Veng/Asset/Level.h>
+#include <Veng/Log.h>
 #include <Veng/Gui/BindingContext.h>
 #include <Veng/Gui/Document.h>
 #include <Veng/Gui/Driver.h>
@@ -20,6 +23,8 @@
 
 #include <algorithm>
 #include <optional>
+
+#include "MarkerSet.h"
 
 using namespace Veng;
 
@@ -113,6 +118,11 @@ VE_GUI_DRIVER(TemplateOverlayDriver, 0xE9906144475EB699ULL, "Template Overlay");
 // builtin input systems plus TemplateOverlaySystem.
 constexpr AssetId OverlayLevelId{0x88B360A2DD16632EULL};
 
+// The game-defined marker set cooked by the template's own cook module. It loads through the
+// ordinary typed path — Load/LoadSync behind AssetHandle<T> — because the module registered its
+// type id and a loader factory; the engine has no compile-time knowledge of it.
+constexpr AssetId MarkerSetId{0x4A433D1EA2E5ACF2ULL};
+
 // The smallest veng game that also authors a HUD and opens a live sub-scene: the bare managed-world
 // app (a rotating cube driven entirely by cooked data) grows a minimal Application subclass. Its
 // jobs are the primary HUD's data binding (the one thing the engine cannot do from data alone) and
@@ -142,6 +152,19 @@ private:
         {
             m_OverlayLevel = *level;
         }
+
+        // The custom-asset seam's end-to-end proof: a type the engine does not define, cooked by
+        // the game's own importer, resolves through the engine's own typed load path.
+        const auto markers = GetAssetManager().LoadSync<Template::MarkerSet>(MarkerSetId);
+        VE_ASSERT(markers.has_value(), "template: marker set failed to load: {}",
+                  markers ? string{} : markers.error().Detail);
+        m_Markers = *markers;
+
+        const Template::Marker* const overlook = m_Markers->Find("overlook");
+        VE_ASSERT(overlook != nullptr, "template: marker set declares no 'overlook' marker");
+        Log::Info("template: marker set loaded, {} markers, 'overlook' at ({}, {}, {})",
+                  m_Markers->Markers.size(), overlook->Position.x, overlook->Position.y,
+                  overlook->Position.z);
     }
 
     // Feed the primary HUD's bound fields, toggle the overlay on Tab, and — while it is open — tick it
@@ -213,6 +236,9 @@ private:
     // The overlay level asset, held resident from OnWorldLoaded, and the live handle while it is open.
     AssetHandle<Level> m_OverlayLevel;
     std::optional<LevelOverlay> m_Overlay;
+
+    // The game-defined asset, held resident for the app's lifetime.
+    AssetHandle<Template::MarkerSet> m_Markers;
 };
 
 extern "C" void VengModuleRegister(VengModuleHost* host)
@@ -226,8 +252,24 @@ extern "C" void VengModuleRegister(VengModuleHost* host)
     {
         host->Drivers->Register<TemplateOverlayDriver>();
     }
+
+    // The game-defined asset type registers here and nowhere else: this entry is reachable from
+    // every host (launcher, cooker, editor), so one registration serves all three. The cook module
+    // contributes only the importer — registering the id from both seams would deliver it twice in
+    // the editor, where both images load, and a duplicate id is fatal.
+    host->AssetTypes.Register(AssetTypeInfo{.Id = Template::MarkerSetAssetType,
+                                            .Name = Template::MarkerSetTypeName,
+                                            .DisplayName = "Marker Set",
+                                            .Glyph = "MRK"});
+    host->AssetLoaders.Register(Template::MarkerSetAssetType, []
+                                { return Unique<AssetLoader>(new Template::MarkerSetLoader()); });
+
+    // The registries are host-owned and outlive this module, so the factory captures them and
+    // points the app's AssetManager at them — the ApplicationInfo fields are how a module-defined
+    // loader reaches the running manager.
     host->App.RegisterApplication(
-        [](TypeRegistry& types, SystemRegistry& systems)
+        [assetTypes = &host->AssetTypes,
+         assetLoaders = &host->AssetLoaders](TypeRegistry& types, SystemRegistry& systems)
         {
             return Unique<Application>(new TemplateApp(
                 ApplicationInfo{
@@ -244,6 +286,8 @@ extern "C" void VengModuleRegister(VengModuleHost* host)
                     // secondary overlay level.
                     .ManagedViewport = ManagedViewportInfo{},
                     .World = GameWorldInfo{.Project = "project.vengproj"},
+                    .AssetTypes = assetTypes,
+                    .AssetLoaders = assetLoaders,
                 },
                 types, systems));
         });

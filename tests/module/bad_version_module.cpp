@@ -1,6 +1,6 @@
 // The same minimal module as test_module.cpp, but its target forces a stale
-// VENG_MODULE_ABI_VERSION (-DVENG_MODULE_ABI_VERSION=5u — the version before the
-// GuiDriverRegistry member grew VengModuleHost to ABI 6), so its exported
+// VENG_MODULE_ABI_VERSION (-DVENG_MODULE_ABI_VERSION=6u — the version before the asset-type
+// and loader-factory registries grew VengModuleHost to ABI 7), so its exported
 // VengModuleAbiVersion disagrees with the engine's. Proves the loader's
 // handshake rejects a stale module without ever calling its entry.
 
