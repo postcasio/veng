@@ -49,6 +49,13 @@ symbol: build the Doxygen reference with `cmake --build build --target docs`
   contract-versus-guidance, input-suspend versus the opt-in `CoveredWorld` pause, stacking, and
   reading results back); and authoring a mirror or probe with a `CaptureSurface` (the
   same-entity material binding and the `everyFrame`/`onDemand` refresh policy).
+- **[Authoring a data table](guides/authoring-data-tables.md)** — the
+  `TableSchema` / `DataTable` pair: declaring columns as reflected types (and the
+  fully-qualified type-name spelling authoring JSON uses), which types can be a
+  key, authoring rows and what the cook rejects, reading a row back through
+  `FindRow` plus the zero-copy `GetColumn<T>` / general `ReadCell` / typed
+  `ReadRow<T>` accessors, the fixed-stride fast path nothing should branch on,
+  and the two editor panels.
 - **[Consuming veng](guides/consuming-veng.md)** — discovering veng from a game
   project with `find_package(veng)`: the three consumption modes (in-tree, build
   tree, install prefix), the `veng_ROOT` / `CMAKE_PREFIX_PATH` /

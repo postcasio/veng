@@ -126,9 +126,11 @@ namespace Veng::Cook
     /// @brief The per-entry inputs, all known before cooking, that select a cache entry.
     ///
     /// These are only half the key: the tool tag (see ComputeCookToolTag) fingerprints the code
-    /// that does the cooking, and these fields the data it cooks. Two cooks agreeing on both
-    /// produce byte-identical stored blobs by construction, so between them they fold everything
-    /// that steers a blob's bytes: the cooker executable and both dlopened module images, plus the
+    /// that does the cooking, and these fields the data it cooks. Between them they fold in
+    /// everything that steers a blob's bytes, which is what makes replaying a stored blob under a
+    /// matching key valid rather than a guess — it is not a claim that two independent cooks of the
+    /// same input emit identical bytes. The two halves cover: the cooker executable and both
+    /// dlopened module images, plus the
     /// entry's manifest JSON (id, type, per-asset fields), the pack directory (source paths are
     /// relative to it, so it disambiguates two packs that reuse a relative source name), the active
     /// configuration's fingerprint (role → format table + zstd level, so macOS/Windows/debug/release
