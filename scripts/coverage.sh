@@ -2,7 +2,8 @@
 # Measure how much of veng's own sources the test suite exercises.
 #
 #   scripts/coverage.sh
-#   COVERAGE_CTEST_ARGS="-L unit|gpu" scripts/coverage.sh
+#   COVERAGE_CTEST_ARGS="-L unit" scripts/coverage.sh
+#   COVERAGE_CTEST_ARGS="" scripts/coverage.sh          # every test, CMake-script ones included
 #
 # Configures a dedicated build-coverage/ with VENG_ENABLE_COVERAGE=ON, builds it,
 # runs a CTest selection, and writes a gcovr report:
@@ -14,11 +15,22 @@
 # suppressed PCH are at odds with the primary build's caching, and because the .gcda
 # counters a run leaves behind should not accumulate in a tree used for ordinary work.
 #
-# The selection is one variable: COVERAGE_CTEST_ARGS defaults to the unit label and
-# takes any CTest argument list (empty runs everything). gcov merges the per-process
-# counters, so widening the selection needs no other change. Widen with one -L and a
-# regex alternation: CTest requires a test to match every -L given, so repeating the
-# flag intersects the labels and usually selects nothing.
+# The selection is one variable: COVERAGE_CTEST_ARGS defaults to every test that runs a
+# compiled binary, and takes any CTest argument list to change that. The default excludes
+# the CMake-script tests (add_test running `cmake -P`), for two distinct reasons:
+#
+#   - They produce no counters for this tree. sdk_conformance_* configures and builds a
+#     separate, uninstrumented SDK tree; cook_per_config reconfigures and rebuilds;
+#     validation_gate re-runs gpu binaries the selection already ran.
+#   - smoke_golden does run instrumented code, through the launcher, but asserts only that
+#     a rendered capture matches a golden image. The lines it marks covered are not thereby
+#     shown correct, so counting them inflates the report without evidencing anything.
+#
+# Setting the variable replaces the default outright, so an explicit value can put them back.
+#
+# gcov merges the per-process counters, so changing the selection needs no other change.
+# Narrow with one -L and a regex alternation: CTest requires a test to match every -L
+# given, so repeating the flag intersects the labels and usually selects nothing.
 #
 # Prerequisites are gcovr and a gcov-compatible tool. gcovr drives either GCC's gcov
 # or Clang's llvm-cov gcov via --gcov-executable, which is what makes the same report
@@ -28,7 +40,7 @@ set -eu
 cd "$(dirname "$0")/.."
 
 BUILD_DIR=build-coverage
-COVERAGE_CTEST_ARGS="${COVERAGE_CTEST_ARGS:--L unit}"
+COVERAGE_CTEST_ARGS="${COVERAGE_CTEST_ARGS:--E (sdk_conformance|validation_gate|cook_per_config|smoke_golden)}"
 
 # Instrumented objects cache correctly — ccache restores the .gcno note beside the object —
 # but they are many times the size of the primary build's and that build never reads them

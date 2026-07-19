@@ -284,15 +284,30 @@ with the option on, builds it, runs a CTest selection, and emits
 `.gcda` counters a run leaves behind would accumulate in a tree used for ordinary work.
 
 ```sh
-scripts/coverage.sh
-COVERAGE_CTEST_ARGS="-L unit|gpu" scripts/coverage.sh   # widen the selection
+scripts/coverage.sh                                  # every test that runs a compiled binary
+COVERAGE_CTEST_ARGS="-L unit" scripts/coverage.sh    # narrow the selection
+COVERAGE_CTEST_ARGS="" scripts/coverage.sh           # everything, CMake-script tests included
 ```
 
-The selection defaults to `-L unit` and is a single variable; gcov merges the
-per-process counters, so widening it changes only the numbers. **Widen with one
-`-L` and a regex alternation, not repeated `-L` flags** — CTest requires a test to
-match *every* `-L` given, so `-L unit -L gpu` selects the tests labelled both, which
-is none, and the run reports success over an empty selection. Prerequisites are
+The selection defaults to every test that runs a **compiled binary** and is a single
+variable. The default excludes the **CMake-script tests** — the `add_test`s that run
+`cmake -P` — for two distinct reasons:
+
+- **They produce no counters for this tree.** `sdk_conformance_*` configures and builds a
+  separate, *uninstrumented* SDK tree; `cook_per_config_invalidation` reconfigures and
+  rebuilds; `validation_gate` re-runs gpu binaries the selection already ran.
+- **`smoke_golden` covers code without asserting much.** It does run instrumented code
+  through the launcher, but its only assertion is that a rendered capture matches a golden
+  image. The lines it marks covered are not thereby shown correct, so counting them
+  inflates the report without evidencing anything — coverage bought this way is worse than
+  no coverage, because it reads as reassurance.
+
+Setting the variable **replaces** the default outright, so an explicit value puts them back.
+
+gcov merges the per-process counters, so changing the selection changes only the numbers.
+**Narrow with one `-L` and a regex alternation, not repeated `-L` flags** — CTest requires
+a test to match *every* `-L` given, so `-L unit -L gpu` selects the tests labelled both,
+which is none, and the run reports success over an empty selection. Prerequisites are
 **gcovr** and a gcov-compatible backend, chosen with `--gcov-executable` — GNU `gcov`,
 or `xcrun llvm-cov gcov` on macOS (what makes the same report reproducible on either
 toolchain). The script fails with an actionable message when either is missing rather
