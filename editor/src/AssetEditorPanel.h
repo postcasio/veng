@@ -41,8 +41,9 @@ namespace VengEditor
         ///
         /// An editor that added children hosts its private dockspace; a childless one is a plain
         /// single window. Either way, closing a document reporting HasUnsavedChanges() takes the
-        /// close back and raises a Save / Discard / Cancel prompt rather than dropping the edits —
-        /// the host destroys a panel whose open flag clears, so this is the only place to ask.
+        /// close back and raises a modal Save / Discard / Cancel prompt rather than dropping the
+        /// edits — the host destroys a panel whose open flag clears, so this is the only place to
+        /// ask, and the prompt is modal so a stray click cannot leave the question unanswered.
         /// @param open  The host's visibility flag; cleared only once a close is confirmed.
         void Draw(bool* open) override;
 

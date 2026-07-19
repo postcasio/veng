@@ -304,9 +304,11 @@ namespace Veng::UI
         bool m_Live = true;
     };
 
-    /// @brief Scope guard for `ImGui::BeginPopup`/`EndPopup`.
+    /// @brief Scope guard for `ImGui::BeginPopup`/`BeginPopupModal` and `EndPopup`.
     ///
-    /// `EndPopup` runs only when the popup is open.
+    /// `EndPopup` runs only when the popup is open. Both begin forms share the guard because
+    /// they share that rule: `BeginPopupModal` ends the popup itself on every path that
+    /// returns false, so a false result owes nothing either way.
     class [[nodiscard]] ScopedPopup
     {
     public:
@@ -713,14 +715,32 @@ namespace Veng::UI
     /// @param id  ImGui id string for the popup.
     [[nodiscard]] ScopedPopup Popup(string_view id);
 
+    /// @brief Opens a modal popup and returns a scope guard that calls `EndPopup` when it is open.
+    ///
+    /// A modal is a question that must be answered: it blocks interaction with everything behind
+    /// it, and neither a click outside nor Escape dismisses it. The only exits are the ones the
+    /// body draws — so every modal owes the user an explicit way out, and a body of buttons that
+    /// never calls `CloseCurrentPopup` strands the editor. Opened with `OpenPopup(title)`, exactly
+    /// like `Popup`.
+    ///
+    /// The window auto-sizes to its content and is centered on first appearance; its position and
+    /// size are not written to the ini, since a dialog id is typically transient.
+    /// @param title  Title bar text and ImGui id, matching the `OpenPopup(id)` that raised it.
+    /// @param open   Optional pointer; non-null draws a title-bar close button that clears it and
+    ///               closes the modal, giving the user a dismissal the body need not draw.
+    /// @param flags  Window display flags.
+    [[nodiscard]] ScopedPopup Modal(string_view title, bool* open = nullptr,
+                                    WindowFlags flags = WindowFlags::None);
+
     /// @brief Queues a popup to open on the next frame.
-    /// @param id  ImGui id string for the popup, matching a `Popup(id)` call.
+    /// @param id  ImGui id string for the popup, matching a `Popup(id)` or `Modal(id)` call.
     void OpenPopup(string_view id);
 
     /// @brief Closes the popup currently being drawn.
     ///
     /// Call inside an open `Popup` scope to dismiss it after a selection (a `Selectable`
-    /// inside a popup does not close it on its own, unlike a `MenuItem`).
+    /// inside a popup does not close it on its own, unlike a `MenuItem`), or inside an open
+    /// `Modal` scope, where it is the only way out the body can offer.
     void CloseCurrentPopup();
 
     /// @brief Directs keyboard focus to the next widget submitted.

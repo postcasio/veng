@@ -635,6 +635,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/net_connection.cpp
             tests/unit/net_lifecycle.cpp
             tests/unit/runtime_requests.cpp
+            tests/unit/ui_modal.cpp
     )
     target_link_libraries(veng_test_unit PRIVATE veng::veng doctest::doctest)
     # Precompile the foundational header + doctest once per suite: a test TU is

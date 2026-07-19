@@ -60,7 +60,9 @@ namespace VengEditor
             return;
         }
 
-        if (auto popup = UI::Popup(m_ClosePromptName))
+        // Modal, so the question cannot be left unanswered: clicking away or pressing Escape
+        // does nothing, and the three buttons below are the only exits.
+        if (auto popup = UI::Modal(m_ClosePromptName))
         {
             UI::Text(fmt::format("Save changes to {} before closing?", GetTitle()));
             UI::Separator();
@@ -98,7 +100,8 @@ namespace VengEditor
             return;
         }
 
-        // Dismissing the popup by clicking away is a cancel: the document stays open and dirty.
+        // A pending close with no open modal means something outside this panel closed it — the
+        // user never answered, so take the safe reading and leave the document open and dirty.
         m_ClosePending = false;
     }
 

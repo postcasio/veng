@@ -498,6 +498,16 @@ namespace Veng::UI
         return ScopedPopup(ImGui::BeginPopup(label.c_str()));
     }
 
+    ScopedPopup Modal(string_view title, bool* open, WindowFlags flags)
+    {
+        const string label = AsCStr(title);
+        // Auto-resize because a dialog is sized by its message, and no saved settings because a
+        // dialog id is often minted per document instance and would otherwise accrete in the ini.
+        const ImGuiWindowFlags modalFlags =
+            ToImGui(flags) | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings;
+        return ScopedPopup(ImGui::BeginPopupModal(label.c_str(), open, modalFlags));
+    }
+
     void OpenPopup(string_view id)
     {
         const string label = AsCStr(id);

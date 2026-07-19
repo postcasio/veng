@@ -42,6 +42,14 @@ editor framework for a debug slider.)
   push/pop pair, closing on scope exit so the close survives every early-out. Flags are
   engine vocab enums (`WindowFlags`, `TreeFlags`, `StyleColorId`, `StyleVarId`), not
   `ImGui*Flags`. `EditorPanel::GetWindowFlags()` returns `UI::WindowFlags`.
+- **`Popup` and `Modal` are the two dialog shapes**, both returning `ScopedPopup` and both raised
+  by `OpenPopup(id)`. A `Popup` is a menu or picker: a click outside or Escape dismisses it, which
+  is what a stray click *should* do to a candidate list. A `Modal` is a question that must be
+  answered — it blocks everything behind it and neither click-away nor Escape closes it, so the
+  only exits are the ones its body draws with `CloseCurrentPopup` (or the title-bar close button
+  the optional `open` pointer adds). Pick by whether a dismissal has a safe meaning: the asset
+  editors' unsaved-changes prompt is the tree's one modal, because "clicked elsewhere" is not an
+  answer to Save / Discard / Cancel.
 - **The `Veng/UI/` headers are imgui-free in their signatures and members.** `<imgui.h>`
   appears only under `engine/src/UI/` (the scope-guard dtors are defined out-of-line there).
   The one ImGui-adjacent type a signature names is the engine's own `ImGuiTexture`
