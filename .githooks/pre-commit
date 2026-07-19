@@ -63,7 +63,39 @@ if command -v clang-tidy >/dev/null 2>&1 && [ -n "$tidy_db" ] && [ -n "$staged_t
         -e 's/ -Winvalid-pch//g' \
         "$tidy_db/compile_commands.json" > "$tidy_tmp/compile_commands.json"
 
-    tidy_out=$(printf '%s\n' "$staged_tus" | tr '\n' '\0' \
+    # A TU the DB carries no entry for is linted against default flags rather than declined,
+    # which fails on the first engine include — and that failure poisons the whole batch, so
+    # TUs that are clean on their own report "Error while processing" merely for following it.
+    # Partition the staged list instead: a source that belongs to no in-tree target (the
+    # out-of-tree-only template) is not lintable here and is reported by name, never silently.
+    tidy_tus=""
+    skipped_tus=""
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        if [ -f "$f" ] \
+            && grep -qF "\"$(cd "$(dirname "$f")" && pwd)/$(basename "$f")\"" \
+                "$tidy_db/compile_commands.json"; then
+            tidy_tus="${tidy_tus}${f}"$'\n'
+        else
+            skipped_tus="${skipped_tus}${f}"$'\n'
+        fi
+    done <<< "$staged_tus"
+
+    if [ -n "$skipped_tus" ]; then
+        echo "pre-commit: not in $tidy_db, so clang-tidy has no flags for them — not linted:" >&2
+        printf '%s' "$skipped_tus" | sed 's/^/  /' >&2
+        echo "Lint these by building the target that owns them, or via their own project." >&2
+    fi
+
+    # Distinct from the toolchain gate below: every staged TU being unlintable here is a
+    # legitimate state, not a broken tool, so it reports what it did not check and lets the
+    # commit through rather than demanding --no-verify (which would skip the format stage too).
+    if [ -z "$tidy_tus" ]; then
+        echo "pre-commit: no staged TU is in $tidy_db, so clang-tidy checked nothing." >&2
+        exit 0
+    fi
+
+    tidy_out=$(printf '%s' "$tidy_tus" | tr '\n' '\0' \
         | xargs -0 clang-tidy -p "$tidy_tmp" --quiet 2>&1 || true)
 
     # A run that evaluated no checks must fail loudly rather than read as a clean tree. clang-tidy

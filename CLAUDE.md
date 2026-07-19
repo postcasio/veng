@@ -165,7 +165,12 @@ Three ways to run it, all opt-in:
   (exported unconditionally) and applies the toolchain fixes below. A changed *header*
   is checked transitively through a staged TU that includes it; a header-only commit
   drives no TU, so use the in-build run for those. Skips cleanly when clang-tidy or a
-  compile DB is missing.
+  compile DB is missing. A staged TU the DB carries no entry for — a source belonging to
+  no in-tree target, such as the out-of-tree-only `examples/template` — is dropped from
+  the invocation and reported by name: clang-tidy lints an unknown file against default
+  flags rather than declining it, and that failure poisons the rest of the batch, so
+  filtering is what keeps the run meaningful. A commit whose every staged TU is out of
+  tree therefore lints nothing, says so, and is allowed through.
 - **By hand:** `scripts/tidy.sh <sources>` checks the named files against the ordinary
   `build-debug` compile DB — no separate lint build tree, and no rebuild between edits
   (clang-tidy reads the source from disk; the DB supplies only flags). Use it to check
