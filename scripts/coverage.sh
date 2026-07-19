@@ -2,7 +2,7 @@
 # Measure how much of veng's own sources the test suite exercises.
 #
 #   scripts/coverage.sh
-#   COVERAGE_CTEST_ARGS="-L unit -L gpu" scripts/coverage.sh
+#   COVERAGE_CTEST_ARGS="-L unit|gpu" scripts/coverage.sh
 #
 # Configures a dedicated build-coverage/ with VENG_ENABLE_COVERAGE=ON, builds it,
 # runs a CTest selection, and writes a gcovr report:
@@ -16,7 +16,9 @@
 #
 # The selection is one variable: COVERAGE_CTEST_ARGS defaults to the unit label and
 # takes any CTest argument list (empty runs everything). gcov merges the per-process
-# counters, so widening the selection needs no other change.
+# counters, so widening the selection needs no other change. Widen with one -L and a
+# regex alternation: CTest requires a test to match every -L given, so repeating the
+# flag intersects the labels and usually selects nothing.
 #
 # Prerequisites are gcovr and a gcov-compatible tool. gcovr drives either GCC's gcov
 # or Clang's llvm-cov gcov via --gcov-executable, which is what makes the same report

@@ -244,11 +244,14 @@ with the option on, builds it, runs a CTest selection, and emits
 
 ```sh
 scripts/coverage.sh
-COVERAGE_CTEST_ARGS="-L unit -L gpu" scripts/coverage.sh   # widen the selection
+COVERAGE_CTEST_ARGS="-L unit|gpu" scripts/coverage.sh   # widen the selection
 ```
 
 The selection defaults to `-L unit` and is a single variable; gcov merges the
-per-process counters, so widening it changes only the numbers. Prerequisites are
+per-process counters, so widening it changes only the numbers. **Widen with one
+`-L` and a regex alternation, not repeated `-L` flags** — CTest requires a test to
+match *every* `-L` given, so `-L unit -L gpu` selects the tests labelled both, which
+is none, and the run reports success over an empty selection. Prerequisites are
 **gcovr** and a gcov-compatible backend, chosen with `--gcov-executable` — GNU `gcov`,
 or `xcrun llvm-cov gcov` on macOS (what makes the same report reproducible on either
 toolchain). The script fails with an actionable message when either is missing rather

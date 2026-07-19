@@ -194,8 +194,13 @@ line- and branch-level) plus `build-coverage/coverage-html/index.html`. The sele
 one variable, so widening it needs no other change:
 
 ```sh
-COVERAGE_CTEST_ARGS="-L unit -L gpu" scripts/coverage.sh
+COVERAGE_CTEST_ARGS="-L unit|gpu" scripts/coverage.sh
 ```
+
+Widen with a single `-L` and a regex alternation. CTest requires a test to match
+*every* `-L` it is given, so repeating the flag (`-L unit -L gpu`) selects only tests
+carrying both labels — usually none — and the run then reports success over an empty
+selection.
 
 Coverage lives in its own build tree: the gcov flags (`--coverage`, `-O0`) suppress the
 precompiled headers and fight the primary build's object caching, and the counter files a
