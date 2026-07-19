@@ -8,6 +8,7 @@ namespace Veng
     struct Transform;
     struct CameraFollow;
     struct CameraLook;
+    struct CameraOrbit;
 
     /// @brief Computes the camera Transform that trails a target by a follow relationship.
     ///
@@ -28,6 +29,22 @@ namespace Veng
     [[nodiscard]] Transform FollowCamera(const Transform& current, const mat4& targetWorld,
                                          const CameraFollow& follow, f32 delta);
 
+    /// @brief Computes the camera Transform that orbits a focus point at a distance.
+    ///
+    /// Integrates the orbit's optional focus glide (Focus eased toward FocusTarget by the same
+    /// frame-rate-independent exponential smoothing FollowCamera uses; a zero FocusDamping
+    /// snaps), clamps Distance into [MinDistance, MaxDistance] and Pitch into ±PitchLimit, then
+    /// places the eye at focus + LookRotation({Yaw, Pitch}) · (0, 0, Distance) and orients it
+    /// back at the focus. y-up throughout, like every other engine rig. Pure math — no scene, no
+    /// device — so it is the deterministic core both the camera-rig system and the unit tests
+    /// drive.
+    /// @param orbit   The focus, distance and clamps, orbit angles, and focus-glide parameters.
+    /// @param current The camera's current Transform (the focus-glide start point).
+    /// @param delta   Time in seconds since the previous tick.
+    /// @return The camera Transform for this tick.
+    [[nodiscard]] Transform OrbitCamera(const CameraOrbit& orbit, const Transform& current,
+                                        f32 delta);
+
     /// @brief Computes the first-person rotation a look heading resolves to.
     ///
     /// Yaw about world up composed with pitch about the yawed right axis, the pitch
@@ -43,8 +60,9 @@ namespace Veng
     /// Runs in the View phase, so it reads pawn state the Sim phase finalized this tick.
     /// For every entity with (Transform, CameraFollow) whose Target is a live entity with a
     /// Transform, it writes the camera entity's Transform through FollowCamera; for every
+    /// entity with (Transform, CameraOrbit) it writes the pose through OrbitCamera; for every
     /// entity with (Transform, CameraLook) it clamps the look pitch and writes the entity's
-    /// rotation through LookRotation. Both go through the scene accessor so the
+    /// rotation through LookRotation. All go through the scene accessor so the
     /// spatial-version bookkeeping is correct. The produced camera pose is purely local —
     /// never authoritative, never on the wire.
     class CameraRigSystem final : public SceneSystem
@@ -53,7 +71,8 @@ namespace Veng
         /// @brief Returns Phase::View — the rig derives view state after the Sim phase.
         [[nodiscard]] Phase GetPhase() const override { return Phase::View; }
 
-        /// @brief Resolves each follow camera behind its Target and each look camera's rotation.
+        /// @brief Resolves each follow camera behind its Target, each orbit camera around its
+        ///        Focus, and each look camera's rotation.
         /// @param scene    The scene whose rigged cameras are updated.
         /// @param delta    Time in seconds since the previous tick.
         /// @param context  Per-tick services (unused).

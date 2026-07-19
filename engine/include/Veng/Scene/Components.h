@@ -669,6 +669,40 @@ namespace Veng
         f32 PitchLimit = 1.5f;
     };
 
+    /// @brief Camera-rig orbit relationship: a camera that circles a focus point at a distance.
+    ///
+    /// Read by the View-phase camera rig: each tick it places the camera entity a Distance from
+    /// Focus along the Yaw/Pitch heading and orients it back at Focus. Unlike CameraFollow, the
+    /// orbit tracks a point rather than a target entity, so it is the rig any scene inspector,
+    /// model viewer, or map/chart view uses. FocusTarget with a positive FocusDamping glides
+    /// Focus toward the target over time, so recentering the view is smooth rather than an
+    /// instant cut; a zero FocusDamping snaps Focus to FocusTarget each tick. Distance is held
+    /// within [MinDistance, MaxDistance] and Pitch within ±PitchLimit — the pitch clamp keeps the
+    /// pose off the pole where the look-at up vector collapses. Because the rig runs in the View
+    /// phase, the produced camera pose is purely local — never authoritative, never on the wire.
+    struct CameraOrbit
+    {
+        /// @brief The point orbited, in world space.
+        vec3 Focus{0.0f, 0.0f, 0.0f};
+        /// @brief Eye distance from Focus, clamped into [MinDistance, MaxDistance].
+        f32 Distance = 10.0f;
+        /// @brief Smallest allowed Distance, so the eye never reaches the focus.
+        f32 MinDistance = 0.1f;
+        /// @brief Largest allowed Distance.
+        f32 MaxDistance = 1000.0f;
+        /// @brief Heading about world up, in radians; positive turns the eye left around Focus.
+        f32 Yaw = 0.0f;
+        /// @brief Elevation about the yawed right axis, in radians; positive swings the eye
+        ///        below Focus so the camera tilts up toward it (matching CameraLook::Pitch).
+        f32 Pitch = 0.0f;
+        /// @brief Maximum |Pitch| in radians; the rig clamps Pitch off the degenerate pole.
+        f32 PitchLimit = 1.5f;
+        /// @brief Where Focus glides toward when FocusDamping is positive, in world space.
+        vec3 FocusTarget{0.0f, 0.0f, 0.0f};
+        /// @brief Exponential-smoothing rate per second of Focus toward FocusTarget; 0 snaps.
+        f32 FocusDamping = 0.0f;
+    };
+
     /// @brief Per-scene game-mode configuration: the data a scene names to pick its mode.
     ///
     /// Held on the level's settings entity. Names the player prefab a spawn rule
@@ -1168,8 +1202,26 @@ VE_FIELD(Pitch, .DisplayName = "Pitch", .Tooltip = "Elevation, radians; positive
 VE_FIELD(PitchLimit, .DisplayName = "Pitch Limit", .Tooltip = "Maximum |Pitch| in radians",
          .Display = {.Min = 0.0})
 VE_REFLECT_END();
-// CameraFollow / CameraLook are not VE_REPLICATED: View-phase camera rig state, derived locally per
-// client and "never on the wire" (see each struct's doc) — the client owns its own camera.
+
+VE_REFLECT(::Veng::CameraOrbit, 0xE2510C54F8FF9F38ULL)
+VE_FIELD(Focus, .DisplayName = "Focus", .Tooltip = "Orbited point, world space")
+VE_FIELD(Distance, .DisplayName = "Distance", .Tooltip = "Eye distance from the focus",
+         .Display = {.Min = 0.0})
+VE_FIELD(MinDistance, .DisplayName = "Min Distance", .Display = {.Min = 0.0})
+VE_FIELD(MaxDistance, .DisplayName = "Max Distance", .Display = {.Min = 0.0})
+VE_FIELD(Yaw, .DisplayName = "Yaw",
+         .Tooltip = "Heading about world up, radians; positive turns left")
+VE_FIELD(Pitch, .DisplayName = "Pitch",
+         .Tooltip = "Elevation, radians; positive tilts the camera up toward the focus")
+VE_FIELD(PitchLimit, .DisplayName = "Pitch Limit", .Tooltip = "Maximum |Pitch| in radians",
+         .Display = {.Min = 0.0})
+VE_FIELD(FocusTarget, .DisplayName = "Focus Target", .Tooltip = "Point the focus glides toward")
+VE_FIELD(FocusDamping, .DisplayName = "Focus Damping",
+         .Tooltip = "Exponential-smoothing rate per second; 0 snaps", .Display = {.Min = 0.0})
+VE_REFLECT_END();
+// CameraFollow / CameraLook / CameraOrbit are not VE_REPLICATED: View-phase camera rig state,
+// derived locally per client and "never on the wire" (see each struct's doc) — the client owns its
+// own camera.
 
 VE_REFLECT(::Veng::GameModeConfig, 0xAE57419CF98B07F8ULL)
 VE_FIELD(PlayerPrefab, .DisplayName = "Player Prefab")

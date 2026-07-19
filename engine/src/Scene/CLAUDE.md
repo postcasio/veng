@@ -250,9 +250,17 @@ is the deterministic, replicable simulation (control, movement, rule systems); a
 is a pure function of state + intents (the `SystemContext.Input` service is always present,
 reporting the neutral all-zeros state in headless, so an input-reading system needs no guard).
 **View** is client-local presentation derived from finalized Sim state — the `CameraRigSystem`
-(`Veng/Scene/CameraRig.h`) trails a possessed pawn via a `CameraFollow` component and resolves a
-first-person `CameraLook` (a clamped yaw/pitch heading written as the entity's rotation), never
-authoritative and never on the wire. An **`Authority { Tier, Owner }`** component marks who
+(`Veng/Scene/CameraRig.h`) trails a possessed pawn via a `CameraFollow` component, orbits a point
+via a `CameraOrbit` component, and resolves a first-person `CameraLook` (a clamped yaw/pitch
+heading written as the entity's rotation), never authoritative and never on the wire. The rig's
+three arms are the same shape: each is a pure device-free function — `FollowCamera` /
+`OrbitCamera` / `LookRotation` — that the system walks the matching `(Transform, …)` archetype to
+apply. `CameraOrbit` is the point-orbit case the follow rig is not: it circles a `Focus` at a
+clamped `Distance` under `Yaw`/`Pitch` (the pitch clamped by `PitchLimit` off the pole where the
+look-at up collapses), reusing `LookRotation` for the y-up pose and orienting back at the focus, so
+a scene inspector, model viewer, or map/chart view stops hand-rolling the spherical-to-cartesian
+eye placement. Its optional `FocusTarget`/`FocusDamping` glide the focus with the same
+frame-rate-independent `1 − exp(−damping·delta)` smoothing `FollowCamera` uses (zero snaps). An **`Authority { Tier, Owner }`** component marks who
 simulates an entity: authored entities default `Server`, client-local view entities are `Local`
 (only those two tiers are authored or persisted; `Remote` and `Predicted` are each peer's runtime
 stance toward an entity, never replicated). Its consumer is the net layer's authority filter —

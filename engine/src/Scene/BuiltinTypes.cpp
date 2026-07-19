@@ -54,11 +54,12 @@ namespace Veng
         registry.Register<ConstantMotion>();
 
         // Net-anticipation seam: the ownership annotation and the camera-rig relationships
-        // (third-person follow, first-person look) the View-phase rig reads.
+        // (third-person follow, first-person look, point orbit) the View-phase rig reads.
         registry.Register<Tier>();
         registry.Register<Authority>();
         registry.Register<CameraFollow>();
         registry.Register<CameraLook>();
+        registry.Register<CameraOrbit>();
 
         // The wire identity of a replicated entity (server-assigned, runtime-only). Reflected so the
         // inspector can surface the assigned id; the net layer keys snapshots by it.

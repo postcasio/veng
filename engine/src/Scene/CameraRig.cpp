@@ -59,6 +59,35 @@ namespace Veng
                glm::angleAxis(pitch, vec3(1.0f, 0.0f, 0.0f));
     }
 
+    Transform OrbitCamera(const CameraOrbit& orbit, const Transform& current, const f32 delta)
+    {
+        // Glide the focus toward its target, frame-rate-independent like FollowCamera; a
+        // non-positive damping snaps.
+        vec3 focus = orbit.FocusTarget;
+        if (orbit.FocusDamping > 0.0f)
+        {
+            const f32 alpha = 1.0f - glm::exp(-orbit.FocusDamping * delta);
+            focus = glm::mix(orbit.Focus, orbit.FocusTarget, alpha);
+        }
+
+        // Clamp the distance into its band, and build the orbit pose with the same y-up
+        // yaw/pitch composition LookRotation applies — reusing its pitch clamp keeps the eye off
+        // the pole where the look-at up vector collapses.
+        const f32 minDistance = glm::max(orbit.MinDistance, 0.0f);
+        const f32 maxDistance = glm::max(orbit.MaxDistance, minDistance);
+        const f32 distance = glm::clamp(orbit.Distance, minDistance, maxDistance);
+        const quat pose = LookRotation(
+            CameraLook{.Yaw = orbit.Yaw, .Pitch = orbit.Pitch, .PitchLimit = orbit.PitchLimit});
+
+        // Place the eye a distance out along the pose's +Z (opposite the look direction) and
+        // orient it back at the focus.
+        Transform result = current;
+        result.Position = focus + pose * vec3(0.0f, 0.0f, distance);
+        result.Rotation =
+            glm::quatLookAt(glm::normalize(focus - result.Position), vec3(0.0f, 1.0f, 0.0f));
+        return result;
+    }
+
     void CameraRigSystem::OnUpdate(Scene& scene, const f32 delta, const SystemContext&)
     {
         scene.Each<Transform, CameraFollow>(
@@ -72,6 +101,24 @@ namespace Veng
 
                 const mat4 targetWorld = WorldMatrix(scene, follow.Target);
                 transform = FollowCamera(transform, targetWorld, follow, delta);
+            });
+
+        scene.Each<Transform, CameraOrbit>(
+            [delta](const Entity entity, Transform& transform, CameraOrbit& orbit)
+            {
+                transform = OrbitCamera(orbit, transform, delta);
+
+                // Persist the glided focus so the ease progresses across ticks (mirroring the
+                // glide OrbitCamera applied for this tick's pose); a non-positive damping snaps.
+                if (orbit.FocusDamping > 0.0f)
+                {
+                    const f32 alpha = 1.0f - glm::exp(-orbit.FocusDamping * delta);
+                    orbit.Focus = glm::mix(orbit.Focus, orbit.FocusTarget, alpha);
+                }
+                else
+                {
+                    orbit.Focus = orbit.FocusTarget;
+                }
             });
 
         scene.Each<Transform, CameraLook>(

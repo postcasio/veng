@@ -5,6 +5,8 @@
 
 #include <doctest/doctest.h>
 
+#include <cmath>
+
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 
@@ -240,4 +242,154 @@ TEST_CASE("The rig writes a look camera's rotation and clamps its stored pitch")
     const vec3 forward = scene->Get<Transform>(camera).Rotation * vec3(0.0f, 0.0f, -1.0f);
     CHECK(forward.x < -0.3f);
     CHECK(scene->Get<CameraLook>(camera).Pitch == doctest::Approx(1.2f));
+}
+
+TEST_CASE("OrbitCamera places the eye at Distance from the focus for a spread of yaw/pitch")
+{
+    const Transform current;
+    const vec3 focus{3.0f, -2.0f, 5.0f};
+    const f32 distance = 12.0f;
+
+    for (const f32 yaw : {-2.0f, -0.5f, 0.0f, 0.7f, 2.5f})
+    {
+        for (const f32 pitch : {-1.0f, -0.2f, 0.0f, 0.4f, 1.0f})
+        {
+            const CameraOrbit orbit{.Focus = focus,
+                                    .Distance = distance,
+                                    .Yaw = yaw,
+                                    .Pitch = pitch,
+                                    .FocusTarget = focus};
+            const Transform result = OrbitCamera(orbit, current, 0.016f);
+
+            // The eye sits exactly Distance from the focus, whatever the orbit angle.
+            CHECK(glm::length(result.Position - focus) == doctest::Approx(distance).epsilon(1e-4f));
+        }
+    }
+}
+
+TEST_CASE("OrbitCamera's forward points at the focus")
+{
+    const Transform current;
+    const vec3 focus{1.0f, 4.0f, -2.0f};
+    const CameraOrbit orbit{
+        .Focus = focus, .Distance = 8.0f, .Yaw = 0.9f, .Pitch = 0.6f, .FocusTarget = focus};
+
+    const Transform result = OrbitCamera(orbit, current, 0.016f);
+
+    const vec3 forward = result.Rotation * vec3(0.0f, 0.0f, -1.0f);
+    const vec3 toFocus = glm::normalize(focus - result.Position);
+    CHECK(VecApprox(forward, toFocus));
+}
+
+TEST_CASE("OrbitCamera clamps the distance into its band")
+{
+    const Transform current;
+    const vec3 focus{0.0f};
+
+    const CameraOrbit tooFar{
+        .Focus = focus, .Distance = 5000.0f, .MaxDistance = 1000.0f, .FocusTarget = focus};
+    CHECK(glm::length(OrbitCamera(tooFar, current, 0.016f).Position - focus) ==
+          doctest::Approx(1000.0f).epsilon(1e-4f));
+
+    const CameraOrbit tooNear{
+        .Focus = focus, .Distance = 0.01f, .MinDistance = 0.5f, .FocusTarget = focus};
+    CHECK(glm::length(OrbitCamera(tooNear, current, 0.016f).Position - focus) ==
+          doctest::Approx(0.5f).epsilon(1e-4f));
+}
+
+TEST_CASE("OrbitCamera clamps the pitch off the pole")
+{
+    const Transform current;
+    const vec3 focus{0.0f};
+    const f32 distance = 10.0f;
+
+    // A pitch far past the limit resolves as if it were exactly the limit.
+    const CameraOrbit past{.Focus = focus,
+                           .Distance = distance,
+                           .Pitch = 3.0f,
+                           .PitchLimit = 1.0f,
+                           .FocusTarget = focus};
+    const CameraOrbit atLimit{.Focus = focus,
+                              .Distance = distance,
+                              .Pitch = 1.0f,
+                              .PitchLimit = 1.0f,
+                              .FocusTarget = focus};
+
+    CHECK(VecApprox(OrbitCamera(past, current, 0.016f).Position,
+                    OrbitCamera(atLimit, current, 0.016f).Position));
+}
+
+TEST_CASE("OrbitCamera's focus glide is frame-rate-independent")
+{
+    // A camera glides its focus from the origin toward a target; one big step and many small
+    // steps summing to the same elapsed time must land the eye in the same place, because
+    // exponential smoothing composes exactly.
+    const CameraOrbit base{.Focus = vec3(0.0f),
+                           .Distance = 6.0f,
+                           .Yaw = 0.3f,
+                           .Pitch = 0.2f,
+                           .FocusTarget = vec3(10.0f, 4.0f, -6.0f),
+                           .FocusDamping = 3.0f};
+
+    TypeRegistry registry = MakeRegistry();
+    ContextStorage storage;
+
+    // One big step.
+    const Unique<Scene> sceneBig = Scene::Create(registry);
+    const Entity cameraBig = sceneBig->CreateEntity();
+    sceneBig->Add<Transform>(cameraBig, Transform{});
+    sceneBig->Add<CameraOrbit>(cameraBig, base);
+    CameraRigSystem rigBig;
+    rigBig.OnUpdate(*sceneBig, 1.0f, storage.Make());
+
+    // Many small steps summing to the same elapsed time.
+    const Unique<Scene> sceneSmall = Scene::Create(registry);
+    const Entity cameraSmall = sceneSmall->CreateEntity();
+    sceneSmall->Add<Transform>(cameraSmall, Transform{});
+    sceneSmall->Add<CameraOrbit>(cameraSmall, base);
+    CameraRigSystem rigSmall;
+    for (int i = 0; i < 100; ++i)
+    {
+        rigSmall.OnUpdate(*sceneSmall, 0.01f, storage.Make());
+    }
+
+    CHECK(VecApprox(sceneBig->Get<Transform>(cameraBig).Position,
+                    sceneSmall->Get<Transform>(cameraSmall).Position, 1e-3f));
+}
+
+TEST_CASE("OrbitCamera with zero focus damping snaps the focus to the target")
+{
+    const Transform current;
+    const CameraOrbit orbit{.Focus = vec3(0.0f),
+                            .Distance = 5.0f,
+                            .FocusTarget = vec3(7.0f, 1.0f, -3.0f),
+                            .FocusDamping = 0.0f};
+
+    const Transform result = OrbitCamera(orbit, current, 0.016f);
+
+    // The eye orbits the snapped-to target, so it sits Distance from FocusTarget, not from Focus.
+    CHECK(glm::length(result.Position - orbit.FocusTarget) == doctest::Approx(5.0f).epsilon(1e-4f));
+}
+
+TEST_CASE("OrbitCamera at a pole-adjacent pitch produces a finite, non-degenerate rotation")
+{
+    const Transform current;
+    const vec3 focus{0.0f};
+    // A pitch right at the default limit sits near the pole; the clamp must keep the look-at
+    // up vector from collapsing, so the rotation stays finite and unit-length.
+    const CameraOrbit orbit{
+        .Focus = focus, .Distance = 9.0f, .Pitch = 1.5f, .PitchLimit = 1.5f, .FocusTarget = focus};
+
+    const Transform result = OrbitCamera(orbit, current, 0.016f);
+
+    const quat r = result.Rotation;
+    CHECK(std::isfinite(r.x));
+    CHECK(std::isfinite(r.y));
+    CHECK(std::isfinite(r.z));
+    CHECK(std::isfinite(r.w));
+    CHECK(glm::length(r) == doctest::Approx(1.0f).epsilon(1e-4f));
+
+    // The forward still resolves and points at the focus.
+    const vec3 forward = r * vec3(0.0f, 0.0f, -1.0f);
+    CHECK(VecApprox(forward, glm::normalize(focus - result.Position)));
 }
