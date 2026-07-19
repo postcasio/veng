@@ -30,6 +30,14 @@ cd "$(dirname "$0")/.."
 BUILD_DIR=build-coverage
 COVERAGE_CTEST_ARGS="${COVERAGE_CTEST_ARGS:--L unit}"
 
+# Instrumented objects cache correctly — ccache restores the .gcno note beside the object —
+# but they are many times the size of the primary build's and that build never reads them
+# back. Sharing one cache therefore spends the primary build's entries on objects only
+# coverage wants. Scope the cache to this tree instead: coverage still gets full reuse across
+# its own runs, bounded by its own ceiling, in a store that dies with the tree.
+export CCACHE_DIR="${CCACHE_DIR:-$PWD/$BUILD_DIR/.ccache}"
+export CCACHE_MAXSIZE="${CCACHE_MAXSIZE:-5G}"
+
 if [ "$(uname)" = Darwin ]; then
     GCOV="${GCOV:-xcrun llvm-cov gcov}"
 else

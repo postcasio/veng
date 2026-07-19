@@ -60,6 +60,16 @@ cmake --build build-debug -j 4
 ctest --test-dir build-debug -j 4 --output-on-failure
 ```
 
+**`VE_DEBUG` selects the build type too.** With no explicit `CMAKE_BUILD_TYPE`, a
+`VE_DEBUG=ON` tree configures as **Debug** and a validation-OFF tree as **Release**, so
+the debug tree is genuinely unoptimized and debuggable rather than `-O3` wearing the
+name. `-g` is added to veng's own targets under `VE_DEBUG` regardless of type, so a
+tree pinned to Release still yields `file:line` backtraces out of `libveng`. The
+cooker's codec hot loops opt back into `-O2` under Debug, so a debug cook does not run
+its encoders unoptimized. Pass `-DCMAKE_BUILD_TYPE=…` to override. **An existing tree
+keeps whatever type its cache already holds** — a tree configured before this landed
+stays Release until it is deleted and configured afresh.
+
 **Build and test the debug build only — do not build twice.** The `build-debug`
 tree above (`VE_DEBUG=ON`) is the one build an agent configures, builds, and tests
 by default. It is `-Werror` and runs the validation gate, so it catches strictly
@@ -217,32 +227,39 @@ things in an ordinary build's compile DB break it, and the script exists to hand
   build's own `Vulkan_INCLUDE_DIR` to cover that case. A tree configured with the
   sysroot from the start records `-I/usr/local/include` itself (see the next bullet),
   so there the export is redundant but harmless.
-- **The sysroot.** This one is fixed at configure time, not in the script: the build
-  tree is configured with **`CMAKE_OSX_SYSROOT`** so the DB records `-isysroot`. It is
-  empty by CMake's default, and the compiler resolves the SDK implicitly as a driver
-  where libTooling does not — so without it every TU dies on `'cstdint' file not found`
-  or a libc++ `mbstate_t` error. It also fixes the identical failure in **clangd** and
-  other libTooling-based editor integrations, and `scripts/tidy.sh` refuses to run
-  against a DB missing it rather than emit a misleading result.
+- **The sysroot.** Fixed at configure time, not in the script — and **the top-level
+  `CMakeLists.txt` now sets it for you**: on Apple, when neither `CMAKE_OSX_SYSROOT` nor
+  the `SDKROOT` environment variable names one, it resolves `xcrun --show-sdk-path` and
+  caches that, *before* `project()`. So an ordinary `cmake -B build-debug -S . -DVE_DEBUG=ON`
+  already records `-isysroot`, and passing `-DCMAKE_OSX_SYSROOT` by hand is redundant.
+  It stays honoured when given, and an explicit value or `SDKROOT` still wins.
 
-  **Set it when the tree is first configured — never add it to an existing tree.**
-  Delete the build directory and configure from scratch:
+  The flag matters because `CMAKE_OSX_SYSROOT` is empty by CMake's default, and the
+  compiler resolves the SDK implicitly as a driver where libTooling does not — so without
+  it every TU dies on `'cstdint' file not found` or a libc++ `mbstate_t` error. That
+  failure reports **no findings**, which reads exactly like a clean lint run, so a tree
+  missing the sysroot silently checks nothing. It also fixes the identical failure in
+  **clangd** and other libTooling-based editor integrations, and `scripts/tidy.sh` refuses
+  to run against a DB missing it rather than emit a misleading result. A secondary benefit:
+  every tree now carries the same compile lines, so two trees' ccache entries differ only
+  where the source does.
+
+  **It has to be set before `project()`, and never added to an existing tree.** CMake strips
+  `-I` for any directory it believes the compiler searches implicitly, and it computes that
+  list **once**, caching it in `CMakeFiles/<ver>/CMakeCXXCompiler.cmake`. On this host
+  `/usr/local/include` is implicit and is where the Vulkan and Slang headers live, so a
+  no-sysroot tree emits no `-I` for them and relies on the implicit search. With the sysroot
+  in hand before the language is enabled, CMake computes the list without `/usr/local/include`
+  and emits `-isystem /usr/local/include`, so everything resolves explicitly. Add the flag to
+  an **existing** tree and the cached list is not recomputed: CMake keeps stripping the flag
+  while the compiler has stopped searching the directory, and the cooker dies on
+  `'slang/slang.h' file not found` — a failure a full step removed from its cause. A tree
+  configured before this default landed therefore still wants a from-scratch reconfigure:
 
   ```sh
   rm -rf build-debug
-  cmake -B build-debug -S . -G Ninja -DVE_DEBUG=ON -DCMAKE_OSX_SYSROOT="$(xcrun --show-sdk-path)"
+  cmake -B build-debug -S . -G Ninja -DVE_DEBUG=ON
   ```
-
-  The reason is that CMake strips `-I` for any directory it believes the compiler
-  searches implicitly, and it computes that list **once**, caching it in
-  `CMakeFiles/<ver>/CMakeCXXCompiler.cmake`. On this host `/usr/local/include` is
-  implicit and is where the Vulkan and Slang headers live, so a no-sysroot tree emits
-  no `-I` for them and relies on the implicit search. Configure *fresh* with the
-  sysroot and CMake recomputes the list without `/usr/local/include`, so it emits
-  `-isystem /usr/local/include` and everything resolves explicitly. Add the flag to an
-  **existing** tree and the cached list is not recomputed: CMake keeps stripping the
-  flag while the compiler has stopped searching the directory, and the cooker dies on
-  `'slang/slang.h' file not found` — a failure a full step removed from its cause.
 
 **Confirm a run actually ran before believing a clean result.** A toolchain or compile
 failure prints `error:` / `Error while processing` **and no findings**, which is

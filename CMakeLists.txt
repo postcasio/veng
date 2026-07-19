@@ -1,4 +1,30 @@
 cmake_minimum_required(VERSION 4.1)
+
+# Resolve headers against an explicit macOS SDK. The compiler driver finds the SDK implicitly,
+# but libTooling — clang-tidy, clangd, any compile-database consumer — does not, so a tree
+# configured without this records no -isysroot and every TU dies on 'cstdint' file not found.
+# That failure reports no findings, which is indistinguishable from a clean lint run, so a tree
+# missing the sysroot silently lints nothing. Naming it here also gives every tree the same
+# compile lines, so two trees' cache entries differ only where the source does.
+#
+# This must precede project(): enabling the language computes the set of directories the
+# compiler is believed to search implicitly and caches it. With the sysroot in hand CMake omits
+# /usr/local/include from that set and emits an explicit -isystem for the Vulkan and Slang
+# headers living there. Set it afterwards — or on an already-configured tree — and the cached
+# set is not recomputed, so CMake keeps stripping an -I the compiler has stopped searching and
+# the cooker fails on 'slang/slang.h' file not found, a full step removed from the cause.
+if (APPLE AND NOT CMAKE_OSX_SYSROOT AND NOT DEFINED ENV{SDKROOT})
+    execute_process(COMMAND xcrun --show-sdk-path
+            OUTPUT_VARIABLE VENG_DETECTED_SYSROOT
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+            RESULT_VARIABLE VENG_SYSROOT_QUERY)
+    if (VENG_SYSROOT_QUERY EQUAL 0 AND IS_DIRECTORY "${VENG_DETECTED_SYSROOT}")
+        set(CMAKE_OSX_SYSROOT "${VENG_DETECTED_SYSROOT}" CACHE PATH
+                "macOS SDK the build and libTooling both resolve headers against")
+    endif ()
+endif ()
+
 project(veng VERSION 0.1.0 LANGUAGES CXX)
 
 # Note: not REQUIRED — AppleClang doesn't advertise the C++26 dialect flag,
@@ -15,12 +41,76 @@ set(CMAKE_VISIBILITY_INLINES_HIDDEN OFF)
 # per-TU flags, whether or not the in-build linter (below) is enabled.
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Declared here rather than beside the other options below because the build-type default
+# immediately after it keys off this value, and both have to be settled before the FetchContent
+# dependencies are configured.
+option(VE_DEBUG "Enable veng debug features (validation layers, asserts)" OFF)
+
+# Pin the build type before the FetchContent dependencies below are configured. Several of them
+# default an unset CMAKE_BUILD_TYPE to Release in their own CMakeLists — one of those writes it
+# to the cache, so a tree configured without an explicit type silently inherits a dependency's
+# choice. Naming the default here means the type is always veng's decision.
+#
+# The default follows VE_DEBUG, so the two stay consistent: the debug tree is a Debug build
+# (unoptimized, debuggable, asserts live), and the validation-OFF tree is a Release one. Without
+# this a VE_DEBUG tree compiled at -O3 -DNDEBUG — debuggable in name only. The cooker's codec hot
+# loops opt back into -O2 under $<CONFIG:Debug> (VENG_COOK_DEBUG_OPT in cooker/CMakeLists.txt), so
+# a Debug cook does not run its encoders unoptimized. Override explicitly as usual:
+# -DCMAKE_BUILD_TYPE=RelWithDebInfo.
+if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    if (VE_DEBUG)
+        set(VENG_DEFAULT_BUILD_TYPE "Debug")
+    else ()
+        set(VENG_DEFAULT_BUILD_TYPE "Release")
+    endif ()
+    set(CMAKE_BUILD_TYPE "${VENG_DEFAULT_BUILD_TYPE}" CACHE STRING "Build type" FORCE)
+    set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS Debug Release RelWithDebInfo MinSizeRel)
+    message(STATUS "build type not specified; defaulting to ${VENG_DEFAULT_BUILD_TYPE} (VE_DEBUG=${VE_DEBUG})")
+endif ()
+
 # Route compilation through ccache when present, so unchanged TUs are served from
 # cache across rebuilds, clean builds, and branch switches. The #embed / bin2cpp
 # machinery below is written to keep ccache's view of generated sources correct.
 find_program(CCACHE_PROGRAM ccache)
 if (CCACHE_PROGRAM)
-    set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+    # A cached result is keyed on absolute paths, so a checkout at a different path can never
+    # reuse another's entries — a linked git worktree only ever writes to the shared cache,
+    # evicting entries it will never read. Give one its own store inside its build tree, where
+    # it still serves that worktree's own rebuilds and is removed along with the worktree.
+    # A linked worktree is the case where .git is a file pointing at the primary checkout
+    # rather than a directory. The store is reached through a generated wrapper: the launcher
+    # has to name one program, because CMake bakes the first launcher value into the compile
+    # rule and appends any later one, which would invoke ccache twice with the outer instance
+    # unable to cache the inner. So resolve the launcher once, here, and assign it once.
+    set(VENG_WORKTREE_CCACHE_MAXSIZE "2G" CACHE STRING
+            "Ceiling for a linked worktree's own ccache store")
+    set(VENG_SCOPED_CCACHE "AUTO" CACHE STRING
+            "Scope ccache to this build tree: AUTO (when the checkout is a linked worktree), ON, OFF")
+    set_property(CACHE VENG_SCOPED_CCACHE PROPERTY STRINGS AUTO ON OFF)
+    if (VENG_SCOPED_CCACHE STREQUAL "AUTO")
+        if (EXISTS "${CMAKE_SOURCE_DIR}/.git" AND NOT IS_DIRECTORY "${CMAKE_SOURCE_DIR}/.git")
+            set(VENG_SCOPED_CCACHE_ACTIVE ON)
+        else ()
+            set(VENG_SCOPED_CCACHE_ACTIVE OFF)
+        endif ()
+    else ()
+        set(VENG_SCOPED_CCACHE_ACTIVE ${VENG_SCOPED_CCACHE})
+    endif ()
+    if (UNIX AND VENG_SCOPED_CCACHE_ACTIVE)
+        set(VENG_CCACHE_WRAPPER "${CMAKE_BINARY_DIR}/ccache-worktree")
+        file(WRITE "${VENG_CCACHE_WRAPPER}"
+                "#!/bin/sh\n"
+                "export CCACHE_DIR=\"${CMAKE_BINARY_DIR}/.ccache\"\n"
+                "export CCACHE_MAXSIZE=\"${VENG_WORKTREE_CCACHE_MAXSIZE}\"\n"
+                "exec \"${CCACHE_PROGRAM}\" \"$@\"\n")
+        file(CHMOD "${VENG_CCACHE_WRAPPER}"
+                PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE)
+        set(CMAKE_CXX_COMPILER_LAUNCHER "${VENG_CCACHE_WRAPPER}")
+        message(STATUS "ccache scoped to this build tree: ${CMAKE_BINARY_DIR}/.ccache "
+                "(max ${VENG_WORKTREE_CCACHE_MAXSIZE})")
+    else ()
+        set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+    endif ()
     # clang stamps every .pch with a build timestamp, which ccache folds into the
     # cache key — a PCH rebuild would miss for every downstream TU even with the
     # header content unchanged. Suppressing the stamp makes the PCH byte-reproducible
@@ -63,7 +153,7 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Game.cmake)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Editor.cmake)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Docs.cmake)
 
-option(VE_DEBUG "Enable veng debug features (validation layers, asserts)" OFF)
+# VE_DEBUG is declared at the top of this file, ahead of the build-type default that keys off it.
 
 # ---------------------------------------------------------------------------
 # Dependencies
@@ -282,10 +372,13 @@ if (VENG_ENABLE_COVERAGE)
     if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         add_compile_options(--coverage -O0 -g)
         add_link_options(--coverage)
-        # gcov maps counters to source lines; a force-included PCH blurs that mapping,
-        # and the coverage flags defeat the object-cache reuse the primary build is
-        # tuned for. Coverage builds in its own tree, so neither is a loss here.
+        # gcov maps counters to source lines and a force-included PCH blurs that mapping.
         set(CMAKE_DISABLE_PRECOMPILE_HEADERS ON)
+        # An instrumented object caches correctly (ccache restores the .gcno note beside it)
+        # but is many times the size of the primary build's and is never read back by it, so
+        # a shared cache means coverage evicts the entries the primary build wants.
+        # scripts/coverage.sh scopes CCACHE_DIR to this tree so coverage keeps its own reuse
+        # without competing; a coverage tree configured by hand does not get that scoping.
         message(STATUS "coverage instrumentation enabled (gcov)")
     else ()
         message(WARNING "VENG_ENABLE_COVERAGE is ON but the compiler is not GCC/Clang; not instrumenting.")
@@ -319,6 +412,15 @@ if (VE_DEBUG)
         add_compile_options(/WX)
     else ()
         add_compile_options(-Werror)
+    endif ()
+    # Guarantee debug information for veng's own targets. The build type defaults to Debug under
+    # VE_DEBUG and already carries -g, so this is redundant there; it matters when the type is
+    # overridden to one that does not (a VE_DEBUG tree pinned to Release), where a backtrace out
+    # of libveng would otherwise carry symbol names but no file or line. Kept on the same boundary
+    # as -Werror, so the third-party targets configured above stay free of it and the objects they
+    # contribute do not grow.
+    if (NOT MSVC)
+        add_compile_options(-g)
     endif ()
 endif ()
 
