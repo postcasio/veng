@@ -12,6 +12,7 @@
 #include <Veng/Asset/AssetHandleType.h>
 #include <Veng/Asset/AssetType.h>
 #include <Veng/Asset/CookedBlobs.h>
+#include <Veng/Asset/HexId.h>
 #include <Veng/Cook/JsonFile.h>
 #include <Veng/Reflection/JsonSerialize.h>
 #include <Veng/Reflection/Serialize.h>
@@ -40,11 +41,23 @@ namespace Veng::Cook
 
             hooks.ValidateAssetId = [resolve, &assetTypes](u64 id, TypeId fieldType) -> VoidResult
             {
-                const optional<AssetTypeId> expected = AssetTypeForHandleField(fieldType);
+                const optional<AssetTypeId> expected = assetTypes.FindByHandleField(fieldType);
+                if (!expected)
+                {
+                    // No registered mapping means the field's asset type never declared its
+                    // handle leaf — a registration mistake. Skipping the check instead would
+                    // let the field accept an id of any type at all.
+                    return std::unexpected(fmt::format(
+                        "field is an AssetHandle whose leaf type {} no registered asset type "
+                        "claims; set HandleFieldType on the type's registration (and pass "
+                        "--module if it is a module-defined type)",
+                        FormatHexId(fieldType)));
+                }
+
                 const optional<ResolvedSource> resolved = resolve(AssetId{.Value = id});
                 // Resolve only validates ids present in this pack (or a --reference pack);
                 // a non-resident id is accepted as-is (residency is the runtime's job).
-                if (resolved && expected && !AssetHandleFieldAccepts(*expected, resolved->Type))
+                if (resolved && !AssetHandleFieldAccepts(*expected, resolved->Type))
                 {
                     return std::unexpected(fmt::format(
                         "asset {} resolves to type {} but the field expects type {}", id,

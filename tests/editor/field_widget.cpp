@@ -11,8 +11,11 @@
 #include "FieldWidget.h"
 
 #include <Veng/Asset/AssetHandle.h>
+#include <Veng/Asset/AssetType.h>
+#include <Veng/Asset/InputMappingContext.h>
 #include <Veng/Asset/Material.h>
 #include <Veng/Asset/Mesh.h>
+#include <Veng/Asset/RawAsset.h>
 #include <Veng/Asset/Texture.h>
 #include <Veng/Reflection/FieldDescriptor.h>
 #include <Veng/Reflection/TypeId.h>
@@ -34,16 +37,45 @@ namespace
     };
 }
 
-TEST_CASE("FieldWidget: AssetTypeOfHandle maps handle leaf types to asset types")
+TEST_CASE("FieldWidget: the picker resolves a handle leaf through the asset-type registry")
 {
-    CHECK(AssetTypeOfHandle(TypeIdOf<Veng::AssetHandle<Veng::Texture>>()) ==
+    Veng::AssetTypeRegistry types;
+    Veng::RegisterBuiltinAssetTypes(types);
+
+    CHECK(types.FindByHandleField(TypeIdOf<Veng::AssetHandle<Veng::Texture>>()) ==
           Veng::AssetTypes::Texture);
-    CHECK(AssetTypeOfHandle(TypeIdOf<Veng::AssetHandle<Veng::Mesh>>()) == Veng::AssetTypes::Mesh);
-    CHECK(AssetTypeOfHandle(TypeIdOf<Veng::AssetHandle<Veng::Material>>()) ==
+    CHECK(types.FindByHandleField(TypeIdOf<Veng::AssetHandle<Veng::Mesh>>()) ==
+          Veng::AssetTypes::Mesh);
+    CHECK(types.FindByHandleField(TypeIdOf<Veng::AssetHandle<Veng::Material>>()) ==
           Veng::AssetTypes::Material);
 
+    // The two leaves the editor's own copy of this mapping used to miss, which left an
+    // InputContextStack's context list drawing as non-droppable chips labelled "Raw".
+    CHECK(types.FindByHandleField(TypeIdOf<Veng::AssetHandle<Veng::InputMappingContext>>()) ==
+          Veng::AssetTypes::InputMap);
+    CHECK(types.FindByHandleField(TypeIdOf<Veng::AssetHandle<Veng::RawAsset>>()) ==
+          Veng::AssetTypes::Raw);
+
     // A non-handle leaf has no asset type.
-    CHECK_FALSE(AssetTypeOfHandle(TypeIdOf<Veng::f32>()).has_value());
+    CHECK_FALSE(types.FindByHandleField(TypeIdOf<Veng::f32>()).has_value());
+}
+
+TEST_CASE("FieldWidget: a game-registered handle leaf resolves beside the builtins")
+{
+    Veng::AssetTypeRegistry types;
+    Veng::RegisterBuiltinAssetTypes(types);
+
+    constexpr Veng::AssetTypeId catalogue{0x36969A7C209FF5DCULL};
+    constexpr Veng::u64 catalogueHandleLeaf = 0x1136201277BDE36BULL;
+    types.Register({.Id = catalogue,
+                    .Name = "TestCatalogue",
+                    .DisplayName = "Test Catalogue",
+                    .Glyph = "CAT",
+                    .HandleFieldType = catalogueHandleLeaf});
+
+    CHECK(types.FindByHandleField(catalogueHandleLeaf) == catalogue);
+    CHECK(types.FindByHandleField(TypeIdOf<Veng::AssetHandle<Veng::Texture>>()) ==
+          Veng::AssetTypes::Texture);
 }
 
 TEST_CASE("FieldWidget: the picker writes the chosen id through the field pointer")

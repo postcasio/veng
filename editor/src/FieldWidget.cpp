@@ -5,17 +5,9 @@
 #include "EditorIcons.h"
 #include "panels/PrefabEditContext.h"
 
-#include <Veng/Asset/Animation.h>
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Asset/AssetManager.h>
-#include <Veng/Asset/Environment.h>
-#include <Veng/Asset/Material.h>
-#include <Veng/Asset/MaterialInstance.h>
-#include <Veng/Asset/Mesh.h>
-#include <Veng/Asset/Prefab.h>
-#include <Veng/Asset/Texture.h>
-#include <Veng/Gui/UIDocument.h>
-#include <Veng/Reflection/TypeId.h>
+#include <Veng/Asset/AssetType.h>
 #include <Veng/Scene/Entity.h>
 #include <Veng/UI/Inspector.h>
 #include <Veng/UI/UI.h>
@@ -26,43 +18,6 @@
 namespace VengEditor
 {
     using namespace Veng;
-
-    optional<AssetTypeId> AssetTypeOfHandle(TypeId type)
-    {
-        if (type == TypeIdOf<AssetHandle<Texture>>())
-        {
-            return AssetTypes::Texture;
-        }
-        if (type == TypeIdOf<AssetHandle<Mesh>>())
-        {
-            return AssetTypes::Mesh;
-        }
-        if (type == TypeIdOf<AssetHandle<Material>>())
-        {
-            return AssetTypes::Material;
-        }
-        if (type == TypeIdOf<AssetHandle<MaterialInstance>>())
-        {
-            return AssetTypes::MaterialInstance;
-        }
-        if (type == TypeIdOf<AssetHandle<Prefab>>())
-        {
-            return AssetTypes::Prefab;
-        }
-        if (type == TypeIdOf<AssetHandle<Animation>>())
-        {
-            return AssetTypes::Animation;
-        }
-        if (type == TypeIdOf<AssetHandle<EnvironmentMap>>())
-        {
-            return AssetTypes::Environment;
-        }
-        if (type == TypeIdOf<AssetHandle<Gui::UIDocument>>())
-        {
-            return AssetTypes::UIDocument;
-        }
-        return std::nullopt;
-    }
 
     void ApplyAssetPick(void* fieldPtr, AssetId chosen)
     {
@@ -81,9 +36,12 @@ namespace VengEditor
             u64 currentId = 0;
             std::memcpy(&currentId, fieldPtr, sizeof(currentId));
 
-            // A handle type the picker can't enumerate (no AssetTypeId mapping) draws as a static
-            // chip; an enumerable one is an interactive drop target / selector.
-            const optional<AssetTypeId> assetType = AssetTypeOfHandle(field.Type);
+            // A handle type the picker can't enumerate (no asset type claims its leaf) draws as a
+            // static chip; an enumerable one is an interactive drop target / selector. The mapping
+            // is the registry's, shared with the prefab loader and the cooker — the editor keeping
+            // its own would drift, and did.
+            const optional<AssetTypeId> assetType =
+                ctx.Sources.GetAssetTypes().FindByHandleField(field.Type);
 
             const AssetChipInfo chip{
                 .Id = AssetId{currentId},

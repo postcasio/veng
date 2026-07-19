@@ -36,8 +36,23 @@ namespace Veng
 {
     AssetManager::AssetManager(Renderer::Context& context, TaskSystem& tasks, TypeRegistry& types,
                                const AssetManagerInfo& info)
-        : m_Context(context), m_Tasks(tasks), m_Types(types), m_AssetTypes(info.AssetTypes)
+        : m_Context(context), m_Tasks(tasks), m_Types(types)
     {
+        // The builtins first, then the host's additions — mirroring the loader registration
+        // below. A handle field on a component resolves through this registry, so it must be
+        // complete whether or not the host wired one up.
+        RegisterBuiltinAssetTypes(m_AssetTypes);
+        if (info.AssetTypes != nullptr)
+        {
+            for (const auto& [id, typeInfo] : info.AssetTypes->All())
+            {
+                if (!m_AssetTypes.IsRegistered(id))
+                {
+                    m_AssetTypes.Register(typeInfo);
+                }
+            }
+        }
+
         RegisterLoader(CreateUnique<RawAssetLoader>());
         RegisterLoader(CreateUnique<TextureLoader>());
         RegisterLoader(CreateUnique<MeshLoader>());
@@ -152,7 +167,7 @@ namespace Veng
 
     string AssetManager::TypeName(AssetTypeId type) const
     {
-        return m_AssetTypes != nullptr ? m_AssetTypes->GetName(type) : FormatHexId(type.Value);
+        return m_AssetTypes.GetName(type);
     }
 
     MountHandle::~MountHandle()

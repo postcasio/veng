@@ -4,19 +4,10 @@
 
 #include <fmt/format.h>
 
-#include <Veng/Asset/Animation.h>
-#include <Veng/Asset/AssetHandleType.h>
 #include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/AssetType.h>
 #include <Veng/Asset/CookedBlobs.h>
-#include <Veng/Asset/Environment.h>
 #include <Veng/Asset/HexId.h>
-#include <Veng/Asset/InputMappingContext.h>
-#include <Veng/Asset/Material.h>
-#include <Veng/Asset/MaterialInstance.h>
-#include <Veng/Asset/Mesh.h>
-#include <Veng/Asset/RawAsset.h>
-#include <Veng/Asset/Texture.h>
-#include <Veng/Gui/UIDocument.h>
 #include <Veng/Reflection/Serialize.h>
 #include <Veng/Reflection/TypeId.h>
 #include <Veng/Reflection/TypeRegistry.h>
@@ -31,79 +22,28 @@ namespace Veng
                 .Kind = AssetError::Corrupt, .Id = id, .Detail = std::move(detail)};
         }
 
-        // Load one embedded dependency by id + type, returning its cache entry.
+        // Load one embedded dependency by id + type, returning its cache entry. The type comes
+        // from the registry rather than a concrete T, so a game's own asset type resolves through
+        // the same path as a builtin.
         AssetResult<Ref<Detail::AssetCacheEntry>> LoadDependency(AssetManager& manager,
                                                                  AssetId parentId, AssetId depId,
                                                                  AssetTypeId type, bool async)
         {
-            auto load = [&]<class T>() -> AssetResult<Ref<Detail::AssetCacheEntry>>
+            if (!async)
             {
-                if (async)
-                {
-                    const AssetHandle<T> handle = manager.Load<T>(depId);
-                    if (!AssetManager::EntryOf(handle))
-                    {
-                        return std::unexpected(AssetLoadError{
-                            .Kind = AssetError::MissingDependency,
-                            .Id = depId,
-                            .Detail = fmt::format("prefab {}: dependency {} did not resolve",
-                                                  parentId.Value, depId.Value)});
-                    }
-                    return AssetManager::EntryOf(handle);
-                }
+                return manager.LoadSyncUntyped(type, depId);
+            }
 
-                const AssetResult<AssetHandle<T>> handle = manager.LoadSync<T>(depId);
-                if (!handle)
-                {
-                    return std::unexpected(handle.error());
-                }
-                return AssetManager::EntryOf(*handle);
-            };
-
-            if (type == AssetTypes::Texture)
+            Ref<Detail::AssetCacheEntry> entry = manager.LoadUntyped(type, depId);
+            if (!entry)
             {
-                return load.operator()<Texture>();
+                return std::unexpected(
+                    AssetLoadError{.Kind = AssetError::MissingDependency,
+                                   .Id = depId,
+                                   .Detail = fmt::format("prefab {}: dependency {} did not resolve",
+                                                         parentId.Value, depId.Value)});
             }
-            if (type == AssetTypes::Mesh)
-            {
-                return load.operator()<Mesh>();
-            }
-            if (type == AssetTypes::Material)
-            {
-                return load.operator()<Material>();
-            }
-            if (type == AssetTypes::MaterialInstance)
-            {
-                return load.operator()<MaterialInstance>();
-            }
-            if (type == AssetTypes::Prefab)
-            {
-                return load.operator()<Prefab>();
-            }
-            if (type == AssetTypes::Animation)
-            {
-                return load.operator()<Animation>();
-            }
-            if (type == AssetTypes::Environment)
-            {
-                return load.operator()<EnvironmentMap>();
-            }
-            if (type == AssetTypes::InputMap)
-            {
-                return load.operator()<InputMappingContext>();
-            }
-            if (type == AssetTypes::UIDocument)
-            {
-                return load.operator()<Gui::UIDocument>();
-            }
-            if (type == AssetTypes::Raw)
-            {
-                return load.operator()<RawAsset>();
-            }
-            return std::unexpected(Corrupt(
-                parentId, fmt::format("prefab {}: embedded handle field has unsupported asset "
-                                      "type {}",
-                                      parentId.Value, FormatHexId(type.Value))));
+            return entry;
         }
 
         // An embedded handle dependency: its id and the asset type its field
@@ -117,7 +57,8 @@ namespace Veng
         // Collect (id, type) for every embedded AssetHandle field, recursing into struct fields.
         // Reads the AssetId off offset 0 of each handle field per the AssetHandle layout contract.
         VoidResult CollectHandleDeps(AssetId parentId, const void* obj, const TypeInfo& type,
-                                     const TypeRegistry& registry, vector<HandleDep>& out)
+                                     const TypeRegistry& registry,
+                                     const AssetTypeRegistry& assetTypes, vector<HandleDep>& out)
         {
             for (const FieldDescriptor& field : type.Fields)
             {
@@ -132,19 +73,21 @@ namespace Veng
                         continue;
                     }
 
-                    const optional<AssetTypeId> assetType = AssetTypeForHandleField(field.Type);
+                    const optional<AssetTypeId> assetType =
+                        assetTypes.FindByHandleField(field.Type);
                     if (!assetType)
                     {
                         return std::unexpected(fmt::format(
-                            "prefab {}: field '{}' is an AssetHandle of an unrecognized asset type",
-                            parentId.Value, field.Name));
+                            "prefab {}: field '{}' is an AssetHandle whose leaf type {} no asset "
+                            "type claims — the type's registration must set HandleFieldType",
+                            parentId.Value, field.Name, FormatHexId(field.Type)));
                     }
                     out.push_back(HandleDep{.Id = fid, .Type = *assetType});
                 }
                 else if (field.Class == FieldClass::Struct)
                 {
                     const VoidResult nested = CollectHandleDeps(
-                        parentId, fieldPtr, registry.Info(field.Type), registry, out);
+                        parentId, fieldPtr, registry.Info(field.Type), registry, assetTypes, out);
                     if (!nested)
                     {
                         return nested;
@@ -160,7 +103,7 @@ namespace Veng
                     {
                         const VoidResult nested =
                             CollectHandleDeps(parentId, variant.VariantActivePtrConst(fieldPtr),
-                                              registry.Info(active), registry, out);
+                                              registry.Info(active), registry, assetTypes, out);
                         if (!nested)
                         {
                             return nested;
@@ -183,20 +126,21 @@ namespace Veng
                                 continue;
                             }
                             const optional<AssetTypeId> assetType =
-                                AssetTypeForHandleField(field.ElementType);
+                                assetTypes.FindByHandleField(field.ElementType);
                             if (!assetType)
                             {
                                 return std::unexpected(fmt::format(
-                                    "prefab {}: array field '{}' holds AssetHandles of an "
-                                    "unrecognized asset type",
-                                    parentId.Value, field.Name));
+                                    "prefab {}: array field '{}' holds AssetHandles whose leaf "
+                                    "type {} no asset type claims — the type's registration must "
+                                    "set HandleFieldType",
+                                    parentId.Value, field.Name, FormatHexId(field.ElementType)));
                             }
                             out.push_back(HandleDep{.Id = fid, .Type = *assetType});
                         }
                         else if (element.Class == FieldClass::Struct)
                         {
-                            const VoidResult nested =
-                                CollectHandleDeps(parentId, elementPtr, element, registry, out);
+                            const VoidResult nested = CollectHandleDeps(
+                                parentId, elementPtr, element, registry, assetTypes, out);
                             if (!nested)
                             {
                                 return nested;
@@ -315,8 +259,8 @@ namespace Veng
                         return std::unexpected(Corrupt(id, read.error()));
                     }
 
-                    const VoidResult collected =
-                        CollectHandleDeps(id, instance.data(), typeInfo, types, handleDeps);
+                    const VoidResult collected = CollectHandleDeps(
+                        id, instance.data(), typeInfo, types, manager.GetAssetTypes(), handleDeps);
                     typeInfo.Destruct(instance.data());
                     if (!collected)
                     {

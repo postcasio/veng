@@ -84,6 +84,39 @@ namespace Veng
         inline constexpr AssetTypeId DataTable{0x29EAA6FA75196517ULL};
     }
 
+    /// @brief The reflection TypeIds of the AssetHandle\<T\> leaves that reference a builtin type.
+    ///
+    /// The value half of AssetTypeInfo::HandleFieldType for the engine's own types. They are
+    /// reflection ids, but a reflection TypeId is a plain u64 alias, so recording them here costs
+    /// assetpack no dependency — and it is what lets one call to RegisterBuiltinAssetTypes give
+    /// every host, including the veng-free core-pack bootstrap, a complete registry.
+    ///
+    /// Each is the literal authored on the matching VE_LEAF in Veng/Reflection/TypeId.h;
+    /// Veng/Asset/AssetHandleType.h static_asserts the two spellings agree.
+    namespace AssetHandleFieldTypes
+    {
+        /// @brief TypeId of AssetHandle\<RawAsset\>.
+        inline constexpr u64 Raw = 0x05A5061C9E34F8D3ULL;
+        /// @brief TypeId of AssetHandle\<Texture\>.
+        inline constexpr u64 Texture = 0x612EE7E69BE7B848ULL;
+        /// @brief TypeId of AssetHandle\<Mesh\>.
+        inline constexpr u64 Mesh = 0x1CD2C85C50AFC9E0ULL;
+        /// @brief TypeId of AssetHandle\<Material\>.
+        inline constexpr u64 Material = 0x3992D11EB4362B4CULL;
+        /// @brief TypeId of AssetHandle\<MaterialInstance\>.
+        inline constexpr u64 MaterialInstance = 0xB47397CC23B08FDEULL;
+        /// @brief TypeId of AssetHandle\<Prefab\>.
+        inline constexpr u64 Prefab = 0xF71230AEA9060D83ULL;
+        /// @brief TypeId of AssetHandle\<Animation\>.
+        inline constexpr u64 Animation = 0xED6B03478BD050CEULL;
+        /// @brief TypeId of AssetHandle\<EnvironmentMap\>.
+        inline constexpr u64 Environment = 0x4E2499935571083DULL;
+        /// @brief TypeId of AssetHandle\<InputMappingContext\>.
+        inline constexpr u64 InputMap = 0xA6CA03617AA27317ULL;
+        /// @brief TypeId of AssetHandle\<Gui::UIDocument\>.
+        inline constexpr u64 UIDocument = 0xC591D0D0452797E1ULL;
+    }
+
     /// @brief What a registry records about one asset type.
     struct AssetTypeInfo
     {
@@ -97,6 +130,16 @@ namespace Veng
         string DisplayName;
         /// @brief Short badge glyph for editor display ("TEX", "MSH", …).
         string Glyph;
+        /// @brief Reflection TypeId of the AssetHandle\<T\> leaf referencing this type; 0 when none.
+        ///
+        /// What makes an `AssetHandle<T>` field on a reflected component resolvable: the prefab
+        /// loader, the cooker's validation hooks, and the editor's asset picker all turn a field's
+        /// leaf TypeId back into an asset type through this. A type with no reflected handle leaf
+        /// (a Font, a Shader) leaves it 0 and simply cannot sit on a component.
+        ///
+        /// Declared as a bare u64 rather than a Veng::TypeId because assetpack carries no
+        /// reflection dependency; TypeId is an alias for exactly this type.
+        u64 HandleFieldType = 0;
     };
 
     /// @brief Name ↔ id ↔ display metadata for the asset types a host knows about.
@@ -107,8 +150,8 @@ namespace Veng
     /// registry; parsing a pack manifest's `"type"` string and rendering a type for a human are
     /// the registry's only jobs.
     ///
-    /// Registering two types under one id, or two ids under one name, is a fatal collision — the
-    /// same discipline the reflection TypeRegistry applies.
+    /// Registering two types under one id, one name, or one handle-leaf TypeId is a fatal
+    /// collision — the same discipline the reflection TypeRegistry applies.
     class AssetTypeRegistry
     {
     public:
@@ -128,6 +171,15 @@ namespace Veng
         /// @param name  The manifest type name (e.g. "MaterialInstance").
         /// @return The matching id, or nullopt when the name is unregistered.
         [[nodiscard]] optional<AssetTypeId> FindByName(std::string_view name) const;
+
+        /// @brief Resolves an AssetHandle\<T\> field's reflected leaf TypeId to the type it references.
+        ///
+        /// The one mapping the prefab loader, the cooker's cook-time handle validation, and the
+        /// editor's asset picker share, so no two of them can answer differently. A game registers
+        /// its own pairing by setting AssetTypeInfo::HandleFieldType alongside its loader factory.
+        /// @param handleFieldType  The reflected leaf TypeId of an AssetHandle\<T\> field.
+        /// @return The asset type the handle references, or nullopt when nothing registered it.
+        [[nodiscard]] optional<AssetTypeId> FindByHandleField(u64 handleFieldType) const;
 
         /// @brief Returns whether an id is registered.
         /// @param id  The asset type to query.
@@ -159,6 +211,8 @@ namespace Veng
         std::unordered_map<AssetTypeId, AssetTypeInfo> m_Types;
         /// @brief Canonical-name index into m_Types, so a manifest name resolves in one lookup.
         std::unordered_map<string, AssetTypeId> m_ByName;
+        /// @brief Handle-leaf-TypeId index into m_Types, so a reflected field resolves in one lookup.
+        std::unordered_map<u64, AssetTypeId> m_ByHandleField;
     };
 
     /// @brief Pre-fills a registry with the eighteen asset types the engine defines.

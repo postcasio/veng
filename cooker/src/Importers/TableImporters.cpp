@@ -59,7 +59,20 @@ namespace Veng::Cook
             JsonFieldHooks hooks;
             hooks.ValidateAssetId = [&context](const u64 id, const TypeId fieldType) -> VoidResult
             {
-                const optional<AssetTypeId> expected = AssetTypeForHandleField(fieldType);
+                const optional<AssetTypeId> expected =
+                    context.AssetTypes->FindByHandleField(fieldType);
+                if (!expected)
+                {
+                    // No registered mapping means the column's asset type never declared its
+                    // handle leaf — a registration mistake. Skipping the check instead would
+                    // let the column accept an id of any type at all.
+                    return std::unexpected(fmt::format(
+                        "column is an AssetHandle whose leaf type {} no registered asset type "
+                        "claims; set HandleFieldType on the type's registration (and pass "
+                        "--module if it is a module-defined type)",
+                        FormatHexId(fieldType)));
+                }
+
                 const optional<ResolvedSource> resolved = context.Resolve(AssetId{.Value = id});
                 if (!resolved)
                 {
@@ -70,7 +83,7 @@ namespace Veng::Cook
                         fmt::format("asset {} is not declared in this pack or its references",
                                     FormatHexId(id)));
                 }
-                if (expected && !AssetHandleFieldAccepts(*expected, resolved->Type))
+                if (!AssetHandleFieldAccepts(*expected, resolved->Type))
                 {
                     return std::unexpected(
                         fmt::format("asset {} resolves to type {} but the column expects type {}",

@@ -7,59 +7,21 @@
 
 namespace Veng
 {
-    /// @brief The AssetTypeId an embedded AssetHandle<T> field resolves to, keyed by the field's leaf
-    ///        TypeId.
-    ///
-    /// The single mapping shared by the runtime prefab loader (which loads a set handle's dependency)
-    /// and the cooker's prefab importer (which validates a set handle's id against the pack), so the
-    /// two cannot drift out of sync. A field whose leaf TypeId is none of veng's asset-handle leaves
-    /// returns nullopt — an AssetHandle of a type the engine does not recognize.
-    /// @param fieldType  The reflected leaf TypeId of the AssetHandle<T> field.
-    /// @return The asset type the handle resolves to, or nullopt for an unrecognized handle type.
-    [[nodiscard]] inline optional<AssetTypeId> AssetTypeForHandleField(TypeId fieldType)
-    {
-        if (fieldType == TypeIdOf<AssetHandle<Texture>>())
-        {
-            return AssetTypes::Texture;
-        }
-        if (fieldType == TypeIdOf<AssetHandle<Mesh>>())
-        {
-            return AssetTypes::Mesh;
-        }
-        if (fieldType == TypeIdOf<AssetHandle<Material>>())
-        {
-            return AssetTypes::Material;
-        }
-        if (fieldType == TypeIdOf<AssetHandle<MaterialInstance>>())
-        {
-            return AssetTypes::MaterialInstance;
-        }
-        if (fieldType == TypeIdOf<AssetHandle<Prefab>>())
-        {
-            return AssetTypes::Prefab;
-        }
-        if (fieldType == TypeIdOf<AssetHandle<Animation>>())
-        {
-            return AssetTypes::Animation;
-        }
-        if (fieldType == TypeIdOf<AssetHandle<EnvironmentMap>>())
-        {
-            return AssetTypes::Environment;
-        }
-        if (fieldType == TypeIdOf<AssetHandle<InputMappingContext>>())
-        {
-            return AssetTypes::InputMap;
-        }
-        if (fieldType == TypeIdOf<AssetHandle<Gui::UIDocument>>())
-        {
-            return AssetTypes::UIDocument;
-        }
-        if (fieldType == TypeIdOf<AssetHandle<RawAsset>>())
-        {
-            return AssetTypes::Raw;
-        }
-        return std::nullopt;
-    }
+    // AssetTypeInfo::HandleFieldType is what every consumer resolves an AssetHandle<T> field
+    // through, and assetpack must spell the builtins' leaf ids as literals — it carries no
+    // reflection dependency and the veng-free core-pack bootstrap registers builtins too. These
+    // bind those literals to the VE_LEAF authorings, so the two cannot drift apart unnoticed.
+    static_assert(AssetHandleFieldTypes::Raw == TypeIdOf<AssetHandle<RawAsset>>());
+    static_assert(AssetHandleFieldTypes::Texture == TypeIdOf<AssetHandle<Texture>>());
+    static_assert(AssetHandleFieldTypes::Mesh == TypeIdOf<AssetHandle<Mesh>>());
+    static_assert(AssetHandleFieldTypes::Material == TypeIdOf<AssetHandle<Material>>());
+    static_assert(AssetHandleFieldTypes::MaterialInstance ==
+                  TypeIdOf<AssetHandle<MaterialInstance>>());
+    static_assert(AssetHandleFieldTypes::Prefab == TypeIdOf<AssetHandle<Prefab>>());
+    static_assert(AssetHandleFieldTypes::Animation == TypeIdOf<AssetHandle<Animation>>());
+    static_assert(AssetHandleFieldTypes::Environment == TypeIdOf<AssetHandle<EnvironmentMap>>());
+    static_assert(AssetHandleFieldTypes::InputMap == TypeIdOf<AssetHandle<InputMappingContext>>());
+    static_assert(AssetHandleFieldTypes::UIDocument == TypeIdOf<AssetHandle<Gui::UIDocument>>());
 
     /// @brief Whether an asset of type @p actual may fill an AssetHandle field expecting @p expected.
     ///

@@ -42,6 +42,19 @@ namespace Veng
                 FormatHexId(existing->second.Value), FormatHexId(info.Id.Value)));
         }
 
+        if (info.HandleFieldType != 0)
+        {
+            if (const auto existing = m_ByHandleField.find(info.HandleFieldType);
+                existing != m_ByHandleField.end())
+            {
+                FatalCollision(fmt::format("asset handle leaf type {} is claimed by both {} and {}",
+                                           FormatHexId(info.HandleFieldType),
+                                           FormatHexId(existing->second.Value),
+                                           FormatHexId(info.Id.Value)));
+            }
+            m_ByHandleField.emplace(info.HandleFieldType, info.Id);
+        }
+
         m_ByName.emplace(info.Name, info.Id);
         m_Types.emplace(info.Id, std::move(info));
     }
@@ -56,6 +69,16 @@ namespace Veng
     {
         const auto it = m_ByName.find(string(name));
         if (it == m_ByName.end())
+        {
+            return std::nullopt;
+        }
+        return it->second;
+    }
+
+    optional<AssetTypeId> AssetTypeRegistry::FindByHandleField(u64 handleFieldType) const
+    {
+        const auto it = m_ByHandleField.find(handleFieldType);
+        if (it == m_ByHandleField.end())
         {
             return std::nullopt;
         }
@@ -86,30 +109,42 @@ namespace Veng
 
     void RegisterBuiltinAssetTypes(AssetTypeRegistry& registry)
     {
-        registry.Register(
-            {.Id = AssetTypes::Raw, .Name = "Raw", .DisplayName = "Raw", .Glyph = "RAW"});
+        registry.Register({.Id = AssetTypes::Raw,
+                           .Name = "Raw",
+                           .DisplayName = "Raw",
+                           .Glyph = "RAW",
+                           .HandleFieldType = AssetHandleFieldTypes::Raw});
         registry.Register({.Id = AssetTypes::Texture,
                            .Name = "Texture",
                            .DisplayName = "Texture",
-                           .Glyph = "TEX"});
-        registry.Register(
-            {.Id = AssetTypes::Mesh, .Name = "Mesh", .DisplayName = "Mesh", .Glyph = "MSH"});
+                           .Glyph = "TEX",
+                           .HandleFieldType = AssetHandleFieldTypes::Texture});
+        registry.Register({.Id = AssetTypes::Mesh,
+                           .Name = "Mesh",
+                           .DisplayName = "Mesh",
+                           .Glyph = "MSH",
+                           .HandleFieldType = AssetHandleFieldTypes::Mesh});
         registry.Register(
             {.Id = AssetTypes::Shader, .Name = "Shader", .DisplayName = "Shader", .Glyph = "SHD"});
         registry.Register({.Id = AssetTypes::Material,
                            .Name = "Material",
                            .DisplayName = "Material",
-                           .Glyph = "MAT"});
+                           .Glyph = "MAT",
+                           .HandleFieldType = AssetHandleFieldTypes::Material});
         registry.Register({.Id = AssetTypes::MaterialInstance,
                            .Name = "MaterialInstance",
                            .DisplayName = "MaterialInstance",
-                           .Glyph = "MTI"});
+                           .Glyph = "MTI",
+                           .HandleFieldType = AssetHandleFieldTypes::MaterialInstance});
         registry.Register({.Id = AssetTypes::VertexLayout,
                            .Name = "VertexLayout",
                            .DisplayName = "VertexLayout",
                            .Glyph = "VTX"});
-        registry.Register(
-            {.Id = AssetTypes::Prefab, .Name = "Prefab", .DisplayName = "Prefab", .Glyph = "PFB"});
+        registry.Register({.Id = AssetTypes::Prefab,
+                           .Name = "Prefab",
+                           .DisplayName = "Prefab",
+                           .Glyph = "PFB",
+                           .HandleFieldType = AssetHandleFieldTypes::Prefab});
         registry.Register(
             {.Id = AssetTypes::Level, .Name = "Level", .DisplayName = "Level", .Glyph = "LVL"});
         registry.Register({.Id = AssetTypes::Skeleton,
@@ -119,15 +154,18 @@ namespace Veng
         registry.Register({.Id = AssetTypes::Animation,
                            .Name = "Animation",
                            .DisplayName = "Animation",
-                           .Glyph = "ANM"});
+                           .Glyph = "ANM",
+                           .HandleFieldType = AssetHandleFieldTypes::Animation});
         registry.Register({.Id = AssetTypes::Environment,
                            .Name = "Environment",
                            .DisplayName = "EnvironmentMap",
-                           .Glyph = "ENV"});
+                           .Glyph = "ENV",
+                           .HandleFieldType = AssetHandleFieldTypes::Environment});
         registry.Register({.Id = AssetTypes::InputMap,
                            .Name = "InputMap",
                            .DisplayName = "InputMap",
-                           .Glyph = "INP"});
+                           .Glyph = "INP",
+                           .HandleFieldType = AssetHandleFieldTypes::InputMap});
         registry.Register(
             {.Id = AssetTypes::Font, .Name = "Font", .DisplayName = "Font", .Glyph = "FNT"});
         registry.Register({.Id = AssetTypes::StyleSheet,
@@ -137,7 +175,8 @@ namespace Veng
         registry.Register({.Id = AssetTypes::UIDocument,
                            .Name = "UIDocument",
                            .DisplayName = "UIDocument",
-                           .Glyph = "VUI"});
+                           .Glyph = "VUI",
+                           .HandleFieldType = AssetHandleFieldTypes::UIDocument});
         registry.Register({.Id = AssetTypes::TableSchema,
                            .Name = "TableSchema",
                            .DisplayName = "TableSchema",
