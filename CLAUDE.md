@@ -187,24 +187,38 @@ things in an ordinary build's compile DB break it, and the script exists to hand
   No `--extra-arg` reconciles it. The script strips the `-include-pch` pair from a
   *copy* of the DB; CMake emits `-include <header>` beside it, so the translation unit
   is unchanged, merely uncached.
-- **The Vulkan headers.** They sit on a path the configured compiler searches
-  implicitly, so CMake records no `-I` for them and a backend TU dies on
-  `'vulkan/vulkan.hpp' file not found`. The script exports `CPATH` from the build's
-  own `Vulkan_INCLUDE_DIR`.
+- **The Vulkan headers.** In a tree configured *without* the sysroot they sit on a path
+  the compiler searches implicitly, so CMake records no `-I` for them and a backend TU
+  dies on `'vulkan/vulkan.hpp' file not found`. The script exports `CPATH` from the
+  build's own `Vulkan_INCLUDE_DIR` to cover that case. A tree configured with the
+  sysroot from the start records `-I/usr/local/include` itself (see the next bullet),
+  so there the export is redundant but harmless.
 - **The sysroot.** This one is fixed at configure time, not in the script: the build
   tree is configured with **`CMAKE_OSX_SYSROOT`** so the DB records `-isysroot`. It is
   empty by CMake's default, and the compiler resolves the SDK implicitly as a driver
   where libTooling does not — so without it every TU dies on `'cstdint' file not found`
-  or a libc++ `mbstate_t` error. Configure any tree you lint against with it:
+  or a libc++ `mbstate_t` error. It also fixes the identical failure in **clangd** and
+  other libTooling-based editor integrations, and `scripts/tidy.sh` refuses to run
+  against a DB missing it rather than emit a misleading result.
+
+  **Set it when the tree is first configured — never add it to an existing tree.**
+  Delete the build directory and configure from scratch:
 
   ```sh
-  cmake -B build-debug -S . -DVE_DEBUG=ON -DCMAKE_OSX_SYSROOT="$(xcrun --show-sdk-path)"
+  rm -rf build-debug
+  cmake -B build-debug -S . -G Ninja -DVE_DEBUG=ON -DCMAKE_OSX_SYSROOT="$(xcrun --show-sdk-path)"
   ```
 
-  It records what the compiler already does implicitly, so it changes no build
-  behavior — and it fixes the identical failure in **clangd** and other libTooling-based
-  editor integrations. `scripts/tidy.sh` refuses to run against a DB missing it rather
-  than emit a misleading result.
+  The reason is that CMake strips `-I` for any directory it believes the compiler
+  searches implicitly, and it computes that list **once**, caching it in
+  `CMakeFiles/<ver>/CMakeCXXCompiler.cmake`. On this host `/usr/local/include` is
+  implicit and is where the Vulkan and Slang headers live, so a no-sysroot tree emits
+  no `-I` for them and relies on the implicit search. Configure *fresh* with the
+  sysroot and CMake recomputes the list without `/usr/local/include`, so it emits
+  `-isystem /usr/local/include` and everything resolves explicitly. Add the flag to an
+  **existing** tree and the cached list is not recomputed: CMake keeps stripping the
+  flag while the compiler has stopped searching the directory, and the cooker dies on
+  `'slang/slang.h' file not found` — a failure a full step removed from its cause.
 
 **Confirm a run actually ran before believing a clean result.** A toolchain or compile
 failure prints `error:` / `Error while processing` **and no findings**, which is

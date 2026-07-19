@@ -14,9 +14,14 @@
 # The other half of the problem is fixed at configure time rather than here: the build
 # tree is configured with CMAKE_OSX_SYSROOT so the DB records -isysroot. Without it
 # every TU dies on 'cstdint' file not found, since the compiler resolves the SDK
-# implicitly as a driver and libTooling does not. Reconfigure with
-#   cmake -B build-debug -S . -DVE_DEBUG=ON -DCMAKE_OSX_SYSROOT="$(xcrun --show-sdk-path)"
-# if this script reports a missing sysroot.
+# implicitly as a driver and libTooling does not.
+#
+# The sysroot must be set when the tree is FIRST configured. CMake computes the
+# implicit-include list once and caches it, and on this host /usr/local/include — where
+# the Vulkan and Slang headers live — is on it, so CMake strips -I for that directory.
+# A fresh sysroot configure recomputes the list without it and emits -isystem instead;
+# adding the flag to an existing tree leaves the stale list in place, so CMake keeps
+# stripping while the compiler stops searching, and the cooker fails to find slang.h.
 set -euo pipefail
 
 if [ $# -eq 0 ]; then
@@ -61,8 +66,14 @@ done
 
 if ! grep -q -- '-isysroot' "$db/compile_commands.json"; then
     echo "tidy: $db was configured without CMAKE_OSX_SYSROOT, so its compile DB records no" >&2
-    echo "      -isysroot and every TU will fail to find the standard headers. Reconfigure:" >&2
-    echo "      cmake -B $db -S . -DVE_DEBUG=ON -DCMAKE_OSX_SYSROOT=\"\$(xcrun --show-sdk-path)\"" >&2
+    echo "      -isysroot and every TU will fail to find the standard headers." >&2
+    echo "" >&2
+    echo "      Configure from scratch — adding the flag to the existing tree does NOT work," >&2
+    echo "      because CMake caches the implicit-include list and will keep stripping -I for" >&2
+    echo "      /usr/local/include while the compiler stops searching it, breaking the cooker:" >&2
+    echo "" >&2
+    echo "      rm -rf $db" >&2
+    echo "      cmake -B $db -S . -G Ninja -DVE_DEBUG=ON -DCMAKE_OSX_SYSROOT=\"\$(xcrun --show-sdk-path)\"" >&2
     exit 1
 fi
 
