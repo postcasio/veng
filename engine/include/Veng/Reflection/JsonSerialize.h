@@ -59,6 +59,36 @@ namespace Veng
                                      const TypeRegistry& registry, const JsonFieldHooks& hooks = {},
                                      bool allowUnknownFields = false);
 
+    /// @brief Binds one JSON value into a single field's storage, per its FieldClass.
+    ///
+    /// The single-field seam JsonReadFields uses per key, exposed for a consumer whose values are
+    /// not keyed into an enclosing object — a table cell, whose column *is* the descriptor. The
+    /// accepted JSON shape and every diagnostic match JsonReadFields exactly, so a cell authors
+    /// the way the same type authors as a struct field.
+    /// @param fieldPtr           Pointer to the destination field storage (default-constructed by the caller).
+    /// @param field              The field descriptor selecting the binding.
+    /// @param value              Source JSON value.
+    /// @param registry           Registry used to resolve nested struct/enum/variant/array element types.
+    /// @param hooks              AssetId/Reference policy hooks; defaulted for a caller that needs neither.
+    /// @param allowUnknownFields Applied to any nested struct the field recurses into.
+    /// @param path               Diagnostic prefix the located error is reported under; empty for a bare value.
+    /// @return Empty on success; a located error string on a malformed value.
+    VE_API VoidResult JsonReadFieldValue(void* fieldPtr, const FieldDescriptor& field,
+                                         const nlohmann::json& value, const TypeRegistry& registry,
+                                         const JsonFieldHooks& hooks = {},
+                                         bool allowUnknownFields = false, const string& path = {});
+
+    /// @brief Writes one field's storage to a JSON value, the inverse of JsonReadFieldValue.
+    /// @param fieldPtr  Pointer to the source field storage.
+    /// @param field     The field descriptor selecting the encoding.
+    /// @param registry  Registry used to resolve nested struct/enum/variant/array element types.
+    /// @param hooks     AssetId/Reference policy hooks; defaulted for a caller that needs neither.
+    /// @return The field's JSON value.
+    [[nodiscard]] VE_API nlohmann::json JsonWriteFieldValue(const void* fieldPtr,
+                                                            const FieldDescriptor& field,
+                                                            const TypeRegistry& registry,
+                                                            const JsonFieldHooks& hooks = {});
+
     /// @brief Writes a reflected instance to a fresh name-keyed JSON object.
     ///
     /// The write inverse of JsonReadFields, over a brand-new nlohmann::json::object() —

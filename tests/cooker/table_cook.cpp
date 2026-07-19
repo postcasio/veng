@@ -1,15 +1,18 @@
 // Table cook test: cooks a *.tableschema.json + *.table.json pair through the TableSchemaImporter
-// and DataTableImporter and checks the cooked schema layout, the fixed-stride rows, the string
-// heap, and the sorted-unique key index. Also covers each validation failure class — an unknown
-// column, a missing column, a kind mismatch, a duplicate key, an unresolvable AssetRef and an
-// AssetRef whose target is the wrong asset type — and that the cook records the schema and every
-// AssetRef target as dependencies. Tables reference only ids, so the cook needs no --module.
+// and DataTableImporter and checks the cooked schema layout, the row encoding under both the
+// fixed-stride and row-directory paths, and the sorted-unique key index. Also covers each
+// validation failure class — an unknown column, a missing column, a type mismatch, a bad
+// enumerator, a malformed nested struct, a duplicate key, an unresolvable asset reference, one
+// whose target is the wrong asset type, an unkeyable key column, an unregistered column type, and
+// a cook carrying no reflected type registry — and that the cook records the schema and every
+// referenced asset as dependencies.
 
 #include <algorithm>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <random>
+#include "support/TableTestTypes.h"
 #include "support/TempPath.h"
 
 #include <doctest/doctest.h>
@@ -31,25 +34,23 @@ namespace
     constexpr u64 TableId = 0x7AB1E5C0DE000002ULL;
     constexpr u64 BlobId = 0x7AB1E5C0DE000003ULL;
 
-    // A schema with one column of every kind, keyed on an Int column.
-    json SampleSchema()
+    // Every column type here encodes to a constant width, so the cook takes the fixed-stride path.
+    json FixedSchema()
     {
         json schema;
         schema["columns"] = json::array({
-            {{"name", "id"}, {"kind", "Int"}},
-            {{"name", "flag"}, {"kind", "Bool"}},
-            {{"name", "weight"}, {"kind", "Float"}},
-            {{"name", "offset"}, {"kind", "Vec2"}},
-            {{"name", "colour"}, {"kind", "Vec4"}},
-            {{"name", "label"}, {"kind", "String"}},
-            {{"name", "payload"}, {"kind", "AssetRef"}, {"assetType", "Raw"}},
+            {{"name", "id"}, {"type", "Veng::i64"}},
+            {{"name", "flag"}, {"type", "bool"}},
+            {{"name", "weight"}, {"type", "Veng::f32"}},
+            {{"name", "offset"}, {"type", "Veng::vec2"}},
+            {{"name", "motion"}, {"type", "VengTest::Cadence"}},
+            {{"name", "payload"}, {"type", "Veng::AssetHandle<RawAsset>"}},
         });
         schema["key"] = "id";
         return schema;
     }
 
-    // Two rows authored out of key order, so a passing sort assertion means something.
-    json SampleTable()
+    json FixedTable()
     {
         json table;
         table["schema"] = FormatHexId(SchemaId);
@@ -58,17 +59,38 @@ namespace
              {"flag", true},
              {"weight", 2.5},
              {"offset", json::array({1.0, 2.0})},
-             {"colour", json::array({0.1, 0.2, 0.3, 1.0})},
-             {"label", "second"},
+             {"motion", "Burst"},
              {"payload", FormatHexId(BlobId)}},
             {{"id", 10},
              {"flag", false},
              {"weight", -1.25},
              {"offset", json::array({3.0, 4.0})},
-             {"colour", json::array({0.4, 0.5, 0.6, 1.0})},
-             {"label", "first"},
+             {"motion", "Idle"},
              {"payload", FormatHexId(0)}},
         });
+        return table;
+    }
+
+    // The fixed columns first, then a string, a nested struct, and an array — so the leading
+    // columns keep a constant offset while the table as a whole needs a row directory.
+    json MixedSchema()
+    {
+        json schema = FixedSchema();
+        schema["columns"].push_back({{"name", "label"}, {"type", "Veng::string"}});
+        schema["columns"].push_back({{"name", "extent"}, {"type", "VengTest::Extent"}});
+        schema["columns"].push_back({{"name", "curve"}, {"type", "VengTest::WeightCurve"}});
+        return schema;
+    }
+
+    json MixedTable()
+    {
+        json table = FixedTable();
+        table["rows"][0]["label"] = "second";
+        table["rows"][0]["extent"] = {{"Size", json::array({8.0, 4.0})}, {"Margin", 0.5}};
+        table["rows"][0]["curve"] = {{"Samples", json::array({1.0, 2.0, 3.0})}};
+        table["rows"][1]["label"] = "first";
+        table["rows"][1]["extent"] = {{"Size", json::array({2.0, 1.0})}, {"Margin", 0.25}};
+        table["rows"][1]["curve"] = {{"Samples", json::array()}};
         return table;
     }
 
@@ -111,10 +133,15 @@ namespace
         vector<path> Dependencies;
     };
 
-    Result<CookedPack> CookTablePack(const path& packJson)
+    // withTypes = false reproduces a cook carrying no reflected type registry, which a table of
+    // reflected columns cannot be laid out against.
+    Result<CookedPack> CookTablePack(const path& packJson, const bool withTypes = true)
     {
         Cooker cooker;
         RegisterBuiltinImporters(cooker);
+
+        TypeRegistry types;
+        VengTest::RegisterTableTestTypes(types);
 
         // Unique per call: ctest runs each case as its own process, and a shared fixed name lets
         // concurrent cases cook over and delete each other's archive.
@@ -123,8 +150,8 @@ namespace
             Veng::TestSupport::TempDir() / fmt::format("veng_cooker_table_{:08x}.vengpack", rng());
 
         CookedPack cooked;
-        const VoidResult cookResult =
-            cooker.CookPack(packJson, outArchive, {}, nullptr, nullptr, &cooked.Dependencies);
+        const VoidResult cookResult = cooker.CookPack(
+            packJson, outArchive, {}, withTypes ? &types : nullptr, nullptr, &cooked.Dependencies);
         if (!cookResult.has_value())
         {
             return std::unexpected(cookResult.error());
@@ -183,113 +210,161 @@ namespace
         return key;
     }
 
-    // The bytes of one row record within a cooked table blob.
-    const u8* TableRow(const vector<u8>& blob, const CookedDataTableHeader& header, const u32 row)
+    usize DirectoryStart(const CookedDataTableHeader& header)
     {
-        return blob.data() + sizeof(CookedDataTableHeader) +
-               static_cast<usize>(header.RowCount) * sizeof(CookedTableKey) +
-               static_cast<usize>(row) * header.RowStride;
+        return sizeof(CookedDataTableHeader) +
+               static_cast<usize>(header.RowCount) * sizeof(CookedTableKey);
     }
 
-    std::string_view TableString(const vector<u8>& blob, const CookedDataTableHeader& header,
-                                 const CookedTableStringSpan span)
+    usize RowRegionStart(const CookedDataTableHeader& header)
     {
-        const usize heapStart = sizeof(CookedDataTableHeader) +
-                                static_cast<usize>(header.RowCount) * sizeof(CookedTableKey) +
-                                static_cast<usize>(header.RowCount) * header.RowStride;
+        return DirectoryStart(header) +
+               (header.FixedStride != 0 ? 0 : static_cast<usize>(header.RowCount) * sizeof(u32));
+    }
+
+    u32 RowOffset(const vector<u8>& blob, const CookedDataTableHeader& header, const u32 row)
+    {
+        u32 offset = 0;
+        std::memcpy(&offset, blob.data() + DirectoryStart(header) + row * sizeof(u32),
+                    sizeof(offset));
+        return offset;
+    }
+
+    // The bytes of one row within a cooked table blob, under either addressing mode.
+    const u8* TableRow(const vector<u8>& blob, const CookedDataTableHeader& header, const u32 row)
+    {
+        const usize base = RowRegionStart(header);
+        if (header.FixedStride != 0)
+        {
+            return blob.data() + base + static_cast<usize>(row) * header.RowStride;
+        }
+        return blob.data() + base + RowOffset(blob, header, row);
+    }
+
+    std::string_view KeyHeapString(const vector<u8>& blob, const CookedDataTableHeader& header,
+                                   const CookedTableStringSpan span)
+    {
+        const usize heapStart = RowRegionStart(header) + header.RowBytes;
         return std::string_view(
             reinterpret_cast<const char*>(blob.data()) + heapStart + span.Offset, span.Length);
     }
 }
 
-TEST_CASE("table cook: happy path — schema layout, rows, string heap, and sorted key index")
+TEST_CASE("table cook: an all-fixed-size schema addresses rows arithmetically and omits the "
+          "directory")
 {
-    const path packJson = WriteTablePack("table_happy", SampleSchema(), SampleTable());
+    const path packJson = WriteTablePack("table_fixed", FixedSchema(), FixedTable());
 
     const Result<CookedPack> cooked = CookTablePack(packJson);
     REQUIRE_MESSAGE(cooked.has_value(), cooked.error());
 
-    // --- Schema blob: one column per declaration, each cell on its own alignment ---
     const CookedTableSchemaHeader schemaHeader = SchemaHeader(cooked->Schema);
     CHECK(schemaHeader.Version == CookedTableSchemaVersion);
-    CHECK(schemaHeader.ColumnCount == 7);
+    CHECK(schemaHeader.ColumnCount == 6);
     CHECK(schemaHeader.KeyColumn == 0);
-    CHECK(schemaHeader.RowStride % 8 == 0);
+    CHECK(schemaHeader.FixedStride == 1);
+    CHECK(schemaHeader.KeyKind == static_cast<u32>(CookedTableKeyKind::Integer));
 
-    for (u32 i = 0; i < schemaHeader.ColumnCount; ++i)
-    {
-        const CookedTableColumn column = SchemaColumn(cooked->Schema, i);
-        const auto kind = static_cast<TableColumnKind>(column.Kind);
-        CHECK(column.Offset % TableCellAlignment(kind) == 0);
-        CHECK(column.Offset + TableCellSize(kind) <= schemaHeader.RowStride);
-    }
+    // Cells are packed in declaration order at their encoded widths: i64, bool, f32, vec2, the
+    // enum's u32, then the handle's leading id.
+    CHECK(SchemaColumn(cooked->Schema, 0).Offset == 0);
+    CHECK(SchemaColumn(cooked->Schema, 1).Offset == 8);
+    CHECK(SchemaColumn(cooked->Schema, 2).Offset == 9);
+    CHECK(SchemaColumn(cooked->Schema, 3).Offset == 13);
+    CHECK(SchemaColumn(cooked->Schema, 4).Offset == 21);
+    CHECK(SchemaColumn(cooked->Schema, 5).Offset == 25);
+    CHECK(schemaHeader.RowStride == 33);
 
-    // The AssetRef column carries the asset type it constrains its cells to.
-    const CookedTableColumn payload = SchemaColumn(cooked->Schema, 6);
+    // A column carries its reflected TypeId, not a bespoke kind enumerator.
+    const CookedTableColumn payload = SchemaColumn(cooked->Schema, 5);
     CHECK(string(payload.Name) == "payload");
-    CHECK(payload.Kind == static_cast<u32>(CookedTableColumnKind::AssetRef));
-    CHECK(payload.ReferencedType == AssetTypes::Raw.Value);
+    CHECK(payload.Type == TypeIdOf<AssetHandle<RawAsset>>());
 
-    // --- Table blob ---
     const CookedDataTableHeader header = TableHeader(cooked->Table);
     CHECK(header.Version == CookedDataTableVersion);
     CHECK(header.RowCount == 2);
+    CHECK(header.FixedStride == 1);
     CHECK(header.RowStride == schemaHeader.RowStride);
+    CHECK(header.RowBytes == 2 * schemaHeader.RowStride);
     CHECK(header.SchemaId == SchemaId);
-    CHECK(header.KeyKind == static_cast<u32>(CookedTableColumnKind::Int));
 
     // The key index is sorted ascending and unique, whatever order the rows were authored in.
-    const CookedTableKey first = TableKey(cooked->Table, 0);
-    const CookedTableKey second = TableKey(cooked->Table, 1);
-    CHECK(first.IntKey == 10);
-    CHECK(second.IntKey == 40);
-    CHECK(first.IntKey < second.IntKey);
-    CHECK(first.RowIndex == 1);
-    CHECK(second.RowIndex == 0);
+    CHECK(TableKey(cooked->Table, 0).IntKey == 10);
+    CHECK(TableKey(cooked->Table, 1).IntKey == 40);
+    CHECK(TableKey(cooked->Table, 0).RowIndex == 1);
+    CHECK(TableKey(cooked->Table, 1).RowIndex == 0);
 
-    // Row 0 is the authored first row (id 40): its cells decode at the schema's offsets.
     const u8* const row = TableRow(cooked->Table, header, 0);
     i64 id = 0;
-    std::memcpy(&id, row + SchemaColumn(cooked->Schema, 0).Offset, sizeof(id));
+    std::memcpy(&id, row + 0, sizeof(id));
     CHECK(id == 40);
 
-    u32 flag = 0;
-    std::memcpy(&flag, row + SchemaColumn(cooked->Schema, 1).Offset, sizeof(flag));
-    CHECK(flag == 1);
-
     f32 weight = 0.0f;
-    std::memcpy(&weight, row + SchemaColumn(cooked->Schema, 2).Offset, sizeof(weight));
+    std::memcpy(&weight, row + 9, sizeof(weight));
     CHECK(weight == doctest::Approx(2.5f));
 
-    CookedTableStringSpan label{};
-    std::memcpy(&label, row + SchemaColumn(cooked->Schema, 5).Offset, sizeof(label));
-    CHECK(TableString(cooked->Table, header, label) == "second");
+    u32 motion = 0;
+    std::memcpy(&motion, row + 21, sizeof(motion));
+    CHECK(motion == static_cast<u32>(VengTest::Cadence::Burst));
 
     u64 reference = 0;
-    std::memcpy(&reference, row + payload.Offset, sizeof(reference));
+    std::memcpy(&reference, row + 25, sizeof(reference));
     CHECK(reference == BlobId);
 
-    // The unset reference in the other row stays the invalid id.
-    const u8* const otherRow = TableRow(cooked->Table, header, 1);
-    std::memcpy(&reference, otherRow + payload.Offset, sizeof(reference));
-    CHECK(reference == 0);
-
-    // --- Dependencies: the schema source and the AssetRef target, recorded through Resolve ---
+    // --- Dependencies: the schema source and the referenced asset, recorded through Resolve ---
     const auto names = [&cooked](const string& suffix)
     {
         return std::ranges::any_of(cooked->Dependencies, [&suffix](const path& dependency)
                                    { return dependency.string().ends_with(suffix); });
     };
-    CHECK(names("table_happy.tableschema.json"));
-    CHECK(names("table_happy.table.json"));
-    CHECK(names("table_happy.bin"));
+    CHECK(names("table_fixed.tableschema.json"));
+    CHECK(names("table_fixed.table.json"));
+    CHECK(names("table_fixed.bin"));
+}
+
+TEST_CASE("table cook: a string, struct, or array column makes rows variable-size and adds a "
+          "directory")
+{
+    const path packJson = WriteTablePack("table_mixed", MixedSchema(), MixedTable());
+
+    const Result<CookedPack> cooked = CookTablePack(packJson);
+    REQUIRE_MESSAGE(cooked.has_value(), cooked.error());
+
+    const CookedTableSchemaHeader schemaHeader = SchemaHeader(cooked->Schema);
+    CHECK(schemaHeader.ColumnCount == 9);
+    CHECK(schemaHeader.FixedStride == 0);
+
+    // Leading fixed columns keep a constant offset; the first variable column and everything
+    // after it does not.
+    CHECK(SchemaColumn(cooked->Schema, 0).Offset == 0);
+    CHECK(SchemaColumn(cooked->Schema, 5).Offset == 25);
+    CHECK(SchemaColumn(cooked->Schema, 6).Offset == CookedTableColumnOffsetUnresolved);
+    CHECK(SchemaColumn(cooked->Schema, 7).Offset == CookedTableColumnOffsetUnresolved);
+    CHECK(SchemaColumn(cooked->Schema, 8).Offset == CookedTableColumnOffsetUnresolved);
+
+    const CookedDataTableHeader header = TableHeader(cooked->Table);
+    CHECK(header.FixedStride == 0);
+    REQUIRE(header.RowCount == 2);
+
+    // The directory starts at zero, and the two rows differ in size because their arrays do.
+    CHECK(RowOffset(cooked->Table, header, 0) == 0);
+    const u32 firstRowBytes = RowOffset(cooked->Table, header, 1);
+    const u32 secondRowBytes = header.RowBytes - firstRowBytes;
+    CHECK(firstRowBytes > 0);
+    CHECK(firstRowBytes > secondRowBytes);
+
+    // The leading fixed cells still decode arithmetically in a variable-size row.
+    const u8* const row = TableRow(cooked->Table, header, 0);
+    i64 id = 0;
+    std::memcpy(&id, row + 0, sizeof(id));
+    CHECK(id == 40);
 }
 
 TEST_CASE("table cook: a String key column sorts the key index lexicographically")
 {
     json schema;
-    schema["columns"] =
-        json::array({{{"name", "name"}, {"kind", "String"}}, {{"name", "count"}, {"kind", "Int"}}});
+    schema["columns"] = json::array(
+        {{{"name", "name"}, {"type", "Veng::string"}}, {{"name", "count"}, {"type", "Veng::i64"}}});
     schema["key"] = "name";
 
     json table;
@@ -303,21 +378,29 @@ TEST_CASE("table cook: a String key column sorts the key index lexicographically
     REQUIRE_MESSAGE(cooked.has_value(), cooked.error());
 
     const CookedDataTableHeader header = TableHeader(cooked->Table);
-    CHECK(header.KeyKind == static_cast<u32>(CookedTableColumnKind::String));
+    CHECK(header.KeyKind == static_cast<u32>(CookedTableKeyKind::String));
     REQUIRE(header.RowCount == 3);
 
-    CHECK(TableString(cooked->Table, header, TableKey(cooked->Table, 0).StringKey) == "alpha");
-    CHECK(TableString(cooked->Table, header, TableKey(cooked->Table, 1).StringKey) == "beta");
-    CHECK(TableString(cooked->Table, header, TableKey(cooked->Table, 2).StringKey) == "gamma");
+    CHECK(KeyHeapString(cooked->Table, header, TableKey(cooked->Table, 0).StringKey) == "alpha");
+    CHECK(KeyHeapString(cooked->Table, header, TableKey(cooked->Table, 1).StringKey) == "beta");
+    CHECK(KeyHeapString(cooked->Table, header, TableKey(cooked->Table, 2).StringKey) == "gamma");
     CHECK(TableKey(cooked->Table, 0).RowIndex == 1);
+}
+
+TEST_CASE("table cook: without a reflected type registry the cook fails loudly")
+{
+    const path packJson = WriteTablePack("table_no_registry", FixedSchema(), FixedTable());
+    const Result<CookedPack> cooked = CookTablePack(packJson, false);
+    REQUIRE_FALSE(cooked.has_value());
+    CHECK(cooked.error().find("needs the reflected type registry") != string::npos);
 }
 
 TEST_CASE("table cook: an unknown column in a row is a located error")
 {
-    json table = SampleTable();
+    json table = FixedTable();
     table["rows"][0]["bogus"] = 1;
 
-    const path packJson = WriteTablePack("table_unknown_column", SampleSchema(), table);
+    const path packJson = WriteTablePack("table_unknown_column", FixedSchema(), table);
     const Result<CookedPack> cooked = CookTablePack(packJson);
     REQUIRE_FALSE(cooked.has_value());
     CHECK(cooked.error().find("no column named 'bogus'") != string::npos);
@@ -325,87 +408,122 @@ TEST_CASE("table cook: an unknown column in a row is a located error")
 
 TEST_CASE("table cook: a missing column in a row is a located error")
 {
-    json table = SampleTable();
+    json table = FixedTable();
     table["rows"][0].erase("weight");
 
-    const path packJson = WriteTablePack("table_missing_column", SampleSchema(), table);
+    const path packJson = WriteTablePack("table_missing_column", FixedSchema(), table);
     const Result<CookedPack> cooked = CookTablePack(packJson);
     REQUIRE_FALSE(cooked.has_value());
     CHECK(cooked.error().find("column 'weight': missing") != string::npos);
 }
 
-TEST_CASE("table cook: a cell of the wrong kind is a located error")
+TEST_CASE("table cook: a cell of the wrong type is a located error naming the column")
 {
-    json table = SampleTable();
+    json table = FixedTable();
     table["rows"][0]["flag"] = "yes";
 
-    const path packJson = WriteTablePack("table_kind_mismatch", SampleSchema(), table);
+    const path packJson = WriteTablePack("table_type_mismatch", FixedSchema(), table);
     const Result<CookedPack> cooked = CookTablePack(packJson);
     REQUIRE_FALSE(cooked.has_value());
-    CHECK(cooked.error().find("expected a boolean") != string::npos);
+    CHECK(cooked.error().find("row 0: flag") != string::npos);
+    CHECK(cooked.error().find("expected a number or boolean") != string::npos);
+}
+
+TEST_CASE("table cook: an unknown enumerator in an enum column is a located error")
+{
+    json table = FixedTable();
+    table["rows"][0]["motion"] = "Frantic";
+
+    const path packJson = WriteTablePack("table_bad_enum", FixedSchema(), table);
+    const Result<CookedPack> cooked = CookTablePack(packJson);
+    REQUIRE_FALSE(cooked.has_value());
+    CHECK(cooked.error().find("unknown enumerator 'Frantic'") != string::npos);
+}
+
+TEST_CASE("table cook: a malformed nested-struct cell is located down to the inner field")
+{
+    json table = MixedTable();
+    table["rows"][0]["extent"]["Margin"] = "wide";
+
+    const path packJson = WriteTablePack("table_bad_struct", MixedSchema(), table);
+    const Result<CookedPack> cooked = CookTablePack(packJson);
+    REQUIRE_FALSE(cooked.has_value());
+    CHECK(cooked.error().find("extent.Margin") != string::npos);
 }
 
 TEST_CASE("table cook: a duplicate key is a located error")
 {
-    json table = SampleTable();
+    json table = FixedTable();
     table["rows"][1]["id"] = 40;
 
-    const path packJson = WriteTablePack("table_duplicate_key", SampleSchema(), table);
+    const path packJson = WriteTablePack("table_duplicate_key", FixedSchema(), table);
     const Result<CookedPack> cooked = CookTablePack(packJson);
     REQUIRE_FALSE(cooked.has_value());
     CHECK(cooked.error().find("appears in more than one row") != string::npos);
 }
 
-TEST_CASE("table cook: an AssetRef naming an undeclared asset is a located error")
+TEST_CASE("table cook: an asset reference naming an undeclared asset is a located error")
 {
-    json table = SampleTable();
+    json table = FixedTable();
     table["rows"][0]["payload"] = FormatHexId(0xDEADBEEFULL);
 
-    const path packJson = WriteTablePack("table_unresolved_ref", SampleSchema(), table);
+    const path packJson = WriteTablePack("table_unresolved_ref", FixedSchema(), table);
     const Result<CookedPack> cooked = CookTablePack(packJson);
     REQUIRE_FALSE(cooked.has_value());
     CHECK(cooked.error().find("is not declared in this pack") != string::npos);
 }
 
-TEST_CASE("table cook: an AssetRef of the wrong asset type is a located error")
+TEST_CASE("table cook: an asset reference of the wrong asset type is a located error")
 {
-    json schema = SampleSchema();
-    schema["columns"][6]["assetType"] = "Texture";
+    json schema = FixedSchema();
+    schema["columns"][5]["type"] = "Veng::AssetHandle<Texture>";
 
-    const path packJson = WriteTablePack("table_ref_type", schema, SampleTable());
+    const path packJson = WriteTablePack("table_ref_type", schema, FixedTable());
     const Result<CookedPack> cooked = CookTablePack(packJson);
     REQUIRE_FALSE(cooked.has_value());
-    CHECK(cooked.error().find("but the column references Texture") != string::npos);
+    CHECK(cooked.error().find("but the column expects type Texture") != string::npos);
 }
 
-TEST_CASE("table schema cook: a key column of an unkeyable kind is a located error")
+TEST_CASE("table schema cook: a key column with no total order is a located error")
 {
-    json schema = SampleSchema();
+    json schema = FixedSchema();
     schema["key"] = "weight";
 
-    const path packJson = WriteTablePack("table_bad_key", schema, SampleTable());
+    const path packJson = WriteTablePack("table_bad_key", schema, FixedTable());
     const Result<CookedPack> cooked = CookTablePack(packJson);
     REQUIRE_FALSE(cooked.has_value());
-    CHECK(cooked.error().find("must be kind 'Int' or 'String'") != string::npos);
+    CHECK(cooked.error().find("must be an integer or a string") != string::npos);
 }
 
-TEST_CASE("table schema cook: an unknown column kind is a located error")
+TEST_CASE("table schema cook: an unregistered column type is a located error")
 {
-    json schema = SampleSchema();
-    schema["columns"][1]["kind"] = "Colour";
+    json schema = FixedSchema();
+    schema["columns"][1]["type"] = "Veng::Colour";
 
-    const path packJson = WriteTablePack("table_bad_kind", schema, SampleTable());
+    const path packJson = WriteTablePack("table_bad_type", schema, FixedTable());
     const Result<CookedPack> cooked = CookTablePack(packJson);
     REQUIRE_FALSE(cooked.has_value());
-    CHECK(cooked.error().find("unknown kind 'Colour'") != string::npos);
+    CHECK(cooked.error().find("no reflected type named 'Veng::Colour' is registered") !=
+          string::npos);
+}
+
+TEST_CASE("table schema cook: a type name must be fully qualified to match")
+{
+    json schema = FixedSchema();
+    schema["columns"][2]["type"] = "f32";
+
+    const path packJson = WriteTablePack("table_unqualified", schema, FixedTable());
+    const Result<CookedPack> cooked = CookTablePack(packJson);
+    REQUIRE_FALSE(cooked.has_value());
+    CHECK(cooked.error().find("no reflected type named 'f32' is registered") != string::npos);
 }
 
 TEST_CASE("table schema cook: a duplicate column name is a located error")
 {
-    json schema = SampleSchema();
+    json schema = FixedSchema();
     schema["columns"][2]["name"] = "flag";
 
-    const path packJson = WriteTablePack("table_dup_column", schema, SampleTable());
+    const path packJson = WriteTablePack("table_dup_column", schema, FixedTable());
     const Result<CookedPack> cooked = CookTablePack(packJson);
     REQUIRE_FALSE(cooked.has_value());
     CHECK(cooked.error().find("is declared more than once") != string::npos);

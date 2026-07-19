@@ -60,4 +60,22 @@ namespace Veng
         }
         return std::nullopt;
     }
+
+    /// @brief Whether an asset of type @p actual may fill an AssetHandle field expecting @p expected.
+    ///
+    /// The one substitution rule the engine allows: a MaterialInstance field accepts a bare
+    /// Material id, resolved at load to that material's zero-override default instance. Shared by
+    /// every cook-time handle validation so no importer invents a second answer.
+    /// @param expected  The asset type the handle field resolves to.
+    /// @param actual    The asset type the referenced id was declared as.
+    /// @return True when the reference is acceptable.
+    [[nodiscard]] inline bool AssetHandleFieldAccepts(const AssetTypeId expected,
+                                                      const AssetTypeId actual)
+    {
+        if (actual == expected)
+        {
+            return true;
+        }
+        return expected == AssetTypes::MaterialInstance && actual == AssetTypes::Material;
+    }
 }

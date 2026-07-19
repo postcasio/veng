@@ -660,6 +660,20 @@ namespace Veng
         return ReadFieldsAt(obj, type, value, registry, hooks, allowUnknownFields, string{});
     }
 
+    VoidResult JsonReadFieldValue(void* fieldPtr, const FieldDescriptor& field,
+                                  const nlohmann::json& value, const TypeRegistry& registry,
+                                  const JsonFieldHooks& hooks, const bool allowUnknownFields,
+                                  const string& path)
+    {
+        return ReadValue(fieldPtr, field, value, registry, hooks, allowUnknownFields, path);
+    }
+
+    nlohmann::json JsonWriteFieldValue(const void* fieldPtr, const FieldDescriptor& field,
+                                       const TypeRegistry& registry, const JsonFieldHooks& hooks)
+    {
+        return WriteValue(fieldPtr, field, registry, hooks);
+    }
+
     nlohmann::json JsonWriteFields(const void* obj, const TypeInfo& type,
                                    const TypeRegistry& registry, const JsonFieldHooks& hooks)
     {

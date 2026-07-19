@@ -3,27 +3,27 @@
   "rows": [
     {
       "id": 20,
-      "label": "brisk",
       "spinSpeed": 2.5,
       "tint": [0.9, 0.4, 0.2, 1.0],
       "enabled": true,
-      "icon": "0x502E61AE5D720E64"
+      "icon": "0x502E61AE5D720E64",
+      "label": "brisk"
     },
     {
       "id": 10,
-      "label": "calm",
       "spinSpeed": 0.75,
       "tint": [0.2, 0.5, 0.9, 1.0],
       "enabled": true,
-      "icon": "0x502E61AE5D720E64"
+      "icon": "0x502E61AE5D720E64",
+      "label": "calm"
     },
     {
       "id": 30,
-      "label": "still",
       "spinSpeed": 0.0,
       "tint": [0.6, 0.6, 0.6, 1.0],
       "enabled": false,
-      "icon": "0x0000000000000000"
+      "icon": "0x502E61AE5D720E64",
+      "label": "still"
     }
   ]
 }
