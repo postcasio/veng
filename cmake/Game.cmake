@@ -1,9 +1,22 @@
 # veng_add_game(<name>
-#     SOURCES   <game sources...>        # the libgame translation units
+#     SOURCES      <game sources...>     # the libgame translation units
+#     [COOK_SOURCES <importer sources...>] # opt in: emit lib<name>_cook, the tool-only cook module
 #     [PROJECT  <veng_add_project host target>] # optional: the project's host-config target
 #     [MCP]                              # opt in: link the launcher against veng::mcp and
 #                                        #   compile its --connect client short-circuit
 # )
+#
+# COOK_SOURCES emits lib<name>_cook: a SHARED library exporting VengCookModuleRegister, which
+# the cooker and the editor load beside lib<name> to obtain the game's own AssetImporters. It is
+# a TOOL artifact: nothing at runtime loads it, so it is not one of the artifacts the relocatable
+# set names (launcher + lib<name> + project + packs) and a ship copies those rather than the
+# build directory. It links veng::cook_interface (the importer contract, headers only — never
+# the static libveng_cook, which would carry a second copy of the cooker's process-wide state
+# into the dlopened image), veng::veng, and lib<name> itself, so an importer shares the game's
+# own format headers with the runtime loader that reads what it writes. It lands beside
+# lib<name> so the sibling lookup (`lib<name>_cook` next to `--module`'s argument) resolves it.
+# Name it to veng_add_project as COOK_MODULE <name>_cook so the cook is ordered behind it; that
+# edge belongs on the cook command, which only veng_add_project declares.
 #
 # MCP turns the launcher into an MCP client: it links veng::mcp and compiles
 # VENG_LAUNCHER_MCP into the exe, activating launcher_main.cpp's --connect
@@ -36,7 +49,7 @@ if (NOT VENG_PACKAGE_MODE)
 endif ()
 
 function(veng_add_game NAME)
-    cmake_parse_arguments(ARG "MCP" "PROJECT" "SOURCES" ${ARGN})
+    cmake_parse_arguments(ARG "MCP" "PROJECT" "SOURCES;COOK_SOURCES" ${ARGN})
 
     add_library(${NAME} SHARED ${ARG_SOURCES})
     target_link_libraries(${NAME} PRIVATE veng::veng)
@@ -74,6 +87,23 @@ function(veng_add_game NAME)
     set_target_properties(${NAME} PROPERTIES
         LIBRARY_OUTPUT_DIRECTORY $<TARGET_FILE_DIR:${NAME}-launcher>)
     add_dependencies(${NAME}-launcher ${NAME})
+
+    # The optional cook module: tool-only, loaded by vengc and the editor, never shipped. It
+    # lands beside lib<name> so the cooker's sibling lookup finds it with no extra flag, and it
+    # is EXCLUDE_FROM_ALL-free on purpose — the cook needs it built, so the project's cook
+    # targets depend on it below.
+    if (ARG_COOK_SOURCES)
+        add_library(${NAME}_cook SHARED ${ARG_COOK_SOURCES})
+        target_link_libraries(${NAME}_cook PRIVATE veng::cook_interface veng::veng ${NAME})
+        set_target_properties(${NAME}_cook PROPERTIES
+            LIBRARY_OUTPUT_DIRECTORY $<TARGET_FILE_DIR:${NAME}-launcher>)
+
+        # lib<name> resolves beside the cook module the same way it does beside the launcher, so
+        # a tool that dlopens the cook module pulls the game lib in from the same directory.
+        set_target_properties(${NAME}_cook PROPERTIES
+            BUILD_RPATH   "${GAME_RPATH}"
+            INSTALL_RPATH "${GAME_RPATH}")
+    endif ()
 
     # Copy the cooked project file and every pack it names beside the launcher so
     # ExecutableDirectory()-relative loading finds them; the set (launcher + lib +

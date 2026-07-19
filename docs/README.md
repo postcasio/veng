@@ -54,6 +54,12 @@ symbol: build the Doxygen reference with `cmake --build build --target docs`
   tree, install prefix), the `veng_ROOT` / `CMAKE_PREFIX_PATH` /
   `FETCHCONTENT_SOURCE_DIR_VENG` discovery incantations, and the co-development
   loop that needs no reinstall.
+- **[Defining your own asset type](guides/custom-asset-types.md)** — the open
+  asset-type space: minting an `AssetTypeId`, sharing one cooked-layout header between
+  a runtime loader and an offline importer, the `lib<game>_cook` cook module and why it
+  links `veng::cook_interface` rather than the cooker, registering the identity and a
+  loader factory through `VengModuleRegister`, the `COOK_SOURCES` / `COOK_MODULE` build
+  wiring, and the module-handle lifetime rule the registries impose.
 - **[Networking: server-authoritative multiplayer](guides/networking.md)** — building
   a client/server game: the server-authoritative model and fixed tick, marking a
   component to replicate with `VE_REPLICATED`, a connection becoming a seat and the

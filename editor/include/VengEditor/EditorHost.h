@@ -189,7 +189,11 @@ namespace VengEditor
         [[nodiscard]] const AssetSourceIndex* GetAssetSources() const { return m_Sources.get(); }
 
         /// @brief Returns the asset-type registry manifest type names and type display resolve through.
-        [[nodiscard]] const Veng::AssetTypeRegistry& GetAssetTypes() const { return m_AssetTypes; }
+        ///
+        /// Carries the engine builtins plus every asset type the loaded game module registered, so
+        /// a game-defined type browses and chips under its own registered display name. Out of
+        /// line because the owning registry struct is opaque here.
+        [[nodiscard]] const Veng::AssetTypeRegistry& GetAssetTypes() const;
 
         /// @brief Shows or hides an open panel by title, or opens/closes a document panel.
         ///
@@ -271,12 +275,6 @@ namespace VengEditor
         /// @brief Declared after the modules so it is destroyed first; its
         /// ApplicationRegistry holds closures whose code lives in the game module.
         Veng::Unique<Registries> m_Registries;
-
-        /// @brief The asset-type identities this editor recognizes, pre-filled with the builtins.
-        ///
-        /// Host-owned and threaded by reference — assetpack is static, so a global would give
-        /// each linked image its own divergent copy. Declared ahead of m_Sources, which borrows it.
-        Veng::AssetTypeRegistry m_AssetTypes;
 
         /// @brief AssetId to source-file index, parsed once from the manifest.
         /// nullptr when no manifest path is configured.

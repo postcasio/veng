@@ -1,0 +1,7 @@
+{
+    "markers": [
+        { "name": "origin", "position": [0.0, 0.0, 0.0] },
+        { "name": "cube", "position": [0.0, 0.5, 0.0] },
+        { "name": "overlook", "position": [3.0, 2.5, 4.0] }
+    ]
+}

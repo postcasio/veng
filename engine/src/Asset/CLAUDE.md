@@ -86,6 +86,20 @@ engine *mounts* archives and resolves assets against them.
   pre-registers the builtins, puts it in the `VengModuleHost` as `Types`, calls
   `VengModuleRegister` (at which point the module registers its component types), and threads it
   onward.
+- **A game module defines whole asset types of its own.** The type's identity registers exactly
+  once per process, through `VengModuleRegister` — `host->AssetTypes.Register(AssetTypeInfo{...})`
+  for the minted id, manifest name, and editor display metadata, and
+  `host->AssetLoaders.Register(type, factory)` for a factory the `AssetManager` instantiates at
+  construction. Registration is inert and GPU-free, which is why it can precede any live manager;
+  the module points `ApplicationInfo::AssetTypes` / `AssetLoaders` at the same host-owned
+  registries so the manager it later builds finds them. A factory claiming a type the engine
+  already handles is fatal — override semantics for builtin types stay engine-owned. The offline
+  half is a separate **cook module** carrying importers only (see
+  [cooker/CLAUDE.md](../../../cooker/CLAUDE.md)); registering an id from both seams would deliver
+  it twice in the editor, where both images load, and duplicate ids abort.
+  @warning The registries hold owned polymorphic objects whose code lives in a `dlclose`-able
+  image, so the module handle must outlive them *and* the `AssetManager` built from them. Hosts
+  enforce this structurally, by declaring the handle first in the owning struct.
 - **Build-order edge: `veng_add_asset_pack(... MODULE <lib>)`.** A pack containing prefabs names
   its game module; the build graph grows a `lib → cook → bundle` edge so the pack cooks after its
   lib is built. Packs without prefabs stay module-independent. `veng_add_game` wires the example's

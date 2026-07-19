@@ -198,7 +198,9 @@ namespace Veng
         // be created once the worker count is known. Done here, before any upload.
         m_RenderContext.InitializeTransferPools(*m_TaskSystem);
 
-        m_AssetManager = CreateUnique<AssetManager>(m_RenderContext, *m_TaskSystem, m_TypeRegistry);
+        m_AssetManager = CreateUnique<AssetManager>(
+            m_RenderContext, *m_TaskSystem, m_TypeRegistry,
+            AssetManagerInfo{.AssetTypes = m_Info.AssetTypes, .Loaders = m_Info.AssetLoaders});
 
         // The sim-domain scheduler owning every open world. Given the live device services, so it can
         // spawn cooked-level worlds and drive their capture surfaces.

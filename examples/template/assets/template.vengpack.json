@@ -105,6 +105,11 @@
       "id": "0x3FDB8FFFCC00B911",
       "type": "DataTable",
       "source": "tables/tuning.table.json"
+    },
+    {
+      "id": "0x4A433D1EA2E5ACF2",
+      "type": "MarkerSet",
+      "source": "markers/template.markers.json"
     }
   ]
 }

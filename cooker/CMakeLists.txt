@@ -271,6 +271,35 @@ endif ()
 # cooker's own targets below — the vendored fetches above are now configured.
 set_directory_properties(PROPERTIES COMPILE_OPTIONS "${VENG_COOK_SAVED_COMPILE_OPTIONS}")
 
+# veng::cook_interface — the importer contract as headers only.
+#
+# A game's optional cook module registers real AssetImporters, so it needs AssetImporter,
+# CookContext, Result, nlohmann-json, and assetpack — and nothing else. It must NOT link
+# libveng_cook: that static library would carry a second copy of the cooker machinery and its
+# process-wide state (the Slang session, the graph-shader resolver hook) into the dlopened image
+# beside the tool's own. This INTERFACE target is that contract, consumed by both libveng_cook
+# (through veng_cook_objs below) and by every out-of-tree cook module, so there is one contract
+# and no duplicated machinery.
+#
+# It deliberately does not link veng::veng: veng_cook_objs must stay veng-free for the
+# core-pack bootstrap. Cook/Importer.h names engine types (TypeRegistry, BuildConfiguration), so
+# a consumer pairs this target with veng::veng — which a game cook module links anyway, to share
+# its game lib's format headers.
+add_library(veng_cook_interface INTERFACE)
+add_library(veng::cook_interface ALIAS veng_cook_interface)
+target_include_directories(veng_cook_interface INTERFACE
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+)
+# JSON_NOEXCEPTION is an ODR-level agreement across every TU that sees nlohmann/json through
+# the cooker's public headers, so it rides the interface rather than each consumer restating it.
+target_compile_definitions(veng_cook_interface INTERFACE JSON_NOEXCEPTION)
+target_link_libraries(veng_cook_interface INTERFACE
+        nlohmann_json::nlohmann_json veng::assetpack)
+
+install(TARGETS veng_cook_interface EXPORT vengTargets)
+install(DIRECTORY include/Veng DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+
 # The cooker's veng-free core. Everything except the module-reflection TU
 # (src/ModuleTypes.cpp) lives here: importers, the Cooker, pack parsing, verify.
 # It compiles against veng's public headers (Cook/Importer.h carries a
@@ -309,9 +338,9 @@ add_library(veng_cook_objs OBJECT
         ${bc7enc_rdo_SOURCE_DIR}/rgbcx.cpp
 )
 
-target_include_directories(veng_cook_objs PUBLIC
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-)
+# The importer contract (its include dir, nlohmann-json, assetpack, JSON_NOEXCEPTION) comes
+# from the shared INTERFACE target above — one contract, two consumers.
+target_link_libraries(veng_cook_objs PUBLIC veng_cook_interface)
 
 # veng's public headers (Cook/Importer.h's TypeRegistry field) without linking
 # veng — include dirs only, so no link cycle through the embedded core pack.
@@ -372,15 +401,10 @@ target_include_directories(veng_cook_objs PRIVATE
 set_source_files_properties(src/Importers/FontImporter.cpp PROPERTIES
         COMPILE_DEFINITIONS "MSDFGEN_PUBLIC=;MSDFGEN_EXTENSIONS")
 
-# JSON_NOEXCEPTION: nlohmann/json's templates appear in the cooker's public
-# headers (Cook/Types.h), so every consumer TU must agree on this define
-# (ODR) — PUBLIC, not PRIVATE. With it, JSON_THROW becomes std::abort(), which
-# compiles under -fno-exceptions; CookPack/AssetImporter::Cook guard every
-# typed JSON access with is_*() checks first, so the abort paths are
-# unreachable in normal operation — the same "loud one-line fix on drift"
-# house style as VE_ASSERT.
-target_compile_definitions(veng_cook_objs PUBLIC JSON_NOEXCEPTION)
-target_link_libraries(veng_cook_objs PUBLIC nlohmann_json::nlohmann_json)
+# JSON_NOEXCEPTION (carried by veng_cook_interface) makes JSON_THROW std::abort(), which
+# compiles under -fno-exceptions; CookPack/AssetImporter::Cook guard every typed JSON access
+# with is_*() checks first, so the abort paths are unreachable in normal operation — the same
+# "loud one-line fix on drift" house style as VE_ASSERT.
 target_compile_options(veng_cook_objs PRIVATE -fno-exceptions)
 # veng_cook_objs pulls in fmt through veng's public headers but does not link
 # fmt::fmt (only the executables below do), so it misses the PUBLIC /utf-8 fmt
@@ -414,6 +438,9 @@ target_compile_options(veng_cook_objs PRIVATE
 add_library(libveng_cook STATIC
         src/BuiltinImporters.cpp
         src/ModuleTypes.cpp
+        # The cook-module loader reuses libveng's platform loader (LoadedModule), so it lives
+        # here rather than in the veng-free core. The bootstrap loads no cook modules.
+        src/CookModule.cpp
         src/Importers/PrefabImporter.cpp
         src/Importers/LevelImporter.cpp
         src/Importers/InputMapImporter.cpp

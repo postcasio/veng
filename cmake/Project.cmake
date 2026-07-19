@@ -2,8 +2,17 @@
 #     PROJECT    <project.veng>            # the authoring project, relative to CMAKE_CURRENT_SOURCE_DIR
 #     OUTPUT_DIR <dir>                      # absolute build-tree dir for the cooked packs + .vengproj
 #     [MODULE    <lib target>]             # game module to dlopen for prefab/level reflection
+#     [COOK_MODULE <lib target>]           # cook module the cook must be ordered behind
 #     [REFERENCE <reference pack.json...>] # packs whose ids the cook may resolve
 # )
+#
+# COOK_MODULE names the tool-only cook module veng_add_game(... COOK_SOURCES ...) emits, so the
+# cook is ordered behind it and vengc's sibling lookup finds it built. It is named here rather
+# than inferred because the cook is an add_custom_command, whose DEPENDS is what actually orders
+# the build — a dependency added later to the wrapping custom target would not order the command,
+# and a name guessed for a project with no cook module would be an unbuildable file dependency.
+# The target need not exist yet: DEPENDS resolves target names at generate time, so the usual
+# order (veng_add_project, then veng_add_game) works.
 #
 # Cooks a project — its asset packs plus a cooked project file (.vengproj) — with
 # `vengc cook-project`, one output set per build configuration the project declares.
@@ -25,7 +34,7 @@
 #   VENG_PACK_MOUNTS     the un-suffixed pack names the runtime mounts
 #   VENG_PROJECT_SOURCE  the absolute project.veng source path (for the editor)
 function(veng_add_project TARGET_NAME)
-    cmake_parse_arguments(ARG "" "PROJECT;OUTPUT_DIR;MODULE" "REFERENCE" ${ARGN})
+    cmake_parse_arguments(ARG "" "PROJECT;OUTPUT_DIR;MODULE;COOK_MODULE" "REFERENCE" ${ARGN})
 
     if (NOT ARG_PROJECT)
         message(FATAL_ERROR "veng_add_project(${TARGET_NAME}): PROJECT is required")
@@ -58,6 +67,11 @@ function(veng_add_project TARGET_NAME)
     if (ARG_MODULE)
         set(MODULE_ARGS --module $<TARGET_FILE:${ARG_MODULE}>)
         set(MODULE_DEP ${ARG_MODULE})
+    endif ()
+    # vengc discovers the cook module beside --module's argument, so no extra flag is needed —
+    # only the build-order edge, which must sit on the cook command itself.
+    if (ARG_COOK_MODULE)
+        list(APPEND MODULE_DEP ${ARG_COOK_MODULE})
     endif ()
 
     # The packs the project owns, resolved to mount names + per-config output stems.

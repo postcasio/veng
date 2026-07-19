@@ -506,6 +506,8 @@ namespace VengEditor
         ApplicationRegistry App;
         TypeRegistry Types;
         SystemRegistry Systems;
+        AssetTypeRegistry AssetTypes;
+        AssetLoaderRegistry AssetLoaders;
         GuiDriverRegistry Drivers;
         EditorRegistry Editor;
     };
@@ -516,6 +518,7 @@ namespace VengEditor
 
         RegisterBuiltinTypes(registries->Types);
         RegisterBuiltinSystems(registries->Systems);
+        RegisterBuiltinAssetTypes(registries->AssetTypes);
 
         // The material node editor's reflection inspector resolves a node's enum property
         // (Param provenance, Constant leaf type) through this registry; register those graph
@@ -573,6 +576,8 @@ namespace VengEditor
             .App = registries->App,
             .Types = registries->Types,
             .Systems = registries->Systems,
+            .AssetTypes = registries->AssetTypes,
+            .AssetLoaders = registries->AssetLoaders,
             .Drivers = &registries->Drivers,
             .Editor = &registries->Editor,
         };
@@ -582,9 +587,16 @@ namespace VengEditor
             editorModule->Register(host);
         }
 
+        // The editor builds its own ApplicationInfo rather than taking the module's, so it points
+        // the base AssetManager at the registries the module just filled here — that is how a
+        // game-typed asset opens in the editor through the ordinary Load path.
+        EditorHostInfo resolvedInfo = info;
+        resolvedInfo.App.AssetTypes = &registries->AssetTypes;
+        resolvedInfo.App.AssetLoaders = &registries->AssetLoaders;
+
         auto gameModulePtr = CreateUnique<LoadedModule>(std::move(*gameModule));
         return Unique<EditorHost>(new EditorHost(
-            info, std::move(settings), std::move(buildDir), std::move(corePackManifest),
+            resolvedInfo, std::move(settings), std::move(buildDir), std::move(corePackManifest),
             std::move(registries), std::move(gameModulePtr), std::move(editorModule)));
     }
 
@@ -597,7 +609,11 @@ namespace VengEditor
           m_ProjectFile(info.ProjectPath.value_or(path{})), m_BuildDir(std::move(buildDir)),
           m_CorePackManifest(std::move(corePackManifest))
     {
-        RegisterBuiltinAssetTypes(m_AssetTypes);
+    }
+
+    const AssetTypeRegistry& EditorHost::GetAssetTypes() const
+    {
+        return m_Registries->AssetTypes;
     }
 
     EditorHost::~EditorHost()
@@ -697,7 +713,7 @@ namespace VengEditor
         // Built from the union of the project's pack manifests; an empty index when no project is
         // configured keeps the picker candidate-free rather than absent.
         m_Sources = CreateUnique<AssetSourceIndex>(
-            AssetSourceIndex::ParsePacks(m_ProjectSettings.Packs, m_AssetTypes));
+            AssetSourceIndex::ParsePacks(m_ProjectSettings.Packs, m_Registries->AssetTypes));
 
         m_Status = CreateUnique<StatusTracker>();
 
@@ -808,7 +824,7 @@ namespace VengEditor
         {
             references.push_back(m_CorePackManifest);
         }
-        return m_Info.MintId(references);
+        return m_Info.MintId(references, m_Registries->AssetTypes);
     }
 
     void EditorHost::RequestCook(const CookRequest& request,
@@ -881,7 +897,7 @@ namespace VengEditor
 
     AssetEditorPanel* EditorHost::FocusedAssetEditor()
     {
-        for (PanelSlot& slot : m_Panels)
+        for (const PanelSlot& slot : m_Panels)
         {
             auto* editor = dynamic_cast<AssetEditorPanel*>(slot.Panel.get());
             if (editor != nullptr && editor->IsDocumentFocused())
@@ -912,7 +928,7 @@ namespace VengEditor
     {
         vector<EditorPanel*> panels;
         panels.reserve(m_Panels.size());
-        for (PanelSlot& slot : m_Panels)
+        for (const PanelSlot& slot : m_Panels)
         {
             if (slot.Open && slot.Panel != nullptr)
             {
@@ -932,7 +948,7 @@ namespace VengEditor
         // Marker-stripped comparison: a title captured before an edit still resolves after the
         // document's dirty '*' appears (see StripUnsavedMarker).
         const string_view wanted = StripUnsavedMarker(panelTitle);
-        for (PanelSlot& slot : m_Panels)
+        for (const PanelSlot& slot : m_Panels)
         {
             auto* editor = dynamic_cast<AssetEditorPanel*>(slot.Panel.get());
             if (editor != nullptr && StripUnsavedMarker(editor->GetTitle()) == wanted)
@@ -946,7 +962,7 @@ namespace VengEditor
     vector<string> EditorHost::GetSceneViewportNames()
     {
         vector<string> names;
-        for (PanelSlot& slot : m_Panels)
+        for (const PanelSlot& slot : m_Panels)
         {
             auto* editor = dynamic_cast<AssetEditorPanel*>(slot.Panel.get());
             if (editor != nullptr && editor->GetDocumentViewport() != nullptr)
