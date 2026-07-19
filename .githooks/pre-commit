@@ -29,64 +29,39 @@ fi
 # .clang-tidy, so any finding on a touched TU is a real regression — no changed-line
 # diffing needed. A changed header is checked transitively (a staged TU that includes
 # it reports its findings via HeaderFilterRegex); a header-only commit drives no TU,
-# so use -DVENG_ENABLE_CLANG_TIDY=ON or CI for those. Needs a compile DB
-# (compile_commands.json, exported unconditionally into build/). Skips cleanly when
-# clang-tidy or a DB is absent, or when nothing relevant is staged.
-# git runs a hook with no arguments, so $VENG_TIDY_DB is the way to name a build tree that is
-# not one of the three searched below — the same variable scripts/tidy.sh reads. A named tree
-# is used as given or not at all: falling back to a guess would lint against a different tree
-# than the one asked for and report the result as if it were the one requested.
+# so use -DVENG_ENABLE_CLANG_TIDY=ON or CI for those.
 #
-# build-debug is searched first because it is the tree the project configures and builds by
-# default; build/ is the optional validation-OFF tree and is routinely absent or stale. A DB
-# whose CMakeCache names a different source directory belongs to a moved or renamed checkout:
-# its entries reference paths that no longer exist, so every staged TU reads as absent from it
-# and the run silently checks nothing. Match scripts/tidy.sh's order, and skip such a tree.
-tidy_root=$(git rev-parse --show-toplevel)
-tidy_db=""
-if [ -n "${VENG_TIDY_DB:-}" ]; then
-    if [ -f "${VENG_TIDY_DB}/compile_commands.json" ]; then
-        tidy_db="$VENG_TIDY_DB"
-    else
-        echo "pre-commit: VENG_TIDY_DB=$VENG_TIDY_DB has no compile_commands.json." >&2
-        exit 1
-    fi
-else
-    for d in build-debug build cmake-build-debug; do
-        if [ -f "$d/compile_commands.json" ]; then
-            tidy_home=$(grep -m1 '^CMAKE_HOME_DIRECTORY:' "$d/CMakeCache.txt" 2>/dev/null | cut -d= -f2 || true)
-            if [ -n "$tidy_home" ] && [ "$tidy_home" != "$tidy_root" ]; then
-                echo "pre-commit: $d was configured for $tidy_home, not $tidy_root — skipping it." >&2
-                continue
-            fi
-            tidy_db="$d"
-            break
-        fi
-    done
+# git runs a hook with no arguments, so $VENG_TIDY_DB is the only way to name a build tree
+# here. The shared plumbing — resolving and vetting that tree, the PCH-stripped DB copy, the
+# include paths libTooling needs, and telling a run that found nothing apart from a run that
+# never started — lives in scripts/lib/tidy-common.sh.
+TIDY_TOOL=pre-commit
+tidy_lib="$(git rev-parse --show-toplevel)/scripts/lib/tidy-common.sh"
+if [ ! -f "$tidy_lib" ]; then
+    echo "pre-commit: $tidy_lib is missing, so the tidy stage cannot run." >&2
+    exit 1
 fi
+# shellcheck source=../scripts/lib/tidy-common.sh
+. "$tidy_lib"
 
 staged_tus=$(git diff --cached --name-only --diff-filter=ACM -- '*.cpp' '*.cc')
 
-if command -v clang-tidy >/dev/null 2>&1 && [ -n "$tidy_db" ] && [ -n "$staged_tus" ]; then
-    # The compile DB carries the configured compiler's flags, which omit the implicit macOS SDK
-    # and Vulkan include paths LLVM's clang-tidy needs. Supply them by env so no
-    # per-file --extra-arg plumbing is required; both are no-ops off macOS.
-    sdk=$(xcrun --show-sdk-path 2>/dev/null || true)
-    [ -n "$sdk" ] && export SDKROOT="$sdk"
-    vk=$(grep -m1 '^Vulkan_INCLUDE_DIR:' "$tidy_db/CMakeCache.txt" 2>/dev/null | cut -d= -f2 || true)
-    [ -n "$vk" ] && export CPATH="${vk}${CPATH:+:$CPATH}"
+if command -v clang-tidy >/dev/null 2>&1 && [ -n "$staged_tus" ]; then
+    # A clone that has never been built has no compile DB through no fault of the commit, so
+    # the search finding none skips the stage. A tree named through $VENG_TIDY_DB and found
+    # unusable is a different matter — that is an instruction that cannot be honoured.
+    tidy_resolve_db "" || {
+        rc=$?
+        if [ "$rc" -eq 2 ]; then
+            echo "pre-commit: no compile DB in build-debug/, build/, or cmake-build-debug/," >&2
+            echo "skipping tidy check. Build one, or name it with \$VENG_TIDY_DB." >&2
+            exit 0
+        fi
+        exit 1
+    }
 
-    # A precompiled header is rejected outright by a clang-tidy built from a different toolchain
-    # than the compiler that wrote it, which aborts the run before a single check evaluates. CMake
-    # emits `-include <header>` beside `-include-pch`, so dropping the PCH pair leaves the same
-    # headers in the translation unit, merely uncached. The filtered copy lives in a temp dir this
-    # run owns, so the build's own DB is untouched.
-    tidy_tmp=$(mktemp -d)
-    trap 'rm -rf "$tidy_tmp"' EXIT
-    sed -e 's/ -Xclang -include-pch -Xclang [^ "]*//g' \
-        -e 's/ -Xclang -fno-pch-timestamp//g' \
-        -e 's/ -Winvalid-pch//g' \
-        "$tidy_db/compile_commands.json" > "$tidy_tmp/compile_commands.json"
+    tidy_export_toolchain_env "$TIDY_DB"
+    tidy_make_filtered_db "$TIDY_DB"
 
     # A TU the DB carries no entry for is linted against default flags rather than declined,
     # which fails on the first engine include — and that failure poisons the whole batch, so
@@ -97,9 +72,7 @@ if command -v clang-tidy >/dev/null 2>&1 && [ -n "$tidy_db" ] && [ -n "$staged_t
     skipped_tus=""
     while IFS= read -r f; do
         [ -n "$f" ] || continue
-        if [ -f "$f" ] \
-            && grep -qF "\"$(cd "$(dirname "$f")" && pwd)/$(basename "$f")\"" \
-                "$tidy_db/compile_commands.json"; then
+        if tidy_db_has_entry "$TIDY_DB" "$f"; then
             tidy_tus="${tidy_tus}${f}"$'\n'
         else
             skipped_tus="${skipped_tus}${f}"$'\n'
@@ -107,7 +80,7 @@ if command -v clang-tidy >/dev/null 2>&1 && [ -n "$tidy_db" ] && [ -n "$staged_t
     done <<< "$staged_tus"
 
     if [ -n "$skipped_tus" ]; then
-        echo "pre-commit: not in $tidy_db, so clang-tidy has no flags for them — not linted:" >&2
+        echo "pre-commit: not in $TIDY_DB, so clang-tidy has no flags for them — not linted:" >&2
         printf '%s' "$skipped_tus" | sed 's/^/  /' >&2
         echo "Lint these by building the target that owns them, or via their own project." >&2
     fi
@@ -116,32 +89,29 @@ if command -v clang-tidy >/dev/null 2>&1 && [ -n "$tidy_db" ] && [ -n "$staged_t
     # legitimate state, not a broken tool, so it reports what it did not check and lets the
     # commit through rather than demanding --no-verify (which would skip the format stage too).
     if [ -z "$tidy_tus" ]; then
-        echo "pre-commit: no staged TU is in $tidy_db, so clang-tidy checked nothing." >&2
+        echo "pre-commit: no staged TU is in $TIDY_DB, so clang-tidy checked nothing." >&2
         exit 0
     fi
 
     tidy_out=$(printf '%s' "$tidy_tus" | tr '\n' '\0' \
-        | xargs -0 clang-tidy -p "$tidy_tmp" --quiet 2>&1 || true)
+        | xargs -0 clang-tidy -p "$TIDY_FILTERED_DB" --quiet 2>&1 || true)
 
-    # A run that evaluated no checks must fail loudly rather than read as a clean tree. clang-tidy
-    # reports a toolchain or compile failure without the `file:line: severity:` shape a finding
-    # carries, so a grep for findings alone cannot tell "nothing to report" from "nothing ran".
-    if printf '%s\n' "$tidy_out" | grep -qE '^error:|Error while processing'; then
+    if tidy_run_failed "$tidy_out"; then
         echo "pre-commit: clang-tidy could not run, so nothing was checked." >&2
         echo "This is a tooling failure, not a clean tree. Cause below." >&2
         echo "------------------------------------------------------------------" >&2
-        printf '%s\n' "$tidy_out" | grep -E '^error:|Error while processing' >&2
+        tidy_run_failure_lines "$tidy_out" >&2
         exit 1
     fi
-    if printf '%s\n' "$tidy_out" | grep -qE ': (warning|error):'; then
+    if tidy_has_findings "$tidy_out"; then
         echo "pre-commit: clang-tidy flagged staged C/C++ changes." >&2
         echo "Fix the findings below or justify with NOLINT, then re-stage and commit." >&2
         echo "------------------------------------------------------------------" >&2
-        printf '%s\n' "$tidy_out" | grep -E ': (warning|error):' >&2
+        tidy_finding_lines "$tidy_out" >&2
         exit 1
     fi
 else
-    echo "pre-commit: clang-tidy or a compile DB not found (or no staged .cpp/.cc), skipping tidy check." >&2
+    echo "pre-commit: clang-tidy not found, or no staged .cpp/.cc, skipping tidy check." >&2
 fi
 
 exit 0
