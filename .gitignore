@@ -10,3 +10,6 @@ imgui.ini
 
 # Editor scratch files written beside an asset while editing (e.g. *.editor-tmp.vmat.json).
 *.editor-tmp*
+
+# Coverage build tree (VENG_ENABLE_COVERAGE) and its gcovr reports.
+/build-coverage/

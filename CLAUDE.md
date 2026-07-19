@@ -214,6 +214,33 @@ exactly that ("could not run, so nothing was checked"); preserve it in anything 
 wraps clang-tidy, and treat total silence from a hand-rolled invocation as unproven
 until you have seen it flag something.
 
+### Coverage
+
+`VENG_ENABLE_COVERAGE` (default `OFF`) adds the gcov flags (`--coverage -O0 -g`) to
+veng's own targets, wired at the same boundary as the clang-tidy option so third-party
+sources are never instrumented. It also sets `CMAKE_DISABLE_PRECOMPILE_HEADERS` — a
+force-included PCH blurs gcov's line mapping, and the coverage flags defeat the object
+cache the primary build is tuned for.
+
+`scripts/coverage.sh` is the whole pipeline: it configures a dedicated `build-coverage/`
+with the option on, builds it, runs a CTest selection, and emits
+`build-coverage/coverage.json` (the machine-readable gcovr report) plus
+`build-coverage/coverage-html/index.html`. Coverage never shares `build-debug` — the
+`.gcda` counters a run leaves behind would accumulate in a tree used for ordinary work.
+
+```sh
+scripts/coverage.sh
+COVERAGE_CTEST_ARGS="-L unit -L gpu" scripts/coverage.sh   # widen the selection
+```
+
+The selection defaults to `-L unit` and is a single variable; gcov merges the
+per-process counters, so widening it changes only the numbers. Prerequisites are
+**gcovr** and a gcov-compatible backend, chosen with `--gcov-executable` — GNU `gcov`,
+or `xcrun llvm-cov gcov` on macOS (what makes the same report reproducible on either
+toolchain). The script fails with an actionable message when either is missing rather
+than leaving a half-built tree that reads as success. `_deps/` and `tests/` are excluded
+from the report.
+
 ### Consuming veng — three modes through one `veng-config`
 
 A game lives **outside** the engine tree and discovers veng as a normal CMake

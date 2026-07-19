@@ -178,6 +178,39 @@ git config core.hooksPath .githooks
 
 ---
 
+## Code coverage
+
+`VENG_ENABLE_COVERAGE` (default `OFF`) instruments veng's own sources for gcov, so
+running the test suite leaves the counters `gcovr` turns into a report. `scripts/coverage.sh`
+is the one-command path:
+
+```sh
+scripts/coverage.sh
+```
+
+It configures a dedicated `build-coverage/` tree with the option on, builds it, runs
+the `unit` test selection, and writes `build-coverage/coverage.json` (machine-readable,
+line- and branch-level) plus `build-coverage/coverage-html/index.html`. The selection is
+one variable, so widening it needs no other change:
+
+```sh
+COVERAGE_CTEST_ARGS="-L unit -L gpu" scripts/coverage.sh
+```
+
+Coverage lives in its own build tree: the gcov flags (`--coverage`, `-O0`) suppress the
+precompiled headers and fight the primary build's object caching, and the counter files a
+run leaves behind should not accumulate in a tree used for ordinary work. `build-debug`
+is unaffected — the option is off unless you ask for it.
+
+The prerequisites are **gcovr** (`brew install gcovr` / `pip install gcovr`) and a
+gcov-compatible tool. gcovr drives either through `--gcov-executable`, which is what makes
+the same report reproducible on both toolchains: GNU builds use `gcov`, and Clang builds
+use `xcrun llvm-cov gcov`, which the script selects on macOS. Third-party sources under
+`_deps/` and the tests themselves are excluded, so the percentage describes first-party
+code the tests are meant to cover.
+
+---
+
 ## API documentation
 
 veng's public headers are documented with Doxygen comments. If **Doxygen** is

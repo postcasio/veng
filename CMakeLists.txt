@@ -269,6 +269,30 @@ if (VENG_ENABLE_CLANG_TIDY)
 endif ()
 
 # ---------------------------------------------------------------------------
+# Coverage instrumentation (opt-in)
+# ---------------------------------------------------------------------------
+
+# Instruments veng's own sources for gcov, so a run of the test suite emits the
+# .gcda counters gcovr turns into a report. Set at the same boundary as the
+# clang-tidy wiring above — after the FetchContent deps, before veng's own
+# subdirectories — so the vendored third-party targets are never instrumented.
+option(VENG_ENABLE_COVERAGE "Instrument veng's own sources for gcov/gcovr coverage" OFF)
+
+if (VENG_ENABLE_COVERAGE)
+    if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        add_compile_options(--coverage -O0 -g)
+        add_link_options(--coverage)
+        # gcov maps counters to source lines; a force-included PCH blurs that mapping,
+        # and the coverage flags defeat the object-cache reuse the primary build is
+        # tuned for. Coverage builds in its own tree, so neither is a loss here.
+        set(CMAKE_DISABLE_PRECOMPILE_HEADERS ON)
+        message(STATUS "coverage instrumentation enabled (gcov)")
+    else ()
+        message(WARNING "VENG_ENABLE_COVERAGE is ON but the compiler is not GCC/Clang; not instrumenting.")
+    endif ()
+endif ()
+
+# ---------------------------------------------------------------------------
 # Source encoding
 # ---------------------------------------------------------------------------
 
