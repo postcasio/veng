@@ -326,7 +326,9 @@ so the cooker and the runtime loader share one encoder.
   game module's types **and systems** for prefab and level validation, which also loads the
   sibling cook module for the game's own importers — see [Cook
   modules](#cook-modules--a-games-own-importers); `--cook-module <lib>` to name that module
-  explicitly instead; `--config <file>`
+  explicitly instead, which *implies* `--module` — a cook module links its runtime module, so
+  the runtime module beside it is loaded too and the importers' asset-type names resolve;
+  `--config <file>`
   to select the build configuration whose role → format table the texture cook resolves
   through; `--shader-include <dir>` to add the engine core shader dir to every Slang session's
   search path so a consumer shader resolves `#include "Veng/surface.slang"`; `--cache-dir <dir>` to
@@ -345,7 +347,9 @@ so the cooker and the runtime loader share one encoder.
   in a sibling — resolution is by-id over source manifests, needing no cooked sibling and no
   build-order edge between packs. `veng_add_project` wires it.
 - **`verify`** — re-hash a `.vengpack`'s blobs + TOC digest and exit nonzero on any
-  mismatch.
+  mismatch. `--module <lib>` is presentation only: the verdict is a byte re-hash that consults
+  no registry, but without the module a game-defined type prints as a raw hex id instead of its
+  registered name. `VerifyArchive` itself stays registry-free; only the CLI presenter takes it.
 - **`generate-id`** — mint a collision-free `AssetId` (prints the zero-padded hex in both
   spellings: `0x{:016X}ULL` for C++ literals and `"0x{:016X}"` for JSON packs;
   `--reference <pack.json>` to avoid existing ids; `--module <lib>` when a reference pack names a
@@ -369,6 +373,14 @@ dlopened image: **`lib<game>_cook`**, emitted by `veng_add_game(... COOK_SOURCES
 directory, same extension, stem suffixed `_cook`); `--cook-module <path>` replaces that lookup
 entirely. An absent sibling simply means the game defines no importers; an explicit path that
 fails to load, or any image that fails the handshake, is fatal.
+
+**`--cook-module` alone is a complete cook.** The importers are keyed on asset-type ids whose
+*names* live in the runtime module, so a cook module with no runtime module beside it would
+register importers for types the manifest cannot name. `SiblingRuntimeModulePath` inverts the
+convention and the runtime module is loaded explicitly — not resolved through the cook module's
+own handle, because `dlsym` searches an image's dependents and `GetProcAddress` does not.
+`--module` alone stays valid (a game with reflected components and no custom importers), and
+passing both is an explicit override of the sibling lookup.
 
 - **It must not link `libveng_cook`.** That static library carries the cooker's machinery and its
   process-wide state — the Slang session, the graph-shader resolver hook — and a second copy of

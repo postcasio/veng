@@ -38,7 +38,7 @@ namespace
                            "  vengc generate-id [--reference <pack.json>]... [--module <lib>]\n"
                            "  vengc generate-type-id [--module <lib>]\n"
                            "  vengc generate-asset-type [--module <lib>]\n"
-                           "  vengc verify <archive.vengpack>\n");
+                           "  vengc verify <archive.vengpack> [--module <lib>]\n");
     }
 
     // A fingerprint of this cooker binary, so any rebuild of vengc (an importer or format change
@@ -118,6 +118,26 @@ namespace
             std::exit(1);
         }
         return std::move(*loaded);
+    }
+
+    // Fills in the runtime module implied by an explicit --cook-module. A cook module links its
+    // runtime module, so that image is always present; without loading it the cook module's
+    // importers install keyed on asset-type ids the type registry never heard of, and every
+    // manifest entry naming one fails as an unknown type. The path is derived and loaded
+    // explicitly rather than resolved through the cook module's own handle: dlsym searches
+    // dependent images, GetProcAddress does not.
+    void ImplyRuntimeModule(optional<path>& modulePath, const optional<path>& cookModulePath)
+    {
+        if (modulePath || !cookModulePath)
+        {
+            return;
+        }
+
+        const optional<path> runtime = SiblingRuntimeModulePath(*cookModulePath);
+        if (runtime && std::filesystem::exists(*runtime))
+        {
+            modulePath = *runtime;
+        }
     }
 
     // Prints the loaded type table as a name → TypeId manifest (stdout, not persisted).
@@ -265,6 +285,8 @@ int main(int argc, char** argv)
             outPath = *packPath;
             outPath->replace_extension(".vengpack");
         }
+
+        ImplyRuntimeModule(modulePath, cookModulePath);
 
         // The module image and its registry must outlive the cook.
         optional<LoadedModuleTypes> moduleTypes;
@@ -480,6 +502,8 @@ int main(int argc, char** argv)
                        projectPath->string(), *configName);
             return 1;
         }
+
+        ImplyRuntimeModule(modulePath, cookModulePath);
 
         // The module image and its registry must outlive the cook.
         optional<LoadedModuleTypes> moduleTypes;
@@ -779,10 +803,20 @@ int main(int argc, char** argv)
     if (subcommand == "verify")
     {
         optional<path> archivePath;
+        optional<path> modulePath;
 
         for (usize i = 1; i < args.size(); ++i)
         {
-            if (!archivePath)
+            if (args[i] == "--module")
+            {
+                if (i + 1 >= args.size())
+                {
+                    fmt::print(stderr, "vengc: --module requires an argument\n");
+                    return 1;
+                }
+                modulePath = path(args[++i]);
+            }
+            else if (!archivePath)
             {
                 archivePath = path(args[i]);
             }
@@ -799,7 +833,22 @@ int main(int argc, char** argv)
             return 1;
         }
 
-        return VerifyArchiveCli(*archivePath);
+        // Presentation only: the verdict is a byte re-hash either way, but a game-typed asset
+        // prints as a raw hex id unless the module that named the type is loaded. The module image
+        // must outlive the registry it populates.
+        optional<LoadedModuleTypes> moduleTypes;
+        if (modulePath)
+        {
+            Result<LoadedModuleTypes> loaded = LoadModuleTypes(*modulePath);
+            if (!loaded)
+            {
+                fmt::print(stderr, "vengc: {}\n", loaded.error());
+                return 1;
+            }
+            moduleTypes = std::move(*loaded);
+        }
+
+        return VerifyArchiveCli(*archivePath, moduleTypes ? &moduleTypes->AssetTypes : nullptr);
     }
 
     PrintUsage();

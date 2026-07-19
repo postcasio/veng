@@ -71,6 +71,19 @@ TEST_CASE("cook module: the sibling path convention suffixes the stem, keeping d
     CHECK(SiblingCookModulePath(path{"/build/game.dll"}) == path{"/build/game_cook.dll"});
 }
 
+TEST_CASE("cook module: the runtime-module path inverts the sibling convention")
+{
+    CHECK(SiblingRuntimeModulePath(path{"/build/libgame_cook.dylib"}) ==
+          optional<path>(path{"/build/libgame.dylib"}));
+    CHECK(SiblingRuntimeModulePath(path{"/build/game_cook.dll"}) ==
+          optional<path>(path{"/build/game.dll"}));
+
+    // A stem that is not _cook-suffixed has no defined inverse, and a bare "_cook" would name
+    // an empty runtime module.
+    CHECK_FALSE(SiblingRuntimeModulePath(path{"/build/libgame.dylib"}).has_value());
+    CHECK_FALSE(SiblingRuntimeModulePath(path{"/build/_cook.dylib"}).has_value());
+}
+
 TEST_CASE("cook module: a game type is unknown to a cooker that loaded no module")
 {
     const path packPath = WriteProbePack("veng_cook_module_no_module_pack.json");

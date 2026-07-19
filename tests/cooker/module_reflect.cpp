@@ -7,6 +7,7 @@
 
 #include <doctest/doctest.h>
 
+#include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
 #include <Veng/Cook/ModuleTypes.h>
 #include <Veng/Reflection/TypeRegistry.h>
@@ -125,7 +126,10 @@ TEST_CASE("module reflect: cooking a prefab entry with no --module is a located 
         out << R"({ "version": 1, "assets": [ { "id": "0x0000000000001092", "type": "Prefab", "source": "x.prefab.json" } ] })";
     }
 
-    const Cooker cooker;
+    // The requirement is the prefab importer's own, so the importers have to be present for the
+    // cook to reach it.
+    Cooker cooker;
+    RegisterBuiltinImporters(cooker);
     const path outPath = Veng::TestSupport::TempDir() / "veng_cooker_prefab_no_module.vengpack";
 
     // No TypeRegistry passed (the no --module case).

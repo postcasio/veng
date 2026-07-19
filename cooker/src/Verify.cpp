@@ -66,7 +66,7 @@ namespace Veng::Cook
         return report;
     }
 
-    int VerifyArchiveCli(const path& archivePath)
+    int VerifyArchiveCli(const path& archivePath, const AssetTypeRegistry* types)
     {
         const VerifyReport report = VerifyArchive(archivePath);
 
@@ -76,10 +76,12 @@ namespace Veng::Cook
             return 1;
         }
 
-        // Names the builtin types for a readable report; a type the engine does not define
-        // prints as its hex id.
-        AssetTypeRegistry assetTypes;
-        RegisterBuiltinAssetTypes(assetTypes);
+        // Naming the types is presentation only — the verdict above is already computed. The
+        // caller's registry, when given, carries a loaded module's types beside the builtins; a
+        // type neither defines still prints as its hex id.
+        AssetTypeRegistry builtins;
+        RegisterBuiltinAssetTypes(builtins);
+        const AssetTypeRegistry& assetTypes = types != nullptr ? *types : builtins;
 
         usize mismatches = 0;
         for (const VerifiedAsset& asset : report.Assets)

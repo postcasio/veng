@@ -204,8 +204,9 @@ Out of scope for this seam: **editor panels** from game code, **cook-module hot 
 
 | Symptom | Cause |
 |---|---|
-| `unknown type 'X'` at cook | The runtime module was not loaded (`--module`), or it never registered the id. |
+| `unknown type 'X'` at cook | The runtime module was not loaded (neither `--module` nor `--cook-module` was passed), or it never registered the id. The error lists every type that did register. |
 | `no importer registered for type 'X'` | The identity registered but the cook module did not load — check it sits beside `--module`'s argument, or pass `--cook-module`. |
+| `asset type 'X' already has an importer` (abort) | The cook module registered an importer for a type the engine already cooks. Override semantics for builtin types stay engine-owned. |
 | `exports no VengCookModuleAbiVersion` | The library is not a cook module, or `VE_EXPORT_COOK_MODULE_ABI()` is missing. |
 | `built against ABI vN, host expects vM` | Stale module — rebuild it against this engine. |
 | `no loader registered for asset type X` at runtime | The module registered the id but not a loader factory, or `ApplicationInfo::AssetLoaders` was left null. |

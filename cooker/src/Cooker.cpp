@@ -1,5 +1,7 @@
 #include <Veng/Cook/Cooker.h>
 
+#include <algorithm>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <span>
@@ -35,6 +37,46 @@ namespace Veng::Cook
                 return p.lexically_normal();
             }
             return canonical;
+        }
+
+        // The cooker core links no libveng, so VE_ASSERT is out of reach here. An importer
+        // registration conflict is unrecoverable authoring misuse, so it aborts the same way the
+        // asset-type registry's own collision does.
+        [[noreturn]] void FatalRegistration(const string& message)
+        {
+            fmt::print(stderr, "Cooker: {}\n", message);
+            std::abort();
+        }
+
+        // A manifest naming a type nothing registered is what a forgotten --module produces, so the
+        // error names the flag rather than leaving the reader to suspect the manifest, and lists
+        // the names that did resolve.
+        string UnknownTypeReason(const string& typeName, const AssetTypeRegistry& types)
+        {
+            vector<string> known;
+            known.reserve(types.All().size());
+            for (const auto& [id, info] : types.All())
+            {
+                known.push_back(info.Name);
+            }
+            std::ranges::sort(known);
+
+            string list;
+            for (const string& name : known)
+            {
+                if (!list.empty())
+                {
+                    list += ", ";
+                }
+                list += name;
+            }
+
+            return fmt::format(
+                "unknown type '{}': no asset type of that name is registered with this cook. A "
+                "game-defined type's name comes from its runtime module, so pass --module (or "
+                "--cook-module, which implies it) when the type is the game's. Registered types: "
+                "{}",
+                typeName, list);
         }
 
         // xxh3-128 of a byte range, packed into the format's ContentHash.
@@ -177,8 +219,8 @@ namespace Veng::Cook
             const optional<AssetTypeId> type = types.FindByName(typeStr);
             if (!type)
             {
-                return std::unexpected(fmt::format("pack '{}': asset[{}]: unknown type '{}'",
-                                                   packJson.string(), index, typeStr));
+                return std::unexpected(fmt::format("pack '{}': asset[{}]: {}", packJson.string(),
+                                                   index, UnknownTypeReason(typeStr, types)));
             }
 
             string source;
@@ -398,7 +440,21 @@ namespace Veng::Cook
 
     void Cooker::Register(Unique<AssetImporter> importer)
     {
+        if (importer == nullptr)
+        {
+            FatalRegistration("importer is null");
+        }
+
         const AssetTypeId type = importer->Type();
+        if (m_Importers.contains(type))
+        {
+            FatalRegistration(
+                fmt::format("asset type '{}' already has an importer. Override semantics for "
+                            "builtin types stay engine-owned, and a silent replacement would cook "
+                            "every asset of that type through the newcomer",
+                            m_AssetTypes.GetName(type)));
+        }
+
         m_Importers[type] = std::move(importer);
     }
 
@@ -415,28 +471,6 @@ namespace Veng::Cook
         }
 
         const json& pack = *packResult;
-
-        // Prefab and level entries require --module for their reflected descriptors.
-        // Check before full entry parsing so the error names the cause.
-        if (types == nullptr)
-        {
-            const json& assets = pack["assets"];
-            for (usize index = 0; index < assets.size(); ++index)
-            {
-                const json& entry = assets[index];
-                if (entry.is_object() && entry.contains("type") && entry["type"].is_string())
-                {
-                    const string typeStr = entry["type"].get<string>();
-                    if (typeStr == "Prefab" || typeStr == "Level")
-                    {
-                        const string lowerType = typeStr == "Prefab" ? "prefab" : "level";
-                        return std::unexpected(
-                            fmt::format("pack '{}': asset[{}]: {} cooking requires --module",
-                                        packJson.string(), index, lowerType));
-                    }
-                }
-            }
-        }
 
         const Result<AssetPack> mainPackResult = ParseAssetPack(packJson, m_AssetTypes);
         if (!mainPackResult)
@@ -939,7 +973,7 @@ namespace Veng::Cook
         const optional<AssetTypeId> type = m_AssetTypes.FindByName(typeStr);
         if (!type)
         {
-            return std::unexpected(fmt::format("unknown type '{}'", typeStr));
+            return std::unexpected(UnknownTypeReason(typeStr, m_AssetTypes));
         }
 
         const auto importerIt = m_Importers.find(*type);
