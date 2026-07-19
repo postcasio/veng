@@ -7,7 +7,6 @@
 #include <Veng/Asset/MaterialInstance.h>
 
 #include <VengEditor/CookRequest.h>
-#include <VengEditor/EditorPanel.h>
 #include <VengEditor/EditorRegistry.h>
 
 #include <VengGraph/NodeGraph.h>
@@ -15,6 +14,9 @@
 #include <VengGraph/MaterialCatalog.h>
 #include <VengGraph/MaterialCompile.h>
 #include <VengGraph/MaterialShaderInterface.h>
+
+#include "AssetEditorPanel.h"
+#include "AssetSaveModel.h"
 
 #include "material/MaterialPreview.h"
 
@@ -48,9 +50,12 @@ namespace VengEditor
     /// and a live MaterialPreview sphere.
     ///
     /// On open, parses the source's "_editor" graph block or starts from a default
-    /// graph (a bare MaterialOutput). Any edit recooks the material off the render
-    /// thread and refreshes the preview. The graph is the source of truth.
-    class MaterialEditorPanel final : public EditorPanel
+    /// graph (a bare MaterialOutput). The graph is the source of truth.
+    ///
+    /// It writes nothing until an explicit save: an edit marks the document dirty, and Save
+    /// performs the merge write of the `.vmat.json` (and, for a graph-sourced material, of the
+    /// shader's `.graph.json`), then the recook that refreshes the preview.
+    class MaterialEditorPanel final : public AssetEditorPanel
     {
     public:
         /// @brief Opens the editor for the material at @p id / @p sourcePath.
@@ -65,6 +70,15 @@ namespace VengEditor
 
         [[nodiscard]] Veng::string_view GetTitle() const override { return m_Title; }
         void OnUI() override;
+
+        /// @brief Writes the graph back to its sources, then recooks.
+        ///
+        /// A read-only document (a graph newer than this editor understands) refuses: rewriting it
+        /// from a graph the editor could not fully parse would destroy the authored data.
+        [[nodiscard]] Veng::VoidResult Save() override;
+
+        /// @brief Returns true while the graph holds edits not yet written to the source.
+        [[nodiscard]] bool HasUnsavedChanges() const override { return m_Dirty; }
 
     private:
         /// @brief Builds a runtime zero-override default instance over the edited parent material.
@@ -98,15 +112,14 @@ namespace VengEditor
         /// @return True if a property edit occurred.
         bool DrawNodeInspector();
 
-        /// @brief Marks the graph dirty and arms the debounced recook.
+        /// @brief Marks the graph dirty; a read-only document takes no edits.
         void MarkDirty();
 
         /// @brief Writes the temp .vmat and drives the cook driver.
         ///
-        /// For a graph-sourced fragment shader, first persists the graph to its .graph.json
-        /// and cooks the shader, then cooks the material referencing it; both mounts are held.
-        /// A non-graph material cooks the material alone. A compile or I/O error is recorded
-        /// in m_CookError and logged.
+        /// For a graph-sourced fragment shader, cooks the shader from its on-disk .graph.json
+        /// first, then the material referencing it; both mounts are held. A non-graph material
+        /// cooks the material alone. A compile or I/O error is recorded in m_CookError and logged.
         void TriggerCook();
 
         /// @brief Cooks the material from the temp .vmat and mounts the result.
@@ -130,8 +143,15 @@ namespace VengEditor
         [[nodiscard]] Veng::optional<Veng::string> AssembleVmat() const;
 
         /// @brief Writes the assembled document to @p target.
-        /// @return False (error recorded) on compile or I/O failure.
-        bool WriteVmat(const Veng::path& target);
+        /// @return Empty on success; a compile or I/O error otherwise.
+        [[nodiscard]] Veng::VoidResult WriteVmat(const Veng::path& target);
+
+        /// @brief Writes the edited graph to the fragment shader's .graph.json.
+        ///
+        /// Only a graph-sourced material has one; the non-graph material's graph is embedded in
+        /// the .vmat's "_editor" block and rides its write instead.
+        /// @return Empty on success; an I/O error otherwise.
+        [[nodiscard]] Veng::VoidResult WriteGraph();
 
         Veng::AssetId m_Id;
         Veng::path m_SourcePath;
@@ -200,9 +220,12 @@ namespace VengEditor
         Veng::MountHandle m_Mount;
         /// @brief Held shader mount for a graph-sourced cook; empty otherwise.
         Veng::MountHandle m_ShaderMount;
-        bool m_Cooking = false;
-        bool m_CookPending = false;
-        Veng::f32 m_DebounceRemaining = 0.0f;
+
+        /// @brief Serialises recooks; a save landing behind one in flight queues rather than drops.
+        CookGate m_Gate;
+
+        /// @brief Whether the graph holds edits not yet written to the source.
+        bool m_Dirty = false;
         /// @brief True when a fresh handle is resident and ready to swap into the preview.
         bool m_MaterialDirty = false;
         Veng::optional<Veng::string> m_CookError;

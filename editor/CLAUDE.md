@@ -83,19 +83,28 @@ across the whole project's one AssetId namespace, not just its own pack.
   region (from the ImGui content rect) in `OnUI`, and samples the ready output as a `UI::Image`.
   The host drives each open panel and owns its visibility. Top-level host panels: asset browser,
   console/log, and the per-asset editors below.
-- **An editor writes the user's files only on an explicit save.** No auto-save and no debounced
-  recook: edits accumulate in the panel's in-memory document, and `Save()` is what performs the
+- **An editor writes the user's files only on an explicit save — this is the editor-wide rule, and
+  it has no exceptions.** No auto-save, no debounced recook, and **nothing writes on a timer**: edits
+  accumulate in the panel's in-memory document, and `Save()` is what performs the
   preserve-unknown-keys merge write, then the recook, then the hot reload — **in that order**, so a
   cook that fails leaves the saved source on disk and reports in-panel rather than reverting the
-  edit. `AssetEditorPanel` carries the whole contract: `HasUnsavedChanges()` drives the window's
-  unsaved marker and the Save action's enabled state, `EditorHost` dispatches the File-menu item and
-  Ctrl/Cmd+S to the focused document, and `AssetEditorPanel::Draw` **takes back a close** on a dirty
-  document and raises a Save / Discard / Cancel prompt (the host destroys a panel whose open flag
-  clears, so that is the only place to ask). A recook arriving while one is in flight is **queued**,
-  not dropped — the in-flight cook read an older source, so a save landing behind it must re-cook
-  once it lands. The table and prefab/level editors follow this; the four settings panels
-  (texture, material, material-instance, input-mapping) still auto-recook on a 300 ms debounce and
-  do not derive from `AssetEditorPanel`, which is the one remaining divergence.
+  edit. A write that fails clears no dirty flag and cooks nothing, so the editor still holds the
+  edits it could not persist.
+  **`AssetEditorPanel` is the contract, and every asset editor derives from it** — that
+  `dynamic_cast` is what `EditorHost::FocusedAssetEditor` finds, and the only route to File▸Save and
+  Ctrl/Cmd+S. It carries the whole thing: `HasUnsavedChanges()` drives the window's unsaved marker
+  and the Save action's enabled state, `EditorHost` dispatches the File-menu item and Ctrl/Cmd+S to
+  the focused document, and `AssetEditorPanel::Draw` **takes back a close** on a dirty document and
+  raises a Save / Discard / Cancel prompt (the host destroys a panel whose open flag clears, so that
+  is the only place to ask) — a subclass writes nothing for the prompt. A toolbar Save button wraps
+  in `UI::Disabled(!dirty)`. A recook arriving while one is in flight is **queued**, not dropped —
+  the in-flight cook read an older source, so a save landing behind it must re-cook once it lands.
+  `editor/src/AssetSaveModel.h` is the shared, UI-free form of both halves — `SaveAssetSource` (the
+  ordered write → clear-dirty → cook sequence) and `CookGate` (`Request`/`Complete`, one in flight
+  and at most one queued) — which is what makes the model testable in the device-free `editor_unit`
+  band. **No panel carries a countdown that reaches a file**: a cook debounce that *follows* an
+  explicit save would not be an auto-save, but none exists either — the sole per-frame countdown in
+  a panel is the material editor's status toast.
 - **`AssetEditorPanel` hosts a private, class-restricted dockspace.** An asset editor is a
   top-level panel whose window hosts a per-instance ImGui dockspace; its child panels are
   submitted as separate windows tagged with a per-instance `ImGuiWindowClass`, so only that
@@ -251,8 +260,8 @@ across the whole project's one AssetId namespace, not just its own pack.
   via `AssetManager::MountMemory` and hot-reloads behind the stable `AssetHandle`.
 - **The texture editor is the template.** `TextureEditorPanel` previews via a render target
   (`CreateTexture` → `ImGui::Image`), edits `.tex.json` settings (sRGB + sampler filter/wrap),
-  recooks live (300ms-debounced), and round-trips the JSON on save — patching known keys,
-  preserving unknown ones. It carries a **compression-role combo** over the same round-trip
+  and on save round-trips the JSON — patching known keys, preserving unknown ones — then recooks to
+  refresh the preview. It carries a **compression-role combo** over the same round-trip
   (writing/clearing the `"role"` key) and shows the **resolved format read-only** for the active
   configuration ("→ ASTC4x4Srgb for 'macos'"), so the artist picks intent and reads the platform's
   codec without choosing one.
@@ -265,24 +274,26 @@ across the whole project's one AssetId namespace, not just its own pack.
   `UI::Drag` over its component count and each texture slot an `AssetChip`; an un-toggled slot
   shows the parent default (read from the parent's `GetDefaultBlock()`) disabled. It previews
   through the **same** `MaterialPreview` path the material editor uses (the instance over its
-  parent on a turntable sphere), recooks live (300ms-debounced), and hot-reloads behind the stable
-  handle. Changing the parent reloads the schema and drops the prior overrides. Save writes the
-  `*.vmatinst.json`.
+  parent on a turntable sphere). Changing the parent reloads the schema and drops the prior
+  overrides. Save merge-writes the `*.vmatinst.json`, then recooks and hot-reloads behind the
+  stable handle.
 - **The input-map editor is near-free.** `InputMappingEditorPanel` (registered for
   `AssetTypes::InputMap`) draws a `.inputmap.json`'s reflected document — its
   `vector<InputAction>` actions and its `vector<Binding>` bindings — through the shared reflection
   inspector (`DrawFields` over the same `FieldClass::Array` path the project-settings panel uses),
   so the binding table is add/remove/edit-able with **no** bespoke widget code. The one custom
   widget is an `ActionId` name combo scoped to the document's own declared actions (a `u64` leaf
-  has no default scalar widget), so a binding picks its action by name, not a raw id. It recooks
-  live behind the stable handle and hot-reloads, exposes a `GetInspectables()` override for the
-  editor MCP, and draws a **read-only resolved-state preview** — the actions the current bindings
+  has no default scalar widget), so a binding picks its action by name, not a raw id. Save
+  merge-writes the document, then recooks and hot-reloads behind the stable handle. It exposes a
+  `GetInspectables()` override for the editor MCP — an external write through it marks the document
+  dirty exactly as a UI edit does, and reaches disk only through `editor.save` — and draws a **read-only resolved-state preview** — the actions the current bindings
   resolve to over the editor's own input each frame — so a binding's effect is observable without
   launching the game. It is deliberately **basic by design**: no press-a-key-to-bind capture, no
   drag-reorder, no undo (the single-asset editors have none), matching the texture/material editor
   idiom.
 - **The table editors author a schema and its rows, both on the explicit-save contract.** They are
-  the two `AssetEditorPanel` subclasses that host no dockspace. `TableSchemaEditorPanel`
+  two of the six `AssetEditorPanel` subclasses that host no dockspace (the four settings panels
+  above are the others). `TableSchemaEditorPanel`
   (`AssetTypes::TableSchema`) edits a `*.tableschema.json`'s column list — add / remove / rename /
   retype (a searchable picker over every registered non-`Reference` type) / reorder — plus the key
   column, whose combo is restricted to types a key index can order (`TableKeyKindForType`). It shows
@@ -363,5 +374,5 @@ editor owns only the **UI**:
   ImGui texture. It is **not** an `EditorPanel`, so its owning `MaterialEditorPanel` registers the
   viewport on its behalf; each frame the preview advances the turntable and pushes its
   `ViewState`, the engine renders the registered viewport, and `GetTexture()` samples the result.
-  The edit loop recooks off-thread and hot-reloads behind the stable `AssetHandle`, re-fetching
-  the texture after a recompile/resize invalidates the output.
+  A save recooks off-thread and hot-reloads behind the stable `AssetHandle`, re-fetching the
+  texture after a recompile/resize invalidates the output.

@@ -10,7 +10,6 @@
 #include <Veng/ImGui/ImGuiLayer.h>
 #include <Veng/Log.h>
 #include <Veng/Renderer/Context.h>
-#include <Veng/Time.h>
 #include <Veng/UI/UI.h>
 
 #include <nlohmann/json.hpp>
@@ -26,7 +25,6 @@ namespace VengEditor
 
     namespace
     {
-        constexpr f32 DebounceSeconds = 0.3f;
         constexpr uvec2 PreviewExtent{256, 256};
 
         // Reads Components float channels from the parent default block at a field's offset.
@@ -64,6 +62,8 @@ namespace VengEditor
             return;
         }
 
+        // Cook once on open so the preview has an instance to show; it reads the source as
+        // authored and writes only the panel's own temp cook input.
         TriggerCook();
     }
 
@@ -79,6 +79,7 @@ namespace VengEditor
     {
         m_AuthoredParams.clear();
         m_AuthoredTextures.clear();
+        m_Dirty = false;
 
         const optional<Json> docResult = ReadJsonObject(m_SourcePath);
         if (!docResult)
@@ -245,107 +246,98 @@ namespace VengEditor
         }
     }
 
-    string MaterialInstanceEditorPanel::AssembleDocument() const
+    VoidResult MaterialInstanceEditorPanel::WriteDocument(const path& target)
     {
-        Json doc = Json::object();
-        doc["parent"] = FormatAssetId(m_ParentId);
+        const VoidResult written =
+            MergeWriteJsonObject(target, 2,
+                                 [this](Json& doc)
+                                 {
+                                     doc["parent"] = FormatAssetId(m_ParentId);
 
-        Json overrides = Json::object();
-        for (const OverrideSlot& slot : m_Slots)
+                                     Json overrides = Json::object();
+                                     for (const OverrideSlot& slot : m_Slots)
+                                     {
+                                         if (!slot.Overridden)
+                                         {
+                                             continue;
+                                         }
+                                         if (slot.IsTexture)
+                                         {
+                                             if (slot.Texture.IsValid())
+                                             {
+                                                 overrides[slot.Name] = FormatAssetId(slot.Texture);
+                                             }
+                                         }
+                                         else if (slot.Components == 1)
+                                         {
+                                             overrides[slot.Name] = slot.Value.x;
+                                         }
+                                         else
+                                         {
+                                             Json arr = Json::array();
+                                             for (u32 i = 0; i < slot.Components; ++i)
+                                             {
+                                                 arr.push_back(slot.Value[static_cast<int>(i)]);
+                                             }
+                                             overrides[slot.Name] = std::move(arr);
+                                         }
+                                     }
+                                     doc["overrides"] = std::move(overrides);
+                                 });
+
+        if (!written)
         {
-            if (!slot.Overridden)
-            {
-                continue;
-            }
-            if (slot.IsTexture)
-            {
-                if (slot.Texture.IsValid())
-                {
-                    overrides[slot.Name] = FormatAssetId(slot.Texture);
-                }
-            }
-            else if (slot.Components == 1)
-            {
-                overrides[slot.Name] = slot.Value.x;
-            }
-            else
-            {
-                Json arr = Json::array();
-                for (u32 i = 0; i < slot.Components; ++i)
-                {
-                    arr.push_back(slot.Value[static_cast<int>(i)]);
-                }
-                overrides[slot.Name] = std::move(arr);
-            }
+            m_CookError = written.error();
+            Log::Error("Material-instance editor: {}", written.error());
         }
-        doc["overrides"] = std::move(overrides);
-
-        return doc.dump(2);
+        return written;
     }
 
-    bool MaterialInstanceEditorPanel::WriteDocument(const path& target)
+    VoidResult MaterialInstanceEditorPanel::Save()
     {
-        std::ofstream out(target, std::ios::binary | std::ios::trunc);
-        if (!out)
-        {
-            m_CookError = fmt::format("failed to write {}", target.string());
-            Log::Error("Material-instance editor: {}", *m_CookError);
-            return false;
-        }
-        out << AssembleDocument() << '\n';
-        return true;
-    }
-
-    void MaterialInstanceEditorPanel::MarkDirty()
-    {
-        m_CookPending = true;
-        m_DebounceRemaining = DebounceSeconds;
+        return SaveAssetSource([this] { return WriteDocument(m_SourcePath); }, m_Dirty,
+                               [this] { TriggerCook(); });
     }
 
     void MaterialInstanceEditorPanel::TriggerCook()
     {
-        if (m_Cooking)
-        {
-            return;
-        }
+        m_Gate.Request(
+            [this]
+            {
+                // The cook input is the panel's own temp dotfile, not the user's source: the
+                // importer resolves the parent relative to the source dir, so it must sit beside it.
+                if (!WriteDocument(m_TempPath))
+                {
+                    m_Gate.Complete();
+                    return;
+                }
 
-        if (!WriteDocument(m_TempPath))
-        {
-            return;
-        }
+                m_CookError.reset();
 
-        m_Cooking = true;
-        m_CookError.reset();
-
-        m_Cook({.SourcePath = m_TempPath, .TargetId = m_Id, .Type = AssetTypes::MaterialInstance},
-               [this](Result<MountHandle> mount)
-               {
-                   m_Cooking = false;
-                   if (!mount)
-                   {
-                       m_CookError = mount.error();
-                       Log::Error("Material-instance editor: cook failed: {}", mount.error());
-                       return;
-                   }
-
-                   m_Mount = std::move(*mount);
-                   m_Handle = m_Assets.Load<MaterialInstance>(m_Id);
-                   m_InstanceDirty = true;
-               });
+                m_Cook({.SourcePath = m_TempPath,
+                        .TargetId = m_Id,
+                        .Type = AssetTypes::MaterialInstance},
+                       [this](Result<MountHandle> mount)
+                       {
+                           if (!mount)
+                           {
+                               m_CookError = mount.error();
+                               Log::Error("Material-instance editor: cook failed: {}",
+                                          mount.error());
+                           }
+                           else
+                           {
+                               m_Mount = std::move(*mount);
+                               m_Handle = m_Assets.Load<MaterialInstance>(m_Id);
+                               m_InstanceDirty = true;
+                           }
+                           m_Gate.Complete();
+                       });
+            });
     }
 
     void MaterialInstanceEditorPanel::OnUI()
     {
-        if (m_CookPending)
-        {
-            m_DebounceRemaining -= Time::GetDeltaTime();
-            if (m_DebounceRemaining <= 0.0f)
-            {
-                m_CookPending = false;
-                TriggerCook();
-            }
-        }
-
         if (m_InstanceDirty && m_Handle.IsLoaded())
         {
             m_Preview->SetMaterial(m_Handle);
@@ -368,12 +360,18 @@ namespace VengEditor
         // Toolbar.
         if (auto bar = UI::Toolbar("##matinst-toolbar"))
         {
-            if (UI::IconButton(Icons::Save))
             {
-                WriteDocument(m_SourcePath);
+                const UI::DisabledScope disabled = UI::Disabled(!m_Dirty);
+                if (UI::IconButton(Icons::Save))
+                {
+                    if (const VoidResult saved = Save(); !saved)
+                    {
+                        Log::Error("Material-instance editor: save failed: {}", saved.error());
+                    }
+                }
+                UI::Tooltip("Save the overrides to the .vmatinst.json and recook");
             }
-            UI::Tooltip("Save the overrides to the .vmatinst.json");
-            if (m_Cooking)
+            if (m_Gate.IsCooking())
             {
                 UI::SameLine();
                 UI::Text("Cooking...");
@@ -500,7 +498,7 @@ namespace VengEditor
 
         if (mutated)
         {
-            MarkDirty();
+            m_Dirty = true;
         }
     }
 }

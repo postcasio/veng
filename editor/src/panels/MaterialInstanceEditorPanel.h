@@ -7,8 +7,10 @@
 #include <Veng/Asset/MaterialInstance.h>
 
 #include <VengEditor/CookRequest.h>
-#include <VengEditor/EditorPanel.h>
 #include <VengEditor/EditorRegistry.h>
+
+#include "AssetEditorPanel.h"
+#include "AssetSaveModel.h"
 
 #include "material/MaterialPreview.h"
 
@@ -36,9 +38,12 @@ namespace VengEditor
     /// Edits a `*.vmatinst.json`. The override surface is exactly the parent's `GetFields()`
     /// exposed subset — toggling a field on adds it to the sparse override set, off reverts it to
     /// the parent default — so the authored surface and the cook-validated surface are the same
-    /// set by construction. Any edit recooks the instance off the render thread and refreshes the
-    /// preview; Save writes the `*.vmatinst.json`.
-    class MaterialInstanceEditorPanel final : public EditorPanel
+    /// set by construction.
+    ///
+    /// It writes nothing until an explicit save: an edit marks the document dirty, and Save
+    /// performs the preserve-unknown-keys merge write of the `*.vmatinst.json`, then the recook
+    /// that refreshes the preview behind the stable handle.
+    class MaterialInstanceEditorPanel final : public AssetEditorPanel
     {
     public:
         /// @brief Opens the editor for the material instance at @p id / @p sourcePath.
@@ -51,6 +56,12 @@ namespace VengEditor
 
         [[nodiscard]] Veng::string_view GetTitle() const override { return m_Title; }
         void OnUI() override;
+
+        /// @brief Writes the overrides back to the `*.vmatinst.json`, then recooks.
+        [[nodiscard]] Veng::VoidResult Save() override;
+
+        /// @brief Returns true while the overrides hold edits not yet written to the source.
+        [[nodiscard]] bool HasUnsavedChanges() const override { return m_Dirty; }
 
     private:
         /// @brief One authored override slot mirroring a parent exposed field.
@@ -91,15 +102,10 @@ namespace VengEditor
         /// @brief Reads the `parent` id and `overrides` map from the source document.
         void ReadSource();
 
-        /// @brief Assembles the `*.vmatinst.json` document from the parent id + the toggled overrides.
-        [[nodiscard]] Veng::string AssembleDocument() const;
-
-        /// @brief Writes the assembled document to @p target.
-        /// @return False (error recorded) on an I/O failure.
-        bool WriteDocument(const Veng::path& target);
-
-        /// @brief Marks the instance dirty and arms the debounced recook.
-        void MarkDirty();
+        /// @brief Merge-writes the parent id and the toggled overrides into @p target.
+        /// @param target  The file to rewrite.
+        /// @return Empty on success; an I/O error otherwise.
+        [[nodiscard]] Veng::VoidResult WriteDocument(const Veng::path& target);
 
         /// @brief Writes the temp source and drives the cook, mounting + hot-reloading the result.
         void TriggerCook();
@@ -133,9 +139,12 @@ namespace VengEditor
 
         Veng::AssetHandle<Veng::MaterialInstance> m_Handle;
         Veng::MountHandle m_Mount;
-        bool m_Cooking = false;
-        bool m_CookPending = false;
-        Veng::f32 m_DebounceRemaining = 0.0f;
+
+        /// @brief Serialises recooks; a save landing behind one in flight queues rather than drops.
+        CookGate m_Gate;
+
+        /// @brief Whether the overrides hold edits not yet written to the source.
+        bool m_Dirty = false;
         bool m_InstanceDirty = false;
         Veng::optional<Veng::string> m_CookError;
     };

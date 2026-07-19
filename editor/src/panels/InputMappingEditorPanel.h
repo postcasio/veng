@@ -6,7 +6,8 @@
 #include <Veng/Asset/InputMappingContext.h>
 #include <Veng/Input/Actions.h>
 
-#include <VengEditor/EditorPanel.h>
+#include "AssetEditorPanel.h"
+#include "AssetSaveModel.h"
 
 #include "panels/TextureEditorPanel.h" // CookDriver alias
 
@@ -27,13 +28,15 @@ namespace VengEditor
     /// `vector<Binding>` bindings — through the shared reflection inspector (`DrawFields`), so the
     /// binding table is add/remove/edit-able with no bespoke widget code. The one custom widget is
     /// an `ActionId` name combo scoped to the document's own declared actions, so a binding shows
-    /// and picks its action by name rather than a raw numeric id. Any edit recooks the source off
-    /// the render thread (debounced) and hot-reloads behind the stable `AssetHandle`. A read-only
-    /// preview readout resolves the document against the editor's own input each frame, so a
-    /// binding's effect is observable without launching the game. Save round-trips the JSON,
-    /// preserving unknown keys. It is deliberately basic: no press-a-key-to-bind capture and no
+    /// and picks its action by name rather than a raw numeric id. A read-only preview readout
+    /// resolves the document against the editor's own input each frame, so a binding's effect is
+    /// observable without launching the game.
+    ///
+    /// It writes nothing until an explicit save: an edit marks the document dirty, and Save
+    /// performs the preserve-unknown-keys merge write, then the recook that hot-reloads behind the
+    /// stable `AssetHandle`. It is deliberately basic: no press-a-key-to-bind capture and no
     /// drag-reorder.
-    class InputMappingEditorPanel final : public EditorPanel
+    class InputMappingEditorPanel final : public AssetEditorPanel
     {
     public:
         /// @brief Opens the editor for the input map at @p id / @p sourcePath.
@@ -53,10 +56,16 @@ namespace VengEditor
         [[nodiscard]] Veng::string_view GetTitle() const override { return m_Title; }
         void OnUI() override;
 
+        /// @brief Writes the actions and bindings back to the .inputmap.json, then recooks.
+        [[nodiscard]] Veng::VoidResult Save() override;
+
+        /// @brief Returns true while the document holds edits not yet written to the source.
+        [[nodiscard]] bool HasUnsavedChanges() const override { return m_Dirty; }
+
         /// @brief Exposes the reflected document so the generic editor MCP tools can read/write it.
         [[nodiscard]] Veng::vector<Inspectable> GetInspectables() override;
 
-        /// @brief Recooks after an external write into the document, matching a UI edit's reaction.
+        /// @brief Marks the document dirty after an external write, matching a UI edit's reaction.
         void OnInspectableChanged(Veng::string_view name) override;
 
     private:
@@ -64,8 +73,8 @@ namespace VengEditor
         void LoadDocument();
 
         /// @brief Writes the document back to the .inputmap.json, preserving unknown keys.
-        /// @return False (error recorded in m_CookError) on I/O or parse failure.
-        bool SaveDocument();
+        /// @return Empty on success; an I/O error otherwise.
+        [[nodiscard]] Veng::VoidResult WriteDocument();
 
         /// @brief Submits a recook of the current on-disk source through the cook driver.
         void TriggerCook();
@@ -102,12 +111,11 @@ namespace VengEditor
         /// @brief The prior frame's resolved actions, threaded as `previous` for phase derivation.
         Veng::ActionState m_Previous;
 
-        /// @brief Cook submitted but not yet mounted; suppresses concurrent cooks.
-        bool m_Cooking = false;
+        /// @brief Serialises recooks; a save landing behind one in flight queues rather than drops.
+        CookGate m_Gate;
 
-        /// @brief A document change is pending; fires TriggerCook when m_DebounceRemaining reaches zero.
-        bool m_CookPending = false;
-        Veng::f32 m_DebounceRemaining = 0.0f;
+        /// @brief Whether the document holds edits not yet written to the source.
+        bool m_Dirty = false;
 
         Veng::optional<Veng::string> m_CookError;
     };

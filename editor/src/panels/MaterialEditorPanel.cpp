@@ -37,7 +37,6 @@ namespace VengEditor
 
     namespace
     {
-        constexpr f32 DebounceSeconds = 0.3f;
         constexpr f32 ToastSeconds = 3.0f;
         constexpr uvec2 PreviewExtent{256, 256};
 
@@ -128,6 +127,8 @@ namespace VengEditor
 
         ResolveShaderSource();
         BuildGraph();
+        // Cook once on open so the preview has a material to show; this reads the sources as
+        // authored and writes only the panel's own temp cook input.
         TriggerCook();
     }
 
@@ -358,8 +359,7 @@ namespace VengEditor
         {
             return;
         }
-        m_CookPending = true;
-        m_DebounceRemaining = DebounceSeconds;
+        m_Dirty = true;
     }
 
     optional<string> MaterialEditorPanel::AssembleVmat() const
@@ -377,12 +377,16 @@ namespace VengEditor
             {
                 return std::nullopt;
             }
-            Json doc = Json::parse(WriteMaterialVmat(generated->Fields, Interface(), m_Domain),
-                                   nullptr, false);
-            if (doc.is_discarded() || !doc.is_object())
+            const Json generatedDoc = Json::parse(
+                WriteMaterialVmat(generated->Fields, Interface(), m_Domain), nullptr, false);
+            if (generatedDoc.is_discarded() || !generatedDoc.is_object())
             {
                 return std::nullopt;
             }
+            // The generated keys replace their counterparts on the authored document, so every
+            // key this editor does not own survives the round-trip.
+            Json doc = ReadJsonObject(m_SourcePath).value_or(Json::object());
+            doc.update(generatedDoc);
             if (m_DefaultInstanceId.IsValid())
             {
                 doc["defaultInstance"] = FormatAssetId(m_DefaultInstanceId);
@@ -393,20 +397,7 @@ namespace VengEditor
         // The non-graph material stays on its on-disk field list; only the embedded "_editor"
         // graph block is regenerated. Reading the source preserves "domain"/"shaders"/"fields"
         // and every unknown key.
-        Json doc = Json::object();
-        {
-            const std::ifstream file(m_SourcePath, std::ios::binary);
-            if (file)
-            {
-                std::ostringstream contents;
-                contents << file.rdbuf();
-                const Json parsed = Json::parse(contents.str(), nullptr, false);
-                if (!parsed.is_discarded() && parsed.is_object())
-                {
-                    doc = parsed;
-                }
-            }
-        }
+        Json doc = ReadJsonObject(m_SourcePath).value_or(Json::object());
 
         // Parse the serializer's string into a JSON object so "_editor" embeds as
         // a nested object rather than an escaped string.
@@ -424,7 +415,7 @@ namespace VengEditor
         return doc.dump(4);
     }
 
-    bool MaterialEditorPanel::WriteVmat(const path& target)
+    VoidResult MaterialEditorPanel::WriteVmat(const path& target)
     {
         // Saving to the real source backfills a missing default-instance id: mint once (against the
         // project packs) and cache it, so AssembleVmat writes it and every reference resolves a real
@@ -449,88 +440,118 @@ namespace VengEditor
         {
             m_CookError = "compile failed; not written";
             Log::Error("Material editor: compile failed, not writing {}", target.string());
-            return false;
+            return std::unexpected(*m_CookError);
         }
 
-        std::ofstream out(target, std::ios::binary | std::ios::trunc);
-        if (!out)
+        const VoidResult written = WriteTextFile(target, *document + "\n");
+        if (!written)
         {
-            m_CookError = fmt::format("failed to write {}", target.string());
-            Log::Error("Material editor: {}", *m_CookError);
-            return false;
+            m_CookError = written.error();
+            Log::Error("Material editor: {}", written.error());
         }
-        out << *document << '\n';
-        return true;
+        return written;
+    }
+
+    VoidResult MaterialEditorPanel::WriteGraph()
+    {
+        if (!m_GraphSourced)
+        {
+            return {};
+        }
+
+        const VoidResult written =
+            WriteTextFile(m_GraphPath, WriteNodeGraph(*m_Graph, m_Catalog) + "\n");
+        if (!written)
+        {
+            m_CookError = written.error();
+            Log::Error("Material editor: {}", written.error());
+        }
+        return written;
+    }
+
+    VoidResult MaterialEditorPanel::Save()
+    {
+        if (m_ReadOnly)
+        {
+            return std::unexpected(string{"the graph is newer than this editor understands"});
+        }
+        if (m_Graph == nullptr)
+        {
+            return std::unexpected(string{"the material failed to load"});
+        }
+
+        return SaveAssetSource(
+            [this]() -> VoidResult
+            {
+                // A graph-sourced material's authored graph is the shader's .graph.json; it is
+                // written beside the regenerated .vmat field list, and the cook reads both.
+                const VoidResult graph = WriteGraph();
+                if (!graph)
+                {
+                    return graph;
+                }
+                return WriteVmat(m_SourcePath);
+            },
+            m_Dirty, [this] { TriggerCook(); });
     }
 
     void MaterialEditorPanel::TriggerCook()
     {
-        if (m_Cooking || m_Graph == nullptr)
+        if (m_Graph == nullptr)
         {
             return;
         }
 
-        // Write the temp source next to the real one (source-dir-relative resolves);
-        // a compile failure aborts the cook with an inline error.
-        if (!WriteVmat(m_TempPath))
-        {
-            return;
-        }
-
-        m_Cooking = true;
-        m_CookError.reset();
-
-        // A graph-sourced shader is cooked first (the generated SPIR-V the material binds),
-        // then the material; both mounts are held. The graph is the shader's source of truth,
-        // so the edit is persisted to its .graph.json and the material cook reflects the
-        // regenerated MaterialParams from it by id-resolution. A non-graph material cooks alone.
-        if (!m_GraphSourced)
-        {
-            CookMaterial();
-            return;
-        }
-
-        // Persist the edited graph to the shader's .graph.json, then cook the shader.
-        {
-            std::ofstream out(m_GraphPath, std::ios::binary | std::ios::trunc);
-            if (!out)
+        m_Gate.Request(
+            [this]
             {
-                m_Cooking = false;
-                m_CookError = fmt::format("failed to write {}", m_GraphPath.string());
-                Log::Error("Material editor: {}", *m_CookError);
-                return;
-            }
-            out << WriteNodeGraph(*m_Graph, m_Catalog) << '\n';
-        }
+                // Write the temp source next to the real one (source-dir-relative resolves);
+                // a compile failure aborts the cook with an inline error.
+                if (!WriteVmat(m_TempPath))
+                {
+                    m_Gate.Complete();
+                    return;
+                }
 
-        m_Cook({.SourcePath = m_ShaderJsonPath,
-                .TargetId = m_FragmentShader,
-                .Type = AssetTypes::Shader},
-               [this](Result<MountHandle> mount)
-               {
-                   if (!mount)
-                   {
-                       m_Cooking = false;
-                       m_CookError = mount.error();
-                       Log::Error("Material editor: shader cook failed: {}", mount.error());
-                       return;
-                   }
-                   m_ShaderMount = std::move(*mount);
-                   CookMaterial();
-               });
+                m_CookError.reset();
+
+                // A graph-sourced shader is cooked first (the generated SPIR-V the material binds)
+                // from the .graph.json a save wrote, then the material; both mounts are held and
+                // the gate stays shut across the pair. A non-graph material cooks alone.
+                if (!m_GraphSourced)
+                {
+                    CookMaterial();
+                    return;
+                }
+
+                m_Cook({.SourcePath = m_ShaderJsonPath,
+                        .TargetId = m_FragmentShader,
+                        .Type = AssetTypes::Shader},
+                       [this](Result<MountHandle> mount)
+                       {
+                           if (!mount)
+                           {
+                               m_CookError = mount.error();
+                               Log::Error("Material editor: shader cook failed: {}", mount.error());
+                               m_Gate.Complete();
+                               return;
+                           }
+                           m_ShaderMount = std::move(*mount);
+                           CookMaterial();
+                       });
+            });
     }
 
     void MaterialEditorPanel::CookMaterial()
     {
-        m_Cooking = true;
         m_Cook({.SourcePath = m_TempPath, .TargetId = m_Id, .Type = AssetTypes::Material},
                [this](Result<MountHandle> mount)
                {
-                   m_Cooking = false;
                    if (!mount)
                    {
                        m_CookError = mount.error();
                        Log::Error("Material editor: cook failed: {}", mount.error());
+                       m_Gate.Complete();
                        return;
                    }
 
@@ -543,10 +564,12 @@ namespace VengEditor
                        m_CookError = rebuilt.error().Detail;
                        Log::Error("Material editor: preview rebuild failed: {}",
                                   rebuilt.error().Detail);
+                       m_Gate.Complete();
                        return;
                    }
                    m_Handle = std::move(*rebuilt);
                    m_MaterialDirty = true;
+                   m_Gate.Complete();
                });
     }
 
@@ -782,17 +805,6 @@ namespace VengEditor
 
     void MaterialEditorPanel::OnUI()
     {
-        // Debounce so a slider drag does not fire a cook per frame.
-        if (m_CookPending)
-        {
-            m_DebounceRemaining -= Time::GetDeltaTime();
-            if (m_DebounceRemaining <= 0.0f)
-            {
-                m_CookPending = false;
-                TriggerCook();
-            }
-        }
-
         if (m_ToastRemaining > 0.0f)
         {
             m_ToastRemaining -= Time::GetDeltaTime();
@@ -824,22 +836,15 @@ namespace VengEditor
         if (auto bar = UI::Toolbar("##material-toolbar"))
         {
             {
-                auto disabled = UI::Disabled(m_ReadOnly);
+                const UI::DisabledScope disabled = UI::Disabled(m_ReadOnly || !m_Dirty);
                 if (UI::IconButton(Icons::Save))
                 {
-                    // A graph-sourced material's authored graph is the shader's .graph.json;
-                    // persist it beside the regenerated .vmat field list.
-                    if (m_GraphSourced)
+                    if (const VoidResult saved = Save(); !saved)
                     {
-                        std::ofstream out(m_GraphPath, std::ios::binary | std::ios::trunc);
-                        if (out)
-                        {
-                            out << WriteNodeGraph(*m_Graph, m_Catalog) << '\n';
-                        }
+                        Log::Error("Material editor: save failed: {}", saved.error());
                     }
-                    WriteVmat(m_SourcePath);
                 }
-                UI::Tooltip("Save the material graph to its .vmat.json");
+                UI::Tooltip("Save the material graph to its .vmat.json and recook");
             }
             UI::SameLine();
             if (UI::IconButton(Icons::Revert))
@@ -847,6 +852,7 @@ namespace VengEditor
                 m_Catalog = NodeCatalog{};
                 m_Emit = MaterialEmitTable{};
                 m_ReadOnly = false;
+                m_Dirty = false;
                 BuildGraph();
                 TriggerCook();
             }
@@ -856,7 +862,7 @@ namespace VengEditor
                 UI::SameLine();
                 UI::TextColored({0.9f, 0.8f, 0.3f, 1.0f}, "(read-only: newer graph version)");
             }
-            if (m_Cooking)
+            if (m_Gate.IsCooking())
             {
                 UI::SameLine();
                 UI::Text("Cooking...");

@@ -17,6 +17,7 @@ add_library(veng_editor SHARED
         src/EditorHost.cpp
         src/EditorPanel.cpp
         src/AssetEditorPanel.cpp
+        src/AssetSaveModel.cpp
         src/AssetSourceIndex.cpp
         src/AssetChip.cpp
         src/CommandStack.cpp

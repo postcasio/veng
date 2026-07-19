@@ -13,7 +13,6 @@
 #include <Veng/Reflection/EnumName.h>
 #include <Veng/Reflection/TypeId.h>
 #include <Veng/Reflection/TypeRegistry.h>
-#include <Veng/Time.h>
 #include <Veng/UI/UI.h>
 #include <VengEditor/EditorRegistry.h>
 
@@ -31,8 +30,6 @@ namespace VengEditor
 
     namespace
     {
-        constexpr f32 DebounceSeconds = 0.3f;
-
         const char* PhaseName(ActionPhase phase)
         {
             switch (phase)
@@ -67,6 +64,8 @@ namespace VengEditor
                                     { DrawActionCombo(fieldPtr); });
 
         LoadDocument();
+        // Cook once on open so the asset is addressable behind the shadow mount; this reads the
+        // source as authored and writes nothing.
         TriggerCook();
     }
 
@@ -75,6 +74,7 @@ namespace VengEditor
     void InputMappingEditorPanel::LoadDocument()
     {
         m_Doc = InputMapData{};
+        m_Dirty = false;
 
         const optional<nlohmann::json> docResult = ReadJsonObject(m_SourcePath);
         if (!docResult)
@@ -190,75 +190,82 @@ namespace VengEditor
         }
     }
 
-    bool InputMappingEditorPanel::SaveDocument()
+    VoidResult InputMappingEditorPanel::WriteDocument()
     {
-        // Round-trip the existing file so unknown keys (a hand-authored comment field, future
-        // per-map settings) survive; only the actions/bindings arrays are rewritten.
-        nlohmann::json doc = ReadJsonObject(m_SourcePath).value_or(nlohmann::json::object());
+        // Round-trip the existing file so unknown keys (a hand-authored comment field, per-map
+        // settings no widget exposes) survive; only the actions/bindings arrays are rewritten.
+        const VoidResult written =
+            MergeWriteJsonObject(m_SourcePath, 2,
+                                 [this](nlohmann::json& doc)
+                                 {
+                                     nlohmann::json actions = nlohmann::json::array();
+                                     for (const InputAction& action : m_Doc.Actions)
+                                     {
+                                         nlohmann::json entry = nlohmann::json::object();
+                                         entry["id"] = FormatHexId(static_cast<u64>(action.Id));
+                                         entry["name"] = action.Name;
+                                         entry["kind"] = EnumeratorName(action.Kind);
+                                         actions.push_back(std::move(entry));
+                                     }
+                                     doc["actions"] = std::move(actions);
 
-        nlohmann::json actions = nlohmann::json::array();
-        for (const InputAction& action : m_Doc.Actions)
+                                     nlohmann::json bindings = nlohmann::json::array();
+                                     for (const Binding& binding : m_Doc.Bindings)
+                                     {
+                                         nlohmann::json source = nlohmann::json::object();
+                                         source["device"] = EnumeratorName(binding.Source.Device);
+                                         source["control"] = binding.Source.Control;
+
+                                         nlohmann::json entry = nlohmann::json::object();
+                                         entry["source"] = std::move(source);
+                                         entry["action"] =
+                                             FormatHexId(static_cast<u64>(binding.Action));
+                                         entry["axis"] = EnumeratorName(binding.Axis);
+                                         entry["scale"] = binding.Scale;
+                                         bindings.push_back(std::move(entry));
+                                     }
+                                     doc["bindings"] = std::move(bindings);
+                                 });
+
+        if (!written)
         {
-            nlohmann::json entry = nlohmann::json::object();
-            entry["id"] = FormatHexId(static_cast<u64>(action.Id));
-            entry["name"] = action.Name;
-            entry["kind"] = EnumeratorName(action.Kind);
-            actions.push_back(std::move(entry));
+            m_CookError = written.error();
+            Log::Error("Input map editor: {}", written.error());
         }
-        doc["actions"] = std::move(actions);
+        return written;
+    }
 
-        nlohmann::json bindings = nlohmann::json::array();
-        for (const Binding& binding : m_Doc.Bindings)
-        {
-            nlohmann::json source = nlohmann::json::object();
-            source["device"] = EnumeratorName(binding.Source.Device);
-            source["control"] = binding.Source.Control;
-
-            nlohmann::json entry = nlohmann::json::object();
-            entry["source"] = std::move(source);
-            entry["action"] = FormatHexId(static_cast<u64>(binding.Action));
-            entry["axis"] = EnumeratorName(binding.Axis);
-            entry["scale"] = binding.Scale;
-            bindings.push_back(std::move(entry));
-        }
-        doc["bindings"] = std::move(bindings);
-
-        std::ofstream out(m_SourcePath, std::ios::binary | std::ios::trunc);
-        if (!out)
-        {
-            m_CookError = fmt::format("failed to write {}", m_SourcePath.string());
-            Log::Error("Input map editor: {}", *m_CookError);
-            return false;
-        }
-        out << doc.dump(2) << '\n';
-        return true;
+    VoidResult InputMappingEditorPanel::Save()
+    {
+        return SaveAssetSource([this] { return WriteDocument(); }, m_Dirty,
+                               [this] { TriggerCook(); });
     }
 
     void InputMappingEditorPanel::TriggerCook()
     {
-        if (m_Cooking)
-        {
-            return;
-        }
+        m_Gate.Request(
+            [this]
+            {
+                m_CookError.reset();
 
-        m_Cooking = true;
-        m_CookError.reset();
-
-        m_Cook({.SourcePath = m_SourcePath, .TargetId = m_Id, .Type = AssetTypes::InputMap},
-               [this](Result<MountHandle> mount)
-               {
-                   m_Cooking = false;
-                   if (!mount)
-                   {
-                       m_CookError = mount.error();
-                       return;
-                   }
-
-                   // Replace the mount and reload behind the stable handle: a running Play session
-                   // in the editor picks up the new bindings the moment the reload lands resident.
-                   m_Mount = std::move(*mount);
-                   m_Handle = m_Assets.Load<InputMappingContext>(m_Id);
-               });
+                m_Cook({.SourcePath = m_SourcePath, .TargetId = m_Id, .Type = AssetTypes::InputMap},
+                       [this](Result<MountHandle> mount)
+                       {
+                           if (!mount)
+                           {
+                               m_CookError = mount.error();
+                           }
+                           else
+                           {
+                               // Replace the mount and reload behind the stable handle: a running
+                               // Play session in the editor picks up the new bindings the moment the
+                               // reload lands resident.
+                               m_Mount = std::move(*mount);
+                               m_Handle = m_Assets.Load<InputMappingContext>(m_Id);
+                           }
+                           m_Gate.Complete();
+                       });
+            });
     }
 
     void InputMappingEditorPanel::DrawActionCombo(void* fieldPtr)
@@ -306,9 +313,7 @@ namespace VengEditor
                 chosen = m_Doc.Actions[static_cast<usize>(index) - 1].Id;
             }
             std::memcpy(fieldPtr, &chosen, sizeof(chosen));
-            SaveDocument();
-            m_CookPending = true;
-            m_DebounceRemaining = DebounceSeconds;
+            m_Dirty = true;
         }
     }
 
@@ -356,18 +361,7 @@ namespace VengEditor
 
     void InputMappingEditorPanel::OnUI()
     {
-        // Debounce so an edit drag does not fire a cook per frame.
-        if (m_CookPending)
-        {
-            m_DebounceRemaining -= Time::GetDeltaTime();
-            if (m_DebounceRemaining <= 0.0f)
-            {
-                m_CookPending = false;
-                TriggerCook();
-            }
-        }
-
-        if (m_Cooking)
+        if (m_Gate.IsCooking())
         {
             UI::Text("Cooking...");
         }
@@ -396,28 +390,30 @@ namespace VengEditor
 
         if (changed)
         {
-            // A live recook reads the on-disk source, so persist the edit before arming the
-            // debounce; the cook then picks up the change. The ActionId combo persists its own
-            // edit inline (its void widget signature carries no change signal to this walk).
-            SaveDocument();
-            m_CookPending = true;
-            m_DebounceRemaining = DebounceSeconds;
+            // The ActionId combo marks itself dirty inline: its void widget signature carries no
+            // change signal to this walk.
+            m_Dirty = true;
         }
 
         UI::Separator();
 
         if (auto bar = UI::Toolbar("##inputmap-toolbar"))
         {
-            if (UI::IconButton(Icons::Save))
             {
-                SaveDocument();
+                const UI::DisabledScope disabled = UI::Disabled(!m_Dirty);
+                if (UI::IconButton(Icons::Save))
+                {
+                    if (const VoidResult saved = Save(); !saved)
+                    {
+                        Log::Error("Input map editor: save failed: {}", saved.error());
+                    }
+                }
+                UI::Tooltip("Save the input map to its .inputmap.json and recook");
             }
-            UI::Tooltip("Save the input map to its .inputmap.json");
             UI::SameLine();
             if (UI::IconButton(Icons::Revert))
             {
                 LoadDocument();
-                SaveDocument();
                 TriggerCook();
             }
             UI::Tooltip("Discard edits and reload the input map from disk");
@@ -435,11 +431,9 @@ namespace VengEditor
     {
         if (name == "inputMap")
         {
-            // An external write lands the same way a UI edit does: persist, then recook behind the
-            // debounce, so a running Play session picks up the change.
-            SaveDocument();
-            m_CookPending = true;
-            m_DebounceRemaining = DebounceSeconds;
+            // An external write lands the same way a UI edit does: it marks the document dirty and
+            // waits for a save, which the MCP surface reaches through editor.save.
+            m_Dirty = true;
         }
     }
 }

@@ -19,7 +19,14 @@ namespace VengEditor
 {
     class CommandStack;
 
-    /// @brief Base for an asset editor that hosts its own private dockspace.
+    /// @brief Base for an asset editor: the explicit-save contract, and a private dockspace.
+    ///
+    /// **An asset editor writes its source only from Save().** No auto-save and no timer: an edit
+    /// accumulates in the panel's in-memory document and marks it dirty, and Save() performs the
+    /// preserve-unknown-keys merge write, then the recook — in that order, so a cook that fails
+    /// leaves the saved source on disk and reports in-panel rather than reverting the edit. Every
+    /// asset editor derives from this base; that is what routes the File menu, Ctrl/Cmd+S, the
+    /// Save action's enabled state, the title's unsaved marker, and the close prompt to it.
     ///
     /// An asset editor is a top-level panel in the host dockspace whose window hosts a
     /// per-instance ImGui dockspace. Its child panels are submitted as separate windows
@@ -46,17 +53,17 @@ namespace VengEditor
 
         /// @brief Returns this document's undo/redo stack, or null when the editor has none.
         ///
-        /// A scene-editing document (the prefab/level editor) owns one; the texture/material
-        /// editors do not derive from this base and so never offer one. The host dispatches the
-        /// Edit menu and the undo/redo shortcuts to the focused document's stack through this.
+        /// A scene-editing document (the prefab/level editor) owns one; the single-asset settings
+        /// editors have no command stack and return null. The host dispatches the Edit menu and
+        /// the undo/redo shortcuts to the focused document's stack through this.
         [[nodiscard]] virtual CommandStack* GetCommandStack() { return nullptr; }
 
         /// @brief Writes this document's edits back to its source; the File-menu / Ctrl+S target.
         ///
-        /// The host dispatches Save to the focused document through this. The base reports an
-        /// error (no source-backed save); a scene-editing document overrides it to round-trip its
-        /// .prefab.json. The texture/material editors save through their own debounced cook loop
-        /// and do not derive from this base.
+        /// The host dispatches Save to the focused document through this, and it is the only path
+        /// that writes the document's source. The base reports an error (no source-backed save);
+        /// every concrete editor overrides it — a scene-editing document round-trips its
+        /// .prefab.json, a settings editor merge-writes its JSON — then triggers the recook.
         /// @return Empty on success; an error string when the document cannot be saved this way.
         [[nodiscard]] virtual Veng::VoidResult Save()
         {
@@ -68,7 +75,7 @@ namespace VengEditor
         /// Drives the Save action's enabled state (File menu, toolbar button) and the document
         /// title's unsaved marker. The base has no editable state and reports false; a
         /// scene-editing document reports its command stack's dirty flag (the level editor folds
-        /// in its config dirtiness).
+        /// in its config dirtiness), and a settings editor its plain dirty flag.
         /// @return True when there is something to save.
         [[nodiscard]] virtual bool HasUnsavedChanges() const { return false; }
 
@@ -82,7 +89,7 @@ namespace VengEditor
         ///
         /// A scene-editing document (the prefab/level editor) returns its edited Scene — the world
         /// McpHost::CurrentWorld / DocumentScene follow when this document is focused; the
-        /// texture/material editors have no scene and return null (the world tools then report an
+        /// single-asset editors have no scene and return null (the world tools then report an
         /// empty world). Null is never a deref.
         [[nodiscard]] virtual Veng::Scene* GetDocumentScene() { return nullptr; }
 
@@ -90,7 +97,7 @@ namespace VengEditor
         ///
         /// A scene-editing document returns its Offscreen scene viewport — the seam
         /// editor.screenshot_panel captures. The texture/material editors render into their own
-        /// preview targets rather than a scene viewport and return null.
+        /// preview textures rather than a scene viewport and return null.
         [[nodiscard]] virtual Veng::Renderer::Viewport* GetDocumentViewport() { return nullptr; }
 
     protected:

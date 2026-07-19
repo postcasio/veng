@@ -14,7 +14,6 @@
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/Sampler.h>
 #include <Veng/Renderer/TypeNames.h>
-#include <Veng/Time.h>
 #include <Veng/UI/UI.h>
 
 #include <array>
@@ -27,11 +26,6 @@
 namespace VengEditor
 {
     using namespace Veng;
-
-    namespace
-    {
-        constexpr f32 DebounceSeconds = 0.3f;
-    }
 
     TextureEditorPanel::TextureEditorPanel(AssetId id, path sourcePath, Renderer::Context& context,
                                            AssetManager& assets, ImGuiLayer& imgui, CookDriver cook,
@@ -52,6 +46,8 @@ namespace VengEditor
                        });
 
         LoadSettings();
+        // Cook once on open so the asset is addressable behind the shadow mount; this reads the
+        // source as authored and writes nothing.
         TriggerCook();
     }
 
@@ -60,6 +56,7 @@ namespace VengEditor
     void TextureEditorPanel::LoadSettings()
     {
         m_Settings = Settings{};
+        m_Dirty = false;
 
         const optional<nlohmann::json> texResult = ReadJsonObject(m_SourcePath);
         if (!texResult)
@@ -113,97 +110,92 @@ namespace VengEditor
         }
     }
 
-    bool TextureEditorPanel::SaveSettings()
+    VoidResult TextureEditorPanel::WriteSettings()
     {
-        // Read the existing file so unknown keys (image, anisotropy, hand-authored
-        // structure) survive the round-trip — only the edited keys are patched.
-        nlohmann::json tex = ReadJsonObject(m_SourcePath).value_or(nlohmann::json::object());
+        const VoidResult written = MergeWriteJsonObject(
+            m_SourcePath, 4,
+            [this](nlohmann::json& tex)
+            {
+                tex["srgb"] = m_Settings.Srgb;
 
-        tex["srgb"] = m_Settings.Srgb;
+                // An authored role writes the "role" key; clearing it removes the key so the cook
+                // reverts to the sRGB guess. The raw "compression" escape-hatch key, if present,
+                // is left untouched.
+                if (m_Settings.Role)
+                {
+                    tex["role"] = std::string(ToString(*m_Settings.Role));
+                }
+                else
+                {
+                    tex.erase("role");
+                }
 
-        // An authored role writes the "role" key; clearing it removes the key so the cook reverts
-        // to the sRGB guess. The raw "compression" escape-hatch key, if present, is left untouched.
-        if (m_Settings.Role)
-        {
-            tex["role"] = std::string(ToString(*m_Settings.Role));
-        }
-        else
-        {
-            tex.erase("role");
-        }
+                nlohmann::json& sampler = tex["sampler"];
+                if (!sampler.is_object())
+                {
+                    sampler = nlohmann::json::object();
+                }
+                sampler["min"] = Renderer::FilterNames[static_cast<usize>(m_Settings.Min)];
+                sampler["mag"] = Renderer::FilterNames[static_cast<usize>(m_Settings.Mag)];
+                sampler["mipmap"] = Renderer::FilterNames[static_cast<usize>(m_Settings.Mipmap)];
+                sampler["wrap_u"] =
+                    Renderer::AddressModeNames[static_cast<usize>(m_Settings.WrapU)];
+                sampler["wrap_v"] =
+                    Renderer::AddressModeNames[static_cast<usize>(m_Settings.WrapV)];
+            });
 
-        nlohmann::json& sampler = tex["sampler"];
-        if (!sampler.is_object())
+        if (!written)
         {
-            sampler = nlohmann::json::object();
+            m_CookError = written.error();
+            Log::Error("Texture editor: {}", written.error());
         }
-        sampler["min"] = Renderer::FilterNames[static_cast<usize>(m_Settings.Min)];
-        sampler["mag"] = Renderer::FilterNames[static_cast<usize>(m_Settings.Mag)];
-        sampler["mipmap"] = Renderer::FilterNames[static_cast<usize>(m_Settings.Mipmap)];
-        sampler["wrap_u"] = Renderer::AddressModeNames[static_cast<usize>(m_Settings.WrapU)];
-        sampler["wrap_v"] = Renderer::AddressModeNames[static_cast<usize>(m_Settings.WrapV)];
+        return written;
+    }
 
-        std::ofstream out(m_SourcePath, std::ios::binary | std::ios::trunc);
-        if (!out)
-        {
-            m_CookError = fmt::format("failed to write {}", m_SourcePath.string());
-            Log::Error("Texture editor: {}", *m_CookError);
-            return false;
-        }
-        out << tex.dump(4) << '\n';
-        return true;
+    VoidResult TextureEditorPanel::Save()
+    {
+        return SaveAssetSource([this] { return WriteSettings(); }, m_Dirty,
+                               [this] { TriggerCook(); });
     }
 
     void TextureEditorPanel::TriggerCook()
     {
-        if (m_Cooking)
-        {
-            return;
-        }
+        m_Gate.Request(
+            [this]
+            {
+                m_CookError.reset();
 
-        m_Cooking = true;
-        m_CookError.reset();
+                // Record which preview configuration this cook ran through so OnUI re-cooks when
+                // the author flips the preview selection. The cook itself resolves through the
+                // host's host-clamped preview config in RequestCook.
+                m_PreviewConfigName = m_PreviewConfig ? m_PreviewConfig().Name : string{};
 
-        // Record which preview configuration this cook ran through so OnUI re-cooks when the
-        // author flips the preview selection. The cook itself resolves through the host's
-        // host-clamped preview config in RequestCook.
-        m_PreviewConfigName = m_PreviewConfig ? m_PreviewConfig().Name : string{};
-
-        m_Cook({.SourcePath = m_SourcePath, .TargetId = m_Id, .Type = AssetTypes::Texture},
-               [this](Result<MountHandle> mount)
-               {
-                   m_Cooking = false;
-                   if (!mount)
-                   {
-                       m_CookError = mount.error();
-                       return;
-                   }
-
-                   // Replace the mount and re-fetch; OnUI rebuilds the preview once
-                   // the async load lands resident.
-                   m_Mount = std::move(*mount);
-                   m_Handle = m_Assets.Load<Texture>(m_Id);
-                   m_PreviewDirty = true;
-               });
+                m_Cook({.SourcePath = m_SourcePath, .TargetId = m_Id, .Type = AssetTypes::Texture},
+                       [this](Result<MountHandle> mount)
+                       {
+                           if (!mount)
+                           {
+                               m_CookError = mount.error();
+                           }
+                           else
+                           {
+                               // Replace the mount and re-fetch; OnUI rebuilds the preview once
+                               // the async load lands resident.
+                               m_Mount = std::move(*mount);
+                               m_Handle = m_Assets.Load<Texture>(m_Id);
+                               m_PreviewDirty = true;
+                           }
+                           m_Gate.Complete();
+                       });
+            });
     }
 
     void TextureEditorPanel::OnUI()
     {
-        // Debounce so a slider drag does not fire a cook per frame.
-        if (m_CookPending)
-        {
-            m_DebounceRemaining -= Time::GetDeltaTime();
-            if (m_DebounceRemaining <= 0.0f)
-            {
-                m_CookPending = false;
-                TriggerCook();
-            }
-        }
-
         // Flipping the preview configuration (host-safe ↔ a ship config) re-cooks so the preview
-        // shows the newly selected target's artifacts; the same recook + remount path a settings
-        // edit takes, triggered by a configuration change instead.
-        if (m_PreviewConfig && !m_Cooking && m_PreviewConfig().Name != m_PreviewConfigName)
+        // shows the newly selected target's artifacts. It re-reads the source as it stands on
+        // disk and writes nothing, so it is not a save.
+        if (m_PreviewConfig && !m_Gate.IsCooking() && m_PreviewConfig().Name != m_PreviewConfigName)
         {
             TriggerCook();
         }
@@ -223,10 +215,10 @@ namespace VengEditor
         }
         else
         {
-            UI::Text(m_Cooking ? "Cooking..." : "Loading...");
+            UI::Text(m_Gate.IsCooking() ? "Cooking..." : "Loading...");
         }
 
-        if (m_Cooking)
+        if (m_Gate.IsCooking())
         {
             UI::Text("Cooking...");
         }
@@ -326,27 +318,28 @@ namespace VengEditor
 
         if (changed)
         {
-            // A live recook reads the on-disk source, so persist the edit before
-            // arming the debounce; the cook then picks up the change.
-            SaveSettings();
-            m_CookPending = true;
-            m_DebounceRemaining = DebounceSeconds;
+            m_Dirty = true;
         }
 
         UI::Separator();
 
         if (auto bar = UI::Toolbar("##texture-toolbar"))
         {
-            if (UI::IconButton(Icons::Save))
             {
-                SaveSettings();
+                const UI::DisabledScope disabled = UI::Disabled(!m_Dirty);
+                if (UI::IconButton(Icons::Save))
+                {
+                    if (const VoidResult saved = Save(); !saved)
+                    {
+                        Log::Error("Texture editor: save failed: {}", saved.error());
+                    }
+                }
+                UI::Tooltip("Save the texture settings to its .tex.json and recook");
             }
-            UI::Tooltip("Save the texture settings to its .tex.json");
             UI::SameLine();
             if (UI::IconButton(Icons::Revert))
             {
                 LoadSettings();
-                SaveSettings();
                 TriggerCook();
             }
             UI::Tooltip("Discard edits and reload the settings from disk");

@@ -9,7 +9,9 @@
 #include <Veng/Renderer/Types.h>
 
 #include <VengEditor/CookRequest.h>
-#include <VengEditor/EditorPanel.h>
+
+#include "AssetEditorPanel.h"
+#include "AssetSaveModel.h"
 
 namespace Veng
 {
@@ -48,9 +50,11 @@ namespace VengEditor
 
     /// @brief Docked panel for previewing and editing a .tex.json texture source.
     ///
-    /// Shows the decoded texture in a live preview, exposes sampler and sRGB
-    /// settings, recooks on change (debounced), and round-trips the JSON on save.
-    class TextureEditorPanel final : public EditorPanel
+    /// Shows the decoded texture in a live preview and exposes the sRGB, compression-role, and
+    /// sampler settings. It writes nothing until an explicit save: an edit marks the document
+    /// dirty, and Save performs the preserve-unknown-keys merge write, then the recook that
+    /// refreshes the preview.
+    class TextureEditorPanel final : public AssetEditorPanel
     {
     public:
         /// @brief Opens the editor for the texture at @p id / @p sourcePath.
@@ -62,6 +66,12 @@ namespace VengEditor
 
         [[nodiscard]] Veng::string_view GetTitle() const override { return m_Title; }
         void OnUI() override;
+
+        /// @brief Writes the settings back to the .tex.json, then recooks.
+        [[nodiscard]] Veng::VoidResult Save() override;
+
+        /// @brief Returns true while the settings hold edits not yet written to the source.
+        [[nodiscard]] bool HasUnsavedChanges() const override { return m_Dirty; }
 
     private:
         /// @brief Editable subset of the .tex.json fields.
@@ -85,10 +95,10 @@ namespace VengEditor
         /// @brief Reads the on-disk .tex.json into m_Settings; absent fields keep defaults.
         void LoadSettings();
 
-        /// @brief Patches the settings keys in the existing JSON (preserving unknown keys)
+        /// @brief Patches the settings keys into the existing JSON (preserving unknown keys)
         /// and writes it back with 4-space indent.
-        /// @return False (error recorded) on I/O or parse failure.
-        bool SaveSettings();
+        /// @return Empty on success; an I/O error otherwise.
+        [[nodiscard]] Veng::VoidResult WriteSettings();
 
         /// @brief Submits a recook of the current on-disk source through the cook driver.
         void TriggerCook();
@@ -114,12 +124,11 @@ namespace VengEditor
         Veng::AssetHandle<Veng::Texture> m_Handle;
         Veng::MountHandle m_Mount;
 
-        /// @brief Cook submitted but not yet mounted; suppresses concurrent cooks.
-        bool m_Cooking = false;
+        /// @brief Serialises recooks; a save landing behind one in flight queues rather than drops.
+        CookGate m_Gate;
 
-        /// @brief A settings change is pending; fires TriggerCook when m_DebounceRemaining reaches zero.
-        bool m_CookPending = false;
-        Veng::f32 m_DebounceRemaining = 0.0f;
+        /// @brief Whether the settings hold edits not yet written to the source.
+        bool m_Dirty = false;
 
         /// @brief Handle is resident but the preview ImGuiTexture has not been (re)created;
         /// creation is deferred to OnUI where the ImGui frame is live.
