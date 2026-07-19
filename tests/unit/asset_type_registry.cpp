@@ -66,11 +66,11 @@ TEST_CASE("AssetTypeRegistry: a game-registered type resolves beside the builtin
 
     const AssetTypeId custom{0x0123456789ABCDEFULL};
     types.Register(
-        {.Id = custom, .Name = "StarCatalogue", .DisplayName = "Star Catalogue", .Glyph = "CAT"});
+        {.Id = custom, .Name = "SpriteAtlas", .DisplayName = "Sprite Atlas", .Glyph = "ATL"});
 
-    CHECK(types.FindByName("StarCatalogue") == optional<AssetTypeId>{custom});
-    CHECK(types.GetDisplayName(custom) == "Star Catalogue");
-    CHECK(types.GetGlyph(custom) == "CAT");
+    CHECK(types.FindByName("SpriteAtlas") == optional<AssetTypeId>{custom});
+    CHECK(types.GetDisplayName(custom) == "Sprite Atlas");
+    CHECK(types.GetGlyph(custom) == "ATL");
     // Registering it did not disturb the builtins.
     CHECK(types.FindByName("Texture") == optional<AssetTypeId>{AssetTypes::Texture});
 }
