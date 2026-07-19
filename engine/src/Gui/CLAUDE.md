@@ -424,6 +424,7 @@ RTT members, and opening a level as an overlay, is
 
 The editor's `UIDocumentEditorPanel` authors a `*.vui.xml` through the cook-on-demand loop (a
 WYSIWYG canvas over an `Offscreen` viewport hosting the live document, an element-tree outline, and
-a resolved-style inspector); see [editor/CLAUDE.md](../../../editor/CLAUDE.md). A task-oriented
+a resolved-style inspector), writing the source only on an explicit save; see
+[editor/CLAUDE.md](../../../editor/CLAUDE.md). A task-oriented
 authoring tutorial lives in
 [docs/guides/authoring-ui-documents.md](../../../docs/guides/authoring-ui-documents.md).

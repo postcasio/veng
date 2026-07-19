@@ -291,9 +291,24 @@ across the whole project's one AssetId namespace, not just its own pack.
   launching the game. It is deliberately **basic by design**: no press-a-key-to-bind capture, no
   drag-reorder, no undo (the single-asset editors have none), matching the texture/material editor
   idiom.
+- **The UI document editor authors markup, and the markup is its document.** `UIDocumentEditorPanel`
+  (`AssetTypes::UIDocument`) edits a `*.vui.xml`: a WYSIWYG canvas — an `Offscreen` `Viewport`
+  rendering the live `Gui::Document` instantiated from the cooked recipe, sampled into a `UI::Image`
+  — plus an element-tree outline and a read-only resolved-style inspector, whose selected `<Image>`
+  gets an editable texture asset-chip over its `src`. Every authoring action (**Add Image**, the
+  chip) is a text rewrite of the in-memory markup held in `panels/UIDocumentSource.{h,cpp}` — the
+  UI-free document model, which is what makes the mutations and the save contract testable in the
+  device-free `editor_unit` band. Save writes the `*.vui.xml` and recooks; **Revert** reloads the
+  file, which is also how an edit made in an external editor reaches the canvas. Because the cook
+  reads the *file*, the canvas shows the last saved markup and an unsaved edit appears on save —
+  the panel says so inline rather than looking dead. **This is a behavioral change for anything
+  driving the editor externally**: an edit action used to write through to disk on its own, and now
+  reaches disk only through an explicit save (`editor.save`, File▸Save, Ctrl/Cmd+S), exactly as an
+  external write through `InputMappingEditorPanel`'s inspectables does. An agent workflow that
+  relied on the write-through breaks by design.
 - **The table editors author a schema and its rows, both on the explicit-save contract.** They are
-  two of the six `AssetEditorPanel` subclasses that host no dockspace (the four settings panels
-  above are the others). `TableSchemaEditorPanel`
+  two of the seven `AssetEditorPanel` subclasses that host no dockspace (the four settings panels
+  and the UI document editor above are the others). `TableSchemaEditorPanel`
   (`AssetTypes::TableSchema`) edits a `*.tableschema.json`'s column list — add / remove / rename /
   retype (a searchable picker over every registered non-`Reference` type) / reorder — plus the key
   column, whose combo is restricted to types a key index can order (`TableKeyKindForType`). It shows

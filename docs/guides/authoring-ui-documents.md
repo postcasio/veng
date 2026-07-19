@@ -667,16 +667,18 @@ split-screen-correct by construction.
 
 Opening a `UIDocument` in `veng-editor` (double-click it in the asset browser) opens the
 **UI document editor**: a WYSIWYG canvas rendering the live document, an element-tree
-outline, and a resolved-style inspector. Editing the `*.vui.xml`/`*.vuss` source recooks
-off the render thread and hot-reloads the document behind its stable handle, so the canvas
-reflects the change — the same cook-on-demand loop the texture and material editors ride.
-The document is the source of truth.
+outline, and a resolved-style inspector.
 
-The panel also authors an `<Image>` directly: **Add Image** appends one under the document
-root, and selecting an image in the outline shows its `src` as a **texture asset-chip** in
-the inspector — drop a texture from the asset browser onto it (or click to pick one) to
-repoint the image, which rewrites the `src` in the markup and recooks behind the stable
-handle.
+The panel authors an `<Image>` directly: **Add Image** appends one under the document root,
+and selecting an image in the outline shows its `src` as a **texture asset-chip** in the
+inspector — drop a texture from the asset browser onto it (or click to pick one) to repoint
+the image. Both rewrite the markup **in memory** and mark the document unsaved; **Save**
+(the toolbar button, File▸Save, or Ctrl/Cmd+S) writes the `*.vui.xml` and then recooks off
+the render thread, hot-reloading the document behind its stable handle — the same
+cook-on-demand loop the texture and material editors ride. Since the cook reads the file,
+the canvas shows the last saved markup. **Revert** discards unsaved edits and reloads from
+disk, which is also how a `*.vui.xml`/`*.vuss` edited in an external editor reaches the
+canvas.
 
 ---
 
