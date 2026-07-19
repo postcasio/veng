@@ -47,6 +47,11 @@ namespace VengEditor
             const optional<AssetTypeId> type = types.FindByName(entry["type"].get<std::string>());
             if (!type)
             {
+                // The asset is dropped from the index, so it degrades across the browser, every
+                // picker, and the MCP asset tools with no shared symptom — say so once, here.
+                Log::Error("AssetSourceIndex: manifest '{}': unknown asset type '{}'; the asset is "
+                           "omitted from the index",
+                           manifestPath.string(), entry["type"].get<std::string>());
                 continue;
             }
 

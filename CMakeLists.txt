@@ -970,6 +970,9 @@ if (VENG_BUILD_TESTS)
     add_library(veng_test_cook_module SHARED tests/cooker/test_cook_module.cpp)
     target_link_libraries(veng_test_cook_module PRIVATE veng::cook_interface veng::veng)
     target_include_directories(veng_test_cook_module PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    # Output-named as veng_test_module's convention sibling (stem + _cook), so the fixture pair
+    # exercises the sibling lookup and its inverse the way a real game's pair does.
+    set_target_properties(veng_test_cook_module PROPERTIES OUTPUT_NAME veng_test_module_cook)
 
     # A second, current-ABI cook module whose importer emits the same value in the opposite byte
     # order: the stand-in for a rebuilt importer, so the cook cache can be shown to re-cook when the

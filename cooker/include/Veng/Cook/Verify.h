@@ -75,5 +75,9 @@ namespace Veng::Cook
     /// Returns 0 when all blobs and the TOC digest match, 1 on any mismatch, unreadable file,
     /// or version drift.
     /// @param archivePath  Path to the .vengpack to verify.
-    [[nodiscard]] int VerifyArchiveCli(const path& archivePath);
+    /// @param types        Registry the report names each asset's type through; null names the
+    ///                     engine builtins only, leaving a game-defined type as its hex id.
+    ///                     Verification itself is a byte re-hash and never consults it.
+    [[nodiscard]] int VerifyArchiveCli(const path& archivePath,
+                                       const AssetTypeRegistry* types = nullptr);
 }

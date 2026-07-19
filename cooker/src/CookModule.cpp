@@ -3,6 +3,8 @@
 #include <Veng/Assert.h>
 #include <Veng/Cook/Cooker.h>
 
+#include <string_view>
+
 #include <fmt/format.h>
 
 namespace Veng::Cook
@@ -47,6 +49,22 @@ namespace Veng::Cook
         path sibling = runtimeModulePath;
         sibling.replace_filename(runtimeModulePath.stem().string() + "_cook" +
                                  runtimeModulePath.extension().string());
+        return sibling;
+    }
+
+    optional<path> SiblingRuntimeModulePath(const path& cookModulePath)
+    {
+        constexpr std::string_view Suffix = "_cook";
+
+        const string stem = cookModulePath.stem().string();
+        if (stem.size() <= Suffix.size() || !stem.ends_with(Suffix))
+        {
+            return std::nullopt;
+        }
+
+        path sibling = cookModulePath;
+        sibling.replace_filename(stem.substr(0, stem.size() - Suffix.size()) +
+                                 cookModulePath.extension().string());
         return sibling;
     }
 }

@@ -97,6 +97,15 @@ namespace Veng::Cook
     /// @param runtimeModulePath  Path to the runtime module the cook module sits beside.
     /// @return The sibling cook-module path.
     [[nodiscard]] path SiblingCookModulePath(const path& runtimeModulePath);
+
+    /// @brief Inverts SiblingCookModulePath: the runtime module a cook module sits beside.
+    ///
+    /// `<dir>/libgame_cook.dylib` yields `<dir>/libgame.dylib`. A cook module links its runtime
+    /// module, so that image is present whenever the cook module is — which is what lets a host
+    /// given only the cook module still load the asset-type identities its importers are keyed on.
+    /// @param cookModulePath  Path to a cook module.
+    /// @return The sibling runtime-module path, or nullopt when the stem is not `_cook`-suffixed.
+    [[nodiscard]] optional<path> SiblingRuntimeModulePath(const path& cookModulePath);
 }
 
 extern "C"

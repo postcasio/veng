@@ -99,8 +99,14 @@ namespace Veng::Cook
         /// @brief Constructs a cooker whose asset-type registry carries the engine builtins.
         Cooker();
 
-        /// @brief Registers an importer for its declared AssetTypeId, replacing any prior registration.
-        /// @param importer  The importer to register.
+        /// @brief Registers an importer for its declared AssetTypeId.
+        ///
+        /// Aborts when the type already carries an importer. The engine builtins register first and
+        /// a cook module's importers after, so a silent replacement would hand every asset of that
+        /// type to the newcomer with no diagnostic — override semantics for builtin types stay
+        /// engine-owned, matching the loader side.
+        /// @param importer  The importer to register; must be non-null.
+        /// @warning Aborts on a null importer or on a type that is already registered.
         void Register(Unique<AssetImporter> importer);
 
         /// @brief Returns the asset-type registry this cooker resolves manifest type names through.
