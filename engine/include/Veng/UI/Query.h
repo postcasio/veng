@@ -49,6 +49,12 @@ namespace Veng::UI
     /// True while the cursor is over any ImGui window or a widget holds the mouse — so a
     /// caller can tell a UI click apart from a click that landed on the scene behind the
     /// overlay (e.g. to re-capture the mouse for gameplay only on the latter).
+    ///
+    /// Safe to call with no UI present: a build that runs no UI pass has no ImGui context, and
+    /// this returns false there rather than faulting, so a simulation system may gate input on
+    /// it unconditionally.
+    /// @return True when the UI is capturing the mouse; false when it is not, or when there is
+    ///         no UI at all.
     [[nodiscard]] bool WantCaptureMouse();
 
     /// @brief Returns true the frame the last item was clicked with the given button.

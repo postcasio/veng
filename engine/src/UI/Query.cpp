@@ -51,6 +51,14 @@ namespace Veng::UI
 
     bool WantCaptureMouse()
     {
+        // Unlike the queries around it, this one is called from simulation code that runs whether or
+        // not a UI pass does — a headless run, a dedicated server, or a frame before the first UI
+        // pass has no ImGui context, and ImGui::GetIO() dereferences it unconditionally. Nothing is
+        // capturing the mouse when there is no UI, so answer that instead of faulting.
+        if (ImGui::GetCurrentContext() == nullptr)
+        {
+            return false;
+        }
         return ImGui::GetIO().WantCaptureMouse;
     }
 
