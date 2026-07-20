@@ -37,6 +37,7 @@ namespace Veng
         settings.AutoExposure = render.AutoExposure;
         settings.SSR = render.SSR;
         settings.AO = render.AO;
+        settings.Refraction = render.Refraction;
 
         view.Exposure = render.Exposure;
         view.Tonemapper = render.Tonemapper;

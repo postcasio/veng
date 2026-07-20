@@ -971,6 +971,13 @@ namespace Veng
         /// Off matches the renderer's own default. SSR renders the g-buffer at full resolution, so
         /// it disables the dynamic-resolution sub-rect while active.
         bool SSR = false;
+        /// @brief Whether the pre-translucent scene-color copy is populated each frame.
+        ///
+        /// Enables the grab a Translucent-domain material samples the scene behind its fragment
+        /// through (SampleSceneColor); without it those samples read black. Off matches the
+        /// renderer's own default — a level whose translucents refract or distort the scene
+        /// authors it on.
+        bool Refraction = false;
     };
 }
 
@@ -1318,4 +1325,5 @@ VE_FIELD(MaxShadowDistance, .DisplayName = "Max Shadow Distance", .Display = {.M
 VE_FIELD(ShadowResolution, .DisplayName = "Shadow Resolution", .Display = {.Min = 1})
 VE_FIELD(AO, .DisplayName = "SSAO")
 VE_FIELD(SSR, .DisplayName = "Screen-Space Reflections")
+VE_FIELD(Refraction, .DisplayName = "Refraction (Scene-Color Grab)")
 VE_REFLECT_END();
