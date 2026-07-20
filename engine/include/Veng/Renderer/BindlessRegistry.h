@@ -307,9 +307,15 @@ namespace Veng::Renderer
         /// would let a second viewport's Execute clobber the region the first's draws still read
         /// at submit (both record into one frame's command buffer, reading the final host value).
         /// So each buffer holds framesInFlight * MaxViewsPerFrame regions; BeginView advances a
-        /// per-frame view slot each Execute, and GetCurrentViewConstantsIndex() folds it in. The
-        /// editor renders one viewport per visible panel; this bounds how many may be live at once.
-        static constexpr u32 MaxViewsPerFrame = 16;
+        /// per-frame view slot each Execute, and GetCurrentViewConstantsIndex() folds it in.
+        /// The budget covers every view-slot consumer sharing one frame: the presented viewports
+        /// (the editor renders one per visible panel), one face per registered scene capture —
+        /// captures in view-less worlds are deliberately driven too — and the sky cubemap bake,
+        /// whose material and atmosphere passes each claim six face slots in the frame a sky
+        /// (re)bakes. Sized so a bake spike stacked on several live captures stays inside the
+        /// budget; a region costs ~6 KB (view constants + lights + area vertices), so headroom
+        /// is cheap.
+        static constexpr u32 MaxViewsPerFrame = 32;
 
         /// @brief The fixed byte stride of one material's parameter block in the
         /// MaterialParamBinding ByteAddressBuffer.
