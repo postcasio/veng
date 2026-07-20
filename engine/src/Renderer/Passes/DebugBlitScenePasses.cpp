@@ -58,6 +58,8 @@ namespace Veng::Renderer
             return io.SsrReflection;
         case Source::Emissive:
             return io.GBufferEmissive;
+        case Source::Coc:
+            return io.DofCoc;
         }
         VE_ASSERT(false, "FullscreenBlitScenePass: unmapped Source");
     }
@@ -82,6 +84,8 @@ namespace Veng::Renderer
             return io.SsrReflectionHandle;
         case Source::Emissive:
             return io.EmissiveHandle;
+        case Source::Coc:
+            return io.DofCocHandle;
         }
         VE_ASSERT(false, "FullscreenBlitScenePass: unmapped Source");
     }

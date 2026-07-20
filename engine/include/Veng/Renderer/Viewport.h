@@ -125,6 +125,12 @@ namespace Veng::Renderer
         /// Hard-clamped to MaxDofRings when the view state is pushed: it is a GPU loop bound, and
         /// an authored value reaching the shader unclamped is a device hang rather than an error.
         u32 DofRingCount = 4;
+        /// @brief Whether the resolved camera authored the lens fields on the last push.
+        ///
+        /// Set by the viewport glue when the camera it resolved is Physical, so a settings surface
+        /// can show DofFocusDistance and DofAperture inactive rather than let an author edit values
+        /// that are not consulted. It is a report, never an input: writing it changes nothing.
+        bool DofFromPhysicalCamera = false;
     };
 
     /// @brief Construction parameters for Viewport.

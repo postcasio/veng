@@ -4,7 +4,9 @@
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/SceneRenderer.h>
+#include <Veng/Renderer/DofTile.h>
 #include <Veng/Renderer/Viewport.h>
+#include <Veng/Scene/SceneViewport.h>
 #include <Veng/UI/Layout.h>
 #include <Veng/UI/Query.h>
 #include <Veng/UI/Scopes.h>
@@ -421,6 +423,38 @@ namespace Veng::UI
                            {.Speed = 0.01f, .Min = 0.0f, .Max = 4.0f});
             (void)UI::Slider("Max roughness##ssr", view.SsrMaxRoughness,
                              {.Min = 0.0f, .Max = 1.0f});
+        }
+
+        if (auto section = UI::CollapsingHeader("Depth of field"))
+        {
+            // The toggle is topology; focus/aperture and the two quality knobs are per-frame
+            // ViewState values. CoC scale has no widget at all — the viewport glue always derives
+            // it from the target's pixel height and the camera's sensor.
+            changed |= UI::Checkbox("Enabled##dof", settings.DepthOfField);
+            auto dofDisabled = UI::Disabled(!settings.DepthOfField);
+
+            // A Physical camera authors the lens fields on every push, so editing them here would
+            // write values nothing consults; the quality knobs stay live in every camera mode.
+            const bool lensFromCamera = view.DofFromPhysicalCamera;
+            {
+                auto lensDisabled = UI::Disabled(lensFromCamera);
+                (void)UI::Drag("Focus distance##dof", view.DofFocusDistance,
+                               {.Speed = 0.05f, .Min = 0.01f, .Max = 1000.0f});
+                (void)UI::Drag("Aperture##dof", view.DofAperture,
+                               {.Speed = 0.0005f, .Min = 0.0f, .Max = 0.5f, .Format = "%.4f m"});
+            }
+            if (lensFromCamera)
+            {
+                UI::TextDisabled(DofPhysicalCameraNote);
+            }
+
+            (void)UI::Drag("Max blur radius##dof", view.DofMaxCoc,
+                           {.Speed = 0.25f, .Min = 0.0f, .Max = Renderer::MaxDofCoc});
+            i32 rings = static_cast<i32>(view.DofRingCount);
+            if (UI::Slider("Rings##dof", rings, 1, static_cast<i32>(Renderer::MaxDofRings)))
+            {
+                view.DofRingCount = static_cast<u32>(rings);
+            }
         }
 
         if (auto section = UI::CollapsingHeader("Shadows", TreeFlags::DefaultOpen))

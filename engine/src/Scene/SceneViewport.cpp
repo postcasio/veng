@@ -35,7 +35,9 @@ namespace Veng
         // full-frame reference height the Camera component defaults to.
         constexpr f32 DefaultSensorHeightMetres = 0.024f;
 
-        if (const optional<CameraLens>& lens = state.Camera.GetLens(); lens.has_value())
+        const optional<CameraLens>& lens = state.Camera.GetLens();
+        state.DofFromPhysicalCamera = lens.has_value();
+        if (lens.has_value())
         {
             const DofParams params = ComputeDofParams(*lens, viewportPixelHeight);
             state.DofFocusDistance = params.FocusDistance;
@@ -64,6 +66,7 @@ namespace Veng
         settings.SSR = render.SSR;
         settings.AO = render.AO;
         settings.Refraction = render.Refraction;
+        settings.DepthOfField = render.DepthOfField;
 
         view.Exposure = render.Exposure;
         view.Tonemapper = render.Tonemapper;
@@ -73,5 +76,14 @@ namespace Veng
         view.BloomThreshold = render.BloomThreshold;
         view.BloomIntensity = render.BloomIntensity;
         view.BloomRadius = render.BloomRadius;
+
+        // An unconditional mapping: the authored focus and aperture are recorded even while a
+        // Physical camera overwrites them on every push, so they come back the moment it stops
+        // being Physical without the level being reloaded. The two quality knobs are clamped here
+        // as well as at the push, because a cooked level is untrusted input.
+        view.DofFocusDistance = render.DofFocusDistance;
+        view.DofAperture = render.DofAperture;
+        view.DofMaxCoc = Renderer::ClampDofMaxCoc(render.DofMaxCoc);
+        view.DofRingCount = Renderer::ClampDofRingCount(render.DofRingCount);
     }
 }

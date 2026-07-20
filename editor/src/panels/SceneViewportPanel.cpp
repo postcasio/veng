@@ -460,7 +460,7 @@ namespace VengEditor
         // A topology change is the only thing that needs a Configure recompile, and this is called
         // per settings-panel edit (an Exposure drag too), so flip dirty only when a toggle moved.
         if (next.Bloom != m_Settings.Bloom || next.Shadows != m_Settings.Shadows ||
-            next.AO != m_Settings.AO)
+            next.AO != m_Settings.AO || next.DepthOfField != m_Settings.DepthOfField)
         {
             m_Settings = next;
             m_SettingsDirty = true;
@@ -468,6 +468,10 @@ namespace VengEditor
 
         m_Exposure = scratch.Exposure;
         m_BloomIntensity = scratch.BloomIntensity;
+        m_DofFocusDistance = scratch.DofFocusDistance;
+        m_DofAperture = scratch.DofAperture;
+        m_DofMaxCoc = scratch.DofMaxCoc;
+        m_DofRingCount = scratch.DofRingCount;
     }
 
     void SceneViewportPanel::DrawToolbar()
@@ -548,6 +552,12 @@ namespace VengEditor
                 m_SettingsDirty = true;
             }
             UI::Tooltip("Temporal anti-aliasing");
+            UI::SameLine();
+            if (UI::ToggleButton("DoF", m_Settings.DepthOfField))
+            {
+                m_SettingsDirty = true;
+            }
+            UI::Tooltip("Depth of field");
         }
     }
 
@@ -719,7 +729,17 @@ namespace VengEditor
             .Alpha = m_Ctx.IsPlaying() ? m_Ctx.PlayAlpha : 0.0f,
             .Exposure = m_Exposure,
             .BloomIntensity = m_BloomIntensity,
+            .DofFocusDistance = m_DofFocusDistance,
+            .DofAperture = m_DofAperture,
+            .DofMaxCoc = m_DofMaxCoc,
+            .DofRingCount = m_DofRingCount,
         };
+
+        // The one site the defocus parameters resolve: a Physical camera's lens wins over the
+        // stored knobs, the CoC scale is derived from the target height, and the two quality knobs
+        // are clamped. The panel keeps the report so the level editor can grey the lens fields.
+        Veng::ResolveDofViewState(view, static_cast<f32>(renderExtent.y));
+        m_DofFromPhysicalCamera = view.DofFromPhysicalCamera;
 
         // The sky is the scene's Sky component, resolved by the renderer itself each Execute — so
         // adding or editing the component in the inspector switches the sky live with no editor

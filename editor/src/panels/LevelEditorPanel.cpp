@@ -7,6 +7,7 @@
 #include <Veng/Reflection/JsonSerialize.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/SceneSystem.h>
+#include <Veng/Scene/SceneViewport.h>
 #include <Veng/Scene/SystemRegistry.h>
 #include <Veng/UI/UI.h>
 #include <Veng/Vendor/ImGuiInternal.h>
@@ -413,7 +414,31 @@ namespace VengEditor
 
         drawConfig("Game mode", &m_GameMode, TypeIdOf<GameModeConfig>());
         UI::Dummy(vec2{0.0f, 4.0f});
-        drawConfig("Render", &m_Render, TypeIdOf<LevelRenderSettings>());
+
+        // The render block is drawn field by field rather than through DrawFields, because the two
+        // lens fields go inactive on a fact reflection cannot see: whether the viewport's resolved
+        // camera is Physical, in which case its lens authors focus and aperture and the authored
+        // values are stored but not consulted.
+        UI::SeparatorText("Render");
+        const bool lensFromCamera = m_Viewport->IsDofFromPhysicalCamera();
+        if (lensFromCamera)
+        {
+            UI::TextDisabled(DofPhysicalCameraNote);
+        }
+        const TypeInfo& renderInfo = types.Info(TypeIdOf<LevelRenderSettings>());
+        FieldWidgetContext renderCtx = ctx;
+        renderCtx.OwnerBase = &m_Render;
+        if (auto table = UI::PropertyTable("##LevelRenderSettings"))
+        {
+            for (const FieldDescriptor& field : renderInfo.Fields)
+            {
+                const bool lensField =
+                    field.Name == "DofFocusDistance" || field.Name == "DofAperture";
+                auto lensDisabled = UI::Disabled(lensFromCamera && lensField);
+                changed |= DrawFieldWidget(reinterpret_cast<u8*>(&m_Render) + field.Offset, field,
+                                           renderCtx);
+            }
+        }
 
         if (changed)
         {

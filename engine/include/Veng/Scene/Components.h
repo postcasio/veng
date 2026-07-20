@@ -4,6 +4,7 @@
 #include <Veng/Input.h>
 #include <Veng/Input/Actions.h>
 #include <Veng/Renderer/Atmosphere.h>
+#include <Veng/Renderer/DofTile.h>
 #include <Veng/Renderer/PointField.h>
 #include <Veng/Renderer/SunPosition.h>
 #include <Veng/Renderer/VolumeField.h>
@@ -978,6 +979,32 @@ namespace Veng
         /// renderer's own default — a level whose translucents refract or distort the scene
         /// authors it on.
         bool Refraction = false;
+        /// @brief Whether the depth-of-field battery runs.
+        ///
+        /// Off matches the renderer's own default.
+        bool DepthOfField = false;
+        /// @brief Depth-of-field focus plane distance in metres.
+        ///
+        /// Not consulted while the resolved camera is Physical — that camera's lens authors the
+        /// focus distance, and this value is stored but inert until it stops being Physical. The
+        /// default matches the renderer's own ViewState default.
+        f32 DofFocusDistance = 10.0f;
+        /// @brief Depth-of-field aperture diameter in metres.
+        ///
+        /// Not consulted while the resolved camera is Physical, exactly as DofFocusDistance is not.
+        /// The default matches the renderer's own ViewState default (50mm f/2.8).
+        f32 DofAperture = 0.0179f;
+        /// @brief Depth-of-field blur radius ceiling in half-resolution pixels.
+        ///
+        /// A quality knob rather than a lens value, so it applies in every camera mode. Clamped to
+        /// MaxDofCoc on the way in — a cooked level is untrusted input.
+        f32 DofMaxCoc = 16.0f;
+        /// @brief Depth-of-field gather ring count.
+        ///
+        /// A quality knob rather than a lens value, so it applies in every camera mode. Clamped to
+        /// MaxDofRings on the way in: it is a GPU loop bound, and an unclamped authored value
+        /// reaching the shader is a device hang rather than a recoverable error.
+        u32 DofRingCount = 4;
     };
 }
 
@@ -1326,4 +1353,11 @@ VE_FIELD(ShadowResolution, .DisplayName = "Shadow Resolution", .Display = {.Min 
 VE_FIELD(AO, .DisplayName = "SSAO")
 VE_FIELD(SSR, .DisplayName = "Screen-Space Reflections")
 VE_FIELD(Refraction, .DisplayName = "Refraction (Scene-Color Grab)")
+VE_FIELD(DepthOfField, .DisplayName = "Depth of Field")
+VE_FIELD(DofFocusDistance, .DisplayName = "DoF Focus Distance", .Display = {.Min = 0.0})
+VE_FIELD(DofAperture, .DisplayName = "DoF Aperture", .Display = {.Min = 0.0})
+VE_FIELD(DofMaxCoc, .DisplayName = "DoF Max Blur Radius",
+         .Display = {.Min = 0.0, .Max = static_cast<f64>(::Veng::Renderer::MaxDofCoc)})
+VE_FIELD(DofRingCount, .DisplayName = "DoF Ring Count",
+         .Display = {.Min = 1, .Max = static_cast<f64>(::Veng::Renderer::MaxDofRings)})
 VE_REFLECT_END();

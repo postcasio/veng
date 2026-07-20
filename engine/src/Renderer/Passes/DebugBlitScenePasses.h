@@ -47,7 +47,8 @@ namespace Veng::Renderer
             Bloom,
             MotionVectors,
             Reflections,
-            Emissive
+            Emissive,
+            Coc
         };
 
         /// @brief Constructs the pass.

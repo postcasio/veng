@@ -88,6 +88,12 @@ namespace VengEditor
         /// @param render  The level's post/pipeline render settings.
         void ApplyLevelRenderSettings(const Veng::LevelRenderSettings& render);
 
+        /// @brief Whether the last pushed view resolved its depth-of-field lens from the camera.
+        ///
+        /// True when the camera the panel pushed is Physical, so an authoring surface can show the
+        /// level's focus and aperture inactive.
+        [[nodiscard]] bool IsDofFromPhysicalCamera() const { return m_DofFromPhysicalCamera; }
+
     private:
         /// @brief Draws the toolbar overlay (play/camera/debug controls) over the viewport image.
         void DrawToolbar();
@@ -191,6 +197,16 @@ namespace VengEditor
         Veng::f32 m_Exposure = 1.0f;
         /// @brief Per-frame bloom composite intensity written into the pushed ViewState each frame.
         Veng::f32 m_BloomIntensity = 1.0f;
+        /// @brief Per-frame depth-of-field focus distance written into the pushed ViewState.
+        Veng::f32 m_DofFocusDistance = 10.0f;
+        /// @brief Per-frame depth-of-field aperture written into the pushed ViewState.
+        Veng::f32 m_DofAperture = 0.0179f;
+        /// @brief Per-frame depth-of-field blur radius ceiling written into the pushed ViewState.
+        Veng::f32 m_DofMaxCoc = 16.0f;
+        /// @brief Per-frame depth-of-field gather ring count written into the pushed ViewState.
+        Veng::u32 m_DofRingCount = 4;
+        /// @brief Whether the last pushed view resolved its lens fields from a Physical camera.
+        bool m_DofFromPhysicalCamera = false;
 
         /// @brief Last extent the ImGui texture was fetched at; re-fetch when the viewport resizes.
         Veng::uvec2 m_TextureExtent{};

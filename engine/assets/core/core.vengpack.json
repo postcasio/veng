@@ -122,6 +122,11 @@
       "source": "shaders/orm_blit.frag.shader.json"
     },
     {
+      "id": "0x878C4C3C6E247858",
+      "type": "Shader",
+      "source": "shaders/coc_blit.frag.shader.json"
+    },
+    {
       "id": "0x97974B40192934E4",
       "type": "Shader",
       "source": "shaders/ao_blit.frag.shader.json"

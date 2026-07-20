@@ -214,7 +214,19 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                                         });
         });
     const vector<u8> debugPixels = debugRenderer->GetOutput()->GetImage()->Download();
-    CHECK(debugPixels.size() == static_cast<size_t>(extent.x) * extent.y * 8);
+    REQUIRE(debugPixels.size() == static_cast<size_t>(extent.x) * extent.y * 8);
+
+    // The arm blits the signed circle of confusion: the near field ramps red, the far field blue,
+    // and an in-focus texel is black. The cube's front face is exactly the focus plane, so the
+    // frame centre is black; the cleared background sits at the far plane, far past focus, so it
+    // saturates the far ramp.
+    const vec3 focusPlane = DofTexel(debugPixels, extent.x, extent.x / 2, extent.y / 2);
+    CHECK(focusPlane.r < 0.02f);
+    CHECK(focusPlane.b < 0.02f);
+
+    const vec3 background = DofTexel(debugPixels, extent.x, 4, 4);
+    CHECK(background.b > 0.2f);
+    CHECK(background.r < 0.02f);
 }
 
 #endif

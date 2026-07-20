@@ -118,7 +118,9 @@ namespace
             json::array({FormatHexId(SpawnPlayerRuleId), FormatHexId(ControlSystemId),
                          FormatHexId(MovementSystemId)});
         level["gameMode"] = {{"PlayerPrefab", FormatHexId(PlayerPrefabId)}};
-        level["render"] = {{"Exposure", 2.5}, {"Bloom", true}, {"BloomIntensity", 1.5}};
+        level["render"] = {{"Exposure", 2.5},         {"Bloom", true},
+                           {"BloomIntensity", 1.5},   {"DepthOfField", true},
+                           {"DofFocusDistance", 3.5}, {"DofRingCount", 6}};
         return level;
     }
 }
@@ -176,6 +178,10 @@ TEST_CASE("level cook: happy path — header, system ids, config record round-tr
     // Shadows/AO were omitted from the sample render block and keep their struct defaults.
     CHECK(render.Shadows == true);
     CHECK(render.AO == true);
+    // The depth-of-field fields ride the same name-keyed record — no cooked-level version bump.
+    CHECK(render.DepthOfField == true);
+    CHECK(render.DofFocusDistance == doctest::Approx(3.5f));
+    CHECK(render.DofRingCount == 6);
 
     CHECK(static_cast<usize>((cursor - blob.data()) + header.RenderRecordBytes) == blob.size());
 }

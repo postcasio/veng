@@ -17,6 +17,15 @@ namespace Veng::Renderer
 
 namespace Veng
 {
+    /// @brief The note an authoring surface shows beside inert depth-of-field lens fields.
+    ///
+    /// Shown whenever ViewState::DofFromPhysicalCamera is set: the focus distance and aperture are
+    /// authored by the camera, so a stored value is recorded but not consulted. Shared so the
+    /// render-settings panel and the level editor say the same thing.
+    inline constexpr string_view DofPhysicalCameraNote =
+        "Focus and aperture come from the active Physical camera's lens; these values are stored "
+        "but not used until it stops being Physical.";
+
     /// @brief Resolves a scene's camera at a viewport's aspect and pushes its per-frame render source.
     ///
     /// The gameplay→render bridge that keeps Renderer::Viewport gameplay-agnostic: it reads the

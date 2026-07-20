@@ -143,6 +143,17 @@ namespace Veng::Renderer
         /// @brief Bindless slot for the SSR reflection sample view; invalid when SSR is off.
         TextureHandle SsrReflectionHandle;
 
+        /// @brief Half-resolution signed circle-of-confusion target; blitted by the CoC debug arm.
+        ///
+        /// Valid only when the depth-of-field chain is wired (Final + Settings.DepthOfField, or the
+        /// CoC debug mode). R carries the signed radius in half-resolution pixels and G the
+        /// view-space depth. The debug blit declares .Sample so the graph derives the
+        /// General → ShaderReadOnly transition after the prefilter writes it. An invalid handle
+        /// means no depth-of-field chain is active.
+        ResourceId DofCoc;
+        /// @brief Bindless slot for the circle-of-confusion target; invalid when the chain is off.
+        TextureHandle DofCocHandle;
+
         /// @brief Shared sampler bindless slot used by fullscreen passes.
         SamplerHandle SamplerHandle;
 

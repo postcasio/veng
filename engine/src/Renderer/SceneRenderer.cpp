@@ -110,6 +110,7 @@ namespace Veng::Renderer
         constexpr AssetId AoBlitFragId{0x97974B40192934E4ULL};
         constexpr AssetId MotionBlitFragId{0xCCD40C76935382FDULL};
         constexpr AssetId ShadowBlitFragId{0x0B61D5D42DAEF190ULL};
+        constexpr AssetId CocBlitFragId{0x878C4C3C6E247858ULL};
 
         // Linear float HDR format for the lighting target and the tail's scene-color intermediates.
         // G1 uses the same format as a sampled color target, establishing RGBA16F
@@ -193,6 +194,9 @@ namespace Veng::Renderer
         // Blits the directional shadow atlas raw depth; reads through a dedicated set 1, not bindless.
         Ref<GraphicsPipeline> Shadow;
         Ref<PipelineLayout> ShadowLayout;
+        // Blits the depth-of-field chain's signed circle-of-confusion target as a near/far ramp.
+        Ref<GraphicsPipeline> Coc;
+        Ref<PipelineLayout> CocLayout;
 
         // Builds every debug-blit pipeline over the shared fullscreen vertex stage, writing the
         // output format. shadowBlitSetLayout is the shadow system's dedicated blit set the shadow
@@ -265,6 +269,10 @@ namespace Veng::Renderer
         blits->MotionLayout = MakeBlitLayout("SceneRenderer Motion Blit Layout");
         blits->Motion = MakePipeline("SceneRenderer Motion Blit Pipeline", blits->MotionLayout,
                                      LoadShader(MotionBlitFragId, "motion-vector-blit fragment"));
+
+        blits->CocLayout = MakeBlitLayout("SceneRenderer CoC Blit Layout");
+        blits->Coc = MakePipeline("SceneRenderer CoC Blit Pipeline", blits->CocLayout,
+                                  LoadShader(CocBlitFragId, "circle-of-confusion-blit fragment"));
 
         // Shadow blit reads raw depth through a dedicated set 1, not bindless, so its layout carries
         // that set and no push block.
@@ -1356,15 +1364,15 @@ namespace Veng::Renderer
             break;
         case DebugView::CoC:
             // The chain's prefilter reads the lit HDR, so lighting is force-wired here as the
-            // Reflections arm force-wires it. The arm terminates on the depth blit — the channel
-            // the circle of confusion is derived from.
+            // Reflections arm force-wires it; the force-wired prefilter and tile dilation then
+            // write the signed-radius target this blit shows as a near/far ramp.
             m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
                 m_Context, m_LightingPipeline, m_Extent, /*useSsao=*/false, m_Shadows->GetSet(),
                 m_Shadows->GetConstantsRingStride(), m_Shadows->GetPunctualRingStride(),
                 m_SkyResolver->GetIbl().GetSet(), m_SkyResolver->GetIbl().GetPrefilterMipCount(),
                 skylightWanted, iblAllowed));
             m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
-                m_Context, m_DebugBlits->Depth, m_Extent, FullscreenBlitScenePass::Source::Depth));
+                m_Context, m_DebugBlits->Coc, m_Extent, FullscreenBlitScenePass::Source::Coc));
             break;
         case DebugView::Emissive:
             // The g-buffer pass writes the emissive channel (G4); this blit shows the authored
@@ -1404,6 +1412,8 @@ namespace Veng::Renderer
             .EmissiveHandle = m_EmissiveHandle,
             .SsrReflection = ssrActive ? m_SsrReflectionChainId.Level(0) : ResourceId{},
             .SsrReflectionHandle = m_Ssr->GetReflectionSampleHandle(),
+            .DofCoc = m_DofCocId,
+            .DofCocHandle = m_Dof->GetCocHandle(),
             .SamplerHandle = m_SamplerHandle,
             .LtcMatHandle = m_LtcMatHandle,
             .LtcMagHandle = m_LtcMagHandle,
