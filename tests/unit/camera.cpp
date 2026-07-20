@@ -1,12 +1,16 @@
 // Camera math: the view/projection construction the scene renderer draws
 // through. Pure CPU — no Context, no Vulkan symbol touched. Pins the engine's
 // clip conventions (the Vulkan Y-flip), the near/far the camera carries
-// alongside the projection, and position recovery from the view's inverse.
+// alongside the projection, position recovery from the view's inverse, and the
+// physical-lens arm — field-of-view derivation, the millimetre/metre
+// normalization, and the circle-of-confusion curve its constants define.
 
 #include <doctest/doctest.h>
 
 #include <glm/gtc/matrix_transform.hpp>
 
+#include <Veng/Reflection/JsonSerialize.h>
+#include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/Camera.h>
 
 using namespace Veng;
@@ -263,4 +267,204 @@ TEST_CASE("far-plane view-direction reconstruction survives extreme Far/Near rat
         const vec3 homogeneous = glm::normalize(vec3(worldH) - eye * worldH.w);
         CHECK(degreesOff(homogeneous, truth) < 0.01);
     }
+}
+
+// ---- The physical lens arm ---------------------------------------------------
+
+namespace
+{
+    // The vertical field of view MakeCameraView derives, in degrees, for a lens/sensor pair.
+    f32 PhysicalFovYDegrees(f32 focalLengthMm, f32 sensorHeightMm)
+    {
+        Camera component;
+        component.Projection = CameraProjection::Physical;
+        component.FocalLength = focalLengthMm;
+        component.SensorHeight = sensorHeightMm;
+
+        // Recover fovY from the projection's [1][1]: it is -cot(fovY/2) / aspect under the
+        // engine's Y-flip, so at aspect 1 the half-angle is atan(1 / |[1][1]|).
+        const CameraView made = MakeCameraView(component, 1.0f, mat4{1.0f});
+        return glm::degrees(2.0f * std::atan(1.0f / std::abs(made.Projection()[1][1])));
+    }
+}
+
+TEST_CASE("A physical camera derives its field of view from focal length over sensor height")
+{
+    // The full-frame reference pairs: a 50mm "normal" lens on a 24mm sensor is ~27 degrees
+    // vertically, and a 24mm wide-angle on the same sensor is ~53.1.
+    CHECK(PhysicalFovYDegrees(50.0f, 24.0f) == doctest::Approx(26.991f).epsilon(0.001));
+    CHECK(PhysicalFovYDegrees(24.0f, 24.0f) == doctest::Approx(53.130f).epsilon(0.001));
+
+    // The derivation is a ratio, so the same lens on a larger sensor sees wider.
+    CHECK(PhysicalFovYDegrees(50.0f, 36.0f) > PhysicalFovYDegrees(50.0f, 24.0f));
+}
+
+TEST_CASE("A Physical camera matches a Perspective camera authored to the equivalent FovY")
+{
+    Camera physical;
+    physical.Projection = CameraProjection::Physical;
+    physical.FocalLength = 35.0f;
+    physical.SensorHeight = 24.0f;
+    physical.Near = 0.2f;
+    physical.Far = 150.0f;
+
+    Camera perspective = physical;
+    perspective.Projection = CameraProjection::Perspective;
+    perspective.FovY = 2.0f * std::atan(24.0f / (2.0f * 35.0f));
+
+    const f32 aspect = 16.0f / 9.0f;
+    const mat4 world = glm::translate(mat4{1.0f}, vec3{1.0f, 2.0f, 3.0f});
+
+    const CameraView made = MakeCameraView(physical, aspect, world);
+    const CameraView equivalent = MakeCameraView(perspective, aspect, world);
+
+    CHECK(MatrixApprox(made.Projection(), equivalent.Projection()));
+    CHECK(MatrixApprox(made.View(), equivalent.View()));
+    CHECK(made.GetNear() == doctest::Approx(physical.Near));
+    CHECK(made.GetFar() == doctest::Approx(physical.Far));
+
+    // The lens block is the one thing that differs: it rides only the physical arm, so a
+    // consumer reads its presence as "this view was authored in lens terms".
+    CHECK(made.GetLens().has_value());
+    CHECK_FALSE(equivalent.GetLens().has_value());
+}
+
+TEST_CASE("Only a Physical camera carries a lens, and it is normalized to metres")
+{
+    Camera component;
+    component.Projection = CameraProjection::Physical;
+
+    // The defaults: a 50mm f/2.8 lens on a 24mm sensor focused at 10 metres. Focal length and
+    // sensor height are authored in millimetres, focus distance in metres — the mix the
+    // normalization exists to resolve exactly once.
+    const CameraLens lens = ComputeCameraLens(component);
+    CHECK(lens.Aperture == doctest::Approx(0.0178571f));
+    CHECK(lens.SensorHeight == doctest::Approx(0.024f));
+    CHECK(lens.FocusDistance == doctest::Approx(10.0f));
+
+    const CameraView made = MakeCameraView(component, 16.0f / 9.0f, mat4{1.0f});
+    REQUIRE(made.GetLens().has_value());
+    CHECK(made.GetLens()->Aperture == doctest::Approx(lens.Aperture));
+    CHECK(made.GetLens()->SensorHeight == doctest::Approx(lens.SensorHeight));
+    CHECK(made.GetLens()->FocusDistance == doctest::Approx(lens.FocusDistance));
+
+    // A zeroed component still yields a finite lens rather than dividing by zero.
+    Camera zeroed;
+    zeroed.Projection = CameraProjection::Physical;
+    zeroed.FocalLength = 0.0f;
+    zeroed.SensorHeight = 0.0f;
+    zeroed.FStop = 0.0f;
+    zeroed.FocusDistance = 0.0f;
+    const CameraLens floored = ComputeCameraLens(zeroed);
+    CHECK(std::isfinite(floored.Aperture));
+    CHECK(floored.SensorHeight > 0.0f);
+    CHECK(floored.FocusDistance > 0.0f);
+}
+
+TEST_CASE("ComputeDofParams adds the sensor-to-pixel scale from the target's pixel height")
+{
+    Camera component;
+    component.Projection = CameraProjection::Physical;
+
+    const DofParams params = ComputeDofParams(component, 1080.0f);
+    CHECK(params.Aperture == doctest::Approx(0.0178571f));
+    CHECK(params.FocusDistance == doctest::Approx(10.0f));
+
+    // A 24mm sensor mapped onto 1080 pixels: 1080 / 0.024 metres.
+    CHECK(params.CocScale == doctest::Approx(45000.0f));
+
+    // The scale — and only the scale — tracks the target's pixel height, which is why it is a
+    // separate value: folding it into the aperture would make the aperture shift on a resize.
+    const DofParams taller = ComputeDofParams(component, 2160.0f);
+    CHECK(taller.CocScale == doctest::Approx(90000.0f));
+    CHECK(taller.Aperture == doctest::Approx(params.Aperture));
+
+    // The lens overload and the component overload agree.
+    const DofParams viaLens = ComputeDofParams(ComputeCameraLens(component), 1080.0f);
+    CHECK(viaLens.CocScale == doctest::Approx(params.CocScale));
+    CHECK(viaLens.Aperture == doctest::Approx(params.Aperture));
+}
+
+TEST_CASE("The circle-of-confusion curve is zero in focus, signed, asymmetric, and bounded behind")
+{
+    Camera component;
+    component.Projection = CameraProjection::Physical;
+    const DofParams params = ComputeDofParams(component, 1080.0f);
+
+    // In focus: no defocus at all.
+    CHECK(ComputeCircleOfConfusion(params, 10.0f) == doctest::Approx(0.0f));
+
+    // The sign carries the field: negative in front of the focus plane, positive behind it.
+    CHECK(ComputeCircleOfConfusion(params, 5.0f) < 0.0f);
+    CHECK(ComputeCircleOfConfusion(params, 20.0f) > 0.0f);
+
+    // Asymmetric about the focus plane: halving the distance defocuses harder than doubling it,
+    // because the near term grows without bound while the far term is bounded by one.
+    const f32 near = std::abs(ComputeCircleOfConfusion(params, 5.0f));
+    const f32 far = std::abs(ComputeCircleOfConfusion(params, 20.0f));
+    CHECK(near > far);
+    CHECK(near == doctest::Approx(2.0f * far));
+
+    // Behind the focus plane the curve converges to the aperture-scaled constant.
+    const f32 limit = params.CocScale * params.Aperture;
+    CHECK(limit == doctest::Approx(803.571f).epsilon(0.001));
+    CHECK(ComputeCircleOfConfusion(params, 1.0e6f) == doctest::Approx(limit).epsilon(0.001));
+    CHECK(ComputeCircleOfConfusion(params, 1.0e4f) < limit);
+
+    // A non-positive depth has no defocus defined.
+    CHECK(ComputeCircleOfConfusion(params, 0.0f) == doctest::Approx(0.0f));
+    CHECK(ComputeCircleOfConfusion(params, -3.0f) == doctest::Approx(0.0f));
+}
+
+TEST_CASE("A Physical camera round-trips through the reflection serializer")
+{
+    // The authoring round-trip cook, spawn, inspector edit, and save all share: the reflected
+    // field set plus the enum's serialize-by-name convention. An authored Physical camera has
+    // to survive it, and a record written before the mode existed has to still read.
+    TypeRegistry registry;
+    registry.Register<Camera>();
+    const TypeInfo& info = registry.Info(registry.IdOf<Camera>());
+    const JsonFieldHooks hooks;
+
+    Camera src;
+    src.Projection = CameraProjection::Physical;
+    src.FocalLength = 85.0f;
+    src.SensorHeight = 36.0f;
+    src.FStop = 1.4f;
+    src.FocusDistance = 2.5f;
+    src.Near = 0.05f;
+    src.Far = 500.0f;
+
+    const nlohmann::json doc = JsonWriteFields(&src, info, registry, hooks);
+
+    // The enum serializes by name, so the new enumerator needs no cooked-format bump.
+    CHECK(doc.at("Projection") == "Physical");
+
+    Camera dst;
+    REQUIRE(JsonReadFields(&dst, info, doc, registry, hooks));
+    CHECK(dst.Projection == CameraProjection::Physical);
+    CHECK(dst.FocalLength == doctest::Approx(85.0f));
+    CHECK(dst.SensorHeight == doctest::Approx(36.0f));
+    CHECK(dst.FStop == doctest::Approx(1.4f));
+    CHECK(dst.FocusDistance == doctest::Approx(2.5f));
+    CHECK(dst.Near == doctest::Approx(0.05f));
+    CHECK(dst.Far == doctest::Approx(500.0f));
+
+    // An edit re-saves through the same path with no loss.
+    dst.FocusDistance = 7.25f;
+    const nlohmann::json edited = JsonWriteFields(&dst, info, registry, hooks);
+    Camera reloaded;
+    REQUIRE(JsonReadFields(&reloaded, info, edited, registry, hooks));
+    CHECK(reloaded.FocusDistance == doctest::Approx(7.25f));
+    CHECK(reloaded.Projection == CameraProjection::Physical);
+
+    // A record predating the lens fields reads tolerantly, keeping the defaults.
+    nlohmann::json legacy = nlohmann::json::object();
+    legacy["Projection"] = "Perspective";
+    legacy["FovY"] = 1.0f;
+    Camera fromLegacy;
+    REQUIRE(JsonReadFields(&fromLegacy, info, legacy, registry, hooks));
+    CHECK(fromLegacy.Projection == CameraProjection::Perspective);
+    CHECK(fromLegacy.FovY == doctest::Approx(1.0f));
+    CHECK(fromLegacy.FocalLength == doctest::Approx(50.0f));
 }
