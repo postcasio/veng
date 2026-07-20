@@ -162,14 +162,18 @@ namespace Veng
         /// Called at the top of a frame, outside any Scene/viewport-list iteration. In order: applies a
         /// recorded reconfigure (rebuilds the set), applies each unconditional world rebind as a
         /// complete rebind (detaching the departed world's engine-driven overlay documents from the
-        /// viewport and re-resolving its seat in the destination), then evaluates each present-on-ready
-        /// rebind — applying it once its destination is ready, dropping it if the destination closed, or
-        /// abandoning it (surfaced through GetAbandonedPresentWorld) once it exceeds the ready timeout.
-        /// The runner resolves the departed and destination worlds; @p delta advances each pending
-        /// present-on-ready request's wait clock.
+        /// viewport, re-resolving its seat in the destination, and re-seeding the viewport's render
+        /// settings and @p knobs from the destination's authored LevelRenderSettings when it carries
+        /// one), then evaluates each present-on-ready rebind — applying it once its destination is
+        /// ready, dropping it if the destination closed, or abandoning it (surfaced through
+        /// GetAbandonedPresentWorld) once it exceeds the ready timeout. The runner resolves the
+        /// departed and destination worlds; @p delta advances each pending present-on-ready request's
+        /// wait clock.
         /// @param runner  The runner the departed/destination worlds resolve through.
         /// @param delta   The wall-clock frame delta in seconds, accruing toward the ready timeout.
-        void ApplyPendingReconfigure(WorldRunner& runner, f32 delta);
+        /// @param knobs   The per-frame view knobs the managed viewports render with, re-seeded by a
+        ///                rebind whose destination authors LevelRenderSettings.
+        void ApplyPendingReconfigure(WorldRunner& runner, f32 delta, Renderer::ViewState& knobs);
 
         /// @brief Returns the world a managed viewport currently presents (its applied binding).
         ///
@@ -320,12 +324,16 @@ namespace Veng
         /// The complete rebind at the apply point: detaches every engine-driven overlay of the departed
         /// world (when it still resolves and differs from the destination) from the viewport, re-points
         /// the viewport's seat association (and the cursor seat when the departed association owned it)
-        /// to the destination's resolved seat, resets Info.World and Info.Viewer, and leaves focus
-        /// policy untouched.
+        /// to the destination's resolved seat, resets Info.World and Info.Viewer, re-seeds the
+        /// viewport's render settings and @p knobs from the destination's authored LevelRenderSettings
+        /// (a destination authoring none keeps the current settings), and leaves focus policy
+        /// untouched.
         /// @param index   The managed viewport index; out of range is a no-op.
         /// @param world   The destination world the viewport presents after the rebind.
         /// @param runner  The runner the departed/destination worlds resolve through.
-        void ApplyCompleteRebind(usize index, WorldInstanceId world, WorldRunner& runner);
+        /// @param knobs   The per-frame view knobs re-seeded from the destination's level settings.
+        void ApplyCompleteRebind(usize index, WorldInstanceId world, WorldRunner& runner,
+                                 Renderer::ViewState& knobs);
 
         /// @brief Drops any pending rebind (deferred, present-on-ready, or abandoned) for an index.
         ///

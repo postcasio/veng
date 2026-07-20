@@ -10,6 +10,7 @@
 #include <Veng/Renderer/Viewport.h>
 #include <Veng/Renderer/ViewportCompositor.h>
 #include <Veng/Scene/Camera.h>
+#include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/SceneSimulation.h>
 #include <Veng/Scene/SceneViewport.h>
@@ -141,7 +142,8 @@ namespace Veng
         m_PendingReconfigure = vector<ManagedViewportInfo>(infos.begin(), infos.end());
     }
 
-    void ManagedViewportSet::ApplyPendingReconfigure(WorldRunner& runner, const f32 delta)
+    void ManagedViewportSet::ApplyPendingReconfigure(WorldRunner& runner, const f32 delta,
+                                                     Renderer::ViewState& knobs)
     {
         if (m_PendingReconfigure)
         {
@@ -154,7 +156,7 @@ namespace Veng
         // complete rebind: detach the departed world's overlays and re-resolve the seat.
         for (const PendingRebind& rebind : m_PendingRebinds)
         {
-            ApplyCompleteRebind(rebind.Index, rebind.World, runner);
+            ApplyCompleteRebind(rebind.Index, rebind.World, runner, knobs);
         }
         m_PendingRebinds.clear();
 
@@ -171,7 +173,7 @@ namespace Veng
             }
             if (IsWorldPresentable(runner, it->World))
             {
-                ApplyCompleteRebind(it->Index, it->World, runner);
+                ApplyCompleteRebind(it->Index, it->World, runner, knobs);
                 it = m_PendingReadyRebinds.erase(it);
                 continue;
             }
@@ -220,7 +222,7 @@ namespace Veng
     }
 
     void ManagedViewportSet::ApplyCompleteRebind(const usize index, const WorldInstanceId world,
-                                                 WorldRunner& runner)
+                                                 WorldRunner& runner, Renderer::ViewState& knobs)
     {
         if (index >= m_Viewports.size())
         {
@@ -254,6 +256,19 @@ namespace Veng
         if (const World* destination = runner.ResolveWorld(world); destination != nullptr)
         {
             resolvedSeat = ResolvePresentationSeat(destination->GetScene(), departedViewer);
+
+            // The presented world's authored render settings govern the viewport that presents it —
+            // the same seed the bootstrap world takes, re-applied here so a travel does not leave a
+            // destination rendering under the departed level's toggles. A destination authoring no
+            // LevelRenderSettings keeps the viewport's current settings (the editor and
+            // engine-agnostic postures).
+            if (const LevelRenderSettings* render =
+                    destination->GetScene().TryGetFirst<LevelRenderSettings>())
+            {
+                Renderer::SceneRendererSettings settings = managed.Viewport->GetSettings();
+                ApplyLevelRenderSettings(*render, settings, knobs);
+                managed.Viewport->Configure(settings);
+            }
         }
 
         // Whether the cursor seat is routed through a viewport *other* than this one, captured before

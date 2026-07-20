@@ -115,10 +115,12 @@ it registers its own viewports through the compositor (which still mints their i
 point, where it is a **complete rebind**: it detaches the *departed* world's engine-driven overlay
 documents from the viewport (`GuiOverlay::Detach`, the exact inverse of the per-frame `Drive` — the
 runtime host survives, only what the engine attached is touched, hand-attached documents untouched),
-and **re-resolves the seat** in the destination scene (the bound `Viewer` when it still resolves
+**re-resolves the seat** in the destination scene (the bound `Viewer` when it still resolves
 there, else the scene's sole/first `Viewer`, else cleared), re-pointing the `InputRouter` association
-and — when the departed association owned it — the cursor seat, and resetting `Info.Viewer`; input
-*focus* is left to the game. `GetManagedViewportWorld(index)` returns the applied binding and
+and — when the departed association owned it — the cursor seat, and resetting `Info.Viewer`, and
+**re-seeds the viewport's render settings and per-frame view knobs** from the destination's authored
+`LevelRenderSettings` (the same seed the bootstrap world takes; a destination authoring none keeps
+the viewport's current settings); input *focus* is left to the game. `GetManagedViewportWorld(index)` returns the applied binding and
 `GetPendingManagedViewportWorld(index)` the destination of an in-flight rebind (so a pending world
 counts as presented and is not reaped in its own rebind gap). **`RebindManagedViewportWhenReady(index,
 world)`** is the front-door / world-jump path: it holds the viewport on its current world until the

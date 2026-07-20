@@ -1174,8 +1174,9 @@ namespace Veng
 
     void Application::StartWorldScene(const WorldInstanceId world, Scene& scene)
     {
-        // Seed the managed viewport only from the managed world; a joined world becomes presented through
-        // the consumer's RebindManagedViewport, which keeps the viewport's existing render settings.
+        // Seed the managed viewport only from the managed world; a joined world becomes presented
+        // through the consumer's RebindManagedViewport, whose apply re-seeds the viewport from the
+        // destination's authored LevelRenderSettings.
         if (world == m_ManagedWorld)
         {
             SeedViewportFromWorld(scene);
@@ -1654,7 +1655,7 @@ namespace Veng
         // which must not run mid-drive. Regions resolve from each info's Layout here; world rebinds run
         // their departed-overlay detach and seat re-resolution through the runner; present-on-ready
         // rebinds accrue this frame's delta toward their ready timeout.
-        m_ManagedViewports->ApplyPendingReconfigure(*m_WorldRunner, delta);
+        m_ManagedViewports->ApplyPendingReconfigure(*m_WorldRunner, delta, m_WorldView);
 
         // Translate the managed viewports' world bindings into directory presence pins at the rebind
         // apply point (one-directional: presentation drives lifetime, never the reverse), then reap the
