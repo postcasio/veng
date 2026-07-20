@@ -201,20 +201,27 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                      .DepthOfField = false,
                      .AO = false},
     });
-    Context.ImmediateCommands(
-        [&](CommandBuffer& cmd)
-        {
-            debugRenderer->Execute(cmd, Renderer::SceneView{
-                                            .World = *scene,
-                                            .Camera = camera,
-                                            .Delta = 0.0f,
-                                            .Exposure = 1.0f,
-                                            .Tonemapper = Tonemapper::None,
-                                            .DofFocusDistance = CubeFaceDistance,
-                                        });
-        });
-    const vector<u8> debugPixels = debugRenderer->GetOutput()->GetImage()->Download();
-    REQUIRE(debugPixels.size() == static_cast<size_t>(extent.x) * extent.y * 8);
+    auto RenderDebug = [&](const f32 maxCoc)
+    {
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                debugRenderer->Execute(cmd, Renderer::SceneView{
+                                                .World = *scene,
+                                                .Camera = camera,
+                                                .Delta = 0.0f,
+                                                .Exposure = 1.0f,
+                                                .Tonemapper = Tonemapper::None,
+                                                .DofFocusDistance = CubeFaceDistance,
+                                                .DofMaxCoc = maxCoc,
+                                            });
+            });
+        const vector<u8> pixels = debugRenderer->GetOutput()->GetImage()->Download();
+        REQUIRE(pixels.size() == static_cast<size_t>(extent.x) * extent.y * 8);
+        return pixels;
+    };
+
+    const vector<u8> debugPixels = RenderDebug(16.0f);
 
     // The arm blits the signed circle of confusion: the near field ramps red, the far field blue,
     // and an in-focus texel is black. The cube's front face is exactly the focus plane, so the
@@ -227,6 +234,24 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const vec3 background = DofTexel(debugPixels, extent.x, 4, 4);
     CHECK(background.b > 0.2f);
     CHECK(background.r < 0.02f);
+
+    // The ramp normalizes against the frame's own budget, so halving the budget brightens the same
+    // geometry's far ramp — the visualization tracks what is being tuned rather than a fixed
+    // ceiling.
+    auto MeanFar = [&](const vector<u8>& pixels)
+    {
+        f64 sum = 0.0;
+        for (u32 y = 0; y < extent.y; ++y)
+        {
+            for (u32 x = 0; x < extent.x; ++x)
+            {
+                sum += DofTexel(pixels, extent.x, x, y).b;
+            }
+        }
+        return sum / (static_cast<f64>(extent.x) * extent.y);
+    };
+    const vector<u8> shallowPixels = RenderDebug(4.0f);
+    CHECK(MeanFar(shallowPixels) > MeanFar(debugPixels));
 }
 
 #endif

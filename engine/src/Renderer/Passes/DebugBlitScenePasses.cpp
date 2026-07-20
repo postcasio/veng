@@ -4,6 +4,7 @@
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/DescriptorSet.h>
+#include <Veng/Renderer/DofTile.h>
 #include <Veng/Renderer/GraphicsPipeline.h>
 
 namespace Veng::Renderer
@@ -58,8 +59,6 @@ namespace Veng::Renderer
             return io.SsrReflection;
         case Source::Emissive:
             return io.GBufferEmissive;
-        case Source::Coc:
-            return io.DofCoc;
         }
         VE_ASSERT(false, "FullscreenBlitScenePass: unmapped Source");
     }
@@ -84,8 +83,6 @@ namespace Veng::Renderer
             return io.SsrReflectionHandle;
         case Source::Emissive:
             return io.EmissiveHandle;
-        case Source::Coc:
-            return io.DofCocHandle;
         }
         VE_ASSERT(false, "FullscreenBlitScenePass: unmapped Source");
     }
@@ -117,6 +114,37 @@ namespace Veng::Renderer
                         .Texture = ormHandle.Index,
                         .Sampler = samplerHandle.Index,
                         .Channel = channel,
+                    });
+                    cmd.DrawFullscreenTriangle();
+                });
+    }
+
+    void CocBlitScenePass::Declare(RenderGraph& graph, const PassIO& io)
+    {
+        const TextureHandle cocHandle = io.DofCocHandle;
+        const SamplerHandle samplerHandle = io.SamplerHandle;
+
+        graph.AddPass("CoC Debug Blit")
+            .Color({
+                .Resource = io.Output,
+                .Load = LoadOp::Clear,
+                .Store = StoreOp::Store,
+                .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
+            })
+            .Sample(io.DofCoc)
+            .Execute(
+                [this, cocHandle, samplerHandle](PassContext& inner)
+                {
+                    const ScenePassContext ctx = Wrap(inner);
+                    CommandBuffer& cmd = ctx.Cmd();
+                    cmd.BindPipeline(m_Pipeline);
+                    cmd.SetViewport({0, 0}, m_Extent);
+                    cmd.SetScissor({0, 0}, m_Extent);
+                    m_Context.GetBindlessRegistry().Bind(cmd);
+                    cmd.PushConstants(CocBlitPushConstants{
+                        .Texture = cocHandle.Index,
+                        .Sampler = samplerHandle.Index,
+                        .MaxCoc = ClampDofMaxCoc(ctx.View().DofMaxCoc),
                     });
                     cmd.DrawFullscreenTriangle();
                 });

@@ -449,7 +449,7 @@ namespace Veng::UI
             }
 
             (void)UI::Drag("Max blur radius##dof", view.DofMaxCoc,
-                           {.Speed = 0.25f, .Min = 0.0f, .Max = Renderer::MaxDofCoc});
+                           {.Speed = 0.25f, .Min = 0.0f, .Max = Renderer::DofCocCeiling});
             i32 rings = static_cast<i32>(view.DofRingCount);
             if (UI::Slider("Rings##dof", rings, 1, static_cast<i32>(Renderer::MaxDofRings)))
             {

@@ -59,7 +59,7 @@ TEST_CASE("ApplyLevelRenderSettings clamps the authored depth-of-field quality k
     ApplyLevelRenderSettings(render, settings, view);
 
     CHECK(settings.DepthOfField);
-    CHECK(view.DofMaxCoc == doctest::Approx(Renderer::MaxDofCoc));
+    CHECK(view.DofMaxCoc == doctest::Approx(Renderer::DofCocCeiling));
     CHECK(view.DofRingCount == Renderer::MaxDofRings);
 }
 

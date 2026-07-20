@@ -241,8 +241,8 @@ value it was.
 `(Mode == Final && DepthOfField) || Mode == DebugView::CoC` — the SSR gate shape, where the
 disjunct is what lets `DebugView::CoC` force-wire the chain's first two stages **with the feature
 off** and blit the signed-radius buffer (near ramps red, far ramps blue, in-focus is black),
-normalized against the engine ceiling `MaxDofCoc` rather than the frame's own knob so two
-differently-tuned frames compare directly.
+normalized against the frame's own clamped `DofMaxCoc` so brightness reads as the fraction of the
+configured budget a texel uses and a shallow budget still fills the ramp.
 
 #### The physical camera drives it — and the units are the trap
 
@@ -285,7 +285,7 @@ consults.
 
 **`DofMaxCoc` and `DofRingCount` still apply in every camera mode** — they are quality knobs, not
 lens properties, and a physical camera does not drive them. Both are **hard-clamped where they are
-pushed** (`ClampDofMaxCoc` → `MaxDofCoc`, `ClampDofRingCount` → `MaxDofRings`, `Renderer/DofTile.h`)
+pushed** (`ClampDofMaxCoc` → `DofCocCeiling`, `ClampDofRingCount` → `MaxDofRings`, `Renderer/DofTile.h`)
 because `LevelRenderSettings` routes authored values in from a cooked level and **an archive is
 untrusted input**; the ring count is a GPU loop bound, and the gather shader ceilings it a second
 time against a compile-time `MaxRings` so no missed CPU clamp can ever produce an unbounded loop.

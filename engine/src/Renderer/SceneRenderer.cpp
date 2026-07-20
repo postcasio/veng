@@ -270,7 +270,13 @@ namespace Veng::Renderer
         blits->Motion = MakePipeline("SceneRenderer Motion Blit Pipeline", blits->MotionLayout,
                                      LoadShader(MotionBlitFragId, "motion-vector-blit fragment"));
 
-        blits->CocLayout = MakeBlitLayout("SceneRenderer CoC Blit Layout");
+        // The CoC blit normalizes against the frame's budget, so it carries its own push block.
+        blits->CocLayout = PipelineLayout::Create(
+            context, {
+                         .Name = "SceneRenderer CoC Blit Layout",
+                         .PushConstantRanges = {PushConstantRange::Of<CocBlitPushConstants>(
+                             ShaderStage::Fragment)},
+                     });
         blits->Coc = MakePipeline("SceneRenderer CoC Blit Pipeline", blits->CocLayout,
                                   LoadShader(CocBlitFragId, "circle-of-confusion-blit fragment"));
 
@@ -1371,8 +1377,8 @@ namespace Veng::Renderer
                 m_Shadows->GetConstantsRingStride(), m_Shadows->GetPunctualRingStride(),
                 m_SkyResolver->GetIbl().GetSet(), m_SkyResolver->GetIbl().GetPrefilterMipCount(),
                 skylightWanted, iblAllowed));
-            m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
-                m_Context, m_DebugBlits->Coc, m_Extent, FullscreenBlitScenePass::Source::Coc));
+            m_Passes.push_back(
+                CreateUnique<CocBlitScenePass>(m_Context, m_DebugBlits->Coc, m_Extent));
             break;
         case DebugView::Emissive:
             // The g-buffer pass writes the emissive channel (G4); this blit shows the authored

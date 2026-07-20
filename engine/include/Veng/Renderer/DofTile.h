@@ -17,7 +17,7 @@ namespace Veng::Renderer
     ///
     /// The gather's kernel radius is bounded by this, so the per-frame value is clamped to it
     /// where it is pushed into the view state rather than trusted from an authored source.
-    inline constexpr f32 MaxDofCoc = 32.0f;
+    inline constexpr f32 DofCocCeiling = 32.0f;
 
     /// @brief Upper bound on DofRingCount.
     ///
@@ -100,14 +100,14 @@ namespace Veng::Renderer
 
     /// @brief Clamps an authored maximum circle of confusion into the supported range.
     /// @param maxCoc  The authored radius in half-resolution pixels.
-    /// @return The value clamped to [0, MaxDofCoc]; a non-finite input resolves to zero.
+    /// @return The value clamped to [0, DofCocCeiling]; a non-finite input resolves to zero.
     [[nodiscard]] inline f32 ClampDofMaxCoc(const f32 maxCoc)
     {
         if (!(maxCoc > 0.0f))
         {
             return 0.0f;
         }
-        return std::min(maxCoc, MaxDofCoc);
+        return std::min(maxCoc, DofCocCeiling);
     }
 
     /// @brief Clamps an authored gather ring count into the supported range.

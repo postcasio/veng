@@ -263,7 +263,7 @@ namespace Veng::Renderer
         f32 DofCocScale = 45000.0f;
         /// @brief Depth-of-field blur radius ceiling in half-resolution pixels; bounds the kernel.
         ///
-        /// Hard-clamped to MaxDofCoc where it is pushed into the view state.
+        /// Hard-clamped to DofCocCeiling where it is pushed into the view state.
         f32 DofMaxCoc = 16.0f;
         /// @brief Depth-of-field gather ring count; sample count grows roughly quadratically.
         ///

@@ -28,6 +28,15 @@ namespace Veng::Renderer
         u32 Channel;
     };
 
+    // Circle-of-confusion blit push block: signed-radius texture + sampler + the frame's clamped
+    // maximum circle of confusion, the budget the near/far ramp normalizes against.
+    struct CocBlitPushConstants
+    {
+        u32 Texture;
+        u32 Sampler;
+        f32 MaxCoc;
+    };
+
     /// @brief Fullscreen debug blit of a single bindless-sampled target into the output.
     ///
     /// The declared .Sample on the source id drives the graph-derived attachment → shader-read
@@ -47,8 +56,7 @@ namespace Veng::Renderer
             Bloom,
             MotionVectors,
             Reflections,
-            Emissive,
-            Coc
+            Emissive
         };
 
         /// @brief Constructs the pass.
@@ -116,6 +124,37 @@ namespace Veng::Renderer
         uvec2 m_Extent;
         /// @brief The ORM channel selector.
         u32 m_Channel;
+    };
+
+    /// @brief Fullscreen debug blit of the depth-of-field signed-radius target into the output.
+    ///
+    /// Near field ramps red, far field ramps blue, in-focus is black. The ramp normalizes against
+    /// the frame's clamped DofMaxCoc, read from the per-frame view at record time, so a shallow
+    /// budget still fills the ramp.
+    class CocBlitScenePass final : public ScenePass
+    {
+    public:
+        /// @brief Constructs the pass.
+        /// @param context  Renderer context for bindless access.
+        /// @param pipeline The circle-of-confusion blit pipeline.
+        /// @param extent   Initial render extent; updated via Resize.
+        CocBlitScenePass(Context& context, Ref<GraphicsPipeline> pipeline, uvec2 extent)
+            : m_Context(context), m_Pipeline(std::move(pipeline)), m_Extent(extent)
+        {
+        }
+
+        /// @brief Updates the render extent.
+        void Resize(uvec2 extent) override { m_Extent = extent; }
+        /// @brief Contributes the circle-of-confusion debug blit pass into the graph.
+        void Declare(RenderGraph& graph, const PassIO& io) override;
+
+    private:
+        /// @brief Renderer context for bindless access.
+        Context& m_Context;
+        /// @brief The circle-of-confusion blit pipeline.
+        Ref<GraphicsPipeline> m_Pipeline;
+        /// @brief Current render extent.
+        uvec2 m_Extent;
     };
 
     /// @brief Fullscreen debug blit of a shadow atlas into the output.

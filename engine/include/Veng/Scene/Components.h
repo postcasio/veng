@@ -997,7 +997,7 @@ namespace Veng
         /// @brief Depth-of-field blur radius ceiling in half-resolution pixels.
         ///
         /// A quality knob rather than a lens value, so it applies in every camera mode. Clamped to
-        /// MaxDofCoc on the way in — a cooked level is untrusted input.
+        /// DofCocCeiling on the way in — a cooked level is untrusted input.
         f32 DofMaxCoc = 16.0f;
         /// @brief Depth-of-field gather ring count.
         ///
@@ -1357,7 +1357,7 @@ VE_FIELD(DepthOfField, .DisplayName = "Depth of Field")
 VE_FIELD(DofFocusDistance, .DisplayName = "DoF Focus Distance", .Display = {.Min = 0.0})
 VE_FIELD(DofAperture, .DisplayName = "DoF Aperture", .Display = {.Min = 0.0})
 VE_FIELD(DofMaxCoc, .DisplayName = "DoF Max Blur Radius",
-         .Display = {.Min = 0.0, .Max = static_cast<f64>(::Veng::Renderer::MaxDofCoc)})
+         .Display = {.Min = 0.0, .Max = static_cast<f64>(::Veng::Renderer::DofCocCeiling)})
 VE_FIELD(DofRingCount, .DisplayName = "DoF Ring Count",
          .Display = {.Min = 1, .Max = static_cast<f64>(::Veng::Renderer::MaxDofRings)})
 VE_REFLECT_END();

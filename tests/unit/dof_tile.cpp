@@ -88,9 +88,9 @@ TEST_CASE("dof clamps: an out-of-range authored ring count never reaches the sha
 TEST_CASE("dof clamps: an out-of-range authored max circle of confusion is bounded")
 {
     CHECK(ClampDofMaxCoc(16.0f) == doctest::Approx(16.0f));
-    CHECK(ClampDofMaxCoc(MaxDofCoc) == doctest::Approx(MaxDofCoc));
-    CHECK(ClampDofMaxCoc(MaxDofCoc + 1.0f) == doctest::Approx(MaxDofCoc));
-    CHECK(ClampDofMaxCoc(1.0e9f) == doctest::Approx(MaxDofCoc));
+    CHECK(ClampDofMaxCoc(DofCocCeiling) == doctest::Approx(DofCocCeiling));
+    CHECK(ClampDofMaxCoc(DofCocCeiling + 1.0f) == doctest::Approx(DofCocCeiling));
+    CHECK(ClampDofMaxCoc(1.0e9f) == doctest::Approx(DofCocCeiling));
     CHECK(ClampDofMaxCoc(-4.0f) == doctest::Approx(0.0f));
 }
 
