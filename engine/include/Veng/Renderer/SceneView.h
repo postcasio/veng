@@ -245,6 +245,32 @@ namespace Veng::Renderer
         /// @brief SSR roughness cutoff; surfaces rougher than this trace no reflection ray.
         f32 SsrMaxRoughness = 0.8f;
 
+        /// @brief Depth-of-field focus plane distance in metres; pushed to the CoC prefilter.
+        ///
+        /// One of the three thin-lens constants the battery evaluates ComputeCircleOfConfusion
+        /// from. Rides the push (no recompile). Ignored when depth of field is inactive.
+        f32 DofFocusDistance = 10.0f;
+        /// @brief Depth-of-field aperture diameter in metres (50mm f/2.8 by default).
+        ///
+        /// The blur magnitude: a wider aperture defocuses more. Rides the push (no recompile).
+        f32 DofAperture = 0.0179f;
+        /// @brief Depth-of-field sensor-to-pixel scale in pixels per metre.
+        ///
+        /// Target pixel height divided by sensor height — 45000 for a 24mm sensor at 1080 pixels.
+        /// Kept separate from DofAperture because it depends on the viewport's pixel height, so
+        /// folding the two would make an authored aperture shift on a window resize. It is never
+        /// hand-authored: the viewport glue derives it every frame.
+        f32 DofCocScale = 45000.0f;
+        /// @brief Depth-of-field blur radius ceiling in half-resolution pixels; bounds the kernel.
+        ///
+        /// Hard-clamped to MaxDofCoc where it is pushed into the view state.
+        f32 DofMaxCoc = 16.0f;
+        /// @brief Depth-of-field gather ring count; sample count grows roughly quadratically.
+        ///
+        /// A GPU loop bound, hard-clamped to MaxDofRings where it is pushed into the view state
+        /// and ceilinged again in the gather shader.
+        u32 DofRingCount = 4;
+
         /// @brief RAW (non-tile-remapped) per-cascade world → light-clip transforms this frame.
         ///
         /// Computed by the renderer on every Execute from the first directional light (identity

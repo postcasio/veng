@@ -73,6 +73,8 @@ namespace Veng::Renderer
         Reflections,
         /// @brief The authored emissive g-buffer channel (G4) alone.
         Emissive,
+        /// @brief Signed circle of confusion (force-wires the depth-of-field prefilter + tiles).
+        CoC,
     };
 
     /// @brief Display names for the DebugView arms, indexed by enum value.
@@ -80,11 +82,12 @@ namespace Veng::Renderer
     /// The single source of truth for the "View" combo in both the engine debug panel and the
     /// editor viewport: entry N is the name of DebugView N, so a combo's selected index casts
     /// straight to the enum. The static_assert below keeps it in lockstep with the enum.
-    inline constexpr std::array<string_view, 15> DebugViewNames{
-        "Final",          "Albedo",      "Normal",  "Depth",    "Roughness",        "Metallic",
-        "Occlusion",      "AO",          "Shadows", "Cascades", "Punctual shadows", "Bloom",
-        "Motion vectors", "Reflections", "Emissive"};
-    static_assert(DebugViewNames.size() == static_cast<usize>(DebugView::Emissive) + 1,
+    inline constexpr std::array<string_view, 16> DebugViewNames{
+        "Final",          "Albedo",      "Normal",           "Depth",
+        "Roughness",      "Metallic",    "Occlusion",        "AO",
+        "Shadows",        "Cascades",    "Punctual shadows", "Bloom",
+        "Motion vectors", "Reflections", "Emissive",         "Circle of confusion"};
+    static_assert(DebugViewNames.size() == static_cast<usize>(DebugView::CoC) + 1,
                   "DebugViewNames must list every DebugView arm in declaration order.");
 
     /// @brief Selects the bloom pyramid's down/up filter kernel.
@@ -235,6 +238,16 @@ namespace Veng::Renderer
         /// reflection, with little visible loss on the rough/glossy surfaces SSR targets. Ignored
         /// when SSR is inactive.
         SsrResolution SsrResolutionScale = SsrResolution::Half;
+
+        /// @brief Whether the depth-of-field battery runs.
+        ///
+        /// A topology change: it inserts the circle-of-confusion prefilter, tile reduction,
+        /// per-layer ring gather and fill compute stages plus a fullscreen composite between the
+        /// lit HDR and the bloom sweep, and routes the bloom/tonemap tail through the composite's
+        /// HDR intermediate. DofFocusDistance / DofAperture / DofCocScale / DofMaxCoc /
+        /// DofRingCount are per-frame values on SceneView and do not recompile. Off by default, so
+        /// the shipping deferred path is byte-identical.
+        bool DepthOfField = false;
 
         /// @brief Whether translucent materials can sample the scene color behind them.
         ///

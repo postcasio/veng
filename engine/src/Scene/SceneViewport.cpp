@@ -1,5 +1,8 @@
 #include <Veng/Scene/SceneViewport.h>
 
+#include <algorithm>
+
+#include <Veng/Renderer/DofTile.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/SceneRenderer.h>
@@ -22,7 +25,30 @@ namespace Veng
         state.Camera = ResolvePrimaryCameraView(scene, aspect).value_or(DefaultCameraView(aspect));
         state.Delta = delta;
         state.Alpha = alpha;
+        ResolveDofViewState(state, static_cast<f32>(output->GetImage()->GetHeight()));
         viewport.SetViewState(state);
+    }
+
+    void ResolveDofViewState(Renderer::ViewState& state, const f32 viewportPixelHeight)
+    {
+        // A camera that is not Physical authors no sensor, so the scale falls back to the same
+        // full-frame reference height the Camera component defaults to.
+        constexpr f32 DefaultSensorHeightMetres = 0.024f;
+
+        if (const optional<CameraLens>& lens = state.Camera.GetLens(); lens.has_value())
+        {
+            const DofParams params = ComputeDofParams(*lens, viewportPixelHeight);
+            state.DofFocusDistance = params.FocusDistance;
+            state.DofAperture = params.Aperture;
+            state.DofCocScale = params.CocScale;
+        }
+        else
+        {
+            state.DofCocScale = std::max(viewportPixelHeight, 1.0f) / DefaultSensorHeightMetres;
+        }
+
+        state.DofMaxCoc = Renderer::ClampDofMaxCoc(state.DofMaxCoc);
+        state.DofRingCount = Renderer::ClampDofRingCount(state.DofRingCount);
     }
 
     void ApplyLevelRenderSettings(const LevelRenderSettings& render,

@@ -257,6 +257,31 @@
       "source": "shaders/ssr_hiz_reduce.comp.shader.json"
     },
     {
+      "id": "0x19AE4B252B75EAF5",
+      "type": "Shader",
+      "source": "shaders/dof_coc_prefilter.comp.shader.json"
+    },
+    {
+      "id": "0x08133BD4AA68833C",
+      "type": "Shader",
+      "source": "shaders/dof_tile_dilate.comp.shader.json"
+    },
+    {
+      "id": "0xD602DA47084ECA46",
+      "type": "Shader",
+      "source": "shaders/dof_gather.comp.shader.json"
+    },
+    {
+      "id": "0x318351739B93477B",
+      "type": "Shader",
+      "source": "shaders/dof_fill.comp.shader.json"
+    },
+    {
+      "id": "0x27F453A760B77C78",
+      "type": "Shader",
+      "source": "shaders/dof_composite.frag.shader.json"
+    },
+    {
       "id": "0xD783ACB75C22D848",
       "type": "Shader",
       "source": "shaders/ibl_equirect_to_cube.comp.shader.json"

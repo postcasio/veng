@@ -393,6 +393,11 @@ namespace Veng::Renderer
             .SsrMaxDistance = m_ViewState.SsrMaxDistance,
             .SsrThickness = m_ViewState.SsrThickness,
             .SsrMaxRoughness = m_ViewState.SsrMaxRoughness,
+            .DofFocusDistance = m_ViewState.DofFocusDistance,
+            .DofAperture = m_ViewState.DofAperture,
+            .DofCocScale = m_ViewState.DofCocScale,
+            .DofMaxCoc = m_ViewState.DofMaxCoc,
+            .DofRingCount = m_ViewState.DofRingCount,
         };
         // Drive any GuiSurface panels in the scene into their HDR targets before the scene render,
         // so a translucent/emissive panel material samples a shader-readable target the same frame.

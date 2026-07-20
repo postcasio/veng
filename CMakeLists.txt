@@ -717,6 +717,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/managed_viewports.cpp
             tests/unit/managed_rebind.cpp
             tests/unit/dynamic_resolution.cpp
+            tests/unit/dof_tile.cpp
             tests/unit/gui_draw_list.cpp
             tests/unit/gui_layout.cpp
             tests/unit/gui_style_states.cpp
@@ -1222,6 +1223,7 @@ if (VENG_BUILD_TESTS)
             tests/gpu/volume_texture_3d.cpp
             tests/gpu/volume_field.cpp
             tests/gpu/volume_scene_pass.cpp
+            tests/gpu/dof_battery.cpp
             tests/gpu/occlusion_test.cpp
             tests/gpu/prefab_spawn.cpp
             tests/gpu/level_loader.cpp

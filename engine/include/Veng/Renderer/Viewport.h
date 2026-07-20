@@ -101,6 +101,30 @@ namespace Veng::Renderer
         f32 SsrThickness = 0.5f;
         /// @brief SSR roughness cutoff; surfaces rougher than this trace no reflection ray.
         f32 SsrMaxRoughness = 0.8f;
+        /// @brief Depth-of-field focus plane distance in metres.
+        ///
+        /// Overwritten from the resolved camera's lens when it is Physical, so the camera wins by
+        /// construction on every pushed frame without the stored knob being touched.
+        f32 DofFocusDistance = 10.0f;
+        /// @brief Depth-of-field aperture diameter in metres (50mm f/2.8 by default).
+        ///
+        /// Overwritten from the resolved camera's lens when it is Physical.
+        f32 DofAperture = 0.0179f;
+        /// @brief Depth-of-field sensor-to-pixel scale in pixels per metre.
+        ///
+        /// Never hand-authored: the viewport glue derives it from the target's pixel height and
+        /// the camera's sensor height (the default sensor height when the camera is not Physical)
+        /// on every pushed frame.
+        f32 DofCocScale = 45000.0f;
+        /// @brief Depth-of-field blur radius ceiling in half-resolution pixels.
+        ///
+        /// Hard-clamped to MaxDofCoc when the view state is pushed.
+        f32 DofMaxCoc = 16.0f;
+        /// @brief Depth-of-field gather ring count.
+        ///
+        /// Hard-clamped to MaxDofRings when the view state is pushed: it is a GPU loop bound, and
+        /// an authored value reaching the shader unclamped is a device hang rather than an error.
+        u32 DofRingCount = 4;
     };
 
     /// @brief Construction parameters for Viewport.

@@ -241,6 +241,7 @@ add_library(veng SHARED
         src/Renderer/AutoExposureMeter.cpp
         src/Renderer/TaaResolve.cpp
         src/Renderer/SsrChain.cpp
+        src/Renderer/DofChain.cpp
         src/Renderer/RefractionGrab.cpp
         src/Renderer/GpuCullSystem.cpp
         src/Renderer/PickingSystem.cpp
@@ -249,6 +250,7 @@ add_library(veng SHARED
         src/Renderer/SkyResolver.cpp
         src/Renderer/AtmospherePrecompute.cpp
         src/Renderer/Passes/SkyScenePass.cpp
+        src/Renderer/Passes/DofCompositeScenePass.cpp
         src/Renderer/Passes/SsaoScenePass.cpp
         src/Renderer/ShaderInterface.cpp
         $<TARGET_OBJECTS:veng_backend_objs>

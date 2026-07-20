@@ -34,6 +34,20 @@ namespace Veng
     void PushSceneView(Renderer::Viewport& viewport, const Scene& scene,
                        const Renderer::ViewState& knobs, f32 delta = 0.0f, f32 alpha = 0.0f);
 
+    /// @brief Fills a pushed view state's depth-of-field fields from its resolved camera and target.
+    ///
+    /// The one site the defocus parameters are resolved, applied to the per-frame copy a viewport
+    /// glue pushes rather than to any stored knob: a Physical camera's lens supplies the focus
+    /// distance and aperture (so the camera wins by construction on every frame, while the
+    /// authored values survive underneath and come back if the camera stops being Physical), and
+    /// any camera supplies the sensor-to-pixel CoC scale, which is never hand-authored. It is also
+    /// the authoritative gate on the two quality knobs: DofMaxCoc and DofRingCount are hard-clamped
+    /// here, because a cooked level is untrusted input and an unclamped ring count is an unbounded
+    /// GPU loop.
+    /// @param state               The view state being pushed; its DoF fields are overwritten.
+    /// @param viewportPixelHeight The target's vertical extent in pixels.
+    void ResolveDofViewState(Renderer::ViewState& state, f32 viewportPixelHeight);
+
     /// @brief Maps a level's post/pipeline render knobs onto a renderer's topology and per-frame view.
     ///
     /// Splits LevelRenderSettings across the two renderer surfaces it feeds: the topology toggles

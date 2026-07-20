@@ -51,6 +51,7 @@ namespace Veng::Renderer
     class AutoExposureMeter;
     class TaaResolve;
     class SsrChain;
+    class DofChain;
     class RefractionGrab;
     class GpuCullSystem;
     class PickingSystem;
@@ -557,6 +558,14 @@ namespace Veng::Renderer
         /// SsrResolution scale after the g-buffer depth and HDR targets.
         Unique<SsrChain> m_Ssr;
 
+        /// @brief The depth-of-field battery — half-resolution layers, tile records, gather/fill
+        ///        targets, and the composite that folds them over the lit HDR.
+        ///
+        /// Its tile and fill pipeline layouts reserve the bloom down/up set layout, so it is
+        /// constructed after the bloom subsystem exists; Recreate rebuilds the chain after the
+        /// g-buffer depth and HDR targets, whose views its prefilter set binds.
+        Unique<DofChain> m_Dof;
+
         /// @brief The entity-id picking cluster + its request → stage → poll state machine; created at Create.
         ///
         /// Owns the R32Uint EntityId target + dedicated depth (allocated only while picking is on),
@@ -677,6 +686,13 @@ namespace Veng::Renderer
         /// Null unless the Final arm is built while a live HdrTail-placed field exists
         /// (m_PointFieldActive).
         Unique<ScenePass> m_PointFieldPass;
+
+        /// @brief The depth-of-field composite, held outside m_Passes and declared at the HDR tail
+        ///        anchor between the point fields and the bloom sweep.
+        ///
+        /// Null unless the chain is fully wired (the Final arm with Settings.DepthOfField); the
+        /// CoC debug arm declares only the chain's first two compute stages, never this.
+        Unique<ScenePass> m_DofCompositePass;
 
         /// @brief The scene-color point-field pass, for fields placed in the lit scene color.
         ///
@@ -807,6 +823,24 @@ namespace Veng::Renderer
         ResourceId m_SsaoId;
         /// @brief Imported id for the SSR lit scene-color intermediate.
         ResourceId m_SsrSceneId;
+        /// @brief Imported id for the depth-of-field near-field prefiltered layer.
+        ResourceId m_DofNearId;
+        /// @brief Imported id for the depth-of-field far-field prefiltered layer.
+        ResourceId m_DofFarId;
+        /// @brief Imported id for the depth-of-field signed-radius/view-depth target.
+        ResourceId m_DofCocId;
+        /// @brief Imported id for the depth-of-field tile records.
+        ResourceId m_DofTileId;
+        /// @brief Imported id for the near-layer ring-gather destination.
+        ResourceId m_DofNearBlurId;
+        /// @brief Imported id for the far-layer ring-gather destination.
+        ResourceId m_DofFarBlurId;
+        /// @brief Imported id for the near-layer fill destination.
+        ResourceId m_DofNearFillId;
+        /// @brief Imported id for the far-layer fill destination.
+        ResourceId m_DofFarFillId;
+        /// @brief Imported id for the depth-of-field lit scene-color intermediate.
+        ResourceId m_DofSceneId;
         /// @brief Imported id for the refraction scene-color intermediate.
         ResourceId m_RefractionSceneId;
         /// @brief Imported id for the refraction scene-depth intermediate.
@@ -887,6 +921,17 @@ namespace Veng::Renderer
         /// @brief True when the last Rebuild wired the SSR passes (Final mode + Settings.SSR, or the
         ///        Reflections debug arm). Execute binds the SSR imports only when true.
         bool m_SsrActive = false;
+
+        /// @brief True when the last Rebuild wired the depth-of-field chain (Final mode +
+        ///        Settings.DepthOfField, or the CoC debug arm). Execute binds its imports only when
+        ///        true.
+        bool m_DofActive = false;
+
+        /// @brief True when the last Rebuild wired the full chain including the composite.
+        ///
+        /// False in the debug-only case, where the gather, fill, and composite stay off and the
+        /// HDR tail is untouched.
+        bool m_DofComposited = false;
 
         /// @brief True when the last Rebuild wired the scene-color copy pass (a scene-composited
         ///        mode + Settings.Refraction). Execute binds the refraction import and populates

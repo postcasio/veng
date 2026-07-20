@@ -386,6 +386,7 @@ namespace Veng
             runner.ResolveCameraView(world, viewer, aspect).value_or(DefaultCameraView(aspect));
         state.Delta = delta;
         state.Alpha = alpha;
+        ResolveDofViewState(state, static_cast<f32>(output->GetImage()->GetHeight()));
         viewport.SetViewState(state);
     }
 

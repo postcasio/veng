@@ -29,6 +29,8 @@
 #include "RefractionGrab.h"
 #include "SkyCubemapBake.h"
 #include "SkyResolver.h"
+#include "DofChain.h"
+#include "Passes/DofCompositeScenePass.h"
 #include "SsrChain.h"
 #include "TaaResolve.h"
 
@@ -325,6 +327,9 @@ namespace Veng::Renderer
         // already exist, so the chain is constructed after those subsystems and CreatePipelines.
         m_Ssr = SsrChain::Create(m_Context, m_Assets, m_GpuCull->GetHiZReduceLayout(),
                                  m_Bloom->GetDownUpSetLayout());
+        // The depth-of-field chain's tile and fill pipeline layouts reserve the same bloom down/up
+        // set layout, so it is likewise constructed after the bloom subsystem.
+        m_Dof = DofChain::Create(m_Context, m_Assets, m_Bloom->GetDownUpSetLayout(), HdrFormat);
 
         CreateOutput();
         CreateGBuffer();
@@ -336,6 +341,8 @@ namespace Veng::Renderer
         m_Bloom->Resize(m_Extent, m_HdrView);
         // The min-Z reduce sets bind the fresh depth view from the g-buffer above.
         m_Ssr->Recreate(m_Settings, m_Extent, m_DepthView, m_GpuCull->GetHiZReduceSetLayout(),
+                        m_Bloom->GetDownUpSetLayout());
+        m_Dof->Recreate(m_Settings, m_Extent, m_HdrView, m_DepthView,
                         m_Bloom->GetDownUpSetLayout());
         m_Refraction->Recreate(m_Settings, m_Extent);
         // The metering set binds the HDR target, so the meter is created after CreateHdr.
@@ -854,6 +861,16 @@ namespace Veng::Renderer
             (m_Settings.Mode == DebugView::Final && m_Settings.SSR) || debugReflections;
         m_SsrActive = ssrActive;
 
+        // Depth of field is a Final-only effect plus its own debug arm, the same gate shape. The
+        // debug arm force-wires the chain with the feature off, but only its first two stages: the
+        // gather, fill, and composite stay off, so inspecting the circle of confusion never alters
+        // the HDR tail.
+        const bool dofActive = (m_Settings.Mode == DebugView::Final && m_Settings.DepthOfField) ||
+                               m_Settings.Mode == DebugView::CoC;
+        const bool dofComposited = m_Settings.Mode == DebugView::Final && m_Settings.DepthOfField;
+        m_DofActive = dofActive;
+        m_DofComposited = dofComposited;
+
         // The scene-color copy runs wherever the translucent composite does (the Final view and
         // the Bloom debug arm), so a refractive material behaves identically in both.
         const bool refractionActive = sceneComposited && m_Settings.Refraction;
@@ -906,7 +923,37 @@ namespace Veng::Renderer
             m_SsrHiZChainId =
                 graph.ImportImageMips("SceneRenderer SSR MinZ", m_Ssr->GetHiZMipCount());
         }
-        const ResourceId sceneColorId = ssrActive ? m_SsrSceneId : hdrId;
+        // Depth of field splices in the same way: the tail writes the chain's scene-color
+        // intermediate and the composite writes the HDR target, so bloom, metering, and tonemap
+        // read the id they always did and no extra copy appears.
+        m_DofSceneId = ResourceId{};
+        m_DofNearId = ResourceId{};
+        m_DofFarId = ResourceId{};
+        m_DofCocId = ResourceId{};
+        m_DofTileId = ResourceId{};
+        m_DofNearBlurId = ResourceId{};
+        m_DofFarBlurId = ResourceId{};
+        m_DofNearFillId = ResourceId{};
+        m_DofFarFillId = ResourceId{};
+        if (dofActive)
+        {
+            m_DofNearId = graph.Import("SceneRenderer DoF Near");
+            m_DofFarId = graph.Import("SceneRenderer DoF Far");
+            m_DofCocId = graph.Import("SceneRenderer DoF CoC");
+            m_DofTileId = graph.Import("SceneRenderer DoF Tiles");
+        }
+        if (dofComposited)
+        {
+            m_DofSceneId = graph.Import("SceneRenderer DoF Scene");
+            m_DofNearBlurId = graph.Import("SceneRenderer DoF Near Blur");
+            m_DofFarBlurId = graph.Import("SceneRenderer DoF Far Blur");
+            m_DofNearFillId = graph.Import("SceneRenderer DoF Near Fill");
+            m_DofFarFillId = graph.Import("SceneRenderer DoF Far Fill");
+        }
+
+        // The id the HDR tail writes before the DoF composite hands the HDR target on.
+        const ResourceId dofTargetId = dofComposited ? m_DofSceneId : hdrId;
+        const ResourceId sceneColorId = ssrActive ? m_SsrSceneId : dofTargetId;
         const ResourceId lightingTargetId = taaActive ? litId : sceneColorId;
 
         // The refraction copy reads the same target the translucent pass blends over, whichever
@@ -918,8 +965,10 @@ namespace Veng::Renderer
             m_RefractionSceneId = graph.Import("SceneRenderer Refraction Scene");
             m_RefractionDepthId = graph.Import("SceneRenderer Refraction Depth");
         }
+        const TextureHandle dofTargetHandle = dofComposited ? m_Dof->GetSceneHandle() : m_HdrHandle;
         const TextureHandle lightingTargetHandle =
-            taaActive ? m_Taa->GetLitHandle() : (ssrActive ? m_Ssr->GetSceneHandle() : m_HdrHandle);
+            taaActive ? m_Taa->GetLitHandle()
+                      : (ssrActive ? m_Ssr->GetSceneHandle() : dofTargetHandle);
 
         ResourceId shadowId{};
         if (shadowActive)
@@ -958,6 +1007,7 @@ namespace Veng::Renderer
 
         m_Passes.clear();
         m_PointFieldPass.reset();
+        m_DofCompositePass.reset();
         m_ScenePointFieldPass = nullptr;
 
         // The pass index the HDR tail (SSR composite, point fields, bloom sweep) is declared
@@ -1138,6 +1188,16 @@ namespace Veng::Renderer
                     ->SetForceDirect(m_PointFieldForceDirect);
             }
 
+            // The composite is declared at the tail anchor (between the point fields and the bloom
+            // read of the finished HDR), so like the point-field pass it is held outside m_Passes.
+            if (dofComposited)
+            {
+                m_DofCompositePass = CreateUnique<DofCompositeScenePass>(
+                    m_Context, m_Dof->GetCompositePipeline(), m_DofNearFillId,
+                    m_Dof->GetNearFillHandle(), m_DofFarFillId, m_Dof->GetFarFillHandle(), m_HdrId,
+                    m_Dof->GetSamplerHandle(), m_Dof->GetHalfExtent(), m_Extent);
+            }
+
             // Tonemap source: bloom composite when bloom is on, raw HDR otherwise.
             ResourceId tonemapSourceId = m_HdrId;
             TextureHandle tonemapSourceHandle = m_HdrHandle;
@@ -1294,6 +1354,18 @@ namespace Veng::Renderer
                 m_Context, m_DebugBlits->Albedo, m_Extent,
                 FullscreenBlitScenePass::Source::Reflections));
             break;
+        case DebugView::CoC:
+            // The chain's prefilter reads the lit HDR, so lighting is force-wired here as the
+            // Reflections arm force-wires it. The arm terminates on the depth blit — the channel
+            // the circle of confusion is derived from.
+            m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
+                m_Context, m_LightingPipeline, m_Extent, /*useSsao=*/false, m_Shadows->GetSet(),
+                m_Shadows->GetConstantsRingStride(), m_Shadows->GetPunctualRingStride(),
+                m_SkyResolver->GetIbl().GetSet(), m_SkyResolver->GetIbl().GetPrefilterMipCount(),
+                skylightWanted, iblAllowed));
+            m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
+                m_Context, m_DebugBlits->Depth, m_Extent, FullscreenBlitScenePass::Source::Depth));
+            break;
         case DebugView::Emissive:
             // The g-buffer pass writes the emissive channel (G4); this blit shows the authored
             // emissive contribution alone, the channel inspectable like every other g-buffer arm.
@@ -1373,16 +1445,32 @@ namespace Veng::Renderer
                 if (ssrActive)
                 {
                     m_Ssr->Declare(graph, m_SsrSceneId, m_SsrReflectionChainId, m_SsrHiZChainId,
-                                   m_NormalId, m_OrmId, m_DepthId, m_HdrId, m_DepthHandle,
+                                   m_NormalId, m_OrmId, m_DepthId, dofTargetId, m_DepthHandle,
                                    m_NormalHandle, m_OrmHandle, m_AlbedoHandle, m_SamplerHandle);
                 }
                 if (m_PointFieldPass != nullptr)
                 {
-                    // The fields write the final HDR target, not the pre-TAA/SSR lit target the
-                    // in-list passes see as io.Hdr.
+                    // The fields write the last scene-color target of the tail, not the pre-TAA/SSR
+                    // lit target the in-list passes see as io.Hdr.
                     PassIO fieldIo = io;
-                    fieldIo.Hdr = m_HdrId;
+                    fieldIo.Hdr = dofTargetId;
                     m_PointFieldPass->Declare(graph, fieldIo);
+                }
+                if (dofActive)
+                {
+                    // The debug arm has no scene intermediate, so its prefilter reads the HDR
+                    // target directly — matching the source view its descriptor set bound.
+                    m_Dof->Declare(graph, dofComposited ? m_DofSceneId : m_HdrId, m_DepthId,
+                                   m_DofNearId, m_DofFarId, m_DofCocId, m_DofTileId,
+                                   m_DofNearBlurId, m_DofFarBlurId, m_DofNearFillId, m_DofFarFillId,
+                                   /*stagesOnly=*/!dofComposited);
+                }
+                if (m_DofCompositePass != nullptr)
+                {
+                    PassIO dofIo = io;
+                    dofIo.Hdr = m_DofSceneId;
+                    dofIo.HdrHandle = m_Dof->GetSceneHandle();
+                    m_DofCompositePass->Declare(graph, dofIo);
                 }
                 if (bloomActive)
                 {
@@ -1909,6 +1997,8 @@ namespace Veng::Renderer
         m_Bloom->Resize(m_Extent, m_HdrView);
         m_Ssr->Recreate(m_Settings, m_Extent, m_DepthView, m_GpuCull->GetHiZReduceSetLayout(),
                         m_Bloom->GetDownUpSetLayout());
+        m_Dof->Recreate(m_Settings, m_Extent, m_HdrView, m_DepthView,
+                        m_Bloom->GetDownUpSetLayout());
         m_Refraction->Recreate(m_Settings, m_Extent);
         // The HDR target moved; rebind the metering source and re-snap the adaptation so the
         // resized frame is not mis-exposed off a stale ring value.
@@ -1938,6 +2028,8 @@ namespace Veng::Renderer
         // The bloom pyramid is extent-driven (unchanged here); only the kernel choice may change.
         m_Bloom->Reconfigure(m_Settings.Kernel);
         m_Ssr->Recreate(m_Settings, m_Extent, m_DepthView, m_GpuCull->GetHiZReduceSetLayout(),
+                        m_Bloom->GetDownUpSetLayout());
+        m_Dof->Recreate(m_Settings, m_Extent, m_HdrView, m_DepthView,
                         m_Bloom->GetDownUpSetLayout());
         m_Refraction->Recreate(m_Settings, m_Extent);
         m_Shadows->Reconfigure(m_Settings);
@@ -2323,6 +2415,21 @@ namespace Veng::Renderer
             {
                 bindings.push_back({m_SsrHiZChainId.Level(level), hiZMips[level]});
             }
+        }
+        if (m_DofActive)
+        {
+            bindings.push_back({m_DofNearId, m_Dof->GetNearView()});
+            bindings.push_back({m_DofFarId, m_Dof->GetFarView()});
+            bindings.push_back({m_DofCocId, m_Dof->GetCocView()});
+            bindings.push_back({m_DofTileId, m_Dof->GetTileView()});
+        }
+        if (m_DofComposited)
+        {
+            bindings.push_back({m_DofSceneId, m_Dof->GetSceneView()});
+            bindings.push_back({m_DofNearBlurId, m_Dof->GetNearBlurView()});
+            bindings.push_back({m_DofFarBlurId, m_Dof->GetFarBlurView()});
+            bindings.push_back({m_DofNearFillId, m_Dof->GetNearFillView()});
+            bindings.push_back({m_DofFarFillId, m_Dof->GetFarFillView()});
         }
         // Bind each hi-Z mip's per-frame storage view to its per-mip import slot.
         const std::vector<Ref<ImageView>>& hiZMipViews = m_GpuCull->GetHiZMipViews();
