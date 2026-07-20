@@ -35,10 +35,10 @@ namespace Veng::Net
         u64 Hi = 0;
 
         /// @brief Equality over both halves.
-        [[nodiscard]] bool operator==(const AccountId&) const = default;
+        [[nodiscard]] constexpr bool operator==(const AccountId&) const = default;
 
         /// @brief Returns whether the id names an account (any nonzero bit); zero is "no account".
-        [[nodiscard]] bool IsValid() const { return Lo != 0 || Hi != 0; }
+        [[nodiscard]] constexpr bool IsValid() const { return Lo != 0 || Hi != 0; }
     };
 
     /// @brief Mints a random, valid account id — the ephemeral per-process default.
