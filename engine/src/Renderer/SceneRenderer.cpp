@@ -3,32 +3,32 @@
 #include <Veng/Renderer/LtcLut.h>
 #include <Veng/Asset/RawAsset.h>
 
+#include "AtmospherePrecompute.h"
 #include "AutoExposureMeter.h"
 #include "BloomPyramid.h"
-#include "DebugDrawScenePass.h"
 #include "DrawPlan.h"
 #include "EnvironmentIbl.h"
 #include "GpuBlocks.h"
 #include "GpuCullSystem.h"
 #include "PickingSystem.h"
-#include "Passes/AtmospherePrecompute.h"
 #include "Passes/DebugBlitScenePasses.h"
+#include "Passes/DebugDrawScenePass.h"
 #include "Passes/DeferredLightingScenePass.h"
 #include "Passes/GBufferScenePass.h"
 #include "Passes/PickingScenePass.h"
 #include "Passes/PointFieldScenePass.h"
+#include "Passes/PunctualShadowScenePass.h"
+#include "Passes/ShadowScenePass.h"
 #include "Passes/SkyScenePass.h"
+#include "Passes/SkyboxScenePass.h"
+#include "Passes/SsaoScenePass.h"
 #include "Passes/TaaScenePass.h"
 #include "Passes/TranslucentScenePass.h"
 #include "Passes/VolumeScenePass.h"
-#include "ShadowScenePass.h"
-#include "PunctualShadowScenePass.h"
 #include "ShadowSystem.h"
 #include "RefractionGrab.h"
-#include "SkyboxScenePass.h"
 #include "SkyCubemapBake.h"
 #include "SkyResolver.h"
-#include "SsaoScenePass.h"
 #include "SsrChain.h"
 #include "TaaResolve.h"
 
@@ -1953,7 +1953,7 @@ namespace Veng::Renderer
         {
             DebugDraw& Accumulator;
             ~DebugDrawClearGuard() { Accumulator.Clear(); }
-        } debugDrawClearGuard{m_DebugDraw};
+        } const debugDrawClearGuard{m_DebugDraw};
 
         // Dynamic resolution: render into the top-left round(allocExtent * scale) sub-rect of the
         // (high-water-mark-allocated) targets; the terminal tonemap upscales it to the full output.

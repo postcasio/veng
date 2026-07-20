@@ -213,9 +213,9 @@ add_library(veng SHARED
         src/Renderer/Passes/DeferredLightingScenePass.cpp
         src/Renderer/Passes/TaaScenePass.cpp
         src/Renderer/Passes/DebugBlitScenePasses.cpp
-        src/Renderer/PostProcessScenePass.cpp
+        src/Renderer/Passes/PostProcessScenePass.cpp
         src/Renderer/DebugDraw.cpp
-        src/Renderer/DebugDrawScenePass.cpp
+        src/Renderer/Passes/DebugDrawScenePass.cpp
         src/Renderer/PointField.cpp
         src/Renderer/Passes/PointFieldScenePass.cpp
         src/Renderer/VolumeField.cpp
@@ -234,8 +234,8 @@ add_library(veng SHARED
         src/Renderer/ShadowCascades.cpp
         src/Renderer/HiZHistory.cpp
         src/Renderer/PunctualShadows.cpp
-        src/Renderer/ShadowScenePass.cpp
-        src/Renderer/PunctualShadowScenePass.cpp
+        src/Renderer/Passes/ShadowScenePass.cpp
+        src/Renderer/Passes/PunctualShadowScenePass.cpp
         src/Renderer/ShadowSystem.cpp
         src/Renderer/BloomPyramid.cpp
         src/Renderer/AutoExposureMeter.cpp
@@ -244,12 +244,12 @@ add_library(veng SHARED
         src/Renderer/RefractionGrab.cpp
         src/Renderer/GpuCullSystem.cpp
         src/Renderer/PickingSystem.cpp
-        src/Renderer/SkyboxScenePass.cpp
+        src/Renderer/Passes/SkyboxScenePass.cpp
         src/Renderer/SkyCubemapBake.cpp
         src/Renderer/SkyResolver.cpp
-        src/Renderer/Passes/AtmospherePrecompute.cpp
+        src/Renderer/AtmospherePrecompute.cpp
         src/Renderer/Passes/SkyScenePass.cpp
-        src/Renderer/SsaoScenePass.cpp
+        src/Renderer/Passes/SsaoScenePass.cpp
         src/Renderer/ShaderInterface.cpp
         $<TARGET_OBJECTS:veng_backend_objs>
         src/Vendor/ImGui.cpp

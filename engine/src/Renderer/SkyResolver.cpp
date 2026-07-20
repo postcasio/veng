@@ -2,7 +2,7 @@
 
 #include "EnvironmentIbl.h"
 #include "SkyCubemapBake.h"
-#include "Passes/AtmospherePrecompute.h"
+#include "AtmospherePrecompute.h"
 
 #include <span>
 #include <vector>

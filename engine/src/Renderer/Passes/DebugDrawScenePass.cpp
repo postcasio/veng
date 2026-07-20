@@ -12,7 +12,7 @@
 #include <Veng/Renderer/PipelineLayout.h>
 #include <Veng/Renderer/ScenePass.h>
 
-#include "Picking.h"
+#include "../Picking.h"
 
 #include <cstring>
 

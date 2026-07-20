@@ -50,10 +50,18 @@ single-owner** (nothing holds a `Ref` to one); `Create(const SceneRendererInfo&)
 The renderer is split along two conventions, and a new battery follows both:
 
 - **A pass lives in its own file under `Passes/`.** Every `ScenePass` — the g-buffer, deferred
-  lighting, translucent, picking, TAA, scene-color copy, the sky/point-field/volume passes, and
-  the debug blits — is a `.h/.cpp` pair in `src/Renderer/Passes/`. The renderer holds them in
-  `m_Passes` and wires them in `Rebuild`; each pass owns its own sizing, declared reads/writes,
-  and recording.
+  lighting, translucent, picking, TAA, scene-color copy, the directional and punctual shadow
+  passes, SSAO, the skybox, the sky/point-field/volume passes, the debug draw (and its companion
+  billboard pick), and the debug blits — is a `.h/.cpp` pair in `src/Renderer/Passes/`. The
+  renderer holds them in `m_Passes` and wires them in `Rebuild`; each pass owns its own sizing,
+  declared reads/writes, and recording. `PostProcessScenePass` is the one split case: its class
+  is declared in the public `Veng/Renderer/ScenePass.h`, so only its implementation
+  (`Passes/PostProcessScenePass.cpp`) lives here.
+
+  **`GatherPass` and `SwapChainCompositePass` sit outside this model by design.** Neither is a
+  `ScenePass` subclass nor an `m_Passes` member — they are the public gather/composite tail
+  consumed by `Application`, `ViewportCompositor`, and the tests, so their headers are public
+  (`Veng/Renderer/`) and their implementations stay directly in `src/Renderer/`.
 - **A battery's resources live on an owned internal subsystem.** Each cluster of images /
   pipelines / descriptor sets / bindless handles / per-frame work is a renderer-owned `Unique<>`
   object in `src/Renderer/` (forward-declared in `SceneRenderer.h`), on the `EnvironmentIbl`
