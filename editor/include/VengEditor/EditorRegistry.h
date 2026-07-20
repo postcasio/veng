@@ -19,6 +19,26 @@
 
 namespace Veng
 {
+    class AssetManager;
+    namespace Renderer
+    {
+        class Context;
+    }
+
+    /// @brief Engine services an asset-editor factory receives when it opens a panel.
+    ///
+    /// A game editor module registers its factories while the module loads, before the engine's
+    /// AssetManager and render Context exist, so a factory cannot capture them at registration. This
+    /// context is passed to OpenEditor instead — built by the host at open time, when the services
+    /// are live — so a game panel can load and inspect the asset it edits.
+    struct AssetEditorContext
+    {
+        /// @brief The asset manager the panel loads and hot-reloads its asset through.
+        AssetManager& Assets;
+        /// @brief The render context, for a panel that builds GPU resources (a preview target).
+        Renderer::Context& Context;
+    };
+
     /// @brief Factory that mints an EditorPanel for a given asset.
     ///
     /// Pure-virtual so a module supplies its own concrete editor without the
@@ -28,7 +48,10 @@ namespace Veng
     public:
         virtual ~AssetEditorFactory() = default;
         /// @brief Creates and returns the editor panel for the given asset id.
-        [[nodiscard]] virtual Unique<VengEditor::EditorPanel> OpenEditor(AssetId id) = 0;
+        /// @param id   The asset to open.
+        /// @param ctx  Live engine services the panel may capture (asset manager, render context).
+        [[nodiscard]] virtual Unique<VengEditor::EditorPanel> OpenEditor(
+            AssetId id, const AssetEditorContext& ctx) = 0;
     };
 
     /// @brief Inspector widget function for a single field.
@@ -79,11 +102,14 @@ namespace Veng
 
         /// @brief Creates an editor panel for an asset, or nullptr when its type has
         /// no registered factory.
-        [[nodiscard]] Unique<VengEditor::EditorPanel> CreateEditorFor(AssetTypeId type,
-                                                                      AssetId id) const
+        /// @param type The asset type whose factory to use.
+        /// @param id   The asset to open.
+        /// @param ctx  Live engine services passed through to the factory's OpenEditor.
+        [[nodiscard]] Unique<VengEditor::EditorPanel> CreateEditorFor(
+            AssetTypeId type, AssetId id, const AssetEditorContext& ctx) const
         {
             AssetEditorFactory* factory = AssetEditorFor(type);
-            return factory == nullptr ? nullptr : factory->OpenEditor(id);
+            return factory == nullptr ? nullptr : factory->OpenEditor(id, ctx);
         }
 
         /// @brief Returns the custom widget for a type, or nullptr when none is registered.

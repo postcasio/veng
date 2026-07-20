@@ -303,7 +303,12 @@ int main(const int argc, char** argv)
     // The editor consumes its own --project/--build-dir flags above; Application::Run reads only a
     // launcher-convention working-directory arg, so hand it just the program name (the editor
     // resolves the project and build dir as absolute paths, needing no working-directory selector).
-    Veng::Unique<VengEditor::EditorHost> host = VengEditor::EditorHost::Create(info);
+    // Declared before the host so it destructs after it: the modules hold the AssetLoader vtables
+    // (and factory closures) the base Application's AssetManager deletes in ~Application, which runs
+    // after every EditorHost member — so the module image must outlive the host (see LoadedModules,
+    // and the same discipline in launcher_main).
+    VengEditor::EditorHost::LoadedModules modules;
+    Veng::Unique<VengEditor::EditorHost> host = VengEditor::EditorHost::Create(info, modules);
 
 #ifdef VENG_EDITOR_WITH_MCP
     // The MCP server is constructed only under --mcp, so the editor's default launch and its smokes

@@ -28,6 +28,12 @@ namespace VengEditor
             /// The folder structure the asset browser builds its tree from
             /// (e.g. textures/brick_basecolor.tex.json).
             Veng::path RelativeSource;
+            /// @brief True for an entry the index synthesized rather than read from a manifest.
+            ///
+            /// A material's companion default MaterialInstance is emitted by the cook, not authored,
+            /// so it has no editable source of its own (Source is empty). The index registers it to
+            /// give the browser a name and folder; an asset editor must refuse to open it.
+            bool Synthesized = false;
         };
 
         /// @brief Parses the manifest at manifestPath and returns the resulting index.

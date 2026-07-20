@@ -40,49 +40,56 @@ namespace VengEditor
         }
     }
 
-    AssetBrowserPanel::AssetBrowserPanel(path packPath, const AssetSourceIndex& sources,
+    AssetBrowserPanel::AssetBrowserPanel(vector<path> packPaths, const AssetSourceIndex& sources,
                                          PanelHost& host)
-        : m_PackPath(std::move(packPath)), m_Sources(sources), m_Host(host)
+        : m_PackPaths(std::move(packPaths)), m_Sources(sources), m_Host(host)
     {
     }
 
     void AssetBrowserPanel::LoadTable()
     {
         m_Loaded = true;
-        m_Root.Name = m_PackPath.filename().string();
 
-        const Result<ArchiveReader> reader = ArchiveReader::Open(m_PackPath);
-        if (!reader)
+        for (const path& packPath : m_PackPaths)
         {
-            Log::Error("Asset browser: failed to open {}: {}", m_PackPath.string(), reader.error());
-            return;
-        }
-
-        for (const ArchiveTocEntry& entry : reader->Entries())
-        {
-            const AssetSourceIndex::Entry* source = m_Sources.Find(entry.Id);
-
-            AssetEntry asset{
-                .Id = entry.Id,
-                .Type = entry.Type,
-                .Size = entry.Size,
-                .Name = AssetDisplayName(entry.Id, m_Sources),
-            };
-
-            // Descend (creating) the folder chain from the source's parent path; an asset
-            // with no manifest source lands directly at the root.
-            FolderNode* node = &m_Root;
-            if (source != nullptr)
+            const Result<ArchiveReader> reader = ArchiveReader::Open(packPath);
+            if (!reader)
             {
-                for (const path& part : source->RelativeSource.parent_path())
-                {
-                    const string name = part.string();
-                    FolderNode& child = node->Children[name];
-                    child.Name = name;
-                    node = &child;
-                }
+                Log::Error("Asset browser: failed to open {}: {}", packPath.string(),
+                           reader.error());
+                continue;
             }
-            node->Assets.push_back(std::move(asset));
+
+            // Each pack is its own top-level folder, so a multi-pack project's packs sit side by
+            // side under the root rather than one pack's assets hiding the rest.
+            const string packName = packPath.stem().string();
+            FolderNode& packNode = m_Root.Children[packName];
+            packNode.Name = packName;
+
+            for (const ArchiveTocEntry& entry : reader->Entries())
+            {
+                AssetEntry asset{
+                    .Id = entry.Id,
+                    .Type = entry.Type,
+                    .Size = entry.Size,
+                    .Name = AssetDisplayName(entry.Id, m_Sources),
+                };
+
+                // Descend (creating) the folder chain from the source's parent path; an asset
+                // with no manifest source lands directly in its pack folder.
+                FolderNode* node = &packNode;
+                if (const AssetSourceIndex::Entry* source = m_Sources.Find(entry.Id))
+                {
+                    for (const path& part : source->RelativeSource.parent_path())
+                    {
+                        const string name = part.string();
+                        FolderNode& child = node->Children[name];
+                        child.Name = name;
+                        node = &child;
+                    }
+                }
+                node->Assets.push_back(std::move(asset));
+            }
         }
     }
 

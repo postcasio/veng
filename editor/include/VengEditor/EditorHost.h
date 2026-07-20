@@ -68,8 +68,27 @@ namespace VengEditor
     class EditorHost : public Veng::Application, public PanelHost
     {
     public:
-        /// @brief Constructs and returns an EditorHost from the given parameters.
-        static Veng::Unique<EditorHost> Create(const EditorHostInfo& info);
+        /// @brief The game (and optional editor) modules the editor dlopens, owned by the caller.
+        ///
+        /// The modules must outlive the EditorHost: their code holds the factory closures, reflected
+        /// descriptors, and — critically — the AssetLoader vtables the base Application's AssetManager
+        /// deletes in its destructor, which runs after every EditorHost member. Held as an EditorHost
+        /// member a module would unload before that base teardown; owned by the caller and declared
+        /// before the host, it outlives it, exactly as launcher_main owns the game module.
+        struct LoadedModules
+        {
+            /// @brief The game module (lib<name>), always present after a successful Create.
+            Veng::Unique<Veng::LoadedModule> Game;
+            /// @brief The optional editor-extension module, present when the project names one.
+            Veng::optional<Veng::LoadedModule> Editor;
+        };
+
+        /// @brief Constructs and returns an EditorHost, loading its modules into @p outModules.
+        ///
+        /// @param info        Construction parameters (project path, cook backend, engine app info).
+        /// @param outModules  Receives the loaded game/editor modules; the caller must keep it alive
+        ///                    until after the returned host is destroyed (declare it first).
+        static Veng::Unique<EditorHost> Create(const EditorHostInfo& info, LoadedModules& outModules);
 
         /// @brief Destroys the host, releasing its panels, pending panels, asset sources, and status
         ///        tracker while the base engine services are still alive.
@@ -223,9 +242,7 @@ namespace VengEditor
         struct Registries;
         /// @brief Private constructor; use Create().
         EditorHost(const EditorHostInfo& info, Veng::ProjectSettings settings, Veng::path buildDir,
-                   Veng::path corePackManifest, Veng::Unique<Registries> registries,
-                   Veng::Unique<Veng::LoadedModule> gameModule,
-                   Veng::optional<Veng::LoadedModule> editorModule);
+                   Veng::path corePackManifest, Veng::Unique<Registries> registries);
 
         /// @brief Draws the main menu bar (File / Edit / Window menus).
         void DrawMenuBar();
@@ -265,15 +282,9 @@ namespace VengEditor
 
         EditorHostInfo m_Info;
 
-        /// @brief Loaded modules; must outlive every registered closure and reflected
-        /// descriptor. Declared before m_Registries so they are destroyed after it
-        /// (C++ destroys members in reverse declaration order).
-        Veng::Unique<Veng::LoadedModule> m_GameModule;
-        /// @brief Optional game editor-extension module.
-        Veng::optional<Veng::LoadedModule> m_EditorModule;
-
-        /// @brief Declared after the modules so it is destroyed first; its
-        /// ApplicationRegistry holds closures whose code lives in the game module.
+        /// @brief The module registries; their ApplicationRegistry / AssetLoaderRegistry hold
+        /// closures whose code lives in the game module. The caller-owned LoadedModules outlive
+        /// this host (see Create), so destroying these in ~EditorHost is safe.
         Veng::Unique<Registries> m_Registries;
 
         /// @brief AssetId to source-file index, parsed once from the manifest.

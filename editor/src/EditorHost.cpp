@@ -246,7 +246,8 @@ namespace VengEditor
             {
             }
 
-            [[nodiscard]] Unique<EditorPanel> OpenEditor(AssetId id) override
+            [[nodiscard]] Unique<EditorPanel> OpenEditor(AssetId id,
+                                                         const AssetEditorContext& /*ctx*/) override
             {
                 const AssetSourceIndex::Entry* entry = m_Index.Find(id);
                 if (!entry)
@@ -284,7 +285,8 @@ namespace VengEditor
             {
             }
 
-            [[nodiscard]] Unique<EditorPanel> OpenEditor(AssetId id) override
+            [[nodiscard]] Unique<EditorPanel> OpenEditor(AssetId id,
+                                                         const AssetEditorContext& /*ctx*/) override
             {
                 const AssetSourceIndex::Entry* entry = m_Index.Find(id);
                 if (!entry)
@@ -322,7 +324,8 @@ namespace VengEditor
             {
             }
 
-            [[nodiscard]] Unique<EditorPanel> OpenEditor(AssetId id) override
+            [[nodiscard]] Unique<EditorPanel> OpenEditor(AssetId id,
+                                                         const AssetEditorContext& /*ctx*/) override
             {
                 const AssetSourceIndex::Entry* entry = m_Index.Find(id);
                 if (!entry)
@@ -330,6 +333,15 @@ namespace VengEditor
                     Log::Error(
                         "Material-instance editor: no source manifest entry for asset 0x{:X}",
                         id.Value);
+                    return nullptr;
+                }
+                if (entry->Synthesized)
+                {
+                    // A material's default instance has no source file; it is edited through the
+                    // parent material, not as a standalone instance.
+                    Log::Warn("Material-instance editor: 0x{:X} is a material's default instance "
+                              "(no editable source); edit the parent material instead",
+                              id.Value);
                     return nullptr;
                 }
 
@@ -358,7 +370,8 @@ namespace VengEditor
             {
             }
 
-            [[nodiscard]] Unique<EditorPanel> OpenEditor(AssetId id) override
+            [[nodiscard]] Unique<EditorPanel> OpenEditor(AssetId id,
+                                                         const AssetEditorContext& /*ctx*/) override
             {
                 const AssetSourceIndex::Entry* entry = m_Index.Find(id);
                 if (!entry)
@@ -393,7 +406,8 @@ namespace VengEditor
             {
             }
 
-            [[nodiscard]] Unique<EditorPanel> OpenEditor(AssetId id) override
+            [[nodiscard]] Unique<EditorPanel> OpenEditor(AssetId id,
+                                                         const AssetEditorContext& /*ctx*/) override
             {
                 const AssetSourceIndex::Entry* entry = m_Index.Find(id);
                 if (!entry)
@@ -426,7 +440,8 @@ namespace VengEditor
             {
             }
 
-            [[nodiscard]] Unique<EditorPanel> OpenEditor(AssetId id) override
+            [[nodiscard]] Unique<EditorPanel> OpenEditor(AssetId id,
+                                                         const AssetEditorContext& /*ctx*/) override
             {
                 const AssetSourceIndex::Entry* entry = m_Index.Find(id);
                 if (!entry)
@@ -458,7 +473,8 @@ namespace VengEditor
             {
             }
 
-            [[nodiscard]] Unique<EditorPanel> OpenEditor(AssetId id) override
+            [[nodiscard]] Unique<EditorPanel> OpenEditor(AssetId id,
+                                                         const AssetEditorContext& /*ctx*/) override
             {
                 const AssetSourceIndex::Entry* entry = m_Index.Find(id);
                 if (!entry)
@@ -494,7 +510,8 @@ namespace VengEditor
             {
             }
 
-            [[nodiscard]] Unique<EditorPanel> OpenEditor(AssetId id) override
+            [[nodiscard]] Unique<EditorPanel> OpenEditor(AssetId id,
+                                                         const AssetEditorContext& /*ctx*/) override
             {
                 return CreateUnique<PrefabEditorPanel>(id, m_App, m_Assets, m_ImGui, m_Types,
                                                        m_Editors, m_Sources, m_Input, m_Router,
@@ -528,7 +545,8 @@ namespace VengEditor
             {
             }
 
-            [[nodiscard]] Unique<EditorPanel> OpenEditor(AssetId id) override
+            [[nodiscard]] Unique<EditorPanel> OpenEditor(AssetId id,
+                                                         const AssetEditorContext& /*ctx*/) override
             {
                 const AssetSourceIndex::Entry* entry = m_Index.Find(id);
                 if (!entry)
@@ -579,7 +597,7 @@ namespace VengEditor
         EditorRegistry Editor;
     };
 
-    Unique<EditorHost> EditorHost::Create(const EditorHostInfo& info)
+    Unique<EditorHost> EditorHost::Create(const EditorHostInfo& info, LoadedModules& outModules)
     {
         auto registries = CreateUnique<Registries>();
 
@@ -661,18 +679,20 @@ namespace VengEditor
         resolvedInfo.App.AssetTypes = &registries->AssetTypes;
         resolvedInfo.App.AssetLoaders = &registries->AssetLoaders;
 
-        auto gameModulePtr = CreateUnique<LoadedModule>(std::move(*gameModule));
-        return Unique<EditorHost>(new EditorHost(
-            resolvedInfo, std::move(settings), std::move(buildDir), std::move(corePackManifest),
-            std::move(registries), std::move(gameModulePtr), std::move(editorModule)));
+        // Hand the loaded modules to the caller, which owns them past this host's destruction: the
+        // base AssetManager deletes its module-provided AssetLoaders in ~Application (after every
+        // EditorHost member), so the module image must still be mapped then — see LoadedModules.
+        outModules.Game = CreateUnique<LoadedModule>(std::move(*gameModule));
+        outModules.Editor = std::move(editorModule);
+        return Unique<EditorHost>(new EditorHost(resolvedInfo, std::move(settings),
+                                                 std::move(buildDir), std::move(corePackManifest),
+                                                 std::move(registries)));
     }
 
     EditorHost::EditorHost(const EditorHostInfo& info, ProjectSettings settings, path buildDir,
-                           path corePackManifest, Unique<Registries> registries,
-                           Unique<LoadedModule> gameModule, optional<LoadedModule> editorModule)
+                           path corePackManifest, Unique<Registries> registries)
         : Application(info.App, registries->Types, registries->Systems), m_Info(info),
-          m_Registries(std::move(registries)), m_GameModule(std::move(gameModule)),
-          m_EditorModule(std::move(editorModule)), m_ProjectSettings(std::move(settings)),
+          m_Registries(std::move(registries)), m_ProjectSettings(std::move(settings)),
           m_ProjectFile(info.ProjectPath.value_or(path{})), m_BuildDir(std::move(buildDir)),
           m_CorePackManifest(std::move(corePackManifest))
     {
@@ -696,7 +716,10 @@ namespace VengEditor
 
     void EditorHost::OpenAssetEditor(AssetTypeId type, AssetId id)
     {
-        if (Unique<EditorPanel> panel = m_Registries->Editor.CreateEditorFor(type, id))
+        // Built at open time (not registration): a game module's factory registers before the engine
+        // services exist, so the panel receives them here, when they are live.
+        const AssetEditorContext ctx{.Assets = GetAssetManager(), .Context = GetRenderContext()};
+        if (Unique<EditorPanel> panel = m_Registries->Editor.CreateEditorFor(type, id, ctx))
         {
             m_PendingPanels.push_back(std::move(panel));
         }
@@ -852,12 +875,16 @@ namespace VengEditor
                                                       *GetImGuiLayer(), cookFor()));
         }
 
-        // The asset browser reads the first mounted pack (cooked in the build dir under the source
-        // manifest's stem); an unconfigured project leaves it with an empty path.
-        const path browserPack = m_ProjectSettings.Packs.empty()
-                                     ? path{}
-                                     : buildDir / m_ProjectSettings.Packs.front().stem();
-        m_Panels.push_back({CreateUnique<AssetBrowserPanel>(browserPack, *m_Sources, *this), true});
+        // The asset browser shows every pack the project owns (each cooked in the build dir under
+        // its source manifest's stem) as a top-level folder; an unconfigured project leaves it empty.
+        vector<path> browserPacks;
+        browserPacks.reserve(m_ProjectSettings.Packs.size());
+        for (const path& packSource : m_ProjectSettings.Packs)
+        {
+            browserPacks.push_back(buildDir / packSource.stem());
+        }
+        m_Panels.push_back(
+            {CreateUnique<AssetBrowserPanel>(std::move(browserPacks), *m_Sources, *this), true});
         m_Panels.push_back({CreateUnique<ConsolePanel>(), true});
         m_Panels.push_back(
             {CreateUnique<ProjectSettingsPanel>(

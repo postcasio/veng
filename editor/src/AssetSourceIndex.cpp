@@ -69,6 +69,38 @@ namespace VengEditor
                 .Source = manifestDir / source,
                 .RelativeSource = path{source},
             };
+
+            // A material may name a companion default MaterialInstance: the cook emits a
+            // zero-override instance at that id, and every direct material reference resolves it.
+            // It has no source file of its own, so register a synthesized entry — named
+            // "<material> (default)" beside the parent — so the browser shows it named and in-folder
+            // rather than as a loose, id-only asset at the root.
+            if (*type == AssetTypes::Material)
+            {
+                const optional<nlohmann::json> material = ReadJsonObject(manifestDir / source);
+                if (material && material->contains("defaultInstance") &&
+                    (*material)["defaultInstance"].is_string())
+                {
+                    const optional<AssetId> defaultId =
+                        ParseAssetId((*material)["defaultInstance"].get<std::string>());
+                    if (defaultId && !index.m_Entries.contains(defaultId->Value))
+                    {
+                        const path parentRel{source};
+                        path base = parentRel.filename().stem();
+                        if (base.has_extension())
+                        {
+                            base = base.stem();
+                        }
+                        index.m_Entries[defaultId->Value] = Entry{
+                            .Type = AssetTypes::MaterialInstance,
+                            .Source = {},
+                            .RelativeSource = parentRel.parent_path() /
+                                              (base.string() + " (default).vmatinst.json"),
+                            .Synthesized = true,
+                        };
+                    }
+                }
+            }
         }
 
         return index;

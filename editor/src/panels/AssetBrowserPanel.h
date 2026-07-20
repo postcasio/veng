@@ -11,22 +11,24 @@ namespace VengEditor
     class PanelHost;
     class AssetSourceIndex;
 
-    /// @brief Windows-Explorer-style browser over a mounted .vengpack.
+    /// @brief Windows-Explorer-style browser over the project's mounted packs.
     ///
-    /// A directory tree (left) built from the pack manifest's source paths drives a content
-    /// view (right) with three switchable layouts — a detail list, a multi-column list, and
-    /// an icon grid. Selecting an asset records the selection (consumed by the inspector);
+    /// A directory tree (left) built from every pack's TOC and the manifest source paths drives a
+    /// content view (right) with three switchable layouts — a detail list, a multi-column list, and
+    /// an icon grid. Each pack is a top-level folder under the root, so a multi-pack project's packs
+    /// sit side by side. Selecting an asset records the selection (consumed by the inspector);
     /// double-clicking an asset asks the host to open the type's registered editor (no-op for
     /// an unregistered type), and double-clicking a folder descends into it. Every asset is a
     /// drag source carrying an AssetDragPayload, droppable onto an inspector AssetHandle field.
     class AssetBrowserPanel final : public EditorPanel
     {
     public:
-        /// @brief Opens the browser for the pack at @p packPath.
-        /// @param packPath  Path to the mounted .vengpack archive.
-        /// @param sources   Manifest source index supplying folder paths and display names.
-        /// @param host      Host the panel asks to open asset editors.
-        AssetBrowserPanel(Veng::path packPath, const AssetSourceIndex& sources, PanelHost& host);
+        /// @brief Opens the browser over the packs at @p packPaths.
+        /// @param packPaths  Paths to the mounted .vengpack archives, one per project pack.
+        /// @param sources    Manifest source index supplying folder paths and display names.
+        /// @param host       Host the panel asks to open asset editors.
+        AssetBrowserPanel(Veng::vector<Veng::path> packPaths, const AssetSourceIndex& sources,
+                          PanelHost& host);
 
         [[nodiscard]] Veng::string_view GetTitle() const override { return "Asset Browser"; }
         void OnUI() override;
@@ -59,7 +61,7 @@ namespace VengEditor
         /// @brief A folder node in the source-path tree.
         struct FolderNode
         {
-            /// @brief Folder name (the root's name is the pack filename).
+            /// @brief Folder name (the root is unnamed; each pack is a top-level folder).
             Veng::string Name;
             /// @brief Subfolders, keyed and ordered by name.
             Veng::map<Veng::string, FolderNode> Children;
@@ -67,13 +69,13 @@ namespace VengEditor
             Veng::vector<AssetEntry> Assets;
         };
 
-        Veng::path m_PackPath;
+        Veng::vector<Veng::path> m_PackPaths;
         const AssetSourceIndex& m_Sources;
         PanelHost& m_Host;
 
-        /// @brief The folder tree, root at the pack.
+        /// @brief The folder tree; each pack is a top-level folder under the root.
         FolderNode m_Root;
-        /// @brief True once the pack TOC has been read into the tree.
+        /// @brief True once every pack's TOC has been read into the tree.
         bool m_Loaded = false;
 
         /// @brief Active content-view layout.
@@ -85,7 +87,7 @@ namespace VengEditor
         /// @brief Case-insensitive name filter applied to the content view.
         Veng::string m_Filter;
 
-        /// @brief Reads the pack TOC into the folder tree; called once on first OnUI.
+        /// @brief Reads every pack's TOC into the folder tree; called once on first OnUI.
         void LoadTable();
         /// @brief Returns the node named by m_CurrentFolder, falling back to root on a stale path.
         FolderNode& CurrentFolder();
