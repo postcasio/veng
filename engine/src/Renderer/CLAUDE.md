@@ -51,7 +51,8 @@ The renderer is split along two conventions, and a new battery follows both:
 
 - **A pass lives in its own file under `Passes/`.** Every `ScenePass` — the g-buffer, deferred
   lighting, translucent, picking, TAA, scene-color copy, the directional and punctual shadow
-  passes, SSAO, the skybox, the sky/point-field/volume passes, the debug draw (and its companion
+  passes, SSAO, the skybox, the sky/point-field/volume passes, the depth-of-field composite, the
+  debug draw (and its companion
   billboard pick), and the debug blits — is a `.h/.cpp` pair in `src/Renderer/Passes/`. The
   renderer holds them in `m_Passes` and wires them in `Rebuild`; each pass owns its own sizing,
   declared reads/writes, and recording. `PostProcessScenePass` is the one split case: its class
@@ -66,6 +67,7 @@ The renderer is split along two conventions, and a new battery follows both:
   pipelines / descriptor sets / bindless handles / per-frame work is a renderer-owned `Unique<>`
   object in `src/Renderer/` (forward-declared in `SceneRenderer.h`), on the `EnvironmentIbl`
   precedent: `ShadowSystem`, `BloomPyramid`, `AutoExposureMeter`, `TaaResolve`, `SsrChain`,
+  `DofChain`,
   `RefractionGrab`, `GpuCullSystem`, `PickingSystem`, and `SkyResolver` (which itself owns the
   three sky radiance-cube helpers `EnvironmentIbl` / `AtmospherePrecompute` / `SkyCubemapBake`).
   A subsystem owns its full vertical slice — its `Create`/recreate path, its `Declare*`
@@ -208,6 +210,94 @@ Kawase** filter for the TBDR GPUs veng primarily targets. `Bloom` (on/off) and `
 `Radius` are per-frame `SceneView` values that ride the compute push, so tuning them never
 recompiles. `DebugView::Bloom` blits pyramid mip 0 after the up-sweep — the accumulated bloom
 contribution before composite.
+
+### Depth of field and the physical camera
+
+**Depth of field is a half-resolution ring-gather compute battery** (`DofChain`,
+`Settings.DepthOfField`, **off by default**) whose parameters come from an authored camera rather
+than bare blur knobs. It follows the `SsrChain` template exactly: an owned subsystem, compute
+stages, one fullscreen composite (`DofCompositeScenePass`, `Passes/DofCompositeScenePass.h`)
+splicing itself in by re-routing the downstream source id, and a `DebugView` arm that force-wires
+the chain independently of the feature toggle. The composite sits **ahead of bloom**, so a
+defocused highlight still blooms.
+
+The chain is five stages. **CoC + prefilter** reconstructs view-space depth, evaluates the
+thin-lens circle of confusion, and splits scene color into a **near** and a **far** half-resolution
+layer with each layer's own radius in alpha, plus a single-tap signed-radius/depth buffer.
+**Tile dilation** reduces each 8×8 tile *and its eight neighbours* into one record (minimum depth,
+largest near and far radii) — the dilation is what lets a gather see the near-field spill its
+neighbours advertise, and it bounds each gather's kernel so an in-focus tile costs one tap.
+**Ring gather** runs once per layer over concentric rings (`8·r` samples on ring `r`, each ring
+rotated half a step so successive rings interleave rather than lining up on spokes), weighting a
+sample by the scatter test read backwards, `saturate(sampleCoc − distance + 1)`. The far layer
+additionally clamps each sample's radius to the destination's, so background blur cannot bleed over
+sharp foreground; the near layer is deliberately unclamped, which is how a defocused foreground
+spills over sharp geometry behind it. **Fill** is a 3×3 center-weighted tent closing the
+single-texel gaps a fixed sample budget leaves at a large radius. **Composite** blends far then
+near over the full-resolution HDR by each layer's coverage, so a zero-coverage texel is the HDR
+value it was.
+
+**The gate carries its own debug arm.** `dofActive` is
+`(Mode == Final && DepthOfField) || Mode == DebugView::CoC` — the SSR gate shape, where the
+disjunct is what lets `DebugView::CoC` force-wire the chain's first two stages **with the feature
+off** and blit the signed-radius buffer (near ramps red, far ramps blue, in-focus is black),
+normalized against the engine ceiling `MaxDofCoc` rather than the frame's own knob so two
+differently-tuned frames compare directly.
+
+#### The physical camera drives it — and the units are the trap
+
+`CameraProjection::Physical` sits beside `Perspective`/`Orthographic` on the `Camera` component
+(`Veng/Scene/Camera.h`), so authored `FovY` content is untouched and there is no
+derivation-precedence ambiguity. Its four authored fields and **their units**:
+
+| Field | Unit | Default |
+|---|---|---|
+| `FocalLength` | **millimetres** | 50 |
+| `SensorHeight` | **millimetres** | 24 |
+| `FStop` | f-number (dimensionless); aperture diameter is `FocalLength / FStop` | 2.8 |
+| `FocusDistance` | **metres** | 10 |
+
+**The millimetre/metre mix is the whole footgun** — a silent 1000× error hides exactly here — so
+the engine has **one conversion site**: `ComputeCameraLens` normalizes the two millimetre fields
+into a metres-only `CameraLens`, and *everything downstream is metres*. Never convert anywhere
+else. A `Physical` camera resolves as a perspective projection whose vertical field of view is
+`2·atan(SensorHeight / (2·FocalLength))` — a **ratio**, so the authored millimetres cancel and
+that expression alone is unit-safe — and the resolved `CameraView` carries the `CameraLens`, read
+back through `CameraView::GetLens()`. `GetLens()` is engaged **iff** the camera was `Physical`, so
+a consumer reads it as "was this view authored in physical terms". `ComputeDofParams` adds the one
+thing a lens does not know — the viewport's pixel height — yielding `CocScale`
+(pixels per metre, `viewportPixelHeight / SensorHeight`); `ComputeCircleOfConfusion` is the curve
+those constants define, `CocScale · Aperture · (depth − FocusDistance) / depth`, signed so the near
+field is negative. All of it is device-free inline math in the public header, unit-testable with no
+ICD.
+
+**With a `Physical` camera, the camera wins — and the level's focus fields go inactive.** The five
+per-frame `ViewState`/`SceneView` fields are `DofFocusDistance`, `DofAperture`, `DofCocScale`,
+`DofMaxCoc`, and `DofRingCount`. `ApplyLevelRenderSettings` stays a **pure, unconditional
+mapping** — it records authored intent into the persistent knobs and never inspects the camera —
+while the viewport glue fills the lens-derived fields in the per-frame copy it pushes. So
+camera-wins holds **by construction every frame**, the stored authored values survive untouched,
+and they come back to life the moment the camera stops being `Physical`. `DofCocScale` is
+*always* derived by the glue (sensor height × viewport pixel height) and is never hand-authored in
+any mode. `ViewState::DofFromPhysicalCamera` is the flag the settings panel and level editor read
+to show `DofFocusDistance`/`DofAperture` **inactive**, so an author is not editing values nothing
+consults.
+
+**`DofMaxCoc` and `DofRingCount` still apply in every camera mode** — they are quality knobs, not
+lens properties, and a physical camera does not drive them. Both are **hard-clamped where they are
+pushed** (`ClampDofMaxCoc` → `MaxDofCoc`, `ClampDofRingCount` → `MaxDofRings`, `Renderer/DofTile.h`)
+because `LevelRenderSettings` routes authored values in from a cooked level and **an archive is
+untrusted input**; the ring count is a GPU loop bound, and the gather shader ceilings it a second
+time against a compile-time `MaxRings` so no missed CPU clamp can ever produce an unbounded loop.
+
+#### Translucency defocuses by the geometry behind it
+
+The translucent composite sits **upstream** of the DoF chain, so translucent draws are already
+blended into the color the chain blurs — but they write **no opaque depth**, and the CoC is
+evaluated from the depth attachment alone. A translucent pixel therefore defocuses by the circle of
+confusion of the **opaque geometry behind it**, not its own distance: glass at the focus plane in
+front of a distant background blurs with that background. This is the standard limitation of
+gather-based depth of field on a deferred pipeline, and the engine accepts it.
 
 ### IBL and the sky
 
@@ -366,8 +456,10 @@ dropping to `RenderGraph` directly (the composite path the sample retains).
 `SceneRendererSettings` carries the topology/sizing knobs — `DebugView Mode` (Final, plus the
 `Albedo` / `Normal` / `Depth` / `Emissive` g-buffer arms, the `Roughness` / `Metallic` / `Occlusion`
 packed-ORM-channel arms, and the `AO` / `Shadows` / `Cascades` / `PunctualShadows` / `Bloom` /
-`MotionVectors` battery-target arms) re-wires the pass set through `Configure`, the recompile
-seam; the `Bloom` / `Shadows` / `PunctualShadows` / `AO` battery toggles, the bloom `Kernel`, and
+`MotionVectors` / `CoC` battery-target arms) re-wires the pass set through `Configure`, the
+recompile
+seam; the `Bloom` / `Shadows` / `PunctualShadows` / `AO` / `DepthOfField` battery toggles, the
+bloom `Kernel`, and
 `ShadowResolution` / `PunctualShadowResolution` are the other recompile knobs. A debug arm
 terminates the chain after the g-buffer (and, for `AO` / `Shadows` / `PunctualShadows`, the
 force-wired producing battery pass) with a single fullscreen debug blit; the `Bloom` arm
