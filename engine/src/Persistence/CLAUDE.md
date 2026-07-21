@@ -106,3 +106,75 @@ The store resolves no directory of its own: the slot directory is supplied by th
 ## The session-store binding
 
 ## The local account store
+
+`Veng/Persistence/LocalAccountStore.h` is the durable local identity of record: **one account per
+root**, load-or-minted at `LocalAccountStore::Open(root)` and persisted before the call returns. It
+sits above the slots — the account is one, the slots are many — and shares nothing with `Store` but
+the lock mechanism.
+
+**The engine interprets exactly one account field: the id.** `GetId()` is a `Net::AccountId`, the
+value a consumer returns from `Net::GameNetInfo::Identity` (the store is the natural feeder; the
+hook stays explicit and nothing auto-wires it). Everything else an application keeps on an account
+— a display name, contact details, preferences — lives in the **profile**, a `Net::Blob` the store
+persists beside the id and **never decodes**: the type tag and the bytes go in and come back out
+verbatim. There is no engine-defined account field beyond the id and there is not going to be one.
+The reflection record encoding is the recommended codec for the payload, its tolerant read being
+what lets a consumer's profile fields accrete without a format break here. The store is **at-rest
+only** — nothing in the engine moves a profile off disk.
+
+Consumer id schemes ride two hooks on `LocalAccountInfo`: **`MintId`** (default
+`Net::GenerateAccountId`) and **`ValidateId`** (default: any nonzero id). An application whose ids
+carry an invariant of their own supplies both, so `AccountId` stays opaque in both directions.
+
+### The id is irreplaceable, so surprise is never resolved by re-minting
+
+Sessions key on the account id and a consumer's record families will too, so discarding it orphans
+every account-keyed record on disk — and overwrites the evidence of why. "Re-mint on anything
+unexpected" is therefore the wrong reflex, and the store splits it into four outcomes:
+
+- **Absent record** → mint and write immediately, before the id is handed out.
+- **Present and adoptable** → adopt. An ordinary open never changes the id.
+- **Unparseable, or rejected by `ValidateId`** → rename the record to `<root>/account.corrupt`,
+  preserving the bytes, *then* mint a replacement and write. The open succeeds and
+  **`WasIdentityReset()` reports it** — a consumer tells the player its identity was reset rather
+  than letting them discover it through orphaned records. If the bytes cannot be preserved, the
+  open fails instead: a mint over unmovable evidence is worse than no store.
+- **Present with a format version this build does not know** → **fail the open**, touching nothing.
+  A newer record means the user has run a newer build, and silently replacing it turns a downgrade
+  into permanent identity loss. This is the case a two-outcome rule folds into "unparseable".
+
+`Open` returns a `Result` for the same reason a failed mint-write must be an error rather than a
+degradation: a by-value return can only hand back a store reporting a valid id and
+`IsEphemeral() == false` while nothing was persisted, so the id already given to `Identity` and
+keyed on quietly becomes a different id next launch. That is the one invariant the class exists
+for. **`Ephemeral()`** is the zero-config posture requested by name for the same reason — an empty
+root path is not inferred as "in memory is fine", because a consumer whose root resolution failed
+should get an error, not an identity that evaporates on exit. An ephemeral store reads, writes, and
+locks nothing, and `SetProfile` on one succeeds having changed nothing.
+
+### On disk
+
+One small binary file, `<root>/account`: the eight-byte magic **`VNG.ACT1`**, a format version, the
+id's `Lo`/`Hi`, then the profile (`TypeId`, byte count, bytes — a zero count is "never set"). It is
+written through **`WriteFileAtomic`** (`Veng/Asset/AtomicFile.h`; `veng::assetpack` is linked
+PUBLIC into `veng`) rather than a hand-rolled temp-and-rename, so a crash mid-write leaves the
+previous record byte-identical and a stray temporary beside an absent record is inert. The profile
+byte count is checked against the bytes remaining before it drives an allocation, as everywhere
+else at this boundary.
+
+`Open` holds an **exclusive advisory lock** on `<root>/account.lock` for the store's lifetime — the
+same mechanism as the slot lock, and taken for the same reason: two processes of one application on
+one machine is a shape consumers really run, two unlocked opens on an empty root both mint (and the
+loser has already published its id), and two unlocked `SetProfile`s drop one.
+
+### Rooting it beside the slots
+
+The root is **consumer-supplied** — the store resolves nothing global, and any intermediate segment
+in a consumer's layout belongs to that consumer's root resolution.
+`Veng/Platform/UserPaths.h`'s per-user data directory is the natural provider, not a mandate.
+
+Where a consumer roots the account file and its save slots together, the two must not collide: a
+slot named `account` would resolve onto the record and the store would try to create a directory
+over a regular file. The name **`account` is reserved** — slot-name validation rejects it, and slot
+enumeration skips non-directories, which together also cover the store's other two files
+(`account.lock` and `account.corrupt`, both extending the reserved name).
