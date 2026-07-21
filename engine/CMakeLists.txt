@@ -227,6 +227,7 @@ add_library(veng SHARED
         src/Renderer/SceneCapture.cpp
         src/Renderer/CaptureSurface.cpp
         src/Renderer/SceneRenderer.cpp
+        src/Renderer/SceneRendererResources.cpp
         src/Renderer/Viewport.cpp
         src/Renderer/ViewportCompositor.cpp
         src/Renderer/ViewportRegistry.cpp
