@@ -478,7 +478,8 @@ clock**, because the header tick it observes advances in the world's tick space,
 world's `SimClock`, so it does not re-sync per host frame. Component change ticks already live in the
 world's tick space (a Scene stamps a write with its own sim tick), so aligning the baseline and header
 to the same space is what closes the gap; an unstamped component (change tick 0) is `≤` any baseline
-in either space, so it is selected by neither, in either space alike (see the tick-zero floor below).
+in either space, so neither snapshot cadence selects it, in either space alike (see the tick-zero
+floor below).
 A world at or near the
 host rate is byte-identical to a host-tick stamp, since its own tick and the host tick coincide.
 
@@ -640,17 +641,28 @@ The mark names **how** an entity replicates, never **whether**. `Authority` stil
 `ProtocolVersion` is unaffected — but a marked entity's Spawn *population* does: it carries a prefab
 id instead of a component list.
 
-**A replicated component stamped at tick zero never reaches a joiner.** Both the spawn payload and
-every snapshot select a component whose change tick is **strictly greater** than the baseline they
-gate against, and both baselines start at zero — the spawn's `sinceTick` literally, a connection's
-`AckedTick` until its first ack. A `Scene`'s change tick is zero until the world drive stamps its
-first sim tick, so a component written only during level load, prefab spawn, or any other pre-tick
-population is indistinguishable from an unstamped one and is **never selected** — not by the spawn,
-not by a snapshot, and not by the keyframe cadence, which forces a full encoding only for components
-that already cleared the same gate. The component reaches a joiner as soon as anything writes it
-again on a real tick. This is a distinct seam from the prefab association above: it drops replicated
-leaves, where a missing association drops prefab structure. `net_local_spawn_replication.cpp` pins
-both, including the tick-zero case and its post-tick control.
+**A replicated component stamped at tick zero rides the spawn, never a snapshot.** The spawn payload
+is a **full-state** operation, not a dirty query: it encodes every replicated component the entity
+currently carries, unconditionally, because a peer that has never seen the entity needs its whole
+state regardless of when each component was last written. So an entity populated during level load,
+prefab spawn, or any other pre-tick window arrives **whole** at a joiner, and an entity straddling
+the boundary carries its pre-tick and post-tick components alike in one record.
+
+A **snapshot is a delta and still gates on the change tick**: it selects a component whose tick is
+**strictly greater** than the connection's `AckedTick`, which starts at zero. A `Scene`'s change tick
+is zero until the world drive stamps its first sim tick, so a component written only pre-tick is
+indistinguishable from an unstamped one, and **no snapshot selects it** — not the ordinary cadence,
+and not the keyframe cadence, which forces a full encoding only for components that already cleared
+the same gate. The consequence is narrow but real: a component written pre-tick onto an entity the
+connection has **already spawned** stays invisible until something writes it again on a real tick.
+The gate itself is correct for its delta purpose — a component last changed at or before the acked
+tick genuinely needs no resend — and the overload is that `0` names both "before any tick" and a tick
+during which writes happen.
+
+This is a distinct seam from the prefab association above: it drops replicated leaves, where a
+missing association drops prefab structure. `net_local_spawn_replication.cpp` pins both, including
+the pre-tick spawn case, its post-tick control, the mixed-population entity, and the spawn record's
+declared component count.
 
 
 ## The admission profile
