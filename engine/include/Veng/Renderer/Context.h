@@ -374,6 +374,14 @@ namespace Veng::Renderer
         /// @brief Returns the index of the current swap chain image.
         [[nodiscard]] u32 GetCurrentSwapChainImageIndex() const;
 
+        /// @brief Whether the presented frame can be read back off the swap chain.
+        ///
+        /// The finished frame — the scene and the UI overlay the composite writes together — exists
+        /// only in the swap chain, so capturing it means reading a presented image. That needs
+        /// transfer-source usage, which the surface grants or withholds; false where it withheld it,
+        /// and false headless, where there is no swap chain and no overlay to capture.
+        [[nodiscard]] bool IsSwapChainCaptureSupported() const;
+
         /// @brief Registers a callback fired after the swap chain is recreated (e.g. on resize).
         ///
         /// The ImGui layer uses this to recreate its offscreen target.

@@ -78,6 +78,14 @@ namespace Veng::Renderer
         [[nodiscard]] vk::Extent2D GetSurfaceExtent(Window& window,
                                                     SwapChainSupportDetails& swapChainSupport);
         [[nodiscard]] u32 GetMaxImageCount() const { return m_MaxImageCount; }
+
+        /// @brief Whether a presented image can be read back — the surface granted transfer-source use.
+        ///
+        /// The finished frame exists only in the swapchain (the composite writes the scene and the UI
+        /// overlay straight into it), so capturing it requires reading a presented image. The usage is
+        /// requested only where the surface reports it, and a surface that withholds it leaves capture
+        /// unsupported rather than failing the swapchain.
+        [[nodiscard]] bool IsCaptureSupported() const { return m_CaptureSupported; }
         [[nodiscard]] u32 GetImageCount() const { return m_ImageCount; }
         [[nodiscard]] u32 GetCurrentImageIndex() const { return m_CurrentImageIndex; }
         /// @brief Engine format of the presentable images.
@@ -144,6 +152,8 @@ namespace Veng::Renderer
         u32 m_Width;
         u32 m_Height;
         u32 m_MaxImageCount;
+        /// @brief Whether the surface granted transfer-source usage, making a presented image readable.
+        bool m_CaptureSupported = false;
         u32 m_ImageCount{};
         u32 m_CurrentImageIndex = 0;
         DisplayMode m_RequestedMode;

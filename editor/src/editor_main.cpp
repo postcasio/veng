@@ -106,7 +106,8 @@ namespace
                      .Viewport = [&host](string_view name) { return host.GetPanelViewport(name); },
                      .ViewportNames = [&host] { return host.GetSceneViewportNames(); },
                      .ApplyMutation = [this](const Mcp::McpMutation& mutation)
-                     { return VengEditor::ApplyEditorMutation(m_EditorHost, mutation); }}
+                     { return VengEditor::ApplyEditorMutation(m_EditorHost, mutation); },
+                     .RenderContext = [&host] { return &host.GetRenderContext(); }}
         {
         }
 

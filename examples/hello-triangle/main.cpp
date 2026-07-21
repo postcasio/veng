@@ -1020,6 +1020,7 @@ private:
             },
             .ViewportNames = [] { return vector<string>{"primary"}; },
             .InjectInput = [this](Event& event) { GetInputRouter().PostInjectedEvent(event); },
+            .RenderContext = [this] { return &GetRenderContext(); },
         });
 
         m_McpServer = Mcp::McpServer::Create(info, *m_McpHost);

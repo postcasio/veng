@@ -5,6 +5,7 @@
 
 namespace Veng::Renderer
 {
+    class Context;
     class Viewport;
 }
 
@@ -23,4 +24,20 @@ namespace Veng::Mcp
     /// @return The content-array JSON string on success, or a located error (no output image, an
     ///         unexpected download size, or a PNG-encode failure).
     Result<string> CaptureViewportContentBlocks(Renderer::Viewport& viewport);
+
+    /// @brief Captures the presented frame off the swap chain as an MCP image content-block array.
+    ///
+    /// The counterpart of CaptureViewportContentBlocks for the *finished* frame: a viewport carries
+    /// scene color alone, while the composite writes the scene and the UI overlay together straight
+    /// into the swap chain, so a presented image is the only surface holding both. It downloads the
+    /// last presented image and encodes it to 8-bit RGB, reading its display encoding off the swap
+    /// chain format rather than assuming the viewport's linear half-float.
+    ///
+    /// Runs on the render thread (the Download() blocks in lockstep with the frame), so the caller
+    /// must invoke it at the Pump() point — where the index still names the last *presented* image
+    /// rather than one acquired for a frame not yet drawn.
+    /// @param context  The render context whose swap chain is captured.
+    /// @return The content-array JSON string on success, or a located error (capture unsupported,
+    ///         an unhandled swap chain format, an unexpected download size, or a PNG-encode failure).
+    Result<string> CaptureSwapChainContentBlocks(Renderer::Context& context);
 }

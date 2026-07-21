@@ -231,6 +231,13 @@ family registers from the editor side.
 - **`render.*`** (`src/RenderTools.cpp`) — `render.screenshot` (viewport `Download` → PNG → an
   image content block, the smoke capture's `Download` path plus a PNG encode; the `--connect`
   CLI requires `--output <file>` to write the PNG and never prints it to stdout),
+  **`render.screenshot_window`** (the *presented* frame — the composite of the scene and the UI
+  overlay drawn over it, which is what the app looks like on screen; a viewport carries scene
+  colour alone and no UI, so this is the capture an agent drives an interface by. It reads the
+  swap chain's current image at the pump point, where that index still names the last presented
+  frame rather than one acquired for a frame not yet drawn. Requires the surface to grant
+  transfer-source usage on its swap chain images, and is unavailable headless — where there is
+  no swap chain and, because ImGui needs a window, no UI overlay to capture),
   `render.list_viewports` (over `McpHost::ViewportNames`), `render.stats` (cull counts +
   `GetLastGpuFrameTimeMs`). The PNG encode uses stb_image_write, vendored PRIVATE into
   `src/Vendor/StbImageWrite.cpp` — never a public header. A null/unknown viewport reports "no
@@ -309,6 +316,7 @@ struct McpHost
     function<vector<string>()>                        ViewportNames;  // the viewport names to expose
     function<bool(const McpMutation&)>                ApplyMutation;  // optional editor routing hook
     function<void(Event&)>                            InjectInput;   // optional synthetic-input sink
+    function<Renderer::Context*()>                    RenderContext; // optional presented-frame capture source
 };
 ```
 

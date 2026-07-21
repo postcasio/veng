@@ -68,6 +68,35 @@ namespace Veng::Mcp
             server.RegisterTool(std::move(tool));
         }
 
+        // render.screenshot_window — the presented frame, the only surface carrying the app's UI.
+        {
+            McpTool tool;
+            tool.Name = "render.screenshot_window";
+            tool.Description =
+                "Captures the presented frame as a PNG image — the finished composite of the "
+                "scene and the UI overlay drawn over it, which is what an app's interface looks "
+                "like on screen. render.screenshot captures a viewport instead, which carries "
+                "scene color alone and no UI. Returns an image content block; over the --connect "
+                "CLI it requires --output <file> to write the PNG (an image is never printed to "
+                "stdout). Unavailable headless (no swap chain, and no UI overlay to capture) and "
+                "where the surface did not grant transfer-source usage on its swap chain images.";
+            tool.InputSchemaJson = R"({"type":"object","properties":{}})";
+            tool.ReturnsContentBlocks = true;
+            tool.Handler = [&host](string_view) -> Result<string>
+            {
+                Renderer::Context* const context =
+                    host.RenderContext ? host.RenderContext() : nullptr;
+                if (context == nullptr)
+                {
+                    return std::unexpected(
+                        string("presented-frame capture is unavailable: this host exposes no "
+                               "render context"));
+                }
+                return CaptureSwapChainContentBlocks(*context);
+            };
+            server.RegisterTool(std::move(tool));
+        }
+
         // render.list_viewports — the viewports the host chose to expose, each with its region
         // extent and role where resolvable.
         {

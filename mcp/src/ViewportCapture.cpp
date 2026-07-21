@@ -1,9 +1,11 @@
 #include "ViewportCapture.h"
 
+#include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/Viewport.h>
 
+#include <fmt/format.h>
 #include <nlohmann/json.hpp>
 
 #include <stb_image_write.h>
@@ -132,6 +134,93 @@ namespace Veng::Mcp
             }
             return rgb8;
         }
+        /// @brief Reorders an 8-bit four-channel download to 8-bit RGB, dropping alpha.
+        ///
+        /// A swap chain's 8-bit formats are already display-encoded — the composite wrote through an
+        /// _SRGB store, or the values are the encoded ones themselves — so the bytes transfer to a
+        /// PNG unchanged and only the channel order differs. Returns empty on a short download.
+        vector<u8> EncodeRgba8ToRgb8(std::span<const u8> download, u32 width, u32 height, bool bgra)
+        {
+            const usize pixelCount = static_cast<usize>(width) * height;
+            if (download.size() < pixelCount * 4)
+            {
+                return {};
+            }
+            vector<u8> rgb8;
+            rgb8.resize(pixelCount * 3);
+            for (usize pixel = 0; pixel < pixelCount; ++pixel)
+            {
+                const u8 first = download[pixel * 4];
+                const u8 second = download[pixel * 4 + 1];
+                const u8 third = download[pixel * 4 + 2];
+                rgb8[pixel * 3] = bgra ? third : first;
+                rgb8[pixel * 3 + 1] = second;
+                rgb8[pixel * 3 + 2] = bgra ? first : third;
+            }
+            return rgb8;
+        }
+    }
+
+    Result<string> CaptureSwapChainContentBlocks(Renderer::Context& context)
+    {
+        if (!context.IsSwapChainCaptureSupported())
+        {
+            return std::unexpected(
+                string("the presented frame cannot be captured: the surface did not grant "
+                       "transfer-source usage on its swap chain images, or the run is headless "
+                       "(no swap chain, and no UI overlay to capture)"));
+        }
+
+        const Ref<Renderer::Image> image = context.GetCurrentSwapChainImage();
+        if (!image)
+        {
+            return std::unexpected(string("no presented swap chain image is available"));
+        }
+        const u32 width = image->GetWidth();
+        const u32 height = image->GetHeight();
+        const Renderer::Format format = image->GetFormat();
+
+        const vector<u8> download = image->Download();
+        vector<u8> rgb8;
+        switch (format)
+        {
+        // An extended-linear (scRGB) swap chain holds the blended colour linear and unencoded,
+        // exactly as a viewport output does, so it takes the same sRGB encode.
+        case Renderer::Format::RGBA16Sfloat:
+            rgb8 = EncodeRgba16fToSrgb8(download, width, height);
+            break;
+        case Renderer::Format::BGRA8Srgb:
+            rgb8 = EncodeRgba8ToRgb8(download, width, height, true);
+            break;
+        case Renderer::Format::RGBA8Srgb:
+        case Renderer::Format::RGBA8Unorm:
+            rgb8 = EncodeRgba8ToRgb8(download, width, height, false);
+            break;
+        default:
+            // An HDR10 swap chain is PQ-encoded against its own primaries; writing those bytes
+            // into an sRGB PNG would produce a confidently wrong image, so it is refused rather
+            // than guessed at.
+            return std::unexpected(
+                fmt::format("the presented frame is in a swap chain format this capture does "
+                            "not encode ({})",
+                            static_cast<u32>(format)));
+        }
+        if (rgb8.empty())
+        {
+            return std::unexpected(string("the presented frame could not be encoded"));
+        }
+
+        const vector<u8> png = EncodePng(width, height, rgb8);
+        if (png.empty())
+        {
+            return std::unexpected(string("PNG encoding failed"));
+        }
+
+        return Json::array(
+                   {Json{{"type", "image"}, {"data", Base64Encode(png)}, {"mimeType", "image/png"}},
+                    Json{{"type", "text"},
+                         {"text", Json{{"width", width}, {"height", height}}.dump()}}})
+            .dump();
     }
 
     Result<string> CaptureViewportContentBlocks(Renderer::Viewport& viewport)

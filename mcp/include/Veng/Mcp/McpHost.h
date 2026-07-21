@@ -14,6 +14,7 @@ namespace Veng
 
     namespace Renderer
     {
+        class Context;
         class Viewport;
     }
 }
@@ -146,5 +147,18 @@ namespace Veng::Mcp
         /// so the event lands before the frame's action resolution reads input. The event is
         /// passed mutable because routing (InputRouter::Dispatch) may mark it handled.
         function<void(Event&)> InjectInput;
+
+        /// @brief Resolves the render context the presented-frame capture reads, or null.
+        ///
+        /// A viewport carries scene colour alone, while the composite writes the scene and the UI
+        /// overlay together straight into the swap chain — so capturing the finished frame, the one
+        /// that shows an app's interface, means reading a presented image. The capture tool
+        /// (render.screenshot_window) reads it through here; a host that leaves it null makes that
+        /// tool report the capture unavailable rather than no-op silently.
+        ///
+        /// The closure runs on the render thread during Pump(), where the swap chain's current
+        /// index still names the last *presented* image rather than one acquired for a frame not
+        /// yet drawn — so the capture is of a finished frame.
+        function<Renderer::Context*()> RenderContext;
     };
 }

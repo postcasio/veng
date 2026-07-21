@@ -164,6 +164,17 @@ namespace Veng::Renderer
         m_Width = extent.width;
         m_Height = extent.height;
 
+        // Transfer-source usage makes a presented image readable, which is the only way to capture
+        // the finished frame: the composite writes the scene and the UI overlay straight into the
+        // swapchain, so no other target holds them together. The surface decides whether it can be
+        // granted, so it is requested only where reported and its absence merely leaves capture
+        // unsupported — a presentable swapchain always outranks a readable one.
+        m_CaptureSupported = static_cast<bool>(swapChainSupport.Capabilities.supportedUsageFlags &
+                                               vk::ImageUsageFlagBits::eTransferSrc);
+        const vk::ImageUsageFlags imageUsage =
+            vk::ImageUsageFlagBits::eColorAttachment |
+            (m_CaptureSupported ? vk::ImageUsageFlagBits::eTransferSrc : vk::ImageUsageFlags{});
+
         vk::SwapchainCreateInfoKHR swapChainCreateInfo{
             .surface = contextNative.Surface,
             .minImageCount = imageCount,
@@ -171,7 +182,7 @@ namespace Veng::Renderer
             .imageColorSpace = m_ColorSpace,
             .imageExtent = {.width = m_Width, .height = m_Height},
             .imageArrayLayers = 1,
-            .imageUsage = vk::ImageUsageFlagBits::eColorAttachment};
+            .imageUsage = imageUsage};
 
         QueueFamilyIndices indices = contextNative.FindQueueFamilies(contextNative.PhysicalDevice);
 
@@ -215,15 +226,17 @@ namespace Veng::Renderer
             auto native = CreateUnique<Image::Native>();
             native->Image = image;
 
-            m_Images.emplace_back(Ref<Image>(
-                new Image(m_Context,
-                          ImageInfo{.Name = fmt::format("SwapChain Image [{}]", m_Images.size()),
-                                    .Extent = uvec3{m_Width, m_Height, 1u},
-                                    .MipLevels = 1,
-                                    .Format = FromVk(m_Format),
-                                    .Type = ImageType::Type2D,
-                                    .Usage = ImageUsage::ColorAttachment},
-                          std::move(native))));
+            m_Images.emplace_back(Ref<Image>(new Image(
+                m_Context,
+                ImageInfo{.Name = fmt::format("SwapChain Image [{}]", m_Images.size()),
+                          .Extent = uvec3{m_Width, m_Height, 1u},
+                          .MipLevels = 1,
+                          .Format = FromVk(m_Format),
+                          .Type = ImageType::Type2D,
+                          .Usage = m_CaptureSupported
+                                       ? (ImageUsage::ColorAttachment | ImageUsage::TransferSrc)
+                                       : ImageUsage::ColorAttachment},
+                std::move(native))));
 
             // Swapchain images come from vkAcquireNextImageKHR, whose
             // image-available semaphore is waited at AcquireWaitStage on submit.

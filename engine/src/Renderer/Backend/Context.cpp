@@ -902,6 +902,11 @@ namespace Veng::Renderer
         VE_ASSERT(m_Native->SwapChain, "no swapchain (headless)");
         return m_Native->SwapChain->GetCurrentImageIndex();
     }
+    bool Context::IsSwapChainCaptureSupported() const
+    {
+        // Queried rather than asserted: headless is a legitimate caller and simply cannot capture.
+        return m_Native->SwapChain && m_Native->SwapChain->IsCaptureSupported();
+    }
 
     void Context::AddSwapChainInvalidationCallback(std::function<void()> callback)
     {
@@ -1106,8 +1111,8 @@ namespace Veng::Renderer
             const auto available = PhysicalDevice.enumerateDeviceExtensionProperties(nullptr).value;
             for (const auto& extension : available)
             {
-                if (std::strcmp(extension.extensionName, VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME) ==
-                    0)
+                if (std::strcmp(extension.extensionName,
+                                VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME) == 0)
                 {
                     deviceExtensions.push_back(VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME);
                     break;
