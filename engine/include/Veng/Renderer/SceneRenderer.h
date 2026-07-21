@@ -62,6 +62,7 @@ namespace Veng::Renderer
     class DescriptorSetLayout;
     class SkyResolver;
     class PointField;
+    struct DebugBlitPipelines;
 
     /// @brief Long-lived deferred render pipeline owning an offscreen target.
     ///
@@ -635,10 +636,9 @@ namespace Veng::Renderer
         /// @brief The fullscreen debug-blit pipelines for the non-Final DebugView arms.
         ///
         /// One aggregate owning the g-buffer/channel/target blit pipeline+layout pairs
-        /// (albedo, normal, depth, packed-ORM, SSAO, motion, directional shadow) each arm's
+        /// (albedo, normal, depth, packed-ORM, SSAO, motion, directional shadow, CoC) each arm's
         /// terminal blit selects. Built once at Create beside the core pipelines. Held behind
         /// an opaque pointer so this header stays free of the pipeline aggregate's definition.
-        struct DebugBlitPipelines;
         Unique<DebugBlitPipelines> m_DebugBlits;
 
         /// @brief The set-1 shadow descriptor system + punctual atlas + constants rings; created at Create.

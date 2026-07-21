@@ -1449,6 +1449,27 @@ TEST_CASE_FIXTURE(
     CHECK(std::isfinite(motionCenter.g));
     CHECK(std::isfinite(motionCenter.b));
 
+    // The Reflections arm force-wires the whole screen-space reflection chain regardless of
+    // the settings toggles (all off here) and blits its resolved target. It recompiles and
+    // renders without error.
+    renderer->Configure(
+        {.Mode = DebugView::Reflections, .Bloom = false, .Shadows = false, .AO = false});
+    const vec3 reflectionsCenter = Center();
+    CHECK(std::isfinite(reflectionsCenter.r));
+    CHECK(std::isfinite(reflectionsCenter.g));
+    CHECK(std::isfinite(reflectionsCenter.b));
+
+    // The Emissive arm blits the G4 emissive channel directly — the authored emissive
+    // contribution alone, independent of lighting. The brick material authors none, so the
+    // lit centre is bright while the emissive centre is black.
+    renderer->Configure(
+        {.Mode = DebugView::Emissive, .Bloom = false, .Shadows = false, .AO = false});
+    const vec3 emissiveCenter = Center();
+    CHECK(emissiveCenter.r < 0.02f);
+    CHECK(emissiveCenter.g < 0.02f);
+    CHECK(emissiveCenter.b < 0.02f);
+    CHECK(Differs(finalCenter, emissiveCenter));
+
     // Velocity is a g-buffer channel, so it stays allocated under any mode (not TAA-gated).
     renderer->Configure({.Mode = DebugView::Albedo, .Bloom = false, .Shadows = false, .AO = false});
     CHECK(renderer->GetVelocityView() != nullptr);
@@ -4211,8 +4232,11 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
     camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
 
-    const SceneRendererSettings refractionOn{
-        .Mode = DebugView::Final, .Bloom = false, .Shadows = false, .Refraction = true, .AO = false};
+    const SceneRendererSettings refractionOn{.Mode = DebugView::Final,
+                                             .Bloom = false,
+                                             .Shadows = false,
+                                             .Refraction = true,
+                                             .AO = false};
     const Unique<SceneRenderer> renderer = SceneRenderer::Create({
         .Context = Context,
         .Assets = assets,
