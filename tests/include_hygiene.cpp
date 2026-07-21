@@ -99,6 +99,7 @@
 #include <Veng/Net/UdpTransport.h>
 #include <Veng/Net/WorldKey.h>
 
+#include <Veng/Persistence/LocalAccountStore.h>
 #include <Veng/Persistence/SaveSlots.h>
 #include <Veng/Persistence/SessionStore.h>
 #include <Veng/Persistence/Store.h>
