@@ -371,6 +371,11 @@ so the cooker and the runtime loader share one encoder.
   There is deliberately **no `--reference`**: a pack manifest carries type *names*, not minted
   type ids, so a pack has nothing to check against. `GenerateAssetTypeId(const AssetTypeRegistry&)`
   (`Cook/AssetPack.h`) is the in-process form.
+- **`generate-family-id`** — mints a `StoreFamilyId` for a durable-store family
+  (`Veng/Persistence/Store.h`), in the same two spellings. It takes **no options**: a family id
+  lives in a consumer's own source, in no registry this tool can load, so there is nothing to
+  collision-check against — the id is 64 bits of randomness and a collision is fatal at
+  registration.
 - The tool can also emit a **type manifest**.
 
 ## Cook modules — a game's own importers

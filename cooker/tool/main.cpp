@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <filesystem>
+#include <random>
 
 #include <fmt/format.h>
 
@@ -34,6 +35,7 @@ namespace
                            "  vengc generate-id [--reference <pack.json>]... [--module <lib>]\n"
                            "  vengc generate-type-id [--module <lib>]\n"
                            "  vengc generate-asset-type [--module <lib>]\n"
+                           "  vengc generate-family-id\n"
                            "  vengc verify <archive.vengpack> [--module <lib>]\n");
     }
 
@@ -777,6 +779,33 @@ int main(int argc, char** argv)
         // quoted in JSON.
         fmt::print("hex (C++):   0x{:016X}ULL\n", id.Value);
         fmt::print("hex (JSON):  \"0x{:016X}\"\n", id.Value);
+        return 0;
+    }
+
+    // -------------------------------------------------------------------
+    // vengc generate-family-id
+    // -------------------------------------------------------------------
+    if (subcommand == "generate-family-id")
+    {
+        if (args.size() > 1)
+        {
+            fmt::print(stderr, "vengc: unexpected argument '{}'\n", args[1]);
+            return 1;
+        }
+
+        // There is deliberately no --module and no --reference: a store family id lives in a
+        // consumer's own source, in no registry this tool can load, so there is nothing to
+        // collision-check against. The id space is 64 bits of randomness and a collision at
+        // registration is fatal at runtime.
+        std::random_device rd;
+        std::mt19937_64 rng(rd());
+        std::uniform_int_distribution<u64> dist(1, UINT64_MAX);
+        const u64 id = dist(rng);
+
+        // One canonical spelling: a zero-padded 16-digit hex literal in C++, the same string
+        // quoted in JSON.
+        fmt::print("hex (C++):   0x{:016X}ULL\n", id);
+        fmt::print("hex (JSON):  \"0x{:016X}\"\n", id);
         return 0;
     }
 

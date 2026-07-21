@@ -30,6 +30,9 @@ Each major system's architecture lives in a `CLAUDE.md` inside its source direct
   `GuiOverlay`/`GuiSurface`/`CaptureSurface` component family).
 - **[src/Net/CLAUDE.md](src/Net/CLAUDE.md)** — `Veng/Net/`, the server-authoritative
   client/server layer (transport, replication, prediction/reconciliation, interest management).
+- **[src/Persistence/CLAUDE.md](src/Persistence/CLAUDE.md)** — `Veng/Persistence/`, the
+  durable-state subsystem: the `Store`'s families, opaque record keys, atomic whole-slot flush,
+  versioning and migration, and the capture/rehydrate scene hooks.
 
 The consumption exemplars are documented in [examples/CLAUDE.md](../examples/CLAUDE.md); the
 offline cook in [cooker/CLAUDE.md](../cooker/CLAUDE.md); the archive format in

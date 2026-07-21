@@ -138,6 +138,10 @@ add_library(veng SHARED
         src/Net/Server.cpp
         src/Net/Session.cpp
         src/Net/UdpTransport.cpp
+        # Persistence/ — the durable-state subsystem, listed as one contiguous block so the
+        # subsystem's sources stay together rather than scattered through the list. Further
+        # persistence sources are appended here, in this block.
+        src/Persistence/Store.cpp
         src/Platform/UserPaths.cpp
         src/Task/ParallelFor.cpp
         src/Task/TaskSystem.cpp
