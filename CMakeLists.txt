@@ -742,6 +742,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/net_connection.cpp
             tests/unit/net_lifecycle.cpp
             tests/unit/persistence_store.cpp
+            tests/unit/persistence_store_patterns.cpp
             tests/unit/runtime_requests.cpp
             tests/unit/ui_modal.cpp
     )
