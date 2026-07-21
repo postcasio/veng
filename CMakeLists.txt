@@ -752,7 +752,7 @@ if (VENG_BUILD_TESTS)
             # -- carve 74/01 --
             tests/unit/net_admission_profile.cpp
             # -- carve 74/02 --
-            # -- carve 74/03 --
+            tests/unit/net_blob_codec.cpp
             # -- carve 74/04 --
             # -- carve 74/05 --
     )
