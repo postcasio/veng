@@ -335,6 +335,28 @@ namespace Veng
         void ApplyCompleteRebind(usize index, WorldInstanceId world, WorldRunner& runner,
                                  Renderer::ViewState& knobs);
 
+        /// @brief Points a viewport's seat association — and the cursor seat when it follows — at a seat.
+        ///
+        /// The shared tail of every seat resolution: associates the viewport with @p seat in the router
+        /// (clearing the association when it is null), moves the cursor seat to follow unless a
+        /// different viewport currently owns it, and records the seat as the viewport's Info.Viewer.
+        /// @param managed  The managed viewport whose seat association is re-pointed.
+        /// @param seat     The resolved seat, or Entity::Null for none.
+        void AdoptViewportSeat(ManagedViewport& managed, Entity seat);
+
+        /// @brief Resolves a seat for any viewport bound to a world without one.
+        ///
+        /// SetViewportWorld records a world alone, and a world's seat is commonly spawned by a system at
+        /// simulation start, so no seat exists at bind time and that path resolves none. This retries
+        /// each frame until the presented scene yields a Viewer, which is what gives a viewport bound
+        /// that way its seat association and the cursor seat. Without it a world that is never rebound —
+        /// one presented straight from bootstrap — leaves the cursor seat null for the whole session, so
+        /// every seat-addressed input path resolves against no seat: focus lands on no seat, and the
+        /// seat's focus-gated input contexts never resolve. Inert once a viewport has a seat, and for a
+        /// scene carrying no Viewer.
+        /// @param runner  The runner each viewport's presented world resolves through.
+        void ResolveUnboundSeats(WorldRunner& runner);
+
         /// @brief Drops any pending rebind (deferred, present-on-ready, or abandoned) for an index.
         ///
         /// The supersession sweep a newly recorded rebind runs so the last request for an index wins and

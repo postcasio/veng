@@ -189,6 +189,12 @@ namespace Veng
             }
             ++it;
         }
+
+        // Last, so a viewport a rebind just resolved a seat for is already bound and skipped: give a
+        // seat to any viewport still without one. Running at this top-of-frame point puts it ahead of
+        // the request drain, so a seat resolved here is the one a focus request stamped at simulation
+        // start reconciles against on this very frame rather than a frame later.
+        ResolveUnboundSeats(runner);
     }
 
     void ManagedViewportSet::SetViewportWorld(usize index, WorldInstanceId world)
@@ -271,34 +277,61 @@ namespace Veng
             }
         }
 
+        AdoptViewportSeat(managed, resolvedSeat);
+    }
+
+    void ManagedViewportSet::AdoptViewportSeat(ManagedViewport& managed, const Entity seat)
+    {
         // Whether the cursor seat is routed through a viewport *other* than this one, captured before
-        // we reassociate. Only then must this rebind leave the cursor seat alone — a split-screen peer
-        // owns it. The stored Info.Viewer is unreliable here: a viewport bound without seat resolution
-        // (the bootstrap SetViewportWorld) leaves Info.Viewer null while the cursor seat still points
-        // at the world this viewport presents, so the live association — not the stored viewer — is
-        // the source of truth for ownership.
+        // we reassociate. Only then must this leave the cursor seat alone — a split-screen peer owns
+        // it. The stored Info.Viewer is unreliable here: a viewport bound without seat resolution (the
+        // bootstrap SetViewportWorld) leaves Info.Viewer null while the cursor seat still points at the
+        // world this viewport presents, so the live association — not the stored viewer — is the source
+        // of truth for ownership.
         const Renderer::Viewport* const cursorViewport = m_Router.ResolvePointerViewport({}, true);
         const bool cursorOwnedElsewhere =
             cursorViewport != nullptr && cursorViewport != managed.Viewport.get();
 
-        if (resolvedSeat != Entity::Null)
+        if (seat != Entity::Null)
         {
-            m_Router.AssociateViewportSeat(*managed.Viewport, resolvedSeat);
+            m_Router.AssociateViewportSeat(*managed.Viewport, seat);
         }
         else
         {
             m_Router.ClearViewportSeat(*managed.Viewport);
         }
         // The cursor seat follows this viewport to its new seat unless a different viewport owns it. A
-        // scene-local seat handle cannot survive the scene change, so the presenting viewport's rebind
-        // must move the cursor seat to the destination's seat — otherwise a captured pointer resolves
-        // no viewport for the stale seat and falls back to the managed world, and the presented
-        // world's seat never receives the look delta.
+        // scene-local seat handle cannot survive a scene change, so the presenting viewport must move
+        // the cursor seat to the seat it resolved — otherwise a captured pointer resolves no viewport
+        // for the stale seat and falls back to the managed world, and the presented world's seat never
+        // receives the look delta.
         if (!cursorOwnedElsewhere)
         {
-            m_Router.SetCursorSeat(resolvedSeat);
+            m_Router.SetCursorSeat(seat);
         }
-        managed.Info.Viewer = resolvedSeat;
+        managed.Info.Viewer = seat;
+    }
+
+    void ManagedViewportSet::ResolveUnboundSeats(WorldRunner& runner)
+    {
+        for (ManagedViewport& managed : m_Viewports)
+        {
+            if (!managed.Info.Viewer.IsNull() || !managed.Info.World.IsValid())
+            {
+                continue;
+            }
+            const World* const presented = runner.ResolveWorld(managed.Info.World);
+            if (presented == nullptr || presented->LiveScene == nullptr)
+            {
+                continue;
+            }
+            // No bound viewer to preserve — this viewport has none, which is why it is being resolved.
+            if (const Entity seat = ResolvePresentationSeat(presented->GetScene(), Entity::Null);
+                seat != Entity::Null)
+            {
+                AdoptViewportSeat(managed, seat);
+            }
+        }
     }
 
     WorldInstanceId ManagedViewportSet::GetViewportWorld(const usize index) const
