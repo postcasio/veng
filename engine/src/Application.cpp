@@ -304,6 +304,9 @@ namespace Veng
             m_LocalAccount = net.Identity ? net.Identity() : Net::GenerateAccountId();
             VE_ASSERT(m_LocalAccount.IsValid(),
                       "GameNetInfo::Identity returned the invalid account id");
+            // The account's opaque profile resolves beside its id, so the local player presents one
+            // value whether the process connects, listens, or runs standalone.
+            m_LocalProfile = net.PresentProfile ? net.PresentProfile() : Net::Blob{};
         }
 
         // The cooked project names the packs to mount and the startup level; everything resolves
@@ -427,7 +430,8 @@ namespace Veng
                 m_Directory->Resolve(Net::JoinRequestInfo{.Connection = Net::ConnectionId{},
                                                           .Account = m_LocalAccount,
                                                           .Key = key,
-                                                          .Payload = Net::Blob{}},
+                                                          .Payload = Net::Blob{},
+                                                          .Profile = GetLocalProfile()},
                                      /*heldWorlds=*/0);
             if (resolve.Outcome == WorldResolveOutcome::Denied)
             {
@@ -447,7 +451,8 @@ namespace Veng
             m_Directory->Resolve(Net::JoinRequestInfo{.Connection = Net::ConnectionId{},
                                                       .Account = m_LocalAccount,
                                                       .Key = record->Gameplay.Key,
-                                                      .Payload = record->Gameplay.Params},
+                                                      .Payload = record->Gameplay.Params,
+                                                      .Profile = GetLocalProfile()},
                                  /*heldWorlds=*/0);
         if (resolve.Outcome == WorldResolveOutcome::Denied)
         {
@@ -546,6 +551,9 @@ namespace Veng
             // The listen host's own player is an account-addressed message recipient (loopback,
             // connection-free); a dedicated host resolves no local account and this stays invalid.
             .LocalAccount = m_LocalAccount,
+            // The listen host's own player presents no connect request, so its profile is bound
+            // here — ProfileOf and the local join arm then answer as they do for a connected account.
+            .LocalProfile = m_LocalProfile,
             // The host consumes the Application-owned directory (get-or-place, presence, dwell, reap)
             // and session registry (records, reattach, durability); the policy hooks and caps
             // already live in them, so they are not repeated here.
@@ -592,6 +600,7 @@ namespace Veng
             .Host = host,
             .Port = port,
             .Account = m_LocalAccount,
+            .Profile = m_LocalProfile,
             .NetSim = m_LaunchArgs.NetSim,
         });
         if (!client)
@@ -878,7 +887,8 @@ namespace Veng
             m_Directory->Resolve(Net::JoinRequestInfo{.Connection = Net::ConnectionId{},
                                                       .Account = m_LocalAccount,
                                                       .Key = info.Key,
-                                                      .Payload = info.Payload},
+                                                      .Payload = info.Payload,
+                                                      .Profile = GetLocalProfile()},
                                  /*heldWorlds=*/0);
         if (resolve.Outcome == WorldResolveOutcome::Denied)
         {

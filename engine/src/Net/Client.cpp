@@ -69,11 +69,25 @@ namespace Veng::Net
         // always valid (see ClientInfo::Account).
         impl->Account = info.Account.IsValid() ? info.Account : GenerateAccountId();
 
+        // The connect request is one unfragmented reliable message, so an over-budget profile has
+        // nowhere to go: refuse here rather than send a request the host would deny anyway, and
+        // surface the same reason the host would have.
+        if (info.Profile.Bytes.size() > MaxProfileBytes)
+        {
+            Log::Warn("Net::Client refusing to connect: account profile is {} bytes, past the {} "
+                      "byte budget",
+                      info.Profile.Bytes.size(), MaxProfileBytes);
+            impl->Deny = DenyReason::ProfileTooLarge;
+            impl->State = ClientState::Denied;
+            return Unique<Client>(new Client(std::move(impl)));
+        }
+
         const vector<u8> request = EncodeConnectRequest(ConnectRequestMessage{
             .ProtocolVersion = info.ProtocolVersion,
             .Content = info.Content,
             .AppVersion = info.AppVersion,
             .Account = impl->Account,
+            .Profile = info.Profile,
         });
         (void)impl->Conn->Send(Channel::ReliableOrdered, request);
 

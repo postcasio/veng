@@ -750,6 +750,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/ui_modal.cpp
             # -- carve 74/00 --
             # -- carve 74/01 --
+            tests/unit/net_admission_profile.cpp
             # -- carve 74/02 --
             # -- carve 74/03 --
             # -- carve 74/04 --

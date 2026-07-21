@@ -186,6 +186,23 @@ namespace Veng
         /// @warning Whoever presents an account id *is* that account (see Net::AccountId): hosting
         ///          beyond a trusted LAN is unsafe until AdmitAccount verifies identity.
         function<Net::AccountId()> Identity;
+        /// @brief The local account's opaque profile, presented at admission; unset presents none.
+        ///
+        /// The sanctioned channel for account-level game data at admission. Evaluated once beside
+        /// Identity, per process activation: a client presents the blob in its connect request, and
+        /// a listen host or standalone app binds the identical value for its own account, so
+        /// ServerHost::ProfileOf and Net::JoinRequestInfo::Profile answer the same in all three
+        /// topologies. The engine transports and holds the bytes but **never decodes them**, never
+        /// replicates them, and never forwards them to another peer — a game wanting peer-visible
+        /// identity replicates its own component instead.
+        ///
+        /// The blob must encode to at most Net::MaxProfileBytes: the connect request is one
+        /// unfragmented reliable message, so a larger profile refuses the connect with
+        /// Net::DenyReason::ProfileTooLarge rather than being truncated.
+        ///
+        /// @warning The profile is client-authored data under the existing admission trust posture
+        ///          (see Net::AccountId): a host may assert what it says, never verify it.
+        function<Net::Blob()> PresentProfile;
         /// @brief Server hook admitting or normalizing a presented account; unset accepts as presented.
         ///
         /// Threaded onto the mounted server's handshake: called with the connection id being assigned
@@ -659,6 +676,18 @@ namespace Veng
         /// managed-world bootstrap runs.
         /// @return The local account id.
         [[nodiscard]] Net::AccountId GetLocalAccount() const { return m_LocalAccount; }
+
+        /// @brief Returns the local account's presented profile, or nullptr when it presented none.
+        ///
+        /// Resolved once at bootstrap through GameNetInfo::PresentProfile. It is what a client puts
+        /// in its connect request and what a listen host or standalone app binds for its own
+        /// account, so the local player's profile reads back the same in every topology. The engine
+        /// never decodes it.
+        /// @return The local profile, borrowed for the process activation, or nullptr.
+        [[nodiscard]] const Net::Blob* GetLocalProfile() const
+        {
+            return m_LocalProfile.Bytes.empty() ? nullptr : &m_LocalProfile;
+        }
 
         /// @brief Returns the process's transport-arm role: Client under `--join`, Server otherwise.
         ///
@@ -1356,6 +1385,8 @@ namespace Veng
 
         /// @brief The local player's account (GetLocalAccount); invalid on a dedicated host.
         Net::AccountId m_LocalAccount;
+        /// @brief The local account's opaque profile (GetLocalProfile); empty when none is presented.
+        Net::Blob m_LocalProfile;
 
         /// @brief The standing memberships the local player holds, each pinned present in the directory.
         ///

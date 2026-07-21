@@ -32,5 +32,14 @@ namespace Veng::Net
         WorldKey Key;
         /// @brief The opaque travel payload the request carries; borrowed for the hook call.
         const Blob& Payload;
+        /// @brief The requester's account profile, or nullptr when the account presented none.
+        ///
+        /// The engine-opaque blob the account presented at admission, held for its connected
+        /// lifetime and borrowed for the hook call. It is account-scoped where Payload is
+        /// join-scoped, and the engine never decodes it. A transport-less local resolve carries the
+        /// local account's profile, so a listen host and a standalone app answer as a remote join
+        /// does. The bytes are client-authored under the admission trust posture: asserted, never
+        /// verified.
+        const Blob* Profile = nullptr;
     };
 }

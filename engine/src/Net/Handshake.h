@@ -62,6 +62,11 @@ namespace Veng::Net
         u32 AppVersion = 0;
         /// @brief The account id the client presents, admitted through the server's AdmitAccount hook.
         AccountId Account;
+        /// @brief The opaque account profile the client presents; empty when none is presented.
+        ///
+        /// Carried verbatim to the host, held per admitted account, and never decoded by the
+        /// engine. A profile whose bytes exceed MaxProfileBytes is refused ProfileTooLarge.
+        Blob Profile;
     };
 
     /// @brief The server's acceptance of the connection: the assigned id, and nothing world-specific.
