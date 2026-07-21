@@ -7,6 +7,7 @@
 #include "DebugBlitPipelines.h"
 #include "DrawPlan.h"
 #include "EnvironmentIbl.h"
+#include "FrameTopology.h"
 #include "GpuBlocks.h"
 #include "GpuCullSystem.h"
 #include "PickingSystem.h"
@@ -137,7 +138,7 @@ namespace Veng::Renderer
     SceneRenderer::SceneRenderer(const SceneRendererInfo& info)
         : m_Context(info.Context), m_Assets(info.Assets), m_OutputFormat(info.OutputFormat),
           m_Extent(info.Extent), m_ValidExtent(info.Extent), m_Settings(info.Settings),
-          m_Internal(CreateUnique<Internal>())
+          m_Internal(CreateUnique<Internal>()), m_Topology(CreateUnique<FrameTopology>())
     {
         ShadowSystem::ClampResolutions(m_Context, m_Settings);
         // Frames-in-flight is spine — the renderer's own rings (draw data, palette) size from it,
@@ -213,118 +214,26 @@ namespace Veng::Renderer
 
     void SceneRenderer::Rebuild()
     {
-        // Final is the full deferred chain; debug modes terminate after the g-buffer with one blit.
-        // Bloom imports are declared only when active.
-        //
-        // Debug arms force-wire their producing battery pass so the visualized target
-        // exists regardless of the corresponding Settings toggle.
-        const bool debugBloom = m_Settings.Mode == DebugView::Bloom;
-        const bool bloomActive =
-            (m_Settings.Mode == DebugView::Final && m_Settings.Bloom) || debugBloom;
-        m_BloomActive = bloomActive;
+        const FrameTopology next = ResolveFrameTopology(
+            m_Settings, SkyTopologyInput{.Kind = m_SkyResolver->GetResolvedKind(),
+                                         .Lighting = m_SkyResolver->GetResolvedLighting(),
+                                         .IsBaked = m_SkyResolver->IsResolvedBaked()});
 
-        // Auto-exposure meters the lit HDR in the Final path only (a debug arm has no tonemap tail
-        // to drive). The enable edge re-snaps the adaptation so the image opens correctly exposed.
-        const bool autoExposureActive =
-            m_Settings.Mode == DebugView::Final && m_Settings.AutoExposure;
-        if (autoExposureActive && !m_AutoExposureActive)
+        // The auto-exposure enable edge is measured against the previous topology, so it has to be
+        // taken before the new one lands: the reset re-snaps the adaptation so the image opens
+        // correctly exposed rather than slewing in from the stale exposure.
+        if (next.AutoExposureActive && !m_Topology->AutoExposureActive)
         {
             m_AutoExposure->RequestReset();
         }
-        m_AutoExposureActive = autoExposureActive;
-
-        // TAA is a Final-only resolve: it inserts the resolve + history-copy passes between
-        // lighting and the tonemap tail and routes lighting into a separate lit target.
-        const bool taaActive = m_Settings.Mode == DebugView::Final && m_Settings.TAA;
-        m_TaaActive = taaActive;
-
-        const bool debugShadow = m_Settings.Mode == DebugView::Shadows;
-        const bool debugAo = m_Settings.Mode == DebugView::AO;
-        // Cascades debug needs the shadow pass wired so cascade constants are written.
-        const bool debugCascades = m_Settings.Mode == DebugView::Cascades;
-        const bool debugPunctual = m_Settings.Mode == DebugView::PunctualShadows;
-
-        // The Final view and the Bloom debug arm both composite the full scene before the bloom
-        // tail, so both fold in the same contributors (shadows, SSAO, sky — plus the g-buffer
-        // emissive channel the lighting pass adds) — the Bloom pyramid then blooms the same HDR the
-        // Final view would.
-        const bool sceneComposited = m_Settings.Mode == DebugView::Final || debugBloom;
-
-        const bool shadowActive =
-            (sceneComposited && m_Settings.Shadows) || debugShadow || debugCascades;
-        m_ShadowActive = shadowActive;
-        m_ShadowPass = nullptr;
-
-        const bool punctualShadowActive =
-            (sceneComposited && m_Settings.PunctualShadows) || debugPunctual;
-        m_PunctualShadowActive = punctualShadowActive;
-        m_PunctualShadowPass = nullptr;
-
-        const bool ssaoFold = sceneComposited && m_Settings.AO;
-        const bool ssaoActive = ssaoFold || debugAo;
-        m_SsaoActive = ssaoActive;
-        m_SsaoPass = nullptr;
-        m_SkyMaterialPass = nullptr;
-
-        // The sky pass topology is driven by the resolved Sky component, not a consumer toggle, and
-        // reduces to one rule: a source fills the radiance cube (static) or composites direct
-        // (dynamic), and the cube-backed sources share one display path. Every cube-backed source —
-        // an environment (its own radiance cube), or a baked material/atmosphere (the bake cube) —
-        // displays through the cubemap skybox pass; the two direct per-pixel passes
-        // (SkyMaterialScenePass for a direct material, SkyScenePass for a direct atmosphere) survive
-        // only as the authored dynamic modes. The SH skylight arm folds into the lighting pass for
-        // any cube-backed source on the SH tier; m_SkylightActive gates the per-frame upload in
-        // Execute.
-        using SkySourceKind = SkyResolver::SkySourceKind;
-        const SkySourceKind skyKind = m_SkyResolver->GetResolvedKind();
-        const SkyLighting skyLighting = m_SkyResolver->GetResolvedLighting();
-        const bool skyBaked = m_SkyResolver->IsResolvedBaked();
-        const bool bakedSkyWanted =
-            sceneComposited &&
-            (skyKind == SkySourceKind::Material || skyKind == SkySourceKind::Atmosphere) &&
-            skyBaked;
-        const bool cubeBacked =
-            (sceneComposited && skyKind == SkySourceKind::Environment) || bakedSkyWanted;
-        const bool skyboxWanted = cubeBacked;
-        const bool atmosphereWanted =
-            sceneComposited && skyKind == SkySourceKind::Atmosphere && !skyBaked;
-        const bool skyMaterialWanted =
-            sceneComposited && skyKind == SkySourceKind::Material && !skyBaked;
-        const bool skylightWanted = cubeBacked && skyLighting == SkyLighting::SH;
-        m_SkyResolver->SetSkylightActive(skylightWanted);
+        *m_Topology = next;
+        m_SkyResolver->SetSkylightActive(m_Topology->SkylightWanted);
 
         // The skybox pass samples the IBL radiance set for an environment sky, or the bake's
         // consumer set (same radiance binding) for a baked material/atmosphere sky.
-        const Ref<DescriptorSet> skyboxSet = bakedSkyWanted ? m_SkyResolver->GetSkyBake().GetSet()
-                                                            : m_SkyResolver->GetIbl().GetSet();
-
-        // IBL lights the scene when the resolved sky is a cube-backed source on the IBL tier — an
-        // environment (convolved from its equirect cube) or a baked material/atmosphere (convolved
-        // from its bake cube). Either fills the IBL consumer set the lighting pass binds; a
-        // display-only source (any other tier) shows its sky without lighting from it.
-        const bool iblAllowed = cubeBacked && skyLighting == SkyLighting::IBL;
-
-        // SSR is a Final-only effect plus its own debug arm; the debug arm force-wires the
-        // trace so the raw reflection target is visible regardless of the Settings.SSR toggle.
-        const bool debugReflections = m_Settings.Mode == DebugView::Reflections;
-        const bool ssrActive =
-            (m_Settings.Mode == DebugView::Final && m_Settings.SSR) || debugReflections;
-        m_SsrActive = ssrActive;
-
-        // Depth of field is a Final-only effect plus its own debug arm, the same gate shape. The
-        // debug arm force-wires the chain with the feature off, but only its first two stages: the
-        // gather, fill, and composite stay off, so inspecting the circle of confusion never alters
-        // the HDR tail.
-        const bool dofActive = (m_Settings.Mode == DebugView::Final && m_Settings.DepthOfField) ||
-                               m_Settings.Mode == DebugView::CoC;
-        const bool dofComposited = m_Settings.Mode == DebugView::Final && m_Settings.DepthOfField;
-        m_DofActive = dofActive;
-        m_DofComposited = dofComposited;
-
-        // The scene-color copy runs wherever the translucent composite does (the Final view and
-        // the Bloom debug arm), so a refractive material behaves identically in both.
-        const bool refractionActive = sceneComposited && m_Settings.Refraction;
-        m_RefractionActive = refractionActive;
+        const Ref<DescriptorSet> skyboxSet = m_Topology->BakedSkyWanted
+                                                 ? m_SkyResolver->GetSkyBake().GetSet()
+                                                 : m_SkyResolver->GetIbl().GetSet();
 
         RenderGraph graph(m_Context);
         const ResourceId albedoId = graph.Import("SceneRenderer GBuffer Albedo");
@@ -345,7 +254,7 @@ namespace Veng::Renderer
         ResourceId litId{};
         ResourceId taaHistoryId{};
         ResourceId velocityId{};
-        if (taaActive)
+        if (m_Topology->TaaActive)
         {
             litId = graph.Import("SceneRenderer Lit");
             taaHistoryId = graph.Import("SceneRenderer TAA History");
@@ -365,7 +274,7 @@ namespace Veng::Renderer
         // into before writing the HDR target — so SSR slots in exactly where TAA does, and the
         // bloom/tonemap tail still reads the HDR target unchanged.
         m_SsrSceneId = ResourceId{};
-        if (ssrActive)
+        if (m_Topology->SsrActive)
         {
             m_SsrSceneId = graph.Import("SceneRenderer SSR Scene");
             m_SsrReflectionChainId = graph.ImportImageMips("SceneRenderer SSR Reflection",
@@ -385,14 +294,14 @@ namespace Veng::Renderer
         m_DofFarBlurId = ResourceId{};
         m_DofNearFillId = ResourceId{};
         m_DofFarFillId = ResourceId{};
-        if (dofActive)
+        if (m_Topology->DofWired())
         {
             m_DofNearId = graph.Import("SceneRenderer DoF Near");
             m_DofFarId = graph.Import("SceneRenderer DoF Far");
             m_DofCocId = graph.Import("SceneRenderer DoF CoC");
             m_DofTileId = graph.Import("SceneRenderer DoF Tiles");
         }
-        if (dofComposited)
+        if (m_Topology->DofComposited())
         {
             m_DofSceneId = graph.Import("SceneRenderer DoF Scene");
             m_DofNearBlurId = graph.Import("SceneRenderer DoF Near Blur");
@@ -402,39 +311,41 @@ namespace Veng::Renderer
         }
 
         // The id the HDR tail writes before the DoF composite hands the HDR target on.
-        const ResourceId dofTargetId = dofComposited ? m_DofSceneId : hdrId;
-        const ResourceId sceneColorId = ssrActive ? m_SsrSceneId : dofTargetId;
-        const ResourceId lightingTargetId = taaActive ? litId : sceneColorId;
+        const ResourceId dofTargetId = m_Topology->DofComposited() ? m_DofSceneId : hdrId;
+        const ResourceId sceneColorId = m_Topology->SsrActive ? m_SsrSceneId : dofTargetId;
+        const ResourceId lightingTargetId = m_Topology->TaaActive ? litId : sceneColorId;
 
         // The refraction copy reads the same target the translucent pass blends over, whichever
         // intermediate the TAA/SSR routing picked; the handle is the bindless side of that id.
         m_RefractionSceneId = ResourceId{};
         m_RefractionDepthId = ResourceId{};
-        if (refractionActive)
+        if (m_Topology->RefractionActive)
         {
             m_RefractionSceneId = graph.Import("SceneRenderer Refraction Scene");
             m_RefractionDepthId = graph.Import("SceneRenderer Refraction Depth");
         }
-        const TextureHandle dofTargetHandle = dofComposited ? m_Dof->GetSceneHandle() : m_HdrHandle;
+        const TextureHandle dofTargetHandle =
+            m_Topology->DofComposited() ? m_Dof->GetSceneHandle() : m_HdrHandle;
         const TextureHandle lightingTargetHandle =
-            taaActive ? m_Taa->GetLitHandle()
-                      : (ssrActive ? m_Ssr->GetSceneHandle() : dofTargetHandle);
+            m_Topology->TaaActive
+                ? m_Taa->GetLitHandle()
+                : (m_Topology->SsrActive ? m_Ssr->GetSceneHandle() : dofTargetHandle);
 
         ResourceId shadowId{};
-        if (shadowActive)
+        if (m_Topology->ShadowActive)
         {
             shadowId = graph.Import("SceneRenderer ShadowMap");
         }
         m_ShadowId = shadowId;
 
         ResourceId punctualShadowId{};
-        if (punctualShadowActive)
+        if (m_Topology->PunctualShadowActive)
         {
             punctualShadowId = graph.Import("SceneRenderer PunctualShadowMap");
         }
         m_PunctualShadowId = punctualShadowId;
 
-        if (bloomActive)
+        if (m_Topology->BloomActive)
         {
             // The pyramid imports one per-mip slot per level (the down/up sweep declares
             // per-level access on these); the result is a single full-resolution import.
@@ -444,13 +355,13 @@ namespace Veng::Renderer
         }
 
         m_AutoExposureId = ResourceId{};
-        if (autoExposureActive)
+        if (m_Topology->AutoExposureActive)
         {
             m_AutoExposureId = graph.ImportBuffer("SceneRenderer AutoExposure");
         }
 
         TextureHandle ssaoHandle{};
-        if (ssaoActive)
+        if (m_Topology->SsaoActive)
         {
             m_SsaoId = graph.Import("SceneRenderer SSAO");
         }
@@ -459,6 +370,12 @@ namespace Veng::Renderer
         m_PointFieldPass.reset();
         m_DofCompositePass.reset();
         m_ScenePointFieldPass = nullptr;
+        // The non-owning pass pointers die with m_Passes; the wiring below repopulates each one
+        // whose pass this topology still wires.
+        m_ShadowPass = nullptr;
+        m_PunctualShadowPass = nullptr;
+        m_SsaoPass = nullptr;
+        m_SkyMaterialPass = nullptr;
 
         // The pass index the HDR tail (SSR composite, point fields, bloom sweep) is declared
         // before: the tonemap in the Final arm (set below), else the terminal pass.
@@ -467,7 +384,7 @@ namespace Veng::Renderer
         // The shadow pass runs first when active so the graph orders its write before
         // the lighting read.
         Ref<ImageView> shadowAtlasView;
-        if (shadowActive)
+        if (m_Topology->ShadowActive)
         {
             auto shadowPass = CreateUnique<ShadowScenePass>(
                 m_Context, m_Assets, m_Settings.ShadowResolution, m_Settings.CascadeCount);
@@ -478,7 +395,7 @@ namespace Veng::Renderer
 
         // Same ordering reason as the directional pass; the atlas is renderer-owned
         // (set 1 binding 4) and passed through PassIO.
-        if (punctualShadowActive)
+        if (m_Topology->PunctualShadowActive)
         {
             auto punctualPass = CreateUnique<PunctualShadowScenePass>(
                 m_Context, m_Assets, m_Settings.PunctualShadowResolution);
@@ -488,7 +405,8 @@ namespace Veng::Renderer
 
         // Recreate the shadow sets against the wired atlas, or the dummy when shadows
         // are off, before the passes below copy their Refs.
-        m_Shadows->RebuildSets(shadowActive ? shadowAtlasView : m_Shadows->GetDummyView());
+        m_Shadows->RebuildSets(m_Topology->ShadowActive ? shadowAtlasView
+                                                        : m_Shadows->GetDummyView());
 
         // The GPU cull arm imports the indirect command buffer so the cull compute pass
         // (StorageBufferWrite) and the geometry pass (IndirectRead) share it through the
@@ -526,7 +444,7 @@ namespace Veng::Renderer
         }
 
         // Created before the tail switch so ssaoHandle is set when the Final arm reads it.
-        if (ssaoActive)
+        if (m_Topology->SsaoActive)
         {
             auto ssaoPass =
                 CreateUnique<SsaoScenePass>(m_Context, m_SsaoPipeline, m_SamplerHandle, m_Extent);
@@ -540,28 +458,29 @@ namespace Veng::Renderer
         case DebugView::Final:
         {
             m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
-                m_Context, ssaoFold ? m_SsaoLightingPipeline : m_LightingPipeline, m_Extent,
-                ssaoFold, m_Shadows->GetSet(), m_Shadows->GetConstantsRingStride(),
-                m_Shadows->GetPunctualRingStride(), m_SkyResolver->GetIbl().GetSet(),
-                m_SkyResolver->GetIbl().GetPrefilterMipCount(), skylightWanted, iblAllowed));
+                m_Context, m_Topology->SsaoFold ? m_SsaoLightingPipeline : m_LightingPipeline,
+                m_Extent, m_Topology->SsaoFold, m_Shadows->GetSet(),
+                m_Shadows->GetConstantsRingStride(), m_Shadows->GetPunctualRingStride(),
+                m_SkyResolver->GetIbl().GetSet(), m_SkyResolver->GetIbl().GetPrefilterMipCount(),
+                m_Topology->SkylightWanted, m_Topology->IblAllowed));
 
             // The resolved sky source wires exactly one fullscreen sky pass in the shared sky slot,
             // before the TAA/SSR/bloom tail so the sky resolves, reflects, and tonemaps with the
             // scene. An environment source samples its radiance cube; an atmosphere source samples
             // the procedural LUTs; a material source runs the authored Sky-domain material.
-            if (skyboxWanted)
+            if (m_Topology->SkyboxWanted)
             {
                 m_Passes.push_back(CreateUnique<SkyboxScenePass>(
                     m_Context, m_SkyboxPipeline, skyboxSet, lightingTargetId, depthId,
-                    m_DepthHandle, m_SamplerHandle, m_Extent, bakedSkyWanted));
+                    m_DepthHandle, m_SamplerHandle, m_Extent, m_Topology->BakedSkyWanted));
             }
-            if (atmosphereWanted)
+            if (m_Topology->AtmosphereWanted)
             {
                 m_Passes.push_back(CreateUnique<SkyScenePass>(
                     m_Context, m_SkyPipeline, m_SkyResolver->GetAtmosphere().GetSet(),
                     lightingTargetId, depthId, m_DepthHandle, m_SamplerHandle, m_Extent));
             }
-            if (skyMaterialWanted)
+            if (m_Topology->SkyMaterialWanted)
             {
                 auto skyMaterialPass = CreateUnique<SkyMaterialScenePass>(
                     m_Context, lightingTargetId, depthId, m_DepthHandle, m_SamplerHandle, HdrFormat,
@@ -601,7 +520,7 @@ namespace Veng::Renderer
             // off, sorted back-to-front. Additive to the pipeline: no toggle — a scene with no
             // translucent submesh records an empty pass. With Refraction on, the copy pass grabs
             // the lit scene color first so a translucent fragment can sample the scene behind it.
-            if (refractionActive)
+            if (m_Topology->RefractionActive)
             {
                 m_Refraction->Declare(m_Passes, lightingTargetId, lightingTargetHandle, depthId,
                                       m_DepthHandle, m_RefractionSceneId, m_RefractionDepthId,
@@ -613,7 +532,7 @@ namespace Veng::Renderer
 
             // TAA resolves the lit target into the HDR target the tail samples, so it sits
             // between lighting and the bloom/tonemap tail.
-            if (taaActive)
+            if (m_Topology->TaaActive)
             {
                 // The resolve writes the scene-color target SSR reads (the HDR target directly
                 // when SSR is off); the SSR composite then writes the HDR target.
@@ -640,7 +559,7 @@ namespace Veng::Renderer
 
             // The composite is declared at the tail anchor (between the point fields and the bloom
             // read of the finished HDR), so like the point-field pass it is held outside m_Passes.
-            if (dofComposited)
+            if (m_Topology->DofComposited())
             {
                 m_DofCompositePass = CreateUnique<DofCompositeScenePass>(
                     m_Context, m_Dof->GetCompositePipeline(), m_DofNearFillId,
@@ -652,7 +571,7 @@ namespace Veng::Renderer
             ResourceId tonemapSourceId = m_HdrId;
             TextureHandle tonemapSourceHandle = m_HdrHandle;
 
-            if (bloomActive)
+            if (m_Topology->BloomActive)
             {
                 // The bloom down/up/composite compute sweep is declared into the graph by
                 // the tail anchor in the pass loop; here the tonemap just reads its result.
@@ -735,7 +654,7 @@ namespace Veng::Renderer
                 m_Context, m_CascadeDebugPipeline, m_Extent, /*useSsao=*/false, m_Shadows->GetSet(),
                 m_Shadows->GetConstantsRingStride(), m_Shadows->GetPunctualRingStride(),
                 m_SkyResolver->GetIbl().GetSet(), m_SkyResolver->GetIbl().GetPrefilterMipCount(),
-                skylightWanted, iblAllowed,
+                m_Topology->SkylightWanted, m_Topology->IblAllowed,
                 /*writeToOutput=*/true));
             break;
         case DebugView::Bloom:
@@ -747,23 +666,24 @@ namespace Veng::Renderer
             // writes the pyramid, and the terminal blit shows mip 0 after the up-sweep — the
             // accumulated bloom before composite.
             m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
-                m_Context, ssaoFold ? m_SsaoLightingPipeline : m_LightingPipeline, m_Extent,
-                ssaoFold, m_Shadows->GetSet(), m_Shadows->GetConstantsRingStride(),
-                m_Shadows->GetPunctualRingStride(), m_SkyResolver->GetIbl().GetSet(),
-                m_SkyResolver->GetIbl().GetPrefilterMipCount(), skylightWanted, iblAllowed));
-            if (skyboxWanted)
+                m_Context, m_Topology->SsaoFold ? m_SsaoLightingPipeline : m_LightingPipeline,
+                m_Extent, m_Topology->SsaoFold, m_Shadows->GetSet(),
+                m_Shadows->GetConstantsRingStride(), m_Shadows->GetPunctualRingStride(),
+                m_SkyResolver->GetIbl().GetSet(), m_SkyResolver->GetIbl().GetPrefilterMipCount(),
+                m_Topology->SkylightWanted, m_Topology->IblAllowed));
+            if (m_Topology->SkyboxWanted)
             {
                 m_Passes.push_back(CreateUnique<SkyboxScenePass>(
                     m_Context, m_SkyboxPipeline, skyboxSet, lightingTargetId, depthId,
-                    m_DepthHandle, m_SamplerHandle, m_Extent, bakedSkyWanted));
+                    m_DepthHandle, m_SamplerHandle, m_Extent, m_Topology->BakedSkyWanted));
             }
-            if (atmosphereWanted)
+            if (m_Topology->AtmosphereWanted)
             {
                 m_Passes.push_back(CreateUnique<SkyScenePass>(
                     m_Context, m_SkyPipeline, m_SkyResolver->GetAtmosphere().GetSet(),
                     lightingTargetId, depthId, m_DepthHandle, m_SamplerHandle, m_Extent));
             }
-            if (skyMaterialWanted)
+            if (m_Topology->SkyMaterialWanted)
             {
                 auto skyMaterialPass = CreateUnique<SkyMaterialScenePass>(
                     m_Context, lightingTargetId, depthId, m_DepthHandle, m_SamplerHandle, HdrFormat,
@@ -773,7 +693,7 @@ namespace Veng::Renderer
             }
             // The same forward translucent composite the Final arm folds into the lit target, so
             // the pyramid blooms the scene the Final view blooms — including the refraction grab.
-            if (refractionActive)
+            if (m_Topology->RefractionActive)
             {
                 m_Refraction->Declare(m_Passes, lightingTargetId, lightingTargetHandle, depthId,
                                       m_DepthHandle, m_RefractionSceneId, m_RefractionDepthId,
@@ -799,7 +719,7 @@ namespace Veng::Renderer
                 m_Context, m_LightingPipeline, m_Extent, /*useSsao=*/false, m_Shadows->GetSet(),
                 m_Shadows->GetConstantsRingStride(), m_Shadows->GetPunctualRingStride(),
                 m_SkyResolver->GetIbl().GetSet(), m_SkyResolver->GetIbl().GetPrefilterMipCount(),
-                skylightWanted, iblAllowed));
+                m_Topology->SkylightWanted, m_Topology->IblAllowed));
             m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
                 m_Context, m_DebugBlits->Albedo, m_Extent,
                 FullscreenBlitScenePass::Source::Reflections));
@@ -812,7 +732,7 @@ namespace Veng::Renderer
                 m_Context, m_LightingPipeline, m_Extent, /*useSsao=*/false, m_Shadows->GetSet(),
                 m_Shadows->GetConstantsRingStride(), m_Shadows->GetPunctualRingStride(),
                 m_SkyResolver->GetIbl().GetSet(), m_SkyResolver->GetIbl().GetPrefilterMipCount(),
-                skylightWanted, iblAllowed));
+                m_Topology->SkylightWanted, m_Topology->IblAllowed));
             m_Passes.push_back(
                 CreateUnique<CocBlitScenePass>(m_Context, m_DebugBlits->Coc, m_Extent));
             break;
@@ -828,7 +748,7 @@ namespace Veng::Renderer
         // Point binding 0 at the punctual atlas for the debug blit (overwrites the
         // cascade/dummy atlas written above — valid in place, the set is fresh this
         // rebuild and not yet bound).
-        if (debugPunctual)
+        if (m_Topology->DebugPunctual)
         {
             m_Shadows->GetBlitSet()->Write(0, m_Shadows->GetPunctualView());
         }
@@ -846,13 +766,13 @@ namespace Veng::Renderer
             .HdrHandle = m_HdrHandle,
             .Ssao = m_SsaoId,
             .SsaoHandle = ssaoHandle,
-            .BloomMip0 = bloomActive ? m_BloomChainId.Level(0) : ResourceId{},
+            .BloomMip0 = m_Topology->BloomActive ? m_BloomChainId.Level(0) : ResourceId{},
             .BloomMip0Handle = m_Bloom->GetMip0Handle(),
             .Velocity = velocityId,
             .VelocityHandle = m_VelocityHandle,
             .GBufferEmissive = emissiveId,
             .EmissiveHandle = m_EmissiveHandle,
-            .SsrReflection = ssrActive ? m_SsrReflectionChainId.Level(0) : ResourceId{},
+            .SsrReflection = m_Topology->SsrActive ? m_SsrReflectionChainId.Level(0) : ResourceId{},
             .SsrReflectionHandle = m_Ssr->GetReflectionSampleHandle(),
             .DofCoc = m_DofCocId,
             .DofCocHandle = m_Dof->GetCocHandle(),
@@ -894,7 +814,7 @@ namespace Veng::Renderer
             {
                 // SSR composes the reflected scene color into the HDR target; the point fields
                 // accumulate over that; the bloom sweep then reads the finished HDR.
-                if (ssrActive)
+                if (m_Topology->SsrActive)
                 {
                     m_Ssr->Declare(graph, m_SsrSceneId, m_SsrReflectionChainId, m_SsrHiZChainId,
                                    m_NormalId, m_OrmId, m_DepthId, dofTargetId, m_DepthHandle,
@@ -908,14 +828,14 @@ namespace Veng::Renderer
                     fieldIo.Hdr = dofTargetId;
                     m_PointFieldPass->Declare(graph, fieldIo);
                 }
-                if (dofActive)
+                if (m_Topology->DofWired())
                 {
                     // The debug arm has no scene intermediate, so its prefilter reads the HDR
                     // target directly — matching the source view its descriptor set bound.
-                    m_Dof->Declare(graph, dofComposited ? m_DofSceneId : m_HdrId, m_DepthId,
-                                   m_DofNearId, m_DofFarId, m_DofCocId, m_DofTileId,
+                    m_Dof->Declare(graph, m_Topology->DofComposited() ? m_DofSceneId : m_HdrId,
+                                   m_DepthId, m_DofNearId, m_DofFarId, m_DofCocId, m_DofTileId,
                                    m_DofNearBlurId, m_DofFarBlurId, m_DofNearFillId, m_DofFarFillId,
-                                   /*stagesOnly=*/!dofComposited);
+                                   /*stagesOnly=*/!m_Topology->DofComposited());
                 }
                 if (m_DofCompositePass != nullptr)
                 {
@@ -924,12 +844,12 @@ namespace Veng::Renderer
                     dofIo.HdrHandle = m_Dof->GetSceneHandle();
                     m_DofCompositePass->Declare(graph, dofIo);
                 }
-                if (bloomActive)
+                if (m_Topology->BloomActive)
                 {
                     m_Bloom->Declare(graph, m_HdrId, m_BloomChainId, m_BloomResultId,
                                      *m_AutoExposure);
                 }
-                if (autoExposureActive)
+                if (m_Topology->AutoExposureActive)
                 {
                     m_AutoExposure->Declare(graph, m_HdrId, m_AutoExposureId, m_Extent);
                 }
@@ -1509,7 +1429,7 @@ namespace Veng::Renderer
         // Auto-exposure: the meter reads the histogram a completed frame wrote, eases the adapted
         // luminance, and resolves the exposure the tonemap uses (SceneView::Exposure directly when
         // metering is inactive). The bloom bright-pass later reads the same resolved exposure.
-        const f32 exposure = m_AutoExposure->ResolveExposure(view, m_AutoExposureActive);
+        const f32 exposure = m_AutoExposure->ResolveExposure(view, m_Topology->AutoExposureActive);
 
         // Per-frame param writes land in the ring-buffered block's current region (no stall).
         if (m_TonemapMaterial.IsLoaded())
@@ -1611,7 +1531,7 @@ namespace Veng::Renderer
         // lighting actually render through.
         const mat4 viewProj = view.Camera.ViewProjection();
         mat4 renderProj = view.Camera.Projection();
-        if (m_TaaActive && validExtent.x > 0 && validExtent.y > 0)
+        if (m_Topology->TaaActive && validExtent.x > 0 && validExtent.y > 0)
         {
             // Sub-pixel projection shear; sign is irrelevant to quality (the sequence is
             // symmetric) and cancels between render and reconstruction, which share this
@@ -1643,8 +1563,9 @@ namespace Veng::Renderer
             // reads one consistent value; the delta is this view's.
             .TimeParams = vec4(Time::GetFrameTime(), view.Delta, 0.0f, 0.0f),
             .ExtentParams = vec4(vec2(validExtent), vec2(m_Extent)),
-            .SceneColor = uvec4(m_Refraction->GetSceneHandle().Index, m_SamplerHandle.Index,
-                                m_RefractionActive ? 1u : 0u, m_Refraction->GetDepthHandle().Index),
+            .SceneColor =
+                uvec4(m_Refraction->GetSceneHandle().Index, m_SamplerHandle.Index,
+                      m_Topology->RefractionActive ? 1u : 0u, m_Refraction->GetDepthHandle().Index),
         };
         for (u32 i = 0; i < ShCoefficientCount; ++i)
         {
@@ -1670,7 +1591,8 @@ namespace Veng::Renderer
         // Pack set-1 ShadowConstants: tile-remapped cascade view-projs, splits, and
         // params. Enabled only when the shadow pass is wired AND a directional light
         // exists this frame; otherwise the lighting pass reads full visibility.
-        const bool shadowEnabled = m_ShadowActive && m_ShadowPass && packed.HaveDirectional;
+        const bool shadowEnabled =
+            m_Topology->ShadowActive && m_ShadowPass && packed.HaveDirectional;
         const ShadowConstantsBlock shadowConstants =
             PackShadowConstants(m_Settings, cascades, shadowEnabled);
 
@@ -1809,7 +1731,7 @@ namespace Veng::Renderer
             {m_AlbedoId, m_AlbedoView}, {m_NormalId, m_NormalView}, {m_OrmId, m_OrmView},
             {m_DepthId, m_DepthView},   {m_HdrId, m_HdrView},       {m_OutputId, m_OutputView},
         };
-        if (m_TaaActive)
+        if (m_Topology->TaaActive)
         {
             bindings.push_back({m_LitId, m_Taa->GetLitView()});
             bindings.push_back({m_TaaHistoryId, m_Taa->GetHistoryView()});
@@ -1819,15 +1741,15 @@ namespace Veng::Renderer
         // Emissive (G4) is likewise a g-buffer channel written every frame, always bound.
         bindings.push_back({m_EmissiveId, m_EmissiveView});
         m_Picking->AppendBindings(bindings);
-        if (m_ShadowActive && m_ShadowPass)
+        if (m_Topology->ShadowActive && m_ShadowPass)
         {
             bindings.push_back({m_ShadowId, m_ShadowPass->GetShadowView()});
         }
-        if (m_PunctualShadowActive && m_PunctualShadowPass)
+        if (m_Topology->PunctualShadowActive && m_PunctualShadowPass)
         {
             bindings.push_back({m_PunctualShadowId, m_Shadows->GetPunctualView()});
         }
-        if (m_BloomActive)
+        if (m_Topology->BloomActive)
         {
             // Each pyramid mip binds its per-frame storage view to its per-mip import slot
             // (the down/up sweep declared per-level access on these); the result is one slot.
@@ -1838,21 +1760,21 @@ namespace Veng::Renderer
             }
             bindings.push_back({m_BloomResultId, m_Bloom->GetResultView()});
         }
-        if (m_AutoExposureActive)
+        if (m_Topology->AutoExposureActive)
         {
             bindings.push_back(
                 {.Id = m_AutoExposureId, .Buffer = m_AutoExposure->GetHistogramBuffer()});
         }
-        if (m_SsaoActive && m_SsaoPass != nullptr)
+        if (m_Topology->SsaoActive && m_SsaoPass != nullptr)
         {
             bindings.push_back({m_SsaoId, m_SsaoPass->GetAoView()});
         }
-        if (m_RefractionActive)
+        if (m_Topology->RefractionActive)
         {
             bindings.push_back({m_RefractionSceneId, m_Refraction->GetSceneView()});
             bindings.push_back({m_RefractionDepthId, m_Refraction->GetDepthView()});
         }
-        if (m_SsrActive)
+        if (m_Topology->SsrActive)
         {
             bindings.push_back({m_SsrSceneId, m_Ssr->GetSceneView()});
             // Each reflection mip binds its per-frame view to its per-mip import slot (the trace
@@ -1868,14 +1790,14 @@ namespace Veng::Renderer
                 bindings.push_back({m_SsrHiZChainId.Level(level), hiZMips[level]});
             }
         }
-        if (m_DofActive)
+        if (m_Topology->DofWired())
         {
             bindings.push_back({m_DofNearId, m_Dof->GetNearView()});
             bindings.push_back({m_DofFarId, m_Dof->GetFarView()});
             bindings.push_back({m_DofCocId, m_Dof->GetCocView()});
             bindings.push_back({m_DofTileId, m_Dof->GetTileView()});
         }
-        if (m_DofComposited)
+        if (m_Topology->DofComposited())
         {
             bindings.push_back({m_DofSceneId, m_Dof->GetSceneView()});
             bindings.push_back({m_DofNearBlurId, m_Dof->GetNearBlurView()});

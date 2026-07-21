@@ -63,6 +63,7 @@ namespace Veng::Renderer
     class SkyResolver;
     class PointField;
     struct DebugBlitPipelines;
+    struct FrameTopology;
 
     /// @brief Long-lived deferred render pipeline owning an offscreen target.
     ///
@@ -852,22 +853,12 @@ namespace Veng::Renderer
         /// @brief Imported id for the final output target.
         ResourceId m_OutputId;
 
-        /// @brief True when the last Rebuild wired the bloom chain (Final mode + Settings.Bloom).
+        /// @brief Which passes the last Rebuild wired, decided from the settings plus the sky.
         ///
-        /// Execute binds the bloom imports and writes the bloom params only when true.
-        bool m_BloomActive = false;
-
-        /// @brief True when the last Rebuild wired the auto-exposure metering pass.
-        ///
-        /// Execute binds the histogram buffer import, averages the metered histogram, and drives
-        /// the adapted exposure only when true.
-        bool m_AutoExposureActive = false;
-
-        /// @brief True when the last Rebuild wired the TAA passes (Final mode + Settings.TAA).
-        ///
-        /// Execute jitters the projection, binds the lit/history imports, and pushes the
-        /// resolve's history-validity flag only when true.
-        bool m_TaaActive = false;
+        /// Held behind a forward declaration because the struct lives in a src-private header this
+        /// installed one cannot include. Rebuild replaces it wholesale; Execute and
+        /// BuildImportBindings read it back to bind exactly the imports the wired passes declared.
+        Unique<FrameTopology> m_Topology;
 
         /// @brief Monotonic frame counter driving the Halton jitter sequence.
         ///
@@ -885,31 +876,17 @@ namespace Veng::Renderer
         /// @brief This frame's world matrix per entity; swapped into m_PreviousWorlds after Execute.
         unordered_map<u64, mat4> m_CurrentWorlds;
 
-        /// @brief True when the last Rebuild wired the directional shadow pass (Final mode + Settings.Shadows).
-        ///
-        /// Execute binds the shadow import and writes the light-space matrix only when true.
-        bool m_ShadowActive = false;
-
         /// @brief Non-owning pointer to the wired ShadowScenePass, or null when shadows are compiled out.
         ///
         /// The renderer reads its produced atlas view to thread into PassIO and to bind the shadow
         /// import per Execute. The pass outlives this pointer (m_Passes is cleared and rebuilt together).
         ShadowScenePass* m_ShadowPass = nullptr;
 
-        /// @brief True when the last Rebuild wired the punctual shadow pass.
-        ///
-        /// Execute binds the punctual atlas import only when true. The pass renders the
-        /// shadow system's punctual atlas (m_Shadows->GetPunctualView()).
-        bool m_PunctualShadowActive = false;
         /// @brief Imported id for the punctual shadow atlas.
         ResourceId m_PunctualShadowId;
         /// @brief Non-owning pointer to the wired punctual shadow pass.
         PunctualShadowScenePass* m_PunctualShadowPass = nullptr;
 
-        /// @brief True when the last Rebuild wired the SSAO pass (Final mode + Settings.AO).
-        ///
-        /// Execute binds the AO import only when true.
-        bool m_SsaoActive = false;
         /// @brief Non-owning pointer into m_Passes to the SsaoScenePass; null when AO is off.
         class SsaoScenePass* m_SsaoPass = nullptr;
 
@@ -917,26 +894,6 @@ namespace Veng::Renderer
         ///
         /// Execute forwards the resolved SceneView::SkyMaterial to it before the graph runs.
         class SkyMaterialScenePass* m_SkyMaterialPass = nullptr;
-
-        /// @brief True when the last Rebuild wired the SSR passes (Final mode + Settings.SSR, or the
-        ///        Reflections debug arm). Execute binds the SSR imports only when true.
-        bool m_SsrActive = false;
-
-        /// @brief True when the last Rebuild wired the depth-of-field chain (Final mode +
-        ///        Settings.DepthOfField, or the CoC debug arm). Execute binds its imports only when
-        ///        true.
-        bool m_DofActive = false;
-
-        /// @brief True when the last Rebuild wired the full chain including the composite.
-        ///
-        /// False in the debug-only case, where the gather, fill, and composite stay off and the
-        /// HDR tail is untouched.
-        bool m_DofComposited = false;
-
-        /// @brief True when the last Rebuild wired the scene-color copy pass (a scene-composited
-        ///        mode + Settings.Refraction). Execute binds the refraction import and populates
-        ///        the view block's SceneColor handles only when true.
-        bool m_RefractionActive = false;
 
         /// @brief The sky-resolve state machine and the three sky radiance-cube helpers; created at Create.
         ///
