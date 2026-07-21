@@ -87,6 +87,7 @@
 
 #include <Veng/Net/AccountId.h>
 #include <Veng/Net/Blob.h>
+// -- carve 74/03 --
 #include <Veng/Net/ClockSync.h>
 #include <Veng/Net/Connection.h>
 #include <Veng/Net/FaultInjectionTransport.h>
@@ -95,6 +96,7 @@
 #include <Veng/Net/Messages.h>
 #include <Veng/Net/PredictionHistory.h>
 #include <Veng/Net/Session.h>
+// -- carve 74/04 --
 #include <Veng/Net/Transport.h>
 #include <Veng/Net/UdpTransport.h>
 #include <Veng/Net/WorldKey.h>

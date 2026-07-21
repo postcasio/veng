@@ -626,6 +626,10 @@ namespace Veng
         Net::AccountId Account;
     };
 
+    // -- carve 74/01 (declaration) --
+
+    // -- carve 74/05 (declaration) --
+
     /// @brief Camera-rig follow relationship: the target a camera entity trails and how.
     ///
     /// Read by the View-phase camera rig: each tick it reads the target's world Transform
@@ -1216,6 +1220,10 @@ VE_REFLECT(::Veng::NetAnchor, 0x6B5366CCAC328A6CULL)
 VE_FIELD(Lo, .DisplayName = "Anchor Lo")
 VE_FIELD(Hi, .DisplayName = "Anchor Hi")
 VE_REFLECT_END();
+
+// -- carve 74/01 (reflection) --
+
+// -- carve 74/05 (reflection) --
 
 // Reflected so the inspector surfaces the seat's account (read-only), but *not* replicated: the
 // account id stays server-local, never broadcast to world members.

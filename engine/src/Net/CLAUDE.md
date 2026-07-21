@@ -563,3 +563,13 @@ delta compression + quantization + packed input, and interest management all sit
 `ActionState`/component shapes and the extensible `Tier` enum. There is no lag compensation, no
 transport security, no spectator/replay/host-migration support, and the editor's Play mode is not a
 network client.
+
+<!-- -- carve 74/00 -- -->
+
+<!-- -- carve 74/01 -- -->
+
+<!-- -- carve 74/02 -- -->
+
+<!-- -- carve 74/03 -- -->
+
+<!-- -- carve 74/04 -- -->

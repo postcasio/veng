@@ -748,6 +748,12 @@ if (VENG_BUILD_TESTS)
             tests/unit/persistence_store_patterns.cpp
             tests/unit/runtime_requests.cpp
             tests/unit/ui_modal.cpp
+            # -- carve 74/00 --
+            # -- carve 74/01 --
+            # -- carve 74/02 --
+            # -- carve 74/03 --
+            # -- carve 74/04 --
+            # -- carve 74/05 --
     )
     target_link_libraries(veng_test_unit PRIVATE veng::veng doctest::doctest)
     # Precompile the foundational header + doctest once per suite: a test TU is
