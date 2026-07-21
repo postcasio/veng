@@ -175,6 +175,18 @@ namespace Veng
         /// @param seat  The keyboard/mouse seat's Viewer entity, or Entity::Null for the implicit seat.
         void SetCursorSeat(Entity seat);
 
+        /// @brief Sets whether a seat keeps its input focus when the window loses OS focus.
+        ///
+        /// Losing window focus normally surrenders a held gameplay focus, so alt-tab frees the cursor.
+        /// Set for a run being driven rather than played — injected input carries no OS focus, so a
+        /// driven app would otherwise go inert whenever the operator works elsewhere. It grabs
+        /// nothing: OS focus still moves away, and only the engine's focus token is held.
+        /// @param retain  True to keep the focus token across a window-focus loss.
+        void SetBackgroundInput(bool retain) { m_BackgroundInput = retain; }
+
+        /// @brief Whether a seat keeps its input focus across a window-focus loss.
+        [[nodiscard]] bool IsBackgroundInput() const { return m_BackgroundInput; }
+
         /// @brief Returns the seat whose focus gates window events and drives the cursor capture.
         [[nodiscard]] Entity GetCursorSeat() const { return m_CursorSeat; }
 
@@ -424,6 +436,8 @@ namespace Veng
         unordered_map<Entity, vector<FocusEntry>> m_Stacks;
         /// @brief The seat whose focus gates window events and drives the cursor capture.
         Entity m_CursorSeat = Entity::Null;
+        /// @brief Whether a window-focus loss leaves a held gameplay focus in place.
+        bool m_BackgroundInput = false;
         /// @brief Monotonic source of focus-token identities; never reuses a value, 0 stays invalid.
         u64 m_NextToken = 1;
 

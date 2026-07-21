@@ -269,7 +269,12 @@ family registers from the editor side.
   closure at the mutation-safe pump point — a game fills it from
   `GetInputRouter()::PostInjectedEvent`, which queues every foldable kind (key/button down·up,
   move, scroll, text) for paced release at the frame's pre-tick input point, so an injected event
-  is **indistinguishable from a real window event** and the action/mapping layer resolves it naturally on the next tick. It **validates the
+  is **indistinguishable from a real window event** and the action/mapping layer resolves it naturally on the next tick.
+  **A driven run wants `--background-input`**: a window that loses OS focus normally surrenders any
+  held gameplay focus, and every focus-gated context stops resolving with it — so an app being driven
+  goes inert the moment the operator works in another window, while its always-on contexts keep
+  responding and make the failure look like a mapping problem. The flag holds the focus token across
+  the blur; it grabs nothing, so OS focus still moves away as usual. It **validates the
   batch shape up front** (a non-empty array within `MaxInputBatchSize` (64), each event
   well-formed with a known type/key/button) and rejects a structural error as the whole call
   before any event applies (the batch verbs' validate-then-apply discipline); a host that leaves

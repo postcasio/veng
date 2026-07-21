@@ -223,6 +223,7 @@ namespace Veng
         // the cursor-capture signal.
         m_InputRouter = CreateUnique<InputRouter>(m_Window.get(), *m_Input,
                                                   m_RenderContext.GetViewportRegistry());
+        m_InputRouter->SetBackgroundInput(m_LaunchArgs.BackgroundInput);
         if (m_ImGuiLayer)
         {
             m_InputRouter->RegisterConsumer(*m_ImGuiLayer);

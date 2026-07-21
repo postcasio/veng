@@ -179,6 +179,10 @@ namespace Veng
             {
                 result.NoRender = true;
             }
+            else if (arg == "--background-input")
+            {
+                result.BackgroundInput = true;
+            }
             else if (arg == "--dedicated")
             {
                 // The first-class dedicated-server flag: a headless listen host with no window, no

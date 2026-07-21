@@ -74,6 +74,17 @@ namespace Veng
         /// process keeps converging. Inert without `--headless` (a windowed run presents its frames).
         bool NoRender = false;
 
+        /// @brief Keep a seat's input focus when the window loses OS focus (`--background-input`).
+        ///
+        /// A window that loses focus normally surrenders any held gameplay focus, so alt-tabbing away
+        /// frees the cursor. That also stops every focus-gated input context resolving, which is wrong
+        /// for a run being driven rather than played: a tool injecting input has no OS focus to hold,
+        /// so the app it drives goes inert the moment the operator works in another window.
+        ///
+        /// With this set the window keeps rendering and resolving input while backgrounded. It grabs
+        /// nothing — OS focus still moves away as usual; only the engine's own focus token stays put.
+        bool BackgroundInput = false;
+
         /// @brief Boot a dedicated server (`--dedicated`): a headless listen host with no local seat.
         ///
         /// The first-class dedicated-server flag and the honest name for the `--server --headless`

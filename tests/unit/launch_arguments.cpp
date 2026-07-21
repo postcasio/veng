@@ -114,6 +114,20 @@ TEST_CASE("LaunchArguments: --server --headless is the dedicated-server pair")
     CHECK(parsed->Headless);
 }
 
+TEST_CASE("LaunchArguments: --background-input is an independent flag, off by default")
+{
+    const Result<LaunchArguments> bare = ParseTokens({});
+    REQUIRE(bare.has_value());
+    CHECK_FALSE(bare->BackgroundInput);
+
+    // It is orthogonal to the windowing flags: a windowed run is exactly what it is for.
+    const Result<LaunchArguments> parsed = ParseTokens({"--background-input", "--level=42"});
+    REQUIRE(parsed.has_value());
+    CHECK(parsed->BackgroundInput);
+    CHECK_FALSE(parsed->Headless);
+    CHECK(parsed->Level.has_value());
+}
+
 TEST_CASE("LaunchArguments: --no-render is an independent flag, off by default")
 {
     const Result<LaunchArguments> bare = ParseTokens({"--headless"});

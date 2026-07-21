@@ -167,10 +167,12 @@ namespace Veng
         const EventType type = event.GetEventType();
 
         // Window-focus loss frees a held gameplay capture on the cursor seat, so alt-tab releases
-        // the cursor.
+        // the cursor — unless the seat holds input in the background, where the token is what keeps
+        // a driven app's focus-gated contexts resolving while the operator works in another window.
         if (type == EventType::WindowFocus)
         {
-            if (!static_cast<WindowFocusEvent&>(event).IsFocused() && IsGameplayFocused())
+            if (!static_cast<WindowFocusEvent&>(event).IsFocused() && IsGameplayFocused() &&
+                !m_BackgroundInput)
             {
                 PopFocus();
             }

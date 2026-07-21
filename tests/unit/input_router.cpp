@@ -166,6 +166,34 @@ TEST_CASE("InputRouter: window-focus loss pops a held gameplay focus")
     CHECK(router.IsGameplayFocused());
 }
 
+TEST_CASE("InputRouter: background input holds a gameplay focus across a window-focus loss")
+{
+    Input input(nullptr);
+    const Renderer::ViewportRegistry registry;
+    InputRouter router(nullptr, input, registry);
+
+    CHECK_FALSE(router.IsBackgroundInput());
+    router.SetBackgroundInput(true);
+    router.PushFocus(InputFocus::Gameplay);
+
+    // The token survives the blur, so a driven app's focus-gated contexts keep resolving while the
+    // operator works in another window.
+    WindowFocusEvent lost(false);
+    router.Dispatch(lost);
+    CHECK(router.IsGameplayFocused());
+
+    // Regaining focus leaves the held token exactly as it was — nothing was pushed to unwind.
+    WindowFocusEvent gained(true);
+    router.Dispatch(gained);
+    CHECK(router.IsGameplayFocused());
+
+    // Clearing it restores the release, so the setting is the whole of the behaviour.
+    router.SetBackgroundInput(false);
+    WindowFocusEvent lostAgain(false);
+    router.Dispatch(lostAgain);
+    CHECK(router.GetFocus() == InputFocus::UI);
+}
+
 TEST_CASE("InputRouter: an injected tap is paced so the press is seen before the release")
 {
     Input input(nullptr);
@@ -251,7 +279,7 @@ TEST_CASE("InputRouter: an injected text event types into the focused field")
     InputRouter router(nullptr, input, registry);
 
     Gui::Document document;
-    Gui::Element& field = FocusedField(document);
+    const Gui::Element& field = FocusedField(document);
     TextConsumer consumer(document);
     router.RegisterConsumer(consumer);
 
@@ -273,7 +301,7 @@ TEST_CASE("InputRouter: injected text takes the same route as window-sourced tex
     InputRouter router(nullptr, input, registry);
 
     Gui::Document injected;
-    Gui::Element& injectedField = FocusedField(injected);
+    const Gui::Element& injectedField = FocusedField(injected);
     TextConsumer injectedConsumer(injected);
 
     Gui::Document windowed;
