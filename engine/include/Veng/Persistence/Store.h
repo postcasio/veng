@@ -227,6 +227,13 @@ namespace Veng
         /// @param scene  The freshly-built scene to rehydrate.
         void RehydrateScene(Scene& scene);
 
+        /// @brief Returns whether a family has been registered on this store.
+        ///
+        /// Registering a family twice is fatal, so a helper that registers a well-known family on a
+        /// consumer's behalf asks first rather than assuming it is the only caller.
+        /// @param family  The family to test.
+        [[nodiscard]] bool IsFamilyRegistered(StoreFamilyId family) const;
+
         /// @brief Returns whether any family holds unflushed writes.
         [[nodiscard]] bool IsDirty() const;
 
