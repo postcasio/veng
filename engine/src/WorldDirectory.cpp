@@ -53,11 +53,32 @@ namespace Veng
         std::unordered_map<u64, Bucket> Buckets;
 
         Net::Blob EmptyPayload;
+        // The scratch InstancesOf returns a view over; rebuilt per call, so its span is valid only
+        // until the next one.
+        vector<WorldPlacement> Instances;
 
         [[nodiscard]] Bucket* Find(WorldInstanceId world)
         {
             const auto it = Buckets.find(world.Value);
             return it != Buckets.end() ? &it->second : nullptr;
+        }
+
+        // Fills out with the key's live buckets, each carrying its presence and recorded payload —
+        // the shape both the placement policy and InstancesOf see.
+        void Gather(const Net::WorldKey& key, vector<WorldPlacement>& out)
+        {
+            out.clear();
+            const auto it = KeyMap.find(key);
+            if (it == KeyMap.end())
+            {
+                return;
+            }
+            for (const WorldInstanceId world : it->second)
+            {
+                const Bucket& bucket = Buckets.at(world.Value);
+                out.push_back(
+                    {.World = world, .LiveSeats = bucket.Presence, .Payload = bucket.Payload});
+            }
         }
 
         // The get-or-place selection: the custom policy if set, else the built-in capacity policy (the
@@ -66,15 +87,7 @@ namespace Veng
         optional<WorldInstanceId> Place(const Net::JoinRequestInfo& request)
         {
             vector<WorldPlacement> buckets;
-            if (const auto it = KeyMap.find(request.Key); it != KeyMap.end())
-            {
-                for (const WorldInstanceId world : it->second)
-                {
-                    const Bucket& bucket = Buckets.at(world.Value);
-                    buckets.push_back(
-                        {.World = world, .LiveSeats = bucket.Presence, .Payload = bucket.Payload});
-                }
-            }
+            Gather(request.Key, buckets);
 
             if (Placement)
             {
@@ -272,6 +285,12 @@ namespace Veng
             }
         }
         return members;
+    }
+
+    std::span<const WorldPlacement> WorldDirectory::InstancesOf(const Net::WorldKey& key) const
+    {
+        m_State->Gather(key, m_State->Instances);
+        return m_State->Instances;
     }
 
     vector<WorldInstanceId> WorldDirectory::ReapIdle(const f64 now)

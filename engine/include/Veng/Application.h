@@ -686,6 +686,18 @@ namespace Veng
         /// @return The client host, or nullptr.
         [[nodiscard]] ClientHost* GetClientHost() const;
 
+        /// @brief Returns the application's world directory, or null when it holds none.
+        ///
+        /// The directory is the application's in every role: a standalone app resolves its travels
+        /// through it, a mounted ServerHost borrows it, and a joining client still owns one. Reaching
+        /// it is how a game asks the world-lifetime questions the engine already answers — which
+        /// instances a key is live under (WorldDirectory::InstancesOf), who is present in it
+        /// (MembersOf), whether an instance is still live (Contains) — instead of mirroring that
+        /// state against registration and close notifications.
+        /// @return The directory, or nullptr before the managed world is started (and always for an
+        ///         application configured without one).
+        [[nodiscard]] WorldDirectory* GetWorldDirectory() const;
+
         /// @brief Starts hosting the managed world at runtime, mounting the ServerHost (mirrors `--server`).
         ///
         /// The runtime counterpart to the `--server` launch flag: binds the listening transport and

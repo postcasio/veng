@@ -264,6 +264,23 @@ namespace Veng
         /// @return The member accounts, in no particular order.
         [[nodiscard]] vector<Net::AccountId> MembersOf(const Net::WorldKey& key) const;
 
+        /// @brief Returns every live instance ("bucket") currently under a key — the key resolve.
+        ///
+        /// The membership reads above answer "who is in this key"; this answers "is this key live,
+        /// and where" — the question a world-addressed consumer starts with. Each offered bucket
+        /// carries its world id, its presence, and its recorded travel payload, exactly as the
+        /// placement policy sees them, so a caller wanting the sole bucket of an uncapped key reads
+        /// the first element and a caller facing a capped key sees the whole live set. A key holds
+        /// several buckets whenever MaxPlayersPerInstance opens a fresh one past a full bucket, so
+        /// the read is plural by construction. A bucket stops appearing the moment ReapIdle drops
+        /// it.
+        /// @param key  The key whose live buckets are gathered.
+        /// @return The key's live buckets in unspecified order; empty for a key hosted nowhere here.
+        /// @warning The view is backed by directory-owned scratch: it is valid until the next call
+        ///          to InstancesOf, and it is not refreshed by a later Resolve, presence change, or
+        ///          reap. Copy what must outlive the call.
+        [[nodiscard]] std::span<const WorldPlacement> InstancesOf(const Net::WorldKey& key) const;
+
         /// @brief Reaps every reapable bucket presence-less past the dwell; returns the reaped ids.
         ///
         /// For each reaped bucket: invokes the consumer CloseWorld hook first, then WorldRunner::CloseWorld

@@ -564,7 +564,42 @@ delta compression + quantization + packed input, and interest management all sit
 transport security, no spectator/replay/host-migration support, and the editor's Play mode is not a
 network client.
 
-<!-- -- carve 74/00 -- -->
+## Resolving a world: which instances, which join, which host
+
+Membership answers "who is in this key"; **resolution answers "is this key live, and where"** — the
+question every world-addressed feature starts with, and the one a consumer otherwise answers by
+mirroring the directory's own map against registration and close notifications.
+**`WorldDirectory::InstancesOf(WorldKey)`** returns the key's live buckets as
+`std::span<const WorldPlacement>` — each carrying its `WorldInstanceId`, its presence, and its
+recorded travel payload, exactly the shape the placement policy is offered. The read is **plural by
+construction, not by caution**: `MaxPlayersPerInstance` opens a fresh bucket once every existing one
+is full, so a key legitimately holds several live instances and a singular resolve would be undefined
+the moment capping turned on. A caller wanting the sole bucket of an uncapped key reads the first
+element. The view is directory-owned scratch, valid until the next `InstancesOf`; it is not a live
+window onto the map, so a caller holding it across a `Resolve` or a reap copies what it needs. A
+bucket stops appearing exactly when `ReapIdle` drops it — the same moment the `CloseWorld` hook fires.
+
+The directory is reachable from outside the engine through **`Application::GetWorldDirectory()`**
+(null before the managed world is started, and always for an application configured without one).
+The directory is the application's in **every role** — a standalone app resolves travels through it,
+a mounted `ServerHost` borrows it, a joining client still owns one — so the accessor, not a
+per-query façade, is the reach: the queries are already the directory's own vocabulary and a façade
+would duplicate every one of them.
+
+The two host-side resolves complete the set. **`ClientHost::JoinForKey(WorldKey)`** is the inverse of
+`JoinKey(JoinId)`: the client's own join for a key, or nothing — single-valued because a repeat
+`Join` of a joined key is idempotent, and empty for a key it left. **`ServerHost::IsReplicatingWorld(WorldInstanceId)`**
+is the **deferral gate**: true while this host holds a live replication instance for the world (opened
+at `Create`, added through `AddWorld`, or opened by the factory) and false once the directory reaps it
+and the host drops its replication state. Work that must wait until a world actually replicates gates
+on it rather than scanning `Connections()` × `JoinsFor` × `WorldForJoin` for a join that resolves
+there. It is **narrower than the directory's `Contains`**: a shared directory may hold a bucket some
+other role opened that this host does not replicate.
+
+All four are **host-local reads over state the tier already maintains** — no wire format, no new
+bookkeeping, no lifecycle change.
+
+
 
 <!-- -- carve 74/01 -- -->
 

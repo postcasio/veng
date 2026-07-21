@@ -454,6 +454,20 @@ namespace Veng
         /// @brief The number of currently live hosted worlds (pre-registered plus factory-opened).
         [[nodiscard]] usize HostedWorldCount() const;
 
+        /// @brief Whether this host holds a live replication instance for a world — the deferral gate.
+        ///
+        /// True for a world this host replicates: one it opened at Create, one added through
+        /// AddWorld, or one its factory opened, from the moment the world is hosted until the
+        /// directory reaps it and the host drops its replication state. It is the safe form of "may I
+        /// touch this world's wire state yet?" — work that must wait until a world actually
+        /// replicates (assigning wire ids, associating a spawn with a prefab) gates on this rather
+        /// than scanning connections and their joins for one that resolves to the world. Narrower
+        /// than the directory's own Contains: a shared directory may hold a bucket some other role
+        /// opened and this host does not replicate.
+        /// @param world  The world to test.
+        /// @return Whether the world has a live replication instance here.
+        [[nodiscard]] bool IsReplicatingWorld(WorldInstanceId world) const;
+
         /// @brief The lifecycle events surfaced this Pump, for game policy (e.g. pawn cleanup).
         /// @return A view valid until the next Pump.
         [[nodiscard]] std::span<const Net::NetEvent> Events() const;
@@ -748,6 +762,16 @@ namespace Veng
         /// @brief The WorldKey a join was requested and granted for, or the zero key when unknown.
         /// @param join  The JoinId to resolve.
         [[nodiscard]] Net::WorldKey JoinKey(Net::JoinId join) const;
+
+        /// @brief This client's own join for a key, if it holds one — the inverse of JoinKey.
+        ///
+        /// The "my join for key K" question, answered over the joins the client already holds
+        /// instead of by scanning Joins() and comparing each JoinKey. A key is joined at most once
+        /// (a repeat Join of a joined key is idempotent), so the answer is single-valued; a key
+        /// joined by some other client, or one this client left, resolves to nothing.
+        /// @param key  The key to resolve.
+        /// @return The JoinId held for the key, or nullopt when this client holds none.
+        [[nodiscard]] optional<Net::JoinId> JoinForKey(const Net::WorldKey& key) const;
 
         /// @brief The prediction history for the current join's predicted set.
         [[nodiscard]] Net::PredictionHistory& History();

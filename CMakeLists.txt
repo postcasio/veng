@@ -748,7 +748,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/persistence_store_patterns.cpp
             tests/unit/runtime_requests.cpp
             tests/unit/ui_modal.cpp
-            # -- carve 74/00 --
+            tests/unit/net_directory_resolution.cpp
             # -- carve 74/01 --
             # -- carve 74/02 --
             # -- carve 74/03 --

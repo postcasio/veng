@@ -135,6 +135,11 @@ namespace Veng
         return m_Net ? m_Net->ClientHost.get() : nullptr;
     }
 
+    WorldDirectory* Application::GetWorldDirectory() const
+    {
+        return m_Directory.get();
+    }
+
     NetRole Application::RoleForWorld(const WorldInstanceId world) const
     {
         if (m_Net)

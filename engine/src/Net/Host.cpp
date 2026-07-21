@@ -810,7 +810,7 @@ namespace Veng
                                                  .InterestPolicy = info.InterestPolicy});
         state->Directory->Register(info.Key, info.WorldId);
 
-        Net::ServerInfo serverInfo = info.Server;
+        const Net::ServerInfo serverInfo = info.Server;
         Result<Unique<Net::Server>> server = Net::Server::Create(serverInfo);
         if (!server.has_value())
         {
@@ -1230,7 +1230,7 @@ namespace Veng
         State& s = *m_State;
         // Swap the queue out so a handler sending (or looping back) during delivery appends to a
         // fresh queue for the next frame rather than extending this iteration.
-        vector<State::InboundMessage> inbound = std::move(s.Inbound);
+        const vector<State::InboundMessage> inbound = std::move(s.Inbound);
         s.Inbound.clear();
         for (const State::InboundMessage& message : inbound)
         {
@@ -1251,6 +1251,11 @@ namespace Veng
     usize ServerHost::HostedWorldCount() const
     {
         return m_State->Directory->WorldCount();
+    }
+
+    bool ServerHost::IsReplicatingWorld(const WorldInstanceId world) const
+    {
+        return m_State->TryWorldOf(world) != nullptr;
     }
 
     std::span<const Net::NetEvent> ServerHost::Events() const
@@ -1414,7 +1419,7 @@ namespace Veng
             {
                 if (jc.World->IsAlive(entity))
                 {
-                    if (Authority* authority = jc.World->TryGet<Authority>(entity);
+                    if (auto* authority = jc.World->TryGet<Authority>(entity);
                         authority != nullptr && authority->Tier == Tier::Predicted)
                     {
                         authority->Tier = Tier::Remote;
@@ -1706,7 +1711,7 @@ namespace Veng
         State& s = *m_State;
         // Swap the queue out so a handler sending during delivery appends to a fresh queue for the
         // next frame rather than extending this iteration.
-        vector<State::InboundMessage> inbound = std::move(s.Inbound);
+        const vector<State::InboundMessage> inbound = std::move(s.Inbound);
         s.Inbound.clear();
         for (const State::InboundMessage& message : inbound)
         {
@@ -1985,6 +1990,18 @@ namespace Veng
     {
         const State::JoinClient* jc = m_State->JoinClientOf(join);
         return jc != nullptr ? jc->Key : Net::WorldKey{};
+    }
+
+    optional<Net::JoinId> ClientHost::JoinForKey(const Net::WorldKey& key) const
+    {
+        for (const auto& [joinId, jc] : m_State->Joins)
+        {
+            if (jc.Key == key)
+            {
+                return joinId;
+            }
+        }
+        return std::nullopt;
     }
 
     Net::PredictionHistory& ClientHost::History()
