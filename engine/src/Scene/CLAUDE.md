@@ -227,6 +227,34 @@ reads the seat's assigned pad through it. A **`Possesses { Entity Pawn }`** link
 seat controls; possession is independent of `Viewer.Camera` (a spectator views without possessing;
 a cutscene retargets the camera without un-possessing).
 
+## LocalControl — which pawn is mine
+
+**`LocalControl { Entity Seat }`** (`Veng/Scene/LocalControl.h`) is the engine's answer to "which
+pawn is mine?", carried by the pawn a **presenting viewport's own seat** possesses. Its derivation
+is two steps and both are required: **the presenting viewport → the seat bound to it → that seat's
+`Possesses` → the pawn**. *"An entity possessed by a `Tier::Local` seat" is not the rule* — on a
+client every mirrored pawn carries its own instantiated local seat, so that test marks every pawn on
+screen, which is the precise failure this marker exists to prevent. A client therefore marks exactly
+its own pawn, a listen host marks the pawn its local seat controls, and a dedicated host —
+presenting nothing — marks nothing.
+
+The engine owns the whole lifecycle and **a consumer only ever reads it**.
+`ReconcileLocalControl(scene, presentingSeats)` stamps and clears a scene's markers against the seats
+presenting it; `ManagedViewportSet` runs it at a viewport↔seat rebind (both ends, so a departed world
+keeps nothing stale), and `Application` runs it once per frame over every live world after the sim
+ticks and the net pump. That per-frame pass is a **reconciling sweep**, because possession raises no
+engine-side event to listen to: `Possesses` is a plain component a game writes directly and, on a
+client, one that changes through snapshot apply. Its cost is the presenting-viewport count, never a
+scan of a scene's entities. Each marker move raises `Application::OnClientPossession`, which is the
+marker's **event form** and fires in every mode rather than only under `--join`.
+
+The marker is singular per presenting viewport and carries the seat it came from, so the consumer
+read is **per viewport** — `ResolveLocalControlledPawn(scene, seat)` against the viewport's bound
+seat (`ManagedViewportSet::GetViewportViewer`) — and split-screen gives each viewport its own pawn. A
+flat "every locally possessed pawn" marker is deliberately not what this is. It is registered
+fieldless (`VE_TYPE`), so it is **never replicated and never persisted**: it is per-process
+presentation state, meaningless off the machine that derived it.
+
 ## ConstantMotion — the input-free counterpart
 
 **`ConstantMotion` is the input-free counterpart** (`Veng/Scene/Motion.h`): an authored

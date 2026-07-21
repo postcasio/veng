@@ -195,10 +195,23 @@ enough that the client never converges.
 `Application` mounts the hosts and drives the pump for you: it receives, ticks the
 Sim phase (feeding each connection's buffered input into its seat first), and sends
 this frame's snapshot + spawn stream. A game reaches the machinery through
-`GetNetRole()`, `GetServerHost()`, and `GetClientHost()`, and wires a joined
-client's local presentation through the `OnClientPossession(world, pawn)` hook —
-called when the client's own seat's possessed pawn changes, so the game aims its
-Local-tier camera at the replicated pawn.
+`GetNetRole()`, `GetServerHost()`, and `GetClientHost()`, and wires its local
+presentation through the `OnClientPossession(world, pawn)` hook — called in every
+mode when the pawn this machine's own seat controls changes, so the game aims its
+Local-tier camera at that pawn. A listen host, where one peer both hosts and
+presents, is notified exactly as a joined client is.
+
+**"Which pawn is mine?" is an engine answer, not a per-frame re-derivation.** The
+engine stamps a **`LocalControl`** marker (`Veng/Scene/LocalControl.h`) on the pawn a
+presenting viewport's own seat possesses, and clears it when that stops being true.
+The derivation is two steps and both are required — *the presenting viewport → the
+seat bound to it → that seat's `Possesses` → the pawn*. "Possessed by a `Tier::Local`
+seat" is **not** the rule: on a client every mirrored pawn carries its own
+instantiated local seat, so that test marks every pawn on screen. A consumer only
+ever reads the marker, and reads it *per viewport* —
+`ResolveLocalControlledPawn(scene, seat)` — so split-screen gives each viewport its
+own pawn rather than a flat "some entity is marked". The marker is never replicated
+and never persisted; `OnClientPossession` is its event form.
 
 Where does a joined client's **local control seat** come from? The same player
 prefab single-player uses. The sample tags the world when a net flag is set and its

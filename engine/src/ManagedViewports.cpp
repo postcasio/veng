@@ -11,6 +11,7 @@
 #include <Veng/Renderer/ViewportCompositor.h>
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
+#include <Veng/Scene/LocalControl.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/SceneSimulation.h>
 #include <Veng/Scene/SceneViewport.h>
@@ -278,6 +279,27 @@ namespace Veng
         }
 
         AdoptViewportSeat(managed, resolvedSeat);
+
+        // The viewport↔seat binding is a derivation point of the locally-controlled marker, and it
+        // just moved: reconcile both ends here rather than leaving the departed world carrying a
+        // marker for a seat nothing presents any more. The departed world keeps the markers of any
+        // split-screen peer still presenting it.
+        vector<Entity> seats;
+        if (departedWorld != world)
+        {
+            if (const World* departed = runner.ResolveWorld(departedWorld);
+                departed != nullptr && departed->LiveScene != nullptr)
+            {
+                CollectPresentingSeats(departedWorld, seats);
+                ReconcileLocalControl(departed->GetScene(), seats);
+            }
+        }
+        if (const World* destination = runner.ResolveWorld(world);
+            destination != nullptr && destination->LiveScene != nullptr)
+        {
+            CollectPresentingSeats(world, seats);
+            ReconcileLocalControl(destination->GetScene(), seats);
+        }
     }
 
     void ManagedViewportSet::AdoptViewportSeat(ManagedViewport& managed, const Entity seat)
@@ -337,6 +359,24 @@ namespace Veng
     WorldInstanceId ManagedViewportSet::GetViewportWorld(const usize index) const
     {
         return index < m_Viewports.size() ? m_Viewports[index].Info.World : WorldInstanceId{};
+    }
+
+    Entity ManagedViewportSet::GetViewportViewer(const usize index) const
+    {
+        return index < m_Viewports.size() ? m_Viewports[index].Info.Viewer : Entity::Null;
+    }
+
+    void ManagedViewportSet::CollectPresentingSeats(const WorldInstanceId world,
+                                                    vector<Entity>& seats) const
+    {
+        seats.clear();
+        for (const ManagedViewport& managed : m_Viewports)
+        {
+            if (managed.Info.World == world && !managed.Info.Viewer.IsNull())
+            {
+                seats.push_back(managed.Info.Viewer);
+            }
+        }
     }
 
     optional<WorldInstanceId> ManagedViewportSet::GetPendingViewportWorld(const usize index) const

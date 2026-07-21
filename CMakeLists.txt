@@ -754,6 +754,7 @@ if (VENG_BUILD_TESTS)
             # -- carve 74/03 --
             # -- carve 74/04 --
             # -- carve 74/05 --
+            tests/unit/net_local_control.cpp
     )
     target_link_libraries(veng_test_unit PRIVATE veng::veng doctest::doctest)
     # Precompile the foundational header + doctest once per suite: a test TU is

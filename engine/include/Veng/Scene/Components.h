@@ -630,6 +630,39 @@ namespace Veng
 
     // -- carve 74/05 (declaration) --
 
+    /// @brief Marks the pawn a presenting viewport's own seat controls on this machine.
+    ///
+    /// The engine's answer to "which pawn is mine?", derived in two steps that are both required:
+    /// **a presenting viewport → the seat bound to it → that seat's Possesses → the pawn**. The
+    /// first step is the one that cannot be dropped: on a client every mirrored pawn carries its
+    /// own instantiated Tier::Local seat, so "possessed by a local seat" would mark every pawn on
+    /// screen. Only the seat a viewport actually presents through yields a marker, so a client
+    /// marks exactly its own pawn, a listen host marks the pawn its local seat controls, and a
+    /// dedicated host — which presents nothing — marks nothing.
+    ///
+    /// The marker is singular per presenting viewport and carries the seat it was derived from, so
+    /// under split-screen each viewport reads back its own pawn: a consumer resolves its viewport's
+    /// seat and asks ResolveLocalControlledPawn (Veng/Scene/LocalControl.h) rather than treating a
+    /// bare "some entity is marked" as its own. A flat every-locally-possessed-pawn marker is not
+    /// what this is.
+    ///
+    /// Never replicated and never persisted — it is per-process presentation state, meaningless off
+    /// the machine that derived it, so it carries no reflected field and rides no snapshot or save.
+    /// @warning A consumer only ever **reads** this marker. The engine owns its whole lifecycle
+    ///          (ReconcileLocalControl); adding, removing, or editing it in application code is
+    ///          misuse and is overwritten at the next reconcile.
+    /// @warning Viewport↔seat binding changes stamp it eagerly, but a possession change does not:
+    ///          Possesses is a plain component a game writes directly and, on a client, one that
+    ///          arrives through snapshot apply — neither raises an engine-side event. That case,
+    ///          and only that case, is covered by a reconciling sweep the engine runs once per
+    ///          frame over the presenting viewports (never a scan of the scene's entities), so the
+    ///          marker reflects the possession state the frame renders.
+    struct LocalControl
+    {
+        /// @brief The presenting viewport's seat whose Possesses named this pawn.
+        Entity Seat = Entity::Null;
+    };
+
     /// @brief Camera-rig follow relationship: the target a camera entity trails and how.
     ///
     /// Read by the View-phase camera rig: each tick it reads the target's world Transform
@@ -1224,6 +1257,10 @@ VE_REFLECT_END();
 // -- carve 74/01 (reflection) --
 
 // -- carve 74/05 (reflection) --
+
+// Registered without a reflected field, so it neither serializes nor rides the wire: the marker is
+// per-process presentation state the engine derives per frame, meaningless off its machine.
+VE_TYPE(::Veng::LocalControl, 0x7B0B171ABA0821EDULL);
 
 // Reflected so the inspector surfaces the seat's account (read-only), but *not* replicated: the
 // account id stays server-local, never broadcast to world members.
