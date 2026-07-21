@@ -100,6 +100,7 @@
 #include <Veng/Net/WorldKey.h>
 
 #include <Veng/Persistence/SaveSlots.h>
+#include <Veng/Persistence/SessionStore.h>
 #include <Veng/Persistence/Store.h>
 
 #include <Veng/Platform/UserPaths.h>

@@ -912,6 +912,12 @@ namespace Veng
         }
     }
 
+    bool Store::IsFamilyRegistered(const StoreFamilyId family) const
+    {
+        const auto it = m_State->Families.find(family);
+        return it != m_State->Families.end() && it->second.Registered;
+    }
+
     bool Store::IsDirty() const
     {
         return std::ranges::any_of(m_State->Families,

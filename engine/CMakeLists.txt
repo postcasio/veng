@@ -143,6 +143,7 @@ add_library(veng SHARED
         # persistence sources are appended here, in this block.
         src/Persistence/Store.cpp
         src/Persistence/SaveSlots.cpp
+        src/Persistence/SessionStore.cpp
         src/Persistence/StorePatterns.cpp
         src/Platform/UserPaths.cpp
         src/Task/ParallelFor.cpp

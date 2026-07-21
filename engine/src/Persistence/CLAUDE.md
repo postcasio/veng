@@ -205,4 +205,46 @@ promise something the helper does not do.
 
 ## The session-store binding
 
+`Veng/Persistence/SessionStore.h` is the store backing the engine ships for `SessionRegistry`'s
+durability hooks. The registry keeps its per-account records for the life of the process unless
+`LoadSession`/`SaveSession` are set; the engine owns *when* durability fires (first admit,
+disconnect, teardown, the debounced checkpoint) and *what* is encoded, and the hook pair owns only
+*where* the bytes land. This is the engine's answer to "where": one family, one record per account.
+
+- **`SessionsFamily`** — the engine's minted family id, drawn from the same flat space consumers
+  mint from (there is no reserved numeric range). Its file stem is **`veng.sessions`**: a bare
+  `sessions` is the stem a consumer is most likely to pick for the same concept, and two families
+  sharing a stem is a refused registration, so engine stems carry the `veng.` prefix.
+- **`RegisterSessionFamily(Store&)`** registers it, once per opened store. It is separate from the
+  hooks rather than a side effect of building them, and idempotent (it asks `IsFamilyRegistered`
+  first): a consumer that binds more than one session-hosting struct against a single store would
+  otherwise register the same family twice, which is fatal.
+- **`MakeSessionHooks(function<Store*()>, SessionStoreInfo)`** returns the `LoadSession`/
+  `SaveSession` pair to assign onto whichever struct the consumer fills — `SessionRegistryInfo`, or
+  the mirrored fields on `ApplicationInfo` and `Net::ServerHostInfo`.
+
+**A source, not a `Store&`.** A registry is built once, at init, and its hooks are frozen from that
+moment; a store is scoped to an open slot, since it holds the slot's exclusive lock and must be
+dropped before another slot opens. A captured reference would name an object that does not exist yet
+at init and a destroyed one afterwards. The source resolves per call instead, which also makes "no
+store right now" expressible: **a source returning null is the memory-only posture** — loads report
+no record, saves are dropped — rather than a special case bolted beside the binding. Setting no
+hooks at all is unchanged and still the zero-config default.
+
+**The record.** Keyed on the **full 128-bit account id** (`StoreKey{ .Lo = account.Lo,
+.Hi = account.Hi }`) — both halves are load-bearing, and keying on the low word alone would collapse
+two accounts onto one record. The value is the registry's encoded blob stored verbatim as a single
+`ComponentBlob` tagged `TypeIdOf<Net::SessionRecord>()`: the store does not re-model the record (its
+encoding is already the tolerant reflection walker), but the tag is the only thing identifying those
+bytes to a debug dump, a save inspector, or a later migration.
+
+**`SessionStoreInfo::FlushOnSave`** defaults true, because a session save is a genuine durability
+point — a disconnect may precede process death. The cost is that `Store::Flush` is whole-slot: every
+dirty family is rewritten and synced, so on a large slot an unrelated family pays for someone's
+disconnect. A consumer checkpointing on its own cadence sets it false. `SaveSession` returns `void`,
+so a failed flush can only be logged; a consumer that must observe write failures flushes itself.
+
+The raw hook pair remains the extension seam — a consumer with bespoke storage skips this header
+entirely.
+
 ## The local account store
