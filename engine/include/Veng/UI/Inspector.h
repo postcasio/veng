@@ -32,6 +32,14 @@ namespace Veng::UI
     using CustomWidgetFn =
         function<bool(void* fieldPtr, const FieldDescriptor& field, string_view displayName)>;
 
+    /// @brief Gates a field on a fact the owning struct instance cannot express.
+    ///
+    /// `FieldDescriptor::EnabledIf` evaluates against the owning instance's bytes alone, so a field
+    /// that must grey out because of something outside that instance — a per-frame renderer fact, a
+    /// host capability, an editor mode — has no predicate that can reach it. This hook is that
+    /// reach: the consumer knows the fact and answers per field. Returning false disables the row.
+    using FieldGateFn = function<bool(const FieldDescriptor& field)>;
+
     /// @brief Consumer-supplied dependencies the reflection inspector needs beyond field bytes.
     ///
     /// A bare game supplies only `Registry`; the drawing hooks stay unset and the inspector draws
@@ -53,7 +61,29 @@ namespace Veng::UI
         FieldValueFn DrawReference;
         /// @brief Draws a per-type custom widget row; unset (or no match) uses the built-in widget.
         CustomWidgetFn CustomWidget;
+        /// @brief Gates a field on a fact outside the owning struct; unset enables every field.
+        ///
+        /// The consumer's answer to "is this field editable, given what I know that the field bytes
+        /// do not" — the case `FieldDescriptor::EnabledIf` cannot express, since that predicate sees
+        /// only the owning instance. It **composes** with the field's own EnabledIf and its ReadOnly
+        /// flag rather than replacing either: a field is editable only when all three admit it, so
+        /// this hook can disable a field but never re-enable one the field's own metadata disabled.
+        /// Unset admits every field, leaving the walk exactly as it is without it.
+        FieldGateFn FieldEnabled;
     };
+
+    /// @brief Whether every gate admits editing the field: its EnabledIf, its ReadOnly flag, and
+    ///        the hooks' FieldEnabled.
+    ///
+    /// The composition rule the inspector applies to each row, as a pure device-free query — no
+    /// ImGui call, so a consumer laying out its own surface can ask exactly what the walk asks. An
+    /// empty EnabledIf, a false ReadOnly, and an unset FieldEnabled each admit unconditionally;
+    /// `hooks.OwnerBase` is the base the EnabledIf predicate evaluates against.
+    /// @param field The field descriptor carrying EnabledIf and ReadOnly.
+    /// @param hooks Owner base + the consumer's gate hook.
+    /// @return True when the field should be editable.
+    /// @see IsFieldEnabled
+    [[nodiscard]] bool IsFieldEditable(const FieldDescriptor& field, const InspectorHooks& hooks);
 
     /// @brief Walks a struct's (or component's) fields as property-table rows, grouping by Category.
     ///
@@ -62,9 +92,9 @@ namespace Veng::UI
     /// `base + FieldDescriptor::Offset`. Fields carrying a `Category` are grouped under a
     /// full-width `UI::PropertyHeader` named for the category; un-categorized fields render first.
     /// Grouping is stable: declared order within a category, categories in first-seen order. Each
-    /// field is gated by its VisibleIf (a failing one skips the row) and EnabledIf (a failing one
-    /// disables the row, composing with ReadOnly), both evaluated against `base` — which the
-    /// helper sets as the walk's owner base.
+    /// field is gated by its VisibleIf (a failing one skips the row) and by `IsFieldEditable` (a
+    /// failing one disables the row — EnabledIf, ReadOnly, and the hooks' FieldEnabled composed),
+    /// the predicates evaluated against `base` — which the helper sets as the walk's owner base.
     /// @param base   Pointer to the owning struct/component instance.
     /// @param fields The owning type's field descriptors, in declared order.
     /// @param hooks  Registry + owner base + the consumer's drawing hooks.

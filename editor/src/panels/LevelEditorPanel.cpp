@@ -415,29 +415,26 @@ namespace VengEditor
         drawConfig("Game mode", &m_GameMode, TypeIdOf<GameModeConfig>());
         UI::Dummy(vec2{0.0f, 4.0f});
 
-        // The render block is drawn field by field rather than through DrawFields, because the two
-        // lens fields go inactive on a fact reflection cannot see: whether the viewport's resolved
-        // camera is Physical, in which case its lens authors focus and aperture and the authored
-        // values are stored but not consulted.
         UI::SeparatorText("Render");
+
+        // A Physical camera's lens authors focus and aperture on every push, so the authored values
+        // are stored but not consulted — a per-frame renderer fact outside the settings struct, so
+        // the gate is supplied to the walk rather than expressed as an EnabledIf.
         const bool lensFromCamera = m_Viewport->IsDofFromPhysicalCamera();
         if (lensFromCamera)
         {
             UI::TextDisabled(DofPhysicalCameraNote);
         }
-        const TypeInfo& renderInfo = types.Info(TypeIdOf<LevelRenderSettings>());
         FieldWidgetContext renderCtx = ctx;
-        renderCtx.OwnerBase = &m_Render;
+        renderCtx.FieldEnabled = [lensFromCamera](const FieldDescriptor& field)
+        {
+            return !lensFromCamera ||
+                   (field.Name != "DofFocusDistance" && field.Name != "DofAperture");
+        };
+        const TypeInfo& renderInfo = types.Info(TypeIdOf<LevelRenderSettings>());
         if (auto table = UI::PropertyTable("##LevelRenderSettings"))
         {
-            for (const FieldDescriptor& field : renderInfo.Fields)
-            {
-                const bool lensField =
-                    field.Name == "DofFocusDistance" || field.Name == "DofAperture";
-                auto lensDisabled = UI::Disabled(lensFromCamera && lensField);
-                changed |= DrawFieldWidget(reinterpret_cast<u8*>(&m_Render) + field.Offset, field,
-                                           renderCtx);
-            }
+            changed |= DrawFields(&m_Render, renderInfo.Fields, renderCtx);
         }
 
         if (changed)

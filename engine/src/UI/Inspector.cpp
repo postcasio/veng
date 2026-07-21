@@ -111,21 +111,29 @@ namespace Veng::UI
         return changed;
     }
 
+    bool IsFieldEditable(const FieldDescriptor& field, const InspectorHooks& hooks)
+    {
+        if (field.ReadOnly || !IsFieldEnabled(field, hooks.OwnerBase))
+        {
+            return false;
+        }
+        return !hooks.FieldEnabled || hooks.FieldEnabled(field);
+    }
+
     namespace
     {
         // Draws one field within a DrawFields walk, after the Hidden/Category filter has placed it.
-        // A failing VisibleIf skips the row; a failing EnabledIf disables the row, composing with
-        // ReadOnly so a field is editable only when both allow it. `hooks.OwnerBase` is the base of
-        // the struct this walk iterates, against which both predicates evaluate.
+        // A failing VisibleIf skips the row; a failing IsFieldEditable disables it.
+        // `hooks.OwnerBase` is the base of the struct this walk iterates, against which the
+        // predicates evaluate.
         bool DrawGatedField(void* base, const FieldDescriptor& field, const InspectorHooks& hooks)
         {
-            const void* ownerBase = hooks.OwnerBase;
-            if (!IsFieldVisible(field, ownerBase))
+            if (!IsFieldVisible(field, hooks.OwnerBase))
             {
                 return false;
             }
             void* fieldPtr = static_cast<u8*>(base) + field.Offset;
-            auto disabled = UI::Disabled(!IsFieldEnabled(field, ownerBase));
+            auto disabled = UI::Disabled(!IsFieldEditable(field, hooks));
             return DrawFieldWidget(fieldPtr, field, hooks);
         }
     }

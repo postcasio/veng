@@ -2,6 +2,7 @@
 
 #include <Veng/Reflection/FieldDescriptor.h>
 #include <Veng/Asset/AssetId.h>
+#include <Veng/UI/Inspector.h>
 
 #include <span>
 
@@ -40,6 +41,13 @@ namespace VengEditor
         /// panel walks seed it with the struct/component they iterate; null disables every
         /// condition (a field with no predicate is unaffected either way).
         const void* OwnerBase = nullptr;
+        /// @brief Gates a field on a fact outside the owning struct; unset enables every field.
+        ///
+        /// Forwarded to `Veng::UI::InspectorHooks::FieldEnabled`, so it composes with — never
+        /// overrides — the field's own EnabledIf and ReadOnly. A panel greying a field on something
+        /// reflection cannot see (a per-frame renderer fact, a host capability) supplies it here
+        /// rather than hand-iterating the field list.
+        Veng::UI::FieldGateFn FieldEnabled;
     };
 
     /// @brief Draws one field as a property-table row: label in column 0, value in column 1.
@@ -68,9 +76,10 @@ namespace VengEditor
     /// derived as `base + FieldDescriptor::Offset`. Fields carrying a `Category` are grouped
     /// under a full-width `UI::PropertyHeader` named for the category; un-categorized fields
     /// render first. Grouping is stable: declared order within a category, categories in
-    /// first-seen order. Each field is gated by its VisibleIf (a failing one skips the row) and
-    /// EnabledIf (a failing one disables the row, composing with ReadOnly), both evaluated
-    /// against `base` — which the helper sets as the walk's owner base.
+    /// first-seen order. Each field is gated by its VisibleIf (a failing one skips the row) and by
+    /// the composed editable rule (EnabledIf, ReadOnly, and `FieldWidgetContext::FieldEnabled` —
+    /// a failing one disables the row), the predicates evaluated against `base` — which the helper
+    /// sets as the walk's owner base.
     /// @param base    Pointer to the owning struct/component instance.
     /// @param fields  The owning type's field descriptors, in declared order.
     /// @param ctx     Dependencies: asset manager, source index, editor registry.

@@ -130,6 +130,7 @@ namespace VengEditor
             UI::InspectorHooks hooks;
             hooks.Registry = &ctx.Assets.GetTypeRegistry();
             hooks.OwnerBase = ctx.OwnerBase;
+            hooks.FieldEnabled = ctx.FieldEnabled;
             hooks.DrawAssetHandle =
                 [&ctx](void* fieldPtr, const FieldDescriptor& field, string_view valueLabel)
             { return DrawAssetPicker(fieldPtr, field, valueLabel, ctx); };

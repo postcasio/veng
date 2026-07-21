@@ -1,8 +1,9 @@
-// IsFieldVisible / IsFieldEnabled decision cases: the pure, device-free gate the
-// inspector applies per field before drawing it. No ImGui, no Vulkan symbol touched —
-// the conditional-display decision is exercised through authored predicates, including a
-// nested-struct case asserting the predicate evaluates against the *nested* instance's
-// base, not the outer one.
+// IsFieldVisible / IsFieldEnabled / IsFieldEditable decision cases: the pure, device-free
+// gate the inspector applies per field before drawing it. No ImGui, no Vulkan symbol
+// touched — the conditional-display decision is exercised through authored predicates,
+// including a nested-struct case asserting the predicate evaluates against the *nested*
+// instance's base, not the outer one, and the composition of the consumer-supplied
+// InspectorHooks::FieldEnabled gate with a field's own EnabledIf and ReadOnly.
 
 #include <doctest/doctest.h>
 
@@ -11,6 +12,7 @@
 #include <Veng/Reflection/Reflect.h>
 #include <Veng/Reflection/TypeId.h>
 #include <Veng/Reflection/TypeRegistry.h>
+#include <Veng/UI/Inspector.h>
 
 using namespace Veng;
 
@@ -145,4 +147,80 @@ TEST_CASE("A nested field's predicate evaluates against the nested base, not the
     // Flip only the nested control; the outer one is unchanged.
     outer.Child.Show = true;
     CHECK(IsFieldVisible(value, &outer.Child));
+}
+
+TEST_CASE("The hooks' FieldEnabled gate disables a field the owning struct admits")
+{
+    TypeRegistry registry;
+    registry.Register<Gated>();
+    const TypeInfo& info = registry.Info(TypeIdOf<Gated>());
+    const FieldDescriptor& conditional = FieldNamed(info, "Conditional");
+
+    Gated value;
+    value.Kind = Mode::On;
+    value.Locked = false;
+
+    UI::InspectorHooks hooks;
+    hooks.Registry = &registry;
+    hooks.OwnerBase = &value;
+
+    // Unset admits every field, so the walk is exactly as it is without the hook.
+    CHECK(UI::IsFieldEditable(conditional, hooks));
+
+    // The gate answers per field: the named one goes inert, its siblings stay live.
+    hooks.FieldEnabled = [](const FieldDescriptor& field) { return field.Name != "Conditional"; };
+    CHECK_FALSE(UI::IsFieldEditable(conditional, hooks));
+    CHECK(UI::IsFieldEditable(FieldNamed(info, "Locked"), hooks));
+
+    // It gates editing only — the row is still drawn.
+    CHECK(IsFieldVisible(conditional, &value));
+}
+
+TEST_CASE("The hooks' FieldEnabled gate composes with EnabledIf rather than overriding it")
+{
+    TypeRegistry registry;
+    registry.Register<Gated>();
+    const TypeInfo& info = registry.Info(TypeIdOf<Gated>());
+    const FieldDescriptor& conditional = FieldNamed(info, "Conditional");
+
+    Gated value;
+    value.Kind = Mode::On;
+
+    UI::InspectorHooks hooks;
+    hooks.Registry = &registry;
+    hooks.OwnerBase = &value;
+    hooks.FieldEnabled = [](const FieldDescriptor&) { return true; };
+
+    // An admitting hook cannot re-enable what the field's own EnabledIf refused.
+    value.Locked = true;
+    CHECK_FALSE(UI::IsFieldEditable(conditional, hooks));
+
+    value.Locked = false;
+    CHECK(UI::IsFieldEditable(conditional, hooks));
+
+    // Either gate refusing is enough to disable.
+    hooks.FieldEnabled = [](const FieldDescriptor&) { return false; };
+    CHECK_FALSE(UI::IsFieldEditable(conditional, hooks));
+}
+
+TEST_CASE("The hooks' FieldEnabled gate composes with ReadOnly rather than overriding it")
+{
+    FieldDescriptor readOnly;
+    readOnly.Name = "Frozen";
+    readOnly.ReadOnly = true;
+
+    Gated value;
+
+    UI::InspectorHooks hooks;
+    hooks.OwnerBase = &value;
+
+    CHECK_FALSE(UI::IsFieldEditable(readOnly, hooks));
+
+    // An admitting hook cannot re-enable a ReadOnly field.
+    hooks.FieldEnabled = [](const FieldDescriptor&) { return true; };
+    CHECK_FALSE(UI::IsFieldEditable(readOnly, hooks));
+
+    // Clearing the flag leaves the hook the only gate, and it admits.
+    readOnly.ReadOnly = false;
+    CHECK(UI::IsFieldEditable(readOnly, hooks));
 }
