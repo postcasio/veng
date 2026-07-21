@@ -7,19 +7,19 @@
 #include <algorithm>
 #include <span>
 
-// Veng/Net/Social.h — the multiplayer-social vocabulary: invite tokens, an admission judge, a
-// presence classifier, and a roster diff.
+// Veng/Net/Social.h — the multiplayer-social vocabulary: invite tokens, an admission judge, and a
+// roster diff.
 //
-// Every multiplayer system with invite-gated shared worlds re-derives the same four pieces, so they
-// live here as pure value logic over engine types (WorldKey, AccountId, monotonic seconds). This is
-// vocabulary, not a feature: the engine ships no roster component, no membership policy, no caps,
-// and no invite flow — a consumer composes these against whatever membership model it defines, and
-// no engine system calls them.
+// Every multiplayer system with invite-gated shared worlds re-derives the same three pieces, so
+// they live here as pure value logic over engine types (WorldKey, AccountId, monotonic seconds).
+// This is vocabulary, not a feature: the engine ships no roster component, no membership policy,
+// no caps, and no invite flow — a consumer composes these against whatever membership model it
+// defines, and no engine system calls them.
 //
-// The pieces are deliberately pure. InviteTable owns storage and nothing else; the judge and the
-// classifier are free functions over booleans and counts; the roster diff reads two snapshots and
-// writes notices. Nothing here touches a socket, a scene, a clock, or a connection, so all of it is
-// unit-testable end to end and compiles under include_hygiene.
+// The pieces are deliberately pure. InviteTable owns storage and nothing else; the judge is a free
+// function over booleans and counts; the roster diff reads two snapshots and writes notices.
+// Nothing here touches a socket, a scene, a clock, or a connection, so all of it is unit-testable
+// end to end and compiles under include_hygiene.
 
 namespace Veng::Net
 {
@@ -137,34 +137,6 @@ namespace Veng::Net
     /// @return The verdict; the caller consumes the invite only on AdmitByInvite.
     [[nodiscard]] VE_API JoinVerdict JudgeInviteGatedJoin(bool inRoster, bool hasInvite,
                                                           usize rosterCount, usize capacity);
-
-    /// @brief The presence transition one observation of a member implies.
-    enum class PresenceTransition
-    {
-        /// @brief A first appearance: the observed account holds no roster membership yet.
-        Join,
-        /// @brief A roster member returning after being marked offline.
-        Rejoin,
-        /// @brief A member losing its connection while its roster membership stands.
-        Offline,
-        /// @brief No transition: the observation matches the state already recorded.
-        None
-    };
-
-    /// @brief Classifies one presence observation, separating a disconnect from a leave.
-    ///
-    /// A connection loss is not a departure: the member keeps its roster membership and is merely
-    /// marked offline, so it reattaches as a Rejoin rather than re-joining from nothing. A member
-    /// observed with a live connection is a Join when it holds no membership yet and a Rejoin when
-    /// it holds one that is marked offline; a member whose recorded state already matches the
-    /// observation yields None, which is what makes Offline fire once rather than on every sweep.
-    /// @param inRoster    Whether the account holds a roster membership.
-    /// @param online      Whether the membership is currently recorded as online.
-    /// @param present     Whether the account is observed in the world.
-    /// @param connected   Whether the account holds a live connection.
-    /// @return The implied transition, or None when the record already matches.
-    [[nodiscard]] VE_API PresenceTransition ClassifyMemberPresence(bool inRoster, bool online,
-                                                                   bool present, bool connected);
 
     /// @brief One row of a replicated roster snapshot: its match key, its online flag, its payload.
     ///

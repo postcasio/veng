@@ -101,26 +101,4 @@ namespace Veng::Net
         }
         return JoinVerdict::AdmitByInvite;
     }
-
-    PresenceTransition ClassifyMemberPresence(const bool inRoster, const bool online,
-                                              const bool present, const bool connected)
-    {
-        if (present && connected)
-        {
-            if (!inRoster)
-            {
-                return PresenceTransition::Join;
-            }
-            if (!online)
-            {
-                return PresenceTransition::Rejoin;
-            }
-            return PresenceTransition::None;
-        }
-        if (inRoster && online && !connected)
-        {
-            return PresenceTransition::Offline;
-        }
-        return PresenceTransition::None;
-    }
 }

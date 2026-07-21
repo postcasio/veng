@@ -1,10 +1,9 @@
-// Social-toolkit cases. The four pieces are pure value logic with no socket, scene, or clock:
+// Social-toolkit cases. The three pieces are pure value logic with no socket, scene, or clock:
 // InviteTable holds one-shot capability tokens keyed on (world, invitee) with monotonic-seconds
-// expiry, JudgeInviteGatedJoin decides one admission without consuming anything,
-// ClassifyMemberPresence separates a disconnect from a leave, and DeriveRosterNotices diffs two
-// roster snapshots into ordered notices. These pin the token discipline (including that a wrong
-// guess never burns a live invite and that a capacity refusal leaves the token retryable), the full
-// four-input presence matrix, and every roster-diff event under both the default change test and a
+// expiry, JudgeInviteGatedJoin decides one admission without consuming anything, and
+// DeriveRosterNotices diffs two roster snapshots into ordered notices. These pin the token
+// discipline (including that a wrong guess never burns a live invite and that a capacity refusal
+// leaves the token retryable) and every roster-diff event under both the default change test and a
 // consumer-supplied one.
 
 #include <doctest/doctest.h>
@@ -195,47 +194,6 @@ TEST_CASE("join judge: a capacity refusal leaves the token live for a retry")
           JoinVerdict::AdmitByInvite);
     CHECK(table.Consume(WorldA, Alice, 0xABCD, 2.0, Expiry));
     CHECK(table.GetCount() == 0);
-}
-
-TEST_CASE("presence classifier: the full four-input transition matrix")
-{
-    // Index bits: inRoster, online, present, connected.
-    constexpr PresenceTransition Expected[16] = {/* F F F F */ PresenceTransition::None,
-                                                 /* F F F T */ PresenceTransition::None,
-                                                 /* F F T F */ PresenceTransition::None,
-                                                 /* F F T T */ PresenceTransition::Join,
-                                                 /* F T F F */ PresenceTransition::None,
-                                                 /* F T F T */ PresenceTransition::None,
-                                                 /* F T T F */ PresenceTransition::None,
-                                                 /* F T T T */ PresenceTransition::Join,
-                                                 /* T F F F */ PresenceTransition::None,
-                                                 /* T F F T */ PresenceTransition::None,
-                                                 /* T F T F */ PresenceTransition::None,
-                                                 /* T F T T */ PresenceTransition::Rejoin,
-                                                 /* T T F F */ PresenceTransition::Offline,
-                                                 /* T T F T */ PresenceTransition::None,
-                                                 /* T T T F */ PresenceTransition::Offline,
-                                                 /* T T T T */ PresenceTransition::None};
-
-    for (int bits = 0; bits < 16; ++bits)
-    {
-        const bool inRoster = (bits & 0b1000) != 0;
-        const bool online = (bits & 0b0100) != 0;
-        const bool present = (bits & 0b0010) != 0;
-        const bool connected = (bits & 0b0001) != 0;
-        CAPTURE(bits);
-        CHECK(ClassifyMemberPresence(inRoster, online, present, connected) == Expected[bits]);
-    }
-}
-
-TEST_CASE("presence classifier: a disconnect is not a leave")
-{
-    // Losing the connection marks the standing member offline exactly once...
-    CHECK(ClassifyMemberPresence(true, true, true, false) == PresenceTransition::Offline);
-    // ...and every subsequent sweep over the already-offline member is quiet.
-    CHECK(ClassifyMemberPresence(true, false, true, false) == PresenceTransition::None);
-    // The member comes back as a rejoin, not a fresh join.
-    CHECK(ClassifyMemberPresence(true, false, true, true) == PresenceTransition::Rejoin);
 }
 
 TEST_CASE("roster diff: an empty snapshot to a populated one is all joins")
