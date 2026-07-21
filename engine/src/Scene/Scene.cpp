@@ -130,7 +130,7 @@ namespace Veng
     {
         // Stamp every in-place edit this tick makes with the tick number, so the net layer can tell
         // what changed since a connection last acked.
-        m_ChangeTick = context.Tick;
+        SetChangeTick(context.Tick);
         if (m_Simulation)
         {
             m_Simulation->Update(*this, delta, context);
@@ -140,7 +140,7 @@ namespace Veng
     void Scene::TickSimulationPhase(const SceneSystem::Phase phase, const f32 delta,
                                     const SystemContext& context)
     {
-        m_ChangeTick = context.Tick;
+        SetChangeTick(context.Tick);
         if (m_Simulation)
         {
             m_Simulation->UpdatePhase(*this, phase, delta, context);

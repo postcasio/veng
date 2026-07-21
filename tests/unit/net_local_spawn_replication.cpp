@@ -175,12 +175,13 @@ TEST_CASE("A replicated component stamped before the world's first tick reaches 
 {
     Peers fx;
 
-    // A host entity created and populated while the scene's change tick is still zero — the level
-    // load / pre-tick window. The component is written once and never again.
+    // A host entity created and populated before the world drive has stamped a tick — the level
+    // load / pre-tick window. The component is written once and never again, at the scene's floor.
     const Entity ghost = fx.HostScene->CreateEntity();
     fx.HostScene->Add<Transform>(ghost, Transform{.Position = vec3(4.0f, 0.0f, 0.0f)});
     fx.HostScene->Add<VengTest::TestScore>(ghost, VengTest::TestScore{.Value = 7});
-    REQUIRE(fx.HostScene->GetComponentChangeTick(ghost, TypeIdOf<VengTest::TestScore>()) == 0);
+    REQUIRE(fx.HostScene->GetComponentChangeTick(ghost, TypeIdOf<VengTest::TestScore>()) ==
+            Scene::MinChangeTick);
 
     fx.Join();
     fx.Step(20);
@@ -234,8 +235,8 @@ namespace
         ReplicationServer ReplServer;
         ReplicationClient ReplClient;
 
-        DirectPair()
-            : ReplClient([](AssetId) -> Ref<Prefab> { return nullptr; })
+        explicit DirectPair(const ReplicationServer::Settings& settings = {})
+            : ReplServer(settings), ReplClient([](AssetId) -> Ref<Prefab> { return nullptr; })
         {
             RegisterBuiltinTypes(ServerTypes);
             ServerTypes.Register<VengTest::TestScore>();
@@ -252,7 +253,40 @@ namespace
             AssignServerNetIds(*Server, allocator);
             return ReplServer.Generate(DirectConnection, *Server, tick);
         }
+
+        // Applies a generated stream into the client scene and returns the tick of the last snapshot
+        // it carried, or zero when the stream held no snapshot at all.
+        u64 Apply(const vector<ReplicationMessage>& messages)
+        {
+            u64 appliedTick = 0;
+            for (const ReplicationMessage& message : messages)
+            {
+                if (message.Channel == Net::Channel::ReliableOrdered)
+                {
+                    ReplClient.ApplyReliable(message.Bytes, *Client, FakeAssets());
+                }
+                else
+                {
+                    appliedTick = ReplClient.ApplySnapshot(message.Bytes, *Client).ServerTick;
+                }
+            }
+            return appliedTick;
+        }
     };
+
+    // Whether a generated stream carries any snapshot at all. Generate emits no snapshot message
+    // when every relevant entity is clean, so absence is the observable form of "nothing to resend".
+    bool CarriesSnapshot(const vector<ReplicationMessage>& messages)
+    {
+        for (const ReplicationMessage& message : messages)
+        {
+            if (message.Channel == Net::Channel::UnreliableSequenced)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
 
     // The component count a Spawn message declares, or nothing when @p bytes is not a Spawn. Mirrors
     // the wire layout: the message id, the wire id and owner, the optional prefab id and anchor pair,
@@ -309,7 +343,8 @@ TEST_CASE("An entity mixing pre-tick and post-tick components arrives whole")
     // stamped a real tick. The two straddle the boundary on one entity.
     const Entity entity = fx.Server->CreateEntity();
     fx.Server->Add<Transform>(entity, Transform{.Position = vec3(2.0f, 3.0f, 4.0f)});
-    REQUIRE(fx.Server->GetComponentChangeTick(entity, TypeIdOf<Transform>()) == 0);
+    REQUIRE(fx.Server->GetComponentChangeTick(entity, TypeIdOf<Transform>()) ==
+            Scene::MinChangeTick);
 
     fx.Server->SetChangeTick(7);
     fx.Server->Add<VengTest::TestScore>(entity, VengTest::TestScore{.Value = 11});
@@ -358,6 +393,87 @@ TEST_CASE("A spawn record's component count is the entity's replicated component
 
     REQUIRE(declared.has_value());
     CHECK(*declared == 2);
+}
+
+// ---- The snapshot arm: a pre-tick write onto an entity the peer already holds --------------------
+
+TEST_CASE("A pre-tick component added to an already-spawned entity rides the next snapshot")
+{
+    DirectPair fx;
+
+    // The entity is spawned on the peer during the pre-tick window, so the spawn record is the only
+    // thing the connection has ever seen, and it has acked nothing.
+    const Entity entity = fx.Server->CreateEntity();
+    fx.Server->Add<Transform>(entity, Transform{.Position = vec3(1.0f, 0.0f, 0.0f)});
+
+    fx.ReplServer.AddConnection(DirectConnection);
+    fx.Apply(fx.Generate(0));
+
+    const Entity mirror = fx.ReplClient.Map().Lookup(fx.Server->Get<NetIdentity>(entity).Id);
+    REQUIRE_FALSE(mirror.IsNull());
+    REQUIRE_FALSE(fx.Client->Has<VengTest::TestScore>(mirror));
+
+    // A second write, still with no tick stepped. It stamps the scene's change tick, which floors at
+    // one, so it is strictly newer than the connection's zero baseline and enters the snapshot.
+    fx.Server->Add<VengTest::TestScore>(entity, VengTest::TestScore{.Value = 5});
+    fx.Apply(fx.Generate(2));
+
+    REQUIRE(fx.Client->Has<VengTest::TestScore>(mirror));
+    CHECK(fx.Client->Get<VengTest::TestScore>(mirror).Value == 5);
+}
+
+TEST_CASE("Change tick zero is reserved for a component that was never stamped")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    Unique<Scene> scene = Scene::Create(types);
+    const Entity entity = scene->CreateEntity();
+
+    // The entity does not carry Transform, so the query reports the reserved before-any-tick value.
+    CHECK(scene->GetComponentChangeTick(entity, TypeIdOf<Transform>()) == 0);
+
+    // A write, in contrast, can never produce it: a fresh scene already stamps the floor.
+    CHECK(scene->GetChangeTick() > 0);
+    scene->Add<Transform>(entity);
+    CHECK(scene->GetComponentChangeTick(entity, TypeIdOf<Transform>()) > 0);
+}
+
+TEST_CASE("An acked component is not resent on the following snapshot")
+{
+    DirectPair fx;
+
+    const Entity entity = fx.Server->CreateEntity();
+    fx.Server->Add<Transform>(entity, Transform{.Position = vec3(1.0f, 2.0f, 3.0f)});
+
+    fx.ReplServer.AddConnection(DirectConnection);
+    const u64 applied = fx.Apply(fx.Generate(2));
+    REQUIRE(applied == 2);
+    fx.ReplServer.Acknowledge(DirectConnection, applied);
+
+    // Nothing has been written since the ack, so the delta gate holds the component back and the
+    // stream carries no snapshot at all.
+    CHECK_FALSE(CarriesSnapshot(fx.Generate(4)));
+    CHECK_FALSE(CarriesSnapshot(fx.Generate(6)));
+}
+
+TEST_CASE("A keyframe forces a full encoding only for components that are dirty")
+{
+    DirectPair fx{ReplicationServer::Settings{.SnapshotInterval = 1, .KeyframeInterval = 1}};
+
+    const Entity entity = fx.Server->CreateEntity();
+    fx.Server->Add<Transform>(entity, Transform{.Position = vec3(1.0f, 2.0f, 3.0f)});
+
+    fx.ReplServer.AddConnection(DirectConnection);
+
+    // Every snapshot here is a keyframe. Unacked, the component is dirty and rides one.
+    REQUIRE(CarriesSnapshot(fx.Generate(1)));
+    const u64 applied = fx.Apply(fx.Generate(2));
+    REQUIRE(applied == 2);
+    fx.ReplServer.Acknowledge(DirectConnection, applied);
+
+    // Acked and untouched, it is clean — the keyframe cadence re-bases what is dirty, it does not
+    // re-admit what the gate excluded.
+    CHECK_FALSE(CarriesSnapshot(fx.Generate(3)));
 }
 
 // ---- Spawn provenance ---------------------------------------------------------------------------
