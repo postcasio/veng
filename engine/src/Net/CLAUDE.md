@@ -572,4 +572,63 @@ network client.
 
 <!-- -- carve 74/03 -- -->
 
-<!-- -- carve 74/04 -- -->
+## The social toolkit — vocabulary, not a feature
+
+`Veng/Net/Social.h` is the multiplayer-social vocabulary every invite-gated shared world re-derives:
+an **`InviteTable`**, a **join judge**, a **presence classifier**, and a **roster diff**. It is pure
+value logic over engine types (`WorldKey`, `AccountId`, monotonic seconds) — no socket, no scene, no
+clock, no connection — so all of it is unit-testable end to end and compiles under
+`include_hygiene`. The two roster templates are header-only; the three non-template pieces live in
+`src/Net/Social.cpp`. **No engine system calls any of it**: the engine ships no roster component, no
+membership policy, no caps, and no invite flow, and a consumer composes these against whatever
+membership model it defines.
+
+**`InviteTable` holds one-shot capability tokens keyed on `(WorldKey, AccountId)`.** `Issue` mints a
+token for the pair, replacing any token the pair already holds and restarting its window; `Consume`
+removes the entry and succeeds **exactly once** when the presented token matches a live entry;
+`IsInvited` is the const listing query; `SweepExpired` / `ClearFor` / `GetCount` are the
+housekeeping. **The token is the capability and the pair only the addressing key** — `AccountId` is
+documented unauthenticated and spoofable, so admitting on `(world, invitee)` alone would degrade the
+table from an unguessable-secret check to an ACL anyone able to name an invitee satisfies. A
+**mismatched token fails and leaves the entry standing**, so a wrong guess never burns the invite
+the legitimate holder still needs. Time is **monotonic seconds since issue** — an entry is live
+while `now - issue < expirySeconds` — so expiry never moves under an NTP step or a user clock
+change. Expiry is swept on demand: by `SweepExpired`, or by a `Consume` that lands on a stale entry;
+the const query reports an expired entry absent without removing it.
+
+**`JudgeInviteGatedJoin(inRoster, hasInvite, rosterCount, capacity)` is pure and does not consume.**
+A roster member always readmits (`AdmitMember`) — a member reattaching after a disconnect is not
+competing for a seat, so capacity is not consulted for one. A non-member is judged on its invite
+first and its seat second, so an uninvited joiner is `RefuseUninvited` whether or not the roster is
+full and learns nothing about occupancy; an invited one is `AdmitByInvite` while a seat remains and
+`RefuseFull` otherwise. **The caller consumes the token only on `AdmitByInvite`**, and because
+capacity is judged before any consume a `RefuseFull` invitee's one-shot token survives for a retry
+once a seat frees. Consuming before judging silently burns it — the ordering guarantee is
+externalized by the pure form, so it is stated on the declaration rather than left for callers to
+rediscover.
+
+**`ClassifyMemberPresence(inRoster, online, present, connected)` separates a disconnect from a
+leave.** A connection loss is not a departure: the member keeps its roster membership and is merely
+marked `Offline`, so it returns as a `Rejoin` rather than joining from nothing; a first appearance is
+a `Join`; an observation matching the recorded state is `None`. All four inputs are load-bearing —
+`online` is what separates `Rejoin` from `None` on a present member and what makes `Offline` fire
+once rather than on every sweep tick.
+
+**`DeriveRosterNotices<Key, Payload>(before, after, changed)` derives events from replicated state,
+with no message traffic.** Two roster snapshots diff into ordered `Joined` / `Left` / `CameOnline` /
+`WentOffline` / `Changed` notices; a member present in both may yield **two** notices in one diff
+(a presence notice and a `Changed`), so a payload edit is never lost behind an online-flag flip.
+Notices come in `after` order for every row `after` holds, then the `Left` notices in `before`
+order; a `Left` carries the earlier snapshot's payload, every other notice the later one's. **The
+match key is a template parameter, not `AccountId`** — a replicated roster commonly carries a
+display identity and deliberately *not* an account id, which is host-side identity a consumer may
+have no intention of putting on the wire, so hard-wiring it would force that disclosure on any
+adopter. The **`changed` predicate is likewise a parameter**: a consumer routinely suppresses the
+change notice for some payload transitions rather than firing on every inequality. An empty
+predicate falls back to `operator!=` where `Payload` supports it and never fires `Changed` where it
+does not.
+
+`tests/unit/net_social.cpp` (fast band) carries the cases: issue/consume-once/expiry/replace plus
+the wrong-token-survives pin, every judge verdict including reattach-over-capacity and the
+`RefuseFull`-leaves-the-token-live pin, the full sixteen-row presence matrix, and the roster diff's
+events, both change tests, the two-notices-in-one-diff case, and the empty↔populated edges.
