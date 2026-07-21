@@ -753,7 +753,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/net_admission_profile.cpp
             # -- carve 74/02 --
             tests/unit/net_blob_codec.cpp
-            # -- carve 74/04 --
+            tests/unit/net_social.cpp
             # -- carve 74/05 --
     )
     target_link_libraries(veng_test_unit PRIVATE veng::veng doctest::doctest)

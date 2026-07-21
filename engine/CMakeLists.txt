@@ -137,6 +137,7 @@ add_library(veng SHARED
         src/Net/LoopbackTransport.cpp
         src/Net/Server.cpp
         src/Net/Session.cpp
+        src/Net/Social.cpp
         src/Net/UdpTransport.cpp
         # Persistence/ — the durable-state subsystem, listed as one contiguous block so the
         # subsystem's sources stay together rather than scattered through the list. Further
