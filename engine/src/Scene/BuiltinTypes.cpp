@@ -73,6 +73,12 @@ namespace Veng
         // the id stays server-local. Net::AccountId registers transitively through its field.
         registry.Register<SeatAccount>();
 
+        // The prefab a spawned root came from, stamped by Prefab::SpawnInto, and the opt-in mark
+        // that turns it into an engine-driven prefab association on a hosted world. Both carry no
+        // reflected field, so neither serializes nor rides the wire.
+        registry.Register<PrefabSource>();
+        registry.Register<NetSpawn>();
+
         // The pawn a presenting viewport's own seat controls, derived and stamped by the engine
         // each frame. Runtime-only: it carries no reflected field, so it never serializes and never
         // rides the wire.

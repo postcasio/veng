@@ -478,7 +478,8 @@ clock**, because the header tick it observes advances in the world's tick space,
 world's `SimClock`, so it does not re-sync per host frame. Component change ticks already live in the
 world's tick space (a Scene stamps a write with its own sim tick), so aligning the baseline and header
 to the same space is what closes the gap; an unstamped component (change tick 0) is `≤` any baseline
-in either space, so it replicates through spawn and keyframes exactly as before. A world at or near the
+in either space, so it is selected by neither, in either space alike (see the tick-zero floor below).
+A world at or near the
 host rate is byte-identical to a host-tick stamp, since its own tick and the host tick coincide.
 
 **Snapshot emission is one per qualifying world tick, not one per host pump.** Stamping the cadence
@@ -601,9 +602,56 @@ bookkeeping, no lifecycle change.
 
 
 
-<!-- -- carve 74/01 -- -->
+## A locally-created host entity on the wire
 
-<!-- -- carve 74/02 -- -->
+**A server-spawned seat's pawn is instantiated by a joiner as a real prefab; an entity the host
+spawns itself is not.** `ServerHost` records the seat prefab against the seat's wire id
+(`SetEntityPrefab`), so the joiner's spawn rides the prefab arm. A locally-spawned host entity has
+no such association, so its Spawn rides the **runtime-constructed arm** and the joiner receives the
+entity's replicated leaves and nothing else — no prefab structure, no children, no non-replicated
+components. Wire *identity* is not the gap: `AssignServerNetIds` runs across every hosted world on
+each `ServerHost::Pump`, so the entity is already identified. The gap is that nothing recorded which
+prefab produced it.
+
+**`PrefabSource` is that record.** `Prefab::SpawnInto` stamps each spawned root with the `AssetId`
+the prefab loaded from (`Prefab::GetSourceId()`, carried from the loader; a runtime-built prefab is
+not addressable and stamps nothing). It is registered fieldless, so provenance never serializes into
+a prefab or a save and never rides the wire — it is derivable state recorded at the one moment it is
+knowable. On its own it is **inert**: carrying it changes no behavior in any role.
+
+**`NetSpawn` is the opt-in gate that makes provenance mean something.** For a host-authoritative
+entity carrying both, `ServerHost::Pump` associates the recorded prefab with the entity's wire id
+each pump — immediately after `AssignServerNetIds` and before the send loop, so an entity spawned
+this frame is associated before its first Spawn goes out. Re-asserting per pump is what handles the
+deferral: an entity marked while the world had no joins is picked up the moment one arrives, with no
+consumer waiting on a join to run its own association pass. The pass iterates the **marked set**,
+never the scene.
+
+**The gate is opt-in on purpose, and this is the load-bearing decision.** `Authority::Tier` defaults
+to `Server` and every prefab spawn now records provenance, so an authority-plus-provenance rule
+would silently enroll *every* host-local prop, effect, debug helper, and editor-placed fixture a
+consumer deliberately kept local — each at a per-connection bookkeeping cost, with no opt-out.
+Requiring the mark keeps the change to entities a game asked to replicate, which is what makes it
+safe to land on a standing consumer: an unmarked provenance-carrying entity replicates byte-for-byte
+as it did.
+
+The mark names **how** an entity replicates, never **whether**. `Authority` still decides that, so a
+`Tier::Local` entity carrying the mark stays unreplicated. No message shape changes —
+`ProtocolVersion` is unaffected — but a marked entity's Spawn *population* does: it carries a prefab
+id instead of a component list.
+
+**A replicated component stamped at tick zero never reaches a joiner.** Both the spawn payload and
+every snapshot select a component whose change tick is **strictly greater** than the baseline they
+gate against, and both baselines start at zero — the spawn's `sinceTick` literally, a connection's
+`AckedTick` until its first ack. A `Scene`'s change tick is zero until the world drive stamps its
+first sim tick, so a component written only during level load, prefab spawn, or any other pre-tick
+population is indistinguishable from an unstamped one and is **never selected** — not by the spawn,
+not by a snapshot, and not by the keyframe cadence, which forces a full encoding only for components
+that already cleared the same gate. The component reaches a joiner as soon as anything writes it
+again on a real tick. This is a distinct seam from the prefab association above: it drops replicated
+leaves, where a missing association drops prefab structure. `net_local_spawn_replication.cpp` pins
+both, including the tick-zero case and its post-tick control.
+
 
 ## The admission profile
 

@@ -749,12 +749,10 @@ if (VENG_BUILD_TESTS)
             tests/unit/runtime_requests.cpp
             tests/unit/ui_modal.cpp
             tests/unit/net_directory_resolution.cpp
-            # -- carve 74/01 --
+            tests/unit/net_local_spawn_replication.cpp
             tests/unit/net_admission_profile.cpp
-            # -- carve 74/02 --
             tests/unit/net_blob_codec.cpp
             tests/unit/net_social.cpp
-            # -- carve 74/05 --
             tests/unit/net_local_control.cpp
     )
     target_link_libraries(veng_test_unit PRIVATE veng::veng doctest::doctest)

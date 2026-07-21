@@ -67,8 +67,15 @@ namespace Veng
         };
 
         /// @brief Creates a Prefab from a list of entities and their resolved dependency entries.
+        ///
+        /// @param entities      The prefab's authored entities, in authoring order.
+        /// @param dependencies  The resolved embedded-handle cache entries, kept resident.
+        /// @param source        The AssetId this prefab loaded from, recorded as each spawned root's
+        ///                      PrefabSource. The invalid id (the default) is a runtime-built prefab
+        ///                      that no id addresses, and stamps no provenance.
         static Ref<Prefab> Create(vector<PrefabEntity> entities,
-                                  vector<Ref<Detail::AssetCacheEntry>> dependencies);
+                                  vector<Ref<Detail::AssetCacheEntry>> dependencies,
+                                  AssetId source = AssetId{});
 
         /// @brief Spawns this prefab's entities and components into `scene`.
         ///
@@ -104,10 +111,16 @@ namespace Veng
         /// @brief Returns the list of prefab entities.
         [[nodiscard]] const vector<PrefabEntity>& Entities() const { return m_Entities; }
 
+        /// @brief Returns the AssetId this prefab loaded from, or the invalid id if it was built at runtime.
+        [[nodiscard]] AssetId GetSourceId() const { return m_SourceId; }
+
     private:
-        Prefab(vector<PrefabEntity> entities, vector<Ref<Detail::AssetCacheEntry>> dependencies);
+        Prefab(vector<PrefabEntity> entities, vector<Ref<Detail::AssetCacheEntry>> dependencies,
+               AssetId source);
 
         vector<PrefabEntity> m_Entities;
+        /// @brief The AssetId this prefab loaded from; invalid for a runtime-built prefab.
+        AssetId m_SourceId;
         /// @brief Resolved embedded-handle cache entries, kept resident so SpawnInto's rehydration is a cheap cache lookup.
         vector<Ref<Detail::AssetCacheEntry>> m_Dependencies;
     };

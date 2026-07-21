@@ -417,6 +417,30 @@ namespace Veng
             return netId;
         }
 
+        // Associates each marked, provenance-carrying, host-authoritative entity in a hosted world
+        // with the prefab it was spawned from, so its Spawn rides as a prefab id and a joiner
+        // instantiates it through the ordinary prefab path instead of receiving its bare replicated
+        // leaves. Re-asserted every pump over the marked set only (never a scan of the scene), which
+        // is what picks up an entity marked before the world had any join to replicate to.
+        void AssociateMarkedSpawns(HostedWorld& world)
+        {
+            const Scene& scene = *world.World;
+            for (auto [entity, source, identity, mark] :
+                 scene.View<PrefabSource, NetIdentity, NetSpawn>())
+            {
+                if (identity.Id == InvalidNetId || !source.Prefab.IsValid())
+                {
+                    continue;
+                }
+                const auto* authority = scene.TryGet<Authority>(entity);
+                if (authority != nullptr && authority->Tier != Tier::Server)
+                {
+                    continue;
+                }
+                world.Replication.SetEntityPrefab(identity.Id, source.Prefab);
+            }
+        }
+
         // Wraps a factory resolution into a hosted world's replication state, if not already present.
         // The directory recorded the bucket; this is the host's replication complement.
         void EnsureHostedWorld(const Net::WorldKey& key, const ServerWorldResolution& resolved)
@@ -905,6 +929,7 @@ namespace Veng
         for (auto& [value, world] : s.Worlds)
         {
             AssignServerNetIds(*world.World, world.Allocator);
+            s.AssociateMarkedSpawns(world);
         }
         for (auto& [id, conn] : s.Connections)
         {

@@ -1324,11 +1324,10 @@ private:
                 }
             }
 
-            // Assign the pawn its wire id now: the host assigns ids in Pump, but the prefab
-            // association must be set before that Pump generates the spawn for a connection.
-            AssignServerNetIds(world, host.AllocatorForWorld(worldId));
-            const NetId netId = world.Get<NetIdentity>(pawn).Id;
-            host.ReplicationForWorld(worldId).SetEntityPrefab(netId, NetPawnPrefabId);
+            // Mark the pawn for replication as a prefab spawn, so a joiner instantiates the whole
+            // netpawn prefab rather than receiving its bare replicated leaves. The host associates
+            // the prefab SpawnInto recorded on its next Pump.
+            world.Add<NetSpawn>(pawn);
             seatPawns[seat] = pawn;
 
             // The host's own follow camera (the spawn rule left its Local-tier target null when the

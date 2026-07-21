@@ -139,15 +139,18 @@ namespace Veng
         }
     }
 
-    Prefab::Prefab(vector<PrefabEntity> entities, vector<Ref<Detail::AssetCacheEntry>> dependencies)
-        : m_Entities(std::move(entities)), m_Dependencies(std::move(dependencies))
+    Prefab::Prefab(vector<PrefabEntity> entities, vector<Ref<Detail::AssetCacheEntry>> dependencies,
+                   const AssetId source)
+        : m_Entities(std::move(entities)), m_SourceId(source),
+          m_Dependencies(std::move(dependencies))
     {
     }
 
     Ref<Prefab> Prefab::Create(vector<PrefabEntity> entities,
-                               vector<Ref<Detail::AssetCacheEntry>> dependencies)
+                               vector<Ref<Detail::AssetCacheEntry>> dependencies,
+                               const AssetId source)
     {
-        return Ref<Prefab>(new Prefab(std::move(entities), std::move(dependencies)));
+        return Ref<Prefab>(new Prefab(std::move(entities), std::move(dependencies), source));
     }
 
     Prefab::SpawnResult Prefab::SpawnInto(Scene& scene, AssetManager& manager) const
@@ -262,6 +265,16 @@ namespace Veng
             else
             {
                 scene.SetParent(spawned[i], parents[i]);
+            }
+        }
+
+        // Record spawn provenance on each root. A runtime-built prefab carries no addressable id, so
+        // there is nothing to record and none is added.
+        if (m_SourceId.IsValid())
+        {
+            for (const Entity root : roots)
+            {
+                scene.Add<PrefabSource>(root, PrefabSource{.Prefab = m_SourceId});
             }
         }
 

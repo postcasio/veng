@@ -626,9 +626,44 @@ namespace Veng
         Net::AccountId Account;
     };
 
-    // -- carve 74/01 (declaration) --
+    /// @brief The prefab an entity was spawned from, stamped on each spawned root by Prefab::SpawnInto.
+    ///
+    /// Spawn provenance: it ties a live entity back to the recipe that produced it, which nothing
+    /// else records once a spawn has run. The net layer is its consumer — a host-authoritative
+    /// entity carrying provenance *and* the NetSpawn marker has that prefab associated with its wire
+    /// id, so a joiner instantiates it through the ordinary prefab path.
+    ///
+    /// Stamped only for a prefab loaded by AssetId; a runtime-built prefab is not addressable, so it
+    /// records nothing. Provenance is derivable state, so it is registered without a reflected
+    /// field: it never serializes into a prefab or a save and never rides the wire. It is inert on
+    /// its own — carrying it changes no behavior anywhere.
+    struct PrefabSource
+    {
+        /// @brief The prefab this entity was spawned from (always valid where the component exists).
+        AssetId Prefab;
+    };
 
-    // -- carve 74/05 (declaration) --
+    /// @brief Opt-in mark: replicate this locally-created host entity as a spawn of its source prefab.
+    ///
+    /// A server-spawned seat gets a prefab association for free, so a joiner instantiates it as a
+    /// real prefab spawn. An entity a game spawns itself gets none, so its Spawn rides the
+    /// runtime-constructed arm and a joiner receives only its replicated leaves — no prefab
+    /// structure, no non-replicated components. Adding this marker beside the entity's PrefabSource
+    /// closes that asymmetry: while the world is a live replication instance, the host associates
+    /// the recorded prefab with the entity's wire id each pump, so an entity marked before
+    /// replication begins is picked up when it does.
+    ///
+    /// **The mark is opt-in, and deliberately so.** Authority::Tier defaults to Server and every
+    /// prefab spawn records provenance, so an authority-plus-provenance rule would enroll every
+    /// host-local prop, effect, and editor-placed fixture a game meant to stay local, each at a
+    /// per-connection bookkeeping cost and with no opt-out. Only marked entities are enrolled.
+    ///
+    /// It names *how* an entity replicates, never *whether*: Authority still decides that, so a
+    /// Local-tier entity carrying the mark stays unreplicated. Carries no field and, being authored
+    /// intent rather than derived state, is safe to author on a prefab.
+    struct NetSpawn
+    {
+    };
 
     /// @brief Marks the pawn a presenting viewport's own seat controls on this machine.
     ///
@@ -1254,9 +1289,12 @@ VE_FIELD(Lo, .DisplayName = "Anchor Lo")
 VE_FIELD(Hi, .DisplayName = "Anchor Hi")
 VE_REFLECT_END();
 
-// -- carve 74/01 (reflection) --
+// Registered without a reflected field, so it neither serializes nor rides the wire: provenance is
+// derivable state recorded at spawn, never authored and never persisted.
+VE_TYPE(::Veng::PrefabSource, 0xD0EA6653C1F9B14DULL);
 
-// -- carve 74/05 (reflection) --
+// A fieldless mark: the component's presence is the whole signal, so there is nothing to reflect.
+VE_TYPE(::Veng::NetSpawn, 0xF6B2DEC39DC3F319ULL);
 
 // Registered without a reflected field, so it neither serializes nor rides the wire: the marker is
 // per-process presentation state the engine derives per frame, meaningless off its machine.

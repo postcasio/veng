@@ -304,7 +304,7 @@ namespace Veng
         }
 
         // ── 5. Construct the Prefab ──────────────────────────────────────────
-        const Ref<Prefab> prefab = Prefab::Create(std::move(entities), dependencies);
+        const Ref<Prefab> prefab = Prefab::Create(std::move(entities), dependencies, id);
 
         return Detail::LoadJob{
             .Resource = Detail::RefAny(prefab),
