@@ -21,7 +21,7 @@ namespace Veng::Net
 
         [[nodiscard]] bool IsKnownDenyReason(u8 value)
         {
-            return value <= static_cast<u8>(DenyReason::AccountAlreadyConnected);
+            return value <= static_cast<u8>(DenyReason::ProfileTooLarge);
         }
 
         [[nodiscard]] bool IsKnownDisconnectReason(u8 value)
@@ -131,6 +131,7 @@ namespace Veng::Net
         WriteU32LE(out, message.AppVersion);
         WriteU64LE(out, message.Account.Lo);
         WriteU64LE(out, message.Account.Hi);
+        WriteBlob(out, message.Profile);
         return out;
     }
 
@@ -165,12 +166,18 @@ namespace Veng::Net
         {
             return {};
         }
-        return ConnectRequestMessage{
+        ConnectRequestMessage request{
             .ProtocolVersion = ReadU32LE(message, 1),
             .Content = ContentDigest{.Lo = ReadU64LE(message, 5), .Hi = ReadU64LE(message, 13)},
             .AppVersion = ReadU32LE(message, 21),
             .Account = AccountId{.Lo = ReadU64LE(message, 25), .Hi = ReadU64LE(message, 33)},
         };
+        usize offset = size;
+        if (!ReadBlob(message, offset, request.Profile))
+        {
+            return {};
+        }
+        return request;
     }
 
     optional<ConnectAcceptMessage> DecodeConnectAccept(std::span<const u8> message)

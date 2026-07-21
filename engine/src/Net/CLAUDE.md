@@ -51,8 +51,8 @@ on the main thread at frame boundaries** (receive → tick → send).
 
 `Server.h`/`Client.h` are the connection lifecycle. A `Net::Server` listens/accepts/denies; a
 `Net::Client` connects. The handshake is **two-tier** (`Handshake.h`): a **connection tier**
-establishes the process↔process link — the connect request carries `Net::ProtocolVersion` (**4**, the
-version that added the account id to the connect request) + the active pack's content digest,
+establishes the process↔process link — the connect request carries `Net::ProtocolVersion` (**5**, the
+version that added the opaque account profile to the connect request) + the active pack's content digest,
 rejected loudly on a mismatch (the `VengModuleAbiVersion` discipline on the wire, so the wire
 carries only asset ids, never assets) — and a **per-world join tier** joins one world (below). The
 `ConnectAcceptMessage` carries **only the assigned connection id**: it no longer bakes in a single
@@ -62,13 +62,13 @@ server-assigned `u32`s — the value `Authority::Owner` holds.
 **The stale-peer story is not a uniform loud deny — it splits on message shape.** A connect request
 that **decodes** but carries a different `ProtocolVersion` is denied loudly with
 `DenyReason::ProtocolMismatch` (the tested case: a peer whose request has the current wire layout
-but a mismatched version number). But a **genuinely older binary** — one built before the account id
-joined the connect request — sends a *shorter* request: `DecodeConnectRequest` runs out of bytes,
-returns `nullopt`, and the frame is **dropped silently as malformed**, no deny emitted, so that peer
-never sees `ProtocolMismatch` — it simply **times out** at `Connection::TimeoutInterval`. So the wire
-break fails loud only when the old and new requests are the same length; a length-changing bump (like
-the account id's) is caught by the decode as a silent drop-and-timeout. Both are safe (no stale peer
-is admitted); they differ in whether the peer is told why.
+but a mismatched version number). But a peer whose request is a **different length** — a binary built
+against a connect request with fewer fields — runs `DecodeConnectRequest` out of bytes: it returns
+`nullopt` and the frame is **dropped silently as malformed**, no deny emitted, so that peer never
+sees `ProtocolMismatch` — it simply **times out** at `Connection::TimeoutInterval`. So the wire break
+fails loud only when the two requests are the same length; a length-changing bump is caught by the
+decode as a silent drop-and-timeout. Both are safe (no stale peer is admitted); they differ in
+whether the peer is told why.
 
 **Who a connection is, is a `Net::AccountId`** (`AccountId.h`): an opaque persistent 128-bit id the
 consumer mints and the engine only compares and hashes (the `WorldKey` discipline applied to
@@ -604,6 +604,58 @@ bookkeeping, no lifecycle change.
 <!-- -- carve 74/01 -- -->
 
 <!-- -- carve 74/02 -- -->
+
+## The admission profile
+
+**The engine interprets the account id; every other account fact is a game-defined, engine-opaque
+payload.** The `GameNetInfo::PresentProfile` hook yields one `Net::Blob` per process activation, the
+account-scoped counterpart of the join-scoped travel payload: the client puts it in its **connect
+request**, the host holds it per admitted account, and only game code ever decodes it. Presenting is
+opt-in and **presenting nothing is byte-identical to the pre-profile handshake apart from the empty
+blob header** — the default is none.
+
+The host surfaces it two ways: **`ServerHost::ProfileOf(AccountId)`** (nullptr when none was
+presented) and **`Net::JoinRequestInfo::Profile`**, a borrowed `const Blob*` beside the join's own
+`const Blob& Payload` — a pointer because `JoinRequestInfo` is a pure value/view built per resolve,
+per `Authorize`, and per placement candidate, so an owning blob would deep-copy the profile on each,
+and because "none presented" then has one spelling across both surfaces instead of an empty-blob
+sentinel on one and `nullptr` on the other.
+
+**The local account presents too.** A listen host and a standalone app perform no connect, so nothing
+would ever invoke the hook for their own account — yet `JoinRequestInfo` also serves the
+transport-less local resolve. `Application` evaluates `PresentProfile` once at bootstrap beside
+`Identity` (`GetLocalProfile()`), hands it to the host as `ServerHostInfo::LocalProfile`, and threads
+it onto every local-arm `JoinRequestInfo`, so `ProfileOf(localAccount)` and a local resolve answer
+exactly as a remote join does across all three topologies. The local entry is owned by
+`ServerConnectionId`, which no connection ever holds, so no teardown clears it.
+
+The posture is three properties:
+
+- **Opaque.** The engine never decodes the blob and no engine path branches on its `TypeId`; the
+  bytes round-trip untouched, nothing added or stripped.
+- **Host-terminal.** The profile is never replicated, never forwarded to a peer, and never enters
+  world state by engine action. A game wanting peer-visible identity replicates its own component —
+  the documented pattern, the same one the non-replicated `SeatAccount` establishes.
+- **Bounded.** `Net::MaxProfileBytes` (`MaxReliableMessageSize` minus `ConnectRequestOverhead`) is
+  published and documented on the hook. The connect request is a single reliable message with no
+  fragmentation, so an over-budget profile cannot be split: it **refuses the connect with
+  `DenyReason::ProfileTooLarge`** rather than truncating, because a silently shortened opaque payload
+  is a corruption the consumer that authored it cannot detect. The refusal happens at both ends — a
+  client whose own profile is over budget refuses locally and sends nothing, and a host refuses an
+  over-budget presented profile at the door.
+
+The bytes are **client-authored data under the existing admission trust posture**, unchanged by the
+profile: a host may assert what a profile says, never verify it, until an authentication layer lands
+behind `AdmitAccount`.
+
+The profile is **connection-scoped state the engine does not persist**: it is re-presented on
+reconnect. Because an account can briefly hold two connections when a reconnect beats the old
+connection's timeout, each held profile records the connection that presented it — the most recently
+admitted connection's profile wins, and a teardown clears the entry only while the departing
+connection still owns it.
+
+Carrying the blob grew `ConnectRequestMessage`, whose decoder requires an exact fixed prefix, so
+`Net::ProtocolVersion` is **5**.
 
 <!-- -- carve 74/03 -- -->
 

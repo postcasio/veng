@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Veng/Net/AccountId.h>
+#include <Veng/Net/Connection.h>
 #include <Veng/Veng.h>
 
 // Veng/Net/NetEvents.h — the shared connection-lifecycle vocabulary.
@@ -27,8 +28,24 @@ namespace Veng::Net
     /// join-tier control messages (the world-directory travel and adopt-in-place primitives), and grew
     /// the reliable spawn record an optional anchor field (the stable-anchor binding). Version 4 added
     /// the presented AccountId to the connect request (the account-identity handshake) and the
-    /// account-tier deny reasons.
-    inline constexpr u32 ProtocolVersion = 4;
+    /// account-tier deny reasons. Version 5 grew the connect request an opaque account profile blob
+    /// (the admission profile) and the over-budget deny reason.
+    inline constexpr u32 ProtocolVersion = 5;
+
+    /// @brief Wire overhead of a connect request, in bytes, ahead of its account profile blob.
+    ///
+    /// The leading control-type byte, the protocol version, the 128-bit content digest, the app
+    /// version, the 128-bit account id, and the profile blob's own header (its reflected type id
+    /// plus its byte count).
+    inline constexpr usize ConnectRequestOverhead = 1 + 4 + 16 + 4 + 16 + sizeof(u64) + 4;
+
+    /// @brief Largest account profile (Blob::Bytes) the connect handshake carries, in bytes.
+    ///
+    /// The reliable channel's per-message bound (MaxReliableMessageSize) minus the connect
+    /// request's own framing (ConnectRequestOverhead). The connect request is a single reliable
+    /// message with no fragmentation, so a profile past this bound cannot be split: the connect is
+    /// refused with DenyReason::ProfileTooLarge rather than the payload being truncated.
+    inline constexpr usize MaxProfileBytes = MaxReliableMessageSize - ConnectRequestOverhead;
 
     /// @brief A server-assigned connection identifier: a per-session u32, never reused.
     ///
@@ -109,6 +126,13 @@ namespace Veng::Net
         /// refused with this reason precisely when reattach matters most. A consumer's reconnect
         /// flow treats it as retryable — retry with backoff until the timeout clears the binding.
         AccountAlreadyConnected = 5,
+        /// @brief The presented account profile exceeded Net::MaxProfileBytes.
+        ///
+        /// The connect request is one unfragmented reliable message, so an over-budget profile
+        /// cannot be split. It is refused rather than truncated: a silently shortened opaque
+        /// payload is a corruption the consumer that authored it cannot detect. A client whose own
+        /// presented profile is over budget refuses locally with this reason and sends nothing.
+        ProfileTooLarge = 6,
     };
 
     /// @brief Why an established connection ended.

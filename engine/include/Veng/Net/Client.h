@@ -2,6 +2,7 @@
 
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Net/AccountId.h>
+#include <Veng/Net/Blob.h>
 #include <Veng/Net/Connection.h>
 #include <Veng/Net/FaultInjectionTransport.h>
 #include <Veng/Net/NetEvents.h>
@@ -40,6 +41,15 @@ namespace Veng::Net
         /// refuses) it. Left invalid (the default), Connect mints a random ephemeral id, so the
         /// presented account is always valid — but derives from nothing durable across relaunches.
         AccountId Account;
+        /// @brief The opaque account profile presented beside the account id; empty presents none.
+        ///
+        /// The engine transports the blob to the host and holds it for the account's connected
+        /// lifetime without ever decoding it; only game code reads it. It must fit
+        /// Net::MaxProfileBytes — the connect request is one unfragmented reliable message — and a
+        /// larger profile refuses the connect locally with DenyReason::ProfileTooLarge, sending
+        /// nothing. The bytes are client-authored under the existing admission trust posture: they
+        /// are asserted, never verified.
+        Blob Profile;
         /// @brief Optional transport to connect over instead of an opened UdpTransport (the test seam).
         Transport* TransportOverride = nullptr;
         /// @brief Optional network simulation wrapping the opened transport (the launcher's --netsim).

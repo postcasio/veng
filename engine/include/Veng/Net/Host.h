@@ -190,6 +190,13 @@ namespace Veng
         /// message recipient beside connected ones. A dedicated host resolves no local account and
         /// leaves it invalid.
         Net::AccountId LocalAccount;
+        /// @brief The local player's account profile, held the way a connecting account's is.
+        ///
+        /// A listen host and a standalone app perform no connect, so nothing would present their own
+        /// account's profile; supplying it here makes ProfileOf(LocalAccount) and the local arm of a
+        /// JoinRequestInfo answer exactly as they do for a connected account. Read only when
+        /// LocalAccount is valid; empty presents none.
+        Net::Blob LocalProfile;
         /// @brief The directory the host consumes for get-or-place + lifetime; unset builds one from the hooks.
         ///
         /// When set (borrowed, must outlive the host), the host resolves joins and reports presence
@@ -341,6 +348,20 @@ namespace Veng
         /// the reverse lookup is single-valued; after a reconnect it re-points to the fresh connection.
         /// @param account  The account to resolve.
         [[nodiscard]] Net::ConnectionId ConnectionFor(const Net::AccountId& account) const;
+
+        /// @brief The opaque profile an admitted account presented, or nullptr when it presented none.
+        ///
+        /// The engine transports the blob at admission and holds it for the account's connected
+        /// lifetime; it never decodes it, never replicates it, and never forwards it to another
+        /// peer. A game wanting peer-visible identity replicates its own component instead. A
+        /// reconnect re-presents the profile — it is connection-scoped state the engine does not
+        /// persist — and while an account briefly holds two connections the most recently admitted
+        /// one's profile is the answer. The host's own local account
+        /// (ServerHostInfo::LocalAccount) resolves ServerHostInfo::LocalProfile, so a listen host
+        /// answers for its own player with no connect.
+        /// @param account  The account to resolve.
+        /// @return The held profile, borrowed until the account's connection is reaped, or nullptr.
+        [[nodiscard]] const Net::Blob* ProfileOf(Net::AccountId account) const;
 
         /// @brief The JoinId of a connection's current (first) join, or ControlJoinId if it has none.
         /// @param id  The connection to resolve.

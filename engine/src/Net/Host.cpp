@@ -201,6 +201,51 @@ namespace Veng
         std::unordered_set<Net::ChannelId> UnregisteredWarned;
         Net::AccountId LocalAccount;
 
+        // One admitted account's presented profile, plus the connection that presented it. The
+        // owner is what makes an overlapping reconnect safe: a teardown clears the entry only while
+        // the departing connection still owns it, so a fresh connection's profile survives a stale
+        // connection's reap. The local account's entry is owned by ServerConnectionId, which no
+        // connection ever holds, so nothing clears it.
+        struct ProfileEntry
+        {
+            Net::ConnectionId Owner = Net::ServerConnectionId;
+            Net::Blob Profile;
+        };
+
+        std::unordered_map<Net::AccountId, ProfileEntry> Profiles;
+
+        [[nodiscard]] const Net::Blob* ProfileOf(const Net::AccountId& account) const
+        {
+            const auto it = Profiles.find(account);
+            return it != Profiles.end() ? &it->second.Profile : nullptr;
+        }
+
+        // Binds an admitted connection's profile to its account; an empty profile ("none
+        // presented") drops any entry the account held, so absence has one spelling.
+        void BindProfile(Net::ConnectionId id, const Net::AccountId& account,
+                         const Net::Blob* profile)
+        {
+            if (!account.IsValid())
+            {
+                return;
+            }
+            if (profile == nullptr || profile->Bytes.empty())
+            {
+                Profiles.erase(account);
+                return;
+            }
+            Profiles[account] = ProfileEntry{.Owner = id, .Profile = *profile};
+        }
+
+        void ReleaseProfile(Net::ConnectionId id, const Net::AccountId& account)
+        {
+            const auto it = Profiles.find(account);
+            if (it != Profiles.end() && it->second.Owner == id)
+            {
+                Profiles.erase(it);
+            }
+        }
+
         HostedWorld& WorldOf(WorldInstanceId id)
         {
             const auto it = Worlds.find(id.Value);
@@ -444,7 +489,8 @@ namespace Veng
                 Directory->Resolve(Net::JoinRequestInfo{.Connection = id,
                                                         .Account = conn.Account,
                                                         .Key = request.Key,
-                                                        .Payload = request.Payload},
+                                                        .Payload = request.Payload,
+                                                        .Profile = ProfileOf(conn.Account)},
                                    static_cast<u32>(conn.Joins.size()));
             if (resolve.Outcome == WorldResolveOutcome::Denied)
             {
@@ -625,7 +671,8 @@ namespace Veng
                 Directory->Resolve(Net::JoinRequestInfo{.Connection = id,
                                                         .Account = account,
                                                         .Key = record->Gameplay.Key,
-                                                        .Payload = record->Gameplay.Params},
+                                                        .Payload = record->Gameplay.Params,
+                                                        .Profile = ProfileOf(account)},
                                    /*heldWorlds=*/0);
             if (resolve.Outcome == WorldResolveOutcome::Denied)
             {
@@ -755,6 +802,9 @@ namespace Veng
         state->Assets = &info.Assets;
         state->Primary = info.WorldId;
         state->LocalAccount = info.LocalAccount;
+        // The local player performs no connect, so its profile is bound here instead — owned by
+        // ServerConnectionId, which no connection holds, so no teardown clears it.
+        state->BindProfile(Net::ServerConnectionId, info.LocalAccount, &info.LocalProfile);
 
         // Consume a borrowed directory when given one (the Application-shared path); otherwise build a
         // private one from the info's caps and policy hooks (the self-contained ServerHost).
@@ -891,6 +941,9 @@ namespace Veng
                 // Bind the admitted account for the connection's lifetime; every player-keyed
                 // decision below (authorize, seat stamp, directory membership) reads it from here.
                 s.Connections.try_emplace(event.Id).first->second.Account = event.Account;
+                // The account's profile is bound before the reattach below, so a resolve driven by
+                // it already sees the profile the fresh connection presented.
+                s.BindProfile(event.Id, event.Account, s.Server->ProfileFor(event.Id));
                 // Reconnecting is reattaching: an admitted account with a record has its standing
                 // joins re-issued and its gameplay world resolved back through the directory.
                 s.ReattachAccount(event.Id, event.Account);
@@ -915,6 +968,7 @@ namespace Veng
                     {
                         s.ReleaseJoin(event.Id, join, now);
                     }
+                    s.ReleaseProfile(event.Id, it->second.Account);
                     s.Connections.erase(it);
                 }
             }
@@ -1101,6 +1155,11 @@ namespace Veng
             }
         }
         return Net::ServerConnectionId;
+    }
+
+    const Net::Blob* ServerHost::ProfileOf(Net::AccountId account) const
+    {
+        return m_State->ProfileOf(account);
     }
 
     Net::JoinId ServerHost::CurrentJoin(Net::ConnectionId id) const

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Veng/Net/AccountId.h>
+#include <Veng/Net/Blob.h>
 #include <Veng/Net/Connection.h>
 #include <Veng/Net/FaultInjectionTransport.h>
 #include <Veng/Net/NetEvents.h>
@@ -124,6 +125,15 @@ namespace Veng::Net
         /// @return This Pump's reliable app messages for the connection, or an empty view for an
         ///         unknown id.
         [[nodiscard]] std::span<const vector<u8>> ReliableAppMessages(ConnectionId id) const;
+
+        /// @brief The opaque account profile an established connection presented at the handshake.
+        ///
+        /// Carried verbatim from the connect request and never decoded by the engine. The pointer
+        /// borrows the server's storage and stays valid until the connection is reaped.
+        /// @param id  An established connection id.
+        /// @return The presented profile, or nullptr when the connection presented none (or the id
+        ///         names no established connection).
+        [[nodiscard]] const Blob* ProfileFor(ConnectionId id) const;
 
         /// @brief The bound local port, useful after Create with Port 0 and no override.
         /// @return The port, or an error string when the transport cannot report one.

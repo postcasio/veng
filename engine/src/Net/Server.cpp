@@ -65,6 +65,7 @@ namespace Veng::Net
             Unique<Connection> Conn;
             ConnectionId Id = ServerConnectionId; // nonzero only once established
             AccountId Account;                    // the admitted account, valid once established
+            Blob Profile;                         // the presented account profile; empty when none
             bool Established = false;
             bool Closing = false; // Disconnect() called; flush the message, then reap
             DisconnectReason CloseReason = DisconnectReason::Kicked;
@@ -148,7 +149,7 @@ namespace Veng::Net
 
         void HandleConnectRequest(PeerConnection& record, std::span<const u8> message)
         {
-            const optional<ConnectRequestMessage> request = DecodeConnectRequest(message);
+            optional<ConnectRequestMessage> request = DecodeConnectRequest(message);
             if (!request.has_value())
             {
                 return; // malformed — drop, recoverable
@@ -173,6 +174,14 @@ namespace Veng::Net
                     "server {:016X}{:016X})",
                     request->Content.Hi, request->Content.Lo, Info.Content.Hi, Info.Content.Lo);
                 Deny(record, DenyReason::ContentMismatch);
+                return;
+            }
+            if (request->Profile.Bytes.size() > MaxProfileBytes)
+            {
+                Log::Warn("Net::Server denying connection: account profile is {} bytes, past the "
+                          "{} byte budget",
+                          request->Profile.Bytes.size(), MaxProfileBytes);
+                Deny(record, DenyReason::ProfileTooLarge);
                 return;
             }
             if (EstablishedCount() >= Info.MaxConnections)
@@ -221,6 +230,7 @@ namespace Veng::Net
             }
 
             record.Account = *admitted;
+            record.Profile = std::move(request->Profile);
             record.Established = true;
             // The connection accept establishes the link only; which world the client loads and which
             // seat is its own ride the per-world join reply, not this acceptance.
@@ -442,6 +452,18 @@ namespace Veng::Net
             }
         }
         return {};
+    }
+
+    const Blob* Server::ProfileFor(ConnectionId id) const
+    {
+        for (const Unique<PeerConnection>& c : m_State->Connections)
+        {
+            if (c->Established && c->Id == id)
+            {
+                return c->Profile.Bytes.empty() ? nullptr : &c->Profile;
+            }
+        }
+        return nullptr;
     }
 
     Result<u16> Server::LocalPort() const
