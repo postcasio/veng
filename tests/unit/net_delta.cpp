@@ -206,7 +206,6 @@ namespace
             ReplClient.SetQuantization(settings.Quantization);
             ReplServer.AddConnection(1);
 
-            Server->SetChangeTick(0);
             Pawn = Server->CreateEntity();
             Server->Add<Transform>(Pawn);
             NetIdAllocator allocator;
@@ -303,7 +302,6 @@ TEST_CASE("Delta + quantization shrink the steady-state stream well below the fu
     TypeRegistry serverTypes;
     RegisterBuiltinTypes(serverTypes);
     Unique<Scene> server = Scene::Create(serverTypes);
-    server->SetChangeTick(0);
 
     // A field of moving entities — the steady-state workload the compression targets.
     constexpr int Count = 12;

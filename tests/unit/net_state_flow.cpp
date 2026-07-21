@@ -141,7 +141,6 @@ TEST_CASE("A prefab-less spawn materializes the entity with full state, marked T
     serverTypes.Register<VengTest::TestScore>();
     Unique<Scene> server = Scene::Create(serverTypes);
 
-    server->SetChangeTick(1);
     const Entity pawn = server->CreateEntity();
     server->Add<Transform>(pawn, Transform{.Position = vec3(1.0f, 2.0f, 3.0f)});
     server->Add<VengTest::TestScore>(pawn, VengTest::TestScore{.Value = 5});
@@ -187,7 +186,6 @@ TEST_CASE("A spawn rides a prefab AssetId through the ordinary prefab path")
     RegisterBuiltinTypes(serverTypes);
     Unique<Scene> server = Scene::Create(serverTypes);
 
-    server->SetChangeTick(1);
     const Entity pawn = server->CreateEntity();
     server->Add<Transform>(pawn, Transform{.Position = vec3(7.0f, 0.0f, 0.0f)});
 
@@ -236,7 +234,6 @@ TEST_CASE("Snapshots buffer Transform samples while non-spatial state applies im
     serverTypes.Register<VengTest::TestScore>();
     Unique<Scene> server = Scene::Create(serverTypes);
 
-    server->SetChangeTick(1);
     const Entity pawn = server->CreateEntity();
     server->Add<Transform>(pawn, Transform{.Position = vec3(0.0f)});
     server->Add<VengTest::TestScore>(pawn, VengTest::TestScore{.Value = 1});
@@ -283,7 +280,8 @@ TEST_CASE("A snapshot for an unknown NetId drops idempotently and converges afte
     RegisterBuiltinTypes(serverTypes);
     Unique<Scene> server = Scene::Create(serverTypes);
 
-    server->SetChangeTick(2);
+    // Populated with no tick stepped: the snapshot below is encoded for a later server tick, but the
+    // pawn's own change tick is the floor, so the record is selected by the pre-tick path.
     const Entity pawn = server->CreateEntity();
     server->Add<Transform>(pawn, Transform{.Position = vec3(3.0f, 0.0f, 0.0f)});
 
@@ -330,7 +328,6 @@ TEST_CASE("A despawn destroys the client mirror and unbinds the map")
     RegisterBuiltinTypes(serverTypes);
     Unique<Scene> server = Scene::Create(serverTypes);
 
-    server->SetChangeTick(1);
     const Entity pawn = server->CreateEntity();
     server->Add<Transform>(pawn);
 

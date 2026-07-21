@@ -275,7 +275,6 @@ TEST_CASE("A client's Possesses change arriving through snapshot apply moves the
     Unique<Scene> server = Scene::Create(serverTypes);
 
     // Server truth: one seat and two pawns, the seat possessing the first.
-    server->SetChangeTick(1);
     const Entity firstPawn = server->CreateEntity();
     server->Add<Transform>(firstPawn);
     const Entity secondPawn = server->CreateEntity();
@@ -328,7 +327,6 @@ TEST_CASE("The marker never rides the wire")
     CHECK_FALSE(serverTypes.Info(TypeIdOf<LocalControl>()).Replicated);
 
     Unique<Scene> server = Scene::Create(serverTypes);
-    server->SetChangeTick(1);
     const Entity pawn = server->CreateEntity();
     server->Add<Transform>(pawn);
 

@@ -170,10 +170,15 @@ marks its own). A runtime **`NetIdentity`** (server-assigned `u32`, never author
 the wire key; the client keeps a `NetId → Entity` map. `EncodeSnapshot`/`ApplySnapshot` are the
 entity-granular codec (per-component `WriteFields` bytes, MTU-packable, replicated `Entity` fields
 translated to NetIds and remapped on apply) — **the reflection serializer is the wire codec; there
-is no IDL**. `ReplicationServer` diffs the scene per connection (dirty `Authority::Server` entities
-gated by per-entity change ticks, sent until acked) and emits reliable **spawn/despawn** (carrying
-a prefab `AssetId` when associated via `SetEntityPrefab`, so the client instantiates through the
-ordinary prefab path) + unreliable **snapshots** on a snapshot-interval tick. `ReplicationClient`
+is no IDL**. `ReplicationServer` emits two kinds of payload, and **they select components by
+different rules**: reliable **spawn/despawn** (carrying a prefab `AssetId` when associated via
+`SetEntityPrefab`, so the client instantiates through the ordinary prefab path), where a spawn is a
+**full-state** record carrying every replicated component the entity currently holds with **no
+change-tick filtering at all**; and unreliable **snapshots** on a snapshot-interval tick, which are
+**deltas** over `Authority::Server` entities, gated per component on the change tick and sent until
+acked. A spawn is what makes a peer whole for an entity it has never seen, so it asks *what is
+there*, not *what changed* — see [the tick-zero floor](#the-tick-zero-floor) for the full account and
+for why the delta gate is nonetheless correct. `ReplicationClient`
 applies latest-wins, marks replicated entities **`Tier::Remote`**, and buffers each Transform
 snapshot for the **View-phase `RemoteInterpolationSystem`**, which renders a remote ~2 snapshot
 intervals in the past.
@@ -641,6 +646,8 @@ The mark names **how** an entity replicates, never **whether**. `Authority` stil
 `ProtocolVersion` is unaffected — but a marked entity's Spawn *population* does: it carries a prefab
 id instead of a component list.
 
+### The tick-zero floor
+
 **A component written before the world's first tick reaches a peer, by both routes.** The spawn
 payload is a **full-state** operation, not a dirty query: it encodes every replicated component the
 entity currently carries, unconditionally, because a peer that has never seen the entity needs its
@@ -665,6 +672,14 @@ association concerns prefab structure. `net_local_spawn_replication.cpp` pins bo
 spawn case, its post-tick control, the mixed-population entity, the spawn record's declared component
 count, the pre-tick write onto an already-spawned entity, and the steady-state negatives that an
 acked component is not resent and a keyframe re-bases only what is dirty.
+
+The load-bearing one is the **suite-level naive shape**: a two-peer case whose host world's change
+tick never moves at all — the fixture's pump leaves it at the floor — where a peer's view still
+converges on both an entity populated before the connection and one populated after it. That is the
+population a consumer produces by loading a level and leaving it alone, and it is the case whose
+absence let this defect survive a comprehensive band. **Do not write a `net_*` case that steps the
+change tick merely to lift a population above zero**: the floor makes that unnecessary, and the idiom
+is what hid the defect. Step ticks when tick progression is the behavior under test, not otherwise.
 
 
 ## The admission profile

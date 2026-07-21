@@ -159,7 +159,6 @@ TEST_CASE("Interest gates spawns; a leave is a visibility despawn that re-baseli
     TypeRegistry serverTypes;
     RegisterBuiltinTypes(serverTypes);
     Unique<Scene> server = Scene::Create(serverTypes);
-    server->SetChangeTick(1);
 
     const Entity a = server->CreateEntity();
     server->Add<Transform>(a, Transform{.Position = vec3(0.0f)});

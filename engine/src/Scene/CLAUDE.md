@@ -63,6 +63,34 @@ last built against and rebuilds only when the version moved. One constraint: a `
 retained across frames and written without re-acquiring it bypasses the bump — write transforms
 through the scene accessors each frame, as all engine and sample code does.
 
+## Change ticks — and why zero is reserved
+
+Beside the scene-wide spatial version, a `Scene` keeps a **per-(entity, component) change tick**. A
+non-`const` access stamps the touched pair with the scene's current change tick
+(`SetChangeTick`/`GetChangeTick`); `GetComponentChangeTick(entity, id)` reads it back. The world
+drive sets the scene's change tick from `SystemContext::Tick` each phase, so an edit made during a
+tick is stamped with that tick. It is the per-component granularity the net layer's delta gate keys
+off — a component enters a snapshot for a connection when its tick is **strictly greater** than what
+that connection has acked.
+
+**Zero is a reserved sentinel meaning *before any tick*, and no write ever produces it.** The scene's
+change tick floors at `Scene::MinChangeTick` (one): `m_ChangeTick` initializes to it, `SetChangeTick`
+raises anything lower to it, and the world drive's assignment routes through the setter, so it cannot
+be lowered either. The consequences are the contract:
+
+- `GetChangeTick()` is **never zero**, from construction onward. There is no value that means "this
+  world has not ticked yet" — a consumer needing that fact must key off its own load/boot state.
+- `GetComponentChangeTick()` returns zero **if and only if** the entity does not carry the component.
+  A component it does carry was stamped when it was added, at a tick of at least `MinChangeTick`, so
+  it reads non-zero however early it was written.
+
+The reason is the delta gate. Zero is also what a replication baseline holds before anything is
+acked, so overloading it as a real tick during which writes happen made a genuine pre-tick write —
+level load, prefab spawn, editor authoring — indistinguishable from never-written, and every
+`changeTick <= sinceTick` gate read it as clean. Flooring at one fixes the ambiguity at its source
+rather than special-casing each comparison, and leaves every comparison correct and unedited. The net
+side of this is [Veng/Net](../Net/CLAUDE.md), "The tick-zero floor".
+
 ## Ownership & the owned simulation
 
 A `Scene` is **`Unique`, single-owner** — nothing holds a `Ref` to it; the app (or the

@@ -114,9 +114,8 @@ TEST_CASE("Round-trip: a snapshot converges the client to field-identical replic
     serverTypes.Register<VengTest::TestScore>();
     Unique<Scene> server = Scene::Create(serverTypes);
 
-    // Server state is authored "at" tick 3 so every component stamps a change tick above the fresh
-    // connection's acked tick (0).
-    server->SetChangeTick(3);
+    // Authored with no tick stepped — the pre-tick population window a level load hits. Each write
+    // stamps the scene's change-tick floor, which is strictly above a fresh connection's zero.
     const Entity pawn = server->CreateEntity();
     server->Add<Transform>(pawn,
                            Transform{.Position = vec3(1.0f, 2.0f, 3.0f), .Scale = vec3(2.0f)});
@@ -164,7 +163,6 @@ TEST_CASE("Entity-field remap: a replicated reference resolves to the local hand
     RegisterBuiltinTypes(serverTypes);
     Unique<Scene> server = Scene::Create(serverTypes);
 
-    server->SetChangeTick(1);
     const Entity pawn = server->CreateEntity();
     server->Add<Transform>(pawn);
     const Entity seat = server->CreateEntity();
@@ -199,7 +197,6 @@ TEST_CASE("A reference to an unreplicated target encodes as the null wire id")
     RegisterBuiltinTypes(serverTypes);
     Unique<Scene> server = Scene::Create(serverTypes);
 
-    server->SetChangeTick(1);
     // A Local-tier target carries no NetIdentity — referencing it from replicated state is an
     // authoring error the codec encodes as a null reference.
     const Entity localTarget = server->CreateEntity();
@@ -231,7 +228,6 @@ TEST_CASE("Dirty gating: only components changed since the acked tick are sent")
     RegisterBuiltinTypes(serverTypes);
     Unique<Scene> server = Scene::Create(serverTypes);
 
-    server->SetChangeTick(1);
     const Entity a = server->CreateEntity();
     server->Add<Transform>(a);
     const Entity b = server->CreateEntity();
@@ -274,7 +270,6 @@ TEST_CASE("An unknown NetId drops its record; the rest still apply")
     RegisterBuiltinTypes(serverTypes);
     Unique<Scene> server = Scene::Create(serverTypes);
 
-    server->SetChangeTick(1);
     const Entity a = server->CreateEntity();
     server->Add<Transform>(a, Transform{.Position = vec3(5.0f)});
     const Entity b = server->CreateEntity();
@@ -335,7 +330,6 @@ TEST_CASE("A truncated packet applies what it can and never runs off the end")
     RegisterBuiltinTypes(serverTypes);
     Unique<Scene> server = Scene::Create(serverTypes);
 
-    server->SetChangeTick(1);
     const Entity a = server->CreateEntity();
     server->Add<Transform>(a, Transform{.Position = vec3(3.0f)});
     const Entity b = server->CreateEntity();
@@ -388,7 +382,6 @@ TEST_CASE("The snapshot header carries a signed input-feedback field that round-
     TypeRegistry serverTypes;
     RegisterBuiltinTypes(serverTypes);
     Unique<Scene> server = Scene::Create(serverTypes);
-    server->SetChangeTick(1);
     const Entity e = server->CreateEntity();
     server->Add<Transform>(e, Transform{.Position = vec3(1.0f)});
 
@@ -418,7 +411,6 @@ TEST_CASE("The snapshot header carries the last-consumed input tick, beside the 
     TypeRegistry serverTypes;
     RegisterBuiltinTypes(serverTypes);
     Unique<Scene> server = Scene::Create(serverTypes);
-    server->SetChangeTick(1);
     const Entity e = server->CreateEntity();
     server->Add<Transform>(e, Transform{.Position = vec3(1.0f)});
 

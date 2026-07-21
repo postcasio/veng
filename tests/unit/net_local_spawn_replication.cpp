@@ -91,6 +91,10 @@ namespace
 
         f64 Now = 0.0;
         u64 Tick = 0;
+        // Whether Step advances the host world's change tick, the way a world drive would. Clearing
+        // it leaves the world at its change-tick floor forever while time and host ticks still
+        // advance — the shape a consumer that populates its world and never mutates it again hits.
+        bool DriveChangeTick = true;
 
         Peers()
         {
@@ -138,7 +142,10 @@ namespace
             {
                 Tick += 1;
                 Now += 1.0 / 60.0;
-                HostScene->SetChangeTick(Tick);
+                if (DriveChangeTick)
+                {
+                    HostScene->SetChangeTick(Tick);
+                }
                 Host->Pump(Now, Tick);
                 Joiner->Pump(Now);
             }
@@ -212,6 +219,43 @@ TEST_CASE("The same component stamped once the world has ticked reaches the join
     REQUIRE_FALSE(mirror.IsNull());
     REQUIRE(fx.ClientWorld().Has<VengTest::TestScore>(mirror));
     CHECK(fx.ClientWorld().Get<VengTest::TestScore>(mirror).Value == 7);
+}
+
+TEST_CASE(
+    "A world whose change tick never moves still converges a joiner, before and after connect")
+{
+    Peers fx;
+    // The naive shape end to end: nothing in this case, and nothing in the pump, ever touches the
+    // host world's change tick. Every write below therefore stamps the floor and is never restamped,
+    // which is precisely the population a consumer produces by loading a level and leaving it alone.
+    fx.DriveChangeTick = false;
+
+    const Entity before = fx.HostScene->CreateEntity();
+    fx.HostScene->Add<Transform>(before, Transform{.Position = vec3(1.0f, 0.0f, 0.0f)});
+    fx.HostScene->Add<VengTest::TestScore>(before, VengTest::TestScore{.Value = 3});
+
+    fx.Join();
+
+    // …and one more entity authored after the connection exists, so it reaches the peer through the
+    // spawn path a live world uses rather than through the join's initial sweep.
+    const Entity after = fx.HostScene->CreateEntity();
+    fx.HostScene->Add<Transform>(after, Transform{.Position = vec3(2.0f, 0.0f, 0.0f)});
+    fx.HostScene->Add<VengTest::TestScore>(after, VengTest::TestScore{.Value = 4});
+
+    fx.Step(20);
+    REQUIRE(fx.HostScene->GetChangeTick() == Scene::MinChangeTick);
+
+    // The peer's view of both entities is field-identical to the host's.
+    for (const auto& [entity, score] : {std::pair{before, 3}, std::pair{after, 4}})
+    {
+        const Entity mirror = fx.MirrorOf(entity);
+        REQUIRE_FALSE(mirror.IsNull());
+        REQUIRE(fx.ClientWorld().Has<VengTest::TestScore>(mirror));
+        CHECK(fx.ClientWorld().Get<VengTest::TestScore>(mirror).Value == score);
+        REQUIRE(fx.ClientWorld().Has<Transform>(mirror));
+        CHECK(fx.ClientWorld().Get<Transform>(mirror).Position.x ==
+              doctest::Approx(fx.HostScene->Get<Transform>(entity).Position.x));
+    }
 }
 
 // ---- The spawn payload read directly off the codec ----------------------------------------------
@@ -438,6 +482,14 @@ TEST_CASE("Change tick zero is reserved for a component that was never stamped")
     CHECK(scene->GetComponentChangeTick(entity, TypeIdOf<Transform>()) > 0);
 }
 
+// ---- The steady-state negatives -----------------------------------------------------------------
+//
+// The change-tick floor lifts every write above a fresh baseline, so the way it fails is by lifting
+// too much: a component that has been acked resending forever, or a keyframe re-admitting what the
+// dirty gate excluded. Both cases below populate pre-tick — the floor's own path — and assert the
+// stream falls silent, which is the observable form of "nothing to resend". Delta, interest,
+// prediction and reconciliation are covered by their own suites passing unchanged.
+
 TEST_CASE("An acked component is not resent on the following snapshot")
 {
     DirectPair fx;
@@ -535,9 +587,8 @@ TEST_CASE("A marked entity spawned before the join is picked up when the client 
 {
     Peers fx;
 
-    // Spawned into a world that replicates but has no joins yet, and stamped past the change-tick
-    // floor so its replicated leaf is selectable.
-    fx.HostScene->SetChangeTick(1);
+    // Spawned into a world that replicates but has no joins yet, with no tick stepped — so this now
+    // covers the pre-tick population path rather than one lifted above it by hand.
     const Prefab::SpawnResult spawned = fx.Pawn->SpawnInto(*fx.HostScene, FakeAssets());
     const Entity pawn = spawned.Roots.front();
     fx.HostScene->Add<NetSpawn>(pawn);
