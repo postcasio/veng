@@ -255,6 +255,19 @@ flat "every locally possessed pawn" marker is deliberately not what this is. It 
 fieldless (`VE_TYPE`), so it is **never replicated and never persisted**: it is per-process
 presentation state, meaningless off the machine that derived it.
 
+**The derivation requires the `Possesses` indirection, and that is a modelling commitment, not a
+neutral rule.** A presenting seat that *is itself* the controlled entity — one entity carrying both
+the `Viewer` and the gameplay state, with no separate pawn to possess — resolves to `Entity::Null`
+and is never marked. That shape is reachable in ordinary use: a server-spawned seat whose
+`SeatPrefab` is left null is created bare and then associated with a prefab whose **root is the
+controlled entity**, so on the client the seat's wire id names that root and its replicated
+`Possesses.Pawn` arrives `Entity::Null` (an `Entity` reference does not cross the wire). A consumer
+in that shape gets no marker and no `OnClientPossession`, and — because the marker's absence reads
+exactly like "this peer controls nothing" — the failure is silent rather than loud. Giving the seat
+a real `Possesses` link, or a non-null `SeatPrefab` so seat and pawn are distinct entities, is what
+brings a consumer inside the rule. Widening the engine rule to model a self-controlling seat is a
+design question that has not been settled, so the limit is documented rather than papered over.
+
 ## ConstantMotion — the input-free counterpart
 
 **`ConstantMotion` is the input-free counterpart** (`Veng/Scene/Motion.h`): an authored

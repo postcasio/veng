@@ -802,3 +802,31 @@ does not.
 the wrong-token-survives pin, every judge verdict including reattach-over-capacity and the
 `RefuseFull`-leaves-the-token-live pin, the full sixteen-row presence matrix, and the roster diff's
 events, both change tests, the two-notices-in-one-diff case, and the empty↔populated edges.
+
+### Where the toolkit's shape is a policy, not a primitive
+
+The match key and the change predicate are parameters precisely because a second consumer would
+disagree about them. Four other choices are **not** parameterized, and each is a fixed policy an
+adopter inherits rather than a neutral primitive. They are recorded here so an adopter meets them
+in the doc rather than in a debugger:
+
+- **The judge's clause order is fixed.** `JudgeInviteGatedJoin` tests the invite before capacity,
+  so an uninvited joiner into a full roster is `RefuseUninvited` and never `RefuseFull`. That
+  ordering is deliberate — occupancy is not disclosed to someone with no claim on the world — but
+  it *is* a disclosure policy compiled into a function documented as pure vocabulary. A consumer
+  wanting capacity to dominate must order the clauses itself and not call this.
+- **`InviteTable` holds at most one outstanding token per `(world, invitee)` pair.** `Issue`
+  replaces rather than appends, so two inviters cannot hold concurrent live invites to the same
+  world for the same account — the second silently invalidates the first. A consumer whose invites
+  are per-inviter needs its own table.
+- **The four pieces ship as one header because one consumer used them together.** They share no
+  types beyond `WorldKey`/`AccountId` and call each other not at all; `InviteTable` + the judge are
+  a pair, the classifier and the roster diff are independent. The bundling is convenience, not
+  cohesion, and `Social.h` names a genre rather than a mechanism.
+- **`ClassifyMemberPresence` ships with no caller anywhere** — not in the engine, which calls none
+  of this by design, and not in the tree's exemplars. Its four-input contract is pinned by the
+  sixteen-row test alone, so it is the one piece of this header whose shape has never been checked
+  against a real integration.
+
+The same caveat applies once outside this header: **`ReconcileLocalControl`'s derivation is a
+policy too** — see [../Scene/CLAUDE.md](../Scene/CLAUDE.md), "LocalControl".
