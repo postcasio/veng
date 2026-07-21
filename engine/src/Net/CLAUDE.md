@@ -745,10 +745,10 @@ the drift cases.
 ## The social toolkit — vocabulary, not a feature
 
 `Veng/Net/Social.h` is the multiplayer-social vocabulary every invite-gated shared world re-derives:
-an **`InviteTable`**, a **join judge**, a **presence classifier**, and a **roster diff**. It is pure
-value logic over engine types (`WorldKey`, `AccountId`, monotonic seconds) — no socket, no scene, no
-clock, no connection — so all of it is unit-testable end to end and compiles under
-`include_hygiene`. The two roster templates are header-only; the three non-template pieces live in
+an **`InviteTable`**, a **join judge**, and a **roster diff**. It is pure value logic over engine
+types (`WorldKey`, `AccountId`, monotonic seconds) — no socket, no scene, no clock, no
+connection — so all of it is unit-testable end to end and compiles under
+`include_hygiene`. The two roster templates are header-only; the two non-template pieces live in
 `src/Net/Social.cpp`. **No engine system calls any of it**: the engine ships no roster component, no
 membership policy, no caps, and no invite flow, and a consumer composes these against whatever
 membership model it defines.
@@ -777,13 +777,6 @@ once a seat frees. Consuming before judging silently burns it — the ordering g
 externalized by the pure form, so it is stated on the declaration rather than left for callers to
 rediscover.
 
-**`ClassifyMemberPresence(inRoster, online, present, connected)` separates a disconnect from a
-leave.** A connection loss is not a departure: the member keeps its roster membership and is merely
-marked `Offline`, so it returns as a `Rejoin` rather than joining from nothing; a first appearance is
-a `Join`; an observation matching the recorded state is `None`. All four inputs are load-bearing —
-`online` is what separates `Rejoin` from `None` on a present member and what makes `Offline` fire
-once rather than on every sweep tick.
-
 **`DeriveRosterNotices<Key, Payload>(before, after, changed)` derives events from replicated state,
 with no message traffic.** Two roster snapshots diff into ordered `Joined` / `Left` / `CameOnline` /
 `WentOffline` / `Changed` notices; a member present in both may yield **two** notices in one diff
@@ -800,13 +793,13 @@ does not.
 
 `tests/unit/net_social.cpp` (fast band) carries the cases: issue/consume-once/expiry/replace plus
 the wrong-token-survives pin, every judge verdict including reattach-over-capacity and the
-`RefuseFull`-leaves-the-token-live pin, the full sixteen-row presence matrix, and the roster diff's
-events, both change tests, the two-notices-in-one-diff case, and the empty↔populated edges.
+`RefuseFull`-leaves-the-token-live pin, and the roster diff's events, both change tests, the
+two-notices-in-one-diff case, and the empty↔populated edges.
 
 ### Where the toolkit's shape is a policy, not a primitive
 
 The match key and the change predicate are parameters precisely because a second consumer would
-disagree about them. Four other choices are **not** parameterized, and each is a fixed policy an
+disagree about them. Three other choices are **not** parameterized, and each is a fixed policy an
 adopter inherits rather than a neutral primitive. They are recorded here so an adopter meets them
 in the doc rather than in a debugger:
 
@@ -819,14 +812,10 @@ in the doc rather than in a debugger:
   replaces rather than appends, so two inviters cannot hold concurrent live invites to the same
   world for the same account — the second silently invalidates the first. A consumer whose invites
   are per-inviter needs its own table.
-- **The four pieces ship as one header because one consumer used them together.** They share no
+- **The three pieces ship as one header because one consumer used them together.** They share no
   types beyond `WorldKey`/`AccountId` and call each other not at all; `InviteTable` + the judge are
-  a pair, the classifier and the roster diff are independent. The bundling is convenience, not
-  cohesion, and `Social.h` names a genre rather than a mechanism.
-- **`ClassifyMemberPresence` ships with no caller anywhere** — not in the engine, which calls none
-  of this by design, and not in the tree's exemplars. Its four-input contract is pinned by the
-  sixteen-row test alone, so it is the one piece of this header whose shape has never been checked
-  against a real integration.
+  a pair, and the roster diff is independent. The bundling is convenience, not cohesion, and
+  `Social.h` names a genre rather than a mechanism.
 
 The same caveat applies once outside this header: **`ReconcileLocalControl`'s derivation is a
 policy too** — see [../Scene/CLAUDE.md](../Scene/CLAUDE.md), "LocalControl".
