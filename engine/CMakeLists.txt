@@ -142,6 +142,7 @@ add_library(veng SHARED
         # subsystem's sources stay together rather than scattered through the list. Further
         # persistence sources are appended here, in this block.
         src/Persistence/Store.cpp
+        src/Persistence/SaveSlots.cpp
         src/Platform/UserPaths.cpp
         src/Task/ParallelFor.cpp
         src/Task/TaskSystem.cpp

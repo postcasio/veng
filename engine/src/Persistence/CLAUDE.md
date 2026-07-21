@@ -101,6 +101,49 @@ The store resolves no directory of its own: the slot directory is supplied by th
 
 ## Save slots
 
+`Veng/Persistence/SaveSlots.h` is the thin layer between "a root directory" and "an open `Store`":
+name rules, slot resolution and enumeration, and the open/create entry point. It exists so every
+consumer does not re-write the same directory arithmetic, and so the engine owns a slot vocabulary
+its own tooling can rely on.
+
+**The root is always supplied by the caller** — these helpers resolve nothing global, exactly as
+`Store::Open` resolves no directory of its own. `Platform/UserPaths.h`'s `UserDataDir(application)`
+is the natural provider of a per-user root and is the helpers' first documented consumer path, but
+it is **documented, not mandated**: a portable application may root beside its executable and a test
+roots in a temporary directory. Any intermediate segment in a consumer's layout (a `saves/`
+directory, say) belongs to *its* root resolution and never appears here.
+
+**Normalization maps; validation rejects.** `NormalizeSlotName` trims, collapses internal
+whitespace runs to one space, drops control characters and the characters no path component may
+carry (`/ \ : * ? " < > |`), and truncates to `MaxSlotNameLength` (32). It never fails and it never
+folds case — folding would silently merge names differing only in case, and rename an existing
+slot's directory the first time it was reopened. `IsValidSlotName` normalizes and then refuses the
+empty result, the relative-path elements `.` and `..`, a trailing dot, and the Windows device names
+(`CON`, `NUL`, `COM1`, … — matched case-insensitively and with any extension, and refused on every
+platform so a slot list is not platform-dependent).
+
+The two stay **separate functions** because folding them into one loses the `.`/`..` rejection, and
+given `SlotDirectoryOf` that is a path-traversal hole rather than a cosmetic gap. For the same
+reason **`SlotDirectoryOf` returns a `Result`, never a bare path**: the only path a rejected name
+could resolve to is the root itself, which `OpenSlot` would then lock and sweep as though the whole
+root were one slot. Since normalization has already dropped every separator, an accepted name is
+always a single component directly under the root.
+
+**`EnumerateSlots` reports filesystem facts and opens no store.** It skips non-directories, so a
+root holding consumer files beside its slots (an account record, say) enumerates cleanly, and it
+sorts on `SlotInfo::LastWriteWall` descending with the name breaking ties. That stamp is a
+**directory mtime, advisory only** — not a semantic "when was this slot last saved", and the store
+perturbs it, since `Store::Open` writes `slot.lock` and may sweep superseded files. A consumer
+ordering a user-facing list on when the state was last written keys on its own persisted stamp;
+sorting here is a sensible default for a bare directory scan, not a guarantee. Display metadata
+beyond these facts is likewise the consumer's, layered through its own store family.
+
+**`OpenSlot(root, name, createIfAbsent)`** resolves, optionally creates the directory, and calls
+`Store::Open`. Every failure is a recoverable `Result` — an unusable name, an absent slot without
+`createIfAbsent`, and whatever `Store::Open` reports passed through with its reason (lock
+contention, an unreadable or unrecognized slot). `OpenSlot` is what makes the store's foreign-slot
+refusal matter, since a consumer may hand it any root at all.
+
 ## Store patterns
 
 ## The session-store binding
