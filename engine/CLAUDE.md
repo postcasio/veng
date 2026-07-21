@@ -33,6 +33,16 @@ Each major system's architecture lives in a `CLAUDE.md` inside its source direct
 - **[src/Persistence/CLAUDE.md](src/Persistence/CLAUDE.md)** — `Veng/Persistence/`, the
   durable-state subsystem: the `Store`'s families, opaque record keys, atomic whole-slot flush,
   versioning and migration, and the capture/rehydrate scene hooks.
+<!-- planset-75 plan 00 -->
+- **[src/Diagnostics/CLAUDE.md](src/Diagnostics/CLAUDE.md)** — `Veng/Diagnostics/`, the CPU
+  instrumentation subsystem: the `VE_PROFILE_*` scope/counter/instant vocabulary, per-thread chunk
+  rings and their release/acquire publication, RAII thread registration, virtual tracks, the
+  `TraceSink` seam, the always-on per-frame aggregates the HUD reads, and the `VE_PROFILE` compile
+  gate. Allocation-free and `Log.h`-free on the hot path.
+<!-- /planset-75 plan 00 -->
+<!-- planset-75 plan 07 -->
+<!-- /planset-75 plan 07 -->
+
 
 The consumption exemplars are documented in [examples/CLAUDE.md](../examples/CLAUDE.md); the
 offline cook in [cooker/CLAUDE.md](../cooker/CLAUDE.md); the archive format in

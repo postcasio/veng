@@ -68,6 +68,17 @@ if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     message(STATUS "build type not specified; defaulting to ${VENG_DEFAULT_BUILD_TYPE} (VE_DEBUG=${VE_DEBUG})")
 endif ()
 
+# VE_PROFILE compiles in the diagnostics profiler (scope timing, per-thread trace buffers). It
+# defaults ON under VE_DEBUG and OFF otherwise, matching the other debug-tier features, and is a
+# PUBLIC compile definition on the veng target (engine/CMakeLists.txt) — owned by the engine and
+# propagated to every consumer, never set by a consumer. A consumer whose macro expansion disagrees
+# with the engine it links is an ABI split over shared profiler state, which manifests as corruption
+# rather than a link error, so the engine keeps the setting. The VE_ prefix (while the repo's other
+# cache options are VENG_*) is deliberate: it doubles as the compile definition consumers test in
+# their own sources, and consumer-visible definitions carry the VE_ prefix. Declared here, ahead of
+# the engine subdirectory that acts on it.
+option(VE_PROFILE "Compile in the diagnostics profiler (scope timing, trace buffers)" ${VE_DEBUG})
+
 # Route compilation through ccache when present, so unchanged TUs are served from
 # cache across rebuilds, clean builds, and branch switches. The #embed / bin2cpp
 # machinery below is written to keep ccache's view of generated sources correct.
@@ -754,6 +765,14 @@ if (VENG_BUILD_TESTS)
             tests/unit/net_blob_codec.cpp
             tests/unit/net_social.cpp
             tests/unit/net_local_control.cpp
+            # planset-75 diagnostics unit sources — one carved block per plan. Each plan writes only
+            # inside its own marker so the parallel fan-out at plans 02/03/04 merges without conflict.
+            # planset-75 plan 00:
+            tests/unit/diagnostics_profiler.cpp
+            # planset-75 plan 01:
+            # planset-75 plan 02:
+            # planset-75 plan 03:
+            # planset-75 plan 05:
     )
     target_link_libraries(veng_test_unit PRIVATE veng::veng doctest::doctest)
     # Precompile the foundational header + doctest once per suite: a test TU is
@@ -788,6 +807,18 @@ if (VENG_BUILD_TESTS)
     # Labelled `fast`: `ctest -L fast` is the driver-free inner feedback loop.
     add_test(NAME unit COMMAND veng_test_unit)
     set_tests_properties(unit PROPERTIES LABELS "unit;fast")
+
+    # ---- Diagnostics microbenchmark (VE_PROFILE only) -----------------------
+    # The first per-scope cost measurement against the ≤ 40 ns budget, the per-frame aggregation-fold
+    # cost, and a hard allocation-free check on the steady-state hot path. Built only under VE_PROFILE
+    # (nothing to measure with the macros compiled out); kept out of the fast band because its timing
+    # output is informational, but registered so its allocation-free invariant is a standing check.
+    if (VE_PROFILE)
+        add_executable(veng_diag_bench tests/bench/diag_bench.cpp)
+        target_link_libraries(veng_diag_bench PRIVATE veng::veng)
+        add_test(NAME diag_bench COMMAND veng_diag_bench)
+        set_tests_properties(diag_bench PROPERTIES LABELS "bench")
+    endif ()
 
     # ---- Shared GPU-band support (consumed by the death + GPU bands) --------
     # Vulkan-driver probe so a GPU test can skip (not fail) where no ICD exists.

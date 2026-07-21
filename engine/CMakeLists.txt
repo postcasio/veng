@@ -46,6 +46,11 @@ target_compile_options(veng_backend_objs PRIVATE -fno-exceptions)
 if (VE_DEBUG)
     target_compile_definitions(veng_backend_objs PRIVATE VE_ENABLE_VALIDATION_LAYERS=1 VE_DEBUG=1)
 endif ()
+# The backend objects are absorbed into veng via $<TARGET_OBJECTS>, so veng's PUBLIC VE_PROFILE does
+# not reach them; set it here too, keeping every TU in the library on one VE_PROFILE_* expansion.
+if (VE_PROFILE)
+    target_compile_definitions(veng_backend_objs PRIVATE VE_PROFILE=1)
+endif ()
 # See the matching veng block below: the dynamic-dispatcher storage lives in
 # Context.cpp, which compiles here.
 if (WIN32)
@@ -105,6 +110,7 @@ add_library(veng SHARED
         src/Asset/Loaders/SkeletonLoader.cpp
         src/Asset/Loaders/TextureLoader.cpp
         src/Asset/Loaders/VertexLayoutLoader.cpp
+        src/Diagnostics/Profiler.cpp
         src/ExecutableDirectory.cpp
         src/Input.cpp
         src/Input/Actions.cpp
@@ -337,6 +343,14 @@ set_source_files_properties(src/Vendor/TinyExr.cpp PROPERTIES
 
 if (VE_DEBUG)
     target_compile_definitions(veng PUBLIC VE_ENABLE_VALIDATION_LAYERS=1 VE_DEBUG=1)
+endif ()
+
+# The diagnostics profiler is a PUBLIC compile definition, following the VE_DEBUG precedent above:
+# owned by the engine and propagated to every consumer, so a consumer's VE_PROFILE_* macro expansion
+# always matches the engine it links. Under VE_PROFILE=OFF no event-recording or buffer code is
+# compiled; the Profiler lifecycle surface remains as documented no-ops.
+if (VE_PROFILE)
+    target_compile_definitions(veng PUBLIC VE_PROFILE=1)
 endif ()
 
 # glm and fmt appear in veng's public headers (engine vector/matrix types and
