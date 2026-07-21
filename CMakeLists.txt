@@ -770,11 +770,16 @@ if (VENG_BUILD_TESTS)
             # planset-75 plan 00:
             tests/unit/diagnostics_profiler.cpp
             # planset-75 plan 01:
+            tests/unit/diagnostics_trace_format.cpp
             # planset-75 plan 02:
             # planset-75 plan 03:
             # planset-75 plan 05:
     )
     target_link_libraries(veng_test_unit PRIVATE veng::veng doctest::doctest)
+    # The committed trace-format fixtures (planset-75 plan 01) live in the source tree; the
+    # round-trip case reads them by absolute path so it runs from any working directory.
+    target_compile_definitions(veng_test_unit PRIVATE
+            VENG_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
     # Precompile the foundational header + doctest once per suite: a test TU is
     # otherwise ~90% redundant header parsing. The doctest mains define the
     # implementation macro before their include, which a force-included PCH would

@@ -47,6 +47,7 @@
 #include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Diagnostics/TraceSink.h>
 // planset-75 plan 01:
+#include <Veng/Diagnostics/FileTraceSink.h>
 
 #include <Veng/Event.h>
 #include <Veng/Input.h>

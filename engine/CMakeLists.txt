@@ -110,7 +110,9 @@ add_library(veng SHARED
         src/Asset/Loaders/SkeletonLoader.cpp
         src/Asset/Loaders/TextureLoader.cpp
         src/Asset/Loaders/VertexLayoutLoader.cpp
+        src/Diagnostics/FileTraceSink.cpp
         src/Diagnostics/Profiler.cpp
+        src/Diagnostics/TraceFile.cpp
         src/ExecutableDirectory.cpp
         src/Input.cpp
         src/Input/Actions.cpp
@@ -352,6 +354,34 @@ endif ()
 if (VE_PROFILE)
     target_compile_definitions(veng PUBLIC VE_PROFILE=1)
 endif ()
+
+# Capture identity for diagnostics traces: the engine version and this tree's git provenance,
+# compiled into the one FileTraceSink TU so a capture can stamp its provenance without a runtime git
+# query. Resolved at configure time (a reconfigure refreshes it); a tree built without git degrades
+# to the header's placeholder defaults. Scoped to the single source so the defines never reach the
+# public surface or any other TU. Only the enumerated identity fields are recorded — no path, env, or
+# command line — so a committed fixture carries nothing host-specific.
+set(VENG_TRACE_GIT_SHA "unknown")
+set(VENG_TRACE_GIT_DIRTY 0)
+find_package(Git QUIET)
+if (GIT_FOUND)
+    execute_process(COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+            OUTPUT_VARIABLE VENG_TRACE_GIT_SHA_RAW OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET RESULT_VARIABLE VENG_TRACE_GIT_SHA_RESULT)
+    if (VENG_TRACE_GIT_SHA_RESULT EQUAL 0 AND VENG_TRACE_GIT_SHA_RAW)
+        set(VENG_TRACE_GIT_SHA "${VENG_TRACE_GIT_SHA_RAW}")
+    endif ()
+    execute_process(COMMAND ${GIT_EXECUTABLE} status --porcelain --untracked-files=no
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+            OUTPUT_VARIABLE VENG_TRACE_GIT_DIRTY_RAW OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET RESULT_VARIABLE VENG_TRACE_GIT_DIRTY_RESULT)
+    if (VENG_TRACE_GIT_DIRTY_RESULT EQUAL 0 AND VENG_TRACE_GIT_DIRTY_RAW)
+        set(VENG_TRACE_GIT_DIRTY 1)
+    endif ()
+endif ()
+set_source_files_properties(src/Diagnostics/FileTraceSink.cpp PROPERTIES COMPILE_DEFINITIONS
+        "VENG_TRACE_VERSION=\"${PROJECT_VERSION}\";VENG_TRACE_GIT_SHA=\"${VENG_TRACE_GIT_SHA}\";VENG_TRACE_GIT_DIRTY=${VENG_TRACE_GIT_DIRTY}")
 
 # glm and fmt appear in veng's public headers (engine vector/matrix types and
 # string formatting), so they stay PUBLIC. veng::assetpack is PUBLIC too —

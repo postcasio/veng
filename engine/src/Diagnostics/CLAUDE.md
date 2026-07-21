@@ -148,7 +148,58 @@ the class holds no recording storage.
 <!-- /planset-75 plan 00 -->
 
 <!-- planset-75 plan 01 -->
-<!-- The trace format and FileTraceSink. -->
+## The trace format and FileTraceSink (plan 01)
+
+The on-disk shape of a capture is a compact binary stream, specified **normatively** in
+[docs/trace-format.md](../../../docs/trace-format.md) — the single source of truth both this
+planset's `vengtrace` converter and the observatory's JS ingest are written against. The internal
+`TraceFormat.h` encoding the profiler writes into its buffers is *not* that format: it is a
+fixed-width provisional record the sink transcodes into the compact on-disk stream. The two are
+deliberately distinct — the buffer encoding is cheap to append on the hot path, the on-disk encoding
+is small to store and read.
+
+**The stream.** A fixed 40-byte preamble (magic `VENGTRAC`, format version, the trace clock's tick
+frequency and base, capture mode, build config, `VE_PROFILE` state) followed by length-prefixed
+typed sections: `Metadata`, `StringTable`, `Track`, `Chunk`, `Accounting`, and a `Trailer` written
+only on a clean close. A reader skips a section type it does not know (by its length prefix) and
+stops at the first section it cannot fully read, so a **truncated capture reads up to its last
+complete section** and a new section type is addable without a version bump. The event record layout
+is what the version pins.
+
+**Ticks, not nanoseconds.** Timestamps are raw trace-clock ticks (`NowTicks`); the preamble records
+`TraceTickFrequency()` (24 MHz on Apple Silicon) and a tick base, and a decoder converts with
+`TraceTicksToNanos`. Every chunk carries its own **absolute** tick base and a monotonic sequence
+number, so it decodes standalone — and a ring dump's first chunk is not sequence 0, the gap being
+how a discarded span reads as a gap rather than silence. Per-record timestamps are variable-width
+tick deltas from the chunk base; per-record frame indices are zigzag deltas from a chunk base frame,
+so a **back-dated GPU span** (an earlier frame than the chunk's) encodes as a small negative.
+
+**Counter values are lossless and compact.** A one-byte tag selects `varint u64`, `zigzag varint
+i64`, or raw `f64`, and the writer picks the narrowest form that round-trips the `f64` **bit-for-bit**
+(`TraceFileFormat::SelectCounterTag`) — so −0.0 and NaN fall to the raw form rather than being
+flattened by an integer encoding.
+
+**Identity, enumerated.** The `Metadata` section carries only the engine version, the executable
+**basename** (never its path), and one git-provenance entry per submodule (short SHA + dirty flag).
+No absolute path, environment variable, command line, or host name is ever written — the engine's
+own provenance is compiled into the `FileTraceSink` TU at configure time.
+
+**`FileTraceSink`** (`Veng/Diagnostics/FileTraceSink.h`, `TraceFile.h`/`.cpp` the internal encoder)
+is the `TraceSink` that writes this stream. `Create(path, ringDump)` returns the sink; chunks and
+string deltas are **copied and queued to a dedicated writer thread**, which does the transcoding and
+encoding off the recording thread, so the hot-path invariant holds through the sink. The finished
+stream is committed with `assetpack`'s `WriteFileAtomic`, so a scanner never sees a half-written
+capture — a ring dump is a complete file the instant it appears. Captures land in
+**`<build-dir>/captures/`** (gitignored with the build tree, orderable and attributable to the build
+that produced them), never `UserDataDir`. The dropped-event/dropped-thread counts the profiler owns
+are stamped through `SetAccounting` before close, so a lossy capture is visibly lossy.
+
+**The reference fixture** (`tests/fixtures/trace-fixture.vtrace`, plus a truncated sibling) is a
+committed capture covering every section and record type, all three counter encodings, a first chunk
+whose sequence is not 0, a full string table, and a back-dated span — the shared conformance input
+both decoders are tested against. It is built from clean synthetic values (no path, no host string),
+and the round-trip test regenerates it and compares byte-for-byte, so it cannot drift from the
+format. Regenerate with `VENG_REGEN_TRACE_FIXTURE=1` on the unit suite.
 <!-- /planset-75 plan 01 -->
 
 <!-- planset-75 plan 02 -->
