@@ -477,10 +477,10 @@ only the periodic **keyframe** cadence; and that world's join **tick estimator t
 clock**, because the header tick it observes advances in the world's tick space, matching the client
 world's `SimClock`, so it does not re-sync per host frame. Component change ticks already live in the
 world's tick space (a Scene stamps a write with its own sim tick), so aligning the baseline and header
-to the same space is what closes the gap; an unstamped component (change tick 0) is `≤` any baseline
-in either space, so it is selected by neither, in either space alike (see the tick-zero floor below).
-A world at or near the
-host rate is byte-identical to a host-tick stamp, since its own tick and the host tick coincide.
+to the same space is what closes the gap; a component the entity does not carry reports change tick 0,
+which is `≤` any baseline in either space, so neither snapshot cadence selects it, in either space
+alike (see the tick-zero floor below). A world at or near the host rate is byte-identical to a
+host-tick stamp, since its own tick and the host tick coincide.
 
 **Snapshot emission is one per qualifying world tick, not one per host pump.** Stamping the cadence
 in the world's tick space is necessary but not sufficient on its own: `ReplicationServer::Generate`
@@ -490,8 +490,9 @@ world advances — so a single qualifying tick persists across many consecutive 
 `SnapshotInterval` of 1 emitting a snapshot every pump, ~60× intended; the keyframe cadence inflating
 the same way). Each connection records `LastSnapshotTick` — the world tick its last snapshot went out
 on — and skips a repeat of it, collapsing emission to **one snapshot per qualifying world tick
-regardless of pump rate**; the sentinel (never a real tick) fires the first snapshot, including one at
-tick 0. A world ticking at or above the host rate advances its tick every pump and is unaffected; a
+regardless of pump rate**; the sentinel (never a real tick) fires the first snapshot, including the
+world's very first. A world ticking at or above the host rate advances its tick every pump and is
+unaffected; a
 slow frame running zero sim steps no longer re-emits the prior tick's snapshot. So a sub-rate world's
 idle traffic converges to zero between changes rather than spending a pump-rate burst.
 `ServerHost::ReplicationBytesForWorld(WorldInstanceId)` reports a world's accumulated replication
@@ -640,17 +641,30 @@ The mark names **how** an entity replicates, never **whether**. `Authority` stil
 `ProtocolVersion` is unaffected — but a marked entity's Spawn *population* does: it carries a prefab
 id instead of a component list.
 
-**A replicated component stamped at tick zero never reaches a joiner.** Both the spawn payload and
-every snapshot select a component whose change tick is **strictly greater** than the baseline they
-gate against, and both baselines start at zero — the spawn's `sinceTick` literally, a connection's
-`AckedTick` until its first ack. A `Scene`'s change tick is zero until the world drive stamps its
-first sim tick, so a component written only during level load, prefab spawn, or any other pre-tick
-population is indistinguishable from an unstamped one and is **never selected** — not by the spawn,
-not by a snapshot, and not by the keyframe cadence, which forces a full encoding only for components
-that already cleared the same gate. The component reaches a joiner as soon as anything writes it
-again on a real tick. This is a distinct seam from the prefab association above: it drops replicated
-leaves, where a missing association drops prefab structure. `net_local_spawn_replication.cpp` pins
-both, including the tick-zero case and its post-tick control.
+**A component written before the world's first tick reaches a peer, by both routes.** The spawn
+payload is a **full-state** operation, not a dirty query: it encodes every replicated component the
+entity currently carries, unconditionally, because a peer that has never seen the entity needs its
+whole state regardless of when each component was last written. So an entity populated during level
+load, prefab spawn, or any other pre-tick window arrives **whole** at a joiner, and an entity
+straddling the boundary carries its pre-tick and post-tick components alike in one record.
+
+A **snapshot is a delta and gates on the change tick**: it selects a component whose tick is
+**strictly greater** than the connection's `AckedTick`, which starts at zero. That gate is correct
+for its delta purpose — a component last changed at or before the acked tick genuinely needs no
+resend — and what makes it safe is that **change tick zero is a reserved sentinel**. `Scene`'s change
+tick floors at `Scene::MinChangeTick` (one) from construction onward, so a write made before the
+world drive stamps its first sim tick lands at one, strictly newer than an un-acked baseline, and
+enters the very next snapshot. Zero means only *before any tick*: a `GetComponentChangeTick` of zero
+says the entity does not carry the component, never that it was written early. So a component written
+pre-tick onto an entity the connection has **already spawned** is delivered on the next snapshot, and
+the keyframe cadence keeps its narrow job of forcing a full encoding for components that cleared the
+gate.
+
+This is a distinct seam from the prefab association above: it concerns replicated leaves, where an
+association concerns prefab structure. `net_local_spawn_replication.cpp` pins both — the pre-tick
+spawn case, its post-tick control, the mixed-population entity, the spawn record's declared component
+count, the pre-tick write onto an already-spawned entity, and the steady-state negatives that an
+acked component is not resent and a keyframe re-bases only what is dirty.
 
 
 ## The admission profile

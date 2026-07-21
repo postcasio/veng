@@ -162,8 +162,8 @@ namespace Veng
             };
         }
 
-        // One entity's dirty replicated component records (each TypeId:u64 ByteLength:u32 bytes),
-        // plus their count — the payload of a snapshot entity record and a spawn message.
+        // One entity's replicated component records (each TypeId:u64 ByteLength:u32 bytes), plus
+        // their count — the payload of a snapshot entity record and a spawn message.
         struct EncodedComponents
         {
             u32 Count = 0;
@@ -182,7 +182,7 @@ namespace Veng
 
             vector<u8> valueCopy;
             WriteFields(valueCopy, component, info, registry);
-            ScratchComponent scratch(info);
+            const ScratchComponent scratch(info);
             ReadFields(valueCopy, scratch.Ptr, info, registry).value();
             RemapComponentReferences(scratch.Ptr, info, registry, encodeRef, keepAsset);
 
@@ -206,12 +206,15 @@ namespace Veng
             out.insert(out.end(), body.begin(), body.end());
         }
 
-        // One entity's dirty replicated components as full self-describing records — the spawn/baseline
-        // form and the free EncodeSnapshot form (no per-connection baseline, no quantization).
-        EncodedComponents EncodeDirtyComponents(const Scene& scene, Entity entity,
-                                                const vector<TypeId>& replicated, u64 sinceTick,
+        // The replicated components @p entity carries that @p select admits, as full self-describing
+        // records (no per-connection baseline, no quantization). @p select is offered each replicated
+        // TypeId the entity actually holds and answers whether it belongs in the payload; the
+        // selection is the caller's, so the encode loop itself has no notion of a change tick.
+        template <typename Select>
+        EncodedComponents EncodeComponentsWhere(const Scene& scene, Entity entity,
+                                                const vector<TypeId>& replicated,
                                                 const TypeRegistry& registry,
-                                                const EntityRemap& encodeRef)
+                                                const EntityRemap& encodeRef, Select select)
         {
             EncodedComponents result;
             for (const TypeId typeId : replicated)
@@ -220,7 +223,7 @@ namespace Veng
                 {
                     continue;
                 }
-                if (scene.GetComponentChangeTick(entity, typeId) <= sinceTick)
+                if (!select(typeId))
                 {
                     continue;
                 }
@@ -232,6 +235,32 @@ namespace Veng
                 ++result.Count;
             }
             return result;
+        }
+
+        // One entity's replicated components last changed strictly after @p sinceTick — the delta
+        // selection the free EncodeSnapshot form emits, where a component the peer already holds at
+        // or before that tick genuinely needs no resend.
+        EncodedComponents EncodeDirtyComponents(const Scene& scene, Entity entity,
+                                                const vector<TypeId>& replicated, u64 sinceTick,
+                                                const TypeRegistry& registry,
+                                                const EntityRemap& encodeRef)
+        {
+            const auto changedSince = [&scene, entity, sinceTick](const TypeId typeId)
+            { return scene.GetComponentChangeTick(entity, typeId) > sinceTick; };
+            return EncodeComponentsWhere(scene, entity, replicated, registry, encodeRef,
+                                         changedSince);
+        }
+
+        // Every replicated component the entity currently carries — the spawn/baseline form.
+        // Unconditional, with no change-tick filtering, because a peer that has never seen the entity
+        // needs its whole state regardless of when each component was last written.
+        EncodedComponents EncodeAllComponents(const Scene& scene, Entity entity,
+                                              const vector<TypeId>& replicated,
+                                              const TypeRegistry& registry,
+                                              const EntityRemap& encodeRef)
+        {
+            return EncodeComponentsWhere(scene, entity, replicated, registry, encodeRef,
+                                         [](TypeId) { return true; });
         }
 
         // The per-(NetId, TypeId) baseline store the delta decoder patches against and updates. Null
@@ -307,7 +336,7 @@ namespace Veng
                     }
                 }
                 vector<u8> payload;
-                if (VoidResult decoded = Net::DecodeComponentBody(
+                if (const VoidResult decoded = Net::DecodeComponentBody(
                         body, baseline, *typeId, transformId, registry, quant, payload);
                     !decoded)
                 {
@@ -318,8 +347,8 @@ namespace Veng
                     (*baselines)[netId][*typeId] = payload;
                 }
 
-                ScratchComponent scratch(info);
-                if (VoidResult read = ReadFields(payload, scratch.Ptr, info, registry); !read)
+                const ScratchComponent scratch(info);
+                if (const VoidResult read = ReadFields(payload, scratch.Ptr, info, registry); !read)
                 {
                     continue; // malformed record: leave prior state intact
                 }
@@ -648,10 +677,10 @@ namespace Veng
             const auto prefabIt = m_EntityPrefabs.find(identity.Id);
             const bool hasPrefab = prefabIt != m_EntityPrefabs.end();
 
-            // The spawn carries the entity's full current replicated state (sinceTick 0), so the
-            // client is whole without waiting a snapshot round.
+            // The spawn carries every replicated component the entity currently holds, so the client
+            // is whole without waiting a snapshot round.
             const EncodedComponents encoded =
-                EncodeDirtyComponents(scene, entity, replicated, 0, registry, encodeRef);
+                EncodeAllComponents(scene, entity, replicated, registry, encodeRef);
 
             // An anchored entity replicates its opaque anchor in the spawn record (beside the prefab
             // id), read before the client creates any entity so the claimant resolves at spawn time.

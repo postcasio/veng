@@ -172,19 +172,36 @@ namespace Veng
         /// write. Read-only consumers use the const View/Each path to avoid bumping.
         [[nodiscard]] u64 GetSpatialVersion() const { return m_SpatialVersion; }
 
+        /// @brief The lowest tick a write can stamp; a Scene's change tick never falls below it.
+        ///
+        /// Tick zero is reserved to mean *before any tick*: it is what a component the entity does
+        /// not carry reports, and what a replication baseline holds before anything is acked. The
+        /// floor keeps a real write out of that value, so an edit made before the world drive's
+        /// first tick is still strictly newer than a fresh baseline and reads as dirty exactly once.
+        static constexpr u64 MinChangeTick = 1;
+
         /// @brief Sets the sim tick that a non-const component access stamps as its change tick.
         ///
         /// The world drive sets this to SystemContext::Tick each phase, so an in-place edit during a
-        /// tick stamps that tick onto the touched (entity, component). Defaults to zero (edits before
-        /// the first tick — level load, editor authoring — stamp tick zero). The net layer's dirty
-        /// query keys off the resulting per-entity change ticks.
-        /// @param tick  The tick value non-const accesses now stamp.
-        void SetChangeTick(u64 tick) { m_ChangeTick = tick; }
+        /// tick stamps that tick onto the touched (entity, component). The value floors at
+        /// MinChangeTick, so an edit before the first tick — level load, editor authoring — stamps
+        /// one rather than the reserved zero. The net layer's dirty query keys off the resulting
+        /// per-entity change ticks.
+        /// @param tick  The tick value non-const accesses now stamp; raised to MinChangeTick if lower.
+        void SetChangeTick(u64 tick) { m_ChangeTick = tick < MinChangeTick ? MinChangeTick : tick; }
 
         /// @brief Returns the sim tick non-const accesses currently stamp (see SetChangeTick).
+        ///
+        /// Never zero — the value floors at MinChangeTick from construction onward, so no write ever
+        /// produces the reserved before-any-tick value.
         [[nodiscard]] u64 GetChangeTick() const { return m_ChangeTick; }
 
         /// @brief Returns the last tick component @p id on @p entity was stamped at, or 0 if absent.
+        ///
+        /// Zero is reserved for *before any tick* and here means only that the entity does not carry
+        /// the component, so nothing has ever stamped it. A component the entity does carry was
+        /// stamped when it was added, at a tick of at least MinChangeTick, so a real stamp reads
+        /// non-zero however early it was written.
         ///
         /// A component enters a snapshot for a connection when this exceeds the connection's last-acked
         /// tick (the send-until-acked dirty rule). A const query — it never stamps.
@@ -611,7 +628,9 @@ namespace Veng
         /// @brief Monotonic counter for spatial-pool changes.
         u64 m_SpatialVersion = 0;
         /// @brief The sim tick a non-const component access stamps as the touched component's change tick.
-        u64 m_ChangeTick = 0;
+        ///
+        /// Starts at the floor rather than zero, which is reserved for *before any tick*.
+        u64 m_ChangeTick = MinChangeTick;
 
         /// @brief Component pools, keyed by TypeId, created lazily.
         unordered_map<TypeId, Unique<ComponentPool>> m_Pools;
