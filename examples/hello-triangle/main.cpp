@@ -34,11 +34,11 @@
 #include <Veng/Asset/InputMappingContext.h>
 #include <Veng/Input.h>
 #include <Veng/Input/Actions.h>
+#include <Veng/Net/BlobCodec.h>
 #include <Veng/Net/Host.h>
 #include <Veng/Net/Messages.h>
 #include <Veng/Net/Replication.h>
 #include <Veng/Net/Session.h>
-#include <Veng/Reflection/Serialize.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/InputMappingSystem.h>
 #include <Veng/Scene/AnimationSystem.h>
@@ -102,8 +102,9 @@ VE_TYPE(::MultiplayerMode, 0xF4220F737E702E78ULL);
 constexpr Net::ChannelId DemoChannelId = 0xE762E43AD6721580ULL;
 
 // The reflected value the demo channel carries. A message payload is an opaque Net::Blob the engine
-// never interprets; the game packs a reflected value through the shared field serializer
-// (WriteFields/ReadFields) and names its type on the blob so the receiving handler can decode it.
+// never interprets; the game packs a reflected value through the record form of the blob codec
+// (EncodeBlobRecord/DecodeBlobRecord), which names its type on the blob so the receiving handler
+// can discriminate and decode it.
 struct ChannelPing
 {
     u32 Sequence = 0;
@@ -491,25 +492,21 @@ private:
         {
             return {};
         }
-        Net::Blob pose{.Type = TypeIdOf<Transform>()};
-        WriteFields(pose.Bytes, transform, GetTypeRegistry().Info(TypeIdOf<Transform>()),
-                    GetTypeRegistry());
-        return pose;
+        return Net::EncodeBlobRecord(*transform, GetTypeRegistry());
     }
 
     // Decodes a session pose payload back onto a freshly spawned pawn — the reattach arrival. A
     // payload of another shape (or none) leaves the prefab's authored pose.
     void ApplySessionPose(Scene& world, const Entity pawn, const Net::Blob& pose)
     {
-        if (pose.Type != TypeIdOf<Transform>() || pose.IsEmpty() || !world.Has<Transform>(pawn))
+        if (!world.Has<Transform>(pawn))
         {
             return;
         }
-        Transform decoded;
-        if (ReadFields(pose.Bytes, &decoded, GetTypeRegistry().Info(TypeIdOf<Transform>()),
-                       GetTypeRegistry()))
+        if (const optional<Transform> decoded =
+                Net::DecodeBlobRecord<Transform>(pose, GetTypeRegistry()))
         {
-            world.Get<Transform>(pawn) = decoded;
+            world.Get<Transform>(pawn) = *decoded;
         }
     }
 
@@ -812,25 +809,13 @@ protected:
     // its reflected type so the receiving handler can discriminate and decode it.
     Net::Blob EncodePing(const ChannelPing& ping)
     {
-        Net::Blob blob;
-        blob.Type = TypeIdOf<ChannelPing>();
-        WriteFields(blob.Bytes, &ping, GetTypeRegistry().Info(blob.Type), GetTypeRegistry());
-        return blob;
+        return Net::EncodeBlobRecord(ping, GetTypeRegistry());
     }
 
     // Decodes a demo-channel blob back into a ChannelPing; nullopt for a foreign type or bad bytes.
     optional<ChannelPing> DecodePing(const Net::Blob& blob)
     {
-        if (blob.Type != TypeIdOf<ChannelPing>())
-        {
-            return {};
-        }
-        ChannelPing ping;
-        if (!ReadFields(blob.Bytes, &ping, GetTypeRegistry().Info(blob.Type), GetTypeRegistry()))
-        {
-            return {};
-        }
-        return ping;
+        return Net::DecodeBlobRecord<ChannelPing>(blob, GetTypeRegistry());
     }
 
     // Registers the demo message channel on whichever host is live and drives its ping/notify

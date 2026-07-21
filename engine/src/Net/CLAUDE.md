@@ -570,6 +570,41 @@ network client.
 
 <!-- -- carve 74/02 -- -->
 
-<!-- -- carve 74/03 -- -->
+## Putting a value into a blob
+
+`Net::Blob` is opaque to the engine, so the consumer supplies the codec — and there are only two
+codecs worth writing, both shipped in **`Veng/Net/BlobCodec.h`** (a sibling of `Blob.h`, so `Blob`
+itself stays a pure value type with no reflection-walker dependency).
+
+**The fixed-layout form** — `EncodeBlob<T>(value, tag)` / `DecodeBlob<T>(blob, expected)` — packs a
+trivially-copyable payload's object representation into `sizeof(T)` bytes. **The tag is an explicit
+parameter, and that is the design point.** A blob's tag is a *discriminator*, not a description of
+the byte layout: a consumer routinely tags a payload with a type other than the one it carries so a
+receiver can tell two payloads apart on one channel, and a payload meant to read as absent carries
+`InvalidTypeId`. A helper hard-wiring `TypeIdOf<T>()` would exclude every wire struct that is not
+itself reflected — most of them are not — and would silently rewrite the discriminator wherever a
+consumer cross-tags, breaking the receiver. Passing `TypeIdOf<T>()` expresses the plain case;
+passing anything else expresses the real one.
+
+The decode's size test is **`>=`, not `==`**: a longer payload sharing the tag decodes its leading
+`sizeof(T)` bytes, and a shorter one reads as absent — the asymmetry a shared channel depends on.
+A caller wanting exactness compares the blob's own byte count.
+
+Two contracts ride the fixed-layout form. It is a **same-build convenience, not a versioned wire
+contract**: it encodes T's in-memory layout, which differs across compilers, architectures, and any
+edit to T, so a payload crossing a build boundary or evolving its fields belongs on the record form.
+And **a successful decode guarantees only the tag matched and the byte count sufficed** — nothing
+validates the bytes. Blobs arrive from the wire as untrusted input, so a size-matching adversarial
+payload `memcpy`'d into a `T` yields out-of-range enums, `bool`s that are neither 0 nor 1, and NaN
+floats; **the caller must validate every field whose domain is narrower than its representation**.
+A payload from an unadmitted peer belongs on the record form. Every rejection — a wrong tag, a short
+payload, an empty blob — is `nullopt`, never an assert, per the recoverable-read policy.
+
+**The record form** — `EncodeBlobRecord<T>(value, registry)` / `DecodeBlobRecord<T>(blob, registry)`
+— runs a reflected value through `WriteFields`/`ReadFields` and tags the blob `TypeIdOf<T>()`. It is
+the schema-tolerant one: a field the record names and T no longer has is skipped, and a field of T
+the record omits keeps its default, so a payload whose shape evolves survives in both directions.
+`net_blob_codec.cpp` pins both round-trips, the cross-tagged payload, the `>=` prefix decode, and
+the drift cases.
 
 <!-- -- carve 74/04 -- -->

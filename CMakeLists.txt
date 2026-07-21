@@ -751,7 +751,7 @@ if (VENG_BUILD_TESTS)
             # -- carve 74/00 --
             # -- carve 74/01 --
             # -- carve 74/02 --
-            # -- carve 74/03 --
+            tests/unit/net_blob_codec.cpp
             # -- carve 74/04 --
             # -- carve 74/05 --
     )

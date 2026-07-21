@@ -87,7 +87,7 @@
 
 #include <Veng/Net/AccountId.h>
 #include <Veng/Net/Blob.h>
-// -- carve 74/03 --
+#include <Veng/Net/BlobCodec.h>
 #include <Veng/Net/ClockSync.h>
 #include <Veng/Net/Connection.h>
 #include <Veng/Net/FaultInjectionTransport.h>
