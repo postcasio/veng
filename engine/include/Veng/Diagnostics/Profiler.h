@@ -3,6 +3,7 @@
 #include <Veng/Veng.h>
 #include <Veng/Diagnostics/TraceSink.h>
 
+#include <atomic>
 #include <chrono>
 
 // Veng/Diagnostics/Profiler.h — the engine's CPU instrumentation surface.
@@ -14,9 +15,11 @@
 //
 // The profiler owns per-thread buffers written with no mutex and no allocation on
 // the hot path; it never touches Veng/Log.h (whose sink is single-threaded), and
-// it reads time from std::chrono::steady_clock rather than Veng::time_point, which
-// is high_resolution_clock and is not guaranteed steady. Steadiness is a
-// correctness requirement for a trace.
+// it timestamps events with a steady raw-tick counter (NowTicks) rather than
+// Veng::time_point, which is high_resolution_clock and is not guaranteed steady.
+// Steadiness is a correctness requirement for a trace. Raw ticks are stored on the
+// hot path and converted to nanoseconds off it, so the per-scope path carries no
+// timebase division.
 
 namespace Veng::Diagnostics
 {
@@ -216,9 +219,9 @@ namespace Veng::Diagnostics
         /// are supplied, so a span measured elsewhere (the GPU) lands on its own track.
         /// @param track       The track to emit onto; 0 emits onto the caller's thread track.
         /// @param name        The span's interned name id.
-        /// @param beginNanos  Span start, in the steady_clock nanosecond domain.
-        /// @param endNanos    Span end, in the same domain.
-        void EmitScope(TrackId track, NameId name, u64 beginNanos, u64 endNanos);
+        /// @param beginTicks  Span start, in the NowTicks() trace-clock domain.
+        /// @param endTicks    Span end, in the same domain.
+        void EmitScope(TrackId track, NameId name, u64 beginTicks, u64 endTicks);
 
         /// @brief Advances the frame index and folds the completed frame's aggregates.
         ///
@@ -263,17 +266,41 @@ namespace Veng::Diagnostics
 #endif
     };
 
-    /// @brief Reads the steady trace clock as a nanosecond count.
+    /// @brief Reads the steady trace clock as a raw tick count — the profiler's timestamp source.
     ///
-    /// The profiler's timestamps come from std::chrono::steady_clock; this is the one
-    /// place that choice is made, so callers building spans by hand stamp them from
-    /// the same source.
-    [[nodiscard]] inline u64 NowNanos() noexcept
+    /// This is the one place the clock source is chosen, so a caller building a span by
+    /// hand (EmitScope) stamps it from the same counter. Ticks, not nanoseconds, are what
+    /// the hot path stores: the read is a single instruction on Apple Silicon, and the
+    /// nanosecond conversion (TraceTicksToNanos) is kept off the per-scope path. The
+    /// counter is monotonic and runs at a fixed frequency (TraceTickFrequency); its epoch
+    /// is arbitrary, so only differences carry meaning.
+    [[nodiscard]] inline u64 NowTicks() noexcept
     {
-        return static_cast<u64>(std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                    std::chrono::steady_clock::now().time_since_epoch())
-                                    .count());
+#if defined(__aarch64__)
+        // The ARM generic-timer virtual counter (CNTVCT_EL0): a monotonic, fixed-frequency
+        // counter readable from user space in one instruction — the same counter
+        // mach_absolute_time() reads on Apple Silicon, without the library-call overhead.
+        u64 ticks;
+        __asm__ __volatile__("mrs %0, cntvct_el0" : "=r"(ticks));
+        return ticks;
+#else
+        // Portable fallback: the steady clock in its native tick period. steady_clock, not
+        // high_resolution_clock, because steadiness is a correctness requirement for a trace.
+        return static_cast<u64>(std::chrono::steady_clock::now().time_since_epoch().count());
+#endif
     }
+
+    /// @brief Ticks per second of the NowTicks() counter; its resolution is one over this.
+    ///
+    /// The trace file format (and any decoder) records this to convert stored ticks to
+    /// wall time. On Apple Silicon it is the 24 MHz architected timer, so one tick is
+    /// ~41.7 ns.
+    [[nodiscard]] u64 TraceTickFrequency() noexcept;
+
+    /// @brief Converts a NowTicks() tick count or delta to nanoseconds. Off the hot path.
+    /// @param ticks  A tick count or tick delta from NowTicks().
+    /// @return The equivalent nanoseconds.
+    [[nodiscard]] u64 TraceTicksToNanos(u64 ticks) noexcept;
 }
 
 // ---------------------------------------------------------------------------
@@ -297,11 +324,36 @@ namespace Veng::Diagnostics::Detail
     /// @return The thread state, or nullptr when no profiler is active.
     [[nodiscard]] ThreadState* CurrentThreadState() noexcept;
 
-    /// @brief Interns a string literal by pointer identity, with a per-thread cache. The fast path.
-    /// @param state    The calling thread's state.
-    /// @param literal  A string literal with static storage duration.
+    /// @brief Per-call-site cache of a string literal's interned id, guarding it by profiler generation.
+    ///
+    /// One static instance sits at each VE_PROFILE_SCOPE("literal") site. The id is
+    /// resolved on first execution and reused thereafter, so the steady state of the
+    /// literal path is a cached read rather than a hash lookup. The generation stamp
+    /// re-resolves the id if the active profiler is torn down and replaced (ids belong
+    /// to a profiler's string table). Shared across threads: the id is a profiler-global
+    /// value, so a resolve on any thread serves the rest. Constant-initialised, so the
+    /// static carries no dynamic-init guard.
+    struct ScopeName
+    {
+        /// @brief Constructs the cache for a string literal with static storage duration.
+        constexpr explicit ScopeName(const char* literal) noexcept
+            : Literal(literal), Generation(0), Id(0)
+        {
+        }
+
+        /// @brief The literal this site names.
+        const char* Literal;
+        /// @brief Profiler generation the cached id was resolved in; 0 until first resolved.
+        std::atomic<u64> Generation;
+        /// @brief The cached interned id, valid while Generation matches the active profiler.
+        std::atomic<NameId> Id;
+    };
+
+    /// @brief Resolves a call site's literal name id, hitting the per-site cache in steady state.
+    /// @param state  The calling thread's state.
+    /// @param name   The call site's cache.
     /// @return The interned id.
-    [[nodiscard]] NameId InternLiteral(ThreadState* state, const char* literal) noexcept;
+    [[nodiscard]] NameId ResolveLiteralName(ThreadState* state, ScopeName& name) noexcept;
 
     /// @brief Interns a runtime string by hashing its contents. The costlier path.
     /// @param state  The calling thread's state.
@@ -340,15 +392,15 @@ namespace Veng::Diagnostics::Detail
     class ScopeTimer
     {
     public:
-        /// @brief Times a scope named by a string literal.
-        /// @param literal  A string literal with static storage duration.
-        explicit ScopeTimer(const char* literal) noexcept : m_State(CurrentThreadState())
+        /// @brief Times a scope named by a call site's cached literal.
+        /// @param name  The call site's ScopeName cache.
+        explicit ScopeTimer(ScopeName& name) noexcept : m_State(CurrentThreadState())
         {
             if (m_State)
             {
-                m_Name = InternLiteral(m_State, literal);
+                m_Name = ResolveLiteralName(m_State, name);
                 EnterScope(m_State);
-                m_Begin = NowNanos();
+                m_Begin = NowTicks();
             }
         }
 
@@ -360,7 +412,7 @@ namespace Veng::Diagnostics::Detail
             {
                 m_Name = InternDynamic(m_State, name);
                 EnterScope(m_State);
-                m_Begin = NowNanos();
+                m_Begin = NowTicks();
             }
         }
 
@@ -369,7 +421,7 @@ namespace Veng::Diagnostics::Detail
         {
             if (m_State)
             {
-                CommitScope(m_State, m_Name, m_Begin, NowNanos());
+                CommitScope(m_State, m_Name, m_Begin, NowTicks());
             }
         }
 
@@ -383,7 +435,7 @@ namespace Veng::Diagnostics::Detail
         ThreadState* m_State;
         /// @brief The scope's interned name id.
         NameId m_Name = 0;
-        /// @brief The begin timestamp, in steady_clock nanoseconds.
+        /// @brief The begin timestamp, in NowTicks() ticks.
         u64 m_Begin = 0;
     };
 }
@@ -396,9 +448,10 @@ namespace Veng::Diagnostics::Detail
 
 /// @brief Times the enclosing block under a compile-time name. The default, cheapest scope.
 #define VE_PROFILE_SCOPE(name)                                                                     \
+    static ::Veng::Diagnostics::Detail::ScopeName VE_PROFILE_DETAIL_UNIQUE(veProfName_){name};     \
     const ::Veng::Diagnostics::Detail::ScopeTimer VE_PROFILE_DETAIL_UNIQUE(veProfScope_)           \
     {                                                                                              \
-        name                                                                                       \
+        VE_PROFILE_DETAIL_UNIQUE(veProfName_)                                                      \
     }
 
 /// @brief Times the enclosing block under a runtime name; the more expensive interning path.
@@ -418,11 +471,13 @@ namespace Veng::Diagnostics::Detail
 #define VE_PROFILE_COUNTER(name, value)                                                            \
     do                                                                                             \
     {                                                                                              \
+        static ::Veng::Diagnostics::Detail::ScopeName veProfName_{name};                           \
         auto* veProfState = ::Veng::Diagnostics::Detail::CurrentThreadState();                     \
         if (veProfState)                                                                           \
         {                                                                                          \
             ::Veng::Diagnostics::Detail::CommitCounter(                                            \
-                veProfState, ::Veng::Diagnostics::Detail::InternLiteral(veProfState, name),        \
+                veProfState,                                                                       \
+                ::Veng::Diagnostics::Detail::ResolveLiteralName(veProfState, veProfName_),         \
                 (value));                                                                          \
         }                                                                                          \
     } while (false)
@@ -431,11 +486,13 @@ namespace Veng::Diagnostics::Detail
 #define VE_PROFILE_INSTANT(name)                                                                   \
     do                                                                                             \
     {                                                                                              \
+        static ::Veng::Diagnostics::Detail::ScopeName veProfName_{name};                           \
         auto* veProfState = ::Veng::Diagnostics::Detail::CurrentThreadState();                     \
         if (veProfState)                                                                           \
         {                                                                                          \
             ::Veng::Diagnostics::Detail::CommitInstant(                                            \
-                veProfState, ::Veng::Diagnostics::Detail::InternLiteral(veProfState, name));       \
+                veProfState,                                                                       \
+                ::Veng::Diagnostics::Detail::ResolveLiteralName(veProfState, veProfName_));        \
         }                                                                                          \
     } while (false)
 

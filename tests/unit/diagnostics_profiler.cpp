@@ -236,7 +236,7 @@ TEST_CASE("Emit-to-track lands a span on a virtual track, not the caller's threa
         gpu = profiler.CreateTrack("GPU", TrackRole::Gpu);
         CHECK(gpu != 0);
         const NameId pass = profiler.InternName("ShadowPass");
-        const u64 begin = NowNanos();
+        const u64 begin = NowTicks();
         profiler.EmitScope(gpu, pass, begin, begin + 1000);
     }
 
@@ -454,13 +454,32 @@ TEST_CASE("Recording and concurrent aggregate reads stay consistent under a prod
 {
     CapturingTestSink sink;
     constexpr u32 Count = 20000;
+
+    // Sum every fold's per-frame Job count as the producer records on another thread. The
+    // aggregation is lock-free — the producer accumulates monotonic totals, the main-thread fold
+    // reads and diffs them — so summing the per-frame deltas must telescope to exactly Count with
+    // no lost or double-counted increment, and the concurrent folds must not tear the producer's
+    // recording.
+    u64 foldedJobs = 0;
+    NameId job = 0;
     {
         Profiler profiler;
         profiler.SetMode(ProfilerMode::Ring);
 
+        const auto sumFrameJobs = [&profiler, &job]() -> u64
+        {
+            if (job == 0)
+            {
+                return 0;
+            }
+            const optional<ScopeAggregate> aggregate = profiler.GetScopeAggregate(job);
+            return aggregate.has_value() ? aggregate->CallCount : 0;
+        };
+
         std::atomic<bool> producing{true};
+        std::atomic<bool> mayExit{false};
         std::thread producer(
-            [&profiler, &sink, &producing]
+            [&profiler, &sink, &producing, &mayExit]
             {
                 const ProfilerThreadRegistration registration = profiler.RegisterThread("Producer");
                 // Stream to the sink from the producer thread only, so the sink has a single writer.
@@ -470,17 +489,33 @@ TEST_CASE("Recording and concurrent aggregate reads stay consistent under a prod
                     VE_PROFILE_SCOPE("Job");
                 }
                 producing.store(false);
+                // Stay registered — the registration's detach would drop the producer's accumulators
+                // — until the main thread has taken its final fold of them.
+                while (!mayExit.load())
+                {
+                    std::this_thread::yield();
+                }
             });
 
+        job = profiler.InternName("Job");
         // Concurrently fold frames and read aggregates on the main thread while the producer records.
         while (producing.load())
         {
             profiler.BeginFrame();
-            const vector<ScopeAggregate> snapshot = profiler.GetFrameAggregates();
-            (void)snapshot;
+            foldedJobs += sumFrameJobs();
         }
+
+        // A final fold while the producer is still registered drains the tail it committed past the
+        // last concurrent fold, so the per-frame deltas telescope to the whole count.
+        profiler.BeginFrame();
+        foldedJobs += sumFrameJobs();
+
+        mayExit.store(true);
         producer.join();
     }
+
+    // The per-frame deltas summed to the full call count, exactly once each.
+    CHECK(foldedJobs == Count);
 
     // Every recorded job survives streaming with no torn record (each decodes to a valid name).
     const vector<DecodedRecord> records = DecodeAll(sink);

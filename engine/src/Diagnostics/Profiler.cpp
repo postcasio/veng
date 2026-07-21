@@ -1,10 +1,41 @@
 #include <Veng/Diagnostics/Profiler.h>
 
+#include <chrono>
+
+namespace Veng::Diagnostics
+{
+    // The trace clock's tick frequency and its tick-to-nanosecond conversion. Defined
+    // unconditionally (they carry no recording state) so a decoder or a hand-built span can
+    // convert NowTicks() values regardless of the VE_PROFILE gate.
+    u64 TraceTickFrequency() noexcept
+    {
+#if defined(__aarch64__)
+        // The architected timer frequency (CNTFRQ_EL0): 24 MHz on Apple Silicon.
+        u64 frequency;
+        __asm__ __volatile__("mrs %0, cntfrq_el0" : "=r"(frequency));
+        return frequency;
+#else
+        using Period = std::chrono::steady_clock::period;
+        return static_cast<u64>(Period::den) / static_cast<u64>(Period::num);
+#endif
+    }
+
+    u64 TraceTicksToNanos(u64 ticks) noexcept
+    {
+        // Cached once: the frequency is fixed for the process lifetime, and this runs off the
+        // per-scope path (at the frame fold and at decode). Split whole seconds from the remainder
+        // so the nanosecond multiply stays exact for absolute tick counts without overflowing u64.
+        static const u64 frequency = TraceTickFrequency();
+        constexpr u64 NanosPerSecond = 1'000'000'000ULL;
+        return (ticks / frequency) * NanosPerSecond +
+               (ticks % frequency) * NanosPerSecond / frequency;
+    }
+}
+
 #if defined(VE_PROFILE) && VE_PROFILE
 
 #include "TraceFormat.h"
 
-#include <algorithm>
 #include <atomic>
 #include <cstring>
 #include <mutex>
@@ -21,19 +52,115 @@ namespace Veng::Diagnostics
     {
         namespace
         {
-            /// @brief One entry on a thread's open-scope stack, holding time attributed to children.
+            /// @brief One entry on a thread's open-scope stack, holding child ticks for self-time.
             struct ScopeStackEntry
             {
-                u64 ChildNanos = 0;
+                u64 ChildTicks = 0;
             };
 
-            /// @brief A thread's running per-frame roll-up for one scope name.
+            /// @brief A thread's monotonic running totals for one scope name, drained by the frame fold.
+            ///
+            /// The owner thread only ever adds to the *Total fields (relaxed stores; it is the sole
+            /// writer, so no read-modify-write is needed) and never resets them. The fold, on the main
+            /// thread, reads them and remembers what it last folded in the *Folded shadow, so each
+            /// frame's contribution is the difference — a single-writer/single-reader relationship over
+            /// each counter word, with no lock and no reset race. The shadow is folder-only and never
+            /// touched on the hot path.
             struct ScopeAccum
             {
-                u64 CallCount = 0;
-                u64 InclusiveNanos = 0;
-                u64 SelfNanos = 0;
-                u64 LastActiveFrame = 0;
+                /// @brief Total times entered since attach; owner-written, folder-read.
+                std::atomic<u64> CallTotal{0};
+                /// @brief Total inclusive ticks since attach; owner-written, folder-read.
+                std::atomic<u64> InclusiveTicks{0};
+                /// @brief Total self ticks since attach; owner-written, folder-read.
+                std::atomic<u64> SelfTicks{0};
+                /// @brief Call total the fold last observed.
+                u64 CallFolded = 0;
+                /// @brief Inclusive-tick total the fold last observed.
+                u64 InclusiveFolded = 0;
+                /// @brief Self-tick total the fold last observed.
+                u64 SelfFolded = 0;
+            };
+
+            /// @brief A thread's per-scope accumulators, indexed by NameId, grown without moving.
+            ///
+            /// The owner thread appends entries (an entry per interned name it records) and the fold
+            /// reads them from another thread, so growth must never move a live entry. Accumulators
+            /// live in fixed-size, heap-allocated blocks whose pointers never change once placed; the
+            /// outer block array is reserved up front so appending a block never reallocates it. The
+            /// published Count is released by the owner after a block is in place and acquire-loaded by
+            /// the fold, so the fold only ever reads entries the owner has finished publishing.
+            struct ScopeAggStore
+            {
+                /// @brief Accumulators per block; sized so a typical program needs one or two.
+                static constexpr u32 BlockSize = 128;
+
+                /// @brief Reserves the block array for up to @p maxIds distinct names.
+                void Reserve(u32 maxIds)
+                {
+                    m_BlockCapacity = (maxIds + BlockSize - 1) / BlockSize + 2;
+                    m_Blocks.reserve(m_BlockCapacity);
+                }
+
+                /// @brief Returns the accumulator for a name id, placing its block on first touch.
+                ///
+                /// Owner thread only. Returns nullptr past the reserved ceiling (an accounted drop
+                /// rather than a reallocation that would race the fold).
+                [[nodiscard]] ScopeAccum* Touch(NameId id)
+                {
+                    if (id == 0)
+                    {
+                        return nullptr;
+                    }
+                    const u32 index = id - 1;
+                    const u32 block = index / BlockSize;
+                    if (block >= m_BlockCapacity)
+                    {
+                        return nullptr;
+                    }
+                    while (block >= m_Blocks.size())
+                    {
+                        m_Blocks.emplace_back(CreateUnique<ScopeAccum[]>(BlockSize));
+                    }
+                    if (id > m_LocalCount)
+                    {
+                        m_LocalCount = id;
+                        m_Count.store(id, std::memory_order_release);
+                    }
+                    return &m_Blocks[block][index % BlockSize];
+                }
+
+                /// @brief The number of ids published for the fold to read (acquire).
+                [[nodiscard]] u32 Published() const
+                {
+                    return m_Count.load(std::memory_order_acquire);
+                }
+
+                /// @brief Returns the accumulator at a zero-based index below the published Count.
+                ///
+                /// The caller must have acquire-read Count first and pass an index below it; that
+                /// index's block was placed (and its outer slot written) before Count was released, so
+                /// the reserved, non-moving block array resolves it without reading the owner-mutated
+                /// vector size.
+                [[nodiscard]] ScopeAccum* At(u32 index)
+                {
+                    const u32 block = index / BlockSize;
+                    if (block >= m_BlockCapacity)
+                    {
+                        return nullptr;
+                    }
+                    return &m_Blocks[block][index % BlockSize];
+                }
+
+            private:
+                /// @brief Fixed-size accumulator blocks; reserved so appends never move a live entry.
+                vector<Unique<ScopeAccum[]>> m_Blocks;
+                /// @brief Published id count, released by the owner and acquire-read by the fold.
+                std::atomic<u32> m_Count{0};
+                /// @brief Owner-side view of the highest id touched.
+                u32 m_LocalCount = 0;
+                /// @brief Reserved block-array capacity; the hard ceiling Touch will not exceed.
+                u32 m_BlockCapacity = 0;
             };
 
             /// @brief One fixed-size buffer chunk. Non-movable: the published offset is an atomic.
@@ -94,11 +221,11 @@ namespace Veng::Diagnostics
             usize CurrentChunk = 0;
             u64 NextSequence = 0;
 
-            std::unordered_map<const void*, NameId> LiteralCache;
             vector<ScopeStackEntry> Stack;
 
-            std::mutex AggMutex;
-            std::unordered_map<NameId, ScopeAccum> Agg;
+            // Per-thread aggregation, lock-free: the owner thread accumulates here and the frame fold
+            // drains it. No mutex — the previous per-scope lock was the largest hot-path cost.
+            ScopeAggStore Agg;
         };
 
         /// @brief Per-profiler recording state: the whole subsystem behind the Profiler shell.
@@ -201,7 +328,7 @@ namespace Veng::Diagnostics
                     {
                         // Streaming drain: seal and hand the full chunk over, then reuse it in place.
                         profiler.HandChunkToSink(state, *chunk);
-                        chunk->Arm(NowNanos(), state.NextSequence++);
+                        chunk->Arm(NowTicks(), state.NextSequence++);
                     }
                     else
                     {
@@ -214,7 +341,7 @@ namespace Veng::Diagnostics
                             profiler.DroppedEvents.fetch_add(target->RecordCount(),
                                                              std::memory_order_relaxed);
                         }
-                        target->Arm(NowNanos(), state.NextSequence++);
+                        target->Arm(NowTicks(), state.NextSequence++);
                         state.CurrentChunk = next;
                         chunk = target;
                     }
@@ -265,11 +392,10 @@ namespace Veng::Diagnostics
                 auto chunk = CreateUnique<Chunk>();
                 chunk->Capacity = Config.ChunkBytes;
                 chunk->Data = Unique<u8[]>(new u8[Config.ChunkBytes]);
-                chunk->Arm(NowNanos(), state->NextSequence++);
+                chunk->Arm(NowTicks(), state->NextSequence++);
                 state->Chunks.push_back(std::move(chunk));
             }
-            state->LiteralCache.reserve(256);
-            state->Agg.reserve(256);
+            state->Agg.Reserve(Config.StringTableCapacity);
             state->Stack.reserve(64);
 
             ThreadState* raw = state.get();
@@ -330,23 +456,46 @@ namespace Veng::Diagnostics
 
         void ProfilerState::AdvanceFrame()
         {
+            // The frame now completing; a scope that ran this frame is stamped active in it.
+            const u64 completingFrame = FrameIndex.load(std::memory_order_relaxed);
+
             std::unordered_map<NameId, ScopeAggregate> folded;
             {
                 const std::scoped_lock registry(RegistryMutex);
                 for (auto& thread : Threads)
                 {
-                    const std::scoped_lock agg(thread->AggMutex);
-                    for (auto& [name, accum] : thread->Agg)
+                    // Acquire the owner's published id count, then read only accumulators below it;
+                    // the release/acquire pair means every block those ids live in is in place.
+                    const u32 published = thread->Agg.Published();
+                    for (u32 index = 0; index < published; ++index)
                     {
+                        ScopeAccum* accum = thread->Agg.At(index);
+                        if (accum == nullptr)
+                        {
+                            continue;
+                        }
+                        const u64 callTotal = accum->CallTotal.load(std::memory_order_relaxed);
+                        if (callTotal == accum->CallFolded)
+                        {
+                            continue; // no calls since the last fold: idle this frame
+                        }
+                        const u64 inclusiveTotal =
+                            accum->InclusiveTicks.load(std::memory_order_relaxed);
+                        const u64 selfTotal = accum->SelfTicks.load(std::memory_order_relaxed);
+                        const u64 callDelta = callTotal - accum->CallFolded;
+                        const u64 inclusiveDelta = inclusiveTotal - accum->InclusiveFolded;
+                        const u64 selfDelta = selfTotal - accum->SelfFolded;
+                        accum->CallFolded = callTotal;
+                        accum->InclusiveFolded = inclusiveTotal;
+                        accum->SelfFolded = selfTotal;
+
+                        const NameId name = index + 1;
                         ScopeAggregate& out = folded[name];
                         out.Name = name;
-                        out.CallCount += accum.CallCount;
-                        out.InclusiveNanos += accum.InclusiveNanos;
-                        out.SelfNanos += accum.SelfNanos;
-                        out.LastActiveFrame = std::max(out.LastActiveFrame, accum.LastActiveFrame);
-                        accum.CallCount = 0;
-                        accum.InclusiveNanos = 0;
-                        accum.SelfNanos = 0;
+                        out.CallCount += callDelta;
+                        out.InclusiveNanos += TraceTicksToNanos(inclusiveDelta);
+                        out.SelfNanos += TraceTicksToNanos(selfDelta);
+                        out.LastActiveFrame = completingFrame;
                     }
                 }
             }
@@ -388,15 +537,19 @@ namespace Veng::Diagnostics
             return t_State;
         }
 
-        NameId InternLiteral(ThreadState* state, const char* literal) noexcept
+        NameId ResolveLiteralName(ThreadState* state, ScopeName& name) noexcept
         {
-            const auto it = state->LiteralCache.find(literal);
-            if (it != state->LiteralCache.end())
+            const u64 generation = g_Generation.load(std::memory_order_acquire);
+            if (name.Generation.load(std::memory_order_acquire) == generation)
             {
-                return it->second;
+                return name.Id.load(std::memory_order_relaxed);
             }
-            const NameId id = state->Owner->Intern(literal);
-            state->LiteralCache.emplace(static_cast<const void*>(literal), id);
+            // First execution under this profiler (or a new one after a teardown): resolve the id
+            // through the string table once and cache it at the call site. Two threads may resolve
+            // concurrently; Intern is idempotent, so they agree on the id.
+            const NameId id = state->Owner->Intern(name.Literal);
+            name.Id.store(id, std::memory_order_relaxed);
+            name.Generation.store(generation, std::memory_order_release);
             return id;
         }
 
@@ -410,38 +563,43 @@ namespace Veng::Diagnostics
             state->Stack.push_back(ScopeStackEntry{});
         }
 
-        void CommitScope(ThreadState* state, NameId name, u64 beginNanos, u64 endNanos) noexcept
+        void CommitScope(ThreadState* state, NameId name, u64 beginTicks, u64 endTicks) noexcept
         {
-            const u64 inclusive = endNanos >= beginNanos ? endNanos - beginNanos : 0;
+            const u64 inclusive = endTicks >= beginTicks ? endTicks - beginTicks : 0;
 
             // Self-time: this scope's inclusive time, less the child time accumulated while it was
             // open. The RAII scopes nest, so the innermost commits first; fold this scope's inclusive
-            // into its parent's child total.
-            u64 childNanos = 0;
+            // into its parent's child total. All in raw ticks; nanosecond conversion is the fold's job.
+            u64 childTicks = 0;
             if (!state->Stack.empty())
             {
-                childNanos = state->Stack.back().ChildNanos;
+                childTicks = state->Stack.back().ChildTicks;
                 state->Stack.pop_back();
             }
             if (!state->Stack.empty())
             {
-                state->Stack.back().ChildNanos += inclusive;
+                state->Stack.back().ChildTicks += inclusive;
             }
-            const u64 self = inclusive >= childNanos ? inclusive - childNanos : 0;
+            const u64 self = inclusive >= childTicks ? inclusive - childTicks : 0;
 
-            // Aggregation is always live under VE_PROFILE=ON, independent of recording.
+            // Aggregation is always live under VE_PROFILE=ON, independent of recording. Lock-free:
+            // this thread is the sole writer of its own accumulators, so a monotonic add (a relaxed
+            // load and store, no read-modify-write) suffices; the frame fold reads and diffs them.
+            ScopeAccum* accum = state->Agg.Touch(name);
+            if (accum != nullptr)
             {
-                const std::scoped_lock lock(state->AggMutex);
-                ScopeAccum& accum = state->Agg[name];
-                ++accum.CallCount;
-                accum.InclusiveNanos += inclusive;
-                accum.SelfNanos += self;
-                accum.LastActiveFrame = state->Owner->FrameIndex.load(std::memory_order_relaxed);
+                accum->CallTotal.store(accum->CallTotal.load(std::memory_order_relaxed) + 1,
+                                       std::memory_order_relaxed);
+                accum->InclusiveTicks.store(accum->InclusiveTicks.load(std::memory_order_relaxed) +
+                                                inclusive,
+                                            std::memory_order_relaxed);
+                accum->SelfTicks.store(accum->SelfTicks.load(std::memory_order_relaxed) + self,
+                                       std::memory_order_relaxed);
             }
 
             if (state->Owner->Mode != ProfilerMode::Off)
             {
-                EmitEvent(*state, RecordType::ScopeComplete, 0, name, beginNanos, endNanos, 0);
+                EmitEvent(*state, RecordType::ScopeComplete, 0, name, beginTicks, endTicks, 0);
             }
         }
 
@@ -453,7 +611,7 @@ namespace Veng::Diagnostics
             }
             u64 bits = 0;
             std::memcpy(&bits, &value, sizeof(bits));
-            EmitEvent(*state, RecordType::Counter, 0, name, NowNanos(), 0, bits);
+            EmitEvent(*state, RecordType::Counter, 0, name, NowTicks(), 0, bits);
         }
 
         void CommitInstant(ThreadState* state, NameId name) noexcept
@@ -462,7 +620,7 @@ namespace Veng::Diagnostics
             {
                 return;
             }
-            EmitEvent(*state, RecordType::Instant, 0, name, NowNanos(), 0, 0);
+            EmitEvent(*state, RecordType::Instant, 0, name, NowTicks(), 0, 0);
         }
 
         void NameCurrentThread(const char* name) noexcept
@@ -484,10 +642,10 @@ namespace Veng::Diagnostics
         }
 
         /// @brief Emits a back-dated span on an explicit track; the virtual-track primitive.
-        void CommitEmitScope(ThreadState* state, TrackId track, NameId name, u64 beginNanos,
-                             u64 endNanos) noexcept
+        void CommitEmitScope(ThreadState* state, TrackId track, NameId name, u64 beginTicks,
+                             u64 endTicks) noexcept
         {
-            EmitEvent(*state, RecordType::ScopeComplete, track, name, beginNanos, endNanos, 0);
+            EmitEvent(*state, RecordType::ScopeComplete, track, name, beginTicks, endTicks, 0);
         }
     }
 }
@@ -600,7 +758,7 @@ namespace Veng::Diagnostics
         return m_State->Intern(name);
     }
 
-    void Profiler::EmitScope(TrackId track, NameId name, u64 beginNanos, u64 endNanos)
+    void Profiler::EmitScope(TrackId track, NameId name, u64 beginTicks, u64 endTicks)
     {
         if (m_State->Mode == ProfilerMode::Off)
         {
@@ -609,7 +767,7 @@ namespace Veng::Diagnostics
         Detail::ThreadState* state = Detail::CurrentThreadState();
         if (state)
         {
-            Detail::CommitEmitScope(state, track, name, beginNanos, endNanos);
+            Detail::CommitEmitScope(state, track, name, beginTicks, endTicks);
         }
     }
 
@@ -740,8 +898,8 @@ namespace Veng::Diagnostics
     {
         return 0;
     }
-    void Profiler::EmitScope(TrackId /*track*/, NameId /*name*/, u64 /*beginNanos*/,
-                             u64 /*endNanos*/)
+    void Profiler::EmitScope(TrackId /*track*/, NameId /*name*/, u64 /*beginTicks*/,
+                             u64 /*endTicks*/)
     {
     }
     void Profiler::BeginFrame() {}

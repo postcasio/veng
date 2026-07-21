@@ -30,7 +30,7 @@ namespace Veng::Diagnostics::TraceFormat
     /// first record, and SequenceNumber orders chunks from the same thread.
     struct ChunkHeader
     {
-        /// @brief Absolute steady_clock nanoseconds every record delta in this chunk is relative to.
+        /// @brief Absolute trace-clock ticks (NowTicks) every record delta in this chunk is relative to.
         u64 TimestampBase = 0;
         /// @brief Monotonic sequence number within the producing thread's chunk stream.
         u64 SequenceNumber = 0;
@@ -44,10 +44,10 @@ namespace Veng::Diagnostics::TraceFormat
 
     /// @brief One fixed-width event record.
     ///
-    /// Timestamps are deltas from the chunk's TimestampBase. For a scope, Begin and
-    /// EndOrValue are the endpoints; for a counter, EndOrValue holds the f64 value's
-    /// bits and Begin the sample time; for an instant, Begin is the point and
-    /// EndOrValue is 0.
+    /// Timestamps are trace-clock tick deltas from the chunk's TimestampBase. For a
+    /// scope, Begin and EndOrValue are the endpoints; for a counter, EndOrValue holds
+    /// the f64 value's bits and Begin the sample time; for an instant, Begin is the
+    /// point and EndOrValue is 0.
     struct EventRecord
     {
         /// @brief The record's RecordType.
@@ -62,7 +62,7 @@ namespace Veng::Diagnostics::TraceFormat
         u32 Name = 0;
         /// @brief Frame index in effect when the record was written.
         u32 Frame = 0;
-        /// @brief Begin timestamp as a delta from TimestampBase, in nanoseconds.
+        /// @brief Begin timestamp as a delta from TimestampBase, in trace-clock ticks.
         u64 BeginDelta = 0;
         /// @brief Scope end delta, counter value bits, or 0 for an instant.
         u64 EndOrValue = 0;
