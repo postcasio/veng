@@ -73,6 +73,11 @@ namespace Veng
         // the id stays server-local. Net::AccountId registers transitively through its field.
         registry.Register<SeatAccount>();
 
+        // The pawn a presenting viewport's own seat controls, derived and stamped by the engine
+        // each frame. Runtime-only: it carries no reflected field, so it never serializes and never
+        // rides the wire.
+        registry.Register<LocalControl>();
+
         // The client-side pose-sample buffer a replicated entity carries, filled by snapshots and read
         // by the View-phase RemoteInterpolationSystem. Runtime-only: it carries no reflected field, so
         // it never serializes and never rides the wire.

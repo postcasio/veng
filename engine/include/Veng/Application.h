@@ -27,6 +27,7 @@
 #include <Veng/Net/Blob.h>
 #include <Veng/Task/TaskSystem.h>
 #include <Veng/Reflection/TypeRegistry.h>
+#include <Veng/Scene/LocalControl.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/SimClock.h>
 #include <Veng/Scene/SystemRegistry.h>
@@ -38,6 +39,7 @@
 #include <span>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
 namespace Veng
 {
@@ -963,14 +965,21 @@ namespace Veng
         /// override. Default is a no-op.
         virtual void OnShutdown() {}
 
-        /// @brief Called in client mode when the own seat's possessed pawn changes (or clears).
+        /// @brief Called when the pawn this machine's own seat controls changes (or clears).
         ///
-        /// Only fires under `--join`, from the join drive, when the replicated own seat's Possesses
-        /// resolves to a newly-bound pawn (Entity::Null when it possesses none) — the point a game
-        /// points its Local-tier camera/viewer at that pawn. The camera rig stays untouched
-        /// client-local View machinery; this only names its target. Default is a no-op.
-        /// @param world  The client scene the ClientHost loaded.
-        /// @param pawn   The pawn the own seat now possesses, or Entity::Null.
+        /// The event form of the LocalControl marker (Veng/Scene/LocalControl.h): it fires in **every**
+        /// mode, at the marker's own derivation points, so a listen host — where one peer both hosts
+        /// and presents — is notified exactly as a joined client is. A game points its Local-tier
+        /// camera/viewer at the named pawn here; the camera rig stays untouched client-local View
+        /// machinery and this only names its target. Entity::Null means the seat controls nothing.
+        ///
+        /// It fires once per transition. On a client the join drive reports the replicated own seat's
+        /// possession as the stream binds it — which is what a game turns into its presenting seat's
+        /// Possesses — and the frame's marker sweep, which reads that presenting seat, does not repeat
+        /// it. The marker is the single source of truth for the state; this is its edge. Default is a
+        /// no-op.
+        /// @param world  The scene the possession changed in.
+        /// @param pawn   The pawn the own seat now controls, or Entity::Null.
         virtual void OnClientPossession(Scene& world, Entity pawn) {}
 
         /// @brief Signals the run loop to exit after the current frame, leaving the exit status.
@@ -1177,6 +1186,33 @@ namespace Veng
         /// binds) and pumps each through PumpNetWorld. A world absent from the map (a standalone
         /// Server-tier world with no transport) is skipped. A no-op with no net host.
         void PumpNet();
+
+        /// @brief Reconciles every live world's LocalControl markers against the presenting viewports.
+        ///
+        /// The engine's one implementation of "which pawn is mine?" (see Veng/Scene/LocalControl.h):
+        /// for each live world it collects the seats the managed viewports present it through and
+        /// reconciles that world's markers against them, so a world no viewport presents is cleared
+        /// and a split-screen world keeps one marker per presenting viewport. It runs once per frame
+        /// after the sim ticks and the net pump, so a possession granted in this frame's Sim and one
+        /// that arrived in this frame's snapshot are both marked before the frame renders.
+        ///
+        /// It is a sweep rather than an event because possession has no engine-side event to listen
+        /// to: Possesses is a plain component a game writes directly, and on a client it changes
+        /// through snapshot apply. Its cost is the presenting-viewport count per world, never a scan
+        /// of a scene's entities. Each marker move raises the marker's event form through
+        /// NotifyPossession.
+        void SyncLocalControl();
+
+        /// @brief Raises OnClientPossession for a marker move, suppressing a repeat within the frame.
+        ///
+        /// The single site the hook fires from, so the engine keeps one answer to the question rather
+        /// than two that can drift. The client join drive reports its own seat's possession here as it
+        /// pumps, and the frame's marker sweep reports every mode's; a scene already notified of the
+        /// same pawn this frame is suppressed, so a client sees the transition once. The per-frame
+        /// record clears at the end of SyncLocalControl.
+        /// @param world  The scene the possession changed in.
+        /// @param pawn   The pawn now controlled there, or Entity::Null when none is.
+        void NotifyPossession(Scene& world, Entity pawn);
 
         /// @brief Pumps net for one net-active world under its role: apply the stream, feed input.
         ///
@@ -1429,6 +1465,19 @@ namespace Veng
         /// UI FocusRequest releases the seat. A FocusToken is a plain id, so dropping the map is inert;
         /// the router owns the actual focus stack.
         unordered_map<Entity, FocusToken> m_FocusRequestTokens;
+
+        /// @brief Scratch for one world's presenting seats, reused across the marker sweep's worlds.
+        vector<Entity> m_PresentingSeats;
+
+        /// @brief Scratch for one world's marker moves, reused across the marker sweep's worlds.
+        vector<LocalControlChange> m_LocalControlChanges;
+
+        /// @brief The (scene, pawn) possessions already notified this frame; cleared each sweep.
+        ///
+        /// The client join drive and the marker sweep both report the same transition on a client —
+        /// the drive as the stream binds the own seat, the sweep as the marker follows it — so this
+        /// keeps OnClientPossession firing once per transition. Bounded by the frame's marker moves.
+        vector<std::pair<const Scene*, Entity>> m_PossessionNotices;
 
         /// @brief Per-frame view knobs pushed into the managed viewport; seeded from the level.
         Renderer::ViewState m_WorldView;

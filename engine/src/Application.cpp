@@ -29,6 +29,7 @@
 
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
+#include <Veng/Scene/LocalControl.h>
 #include <Veng/Scene/Requests.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/Transforms.h>
@@ -644,7 +645,7 @@ namespace Veng
                 return Ref<Prefab>(std::shared_ptr<void>{}, held.Get());
             },
             .OnPossession = [this](Scene& world, const Entity pawn)
-            { OnClientPossession(world, pawn); },
+            { NotifyPossession(world, pawn); },
             .Prediction = net.PredictionPolicy,
             .Replay =
                 [this](Scene& world, const u64 tick, const PlayerInput& input)
@@ -1296,6 +1297,43 @@ namespace Veng
         return Net::ControlJoinId;
     }
 
+    void Application::NotifyPossession(Scene& world, const Entity pawn)
+    {
+        const std::pair<const Scene*, Entity> notice{&world, pawn};
+        if (std::ranges::find(m_PossessionNotices, notice) != m_PossessionNotices.end())
+        {
+            return;
+        }
+        m_PossessionNotices.push_back(notice);
+        OnClientPossession(world, pawn);
+    }
+
+    void Application::SyncLocalControl()
+    {
+        for (const Unique<World>& world : m_WorldRunner->GetWorlds())
+        {
+            if (world == nullptr || world->LiveScene == nullptr)
+            {
+                continue;
+            }
+            // A world no managed viewport presents collects no seat, which clears its markers: the
+            // pass is what makes a viewport rebind, a seat teardown, and a world leaving the screen
+            // all leave nothing stale behind.
+            m_PresentingSeats.clear();
+            if (m_ManagedViewports)
+            {
+                m_ManagedViewports->CollectPresentingSeats(world->Id, m_PresentingSeats);
+            }
+            m_LocalControlChanges.clear();
+            ReconcileLocalControl(world->GetScene(), m_PresentingSeats, &m_LocalControlChanges);
+            for (const LocalControlChange& change : m_LocalControlChanges)
+            {
+                NotifyPossession(world->GetScene(), change.Pawn);
+            }
+        }
+        m_PossessionNotices.clear();
+    }
+
     void Application::PumpNet()
     {
         if (!m_Net)
@@ -1898,6 +1936,11 @@ namespace Veng
         // client-side the stamped input window is sent. Placed after the tick loop so a snapshot's
         // content and its tick label agree.
         PumpNet();
+
+        // Reconcile the locally-controlled markers after the ticks and the net pump, so a possession
+        // granted in this frame's Sim and one that arrived in this frame's snapshot are both marked
+        // before the frame renders — and each move raises OnClientPossession, in every mode.
+        SyncLocalControl();
 
         // The edge latch: a frame with a live world that ran no tick holds its edges for the next
         // tick-running frame; a frame with no active world never latches (it rolls next frame).

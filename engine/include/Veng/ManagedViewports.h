@@ -184,6 +184,29 @@ namespace Veng
         /// @return The presented world's handle, or an invalid handle when index is out of range.
         [[nodiscard]] WorldInstanceId GetViewportWorld(usize index) const;
 
+        /// @brief Returns the seat a managed viewport presents through, or Entity::Null when it has none.
+        ///
+        /// The applied viewport↔seat binding: the seat named by the info it was built from, or the one
+        /// a rebind or the unbound-seat resolution adopted since. It is the first half of the
+        /// locally-controlled derivation — this seat's Possesses names the pawn the viewport's viewer
+        /// controls (see Veng/Scene/LocalControl.h) — and the seat its pointer input routes to. An
+        /// out-of-range index has no seat.
+        /// @param index  The managed viewport index (0 the primary).
+        /// @return The bound seat entity, or Entity::Null when the index is unbound or out of range.
+        [[nodiscard]] Entity GetViewportViewer(usize index) const;
+
+        /// @brief Fills @p seats with the bound seats of every managed viewport presenting a world.
+        ///
+        /// The presenting-viewport half of the locally-controlled derivation (see
+        /// Veng/Scene/LocalControl.h): a world presented by two split-screen viewports yields both
+        /// their seats, and a world no managed viewport presents yields none — which is what lets a
+        /// reconcile clear the markers of a world that stopped being presented. Clears @p seats first,
+        /// so a caller reuses one buffer across worlds without a per-frame allocation. Unbound
+        /// viewports and the non-indexed bound (overlay) viewports contribute no seat.
+        /// @param world  The world whose presenting seats to collect.
+        /// @param seats  The buffer filled with the presenting seats; cleared on entry.
+        void CollectPresentingSeats(WorldInstanceId world, vector<Entity>& seats) const;
+
         /// @brief Returns the destination of a viewport's in-flight rebind, or nullopt when none is pending.
         ///
         /// The world a recorded rebind (deferred RebindWorld or present-on-ready RebindWorldWhenReady)

@@ -180,6 +180,7 @@ add_library(veng SHARED
         src/Scene/DeviceAssignmentSystem.cpp
         src/Scene/FocusRequestReconcile.cpp
         src/Scene/InputMappingSystem.cpp
+        src/Scene/LocalControl.cpp
         src/Scene/Motion.cpp
         src/Scene/Movement.cpp
         src/Scene/RemoteInterpolationSystem.cpp
