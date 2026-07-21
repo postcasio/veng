@@ -25,9 +25,11 @@ namespace Veng
     /// @brief Returns whether a name is usable as a slot's directory name.
     ///
     /// Normalizes @p raw, then rejects an empty result, the relative-path elements `.` and `..`, a
-    /// name ending in a dot, and the platform-reserved device names (`CON`, `NUL`, `COM1`, …,
-    /// matched case-insensitively and with any extension). The separators and wildcards are gone by
-    /// normalization, so an accepted name is always a single path component.
+    /// name ending in a dot, the platform-reserved device names (`CON`, `NUL`, `COM1`, …, matched
+    /// case-insensitively and with any extension), and `LocalAccountStore::FileName` with any
+    /// extension, so a slot cannot resolve onto the account record where a consumer roots the two
+    /// together. The separators and wildcards are gone by normalization, so an accepted name is
+    /// always a single path component.
     /// @param raw  The name to test, normalized or not.
     [[nodiscard]] VE_API bool IsValidSlotName(string_view raw);
 

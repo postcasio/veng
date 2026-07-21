@@ -103,6 +103,15 @@ TEST_CASE("slot name validation rejects the unusable")
     CHECK_FALSE(IsValidSlotName("lpt9.save"));
     CHECK(IsValidSlotName("console"));
     CHECK(IsValidSlotName("com10"));
+
+    // The account record's stem, so a slot cannot be created over it where a consumer roots the
+    // account file and its slots in one directory. The extensions are the store's other two files.
+    CHECK_FALSE(IsValidSlotName("account"));
+    CHECK_FALSE(IsValidSlotName("Account"));
+    CHECK_FALSE(IsValidSlotName("account.lock"));
+    CHECK_FALSE(IsValidSlotName("account.corrupt"));
+    CHECK(IsValidSlotName("accounts"));
+    CHECK(IsValidSlotName("my account"));
 }
 
 TEST_CASE("slot resolution refuses traversal and always stays one component under the root")

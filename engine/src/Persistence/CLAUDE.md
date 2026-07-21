@@ -317,6 +317,8 @@ in a consumer's layout belongs to that consumer's root resolution.
 
 Where a consumer roots the account file and its save slots together, the two must not collide: a
 slot named `account` would resolve onto the record and the store would try to create a directory
-over a regular file. The name **`account` is reserved** — slot-name validation rejects it, and slot
-enumeration skips non-directories, which together also cover the store's other two files
-(`account.lock` and `account.corrupt`, both extending the reserved name).
+over a regular file. The name **`account` is reserved as a whole stem** — slot-name validation
+rejects it with any extension, which covers the store's other two files (`account.lock` and
+`account.corrupt`) at creation as well as at enumeration. Enumeration skips non-directories
+independently, so a root holding these files lists cleanly either way; the stem rule is what stops
+a slot being *created* over one.

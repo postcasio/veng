@@ -1,5 +1,7 @@
 #include <Veng/Persistence/SaveSlots.h>
 
+#include <Veng/Persistence/LocalAccountStore.h>
+
 #include <fmt/format.h>
 
 #include <algorithm>
@@ -61,6 +63,20 @@ namespace Veng
                 return true;
             }
             return stem.size() == 4 && stem.starts_with("lpt") && stem[3] >= '0' && stem[3] <= '9';
+        }
+
+        // Whether a normalized name would resolve onto the local account store's files. A consumer
+        // that roots the account record and its slots together holds `account`, `account.lock`, and
+        // `account.corrupt` in that directory, and a slot of any of those names would have the
+        // store create a directory over a regular file. The whole stem is reserved rather than the
+        // bare name, matched case-insensitively because the platforms that fold case would resolve
+        // `Account` onto the same file.
+        [[nodiscard]] bool IsReservedAccountName(const string& normalized)
+        {
+            const usize dot = normalized.find('.');
+            string stem = normalized.substr(0, dot == string::npos ? normalized.size() : dot);
+            std::ranges::transform(stem, stem.begin(), ToLowerAscii);
+            return stem == LocalAccountStore::FileName;
         }
 
         // The directory's last-write time as whole Unix-epoch seconds; 0 when it cannot be read.
@@ -128,7 +144,7 @@ namespace Veng
         {
             return false;
         }
-        return !IsReservedDeviceName(normalized);
+        return !IsReservedDeviceName(normalized) && !IsReservedAccountName(normalized);
     }
 
     Result<path> SlotDirectoryOf(const path& root, const string_view name)
