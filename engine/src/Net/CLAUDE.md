@@ -153,6 +153,15 @@ the engine owns *when and what* (load on first admit; save on disconnect, on `St
 and debounced at the checkpoint), the consumer owns *where*. No hooks → records live for the
 process lifetime, the zero-config LAN posture.
 
+The engine ships a **default backend** for that *where*: `Veng/Persistence/SessionStore.h` binds
+the pair onto a `Store` (`RegisterSessionFamily` + `MakeSessionHooks`), one record per account in
+the engine-minted `veng.sessions` family, keyed on the full 128-bit account id. It takes a
+`function<Store*()>` **source** rather than a reference, since the registry is built once at init
+while a store is scoped to an open slot — and a source returning null *is* the memory-only posture,
+so the zero-config default above is expressible rather than special-cased. The binding is opt-in;
+the raw hook pair remains the extension seam for a consumer with bespoke storage. See
+[src/Persistence/CLAUDE.md](../Persistence/CLAUDE.md).
+
 ## Replication
 
 Replication is reflection-driven (`Replication.h`). A type opts in with a **`VE_REPLICATED`** mark

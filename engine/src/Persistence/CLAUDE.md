@@ -118,9 +118,11 @@ whitespace runs to one space, drops control characters and the characters no pat
 carry (`/ \ : * ? " < > |`), and truncates to `MaxSlotNameLength` (32). It never fails and it never
 folds case — folding would silently merge names differing only in case, and rename an existing
 slot's directory the first time it was reopened. `IsValidSlotName` normalizes and then refuses the
-empty result, the relative-path elements `.` and `..`, a trailing dot, and the Windows device names
+empty result, the relative-path elements `.` and `..`, a trailing dot, the Windows device names
 (`CON`, `NUL`, `COM1`, … — matched case-insensitively and with any extension, and refused on every
-platform so a slot list is not platform-dependent).
+platform so a slot list is not platform-dependent), and **`LocalAccountStore::FileName` with any
+extension** — the reserved `account` stem, so a slot cannot be created over the account record
+where a consumer roots the two together (see [Rooting it beside the slots](#rooting-it-beside-the-slots)).
 
 The two stay **separate functions** because folding them into one loses the `.`/`..` rejection, and
 given `SlotDirectoryOf` that is a path-traversal hole rather than a cosmetic gap. For the same
