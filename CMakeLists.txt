@@ -1566,15 +1566,19 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle-launcher AND TARGET veng_test_gol
     set_tests_properties(smoke_golden PROPERTIES LABELS "gpu;fast")
 
     # Automated launcher smoke: exercises the real dlopen -> VengModuleRegister ->
-    # registry -> Run() binary path end-to-end. Runs the launcher with HT_SMOKE
-    # pointed at a temp PPM (so it renders headless and exits) and asserts exit 0.
-    # SKIP_RETURN_CODE 77 matches the rest of the gpu band. The only test covering
-    # the migration's headline shipping path.
+    # registry -> Run() binary path end-to-end. The only test covering the shipping
+    # path. It runs through a script wrapper because the launcher carries no driver
+    # probe of its own — see the skip contract in cmake/LauncherSmoke.cmake.
     add_test(NAME hello_triangle_launcher_smoke
-        COMMAND $<TARGET_FILE:hello_triangle-launcher>)
+        COMMAND ${CMAKE_COMMAND}
+            -D VENG_LAUNCHER_BIN=$<TARGET_FILE:hello_triangle-launcher>
+            -D VENG_PROBE_BIN=$<TARGET_FILE:veng_test_headless_smoke>
+            -D VENG_CAPTURE=${CMAKE_CURRENT_BINARY_DIR}/hello_triangle_launcher_smoke.ppm
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/LauncherSmoke.cmake
+    )
     set_tests_properties(hello_triangle_launcher_smoke PROPERTIES
-        LABELS "gpu;fast" SKIP_RETURN_CODE 77
-        ENVIRONMENT "HT_SMOKE=${CMAKE_CURRENT_BINARY_DIR}/hello_triangle_launcher_smoke.ppm")
+        LABELS "gpu;fast"
+        SKIP_REGULAR_EXPRESSION "skipped \\(no Vulkan ICD\\)")
 
     # ---- MCP conformance smoke (gpu;mcp band) -------------------------------
     # The build-time analogue of the loopback tests, but through the shipping consumer path: it
