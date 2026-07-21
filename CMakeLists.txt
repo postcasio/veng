@@ -1563,7 +1563,11 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle-launcher AND TARGET veng_test_gol
             -D VENG_TMP=${CMAKE_CURRENT_BINARY_DIR}/smoke_golden_capture.ppm
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/SmokeGolden.cmake
     )
-    set_tests_properties(smoke_golden PROPERTIES LABELS "gpu;fast")
+    # The script reports both its skip paths (no ICD, no ASTC) with one prefix, so the
+    # regex covers both and a skipped run reports as skipped rather than as passed.
+    set_tests_properties(smoke_golden PROPERTIES
+        LABELS "gpu;fast"
+        SKIP_REGULAR_EXPRESSION "smoke_golden: skipped")
 
     # Automated launcher smoke: exercises the real dlopen -> VengModuleRegister ->
     # registry -> Run() binary path end-to-end. The only test covering the shipping
