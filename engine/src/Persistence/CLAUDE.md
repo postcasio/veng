@@ -146,6 +146,63 @@ refusal matter, since a consumer may hand it any root at all.
 
 ## Store patterns
 
+`Veng/Persistence/StorePatterns.h` ships the two shapes a store consumer writes on day one, as
+**constructors over the delivered surface** — they build ordinary `StoreFamily` values and call
+ordinary `Store` methods, and a registrar whose logic genuinely diverges keeps hand-written hooks.
+The reason they are public is not the line count they save: it is that their **edge semantics are
+pinned and tested**, so consumers do not each invent their own answer to the same handful of
+questions.
+
+### The component-set family
+
+`ComponentSetFamily<MarkerT, ComponentTs...>(id, fileStem, keyOf, types)` is "persist these
+component types off every entity carrying this marker, keyed by an extractor". `Capture` walks the
+marker set, derives each entity's key through `keyOf`, and writes every `ComponentTs` the entity
+carries as a reflected blob; `RehydrateKeys` collects the same keys off a fresh scene and
+`Rehydrate` applies a stored record's blobs onto the entity whose key matches. `Version` and an
+optional `Migrate` stay the caller's to set before registering.
+
+`keyOf` is a spelled-out `function`, not a deduced callable: `ComponentTs` is a pack the caller
+always supplies explicitly, so a trailing deduced parameter would be a trap. `types` is captured by
+reference and must outlive the store.
+
+The pinned semantics — each one a place two hand-written registrars could reasonably differ:
+
+- A `nullopt` key **skips** the entity; it is never written under a sentinel key.
+- An entity from which **zero components were captured contributes no record**. The natural
+  hand-written spelling walks a view of the marker *plus* the components, so a marker carried alone
+  writes nothing; a helper emitting a record regardless would write an empty record per marked
+  entity per capture and grow the family forever.
+- **Rehydrate adds a stored component the claimant lacks**, rather than only updating what is
+  already present — restoring onto a freshly built entity is the common case.
+- A component type absent from a stored record leaves the live component untouched.
+- A stored blob matching none of `ComponentTs` is **skipped and logged**, naming the type id, once
+  per family. The latch is the family's own, so repeated rehydrates of the same drift cost one line
+  rather than a flood — but never silence: an unrecognized blob is a diagnostic.
+- **First claimant wins** where several entities resolve one key; the rest are left untouched. The
+  claimant is resolved before anything is applied, since rehydrate adds components and a scene
+  mutated mid-view would iterate a moving pool.
+- Rehydrate is an **identity restore**: the elapsed wall seconds are forwarded to nothing. Catch-up
+  math is a consumer's own `Rehydrate`, which stays fully supported.
+
+Capture folds over the pack with a **comma fold, not a disjunction** — a short-circuit would drop a
+component sitting behind an absent predecessor. Rehydrate's apply fold *is* a disjunction, because
+exactly one type claims a blob.
+
+### The singleton record
+
+`SingletonFamily(id, fileStem)` builds a hook-less family holding one record at
+**`SingletonRecordKey`** (the zero key) — the whole-slot settings shape, written directly rather
+than captured off entities. `ReadSingleton<T>` returns `nullopt` when the record or `T`'s blob is
+absent, or the blob failed to decode (logged).
+
+`WriteSingleton<T>` is **read-modify-write at the blob level**: it reads the stored record back,
+replaces or inserts `T`'s blob, and preserves every other blob in the record, so independent types
+sharing the singleton never clobber each other. It is **not field-level** — writing a `T` replaces
+the whole `T` — so a consumer holding several independently-updated fields inside one reflected type
+still reads that type back and modifies it before calling. Stating it the other way round would
+promise something the helper does not do.
+
 ## The session-store binding
 
 ## The local account store
