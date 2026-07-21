@@ -226,6 +226,7 @@ add_library(veng SHARED
         src/Renderer/RenderGraph.cpp
         src/Renderer/SceneCapture.cpp
         src/Renderer/CaptureSurface.cpp
+        src/Renderer/DrawGather.cpp
         src/Renderer/FrameTopology.cpp
         src/Renderer/SceneRenderer.cpp
         src/Renderer/SceneRendererResources.cpp

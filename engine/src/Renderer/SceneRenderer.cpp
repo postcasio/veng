@@ -5,6 +5,7 @@
 #include "AutoExposureMeter.h"
 #include "BloomPyramid.h"
 #include "DebugBlitPipelines.h"
+#include "DrawGather.h"
 #include "DrawPlan.h"
 #include "EnvironmentIbl.h"
 #include "FrameTopology.h"
@@ -1003,8 +1004,6 @@ namespace Veng::Renderer
         // this frame's worlds (swapped to "previous" after Execute) and look the prior one up
         // when filling DrawData. The surface pass writes velocity every frame (G3), so this is
         // always maintained.
-        const auto PackEntity = [](Entity e) -> u64
-        { return (static_cast<u64>(e.Index) << 32) | static_cast<u64>(e.Generation); };
         {
             m_CurrentWorlds.clear();
             for (const VisibleMesh& vm : view.Visible)
@@ -1013,336 +1012,44 @@ namespace Veng::Renderer
             }
         }
 
-        auto* drawData = static_cast<GpuDrawData*>(m_DrawDataBuffer->GetMappedData());
-        // The GPU cull candidate span for this frame's ring region (null under CullMode::CPU); the
-        // renderer-coordinated write surface into the subsystem-owned candidate buffer.
-        GpuCullCandidate* cullData = m_GpuCull->BeginFrameUpload(frameIndex);
+        const DrawGatherInput gatherInput{
+            .Candidates = candidates,
+            .View = view,
+            .FrameBase = frameBase,
+            .PaletteRegionBase = paletteRegionBase,
+            .MaxSlots = MaxCullCandidates,
+            .MaxPaletteMatrices = MaxSkinningMatricesPerFrame,
+            .DrawData = static_cast<GpuDrawData*>(m_DrawDataBuffer->GetMappedData()),
+            .CullData = m_GpuCull->BeginFrameUpload(frameIndex),
+            .PaletteData = paletteData,
+            .PreviousWorlds = m_PreviousWorlds,
+            .PreviousPaletteBases = m_PreviousPaletteBaseByEntity,
+        };
 
-        // Skinned survivors are deferred to a second pass (they draw on the CPU-direct skinned
-        // path after the static slots, which must stay contiguous from 0 for the GPU cull arrays).
+        // One slot cursor threads all three phases, which is what keeps the static opaque range
+        // contiguous from 0. The static phase triages the survivors the other two gather, so it
+        // must run first.
+        u32 slotCursor = 0;
         vector<u32> skinnedScratch;
-
-        // Translucent survivors are routed to the forward translucent plan, sorted back-to-front
-        // after the opaque/skinned slots are laid out (its DrawData slots follow theirs).
         vector<u32> translucentScratch;
+        GatherStaticOpaque(gatherInput, m_CullScratch, plan, slotCursor, skinnedScratch,
+                           translucentScratch);
+        GatherSkinned(gatherInput, skinnedScratch, plan, m_PaletteBaseByEntity, slotCursor,
+                      paletteCursor);
+        GatherTranslucent(gatherInput, translucentScratch, translucentPlan, slotCursor);
 
-        // Fill one slot per survivor whose submesh has a loaded material (a materialless or
-        // not-yet-resident submesh is skipped, matching the direct draw it replaces). The slot
-        // index is the dense candidate id the instance attribute carries.
-        for (const u32 id : m_CullScratch)
-        {
-            const SubMeshCandidate& candidate = candidates[id];
-            const VisibleMesh& item = view.Visible[candidate.MeshCandidate];
-            const Mesh& mesh = *item.Mesh;
-            const std::span<const AssetHandle<MaterialInstance>> materials = mesh.GetMaterials();
-            const SubMesh& subMesh = mesh.GetSubMeshes()[candidate.SubMeshIndex];
-
-            if (subMesh.MaterialIndex == SubMesh::NoMaterial ||
-                !materials[subMesh.MaterialIndex].IsLoaded())
-            {
-                continue;
-            }
-
-            // Translucent submeshes are excluded from the g-buffer/opaque draw list and collected
-            // into the forward translucent plan below (they output final color through the forward
-            // pass, not the g-buffer). The frustum-survivor set is shared — a translucent submesh is
-            // simply routed to a different draw list.
-            if (materials[subMesh.MaterialIndex].Get()->GetDomain() == MaterialDomain::Translucent)
-            {
-                translucentScratch.push_back(id);
-                continue;
-            }
-
-            if (mesh.IsSkinned())
-            {
-                skinnedScratch.push_back(id);
-                continue;
-            }
-
-            const u32 slot = static_cast<u32>(plan.Slots.size());
-            if (slot >= MaxCullCandidates)
-            {
-                VE_ASSERT(false,
-                          "SceneRenderer: per-frame candidate count exceeds MaxCullCandidates {}",
-                          MaxCullCandidates);
-                break;
-            }
-
-            const MaterialInstance& material = *materials[subMesh.MaterialIndex].Get();
-            if (!plan.PipelineMaterial)
-            {
-                plan.PipelineMaterial = materials[subMesh.MaterialIndex].Get();
-            }
-
-            // Per-draw record: world matrix, the normal matrix's three columns (inverse-
-            // transpose of the upper 3×3, correct under non-uniform scale), and the
-            // frame-folded material selector.
-            const mat3 normalMatrix = glm::inverseTranspose(mat3(item.World));
-            // Previous world for velocity: last frame's matrix for this entity, or the
-            // current one (zero object motion) when first seen.
-            mat4 prevWorld = item.World;
-            {
-                const auto it = m_PreviousWorlds.find(PackEntity(item.Owner));
-                if (it != m_PreviousWorlds.end())
-                {
-                    prevWorld = it->second;
-                }
-            }
-            drawData[frameBase + slot] = GpuDrawData{
-                .World = item.World,
-                .NormalColumn0 = vec4(normalMatrix[0], 0.0f),
-                .NormalColumn1 = vec4(normalMatrix[1], 0.0f),
-                .NormalColumn2 = vec4(normalMatrix[2], 0.0f),
-                .MaterialIndex = material.GetMaterialSelector(),
-                .EntityIndex = item.Owner.Index,
-                .PrevWorld = prevWorld,
-            };
-
-            if (cullData != nullptr)
-            {
-                const AABB& bounds = item.WorldBounds;
-                cullData[slot] = GpuCullCandidate{
-                    .BoundsMin = vec4(bounds.Min, 0.0f),
-                    .BoundsMax = vec4(bounds.Max, 0.0f),
-                    .IndexCount = subMesh.IndexCount,
-                    .FirstIndex = subMesh.IndexOffset,
-                    .VertexOffset = 0,
-                    .FirstInstance = slot,
-                };
-            }
-
-            plan.Slots.push_back(DrawSlot{
-                .SourceMesh = &mesh,
-                .Pipeline = materials[subMesh.MaterialIndex].Get(),
-                .IndexCount = subMesh.IndexCount,
-                .FirstIndex = subMesh.IndexOffset,
-                .VertexOffset = 0,
-                .CandidateId = slot,
-            });
-        }
-
-        // Group contiguous slots that share both a source mesh and a pipeline, so the mesh's
-        // buffers and the material pipeline each bind once per group. Splitting on the pipeline
-        // (not just the mesh) is what lets surface materials with different fragment shaders
-        // coexist — each group binds its own.
-        for (u32 s = 0; s < plan.Slots.size();)
-        {
-            const Mesh* mesh = plan.Slots[s].SourceMesh;
-            const MaterialInstance* pipeline = plan.Slots[s].Pipeline;
-            u32 count = 0;
-            while (s + count < plan.Slots.size() && plan.Slots[s + count].SourceMesh == mesh &&
-                   plan.Slots[s + count].Pipeline == pipeline)
-            {
-                ++count;
-            }
-            plan.Groups.push_back(DrawGroup{.SourceMesh = mesh,
-                                            .PipelineMaterial = pipeline,
-                                            .FirstSlot = s,
-                                            .SlotCount = count});
-            s += count;
-        }
-
-        // Skinned second pass: assign DrawData slots after the static ones (keeping the static
-        // range contiguous from 0), compute each skinned instance's palette once per entity, and
-        // record PaletteBase into the slot's DrawData. These draw on the CPU-direct skinned path.
-        for (const u32 id : skinnedScratch)
-        {
-            const SubMeshCandidate& candidate = candidates[id];
-            const VisibleMesh& item = view.Visible[candidate.MeshCandidate];
-            const Mesh& mesh = *item.Mesh;
-            const SubMesh& subMesh = mesh.GetSubMeshes()[candidate.SubMeshIndex];
-            const std::span<const AssetHandle<MaterialInstance>> materials = mesh.GetMaterials();
-            const AssetHandle<Skeleton>& skeletonHandle = mesh.GetSkeleton();
-            if (!skeletonHandle.IsLoaded())
-            {
-                continue;
-            }
-            const Skeleton& skeleton = *skeletonHandle.Get();
-            const u32 boneCount = static_cast<u32>(skeleton.GetBoneCount());
-
-            // One palette per entity, shared by its submeshes. Computed on first encounter from
-            // the entity's SkinnedPose (the animation system's output) or the bind pose when the
-            // entity has none (e.g. the editor with systems paused).
-            const u64 packed = PackEntity(item.Owner);
-            u32 paletteBase = 0;
-            const auto existing = m_PaletteBaseByEntity.find(packed);
-            if (existing != m_PaletteBaseByEntity.end())
-            {
-                paletteBase = existing->second;
-            }
-            else
-            {
-                if (paletteCursor + boneCount > MaxSkinningMatricesPerFrame)
-                {
-                    continue; // palette budget exhausted this frame
-                }
-                paletteBase = paletteRegionBase + paletteCursor;
-
-                const auto* pose = view.World.TryGet<SkinnedPose>(item.Owner);
-                if (pose != nullptr && pose->Skinning.size() == boneCount)
-                {
-                    std::memcpy(paletteData + paletteBase, pose->Skinning.data(),
-                                static_cast<usize>(boneCount) * sizeof(mat4));
-                }
-                else
-                {
-                    vector<mat4> bind;
-                    skeleton.ComputeBindPoseMatrices(bind);
-                    std::memcpy(paletteData + paletteBase, bind.data(),
-                                static_cast<usize>(boneCount) * sizeof(mat4));
-                }
-
-                paletteCursor += boneCount;
-                m_PaletteBaseByEntity[packed] = paletteBase;
-            }
-
-            const u32 slot = static_cast<u32>(plan.Slots.size() + plan.SkinnedSlots.size());
-            if (slot >= MaxCullCandidates)
-            {
-                break;
-            }
-
-            const MaterialInstance& material = *materials[subMesh.MaterialIndex].Get();
-            if (plan.SkinnedPipelineMaterial == nullptr)
-            {
-                plan.SkinnedPipelineMaterial = materials[subMesh.MaterialIndex].Get();
-            }
-
-            // Velocity needs the previous frame's world and palette base for this entity (its
-            // deformation motion). The previous palette data is still resident in its own ring
-            // region. First seen → no motion (current values).
-            mat4 prevWorld = item.World;
-            u32 prevPaletteBase = paletteBase;
-            {
-                const auto prevWorldIt = m_PreviousWorlds.find(packed);
-                if (prevWorldIt != m_PreviousWorlds.end())
-                {
-                    prevWorld = prevWorldIt->second;
-                }
-                const auto prevBaseIt = m_PreviousPaletteBaseByEntity.find(packed);
-                if (prevBaseIt != m_PreviousPaletteBaseByEntity.end())
-                {
-                    prevPaletteBase = prevBaseIt->second;
-                }
-            }
-
-            const mat3 normalMatrix = glm::inverseTranspose(mat3(item.World));
-            drawData[frameBase + slot] = GpuDrawData{
-                .World = item.World,
-                .NormalColumn0 = vec4(normalMatrix[0], 0.0f),
-                .NormalColumn1 = vec4(normalMatrix[1], 0.0f),
-                .NormalColumn2 = vec4(normalMatrix[2], 0.0f),
-                .MaterialIndex = material.GetMaterialSelector(),
-                .PaletteBase = paletteBase,
-                .PrevPaletteBase = prevPaletteBase,
-                .EntityIndex = item.Owner.Index,
-                .PrevWorld = prevWorld,
-            };
-
-            plan.SkinnedSlots.push_back(DrawSlot{
-                .SourceMesh = &mesh,
-                .Pipeline = materials[subMesh.MaterialIndex].Get(),
-                .IndexCount = subMesh.IndexCount,
-                .FirstIndex = subMesh.IndexOffset,
-                .VertexOffset = 0,
-                .CandidateId = slot,
-            });
-        }
-
-        for (u32 s = 0; s < plan.SkinnedSlots.size();)
-        {
-            const Mesh* mesh = plan.SkinnedSlots[s].SourceMesh;
-            const MaterialInstance* pipeline = plan.SkinnedSlots[s].Pipeline;
-            u32 count = 0;
-            while (s + count < plan.SkinnedSlots.size() &&
-                   plan.SkinnedSlots[s + count].SourceMesh == mesh &&
-                   plan.SkinnedSlots[s + count].Pipeline == pipeline)
-            {
-                ++count;
-            }
-            plan.SkinnedGroups.push_back(DrawGroup{.SourceMesh = mesh,
-                                                   .PipelineMaterial = pipeline,
-                                                   .FirstSlot = s,
-                                                   .SlotCount = count});
-            s += count;
-        }
-
-        // Forward translucent gather: one DrawData slot per translucent survivor, allocated after
-        // the opaque static + skinned slots so those stay contiguous from 0 for the GPU cull
-        // arrays. Each draw reads its record from DrawData by the candidate id, exactly like a
-        // static surface draw; the translucent pass binds each material's own alpha-blended
-        // pipeline. The forward pass draws through the canonical (static) vertex layout, so a
-        // skinned mesh carrying a translucent material is not gathered here (opaque skinning,
-        // which uses the skinned vertex path, is unaffected).
-        const mat4 viewMatrix = view.Camera.View();
-        for (const u32 id : translucentScratch)
-        {
-            const SubMeshCandidate& candidate = candidates[id];
-            const VisibleMesh& item = view.Visible[candidate.MeshCandidate];
-            const Mesh& mesh = *item.Mesh;
-            if (mesh.IsSkinned())
-            {
-                continue;
-            }
-            const std::span<const AssetHandle<MaterialInstance>> materials = mesh.GetMaterials();
-            const SubMesh& subMesh = mesh.GetSubMeshes()[candidate.SubMeshIndex];
-
-            const u32 slot = static_cast<u32>(plan.Slots.size() + plan.SkinnedSlots.size() +
-                                              translucentPlan.Draws.size());
-            if (slot >= MaxCullCandidates)
-            {
-                break;
-            }
-
-            const MaterialInstance& material = *materials[subMesh.MaterialIndex].Get();
-
-            const mat3 normalMatrix = glm::inverseTranspose(mat3(item.World));
-            mat4 prevWorld = item.World;
-            {
-                const auto it = m_PreviousWorlds.find(PackEntity(item.Owner));
-                if (it != m_PreviousWorlds.end())
-                {
-                    prevWorld = it->second;
-                }
-            }
-            drawData[frameBase + slot] = GpuDrawData{
-                .World = item.World,
-                .NormalColumn0 = vec4(normalMatrix[0], 0.0f),
-                .NormalColumn1 = vec4(normalMatrix[1], 0.0f),
-                .NormalColumn2 = vec4(normalMatrix[2], 0.0f),
-                .MaterialIndex = material.GetMaterialSelector(),
-                .EntityIndex = item.Owner.Index,
-                .PrevWorld = prevWorld,
-            };
-
-            // Sort key: the submesh center in view space. The camera looks down -Z, so a farther
-            // submesh has a more negative z; sorting ascending by z draws farthest first.
-            const vec3 center = (item.WorldBounds.Min + item.WorldBounds.Max) * 0.5f;
-            const f32 viewDepth = (viewMatrix * vec4(center, 1.0f)).z;
-
-            translucentPlan.Draws.push_back(TranslucentDraw{
-                .Material = &material,
-                .SourceMesh = &mesh,
-                .IndexCount = subMesh.IndexCount,
-                .FirstIndex = subMesh.IndexOffset,
-                .CandidateId = slot,
-                .ViewDepth = viewDepth,
-                .SortPriority = material.GetParent().Get()->GetSortPriority(),
-            });
-        }
-
-        // Ascending priority groups, back-to-front (most negative view-space z first) within
-        // each: a higher-priority material (an overlay) draws over every lower-priority draw
-        // regardless of depth.
-        std::ranges::sort(translucentPlan.Draws,
-                          [](const TranslucentDraw& a, const TranslucentDraw& b)
-                          {
-                              if (a.SortPriority != b.SortPriority)
-                              {
-                                  return a.SortPriority < b.SortPriority;
-                              }
-                              return a.ViewDepth < b.ViewDepth;
-                          });
+        // The slot layout the GPU cull arrays depend on, asserted in one place rather than left
+        // implicit in the three phases' call order.
+        const u32 gatheredSlots = static_cast<u32>(plan.Slots.size() + plan.SkinnedSlots.size() +
+                                                   translucentPlan.Draws.size());
+        VE_ASSERT(gatheredSlots == slotCursor,
+                  "SceneRenderer: {} draw slots laid out but the shared cursor advanced {}",
+                  gatheredSlots, slotCursor);
+        VE_ASSERT(
+            plan.Slots.empty() || (plan.Slots.front().CandidateId == 0 &&
+                                   plan.Slots.back().CandidateId + 1 == plan.Slots.size()),
+            "SceneRenderer: the static opaque slot range must be contiguous from 0 ({} slots)",
+            plan.Slots.size());
 
         // Arm this frame's GPU cull dispatch + survivor readback: the count is the opaque static
         // slot count, the previous-frame view-projection screen-bounds candidates, and Occlusion
