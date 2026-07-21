@@ -47,7 +47,7 @@ single-owner** (nothing holds a `Ref` to one); `Create(const SceneRendererInfo&)
 
 ### File layout — the shape a new battery lands in
 
-The renderer is split along two conventions, and a new battery follows both:
+The renderer is split along three conventions, and a new battery follows all of them:
 
 - **A pass lives in its own file under `Passes/`.** Every `ScenePass` — the g-buffer, deferred
   lighting, translucent, picking, TAA, scene-color copy, the directional and punctual shadow
@@ -73,16 +73,77 @@ The renderer is split along two conventions, and a new battery follows both:
   A subsystem owns its full vertical slice — its `Create`/recreate path, its `Declare*`
   contribution, its per-frame work — and **releases its own bindless handles in its own
   destructor**, so `~SceneRenderer`'s hand-list holds only the spine handles.
+- **A renderer-internal header lives in `src/Renderer/`, never `include/Veng/`.** `SkyResolver.h`,
+  `DrawPlan.h`, `SkySourceKind.h`, `FrameTopology.h`, `DrawGather.h`, `DebugBlitPipelines.h`, and
+  `SceneRendererIds.h` are private headers beside the sources that consume them. Two properties
+  follow and are load-bearing: they sit **outside the `include_hygiene` sweep**, which compiles
+  *public* headers only, so nothing about them touches the engine's API surface; and
+  `veng_test_unit` **can include them directly**, because `engine/src` is on its include path —
+  which is what makes a device-free renderer decision (`FrameTopology.h`, `DrawGather.h`)
+  unit-testable with no ICD and no CMake plumbing beyond a source-list entry. A constant read on
+  both sides of a file boundary goes in `SceneRendererIds.h` at namespace scope rather than being
+  duplicated into two anonymous namespaces: internal linkage is what forces the choice, and two
+  spellings of an `AssetId` or a format is a silent-divergence hazard that surfaces as a validation
+  error or a subtly wrong image.
 
-What **stays on the renderer** is the wiring and orchestration, not a battery: `Rebuild()` (the
-wiring hub — reads top-to-bottom as the pipeline order), `Execute()` (the frame orchestrator,
-decomposed into named phase helpers — `ResolveRenderScale`, `ApplyTransformInterpolation`,
-`ResolveScenePasses`, `BuildImportBindings`, `RecordFrameHistory` — around the inline resolve
-core), `PrepareDraws` (the cross-plan draw/cull/skinning coordinator), the Create/Resize/
-Configure/Execute lifetime split, the debug-blit pipeline aggregate (`DebugBlitPipelines`), and
-the shared **spine** every battery reads: the output target, the g-buffer (albedo/normal/ORM/
-depth + velocity/emissive), the HDR target, the LTC LUTs, the shared sampler, and the
-previous-frame view state (packed into the set-0 view-constants block every frame). The public
+What **stays on the renderer** is the wiring and orchestration, not a battery — and the layout
+separates *deciding* from *wiring*:
+
+- **`Rebuild()` is the wiring hub, and that is now its whole job.** It reads top-to-bottom as the
+  pipeline order: a straight run of `AddPass` calls whose conditions are fields of one
+  already-resolved topology. **It is deliberately not split further.** Its body carries ~469
+  renderer-state references across ~291 of its ~635 lines — every subsystem pointer, both
+  pass-handle sets, every resource id — so lifting it yields either a context struct that is
+  `SceneRenderer&` in disguise or a friend class, and buys nothing. Long, but honest. What would
+  justify revisiting is a **second axis of variation** (a second render path, not merely more
+  batteries), never line count.
+- **The topology decision is a device-free pure function**, not a prologue.
+  `ResolveFrameTopology(settings, sky) → FrameTopology` (`FrameTopology.{h,cpp}`) maps the topology
+  settings plus the resolved sky to every pass-set decision the graph body reads — no context, no
+  allocation, no I/O, a function of its arguments alone. The renderer holds the result as a single
+  `Unique<FrameTopology> m_Topology` behind a namespace-scope forward declaration (the
+  `DebugBlitPipelines` pattern in that same header), so a decision made in `Rebuild` and read three
+  phases later in `Execute` / `BuildImportBindings` names *one* member instead of one of eight
+  scattered flags. The two genuine side effects stay at the call site: the skylight notification,
+  and the auto-exposure enable **edge**, which is measured against the *previous* topology and so
+  cannot live inside a function of the current inputs. Because the resolve is pure, its rules are
+  pinned by `tests/unit/frame_topology.cpp` in the `fast` band rather than by a golden image. A gate
+  with more than two meaningful states is a **named enum field**, not a boolean pair:
+  `DofStages { None, CocOnly, Full }` makes "composited without the stages wired" unrepresentable
+  rather than merely unreachable.
+- **The three per-frame field-active flags are not topology and stay loose members.**
+  `m_PointFieldActive`, `m_ScenePointFieldActive`, and `m_VolumeFieldActive` are resolved from
+  *scene content* each frame (`ResolvePointFields` / `ResolveVolumeFields`), not from settings — so
+  folding them into `FrameTopology` would break exactly the purity the unit cases pin. If they ever
+  want the same treatment it is as a separate per-frame *content* struct.
+- **`PrepareDraws` is the cross-plan draw/cull/skinning coordinator**, and only that: the per-frame
+  plan reset, the ring bases, the frustum descent, and the cull arm. The three gather phases — the
+  static opaque slot layout and its grouping, the skinned slots and their palettes, the translucent
+  draws and their sort — are free functions in `DrawGather.{h,cpp}`, beside the `DrawPlan.h` types
+  they fill. They take one `DrawGatherInput` bundle by const reference and the genuinely mutable
+  state (the plans, the palette-base map, the shared slot and palette cursors) as explicit
+  by-reference parameters, so mutation is visible at the call site. Threading **one** slot cursor
+  through all three is what keeps the static opaque range contiguous from 0, which the GPU cull
+  arrays index by; the retained cull arm asserts that invariant directly. The grouping loop both the
+  static and skinned phases run is one pure `GroupContiguousSlots` over a span of slots, covered by
+  `tests/unit/draw_grouping.cpp`.
+- **Construction lives in `SceneRendererResources.cpp`** — the `Create` half of the lifetime split
+  below, compiled as a **second translation unit of the same class**, not a new type. The six
+  `Create*` members keep unchanged signatures and reference `m_Internal` nowhere, so the split needs
+  no shared internal header and no context object.
+- **`DebugBlitPipelines` is its own `.h/.cpp` pair** in `src/Renderer/`, de-nested from
+  `SceneRenderer` to `Veng::Renderer::DebugBlitPipelines` so its header stands alone without pulling
+  in `SceneRenderer.h`. It reads no renderer state and takes everything it needs as parameters; the
+  renderer holds it as a `Unique<>` behind a forward declaration.
+- **`Execute()` is the frame orchestrator**, decomposed into named phase helpers —
+  `ResolveRenderScale`, `ApplyTransformInterpolation`, `ResolveScenePasses`, `BuildImportBindings`,
+  `RecordFrameHistory` — around the inline resolve core.
+- **The Create/Resize/Configure/Execute lifetime split** (below) and the accessor block stay on the
+  class.
+
+The renderer also owns the shared **spine** every battery reads: the output target, the g-buffer
+(albedo/normal/ORM/depth + velocity/emissive), the HDR target, the LTC LUTs, the shared sampler, and
+the previous-frame view state (packed into the set-0 view-constants block every frame). The public
 types split across three headers — `SceneRendererSettings.h` (the topology/sizing knobs, the
 `DebugView` vocabulary), `SceneView.h` (the per-frame input + `SceneRendererInfo`), and
 `SceneRenderer.h` (the class) — with the last re-including the first two, so a settings panel
@@ -94,7 +155,9 @@ compiled graph and the draw plans.
 Its surface is a **lifetime split** keyed on how often each piece of state changes:
 
 - `Create(info)` — once: allocate persistent resources (output, g-buffer, HDR targets; fullscreen
-  pipelines), build + compile the graph.
+  pipelines), build + compile the graph. The six `Create*` members that do that allocating compile
+  in **`SceneRendererResources.cpp`**, a second translation unit of the same class; `Resize` and
+  `Configure` call back into them from `SceneRenderer.cpp` unchanged.
 - `Resize(extent)` — recreate the **allocation**-sized images via the retire path, re-register
   them into bindless, rebuild + re-`Compile()`. The extent is the *allocation* the targets live
   in; the per-frame `SceneView::RenderScale` renders into a top-left
