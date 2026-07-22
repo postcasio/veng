@@ -27,6 +27,20 @@ namespace Veng::Cook
                                                                     std::string_view value,
                                                                     const string& located);
 
+    /// @brief Parses a `box-shadow` shorthand into its geometry and color declarations.
+    ///
+    /// The shadow is split across two cooked declarations the way a border is —
+    /// `StyleProperty::BoxShadow` carrying the offset, blur, and spread in its Values and the
+    /// BoxShadowMode in its Unit, `StyleProperty::BoxShadowColor` carrying the color — so both fit
+    /// the uniform CookedStyleProperty payload. The grammar is
+    /// `<offx> <offy> [blur] [spread] [color] [inset]` (the `inset` keyword may lead or trail), or
+    /// the bare keyword `none`, which cooks the geometry declaration alone with a None mode.
+    /// @param value    The declaration's value text.
+    /// @param located  The located-error prefix (file + selector/element context).
+    /// @return The one or two cooked declarations, or a located error.
+    [[nodiscard]] Result<vector<CookedStyleProperty>>
+    ParseBoxShadowDeclaration(std::string_view value, const string& located);
+
     /// @brief Parses a color value (`#rrggbb`/`#rrggbbaa` hex or `rgb()`/`rgba()`) to linear.
     ///
     /// The shared color parse both a `background`/`color` declaration and a gradient stop resolve

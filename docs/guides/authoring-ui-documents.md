@@ -98,7 +98,8 @@ Layout is **flexbox** (Yoga): `flex-direction`, `justify-content`, `align-items`
 `padding`, `position`/`inset`. Paint is `background`, `background-gradient`,
 `background-image` (with `background-slice`/`background-fit`/`background-repeat`),
 `object-fit`/`image-repeat`/`image-slice` (an `Image` element's own fill), `color`
-(text / widget fill), `corner-radius`, `border-width`/`border-color`, `opacity`, and
+(text / widget fill), `corner-radius`, `border-width`/`border-color`, `box-shadow`,
+`opacity`, and
 `text-align` (`left`/`center`/`right` — a Text element's glyph alignment inside its
 solved box, meaningful when the box is wider than the run, e.g. a Table cell). Colors
 are hex `#rrggbb` or `#rrggbbaa`, resolved sRGB→linear at cook time. Register the
@@ -192,6 +193,35 @@ transition-able property:
 .primary:hover { background: #60a5fa; }
 .primary:disabled { opacity: 0.5; }
 ```
+
+### Drop and inset shadows
+
+`box-shadow` lifts an element off what is behind it — or recesses it into it. The value is
+`<offset-x> <offset-y> [blur] [spread] [color] [inset]`, or the keyword `none`; the two offsets
+are required, the rest default to `0`, opaque black, and a drop shadow.
+
+```css
+/* A soft card shadow: 4px right, 6px down, an 12px blur ramp. */
+.card    { box-shadow: 4px 6px 12px 0 #00000099; }
+/* A spread-only glow: no offset, no displacement, 3px of growth under a wide blur. */
+.glow    { box-shadow: 0 0 16px 3px #6ea0ffcc; }
+/* Recessed: the shadow paints *inside* the box, off its top-left edge. */
+.well    { box-shadow: 3px 4px 7px 1px #000000e6 inset; }
+/* A variant may drop the shadow entirely. */
+.card:active { box-shadow: none; }
+```
+
+**Blur** is the half-width of the softening ramp, in pixels, centred on the shadow's edge; `0`
+is a hard (still anti-aliased) edge. **Spread** grows the shadow's silhouette on every side —
+inward, for an inset shadow — and its corner radius grows with it, so the shadow follows the
+element's `corner-radius` rather than squaring off at the corners. One shadow per element: the
+comma-separated CSS list is not supported.
+
+A shadow is a plain UI primitive, so it composes for free — it multiplies the inherited
+`opacity`, rotates with the element's `rotation`, and is clipped by the enclosing scissor. That
+last one is the sharp edge: **a drop shadow is clipped by an ancestor's `overflow: hidden`**,
+because a scissor cannot paint outside itself. A card that must cast its shadow past a scrolling
+parent has to live outside that parent.
 
 ### Variables and `@use`
 

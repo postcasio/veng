@@ -537,3 +537,43 @@ TEST_CASE("Cooker: the Image fill family parses into its cooked slots")
                                                 declaration(Gui::StyleProperty::ImageSlice)};
     CHECK(CheckExclusiveFillSources(beside, located).has_value());
 }
+
+TEST_CASE("Cooker: the box-shadow shorthand splits into a geometry and a color declaration")
+{
+    const string located = "loc";
+
+    // The full form: offset, blur, spread, color, then the inset keyword.
+    const Result<vector<CookedStyleProperty>> full =
+        ParseBoxShadowDeclaration("2px 3px 8px 1px rgba(0.1, 0.2, 0.3, 0.5) inset", located);
+    REQUIRE(full.has_value());
+    REQUIRE(full->size() == 2);
+    CHECK((*full)[0].Property == static_cast<u32>(Gui::StyleProperty::BoxShadow));
+    CHECK((*full)[0].Unit == static_cast<u32>(Gui::BoxShadowMode::Inset));
+    CHECK((*full)[0].Values[0] == doctest::Approx(2.0f));
+    CHECK((*full)[0].Values[1] == doctest::Approx(3.0f));
+    CHECK((*full)[0].Values[2] == doctest::Approx(8.0f));
+    CHECK((*full)[0].Values[3] == doctest::Approx(1.0f));
+    CHECK((*full)[1].Property == static_cast<u32>(Gui::StyleProperty::BoxShadowColor));
+    CHECK((*full)[1].Values[0] == doctest::Approx(0.1f));
+    CHECK((*full)[1].Values[3] == doctest::Approx(0.5f));
+
+    // Blur, spread, and color are all optional; an omitted color is opaque black.
+    const Result<vector<CookedStyleProperty>> minimal = ParseBoxShadowDeclaration("4 5", located);
+    REQUIRE(minimal.has_value());
+    REQUIRE(minimal->size() == 2);
+    CHECK((*minimal)[0].Unit == static_cast<u32>(Gui::BoxShadowMode::Drop));
+    CHECK((*minimal)[0].Values[2] == doctest::Approx(0.0f));
+    CHECK((*minimal)[0].Values[3] == doctest::Approx(0.0f));
+    CHECK((*minimal)[1].Values[3] == doctest::Approx(1.0f));
+
+    // `none` clears the shadow, so it cooks the geometry declaration alone.
+    const Result<vector<CookedStyleProperty>> none = ParseBoxShadowDeclaration("none", located);
+    REQUIRE(none.has_value());
+    REQUIRE(none->size() == 1);
+    CHECK((*none)[0].Unit == static_cast<u32>(Gui::BoxShadowMode::None));
+
+    // Too few lengths is a located error rather than a silently defaulted offset.
+    const Result<vector<CookedStyleProperty>> short_ = ParseBoxShadowDeclaration("4px", located);
+    REQUIRE_FALSE(short_.has_value());
+    CHECK(short_.error().find("loc") != string::npos);
+}

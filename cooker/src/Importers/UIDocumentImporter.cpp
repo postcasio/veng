@@ -362,6 +362,20 @@ namespace Veng::Cook
                     return std::unexpected(
                         fmt::format("{}: unknown style property '{}'", located, name));
                 }
+                // The box-shadow shorthand cooks to two declarations (geometry and color), so it
+                // cannot ride the one-declaration return the other properties share.
+                if (*property == Gui::StyleProperty::BoxShadow)
+                {
+                    const Result<vector<CookedStyleProperty>> shadow =
+                        ParseBoxShadowDeclaration(value, located);
+                    if (!shadow)
+                    {
+                        return std::unexpected(shadow.error());
+                    }
+                    properties.insert(properties.end(), shadow->begin(), shadow->end());
+                    continue;
+                }
+
                 const Result<CookedStyleProperty> cooked =
                     ParseStyleDeclaration(*property, value, located);
                 if (!cooked)

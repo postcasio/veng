@@ -1335,6 +1335,8 @@ namespace Veng::Gui
             case StyleProperty::BackgroundRepeat:
             case StyleProperty::ObjectFit:
             case StyleProperty::ImageRepeat:
+            case StyleProperty::BoxShadow:
+            case StyleProperty::BoxShadowColor:
                 return false;
             // A slice makes an Image's intrinsic size the sum of its corner insets, so authoring or
             // dropping one re-measures the leaf.
@@ -1405,6 +1407,10 @@ namespace Veng::Gui
             case StyleProperty::ObjectFit:
             case StyleProperty::ImageRepeat:
             case StyleProperty::ImageSlice:
+            // A shadow's geometry rides one declaration with the kind in its Unit, so easing it
+            // would interpolate an enum alongside the pixels; both halves snap.
+            case StyleProperty::BoxShadow:
+            case StyleProperty::BoxShadowColor:
                 return false;
             }
             return false;
@@ -2986,6 +2992,17 @@ namespace Veng::Gui
             list.PushTransform(pivot, glm::radians(style.Rotation));
         }
 
+        // A drop shadow is one extra quad *behind* the fill — the element's own rounded box, its
+        // silhouette displaced and grown, its edge softened across the blur. It is emitted inside
+        // the element's draw, so it folds in the composited opacity and rides the transform and
+        // clip stacks like every other primitive.
+        if (style.Shadow.has_value() && !style.Shadow->Inset)
+        {
+            BoxShadow shadow = *style.Shadow;
+            shadow.Color.a *= opacity;
+            list.Shadow(rect, shadow, style.Radii);
+        }
+
         // Fill sources are exclusive and ranked BackgroundGradient > BackgroundImage > Background:
         // the winning source is the fill, and they never layer. The border is drawn over whichever
         // wins.
@@ -3092,6 +3109,14 @@ namespace Veng::Gui
                 list.Texture(fill.Dest, element.ImageTexture, element.ImageSampler, fill.Uv, tint,
                              content.Radii);
             }
+        }
+        // An inset shadow paints *over* the fill instead of behind it, bounded by the box it
+        // recesses — so it lands after every fill source and under the border ring.
+        if (style.Shadow.has_value() && style.Shadow->Inset)
+        {
+            BoxShadow shadow = *style.Shadow;
+            shadow.Color.a *= opacity;
+            list.Shadow(rect, shadow, style.Radii);
         }
         if (style.BorderStyle.Width > 0.0f)
         {

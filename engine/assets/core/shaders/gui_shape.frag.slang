@@ -3,10 +3,12 @@
 // three sources — a flat vertex color, a bindless texture modulating the color (a
 // plain textured quad or one 9-slice tile is a zero-radius rect with a bound texture),
 // or a gradient that reduces the fragment's normalized box position to an offset into a
-// 1D ramp LUT (multi-stop color baked into the ramp). The interpolated per-fragment
-// local coordinate and the rect half-extent reconstruct the SDF: negative inside, zero
-// on the edge. Corner radius and border width ride the params; the texture and sampler
-// indices are bindless set-0 slots, with a negative texture index meaning untextured.
+// 1D ramp LUT (multi-stop color baked into the ramp). The same SDF, read with a wide
+// coverage ramp instead of a one-pixel anti-aliased one, is a soft drop or inset
+// shadow. The interpolated per-fragment local coordinate and the rect half-extent
+// reconstruct the SDF: negative inside, zero on the edge. Corner radius and border
+// width ride the params, the blur/spread/offset of a shadow its own field; the texture
+// and sampler indices are bindless set-0 slots, a negative index meaning untextured.
 // Output is premultiplied linear RGBA so the pass blends it "over" the scene in linear
 // space.
 
@@ -19,6 +21,7 @@ struct VSOutput
     float2 v_RectCoord : TEXCOORD2;
     nointerpolation float4 v_Params : TEXCOORD3;
     nointerpolation uint v_GradientSelector : TEXCOORD4;
+    nointerpolation float4 v_Shadow : TEXCOORD5;
 };
 
 // Must match GuiScenePass's push block and the vertex stage: the gradient-record buffer's bindless
@@ -70,6 +73,45 @@ float4 fsMain(VSOutput input) : SV_Target
     float border = input.v_Params.y;
     int textureIndex = int(input.v_Params.z);
     int samplerIndex = int(input.v_Params.w);
+
+    // A shadow quad is the same rounded-rect SDF read with a wide coverage ramp instead of a
+    // one-pixel anti-aliased one: the blur is the half-width of that ramp in pixels, centered on
+    // the silhouette edge. A zero blur lane means the quad is not a shadow at all; a positive one
+    // is an outer (drop) shadow and a negative one an inset shadow, the sign being the inset flag's
+    // only transport. Offset and spread displace and grow the silhouette here rather than in the
+    // quad's geometry, so the silhouette stays exact around a rounded corner.
+    float shadowBlur = input.v_Shadow.x;
+    if (shadowBlur != 0.0)
+    {
+        bool inset = shadowBlur < 0.0;
+        // An inset spread grows the shadow inward, which is the silhouette shrinking.
+        float spread = inset ? -input.v_Shadow.y : input.v_Shadow.y;
+        float2 offset = input.v_Shadow.zw;
+
+        float boxDist = RoundedBoxSdf(input.v_RectCoord, input.v_RectHalf, radius);
+        float shadowAa = max(fwidth(boxDist), 1e-4);
+        // A ramp narrower than the pixel grid can resolve would alias, so a hard-edged shadow
+        // degrades to the ordinary anti-aliased edge rather than to a stair-stepped one.
+        float ramp = max(abs(shadowBlur), shadowAa);
+
+        float2 silhouetteHalf = max(input.v_RectHalf + spread, float2(0.0, 0.0));
+        float silhouetteRadius =
+            clamp(radius + spread, 0.0, min(silhouetteHalf.x, silhouetteHalf.y));
+        float silhouetteDist =
+            RoundedBoxSdf(input.v_RectCoord - offset, silhouetteHalf, silhouetteRadius);
+        float silhouette = 1.0 - smoothstep(-ramp, ramp, silhouetteDist);
+
+        // An outer shadow *is* the softened silhouette. An inset shadow is the box minus it — the
+        // border ring's subtraction, with the ring's inner edge blurred and displaced.
+        float shadowCoverage = silhouette;
+        if (inset)
+        {
+            shadowCoverage = (1.0 - smoothstep(-shadowAa, shadowAa, boxDist)) * (1.0 - silhouette);
+        }
+
+        float shadowAlpha = input.v_Color.a * shadowCoverage;
+        return float4(input.v_Color.rgb * shadowAlpha, shadowAlpha);
+    }
 
     // v_GradientSelector is 0 for no gradient, else the record index plus one. A gradient loads its
     // record from the byte-address gradient buffer, reduces the fragment's normalized box position to

@@ -6,6 +6,7 @@
     { "format": "RG32Sfloat",   "name": "a_RectHalf" },
     { "format": "RG32Sfloat",   "name": "a_RectCoord" },
     { "format": "RGBA32Sfloat", "name": "a_Params" },
-    { "format": "R32Uint",      "name": "a_GradientSelector" }
+    { "format": "R32Uint",      "name": "a_GradientSelector" },
+    { "format": "RGBA32Sfloat", "name": "a_Shadow" }
   ]
 }

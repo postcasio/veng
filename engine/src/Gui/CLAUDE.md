@@ -134,6 +134,33 @@ shapes, driven by `background-slice` / `background-fit` / `background-repeat`:
   computes: `fill` stretches, `contain`/`cover` letterbox/crop preserving aspect, `none` is
   intrinsic pixels. `ImageFit`/`ImageRepeat` (`Veng/Gui/Style.h`) are the shared fill vocabulary.
 
+### `box-shadow` — an effect on the same silhouette
+
+**A shadow is the shape's own SDF read with a wide coverage ramp.** `box-shadow`
+(`<offset-x> <offset-y> [blur] [spread] [color] [inset]`, or `none`) emits **one extra quad** on
+the unchanged `Shape` pipeline: the blur is the half-width of the coverage ramp in pixels, and
+spread grows the silhouette (radius included, so a shadow follows `corner-radius`). Offset and
+spread are applied **in the fragment**, against the element's own `RectHalf`/`RectCoord`, rather
+than baked into the quad — which is what keeps an inset shadow exact inside a rounded corner,
+where a scissor could only bound it to the square box.
+
+- **Transport is a `GuiVertex` field of its own** (`vec4 Shadow`: signed blur, spread, offset),
+  beside `Params` the way `GradientSelector` is — `Params`'s four lanes are fully occupied. A
+  **zero blur lane means the quad is not a shadow**, a positive one a drop shadow, a negative one
+  an inset shadow: the sign is the inset flag's only transport, which is why a hard-edged shadow
+  still carries a tiny non-zero blur the fragment widens to the anti-aliasing width.
+- **Geometry differs, the pipeline does not.** A drop shadow's quad is the box grown by spread +
+  blur and slid by the offset (the SDF's outside-positive region has no fragments to shade
+  otherwise); an inset shadow's quad is the box itself. Both are untextured, so they batch into
+  the runs around them.
+- **A drop shadow paints before the fill and an inset shadow after it**, both inside the
+  element's own draw — so a shadow multiplies the inherited opacity, rotates with the transform
+  stack, and is clipped by the enclosing scissor like every other primitive. The consequence to
+  author around: **an outer shadow is clipped by an ancestor's `overflow: hidden`**.
+- **One shadow per element** (no comma-separated list), and no separate blur pass — the
+  smoothstep-over-SDF approximation is the whole mechanism. Text shadows are absent; the MSDF
+  path is untouched.
+
 ### The `Image` widget's fill
 
 **One fill vocabulary, two hosts.** The same three shapes drive the `Image` widget's own content
@@ -166,8 +193,11 @@ quads** — rounded-rect / border SDF, 9-slice, tint/opacity, and MSDF text runs
 `Document::Build` appends into. A `GuiScenePass` records the draw list into an offscreen image
 blended over the viewport's scene output (its Slang shaders, `gui.slang` + the MSDF text shader,
 are core-pack shaders — a game reuses them, never authors a UI shader). The image goldens
-(`gui_overlay`, `gui_rotated`, `gui_image`, `gui_background`) are the render floor every later
-change holds pixel-stable against.
+(`gui_overlay`, `gui_rotated`, `gui_image`, `gui_background`, `gui_shadow`) are the render floor
+every later change holds pixel-stable against. **The vertex format is five files, not one**: the
+`GuiVertex` struct, the cooked `gui.vlayout.json` the pass loads, and the `VSInput`/`VSOutput` of
+`gui.vert.slang` — the shader importer hard-errors at cook time on a reflected-vs-declared
+mismatch, so a new field lands in all of them at once or nothing cooks.
 `DrawList` carries a composing **transform stack** (`PushTransform(pivot, angle)` / `PopTransform`)
 applied to vertex positions at quad emission while `RectCoord`/`RectHalf`/UV stay in unrotated
 local space, so a `rotation` style property (scalar degrees, clockwise in the y-down document

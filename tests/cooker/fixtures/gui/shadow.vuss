@@ -1,0 +1,11 @@
+/* The stylesheet half of the box-shadow fixture: the inset card's shadow is authored in a *rule*
+   rather than inline, so the capture covers both authoring paths a shadow rides — the sheet
+   importer's declaration block and the document importer's inline style. */
+
+.recessed {
+    width: 108px;
+    height: 46px;
+    background: #b4b4c8ff;
+    corner-radius: 10px;
+    box-shadow: 3px 4px 7px 1px #000000e6 inset;
+}

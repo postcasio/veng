@@ -93,6 +93,26 @@ namespace Veng::Gui
         vec4 Color{0.0f};
     };
 
+    /// @brief A soft drop or inset shadow of a rounded rectangle.
+    ///
+    /// The shadow silhouette is the element's rounded box translated by Offset and grown by Spread
+    /// (shrunk, for a negative Spread), its edge softened across Blur pixels. Inset flips it: the
+    /// shadow paints *inside* the box, between the box edge and the same displaced silhouette, so a
+    /// panel reads as recessed. A Blur of zero is a hard-edged (anti-aliased) shadow.
+    struct BoxShadow
+    {
+        /// @brief Displacement of the shadow silhouette from the box, in pixels.
+        vec2 Offset{0.0f};
+        /// @brief Softening radius of the shadow edge, in pixels; zero is a hard edge.
+        f32 Blur = 0.0f;
+        /// @brief Growth of the shadow silhouette on every side, in pixels; negative shrinks it.
+        f32 Spread = 0.0f;
+        /// @brief Shadow color, linear straight-alpha RGBA; a zero alpha draws nothing.
+        vec4 Color{0.0f};
+        /// @brief Whether the shadow paints inside the box (an inner shadow) instead of behind it.
+        bool Inset = false;
+    };
+
     /// @brief Per-edge inset distances, in pixels: the 9-slice margins and the padding vocabulary.
     struct Insets
     {
@@ -224,6 +244,16 @@ namespace Veng::Gui
         /// positive value selects the GpuGradient record at (value - 1) in the draw list's gradient
         /// table, and the fragment loads it from the storage buffer to evaluate the ramp offset.
         u32 GradientSelector = 0;
+        /// @brief Shadow parameters: blur (x, signed), spread (y), and offset (zw), all in pixels.
+        ///
+        /// A zero x (the default) means the quad is not a shadow and the fragment takes its ordinary
+        /// fill path. A **positive** x is an outer (drop) shadow and a **negative** x an inset one —
+        /// the sign is the only transport the inset flag has, which is why a hard-edged shadow still
+        /// carries a tiny non-zero blur. The magnitude is the softening radius; spread grows the
+        /// silhouette and offset displaces it, both evaluated against RectHalf/RectCoord in the
+        /// fragment rather than baked into the quad, so the silhouette stays exact under a rounded
+        /// corner.
+        vec4 Shadow{0.0f};
     };
 
     /// @brief A contiguous slice of the index stream sharing one pipeline, clip, and texture.
@@ -268,6 +298,19 @@ namespace Veng::Gui
         /// @param border   Optional border; a positive width draws a ring in the border color.
         void Quad(const Rect& rect, vec4 color, const CornerRadii& radii = {},
                   const Border& border = {});
+
+        /// @brief Appends a soft drop or inset shadow of a rounded rectangle.
+        ///
+        /// One extra quad on the same shape pipeline: an outer shadow's quad is the box translated
+        /// by the shadow's offset and grown by its spread plus its blur, so the softened silhouette
+        /// has fragments to shade outside the box; an inset shadow's quad is the box itself, the
+        /// geometry bounding what an inner shadow may cover. Untextured, so it batches with the
+        /// solid and gradient quads around it. A caller draws an outer shadow *before* the element's
+        /// fill and an inset shadow *after* it.
+        /// @param rect    The element's box, in framebuffer pixels — not the shadow silhouette.
+        /// @param shadow  The shadow's offset, blur, spread, color, and inset flag.
+        /// @param radii   The element's per-corner radius; the shape path uses the uniform radius.
+        void Shadow(const Rect& rect, const BoxShadow& shadow, const CornerRadii& radii = {});
 
         /// @brief Appends a rounded rectangle filled by a gradient sampled from a ramp LUT.
         ///
@@ -414,8 +457,10 @@ namespace Veng::Gui
         /// @param center     Rect center in pixels, for the per-vertex RectCoord (shape path).
         /// @param params     Packed fragment params written to every vertex.
         /// @param selector   Gradient record selector (record index plus one); zero for no gradient.
+        /// @param shadow     Shadow parameters (see GuiVertex::Shadow); zero for an ordinary quad.
         void PushQuad(const std::array<vec2, 4>& corners, const std::array<vec2, 4>& uvs,
-                      vec4 color, vec2 rectHalf, vec2 center, vec4 params, u32 selector = 0);
+                      vec4 color, vec2 rectHalf, vec2 center, vec4 params, u32 selector = 0,
+                      vec4 shadow = vec4(0.0f));
 
         /// @brief Emits one textured quad, opening a Shape run keyed by its texture.
         /// @param radii  Per-corner radius; the shape path uses the uniform radius (zero for square).

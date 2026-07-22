@@ -12,6 +12,12 @@ namespace Veng::Gui
         // A negative texture index in the packed params means "untextured" to the shape shader.
         constexpr f32 UntexturedIndex = -1.0f;
 
+        // The smallest blur magnitude a shadow quad transports. A zero blur lane means "not a
+        // shadow", so a hard-edged shadow still needs a non-zero value; the fragment widens any
+        // blur narrower than one screen pixel to the anti-aliasing width, so this reads as a crisp
+        // edge rather than an aliased one.
+        constexpr f32 MinShadowBlur = 1.0f / 1024.0f;
+
         // Decodes a UTF-8 byte sequence into Unicode codepoints. A malformed byte is emitted as
         // U+FFFD and skipped, so a bad encoding degrades to replacement glyphs rather than reading
         // out of bounds — the draw list never trusts an ill-formed string.
@@ -148,7 +154,8 @@ namespace Veng::Gui
     }
 
     void DrawList::PushQuad(const std::array<vec2, 4>& corners, const std::array<vec2, 4>& uvs,
-                            vec4 color, vec2 rectHalf, vec2 center, vec4 params, u32 selector)
+                            vec4 color, vec2 rectHalf, vec2 center, vec4 params, u32 selector,
+                            vec4 shadow)
     {
         const u32 base = static_cast<u32>(m_Vertices.size());
         for (usize i = 0; i < 4; ++i)
@@ -164,6 +171,7 @@ namespace Veng::Gui
                 .RectCoord = corners[i] - center,
                 .Params = params,
                 .GradientSelector = selector,
+                .Shadow = shadow,
             });
         }
 
@@ -203,6 +211,50 @@ namespace Veng::Gui
         const vec4 params{radius, border.Width, UntexturedIndex, UntexturedIndex};
 
         PushQuad(corners, uvs, fill, half, center, params);
+    }
+
+    void DrawList::Shadow(const Rect& rect, const BoxShadow& shadow, const CornerRadii& radii)
+    {
+        if (rect.IsEmpty() || shadow.Color.a <= 0.0f)
+        {
+            return;
+        }
+
+        // A shadow is untextured and carries no gradient, so it merges with the solid and gradient
+        // quads it sits between rather than opening a run of its own.
+        EnsureRun(GuiPipeline::Shape, Renderer::TextureHandle::Invalid);
+
+        const vec2 half = rect.Size * 0.5f;
+        const vec2 center = rect.Center();
+        const f32 radius = std::min(radii.TopLeft, std::min(half.x, half.y));
+        const f32 blur = std::max(std::abs(shadow.Blur), MinShadowBlur);
+
+        // An outer shadow needs fragments *outside* the box to soften into, so its quad grows by
+        // the silhouette's own spread plus the blur ramp and slides by the offset. An inset shadow
+        // is bounded by the box it darkens, so its quad is the box itself.
+        Rect quad = rect;
+        if (!shadow.Inset)
+        {
+            const f32 grow = std::max(shadow.Spread + blur, 0.0f);
+            quad = Rect{.Min = rect.Min + shadow.Offset - vec2(grow),
+                        .Size = rect.Size + vec2(2.0f * grow)};
+        }
+
+        const vec2 min = quad.Min;
+        const vec2 max = quad.Max();
+        const std::array<vec2, 4> corners = {min, vec2(max.x, min.y), max, vec2(min.x, max.y)};
+        // The shadow reads no UV; a unit UV keeps the vertices well-formed.
+        const std::array<vec2, 4> uvs = {vec2(0.0f, 0.0f), vec2(1.0f, 0.0f), vec2(1.0f, 1.0f),
+                                         vec2(0.0f, 1.0f)};
+
+        // RectHalf/RectCoord stay the *element's* box however far the quad reaches; the fragment
+        // displaces and grows that box into the shadow silhouette, which is what keeps an inset
+        // shadow exact inside a rounded corner. Zero border, so the silhouette fills rather than rings.
+        const vec4 params{radius, 0.0f, UntexturedIndex, UntexturedIndex};
+        const vec4 shadowParams{shadow.Inset ? -blur : blur, shadow.Spread, shadow.Offset.x,
+                                shadow.Offset.y};
+
+        PushQuad(corners, uvs, shadow.Color, half, center, params, 0, shadowParams);
     }
 
     void DrawList::Gradient(const Rect& rect, const GradientFill& fill, const CornerRadii& radii,

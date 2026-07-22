@@ -4,7 +4,8 @@
 // the linear straight-alpha color, the rounded-rect half-extent and the per-vertex
 // signed local coordinate (both in pixels, the fragment reconstructs the SDF from
 // their interpolation), and the packed params (corner radius, border width, and the
-// bindless texture/sampler indices). Vulkan clip space has Y pointing down, so a
+// bindless texture/sampler indices), and the shadow parameters (signed blur, spread,
+// and offset) a shadow quad carries. Vulkan clip space has Y pointing down, so a
 // top-left pixel (y=0) maps to clip y=-1 with no extra flip.
 
 struct PushConstants
@@ -25,6 +26,7 @@ struct VSInput
     float2 a_RectCoord : TEXCOORD2;
     float4 a_Params : TEXCOORD3;
     uint a_GradientSelector : TEXCOORD4;
+    float4 a_Shadow : TEXCOORD5;
 };
 
 struct VSOutput
@@ -36,6 +38,7 @@ struct VSOutput
     float2 v_RectCoord : TEXCOORD2;
     nointerpolation float4 v_Params : TEXCOORD3;
     nointerpolation uint v_GradientSelector : TEXCOORD4;
+    nointerpolation float4 v_Shadow : TEXCOORD5;
 };
 
 [shader("vertex")]
@@ -50,5 +53,6 @@ VSOutput vsMain(VSInput input)
     output.v_RectCoord = input.a_RectCoord;
     output.v_Params = input.a_Params;
     output.v_GradientSelector = input.a_GradientSelector;
+    output.v_Shadow = input.a_Shadow;
     return output;
 }

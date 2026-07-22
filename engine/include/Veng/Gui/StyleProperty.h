@@ -132,12 +132,29 @@ namespace Veng::Gui
         /// @brief An Image's nine-slice margins (Style::ImageSlice); value is four edge distances
         /// (L/T/R/B) in source-texture pixels.
         ImageSlice,
+        /// @brief The shadow's geometry and kind (Style::Shadow): Values are the x/y offset, the
+        /// blur, and the spread in pixels; Unit is 0 for no shadow, 1 for a drop shadow, 2 for an
+        /// inset one. Paired with BoxShadowColor as BorderWidth is with BorderColor.
+        BoxShadow,
+        /// @brief The shadow's color (Style::Shadow->Color); value is a linear-space vec4.
+        BoxShadowColor,
+    };
+
+    /// @brief The kind of shadow a BoxShadow declaration's Unit selects.
+    enum class BoxShadowMode : u32
+    {
+        /// @brief No shadow: the declaration clears Style::Shadow (`box-shadow: none`).
+        None = 0,
+        /// @brief A drop shadow, painted behind the element's fill.
+        Drop = 1,
+        /// @brief An inset shadow, painted over the element's fill.
+        Inset = 2,
     };
 
     /// @brief The number of StyleProperty enumerators — keep in step when appending one.
     ///
     /// The runtime's whole-style property sweeps iterate `[0, StylePropertyCount)`.
-    inline constexpr u32 StylePropertyCount = static_cast<u32>(StyleProperty::ImageSlice) + 1;
+    inline constexpr u32 StylePropertyCount = static_cast<u32>(StyleProperty::BoxShadowColor) + 1;
 
     /// @brief Canonical USS declaration name of a style property ("flex-direction", "background", …).
     ///

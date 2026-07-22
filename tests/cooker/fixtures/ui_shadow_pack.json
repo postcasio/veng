@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "0x174785227902338F",
+      "type": "StyleSheet",
+      "source": "gui/shadow.vuss"
+    },
+    {
+      "id": "0x35F48CAF87C31796",
+      "type": "UIDocument",
+      "source": "gui/shadow.vui.xml"
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 /* The hello-triangle status HUD: an accent token shared between the stylesheet and the app,
-   a nine-slice window-chrome frame behind the panel, a conic-gradient loading spinner spun by a
-   rotation keyframe, and a fixed strip of numbered ticks the app resolves by class and lights per
-   frame. */
+   a nine-slice window-chrome frame behind the panel and a soft drop shadow lifting it off the
+   scene, a conic-gradient loading spinner spun by a rotation keyframe, and a fixed strip of
+   numbered ticks the app resolves by class and lights per frame. */
 
 --accent: #4fa3ff;
 --text: #eef2f8ff;
@@ -15,6 +15,7 @@
     flex-direction: column;
     background-image: 0x2B62E4E91B4A08B4;
     background-slice: 8px;
+    box-shadow: 3px 5px 12px 0 #00000099;
     padding: 14px;
     width: 220px;
 }

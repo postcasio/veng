@@ -1,0 +1,11 @@
+<Panel stylesheets="0x174785227902338F" style="width: 256px; height: 192px; background: #6e7080ff; padding: 12px;">
+  <Panel style="flex-direction: row;">
+    <Panel style="width: 108px; height: 46px; background: #c8c8d8ff; corner-radius: 10px; box-shadow: 5px 6px 4px 0 #000000cc;"/>
+    <Panel style="width: 108px; height: 46px; margin: 0 0 0 16px; background: #c8c8d8ff; corner-radius: 10px; box-shadow: 5px 6px 14px 0 #000000cc;"/>
+  </Panel>
+  <Panel style="flex-direction: row; margin: 20px 0 0 0;">
+    <Panel style="width: 108px; height: 46px; background: #c8c8d8ff; corner-radius: 10px; box-shadow: 4px 4px 0 2px #000000cc;"/>
+    <Panel class="recessed" style="margin: 0 0 0 16px;"/>
+  </Panel>
+  <Panel style="width: 232px; height: 40px; margin: 20px 0 0 0; background: #c8c8d8ff; box-shadow: 0 0 12px 4px #6ea0ffcc;"/>
+</Panel>

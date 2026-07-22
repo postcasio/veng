@@ -395,6 +395,54 @@ namespace Veng::Cook
             return parts;
         }
 
+        // Splits a declaration value on top-level whitespace, keeping a parenthesized group — an
+        // `rgba(1, 2, 3, 4)` color, whose components may be spaced — as a single token.
+        vector<std::string_view> SplitTopLevel(std::string_view value)
+        {
+            vector<std::string_view> parts;
+            i32 depth = 0;
+            usize start = 0;
+            bool inToken = false;
+            for (usize i = 0; i < value.size(); ++i)
+            {
+                const char c = value[i];
+                if (c == '(')
+                {
+                    ++depth;
+                }
+                else if (c == ')' && depth > 0)
+                {
+                    --depth;
+                }
+                if (depth == 0 && std::isspace(static_cast<unsigned char>(c)) != 0)
+                {
+                    if (inToken)
+                    {
+                        parts.push_back(value.substr(start, i - start));
+                        inToken = false;
+                    }
+                    continue;
+                }
+                if (!inToken)
+                {
+                    inToken = true;
+                    start = i;
+                }
+            }
+            if (inToken)
+            {
+                parts.push_back(value.substr(start));
+            }
+            return parts;
+        }
+
+        // Whether a shorthand token is a color rather than a length: the two color spellings both
+        // announce themselves, `#rrggbb` by its hash and rgb()/rgba() by its name.
+        bool IsColorToken(std::string_view token)
+        {
+            return !token.empty() && (token.front() == '#' || token.substr(0, 3) == "rgb");
+        }
+
         // The CSS `overflow` keyword set. `clip` is accepted as a synonym for `hidden` and `auto`
         // for `scroll`: veng shows a scrollbar only on a scrollable axis whose content overflows,
         // so the CSS auto/scroll distinction (always-visible bar) has no separate meaning here.
@@ -563,6 +611,90 @@ namespace Veng::Cook
         return ParseColorValue(value, located);
     }
 
+    Result<vector<CookedStyleProperty>> ParseBoxShadowDeclaration(std::string_view value,
+                                                                  const string& located)
+    {
+        const std::string_view v = Trim(value);
+        if (v.empty())
+        {
+            return std::unexpected(fmt::format("{}: 'box-shadow' has an empty value", located));
+        }
+
+        CookedStyleProperty geometry{};
+        geometry.Property = static_cast<u32>(StyleProperty::BoxShadow);
+
+        if (v == "none")
+        {
+            geometry.Unit = static_cast<u32>(Gui::BoxShadowMode::None);
+            return vector<CookedStyleProperty>{geometry};
+        }
+
+        vector<f32> lengths;
+        optional<vec4> color;
+        bool inset = false;
+        for (const std::string_view token : SplitTopLevel(v))
+        {
+            if (token == "inset")
+            {
+                inset = true;
+                continue;
+            }
+            if (IsColorToken(token))
+            {
+                if (color.has_value())
+                {
+                    return std::unexpected(fmt::format(
+                        "{}: 'box-shadow' takes one color, got a second '{}'", located, token));
+                }
+                const Result<vec4> parsed = ParseColorValue(token, located);
+                if (!parsed)
+                {
+                    return std::unexpected(parsed.error());
+                }
+                color = *parsed;
+                continue;
+            }
+            if (color.has_value())
+            {
+                return std::unexpected(fmt::format(
+                    "{}: 'box-shadow' expects its lengths before its color, got '{}' after it",
+                    located, token));
+            }
+            const Result<std::pair<u32, f32>> length = ParseLength(token, located);
+            if (!length)
+            {
+                return std::unexpected(length.error());
+            }
+            lengths.push_back(length->second);
+        }
+
+        if (lengths.size() < 2 || lengths.size() > 4)
+        {
+            return std::unexpected(
+                fmt::format("{}: 'box-shadow' expects '<offset-x> <offset-y> [blur] [spread] "
+                            "[color] [inset]' or 'none', got '{}'",
+                            located, v));
+        }
+
+        geometry.Unit =
+            static_cast<u32>(inset ? Gui::BoxShadowMode::Inset : Gui::BoxShadowMode::Drop);
+        geometry.Values[0] = lengths[0];
+        geometry.Values[1] = lengths[1];
+        geometry.Values[2] = lengths.size() > 2 ? lengths[2] : 0.0f;
+        geometry.Values[3] = lengths.size() > 3 ? lengths[3] : 0.0f;
+
+        // An omitted color is opaque black, the shadow every UI reaches for first.
+        const vec4 resolved = color.value_or(vec4(0.0f, 0.0f, 0.0f, 1.0f));
+        CookedStyleProperty tint{};
+        tint.Property = static_cast<u32>(StyleProperty::BoxShadowColor);
+        tint.Values[0] = resolved.r;
+        tint.Values[1] = resolved.g;
+        tint.Values[2] = resolved.b;
+        tint.Values[3] = resolved.a;
+
+        return vector<CookedStyleProperty>{geometry, tint};
+    }
+
     VoidResult CheckExclusiveFillSources(const vector<CookedStyleProperty>& properties,
                                          const string& located)
     {
@@ -686,7 +818,15 @@ namespace Veng::Cook
         case StyleProperty::Background:
         case StyleProperty::BorderColor:
         case StyleProperty::TextColor:
+        case StyleProperty::BoxShadowColor:
             return ColorProperty(property, v, located);
+
+        case StyleProperty::BoxShadow:
+            // The shorthand cooks to a geometry declaration plus a color one, which the uniform
+            // one-declaration return here cannot carry; ParseBoxShadowDeclaration is its parse.
+            return std::unexpected(fmt::format(
+                "{}: 'box-shadow' is a shorthand cooked through ParseBoxShadowDeclaration",
+                located));
 
         case StyleProperty::TextFont:
         {

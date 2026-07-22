@@ -1,5 +1,5 @@
 /* The overlay level's own HUD stylesheet: a small opaque card with a heading, a snapshot line, a
-   value bar, and a dismiss button. Screen-space UI is LDR (composited after tonemap), so its colors
+   value bar, and a dismiss button, dropped onto the scene with a soft shadow. Screen-space UI is LDR (composited after tonemap), so its colors
    are ordinary sRGB hex — unlike the diegetic panel's rgb() HDR emitters, an overlay color clamps at
    white and does not glow. The button carries :hover / :active variants the runtime eases between. */
 
@@ -12,6 +12,7 @@
     flex-direction: column;
     background: var(--card);
     corner-radius: 8px;
+    box-shadow: 0 6px 18px 0 #00000099;
     padding: 16px;
     width: 320px;
     margin: 24px;

@@ -158,6 +158,30 @@ namespace Veng::Gui
         case StyleProperty::ImageSlice:
             style.ImageSlice = InsetsFrom(declaration);
             return;
+        case StyleProperty::BoxShadow:
+        {
+            if (static_cast<BoxShadowMode>(declaration.Unit) == BoxShadowMode::None)
+            {
+                style.Shadow.reset();
+                return;
+            }
+            // The geometry and the color are separate declarations, so each writes only its own
+            // half of an existing shadow — a variant may restyle one without restating the other.
+            BoxShadow shadow = style.Shadow.value_or(BoxShadow{});
+            shadow.Offset = vec2(declaration.Values.x, declaration.Values.y);
+            shadow.Blur = declaration.Values.z;
+            shadow.Spread = declaration.Values.w;
+            shadow.Inset = static_cast<BoxShadowMode>(declaration.Unit) == BoxShadowMode::Inset;
+            style.Shadow = shadow;
+            return;
+        }
+        case StyleProperty::BoxShadowColor:
+        {
+            BoxShadow shadow = style.Shadow.value_or(BoxShadow{});
+            shadow.Color = declaration.Values;
+            style.Shadow = shadow;
+            return;
+        }
         case StyleProperty::Opacity:
             style.Opacity = declaration.Values.x;
             return;

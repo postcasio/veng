@@ -368,6 +368,15 @@ namespace Veng::Gui
         CornerRadii Radii;
         /// @brief Border width and color; a zero width draws no border.
         Border BorderStyle;
+        /// @brief A drop or inset shadow of the element's box; unset (the default) draws none.
+        ///
+        /// An outer shadow paints *behind* the element's fill and an inset one *over* it, both
+        /// inside the element's own draw so they multiply the inherited opacity, rotate with the
+        /// transform stack, and are clipped by the enclosing scissor like every other primitive.
+        /// @warning An outer shadow is clipped by an ancestor's `overflow: hidden` — a scissor
+        ///          cannot paint outside itself — so a shadow that must overhang a scrolling
+        ///          parent belongs on an element outside it.
+        optional<BoxShadow> Shadow;
 
         /// @brief Text fill color, linear straight-alpha RGBA (Text elements).
         vec4 TextColor{1.0f};

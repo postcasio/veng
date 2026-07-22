@@ -305,3 +305,63 @@ TEST_CASE("gui draw list: Clear resets the transform stack")
         CheckVec2(list.GetVertices()[i].Position, reference.GetVertices()[i].Position);
     }
 }
+
+TEST_CASE("gui draw list: an outer shadow expands its quad and keeps the element's SDF box")
+{
+    DrawList list;
+    const BoxShadow shadow{.Offset = vec2(4.0f, 6.0f),
+                           .Blur = 8.0f,
+                           .Spread = 2.0f,
+                           .Color = vec4(0.0f, 0.0f, 0.0f, 0.5f)};
+    list.Shadow(UnitRect, shadow, CornerRadii::All(6.0f));
+
+    REQUIRE(list.GetVertices().size() == 4);
+    // The quad grows by spread + blur on every side and slides by the offset, so the softened
+    // silhouette has fragments outside the element box to shade.
+    CheckVec2(list.GetVertices()[0].Position, UnitRect.Min + shadow.Offset - vec2(10.0f));
+    CheckVec2(list.GetVertices()[2].Position, UnitRect.Max() + shadow.Offset + vec2(10.0f));
+
+    // The SDF box stays the *element's*: the fragment displaces and grows it from the shadow field.
+    for (const GuiVertex& vertex : list.GetVertices())
+    {
+        CheckVec2(vertex.RectHalf, UnitRect.Size * 0.5f);
+        CHECK(vertex.Shadow.x == doctest::Approx(8.0f));
+        CHECK(vertex.Shadow.y == doctest::Approx(2.0f));
+        CHECK(vertex.Shadow.z == doctest::Approx(4.0f));
+        CHECK(vertex.Shadow.w == doctest::Approx(6.0f));
+    }
+
+    // Untextured and gradient-free, so it merges with the quads around it into one run.
+    list.Quad(UnitRect, vec4(1.0f));
+    CHECK(list.GetRuns().size() == 1);
+}
+
+TEST_CASE("gui draw list: an inset shadow keeps the element box as its quad and signs its blur")
+{
+    DrawList list;
+    const BoxShadow shadow{
+        .Offset = vec2(3.0f), .Blur = 5.0f, .Spread = 1.0f, .Color = vec4(1.0f), .Inset = true};
+    list.Shadow(UnitRect, shadow);
+
+    REQUIRE(list.GetVertices().size() == 4);
+    // An inset shadow is bounded by the box it recesses, so the quad is exactly that box.
+    CheckVec2(list.GetVertices()[0].Position, UnitRect.Min);
+    CheckVec2(list.GetVertices()[2].Position, UnitRect.Max());
+    // The sign of the blur lane is the inset flag's only transport.
+    CHECK(list.GetVertices()[0].Shadow.x == doctest::Approx(-5.0f));
+}
+
+TEST_CASE("gui draw list: a hard shadow still carries a non-zero blur lane")
+{
+    DrawList list;
+    list.Shadow(UnitRect, BoxShadow{.Blur = 0.0f, .Color = vec4(1.0f)});
+    REQUIRE(list.GetVertices().size() == 4);
+    // A zero lane means "not a shadow" to the fragment, so a hard edge transports a tiny positive
+    // blur the fragment widens to the anti-aliasing width.
+    CHECK(list.GetVertices()[0].Shadow.x > 0.0f);
+
+    // A fully transparent shadow emits nothing at all.
+    DrawList empty;
+    empty.Shadow(UnitRect, BoxShadow{.Blur = 4.0f, .Color = vec4(0.0f)});
+    CHECK(empty.GetVertices().empty());
+}

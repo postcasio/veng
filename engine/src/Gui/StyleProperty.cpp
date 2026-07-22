@@ -100,6 +100,10 @@ namespace Veng::Gui
             return "image-repeat";
         case StyleProperty::ImageSlice:
             return "image-slice";
+        case StyleProperty::BoxShadow:
+            return "box-shadow";
+        case StyleProperty::BoxShadowColor:
+            return "box-shadow-color";
         }
         return "unknown";
     }
@@ -293,6 +297,14 @@ namespace Veng::Gui
         if (name == "image-slice")
         {
             return StyleProperty::ImageSlice;
+        }
+        if (name == "box-shadow")
+        {
+            return StyleProperty::BoxShadow;
+        }
+        if (name == "box-shadow-color")
+        {
+            return StyleProperty::BoxShadowColor;
         }
         return std::nullopt;
     }
