@@ -129,6 +129,17 @@ the work to dodge the diff — the fix is mechanical and the tree's clean-format
 clean-tidy invariant is exactly the point. Working around a trivial format/lint
 issue instead of fixing it is a defect, not a scope boundary.
 
+**This generalizes past the linters.** Any small defect you surface while working is
+yours to fix in the same pass: if fixing it is smaller than describing it, fix it —
+a stale comment, a wrong constant, a dangling doc reference, a misnamed field, a
+header comment contradicting the code beneath it. Roughly: a mechanical change under
+ten lines gets fixed on sight, with a line in the commit body noting it. A module or
+file boundary routes the work, it does not excuse it. Defer only when the fix is
+genuinely large, changes a contract other work depends on, or needs a decision you
+cannot make — and then say so plainly rather than silently narrowing scope. A plan's
+"out of scope" bounds that plan's **deliverable**; it never licenses leaving a known
+small defect standing in the tree.
+
 ### Linting (clang-tidy)
 
 clang-tidy is configured by the repo-root `.clang-tidy` as a **deliberately small
