@@ -1379,6 +1379,29 @@ namespace Veng
         {
             PumpNetWorld(WorldInstanceId{.Value = worldValue}, role);
         }
+
+#if defined(VE_PROFILE) && VE_PROFILE
+        // The connection RTT and the server's per-world replication bytes are maintained each frame
+        // regardless; sampling the existing figures here only puts them on the trace timeline.
+        if (m_Net->Client != nullptr && m_Net->Client->State() == Net::ClientState::Connected)
+        {
+            VE_PROFILE_COUNTER("Net/Client/RttMs",
+                               static_cast<f64>(m_Net->Client->Server().RttEstimate()) * 1000.0);
+        }
+        if (m_Net->Server != nullptr)
+        {
+            u64 replicationBytes = 0;
+            for (const auto& [worldValue, role] : m_Net->WorldRoles)
+            {
+                if (role == NetRole::Server)
+                {
+                    replicationBytes += m_Net->Server->ReplicationBytesForWorld(
+                        WorldInstanceId{.Value = worldValue});
+                }
+            }
+            VE_PROFILE_COUNTER("Net/Server/ReplicationBytes", static_cast<f64>(replicationBytes));
+        }
+#endif
     }
 
     void Application::PumpNetWorld(const WorldInstanceId world, const NetRole role)
