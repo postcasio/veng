@@ -17,4 +17,7 @@ imgui.ini
 
 # Compile-time tracing build tree (VENG_TIME_TRACE): objects plus a per-TU .json beside
 # each of them, gigabytes of it, embedding absolute developer paths.
-/build-trace/
+/build-trace*/
+
+# Python bytecode cache, written beside the scripts by any script run.
+__pycache__/
