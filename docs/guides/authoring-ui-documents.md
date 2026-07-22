@@ -226,10 +226,11 @@ Two consequences to author around:
 - **It is the top of the exclusive fill order** (`background-material` > `background-gradient` >
   `background-image` > `background`), so a rule authoring it beside any other background fill is a
   cook error, not a layering.
-- **Do not put a border on it.** A positive `border-width` restricts *any* fill — a material
-  included — to the border ring, and the element's own border quad is then painted over that ring
-  opaquely: the shader runs and is entirely hidden. A material ring is authored with
-  `border-width: 0`, drawing the annulus in the fragment's own alpha instead.
+- **A border draws over it, and does not cut it down.** The material paints the whole shape; the
+  element's `border-width` is a separate opaque ring painted on top, covering that many pixels of
+  the fill — the same thing it does to a flat colour or a gradient. So a border is fine. What a
+  border cannot do is turn the material *into* a ring: to shade an annulus, leave `border-width: 0`
+  and shape it in the fragment's own alpha.
 
 Animation comes from the pass clock (`g_PC.Time` in the fragment, seconds), not from writing a
 parameter per frame — so a sweeping or pulsing fill needs no C++ at all, and a capture that never

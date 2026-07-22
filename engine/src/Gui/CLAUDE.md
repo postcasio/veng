@@ -207,12 +207,14 @@ and `rotation` for free, and the material cannot widen, replace, or alpha-blur t
 - **Residency is a load-time dependency in both loaders**, exactly as `background-image`'s texture
   is: `StyleSheetLoader`'s `MaterialIds` for a rule and `UIDocumentLoader`'s for an inline style, so
   the instantiate-time resolve is a cache hit.
-- **A bordered element hides its own material fill.** `GuiFillResolve` restricts the fill to the
-  border ring when `border-width > 0` — the shape path's own rule, so the two fill sources agree —
-  and the element's border quad is then drawn *over* that ring, opaquely. Each half is right on its
-  own; together they make a material on a bordered element a silent no-op. **Author a material ring
-  with `border-width: 0`** and shape the annulus in the fragment's own alpha, which is where a
-  material's freedom actually is.
+- **A material fills the whole shape, and the border is drawn over it.** `GuiFillResolve`'s ring
+  branch keys off the *quad's* border lane, which is the emission-side flag meaning "this quad is
+  the border ring" — a bordered element is two quads, the fill and the ring, exactly as a flat or
+  gradient background is. `Document::Build` passes an empty `Border` for both material fill sites,
+  so a material always paints the full silhouette and the border quad then covers its outermost
+  `border-width` pixels, as it covers any other fill. **A material *ring* is therefore shaped in the
+  fragment's own alpha**, not by setting `border-width` — the border is a separate opaque quad, not
+  a window onto the fill.
 - **The cost is batching.** A material is part of the run key, so N distinct materials are ≥ N runs —
   the same trade a distinct texture already forces, and the reason the pass's rebind guard is keyed
   on `{kind, material instance}` rather than the run-kind enum (two adjacent material runs would
