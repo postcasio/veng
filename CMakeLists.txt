@@ -457,6 +457,11 @@ add_subdirectory(mcp)
 
 add_subdirectory(cooker)
 
+# vengtrace — the binary-capture -> Chrome Trace JSON converter, a sibling of vengc. Builds
+# unconditionally from source (veng is the tools) and joins the SDK export set. It links only
+# veng::veng, so it comes after engine.
+add_subdirectory(vengtrace)
+
 # The editor is the heavy GUI authoring surface above the cooker. The cooker + graph
 # always build from source (veng is the tools); this option decides only whether the
 # editor builds and installs, so a packaging superbuild produces a complete authoring
@@ -1081,6 +1086,29 @@ if (VENG_BUILD_TESTS)
 
     add_test(NAME mcp_cli COMMAND veng_test_mcp_cli)
     set_tests_properties(mcp_cli PROPERTIES LABELS mcp)
+
+    # ---- vengtrace converter conformance (device-free, fast band) -----------
+    # The binary-capture -> Chrome Trace JSON converter, decoded and projected against plan 01's
+    # committed reference fixture. It compiles vengtrace's own decoder/converter/CLI sources (the
+    # tool keeps them in the executable rather than an exported library) and drives them in-process:
+    # the record-type mapping, duration round-trips, the back-dated GPU-under-frame property, the
+    # truncation path, and the arg grammar + exit-code map (mirroring mcp_cli's RunClientCli proof).
+    # It parses the emitted JSON with nlohmann to assert on the projection, and reads the fixture by
+    # absolute path so it runs from any working directory. No GPU, so it is in the fast band.
+    add_executable(veng_test_vengtrace
+            tests/vengtrace.cpp
+            vengtrace/src/TraceDecoder.cpp
+            vengtrace/src/ChromeTraceConverter.cpp
+            vengtrace/src/Cli.cpp)
+    target_include_directories(veng_test_vengtrace PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/vengtrace/src ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    target_link_libraries(veng_test_vengtrace PRIVATE veng::veng doctest::doctest
+            nlohmann_json::nlohmann_json fmt::fmt)
+    target_compile_definitions(veng_test_vengtrace PRIVATE JSON_NOEXCEPTION
+            VENG_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
+
+    add_test(NAME vengtrace COMMAND veng_test_vengtrace)
+    set_tests_properties(vengtrace PROPERTIES LABELS "unit;fast")
 
     # The render-tools proof (mcp_screenshot) is registered after veng_test_shaders
     # (it renders the cube fixture through the test shader pack) further below.

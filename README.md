@@ -33,8 +33,8 @@ cmake -B build -S .
 cmake --build build
 ```
 
-This produces the engine library (`libveng`), the asset cooker (`vengc`), and the
-sample application.
+This produces the engine library (`libveng`), the asset cooker (`vengc`), the
+trace converter (`vengtrace`), and the sample application.
 
 To enable Vulkan validation layers while developing, configure a separate build
 directory with `-DVE_DEBUG=ON`:
@@ -159,6 +159,21 @@ generated at runtime (cubes, planes, spheres) with no cooker involved.
 
 The `examples/hello-triangle` directory is a complete, working reference for all
 of this — application, scene setup, assets, and build wiring.
+
+### Profiling
+
+When built with the diagnostics profiler (`VE_PROFILE`, on by default under
+`VE_DEBUG`), the engine can write a compact binary capture of a run's CPU and GPU
+timing. The `vengtrace` tool converts a capture to Chrome Trace Event JSON, which
+opens in [ui.perfetto.dev](https://ui.perfetto.dev) or
+[speedscope.app](https://speedscope.app):
+
+```sh
+vengtrace convert build-debug/captures/run.vtrace --out run.json
+```
+
+See [docs/guides/profiling-captures.md](docs/guides/profiling-captures.md) for the
+full workflow and what each track means.
 
 ---
 

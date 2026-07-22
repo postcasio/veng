@@ -80,6 +80,11 @@ symbol: build the Doxygen reference with `cmake --build build --target docs`
   tool families, connecting an MCP client to the loopback endpoint, the editor host
   and its `GetInspectables()` extension point, and the loopback/`Origin`/mutation
   safety model.
+- **[Viewing a profiling capture](guides/profiling-captures.md)** — converting a
+  binary `.vtrace` capture to Chrome Trace Event JSON with `vengtrace` and opening
+  it in Perfetto or speedscope: the `convert` command and its options, the exit-code
+  map, what each track (frames, CPU threads, GPU, counters, instants) means, and why
+  the JSON is a lossy viewer-facing projection nothing in veng reads.
 
 Every type, macro, and method these guides name exists in the engine as written,
 and the worked examples cross-reference the real

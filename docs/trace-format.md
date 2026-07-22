@@ -275,3 +275,17 @@ Within a recognized version:
 
 This file format's version is independent of the network `ProtocolVersion` and of the `.vengpack`
 archive version; the three are unrelated and move independently.
+
+## For readers: this binary is the native form
+
+This format is the **native, canonical** shape of a capture. Every consumer that reads a capture
+decodes *these bytes* — the observatory's ingest reads the binary directly, and `vengtrace` decodes
+it to hand a viewer a copy.
+
+`vengtrace` converts a capture to **Chrome Trace Event JSON** so it opens in Perfetto and speedscope.
+That JSON is a **lossy, viewer-facing projection**, not a second source of truth: it is larger, it
+drops what Chrome Trace has no slot for (the exact clock resolution, the format version, the chunk
+sequence gaps), and **nothing in veng or the observatory ever reads it**. The two never form a
+hierarchy in which one is the "real" capture and the JSON a cache of it — a decoder wanting a field
+the JSON cannot carry reads the binary, never the projection. A converter is a one-way escape hatch
+to general-purpose viewers; the binary is what everything else is written against.

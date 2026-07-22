@@ -18,6 +18,13 @@ if (NOT TARGET vengc)
     add_executable(vengc ALIAS veng::vengc)
 endif ()
 
+# vengtrace — the trace converter, exported as an IMPORTED executable under the veng:: namespace,
+# like vengc. Recreate the unqualified name so a downstream $<TARGET_FILE:vengtrace> resolves in
+# every consumption mode. It links only libveng, so its interface needs no extra find_dependency.
+if (NOT TARGET vengtrace)
+    add_executable(vengtrace ALIAS veng::vengtrace)
+endif ()
+
 # The editor surface arrives under the veng:: namespace (veng::veng_graph /
 # veng::veng_editor / veng::veng-editor). Recreate the in-tree alias spellings the helper
 # modules and a downstream EDITOR_MODULE use, each behind a NOT TARGET guard: veng_add_editor's
