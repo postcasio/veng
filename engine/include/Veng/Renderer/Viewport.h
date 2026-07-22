@@ -830,6 +830,11 @@ namespace Veng::Renderer
         /// @brief The native output extent the GuiScenePass is sized to; a region change re-sizes it.
         uvec2 m_GuiPassExtent = {};
 
+        /// @brief Seconds of document drive accumulated from the per-frame delta.
+        ///
+        /// Pushed to the GuiScenePass each record as the clock an animated material fill reads.
+        f32 m_GuiTime = 0.0f;
+
         /// @brief Bindless slot naming the GuiScenePass composite; unset until a document attaches.
         ///
         /// GetOutputHandle returns this while documents are attached, so a material or the compositor

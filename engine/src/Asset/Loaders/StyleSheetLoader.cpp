@@ -7,6 +7,7 @@
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/CookedBlobs.h>
 #include <Veng/Asset/Font.h>
+#include <Veng/Asset/MaterialInstance.h>
 #include <Veng/Asset/Texture.h>
 
 namespace Veng
@@ -145,6 +146,12 @@ namespace Veng
                     {
                         decoded.TextureIds.push_back(AssetId{cp.Handle});
                     }
+                    if ((declaration.Property == Gui::StyleProperty::BackgroundMaterial ||
+                         declaration.Property == Gui::StyleProperty::ImageMaterial) &&
+                        cp.Handle != 0)
+                    {
+                        decoded.MaterialIds.push_back(AssetId{cp.Handle});
+                    }
                     out.push_back(declaration);
                 }
                 return std::nullopt;
@@ -253,6 +260,7 @@ namespace Veng
             };
             deduplicate(decoded.FontIds);
             deduplicate(decoded.TextureIds);
+            deduplicate(decoded.MaterialIds);
 
             return decoded;
         }
@@ -319,6 +327,38 @@ namespace Veng
             {
                 const AssetResult<AssetHandle<Texture>> handle =
                     manager.LoadSync<Texture>(textureId);
+                if (!handle)
+                {
+                    return std::unexpected(handle.error());
+                }
+                dependencies.push_back(AssetManager::EntryOf(*handle));
+            }
+        }
+
+        // A `background-material` / `material` instance is an ordinary load-time dependency on the
+        // same footing as a texture; the id may name a bare Material, which the instance loader
+        // resolves to its zero-override default instance.
+        for (const AssetId materialId : decoded->MaterialIds)
+        {
+            if (async)
+            {
+                const AssetHandle<MaterialInstance> handle =
+                    manager.Load<MaterialInstance>(materialId);
+                if (!AssetManager::EntryOf(handle))
+                {
+                    return std::unexpected(AssetLoadError{
+                        .Kind = AssetError::MissingDependency,
+                        .Id = materialId,
+                        .Detail =
+                            fmt::format("stylesheet {}: material dependency {} did not resolve",
+                                        id.Value, materialId.Value)});
+                }
+                dependencies.push_back(AssetManager::EntryOf(handle));
+            }
+            else
+            {
+                const AssetResult<AssetHandle<MaterialInstance>> handle =
+                    manager.LoadSync<MaterialInstance>(materialId);
                 if (!handle)
                 {
                     return std::unexpected(handle.error());

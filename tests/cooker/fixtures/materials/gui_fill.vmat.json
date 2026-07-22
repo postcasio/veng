@@ -1,0 +1,12 @@
+{
+  "defaultInstance": "0x38FECEB6EB6644F5",
+  "domain": "GuiFill",
+  "shaders": {
+    "vertex": "0x23896E307C8108E6",
+    "fragment": "0x46FC05FE07B6E173"
+  },
+  "fields": [
+    { "name": "TintA", "type": "vec4", "value": [0.05, 0.55, 0.85, 1.0] },
+    { "name": "TintB", "type": "vec4", "value": [0.95, 0.35, 0.10, 1.0] }
+  ]
+}

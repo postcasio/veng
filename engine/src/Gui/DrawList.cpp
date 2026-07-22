@@ -122,7 +122,7 @@ namespace Veng::Gui
         return m_ClipStack.back();
     }
 
-    void DrawList::EnsureRun(GuiPipeline pipeline, u32 textureKey)
+    void DrawList::EnsureRun(GuiPipeline pipeline, u32 textureKey, const MaterialInstance* material)
     {
         const optional<Rect> clip = CurrentClip();
         const u32 firstIndex = static_cast<u32>(m_Indices.size());
@@ -135,9 +135,10 @@ namespace Veng::Gui
                 (!clip.has_value() || (last.Clip.Min == clip->Min && last.Clip.Size == clip->Size));
             // A run's texture key rides its trailing vertices' params; the run stores none, so a
             // texture change is detected by the caller opening a distinct run. The run merges only
-            // when the pipeline, clip, and texture key all match the trailing run — tracked through
-            // m_RunTextureKey below.
-            if (last.Pipeline == pipeline && clipMatches && m_RunTextureKey == textureKey)
+            // when the pipeline, clip, texture key, and material all match the trailing run —
+            // tracked through m_RunTextureKey / m_RunMaterial below.
+            if (last.Pipeline == pipeline && clipMatches && m_RunTextureKey == textureKey &&
+                m_RunMaterial == material)
             {
                 return;
             }
@@ -145,12 +146,14 @@ namespace Veng::Gui
 
         m_Runs.push_back(DrawRun{
             .Pipeline = pipeline,
+            .Material = material,
             .FirstIndex = firstIndex,
             .IndexCount = 0,
             .Clip = clip.value_or(Rect{}),
             .HasClip = clip.has_value(),
         });
         m_RunTextureKey = textureKey;
+        m_RunMaterial = material;
     }
 
     void DrawList::PushQuad(const std::array<vec2, 4>& corners, const std::array<vec2, 4>& uvs,
@@ -298,6 +301,37 @@ namespace Veng::Gui
         const u32 selector = static_cast<u32>(m_Gradients.size());
 
         PushQuad(corners, uvs, tint, half, center, params, selector);
+    }
+
+    void DrawList::MaterialFill(const Rect& rect, const MaterialInstance* material,
+                                const CornerRadii& radii, const Border& border, vec4 tint,
+                                const Rect& uv)
+    {
+        if (rect.IsEmpty() || material == nullptr)
+        {
+            return;
+        }
+
+        // The material *is* the run key: its pipeline and parameter block are what the pass binds,
+        // so no texture keys the run and two fills merge only when one material serves both.
+        EnsureRun(GuiPipeline::Material, Renderer::TextureHandle::Invalid, material);
+
+        const vec2 min = rect.Min;
+        const vec2 max = rect.Max();
+        const std::array<vec2, 4> corners = {min, vec2(max.x, min.y), max, vec2(min.x, max.y)};
+
+        const vec2 uvMin = uv.Min;
+        const vec2 uvMax = uv.Max();
+        const std::array<vec2, 4> uvs = {uvMin, vec2(uvMax.x, uvMin.y), uvMax,
+                                         vec2(uvMin.x, uvMax.y)};
+
+        const vec2 half = rect.Size * 0.5f;
+        const f32 radius = std::min(radii.TopLeft, std::min(half.x, half.y));
+        // The generated fragment reads only the radius and border lanes (through GuiFillResolve);
+        // the texture/sampler lanes stay negative, since a material samples through its own params.
+        const vec4 params{radius, border.Width, UntexturedIndex, UntexturedIndex};
+
+        PushQuad(corners, uvs, tint, half, rect.Center(), params);
     }
 
     void DrawList::EmitTexturedQuad(const Rect& rect, Renderer::TextureHandle texture,

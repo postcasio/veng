@@ -1,0 +1,13 @@
+{
+  "defaultInstance": "0x613B0B9D6991E209",
+  "domain": "GuiFill",
+  "shaders": {
+    "vertex": "0x23896E307C8108E6",
+    "fragment": "0x1D7F460EDDB8C4E3"
+  },
+  "fields": [
+    { "name": "Tint", "type": "vec4", "value": [0.35, 0.95, 0.55, 1.0] },
+    { "name": "Image", "type": "texture" },
+    { "name": "ImageSampler", "type": "sampler", "texture": "Image" }
+  ]
+}

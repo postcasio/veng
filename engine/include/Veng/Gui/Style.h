@@ -9,6 +9,7 @@
 namespace Veng
 {
     class Font;
+    class MaterialInstance;
     class Texture;
 }
 
@@ -21,6 +22,15 @@ namespace Veng
 /// font, opacity) feed the draw list. All spatial values are in framebuffer pixels.
 namespace Veng::Gui
 {
+    /// @brief Name of the TextureHandle field an Image's `material` receives its `src` texture in.
+    ///
+    /// The one convention binding the widget's authored art to its shading material. A material
+    /// declaring no such field simply shades without it.
+    inline constexpr const char* ImageMaterialTextureField = "Image";
+
+    /// @brief Name of the SamplerHandle field an Image's `material` receives its `src` sampler in.
+    inline constexpr const char* ImageMaterialSamplerField = "ImageSampler";
+
     /// @brief A gradient background resolved onto a Style: its shape, geometry, and resident ramp.
     ///
     /// The cook bakes a gradient's multi-stop color into an N×1 ramp LUT and stores its shape +
@@ -324,6 +334,15 @@ namespace Veng::Gui
         vec4 Background{0.0f};
         /// @brief A gradient background fill; when set it paints instead of the flat Background color.
         optional<ResolvedGradient> BackgroundGradient;
+        /// @brief A material background fill; empty (the default) leaves the other fill sources alone.
+        ///
+        /// The resident GuiFill material instance whose fragment shades the fill, resolved at
+        /// instantiate and held for the Style's lifetime like TextFont. It is the **top** of the
+        /// exclusive fill-source order (BackgroundMaterial > BackgroundGradient > BackgroundImage >
+        /// Background): when set, the material *is* the fill. The material never owns the
+        /// silhouette — the engine's rounded-rect coverage, the border ring, the clip, and the
+        /// rotation multiply into whatever RGBA it emits.
+        AssetHandle<MaterialInstance> BackgroundMaterial;
         /// @brief A texture background fill; empty (the default) leaves the flat/gradient fill alone.
         ///
         /// The resident texture the fill samples, resolved at instantiate and held for the Style's
@@ -364,6 +383,14 @@ namespace Veng::Gui
         /// corner insets — the natural minimum at which the frame still reads. A sliced Image is
         /// unrounded and ignores ObjectFit, exactly as a sliced background is.
         Insets ImageSlice;
+        /// @brief The GuiFill material an Image shades its content box through (`material`).
+        ///
+        /// When set it replaces the widget's own texture fill: the material paints the content box
+        /// and the element's `src` texture reaches it as a declared parameter (the
+        /// @ref ImageMaterialTextureField / @ref ImageMaterialSamplerField fields, written once at
+        /// instantiate when the material declares them), so a shader shades authored art rather
+        /// than replacing it. Inert on every kind but Image.
+        AssetHandle<MaterialInstance> ImageMaterial;
         /// @brief Per-corner background/border radius, in pixels.
         CornerRadii Radii;
         /// @brief Border width and color; a zero width draws no border.

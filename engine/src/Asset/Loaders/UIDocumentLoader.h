@@ -41,6 +41,8 @@ namespace Veng
             vector<AssetId> FontIds;
             /// @brief The deduplicated texture AssetIds the Image `src`s and inline `background-image`s name (load-time dependencies).
             vector<AssetId> TextureIds;
+            /// @brief The deduplicated material AssetIds the inline `background-material` / `material` styles name (load-time dependencies).
+            vector<AssetId> MaterialIds;
         };
 
         /// @brief Decodes a cooked UI-document blob into its recipe tree and dependency ids.

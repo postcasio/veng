@@ -704,7 +704,8 @@ namespace Veng::Cook
             const auto property = static_cast<StyleProperty>(cp.Property);
             if (property != StyleProperty::Background &&
                 property != StyleProperty::BackgroundGradient &&
-                property != StyleProperty::BackgroundImage)
+                property != StyleProperty::BackgroundImage &&
+                property != StyleProperty::BackgroundMaterial)
             {
                 continue;
             }
@@ -843,12 +844,14 @@ namespace Veng::Cook
         }
 
         case StyleProperty::BackgroundImage:
+        case StyleProperty::BackgroundMaterial:
+        case StyleProperty::ImageMaterial:
         {
             const optional<AssetId> id = ParseAssetId(v);
             if (!id)
             {
-                return std::unexpected(fmt::format(
-                    "{}: 'background-image' must be a hex AssetId (0x…), got '{}'", located, v));
+                return std::unexpected(fmt::format("{}: '{}' must be a hex AssetId (0x…), got '{}'",
+                                                   located, ToString(property), v));
             }
             CookedStyleProperty cp{};
             cp.Property = static_cast<u32>(property);

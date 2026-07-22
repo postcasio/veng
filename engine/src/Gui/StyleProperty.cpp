@@ -104,6 +104,10 @@ namespace Veng::Gui
             return "box-shadow";
         case StyleProperty::BoxShadowColor:
             return "box-shadow-color";
+        case StyleProperty::BackgroundMaterial:
+            return "background-material";
+        case StyleProperty::ImageMaterial:
+            return "material";
         }
         return "unknown";
     }
@@ -305,6 +309,14 @@ namespace Veng::Gui
         if (name == "box-shadow-color")
         {
             return StyleProperty::BoxShadowColor;
+        }
+        if (name == "background-material")
+        {
+            return StyleProperty::BackgroundMaterial;
+        }
+        if (name == "material")
+        {
+            return StyleProperty::ImageMaterial;
         }
         return std::nullopt;
     }

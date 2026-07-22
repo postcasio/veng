@@ -104,8 +104,8 @@ interaction mask, folds them over the base, and **eases** any transition-able pr
 opacity, scalar sizes) over its authored duration through a small tween clock. A style change that
 moves a layout input re-dirties the Yoga box; a pure paint change (color/opacity) does not.
 
-**A background is one fill source, never a stack.** `background-gradient` > `background-image` >
-`background`, **exclusive**: the winning source *is* the fill and they do not layer (CSS-style
+**A background is one fill source, never a stack.** `background-material` > `background-gradient` >
+`background-image` > `background`, **exclusive**: the winning source *is* the fill and they do not layer (CSS-style
 image-over-color compositing is out). This is what the fragment already does — `gui_shape.frag.slang`
 is `if (selector > 0) … else if (textureIndex >= 0) …` — so the rule costs nothing to enforce, and a
 single rule authoring two sources is a **cook error** rather than a silently-ignored declaration.
@@ -161,6 +161,51 @@ where a scissor could only bound it to the square box.
   smoothstep-over-SDF approximation is the whole mechanism. Text shadows are absent; the MSDF
   path is untouched.
 
+### Material fills: an authored fill source
+
+**A material is a fill source, never a silhouette.** `background-material: <material id>` on any
+container, and `material: <material id>` on an `Image`, name a resident **`MaterialDomain::GuiFill`**
+material whose fragment emits the RGBA *inside* the shape; the engine's rounded-rect SDF coverage,
+border ring, composited opacity, clip, and rotation all multiply into it exactly as they do a flat
+color. So a shader-driven fill composes with `corner-radius`, `border-width`, `overflow: hidden`,
+and `rotation` for free, and the material cannot widen, replace, or alpha-blur the silhouette. (A
+"full custom shader" domain flag that skips the coverage multiply is deliberately not built.)
+
+- **`background-material` is the top of the exclusive fill-source order** — above
+  `background-gradient`, `background-image`, and `background`. When set, the material *is* the fill;
+  a rule authoring it beside another fill source is the same **cook error** the rest of the order
+  raises. It may still sample a texture, as a declared parameter of its own.
+- **Authoring is three files and an id.** A `*.slang` fragment (or a `.graph.json` with
+  `"domain": "GuiFill"`) `#include`s the core-pack `Veng/guifill.slang`, declares its own
+  `MaterialParams`, and returns `GuiFillResolve(input, fill)`; a `*.vmat.json` carries
+  `"domain": "GuiFill"`, names the **core gui vertex stage** (`0x23896E307C8108E6`) as its vertex
+  shader, and declares a `defaultInstance` id; the style names **that instance id**. The three
+  domain-only source nodes a graph gets — `GuiBoxCoord`, `GuiUV`, `GuiTime` — are the same three
+  values a hand-written fragment reads off `GuiFillInputs` and `g_PC`.
+- **An `Image`'s `material` shades its art rather than replacing it.** The element's `src` texture
+  and sampler are written **once at resolve** into the two conventional runtime-bound handle fields
+  — `Image` and `ImageSampler` (`Gui::ImageMaterialTextureField` / `ImageMaterialSamplerField`) —
+  when the material declares them, so the shader samples exactly what the plain fill would have
+  drawn. A material declaring neither shades procedurally. The fill covers the **content** box, like
+  every other `Image` fill.
+- **Animation rides the pass clock, not a parameter write.** `GuiScenePass::SetTime` is the domain's
+  only per-frame channel (`float Time` at byte 16 of the GUI push block, read as `g_PC.Time`); the
+  viewport and the `GuiSurface` texture path each accumulate the frame delta into it. There is no
+  general per-frame material-parameter channel here, and a `GuiSurface` carrying a material fill
+  drops out of the dirty-gate and re-records every drive. Because the clock is *supplied*, a capture
+  that never advances it renders reproducibly — which is what makes `gui_material.png` a golden.
+- **Residency is a load-time dependency in both loaders**, exactly as `background-image`'s texture
+  is: `StyleSheetLoader`'s `MaterialIds` for a rule and `UIDocumentLoader`'s for an inline style, so
+  the instantiate-time resolve is a cache hit.
+- **The cost is batching.** A material is part of the run key, so N distinct materials are ≥ N runs —
+  the same trade a distinct texture already forces, and the reason the pass's rebind guard is keyed
+  on `{kind, material instance}` rather than the run-kind enum (two adjacent material runs would
+  otherwise draw the second's geometry with the first's pipeline). Adjacent fills sharing one
+  material still merge. `GuiScenePass` caches one built pipeline **per parent material** (the
+  pipeline depends on its layout and modules, not on an instance's parameter block), each entry
+  pinning that material's shader modules resident — bounded by the resident material set of the
+  documents the pass draws.
+
 ### The `Image` widget's fill
 
 **One fill vocabulary, two hosts.** The same three shapes drive the `Image` widget's own content
@@ -191,10 +236,13 @@ whole texture, since that is what the sampler's wrap addresses.
 `Gui::DrawList` (`Veng/Gui/DrawList.h`) is a device-free builder of **batched, clipped, textured
 quads** — rounded-rect / border SDF, 9-slice, tint/opacity, and MSDF text runs — that
 `Document::Build` appends into. A `GuiScenePass` records the draw list into an offscreen image
-blended over the viewport's scene output (its Slang shaders, `gui.slang` + the MSDF text shader,
-are core-pack shaders — a game reuses them, never authors a UI shader). The image goldens
-(`gui_overlay`, `gui_rotated`, `gui_image`, `gui_background`, `gui_shadow`) are the render floor
-every later change holds pixel-stable against. **The vertex format is five files, not one**: the
+blended over the viewport's scene output. Its two fixed pipelines (the rounded-rect shape path and
+the MSDF text path) are built from **core-pack** Slang shaders a consumer reuses rather than
+authors; the **third** run kind, `GuiPipeline::Material`, is the seam where a consumer *does*
+author a fragment — an authored `GuiFill` material, drawn on the same vertex stage and multiplied
+by the same silhouette (see [Material fills](#material-fills-an-authored-fill-source) above). The
+image goldens (`gui_overlay`, `gui_rotated`, `gui_image`, `gui_background`, `gui_shadow`,
+`gui_material`) are the render floor every later change holds pixel-stable against. **The vertex format is five files, not one**: the
 `GuiVertex` struct, the cooked `gui.vlayout.json` the pass loads, and the `VSInput`/`VSOutput` of
 `gui.vert.slang` — the shader importer hard-errors at cook time on a reflected-vs-declared
 mismatch, so a new field lands in all of them at once or nothing cooks.

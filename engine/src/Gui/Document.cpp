@@ -5,6 +5,7 @@
 #include <Veng/Assert.h>
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Font.h>
+#include <Veng/Asset/MaterialInstance.h>
 #include <Veng/Asset/Texture.h>
 #include <Veng/Gui/StyleSheet.h>
 #include <Veng/Gui/UIDocument.h>
@@ -643,6 +644,33 @@ namespace Veng::Gui
             }
         }
 
+        // Hands an Image's resolved source texture to the material shading it, once, through the
+        // two conventional handle fields. A material that declares neither shades without the
+        // texture (a purely procedural fill), so the write is conditional on the reflected schema
+        // rather than required by it — and it runs at resolve, not per frame, since a UI material
+        // has no per-frame parameter channel.
+        void BindImageMaterialTexture(Element& element)
+        {
+            MaterialInstance* const material = element.ComputedStyle.ImageMaterial.Get();
+            if (material == nullptr || !element.ImageTexture.IsValid())
+            {
+                return;
+            }
+            const auto declares = [material](const char* name, MaterialField::FieldKind kind)
+            {
+                return std::ranges::any_of(material->GetFields(), [&](const MaterialField& field)
+                                           { return field.Name == name && field.Kind == kind; });
+            };
+            if (declares(ImageMaterialTextureField, MaterialField::FieldKind::TextureHandle))
+            {
+                material->SetTextureHandle(ImageMaterialTextureField, element.ImageTexture);
+            }
+            if (declares(ImageMaterialSamplerField, MaterialField::FieldKind::SamplerHandle))
+            {
+                material->SetSamplerHandle(ImageMaterialSamplerField, element.ImageSampler);
+            }
+        }
+
         // Resolves an Image element's source texture: its recipe tint and UV fold onto the element,
         // and its `src` AssetId resolves to a resident AssetHandle<Texture> through the borrowed
         // manager (a cache lookup — the texture is already resident as a load-time dependency), whose
@@ -670,6 +698,8 @@ namespace Veng::Gui
                 element.ImageSize = vec2(texture.Get()->GetExtent());
                 element.Image = std::move(texture);
             }
+
+            BindImageMaterialTexture(element);
         }
 
         // Formats a leaf field value at `fieldPtr` (of registered type `info`) as display text. A
@@ -1337,6 +1367,8 @@ namespace Veng::Gui
             case StyleProperty::ImageRepeat:
             case StyleProperty::BoxShadow:
             case StyleProperty::BoxShadowColor:
+            case StyleProperty::BackgroundMaterial:
+            case StyleProperty::ImageMaterial:
                 return false;
             // A slice makes an Image's intrinsic size the sum of its corner insets, so authoring or
             // dropping one re-measures the leaf.
@@ -1411,6 +1443,8 @@ namespace Veng::Gui
             // would interpolate an enum alongside the pixels; both halves snap.
             case StyleProperty::BoxShadow:
             case StyleProperty::BoxShadowColor:
+            case StyleProperty::BackgroundMaterial:
+            case StyleProperty::ImageMaterial:
                 return false;
             }
             return false;
@@ -3003,10 +3037,18 @@ namespace Veng::Gui
             list.Shadow(rect, shadow, style.Radii);
         }
 
-        // Fill sources are exclusive and ranked BackgroundGradient > BackgroundImage > Background:
-        // the winning source is the fill, and they never layer. The border is drawn over whichever
-        // wins.
-        if (style.BackgroundGradient.has_value() && style.BackgroundGradient->Ramp.IsLoaded())
+        // Fill sources are exclusive and ranked BackgroundMaterial > BackgroundGradient >
+        // BackgroundImage > Background: the winning source is the fill, and they never layer. The
+        // border is drawn over whichever wins.
+        if (style.BackgroundMaterial.IsLoaded())
+        {
+            // A material emits the RGBA inside the shape; the engine's SDF coverage, the border
+            // ring, and the composited opacity multiply into it, so the material never widens or
+            // replaces the silhouette. The opacity rides the vertex color the fragment reads.
+            list.MaterialFill(rect, style.BackgroundMaterial.Get(), style.Radii, {},
+                              vec4(1.0f, 1.0f, 1.0f, opacity));
+        }
+        else if (style.BackgroundGradient.has_value() && style.BackgroundGradient->Ramp.IsLoaded())
         {
             const ResolvedGradient& gradient = *style.BackgroundGradient;
             const Texture& ramp = *gradient.Ramp.Get();
@@ -3071,8 +3113,20 @@ namespace Veng::Gui
         //
         // The three shapes are the background fill's, against the widget's own properties: sliced
         // (nine-slice, unrounded), tiled (one quad, a wrapping sampler, a scaled UV), or fitted.
-        if (element.Kind == ElementKind::Image && element.ImageTexture.IsValid() &&
-            element.ImageSampler.IsValid())
+        //
+        // An authored `material` supersedes the texture fill: the material shades the same content
+        // box, with the element's own texture reaching it as a declared parameter rather than as
+        // the fill itself, so a shader animates or recolors authored art instead of replacing it.
+        if (element.Kind == ElementKind::Image && style.ImageMaterial.IsLoaded())
+        {
+            vec4 tint = element.ImageTint;
+            tint.a *= opacity;
+            const FillBox content = ToContentBox(rect, style);
+            list.MaterialFill(content.Box, style.ImageMaterial.Get(), content.Radii, {}, tint,
+                              element.ImageUv);
+        }
+        else if (element.Kind == ElementKind::Image && element.ImageTexture.IsValid() &&
+                 element.ImageSampler.IsValid())
         {
             vec4 tint = element.ImageTint;
             tint.a *= opacity;

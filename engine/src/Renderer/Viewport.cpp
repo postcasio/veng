@@ -440,6 +440,8 @@ namespace Veng::Renderer
             m_GuiPassExtent = m_Region.Extent;
         }
         m_GuiPass->SetUiScale(m_UiScale);
+        m_GuiTime += delta;
+        m_GuiPass->SetTime(m_GuiTime);
 
         // Walk bottom → top, driving each document's per-frame pipeline and appending its geometry
         // into the one shared draw list, so the layers composite in a single GuiScenePass record.

@@ -91,6 +91,8 @@ namespace Veng::Gui
         DrawList m_Draws;
         /// @brief The resolution the target was last sized to; a change re-sizes and re-renders.
         uvec2 m_TargetExtent{0, 0};
+        /// @brief Seconds of drive accumulated from the per-frame delta, pushed as the pass's clock.
+        f32 m_Time = 0.0f;
         /// @brief Whether any document render has happened yet (the first is unconditional).
         bool m_EverRendered = false;
         /// @brief Whether the most recent RenderToTarget re-recorded the document.

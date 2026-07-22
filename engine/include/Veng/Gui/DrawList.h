@@ -8,6 +8,7 @@
 namespace Veng
 {
     class Font;
+    class MaterialInstance;
 }
 
 /// @brief Device-free UI primitives: the draw list, its runs, and the shared value types.
@@ -213,6 +214,8 @@ namespace Veng::Gui
         Shape,
         /// @brief MSDF glyph coverage sampled from a font atlas.
         Msdf,
+        /// @brief An authored GuiFill material shading the fill, the engine's SDF coverage multiplying it.
+        Material,
     };
 
     /// @brief One interleaved vertex of the draw list's single geometry stream.
@@ -256,7 +259,7 @@ namespace Veng::Gui
         vec4 Shadow{0.0f};
     };
 
-    /// @brief A contiguous slice of the index stream sharing one pipeline, clip, and texture.
+    /// @brief A contiguous slice of the index stream sharing one pipeline, clip, texture, and material.
     ///
     /// The pass replays runs in order, changing pipeline / scissor / bound texture only at run
     /// boundaries. A run's clip is already intersected with the enclosing clip stack, so the
@@ -265,6 +268,12 @@ namespace Veng::Gui
     {
         /// @brief The fragment path this run replays.
         GuiPipeline Pipeline = GuiPipeline::Shape;
+        /// @brief The material shading a GuiPipeline::Material run; null on every other run.
+        ///
+        /// Borrowed for the frame, not owned: the resident AssetHandle keeping it alive lives on
+        /// the Style that authored the fill, and a draw list is rebuilt from that tree each frame.
+        /// It is part of the run key, so two adjacent fills with different materials are two runs.
+        const MaterialInstance* Material = nullptr;
         /// @brief First index of this run in the draw list's index stream.
         u32 FirstIndex = 0;
         /// @brief Number of indices in this run.
@@ -325,6 +334,24 @@ namespace Veng::Gui
         /// @param tint    Multiplied over the sampled ramp texel, linear straight-alpha RGBA.
         void Gradient(const Rect& rect, const GradientFill& fill, const CornerRadii& radii = {},
                       const Border& border = {}, vec4 tint = vec4(1.0f));
+
+        /// @brief Appends a rounded rectangle whose fill color an authored GuiFill material shades.
+        ///
+        /// A material is a fill *source*, never a silhouette: the fragment's authored RGBA is
+        /// multiplied by the same rounded-rect SDF coverage and border ring the flat and gradient
+        /// fills ride, so corner radius, border, clip, opacity, and rotation compose with it for
+        /// free. The quad opens a run keyed by the material instance, so a distinct material breaks
+        /// batching exactly as a distinct texture does.
+        /// @param rect      The rectangle, in framebuffer pixels.
+        /// @param material  The GuiFill material instance shading the fill; null draws nothing.
+        /// @param radii     Per-corner radius; the shape path uses the uniform radius.
+        /// @param border    Optional border; a positive width restricts the fill to the ring.
+        /// @param tint      Forwarded to the fragment as the vertex color, linear straight-alpha RGBA.
+        /// @param uv        UV rectangle the quad interpolates (defaults to the whole 0..1 box).
+        void MaterialFill(const Rect& rect, const MaterialInstance* material,
+                          const CornerRadii& radii = {}, const Border& border = {},
+                          vec4 tint = vec4(1.0f),
+                          const Rect& uv = {.Min = {0.0f, 0.0f}, .Size = {1.0f, 1.0f}});
 
         /// @brief Appends a textured quad modulated by a tint, optionally rounded.
         ///
@@ -441,13 +468,17 @@ namespace Veng::Gui
 
         /// @brief Ensures the trailing run matches the key, opening a new run when it differs.
         ///
-        /// The run-partitioning core: a primitive that shares {pipeline, clip, texture} with the
-        /// trailing run extends it; any difference (including a change of clip nesting) opens a new
-        /// run. The texture key is folded into the params-carried index, so a distinct texture is a
-        /// distinct run even at the same pipeline and clip.
+        /// The run-partitioning core: a primitive that shares {pipeline, clip, texture, material}
+        /// with the trailing run extends it; any difference (including a change of clip nesting)
+        /// opens a new run. The texture key is folded into the params-carried index, so a distinct
+        /// texture is a distinct run even at the same pipeline and clip; the material is the same
+        /// key one level up, since two material fills share a run only when one pipeline and one
+        /// parameter block serve both.
         /// @param pipeline    The pipeline this primitive draws with.
         /// @param textureKey  The bindless texture index keying the run (Invalid for untextured shapes).
-        void EnsureRun(GuiPipeline pipeline, u32 textureKey);
+        /// @param material    The material instance keying the run (null for every non-material run).
+        void EnsureRun(GuiPipeline pipeline, u32 textureKey,
+                       const MaterialInstance* material = nullptr);
 
         /// @brief Appends one axis-aligned quad (four vertices, six indices) into the current run.
         /// @param corners   The four corner positions in framebuffer pixels (TL, TR, BR, BL order).
@@ -485,5 +516,10 @@ namespace Veng::Gui
         /// The run table stores no texture, so the merge test in EnsureRun compares this against the
         /// incoming key to keep a distinct texture in its own run.
         u32 m_RunTextureKey = Renderer::TextureHandle::Invalid;
+        /// @brief Material instance keying the trailing run; null on a non-material run.
+        ///
+        /// The run table does carry its material (the pass needs it to bind), so this mirrors the
+        /// trailing run's value only to keep the merge test in EnsureRun uniform with the texture key.
+        const MaterialInstance* m_RunMaterial = nullptr;
     };
 }

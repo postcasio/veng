@@ -1,5 +1,7 @@
 #include <Veng/Gui/DocumentTexture.h>
 
+#include <algorithm>
+
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Gui/Document.h>
 #include <Veng/Gui/RenderTarget.h>
@@ -52,12 +54,21 @@ namespace Veng::Gui
             });
         }
 
+        m_Time += delta;
+        m_Pass->SetTime(m_Time);
+
+        // A material fill's animation rides the pass's clock, so its pixels change with no dirty
+        // signal from the tree at all — a document carrying one is re-recorded every drive.
+        const bool hasMaterialFill =
+            std::ranges::any_of(m_Draws.GetRuns(), [](const DrawRun& run)
+                                { return run.Pipeline == GuiPipeline::Material; });
+
         // Dirty-gate: re-render only when the layout changed, a transition is animating, or the
         // resolution moved. A static document keeps its persistent target content and re-records
         // nothing. The caller refreshes the document's data bindings ahead of this call, so a moved
         // binding has already dirtied the layout and is reflected below.
-        const bool needsRender =
-            !m_EverRendered || resolutionChanged || document.IsDirty() || document.IsAnimating();
+        const bool needsRender = !m_EverRendered || resolutionChanged || document.IsDirty() ||
+                                 document.IsAnimating() || hasMaterialFill;
         if (needsRender)
         {
             const vec2 available(static_cast<f32>(resolution.x), static_cast<f32>(resolution.y));

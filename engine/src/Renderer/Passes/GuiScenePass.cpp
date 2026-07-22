@@ -1,11 +1,15 @@
 #include "GuiScenePass.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
+
+#include <fmt/format.h>
 
 #include <Veng/Assert.h>
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Material.h>
+#include <Veng/Asset/MaterialInstance.h>
 #include <Veng/Asset/Shader.h>
 #include <Veng/Asset/VertexLayout.h>
 #include <Veng/Gui/DrawList.h>
@@ -82,6 +86,8 @@ namespace Veng::Renderer
         // The draw-list-points → UI-image-pixels magnification (see SetUiScale); positions
         // scale through the vertex-stage clip transform, clip rects through the scissor.
         f32 UiScale = 1.0f;
+        // Seconds an animated material fill reads out of the push block; the driver advances it.
+        f32 Time = 0.0f;
         Format OutputFormat;
 
         // Resident shaders keep the modules alive for the pipelines' lifetime.
@@ -94,6 +100,16 @@ namespace Veng::Renderer
         Ref<PipelineLayout> GuiLayout;
         Ref<GraphicsPipeline> ShapePipeline;
         Ref<GraphicsPipeline> MsdfPipeline;
+
+        // The gui vertex layout every gui pipeline is built against, kept past construction because
+        // a material fill's pipeline is built on first sight rather than up front.
+        optional<VertexBufferLayout> GuiVertexLayout;
+
+        // One built pipeline per GuiFill *parent* material — the pipeline depends on the parent's
+        // layout and modules, never on an instance's parameter block, so N instances of one
+        // material share it. Each entry pins that material's shader modules resident for the pass's
+        // lifetime, so the cache is bounded by the resident material set of the documents it draws.
+        map<const Veng::Material*, Ref<GraphicsPipeline>> MaterialPipelines;
 
         Ref<PipelineLayout> BlitLayout;
         Ref<GraphicsPipeline> ScenePipeline;   // opaque scene copy into the composite
@@ -179,10 +195,96 @@ namespace Veng::Renderer
                 ImageView::Create(Context, {.Name = "Gui Composite View", .Image = CompositeImage});
         }
 
+        // Returns the pipeline for a GuiFill material, building it on first sight.
+        //
+        // The pass-built-domain shape, with more than the color format supplied: a GUI pipeline also
+        // needs the gui vertex layout, the premultiplied-over blend, and the material's own layout
+        // (whose push range covers the reserved GUI block plus the selector past it). The pass
+        // authors no shader — both modules are the material's.
+        const Ref<GraphicsPipeline>& MaterialPipelineFor(const MaterialInstance& instance)
+        {
+            const Veng::Material* parent = instance.GetParent().Get();
+            VE_ASSERT(parent != nullptr,
+                      "GuiScenePass: material instance '{}' has no resident parent",
+                      instance.GetName());
+            VE_ASSERT(parent->GetDomain() == MaterialDomain::GuiFill,
+                      "GuiScenePass: material '{}' is not a GuiFill material", parent->GetName());
+
+            const auto existing = MaterialPipelines.find(parent);
+            if (existing != MaterialPipelines.end())
+            {
+                return existing->second;
+            }
+
+            Ref<GraphicsPipeline> pipeline = GraphicsPipeline::Create(
+                Context,
+                {
+                    .Name = fmt::format("GuiScenePass Material Pipeline ({})", parent->GetName()),
+                    .ColorAttachments = {{.Format = OutputFormat, .Blend = PremultipliedOver()}},
+                    .VertexBufferLayout = GuiVertexLayout,
+                    .PipelineLayout = parent->GetPipelineLayout(),
+                    .ShaderStages =
+                        {
+                            {.Stage = ShaderStage::Vertex, .Module = parent->GetVertexModule()},
+                            {.Stage = ShaderStage::Fragment, .Module = parent->GetFragmentModule()},
+                        },
+                });
+            return MaterialPipelines.emplace(parent, std::move(pipeline)).first->second;
+        }
+
+        // Writes the shared GUI push block into a material pipeline's declared ranges.
+        //
+        // A material layout reflects its two stages separately — the gui vertex stage's block and
+        // the generated fragment's, which continues past it to the selector — so the shared bytes
+        // sit under two overlapping ranges with different stages. The typed push cannot express
+        // that (it wants exactly one containing range), and a single raw push cannot either: a
+        // push must name *every* stage whose range covers a byte it writes, and no stage whose
+        // range does not. So the block is cut at the ranges' boundaries and each segment is pushed
+        // with the union of the stages covering it.
+        static void PushGuiBlock(CommandBuffer& passCmd, const PipelineLayout& layout,
+                                 const GuiPushConstants& push)
+        {
+            constexpr auto blockSize = static_cast<u32>(sizeof(GuiPushConstants));
+            const vector<PushConstantRange>& ranges = layout.GetPushConstantRanges();
+
+            vector<u32> cuts{0, blockSize};
+            for (const PushConstantRange& range : ranges)
+            {
+                cuts.push_back(std::min(range.Offset, blockSize));
+                cuts.push_back(std::min(range.Offset + range.Size, blockSize));
+            }
+            std::ranges::sort(cuts);
+            cuts.erase(std::ranges::unique(cuts).begin(), cuts.end());
+
+            for (usize i = 0; i + 1 < cuts.size(); ++i)
+            {
+                const u32 begin = cuts[i];
+                const u32 end = cuts[i + 1];
+                u32 stages = 0;
+                for (const PushConstantRange& range : ranges)
+                {
+                    if (range.Offset <= begin && begin < range.Offset + range.Size)
+                    {
+                        stages |= static_cast<u32>(range.Stages);
+                    }
+                }
+                if (stages == 0)
+                {
+                    continue;
+                }
+                passCmd.PushConstants(PushConstantsInfo{
+                    .StageFlags = static_cast<ShaderStage>(stages),
+                    .Offset = begin,
+                    .Size = end - begin,
+                    .Data = reinterpret_cast<const u8*>(&push) + begin,
+                });
+            }
+        }
+
         // Replays the cached run table into the bound color target at the given extent: binds the
-        // ring geometry, and per run its pipeline (rounded-rect SDF or MSDF text), set 0, push
-        // block, and scissor. Shared by the overlay UI pass and the render-to-texture sink, so both
-        // sinks record identical geometry into their respective targets.
+        // ring geometry, and per run its pipeline (rounded-rect SDF, MSDF text, or an authored
+        // GuiFill material), set 0, push block, and scissor. Shared by the overlay UI pass and the
+        // render-to-texture sink, so both sinks record identical geometry into their targets.
         void RecordRuns(CommandBuffer& passCmd, uvec2 extent)
         {
             const BindlessRegistry& bindless = Context.GetBindlessRegistry();
@@ -197,10 +299,14 @@ namespace Veng::Renderer
                                       UiScale / static_cast<f32>(extent.y)),
                 .GradientBuffer = GradientSlot.Index,
                 .GradientBase = GradientBase,
-                .Time = 0.0f,
+                .Time = Time,
             };
 
+            // The rebind guard is keyed on {kind, material}, not the kind alone: two adjacent
+            // material runs both read GuiPipeline::Material, and skipping the rebind between them
+            // would draw the second material's geometry with the first's pipeline and params.
             optional<Gui::GuiPipeline> boundPipeline;
+            const MaterialInstance* boundMaterial = nullptr;
 
             for (const Gui::DrawRun& run : Runs)
             {
@@ -209,14 +315,28 @@ namespace Veng::Renderer
                     continue;
                 }
 
-                if (boundPipeline != run.Pipeline)
+                if (boundPipeline != run.Pipeline || boundMaterial != run.Material)
                 {
-                    passCmd.BindPipeline(run.Pipeline == Gui::GuiPipeline::Msdf ? MsdfPipeline
-                                                                                : ShapePipeline);
-                    // Set 0 is bound after the pipeline so the layout is established.
-                    bindless.Bind(passCmd);
-                    passCmd.PushConstants(push);
+                    if (run.Pipeline == Gui::GuiPipeline::Material)
+                    {
+                        const MaterialInstance& material = *run.Material;
+                        passCmd.BindPipeline(MaterialPipelineFor(material));
+                        // Set 0 is bound after the pipeline so the layout is established.
+                        bindless.Bind(passCmd);
+                        PushGuiBlock(passCmd, *material.GetPipelineLayout(), push);
+                        // The instance pushes its own frame-folded selector past the GUI block; its
+                        // parent owns no pipeline, so this binds nothing further.
+                        material.Bind(passCmd);
+                    }
+                    else
+                    {
+                        passCmd.BindPipeline(
+                            run.Pipeline == Gui::GuiPipeline::Msdf ? MsdfPipeline : ShapePipeline);
+                        bindless.Bind(passCmd);
+                        passCmd.PushConstants(push);
+                    }
                     boundPipeline = run.Pipeline;
+                    boundMaterial = run.Material;
                 }
 
                 // The run's clip is already an absolute rectangle in logical points; the scissor
@@ -354,6 +474,9 @@ namespace Veng::Renderer
                       layoutResult.error().Detail);
             guiLayout = layoutResult->Get()->GetLayout();
         }
+        // A material fill's pipeline is built on first sight, long after construction, and needs the
+        // same vertex layout the fixed pipelines are built against.
+        m_Impl->GuiVertexLayout = guiLayout;
 
         m_Impl->GuiLayout = PipelineLayout::Create(
             context, {
@@ -515,6 +638,11 @@ namespace Veng::Renderer
     {
         VE_ASSERT(scale > 0.0f, "GuiScenePass::SetUiScale: scale {} must be positive", scale);
         m_Impl->UiScale = scale;
+    }
+
+    void GuiScenePass::SetTime(const f32 seconds)
+    {
+        m_Impl->Time = seconds;
     }
 
     void GuiScenePass::Resize(uvec2 extent)

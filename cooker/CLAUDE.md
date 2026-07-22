@@ -85,7 +85,8 @@ at cook time:
   (`CookContext::ShaderIncludeDir`, set by the `veng_add_asset_pack` / `veng_add_project` CMake from
   `${VENG_CORE_SHADER_DIR}`; the editor's cook-on-demand fills it from the core pack's own
   directory). A consumer (or generated) `.slang` therefore `#include`s its domain's engine material
-  contract directly — `#include "Veng/surface.slang"` (or `Veng/postprocess.slang` / `Veng/sky.slang`)
+  contract directly — `#include "Veng/surface.slang"` (or `Veng/postprocess.slang` / `Veng/sky.slang` /
+  `Veng/guifill.slang`)
   — the per-domain engine headers under `engine/assets/core/shaders/Veng/`, each holding the bindless
   declarations, `g_ViewConstants`, and its domain's push block + fragment-input struct (`surface.slang`
   additionally `DrawData`, `GBufferOutput`, `ComputeMotionVector`). The per-shader `MaterialParams`

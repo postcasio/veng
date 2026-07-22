@@ -94,6 +94,15 @@ namespace Veng::Renderer
         /// @param scale  The UI scale factor; must be positive.
         void SetUiScale(f32 scale);
 
+        /// @brief Sets the clock an animated material fill reads out of the pass's push block.
+        ///
+        /// A GuiFill material's only per-frame channel: the value lands in the GUI push block both
+        /// record sites push, so a fill animates with no per-frame parameter write and no game code.
+        /// It is caller-supplied rather than accumulated internally, so a capture pins it and
+        /// renders reproducibly. The default is 0.
+        /// @param seconds  Elapsed seconds since whatever origin the driver chose.
+        void SetTime(f32 seconds);
+
         /// @brief Records the UI into its image and blends it over the scene output.
         ///
         /// Clears the UI image to transparent, replays each cached run (scissor + pipeline) into it,

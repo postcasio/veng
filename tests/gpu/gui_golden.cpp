@@ -7,12 +7,13 @@
 // golden is (re)generated: dump, sips the PPM to tests/golden/gui_overlay.png, commit. Each of the
 // document-driven cases below carries its own dump variable and golden on the same pattern
 // (VENG_GUI_ROTATED_GOLDEN_DUMP, VENG_GUI_IMAGE_GOLDEN_DUMP, VENG_GUI_BACKGROUND_GOLDEN_DUMP,
-// VENG_GUI_SHADOW_GOLDEN_DUMP).
+// VENG_GUI_SHADOW_GOLDEN_DUMP, VENG_GUI_MATERIAL_GOLDEN_DUMP).
 //
 // The same font fixture backs one non-rendering case here: a TextInput built with a resident font
 // emits its own value as a glyph run, which needs a real atlas and so cannot live in the
 // device-free widget suite.
 
+#include <algorithm>
 #include <array>
 #include <cstdlib>
 #include <filesystem>
@@ -957,6 +958,124 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     const double fraction = static_cast<double>(mismatched) / static_cast<double>(pixelCount);
     MESSAGE("gui shadow golden: ", mismatched, "/", pixelCount, " pixels exceed delta ",
+            MaxChannelDelta, " (worst ", worst, ")");
+    CHECK(fraction <= MaxMismatchFraction);
+
+    std::filesystem::remove(outArchive);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "gui material golden: a GuiFill material fills a panel and shades an Image")
+{
+    // Cook a UI document driven by two authored GuiFill materials — a procedural sweep filling
+    // panel backgrounds (plain, bordered, faded, and heavily rounded) and a second material shading
+    // an <Image>'s own texture through the two conventional handle fields — instantiate + solve +
+    // build it, render through GuiScenePass, and pin the composite. One background is styled from a
+    // *stylesheet* rule while the rest are inline, so the capture covers both residency paths a UI
+    // material rides. The pass clock is left at its 0 default, so the animated sweep is captured at
+    // a fixed time and the golden is reproducible.
+    const path fixtureDir = path(GPU_COOKER_FIXTURE_DIR);
+    const path packJson = fixtureDir / "ui_material_pack.json";
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_ui_material.vengpack";
+    const std::array<path, 1> references{path(VENG_CORE_PACK_JSON)};
+
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    const VoidResult cooked = cooker.CookPack(packJson, outArchive, references, nullptr, nullptr,
+                                              nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR));
+    REQUIRE_MESSAGE(cooked.has_value(), cooked.error());
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(outArchive).has_value());
+
+    const AssetResult<AssetHandle<Gui::UIDocument>> recipe =
+        assets.LoadSync<Gui::UIDocument>(AssetId{0xED64D6867A7A6259ULL});
+    const string loadError = recipe.has_value() ? string{} : recipe.error().Detail;
+    REQUIRE_MESSAGE(recipe.has_value(), loadError);
+    REQUIRE(recipe->IsLoaded());
+
+    const Unique<Gui::Document> document = Gui::Document::Instantiate(*recipe->Get(), assets);
+    REQUIRE(document != nullptr);
+
+    const Ref<Image> sceneImage =
+        Image::Create(Context, {
+                                   .Name = "Gui Material Scene",
+                                   .Extent = {Extent.x, Extent.y, 1},
+                                   .Format = Format::RGBA16Sfloat,
+                                   .Usage = ImageUsage::ColorAttachment | ImageUsage::Sampled |
+                                            ImageUsage::TransferSrc,
+                               });
+    const Ref<ImageView> sceneView =
+        ImageView::Create(Context, {.Name = "Gui Material Scene View", .Image = sceneImage});
+    ClearImage(Context, sceneView, ClearColor{.R = 0.10f, .G = 0.12f, .B = 0.16f, .A = 1.0f});
+
+    document->Solve(vec2(static_cast<f32>(Extent.x), static_cast<f32>(Extent.y)));
+    Gui::DrawList list;
+    document->Build(list);
+
+    // The batching cost the fill source imposes, and why the pass's rebind guard cannot key on the
+    // run kind alone: the five material fills collapse to four runs — the first two share a
+    // material *and* adjacency so they merge, while the bordered one's border quad, the second
+    // material, and the trailing panel each break the run.
+    const auto materialRuns =
+        std::ranges::count_if(list.GetRuns(), [](const Gui::DrawRun& run)
+                              { return run.Pipeline == Gui::GuiPipeline::Material; });
+    CHECK(materialRuns == 4);
+
+    const Unique<GuiScenePass> pass = GuiScenePass::Create({
+        .Context = Context,
+        .Assets = assets,
+        .Extent = Extent,
+        .OutputFormat = Format::RGBA16Sfloat,
+    });
+    pass->SetDrawList(list);
+    Context.ImmediateCommands([&](CommandBuffer& cmd) { pass->Render(cmd, sceneView); });
+
+    const vector<u8> raw = pass->GetOutput()->GetImage()->Download();
+    REQUIRE(raw.size() == static_cast<usize>(Extent.x) * Extent.y * 8);
+    const vector<u8> actual = DecodeHalfRgb(raw, Extent);
+
+    if (const char* dump = std::getenv("VENG_GUI_MATERIAL_GOLDEN_DUMP"))
+    {
+        WritePpm(path(dump), actual, Extent);
+        MESSAGE("gui material golden: wrote capture to ", dump);
+        std::filesystem::remove(outArchive);
+        return;
+    }
+
+    const path golden = path(GUI_GOLDEN_DIR) / "gui_material.png";
+    int gw = 0;
+    int gh = 0;
+    int gc = 0;
+    u8* goldenPixels = stbi_load(golden.string().c_str(), &gw, &gh, &gc, 3);
+    REQUIRE_MESSAGE(goldenPixels != nullptr, "gui material golden: failed to load ",
+                    golden.string());
+    REQUIRE(static_cast<u32>(gw) == Extent.x);
+    REQUIRE(static_cast<u32>(gh) == Extent.y);
+
+    const long pixelCount = static_cast<long>(Extent.x) * Extent.y;
+    long mismatched = 0;
+    int worst = 0;
+    for (long i = 0; i < pixelCount; ++i)
+    {
+        int pixelDelta = 0;
+        for (int c = 0; c < 3; ++c)
+        {
+            const int a = actual[i * 3 + c];
+            const int g = goldenPixels[i * 3 + c];
+            const int d = a > g ? a - g : g - a;
+            pixelDelta = d > pixelDelta ? d : pixelDelta;
+        }
+        worst = pixelDelta > worst ? pixelDelta : worst;
+        if (pixelDelta > MaxChannelDelta)
+        {
+            ++mismatched;
+        }
+    }
+    stbi_image_free(goldenPixels);
+
+    const double fraction = static_cast<double>(mismatched) / static_cast<double>(pixelCount);
+    MESSAGE("gui material golden: ", mismatched, "/", pixelCount, " pixels exceed delta ",
             MaxChannelDelta, " (worst ", worst, ")");
     CHECK(fraction <= MaxMismatchFraction);
 

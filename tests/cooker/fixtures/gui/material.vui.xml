@@ -1,0 +1,11 @@
+<Panel stylesheets="0xD6B7AD517878EDDE" style="width: 256px; height: 192px; background: #14141fff; padding: 8px;">
+  <Panel style="flex-direction: row;">
+    <Panel style="width: 108px; height: 52px; background-material: 0x38FECEB6EB6644F5;"/>
+    <Panel class="shaded" style="margin: 0 0 0 16px; border-width: 6px;"/>
+  </Panel>
+  <Panel style="flex-direction: row; margin: 12px 0 0 0;">
+    <Panel style="width: 108px; height: 52px; opacity: 0.4; background-material: 0x38FECEB6EB6644F5;"/>
+    <Image src="0x4B1583166B212C2A" style="width: 108px; height: 52px; margin: 0 0 0 16px; material: 0x613B0B9D6991E209;"/>
+  </Panel>
+  <Panel style="width: 232px; height: 44px; margin: 12px 0 0 0; corner-radius: 20px; background-material: 0x38FECEB6EB6644F5;"/>
+</Panel>

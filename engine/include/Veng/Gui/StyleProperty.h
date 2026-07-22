@@ -138,6 +138,12 @@ namespace Veng::Gui
         BoxShadow,
         /// @brief The shadow's color (Style::Shadow->Color); value is a linear-space vec4.
         BoxShadowColor,
+        /// @brief A material background fill (Style::BackgroundMaterial); value is a Material or
+        /// MaterialInstance AssetId.
+        BackgroundMaterial,
+        /// @brief The material an Image shades its content box through (Style::ImageMaterial);
+        /// value is a Material or MaterialInstance AssetId.
+        ImageMaterial,
     };
 
     /// @brief The kind of shadow a BoxShadow declaration's Unit selects.
@@ -154,7 +160,7 @@ namespace Veng::Gui
     /// @brief The number of StyleProperty enumerators — keep in step when appending one.
     ///
     /// The runtime's whole-style property sweeps iterate `[0, StylePropertyCount)`.
-    inline constexpr u32 StylePropertyCount = static_cast<u32>(StyleProperty::BoxShadowColor) + 1;
+    inline constexpr u32 StylePropertyCount = static_cast<u32>(StyleProperty::ImageMaterial) + 1;
 
     /// @brief Canonical USS declaration name of a style property ("flex-direction", "background", …).
     ///

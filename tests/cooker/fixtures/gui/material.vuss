@@ -1,0 +1,10 @@
+/* The stylesheet half of the material-fill fixture: a `background-material` authored in a *rule*
+   rather than inline, so the cook makes the material a dependency of the sheet and the sheet's
+   loader keeps it resident — the second of the two residency paths a UI material rides. */
+
+.shaded {
+    width: 108px;
+    height: 52px;
+    corner-radius: 12px;
+    background-material: 0x38FECEB6EB6644F5;
+}

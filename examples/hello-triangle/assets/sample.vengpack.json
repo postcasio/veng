@@ -72,6 +72,26 @@
       "source": "materials/panel.vmat.json"
     },
     {
+      "id": "0x66F37578D6387CAA",
+      "type": "Shader",
+      "source": "shaders/hud_fill.frag.shader.json"
+    },
+    {
+      "id": "0xC7BEB364B8329DA8",
+      "type": "Material",
+      "source": "materials/hud_fill.vmat.json"
+    },
+    {
+      "id": "0xF4E0AA461A24E4BA",
+      "type": "Shader",
+      "source": "shaders/hud_image_fill.frag.shader.json"
+    },
+    {
+      "id": "0xB565836196301C49",
+      "type": "Material",
+      "source": "materials/hud_image_fill.vmat.json"
+    },
+    {
       "id": "0xBB419B2104D9FE71",
       "type": "Prefab",
       "source": "prefabs/player.prefab.json"

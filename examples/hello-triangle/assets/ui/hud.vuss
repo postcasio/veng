@@ -20,9 +20,16 @@
     width: 220px;
 }
 
+/* The header strip's fill is an authored GuiFill *material* — the top of the exclusive fill-source
+   order, so it is the fill and nothing layers under it. The shader owns the color it emits; the
+   engine still owns the silhouette, so the corner radius and the enclosing clip compose with it,
+   and its sweep animates off the pass clock with no per-frame code here. */
 .header {
     flex-direction: row;
     align-items: center;
+    corner-radius: 6px;
+    padding: 4px 6px 4px 6px;
+    background-material: 0x2585BF3D75DE0CEE;
 }
 
 .title {
@@ -88,10 +95,14 @@
     image-repeat: tile;
 }
 
-/* A square texture in a wide box, letterboxed rather than stretched. */
+/* A square texture in a wide box, and the second material host: an <Image> shading its own `src`
+   art through a GuiFill material. The texture reaches the shader as a declared parameter, so the
+   wipe recolors the authored pixels rather than replacing them — the widget-side spelling is
+   `material`, not `background-material`, and it supersedes the plain fit-into-the-box fill. */
 .thumb {
     width: 40px;
     height: 24px;
     margin: 0 0 0 6px;
     object-fit: contain;
+    material: 0x106ABE559B6AE349;
 }

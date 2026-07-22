@@ -2,6 +2,7 @@
 
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Font.h>
+#include <Veng/Asset/MaterialInstance.h>
 #include <Veng/Asset/Texture.h>
 
 namespace Veng::Gui
@@ -140,6 +141,34 @@ namespace Veng::Gui
                 }
             }
             return;
+        case StyleProperty::BackgroundMaterial:
+        case StyleProperty::ImageMaterial:
+        {
+            // The material is already resident as a load-time dependency of the sheet (or of the
+            // document, for an inline style), so this is a cache lookup. The id may name a
+            // MaterialInstance or a bare Material — the instance loader resolves the latter to a
+            // zero-override default instance, so both spellings author identically.
+            if (assets == nullptr || !declaration.Handle.IsValid())
+            {
+                return;
+            }
+            AssetHandle<MaterialInstance> material =
+                assets->LoadSync<MaterialInstance>(declaration.Handle)
+                    .value_or(AssetHandle<MaterialInstance>{});
+            if (!material.Id().IsValid())
+            {
+                return;
+            }
+            if (declaration.Property == StyleProperty::BackgroundMaterial)
+            {
+                style.BackgroundMaterial = std::move(material);
+            }
+            else
+            {
+                style.ImageMaterial = std::move(material);
+            }
+            return;
+        }
         case StyleProperty::BackgroundSlice:
             style.BackgroundSlice = InsetsFrom(declaration);
             return;

@@ -1543,6 +1543,9 @@ if (VENG_BUILD_TESTS)
             # The gbuffer fixture's brick shaders `#include "Veng/surface.slang"`,
             # so the in-process cook adds the engine core shader dir to its search path.
             VENG_CORE_SHADER_DIR="${VENG_CORE_SHADER_DIR}"
+            # The GuiFill material fixture's .vmat.json names the core gui vertex stage by
+            # AssetId, so its in-process cook references the core pack to resolve it.
+            VENG_CORE_PACK_JSON="${VENG_CORE_PACK_JSON}"
             # gui_golden.cpp reads its committed golden PNG from the source tree.
             GUI_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/golden"
     )

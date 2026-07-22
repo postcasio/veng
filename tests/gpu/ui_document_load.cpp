@@ -177,7 +177,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const Gui::StyleRule* hud = FindRule(sheet, "", "hud", "", Gui::ElementState::None);
     REQUIRE(hud != nullptr);
     CHECK(FindDecl(*hud, Gui::StyleProperty::FlexDirection) != nullptr);
-    CHECK(FindDecl(*hud, Gui::StyleProperty::Background) != nullptr);
+    // The root's fill is the gradient — fill sources are exclusive, so the rule authors no
+    // `background` beside it.
+    CHECK(FindDecl(*hud, Gui::StyleProperty::BackgroundGradient) != nullptr);
 
     const Gui::StyleRule* primary = FindRule(sheet, "", "primary", "", Gui::ElementState::None);
     REQUIRE(primary != nullptr);
