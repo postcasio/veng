@@ -99,6 +99,22 @@ option(VE_PROFILE "Compile in the diagnostics profiler (scope timing, trace buff
 #     those TUs are traced like any other and their traces are simply the no-PCH case.
 option(VENG_TIME_TRACE "Emit clang -ftime-trace compile profiles beside each object file" OFF)
 
+# The compiler launcher is this file's decision alone, so the one dependency that would
+# otherwise impose its own is disabled before it is fetched. assimp (pulled in by the cooker's
+# add_subdirectory below) defaults ASSIMP_BUILD_USE_CCACHE ON and acts on it by setting a
+# GLOBAL RULE_LAUNCH_COMPILE / RULE_LAUNCH_LINK — a directory-independent property that
+# prefixes ccache onto every target's compile and link rule in the whole tree, veng's included,
+# without ever touching CMAKE_CXX_COMPILER_LAUNCHER. It therefore stacks with the launcher
+# assigned below instead of colliding with it, and nothing reports the overlap: the compile
+# rule becomes `ccache ccache c++`, and the archive rules become `ccache ar` / `ccache ranlib`
+# / `ccache cmake -E rm`, running ccache over programs it cannot cache at all. Forcing the
+# option off leaves exactly one launcher, chosen here, on compile rules only.
+#
+# This is unconditional — not inside the find_program guard below — because assimp runs its
+# own find_program: a tree where veng deliberately declines the cache (a tracing build) would
+# otherwise still have one injected under it.
+set(ASSIMP_BUILD_USE_CCACHE OFF CACHE BOOL "" FORCE)
+
 # Route compilation through ccache when present, so unchanged TUs are served from
 # cache across rebuilds, clean builds, and branch switches. The #embed / bin2cpp
 # machinery below is written to keep ccache's view of generated sources correct.
@@ -438,14 +454,9 @@ endif ()
 if (VENG_TIME_TRACE)
     if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         add_compile_options(-ftime-trace)
-        # assimp — fetched below by the cooker — turns ccache on for the whole project by
-        # default, and does it through a GLOBAL RULE_LAUNCH_COMPILE that prefixes every target's
-        # compile rule, not through the compiler-launcher variable the block at the top of this
-        # file owns. Leaving it on would route a tracing build through the cache after all, and
-        # a cache hit yields an object with no .json beside it. Forced off here, ahead of the
-        # cooker's FetchContent, so the option's cache-disabled posture actually holds; the
-        # default (non-tracing) build is untouched.
-        set(ASSIMP_BUILD_USE_CCACHE OFF CACHE BOOL "" FORCE)
+        # The fetched importer's tree-wide RULE_LAUNCH_COMPILE — the other way a cache reaches
+        # these TUs, which would leave a traced object with no .json beside it — is already
+        # forced off unconditionally beside the ccache block at the top of this file.
         message(STATUS "compile-time tracing enabled (-ftime-trace); the compiler cache is off for this tree")
     else ()
         message(WARNING "VENG_TIME_TRACE is ON but the compiler is not Clang; not tracing.")

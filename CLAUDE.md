@@ -340,8 +340,9 @@ tracing configure never disturbs `build-debug`. Three things about it are load-b
   `CMakeLists.txt`, beside `VE_DEBUG`/`VE_PROFILE` rather than with the other `VENG_*` options
   further down: it has to be readable when the launcher is assigned. The launcher variable is
   not the only way a cache gets in, either — a fetched dependency can set a **global
-  `RULE_LAUNCH_COMPILE`**, which prefixes every target's compile rule tree-wide; the tracing
-  block forces that off too (`ASSIMP_BUILD_USE_CCACHE`), ahead of the fetch that would set it.
+  `RULE_LAUNCH_COMPILE`**, which prefixes every target's compile rule tree-wide; that
+  injection is forced off (`ASSIMP_BUILD_USE_CCACHE`) unconditionally beside the ccache block,
+  ahead of the fetch that would set it, so a tracing tree really does compile uncached.
 - **Every `VENG_TIME_TRACE=ON` configure is a full cold build**: on the order of ten minutes of
   wall clock, and roughly **2–6 GB** of JSON across veng's ~600 first-party TUs. That is why
   it defaults off, and why the tree is a deliberately-made, manually-refreshed artifact rather
