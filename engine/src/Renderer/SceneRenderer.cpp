@@ -939,6 +939,31 @@ namespace Veng::Renderer
         }
     }
 
+    void SceneRenderer::ReportDrawBudgetDrops()
+    {
+        const DrawBudgetStats& stats = m_DrawBudgetStats;
+        const u32 slotDrops = stats.StaticDropped + stats.SkinnedDropped + stats.TranslucentDropped;
+        if (slotDrops > 0 && !m_DrawSlotBudgetWarned)
+        {
+            // A static-phase drop covers the untriaged remainder — the phase triages the skinned
+            // and translucent survivors as it goes, so its overflow ends the triage as well.
+            Log::Warn("SceneRenderer: the per-frame draw-slot budget of {} is exhausted; {} static "
+                      "/ {} skinned / {} translucent candidates were not drawn. The frame is "
+                      "clamped rather than failed, and later frames clamp without warning again.",
+                      stats.SlotLimit, stats.StaticDropped, stats.SkinnedDropped,
+                      stats.TranslucentDropped);
+            m_DrawSlotBudgetWarned = true;
+        }
+        if (stats.PaletteDropped > 0 && !m_PaletteBudgetWarned)
+        {
+            Log::Warn("SceneRenderer: the per-frame skinning-palette budget of {} matrices is "
+                      "exhausted; {} skinned instances were not drawn. The frame is clamped rather "
+                      "than failed, and later frames clamp without warning again.",
+                      MaxSkinningMatricesPerFrame, stats.PaletteDropped);
+            m_PaletteBudgetWarned = true;
+        }
+    }
+
     void SceneRenderer::PrepareDraws(const SceneView& view, const u32 viewConstantsIndex)
     {
         GBufferDrawPlan& plan = m_Internal->Plan;
@@ -966,7 +991,6 @@ namespace Veng::Renderer
         const u32 frameIndex = m_Context.GetCurrentFrameInFlight();
         const u32 frameBase = frameIndex * MaxCullCandidates;
         const u32 paletteRegionBase = frameIndex * MaxSkinningMatricesPerFrame;
-        u32 paletteCursor = 0;
         auto* paletteData = static_cast<mat4*>(m_PaletteBuffer->GetMappedData());
         plan.Push = SurfacePush{.FrameBase = frameBase, .ViewConstantsIndex = viewConstantsIndex};
         translucentPlan.Push = plan.Push;
@@ -1017,8 +1041,6 @@ namespace Veng::Renderer
             .View = view,
             .FrameBase = frameBase,
             .PaletteRegionBase = paletteRegionBase,
-            .MaxSlots = MaxCullCandidates,
-            .MaxPaletteMatrices = MaxSkinningMatricesPerFrame,
             .DrawData = static_cast<GpuDrawData*>(m_DrawDataBuffer->GetMappedData()),
             .CullData = m_GpuCull->BeginFrameUpload(frameIndex),
             .PaletteData = paletteData,
@@ -1026,17 +1048,20 @@ namespace Veng::Renderer
             .PreviousPaletteBases = m_PreviousPaletteBaseByEntity,
         };
 
-        // One slot cursor threads all three phases, which is what keeps the static opaque range
+        // One budget threads all three phases, which is what keeps the static opaque range
         // contiguous from 0. The static phase triages the survivors the other two gather, so it
         // must run first.
-        u32 slotCursor = 0;
+        DrawBudget budget(MaxCullCandidates, MaxSkinningMatricesPerFrame);
         vector<u32> skinnedScratch;
         vector<u32> translucentScratch;
-        GatherStaticOpaque(gatherInput, m_CullScratch, plan, slotCursor, skinnedScratch,
+        GatherStaticOpaque(gatherInput, m_CullScratch, plan, budget, skinnedScratch,
                            translucentScratch);
-        GatherSkinned(gatherInput, skinnedScratch, plan, m_PaletteBaseByEntity, slotCursor,
-                      paletteCursor);
-        GatherTranslucent(gatherInput, translucentScratch, translucentPlan, slotCursor);
+        GatherSkinned(gatherInput, skinnedScratch, plan, m_PaletteBaseByEntity, budget);
+        GatherTranslucent(gatherInput, translucentScratch, translucentPlan, budget);
+
+        m_DrawBudgetStats = budget.GetStats();
+        ReportDrawBudgetDrops();
+        const u32 slotCursor = budget.GetSlotCursor();
 
         // The slot layout the GPU cull arrays depend on, asserted in one place rather than left
         // implicit in the three phases' call order.
@@ -1586,6 +1611,10 @@ namespace Veng::Renderer
     u32 SceneRenderer::GetLastDrawnCount() const
     {
         return m_LastDrawnCount;
+    }
+    DrawBudgetStats SceneRenderer::GetDrawBudgetStats() const
+    {
+        return m_DrawBudgetStats;
     }
     PointFieldStats SceneRenderer::GetPointFieldStats() const
     {

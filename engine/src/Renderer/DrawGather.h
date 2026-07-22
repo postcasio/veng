@@ -7,6 +7,7 @@
 #include <Veng/Scene/Visibility.h>
 #include <Veng/Veng.h>
 
+#include "DrawBudget.h"
 #include "DrawPlan.h"
 #include "GpuBlocks.h"
 
@@ -26,9 +27,9 @@ namespace Veng::Renderer
     /// @brief The per-frame inputs the three draw-gather phases share.
     ///
     /// Plain data plus the mapped write targets, bundled so each phase takes one const reference
-    /// rather than a dozen positional parameters. The genuinely mutable state — the slot and
-    /// palette cursors, the plans, the palette-base map — stays an explicit by-reference
-    /// parameter, so mutation is visible at every call site.
+    /// rather than a dozen positional parameters. The genuinely mutable state — the draw budget,
+    /// the plans, the palette-base map — stays an explicit by-reference parameter, so mutation is
+    /// visible at every call site.
     struct DrawGatherInput
     {
         /// @brief Every per-submesh candidate this frame; the survivor ids index it.
@@ -40,10 +41,6 @@ namespace Veng::Renderer
         u32 FrameBase = 0;
         /// @brief First palette matrix of this frame's ring region.
         u32 PaletteRegionBase = 0;
-        /// @brief Slots a frame may lay out across all three phases; the overflow is dropped.
-        u32 MaxSlots = 0;
-        /// @brief Palette matrices a frame may write; an instance that would exceed it is skipped.
-        u32 MaxPaletteMatrices = 0;
         /// @brief Mapped per-draw DrawData records the phases write through.
         GpuDrawData* DrawData = nullptr;
         /// @brief Mapped GPU-cull candidate records for this frame's region, or null under CPU culling.
@@ -75,14 +72,16 @@ namespace Veng::Renderer
     /// @pre Runs before GatherSkinned and GatherTranslucent, which consume its output lists and
     ///      continue its slot cursor — the static range must stay contiguous from 0, because the
     ///      GPU cull arrays are indexed by it.
+    /// An exhausted slot budget ends the phase, so it also ends the triage: every survivor after
+    /// that point is counted as a static drop and never reaches the later phases' lists.
     /// @param input          The shared per-frame inputs.
     /// @param survivors      The camera-frustum survivors, in ascending candidate-id order.
     /// @param plan           Receives the static slots and their groups.
-    /// @param slotCursor     The shared slot cursor, advanced once per laid-out slot.
+    /// @param budget         The shared draw budget, claimed once per laid-out slot.
     /// @param skinnedOut     Receives the skinned survivors, in survivor order.
     /// @param translucentOut Receives the translucent survivors, in survivor order.
     void GatherStaticOpaque(const DrawGatherInput& input, std::span<const u32> survivors,
-                            GBufferDrawPlan& plan, u32& slotCursor, vector<u32>& skinnedOut,
+                            GBufferDrawPlan& plan, DrawBudget& budget, vector<u32>& skinnedOut,
                             vector<u32>& translucentOut);
 
     /// @brief Lays out the skinned slots after the static range and writes their palettes.
@@ -97,11 +96,11 @@ namespace Veng::Renderer
     /// @param plan                 Receives the skinned slots and their groups.
     /// @param paletteBaseByEntity  This frame's palette base per packed entity; read back by the
     ///                             shadow passes.
-    /// @param slotCursor           The shared slot cursor, continued from the static range.
-    /// @param paletteCursor        Matrices written into this frame's palette region so far.
+    /// @param budget               The shared draw budget, continued from the static range; an
+    ///                             entity's first submesh claims its slot and palette together.
     void GatherSkinned(const DrawGatherInput& input, std::span<const u32> skinned,
                        GBufferDrawPlan& plan, unordered_map<u64, u32>& paletteBaseByEntity,
-                       u32& slotCursor, u32& paletteCursor);
+                       DrawBudget& budget);
 
     /// @brief Lays out the translucent draws after the opaque slots and sorts them for blending.
     ///
@@ -115,7 +114,7 @@ namespace Veng::Renderer
     /// @param input       The shared per-frame inputs.
     /// @param translucent The translucent survivors GatherStaticOpaque triaged out.
     /// @param plan        Receives the sorted translucent draws.
-    /// @param slotCursor  The shared slot cursor, continued from the skinned range.
+    /// @param budget      The shared draw budget, continued from the skinned range.
     void GatherTranslucent(const DrawGatherInput& input, std::span<const u32> translucent,
-                           TranslucentDrawPlan& plan, u32& slotCursor);
+                           TranslucentDrawPlan& plan, DrawBudget& budget);
 }

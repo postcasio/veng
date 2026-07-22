@@ -4,6 +4,7 @@
 #include <Veng/Asset/AssetHandle.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/DebugDraw.h>
+#include <Veng/Renderer/DrawBudgetStats.h>
 #include <Veng/Renderer/Types.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/RenderGraph.h>
@@ -166,6 +167,16 @@ namespace Veng::Renderer
         /// GetLastGpuSurvivorCount() (the device-side draws after the hi-Z test zeros occluded
         /// commands). Zero before the first Execute.
         [[nodiscard]] u32 GetLastDrawnCount() const;
+
+        /// @brief Returns the per-frame draw-budget accounting from the last Execute.
+        ///
+        /// The slot limit in force, the slots the three gather phases claimed, and the submeshes
+        /// each phase could not draw once a budget was exhausted. A frame within budget reports
+        /// zero drops; a frame over it is clamped rather than failed, and this is the number a
+        /// consumer profiling a heavy scene reads (the accompanying warning fires only once per
+        /// renderer). All zero before the first Execute.
+        /// @return The last Execute's draw-budget statistics.
+        [[nodiscard]] DrawBudgetStats GetDrawBudgetStats() const;
 
         /// @brief Returns the aggregate point-field draw statistics from the last Execute.
         ///
@@ -731,6 +742,20 @@ namespace Veng::Renderer
         /// The terminal funnel stage: every frustum survivor is a draw under CullMode::CPU.
         /// Zero before the first Execute.
         u32 m_LastDrawnCount = 0;
+
+        /// @brief The last Execute's draw-slot / palette budget accounting.
+        DrawBudgetStats m_DrawBudgetStats;
+        /// @brief Set once the slot-budget clamp has logged, so the WARN fires only once.
+        bool m_DrawSlotBudgetWarned = false;
+        /// @brief Set once the palette-budget clamp has logged, so the WARN fires only once.
+        bool m_PaletteBudgetWarned = false;
+
+        /// @brief Warns once per renderer, per budget, when the last gather clamped.
+        ///
+        /// Reads m_DrawBudgetStats after the gather phases have run. An overflowed scene is a
+        /// steady state rather than a transient, so each budget's message fires once for the life
+        /// of the renderer and the per-frame signal is the stats block itself.
+        void ReportDrawBudgetDrops();
 
         /// @brief Allocates the mode-independent per-draw buffers + their descriptor sets.
         ///

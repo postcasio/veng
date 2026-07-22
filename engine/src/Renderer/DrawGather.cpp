@@ -5,7 +5,6 @@
 
 #include <glm/gtc/matrix_inverse.hpp>
 
-#include <Veng/Assert.h>
 #include <Veng/Asset/Material.h>
 #include <Veng/Asset/MaterialInstance.h>
 #include <Veng/Asset/Mesh.h>
@@ -52,11 +51,12 @@ namespace Veng::Renderer
     }
 
     void GatherStaticOpaque(const DrawGatherInput& input, const std::span<const u32> survivors,
-                            GBufferDrawPlan& plan, u32& slotCursor, vector<u32>& skinnedOut,
+                            GBufferDrawPlan& plan, DrawBudget& budget, vector<u32>& skinnedOut,
                             vector<u32>& translucentOut)
     {
-        for (const u32 id : survivors)
+        for (usize index = 0; index < survivors.size(); ++index)
         {
+            const u32 id = survivors[index];
             const SubMeshCandidate& candidate = input.Candidates[id];
             const VisibleMesh& item = input.View.Visible[candidate.MeshCandidate];
             const Mesh& mesh = *item.Mesh;
@@ -88,11 +88,13 @@ namespace Veng::Renderer
                 continue;
             }
 
-            const u32 slot = slotCursor;
-            if (slot >= input.MaxSlots)
+            // Exhausting the budget ends the triage above too, so every remaining survivor is
+            // lost — including ones the skinned and translucent phases would have gathered.
+            u32 slot = 0;
+            if (!budget.TryClaimSlot(slot))
             {
-                VE_ASSERT(false, "Draw gather: per-frame candidate count exceeds the maximum {}",
-                          input.MaxSlots);
+                budget.RecordDropped(DrawPhase::StaticOpaque,
+                                     static_cast<u32>(survivors.size() - index));
                 break;
             }
 
@@ -139,7 +141,6 @@ namespace Veng::Renderer
                 .VertexOffset = 0,
                 .CandidateId = slot,
             });
-            ++slotCursor;
         }
 
         GroupContiguousSlots(plan.Slots, plan.Groups);
@@ -147,10 +148,11 @@ namespace Veng::Renderer
 
     void GatherSkinned(const DrawGatherInput& input, const std::span<const u32> skinned,
                        GBufferDrawPlan& plan, unordered_map<u64, u32>& paletteBaseByEntity,
-                       u32& slotCursor, u32& paletteCursor)
+                       DrawBudget& budget)
     {
-        for (const u32 id : skinned)
+        for (usize index = 0; index < skinned.size(); ++index)
         {
+            const u32 id = skinned[index];
             const SubMeshCandidate& candidate = input.Candidates[id];
             const VisibleMesh& item = input.View.Visible[candidate.MeshCandidate];
             const Mesh& mesh = *item.Mesh;
@@ -169,18 +171,37 @@ namespace Veng::Renderer
             // entity has none (e.g. the editor with systems paused).
             const u64 packed = PackEntity(item.Owner);
             u32 paletteBase = 0;
+            u32 slot = 0;
             const auto existing = paletteBaseByEntity.find(packed);
             if (existing != paletteBaseByEntity.end())
             {
                 paletteBase = existing->second;
+                if (!budget.TryClaimSlot(slot))
+                {
+                    budget.RecordDropped(DrawPhase::Skinned,
+                                         static_cast<u32>(skinned.size() - index));
+                    break;
+                }
             }
             else
             {
-                if (paletteCursor + boneCount > input.MaxPaletteMatrices)
+                // One claim for the slot and the palette together: a half-committed claim would
+                // either burn a slot no DrawSlot is written for, or leave a live palette base for
+                // a draw that never happens (the shadow passes and next frame's velocity read it).
+                u32 relativeBase = 0;
+                const SkinnedClaim claim =
+                    budget.TryClaimSkinnedDraw(boneCount, slot, relativeBase);
+                if (claim == SkinnedClaim::PaletteExhausted)
                 {
-                    continue; // palette budget exhausted this frame
+                    continue;
                 }
-                paletteBase = input.PaletteRegionBase + paletteCursor;
+                if (claim == SkinnedClaim::SlotsExhausted)
+                {
+                    budget.RecordDropped(DrawPhase::Skinned,
+                                         static_cast<u32>(skinned.size() - index));
+                    break;
+                }
+                paletteBase = input.PaletteRegionBase + relativeBase;
 
                 const auto* pose = input.View.World.TryGet<SkinnedPose>(item.Owner);
                 if (pose != nullptr && pose->Skinning.size() == boneCount)
@@ -196,14 +217,7 @@ namespace Veng::Renderer
                                 static_cast<usize>(boneCount) * sizeof(mat4));
                 }
 
-                paletteCursor += boneCount;
                 paletteBaseByEntity[packed] = paletteBase;
-            }
-
-            const u32 slot = slotCursor;
-            if (slot >= input.MaxSlots)
-            {
-                break;
             }
 
             const MaterialInstance& material = *materials[subMesh.MaterialIndex].Get();
@@ -246,18 +260,18 @@ namespace Veng::Renderer
                 .VertexOffset = 0,
                 .CandidateId = slot,
             });
-            ++slotCursor;
         }
 
         GroupContiguousSlots(plan.SkinnedSlots, plan.SkinnedGroups);
     }
 
     void GatherTranslucent(const DrawGatherInput& input, const std::span<const u32> translucent,
-                           TranslucentDrawPlan& plan, u32& slotCursor)
+                           TranslucentDrawPlan& plan, DrawBudget& budget)
     {
         const mat4 viewMatrix = input.View.Camera.View();
-        for (const u32 id : translucent)
+        for (usize index = 0; index < translucent.size(); ++index)
         {
+            const u32 id = translucent[index];
             const SubMeshCandidate& candidate = input.Candidates[id];
             const VisibleMesh& item = input.View.Visible[candidate.MeshCandidate];
             const Mesh& mesh = *item.Mesh;
@@ -268,9 +282,11 @@ namespace Veng::Renderer
             const std::span<const AssetHandle<MaterialInstance>> materials = mesh.GetMaterials();
             const SubMesh& subMesh = mesh.GetSubMeshes()[candidate.SubMeshIndex];
 
-            const u32 slot = slotCursor;
-            if (slot >= input.MaxSlots)
+            u32 slot = 0;
+            if (!budget.TryClaimSlot(slot))
             {
+                budget.RecordDropped(DrawPhase::Translucent,
+                                     static_cast<u32>(translucent.size() - index));
                 break;
             }
 
@@ -303,7 +319,6 @@ namespace Veng::Renderer
                 .ViewDepth = viewDepth,
                 .SortPriority = material.GetParent().Get()->GetSortPriority(),
             });
-            ++slotCursor;
         }
 
         // Ascending priority groups, back-to-front (most negative view-space z first) within

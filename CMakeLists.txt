@@ -685,6 +685,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/hi_z_history.cpp
             tests/unit/frame_topology.cpp
             tests/unit/draw_grouping.cpp
+            tests/unit/draw_budget.cpp
             tests/unit/taa_jitter.cpp
             tests/unit/atmosphere.cpp
             tests/unit/sun_position.cpp
