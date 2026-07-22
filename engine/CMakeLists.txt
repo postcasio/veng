@@ -405,6 +405,19 @@ target_link_libraries(veng PUBLIC
         nlohmann_json::nlohmann_json
 )
 
+# JSON_NOEXCEPTION rides the PUBLIC nlohmann link, for the same reason veng_cook_interface carries
+# it: it is an ODR-level agreement across every TU that sees nlohmann/json through a veng public
+# header, not a per-target preference. nlohmann's ABI tag is built from JSON_DIAGNOSTICS and
+# JSON_USE_LEGACY_DISCARDED_VALUE_COMPARISON only, so a TU that compiles json.hpp with exceptions
+# and one that compiles it without produce identically mangled inline members with different
+# bodies — the linker keeps one arbitrarily. libveng itself is -fno-exceptions, which already
+# selects the std::abort() branch (nlohmann tests __EXCEPTIONS before JSON_NOEXCEPTION), so
+# without this the agreement held inside the engine by accident and not at all for a consumer
+# compiling with exceptions. Stating it PUBLIC makes JSON_THROW std::abort() everywhere the header
+# reaches; Veng/Reflection/JsonSerialize.h guards its typed access with is_*() checks, so the abort
+# paths are unreachable in normal operation — the same house style as VE_ASSERT.
+target_compile_definitions(veng PUBLIC JSON_NOEXCEPTION)
+
 target_link_libraries(veng PRIVATE
         Vulkan::Vulkan
         glfw
