@@ -86,6 +86,14 @@ namespace Veng::Gui
             return "rotation";
         case StyleProperty::TextAlign:
             return "text-align";
+        case StyleProperty::BackgroundImage:
+            return "background-image";
+        case StyleProperty::BackgroundSlice:
+            return "background-slice";
+        case StyleProperty::BackgroundFit:
+            return "background-fit";
+        case StyleProperty::BackgroundRepeat:
+            return "background-repeat";
         }
         return "unknown";
     }
@@ -251,6 +259,22 @@ namespace Veng::Gui
         if (name == "text-align")
         {
             return StyleProperty::TextAlign;
+        }
+        if (name == "background-image")
+        {
+            return StyleProperty::BackgroundImage;
+        }
+        if (name == "background-slice")
+        {
+            return StyleProperty::BackgroundSlice;
+        }
+        if (name == "background-fit")
+        {
+            return StyleProperty::BackgroundFit;
+        }
+        if (name == "background-repeat")
+        {
+            return StyleProperty::BackgroundRepeat;
         }
         return std::nullopt;
     }

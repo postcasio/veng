@@ -18,6 +18,11 @@
     background: var(--panel);
     color: var(--accent);
     opacity: var(--half);
+}
+
+/* A gradient is a background fill source, and fill sources are exclusive, so the var()-substituted
+   stop list sits in its own rule rather than beside .panel's flat background. */
+.panel-ramp {
     background-gradient: linear 180deg, var(--stops);
 }
 

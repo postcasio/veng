@@ -826,6 +826,11 @@ namespace Veng::Cook
                 return std::unexpected(fmt::format("{}: unterminated declaration block", located));
             }
             ++i; // consume the '}'
+            if (const VoidResult exclusive = CheckExclusiveFillSources(properties, located);
+                !exclusive)
+            {
+                return std::unexpected(exclusive.error());
+            }
             return properties;
         }
 

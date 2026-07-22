@@ -95,7 +95,8 @@ selector engine.
 
 Layout is **flexbox** (Yoga): `flex-direction`, `justify-content`, `align-items`,
 `flex-grow`/`flex-shrink`/`flex-basis`, `width`/`height` (`px` or `%`), `margin`,
-`padding`, `position`/`inset`. Paint is `background`, `background-gradient`, `color`
+`padding`, `position`/`inset`. Paint is `background`, `background-gradient`,
+`background-image` (with `background-slice`/`background-fit`/`background-repeat`), `color`
 (text / widget fill), `corner-radius`, `border-width`/`border-color`, `opacity`, and
 `text-align` (`left`/`center`/`right` — a Text element's glyph alignment inside its
 solved box, meaningful when the box is wider than the run, e.g. a Table cell). Colors
@@ -122,10 +123,14 @@ bottom-right, bottom-left** — matching CSS `border-radius`. The per-edge longh
 `inset-left`/`inset-top`/`inset-right`/`inset-bottom` each take a single length and are
 unambiguous.
 
+**A fill source is exclusive.** An element's background is a gradient, a texture, or a flat
+color — never two layered — and they rank `background-gradient` > `background-image` >
+`background`. Authoring two in one rule is a **cook error**, not a silently-ignored
+declaration, so replace the one you are superseding rather than adding beside it.
+
 A `background-gradient` fills the element with a multi-stop gradient instead of a flat
-color (it wins over `background` when both are set, and composes with `corner-radius`
-and a border). The multi-stop color is baked into a ramp at cook time; the shape is one
-of three, each spanning the element's box:
+color (and composes with `corner-radius` and a border). The multi-stop color is baked into a
+ramp at cook time; the shape is one of three, each spanning the element's box:
 
 ```css
 /* linear: an angle (CSS convention — 0deg to the top, 90deg to the right) then stops */
@@ -146,6 +151,36 @@ authorable **only in a stylesheet rule** (like `animation`), applied from the ba
 gradient **can be animated from C++**: `Document::SetBackgroundGradient(element, …)`
 sets a resolved gradient whose `P0`/`P1`/`AngleOffset` you mutate per frame — moving a
 linear axis, growing a radial, or spinning a conic — a paint-only write with no re-solve.
+
+### Textured and nine-slice backgrounds
+
+`background-image` names a `Texture` `AssetId` — the same `0x…` spelling `font` and an
+`<Image src>` take — and fills the element's **padding box** (behind the border and the
+content, like CSS). The texture becomes a load-time dependency of whatever carries the
+declaration (the stylesheet, or the document for an inline style), so it is resident before
+the document instantiates.
+
+```css
+/* Plain: stretched to the box, rounded and framed by the element's own radius and border. */
+.card  { background-image: 0x502E61AE5D720E64; corner-radius: 6px; border-width: 2px; }
+/* Aspect-preserving: `contain` letterboxes, `cover` crops, `none` is intrinsic pixels. */
+.crest { background-image: 0x502E61AE5D720E64; background-fit: contain; }
+/* Tiled at the texture's own pixel size — one quad, so a huge box costs no more geometry. */
+.hatch { background-image: 0x68D20CFB7FEC7518; background-repeat: tile; }
+/* Nine-slice window chrome: the margins are source-texture pixels. */
+.frame { background-image: 0x2B62E4E91B4A08B4; background-slice: 8px; }
+```
+
+`background-slice` takes the same one-to-four edge shorthand as `padding`, in **source-texture
+pixels**: it splits both the texture and the box into a 3×3 grid, so the corners keep their
+source size while the edges stretch along one axis and the center stretches both — the
+resizable-panel-art primitive. A **sliced background takes no `corner-radius`** (nine-slice art
+carries its own corners), and `background-fit`/`background-repeat` do not apply to it.
+
+Tiling is a **sampler address mode**, not repeated geometry, so the texture's own
+`*.tex.json` sampler must wrap (`"wrap_u": "repeat"`, the cooked default); a texture authored
+`clamp_to_edge` clamps its tiled fill instead of repeating it. `background-repeat: tile` also
+supersedes `background-fit`, which only maps a single, unrepeated copy.
 
 A state variant is the selector plus a pseudo-state — a `:hover` rule contributes a
 variant the runtime folds over the base style when the element is hovered, easing any

@@ -215,7 +215,7 @@ TEST_CASE("gui style: a font declaration resolves to nothing with no asset manag
 
     StyleDeclaration font;
     font.Property = StyleProperty::TextFont;
-    font.Font = AssetId{0x0123456789ABCDEFULL};
+    font.Handle = AssetId{0x0123456789ABCDEFULL};
     label.Variants = {StyleVariant{.State = ElementState::Hovered, .Declarations = {font}}};
 
     // Activating the variant runs the font declaration through the guarded, manager-less path.

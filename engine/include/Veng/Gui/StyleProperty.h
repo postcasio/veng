@@ -112,12 +112,23 @@ namespace Veng::Gui
         /// @brief A Text element's horizontal glyph alignment (Style::TextAlignment); value is a
         /// TextAlign ordinal.
         TextAlign,
+        /// @brief A texture background fill (Style::BackgroundImage); value is a Texture AssetId.
+        BackgroundImage,
+        /// @brief The background image's nine-slice margins (Style::BackgroundSlice); value is four
+        /// edge distances (L/T/R/B) in source-texture pixels.
+        BackgroundSlice,
+        /// @brief How the background image maps into its box (Style::BackgroundFit); Unit is an
+        /// ImageFit ordinal.
+        BackgroundFit,
+        /// @brief Whether the background image stretches or tiles (Style::BackgroundRepeat); Unit is
+        /// an ImageRepeat ordinal.
+        BackgroundRepeat,
     };
 
     /// @brief The number of StyleProperty enumerators — keep in step when appending one.
     ///
     /// The runtime's whole-style property sweeps iterate `[0, StylePropertyCount)`.
-    inline constexpr u32 StylePropertyCount = static_cast<u32>(StyleProperty::TextAlign) + 1;
+    inline constexpr u32 StylePropertyCount = static_cast<u32>(StyleProperty::BackgroundRepeat) + 1;
 
     /// @brief Canonical USS declaration name of a style property ("flex-direction", "background", …).
     ///

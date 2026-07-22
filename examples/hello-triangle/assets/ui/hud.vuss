@@ -1,16 +1,20 @@
 /* The hello-triangle status HUD: an accent token shared between the stylesheet and the app,
-   a conic-gradient loading spinner spun by a rotation keyframe, and a fixed strip of numbered
-   ticks the app resolves by class and lights per frame. */
+   a nine-slice window-chrome frame behind the panel, a conic-gradient loading spinner spun by a
+   rotation keyframe, and a fixed strip of numbered ticks the app resolves by class and lights per
+   frame. */
 
---panel: #12141ad8;
 --accent: #4fa3ff;
 --text: #eef2f8ff;
 --tick-idle: #43506688;
 
+/* The frame art is 24×24 with 8px margins, so the corner brackets keep their size at any panel
+   width while the edges and the fill stretch. A sliced fill takes no corner-radius — the art
+   carries its own corners. Fill sources are exclusive, so this replaces the flat `background`
+   rather than layering over it. */
 .hud {
     flex-direction: column;
-    background: var(--panel);
-    corner-radius: 8px;
+    background-image: 0x2B62E4E91B4A08B4;
+    background-slice: 8px;
     padding: 14px;
     width: 220px;
 }

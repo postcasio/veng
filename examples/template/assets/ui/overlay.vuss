@@ -17,6 +17,17 @@
     margin: 24px;
 }
 
+/* A plain textured background fill: the badge texture aspect-fitted into the crest's padding box.
+   The stylesheet's `background-image` makes the texture a load-time dependency of the sheet, so the
+   instantiate-time resolve is a cache hit exactly as a `font` declaration's is. */
+.crest {
+    width: 48px;
+    height: 48px;
+    align-self: center;
+    background-image: 0x502E61AE5D720E64;
+    background-fit: contain;
+}
+
 .heading {
     font-size: 22px;
     color: var(--text);

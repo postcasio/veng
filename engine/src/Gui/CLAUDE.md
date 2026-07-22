@@ -104,6 +104,36 @@ interaction mask, folds them over the base, and **eases** any transition-able pr
 opacity, scalar sizes) over its authored duration through a small tween clock. A style change that
 moves a layout input re-dirties the Yoga box; a pure paint change (color/opacity) does not.
 
+**A background is one fill source, never a stack.** `background-gradient` > `background-image` >
+`background`, **exclusive**: the winning source *is* the fill and they do not layer (CSS-style
+image-over-color compositing is out). This is what the fragment already does — `gui_shape.frag.slang`
+is `if (selector > 0) … else if (textureIndex >= 0) …` — so the rule costs nothing to enforce, and a
+single rule authoring two sources is a **cook error** rather than a silently-ignored declaration.
+
+**`background-image` is a texture fill on the same shape path.** It names a `Texture` `AssetId`
+transported exactly as `font`'s is (`CookedStyleProperty::Handle`), resolved at instantiate to a
+resident `AssetHandle<Texture>` held for the `Style`'s lifetime. Because a background image may be
+authored in a **stylesheet rule** *or* an **inline style**, the texture is collected as a load-time
+dependency in **both** loaders (`StyleSheetLoader`'s `TextureIds` and `UIDocumentLoader`'s, beside
+the `Image` `src` ids it already gathered) — the instantiate-time resolve is then a cache hit.
+The fill sizes against the **padding box**, so it sits behind the border and the content, and its
+corner radii are the element's reduced by the border width (the CSS inner-radius rule). Three
+shapes, driven by `background-slice` / `background-fit` / `background-repeat`:
+
+- **Sliced** (`background-slice` non-zero, in source-texture pixels) → `DrawList::NineSlice`: the
+  corners keep their source size while edges and center stretch. The sliced path is **unrounded** —
+  the primitive takes no radii, which matches nine-slice art carrying its own corners.
+- **Tiled** (`background-repeat: tile`, unsliced) → **one** `DrawList::Texture` quad with the UV
+  rect scaled by box ÷ texture size, repeated by the texture's own wrapping sampler. Never a quad
+  per tile: the GUI geometry ring is a hard cap behind an unconditional `VE_ASSERT`, so an unbounded
+  tile count would abort, and the clip such quads would need would break batching. A texture whose
+  `*.tex.json` authors a clamp address mode therefore clamps rather than tiles. Cell-level tiling of
+  a *sliced* fill is not expressible — repeating a sub-rect of an atlas needs a per-quad UV wrap the
+  shape fragment does not carry — so `tile` is ignored on a sliced fill.
+- **Fitted** (the default) → `DrawList::Texture` with the UV sub-rect and destination `ImageFit`
+  computes: `fill` stretches, `contain`/`cover` letterbox/crop preserving aspect, `none` is
+  intrinsic pixels. `ImageFit`/`ImageRepeat` (`Veng/Gui/Style.h`) are the shared fill vocabulary.
+
 ## The draw floor: a device-free draw list + a `GuiScenePass`
 
 `Gui::DrawList` (`Veng/Gui/DrawList.h`) is a device-free builder of **batched, clipped, textured
@@ -111,7 +141,8 @@ quads** — rounded-rect / border SDF, 9-slice, tint/opacity, and MSDF text runs
 `Document::Build` appends into. A `GuiScenePass` records the draw list into an offscreen image
 blended over the viewport's scene output (its Slang shaders, `gui.slang` + the MSDF text shader,
 are core-pack shaders — a game reuses them, never authors a UI shader). The image goldens
-(`gui_overlay`, `gui_rotated`) are the render floor every later change holds pixel-stable against.
+(`gui_overlay`, `gui_rotated`, `gui_image`, `gui_background`) are the render floor every later
+change holds pixel-stable against.
 `DrawList` carries a composing **transform stack** (`PushTransform(pivot, angle)` / `PopTransform`)
 applied to vertex positions at quad emission while `RectCoord`/`RectHalf`/UV stay in unrotated
 local space, so a `rotation` style property (scalar degrees, clockwise in the y-down document

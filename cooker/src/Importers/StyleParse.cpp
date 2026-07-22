@@ -445,6 +445,40 @@ namespace Veng::Cook
             return std::nullopt;
         }
 
+        optional<u32> ParseImageFit(std::string_view v)
+        {
+            if (v == "fill")
+            {
+                return static_cast<u32>(Gui::ImageFit::Fill);
+            }
+            if (v == "contain")
+            {
+                return static_cast<u32>(Gui::ImageFit::Contain);
+            }
+            if (v == "cover")
+            {
+                return static_cast<u32>(Gui::ImageFit::Cover);
+            }
+            if (v == "none")
+            {
+                return static_cast<u32>(Gui::ImageFit::None);
+            }
+            return std::nullopt;
+        }
+
+        optional<u32> ParseImageRepeat(std::string_view v)
+        {
+            if (v == "stretch")
+            {
+                return static_cast<u32>(Gui::ImageRepeat::Stretch);
+            }
+            if (v == "tile")
+            {
+                return static_cast<u32>(Gui::ImageRepeat::Tile);
+            }
+            return std::nullopt;
+        }
+
         // Builds a CookedStyleProperty for an enum-valued property, or a located error.
         Result<CookedStyleProperty> EnumProperty(StyleProperty property, optional<u32> ordinal,
                                                  std::string_view value, const string& located)
@@ -529,6 +563,31 @@ namespace Veng::Cook
         return ParseColorValue(value, located);
     }
 
+    VoidResult CheckExclusiveFillSources(const vector<CookedStyleProperty>& properties,
+                                         const string& located)
+    {
+        optional<StyleProperty> seen;
+        for (const CookedStyleProperty& cp : properties)
+        {
+            const auto property = static_cast<StyleProperty>(cp.Property);
+            if (property != StyleProperty::Background &&
+                property != StyleProperty::BackgroundGradient &&
+                property != StyleProperty::BackgroundImage)
+            {
+                continue;
+            }
+            if (seen.has_value() && *seen != property)
+            {
+                return std::unexpected(
+                    fmt::format("{}: '{}' and '{}' are both background fill sources, and a fill "
+                                "source is exclusive — author one",
+                                located, ToString(*seen), ToString(property)));
+            }
+            seen = property;
+        }
+        return {};
+    }
+
     Result<CookedStyleProperty> ParseStyleDeclaration(StyleProperty property,
                                                       std::string_view value, const string& located)
     {
@@ -561,6 +620,10 @@ namespace Veng::Cook
             return EnumProperty(property, ParseOverflow(v), v, located);
         case StyleProperty::ScrollbarLayout:
             return EnumProperty(property, ParseScrollbarLayout(v), v, located);
+        case StyleProperty::BackgroundFit:
+            return EnumProperty(property, ParseImageFit(v), v, located);
+        case StyleProperty::BackgroundRepeat:
+            return EnumProperty(property, ParseImageRepeat(v), v, located);
 
         case StyleProperty::Overflow:
         {
@@ -612,6 +675,7 @@ namespace Veng::Cook
         case StyleProperty::Padding:
         case StyleProperty::Inset:
         case StyleProperty::CornerRadius:
+        case StyleProperty::BackgroundSlice:
             return EdgeProperty(property, v, located);
 
         case StyleProperty::Background:
@@ -626,6 +690,20 @@ namespace Veng::Cook
             {
                 return std::unexpected(
                     fmt::format("{}: 'font' must be a hex AssetId (0x…), got '{}'", located, v));
+            }
+            CookedStyleProperty cp{};
+            cp.Property = static_cast<u32>(property);
+            cp.Handle = id->Value;
+            return cp;
+        }
+
+        case StyleProperty::BackgroundImage:
+        {
+            const optional<AssetId> id = ParseAssetId(v);
+            if (!id)
+            {
+                return std::unexpected(fmt::format(
+                    "{}: 'background-image' must be a hex AssetId (0x…), got '{}'", located, v));
             }
             CookedStyleProperty cp{};
             cp.Property = static_cast<u32>(property);

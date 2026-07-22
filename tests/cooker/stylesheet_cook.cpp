@@ -118,14 +118,17 @@ TEST_CASE("Cooker: stylesheet variables substitute, redefine last-wins, and fill
     REQUIRE(controlAccentColor != nullptr);
 
     // .panel: var(--panel) resolves to the value at its use site (#10203a, before redefinition),
-    // var(--accent) resolves to the @use'd theme color, and the gradient stop list substituted.
+    // and var(--accent) resolves to the @use'd theme color. The gradient stop list substitutes in
+    // .panel-ramp, a rule of its own because a background fill source is exclusive.
     const Gui::StyleRule* panel = FindRuleByClass(decoded->Rules, "panel");
     REQUIRE(panel != nullptr);
+    const Gui::StyleRule* panelRamp = FindRuleByClass(decoded->Rules, "panel-ramp");
+    REQUIRE(panelRamp != nullptr);
     const Gui::StyleDeclaration* panelBg = FindDecl(*panel, Gui::StyleProperty::Background);
     const Gui::StyleDeclaration* panelColor = FindDecl(*panel, Gui::StyleProperty::TextColor);
     const Gui::StyleDeclaration* panelOpacity = FindDecl(*panel, Gui::StyleProperty::Opacity);
     const Gui::StyleDeclaration* panelGradient =
-        FindDecl(*panel, Gui::StyleProperty::BackgroundGradient);
+        FindDecl(*panelRamp, Gui::StyleProperty::BackgroundGradient);
     REQUIRE(panelBg != nullptr);
     REQUIRE(panelColor != nullptr);
     REQUIRE(panelOpacity != nullptr);
@@ -420,4 +423,72 @@ TEST_CASE("Cooker: an edge shorthand resolves top, right, bottom, left — the C
     CHECK(style.Radii.TopRight == doctest::Approx(14.0f));
     CHECK(style.Radii.BottomRight == doctest::Approx(15.0f));
     CHECK(style.Radii.BottomLeft == doctest::Approx(16.0f));
+}
+
+TEST_CASE("Cooker: the background-image family parses into its cooked slots")
+{
+    const string located = "loc";
+
+    // The texture rides the Handle slot, the same transport `font` uses.
+    const Result<CookedStyleProperty> image =
+        ParseStyleDeclaration(Gui::StyleProperty::BackgroundImage, "0x0123456789ABCDEF", located);
+    REQUIRE(image.has_value());
+    CHECK(image->Handle == 0x0123456789ABCDEFULL);
+
+    // A non-id value is a located error, like a malformed `font`.
+    const Result<CookedStyleProperty> notAnId =
+        ParseStyleDeclaration(Gui::StyleProperty::BackgroundImage, "panel.png", located);
+    REQUIRE_FALSE(notAnId.has_value());
+    CHECK(notAnId.error().find("loc") != string::npos);
+
+    // The slice insets take the four-edge shorthand in CSS order (top, right, bottom, left).
+    const Result<CookedStyleProperty> slice =
+        ParseStyleDeclaration(Gui::StyleProperty::BackgroundSlice, "1px 2px 3px 4px", located);
+    REQUIRE(slice.has_value());
+    CHECK(slice->Values[0] == doctest::Approx(1.0f));
+    CHECK(slice->Values[1] == doctest::Approx(2.0f));
+    CHECK(slice->Values[2] == doctest::Approx(3.0f));
+    CHECK(slice->Values[3] == doctest::Approx(4.0f));
+
+    // The two enums ride Unit, and an unknown keyword is a located error.
+    const Result<CookedStyleProperty> fit =
+        ParseStyleDeclaration(Gui::StyleProperty::BackgroundFit, "cover", located);
+    REQUIRE(fit.has_value());
+    CHECK(fit->Unit == static_cast<u32>(Gui::ImageFit::Cover));
+
+    const Result<CookedStyleProperty> repeat =
+        ParseStyleDeclaration(Gui::StyleProperty::BackgroundRepeat, "tile", located);
+    REQUIRE(repeat.has_value());
+    CHECK(repeat->Unit == static_cast<u32>(Gui::ImageRepeat::Tile));
+
+    const Result<CookedStyleProperty> badFit =
+        ParseStyleDeclaration(Gui::StyleProperty::BackgroundFit, "stretch", located);
+    REQUIRE_FALSE(badFit.has_value());
+    CHECK(badFit.error().find("loc") != string::npos);
+}
+
+TEST_CASE("Cooker: a block authoring two background fill sources is a located error")
+{
+    const string located = "loc";
+
+    const auto declaration = [](Gui::StyleProperty property)
+    {
+        CookedStyleProperty cp{};
+        cp.Property = static_cast<u32>(property);
+        return cp;
+    };
+
+    // One source, repeated, is a plain last-wins override rather than a conflict.
+    const vector<CookedStyleProperty> single = {declaration(Gui::StyleProperty::Background),
+                                                declaration(Gui::StyleProperty::Background),
+                                                declaration(Gui::StyleProperty::CornerRadius)};
+    CHECK(CheckExclusiveFillSources(single, located).has_value());
+
+    // Two different sources in one block cannot both be the fill, so the cook rejects it.
+    const vector<CookedStyleProperty> both = {declaration(Gui::StyleProperty::Background),
+                                              declaration(Gui::StyleProperty::BackgroundImage)};
+    const VoidResult conflict = CheckExclusiveFillSources(both, located);
+    REQUIRE_FALSE(conflict.has_value());
+    CHECK(conflict.error().find("loc") != string::npos);
+    CHECK(conflict.error().find("background-image") != string::npos);
 }

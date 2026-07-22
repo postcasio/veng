@@ -1,0 +1,8 @@
+<Panel stylesheets="0x4ECB98295A369623" style="width: 256px; height: 192px; background: #14141fff; padding: 8px;">
+  <Panel style="width: 100px; height: 52px; background-image: 0x4B1583166B212C2A; background-slice: 8px;"/>
+  <Panel style="width: 232px; height: 44px; margin: 4px 0 0 0; background-image: 0x4B1583166B212C2A; background-slice: 8px;"/>
+  <Panel style="flex-direction: row; margin: 4px 0 0 0;">
+    <Panel class="tiled"/>
+    <Panel style="width: 112px; height: 60px; margin: 0 0 0 8px; background-image: 0x4B1583166B212C2A; background-fit: contain;"/>
+  </Panel>
+</Panel>

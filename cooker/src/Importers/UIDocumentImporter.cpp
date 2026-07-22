@@ -370,6 +370,11 @@ namespace Veng::Cook
                 }
                 properties.push_back(*cooked);
             }
+            if (const VoidResult exclusive = CheckExclusiveFillSources(properties, located);
+                !exclusive)
+            {
+                return std::unexpected(exclusive.error());
+            }
             return properties;
         }
 

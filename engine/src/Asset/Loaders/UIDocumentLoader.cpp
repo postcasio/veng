@@ -227,10 +227,14 @@ namespace Veng
                     declaration.Property = static_cast<Gui::StyleProperty>(cp.Property);
                     declaration.Unit = cp.Unit;
                     declaration.Values = {cp.Values[0], cp.Values[1], cp.Values[2], cp.Values[3]};
-                    declaration.Font = AssetId{cp.Handle};
-                    if (declaration.Property == Gui::StyleProperty::TextFont && cp.Handle != 0)
+                    declaration.Handle = AssetId{cp.Handle};
+                    if (declaration.Property == Gui::StyleProperty::TextFont)
                     {
                         AddUnique(decoded.FontIds, AssetId{cp.Handle});
+                    }
+                    if (declaration.Property == Gui::StyleProperty::BackgroundImage)
+                    {
+                        AddUnique(decoded.TextureIds, AssetId{cp.Handle});
                     }
                     recipe.InlineStyle.push_back(declaration);
                 }

@@ -39,7 +39,7 @@ namespace Veng
             vector<AssetId> StyleSheetIds;
             /// @brief The deduplicated font AssetIds the inline styles reference (load-time dependencies).
             vector<AssetId> FontIds;
-            /// @brief The deduplicated texture AssetIds the Image elements source (load-time dependencies).
+            /// @brief The deduplicated texture AssetIds the Image `src`s and inline `background-image`s name (load-time dependencies).
             vector<AssetId> TextureIds;
         };
 

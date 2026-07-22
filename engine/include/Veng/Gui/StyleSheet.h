@@ -20,7 +20,7 @@ namespace Veng::Gui
     /// The value rides a uniform payload the style application interprets by Property:
     /// Unit carries a Length's LengthKind ordinal or an enum property's enumerator ordinal; Values
     /// holds the numeric payload (a Length value in x, a vec4/CornerRadii/Insets in xyzw, a scalar
-    /// in x); Font carries a font property's AssetId (else invalid). Colors are already linear
+    /// in x); Handle carries an asset-valued property's AssetId (else invalid). Colors are already linear
     /// straight-alpha (the cooker resolved authored sRGB), matching the draw-list contract.
     struct StyleDeclaration
     {
@@ -30,8 +30,11 @@ namespace Veng::Gui
         u32 Unit = 0;
         /// @brief Numeric payload: a Length value (x), a vec4/CornerRadii/Insets (xyzw), or a scalar (x).
         vec4 Values{0.0f};
-        /// @brief A font property's AssetId (resolved through the sheet's dependencies); invalid otherwise.
-        AssetId Font;
+        /// @brief An asset-valued property's AssetId (resolved through the sheet's dependencies); invalid otherwise.
+        ///
+        /// The transport `font` (a Font) and `background-image` (a Texture) both ride; which asset
+        /// type it names is decided by Property.
+        AssetId Handle;
     };
 
     /// @brief One cooked @keyframes clip: its keyframes, ascending by offset.

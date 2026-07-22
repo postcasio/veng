@@ -1,0 +1,14 @@
+{
+  "image": "tile_8x8.png",
+  "srgb": true,
+  "compression": "None",
+  "generate_mips": false,
+  "sampler": {
+    "min": "nearest",
+    "mag": "nearest",
+    "mipmap": "nearest",
+    "wrap_u": "repeat",
+    "wrap_v": "repeat",
+    "anisotropy": 0
+  }
+}

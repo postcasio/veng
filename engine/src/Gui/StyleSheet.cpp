@@ -2,6 +2,7 @@
 
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Font.h>
+#include <Veng/Asset/Texture.h>
 
 namespace Veng::Gui
 {
@@ -115,15 +116,38 @@ namespace Veng::Gui
             style.TextSize = declaration.Values.x;
             return;
         case StyleProperty::TextFont:
-            if (assets != nullptr && declaration.Font.IsValid())
+            if (assets != nullptr && declaration.Handle.IsValid())
             {
                 AssetHandle<Font> font =
-                    assets->LoadSync<Font>(declaration.Font).value_or(AssetHandle<Font>{});
+                    assets->LoadSync<Font>(declaration.Handle).value_or(AssetHandle<Font>{});
                 if (font.Id().IsValid())
                 {
                     style.TextFont = std::move(font);
                 }
             }
+            return;
+        case StyleProperty::BackgroundImage:
+            // The texture is already resident as a load-time dependency of the sheet (or of the
+            // document, for an inline style), so this is a cache lookup. A miss leaves the fill
+            // unset and the flat/gradient background paints instead — a missing font's tolerance.
+            if (assets != nullptr && declaration.Handle.IsValid())
+            {
+                AssetHandle<Texture> texture =
+                    assets->LoadSync<Texture>(declaration.Handle).value_or(AssetHandle<Texture>{});
+                if (texture.Id().IsValid())
+                {
+                    style.BackgroundImage = std::move(texture);
+                }
+            }
+            return;
+        case StyleProperty::BackgroundSlice:
+            style.BackgroundSlice = InsetsFrom(declaration);
+            return;
+        case StyleProperty::BackgroundFit:
+            style.BackgroundFit = static_cast<ImageFit>(declaration.Unit);
+            return;
+        case StyleProperty::BackgroundRepeat:
+            style.BackgroundRepeat = static_cast<ImageRepeat>(declaration.Unit);
             return;
         case StyleProperty::Opacity:
             style.Opacity = declaration.Values.x;

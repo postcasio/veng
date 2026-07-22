@@ -331,6 +331,90 @@ namespace Veng::Gui
             return style.OverflowX != Overflow::Visible || style.OverflowY != Overflow::Visible;
         }
 
+        // The box a background image fills, with the corner radii that box carries.
+        struct PaddingBox
+        {
+            Rect Box;
+            CornerRadii Radii;
+        };
+
+        // Deflates an element's border box to its padding box, so a background image sits behind the
+        // border and the content exactly as CSS paints one. The border ring is drawn over the border
+        // box, so deflating by its width is what keeps the fill from bleeding under it; each corner
+        // radius shrinks by the same width, the CSS inner-radius rule. A zero border is the identity.
+        PaddingBox ToPaddingBox(const Rect& rect, const Style& style)
+        {
+            const f32 width = std::max(style.BorderStyle.Width, 0.0f);
+            const f32 inset = std::min(width, std::min(rect.Size.x, rect.Size.y) * 0.5f);
+            return PaddingBox{
+                .Box = Rect{.Min = rect.Min + vec2(inset), .Size = rect.Size - vec2(inset * 2.0f)},
+                .Radii =
+                    CornerRadii{
+                        .TopLeft = std::max(style.Radii.TopLeft - inset, 0.0f),
+                        .TopRight = std::max(style.Radii.TopRight - inset, 0.0f),
+                        .BottomRight = std::max(style.Radii.BottomRight - inset, 0.0f),
+                        .BottomLeft = std::max(style.Radii.BottomLeft - inset, 0.0f),
+                    },
+            };
+        }
+
+        // A texture fill's destination rectangle and the UV sub-rect it samples, from the fit mode.
+        struct FittedFill
+        {
+            Rect Dest;
+            Rect Uv;
+        };
+
+        // Maps a texture of `source` pixels into `box` under `fit`. Fill stretches the whole texture
+        // over the box; Cover keeps the box and crops the UV; Contain and None keep the whole texel
+        // aspect and center a smaller destination inside the box (None additionally crops when the
+        // texture is larger than the box, so an intrinsic-size fill never spills).
+        FittedFill FitTexture(const Rect& box, vec2 source, ImageFit fit)
+        {
+            const Rect wholeUv{.Min = vec2(0.0f), .Size = vec2(1.0f)};
+            if (source.x <= 0.0f || source.y <= 0.0f || box.Size.x <= 0.0f || box.Size.y <= 0.0f)
+            {
+                return {.Dest = box, .Uv = wholeUv};
+            }
+
+            const auto centered = [&](vec2 size)
+            { return Rect{.Min = box.Min + (box.Size - size) * 0.5f, .Size = size}; };
+            const auto croppedUv = [&](vec2 visible)
+            {
+                const vec2 size = visible / source;
+                return Rect{.Min = (vec2(1.0f) - size) * 0.5f, .Size = size};
+            };
+
+            switch (fit)
+            {
+            case ImageFit::Fill:
+                return {.Dest = box, .Uv = wholeUv};
+            case ImageFit::Contain:
+            {
+                const f32 scale = std::min(box.Size.x / source.x, box.Size.y / source.y);
+                return {.Dest = centered(source * scale), .Uv = wholeUv};
+            }
+            case ImageFit::Cover:
+            {
+                const f32 scale = std::max(box.Size.x / source.x, box.Size.y / source.y);
+                return {.Dest = box, .Uv = croppedUv(box.Size / scale)};
+            }
+            case ImageFit::None:
+            {
+                const vec2 drawn = glm::min(source, box.Size);
+                return {.Dest = centered(drawn), .Uv = croppedUv(drawn)};
+            }
+            }
+            return {.Dest = box, .Uv = wholeUv};
+        }
+
+        // Whether any slice edge is set, which is what turns a plain texture fill into a nine-slice.
+        bool IsSliced(const Insets& slice)
+        {
+            return slice.Left > 0.0f || slice.Top > 0.0f || slice.Right > 0.0f ||
+                   slice.Bottom > 0.0f;
+        }
+
         // Whether an element is a widget-owned part rather than authored content — a scrollbar
         // track or thumb, a slider's fill or handle. A part is a real element so it styles through
         // the ordinary cascade, but it is not content and never appears in a content walk.
@@ -1182,6 +1266,10 @@ namespace Veng::Gui
             case StyleProperty::PointerEvents:
             case StyleProperty::Animation:
             case StyleProperty::TextAlign:
+            case StyleProperty::BackgroundImage:
+            case StyleProperty::BackgroundSlice:
+            case StyleProperty::BackgroundFit:
+            case StyleProperty::BackgroundRepeat:
                 return false;
             // An overflow axis and the scrollbar layout move layout inputs: a gutter takes its
             // width out of the content box, and turning an axis scrollable re-clamps the offset.
@@ -1241,6 +1329,10 @@ namespace Veng::Gui
             case StyleProperty::Animation:
             case StyleProperty::BackgroundGradient:
             case StyleProperty::TextAlign:
+            case StyleProperty::BackgroundImage:
+            case StyleProperty::BackgroundSlice:
+            case StyleProperty::BackgroundFit:
+            case StyleProperty::BackgroundRepeat:
                 return false;
             }
             return false;
@@ -2817,7 +2909,9 @@ namespace Veng::Gui
             list.PushTransform(pivot, glm::radians(style.Rotation));
         }
 
-        // A gradient background paints in place of the flat color; the border is drawn over either.
+        // Fill sources are exclusive and ranked BackgroundGradient > BackgroundImage > Background:
+        // the winning source is the fill, and they never layer. The border is drawn over whichever
+        // wins.
         if (style.BackgroundGradient.has_value() && style.BackgroundGradient->Ramp.IsLoaded())
         {
             const ResolvedGradient& gradient = *style.BackgroundGradient;
@@ -2830,6 +2924,44 @@ namespace Veng::Gui
                                        .Ramp = ramp.GetHandle(),
                                        .Sampler = ramp.GetSamplerHandle()},
                           style.Radii, {}, vec4(1.0f, 1.0f, 1.0f, opacity));
+        }
+        else if (style.BackgroundImage.IsLoaded())
+        {
+            const Texture& texture = *style.BackgroundImage.Get();
+            const PaddingBox box = ToPaddingBox(rect, style);
+            const vec2 source = vec2(texture.GetExtent());
+            const vec4 tint = vec4(1.0f, 1.0f, 1.0f, opacity);
+            if (IsSliced(style.BackgroundSlice))
+            {
+                // The slice insets author source-texture pixels; the primitive takes the source
+                // split as UV fractions and keeps the destination corners at their source size.
+                const Insets& slice = style.BackgroundSlice;
+                const Insets sliceUv{
+                    .Left = source.x > 0.0f ? slice.Left / source.x : 0.0f,
+                    .Top = source.y > 0.0f ? slice.Top / source.y : 0.0f,
+                    .Right = source.x > 0.0f ? slice.Right / source.x : 0.0f,
+                    .Bottom = source.y > 0.0f ? slice.Bottom / source.y : 0.0f,
+                };
+                list.NineSlice(box.Box, texture.GetHandle(), texture.GetSamplerHandle(), sliceUv,
+                               slice, tint);
+            }
+            else if (style.BackgroundRepeat == ImageRepeat::Tile)
+            {
+                // One quad with the UV rect scaled by box / texture size, tiled by the texture's own
+                // wrapping sampler — never a quad per tile, which would be unbounded against the
+                // draw list's fixed geometry ring.
+                const Rect uv{.Min = vec2(0.0f),
+                              .Size = source.x > 0.0f && source.y > 0.0f ? box.Box.Size / source
+                                                                         : vec2(1.0f)};
+                list.Texture(box.Box, texture.GetHandle(), texture.GetSamplerHandle(), uv, tint,
+                             box.Radii);
+            }
+            else
+            {
+                const FittedFill fill = FitTexture(box.Box, source, style.BackgroundFit);
+                list.Texture(fill.Dest, texture.GetHandle(), texture.GetSamplerHandle(), fill.Uv,
+                             tint, box.Radii);
+            }
         }
         else if (style.Background.a > 0.0f)
         {

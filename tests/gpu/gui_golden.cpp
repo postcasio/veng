@@ -1,11 +1,12 @@
 // Gui render golden: builds a hand-authored DrawList — a rounded panel, a 9-slice frame,
 // a tinted texture, and a line of text at two pixel sizes — renders it through GuiScenePass
 // over a solid scene output, downloads the composited result, and fuzzy-compares it to a
-// committed golden PNG. The image floor every later Gui plan holds stable (02-08 change what
-// builds the draw list, never the pixels a given draw list produces).
+// committed golden PNG. The image floor a change to what *builds* a draw list holds stable.
 //
 // Set VENG_GUI_GOLDEN_DUMP=<path.ppm> to write the capture instead of comparing — the way the
-// golden is (re)generated: dump, sips the PPM to tests/golden/gui_overlay.png, commit.
+// golden is (re)generated: dump, sips the PPM to tests/golden/gui_overlay.png, commit. Each of the
+// document-driven cases below carries its own dump variable and golden on the same pattern
+// (VENG_GUI_ROTATED_GOLDEN_DUMP, VENG_GUI_IMAGE_GOLDEN_DUMP, VENG_GUI_BACKGROUND_GOLDEN_DUMP).
 //
 // The same font fixture backs one non-rendering case here: a TextInput built with a resident font
 // emits its own value as a glyph run, which needs a real atlas and so cannot live in the
@@ -744,6 +745,112 @@ TEST_CASE_FIXTURE(
 
     const double fraction = static_cast<double>(mismatched) / static_cast<double>(pixelCount);
     MESSAGE("gui image golden: ", mismatched, "/", pixelCount, " pixels exceed delta ",
+            MaxChannelDelta, " (worst ", worst, ")");
+    CHECK(fraction <= MaxMismatchFraction);
+
+    std::filesystem::remove(outArchive);
+}
+
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "gui background golden: styled background-image fills slice, tile, and fit their boxes")
+{
+    // Cook a UI document whose panels carry `background-image` in three modes — a nine-slice frame
+    // at two widths (proving the corners keep their source size while the edges and center
+    // stretch), a tiled fill, and an aspect-fitted one — instantiate + solve + build it, render
+    // through GuiScenePass, and pin the composite. The tiled panel is styled from a *stylesheet*
+    // rule while the rest are inline, so the capture covers both residency paths a background
+    // texture rides: the sheet loader's and the document loader's inline-style decode.
+    const path fixtureDir = path(GPU_COOKER_FIXTURE_DIR);
+    const path packJson = fixtureDir / "ui_background_pack.json";
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_ui_background.vengpack";
+
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    REQUIRE(cooker.CookPack(packJson, outArchive).has_value());
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(outArchive).has_value());
+
+    const AssetResult<AssetHandle<Gui::UIDocument>> recipe =
+        assets.LoadSync<Gui::UIDocument>(AssetId{0xE4D34F00C43EC714ULL});
+    REQUIRE_MESSAGE(recipe.has_value(),
+                    "load failed: ", recipe ? "" : recipe.error().Detail.c_str());
+    REQUIRE(recipe->IsLoaded());
+
+    const Unique<Gui::Document> document = Gui::Document::Instantiate(*recipe->Get(), assets);
+    REQUIRE(document != nullptr);
+
+    const Ref<Image> sceneImage =
+        Image::Create(Context, {
+                                   .Name = "Gui Background Scene",
+                                   .Extent = {Extent.x, Extent.y, 1},
+                                   .Format = Format::RGBA16Sfloat,
+                                   .Usage = ImageUsage::ColorAttachment | ImageUsage::Sampled |
+                                            ImageUsage::TransferSrc,
+                               });
+    const Ref<ImageView> sceneView =
+        ImageView::Create(Context, {.Name = "Gui Background Scene View", .Image = sceneImage});
+    ClearImage(Context, sceneView, ClearColor{.R = 0.10f, .G = 0.12f, .B = 0.16f, .A = 1.0f});
+
+    document->Solve(vec2(static_cast<f32>(Extent.x), static_cast<f32>(Extent.y)));
+    Gui::DrawList list;
+    document->Build(list);
+
+    const Unique<GuiScenePass> pass = GuiScenePass::Create({
+        .Context = Context,
+        .Assets = assets,
+        .Extent = Extent,
+        .OutputFormat = Format::RGBA16Sfloat,
+    });
+    pass->SetDrawList(list);
+    Context.ImmediateCommands([&](CommandBuffer& cmd) { pass->Render(cmd, sceneView); });
+
+    const vector<u8> raw = pass->GetOutput()->GetImage()->Download();
+    REQUIRE(raw.size() == static_cast<usize>(Extent.x) * Extent.y * 8);
+    const vector<u8> actual = DecodeHalfRgb(raw, Extent);
+
+    if (const char* dump = std::getenv("VENG_GUI_BACKGROUND_GOLDEN_DUMP"))
+    {
+        WritePpm(path(dump), actual, Extent);
+        MESSAGE("gui background golden: wrote capture to ", dump);
+        std::filesystem::remove(outArchive);
+        return;
+    }
+
+    const path golden = path(GUI_GOLDEN_DIR) / "gui_background.png";
+    int gw = 0;
+    int gh = 0;
+    int gc = 0;
+    u8* goldenPixels = stbi_load(golden.string().c_str(), &gw, &gh, &gc, 3);
+    REQUIRE_MESSAGE(goldenPixels != nullptr, "gui background golden: failed to load ",
+                    golden.string());
+    REQUIRE(static_cast<u32>(gw) == Extent.x);
+    REQUIRE(static_cast<u32>(gh) == Extent.y);
+
+    const long pixelCount = static_cast<long>(Extent.x) * Extent.y;
+    long mismatched = 0;
+    int worst = 0;
+    for (long i = 0; i < pixelCount; ++i)
+    {
+        int pixelDelta = 0;
+        for (int c = 0; c < 3; ++c)
+        {
+            const int a = actual[i * 3 + c];
+            const int g = goldenPixels[i * 3 + c];
+            const int d = a > g ? a - g : g - a;
+            pixelDelta = d > pixelDelta ? d : pixelDelta;
+        }
+        worst = pixelDelta > worst ? pixelDelta : worst;
+        if (pixelDelta > MaxChannelDelta)
+        {
+            ++mismatched;
+        }
+    }
+    stbi_image_free(goldenPixels);
+
+    const double fraction = static_cast<double>(mismatched) / static_cast<double>(pixelCount);
+    MESSAGE("gui background golden: ", mismatched, "/", pixelCount, " pixels exceed delta ",
             MaxChannelDelta, " (worst ", worst, ")");
     CHECK(fraction <= MaxMismatchFraction);
 

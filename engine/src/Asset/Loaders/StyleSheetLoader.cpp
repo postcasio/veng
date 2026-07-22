@@ -7,6 +7,7 @@
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/CookedBlobs.h>
 #include <Veng/Asset/Font.h>
+#include <Veng/Asset/Texture.h>
 
 namespace Veng
 {
@@ -62,7 +63,7 @@ namespace Veng
                 static_cast<usize>(header.GradientCount) * sizeof(CookedStyleGradient);
             const usize variableBytes =
                 static_cast<usize>(header.VariableCount) * sizeof(CookedStyleVariable);
-            const usize rampBytes = static_cast<usize>(header.RampByteCount);
+            const auto rampBytes = static_cast<usize>(header.RampByteCount);
 
             usize cursor = sizeof(CookedStyleSheetHeader);
             if (cooked.size() < cursor + ruleBytes + propertyBytes + animationBytes +
@@ -134,10 +135,15 @@ namespace Veng
                     declaration.Property = static_cast<Gui::StyleProperty>(cp.Property);
                     declaration.Unit = cp.Unit;
                     declaration.Values = {cp.Values[0], cp.Values[1], cp.Values[2], cp.Values[3]};
-                    declaration.Font = AssetId{cp.Handle};
+                    declaration.Handle = AssetId{cp.Handle};
                     if (declaration.Property == Gui::StyleProperty::TextFont && cp.Handle != 0)
                     {
                         decoded.FontIds.push_back(AssetId{cp.Handle});
+                    }
+                    if (declaration.Property == Gui::StyleProperty::BackgroundImage &&
+                        cp.Handle != 0)
+                    {
+                        decoded.TextureIds.push_back(AssetId{cp.Handle});
                     }
                     out.push_back(declaration);
                 }
@@ -223,25 +229,30 @@ namespace Veng
                 decoded.Variables.push_back(std::move(variable));
             }
 
-            // Deduplicate the surfaced font ids so a font referenced by many rules loads once.
-            vector<AssetId> unique;
-            for (const AssetId fontId : decoded.FontIds)
+            // Deduplicate the surfaced asset ids so an asset referenced by many rules loads once.
+            const auto deduplicate = [](vector<AssetId>& ids)
             {
-                bool known = false;
-                for (const AssetId existing : unique)
+                vector<AssetId> unique;
+                for (const AssetId id : ids)
                 {
-                    if (existing.Value == fontId.Value)
+                    bool known = false;
+                    for (const AssetId existing : unique)
                     {
-                        known = true;
-                        break;
+                        if (existing.Value == id.Value)
+                        {
+                            known = true;
+                            break;
+                        }
+                    }
+                    if (!known)
+                    {
+                        unique.push_back(id);
                     }
                 }
-                if (!known)
-                {
-                    unique.push_back(fontId);
-                }
-            }
-            decoded.FontIds = std::move(unique);
+                ids = std::move(unique);
+            };
+            deduplicate(decoded.FontIds);
+            deduplicate(decoded.TextureIds);
 
             return decoded;
         }
@@ -278,6 +289,36 @@ namespace Veng
             else
             {
                 const AssetResult<AssetHandle<Font>> handle = manager.LoadSync<Font>(fontId);
+                if (!handle)
+                {
+                    return std::unexpected(handle.error());
+                }
+                dependencies.push_back(AssetManager::EntryOf(*handle));
+            }
+        }
+
+        // A `background-image`'s texture is an ordinary load-time dependency, kept resident so the
+        // instantiate-time resolve is a cache hit and the texture stays loaded like a font.
+        for (const AssetId textureId : decoded->TextureIds)
+        {
+            if (async)
+            {
+                const AssetHandle<Texture> handle = manager.Load<Texture>(textureId);
+                if (!AssetManager::EntryOf(handle))
+                {
+                    return std::unexpected(AssetLoadError{
+                        .Kind = AssetError::MissingDependency,
+                        .Id = textureId,
+                        .Detail =
+                            fmt::format("stylesheet {}: texture dependency {} did not resolve",
+                                        id.Value, textureId.Value)});
+                }
+                dependencies.push_back(AssetManager::EntryOf(handle));
+            }
+            else
+            {
+                const AssetResult<AssetHandle<Texture>> handle =
+                    manager.LoadSync<Texture>(textureId);
                 if (!handle)
                 {
                     return std::unexpected(handle.error());

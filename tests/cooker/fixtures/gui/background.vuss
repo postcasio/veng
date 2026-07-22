@@ -1,0 +1,10 @@
+/* The stylesheet half of the background-fill fixture: a `background-image` authored in a *rule*
+   rather than inline, so the cook makes the texture a dependency of the sheet and the sheet's
+   loader keeps it resident — the second of the two residency paths a background image rides. */
+
+.tiled {
+    width: 112px;
+    height: 60px;
+    background-image: 0x68D20CFB7FEC7518;
+    background-repeat: tile;
+}

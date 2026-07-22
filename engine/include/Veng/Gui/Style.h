@@ -43,6 +43,37 @@ namespace Veng::Gui
         AssetHandle<Texture> Ramp;
     };
 
+    /// @brief How a texture fill maps into its box when it is not sliced.
+    ///
+    /// The shared fill vocabulary: it sizes a container's `background-image` against its padding
+    /// box. Fit is ignored by a sliced fill (the 3×3 split decides the mapping) and by a tiled one
+    /// (ImageRepeat::Tile scales the UV by box / texture size instead).
+    enum class ImageFit : u8
+    {
+        /// @brief Stretch the whole texture to the box, ignoring its aspect ratio.
+        Fill,
+        /// @brief Scale to fit inside the box preserving aspect, centered — letterboxed.
+        Contain,
+        /// @brief Scale to cover the box preserving aspect, centered — cropped.
+        Cover,
+        /// @brief Draw at the texture's intrinsic pixel size, centered and cropped to the box.
+        None,
+    };
+
+    /// @brief Whether a texture fill stretches across its box or tiles at its intrinsic size.
+    ///
+    /// Tile is a sampler address mode plus a scaled UV rect on one quad, never repeated geometry,
+    /// so a tiled fill costs the same as a stretched one however large the box grows. It therefore
+    /// requires the texture's own sampler to wrap (the cooked default; a `.tex.json` authoring
+    /// `wrap_u`/`wrap_v` as a clamp mode clamps the tiled fill instead of repeating it).
+    enum class ImageRepeat : u8
+    {
+        /// @brief The fill spans the box once, mapped by its ImageFit.
+        Stretch,
+        /// @brief The fill repeats at the texture's intrinsic pixel size from the box's top-left.
+        Tile,
+    };
+
     /// @brief How a sizing value (width, height, flex basis) is expressed.
     enum class LengthKind : u8
     {
@@ -293,6 +324,25 @@ namespace Veng::Gui
         vec4 Background{0.0f};
         /// @brief A gradient background fill; when set it paints instead of the flat Background color.
         optional<ResolvedGradient> BackgroundGradient;
+        /// @brief A texture background fill; empty (the default) leaves the flat/gradient fill alone.
+        ///
+        /// The resident texture the fill samples, resolved at instantiate and held for the Style's
+        /// lifetime like TextFont — so the borrowed AssetManager must outlive the document. Fill
+        /// sources are exclusive and ranked BackgroundGradient > BackgroundImage > Background: the
+        /// winning source is the fill, and they never layer.
+        AssetHandle<Texture> BackgroundImage;
+        /// @brief Nine-slice margins of the background image, in source-texture pixels.
+        ///
+        /// All-zero (the default) paints the image as a plain fill. Any non-zero edge splits the
+        /// texture and the padding box into a 3×3 grid: corners keep their source size, edges
+        /// stretch along one axis, and the center stretches both.
+        /// @warning A sliced fill takes no corner radius — the nine-slice primitive is unrounded,
+        ///          which matches nine-slice art carrying its own corners.
+        Insets BackgroundSlice;
+        /// @brief How an unsliced, unrepeated background image maps into the padding box.
+        ImageFit BackgroundFit = ImageFit::Fill;
+        /// @brief Whether the background image stretches across the box or tiles at its own size.
+        ImageRepeat BackgroundRepeat = ImageRepeat::Stretch;
         /// @brief Per-corner background/border radius, in pixels.
         CornerRadii Radii;
         /// @brief Border width and color; a zero width draws no border.

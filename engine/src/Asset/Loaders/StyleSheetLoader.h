@@ -29,7 +29,7 @@ namespace Veng
 
     namespace Detail
     {
-        /// @brief The decoded form of a cooked stylesheet blob: rules, clips, and font dependency ids.
+        /// @brief The decoded form of a cooked stylesheet blob: rules, clips, and asset dependency ids.
         struct DecodedStyleSheet
         {
             /// @brief The flattened, resolved rules, in source order.
@@ -42,16 +42,18 @@ namespace Veng
             vector<Gui::StyleVariable> Variables;
             /// @brief The deduplicated font AssetIds every declaration references (load-time dependencies).
             vector<AssetId> FontIds;
+            /// @brief The deduplicated texture AssetIds every `background-image` names (load-time dependencies).
+            vector<AssetId> TextureIds;
         };
 
-        /// @brief Decodes a cooked stylesheet blob into its rules and font dependency ids.
+        /// @brief Decodes a cooked stylesheet blob into its rules and asset dependency ids.
         ///
         /// The pure, device-free decode both the loader and its round-trip test share: it validates
         /// the header (version + sizes) and reads the rule/property tables. A truncated or
         /// version-mismatched blob is a recoverable AssetError::Corrupt.
         /// @param id      The asset being decoded (for error reporting).
         /// @param cooked  The cooked blob bytes.
-        /// @return The decoded rules + font ids, or a structured load error.
+        /// @return The decoded rules + dependency ids, or a structured load error.
         [[nodiscard]] AssetResult<DecodedStyleSheet> DecodeStyleSheet(AssetId id,
                                                                       std::span<const u8> cooked);
     }

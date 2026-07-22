@@ -38,4 +38,17 @@ namespace Veng::Cook
     /// @param located  The located-error prefix (file + selector/element context).
     /// @return The linear straight-alpha color, or a located error.
     [[nodiscard]] Result<vec4> ParseStyleColor(std::string_view value, const string& located);
+
+    /// @brief Rejects a declaration block that authors more than one background fill source.
+    ///
+    /// Fill sources are exclusive at paint — `background-gradient` beats `background-image` beats
+    /// `background`, and the winner *is* the fill — so a block naming two says something the
+    /// renderer cannot honour. Catching it at cook turns a silently-ignored declaration into a
+    /// located error. Run over a finished rule block or inline style, whose declarations are all
+    /// one element's.
+    /// @param properties  The block's cooked declarations.
+    /// @param located     The located-error prefix (file + selector/element context).
+    /// @return Nothing, or a located error naming the two conflicting sources.
+    [[nodiscard]] VoidResult
+    CheckExclusiveFillSources(const vector<CookedStyleProperty>& properties, const string& located);
 }
