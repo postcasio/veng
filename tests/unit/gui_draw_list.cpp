@@ -351,6 +351,54 @@ TEST_CASE("gui draw list: an inset shadow keeps the element box as its quad and 
     CHECK(list.GetVertices()[0].Shadow.x == doctest::Approx(-5.0f));
 }
 
+TEST_CASE("gui draw list: a zero-spread shadow grows by the blur alone")
+{
+    // Spread and blur both widen the quad, so a spread of zero isolates the blur's contribution:
+    // an off-by-Blur here is invisible except as a shadow ramp clipped at the quad's edge.
+    DrawList list;
+    const BoxShadow shadow{
+        .Offset = vec2(0.0f), .Blur = 7.0f, .Spread = 0.0f, .Color = vec4(0.0f, 0.0f, 0.0f, 0.6f)};
+    list.Shadow(UnitRect, shadow);
+
+    REQUIRE(list.GetVertices().size() == 4);
+    CheckVec2(list.GetVertices()[0].Position, UnitRect.Min - vec2(7.0f));
+    CheckVec2(list.GetVertices()[2].Position, UnitRect.Max() + vec2(7.0f));
+    CHECK(list.GetVertices()[0].Shadow.y == doctest::Approx(0.0f));
+
+    // A negative spread shrinks the silhouette, so the quad grows by less than the blur — but never
+    // below the element's own box, which the fragment still needs to reconstruct the SDF.
+    DrawList tightened;
+    tightened.Shadow(UnitRect, BoxShadow{.Blur = 7.0f, .Spread = -3.0f, .Color = vec4(1.0f)});
+    REQUIRE(tightened.GetVertices().size() == 4);
+    CheckVec2(tightened.GetVertices()[0].Position, UnitRect.Min - vec2(4.0f));
+    CHECK(tightened.GetVertices()[0].Shadow.y == doctest::Approx(-3.0f));
+}
+
+TEST_CASE("gui draw list: an inset shadow's quad ignores blur, spread, and offset alike")
+{
+    // An inset shadow is bounded by the box it recesses, so none of the three widening terms may
+    // reach the geometry — they are all evaluated in the fragment against the element's own SDF.
+    DrawList list;
+    list.Shadow(UnitRect, BoxShadow{.Offset = vec2(9.0f, -4.0f),
+                                    .Blur = 12.0f,
+                                    .Spread = 5.0f,
+                                    .Color = vec4(1.0f),
+                                    .Inset = true});
+
+    REQUIRE(list.GetVertices().size() == 4);
+    CheckVec2(list.GetVertices()[0].Position, UnitRect.Min);
+    CheckVec2(list.GetVertices()[2].Position, UnitRect.Max());
+    for (const GuiVertex& vertex : list.GetVertices())
+    {
+        CheckVec2(vertex.RectHalf, UnitRect.Size * 0.5f);
+        // The blur's magnitude is the ramp and its sign the inset flag; spread and offset ride
+        // unsigned, so an inset spread is read as inward growth by the fragment, not here.
+        CHECK(vertex.Shadow.x == doctest::Approx(-12.0f));
+        CHECK(vertex.Shadow.y == doctest::Approx(5.0f));
+        CheckVec2(vec2(vertex.Shadow.z, vertex.Shadow.w), vec2(9.0f, -4.0f));
+    }
+}
+
 TEST_CASE("gui draw list: a hard shadow still carries a non-zero blur lane")
 {
     DrawList list;

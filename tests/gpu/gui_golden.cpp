@@ -7,7 +7,8 @@
 // golden is (re)generated: dump, sips the PPM to tests/golden/gui_overlay.png, commit. Each of the
 // document-driven cases below carries its own dump variable and golden on the same pattern
 // (VENG_GUI_ROTATED_GOLDEN_DUMP, VENG_GUI_IMAGE_GOLDEN_DUMP, VENG_GUI_BACKGROUND_GOLDEN_DUMP,
-// VENG_GUI_SHADOW_GOLDEN_DUMP, VENG_GUI_MATERIAL_GOLDEN_DUMP, VENG_GUI_POPUP_GOLDEN_DUMP).
+// VENG_GUI_SHADOW_GOLDEN_DUMP, VENG_GUI_MATERIAL_GOLDEN_DUMP, VENG_GUI_POPUP_GOLDEN_DUMP,
+// VENG_GUI_COMPOSITION_GOLDEN_DUMP).
 //
 // The same font fixture backs one non-rendering case here: a TextInput built with a resident font
 // emits its own value as a glyph run, which needs a real atlas and so cannot live in the
@@ -1228,4 +1229,159 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     MESSAGE("gui popup golden: ", mismatched, "/", pixelCount, " pixels exceed delta ",
             MaxChannelDelta, " (worst ", worst, ")");
     CHECK(fraction <= MaxMismatchFraction);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "gui composition golden: fills, an effect, and the popup layer in one frame")
+{
+    // The cross-feature capture: what the per-feature cases above cannot show in isolation, because
+    // each is a property of two of them meeting.
+    //
+    //   - a nine-slice frame with a *tiled* `Image` inside it — two texture fills of different
+    //     shapes, in different boxes, nested;
+    //   - a material fill inside a clipped scroller — the material run's scissor, which nothing in
+    //     the material capture (unclipped panels) exercises;
+    //   - a box-shadowed card *under* an open popup — the shadow is emitted inside the main tree's
+    //     draw and the popup after all of it with the clip stack reset, so their ordering is only
+    //     observable together.
+    //
+    // The pass clock is left at its 0 default, so the material's animated sweep is captured at a
+    // fixed time and the composite is reproducible.
+    const path fixtureDir = path(GPU_COOKER_FIXTURE_DIR);
+    const path packJson = fixtureDir / "ui_composition_pack.json";
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_ui_composition.vengpack";
+    const std::array<path, 1> references{path(VENG_CORE_PACK_JSON)};
+
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    const VoidResult cooked = cooker.CookPack(packJson, outArchive, references, nullptr, nullptr,
+                                              nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR));
+    REQUIRE_MESSAGE(cooked.has_value(), cooked.error());
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(outArchive).has_value());
+
+    const AssetResult<AssetHandle<Gui::UIDocument>> recipe =
+        assets.LoadSync<Gui::UIDocument>(AssetId{0x0ABB1E8D06A2C6E1ULL});
+    const string loadError = recipe.has_value() ? string{} : recipe.error().Detail;
+    REQUIRE_MESSAGE(recipe.has_value(), loadError);
+    REQUIRE(recipe->IsLoaded());
+
+    const Unique<Gui::Document> document = Gui::Document::Instantiate(*recipe->Get(), assets);
+    REQUIRE(document != nullptr);
+
+    // The popup is opened imperatively — the layer has no markup spelling, and anchoring it to the
+    // clipping panel is what drops it over the shadowed card the cooked tree painted last.
+    Gui::Element* const anchor = document->FindById("scroller");
+    REQUIRE(anchor != nullptr);
+    const Gui::PopupId popup = document->OpenPopup(
+        *anchor, Gui::PopupOptions{.Side = Gui::PopupSide::Below, .Offset = vec2(-46.0f, 22.0f)});
+    Gui::Element* const menuRoot = document->GetPopupRoot(popup);
+    REQUIRE(menuRoot != nullptr);
+
+    Gui::Style menu;
+    menu.Direction = Gui::FlexDirection::Column;
+    menu.Width = Gui::Length::Points(120.0f);
+    menu.Padding = Gui::Insets::All(6.0f);
+    menu.Background = vec4(0.93f, 0.94f, 0.97f, 1.0f);
+    menu.Radii = Gui::CornerRadii::All(6.0f);
+    menu.BorderStyle = Gui::Border{.Width = 2.0f, .Color = vec4(0.31f, 0.639f, 1.0f, 1.0f)};
+    document->SetStyle(*menuRoot, menu);
+
+    Gui::Style item;
+    item.Height = Gui::Length::Points(14.0f);
+    item.FlexShrink = 0.0f;
+    item.Radii = Gui::CornerRadii::All(3.0f);
+    item.Margin = Gui::Insets{.Left = 0.0f, .Top = 0.0f, .Right = 0.0f, .Bottom = 4.0f};
+    for (int i = 0; i < 2; ++i)
+    {
+        Gui::Element& option = document->Add(*menuRoot, Gui::ElementKind::Panel);
+        item.Background = vec4(0.22f + 0.24f * static_cast<f32>(i), 0.26f, 0.34f, 1.0f);
+        document->SetStyle(option, item);
+    }
+
+    const Ref<Image> sceneImage =
+        Image::Create(Context, {
+                                   .Name = "Gui Composition Scene",
+                                   .Extent = {Extent.x, Extent.y, 1},
+                                   .Format = Format::RGBA16Sfloat,
+                                   .Usage = ImageUsage::ColorAttachment | ImageUsage::Sampled |
+                                            ImageUsage::TransferSrc,
+                               });
+    const Ref<ImageView> sceneView =
+        ImageView::Create(Context, {.Name = "Gui Composition Scene View", .Image = sceneImage});
+    ClearImage(Context, sceneView, ClearColor{.R = 0.10f, .G = 0.12f, .B = 0.16f, .A = 1.0f});
+
+    document->Solve(vec2(static_cast<f32>(Extent.x), static_cast<f32>(Extent.y)));
+    Gui::DrawList list;
+    document->Build(list);
+
+    // The frame stays well inside the draw list's fixed geometry ring: a nine-slice is nine quads
+    // and a shadow one, and the whole composition is far short of the cap the pass asserts on.
+    CHECK(list.GetVertices().size() < 256);
+    // The material run is clipped: the scissor the scroller pushed reaches the material pipeline
+    // exactly as it reaches the shape one.
+    const auto clippedMaterialRuns = std::ranges::count_if(
+        list.GetRuns(), [](const Gui::DrawRun& run)
+        { return run.Pipeline == Gui::GuiPipeline::Material && run.HasClip; });
+    CHECK(clippedMaterialRuns == 1);
+
+    const Unique<GuiScenePass> pass = GuiScenePass::Create({
+        .Context = Context,
+        .Assets = assets,
+        .Extent = Extent,
+        .OutputFormat = Format::RGBA16Sfloat,
+    });
+    pass->SetDrawList(list);
+    Context.ImmediateCommands([&](CommandBuffer& cmd) { pass->Render(cmd, sceneView); });
+
+    const vector<u8> raw = pass->GetOutput()->GetImage()->Download();
+    REQUIRE(raw.size() == static_cast<usize>(Extent.x) * Extent.y * 8);
+    const vector<u8> actual = DecodeHalfRgb(raw, Extent);
+
+    if (const char* dump = std::getenv("VENG_GUI_COMPOSITION_GOLDEN_DUMP"))
+    {
+        WritePpm(path(dump), actual, Extent);
+        MESSAGE("gui composition golden: wrote capture to ", dump);
+        std::filesystem::remove(outArchive);
+        return;
+    }
+
+    const path golden = path(GUI_GOLDEN_DIR) / "gui_composition.png";
+    int gw = 0;
+    int gh = 0;
+    int gc = 0;
+    u8* goldenPixels = stbi_load(golden.string().c_str(), &gw, &gh, &gc, 3);
+    REQUIRE_MESSAGE(goldenPixels != nullptr, "gui composition golden: failed to load ",
+                    golden.string());
+    REQUIRE(static_cast<u32>(gw) == Extent.x);
+    REQUIRE(static_cast<u32>(gh) == Extent.y);
+
+    const long pixelCount = static_cast<long>(Extent.x) * Extent.y;
+    long mismatched = 0;
+    int worst = 0;
+    for (long i = 0; i < pixelCount; ++i)
+    {
+        int pixelDelta = 0;
+        for (int c = 0; c < 3; ++c)
+        {
+            const int a = actual[i * 3 + c];
+            const int g = goldenPixels[i * 3 + c];
+            const int d = a > g ? a - g : g - a;
+            pixelDelta = d > pixelDelta ? d : pixelDelta;
+        }
+        worst = pixelDelta > worst ? pixelDelta : worst;
+        if (pixelDelta > MaxChannelDelta)
+        {
+            ++mismatched;
+        }
+    }
+    stbi_image_free(goldenPixels);
+
+    const double fraction = static_cast<double>(mismatched) / static_cast<double>(pixelCount);
+    MESSAGE("gui composition golden: ", mismatched, "/", pixelCount, " pixels exceed delta ",
+            MaxChannelDelta, " (worst ", worst, ")");
+    CHECK(fraction <= MaxMismatchFraction);
+
+    std::filesystem::remove(outArchive);
 }

@@ -6,6 +6,7 @@
 // recorded as a build dependency, and each malformed sheet is a located cook error.
 
 #include <algorithm>
+#include <array>
 #include <filesystem>
 #include <fstream>
 #include <span>
@@ -491,6 +492,24 @@ TEST_CASE("Cooker: a block authoring two background fill sources is a located er
     REQUIRE_FALSE(conflict.has_value());
     CHECK(conflict.error().find("loc") != string::npos);
     CHECK(conflict.error().find("background-image") != string::npos);
+
+    // The rule covers all four sources, not the two the shape path started with: a material is the
+    // top of the order and conflicts with each of the three below it just as they conflict with
+    // each other, so the diagnostic is what makes the runtime's exclusive `else if` chain the only
+    // reachable behavior rather than a silent drop.
+    const std::array<Gui::StyleProperty, 4> sources = {
+        Gui::StyleProperty::BackgroundMaterial, Gui::StyleProperty::BackgroundGradient,
+        Gui::StyleProperty::BackgroundImage, Gui::StyleProperty::Background};
+    for (usize i = 0; i < sources.size(); ++i)
+    {
+        for (usize j = 0; j < sources.size(); ++j)
+        {
+            const vector<CookedStyleProperty> pair = {declaration(sources[i]),
+                                                      declaration(sources[j])};
+            const VoidResult result = CheckExclusiveFillSources(pair, located);
+            CHECK(result.has_value() == (i == j));
+        }
+    }
 }
 
 TEST_CASE("Cooker: the Image fill family parses into its cooked slots")

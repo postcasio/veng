@@ -1,0 +1,12 @@
+/* The stylesheet half of the composition fixture: the shadowed card an open popup covers. It is a
+   rule rather than an inline style so the composition capture also exercises a shadow arriving
+   through the sheet cascade beside inline-authored fills. */
+
+.card {
+    width: 232px;
+    height: 46px;
+    margin: 10px 0 0 0;
+    corner-radius: 8px;
+    background: #6f86c8ff;
+    box-shadow: 5px 7px 10px 2px #000000ee;
+}

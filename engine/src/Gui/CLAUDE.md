@@ -105,10 +105,20 @@ opacity, scalar sizes) over its authored duration through a small tween clock. A
 moves a layout input re-dirties the Yoga box; a pure paint change (color/opacity) does not.
 
 **A background is one fill source, never a stack.** `background-material` > `background-gradient` >
-`background-image` > `background`, **exclusive**: the winning source *is* the fill and they do not layer (CSS-style
-image-over-color compositing is out). This is what the fragment already does — `gui_shape.frag.slang`
-is `if (selector > 0) … else if (textureIndex >= 0) …` — so the rule costs nothing to enforce, and a
-single rule authoring two sources is a **cook error** rather than a silently-ignored declaration.
+`background-image` > `background`, **exclusive**: the winning source *is* the fill and they do not
+layer (CSS-style image-over-color compositing is out). The rule costs nothing to enforce because it
+is what the code already shapes itself as at both ends — `Document::Build`'s single `else if` chain
+picks one source per element, and within the shape path `gui_shape.frag.slang` is
+`if (selector > 0) … else if (textureIndex >= 0) …`. So a single rule authoring two sources is a
+**cook error** (`CheckExclusiveFillSources`) rather than a silently-ignored declaration. An
+*unresolved* source is not a conflict: it falls through to the next one, so a texture that failed to
+load leaves the flat color painting rather than a hole.
+
+Each source rides the identical silhouette — the rounded-rect SDF with its corner radius, border
+ring, clip, rotation, and composited opacity — which is the whole reason the set could grow without
+touching the shape path. The three that follow are the same idea at three distances from the engine:
+a **texture** (plain, tiled, or nine-sliced), the `Image` widget's content fill in that same
+vocabulary, and an authored **material** whose fragment computes the RGBA.
 
 **`background-image` is a texture fill on the same shape path.** It names a `Texture` `AssetId`
 transported exactly as `font`'s is (`CookedStyleProperty::Handle`), resolved at instantiate to a
@@ -197,6 +207,12 @@ and `rotation` for free, and the material cannot widen, replace, or alpha-blur t
 - **Residency is a load-time dependency in both loaders**, exactly as `background-image`'s texture
   is: `StyleSheetLoader`'s `MaterialIds` for a rule and `UIDocumentLoader`'s for an inline style, so
   the instantiate-time resolve is a cache hit.
+- **A bordered element hides its own material fill.** `GuiFillResolve` restricts the fill to the
+  border ring when `border-width > 0` — the shape path's own rule, so the two fill sources agree —
+  and the element's border quad is then drawn *over* that ring, opaquely. Each half is right on its
+  own; together they make a material on a bordered element a silent no-op. **Author a material ring
+  with `border-width: 0`** and shape the annulus in the fragment's own alpha, which is where a
+  material's freedom actually is.
 - **The cost is batching.** A material is part of the run key, so N distinct materials are ≥ N runs —
   the same trade a distinct texture already forces, and the reason the pass's rebind guard is keyed
   on `{kind, material instance}` rather than the run-kind enum (two adjacent material runs would
@@ -223,6 +239,11 @@ through `object-fit` / `image-repeat` / `image-slice` — the widget-side spelli
   sum of its corner insets instead — the smallest box at which the frame still reads. An unresolved
   texture measures zero. Taking a child turns an `Image` into a container, exactly as it does a
   `Button` (a measured Yoga node cannot hold children).
+- **Slicing wins over tiling on either host.** `image-repeat: tile` (like `background-repeat: tile`)
+  is ignored once a slice is authored, for the same reason: a wrapping sampler run past a nine-slice
+  cell samples the *neighbouring* atlas region, and correct per-cell wrapping needs a per-quad UV
+  wrap the shape vertex does not carry. A sliced cell therefore stretches. Tiling a frame's edges is
+  a named gap, not a supported combination.
 
 **The measure reads the whole texture, never the `uv` sub-rect.** Reading `ImageUv` there would make
 `Document::SetImageUv` a layout input, turning a per-frame atlas flipbook advance into a per-frame
@@ -241,11 +262,21 @@ the MSDF text path) are built from **core-pack** Slang shaders a consumer reuses
 authors; the **third** run kind, `GuiPipeline::Material`, is the seam where a consumer *does*
 author a fragment — an authored `GuiFill` material, drawn on the same vertex stage and multiplied
 by the same silhouette (see [Material fills](#material-fills-an-authored-fill-source) above). The
-image goldens (`gui_overlay`, `gui_rotated`, `gui_image`, `gui_background`, `gui_shadow`,
-`gui_material`, `gui_popup`) are the render floor every later change holds pixel-stable against. **The vertex format is five files, not one**: the
+image goldens are the render floor every later change holds pixel-stable against: one **per feature**
+(`gui_overlay`, `gui_rotated`, `gui_image`, `gui_background`, `gui_shadow`, `gui_material`,
+`gui_popup`), kept separate on purpose so a moved pixel names the feature that moved it, plus one
+**composition** capture (`gui_composition`) for what only shows when two of them meet — a nine-slice
+frame around a tiled `Image`, a material fill inside a clipped scroller, and a shadowed card under an
+open popup. **The vertex format is five files, not one**: the
 `GuiVertex` struct, the cooked `gui.vlayout.json` the pass loads, and the `VSInput`/`VSOutput` of
 `gui.vert.slang` — the shader importer hard-errors at cook time on a reflected-vs-declared
-mismatch, so a new field lands in all of them at once or nothing cooks.
+mismatch, so a new field lands in all of them at once or nothing cooks. **A fragment declares only
+the interpolants it reads**, and the vertex stage may output more: semantics bind the two, not
+member order or count, so `gui_msdf.frag.slang`'s `VSOutput` and the `GuiFillInputs` a material
+reads both omit the gradient-selector and shadow lanes they have no use for. That is the
+established shape here, not an oversight — the validation gate accepts the unread output (it logs
+the SPIR-V interface mismatch at `WARN`), and a fragment that *does* read a lane must declare it at
+the matching semantic.
 `DrawList` carries a composing **transform stack** (`PushTransform(pivot, angle)` / `PopTransform`)
 applied to vertex positions at quad emission while `RectCoord`/`RectHalf`/UV stay in unrotated
 local space, so a `rotation` style property (scalar degrees, clockwise in the y-down document

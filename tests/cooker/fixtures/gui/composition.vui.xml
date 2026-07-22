@@ -1,0 +1,11 @@
+<Panel stylesheets="0x9173B62B59BE30F9" style="width: 256px; height: 192px; background: #14141fff; padding: 8px;">
+  <Panel style="flex-direction: row;">
+    <Panel style="width: 118px; height: 64px; padding: 10px; background-image: 0x4B1583166B212C2A; background-slice: 8px;">
+      <Image src="0x68D20CFB7FEC7518" style="width: 98px; height: 44px; image-repeat: tile;"/>
+    </Panel>
+    <Panel id="scroller" style="width: 104px; height: 64px; margin: 0 0 0 8px; overflow: hidden; background: #0b0d14ff;">
+      <Panel style="width: 104px; height: 120px; flex-shrink: 0; background-material: 0x38FECEB6EB6644F5;"/>
+    </Panel>
+  </Panel>
+  <Panel class="card"/>
+</Panel>

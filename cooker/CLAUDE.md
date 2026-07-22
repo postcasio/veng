@@ -123,6 +123,23 @@ at cook time:
   + a value region of the param overrides' raw bytes); the instance owns no shader or pipeline — the
   parent supplies those. The importer is in the **core** set (it links only the Slang reflection +
   the graph-shader resolver hook, never libveng), so a bare-parent cook stays graph-aware.
+- **UI documents and stylesheets** (`*.vui.xml` / `*.vuss`) cook through the
+  **`UIDocumentImporter`** and **`StyleSheetImporter`** — pugixml over the markup and a CSS
+  tokenizer over the sheet, both cooker-only, so no XML or CSS parser reaches the runtime. The
+  markup becomes a pre-order recipe element tree (kind, id, classes, text, inline style, unresolved
+  `{obj.field}` bindings, named handlers) and the sheet becomes flattened, selector-resolved rules
+  plus their pseudo-state variants, with colors resolved sRGB→linear and each `background-gradient`
+  baked to a shape + a ramp LUT. Both importers share `Importers/StyleParse.{h,cpp}`, which owns the
+  per-property value grammar and the **fill-source exclusivity diagnostic**
+  (`CheckExclusiveFillSources`): `background-material`, `background-gradient`, `background-image`,
+  and `background` are one exclusive fill source, so a block authoring two is a **located cook
+  error** rather than a silently-ignored declaration. An asset-valued declaration (`font`,
+  `background-image`, `background-material`, an `<Image src>`) cooks its `AssetId` into the
+  declaration's `Handle` slot; **residency is the runtime loaders' job**, not the cook's — each
+  blob's loader scans its decoded declarations for handle-valued properties and eager-loads them, so
+  a rule-authored and an inline-authored reference both reach the document resident. A `@use`d sheet
+  is the one *file* dependency these importers record, so editing a theme re-cooks every sheet that
+  imports it. The runtime half is [engine/src/Gui/CLAUDE.md](../engine/src/Gui/CLAUDE.md).
 - **Input maps** (`*.inputmap.json`) cook an `InputMappingContext` (`AssetTypes::InputMap`)
   through the **`InputMapImporter`**. The source declares its `"actions"` (each an unsigned
   `id`, a `name`, and an enum `kind`) and its `"bindings"` (a raw `source` device/control, a

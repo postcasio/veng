@@ -194,6 +194,47 @@ transition-able property:
 .primary:disabled { opacity: 0.5; }
 ```
 
+### Shader-driven fills: `background-material`
+
+The three fills above are data. The fourth is a **shader**: `background-material` names a
+resident material whose `domain` is `GuiFill`, and its fragment decides the color of every pixel
+inside the element's shape. On an `<Image>` the same fill is spelled `material`, and there the
+element's own `src` reaches the shader as a parameter, so it *shades* the authored art rather
+than replacing it.
+
+```css
+/* A procedural, animated panel fill. */
+.readout { background-material: 0x38FECEB6EB6644F5; }
+/* The Image spelling: the shader gets the element's own texture to work from. */
+.icon    { material: 0x613B0B9D6991E209; }
+```
+
+Authoring the material itself is three files and an id — a `*.slang` fragment that
+`#include`s the core-pack `Veng/guifill.slang`, declares its own `MaterialParams`, and returns
+`GuiFillResolve(input, fill)`; a `*.vmat.json` carrying `"domain": "GuiFill"`, the core gui
+vertex stage as its vertex shader, and a `defaultInstance` id; and the pack entry for each. The
+style names the **instance** id.
+
+The load-bearing rule is that **a material is a fill source, not a silhouette**. The engine still
+owns the shape: the rounded-rect coverage, the border ring, the inherited `opacity`, an ancestor's
+`overflow: hidden`, and `rotation` all multiply into whatever RGBA the fragment returns. So a
+shader fill rounds its corners and clips inside a scroller for free — and it cannot round its own
+corners differently, punch a hole, or extend past the box.
+
+Two consequences to author around:
+
+- **It is the top of the exclusive fill order** (`background-material` > `background-gradient` >
+  `background-image` > `background`), so a rule authoring it beside any other background fill is a
+  cook error, not a layering.
+- **Do not put a border on it.** A positive `border-width` restricts *any* fill — a material
+  included — to the border ring, and the element's own border quad is then painted over that ring
+  opaquely: the shader runs and is entirely hidden. A material ring is authored with
+  `border-width: 0`, drawing the annulus in the fragment's own alpha instead.
+
+Animation comes from the pass clock (`g_PC.Time` in the fragment, seconds), not from writing a
+parameter per frame — so a sweeping or pulsing fill needs no C++ at all, and a capture that never
+advances the clock renders reproducibly.
+
 ### Drop and inset shadows
 
 `box-shadow` lifts an element off what is behind it — or recesses it into it. The value is
@@ -605,6 +646,62 @@ texture (that is what the sampler wraps over). The *measure*, though, reads the 
 texture — which is what keeps `Document::SetImageUv` a paint-only write that never re-runs
 layout, so a per-frame flipbook advance stays free.
 
+### Worked example: a framed panel with a tiled backdrop and a shader readout
+
+The three fills meet often enough to be worth seeing together — nine-slice art for the chrome, a
+tiled texture for the interior, and a `GuiFill` material for the one element that has to move. The
+sheet:
+
+```css
+/* The chrome: nine-slice art keeps the corners crisp at any size, so one 24×24 source
+   frames a panel of any dimensions. No corner-radius — the art carries its own corners. */
+.frame {
+    background-image: 0x2B62E4E91B4A08B4;
+    background-slice: 8px;
+    padding: 10px;                     /* the frame's art thickness, so content clears it */
+}
+
+/* The interior: one quad, tiled by the texture's own wrapping sampler, so growing the
+   panel costs no extra geometry. The source's *.tex.json must author `wrap_u`/`wrap_v`
+   as `repeat`. */
+.backdrop {
+    flex-grow: 1;
+    height: 44px;
+    image-repeat: tile;
+}
+
+/* The live element: a shader fill, animated off the pass clock. No border-width here —
+   a border would restrict the fill to the ring and then paint over it. */
+.readout {
+    width: 96px;
+    height: 44px;
+    corner-radius: 6px;                /* the engine's silhouette, applied to the shader */
+    background-material: 0x38FECEB6EB6644F5;
+}
+```
+
+and the markup:
+
+```xml
+<Panel class="frame" style="flex-direction: row;">
+    <Image class="backdrop" src="0x68D20CFB7FEC7518"/>
+    <Panel class="readout" style="margin: 0 0 0 8px;"/>
+</Panel>
+```
+
+Three things are worth naming, because each is a rule rather than a detail of this example:
+
+- **Which box each fill sizes against.** `.frame`'s nine-slice fills the panel's *padding* box, so
+  the `padding` is what keeps the tiled `Image` off the art; the `Image`'s own fill covers its
+  *content* box.
+- **Slicing and tiling do not combine.** `.frame` is sliced, so a `background-repeat: tile` on it
+  would be ignored — its cells stretch. Tiling belongs on the unsliced child, which is why the
+  backdrop is its own element.
+- **The material composes but does not own the shape.** `.readout` rounds because the *engine*
+  rounds it; the fragment never sees a corner radius. Put a border on it and the fill disappears.
+
+`tests/golden/gui_composition.png` is this arrangement rendered, with a popup over it.
+
 ## 4. Instantiate, bind, and attach
 
 The one thing the engine cannot do from data alone is wire the document to *this game's*
@@ -829,6 +926,7 @@ canvas.
 | `*.font.json` (+ TTF) | `Font` (MSDF atlas + metrics) | Loads the atlas; shapes crisp text |
 | `*.vuss` | `StyleSheet` (resolved rules + variants) | Selects variants, eases transitions |
 | `*.vui.xml` | `UIDocument` (recipe tree) | Instantiates a live tree; solves Yoga layout; draws |
+| `*.slang` + `*.vmat.json`, `"domain": "GuiFill"` | `Material` + its default `MaterialInstance` | Builds and binds the pipeline; multiplies the fragment's RGBA by the fixed silhouette |
 | a ~15-line `Application` subclass | — | Drives layout + draw + composite each frame |
 
 The runtime never parses XML or CSS — the cooker does, once, offline. Bindings and

@@ -1,5 +1,6 @@
 #include <Veng/Gui/Document.h>
 
+#include "FillGeometry.h"
 #include "YogaTree.h"
 
 #include <Veng/Assert.h>
@@ -409,66 +410,6 @@ namespace Veng::Gui
                                      .Top = width + padding.Top,
                                      .Right = width + padding.Right,
                                      .Bottom = width + padding.Bottom});
-        }
-
-        // A texture fill's destination rectangle and the UV sub-rect it samples, from the fit mode.
-        struct FittedFill
-        {
-            Rect Dest;
-            Rect Uv;
-        };
-
-        // Maps the `base` sub-rect of a texture — `source` pixels of it — into `box` under `fit`.
-        // Fill stretches the sub-rect over the box; Cover keeps the box and crops the UV; Contain
-        // and None keep the whole texel aspect and center a smaller destination inside the box (None
-        // additionally crops when the texture is larger than the box, so an intrinsic-size fill
-        // never spills). `base` is the whole texture for a background fill and the Image widget's
-        // `uv` sub-rect for an atlas frame, so a flipbook cell fits its own cell.
-        FittedFill FitTexture(const Rect& box, vec2 source, ImageFit fit,
-                              const Rect& base = {.Min = vec2(0.0f), .Size = vec2(1.0f)})
-        {
-            if (source.x <= 0.0f || source.y <= 0.0f || box.Size.x <= 0.0f || box.Size.y <= 0.0f)
-            {
-                return {.Dest = box, .Uv = base};
-            }
-
-            const auto centered = [&](vec2 size)
-            { return Rect{.Min = box.Min + (box.Size - size) * 0.5f, .Size = size}; };
-            const auto croppedUv = [&](vec2 visible)
-            {
-                const vec2 size = visible / source;
-                return Rect{.Min = base.Min + (vec2(1.0f) - size) * 0.5f * base.Size,
-                            .Size = size * base.Size};
-            };
-
-            switch (fit)
-            {
-            case ImageFit::Fill:
-                return {.Dest = box, .Uv = base};
-            case ImageFit::Contain:
-            {
-                const f32 scale = std::min(box.Size.x / source.x, box.Size.y / source.y);
-                return {.Dest = centered(source * scale), .Uv = base};
-            }
-            case ImageFit::Cover:
-            {
-                const f32 scale = std::max(box.Size.x / source.x, box.Size.y / source.y);
-                return {.Dest = box, .Uv = croppedUv(box.Size / scale)};
-            }
-            case ImageFit::None:
-            {
-                const vec2 drawn = glm::min(source, box.Size);
-                return {.Dest = centered(drawn), .Uv = croppedUv(drawn)};
-            }
-            }
-            return {.Dest = box, .Uv = base};
-        }
-
-        // Whether any slice edge is set, which is what turns a plain texture fill into a nine-slice.
-        bool IsSliced(const Insets& slice)
-        {
-            return slice.Left > 0.0f || slice.Top > 0.0f || slice.Right > 0.0f ||
-                   slice.Bottom > 0.0f;
         }
 
         // Whether an element is a widget-owned part rather than authored content — a scrollbar
@@ -3121,14 +3062,8 @@ namespace Veng::Gui
                 // The slice insets author source-texture pixels; the primitive takes the source
                 // split as UV fractions and keeps the destination corners at their source size.
                 const Insets& slice = style.BackgroundSlice;
-                const Insets sliceUv{
-                    .Left = source.x > 0.0f ? slice.Left / source.x : 0.0f,
-                    .Top = source.y > 0.0f ? slice.Top / source.y : 0.0f,
-                    .Right = source.x > 0.0f ? slice.Right / source.x : 0.0f,
-                    .Bottom = source.y > 0.0f ? slice.Bottom / source.y : 0.0f,
-                };
-                list.NineSlice(box.Box, texture.GetHandle(), texture.GetSamplerHandle(), sliceUv,
-                               slice, tint);
+                list.NineSlice(box.Box, texture.GetHandle(), texture.GetSamplerHandle(),
+                               SliceToUv(slice, source), slice, tint);
             }
             else if (style.BackgroundRepeat == ImageRepeat::Tile)
             {
@@ -3136,8 +3071,7 @@ namespace Veng::Gui
                 // wrapping sampler — never a quad per tile, which would be unbounded against the
                 // draw list's fixed geometry ring.
                 const Rect uv{.Min = vec2(0.0f),
-                              .Size = source.x > 0.0f && source.y > 0.0f ? box.Box.Size / source
-                                                                         : vec2(1.0f)};
+                              .Size = TileUvSize(box.Box.Size, source, vec2(1.0f))};
                 list.Texture(box.Box, texture.GetHandle(), texture.GetSamplerHandle(), uv, tint,
                              box.Radii);
             }
@@ -3187,21 +3121,14 @@ namespace Veng::Gui
             if (IsSliced(style.ImageSlice))
             {
                 const Insets& slice = style.ImageSlice;
-                const Insets sliceUv{
-                    .Left = sampled.x > 0.0f ? slice.Left / sampled.x : 0.0f,
-                    .Top = sampled.y > 0.0f ? slice.Top / sampled.y : 0.0f,
-                    .Right = sampled.x > 0.0f ? slice.Right / sampled.x : 0.0f,
-                    .Bottom = sampled.y > 0.0f ? slice.Bottom / sampled.y : 0.0f,
-                };
-                list.NineSlice(content.Box, element.ImageTexture, element.ImageSampler, sliceUv,
-                               slice, tint, element.ImageUv);
+                list.NineSlice(content.Box, element.ImageTexture, element.ImageSampler,
+                               SliceToUv(slice, sampled), slice, tint, element.ImageUv);
             }
             else if (style.ImageRepeatMode == ImageRepeat::Tile)
             {
-                const Rect uv{.Min = element.ImageUv.Min,
-                              .Size = element.ImageSize.x > 0.0f && element.ImageSize.y > 0.0f
-                                          ? content.Box.Size / element.ImageSize
-                                          : element.ImageUv.Size};
+                const Rect uv{
+                    .Min = element.ImageUv.Min,
+                    .Size = TileUvSize(content.Box.Size, element.ImageSize, element.ImageUv.Size)};
                 list.Texture(content.Box, element.ImageTexture, element.ImageSampler, uv, tint,
                              content.Radii);
             }

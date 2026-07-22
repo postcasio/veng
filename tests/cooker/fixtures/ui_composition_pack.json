@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "0x4B1583166B212C2A",
+      "type": "Texture",
+      "source": "textures/frame.tex.json"
+    },
+    {
+      "id": "0x68D20CFB7FEC7518",
+      "type": "Texture",
+      "source": "textures/texture_tiled.tex.json"
+    },
+    {
+      "id": "0x46FC05FE07B6E173",
+      "type": "Shader",
+      "source": "shaders/gui_fill.frag.shader.json"
+    },
+    {
+      "id": "0xEF12D1EC6554B13B",
+      "type": "Material",
+      "source": "materials/gui_fill.vmat.json"
+    },
+    {
+      "id": "0x9173B62B59BE30F9",
+      "type": "StyleSheet",
+      "source": "gui/composition.vuss"
+    },
+    {
+      "id": "0x0ABB1E8D06A2C6E1",
+      "type": "UIDocument",
+      "source": "gui/composition.vui.xml"
+    }
+  ]
+}
