@@ -295,6 +295,15 @@ namespace Veng::Gui
     {
         /// @brief The element's kind, fixed at construction.
         ElementKind Kind = ElementKind::Panel;
+
+        /// @brief The document-unique serial identifying this element, assigned at creation.
+        ///
+        /// The value an ElementHandle carries. Elements are not address-stable — a repeater
+        /// destroys and re-creates whole item subtrees and the allocator re-uses the storage — so
+        /// a serial, issued monotonically and never re-used, is what lets a reference held across
+        /// frames tell a live element from its replacement. Zero on a detached template node,
+        /// which is inert data rather than a live element.
+        u64 Serial = 0;
         /// @brief The live resolved style: the layout inputs Solve reads and the paint inputs Build reads.
         Style ComputedStyle;
         /// @brief The base resolved style — inline + None-state cascade, before any active variant.

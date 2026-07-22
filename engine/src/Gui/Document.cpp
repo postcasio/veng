@@ -7,6 +7,7 @@
 #include <Veng/Asset/Font.h>
 #include <Veng/Asset/MaterialInstance.h>
 #include <Veng/Asset/Texture.h>
+#include <Veng/Gui/Placement.h>
 #include <Veng/Gui/StyleSheet.h>
 #include <Veng/Gui/UIDocument.h>
 #include <Veng/Reflection/EnumName.h>
@@ -1102,6 +1103,7 @@ namespace Veng::Gui
     {
         auto owned = CreateUnique<Element>();
         owned->Kind = kind;
+        owned->Serial = m_NextSerial++;
 
         // ScrollView is the named preset over the overflow property: it is a Panel whose overflow
         // defaults to Scroll on both axes. Seeding the default here rather than forcing it at paint
@@ -1173,6 +1175,8 @@ namespace Veng::Gui
 
     void Document::DestroySubtree(Element& element)
     {
+        ForgetElement(element);
+
         // Depth-first so a child's node is freed before its parent's.
         for (Element* child : element.Children)
         {
@@ -2900,8 +2904,53 @@ namespace Veng::Gui
 
         ReadLayout(*m_Root, vec2(0.0f));
 
+        // Popups lay out against the document extent, not against a parent box, and their
+        // placement reads their anchor's solved rect — so they are solved after the main tree's
+        // layout read, bottom-up (a submenu anchored inside its menu reads a placed anchor).
+        for (const Popup& popup : m_Popups)
+        {
+            SolvePopup(popup, available);
+        }
+
         m_Dirty = false;
         m_LastAvailable = available;
+    }
+
+    void Document::SolvePopup(const Popup& popup, const vec2 available)
+    {
+        const YGNodeRef node = m_Yoga->Get(*popup.Root);
+        if (node == nullptr || popup.AnchorElement == nullptr)
+        {
+            return;
+        }
+
+        ApplyStyle(*popup.Root);
+        // Unconstrained on both axes, so the root sizes to its content unless its own style bounds
+        // it — a menu is as wide as its widest item and as tall as its items, with `max-height`
+        // (plus `overflow-y: scroll`) the way an author caps a long one.
+        YGNodeCalculateLayout(node, YGUndefined, YGUndefined, YGDirectionLTR);
+
+        const vec2 size(YGNodeLayoutGetWidth(node), YGNodeLayoutGetHeight(node));
+        const Rect& anchor = popup.AnchorElement->Layout;
+        vec2 corner{0.0f};
+        switch (popup.Options.Side)
+        {
+        case PopupSide::Below:
+            corner = vec2(anchor.Min.x, anchor.Max().y);
+            break;
+        case PopupSide::Above:
+            corner = vec2(anchor.Min.x, anchor.Min.y - size.y);
+            break;
+        case PopupSide::RightOf:
+            corner = vec2(anchor.Max().x, anchor.Min.y);
+            break;
+        case PopupSide::LeftOf:
+            corner = vec2(anchor.Min.x - size.x, anchor.Min.y);
+            break;
+        }
+
+        ReadLayout(*popup.Root, AnchorBeside(corner, size, popup.Options.Offset, available,
+                                             popup.Options.Margin));
     }
 
     bool Document::AlignTableColumns()
@@ -3326,6 +3375,15 @@ namespace Veng::Gui
     void Document::Build(DrawList& list) const
     {
         BuildElement(*m_Root, list, 1.0f);
+
+        // The main walk's clip and transform pushes are balanced, so both stacks are back at the
+        // caller's state here: a popup inherits no ancestor scissor and no ancestor rotation, and
+        // paints over every main-tree primitive. Bottom-up, so a submenu covers its menu. A popup
+        // that clips or rotates still pushes its own, inside its own walk.
+        for (const Popup& popup : m_Popups)
+        {
+            BuildElement(*popup.Root, list, 1.0f);
+        }
     }
 
     void Document::Drive(vec2 available, f32 delta, DrawList& out)
@@ -3394,7 +3452,166 @@ namespace Veng::Gui
 
     Element* Document::HitTest(vec2 point)
     {
+        // Popups paint over the main tree, so they claim the pointer over it: try the stack
+        // top-down first, each against no inherited clip, and only then the main tree. This is
+        // also what makes IsPointerOverDocument count an open menu covering the content below it.
+        for (auto it = m_Popups.rbegin(); it != m_Popups.rend(); ++it)
+        {
+            if (Element* const hit = HitTestElement(*it->Root, point, std::nullopt))
+            {
+                return hit;
+            }
+        }
         return HitTestElement(*m_Root, point, std::nullopt);
+    }
+
+    ElementHandle Document::GetHandle(const Element& element) const
+    {
+        return ElementHandle{.Value = element.Serial};
+    }
+
+    Element* Document::Resolve(const ElementHandle handle)
+    {
+        if (!handle.IsValid())
+        {
+            return nullptr;
+        }
+        const auto it = std::ranges::find_if(m_Elements, [&](const Unique<Element>& owned)
+                                             { return owned->Serial == handle.Value; });
+        return it != m_Elements.end() ? it->get() : nullptr;
+    }
+
+    bool Document::IsInSubtree(const Element& element, const Element& root)
+    {
+        for (const Element* cursor = &element; cursor != nullptr; cursor = cursor->Parent)
+        {
+            if (cursor == &root)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    PopupId Document::OpenPopup(Element& anchor, const PopupOptions& options)
+    {
+        Element& root = CreateElement(ElementKind::Panel);
+
+        // A popup root has no parent, so the typography that inherits down a subtree has no chain
+        // to walk: seed it from the anchor's resolved font, which is the font the popup would have
+        // inherited had it been parented where it is anchored.
+        for (const Element* cursor = &anchor; cursor != nullptr; cursor = cursor->Parent)
+        {
+            if (cursor->ComputedStyle.TextFont.IsLoaded())
+            {
+                root.BaseStyle.TextFont = cursor->ComputedStyle.TextFont;
+                root.ComputedStyle.TextFont = cursor->ComputedStyle.TextFont;
+                break;
+            }
+        }
+
+        m_Popups.emplace_back(Popup{
+            .Id = m_NextPopupId++,
+            .Root = &root,
+            .Anchor = GetHandle(anchor),
+            .AnchorElement = &anchor,
+            .Options = options,
+            .RestoreFocus = m_Focused != nullptr ? GetHandle(*m_Focused) : ElementHandle{},
+        });
+        m_Dirty = true;
+        return PopupId{.Value = m_Popups.back().Id};
+    }
+
+    Element* Document::GetPopupRoot(const PopupId id)
+    {
+        const auto it = std::ranges::find_if(m_Popups, [&](const Popup& popup)
+                                             { return popup.Id == id.Value; });
+        return it != m_Popups.end() ? it->Root : nullptr;
+    }
+
+    bool Document::IsPopupOpen(const PopupId id) const
+    {
+        return id.IsValid() && std::ranges::any_of(m_Popups, [&](const Popup& popup)
+                                                   { return popup.Id == id.Value; });
+    }
+
+    PopupId Document::GetTopPopup() const
+    {
+        return m_Popups.empty() ? PopupId{} : PopupId{.Value = m_Popups.back().Id};
+    }
+
+    void Document::ClosePopup(const PopupId id)
+    {
+        if (!id.IsValid())
+        {
+            return;
+        }
+        for (usize i = 0; i < m_Popups.size(); ++i)
+        {
+            if (m_Popups[i].Id == id.Value)
+            {
+                ClosePopupsFrom(i);
+                return;
+            }
+        }
+    }
+
+    void Document::CloseAllPopups()
+    {
+        if (!m_Popups.empty())
+        {
+            ClosePopupsFrom(0);
+        }
+    }
+
+    void Document::ClosePopupsFrom(const usize index)
+    {
+        // The stack is LIFO, so closing an entry dismisses everything above it. The pre-open focus
+        // to restore is the *lowest* closed popup's — the state before the whole chain opened.
+        const ElementHandle restore = m_Popups[index].RestoreFocus;
+        while (m_Popups.size() > index)
+        {
+            // Pop before destroying: the destroy walk closes popups anchored inside the subtree it
+            // frees, and this entry must already be off the stack when that runs.
+            Element* const root = m_Popups.back().Root;
+            m_Popups.pop_back();
+            DestroySubtree(*root);
+        }
+
+        if (Element* const previous = Resolve(restore))
+        {
+            SetFocus(previous);
+        }
+        m_Dirty = true;
+    }
+
+    void Document::ForgetElement(const Element& element)
+    {
+        // A popup outliving its anchor would place itself against a freed rect, so the anchor's
+        // destruction is the popup's dismissal — the mechanism behind "a popup closes with its
+        // anchor" for the repeater case, where a shrinking bound array destroys whole item
+        // subtrees under the document's feet.
+        for (usize i = 0; i < m_Popups.size(); ++i)
+        {
+            if (m_Popups[i].AnchorElement == &element || m_Popups[i].Root == &element)
+            {
+                ClosePopupsFrom(i);
+                break;
+            }
+        }
+
+        if (m_Focused == &element)
+        {
+            m_Focused = nullptr;
+        }
+        if (m_HoverTarget == &element)
+        {
+            m_HoverTarget = nullptr;
+        }
+        if (m_PressTarget == &element)
+        {
+            m_PressTarget = nullptr;
+        }
     }
 
     void Document::BindContext(BindingContext* context, const TypeRegistry* registry)
@@ -3674,6 +3891,8 @@ namespace Veng::Gui
 
     Element* Document::DetachTemplate(Element& element, vector<Unique<Element>>& owned)
     {
+        ForgetElement(element);
+
         // Copy the element into a standalone template node held by `owned`, then recurse so the whole
         // subtree is captured; a template is inert data, never solved or drawn. The live element's
         // Yoga node and live storage are released here; the caller has already unlinked the root from
@@ -4131,6 +4350,10 @@ namespace Veng::Gui
         m_Interactive = interactive;
         if (!interactive)
         {
+            // Popups belong to interactive documents — a display-only HUD opens none — so closing
+            // interactivity dismisses whatever was open rather than stranding it on screen.
+            CloseAllPopups();
+
             // Display-only documents hold no hover/press/focus state; drop any live interaction.
             if (m_HoverTarget != nullptr)
             {
@@ -4175,6 +4398,19 @@ namespace Veng::Gui
         }
 
         event.Target = target;
+
+        // Light dismiss: a press that lands outside the top popup closes it (and everything above
+        // it) and is consumed, so a click-away never doubles as a click on the content the popup
+        // was covering. A press *inside* the popup falls through to the ordinary routing below.
+        if (event.Kind == PointerEventKind::Down && !m_Popups.empty())
+        {
+            const Popup& top = m_Popups.back();
+            if (top.Options.LightDismiss && (target == nullptr || !IsInSubtree(*target, *top.Root)))
+            {
+                ClosePopup(PopupId{.Value = top.Id});
+                return true;
+            }
+        }
 
         if (event.Kind == PointerEventKind::Down && target != nullptr)
         {
@@ -4342,6 +4578,14 @@ namespace Veng::Gui
             return false;
         }
 
+        // Cancel dismisses the top popup before anything else sees it: Esc (or gamepad B) closes
+        // an open menu rather than firing the focused element's `onCancel` beneath it.
+        if (action == NavAction::Cancel && !m_Popups.empty())
+        {
+            ClosePopup(PopupId{.Value = m_Popups.back().Id});
+            return true;
+        }
+
         if (action == NavAction::Confirm)
         {
             if (m_Focused == nullptr)
@@ -4388,8 +4632,10 @@ namespace Veng::Gui
             }
         }
 
+        // An open popup scopes focus navigation to itself: the stops behind a menu are not
+        // reachable while it covers them, exactly as they are not clickable.
         vector<Element*> focusables;
-        GatherFocusables(*m_Root, focusables);
+        GatherFocusables(m_Popups.empty() ? *m_Root : *m_Popups.back().Root, focusables);
         if (focusables.empty())
         {
             return false;

@@ -68,6 +68,31 @@
     margin: 0 6px 0 0;
 }
 
+/* A short scrolling strip of channel rows, deliberately too small to hold all six: clicking a row
+   opens a dropdown from the driver into the document's popup layer, which lays out against the
+   document extent and paints with no inherited scissor — so the menu covers the rows below it and
+   spills past this box, where an absolute-positioned child would be clipped away by it. */
+.picker {
+    height: 54px;
+    margin: 10px 0 0 0;
+    padding: 3px;
+    corner-radius: 4px;
+    background: #12141a99;
+}
+
+.row {
+    font-size: 13px;
+    color: var(--text);
+    padding: 2px 4px 2px 4px;
+    margin: 0 0 2px 0;
+    corner-radius: 3px;
+    background: #43506644;
+}
+
+.row:hover {
+    background: #4fa3ff44;
+}
+
 /* A legend strip of the four ways an <Image> maps its texture into its content box. */
 .legend {
     flex-direction: row;

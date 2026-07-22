@@ -755,6 +755,54 @@ capture → target → bubble, directional focus navigation moves a focus ring, 
 `"Name"`. Because focus is **per-seat**, seat A opening a menu leaves seat B playing —
 split-screen-correct by construction.
 
+## 6. Open a menu that escapes its container
+
+A dropdown, context menu, or tooltip has to paint **above** its siblings and **outside** the clip
+of any scrolling ancestor. `position: absolute` gives you neither — an absolute-positioned child
+leaves flow but stays inside its parent's scissor, so a menu opened from a row inside a
+`ScrollView` is cut off at the view's edge. The **popup layer** is the mechanism for it:
+
+```cpp
+// In the driver's onClick handler for a row.
+m_Menu = document.OpenPopup(row, Gui::PopupOptions{.Side = Gui::PopupSide::Below,
+                                                   .Offset = vec2(0.0f, 2.0f),
+                                                   .Margin = 4.0f});
+
+Gui::Element* const root = document.GetPopupRoot(m_Menu);
+document.SetStyle(*root, menuPanelStyle);
+for (const char* label : {"mute", "solo", "arm"})
+{
+    Gui::Element& option = document.Add(*root, Gui::ElementKind::Button);
+    document.SetText(option, label);
+    option.Bindings["onClick"] = "chooseChannel";
+    document.InitWidget(option);
+    document.SetStyle(option, menuItemStyle);
+}
+```
+
+`OpenPopup` returns a `PopupId` and hands you an empty `Panel` root you fill like any other
+subtree. The popup then lays out against the **document extent** (sized to its content unless you
+bound it — `max-height` plus `overflow-y: scroll` caps a long menu), is placed off the anchor edge
+`PopupSide` names, offset, and clamped inside the document with `Margin`. It paints after the
+whole main tree with no inherited scissor and hit-tests ahead of it, so it covers what it overlaps
+and claims the pointer there.
+
+Dismissal is handled for you: a press outside the popup closes it and is consumed, Esc (or gamepad
+B) closes the top one, and closing a popup closes any opened over it, restoring the focus that was
+live before. **Never store the anchor as an `Element*`** — a repeater destroys whole rows when its
+bound array shrinks. Take a handle instead, and the popup closes with its anchor for free:
+
+```cpp
+m_Anchor = document.GetHandle(row);          // generation-checked, never stale-aliased
+// … later, in the option's handler:
+if (Gui::Element* const row = document.Resolve(m_Anchor)) { document.SetText(*row, …); }
+document.ClosePopup(m_Menu);
+```
+
+`examples/hello-triangle`'s `HudDriver` is the worked example: its channel rows live in a short
+scrolling picker, and the dropdown they open spills past that picker's clip and over the HUD
+beneath it.
+
 ## Editing in the editor
 
 Opening a `UIDocument` in `veng-editor` (double-click it in the asset browser) opens the
@@ -786,5 +834,7 @@ canvas.
 The runtime never parses XML or CSS — the cooker does, once, offline. Bindings and
 handlers resolve against a reflected view-model through the same `TypeRegistry` the editor
 inspector and the serializer use. A document is content a viewport hosts in ordered layers,
-engine-driven, display-only until a `SeatFocusScope` opens it. The full architecture is in
+engine-driven, display-only until a `SeatFocusScope` opens it; within one document the popup layer
+is the only ordering concept — a subtree laid out against the document extent, painted last and
+unclipped, hit-tested first. The full architecture is in
 [engine/CLAUDE.md](../../engine/CLAUDE.md), "Veng::Gui".

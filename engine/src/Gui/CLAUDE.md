@@ -242,7 +242,7 @@ authors; the **third** run kind, `GuiPipeline::Material`, is the seam where a co
 author a fragment — an authored `GuiFill` material, drawn on the same vertex stage and multiplied
 by the same silhouette (see [Material fills](#material-fills-an-authored-fill-source) above). The
 image goldens (`gui_overlay`, `gui_rotated`, `gui_image`, `gui_background`, `gui_shadow`,
-`gui_material`) are the render floor every later change holds pixel-stable against. **The vertex format is five files, not one**: the
+`gui_material`, `gui_popup`) are the render floor every later change holds pixel-stable against. **The vertex format is five files, not one**: the
 `GuiVertex` struct, the cooked `gui.vlayout.json` the pass loads, and the `VSInput`/`VSOutput` of
 `gui.vert.slang` — the shader importer hard-errors at cook time on a reflected-vs-declared
 mismatch, so a new field lands in all of them at once or nothing cooks.
@@ -310,6 +310,48 @@ still consumes the key, so an arrow never leaks out of a field and moves focus i
 indexes **codepoints**, so a move steps one whole glyph and a delete removes one whole glyph of the
 UTF-8 value. There is no selection anchor: every action addresses the caret or the codepoint
 adjacent to it.
+
+## Popups — the within-document layer that escapes every clip
+
+**A popup is a subtree the document owns but does not parent under `Root()`.** An
+absolute-positioned child leaves flow but stays inside its ancestors' scissor, so a menu opened
+from a row inside a scrolling container is still clipped to that container and still painted under
+its later siblings. The **popup stack** lifts both: a popup root lays out against the **document
+extent** rather than a parent box, is built **after the whole main tree with the clip and
+transform stacks reset**, and **hit-tests ahead of it**, top-down.
+
+- **Opening.** `Document::OpenPopup(anchor, PopupOptions) -> PopupId` pushes an empty `Panel` root
+  the caller fills through `GetPopupRoot(id)` with the ordinary `Add`/`SetStyle`/`InitWidget` calls
+  — so a popup cascades, animates, scrolls, and takes any fill or shadow exactly as a parented
+  subtree does. `ClosePopup(id)` / `CloseAllPopups()` dismiss; `IsPopupOpen` / `GetPopupCount` /
+  `GetTopPopup` query. Because a popup root has no ancestor, the typography that would have
+  inherited is **seeded from the anchor's resolved font** at open.
+- **Placement is `Gui::Placement`, not a new vocabulary.** Each `Solve` runs after the main tree's
+  layout read (the placement needs the anchor's solved rect), sizes the root **unconstrained** so
+  it takes its content's extent — `max-height` + `overflow-y: scroll` is how an author caps a long
+  menu — hangs it off the `PopupSide` edge of the anchor's box, adds `Offset`, and runs
+  `AnchorBeside`/`ClampIntoBounds` against the extent with `Margin`.
+- **The anchor is an `ElementHandle`, never an `Element*`.** Elements are not address-stable: a
+  `List`/`Table` repeater destroys whole item subtrees whenever its bound array shrinks, and the
+  allocator re-uses the storage. So an element carries a monotonic, never-re-issued
+  `Element::Serial` (`Document::GetHandle` / `Resolve`), and `DestroySubtree` / `DetachTemplate`
+  **close any popup anchored inside the subtree they free** — which makes "a popup closes with its
+  anchor" a mechanism rather than a policy. The same hook drops the focus/hover/press targets
+  naming a dying element.
+- **Dismissal is LIFO and three-signalled.** Closing an entry closes everything above it (a menu
+  takes its submenus), and focus returns to the element that held it before the chain opened. A
+  **pointer press outside the top popup** light-dismisses it and is **consumed**, so a click-away
+  never doubles as a click-through (`PopupOptions::LightDismiss` opts out). **`Cancel`** (Esc /
+  gamepad B) closes the top popup before it reaches the focused element's `onCancel`. And focus
+  navigation is **scoped to the top popup** while one is open, so the stops behind a menu are no
+  more reachable by keyboard than they are by pointer.
+- **Popups belong to interactive documents.** `SetInteractive(false)` closes them, so a
+  display-only HUD holds none. Because the layer sits inside `Document::HitTest`,
+  `Viewport::IsPointerOverDocument` counts an open menu covering the content beneath it with no
+  extra wiring.
+
+`gui_popup.png` is the render floor: a popup anchored inside an `overflow: hidden` panel, spilling
+past that clip and over a banner the main tree painted after the panel.
 
 ## Widgets
 

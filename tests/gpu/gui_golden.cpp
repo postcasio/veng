@@ -7,7 +7,7 @@
 // golden is (re)generated: dump, sips the PPM to tests/golden/gui_overlay.png, commit. Each of the
 // document-driven cases below carries its own dump variable and golden on the same pattern
 // (VENG_GUI_ROTATED_GOLDEN_DUMP, VENG_GUI_IMAGE_GOLDEN_DUMP, VENG_GUI_BACKGROUND_GOLDEN_DUMP,
-// VENG_GUI_SHADOW_GOLDEN_DUMP, VENG_GUI_MATERIAL_GOLDEN_DUMP).
+// VENG_GUI_SHADOW_GOLDEN_DUMP, VENG_GUI_MATERIAL_GOLDEN_DUMP, VENG_GUI_POPUP_GOLDEN_DUMP).
 //
 // The same font fixture backs one non-rendering case here: a TextInput built with a resident font
 // emits its own value as a glyph run, which needs a real atlas and so cannot live in the
@@ -1080,4 +1080,152 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(fraction <= MaxMismatchFraction);
 
     std::filesystem::remove(outArchive);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "gui popup golden: a popup escapes its ancestor's clip and paints over the tree")
+{
+    // The document popup layer's load-bearing capture. The tree is built imperatively (panels
+    // only, no font), so the case needs no cook fixture: a clipping panel whose overflowing child
+    // is visibly cut at its box, a wide banner painted after it in the main tree, and a popup
+    // anchored to the row inside the clipping panel. The popup lays out against the document
+    // extent, so it spills past the clip that bounds its anchor's siblings, and it is built after
+    // the whole main tree with the scissor stack reset, so it covers the banner it overlaps.
+    Gui::Document document;
+
+    Gui::Style root;
+    root.Direction = Gui::FlexDirection::Column;
+    root.Padding = Gui::Insets::All(20.0f);
+    document.SetStyle(document.Root(), root);
+
+    Gui::Style clipped;
+    clipped.Width = Gui::Length::Points(100.0f);
+    clipped.Height = Gui::Length::Points(60.0f);
+    clipped.FlexShrink = 0.0f;
+    clipped.OverflowY = Gui::Overflow::Hidden;
+    clipped.Background = vec4(0.09f, 0.13f, 0.20f, 1.0f);
+    Gui::Element& view = document.Add(document.Root(), Gui::ElementKind::Panel);
+    document.SetStyle(view, clipped);
+
+    Gui::Style rowStyle;
+    rowStyle.Height = Gui::Length::Points(18.0f);
+    rowStyle.FlexShrink = 0.0f;
+    rowStyle.Background = vec4(0.31f, 0.639f, 1.0f, 1.0f);
+    Gui::Element& row = document.Add(view, Gui::ElementKind::Panel);
+    document.SetStyle(row, rowStyle);
+
+    // Tall enough to overflow the clipping panel: the cut edge is what the popup's spill is read
+    // against.
+    Gui::Style tail;
+    tail.Height = Gui::Length::Points(140.0f);
+    tail.FlexShrink = 0.0f;
+    tail.Background = vec4(0.88f, 0.54f, 0.23f, 1.0f);
+    Gui::Element& overflowing = document.Add(view, Gui::ElementKind::Panel);
+    document.SetStyle(overflowing, tail);
+
+    Gui::Style banner;
+    banner.Height = Gui::Length::Points(80.0f);
+    banner.FlexShrink = 0.0f;
+    banner.Background = vec4(0.18f, 0.55f, 0.35f, 1.0f);
+    Gui::Element& covered = document.Add(document.Root(), Gui::ElementKind::Panel);
+    document.SetStyle(covered, banner);
+
+    const Gui::PopupId popup = document.OpenPopup(
+        row, Gui::PopupOptions{.Side = Gui::PopupSide::Below, .Offset = vec2(64.0f, 4.0f)});
+    Gui::Style menu;
+    menu.Direction = Gui::FlexDirection::Column;
+    menu.Width = Gui::Length::Points(150.0f);
+    menu.Padding = Gui::Insets::All(6.0f);
+    menu.Background = vec4(0.95f, 0.95f, 0.97f, 1.0f);
+    menu.Radii = Gui::CornerRadii::All(8.0f);
+    menu.BorderStyle = Gui::Border{.Width = 2.0f, .Color = vec4(0.31f, 0.639f, 1.0f, 1.0f)};
+    menu.Shadow = Gui::BoxShadow{
+        .Offset = vec2(0.0f, 4.0f), .Blur = 10.0f, .Color = vec4(0.0f, 0.0f, 0.0f, 0.7f)};
+    Gui::Element* const menuRoot = document.GetPopupRoot(popup);
+    REQUIRE(menuRoot != nullptr);
+    document.SetStyle(*menuRoot, menu);
+
+    Gui::Style item;
+    item.Height = Gui::Length::Points(20.0f);
+    item.FlexShrink = 0.0f;
+    item.Radii = Gui::CornerRadii::All(3.0f);
+    item.Margin = Gui::Insets{.Left = 0.0f, .Top = 0.0f, .Right = 0.0f, .Bottom = 4.0f};
+    for (int i = 0; i < 3; ++i)
+    {
+        Gui::Element& option = document.Add(*menuRoot, Gui::ElementKind::Panel);
+        item.Background = vec4(0.22f + 0.2f * static_cast<f32>(i), 0.26f, 0.34f, 1.0f);
+        document.SetStyle(option, item);
+    }
+
+    const Ref<Image> sceneImage =
+        Image::Create(Context, {
+                                   .Name = "Gui Popup Scene",
+                                   .Extent = {Extent.x, Extent.y, 1},
+                                   .Format = Format::RGBA16Sfloat,
+                                   .Usage = ImageUsage::ColorAttachment | ImageUsage::Sampled |
+                                            ImageUsage::TransferSrc,
+                               });
+    const Ref<ImageView> sceneView =
+        ImageView::Create(Context, {.Name = "Gui Popup Scene View", .Image = sceneImage});
+    ClearImage(Context, sceneView, ClearColor{.R = 0.10f, .G = 0.12f, .B = 0.16f, .A = 1.0f});
+
+    document.Solve(vec2(static_cast<f32>(Extent.x), static_cast<f32>(Extent.y)));
+    Gui::DrawList list;
+    document.Build(list);
+
+    AssetManager assets(Context, Tasks, Types);
+    const Unique<GuiScenePass> pass = GuiScenePass::Create({
+        .Context = Context,
+        .Assets = assets,
+        .Extent = Extent,
+        .OutputFormat = Format::RGBA16Sfloat,
+    });
+    pass->SetDrawList(list);
+    Context.ImmediateCommands([&](CommandBuffer& cmd) { pass->Render(cmd, sceneView); });
+
+    const vector<u8> raw = pass->GetOutput()->GetImage()->Download();
+    REQUIRE(raw.size() == static_cast<usize>(Extent.x) * Extent.y * 8);
+    const vector<u8> actual = DecodeHalfRgb(raw, Extent);
+
+    if (const char* dump = std::getenv("VENG_GUI_POPUP_GOLDEN_DUMP"))
+    {
+        WritePpm(path(dump), actual, Extent);
+        MESSAGE("gui popup golden: wrote capture to ", dump);
+        return;
+    }
+
+    const path golden = path(GUI_GOLDEN_DIR) / "gui_popup.png";
+    int gw = 0;
+    int gh = 0;
+    int gc = 0;
+    u8* goldenPixels = stbi_load(golden.string().c_str(), &gw, &gh, &gc, 3);
+    REQUIRE_MESSAGE(goldenPixels != nullptr, "gui popup golden: failed to load ", golden.string());
+    REQUIRE(static_cast<u32>(gw) == Extent.x);
+    REQUIRE(static_cast<u32>(gh) == Extent.y);
+
+    const long pixelCount = static_cast<long>(Extent.x) * Extent.y;
+    long mismatched = 0;
+    int worst = 0;
+    for (long i = 0; i < pixelCount; ++i)
+    {
+        int pixelDelta = 0;
+        for (int c = 0; c < 3; ++c)
+        {
+            const int a = actual[i * 3 + c];
+            const int g = goldenPixels[i * 3 + c];
+            const int d = a > g ? a - g : g - a;
+            pixelDelta = d > pixelDelta ? d : pixelDelta;
+        }
+        worst = pixelDelta > worst ? pixelDelta : worst;
+        if (pixelDelta > MaxChannelDelta)
+        {
+            ++mismatched;
+        }
+    }
+    stbi_image_free(goldenPixels);
+
+    const double fraction = static_cast<double>(mismatched) / static_cast<double>(pixelCount);
+    MESSAGE("gui popup golden: ", mismatched, "/", pixelCount, " pixels exceed delta ",
+            MaxChannelDelta, " (worst ", worst, ")");
+    CHECK(fraction <= MaxMismatchFraction);
 }

@@ -815,6 +815,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/gui_document_api.cpp
             tests/unit/gui_presence.cpp
             tests/unit/gui_placement.cpp
+            tests/unit/gui_popup.cpp
             tests/unit/gui_overlay_component.cpp
             tests/unit/gui_driver_registry.cpp
             tests/unit/level_render_settings.cpp

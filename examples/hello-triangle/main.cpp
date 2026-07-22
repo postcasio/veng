@@ -392,12 +392,26 @@ VE_SYSTEM(SpawnPlayerRule, 0x70CCE23C99D1C3A1ULL, "Spawn Player Rule");
 // sweeps a highlight across it each frame — the per-instance form of the find-and-bind HUD system a
 // consumer used to hand-roll, with no per-frame app code and no entity-keyed state. It reads and
 // writes only its own document, so it stamps no scene component and needs no ViewOutput tag.
+//
+// It is also the sample's consumer of the document **popup layer**: a click on a channel row opens
+// a dropdown into the document's popup stack, which lays out against the document extent, paints
+// after the whole main tree with no inherited scissor, and hit-tests ahead of it. The rows live in
+// a short scrolling picker, so the menu escapes that clip and covers the HUD below it — neither of
+// which an absolute-positioned child could do.
 class HudDriver final : public GuiDriver
 {
 public:
     void OnInstantiate(Gui::Document& document, Scene&, Entity) override
     {
+        m_Document = &document;
         m_Ticks = document.FindAllByClass("tick");
+        m_Menu = {};
+        m_Anchor = {};
+
+        m_Context.SetHandler("openChannel", [this](Gui::Element& row) { OpenChannelMenu(row); });
+        m_Context.SetHandler("chooseChannel",
+                             [this](Gui::Element& option) { ChooseChannel(option); });
+        document.BindContext(&m_Context);
     }
 
     void OnUpdate(const GuiDriverFrame& frame) override
@@ -422,8 +436,72 @@ public:
     }
 
 private:
+    // Opens the channel dropdown beneath the clicked row, replacing whatever was open. A popup
+    // root is an ordinary empty Panel the caller fills, so the menu is built with the same
+    // Add/SetStyle/InitWidget calls any other subtree takes.
+    void OpenChannelMenu(Gui::Element& row)
+    {
+        Gui::Document& document = *m_Document;
+        document.ClosePopup(m_Menu);
+
+        m_Menu = document.OpenPopup(row, Gui::PopupOptions{.Side = Gui::PopupSide::Below,
+                                                           .Offset = vec2(0.0f, 2.0f),
+                                                           .Margin = 4.0f});
+        m_Anchor = document.GetHandle(row);
+        // The row's label without any previously applied choice, so re-picking rewrites the
+        // suffix rather than stacking another one on.
+        m_AnchorLabel = row.Text.substr(0, row.Text.find(" \xc2\xb7 "));
+
+        Gui::Element* const root = document.GetPopupRoot(m_Menu);
+        Gui::Style panel;
+        panel.Direction = Gui::FlexDirection::Column;
+        panel.Width = Gui::Length::Points(96.0f);
+        panel.Padding = Gui::Insets::All(3.0f);
+        panel.Background = vec4(0.055f, 0.063f, 0.078f, 0.96f);
+        panel.Radii = Gui::CornerRadii::All(4.0f);
+        panel.BorderStyle = Gui::Border{.Width = 1.0f, .Color = vec4(0.31f, 0.639f, 1.0f, 0.55f)};
+        panel.Shadow = Gui::BoxShadow{
+            .Offset = vec2(0.0f, 3.0f), .Blur = 8.0f, .Color = vec4(0.0f, 0.0f, 0.0f, 0.6f)};
+        document.SetStyle(*root, panel);
+
+        for (const char* label : {"mute", "solo", "arm"})
+        {
+            Gui::Element& option = document.Add(*root, Gui::ElementKind::Button);
+            document.SetText(option, label);
+            option.Bindings["onClick"] = "chooseChannel";
+            document.InitWidget(option);
+
+            Gui::Style item;
+            item.TextSize = 13.0f;
+            item.TextColor = vec4(0.933f, 0.949f, 0.973f, 1.0f);
+            item.Padding = Gui::Insets{.Left = 5.0f, .Top = 2.0f, .Right = 5.0f, .Bottom = 2.0f};
+            item.Radii = Gui::CornerRadii::All(3.0f);
+            document.SetStyle(option, item);
+        }
+    }
+
+    // Applies a picked option to the anchoring row and dismisses the menu. The anchor is resolved
+    // through its handle, never a stored pointer: the row may have been destroyed while open, in
+    // which case the popup is already closed and the handle resolves to nothing.
+    void ChooseChannel(Gui::Element& option)
+    {
+        Gui::Document& document = *m_Document;
+        if (Gui::Element* const row = document.Resolve(m_Anchor))
+        {
+            document.SetText(*row, fmt::format("{} \xc2\xb7 {}", m_AnchorLabel, option.Text));
+        }
+        document.ClosePopup(m_Menu);
+        m_Menu = {};
+        m_Anchor = {};
+    }
+
+    Gui::Document* m_Document = nullptr;
+    Gui::BindingContext m_Context;
     vector<Gui::Element*> m_Ticks;
     f32 m_Phase = 0.0f;
+    Gui::PopupId m_Menu;
+    Gui::ElementHandle m_Anchor;
+    string m_AnchorLabel;
 };
 
 VE_GUI_DRIVER(HudDriver, 0xE46A19EB6642A7D3ULL, "HUD");
@@ -717,6 +795,10 @@ protected:
         auto& overlay = world.Add<GuiOverlay>(hud);
         overlay.Document = *recipe;
         overlay.Driver = GuiDriverIdOf<HudDriver>();
+        // The HUD takes input so its channel picker and the dropdown it opens are clickable; the
+        // seat only routes pointer into it while its focus top is UI, which here is after Escape
+        // frees the cursor from gameplay.
+        overlay.Interactive = true;
     }
 
     void OnUpdate(const f32) override

@@ -202,6 +202,17 @@ its `TargetSeat` reference, else **unbound** — in which case the sole (or prim
 viewport claims it (the single-viewport HUD case). So per-player HUDs fall out of authored data
 (one overlay per seat), and a single overlay never thrashes between viewports.
 
+### Layering *within* one document: the popup layer
+
+The layer stack orders whole **documents** (HUD under menu under notifications). Ordering *inside*
+one document — a dropdown that must cover its own siblings and escape a scrolling ancestor's clip —
+is the **popup layer**, not a second overlay: `Document::OpenPopup(anchor, options)` pushes a
+subtree that lays out against the document extent, paints after the whole main tree with no
+inherited scissor, and hit-tests ahead of it, dismissed on an outside press or `Cancel` and closed
+with its anchor. Reach for a second attached document when the content is genuinely a separate
+screen; reach for a popup when it is a menu belonging to the document that opened it. Authoring one
+is [Authoring a UI document](authoring-ui-documents.md), step 6.
+
 ---
 
 ## 2. Opening a level as an overlay — `LevelOverlay`

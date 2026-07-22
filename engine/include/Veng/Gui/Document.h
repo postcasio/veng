@@ -26,6 +26,75 @@ namespace Veng::Gui
 {
     class UIDocument;
 
+    /// @brief A stable, generation-checked reference to one element of a Document.
+    ///
+    /// Elements are not address-stable — a repeater destroys and re-creates whole item subtrees as
+    /// its bound array grows and shrinks, and the allocator re-uses the storage — so a raw
+    /// `Element*` held across frames can silently name a different element. A handle carries the
+    /// element's document-unique serial instead: the serial is monotonic and never re-issued, so a
+    /// handle to a destroyed element resolves to nullptr rather than to whatever took its place.
+    struct ElementHandle
+    {
+        /// @brief The element's document-unique serial; zero is the reserved empty handle.
+        u64 Value = 0;
+
+        /// @brief Returns whether the handle names an element at all (a non-zero serial).
+        [[nodiscard]] bool IsValid() const { return Value != 0; }
+
+        /// @brief Compares two handles by serial.
+        friend bool operator==(const ElementHandle&, const ElementHandle&) = default;
+    };
+
+    /// @brief A stable, generation-checked reference to one open popup of a Document.
+    ///
+    /// Minted by Document::OpenPopup from a monotonic counter, so an id never names a second
+    /// popup: closing a popup and opening another leaves the stale id resolving to nothing rather
+    /// than to the new one.
+    struct PopupId
+    {
+        /// @brief The popup's document-unique serial; zero is the reserved empty id.
+        u64 Value = 0;
+
+        /// @brief Returns whether the id names a popup at all (a non-zero serial).
+        [[nodiscard]] bool IsValid() const { return Value != 0; }
+
+        /// @brief Compares two popup ids by serial.
+        friend bool operator==(const PopupId&, const PopupId&) = default;
+    };
+
+    /// @brief Which edge of its anchor's box a popup hangs off before clamping.
+    enum class PopupSide : u8
+    {
+        /// @brief Below the anchor, left edges aligned — the dropdown/menu default.
+        Below,
+        /// @brief Above the anchor, left edges aligned.
+        Above,
+        /// @brief To the right of the anchor, top edges aligned — the submenu placement.
+        RightOf,
+        /// @brief To the left of the anchor, top edges aligned.
+        LeftOf,
+    };
+
+    /// @brief How a popup is placed against its anchor and how it dismisses.
+    struct PopupOptions
+    {
+        /// @brief The anchor edge the popup hangs off before the bounds clamp.
+        PopupSide Side = PopupSide::Below;
+
+        /// @brief A signed offset added to the placed top-left, in document points.
+        vec2 Offset{0.0f};
+
+        /// @brief The inset kept clear of the document's edges when the placement is clamped.
+        f32 Margin = 0.0f;
+
+        /// @brief Whether a pointer press outside the popup dismisses it.
+        ///
+        /// The dismissing press is **consumed**: it closes the popup and does not reach the
+        /// content it landed on, so a click-away never doubles as a click-through. Clear this for
+        /// a popup that must be dismissed explicitly (a modal, a tooltip driven by hover).
+        bool LightDismiss = true;
+    };
+
     /// @brief A retained tree of UI elements with flexbox layout, drawn through a DrawList.
     ///
     /// A Document single-owns a persistent tree rooted at Root(). It mirrors the tree into an
@@ -618,6 +687,70 @@ namespace Veng::Gui
         /// @param element  The control element to initialize.
         void InitWidget(Element& element);
 
+        /// @brief Returns a generation-checked handle naming an element of this document.
+        /// @param element  The element to name.
+        /// @return The element's handle.
+        [[nodiscard]] ElementHandle GetHandle(const Element& element) const;
+
+        /// @brief Resolves a handle back to its element, or nullptr when it has been destroyed.
+        /// @param handle  The handle to resolve.
+        /// @return The named element, or nullptr when the handle is empty or stale.
+        [[nodiscard]] Element* Resolve(ElementHandle handle);
+
+        /// @brief Opens an empty popup anchored to an element, on top of the popup stack.
+        ///
+        /// A popup is a subtree the document owns but does **not** parent under Root(): it lays
+        /// out against the document extent rather than inside a parent box, paints after the whole
+        /// main tree with the scissor and transform stacks reset, and hit-tests ahead of it. That
+        /// is what lets a menu opened from a row inside a scrolling container escape that
+        /// container's clip and cover the content around it.
+        ///
+        /// The returned popup root is an ordinary Element (an empty Panel), so the caller builds
+        /// its content with the same Add/SetStyle/InitWidget calls any other subtree takes and it
+        /// cascades, animates, and takes any fill exactly as a parented element does. Each Solve
+        /// sizes the root to its content, places it against the anchor's solved box per `options`,
+        /// and clamps the result inside the document extent through Gui::Placement.
+        ///
+        /// The anchor is stored as an ElementHandle, never a raw pointer: destroying the anchor —
+        /// which a List or Table repeater does to whole item subtrees whenever its bound array
+        /// shrinks — **closes the popup** as part of the same operation. Popups stack LIFO, so
+        /// closing one closes every popup opened over it.
+        /// @param anchor   The element the popup is placed against; must belong to this document.
+        /// @param options  The placement and dismissal policy.
+        /// @return The new popup's id, used to reach its root and to close it.
+        PopupId OpenPopup(Element& anchor, const PopupOptions& options = {});
+
+        /// @brief Returns an open popup's root element, or nullptr when the id is stale.
+        ///
+        /// The subtree root a caller populates after OpenPopup and mutates while the popup is
+        /// open. It is not a child of Root(), so a tree walk from the root never reaches it.
+        /// @param id  The popup id OpenPopup returned.
+        /// @return The popup's root element, or nullptr when no such popup is open.
+        [[nodiscard]] Element* GetPopupRoot(PopupId id);
+
+        /// @brief Closes a popup and every popup opened over it, restoring the pre-open focus.
+        ///
+        /// The stack is LIFO, so closing an entry dismisses the ones above it top-down — a menu
+        /// closing takes its submenus with it. The whole subtree is destroyed, and focus returns
+        /// to the element that held it when the closed popup was opened (when that element is
+        /// still alive). A stale or empty id is a no-op.
+        /// @param id  The popup to close.
+        void ClosePopup(PopupId id);
+
+        /// @brief Closes every open popup, top-down.
+        void CloseAllPopups();
+
+        /// @brief Returns whether a popup id names a currently open popup.
+        /// @param id  The id to test.
+        /// @return True while the popup is open.
+        [[nodiscard]] bool IsPopupOpen(PopupId id) const;
+
+        /// @brief Returns how many popups are open on the document's popup stack.
+        [[nodiscard]] usize GetPopupCount() const { return m_Popups.size(); }
+
+        /// @brief Returns the topmost open popup's id, or an empty id when none is open.
+        [[nodiscard]] PopupId GetTopPopup() const;
+
     private:
         // Viewport::AttachDocument / DetachDocument set and clear m_HostViewport, so the destructor
         // self-detaches through it — the sole writer of the back-reference.
@@ -826,6 +959,43 @@ namespace Veng::Gui
         /// @brief Dispatches a pointer event down (capture) then up (bubble) the target's ancestor path.
         bool RoutePointerPath(PointerEvent& event);
 
+        /// @brief One open popup: its root subtree, its anchor, and the policy it was opened under.
+        struct Popup
+        {
+            /// @brief The popup's document-unique serial, the value its PopupId carries.
+            u64 Id = 0;
+            /// @brief The popup's root element, owned by m_Elements but parented to nothing.
+            Element* Root = nullptr;
+            /// @brief The anchor, held as a handle so a destroyed anchor cannot be mistaken.
+            ElementHandle Anchor;
+            /// @brief The live anchor element; the destroy hooks close the popup before it dies.
+            Element* AnchorElement = nullptr;
+            /// @brief The placement and dismissal policy the popup was opened under.
+            PopupOptions Options;
+            /// @brief The element that held focus when the popup opened, restored when it closes.
+            ElementHandle RestoreFocus;
+        };
+
+        /// @brief Lays one popup root out against the document extent and places it by its anchor.
+        ///
+        /// Runs after the main tree's layout read, since the placement reads the anchor's solved
+        /// box: the root is solved at an unconstrained extent (so it sizes to its content unless
+        /// the style bounds it), placed off the anchor edge the options name, and clamped inside
+        /// the available extent through Gui::Placement.
+        void SolvePopup(const Popup& popup, vec2 available);
+
+        /// @brief Closes the popup at a stack index and every popup above it, top-down.
+        void ClosePopupsFrom(usize index);
+
+        /// @brief Drops every reference the document holds to an element about to be destroyed.
+        ///
+        /// Clears the focus/hover/press targets naming it and closes any popup anchored to it, so
+        /// no interaction state and no popup outlives the element it points at.
+        void ForgetElement(const Element& element);
+
+        /// @brief Returns whether an element is the given subtree root or a descendant of it.
+        [[nodiscard]] static bool IsInSubtree(const Element& element, const Element& root);
+
         /// @brief The layout mirror wrapping the flexbox node tree and the Element↔node map.
         Unique<YogaTree> m_Yoga;
 
@@ -915,5 +1085,18 @@ namespace Veng::Gui
 
         /// @brief The codepoint DispatchText exposes while an onText handler runs; zero otherwise.
         u32 m_PendingCodepoint = 0;
+
+        /// @brief The open popups, bottom to top; the last entry is the topmost.
+        ///
+        /// Laid out after the main tree, painted after it with no inherited scissor, and
+        /// hit-tested ahead of it, top-down. Empty on a document that has opened none, which is
+        /// every display-only document.
+        vector<Popup> m_Popups;
+
+        /// @brief The next element serial; monotonic, so a freed element's serial is never re-used.
+        u64 m_NextSerial = 1;
+
+        /// @brief The next popup serial; monotonic, so a closed popup's id is never re-used.
+        u64 m_NextPopupId = 1;
     };
 }
