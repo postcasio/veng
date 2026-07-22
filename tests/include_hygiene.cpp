@@ -40,14 +40,9 @@
 #include <Veng/Application.h>
 #include <Veng/Assert.h>
 
-// planset-75 Veng/Diagnostics/* — one carved block per plan; each plan enrolls only its own new
-// public headers here so the parallel fan-out merges without conflict. Un-enrolled headers are not
-// swept at all, so enrolment is the check.
-// planset-75 plan 00:
+#include <Veng/Diagnostics/FileTraceSink.h>
 #include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Diagnostics/TraceSink.h>
-// planset-75 plan 01:
-#include <Veng/Diagnostics/FileTraceSink.h>
 
 #include <Veng/Event.h>
 #include <Veng/Input.h>

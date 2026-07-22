@@ -770,21 +770,14 @@ if (VENG_BUILD_TESTS)
             tests/unit/net_blob_codec.cpp
             tests/unit/net_social.cpp
             tests/unit/net_local_control.cpp
-            # planset-75 diagnostics unit sources — one carved block per plan. Each plan writes only
-            # inside its own marker so the parallel fan-out at plans 02/03/04 merges without conflict.
-            # planset-75 plan 00:
             tests/unit/diagnostics_profiler.cpp
-            # planset-75 plan 01:
             tests/unit/diagnostics_trace_format.cpp
-            # planset-75 plan 02:
             tests/unit/diagnostics_spine.cpp
-            # planset-75 plan 03:
             tests/unit/diagnostics_capture.cpp
-            # planset-75 plan 05:
             tests/unit/performance_panel.cpp
     )
     target_link_libraries(veng_test_unit PRIVATE veng::veng doctest::doctest)
-    # The committed trace-format fixtures (planset-75 plan 01) live in the source tree; the
+    # The committed trace-format fixtures live in the source tree; the
     # round-trip case reads them by absolute path so it runs from any working directory.
     target_compile_definitions(veng_test_unit PRIVATE
             VENG_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")

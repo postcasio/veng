@@ -6,8 +6,7 @@ into, and the `VE_PROFILE` compile gate that removes all of it. The namespace is
 
 Call sites use only the `VE_PROFILE_*` macros; everything else is the subsystem they drive.
 
-<!-- planset-75 plan 00 -->
-## The core (plan 00)
+## The core
 
 ### The macro vocabulary
 
@@ -56,14 +55,14 @@ The design constraint is that a scope costs **≤ 40 ns and allocates nothing**,
   re-resolves. The id is a profiler-global value, so one thread's resolve serves the rest — steady
   state is a cached read, not a hash lookup. The dynamic form (`VE_PROFILE_SCOPE_DYNAMIC`) hashes
   contents through the shared, mutex-guarded string table on every call and is the costlier path;
-  plan 02's call sites resolve those once at construction. New strings are published to the sink as
+  the engine's own high-cardinality call sites resolve those once at construction. New strings are published to the sink as
   `StringTableDelta`s.
 
 ### The trace clock
 
 `NowTicks()` is the single timestamp source. Every stored timestamp — chunk `TimestampBase`, record
 deltas, the values `EmitScope` takes — is in this **raw tick domain**; nanoseconds appear only after
-`TraceTicksToNanos`, which the file format (plan 01) and any decoder apply with the recorded frequency.
+`TraceTicksToNanos`, which the file format and any decoder apply with the recorded frequency.
 
 - **Source.** On `__aarch64__` (the primary Apple-Silicon target) it reads the ARM generic-timer
   virtual counter `CNTVCT_EL0` in one instruction (`mrs`) — the same counter `mach_absolute_time()`
@@ -83,11 +82,11 @@ deltas, the values `EmitScope` takes — is in this **raw tick domain**; nanosec
 Each thread holds `ChunksPerThread` fixed-size chunks in a circular array. Every chunk is
 **self-contained**: its own absolute timestamp base, the offset of its first record, and a monotonic
 sequence number (`TraceFormat.h`, the internal provisional encoding — the normative on-disk format is
-plan 01). A byte ring would overwrite the base its surviving deltas are relative to and leave
+[docs/trace-format.md](../../../docs/trace-format.md)). A byte ring would overwrite the base its surviving deltas are relative to and leave
 variable-width records torn at an unlocatable boundary; a chunk ring cannot. The cost, documented
 rather than hidden, is that the ring's configured duration is honoured only **to within one chunk**.
 
-Two drain behaviours, both built here; the *policy* that selects between them is plan 03:
+Two drain behaviours; the *policy* that selects between them is [Capture control](#capture-control):
 
 - **Streaming** (a non-null sink attached): when a chunk fills it is sealed, handed to the sink whole
   via `OnChunk`, and reused in place. No loss.
@@ -135,7 +134,7 @@ track (the GPU bridge is the case this exists for). `CreateTrack(name, role)` mi
 bracketing the caller's block. The `TraceSink` seam takes **completed chunks**, not events —
 `OnChunk`/`OnStrings`/`OnFlush`/`OnClose` — which is what keeps the sink off the hot path. The core
 ships a `NullTraceSink` (the default) and a `CapturingTestSink` (retains chunks in memory for tests);
-`FileTraceSink` is plan 01.
+`FileTraceSink` is the on-disk sink described below.
 
 ### The gate
 
@@ -145,14 +144,12 @@ a consumer** (a consumer whose macro expansion disagrees with the engine it link
 shared profiler state). Under `OFF` the `Profiler` lifecycle surface remains as documented no-ops so
 consumers and tools build unchanged, but **no event-recording or buffer code compiles or links** and
 the class holds no recording storage.
-<!-- /planset-75 plan 00 -->
 
-<!-- planset-75 plan 01 -->
-## The trace format and FileTraceSink (plan 01)
+## The trace format and `FileTraceSink`
 
 The on-disk shape of a capture is a compact binary stream, specified **normatively** in
 [docs/trace-format.md](../../../docs/trace-format.md) — the single source of truth both this
-planset's `vengtrace` converter and the observatory's JS ingest are written against. The internal
+repo's `vengtrace` converter and any out-of-tree decoder are written against. The internal
 `TraceFormat.h` encoding the profiler writes into its buffers is *not* that format: it is a
 fixed-width provisional record the sink transcodes into the compact on-disk stream. The two are
 deliberately distinct — the buffer encoding is cheap to append on the hot path, the on-disk encoding
@@ -200,10 +197,8 @@ whose sequence is not 0, a full string table, and a back-dated span — the shar
 both decoders are tested against. It is built from clean synthetic values (no path, no host string),
 and the round-trip test regenerates it and compares byte-for-byte, so it cannot drift from the
 format. Regenerate with `VENG_REGEN_TRACE_FIXTURE=1` on the unit suite.
-<!-- /planset-75 plan 01 -->
 
-<!-- planset-75 plan 02 -->
-## Instrumenting the spine (plan 02)
+## The instrumented spine
 
 The call sites that make a capture worth taking, plus the seam and bridge that place GPU work on it.
 
@@ -251,13 +246,13 @@ The call sites that make a capture worth taking, plus the seam and bridge that p
   (`m_GpuSlotFrame`/`m_GpuSlotAnchorTicks`), never the current frame. `EmitScope(track, name, begin,
   end, frameIndex)` is the frame-indexing primitive the format's negative-frame-delta encoding
   exists for. Timing unsupported → no track, no error; an out-of-frame graph run records nothing.
-  The live alignment check is plan 07's; the fast band tests the mechanism over a fake source.
+  The fast band tests the mechanism over a fake source; the live alignment result is under
+  [Verification](#verification) below.
 
-### The track-descriptor seam (the plan-01 name/role gap)
+### The track-descriptor seam
 
-Plan 01 left the sink emitting Track descriptors with empty names because the plan-00 seam delivered
-no names or roles. This plan closes it: `TraceSink` gains **`OnTrack(const TrackDescriptor&)`** (the
-track analogue of `OnStrings`), and the `Profiler` calls it when a thread is named
+`TraceSink` carries **`OnTrack(const TrackDescriptor&)`** (the track analogue of `OnStrings`), and
+the `Profiler` calls it when a thread is named
 (`RegisterThread`/`VE_PROFILE_THREAD`), when a virtual track is created (`CreateTrack`), and — for
 tracks named before a capture began — replayed for every known track when a sink is attached
 (`SetSink`). `FileTraceSink::OnTrack` records the delivered descriptor and prefers it over the
@@ -273,12 +268,10 @@ enabled `VK_EXT_debug_utils` instance extension, exposing `BeginLabel`/`EndLabel
 (each null-checking its own pointer). `Context::BeginGpuScope`/`EndGpuScope` emit a balanced label
 region under `VE_DEBUG`, so `RenderGraph`'s per-pass auto-bracketing labels every pass for RenderDoc
 and Xcode with no new call site and no per-pass cost in a shipping build.
-<!-- /planset-75 plan 02 -->
 
-<!-- planset-75 plan 03 -->
-## Capture control (plan 03)
+## Capture control
 
-The policy layer over plan 00's two buffer behaviours. A capture is something you *start* — from
+The policy layer over the two buffer behaviours above. A capture is something you *start* — from
 code, a key, or over MCP — that ends with a file on disk whose path you are handed back; the
 continuous ring is the same buffers under a different policy, dumped after the fact.
 
@@ -296,14 +289,16 @@ continuous ring is the same buffers under a different policy, dumped after the f
 - **`SetRingEnabled(bool)`** — the standing continuous-ring policy (size = `RingDurationSeconds`). A
   capture temporarily overrides the active mode; the ring is re-derived from this flag when the
   capture ends, so enabling it mid-capture takes effect on `EndCapture`.
-- **`DumpRing(path) -> Result<path>`** — freezes the ring, walks each thread's live chunks in
-  sequence order from the oldest (copied, never disturbing the still-recording ring), writes them
-  with the **full** string table (a ring dump has no earlier delta to build on), and resumes. Fails
-  if a capture is running. Honoured to within one chunk, since a wrap discards a whole chunk.
+- **`DumpRing(path) -> Result<path>`** — walks each thread's live chunks in sequence order from the
+  oldest, copying each up to its acquire-loaded write offset, and writes them with the **full**
+  string table (a ring dump has no earlier delta to build on). **Recording is not suspended** —
+  producers keep appending throughout — so the dump is honoured to within one chunk, and a wrap
+  landing on a chunk mid-copy can tear that chunk (see [Verification](#verification)). Fails if a
+  capture is running.
 - **`GetState() -> CaptureState`** — off / ring / capturing, the frame budget and frames elapsed, the
   running capture's path, and `WriterDraining`.
 
-**Off-thread finish.** `EndCapture`/`DumpRing` hand their chunks to plan 01's `FileTraceSink` writer
+**Off-thread finish.** `EndCapture`/`DumpRing` hand their chunks to the `FileTraceSink` writer
 and return **immediately** — the calling thread's cost is collecting and copying chunks, never the
 encode or I/O. `FileTraceSink::BeginClose()` initiates the trailer + atomic commit without joining,
 and `HasFinishedWriting()` reports when the file is on disk; `GetState().WriterDraining` reflects
@@ -368,15 +363,77 @@ if (GetInput().WasKeyPressed(Key::F7))
     profiler.SetRingEnabled(profiler.GetState().Status != Diagnostics::CaptureStatus::Ring);
 ```
 
-Every verb returns a `Result`, so a failure is logged, never fatal. No in-HUD capture affordance
-lands here (the HUD is plan 05).
+Every verb returns a `Result`, so a failure is logged, never fatal.
 
 ### Under `VE_PROFILE=OFF`
 
 The capture verbs are documented no-ops returning a clear "disabled" error, and the MCP tools report
 the profiler unavailable — both build unchanged, neither aborts.
-<!-- /planset-75 plan 03 -->
 
-<!-- planset-75 plan 07 -->
-<!-- Verification, overhead numbers, the separation sweep. -->
-<!-- /planset-75 plan 07 -->
+
+## Verification
+
+The subsystem's value rests on two properties no single test proves: that instrumenting the engine
+does not distort what it measures, and that a GPU duration read back several frames late is
+attributed to the frame that produced it. Both are measured, and the numbers are recorded here so
+the next change to this code has a baseline rather than a claim.
+
+`tests/bench/diag_bench.cpp` (the `diag_bench` ctest, built only under `VE_PROFILE`) is the
+standing measurement: per-scope cost with recording on, per-scope cost with the profiler merely
+compiled in, the per-frame aggregation fold, and a hard allocation-free assertion on the
+steady-state hot path — the one thing it fails on, since a timing threshold in CI would be a
+flake generator. **Measure in an optimized build.** The figures below are medians over seven runs
+on an Apple M-series host, in a `VE_DEBUG=OFF` (Release, `-O3`) tree; the `VE_DEBUG=ON` tree is
+`-O0` and is roughly an order of magnitude slower, which is a property of the build type, not of
+the design.
+
+| Measurement | Release (`-O3`) | Debug (`-O0`) | Budget |
+|---|---|---|---|
+| Per scope, recording (append + release store + aggregation) | **12.4 ns** | 146.7 ns | ≤ 40 ns |
+| Per scope, compiled in but not recording (aggregation only) | **9.4 ns** | 113.6 ns | — |
+| Per-frame aggregation fold, 8 distinct scopes | **737 ns** | 5,626 ns | — |
+| Hot-path allocations under a recording load | **0** | 0 | 0 |
+
+So **recording costs ~3 ns per scope over merely being compiled in** — the two are reported apart
+because conflating them hides the one that matters. The per-frame fold is a per-frame cost the
+per-scope budget does not cover at all and is likewise its own figure.
+
+**A disabled build shows no frame-time regression.** Over a fixed twenty-frame headless drive of
+the sample, medians of fifteen interleaved runs: 647.0 ms at the instrumented tree's
+`VE_PROFILE=OFF` build against 647.2 ms at a pre-instrumentation build of the same sample — a
+−0.03 % difference, inside the run-to-run spread. That drive is startup-dominated and resolves
+about 150 µs per frame; the substantive evidence is the symbol check below, which shows the code
+is not merely inert but absent.
+
+**`VE_PROFILE=OFF` links no recording path.** The disabled build is *not* free of diagnostics
+symbols and must not be checked as if it were — the `Profiler` lifecycle surface, the `profile.*`
+MCP tool stubs and the performance panel's degraded branch all remain so consumers, tools, and
+panels build unchanged. The checkable property is that **no event-recording code and no per-thread
+buffer storage link**, and it holds: `Detail::ThreadState`, `CurrentThreadState`, `EnterScope`,
+`CommitScope`/`CommitCounter`/`CommitInstant`/`CommitEmitScope`, `ResolveLiteralName`,
+`InternDynamic`, `MarkFrame`, `NameCurrentThread`, and the whole `Detail::ProfilerState` are absent
+from the `OFF` library, which carries no thread-local storage for the subsystem at all. One thing
+outside that list does still link: `FileTraceSink` and the `TraceFileFormat` writer compile whole
+under `OFF`, unreachable because every capture verb returns the disabled error. They are the
+serializer, not the recording path, but they are dead weight in a disabled build.
+
+**GPU spans land on the frame that executed them.** Verified over a capture of a deliberately
+varied per-frame GPU load — 1,256 frames whose CPU duration ranged 8.2–99.2 ms (median 18.3) and
+whose GPU frame time ranged 0–40.4 ms (median 7.1), stepped down five times by destroying batches
+of drawn entities mid-capture. For each GPU span, its stamped frame index is checked against the
+wall-clock window of that frame's CPU work: **100.0 % of spans begin inside the frame they are
+stamped with.** The same check under an artificial constant frame-shift fails, which is what makes
+it a check rather than a tautology — shifting the stamps by +1 / −1 frame leaves 42.0 % / 4.4 %
+in-window, by +2 / −2 leaves 3.6 % / 0.6 %, and by +3 / −3 leaves 0.2 % / 0.0 %.
+
+**The publication protocol is TSan-clean under a concurrent collector.** A recording load driving
+the frame spine, task-pool jobs, and `ParallelFor`'s transient threads, with a second thread
+repeatedly calling `DumpRing`, runs clean under ThreadSanitizer over ~4,600 frames and ~240 dumps.
+A chunk's `TimestampBase` and `SequenceNumber` are atomic for the same reason its write offset is:
+a collector sorts live chunks by sequence off the owning thread while the ring re-arms one under it.
+Their accesses are relaxed — `WriteOffset`'s release/acquire pair supplies the ordering.
+
+**A ring dump can still tear at a wrap.** `DumpRing` copies a live chunk up to its acquire-loaded
+write offset while the ring keeps recording, so a wrap that re-arms *that* chunk mid-copy
+overwrites the header the copy is reading. The window is narrow and costs at most one chunk of a
+dump, and closing it needs a per-chunk generation the collector re-checks after copying.

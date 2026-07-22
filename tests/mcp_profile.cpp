@@ -14,9 +14,10 @@
 // null Profiler seam asserts the verbs report the profiler unavailable. Pure logic + loopback, no
 // GPU, so it runs in the default band.
 //
-// The runtime behaviour is proved under VE_PROFILE; under VE_PROFILE=OFF the profiler is a shell and
-// the file round-trips do not apply, so those assertions are gated. The file still compiles and links
-// under OFF (the OFF compile-and-link check), where the verbs return the documented disabled error.
+// The capture round-trip is proved under VE_PROFILE; under VE_PROFILE=OFF the profiler is a shell,
+// so the same three write verbs are driven over the same loopback and asserted to report the
+// documented disabled error instead. Tool registration, shape validation, and the null-seam
+// behaviour are configuration-independent and are asserted in both.
 
 #include <Veng/Mcp/McpHost.h>
 #include <Veng/Mcp/McpServer.h>
@@ -183,6 +184,7 @@ int main()
         Check(stats.is_object() && stats.contains("status"), "profile.stats reports a status");
         Check(stats.contains("dropped_events"), "profile.stats reports drop counters");
 
+#if defined(VE_PROFILE) && VE_PROFILE
         // profile.start + profile.stop round-trip to a real file.
         const Json started = CallToolResult(client, "profile.start", Json{{"name", "mcp-capture"}});
         Check(!IsError(started), "profile.start succeeded");
@@ -193,7 +195,6 @@ int main()
         Check(!IsError(stopped), "profile.stop succeeded");
         const std::string stopPath = Payload(stopped).value("path", std::string{});
         Check(!stopPath.empty(), "profile.stop returned a path");
-#if defined(VE_PROFILE) && VE_PROFILE
         Check(std::filesystem::exists(stopPath), "the profile.stop path names a real file");
         {
             std::ifstream in(stopPath, std::ios::binary);
@@ -201,15 +202,22 @@ int main()
             in.read(magic, sizeof(magic));
             Check(std::string(magic, 8) == "VENGTRAC", "the written capture carries the magic");
         }
-#endif
 
         // profile.dump_ring returns a path to a written file.
         const Json dumped = CallToolResult(client, "profile.dump_ring", Json{{"name", "mcp-ring"}});
         Check(!IsError(dumped), "profile.dump_ring succeeded");
         const std::string dumpPath = Payload(dumped).value("path", std::string{});
         Check(!dumpPath.empty(), "profile.dump_ring returned a path");
-#if defined(VE_PROFILE) && VE_PROFILE
         Check(std::filesystem::exists(dumpPath), "the profile.dump_ring path names a real file");
+#else
+        // The write verbs are registered and answerable, and report the disabled build rather than
+        // writing anything: the profiler holds no recording state to capture.
+        Check(IsError(CallToolResult(client, "profile.start", Json{{"name", "mcp-capture"}})),
+              "profile.start reports the disabled build");
+        Check(IsError(CallToolResult(client, "profile.stop", Json::object())),
+              "profile.stop reports the disabled build");
+        Check(IsError(CallToolResult(client, "profile.dump_ring", Json{{"name", "mcp-ring"}})),
+              "profile.dump_ring reports the disabled build");
 #endif
 
         // A shape error surfaces as an isError tool result, not a JSON-RPC protocol error.

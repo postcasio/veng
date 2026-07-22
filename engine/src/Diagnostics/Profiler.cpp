@@ -201,14 +201,17 @@ namespace Veng::Diagnostics
                 Unique<u8[]> Data;
                 u32 Capacity = 0;
                 std::atomic<u32> WriteOffset{sizeof(ChunkHeader)};
-                u64 TimestampBase = 0;
-                u64 SequenceNumber = 0;
+                // A collector (EndCapture, DumpRing) reads these off the owning thread while it is
+                // still recording, so they are atomic like the write offset. Relaxed suffices: Arm's
+                // release store to WriteOffset and the collector's acquire load of it order the pair.
+                std::atomic<u64> TimestampBase{0};
+                std::atomic<u64> SequenceNumber{0};
 
                 /// @brief Re-arms the chunk for reuse with a fresh base and sequence, writing its header.
                 void Arm(u64 base, u64 sequence)
                 {
-                    TimestampBase = base;
-                    SequenceNumber = sequence;
+                    TimestampBase.store(base, std::memory_order_relaxed);
+                    SequenceNumber.store(sequence, std::memory_order_relaxed);
                     ChunkHeader header;
                     header.TimestampBase = base;
                     header.SequenceNumber = sequence;
@@ -412,12 +415,11 @@ namespace Veng::Diagnostics
                 record.Track = track;
                 record.Name = name;
                 record.Frame = static_cast<u32>(frame);
-                record.BeginDelta =
-                    beginAbs >= chunk->TimestampBase ? beginAbs - chunk->TimestampBase : 0;
+                const u64 base = chunk->TimestampBase.load(std::memory_order_relaxed);
+                record.BeginDelta = beginAbs >= base ? beginAbs - base : 0;
                 if (type == RecordType::ScopeComplete)
                 {
-                    record.EndOrValue =
-                        endAbs >= chunk->TimestampBase ? endAbs - chunk->TimestampBase : 0;
+                    record.EndOrValue = endAbs >= base ? endAbs - base : 0;
                 }
                 else if (type == RecordType::Counter)
                 {
@@ -870,8 +872,12 @@ namespace Veng::Diagnostics
                             live.push_back(chunk.get());
                         }
                     }
-                    std::ranges::sort(live, [](const Chunk* a, const Chunk* b)
-                                      { return a->SequenceNumber < b->SequenceNumber; });
+                    std::ranges::sort(live,
+                                      [](const Chunk* a, const Chunk* b)
+                                      {
+                                          return a->SequenceNumber.load(std::memory_order_relaxed) <
+                                                 b->SequenceNumber.load(std::memory_order_relaxed);
+                                      });
                     for (Chunk* chunk : live)
                     {
                         collect(thread->Id, *chunk);
