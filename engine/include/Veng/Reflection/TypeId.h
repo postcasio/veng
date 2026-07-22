@@ -40,8 +40,14 @@ namespace Veng
     ///   static constexpr TypeId Id;                  // authored 0x…ULL
     ///   static constexpr FieldClass Class;           // the type's meta-kind
     ///   static string Name();                        // logs/editor display
-    ///   static vector<FieldDescriptor> Fields();     // {} for a leaf / id-only
-    ///   static void RegisterDependencies(TypeRegistry&); // no-op for those
+    ///   template <class> static vector<FieldDescriptor> Fields();     // {} for a leaf / id-only
+    ///   template <class> static void RegisterDependencies(TypeRegistry&); // no-op for those
+    ///
+    /// Fields() and RegisterDependencies() are member templates on a defaulted
+    /// parameter, so each is spelled and called exactly like a plain static member
+    /// while its body — and for a fielded struct the describe-block replay behind
+    /// it — is instantiated only where TypeRegistry::Register<T>() calls it, rather
+    /// than in every translation unit that includes the trait.
     ///
     /// Three authoring macros emit that set: VE_LEAF (a non-struct leaf),
     /// VE_TYPE (a fieldless struct/component), and VE_REFLECT (a fielded struct).
@@ -88,8 +94,15 @@ namespace Veng
         static constexpr ::Veng::TypeId Id = (TypeIdLiteral);                                      \
         static constexpr ::Veng::FieldClass Class = (FieldClassValue);                             \
         static ::Veng::string Name() { return #Type; }                                             \
-        static ::Veng::vector<::Veng::FieldDescriptor> Fields() { return {}; }                     \
-        static void RegisterDependencies(::Veng::TypeRegistry&) {}                                 \
+        template <class = void>                                                                    \
+        static ::Veng::vector<::Veng::FieldDescriptor> Fields()                                    \
+        {                                                                                          \
+            return {};                                                                             \
+        }                                                                                          \
+        template <class = void>                                                                    \
+        static void RegisterDependencies(::Veng::TypeRegistry&)                                    \
+        {                                                                                          \
+        }                                                                                          \
     }
 
 // ----- Builtin leaf vocabulary ---------------------------------------------

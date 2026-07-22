@@ -122,7 +122,11 @@ namespace Veng::Detail
 //
 // The block body is emitted once into a templated Describe(Sink&) member; both
 // Fields() and RegisterDependencies() replay it with a different sink, so the
-// field names are written exactly once.
+// field names are written exactly once. Those two are themselves member templates
+// on a defaulted parameter — the author writes and calls them as plain statics,
+// but their bodies, and so both Describe instantiations, are compiled only in the
+// translation units that actually register the type rather than in every one that
+// includes the describe block.
 
 /// @brief Opens a VE_ENUM block: declares an enum leaf and starts its enumerator list.
 ///
@@ -141,8 +145,15 @@ namespace Veng::Detail
         static constexpr ::Veng::TypeId Id = (TypeIdLiteral);                                      \
         static constexpr ::Veng::FieldClass Class = ::Veng::FieldClass::Enum;                      \
         static ::Veng::string Name() { return #Type; }                                             \
-        static ::Veng::vector<::Veng::FieldDescriptor> Fields() { return {}; }                     \
-        static void RegisterDependencies(::Veng::TypeRegistry&) {}                                 \
+        template <class = void>                                                                    \
+        static ::Veng::vector<::Veng::FieldDescriptor> Fields()                                    \
+        {                                                                                          \
+            return {};                                                                             \
+        }                                                                                          \
+        template <class = void>                                                                    \
+        static void RegisterDependencies(::Veng::TypeRegistry&)                                    \
+        {                                                                                          \
+        }                                                                                          \
         static ::Veng::vector<::Veng::EnumEntry> Enumerators()                                     \
         {                                                                                          \
             ::Veng::vector<::Veng::EnumEntry> entries;
@@ -237,12 +248,14 @@ namespace Veng::Detail
 /// @brief Closes a VE_REFLECT block and emits Fields() / RegisterDependencies().
 #define VE_REFLECT_END()                                                                           \
     }                                                                                              \
+    template <class = void>                                                                        \
     static ::Veng::vector<::Veng::FieldDescriptor> Fields()                                        \
     {                                                                                              \
         ::Veng::Detail::FieldCollector collector;                                                  \
         Describe(collector);                                                                       \
         return std::move(collector.Fields);                                                        \
     }                                                                                              \
+    template <class = void>                                                                        \
     static void RegisterDependencies(::Veng::TypeRegistry& registry)                               \
     {                                                                                              \
         ::Veng::Detail::DependencyRegistrar registrar{registry};                                   \
@@ -310,7 +323,11 @@ namespace Veng::Detail
         static constexpr ::Veng::TypeId Id = (TypeIdLiteral);                                      \
         static constexpr ::Veng::FieldClass Class = ::Veng::FieldClass::Variant;                   \
         static ::Veng::string Name() { return #Type; }                                             \
-        static ::Veng::vector<::Veng::FieldDescriptor> Fields() { return {}; }                     \
+        template <class = void>                                                                    \
+        static ::Veng::vector<::Veng::FieldDescriptor> Fields()                                    \
+        {                                                                                          \
+            return {};                                                                             \
+        }                                                                                          \
         static ::Veng::TypeId ActiveType(const void* p)                                            \
         {                                                                                          \
             return static_cast<const Type*>(p)->ActiveType();                                      \
@@ -330,6 +347,7 @@ namespace Veng::Detail
             const auto s = Type::Alternatives();                                                   \
             return {s.begin(), s.end()};                                                           \
         }                                                                                          \
+        template <class = void>                                                                    \
         static void RegisterDependencies(::Veng::TypeRegistry& r)                                  \
         {                                                                                          \
             Type::RegisterAlternatives(r);                                                         \

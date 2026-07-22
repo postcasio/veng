@@ -362,6 +362,13 @@ namespace Veng
         static constexpr ::Veng::TypeId Id = (TypeIdLiteral);                                      \
         static constexpr ::Veng::FieldClass Class = ::Veng::FieldClass::Struct;                    \
         static ::Veng::string Name() { return #Type; }                                             \
-        static ::Veng::vector<::Veng::FieldDescriptor> Fields() { return {}; }                     \
-        static void RegisterDependencies(::Veng::TypeRegistry&) {}                                 \
+        template <class = void>                                                                    \
+        static ::Veng::vector<::Veng::FieldDescriptor> Fields()                                    \
+        {                                                                                          \
+            return {};                                                                             \
+        }                                                                                          \
+        template <class = void>                                                                    \
+        static void RegisterDependencies(::Veng::TypeRegistry&)                                    \
+        {                                                                                          \
+        }                                                                                          \
     }
