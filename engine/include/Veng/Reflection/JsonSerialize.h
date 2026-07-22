@@ -5,7 +5,7 @@
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/Entity.h>
 
-#include <nlohmann/json.hpp>
+#include <nlohmann/json_fwd.hpp>
 
 namespace Veng
 {

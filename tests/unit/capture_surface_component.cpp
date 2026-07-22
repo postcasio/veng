@@ -14,6 +14,8 @@
 #include <Veng/Renderer/CaptureSurface.h>
 #include <Veng/Scene/Entity.h>
 
+#include <nlohmann/json.hpp>
+
 using namespace Veng;
 using namespace Veng::Renderer;
 using Json = nlohmann::json;

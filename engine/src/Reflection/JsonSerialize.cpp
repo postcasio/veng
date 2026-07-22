@@ -9,6 +9,7 @@
 #include <cstring>
 
 #include <fmt/format.h>
+#include <nlohmann/json.hpp>
 
 namespace Veng
 {

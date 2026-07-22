@@ -13,6 +13,8 @@
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/Camera.h>
 
+#include <nlohmann/json.hpp>
+
 using namespace Veng;
 
 namespace

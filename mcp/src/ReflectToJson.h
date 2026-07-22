@@ -3,7 +3,7 @@
 #include <Veng/Veng.h>
 #include <Veng/Result.h>
 
-#include <nlohmann/json.hpp>
+#include <nlohmann/json_fwd.hpp>
 
 namespace Veng
 {
