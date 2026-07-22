@@ -35,6 +35,7 @@ add_library(veng_editor SHARED
         src/panels/LevelEditorPanel.cpp
         src/panels/MaterialEditorPanel.cpp
         src/panels/MaterialInstanceEditorPanel.cpp
+        src/panels/PerformanceEditorPanel.cpp
         src/panels/PrefabEditorPanel.cpp
         src/panels/PrefabExplorerPanel.cpp
         src/panels/ProjectSettingsPanel.cpp

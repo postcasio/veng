@@ -1237,11 +1237,11 @@ private:
             }
         }
 
-        // The combined frame-time graph; the stateful helper samples the CPU/GPU/per-pass timers
-        // itself and overlays the whole-frame GPU time with each pass on one chart.
+        // The performance panel; the stateful helper samples the CPU/GPU timers and the profiler's
+        // per-scope aggregates itself and draws its five bands.
         if (auto graphWindow = UI::Window("Frame Time"))
         {
-            m_FrameTimeGraph.Draw(viewport);
+            m_Performance.Draw(viewport);
         }
 
         // The scene's composited output, drawn last so it fills its own window.
@@ -1437,8 +1437,8 @@ private:
         Log::Info("Wrote scene capture to {}", outPath);
     }
 
-    // The GPU frame-time history graph, owning its sample ring across frames.
-    UI::FrameTimeGraph m_FrameTimeGraph;
+    // The performance panel, owning its rolling history and sort key across frames.
+    UI::PerformancePanel m_Performance;
 
     // Topology/sizing knobs applied to the managed viewport through Configure; seeded from the
     // level (plus the sample's SSR/debug-view extras) in OnWorldLoaded. The per-frame tonemap/bloom

@@ -2,17 +2,17 @@
 #include <Veng/Veng.h>
 
 #include <array>
-#include <map>
+#include <span>
 #include <string>
 
 /// @brief À-la-carte renderer debug panels built on the `Veng::UI` widget vocabulary.
 ///
-/// Three composable helpers a game arranges in its own windows — the renderer stats
-/// read-out, a stateful frame-time graph, and the render-settings editor — rather than
-/// one turnkey overlay. Each is authored against `Veng::UI` and imgui-free in its
-/// signatures, naming only engine renderer types. None opens its own window: a caller
-/// wraps the panel it wants in a `UI::Window`/`UI::Child`, skips one in a shipping build,
-/// or embeds it in a larger profiler.
+/// Composable helpers a game arranges in its own windows — the renderer stats read-out, the
+/// compact performance panel over the profiler's live scope data, and the render-settings
+/// editor — rather than one turnkey overlay. Each is authored against `Veng::UI` and imgui-free
+/// in its signatures, naming only engine renderer types. None opens its own window: a caller
+/// wraps the panel it wants in a `UI::Window`/`UI::Child`, skips one in a shipping build, or
+/// embeds it in a larger profiler.
 
 namespace Veng::Renderer
 {
@@ -35,66 +35,194 @@ namespace Veng::UI
     /// @param viewport  The viewport whose renderer the stats are read from.
     void RendererStatsPanel(const Renderer::Viewport& viewport);
 
-    /// @brief A stateful rolling frame-time graph combining the whole-frame and per-pass timings.
+    /// @brief A fixed-capacity rolling ring of millisecond samples for the panel's history charts.
     ///
-    /// The one stateful `Veng::UI` helper: a small value type the caller persists across frames
-    /// (a panel-local member), owning rolling millisecond histories for the CPU frame delta, the
-    /// whole-frame GPU time, and each render pass's GPU cost. One `Draw(viewport)` per frame
-    /// samples all three from the viewport's render context (and the frame delta from `Time`),
-    /// then plots the whole-frame GPU time and every grouped pass as colored lines on one shared
-    /// auto-scaled chart with a color-swatch legend, and the CPU frame time on its own axis
-    /// below. Imgui-free in its surface, consistent with the stateless widget wrappers.
-    class FrameTimeGraph
+    /// Samples are appended head-first and the ring saturates at `Capacity`, overwriting the oldest
+    /// once full; `PlotOffset()` reports the oldest sample's index so a `UI::PlotLines` draws it
+    /// oldest-to-newest without a rotation. A plain value type with no imgui dependency.
+    struct PerformanceHistory
+    {
+        /// @brief Fixed sample capacity of the ring.
+        static constexpr usize Capacity = 240;
+
+        /// @brief The rolling millisecond samples; filled from index 0 until it wraps.
+        std::array<f32, Capacity> Samples{};
+        /// @brief The next write slot (and, once full, the oldest sample).
+        usize Head = 0;
+        /// @brief The number of valid samples, saturating at `Capacity`.
+        usize Count = 0;
+
+        /// @brief Appends one sample, overwriting the oldest once full.
+        /// @param milliseconds  The sample value in milliseconds.
+        void Push(f32 milliseconds);
+
+        /// @brief Returns the most recently pushed sample, or 0 before the first push.
+        [[nodiscard]] f32 Last() const;
+
+        /// @brief Returns the plot ring offset: the write head once the ring has wrapped, else 0.
+        [[nodiscard]] i32 PlotOffset() const;
+    };
+
+    /// @brief One candidate frame phase for the heaviest-N selection: its name and inclusive cost.
+    struct PhaseSample
+    {
+        /// @brief The phase scope's name (a stable `Frame/*`-family string).
+        string Name;
+        /// @brief The phase's last-frame inclusive time, in milliseconds.
+        f64 InclusiveMs = 0.0;
+    };
+
+    /// @brief One GPU pass band — a display name and its millisecond cost.
+    ///
+    /// Both the input and the output of `FoldGpuBands`: the fold takes the frame's grouped passes
+    /// and returns at most a fixed number of bands, the surplus summed into a trailing "Other".
+    struct GpuBand
+    {
+        /// @brief The pass (or folded group) display name.
+        string Name;
+        /// @brief The band's GPU cost, in milliseconds.
+        f32 Milliseconds = 0.0f;
+    };
+
+    /// @brief One row of the scope table: the numeric columns for a scope active last frame.
+    struct ScopeRow
+    {
+        /// @brief The scope's name.
+        string Name;
+        /// @brief Inclusive time (self plus children), in milliseconds.
+        f64 InclusiveMs = 0.0;
+        /// @brief Self time (inclusive minus nested children), in milliseconds.
+        f64 SelfMs = 0.0;
+        /// @brief Inclusive time as a fraction of the frame, in percent.
+        f64 PercentOfFrame = 0.0;
+        /// @brief Times the scope was entered in the reported frame.
+        u64 CallCount = 0;
+    };
+
+    /// @brief The scope table's sort column.
+    enum class ScopeSortColumn : u8
+    {
+        /// @brief Sort by scope name (lexicographic).
+        Name,
+        /// @brief Sort by inclusive time.
+        Inclusive,
+        /// @brief Sort by self time.
+        Self,
+        /// @brief Sort by percent of frame.
+        Percent,
+        /// @brief Sort by call count.
+        Calls,
+    };
+
+    /// @brief Selects the heaviest phases to plot, with hysteresis so a near-tie does not flicker.
+    ///
+    /// Keeps `selection` (the phases currently shown, at most `count`) stable across frames: an
+    /// incumbent holds its slot while its cost stays within `hysteresis` of the `count`-th heaviest
+    /// candidate, and only a challenger that clears that margin displaces it. Remaining slots fill
+    /// heaviest-first from the candidates. Ties break by name, so the result is deterministic. The
+    /// candidate list may be in any order; `selection` is rewritten in place with the new set, in
+    /// display order (surviving incumbents first, then fresh entrants heaviest-first).
+    /// @param candidates  The frame's candidate phases (name + inclusive ms).
+    /// @param selection   The persisted selection, read and rewritten in place.
+    /// @param count       The maximum number of phases to select.
+    /// @param hysteresis  The relative margin (e.g. 0.25) a challenger must clear to displace an
+    ///                    incumbent.
+    void SelectHeaviestPhases(std::span<const PhaseSample> candidates, vector<string>& selection,
+                              usize count, f32 hysteresis);
+
+    /// @brief Folds the frame's GPU passes into at most `maxBands` bands, the surplus summed as "Other".
+    ///
+    /// Sorts the passes by cost (descending, ties by name) and returns them unchanged when they fit
+    /// within `maxBands`; otherwise returns the heaviest `maxBands - 1` followed by a single "Other"
+    /// band holding the sum of the rest. The total across the returned bands always equals the total
+    /// across the input, so the stack it draws neither gains nor loses time — the bound on band count
+    /// never bounds the reported total.
+    /// @param passes    The frame's grouped GPU passes.
+    /// @param maxBands  The maximum number of bands to return (must be at least 1).
+    /// @return The bounded band list, heaviest-first, with a trailing "Other" when folded.
+    [[nodiscard]] vector<GpuBand> FoldGpuBands(std::span<const GpuBand> passes, usize maxBands);
+
+    /// @brief Sorts the scope table's rows by one column, ascending or descending.
+    ///
+    /// Every non-name column breaks ties by name so the order is total and stable frame to frame;
+    /// the name column breaks ties on itself (already total). Sorting is the panel's only per-frame
+    /// reshaping of the aggregate snapshot — a new scope is a new row and changes nothing else.
+    /// @param rows       The rows to sort in place.
+    /// @param column     The column to order by.
+    /// @param ascending  True for ascending order, false for descending.
+    void SortScopeRows(vector<ScopeRow>& rows, ScopeSortColumn column, bool ascending);
+
+    /// @brief Returns the notice the panel draws in place of its profiler-sourced bands, or empty.
+    ///
+    /// The phase series and the scope table are populated only when the profiler is compiled in
+    /// (`VE_PROFILE=ON`) and an instance is installed. When either is absent this returns a stated
+    /// line explaining why — never empty, so the panel never degrades to a silent empty table that
+    /// reads as "nothing is running". When the data is available it returns an empty view.
+    /// @return The disabled-notice line, or an empty view when per-scope data is available.
+    [[nodiscard]] string_view PerformanceProfilerNotice();
+
+    /// @brief A compact, organized performance panel over the profiler's live per-frame scope data.
+    ///
+    /// Drawn windowless in five bands top to bottom (the caller owns the window, as
+    /// `RendererStatsPanel` does): a **budget bar** (stacked CPU/GPU against the frame target, FPS,
+    /// frame index), a **frame-history chart** (CPU total, GPU total, and the heaviest few phases —
+    /// a series count fixed by construction so the legend never grows), a **GPU pass breakdown**
+    /// (a bounded stack, the surplus passes folded into "Other"), a **sortable scope table**, and a
+    /// **counter strip** (the renderer's cull-funnel counters, current frame, no history).
+    ///
+    /// The table is the design's scalability property: it draws one row per scope active in the last
+    /// completed frame — name, inclusive ms, self ms, % of frame, call count — read from the
+    /// profiler's aggregate snapshot each frame, not mirrored. A subsystem that adds a scope gets a
+    /// table row for free and changes nothing about the panel's layout, its two fixed-series charts,
+    /// their legends, or its cost. The panel's own state is just the rolling chart history and the
+    /// table's sort key.
+    ///
+    /// Both the whole-frame CPU delta (from `Time`) and the GPU timings (from `Context`) are read
+    /// without the profiler, so the budget bar, the GPU pass chart, and the frame-history CPU/GPU
+    /// totals draw regardless of build configuration. Under `VE_PROFILE=OFF` — or with no profiler
+    /// installed — the phase series and the scope table are replaced by a single stated line
+    /// (`PerformanceProfilerNotice`); the panel always builds and always draws.
+    class PerformancePanel
     {
     public:
-        /// @brief Constructs an empty graph with zeroed history rings.
-        FrameTimeGraph() = default;
+        /// @brief Constructs an empty panel with zeroed history rings and no selection.
+        PerformancePanel() = default;
 
-        /// @brief Samples this frame's CPU/GPU/per-pass timings, then plots the combined graph.
+        /// @brief Samples this frame's timings and scope aggregates, then draws the five bands.
         ///
-        /// Reads the whole-frame GPU time and the per-pass GPU breakdown
-        /// (`Context::GetLastGpuFrameTimeMs()` / `Context::GetLastGpuPassTimings()`) through the
-        /// viewport's render context and the CPU frame delta from `Time::GetDeltaTime()`, appends
-        /// each to its rolling history, then draws them: the whole-frame GPU envelope (white) and
-        /// every grouped pass (bloom / hi-Z mip sweeps collapsed) as colored lines on one shared
-        /// auto-scaled chart, a two-column legend, and the CPU frame time below on its own axis.
-        /// The GPU sections are replaced by a disabled note when the device exposes no timestamp
-        /// queries (`Context::IsGpuTimingSupported()` is false). Draws into the current window.
-        /// @param viewport  The viewport whose render context the timings are read from.
+        /// Reads the CPU frame delta from `Time`, the GPU whole-frame and per-pass timings through
+        /// the viewport's render context, the per-scope aggregates from the active profiler (when
+        /// installed), and the renderer's cull-funnel counters from the viewport's `SceneRenderer`.
+        /// Draws into the current window.
+        /// @param viewport  The viewport whose render context and renderer the timings are read from.
         void Draw(const Renderer::Viewport& viewport);
 
     private:
-        /// @brief Fixed sample capacity of each history ring.
-        static constexpr usize Capacity = 240;
+        /// @brief The maximum number of frame phases plotted on the frame-history chart.
+        static constexpr usize PhaseSlots = 3;
+        /// @brief The maximum number of bands on the GPU pass breakdown (last is "Other" when folded).
+        static constexpr usize GpuBandSlots = 6;
+        /// @brief The relative margin a phase must clear to displace an incumbent (see SelectHeaviestPhases).
+        static constexpr f32 PhaseHysteresis = 0.25f;
 
-        /// @brief A fixed-capacity rolling ring of millisecond samples.
-        struct History
-        {
-            /// @brief The rolling millisecond samples; filled from index 0 until it wraps.
-            std::array<f32, Capacity> Samples{};
-            /// @brief The next write slot (and, once full, the oldest sample).
-            usize Head = 0;
-            /// @brief The number of valid samples, saturating at Capacity.
-            usize Count = 0;
-
-            /// @brief Appends one sample, overwriting the oldest once full.
-            /// @param milliseconds  The sample value in milliseconds.
-            void Push(f32 milliseconds);
-
-            /// @brief Returns the most recently pushed sample, or 0 before the first push.
-            [[nodiscard]] f32 Last() const;
-
-            /// @brief Returns the plot ring offset: the write head once wrapped, else 0.
-            [[nodiscard]] i32 PlotOffset() const;
-        };
-
-        /// @brief The CPU frame-delta history, plotted on its own axis below the GPU chart.
-        History m_Cpu;
-        /// @brief The whole-frame GPU-time history, the white envelope line on the shared chart.
-        History m_Gpu;
-        /// @brief Per-pass GPU-cost histories, keyed by grouped pass name; a pass absent this
-        /// frame simply stops receiving samples until it returns.
-        map<string, History> m_Passes;
+        /// @brief The CPU whole-frame history, a fixed series on the frame-history chart.
+        PerformanceHistory m_Cpu;
+        /// @brief The whole-frame GPU history, a fixed series on the frame-history chart.
+        PerformanceHistory m_Gpu;
+        /// @brief Per-slot phase histories; each slot follows the phase currently occupying it.
+        std::array<PerformanceHistory, PhaseSlots> m_PhaseSlots;
+        /// @brief The phases currently selected for the slots, in display order (hysteresis state).
+        vector<string> m_PhaseNames;
+        /// @brief Per-slot GPU-band histories; each slot follows the band currently occupying it.
+        std::array<PerformanceHistory, GpuBandSlots> m_GpuSlots;
+        /// @brief The GPU bands currently occupying the slots, in display order.
+        vector<string> m_GpuBandNames;
+        /// @brief The scope table's active sort column.
+        ScopeSortColumn m_SortColumn = ScopeSortColumn::Inclusive;
+        /// @brief Whether the scope table sorts ascending (false = descending).
+        bool m_SortAscending = false;
+        /// @brief The scope table's name filter text.
+        string m_Filter;
     };
 
     /// @brief Draws the renderer debug-view selector as a combo over every DebugView arm.

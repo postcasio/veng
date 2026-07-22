@@ -12,10 +12,11 @@
 #include <Veng/UI/Scopes.h>
 #include <Veng/UI/Widgets.h>
 
+#include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Time.h>
 
 #include <algorithm>
-#include <limits>
+#include <cstddef>
 #include <ranges>
 #include <span>
 
@@ -117,159 +118,470 @@ namespace Veng::UI
             return costs;
         }
 
-        // A stable, legible color for a pass's line and legend swatch: a fixed palette indexed by
-        // a name hash, so a pass keeps its color regardless of its position in the frame's order.
-        vec4 PassColor(string_view name)
-        {
-            // A hand-tuned categorical palette: widely separated hues with alternating brightness
-            // so neighbors in the legend stay distinguishable. White is reserved for the GPU total.
-            static const std::array<vec4, 16> Palette{
-                vec4{0.90f, 0.10f, 0.10f, 1.0f}, // red
-                vec4{0.20f, 0.55f, 1.00f, 1.0f}, // blue
-                vec4{1.00f, 0.85f, 0.00f, 1.0f}, // yellow
-                vec4{0.55f, 0.20f, 0.90f, 1.0f}, // violet
-                vec4{0.10f, 0.80f, 0.30f, 1.0f}, // green
-                vec4{1.00f, 0.45f, 0.00f, 1.0f}, // orange
-                vec4{0.10f, 0.85f, 0.90f, 1.0f}, // cyan
-                vec4{0.95f, 0.35f, 0.70f, 1.0f}, // pink
-                vec4{0.60f, 0.80f, 0.10f, 1.0f}, // lime
-                vec4{0.50f, 0.35f, 0.20f, 1.0f}, // brown
-                vec4{0.45f, 0.95f, 0.65f, 1.0f}, // mint
-                vec4{0.80f, 0.55f, 1.00f, 1.0f}, // lavender
-                vec4{0.85f, 0.65f, 0.40f, 1.0f}, // tan
-                vec4{0.00f, 0.50f, 0.55f, 1.0f}, // teal
-                vec4{1.00f, 0.60f, 0.55f, 1.0f}, // salmon
-                vec4{0.65f, 0.75f, 0.85f, 1.0f}, // slate
-            };
+        // A categorical palette indexed by chart slot, so slot 0 keeps its color across frames even
+        // as the phase or band occupying it changes: widely separated hues with alternating
+        // brightness so neighbors in the legend stay distinguishable.
+        constexpr std::array<vec4, 8> SlotPalette{
+            vec4{0.90f, 0.10f, 0.10f, 1.0f}, // red
+            vec4{1.00f, 0.85f, 0.00f, 1.0f}, // yellow
+            vec4{0.10f, 0.80f, 0.30f, 1.0f}, // green
+            vec4{1.00f, 0.45f, 0.00f, 1.0f}, // orange
+            vec4{0.55f, 0.20f, 0.90f, 1.0f}, // violet
+            vec4{0.10f, 0.85f, 0.90f, 1.0f}, // cyan
+            vec4{0.95f, 0.35f, 0.70f, 1.0f}, // pink
+            vec4{0.60f, 0.80f, 0.10f, 1.0f}, // lime
+        };
 
-            // FNV-1a over the name.
-            u32 hash = 2166136261u;
-            for (const char c : name)
-            {
-                hash = (hash ^ static_cast<u8>(c)) * 16777619u;
-            }
-            return Palette[hash % Palette.size()];
+        // The color for chart slot i, wrapping the palette.
+        vec4 SlotColor(usize i)
+        {
+            return SlotPalette[i % SlotPalette.size()];
         }
 
-        // The whole-frame GPU line is drawn in white; the passes take the distinct palette.
+        // The whole-frame GPU total line is white; the CPU total a light blue; slots take the palette.
         constexpr vec4 GpuLineColor{1.0f, 1.0f, 1.0f, 1.0f};
+        constexpr vec4 CpuLineColor{0.65f, 0.80f, 1.0f, 1.0f};
     }
 
-    void FrameTimeGraph::History::Push(const f32 milliseconds)
+    void PerformanceHistory::Push(const f32 milliseconds)
     {
         Samples[Head] = milliseconds;
         Head = (Head + 1) % Capacity;
         Count = std::min(Count + 1, Capacity);
     }
 
-    f32 FrameTimeGraph::History::Last() const
+    f32 PerformanceHistory::Last() const
     {
         return Count == 0 ? 0.0f : Samples[(Head + Capacity - 1) % Capacity];
     }
 
-    i32 FrameTimeGraph::History::PlotOffset() const
+    i32 PerformanceHistory::PlotOffset() const
     {
         // A full buffer wraps, so the oldest sample sits at the write head; until then it is
         // filled from index 0 and plots in array order.
         return Count == Capacity ? static_cast<i32>(Head) : 0;
     }
 
-    void FrameTimeGraph::Draw(const Viewport& viewport)
+    void SelectHeaviestPhases(std::span<const PhaseSample> candidates, vector<string>& selection,
+                              const usize count, const f32 hysteresis)
     {
-        const Renderer::Context& context =
-            viewport.GetRenderer().GetOutput()->GetImage()->GetContext();
+        // Rank candidates heaviest-first, ties by name for a total order.
+        vector<PhaseSample> ranked(candidates.begin(), candidates.end());
+        std::ranges::sort(ranked,
+                          [](const PhaseSample& a, const PhaseSample& b)
+                          {
+                              return a.InclusiveMs != b.InclusiveMs ? a.InclusiveMs > b.InclusiveMs
+                                                                    : a.Name < b.Name;
+                          });
+
+        // The cost of the count-th heaviest is the bar an incumbent must stay near to keep its slot;
+        // only a challenger clearing it by the hysteresis margin displaces the incumbent.
+        const f64 cutoff = ranked.size() >= count ? ranked[count - 1].InclusiveMs : 0.0;
+        const f64 threshold = cutoff * (1.0 - static_cast<f64>(hysteresis));
+
+        const auto costOf = [&](string_view name) -> optional<f64>
+        {
+            for (const PhaseSample& sample : ranked)
+            {
+                if (sample.Name == name)
+                {
+                    return sample.InclusiveMs;
+                }
+            }
+            return std::nullopt;
+        };
+
+        vector<string> next;
+        next.reserve(count);
+        // Surviving incumbents keep their slots, in their existing display order.
+        for (const string& name : selection)
+        {
+            if (next.size() >= count)
+            {
+                break;
+            }
+            const optional<f64> cost = costOf(name);
+            if (cost.has_value() && *cost >= threshold)
+            {
+                next.push_back(name);
+            }
+        }
+        // Fill the remaining slots heaviest-first, skipping those already kept.
+        for (const PhaseSample& sample : ranked)
+        {
+            if (next.size() >= count)
+            {
+                break;
+            }
+            if (std::ranges::find(next, sample.Name) == next.end())
+            {
+                next.push_back(sample.Name);
+            }
+        }
+        selection = std::move(next);
+    }
+
+    vector<GpuBand> FoldGpuBands(std::span<const GpuBand> passes, const usize maxBands)
+    {
+        vector<GpuBand> sorted(passes.begin(), passes.end());
+        std::ranges::sort(sorted,
+                          [](const GpuBand& a, const GpuBand& b)
+                          {
+                              return a.Milliseconds != b.Milliseconds
+                                         ? a.Milliseconds > b.Milliseconds
+                                         : a.Name < b.Name;
+                          });
+        if (maxBands == 0 || sorted.size() <= maxBands)
+        {
+            return sorted;
+        }
+
+        // Keep the heaviest maxBands-1 and fold the rest into one "Other" band, so the returned
+        // total equals the input total exactly — the band cap never loses time.
+        vector<GpuBand> folded(sorted.begin(),
+                               sorted.begin() + static_cast<std::ptrdiff_t>(maxBands - 1));
+        f32 other = 0.0f;
+        for (usize i = maxBands - 1; i < sorted.size(); i++)
+        {
+            other += sorted[i].Milliseconds;
+        }
+        folded.push_back({.Name = "Other", .Milliseconds = other});
+        return folded;
+    }
+
+    void SortScopeRows(vector<ScopeRow>& rows, const ScopeSortColumn column, const bool ascending)
+    {
+        const auto compare = [column, ascending](const ScopeRow& a, const ScopeRow& b)
+        {
+            const auto ordered = [ascending](auto lhs, auto rhs)
+            { return ascending ? lhs < rhs : lhs > rhs; };
+            switch (column)
+            {
+            case ScopeSortColumn::Name:
+                return ascending ? a.Name < b.Name : a.Name > b.Name;
+            case ScopeSortColumn::Inclusive:
+                if (a.InclusiveMs != b.InclusiveMs)
+                {
+                    return ordered(a.InclusiveMs, b.InclusiveMs);
+                }
+                break;
+            case ScopeSortColumn::Self:
+                if (a.SelfMs != b.SelfMs)
+                {
+                    return ordered(a.SelfMs, b.SelfMs);
+                }
+                break;
+            case ScopeSortColumn::Percent:
+                if (a.PercentOfFrame != b.PercentOfFrame)
+                {
+                    return ordered(a.PercentOfFrame, b.PercentOfFrame);
+                }
+                break;
+            case ScopeSortColumn::Calls:
+                if (a.CallCount != b.CallCount)
+                {
+                    return ordered(a.CallCount, b.CallCount);
+                }
+                break;
+            }
+            // Every non-name column breaks ties by name, so the order is total and stable.
+            return a.Name < b.Name;
+        };
+        std::ranges::sort(rows, compare);
+    }
+
+    string_view PerformanceProfilerNotice()
+    {
+#if defined(VE_PROFILE) && VE_PROFILE
+        if (Diagnostics::GetActiveProfiler() != nullptr)
+        {
+            return {};
+        }
+        return "No active profiler — per-scope timings unavailable.";
+#else
+        return "Profiling is disabled in this build (VE_PROFILE=OFF); rebuild with "
+               "-DVE_PROFILE=ON for per-scope timings.";
+#endif
+    }
+
+    namespace
+    {
+        // The frame budget the budget bar and charts measure against: one 60 Hz frame.
+        constexpr f32 FrameBudgetMs = 1000.0f / 60.0f;
+
+        // Draws a color swatch followed by "label: value ms" on the current line — one legend entry.
+        void LegendEntry(vec4 color, string_view label, f32 milliseconds)
+        {
+            const f32 swatch = UI::GetTextLineHeight();
+            UI::Badge("", color, {swatch, swatch});
+            UI::SameLine();
+            UI::Text(fmt::format("{}: {:.3f} ms", label, milliseconds));
+        }
+    }
+
+    void PerformancePanel::Draw(const Viewport& viewport)
+    {
+        const Renderer::SceneRenderer& renderer = viewport.GetRenderer();
+        const Renderer::Context& context = renderer.GetOutput()->GetImage()->GetContext();
         const bool gpuTiming = context.IsGpuTimingSupported();
 
-        // Sample this frame's timelines into their rolling histories: the CPU frame delta the
-        // engine just measured, and the GPU whole-frame + per-pass times read back from the
-        // device timers (a frame or two late, which is fine for a rolling history). A pass keyed
-        // by its group name keeps its own history across frames; one absent this frame simply
-        // stops receiving samples until it returns.
-        m_Cpu.Push(Time::GetDeltaTime() * 1000.0f);
-        vector<PassCost> passes;
-        if (gpuTiming)
+        // The always-available totals — CPU frame delta from Time, GPU whole-frame from Context —
+        // neither of which depends on the profiler, so the budget bar and totals draw in any build.
+        const f32 cpuMs = Time::GetDeltaTime() * 1000.0f;
+        const f32 gpuMs = gpuTiming ? context.GetLastGpuFrameTimeMs() : 0.0f;
+
+        // Profiler-sourced data: the per-frame per-scope aggregates. Null under VE_PROFILE=OFF, or
+        // when no profiler is installed — the phase series and scope table degrade to the notice.
+        Diagnostics::Profiler* profiler = Diagnostics::GetActiveProfiler();
+        const string_view notice = PerformanceProfilerNotice();
+
+        // Roll the frame's aggregates into table rows and the phase-selection candidates. The frame
+        // wall time is the % denominator; guard against a zero first frame.
+        const f64 frameMs = std::max(static_cast<f64>(cpuMs), 1.0e-4);
+        vector<ScopeRow> rows;
+        vector<PhaseSample> phaseCandidates;
+        if (profiler != nullptr)
         {
-            m_Gpu.Push(context.GetLastGpuFrameTimeMs());
-            passes = AggregatePasses(context.GetLastGpuPassTimings());
-            for (const PassCost& pass : passes)
+            for (const Diagnostics::ScopeAggregate& agg : profiler->GetFrameAggregates())
             {
-                m_Passes[pass.Name].Push(pass.Milliseconds);
+                if (agg.CallCount == 0)
+                {
+                    continue; // Ran in an earlier frame, not this one.
+                }
+                const string_view name = profiler->GetName(agg.Name);
+                if (name.empty())
+                {
+                    continue;
+                }
+                const f64 inclusiveMs = static_cast<f64>(agg.InclusiveNanos) * 1.0e-6;
+                const f64 selfMs = static_cast<f64>(agg.SelfNanos) * 1.0e-6;
+                rows.push_back({.Name = string(name),
+                                .InclusiveMs = inclusiveMs,
+                                .SelfMs = selfMs,
+                                .PercentOfFrame = inclusiveMs / frameMs * 100.0,
+                                .CallCount = agg.CallCount});
+                if (name.starts_with("Frame/"))
+                {
+                    phaseCandidates.push_back({.Name = string(name), .InclusiveMs = inclusiveMs});
+                }
             }
         }
 
+        // Sample the rolling histories. The phase and GPU-band slots each follow whichever
+        // phase/band currently occupies them; the identity is settled with hysteresis so a near-tie
+        // does not flip a slot frame to frame.
+        m_Cpu.Push(cpuMs);
         if (gpuTiming)
         {
-            // The whole-frame GPU envelope first (white), then each pass's history — one shared,
-            // auto-scaled chart so the passes read against the frame total.
-            vector<UI::PlotSeries> series;
-            series.reserve(passes.size() + 1);
-            series.push_back({
-                .Color = GpuLineColor,
-                .Values = {m_Gpu.Samples.data(), m_Gpu.Count},
-                .Offset = m_Gpu.PlotOffset(),
-            });
-            for (const PassCost& pass : passes)
-            {
-                const History& history = m_Passes[pass.Name];
-                series.push_back({
-                    .Color = PassColor(pass.Name),
-                    .Values = {history.Samples.data(), history.Count},
-                    .Offset = history.PlotOffset(),
-                });
-            }
-            UI::PlotLinesMulti("##gpu", series, {.ScaleMin = 0.0f, .Size = {0.0f, 160.0f}});
+            m_Gpu.Push(gpuMs);
+        }
 
-            // Two-column legend: a swatch matching each line, then its label and current cost.
-            if (auto legend = UI::Table("GpuLegend", 2))
+        SelectHeaviestPhases(phaseCandidates, m_PhaseNames, PhaseSlots, PhaseHysteresis);
+        const auto phaseCost = [&](string_view name)
+        {
+            for (const PhaseSample& sample : phaseCandidates)
             {
-                const f32 swatch = UI::GetTextLineHeight();
-                UI::TableNextColumn();
-                UI::Badge("", GpuLineColor, {swatch, swatch});
-                UI::SameLine();
-                UI::Text(fmt::format("GPU: {:.3f} ms", m_Gpu.Last()));
-                for (const PassCost& pass : passes)
+                if (sample.Name == name)
                 {
-                    UI::TableNextColumn();
-                    UI::Badge("", PassColor(pass.Name), {swatch, swatch});
-                    UI::SameLine();
-                    UI::Text(fmt::format("{}: {:.3f} ms", pass.Name, pass.Milliseconds));
+                    return static_cast<f32>(sample.InclusiveMs);
                 }
             }
+            return 0.0f;
+        };
+        for (usize i = 0; i < PhaseSlots; i++)
+        {
+            m_PhaseSlots[i].Push(i < m_PhaseNames.size() ? phaseCost(m_PhaseNames[i]) : 0.0f);
+        }
 
-            UI::Spacing();
+        vector<GpuBand> folded;
+        if (gpuTiming)
+        {
+            vector<GpuBand> bands;
+            for (const PassCost& pass : AggregatePasses(context.GetLastGpuPassTimings()))
+            {
+                bands.push_back({.Name = pass.Name, .Milliseconds = pass.Milliseconds});
+            }
+            folded = FoldGpuBands(bands, GpuBandSlots);
+        }
+        m_GpuBandNames.clear();
+        for (const GpuBand& band : folded)
+        {
+            m_GpuBandNames.push_back(band.Name);
+        }
+        for (usize i = 0; i < GpuBandSlots; i++)
+        {
+            m_GpuSlots[i].Push(i < folded.size() ? folded[i].Milliseconds : 0.0f);
+        }
+
+        // ---- Band 1: the budget bar ----------------------------------------------------------
+        {
+            const f32 frameCost = std::max(cpuMs, gpuMs);
+            const f32 fraction = FrameBudgetMs > 0.0f ? frameCost / FrameBudgetMs : 0.0f;
+            const char* side = cpuMs > FrameBudgetMs   ? " CPU-bound"
+                               : gpuMs > FrameBudgetMs ? " GPU-bound"
+                                                       : "";
+            const string frameLabel = profiler != nullptr
+                                          ? fmt::format("frame {}", profiler->GetFrameIndex())
+                                          : "frame -";
+            UI::Text(fmt::format("{:.1f} FPS  |  {}  |  budget {:.2f} ms", UI::FrameRate(),
+                                 frameLabel, FrameBudgetMs));
+            UI::ProgressBar(fraction, {-1.0f, 0.0f},
+                            fmt::format("CPU {:.2f} / GPU {:.2f} ms{}", cpuMs, gpuMs, side));
+        }
+
+        // ---- Band 2: the frame-history chart -------------------------------------------------
+        UI::SeparatorText("Frame history");
+        {
+            // A series count fixed by construction — CPU total, GPU total, and the phase slots — so
+            // the legend never grows however many phases the frame gains.
+            vector<UI::PlotSeries> series;
+            series.push_back({.Color = CpuLineColor,
+                              .Values = {m_Cpu.Samples.data(), m_Cpu.Count},
+                              .Offset = m_Cpu.PlotOffset()});
+            if (gpuTiming)
+            {
+                series.push_back({.Color = GpuLineColor,
+                                  .Values = {m_Gpu.Samples.data(), m_Gpu.Count},
+                                  .Offset = m_Gpu.PlotOffset()});
+            }
+            for (usize i = 0; i < m_PhaseNames.size(); i++)
+            {
+                series.push_back({.Color = SlotColor(i),
+                                  .Values = {m_PhaseSlots[i].Samples.data(), m_PhaseSlots[i].Count},
+                                  .Offset = m_PhaseSlots[i].PlotOffset()});
+            }
+            UI::PlotLinesMulti("##framehistory", series,
+                               {.ScaleMin = 0.0f, .Size = {0.0f, 110.0f}});
+
+            LegendEntry(CpuLineColor, "CPU", m_Cpu.Last());
+            if (gpuTiming)
+            {
+                UI::SameLine();
+                LegendEntry(GpuLineColor, "GPU", m_Gpu.Last());
+            }
+            for (usize i = 0; i < m_PhaseNames.size(); i++)
+            {
+                LegendEntry(SlotColor(i), m_PhaseNames[i], m_PhaseSlots[i].Last());
+            }
+        }
+
+        // ---- Band 3: the GPU pass breakdown --------------------------------------------------
+        UI::SeparatorText("GPU pass breakdown");
+        if (gpuTiming && !m_GpuBandNames.empty())
+        {
+            // A stacked read: each band's plotted line is the running sum of the bands beneath it,
+            // so the topmost line is the frame's GPU total and a band's share is the gap below it.
+            const usize count = m_GpuSlots[0].Count;
+            const i32 offset = m_GpuSlots[0].PlotOffset();
+            const usize bandCount = std::min(m_GpuBandNames.size(), GpuBandSlots);
+            std::array<vector<f32>, GpuBandSlots> stacked;
+            for (usize k = 0; k < bandCount; k++)
+            {
+                stacked[k].resize(count);
+                for (usize s = 0; s < count; s++)
+                {
+                    f32 sum = 0.0f;
+                    for (usize j = 0; j <= k; j++)
+                    {
+                        sum += m_GpuSlots[j].Samples[s];
+                    }
+                    stacked[k][s] = sum;
+                }
+            }
+            vector<UI::PlotSeries> series;
+            for (usize k = 0; k < bandCount; k++)
+            {
+                series.push_back({.Color = SlotColor(k), .Values = stacked[k], .Offset = offset});
+            }
+            UI::PlotLinesMulti("##gpustack", series, {.ScaleMin = 0.0f, .Size = {0.0f, 110.0f}});
+
+            for (usize k = 0; k < bandCount; k++)
+            {
+                LegendEntry(SlotColor(k), m_GpuBandNames[k], m_GpuSlots[k].Last());
+            }
         }
         else
         {
             UI::TextDisabled("GPU timing unsupported on this device");
         }
 
-        // The CPU whole-frame plot sits below the GPU chart, on its own fixed millisecond axis.
-        f32 minimum = std::numeric_limits<f32>::max();
-        f32 maximum = 0.0f;
-        f32 sum = 0.0f;
-        for (usize i = 0; i < m_Cpu.Count; i++)
+        // ---- Band 4: the sortable scope table ------------------------------------------------
+        UI::SeparatorText("Scopes");
+        if (!notice.empty())
         {
-            const f32 sample = m_Cpu.Samples[i];
-            minimum = std::min(minimum, sample);
-            maximum = std::max(maximum, sample);
-            sum += sample;
+            // Never a silent empty table: state that per-scope data is unavailable and why.
+            UI::TextDisabled(notice);
         }
-        if (m_Cpu.Count == 0)
+        else
         {
-            minimum = 0.0f;
+            (void)UI::InputTextWithHint("##scopefilter", "filter scopes", m_Filter);
+            if (!m_Filter.empty())
+            {
+                std::erase_if(rows, [this](const ScopeRow& row)
+                              { return row.Name.find(m_Filter) == string::npos; });
+            }
+            SortScopeRows(rows, m_SortColumn, m_SortAscending);
+
+            const auto header = [this](string_view label, ScopeSortColumn column)
+            {
+                UI::TableNextColumn();
+                string caption(label);
+                if (m_SortColumn == column)
+                {
+                    caption += m_SortAscending ? " ^" : " v";
+                }
+                if (UI::Selectable(caption))
+                {
+                    if (m_SortColumn == column)
+                    {
+                        m_SortAscending = !m_SortAscending;
+                    }
+                    else
+                    {
+                        m_SortColumn = column;
+                        m_SortAscending = false;
+                    }
+                }
+            };
+
+            if (auto table = UI::Table("ScopeTable", 5))
+            {
+                header("Scope", ScopeSortColumn::Name);
+                header("Incl ms", ScopeSortColumn::Inclusive);
+                header("Self ms", ScopeSortColumn::Self);
+                header("% frame", ScopeSortColumn::Percent);
+                header("Calls", ScopeSortColumn::Calls);
+                for (const ScopeRow& row : rows)
+                {
+                    UI::TableNextColumn();
+                    UI::Text(row.Name);
+                    UI::TableNextColumn();
+                    UI::Text(fmt::format("{:.3f}", row.InclusiveMs));
+                    UI::TableNextColumn();
+                    UI::Text(fmt::format("{:.3f}", row.SelfMs));
+                    UI::TableNextColumn();
+                    UI::Text(fmt::format("{:.1f}", row.PercentOfFrame));
+                    UI::TableNextColumn();
+                    UI::Text(fmt::format("{}", row.CallCount));
+                }
+            }
         }
-        const f32 average = m_Cpu.Count == 0 ? 0.0f : sum / static_cast<f32>(m_Cpu.Count);
-        UI::Text(fmt::format("CPU: {:.2f} ms  (avg {:.2f}  min {:.2f}  max {:.2f})", m_Cpu.Last(),
-                             average, minimum, maximum));
-        const f32 scaleMax = glm::max(maximum * 1.25f, 1000.0f / 60.0f);
-        UI::PlotLines("##cpuframetime", {m_Cpu.Samples.data(), m_Cpu.Count},
-                      {
-                          .OverlayText = fmt::format("{:.2f} ms", m_Cpu.Last()),
-                          .ScaleMin = 0.0f,
-                          .ScaleMax = scaleMax,
-                          .Offset = m_Cpu.PlotOffset(),
-                          .Size = {0.0f, 80.0f},
-                      });
+
+        // ---- Band 5: the counter strip -------------------------------------------------------
+        UI::SeparatorText("Counters");
+        {
+            const bool gpuCull =
+                renderer.GetActiveCullMode() == SceneRendererSettings::CullMode::GPU;
+            string line = fmt::format("Draws {}  |  Visible {}  |  Frustum survived {}",
+                                      renderer.GetLastDrawnCount(), renderer.GetLastVisibleCount(),
+                                      renderer.GetFrustumSurvivedCount());
+            if (gpuCull)
+            {
+                line +=
+                    fmt::format("  |  Occlusion survived {}", renderer.GetLastGpuSurvivorCount());
+            }
+            UI::Text(line);
+        }
     }
 
     namespace

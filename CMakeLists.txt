@@ -781,6 +781,7 @@ if (VENG_BUILD_TESTS)
             # planset-75 plan 03:
             tests/unit/diagnostics_capture.cpp
             # planset-75 plan 05:
+            tests/unit/performance_panel.cpp
     )
     target_link_libraries(veng_test_unit PRIVATE veng::veng doctest::doctest)
     # The committed trace-format fixtures (planset-75 plan 01) live in the source tree; the

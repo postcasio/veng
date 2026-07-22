@@ -32,6 +32,7 @@
 #include "panels/LevelEditorPanel.h"
 #include "panels/MaterialEditorPanel.h"
 #include "panels/MaterialInstanceEditorPanel.h"
+#include "panels/PerformanceEditorPanel.h"
 #include "panels/PrefabEditorPanel.h"
 #include "panels/ProjectSettingsPanel.h"
 #include "panels/TableSchemaEditorPanel.h"
@@ -886,6 +887,7 @@ namespace VengEditor
         m_Panels.push_back(
             {CreateUnique<AssetBrowserPanel>(std::move(browserPacks), *m_Sources, *this), true});
         m_Panels.push_back({CreateUnique<ConsolePanel>(), true});
+        m_Panels.push_back({CreateUnique<PerformanceEditorPanel>(*this), true});
         m_Panels.push_back(
             {CreateUnique<ProjectSettingsPanel>(
                  m_ProjectSettings, m_ProjectFile, GetAssetManager(), m_Registries->Editor,
