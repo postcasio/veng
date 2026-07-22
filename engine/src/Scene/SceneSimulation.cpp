@@ -1,25 +1,60 @@
 #include <Veng/Scene/SceneSimulation.h>
 
+#include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Scene/SystemRegistry.h>
 
 namespace Veng
 {
-    SceneSimulation::SceneSimulation(const SystemRegistry& registry)
-        : m_Systems(registry.Instantiate())
+    namespace
     {
+        // Interns a system's registered name against the active profiler once, at construction. The
+        // per-system tick scope reuses the id, so the hot path never re-resolves the name (which
+        // returns a string by value). Zero when no profiler is installed or under VE_PROFILE=OFF.
+        Diagnostics::NameId InternSystemName(string_view name)
+        {
+            Diagnostics::Profiler* profiler = Diagnostics::GetActiveProfiler();
+            return profiler != nullptr ? profiler->InternName(name) : 0;
+        }
+    }
+
+    SceneSimulation::SceneSimulation(const SystemRegistry& registry)
+    {
+        const vector<SystemEntry>& entries = registry.Entries();
+        m_Systems.reserve(entries.size());
+        m_SystemProfileNames.reserve(entries.size());
+        for (const SystemEntry& entry : entries)
+        {
+            m_Systems.emplace_back(entry.Factory());
+            m_SystemProfileNames.push_back(InternSystemName(entry.Name));
+        }
     }
 
     SceneSimulation::SceneSimulation(const SystemRegistry& registry,
                                      const vector<SystemId>& systemIds)
     {
         m_Systems.reserve(systemIds.size());
+        m_SystemProfileNames.reserve(systemIds.size());
         for (const SystemId id : systemIds)
         {
             Unique<SceneSystem> system = registry.Instantiate(id);
-            if (system != nullptr)
+            if (system == nullptr)
             {
-                m_Systems.emplace_back(std::move(system));
+                continue;
             }
+            m_Systems.emplace_back(std::move(system));
+
+            // Resolve the system's name against the catalog for the interned profile name; both
+            // constructors have the name in hand, and neither used to keep it.
+            string_view name;
+            for (const SystemEntry& entry : registry.Entries())
+            {
+                if (entry.Id == id)
+                {
+                    name = entry.Name;
+                    break;
+                }
+            }
+            m_SystemProfileNames.push_back(InternSystemName(name));
         }
     }
 
@@ -44,10 +79,15 @@ namespace Veng
     void SceneSimulation::UpdatePhase(Scene& scene, const SceneSystem::Phase phase, const f32 delta,
                                       const SystemContext& context)
     {
-        for (const Unique<SceneSystem>& system : m_Systems)
+        // The one deliberate high-cardinality instrumentation site: the systems are the phases here,
+        // and their per-frame breakdown is the reason to profile a simulation. Each scope names the
+        // system through the id interned once at construction.
+        for (usize i = 0; i < m_Systems.size(); ++i)
         {
+            const Unique<SceneSystem>& system = m_Systems[i];
             if (system->GetPhase() == phase)
             {
+                VE_PROFILE_SCOPE_ID(m_SystemProfileNames[i]);
                 system->OnUpdate(scene, delta, context);
             }
         }

@@ -25,6 +25,7 @@
 #include <Veng/Net/PredictionHistory.h>
 #include <Veng/Net/Session.h>
 #include <Veng/Net/Blob.h>
+#include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Task/TaskSystem.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/LocalControl.h>
@@ -475,6 +476,14 @@ namespace Veng
 
         /// @brief Returns the render context.
         [[nodiscard]] Renderer::Context& GetRenderContext() { return m_RenderContext; }
+
+        /// @brief Returns the CPU profiler the engine drives each frame.
+        ///
+        /// Owned by the application and installed as the process's active profiler at construction,
+        /// so the frame spine, simulation, and GPU bridge all record into it. Aggregation is always
+        /// live under VE_PROFILE=ON; buffering is what a capture toggles. A shell of no-ops under
+        /// VE_PROFILE=OFF.
+        [[nodiscard]] Diagnostics::Profiler& GetProfiler() { return m_Profiler; }
 
         /// @brief Returns the task system.
         ///
@@ -1014,6 +1023,19 @@ namespace Veng
         void Initialize();
         void Frame();
 
+        /// @brief Samples the per-frame profiler counters (task pool, net telemetry) once per frame.
+        void SampleFrameCounters();
+
+        /// @brief Samples the renderer's cull-funnel and point-field counters at the render-block end.
+        void SampleRenderCounters();
+
+        /// @brief Lifts the last completed frame's GPU pass timings onto the virtual GPU track.
+        ///
+        /// Run once per frame after Context::EndFrame(). The timings read back are N frames old, so
+        /// each pass is stamped with the frame index that executed it — tracked per frame-in-flight
+        /// slot — not the current one. Reaches the timings only through the public Context accessors.
+        void BridgeGpuTimings();
+
         /// @brief Mounts the world pack, loads its startup level, and starts the running world.
         ///
         /// Called at the end of Initialize when ApplicationInfo::World is set: mounts the pack
@@ -1329,6 +1351,27 @@ namespace Veng
 
         /// @brief Borrowed host-owned GuiDriver catalog, or null; must outlive this app if set.
         GuiDriverRegistry* m_GuiDriverRegistry = nullptr;
+
+        /// @brief The CPU profiler, installed active at construction; the first owned member.
+        ///
+        /// Declared ahead of every other owned member so it destructs last — after the task system,
+        /// so a worker detaching from it always reaches a live profiler, honoring the contract that a
+        /// profiler outlives every thread that registered with it. Its constructor registers the
+        /// calling (main) thread.
+        Diagnostics::Profiler m_Profiler;
+
+        /// @brief The virtual GPU track the bridge emits back-dated pass timings onto; 0 until created.
+        Diagnostics::TrackId m_GpuTrack = 0;
+
+        /// @brief Per frame-in-flight slot: the profiler frame index whose GPU work occupies the slot.
+        ///
+        /// The readback in a frame's Context::BeginFrame reports the frame that last used this slot,
+        /// N frames ago; the bridge stamps its events with the remembered value and then records the
+        /// current frame as the slot's new occupant. Sized to the frames-in-flight count on first use.
+        vector<u64> m_GpuSlotFrame;
+
+        /// @brief Per frame-in-flight slot: the trace-clock tick the slot's GPU frame is anchored at.
+        vector<u64> m_GpuSlotAnchorTicks;
 
         /// @brief The application window; null when Headless.
         ///

@@ -3,6 +3,7 @@
 #include <Veng/Assert.h>
 #include <Veng/Asset/MaterialInstance.h>
 #include <Veng/Asset/Mesh.h>
+#include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Renderer/CaptureSurface.h>
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
@@ -11,6 +12,7 @@
 #include <Veng/Scene/Transforms.h>
 
 #include <algorithm>
+#include <string>
 #include <utility>
 
 namespace Veng
@@ -176,6 +178,8 @@ namespace Veng
 
     WorldTickResult WorldRunner::Tick(const WorldTickInfo& info)
     {
+        VE_PROFILE_SCOPE("WorldRunner/Tick");
+
         WorldTickResult result;
         for (const Unique<World>& world : m_Worlds)
         {
@@ -200,24 +204,35 @@ namespace Veng
                 result.AnyTicked = true;
             }
 
-            for (u32 tickIndex = 0; tickIndex < step.Steps; ++tickIndex)
             {
-                const u64 tick = step.FirstTick + tickIndex;
-                if (info.BeforeSimStep)
+                // Per-world Sim scope, named with the world's identity so several worlds read side
+                // by side rather than summed. The step counter distinguishes a heavy simulation from
+                // a frame that spiralled into multiple fixed-step catch-up steps.
+                const string simLabel = "World " + std::to_string(world->Id.Value) + " Sim";
+                VE_PROFILE_SCOPE_DYNAMIC(simLabel);
+                VE_PROFILE_COUNTER("WorldRunner/SimSteps", static_cast<f64>(step.Steps));
+
+                for (u32 tickIndex = 0; tickIndex < step.Steps; ++tickIndex)
                 {
-                    info.BeforeSimStep(world->Id, scene, tick);
-                }
-                scene.TickSimulationPhase(
-                    SceneSystem::Phase::Sim, step.SimDelta,
-                    info.BuildContext(world->Id, scene, tick, 0.0f, tickIndex == 0));
-                if (info.AfterSimStep)
-                {
-                    info.AfterSimStep(world->Id, scene, tick);
+                    const u64 tick = step.FirstTick + tickIndex;
+                    if (info.BeforeSimStep)
+                    {
+                        info.BeforeSimStep(world->Id, scene, tick);
+                    }
+                    scene.TickSimulationPhase(
+                        SceneSystem::Phase::Sim, step.SimDelta,
+                        info.BuildContext(world->Id, scene, tick, 0.0f, tickIndex == 0));
+                    if (info.AfterSimStep)
+                    {
+                        info.AfterSimStep(world->Id, scene, tick);
+                    }
                 }
             }
 
             if (info.RunViewPhase)
             {
+                const string viewLabel = "World " + std::to_string(world->Id.Value) + " View";
+                VE_PROFILE_SCOPE_DYNAMIC(viewLabel);
                 scene.TickSimulationPhase(
                     SceneSystem::Phase::View, info.Delta,
                     info.BuildContext(world->Id, scene, world->Clock.GetTick(), step.Alpha, false));
@@ -285,7 +300,7 @@ namespace Veng
                 const vec3 position = vec3(WorldMatrix(scene, entity)[3]);
 
                 MaterialInstance* material = nullptr;
-                if (const MeshRenderer* mesh = scene.TryGet<MeshRenderer>(entity); mesh != nullptr)
+                if (const auto* mesh = scene.TryGet<MeshRenderer>(entity); mesh != nullptr)
                 {
                     if (mesh->Mesh.IsLoaded())
                     {

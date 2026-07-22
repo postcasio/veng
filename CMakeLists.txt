@@ -772,6 +772,7 @@ if (VENG_BUILD_TESTS)
             # planset-75 plan 01:
             tests/unit/diagnostics_trace_format.cpp
             # planset-75 plan 02:
+            tests/unit/diagnostics_spine.cpp
             # planset-75 plan 03:
             # planset-75 plan 05:
     )

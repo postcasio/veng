@@ -2,6 +2,7 @@
 
 #include <Veng/Assert.h>
 #include <Veng/Asset/CookedProject.h>
+#include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Gui/GuiConsumer.h>
 #include <Veng/Log.h>
 #include <Veng/Time.h>
@@ -1341,6 +1342,8 @@ namespace Veng
             return;
         }
 
+        VE_PROFILE_SCOPE("Net/Pump");
+
         // Keep the JoinId → runner world map current before the join/apply flow, so a directed travel's
         // leave (fired from inside the pump) resolves the departed join's world from this frame's map.
         if (m_Net->ClientHost != nullptr)
@@ -1365,6 +1368,7 @@ namespace Veng
         // join/apply flow once before the per-world drive rather than once per net-active client world.
         if (m_Net->ClientHost != nullptr)
         {
+            VE_PROFILE_SCOPE("Net/ClientPump");
             m_Net->ClientHost->Pump(static_cast<f64>(Time::Now()));
         }
 
@@ -1387,6 +1391,7 @@ namespace Veng
             {
                 return;
             }
+            VE_PROFILE_SCOPE("Net/ServerPump");
             // The world is generated + streamed keyed to the last completed tick (its just-ticked
             // state); the per-step SetChangeTick already stamped this frame's mutations.
             m_Net->Server->Pump(now, WorldSimTick(world));
@@ -1702,58 +1707,75 @@ namespace Veng
 
     void Application::Frame()
     {
+        // The frame boundary: advances the profiler's frame index once per frame and folds the
+        // completed frame's aggregates. Not a scope — every later event this frame indexes against it.
+        VE_PROFILE_FRAME();
+
+        // Sample the per-frame profiler counters at the frame boundary (task pool depth, net
+        // telemetry), the profiler's own once-per-frame point.
+        SampleFrameCounters();
+
         const f32 delta = Time::Update();
 
-        // Apply the deferred managed-viewport work at the top of the frame, outside any
-        // Scene/viewport-list iteration: it drops and constructs viewports (mutating the drive-list),
-        // which must not run mid-drive. Regions resolve from each info's Layout here; world rebinds run
-        // their departed-overlay detach and seat re-resolution through the runner; present-on-ready
-        // rebinds accrue this frame's delta toward their ready timeout.
-        m_ManagedViewports->ApplyPendingReconfigure(*m_WorldRunner, delta, m_WorldView);
-
-        // Translate the managed viewports' world bindings into directory presence pins at the rebind
-        // apply point (one-directional: presentation drives lifetime, never the reverse), then reap the
-        // directory standalone (a host owns the reap when hosting). A presented world — pending rebind
-        // destination included — is pinned and never reaped; a departed world is unpinned to the dwell.
-        SyncPresentationPins();
-        ReapDirectory();
-
-        // The standalone durability checkpoint; while hosting, the ServerHost's Pump owns the
-        // shared registry's checkpoint (with its live pose refresh), so skip it there.
-        if (m_Sessions && GetServerHost() == nullptr)
         {
-            m_Sessions->Checkpoint(static_cast<f64>(Time::Now()));
-        }
+            VE_PROFILE_SCOPE("Frame/RequestDrain");
 
-        // Drain the builtin request components at the same frame-safe point: a gameplay system stamps
-        // one onto its world's scene to reach an application-level operation it cannot call directly
-        // (host, connect, stop-net, travel, exit), and the engine carries them out here, before the
-        // input snapshot and the world tick. Runs on the local Application only; requests never ride
-        // the wire.
-        DrainRequestComponents();
+            // Apply the deferred managed-viewport work at the top of the frame, outside any
+            // Scene/viewport-list iteration: it drops and constructs viewports (mutating the
+            // drive-list), which must not run mid-drive. Regions resolve from each info's Layout here;
+            // world rebinds run their departed-overlay detach and seat re-resolution through the
+            // runner; present-on-ready rebinds accrue this frame's delta toward their ready timeout.
+            m_ManagedViewports->ApplyPendingReconfigure(*m_WorldRunner, delta, m_WorldView);
 
-        // Deliver queued inbound game messages at the same frame-safe point: the hosts' pumps only
-        // queue them, and dispatching here — outside any scene iteration, before the world tick —
-        // means a channel handler observing scene state never runs mid-tick.
-        if (m_Net)
-        {
-            if (m_Net->Server)
+            // Translate the managed viewports' world bindings into directory presence pins at the
+            // rebind apply point (one-directional: presentation drives lifetime, never the reverse),
+            // then reap the directory standalone (a host owns the reap when hosting). A presented
+            // world — pending rebind destination included — is pinned and never reaped; a departed
+            // world is unpinned to the dwell.
+            SyncPresentationPins();
+            ReapDirectory();
+
+            // The standalone durability checkpoint; while hosting, the ServerHost's Pump owns the
+            // shared registry's checkpoint (with its live pose refresh), so skip it there.
+            if (m_Sessions && GetServerHost() == nullptr)
             {
-                m_Net->Server->DeliverMessages();
+                m_Sessions->Checkpoint(static_cast<f64>(Time::Now()));
             }
-            if (m_Net->ClientHost)
+
+            // Drain the builtin request components at the same frame-safe point: a gameplay system
+            // stamps one onto its world's scene to reach an application-level operation it cannot call
+            // directly (host, connect, stop-net, travel, exit), and the engine carries them out here,
+            // before the input snapshot and the world tick. Runs on the local Application only;
+            // requests never ride the wire.
+            DrainRequestComponents();
+
+            // Deliver queued inbound game messages at the same frame-safe point: the hosts' pumps only
+            // queue them, and dispatching here — outside any scene iteration, before the world tick —
+            // means a channel handler observing scene state never runs mid-tick.
+            if (m_Net)
             {
-                m_Net->ClientHost->DeliverMessages();
+                if (m_Net->Server)
+                {
+                    m_Net->Server->DeliverMessages();
+                }
+                if (m_Net->ClientHost)
+                {
+                    m_Net->ClientHost->DeliverMessages();
+                }
             }
         }
 
         // Before BeginFrame: continuations that register or retire resources must
         // land before AcquireNextFrame or their GPU-state mutation is frame-ambiguous.
+        // PumpMainThread carries its own scope.
         m_TaskSystem->PumpMainThread();
 
         // Finalize resident async loads (bindless registration + cache swap) before
         // BeginFrame, in the same main-thread window as the continuation pump.
-        m_AssetManager->PumpFinalizes();
+        {
+            VE_PROFILE_SCOPE("Frame/AssetFinalize");
+            m_AssetManager->PumpFinalizes();
+        }
 
         // The managed world's interpolation fraction drives the view pushes and a game's overlay Update;
         // resolve it before the tick so its alpha is read after the advance.
@@ -1827,33 +1849,38 @@ namespace Veng
             }
         }
 
-        // Roll the input snapshot forward, then poll the window and route this frame's events
-        // through the router (folding into the snapshot, forwarding to ImGui by focus).
-        // Headless borrows no window, so no events arrive and the snapshot stays neutral. The roll is
-        // held only when the previous frame latched (an active sim ran no tick), so a pressed edge on
-        // a zero-tick frame survives to the next tick-running frame; a frame with no active sim (the
-        // editor, a full pause) rolls every frame like an ordinary UI.
-        m_Input->BeginFrame(!m_PreviousFrameLatchedInput);
-        if (m_Window)
         {
-            m_Window->Update();
-            m_Window->DrainEvents([this](Event& event) { m_InputRouter->Dispatch(event); });
+            VE_PROFILE_SCOPE("Frame/Input");
 
-            // Poll every joystick slot into the snapshot after BeginFrame's roll: gamepads are
-            // polled per frame, unlike the callback-driven keyboard/mouse folded via DrainEvents.
-            std::array<GamepadState, 16> pads{};
-            m_Window->PollGamepads(pads);
-            m_Input->IngestGamepadStates(pads);
+            // Roll the input snapshot forward, then poll the window and route this frame's events
+            // through the router (folding into the snapshot, forwarding to ImGui by focus). Headless
+            // borrows no window, so no events arrive and the snapshot stays neutral. The roll is held
+            // only when the previous frame latched (an active sim ran no tick), so a pressed edge on a
+            // zero-tick frame survives to the next tick-running frame; a frame with no active sim (the
+            // editor, a full pause) rolls every frame like an ordinary UI.
+            m_Input->BeginFrame(!m_PreviousFrameLatchedInput);
+            if (m_Window)
+            {
+                m_Window->Update();
+                m_Window->DrainEvents([this](Event& event) { m_InputRouter->Dispatch(event); });
+
+                // Poll every joystick slot into the snapshot after BeginFrame's roll: gamepads are
+                // polled per frame, unlike the callback-driven keyboard/mouse folded via DrainEvents.
+                std::array<GamepadState, 16> pads{};
+                m_Window->PollGamepads(pads);
+                m_Input->IngestGamepadStates(pads);
+            }
+
+            // Release one paced segment of any queued synthetic input (MCP/script injection) at the
+            // same pre-tick point real window events land, so an injected event folds into this
+            // frame's snapshot for the tick loop rather than after it (DrainInjectedEvents).
+            m_InputRouter->DrainInjectedEvents();
         }
-
-        // Release one paced segment of any queued synthetic input (MCP/script injection) at the same
-        // pre-tick point real window events land, so an injected event folds into this frame's
-        // snapshot for the tick loop rather than after it (see InputRouter::DrainInjectedEvents).
-        m_InputRouter->DrainInjectedEvents();
 
         // After the events are forwarded: ImGui's NewFrame consumes them this frame.
         if (m_ImGuiLayer)
         {
+            VE_PROFILE_SCOPE("Frame/ImGui");
             m_ImGuiLayer->BeginFrame();
         }
 
@@ -1946,7 +1973,10 @@ namespace Veng
         // tick-running frame; a frame with no active world never latches (it rolls next frame).
         m_PreviousFrameLatchedInput = ticked.AnyActive && !ticked.AnyTicked;
 
-        OnUpdate(delta);
+        {
+            VE_PROFILE_SCOPE("Frame/Update");
+            OnUpdate(delta);
+        }
 
         // Pull each managed viewport's camera from the world it names and push it: a viewport naming a
         // Viewer gets that seat's camera resolved at its aspect, otherwise the world's scene primary
@@ -1956,10 +1986,14 @@ namespace Veng
         // server pushes nothing — it has no render tail.
         if (!dedicatedServer)
         {
+            VE_PROFILE_SCOPE("Frame/ViewPush");
             m_ManagedViewports->PushViews(*m_WorldRunner, m_WorldView, delta, m_SimAlpha);
         }
 
-        m_RenderContext.BeginFrame();
+        {
+            VE_PROFILE_SCOPE("Frame/RenderBegin");
+            m_RenderContext.BeginFrame();
+        }
 
         Renderer::CommandBuffer& cmd = m_RenderContext.GetCurrentCommandBuffer();
 
@@ -1967,7 +2001,11 @@ namespace Veng
         // server) the View phase have run, and no consumer reads what the tail would record.
         if (!renderTail)
         {
-            m_RenderContext.EndFrame();
+            {
+                VE_PROFILE_SCOPE("Frame/RenderEnd");
+                m_RenderContext.EndFrame();
+            }
+            BridgeGpuTimings();
             return;
         }
 
@@ -1981,19 +2019,144 @@ namespace Veng
         // this frame's result), then every registered viewport in registration order — each into
         // Sample layout, so viewport outputs are sampleable before OnRender builds the ImGui draw
         // data that may sample them.
-        m_Compositor.RenderRegistered(cmd);
+        {
+            VE_PROFILE_SCOPE("Frame/Render");
+            m_Compositor.RenderRegistered(cmd);
+        }
 
         // The app builds its ImGui frame and records any extra draws; it no longer runs the
         // composite or ImGuiLayer::Render — those bracket it in the engine phase.
-        OnRender();
+        {
+            VE_PROFILE_SCOPE("Frame/OnRender");
+            OnRender();
+        }
 
         // When ImGui is on, record the overlay then composite the Presented viewports behind it.
         if (m_ImGuiLayer)
         {
+            VE_PROFILE_SCOPE("Frame/Composite");
             m_ImGuiLayer->Render(cmd);
             m_Compositor.Composite(cmd);
         }
 
-        m_RenderContext.EndFrame();
+        // Sample the renderer's cull-funnel and point-field counters once per frame, at the end of
+        // the render block; the getters keep their ownership, this only puts them on a timeline.
+        SampleRenderCounters();
+
+        {
+            VE_PROFILE_SCOPE("Frame/RenderEnd");
+            m_RenderContext.EndFrame();
+        }
+
+        // Lift the last completed frame's GPU pass timings onto the virtual GPU track, back-dated to
+        // the frame that executed them.
+        BridgeGpuTimings();
+    }
+
+    void Application::SampleFrameCounters()
+    {
+        if (m_TaskSystem)
+        {
+            VE_PROFILE_COUNTER("TaskSystem/QueueDepth",
+                               static_cast<f64>(m_TaskSystem->GetQueueDepth()));
+            VE_PROFILE_COUNTER("TaskSystem/ActiveJobs",
+                               static_cast<f64>(m_TaskSystem->GetActiveJobCount()));
+            VE_PROFILE_COUNTER("TaskSystem/MainThreadQueue",
+                               static_cast<f64>(m_TaskSystem->GetMainThreadQueueDepth()));
+        }
+    }
+
+    void Application::SampleRenderCounters()
+    {
+#if defined(VE_PROFILE) && VE_PROFILE
+        if (m_ManagedViewports == nullptr || m_ManagedViewports->GetCount() == 0)
+        {
+            return;
+        }
+        const Renderer::Viewport* viewport = m_ManagedViewports->Get(0);
+        if (viewport == nullptr)
+        {
+            return;
+        }
+        const Renderer::SceneRenderer& renderer = viewport->GetRenderer();
+
+        // The cull funnel, read as four aligned series: visible → frustum-survived → GPU-survived →
+        // drawn. The getters keep their ownership; this adds the sampler.
+        VE_PROFILE_COUNTER("Render/Visible", static_cast<f64>(renderer.GetLastVisibleCount()));
+        VE_PROFILE_COUNTER("Render/FrustumSurvived",
+                           static_cast<f64>(renderer.GetFrustumSurvivedCount()));
+        VE_PROFILE_COUNTER("Render/GpuSurvivors",
+                           static_cast<f64>(renderer.GetLastGpuSurvivorCount()));
+        VE_PROFILE_COUNTER("Render/Drawn", static_cast<f64>(renderer.GetLastDrawnCount()));
+
+        const Renderer::PointFieldStats pointFields = renderer.GetPointFieldStats();
+        VE_PROFILE_COUNTER("Render/PointFieldCells", static_cast<f64>(pointFields.CellsInFrustum));
+        VE_PROFILE_COUNTER("Render/PointFieldSprites", static_cast<f64>(pointFields.SpritePoints));
+        VE_PROFILE_COUNTER("Render/PointFieldSplats", static_cast<f64>(pointFields.Splats));
+#endif
+    }
+
+    void Application::BridgeGpuTimings()
+    {
+#if defined(VE_PROFILE) && VE_PROFILE
+        const Renderer::Context& context = m_RenderContext;
+
+        // Timing unsupported → the GPU track is simply absent, not empty-and-broken.
+        if (!context.IsGpuTimingSupported())
+        {
+            return;
+        }
+
+        constexpr u64 NoFrame = ~0ULL;
+        const u32 slotCount = context.GetMaxFramesInFlight();
+        if (m_GpuSlotFrame.size() != slotCount)
+        {
+            m_GpuSlotFrame.assign(slotCount, NoFrame);
+            m_GpuSlotAnchorTicks.assign(slotCount, 0);
+        }
+
+        const u32 slot = context.GetCurrentFrameInFlight();
+
+        // The timings now readable belong to the frame that last occupied this slot — N frames ago,
+        // remembered when it was submitted. Stamp the events with that frame, never the current one.
+        const u64 readbackFrame = m_GpuSlotFrame[slot];
+        const u64 anchorTicks = m_GpuSlotAnchorTicks[slot];
+
+        const std::span<const Renderer::Context::GpuPassTiming> timings =
+            context.GetLastGpuPassTimings();
+        if (readbackFrame != NoFrame && !timings.empty())
+        {
+            if (m_GpuTrack == 0)
+            {
+                m_GpuTrack = m_Profiler.CreateTrack("GPU", Diagnostics::TrackRole::Gpu);
+            }
+
+            const u64 frequency = Diagnostics::TraceTickFrequency();
+            const auto nanosToTicks = [frequency](const u64 nanos)
+            {
+                return static_cast<u64>((static_cast<f64>(nanos) * static_cast<f64>(frequency)) /
+                                        1.0e9);
+            };
+
+            // The enclosing whole-frame GPU scope, so the track flamegraphs like a CPU one.
+            const u64 frameNanos = static_cast<u64>(context.GetLastGpuFrameTimeMs() * 1.0e6f);
+            m_Profiler.EmitScope(m_GpuTrack, m_Profiler.InternName("GPU Frame"), anchorTicks,
+                                 anchorTicks + nanosToTicks(frameNanos), readbackFrame);
+
+            // Each pass placed by its begin/end ticks; nesting falls out of tick containment (the
+            // depth the accessor now carries reconstructs the same tree).
+            for (const Renderer::Context::GpuPassTiming& pass : timings)
+            {
+                m_Profiler.EmitScope(m_GpuTrack, m_Profiler.InternName(pass.Name),
+                                     anchorTicks + nanosToTicks(pass.BeginNanos),
+                                     anchorTicks + nanosToTicks(pass.EndNanos), readbackFrame);
+            }
+        }
+
+        // This frame's GPU work now occupies the slot (submitted in the EndFrame just run); remember
+        // the frame index it was stamped with and a trace-clock anchor for its GPU start.
+        m_GpuSlotFrame[slot] = m_Profiler.GetFrameIndex();
+        m_GpuSlotAnchorTicks[slot] = Diagnostics::NowTicks();
+#endif
     }
 }

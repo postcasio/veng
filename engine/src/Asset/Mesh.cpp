@@ -1,5 +1,7 @@
 #include <Veng/Asset/Mesh.h>
 
+#include <Veng/Diagnostics/Profiler.h>
+
 #include <cstring>
 #include <span>
 #include <utility>
@@ -177,11 +179,13 @@ namespace Veng
         return tasks.Submit(
             [&context, data = std::move(data), name = std::move(name)]
             {
+                VE_PROFILE_SCOPE("Asset/MeshUpload");
                 // A Mesh has no bindless step, so the worker yields it resident with a null
                 // finalize — the main-thread continuation only swaps it into the cache.
                 Ref<Mesh> mesh =
                     Mesh::Create(UploadMesh(context, data, name, BuildSubMeshes(data)));
                 return Detail::BuiltAsset<Mesh>{.Resource = std::move(mesh), .Finalize = {}};
-            });
+            },
+            "Asset/Mesh");
     }
 }

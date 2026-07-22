@@ -1,5 +1,7 @@
 #include <Veng/Task/TaskSystem.h>
 
+#include <string>
+
 namespace Veng
 {
     namespace
@@ -57,13 +59,77 @@ namespace Veng
         return t_CurrentWorkerIndex;
     }
 
+    u32 TaskSystem::TryGetCurrentWorkerIndex()
+    {
+        return t_CurrentWorkerIndex;
+    }
+
+    void TaskSystem::Enqueue(function<void()> run, string_view name)
+    {
+        QueuedJob job;
+        job.Run = std::move(run);
+#if defined(VE_PROFILE) && VE_PROFILE
+        job.Name = string(name);
+        // Read the clock at submit only while a capture is running; an idle profiler must not put a
+        // timestamp on every enqueue in the engine.
+        if (Diagnostics::Profiler* profiler = Diagnostics::GetActiveProfiler();
+            profiler != nullptr && profiler->IsRecording())
+        {
+            job.SubmitTicks = Diagnostics::NowTicks();
+        }
+#else
+        (void)name;
+#endif
+
+        {
+            const std::scoped_lock lock(m_QueueMutex);
+            m_ActiveJobs.fetch_add(1, std::memory_order_relaxed);
+            m_QueueDepth.fetch_add(1, std::memory_order_relaxed);
+            m_Queue.push_back(std::move(job));
+        }
+        m_WorkAvailable.notify_one();
+    }
+
+    void TaskSystem::RunJob(QueuedJob& job)
+    {
+#if defined(VE_PROFILE) && VE_PROFILE
+        // Job latency (submit → start): one subtraction here, paired with the one clock read at
+        // submit, both only while recording. Zero SubmitTicks means the submit was not recorded.
+        if (job.SubmitTicks != 0)
+        {
+            const u64 latencyTicks = Diagnostics::NowTicks() - job.SubmitTicks;
+            VE_PROFILE_COUNTER("TaskSystem/JobLatencyNs",
+                               static_cast<f64>(Diagnostics::TraceTicksToNanos(latencyTicks)));
+        }
+        if (!job.Name.empty())
+        {
+            VE_PROFILE_SCOPE_DYNAMIC(job.Name);
+            job.Run();
+            return;
+        }
+        VE_PROFILE_SCOPE("TaskSystem/Job");
+#endif
+        job.Run();
+    }
+
     void TaskSystem::WorkerLoop(u32 workerIndex)
     {
         t_CurrentWorkerIndex = workerIndex;
 
+#if defined(VE_PROFILE) && VE_PROFILE
+        // Name this worker's track when a profiler is installed; a worker started before the
+        // profiler attaches lazily instead, and its jobs still land on a per-worker track.
+        Diagnostics::ProfilerThreadRegistration registration;
+        if (Diagnostics::Profiler* profiler = Diagnostics::GetActiveProfiler())
+        {
+            registration =
+                profiler->RegisterThread(string("Worker ") + std::to_string(workerIndex));
+        }
+#endif
+
         while (true)
         {
-            function<void()> job;
+            QueuedJob job;
             {
                 std::unique_lock lock(m_QueueMutex);
                 m_WorkAvailable.wait(lock, [this] { return m_Stopping || !m_Queue.empty(); });
@@ -75,9 +141,10 @@ namespace Veng
 
                 job = std::move(m_Queue.front());
                 m_Queue.pop_front();
+                m_QueueDepth.fetch_sub(1, std::memory_order_relaxed);
             }
 
-            job();
+            RunJob(job);
         }
     }
 
@@ -120,16 +187,21 @@ namespace Veng
     {
         const std::scoped_lock lock(m_MainThreadMutex);
         m_MainThreadQueue.push_back(std::move(fn));
+        m_MainThreadDepth.fetch_add(1, std::memory_order_relaxed);
     }
 
     void TaskSystem::PumpMainThread()
     {
+        VE_PROFILE_SCOPE("TaskSystem/PumpMainThread");
+
         // Drain a snapshot so continuations enqueued by other continuations run
         // on the next pump, not this one (bounded work per frame).
         std::deque<function<void()>> pending;
         {
             const std::scoped_lock lock(m_MainThreadMutex);
             pending.swap(m_MainThreadQueue);
+            m_MainThreadDepth.fetch_sub(static_cast<u32>(pending.size()),
+                                        std::memory_order_relaxed);
         }
 
         for (const function<void()>& fn : pending)
@@ -141,6 +213,8 @@ namespace Veng
     void TaskSystem::WaitForAll()
     {
         std::unique_lock lock(m_QueueMutex);
-        m_WorkDrained.wait(lock, [this] { return m_Queue.empty() && m_ActiveJobs == 0; });
+        m_WorkDrained.wait(
+            lock, [this]
+            { return m_Queue.empty() && m_ActiveJobs.load(std::memory_order_relaxed) == 0; });
     }
 }

@@ -203,7 +203,76 @@ format. Regenerate with `VENG_REGEN_TRACE_FIXTURE=1` on the unit suite.
 <!-- /planset-75 plan 01 -->
 
 <!-- planset-75 plan 02 -->
-<!-- Instrumenting the spine: the GPU accessor bridge and the call sites. -->
+## Instrumenting the spine (plan 02)
+
+The call sites that make a capture worth taking, plus the seam and bridge that place GPU work on it.
+
+### What the engine records
+
+- **The frame spine.** `Application::Frame()` opens with `VE_PROFILE_FRAME()` (the boundary marker,
+  not a scope) and wraps each phase in a stable-named scope in the order the frame runs them:
+  `Frame/RequestDrain`, `TaskSystem/PumpMainThread`, `Frame/AssetFinalize`, `Frame/Input`,
+  `Frame/ImGui`, `WorldRunner/Tick`, the net pumps, `Frame/Update`, `Frame/ViewPush`,
+  `Frame/RenderBegin`, `Frame/Render` (per viewport, dynamic), `Frame/OnRender`, `Frame/Composite`,
+  `Frame/RenderEnd`. **The names are stable strings** — the HUD and the flamegraph key on them.
+- **Simulation, per world and per system.** `WorldRunner::Tick` carries an outer scope; each world's
+  Sim and View phases get a dynamic scope named by the world's identity, and the Sim phase records
+  a `WorldRunner/SimSteps` counter (the fixed-step catch-up count). `SceneSimulation` **retains each
+  system's registered name, interned once at construction** (`SystemNameOf` returns a `string` by
+  value, so resolving it per frame would allocate on the hottest instrumentation path), and scopes
+  each system over that pre-interned id through `VE_PROFILE_SCOPE_ID`. This per-system loop is the
+  one deliberate high-cardinality site — the systems *are* the phases there.
+- **The task pool.** `TaskSystem::Submit` gains an optional job name (defaulted, so every call site
+  compiles); the queue element is a `QueuedJob` struct declared in every configuration, its
+  profiling fields conditional on `VE_PROFILE`. Each job's execution is scoped on its worker (named
+  by the job), `PumpMainThread` is scoped, workers name their tracks, and `ParallelFor` scopes its
+  region and each range and registers its transient threads. The counters the pool never had:
+  **queue depth** and **main-thread queue depth** (atomics maintained under the lock the
+  enqueue/dequeue already hold, read lock-free at the sample point), **active jobs** (atomic), and
+  **job latency** (submit→start, from a submit timestamp taken *only while recording*).
+  `TryGetCurrentWorkerIndex()` is the non-asserting worker query (returns `NotAWorker` off a
+  worker), leaving the asserting `GetCurrentWorkerIndex()` untouched. `Application` samples the
+  pool counters once per frame at the frame boundary (`SampleFrameCounters`).
+
+### The GPU accessor extension and the bridge
+
+- **`GpuPassTiming` gains placement and nesting.** Alongside `Name`/`Milliseconds` it carries
+  `BeginNanos`/`EndNanos` (nanoseconds from the frame's GPU start) and `Depth` (nesting level,
+  reconstructing the backend `OpenScopeStack`). The public boundary stays backend-free — the struct
+  carries plain integers, resolved against `TimestampPeriodNs` the backend already knows.
+  `Name`/`Milliseconds` keep their meaning, so existing readers are unchanged. This changes what the
+  accessor *reports*, not how timestamps are collected: the 128-scope budget, the readback latency,
+  and the `m_GpuScopeRecording` gate are untouched.
+- **The bridge back-dates.** `Application::BridgeGpuTimings()` runs once per frame after
+  `Context::EndFrame()`, reads the timings **through the public `Context` accessors only**, and
+  emits each pass as a scope-shaped event onto a virtual GPU track (`CreateTrack` once, then the
+  five-argument `EmitScope` that stamps an explicit frame index). The readback is N frames late, so
+  each event is stamped with the frame that executed it — tracked per frame-in-flight slot
+  (`m_GpuSlotFrame`/`m_GpuSlotAnchorTicks`), never the current frame. `EmitScope(track, name, begin,
+  end, frameIndex)` is the frame-indexing primitive the format's negative-frame-delta encoding
+  exists for. Timing unsupported → no track, no error; an out-of-frame graph run records nothing.
+  The live alignment check is plan 07's; the fast band tests the mechanism over a fake source.
+
+### The track-descriptor seam (the plan-01 name/role gap)
+
+Plan 01 left the sink emitting Track descriptors with empty names because the plan-00 seam delivered
+no names or roles. This plan closes it: `TraceSink` gains **`OnTrack(const TrackDescriptor&)`** (the
+track analogue of `OnStrings`), and the `Profiler` calls it when a thread is named
+(`RegisterThread`/`VE_PROFILE_THREAD`), when a virtual track is created (`CreateTrack`), and — for
+tracks named before a capture began — replayed for every known track when a sink is attached
+(`SetSink`). `FileTraceSink::OnTrack` records the delivered descriptor and prefers it over the
+id-only fallback it synthesizes from chunk references, so the format's named/roled Track section
+carries real names and roles. `GetActiveProfiler()` reaches the installed instance for code with no
+profiler reference in hand (the per-system interning, the GPU bridge).
+
+### Vulkan debug-utils command-buffer labels
+
+`DebugMarkers` drops the three dead `vkCmdDebugMarker*` pointers (they belong to the never-requested
+`VK_EXT_debug_marker` device extension) and loads `vkCmdBegin/End/InsertDebugUtilsLabelEXT` from the
+enabled `VK_EXT_debug_utils` instance extension, exposing `BeginLabel`/`EndLabel`/`InsertLabel`
+(each null-checking its own pointer). `Context::BeginGpuScope`/`EndGpuScope` emit a balanced label
+region under `VE_DEBUG`, so `RenderGraph`'s per-pass auto-bracketing labels every pass for RenderDoc
+and Xcode with no new call site and no per-pass cost in a shipping build.
 <!-- /planset-75 plan 02 -->
 
 <!-- planset-75 plan 03 -->

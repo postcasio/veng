@@ -3,7 +3,9 @@
 #include <Veng/Veng.h>
 #include <Veng/Result.h>
 #include <Veng/Assert.h>
+#include <Veng/Diagnostics/Profiler.h>
 
+#include <atomic>
 #include <condition_variable>
 #include <deque>
 #include <mutex>
@@ -124,6 +126,25 @@ namespace Veng
         u32 WorkerCount = 0;
     };
 
+    /// @brief One queued job: its callable plus the profiling metadata a worker records against.
+    ///
+    /// The type is declared in every configuration so the queue's element type is stable; the
+    /// profiling fields exist only under VE_PROFILE. VE_PROFILE is a PUBLIC compile definition
+    /// propagated to every consumer, so all translation units in one build agree on this layout —
+    /// there is no mixed-configuration link that would split it.
+    struct QueuedJob
+    {
+        /// @brief The job's work, invoked once on a worker.
+        function<void()> Run;
+
+#if defined(VE_PROFILE) && VE_PROFILE
+        /// @brief The job's name, used as its execution scope's name; empty records under a generic name.
+        string Name;
+        /// @brief NowTicks() at submit, set only while recording; 0 means the submit latency is unknown.
+        u64 SubmitTicks = 0;
+#endif
+    };
+
     /// @brief Fixed pool of worker threads draining a shared work queue.
     ///
     /// Owned by Application and threaded by reference into consumers; there is no global
@@ -151,13 +172,22 @@ namespace Veng
         /// transfer command pool.
         [[nodiscard]] static u32 GetCurrentWorkerIndex();
 
+        /// @brief Returns the calling thread's worker index, or NotAWorker off a worker thread.
+        ///
+        /// The non-asserting companion to GetCurrentWorkerIndex(): it answers "am I a worker,
+        /// and which" from any thread — the main thread, a ParallelFor transient thread, a sink
+        /// writer — without the assert. Automatic per-thread track registration keys off it.
+        [[nodiscard]] static u32 TryGetCurrentWorkerIndex();
+
         /// @brief Submits a callable to run on a worker and returns a Task<T> handle.
         ///
         /// A callable returning Result<T> is unwrapped so the job can report a
         /// recoverable failure. Void return is also supported.
-        /// @param fn  Callable with no arguments returning T, void, or Result<T>.
+        /// @param fn    Callable with no arguments returning T, void, or Result<T>.
+        /// @param name  Optional job name; used as the execution scope's name in a capture. Empty
+        ///              records the job under a generic name. Additive — existing call sites omit it.
         template <typename Fn>
-        auto Submit(Fn&& fn);
+        auto Submit(Fn&& fn, string_view name = {});
 
         /// @brief Runs fn on each worker once with its index; blocks until all have finished.
         ///
@@ -179,9 +209,36 @@ namespace Veng
         /// @brief Returns the number of worker threads in the pool.
         [[nodiscard]] u32 GetWorkerCount() const { return m_WorkerCount; }
 
+        /// @brief Returns the number of jobs queued but not yet picked up by a worker.
+        ///
+        /// Maintained lock-free alongside the enqueue/dequeue paths and read without taking the
+        /// pool mutex, so the per-frame sampler never contends the hot lock to measure it.
+        [[nodiscard]] u32 GetQueueDepth() const
+        {
+            return m_QueueDepth.load(std::memory_order_relaxed);
+        }
+
+        /// @brief Returns the number of jobs queued plus in flight.
+        [[nodiscard]] u32 GetActiveJobCount() const
+        {
+            return m_ActiveJobs.load(std::memory_order_relaxed);
+        }
+
+        /// @brief Returns the number of continuations queued for the next PumpMainThread().
+        [[nodiscard]] u32 GetMainThreadQueueDepth() const
+        {
+            return m_MainThreadDepth.load(std::memory_order_relaxed);
+        }
+
     private:
         template <typename T>
         friend class Task;
+
+        /// @brief Builds a queued job, stamps its profiling metadata, and enqueues it under the lock.
+        void Enqueue(function<void()> run, string_view name);
+
+        /// @brief Runs a job on a worker, bracketing it in its execution scope and recording latency.
+        void RunJob(QueuedJob& job);
 
         /// @brief Pushes a ready continuation onto the main-thread queue.
         void EnqueueMainThread(function<void()> fn);
@@ -213,7 +270,7 @@ namespace Veng
 
             {
                 const std::scoped_lock lock(m_QueueMutex);
-                --m_ActiveJobs;
+                m_ActiveJobs.fetch_sub(1, std::memory_order_relaxed);
             }
             m_WorkDrained.notify_all();
         }
@@ -232,10 +289,12 @@ namespace Veng
         std::condition_variable m_WorkAvailable;
         /// @brief Signalled when m_ActiveJobs reaches zero.
         std::condition_variable m_WorkDrained;
-        /// @brief Pending job closures.
-        std::deque<function<void()>> m_Queue;
-        /// @brief Count of in-flight + queued jobs.
-        u32 m_ActiveJobs = 0;
+        /// @brief Pending job closures with their profiling metadata.
+        std::deque<QueuedJob> m_Queue;
+        /// @brief Count of in-flight + queued jobs; modified under the lock, read lock-free.
+        std::atomic<u32> m_ActiveJobs{0};
+        /// @brief Jobs queued but not yet picked up; maintained under the lock, read lock-free.
+        std::atomic<u32> m_QueueDepth{0};
         /// @brief Set to true to drain and shut down workers.
         bool m_Stopping = false;
 
@@ -243,6 +302,8 @@ namespace Veng
         std::mutex m_MainThreadMutex;
         /// @brief Ready continuations for PumpMainThread().
         std::deque<function<void()>> m_MainThreadQueue;
+        /// @brief Continuations queued for the next pump; maintained under the lock, read lock-free.
+        std::atomic<u32> m_MainThreadDepth{0};
     };
 
     // --- template implementations ------------------------------------------
@@ -271,7 +332,7 @@ namespace Veng
     }
 
     template <typename Fn>
-    auto TaskSystem::Submit(Fn&& fn)
+    auto TaskSystem::Submit(Fn&& fn, string_view name)
     {
         using Returned = std::invoke_result_t<Fn>;
 
@@ -282,17 +343,13 @@ namespace Veng
             using State = Detail::TaskState<Payload>;
 
             auto state = CreateRef<State>();
-            {
-                const std::scoped_lock lock(m_QueueMutex);
-                ++m_ActiveJobs;
-                m_Queue.emplace_back(
-                    [this, state, fn = std::forward<Fn>(fn)]() mutable
-                    {
-                        Result<Payload> result = fn();
-                        Finish(*state, std::move(result));
-                    });
-            }
-            m_WorkAvailable.notify_one();
+            Enqueue(
+                [this, state, fn = std::forward<Fn>(fn)]() mutable
+                {
+                    Result<Payload> result = fn();
+                    Finish(*state, std::move(result));
+                },
+                name);
             return Task<Payload>(*this, std::move(state));
         }
         else if constexpr (std::is_void_v<Returned>)
@@ -300,17 +357,13 @@ namespace Veng
             using State = Detail::TaskState<void>;
 
             auto state = CreateRef<State>();
-            {
-                const std::scoped_lock lock(m_QueueMutex);
-                ++m_ActiveJobs;
-                m_Queue.emplace_back(
-                    [this, state, fn = std::forward<Fn>(fn)]() mutable
-                    {
-                        fn();
-                        Finish(*state, Result<std::monostate>(std::monostate{}));
-                    });
-            }
-            m_WorkAvailable.notify_one();
+            Enqueue(
+                [this, state, fn = std::forward<Fn>(fn)]() mutable
+                {
+                    fn();
+                    Finish(*state, Result<std::monostate>(std::monostate{}));
+                },
+                name);
             return Task<void>(*this, std::move(state));
         }
         else
@@ -318,17 +371,13 @@ namespace Veng
             using State = Detail::TaskState<Returned>;
 
             auto state = CreateRef<State>();
-            {
-                const std::scoped_lock lock(m_QueueMutex);
-                ++m_ActiveJobs;
-                m_Queue.emplace_back(
-                    [this, state, fn = std::forward<Fn>(fn)]() mutable
-                    {
-                        Result<Returned> result = fn();
-                        Finish(*state, std::move(result));
-                    });
-            }
-            m_WorkAvailable.notify_one();
+            Enqueue(
+                [this, state, fn = std::forward<Fn>(fn)]() mutable
+                {
+                    Result<Returned> result = fn();
+                    Finish(*state, std::move(result));
+                },
+                name);
             return Task<Returned>(*this, std::move(state));
         }
     }

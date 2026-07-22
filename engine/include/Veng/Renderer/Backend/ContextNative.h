@@ -178,10 +178,21 @@ namespace Veng::Renderer
         /// Sized [MaxFramesInFlight]; the count also gives how many scope query pairs to read
         /// back, since the scope count varies per frame with the graph topology. Indexed by slot.
         vector<vector<string>> ScopeNames;
+        /// @brief Per-slot nesting depth of each recorded scope, parallel to ScopeNames[slot].
+        ///
+        /// A pass's depth is the number of scopes open when it began, so a consumer reconstructs
+        /// the pass tree the flattened execution order would otherwise lose. Indexed by slot.
+        vector<vector<u32>> ScopeDepths;
+
         /// @brief Names of the scopes opened during the in-progress recording, in open order.
         ///
         /// Moved into ScopeNames[slot] at EndFrame; cleared at the next BeginFrame for the slot.
         vector<string> CurrentScopeNames;
+
+        /// @brief Nesting depth of each in-progress scope, parallel to CurrentScopeNames.
+        ///
+        /// Moved into ScopeDepths[slot] at EndFrame; cleared at the next BeginFrame for the slot.
+        vector<u32> CurrentScopeDepths;
         /// @brief Open BeginGpuScope query-pair indices awaiting their EndGpuScope (a nesting stack).
         ///
         /// Holds MaxGpuScopes as a sentinel for a scope opened past the per-frame budget, so the

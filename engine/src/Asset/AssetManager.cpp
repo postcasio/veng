@@ -2,6 +2,7 @@
 
 #include <Veng/Assert.h>
 #include <Veng/Asset/HexId.h>
+#include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Log.h>
 #include <Veng/Task/TaskSystem.h>
 
@@ -398,6 +399,9 @@ namespace Veng
                 }
                 else
                 {
+                    // The decode → upload → continuation chain lands back on the main thread here;
+                    // the instant marks where an async load becomes resident.
+                    VE_PROFILE_INSTANT("Asset/Finalize");
                     pending.Entry->Resource = std::move(pending.Resource);
                 }
 

@@ -9,12 +9,15 @@ namespace Veng::Renderer
         s_PfnSetDebugUtilsObjectName = reinterpret_cast<PFN_vkSetDebugUtilsObjectNameEXT>(
             instance.getProcAddr("vkSetDebugUtilsObjectNameEXT"));
 
-        s_PfnCmdDebugMarkerBegin = reinterpret_cast<PFN_vkCmdDebugMarkerBeginEXT>(
-            instance.getProcAddr("vkCmdDebugMarkerBeginEXT"));
-        s_PfnCmdDebugMarkerEnd = reinterpret_cast<PFN_vkCmdDebugMarkerEndEXT>(
-            instance.getProcAddr("vkCmdDebugMarkerEndEXT"));
-        s_PfnCmdDebugMarkerInsert = reinterpret_cast<PFN_vkCmdDebugMarkerInsertEXT>(
-            instance.getProcAddr("vkCmdDebugMarkerInsertEXT"));
+        // The command-buffer label entry points belong to VK_EXT_debug_utils, the instance
+        // extension the engine enables — unlike the VK_EXT_debug_marker device-extension markers,
+        // which were never requested. Null when the instance did not enable the extension.
+        s_PfnCmdBeginDebugUtilsLabel = reinterpret_cast<PFN_vkCmdBeginDebugUtilsLabelEXT>(
+            instance.getProcAddr("vkCmdBeginDebugUtilsLabelEXT"));
+        s_PfnCmdEndDebugUtilsLabel = reinterpret_cast<PFN_vkCmdEndDebugUtilsLabelEXT>(
+            instance.getProcAddr("vkCmdEndDebugUtilsLabelEXT"));
+        s_PfnCmdInsertDebugUtilsLabel = reinterpret_cast<PFN_vkCmdInsertDebugUtilsLabelEXT>(
+            instance.getProcAddr("vkCmdInsertDebugUtilsLabelEXT"));
     }
 
     void DebugMarkers::MarkObject(vk::Device device, const u64 object,
@@ -106,5 +109,42 @@ namespace Veng::Renderer
     void DebugMarkers::MarkSampler(vk::Device device, const vk::Sampler sampler, const string& name)
     {
         MarkObject(device, VK_OBJECT_TO_U64(VkSampler, sampler), VK_OBJECT_TYPE_SAMPLER, name);
+    }
+
+    void DebugMarkers::BeginLabel(const vk::CommandBuffer commandBuffer, const string& name)
+    {
+        if (s_PfnCmdBeginDebugUtilsLabel == nullptr)
+        {
+            return;
+        }
+        const VkDebugUtilsLabelEXT label{
+            .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT,
+            .pLabelName = name.c_str(),
+            .color = {0.0f, 0.0f, 0.0f, 1.0f},
+        };
+        s_PfnCmdBeginDebugUtilsLabel(commandBuffer, &label);
+    }
+
+    void DebugMarkers::EndLabel(const vk::CommandBuffer commandBuffer)
+    {
+        if (s_PfnCmdEndDebugUtilsLabel == nullptr)
+        {
+            return;
+        }
+        s_PfnCmdEndDebugUtilsLabel(commandBuffer);
+    }
+
+    void DebugMarkers::InsertLabel(const vk::CommandBuffer commandBuffer, const string& name)
+    {
+        if (s_PfnCmdInsertDebugUtilsLabel == nullptr)
+        {
+            return;
+        }
+        const VkDebugUtilsLabelEXT label{
+            .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT,
+            .pLabelName = name.c_str(),
+            .color = {0.0f, 0.0f, 0.0f, 1.0f},
+        };
+        s_PfnCmdInsertDebugUtilsLabel(commandBuffer, &label);
     }
 }

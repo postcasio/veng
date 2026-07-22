@@ -179,24 +179,37 @@ namespace Veng::Renderer
         /// @return The last completed frame's GPU time in ms, or 0 when unavailable.
         [[nodiscard]] f32 GetLastGpuFrameTimeMs() const;
 
-        /// @brief One render pass's measured GPU duration for the last completed frame.
+        /// @brief One render pass's measured GPU timing for the last completed frame.
+        ///
+        /// The span the accessor returns is flattened in execution order but carries the nesting
+        /// that order alone would lose: BeginNanos/EndNanos place each pass on a timeline and Depth
+        /// records how deeply it nests, so a consumer reconstructs the pass tree rather than laying
+        /// durations end to end. Summing Milliseconds across every entry double-counts a parent's
+        /// children — use SelfNanos-style accounting (inclusive minus nested) if a total is wanted.
         struct GpuPassTiming
         {
             /// @brief The pass's name, as declared on the RenderGraph.
             string Name;
-            /// @brief The pass's GPU duration in milliseconds.
+            /// @brief The pass's GPU duration in milliseconds (inclusive of nested passes).
             f32 Milliseconds = 0.0f;
+            /// @brief The pass's begin, in nanoseconds from the frame's GPU start (frame start = 0).
+            u64 BeginNanos = 0;
+            /// @brief The pass's end, in nanoseconds from the frame's GPU start.
+            u64 EndNanos = 0;
+            /// @brief The pass's nesting depth; 0 is a top-level pass, each nested scope one deeper.
+            u32 Depth = 0;
         };
 
-        /// @brief Returns the per-pass GPU durations measured for the last completed frame.
+        /// @brief Returns the per-pass GPU timings measured for the last completed frame.
         ///
         /// One entry per timestamp scope bracketed during the frame, in execution order across
         /// every CompiledGraph::Execute of the frame (scene render, then the gather/composite
         /// tail). Each pass is bracketed by a timestamp pair around its GPU work, so a duration
-        /// includes the pass's own barrier waits. Empty before the first measurement, whenever
-        /// IsGpuTimingSupported() is false, and on a frame whose scope count exceeded the
-        /// per-frame budget (the surplus scopes go unmeasured). The span is valid until the
-        /// next BeginFrame.
+        /// includes the pass's own barrier waits and its nested passes; BeginNanos/EndNanos and
+        /// Depth carry the placement and nesting that execution order flattens. Empty before the
+        /// first measurement, whenever IsGpuTimingSupported() is false, and on a frame whose scope
+        /// count exceeded the per-frame budget (the surplus scopes go unmeasured). The span is
+        /// valid until the next BeginFrame.
         /// @return The last completed frame's per-pass timings, in execution order.
         [[nodiscard]] std::span<const GpuPassTiming> GetLastGpuPassTimings() const;
 

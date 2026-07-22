@@ -152,6 +152,7 @@ namespace Veng::Diagnostics
         {
             Chunk,
             Strings,
+            Track,
             Close,
         };
 
@@ -167,6 +168,14 @@ namespace Veng::Diagnostics
         NameId FirstId = 0;
         /// @brief For a Strings item: the new strings.
         vector<string> Strings;
+        /// @brief For a Track item: the track's id in its kind's space.
+        u32 TrackIdValue = 0;
+        /// @brief For a Track item: whether the id is a virtual TrackId (else a thread ThreadId).
+        bool TrackVirtual = false;
+        /// @brief For a Track item: the kind of work the track carries.
+        TrackRole TrackRoleValue = TrackRole::Cpu;
+        /// @brief For a Track item: the track's display name.
+        string TrackName;
     };
 
     struct FileTraceSink::Impl
@@ -191,6 +200,29 @@ namespace Veng::Diagnostics
         // Writer-thread-owned accumulation. Built up as items drain, encoded at close.
         vector<TraceFileFormat::ChunkData> Chunks;
         vector<string> StringTable; // indexed by (id - 1)
+
+        /// @brief One track descriptor delivered through OnTrack, retained until encode.
+        struct DeliveredTrack
+        {
+            u32 Id = 0;
+            bool IsVirtual = false;
+            TrackRole Role = TrackRole::Cpu;
+            string Name;
+        };
+        vector<DeliveredTrack> DeliveredTracks;
+
+        /// @brief Finds a delivered descriptor for a track id of the given kind, or nullptr.
+        [[nodiscard]] const DeliveredTrack* FindDeliveredTrack(u32 id, bool isVirtual) const
+        {
+            for (const DeliveredTrack& track : DeliveredTracks)
+            {
+                if (track.Id == id && track.IsVirtual == isVirtual)
+                {
+                    return &track;
+                }
+            }
+            return nullptr;
+        }
 
         void Enqueue(WriterItem&& item)
         {
@@ -234,6 +266,32 @@ namespace Veng::Diagnostics
                     for (usize i = 0; i < item.Strings.size(); ++i)
                     {
                         StringTable[item.FirstId + i - 1] = std::move(item.Strings[i]);
+                    }
+                }
+                else if (item.What == WriterItem::Kind::Track)
+                {
+                    // Last delivery wins: a thread renamed after its first descriptor updates in place.
+                    DeliveredTrack* existing = nullptr;
+                    for (DeliveredTrack& track : DeliveredTracks)
+                    {
+                        if (track.Id == item.TrackIdValue && track.IsVirtual == item.TrackVirtual)
+                        {
+                            existing = &track;
+                            break;
+                        }
+                    }
+                    if (existing == nullptr)
+                    {
+                        DeliveredTracks.push_back(
+                            DeliveredTrack{.Id = item.TrackIdValue,
+                                           .IsVirtual = item.TrackVirtual,
+                                           .Role = item.TrackRoleValue,
+                                           .Name = std::move(item.TrackName)});
+                    }
+                    else
+                    {
+                        existing->Role = item.TrackRoleValue;
+                        existing->Name = std::move(item.TrackName);
                     }
                 }
                 else
@@ -314,17 +372,25 @@ namespace Veng::Diagnostics
                     }
                 }
             }
+            // A referenced track the profiler also delivered a descriptor for carries that name and
+            // role; one it did not (a lazily attached, never-named thread) falls back to its id.
             for (const u32 id : threadTracks)
             {
-                writer.WriteTrack(TrackDescriptor{
-                    .Kind = TrackKind::Thread, .Id = id, .Role = TrackRole::Cpu, .Name = string()});
+                const DeliveredTrack* meta = FindDeliveredTrack(id, false);
+                writer.WriteTrack(TraceFileFormat::TrackDescriptor{
+                    .Kind = TrackKind::Thread,
+                    .Id = id,
+                    .Role = meta != nullptr ? meta->Role : TrackRole::Cpu,
+                    .Name = meta != nullptr ? meta->Name : string()});
             }
             for (const u32 id : virtualTracks)
             {
-                writer.WriteTrack(TrackDescriptor{.Kind = TrackKind::Virtual,
-                                                  .Id = id,
-                                                  .Role = TrackRole::Custom,
-                                                  .Name = string()});
+                const DeliveredTrack* meta = FindDeliveredTrack(id, true);
+                writer.WriteTrack(TraceFileFormat::TrackDescriptor{
+                    .Kind = TrackKind::Virtual,
+                    .Id = id,
+                    .Role = meta != nullptr ? meta->Role : TrackRole::Custom,
+                    .Name = meta != nullptr ? meta->Name : string()});
             }
 
             for (const ChunkData& chunk : Chunks)
@@ -413,6 +479,17 @@ namespace Veng::Diagnostics
         {
             item.Strings.emplace_back(text);
         }
+        m_Impl->Enqueue(std::move(item));
+    }
+
+    void FileTraceSink::OnTrack(const TrackDescriptor& track)
+    {
+        WriterItem item;
+        item.What = WriterItem::Kind::Track;
+        item.TrackIdValue = track.Id;
+        item.TrackVirtual = track.IsVirtual;
+        item.TrackRoleValue = track.Role;
+        item.TrackName = string(track.Name);
         m_Impl->Enqueue(std::move(item));
     }
 

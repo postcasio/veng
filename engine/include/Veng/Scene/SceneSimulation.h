@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Veng/Veng.h>
+#include <Veng/Diagnostics/TraceSink.h>
 #include <Veng/Scene/SceneSystem.h>
 
 namespace Veng
@@ -94,6 +95,14 @@ namespace Veng
     private:
         /// @brief The instantiated systems, in registration (run) order.
         vector<Unique<SceneSystem>> m_Systems;
+
+        /// @brief Each system's registered name, interned once at construction, parallel to m_Systems.
+        ///
+        /// The catalog knows every system's name; interning it here (never per frame — SystemNameOf
+        /// returns a string by value) gives the per-system tick scope a stable id with no per-frame
+        /// allocation. Zero when no profiler was installed at construction. Empty under VE_PROFILE=OFF
+        /// carries no cost; the per-system scope compiles out there.
+        vector<Diagnostics::NameId> m_SystemProfileNames;
 
         /// @brief Whether the engine skips this simulation's per-frame tick (see SetPaused).
         bool m_Paused = false;

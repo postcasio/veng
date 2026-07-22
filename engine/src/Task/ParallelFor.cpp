@@ -1,5 +1,7 @@
 #include <Veng/Task/ParallelFor.h>
 
+#include <Veng/Diagnostics/Profiler.h>
+
 #include <algorithm>
 #include <thread>
 
@@ -12,6 +14,8 @@ namespace Veng
         {
             return;
         }
+
+        VE_PROFILE_SCOPE("ParallelFor");
 
         u32 requested = maxThreads;
         if (requested == 0)
@@ -27,6 +31,7 @@ namespace Veng
         const usize threads = std::min<usize>(requested, count);
         if (threads <= 1)
         {
+            VE_PROFILE_SCOPE("ParallelFor/Range");
             body(0, count);
             return;
         }
@@ -47,11 +52,28 @@ namespace Veng
             // caller-stack context still sees it for that share, and one fewer thread is spawned.
             if (i + 1 == threads)
             {
+                VE_PROFILE_SCOPE("ParallelFor/Range");
                 body(begin, end);
             }
             else
             {
-                helpers.emplace_back([&body, begin, end] { body(begin, end); });
+                helpers.emplace_back(
+                    [&body, begin, end]
+                    {
+                // A transient helper is not a pool worker, so it registers its own track
+                // explicitly; the RAII handle flushes and unlinks it at thread exit. A run
+                // that cycles more identities than the profiler's max is accounted, not
+                // silently dropped.
+#if defined(VE_PROFILE) && VE_PROFILE
+                        Diagnostics::ProfilerThreadRegistration registration;
+                        if (Diagnostics::Profiler* profiler = Diagnostics::GetActiveProfiler())
+                        {
+                            registration = profiler->RegisterThread("ParallelFor");
+                        }
+#endif
+                        VE_PROFILE_SCOPE("ParallelFor/Range");
+                        body(begin, end);
+                    });
             }
             begin = end;
         }

@@ -4,6 +4,7 @@
 
 #include <Veng/Assert.h>
 #include <Veng/Asset/AssetBuild.h>
+#include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
@@ -129,12 +130,19 @@ namespace Veng
                 data.Pixels = pixels;
 
                 Task<void> upload;
-                const Ref<Texture> texture = Texture::PrepareAsync(context, data, tasks, upload);
+                Ref<Texture> texture;
+                {
+                    VE_PROFILE_SCOPE("Asset/TextureDecode");
+                    texture = Texture::PrepareAsync(context, data, tasks, upload);
+                }
 
                 // Block on the transfer-queue submit here on the worker; the staging buffer retires
                 // on the transfer timeline, so the frame that first samples this view folds in the
                 // timeline wait. Finalize (bindless registration) is deferred to the main thread.
-                (void)upload.Get();
+                {
+                    VE_PROFILE_SCOPE("Asset/TextureUpload");
+                    (void)upload.Get();
+                }
 
                 return Detail::BuiltAsset<Texture>{
                     .Resource = texture,
@@ -144,7 +152,8 @@ namespace Veng
                         return {};
                     },
                 };
-            });
+            },
+            "Asset/Texture");
     }
 
     Ref<Texture> Detail::BuildAssetSync(Context& context, const TextureData& data)

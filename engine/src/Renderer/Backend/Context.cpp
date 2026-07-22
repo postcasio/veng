@@ -339,6 +339,7 @@ namespace Veng::Renderer
                 validBits >= 64 ? ~0ULL : ((static_cast<u64>(1) << validBits) - 1);
             m_Native->TimestampWritten.assign(m_Native->MaxFramesInFlight, false);
             m_Native->ScopeNames.resize(m_Native->MaxFramesInFlight);
+            m_Native->ScopeDepths.resize(m_Native->MaxFramesInFlight);
 
             // Per frame slot: the frame (start,end) pair plus MaxGpuScopes (start,end) scope pairs.
             const u32 queriesPerFrame = 2 + 2 * Native::MaxGpuScopes;
@@ -630,10 +631,22 @@ namespace Veng::Renderer
         const u32 scopeBase = (slot * (2 + 2 * Native::MaxGpuScopes)) + 2;
         const auto index = static_cast<u32>(m_Native->CurrentScopeNames.size());
 
+        // Depth is the number of scopes open before this one, so the flattened span reconstructs
+        // the pass tree its execution order would otherwise lose.
+        const auto depth = static_cast<u32>(m_Native->OpenScopeStack.size());
+
         m_Native->CurrentScopeNames.emplace_back(name);
+        m_Native->CurrentScopeDepths.push_back(depth);
         m_Native->OpenScopeStack.push_back(index);
         GetVkCommandBuffer(cmd).writeTimestamp(vk::PipelineStageFlagBits::eBottomOfPipe,
                                                m_Native->TimestampPool, scopeBase + (index * 2));
+
+#if defined(VE_DEBUG) && VE_DEBUG
+        // Bracket the pass with a debug-utils label so a RenderDoc or Xcode capture reads as named
+        // regions rather than an unlabelled wall of draws. Emitted only in a debug build; a shipping
+        // build pays no per-pass label cost. A no-op when the instance lacks VK_EXT_debug_utils.
+        DebugMarkers::BeginLabel(GetVkCommandBuffer(cmd), string(name));
+#endif
     }
 
     void Context::EndGpuScope(CommandBuffer& cmd)
@@ -661,6 +674,12 @@ namespace Veng::Renderer
         GetVkCommandBuffer(cmd).writeTimestamp(vk::PipelineStageFlagBits::eBottomOfPipe,
                                                m_Native->TimestampPool,
                                                scopeBase + (index * 2) + 1);
+
+#if defined(VE_DEBUG) && VE_DEBUG
+        // Close the region BeginGpuScope opened. Symmetric: a scope opened past the budget took the
+        // sentinel branch above and emitted no BeginLabel, so it emits no EndLabel here either.
+        DebugMarkers::EndLabel(GetVkCommandBuffer(cmd));
+#endif
     }
 
     bool Context::IsFormatLinearFilterSupported(const Format format) const
@@ -744,22 +763,30 @@ namespace Veng::Renderer
             const auto ticksToMs = [this](const u64 ticks)
             { return static_cast<f32>(ticks) * m_Native->TimestampPeriodNs * 1e-6f; };
 
+            const auto ticksToNanos = [this](const u64 ticks)
+            { return static_cast<u64>(static_cast<f64>(ticks) * m_Native->TimestampPeriodNs); };
+
             if (m_Native->TimestampWritten[slot])
             {
                 std::array<u64, 2> frameStamps{};
                 const vk::Result frameResult = m_Native->Device.getQueryPoolResults(
                     m_Native->TimestampPool, frameBase, 2, sizeof(frameStamps), frameStamps.data(),
                     sizeof(u64), vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWait);
+                u64 frameStartTick = 0;
+                bool haveFrameStart = false;
                 if (frameResult == vk::Result::eSuccess)
                 {
                     const u64 ticks = (frameStamps[1] - frameStamps[0]) & mask;
                     m_GpuFrameTimeMs = ticksToMs(ticks);
+                    frameStartTick = frameStamps[0];
+                    haveFrameStart = true;
                 }
 
                 // The scope names recorded into this slot last cycle give both the count of
                 // scope pairs to read (only the written ones — an eWait read of an unwritten
                 // query would hang) and the label for each measured pass.
                 const vector<string>& names = m_Native->ScopeNames[slot];
+                const vector<u32>& depths = m_Native->ScopeDepths[slot];
                 m_GpuPassTimings.clear();
                 if (!names.empty())
                 {
@@ -770,14 +797,22 @@ namespace Veng::Renderer
                         vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWait);
                     if (scopeResult == vk::Result::eSuccess)
                     {
+                        // Place each pass relative to the frame's GPU start (else the earliest
+                        // scope), so BeginNanos/EndNanos are epoch-free and the GPU bridge anchors
+                        // the whole run against one CPU timestamp.
+                        const u64 base = haveFrameStart ? frameStartTick : scopeStamps[0];
                         m_GpuPassTimings.reserve(names.size());
                         for (usize i = 0; i < names.size(); i++)
                         {
-                            const u64 ticks =
-                                (scopeStamps[(i * 2) + 1] - scopeStamps[i * 2]) & mask;
+                            const u64 beginTick = scopeStamps[i * 2];
+                            const u64 endTick = scopeStamps[(i * 2) + 1];
+                            const u64 ticks = (endTick - beginTick) & mask;
                             m_GpuPassTimings.push_back({
                                 .Name = names[i],
                                 .Milliseconds = ticksToMs(ticks),
+                                .BeginNanos = ticksToNanos((beginTick - base) & mask),
+                                .EndNanos = ticksToNanos((endTick - base) & mask),
+                                .Depth = i < depths.size() ? depths[i] : 0,
                             });
                         }
                     }
@@ -792,6 +827,7 @@ namespace Veng::Renderer
             // Open a fresh recording for this slot's new frame; scopes append as passes record.
             // The reset above makes the slot's queries writable, so scope writes are now legal.
             m_Native->CurrentScopeNames.clear();
+            m_Native->CurrentScopeDepths.clear();
             m_Native->OpenScopeStack.clear();
             m_GpuScopeRecording = true;
         }
@@ -832,6 +868,7 @@ namespace Veng::Renderer
                 .writeTimestamp(vk::PipelineStageFlagBits::eBottomOfPipe, m_Native->TimestampPool,
                                 frameBase + 1);
             m_Native->ScopeNames[slot] = std::move(m_Native->CurrentScopeNames);
+            m_Native->ScopeDepths[slot] = std::move(m_Native->CurrentScopeDepths);
             m_Native->TimestampWritten[slot] = true;
             m_GpuScopeRecording = false;
         }

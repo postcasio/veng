@@ -217,11 +217,26 @@ namespace Veng::Diagnostics
         ///
         /// Unlike a scope, this does not bracket the caller's block: the timestamps
         /// are supplied, so a span measured elsewhere (the GPU) lands on its own track.
+        /// The event is stamped with the current frame index; a bridge whose work
+        /// retired in an earlier frame must pass that frame through the overload below.
         /// @param track       The track to emit onto; 0 emits onto the caller's thread track.
         /// @param name        The span's interned name id.
         /// @param beginTicks  Span start, in the NowTicks() trace-clock domain.
         /// @param endTicks    Span end, in the same domain.
         void EmitScope(TrackId track, NameId name, u64 beginTicks, u64 endTicks);
+
+        /// @brief Emits a back-dated span stamped with an explicit frame index.
+        ///
+        /// The frame-indexing form the GPU bridge needs: a per-pass timing read back N
+        /// frames after it executed is stamped with the frame that ran it, not the
+        /// current one. The trace format encodes a frame earlier than a chunk's base as
+        /// a small negative delta, so a back-dated span reads on the frame it belongs to.
+        /// @param track       The track to emit onto; 0 emits onto the caller's thread track.
+        /// @param name        The span's interned name id.
+        /// @param beginTicks  Span start, in the NowTicks() trace-clock domain.
+        /// @param endTicks    Span end, in the same domain.
+        /// @param frameIndex  The frame index the span is stamped with.
+        void EmitScope(TrackId track, NameId name, u64 beginTicks, u64 endTicks, u64 frameIndex);
 
         /// @brief Advances the frame index and folds the completed frame's aggregates.
         ///
@@ -265,6 +280,15 @@ namespace Veng::Diagnostics
         Unique<Detail::ProfilerState> m_State;
 #endif
     };
+
+    /// @brief Returns the process's active profiler, or nullptr when none is installed.
+    ///
+    /// Constructing a Profiler installs it as the active one; destroying it uninstalls it.
+    /// This lets code with no Profiler reference in hand — a subsystem interning a name at
+    /// construction, the GPU bridge — reach the live instance. Returns nullptr under
+    /// VE_PROFILE=OFF, where no recording state exists. Not for the hot path: the
+    /// argument-free scope macros resolve their thread state directly.
+    [[nodiscard]] Profiler* GetActiveProfiler() noexcept;
 
     /// @brief Reads the steady trace clock as a raw tick count — the profiler's timestamp source.
     ///
@@ -384,6 +408,11 @@ namespace Veng::Diagnostics::Detail
     {
     };
 
+    /// @brief Tag selecting the pre-interned-id scope constructor.
+    struct PreinternedTag
+    {
+    };
+
     /// @brief RAII scope timer: records begin on construction and commits the span on destruction.
     ///
     /// Holds the thread state resolved once at construction, so entry and exit touch
@@ -411,6 +440,22 @@ namespace Veng::Diagnostics::Detail
             if (m_State)
             {
                 m_Name = InternDynamic(m_State, name);
+                EnterScope(m_State);
+                m_Begin = NowTicks();
+            }
+        }
+
+        /// @brief Times a scope named by a name id interned once, ahead of the hot path.
+        ///
+        /// The per-frame form for a name whose interning would allocate: the caller resolves
+        /// the id when its work is built and reuses it every frame, so the scope costs no hash
+        /// lookup. A zero id (no active profiler at interning time) records under "no name".
+        /// @param name  The pre-interned name id.
+        ScopeTimer(NameId name, PreinternedTag) noexcept : m_State(CurrentThreadState())
+        {
+            if (m_State)
+            {
+                m_Name = name;
                 EnterScope(m_State);
                 m_Begin = NowTicks();
             }
@@ -461,6 +506,13 @@ namespace Veng::Diagnostics::Detail
         (name), ::Veng::Diagnostics::Detail::DynamicTag {}                                         \
     }
 
+/// @brief Times the enclosing block under a name id interned once, off the hot path.
+#define VE_PROFILE_SCOPE_ID(nameId)                                                                \
+    const ::Veng::Diagnostics::Detail::ScopeTimer VE_PROFILE_DETAIL_UNIQUE(veProfScope_)           \
+    {                                                                                              \
+        (nameId), ::Veng::Diagnostics::Detail::PreinternedTag {}                                   \
+    }
+
 /// @brief Times the enclosing function under its own name.
 #define VE_PROFILE_FUNCTION() VE_PROFILE_SCOPE(__func__)
 
@@ -503,6 +555,7 @@ namespace Veng::Diagnostics::Detail
 
 #define VE_PROFILE_SCOPE(name)
 #define VE_PROFILE_SCOPE_DYNAMIC(name)
+#define VE_PROFILE_SCOPE_ID(nameId)
 #define VE_PROFILE_FUNCTION()
 #define VE_PROFILE_FRAME()
 #define VE_PROFILE_COUNTER(name, value)

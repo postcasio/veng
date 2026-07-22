@@ -54,12 +54,29 @@ namespace Veng::Renderer
         /// @brief Attaches @p name to a sampler.
         static void MarkSampler(vk::Device device, vk::Sampler sampler, const string& name);
 
+        /// @brief Opens a named command-buffer label region; a no-op when the extension is unavailable.
+        ///
+        /// A RenderDoc or Xcode GPU capture groups the recorded work between this and the matching
+        /// EndLabel under @p name. Balanced by an EndLabel on the same command buffer.
+        /// @param commandBuffer  Command buffer the label is recorded into.
+        /// @param name           The region's display name.
+        static void BeginLabel(vk::CommandBuffer commandBuffer, const string& name);
+
+        /// @brief Closes the most recently opened command-buffer label region.
+        /// @param commandBuffer  Command buffer the label is recorded into.
+        static void EndLabel(vk::CommandBuffer commandBuffer);
+
+        /// @brief Inserts a single-point command-buffer label; a no-op when the extension is unavailable.
+        /// @param commandBuffer  Command buffer the label is recorded into.
+        /// @param name           The point label's display name.
+        static void InsertLabel(vk::CommandBuffer commandBuffer, const string& name);
+
     private:
         static inline PFN_vkSetDebugUtilsObjectTagEXT s_PfnSetDebugUtilsObjectTag = nullptr;
         static inline PFN_vkSetDebugUtilsObjectNameEXT s_PfnSetDebugUtilsObjectName = nullptr;
 
-        static inline PFN_vkCmdDebugMarkerBeginEXT s_PfnCmdDebugMarkerBegin = nullptr;
-        static inline PFN_vkCmdDebugMarkerEndEXT s_PfnCmdDebugMarkerEnd = nullptr;
-        static inline PFN_vkCmdDebugMarkerInsertEXT s_PfnCmdDebugMarkerInsert = nullptr;
+        static inline PFN_vkCmdBeginDebugUtilsLabelEXT s_PfnCmdBeginDebugUtilsLabel = nullptr;
+        static inline PFN_vkCmdEndDebugUtilsLabelEXT s_PfnCmdEndDebugUtilsLabel = nullptr;
+        static inline PFN_vkCmdInsertDebugUtilsLabelEXT s_PfnCmdInsertDebugUtilsLabel = nullptr;
     };
 }

@@ -263,6 +263,7 @@ namespace Veng::Diagnostics
 
             ThreadState* AttachThread(string_view name);
             void DetachThread(ThreadState* state);
+            void EmitThreadTrack(ThreadState& state);
             NameId Intern(string_view text);
             void HandChunkToSink(ThreadState& state, Chunk& chunk);
             void AdvanceFrame();
@@ -272,6 +273,9 @@ namespace Veng::Diagnostics
         {
             /// @brief The active profiler's state, installed by the owning Profiler. The macros' anchor.
             std::atomic<ProfilerState*> g_Active{nullptr};
+
+            /// @brief The active Profiler instance, for GetActiveProfiler(); the object behind g_Active.
+            std::atomic<Profiler*> g_ActiveProfiler{nullptr};
 
             /// @brief Bumped on every Profiler construction and destruction, to invalidate thread caches.
             std::atomic<u64> g_Generation{0};
@@ -316,7 +320,7 @@ namespace Veng::Diagnostics
             /// The record's timestamp deltas are computed against the chunk it actually lands in, so a
             /// commit that straddles a chunk boundary stays base-relative to its own chunk.
             void EmitEvent(ThreadState& state, RecordType type, u32 track, NameId name,
-                           u64 beginAbs, u64 endAbs, u64 valueBits)
+                           u64 beginAbs, u64 endAbs, u64 valueBits, u64 frame)
             {
                 ProfilerState& profiler = *state.Owner;
                 Chunk* chunk = state.Chunks[state.CurrentChunk].get();
@@ -352,8 +356,7 @@ namespace Veng::Diagnostics
                 record.Type = static_cast<u8>(type);
                 record.Track = track;
                 record.Name = name;
-                record.Frame =
-                    static_cast<u32>(profiler.FrameIndex.load(std::memory_order_relaxed));
+                record.Frame = static_cast<u32>(frame);
                 record.BeginDelta =
                     beginAbs >= chunk->TimestampBase ? beginAbs - chunk->TimestampBase : 0;
                 if (type == RecordType::ScopeComplete)
@@ -430,6 +433,20 @@ namespace Veng::Diagnostics
                 }
                 Threads.erase(it);
                 return;
+            }
+        }
+
+        void ProfilerState::EmitThreadTrack(ThreadState& state)
+        {
+            // A track descriptor enriches the id→name/role mapping a decoder would otherwise fall
+            // back to the bare id for. Emitted only while a sink is attached; a capture that begins
+            // later replays every known thread through SetSink.
+            if (Sink)
+            {
+                Sink->OnTrack(TrackDescriptor{.Id = state.Id,
+                                              .IsVirtual = false,
+                                              .Role = TrackRole::Cpu,
+                                              .Name = state.Name});
             }
         }
 
@@ -599,7 +616,9 @@ namespace Veng::Diagnostics
 
             if (state->Owner->Mode != ProfilerMode::Off)
             {
-                EmitEvent(*state, RecordType::ScopeComplete, 0, name, beginTicks, endTicks, 0);
+                const u64 frame = state->Owner->FrameIndex.load(std::memory_order_relaxed);
+                EmitEvent(*state, RecordType::ScopeComplete, 0, name, beginTicks, endTicks, 0,
+                          frame);
             }
         }
 
@@ -611,7 +630,8 @@ namespace Veng::Diagnostics
             }
             u64 bits = 0;
             std::memcpy(&bits, &value, sizeof(bits));
-            EmitEvent(*state, RecordType::Counter, 0, name, NowTicks(), 0, bits);
+            const u64 frame = state->Owner->FrameIndex.load(std::memory_order_relaxed);
+            EmitEvent(*state, RecordType::Counter, 0, name, NowTicks(), 0, bits, frame);
         }
 
         void CommitInstant(ThreadState* state, NameId name) noexcept
@@ -620,7 +640,8 @@ namespace Veng::Diagnostics
             {
                 return;
             }
-            EmitEvent(*state, RecordType::Instant, 0, name, NowTicks(), 0, 0);
+            const u64 frame = state->Owner->FrameIndex.load(std::memory_order_relaxed);
+            EmitEvent(*state, RecordType::Instant, 0, name, NowTicks(), 0, 0, frame);
         }
 
         void NameCurrentThread(const char* name) noexcept
@@ -629,6 +650,7 @@ namespace Veng::Diagnostics
             if (state)
             {
                 state->Name = name;
+                state->Owner->EmitThreadTrack(*state);
             }
         }
 
@@ -641,11 +663,12 @@ namespace Veng::Diagnostics
             }
         }
 
-        /// @brief Emits a back-dated span on an explicit track; the virtual-track primitive.
+        /// @brief Emits a back-dated span on an explicit track and frame; the virtual-track primitive.
         void CommitEmitScope(ThreadState* state, TrackId track, NameId name, u64 beginTicks,
-                             u64 endTicks) noexcept
+                             u64 endTicks, u64 frame) noexcept
         {
-            EmitEvent(*state, RecordType::ScopeComplete, track, name, beginTicks, endTicks, 0);
+            EmitEvent(*state, RecordType::ScopeComplete, track, name, beginTicks, endTicks, 0,
+                      frame);
         }
     }
 }
@@ -666,6 +689,7 @@ namespace Veng::Diagnostics
 
         Detail::g_Generation.fetch_add(1, std::memory_order_acq_rel);
         Detail::g_Active.store(m_State.get(), std::memory_order_release);
+        Detail::g_ActiveProfiler.store(this, std::memory_order_release);
 
         // Register the calling (main) thread against this profiler.
         Detail::t_State = m_State->AttachThread(string_view("Main"));
@@ -689,10 +713,16 @@ namespace Veng::Diagnostics
             m_State->Sink->OnClose();
         }
 
+        Detail::g_ActiveProfiler.store(nullptr, std::memory_order_release);
         Detail::g_Active.store(nullptr, std::memory_order_release);
         Detail::g_Generation.fetch_add(1, std::memory_order_acq_rel);
         Detail::t_State = nullptr;
         Detail::t_Owner = nullptr;
+    }
+
+    Profiler* GetActiveProfiler() noexcept
+    {
+        return Detail::g_ActiveProfiler.load(std::memory_order_acquire);
     }
 
     void Profiler::SetSink(TraceSink* sink)
@@ -701,17 +731,43 @@ namespace Veng::Diagnostics
         if (sink)
         {
             // Bring a freshly attached sink current with every string interned so far.
-            const std::scoped_lock lock(m_State->StringMutex);
-            if (!m_State->IdToString.empty())
             {
-                StringTableDelta delta;
-                delta.FirstId = 1;
-                delta.Strings.reserve(m_State->IdToString.size());
-                for (const string& text : m_State->IdToString)
+                const std::scoped_lock lock(m_State->StringMutex);
+                if (!m_State->IdToString.empty())
                 {
-                    delta.Strings.emplace_back(text);
+                    StringTableDelta delta;
+                    delta.FirstId = 1;
+                    delta.Strings.reserve(m_State->IdToString.size());
+                    for (const string& text : m_State->IdToString)
+                    {
+                        delta.Strings.emplace_back(text);
+                    }
+                    sink->OnStrings(delta);
                 }
-                sink->OnStrings(delta);
+            }
+
+            // Replay every known track's descriptor: a thread named before the sink attached (the
+            // main thread, the workers) and every virtual track created before it would otherwise
+            // reach the capture as a bare id.
+            {
+                const std::scoped_lock lock(m_State->RegistryMutex);
+                for (const auto& thread : m_State->Threads)
+                {
+                    sink->OnTrack(TrackDescriptor{.Id = thread->Id,
+                                                  .IsVirtual = false,
+                                                  .Role = TrackRole::Cpu,
+                                                  .Name = thread->Name});
+                }
+            }
+            {
+                const std::scoped_lock lock(m_State->TrackMutex);
+                for (usize i = 0; i < m_State->Tracks.size(); ++i)
+                {
+                    sink->OnTrack(TrackDescriptor{.Id = static_cast<TrackId>(i + 1),
+                                                  .IsVirtual = true,
+                                                  .Role = m_State->Tracks[i].Role,
+                                                  .Name = m_State->Tracks[i].Name});
+                }
             }
         }
     }
@@ -741,15 +797,24 @@ namespace Veng::Diagnostics
         Detail::t_State = state;
         Detail::t_Owner = m_State.get();
         Detail::t_Generation = Detail::g_Generation.load(std::memory_order_acquire);
+        m_State->EmitThreadTrack(*state);
         return ProfilerThreadRegistration(this, state->Id);
     }
 
     TrackId Profiler::CreateTrack(string_view name, TrackRole role)
     {
-        const std::scoped_lock lock(m_State->TrackMutex);
-        const TrackId id = m_State->NextTrackId++;
-        m_State->Tracks.push_back(
-            Detail::ProfilerState::TrackInfo{.Name = string(name), .Role = role});
+        TrackId id;
+        {
+            const std::scoped_lock lock(m_State->TrackMutex);
+            id = m_State->NextTrackId++;
+            m_State->Tracks.push_back(
+                Detail::ProfilerState::TrackInfo{.Name = string(name), .Role = role});
+        }
+        if (m_State->Sink)
+        {
+            m_State->Sink->OnTrack(
+                TrackDescriptor{.Id = id, .IsVirtual = true, .Role = role, .Name = name});
+        }
         return id;
     }
 
@@ -760,6 +825,13 @@ namespace Veng::Diagnostics
 
     void Profiler::EmitScope(TrackId track, NameId name, u64 beginTicks, u64 endTicks)
     {
+        EmitScope(track, name, beginTicks, endTicks,
+                  m_State->FrameIndex.load(std::memory_order_relaxed));
+    }
+
+    void Profiler::EmitScope(TrackId track, NameId name, u64 beginTicks, u64 endTicks,
+                             u64 frameIndex)
+    {
         if (m_State->Mode == ProfilerMode::Off)
         {
             return;
@@ -767,7 +839,7 @@ namespace Veng::Diagnostics
         Detail::ThreadState* state = Detail::CurrentThreadState();
         if (state)
         {
-            Detail::CommitEmitScope(state, track, name, beginTicks, endTicks);
+            Detail::CommitEmitScope(state, track, name, beginTicks, endTicks, frameIndex);
         }
     }
 
@@ -876,6 +948,10 @@ namespace Veng::Diagnostics
 {
     Profiler::Profiler(const ProfilerConfig& /*config*/) {}
     Profiler::~Profiler() = default;
+    Profiler* GetActiveProfiler() noexcept
+    {
+        return nullptr;
+    }
     void Profiler::SetSink(TraceSink* /*sink*/) {}
     TraceSink* Profiler::GetSink() const
     {
@@ -900,6 +976,10 @@ namespace Veng::Diagnostics
     }
     void Profiler::EmitScope(TrackId /*track*/, NameId /*name*/, u64 /*beginTicks*/,
                              u64 /*endTicks*/)
+    {
+    }
+    void Profiler::EmitScope(TrackId /*track*/, NameId /*name*/, u64 /*beginTicks*/,
+                             u64 /*endTicks*/, u64 /*frameIndex*/)
     {
     }
     void Profiler::BeginFrame() {}

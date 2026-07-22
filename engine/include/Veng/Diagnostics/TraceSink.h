@@ -12,6 +12,13 @@
 
 namespace Veng::Diagnostics
 {
+    /// @brief The kind of work a track carries, so a viewer can group and colour it.
+    ///
+    /// Mirrors Profiler.h's TrackRole; a forward declaration would need the enum's
+    /// definition, so it is declared here where the sink seam already needs it and
+    /// Profiler.h includes this header.
+    enum class TrackRole : u8;
+
     /// @brief Dense per-thread track identifier assigned at thread registration.
     ///
     /// Chunks are handed to the sink tagged with the thread that produced them.
@@ -38,6 +45,23 @@ namespace Veng::Diagnostics
         vector<string_view> Strings;
     };
 
+    /// @brief A track's identity and display metadata, delivered to the sink out of band.
+    ///
+    /// Chunks and records carry only a numeric track id; the id→name/role mapping is
+    /// delivered separately through OnTrack, the track analogue of the OnStrings
+    /// string-table delta. A sink that retains the Name past the call copies it.
+    struct TrackDescriptor
+    {
+        /// @brief The track's id: a chunk ThreadId when IsVirtual is false, a record TrackId otherwise.
+        u32 Id = 0;
+        /// @brief True for a virtual (bridge) track, false for a recording thread's own track.
+        bool IsVirtual = false;
+        /// @brief The kind of work the track carries.
+        TrackRole Role = static_cast<TrackRole>(0);
+        /// @brief The track's display name; may be empty. Points into caller storage for the call only.
+        string_view Name;
+    };
+
     /// @brief Abstract consumer of completed profiler buffer chunks and string deltas.
     ///
     /// Every method is called from the thread that owns the chunk (a recording
@@ -60,6 +84,14 @@ namespace Veng::Diagnostics
         /// @brief Receives the strings interned since the previous call.
         /// @param delta  The new string ids and their text.
         virtual void OnStrings(const StringTableDelta& delta) = 0;
+
+        /// @brief Receives a track's name and role, so a decoder need not fall back to the bare id.
+        ///
+        /// Delivered when a track is named (a thread named at start, a virtual track created) and
+        /// replayed for every known track when a sink is attached. A track a sink never receives a
+        /// descriptor for still appears in the capture under its id — this only enriches it.
+        /// @param track  The track's identity and display metadata.
+        virtual void OnTrack(const TrackDescriptor& /*track*/) {}
 
         /// @brief Marks a flush boundary: every chunk outstanding at the flush has been delivered.
         virtual void OnFlush() {}
@@ -118,6 +150,28 @@ namespace Veng::Diagnostics
             }
         }
 
+        /// @brief One retained track descriptor: a copy of its id, kind, role, and name.
+        struct CapturedTrack
+        {
+            /// @brief The track's id in its kind's space.
+            u32 Id = 0;
+            /// @brief True for a virtual (bridge) track, false for a thread track.
+            bool IsVirtual = false;
+            /// @brief The kind of work the track carries.
+            TrackRole Role = static_cast<TrackRole>(0);
+            /// @brief A copy of the track's display name.
+            string Name;
+        };
+
+        /// @brief Copies the track descriptor into the retained list.
+        void OnTrack(const TrackDescriptor& track) override
+        {
+            m_Tracks.push_back(CapturedTrack{.Id = track.Id,
+                                             .IsVirtual = track.IsVirtual,
+                                             .Role = track.Role,
+                                             .Name = string(track.Name)});
+        }
+
         /// @brief Counts a flush boundary.
         void OnFlush() override { ++m_FlushCount; }
         /// @brief Counts the close boundary.
@@ -136,12 +190,16 @@ namespace Veng::Diagnostics
         [[nodiscard]] u32 GetFlushCount() const { return m_FlushCount; }
         /// @brief Returns how many times OnClose was called.
         [[nodiscard]] u32 GetCloseCount() const { return m_CloseCount; }
+        /// @brief Returns the retained track descriptors, in arrival order.
+        [[nodiscard]] const vector<CapturedTrack>& GetTracks() const { return m_Tracks; }
         /// @brief Drops every retained chunk (strings and boundary counts are kept).
         void ClearChunks() { m_Chunks.clear(); }
 
     private:
         /// @brief Retained chunk copies, in arrival order.
         vector<CapturedChunk> m_Chunks;
+        /// @brief Retained track descriptors, in arrival order.
+        vector<CapturedTrack> m_Tracks;
         /// @brief Retained strings, indexed by NameId.
         vector<string> m_Strings;
         /// @brief Number of OnFlush calls.

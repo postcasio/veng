@@ -54,6 +54,10 @@ namespace Veng::Diagnostics
         /// @param delta  The new string ids and their text.
         void OnStrings(const StringTableDelta& delta) override;
 
+        /// @brief Queues a track's name and role to the writer thread, enriching its Track section.
+        /// @param track  The track descriptor.
+        void OnTrack(const TrackDescriptor& track) override;
+
         /// @brief Marks a flush boundary; the file is committed at close, so this is a no-op.
         void OnFlush() override;
 
