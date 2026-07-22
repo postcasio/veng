@@ -354,13 +354,76 @@ tracing configure never disturbs `build-debug`. Three things about it are load-b
   `RULE_LAUNCH_COMPILE`**, which prefixes every target's compile rule tree-wide; that
   injection is forced off (`ASSIMP_BUILD_USE_CCACHE`) unconditionally beside the ccache block,
   ahead of the fetch that would set it, so a tracing tree really does compile uncached.
-- **Every `VENG_TIME_TRACE=ON` configure is a full cold build**: on the order of ten minutes of
-  wall clock, and roughly **2–6 GB** of JSON across veng's ~600 first-party TUs. That is why
-  it defaults off, and why the tree is a deliberately-made, manually-refreshed artifact rather
-  than a by-product. Clean up by deleting `build-trace/` outright — objects and JSON are only
-  ever regenerated as a pair.
+- **Every `VENG_TIME_TRACE=ON` configure is a full cold build.** Measured on the reference host
+  (Apple M2, `-j 6`, 627 TUs): **3:53 of wall clock, ~1097 s of compile CPU, a 3.3 GB tree
+  carrying 216 MB of JSON**. That is why it defaults off, and why the tree is a
+  deliberately-made, manually-refreshed artifact rather than a by-product. Clean up by deleting
+  `build-trace/` outright — objects and JSON are only ever regenerated as a pair.
 - **It is a measurement build.** The flag changes what the compiler *does*, not just what it
   emits. Compare a tracing build's timings only against another tracing build's.
+
+Two properties of the format anything reading the traces has to know:
+
+- **A trace's `ts` values restart at zero in every document.** They order events *within* one TU
+  and say nothing about where in the build that TU compiled. The only build ordering the tree
+  carries is the **trace files' mtimes**, which is what the build span below is computed from.
+- **A namespace-scope instantiation placed in a PCH header is serialised into the PCH and is not
+  re-paid per TU.** A precompiled header caches parsed declarations *and* whatever was
+  instantiated while it was built, so an instantiation added at namespace scope in a PCH-resident
+  header appears once, in the PCH, and nowhere else. An experiment expecting to see a per-TU cost
+  has to place the instantiation where the PCH does not reach.
+
+#### Guarding the cost
+
+`docs/build-cost-baseline.md` is the tree's checked-in cost baseline and
+`scripts/check_build_cost.py` is what produces and checks it. The script parses a tracing tree's
+`-ftime-trace` JSON directly — no external analysis tool, no database — and compares the
+whole-tree totals and the per-origin instantiation breakdown against the baseline file.
+
+```sh
+cmake -B build-trace -S . -DVE_DEBUG=ON -DVENG_TIME_TRACE=ON
+cmake --build build-trace -j 6
+python3 scripts/check_build_cost.py --tree build-trace                    # check
+python3 scripts/check_build_cost.py --tree build-trace --write-baseline   # refresh
+```
+
+Exit codes: `0` pass, `1` regression, `2` skipped, `3` inconclusive. **Run it after any change to
+the reflection headers, the include graph, or the PCH set.** Whoever lands such a change owns the
+number: either the check passes, or the same commit refreshes the baseline **and its body says
+why the number moved** — a refresh with no stated reason turns the tripwire into a rubber stamp.
+
+The thresholds: total compile CPU may exceed the baseline by **5 %**; a single origin's
+instantiation total may exceed its baseline by **10 % *and* by 5 s absolute**, both conjuncts,
+because 10 % of a small origin is drift while 10 % of a large one is a real header change. A
+**provenance mismatch skips rather than fails** — compile CPU varies by a factor of ~2 across CPU
+models, and a check that fires permanently on everyone else's machine is a check that gets
+ignored. It is deliberately **not** a `ctest` test: it needs a tracing tree no ordinary build
+produces, so as a test it would be permanently skipped or would force a cold tracing build into
+every run.
+
+Three properties of the instrument decide how a delta is read, all three measured rather than
+assumed:
+
+- **An outlier cluster makes a run inconclusive (exit 3), not failed.** `-ftime-trace` durations
+  are wall time *inside* the compile, so a machine-level stall lands in them as compile cost with
+  nothing to distinguish it — one measured instance inflated four adjacent TUs ~170× and the whole
+  tree by 57 %. The script scans for a bounded prefix of TUs an order of magnitude above the next
+  and reports it as an artifact, because an artifact and a regression are indistinguishable to a
+  threshold and reporting one as the other is worse than reporting neither. Recompile the named
+  TUs serially and re-run.
+- **The build span is provenance, and it is compared before a delta is trusted.** The baseline
+  records first-to-last trace mtime. A tree built in one saturated parallel pass and one built
+  with idle stretches are not measuring the same machine; a large span mismatch means the totals
+  are not comparable, and the honest move is to say so rather than reason about the difference.
+- **Whole-tree totals vary ≈11 % run to run on the reference host**, the excess concentrated in
+  the last build deciles — thermal behaviour on a fanless machine, not compile cost. So the 5 %
+  total threshold **sits below the noise**, and the per-origin rule is the load-bearing half of
+  the check. The limitation is documented rather than tuned away: a threshold widened to the
+  spread would stop catching the failure the check exists for. Read the figures in this order of
+  trust — **the TU count paying an origin first** (a structural count, immune to timing), then the
+  median per-TU ratio against the previous tree, then the per-origin totals, then the whole-tree
+  total, for completeness only. Proof that the total alone means nothing: a deliberately
+  *regressed* tree, built to exceed its baseline, measured 10 % **below** it.
 
 The PCH opt-outs (`SKIP_PRECOMPILE_HEADERS`, and the debug encode TUs matching the PCH's
 `__OPTIMIZE__`) are untouched — the flag is orthogonal to both, and those TUs simply trace as
@@ -724,6 +787,26 @@ is fully alive, e.g. flushing state ahead of the engine's own durability save �
 in the app's `OnShutdown()` override, which `Run` invokes before teardown begins. A
 resource that outlives the context still fails loudly: the `Disposed` tripwire (set in
 `~Context`) asserts on any handle retiring after teardown.
+
+### Reflection: the describe block is instantiated where it is used
+
+`VengReflect<T>::Fields()` and `::RegisterDependencies()` are **member templates on a defaulted
+parameter** (`template <class = void>`), not plain static members. They are spelled and called
+exactly like plain statics — no `template` disambiguator is needed at any call site, since the
+calls name no explicit template argument — but a member template's body is instantiated only
+where it is *called*. So the describe-block replay behind them, and both of its `Describe<Sink>`
+instantiations, are compiled only in the translation units that actually call
+`TypeRegistry::Register<T>()`, rather than in every unit that merely includes the describe block.
+The cost follows use rather than inclusion.
+
+**The authored vocabulary is unchanged.** `VE_REFLECT` / `VE_FIELD` / `VE_ARRAY_FIELD` /
+`VE_LEAF` / `VE_TYPE` / `VE_ENUM` / `VE_VARIANT` are written exactly as before; the form lives
+entirely in the macro expansion and is invisible to an author. The one consumer-visible
+consequence: **a hand-written `VengReflect<T>` specialisation must emit the templated form** for
+those two members, since `Register<T>()` calls them uniformly across the whole trait. The trait
+is public, so this is a real constraint even though the tree contains no hand-written
+specialisation — every one is macro-emitted. `Enumerators()`, which only `VE_ENUM` emits, stays
+a plain static: it carries no describe block and nothing to defer.
 
 ### The Native idiom (public/backend split)
 

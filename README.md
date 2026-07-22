@@ -270,13 +270,52 @@ that layout is the contract anything reading the traces scans.
 **What it costs, up front.** The option disables the compiler cache — `-ftime-trace` writes
 a side output ccache does not reproduce, so a cache hit would yield an object with no trace
 beside it, and a partial tree that reads as a complete one. Every `VENG_TIME_TRACE=ON`
-configure is therefore a **full cold build**: on the order of **ten minutes of wall clock**,
-and, across the ~600 first-party translation units veng builds by default, **roughly 2–6 GB**
-of JSON in the tree. That is the reason the option defaults off.
+configure is therefore a **full cold build**. Measured on the reference host (Apple M2, `-j 6`,
+627 translation units): **3:53 of wall clock, ~1097 s of compile CPU, a 3.3 GB tree carrying
+216 MB of JSON**. That is the reason the option defaults off.
 
 **It is a measurement build, not a normal one.** The flag changes what the compiler does, not
 merely what it emits: it costs frontend time and writes a file per TU. Compare a tracing
 build's timings only against another tracing build's, never against a normal build's.
+
+**Two properties of the format.** A trace's `ts` values **restart at zero in every document**, so
+they order events within one TU and say nothing about where in the build that TU compiled — the
+only build ordering the tree carries is the trace files' mtimes. And **a namespace-scope
+instantiation placed in a precompiled header is serialised into the PCH and is not re-paid per
+TU**: a PCH caches parsed declarations *and* whatever was instantiated while it was built, so
+such an instantiation appears once and nowhere else.
+
+### Guarding the build cost
+
+`docs/build-cost-baseline.md` records this tree's whole-tree compile cost — the totals, the
+frontend/backend split, and the template-instantiation breakdown by origin — together with the
+provenance that makes the figure meaningful (compiler, build type, option set, host, TU count,
+build span, git SHA). `scripts/check_build_cost.py` both produces that file and checks a tree
+against it, parsing the `-ftime-trace` JSON directly with no external tooling:
+
+```sh
+python3 scripts/check_build_cost.py --tree build-trace                    # check
+python3 scripts/check_build_cost.py --tree build-trace --write-baseline   # refresh
+```
+
+Exit codes are `0` pass, `1` regression, `2` skipped, `3` inconclusive. Run it after any change
+to the reflection headers, the include graph, or the precompiled-header set; whoever lands such a
+change either passes the check or refreshes the baseline in the same commit **and says in the
+commit body why the number moved**. It fails when total compile CPU exceeds the baseline by more
+than 5 %, or when a single origin's instantiation total exceeds its baseline by more than 10 %
+*and* more than 5 s. A provenance mismatch **skips** rather than fails — compile CPU varies by a
+factor of ~2 across CPU models. It is not a `ctest` test: it needs a tracing tree no ordinary
+build produces.
+
+**How to read a delta.** `-ftime-trace` durations are wall time *inside* the compile, so the
+machine's own behaviour lands in them as compile cost. Three consequences, all measured: a
+cluster of translation units an order of magnitude above the next is a **stall artifact**, and
+the check reports it as **inconclusive** rather than failed; the recorded **build span** is
+provenance, and a large mismatch against the baseline's means the totals are not comparable; and
+whole-tree totals vary by **≈11 % run to run** on the reference host, concentrated in the last
+build deciles, which puts the 5 % total threshold below the noise and makes the per-origin rule
+the load-bearing half. Trust the figures in this order: the number of TUs paying an origin, then
+the median per-TU ratio, then the per-origin totals, then the whole-tree total.
 
 **Cleaning up.** Delete `build-trace/` outright — the objects and the JSON are only ever
 regenerated as a pair, so removing the tree reclaims both. Nothing refreshes it on a schedule

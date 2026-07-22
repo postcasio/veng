@@ -86,6 +86,14 @@ symbol: build the Doxygen reference with `cmake --build build --target docs`
   map, what each track (frames, CPU threads, GPU, counters, instants) means, and why
   the JSON is a lossy viewer-facing projection nothing in veng reads.
 
+## Reference data
+
+- **[Build-cost baseline](build-cost-baseline.md)** — the checked-in whole-tree compile cost
+  this repository is measured against, with the provenance that makes the figure meaningful.
+  Generated and checked by `scripts/check_build_cost.py`; see the README's
+  [Build-time tracing](../README.md#build-time-tracing) section for when to run the check and
+  how to read a delta.
+
 Every type, macro, and method these guides name exists in the engine as written,
 and the worked examples cross-reference the real
 [hello-triangle](../examples/hello-triangle/) game module so the prose stays

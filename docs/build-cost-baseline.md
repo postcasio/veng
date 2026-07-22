@@ -32,6 +32,18 @@ compile cost. A tree built in one saturated parallel pass and a tree built with 
 not measuring the same machine. Compare spans before trusting a delta, and re-take rather than
 reason about a figure taken under conditions that differ.
 
+**Read the figures in this order of trust: the TU count paying an origin first** — a structural
+count, immune to timing — **then the median per-TU ratio against the previous tree, then the
+per-origin totals, and the whole-tree total last, for completeness only.** Two takes of one tree
+on the reference host have differed by ~11 % on the whole-tree total while their median per-TU
+ratio stayed within 5 % of parity, the excess concentrated in the last build deciles: thermal
+behaviour, not compile cost. So the check's **5 % total threshold sits below this host's
+run-to-run spread**, and a total-only movement is a prompt to re-take the tree rather than
+evidence of anything. The **per-origin rule is the load-bearing half** — its +10 % *and* +5 s
+conjunct is broad enough to survive that spread and narrow enough to name the origin that moved.
+The limitation is documented rather than tuned away: a threshold retuned to the noise would stop
+catching the failure the check exists for.
+
 ## Provenance
 
 | field | value |
@@ -41,18 +53,18 @@ reason about a figure taken under conditions that differ.
 | options | VE_DEBUG=ON;VE_PROFILE=ON;VENG_TIME_TRACE=ON;VENG_BUILD_TESTS=ON;VENG_BUILD_EXAMPLES=ON;VENG_INSTALL_SDK=ON;VENG_EDITOR_WITH_MCP=ON;VENG_ENABLE_CLANG_TIDY=OFF;VENG_ENABLE_COVERAGE=OFF;VENG_USE_EMBED=OFF;VENG_BUILD_CONFIG=macos |
 | host | Darwin arm64 / Apple M2 |
 | TUs | 627 |
-| build span | 231 s |
-| git SHA | 3814a1db |
+| build span | 211 s |
+| git SHA | 23c98d09 |
 
 ## Whole-tree totals
 
 | figure | seconds |
 |---|---|
-| compile CPU (ExecuteCompiler) | 1038.7 |
-| Frontend | 900.9 |
-| Backend | 121.5 |
-| Template instantiation | 406.5 |
-| Parse (Source) | 331.5 |
+| compile CPU (ExecuteCompiler) | 930.1 |
+| Frontend | 811.1 |
+| Backend | 104.5 |
+| Template instantiation | 363.1 |
+| Parse (Source) | 299.8 |
 
 ## Template instantiation by origin
 
@@ -62,10 +74,10 @@ first-party usage rather than inherent to the standard library.
 
 | origin | seconds | TUs paying |
 |---|---|---|
-| libc++ | 275.5 | 623 |
-| nlohmann | 55.6 | 139 |
-| first-party | 27.4 | 363 |
-| other | 17.9 | 610 |
-| fmt | 16.4 | 601 |
-| std::format | 11.0 | 388 |
-| veng reflection | 2.7 | 57 |
+| libc++ | 247.2 | 624 |
+| nlohmann | 46.9 | 140 |
+| first-party | 25.4 | 359 |
+| other | 15.9 | 610 |
+| fmt | 15.0 | 597 |
+| std::format | 10.4 | 386 |
+| veng reflection | 2.3 | 57 |

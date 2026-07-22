@@ -553,6 +553,18 @@ compile — a stall, contention from the rest of the build, thermal throttling �
 compile cost. A tree built in one saturated parallel pass and a tree built with idle stretches are
 not measuring the same machine. Compare spans before trusting a delta, and re-take rather than
 reason about a figure taken under conditions that differ.
+
+**Read the figures in this order of trust: the TU count paying an origin first** — a structural
+count, immune to timing — **then the median per-TU ratio against the previous tree, then the
+per-origin totals, and the whole-tree total last, for completeness only.** Two takes of one tree
+on the reference host have differed by ~11 % on the whole-tree total while their median per-TU
+ratio stayed within 5 % of parity, the excess concentrated in the last build deciles: thermal
+behaviour, not compile cost. So the check's **5 % total threshold sits below this host's
+run-to-run spread**, and a total-only movement is a prompt to re-take the tree rather than
+evidence of anything. The **per-origin rule is the load-bearing half** — its +10 % *and* +5 s
+conjunct is broad enough to survive that spread and narrow enough to name the origin that moved.
+The limitation is documented rather than tuned away: a threshold retuned to the noise would stop
+catching the failure the check exists for.
 """
 
 
