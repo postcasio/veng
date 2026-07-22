@@ -62,8 +62,8 @@ at cook time:
   the shader offline** into a serializable `ShaderInterface`; the engine then loads
   plain SPIR-V.
 - **A fragment shader's source can be a graph, not a `.slang` file.** A `*.shader.json` whose
-  `"source"` ends in `.graph.json` (plus a `"domain"`: `"Surface"` | `"PostProcess"`,
-  `MaterialDomain`'s exact enumerator spellings) is cooked by
+  `"source"` ends in `.graph.json` (plus a `"domain"`: `"Surface"` | `"PostProcess"` | `"Sky"` |
+  `"Translucent"` | `"GuiFill"`, `MaterialDomain`'s exact enumerator spellings) is cooked by
   walking the graph into Slang fragment text via the shared `veng::graph` emit walk, then
   compiling and reflecting that text through the **same** `ShaderImporter` / `SlangReflect`
   SPIR-V path a hand-authored `.slang` takes — Slang loads it from a source string, since the
@@ -96,8 +96,9 @@ at cook time:
   parameters — the declared, explicitly-typed field list must match — and the
   fragment outputs are validated against the material domain's contract (Surface →
   the five-target g-buffer MRT `SV_Target0`..`SV_Target4` — albedo/normal/ORM, velocity, and
-  emissive; PostProcess → a single `SV_Target0`). Because the Surface contract's output set is
-  part of what a cooked material *means*, a change to it bumps `CookedMaterialVersion`
+  emissive; PostProcess, Sky, Translucent, and GuiFill → a single `SV_Target0`). Because the
+  Surface contract's output set is part of what a cooked material *means*, a change to it bumps
+  `CookedMaterialVersion`
   (`assetpack`'s `CookedBlobs.h`), so a stale blob cooked against an older output set rejects
   loudly at load rather than binding a pipeline whose color-target list no longer matches. A parent
   `*.vmat.json` may declare a top-level **`"defaultInstance"`** id: when present, the cook emits a

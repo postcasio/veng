@@ -29,7 +29,9 @@ namespace Veng
     /// and is invoked fullscreen in the sky slot (composited over the lit scene with LoadOp::Load);
     /// Translucent writes final HDR radiance and is drawn per submesh by the forward translucent pass
     /// (alpha-blended into the lit scene color, after deferred lighting and the sky, before the
-    /// bloom/tonemap tail). The parameter schema, bindless handles, authoring, and editor inspector are
+    /// bloom/tonemap tail); GuiFill writes the fill color of a UI shape and is drawn per UI quad by
+    /// the GUI pass through the gui vertex stage, the engine's rounded-rect coverage multiplying the
+    /// authored fill. The parameter schema, bindless handles, authoring, and editor inspector are
     /// shared across domains. Surface is 0 so a zero-initialized header defaults to the Surface domain.
     enum class MaterialDomain : u32
     {
@@ -41,7 +43,17 @@ namespace Veng
         Sky = 2,
         /// @brief Final HDR radiance + alpha; drawn per submesh by the forward translucent pass, alpha-blended into the lit scene color.
         Translucent = 3,
+        /// @brief Premultiplied UI fill color; drawn per UI quad by the GUI pass, multiplied by the engine's rounded-rect SDF coverage.
+        GuiFill = 4,
     };
+
+    /// @brief Push-constant offset of a GuiFill material's per-draw selector.
+    ///
+    /// A GuiFill pipeline reserves the GUI pass's own push block — the inverse screen size the gui
+    /// vertex stage needs to reach clip space, the gradient buffer slot and base, and the frame
+    /// time — and places the material selector immediately after it. The GUI pass static_asserts
+    /// its push block against this value, so the two cannot drift.
+    inline constexpr u32 GuiFillSelectorPushOffset = 20;
 
     /// @brief One reflected material parameter field, kept at runtime for name-based SetTexture/SetParam dispatch.
     struct MaterialField
@@ -138,7 +150,7 @@ namespace Veng
         /// @brief Returns the material's debug name.
         [[nodiscard]] const string& GetName() const { return m_Name; }
 
-        /// @brief Returns the material's domain (Surface, PostProcess, Sky, or Translucent).
+        /// @brief Returns the material's domain (Surface, PostProcess, Sky, Translucent, or GuiFill).
         [[nodiscard]] MaterialDomain GetDomain() const { return m_Domain; }
 
         /// @brief Returns the material's authored face-culling mode (Back when unauthored).
@@ -153,7 +165,7 @@ namespace Veng
         /// groups, so a higher-priority material draws over every lower-priority one.
         [[nodiscard]] i32 GetSortPriority() const { return m_SortPriority; }
 
-        /// @brief Returns the built graphics pipeline, or null for a pass-built domain (PostProcess, Sky, Translucent).
+        /// @brief Returns the built graphics pipeline, or null for a pass-built domain (PostProcess, Sky, Translucent, GuiFill).
         [[nodiscard]] const Ref<Renderer::GraphicsPipeline>& GetPipeline() const
         {
             return m_Pipeline;
@@ -269,6 +281,7 @@ VE_ENUMERATOR(Surface)
 VE_ENUMERATOR(PostProcess)
 VE_ENUMERATOR(Sky)
 VE_ENUMERATOR(Translucent)
+VE_ENUMERATOR(GuiFill)
 VE_ENUM_END();
 
 // The cull-mode name table lives beside MaterialDomain's: material sources are the one

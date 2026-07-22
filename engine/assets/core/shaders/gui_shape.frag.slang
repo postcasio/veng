@@ -24,8 +24,9 @@ struct VSOutput
     nointerpolation float4 v_Shadow : TEXCOORD5;
 };
 
-// Must match GuiScenePass's push block and the vertex stage: the gradient-record buffer's bindless
-// slot and the current frame-in-flight's record base.
+// The leading members of GuiScenePass's push block, matching the vertex stage: the gradient-record
+// buffer's bindless slot and the current frame-in-flight's record base. The block continues past
+// what this path reads, so the members declared here must stay at these offsets.
 struct PushConstants
 {
     float2 InvScreenSize;

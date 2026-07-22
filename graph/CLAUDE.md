@@ -73,8 +73,20 @@ topology core stays asset-agnostic.
 (`GBufferOutput fsMain` for Surface, `float4 fsMain … : SV_Target0` for PostProcess) with defined
 defaults for unconnected sinks (Surface: Albedo `float4(0,0,0,1)`, Normal the geometric
 `input.v_WorldNormal`, ORM `float3(1,1,0)`, Velocity always `ComputeMotionVector(...)`); the
-source is prefixed with its domain's contract include (`Veng/surface.slang` or
-`Veng/postprocess.slang`).
+source is prefixed with its domain's contract include (`Veng/surface.slang`,
+`Veng/postprocess.slang`, `Veng/translucent.slang`, or `Veng/guifill.slang`).
+
+**`GuiFill` is the one domain whose entry point wraps the graph rather than returning it.** Its
+`fsMain` takes the gui vertex stage's interpolants (`GuiFillInputs`), reads its selector from the
+reserved GUI push block (`g_PC.MaterialIndex`, at `Veng::GuiFillSelectorPushOffset`), and returns
+`GuiFillResolve(input, <Color>)` — the engine's fixed rounded-rect SDF coverage and border ring
+multiplying the authored fill. A material in this domain is a **fill source**, never a silhouette:
+corner radius, border, clip, and rotation compose with it exactly as they do with a flat color,
+because the graph never gets to touch them. An unconnected `Color` sink falls back to the quad's
+own vertex color. The domain also adds three read-only source nodes no other fragment stage could
+carry — `GuiBoxCoord` (the normalized `[-1,1]` box position, the same space a gradient fill
+reduces to a ramp offset), `GuiUV` (the quad's own UV), and `GuiTime` (seconds, from the push
+block, so an animated fill needs no per-frame consumer code).
 
 **A `Param` carries one of three provenances:** *const* folds its value inline; *exposed*
 contributes an author-tweakable `MaterialParams` field with a default; *engine-bound* contributes

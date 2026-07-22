@@ -5,6 +5,7 @@
 
 #include <Veng/Assert.h>
 #include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/Material.h>
 #include <Veng/Asset/Shader.h>
 #include <Veng/Asset/VertexLayout.h>
 #include <Veng/Gui/DrawList.h>
@@ -49,13 +50,21 @@ namespace Veng::Renderer
         // Push block shared by the gui vertex and shape-fragment stages: the reciprocal of the UI
         // image extent (vertex, maps a framebuffer-pixel position to clip space) plus the gradient
         // record buffer's bindless slot and the current frame-in-flight's record base (fragment,
-        // to load a vertex-selected gradient record).
+        // to load a vertex-selected gradient record) and the frame time an animated fill reads.
         struct GuiPushConstants
         {
             vec2 InvScreenSize;
             u32 GradientBuffer;
             u32 GradientBase;
+            f32 Time;
         };
+
+        // A GuiFill material's pipeline reserves this block verbatim and places its per-draw
+        // selector immediately after it, so the domain's declared selector offset is this block's
+        // size — the one place the two definitions can drift.
+        static_assert(sizeof(GuiPushConstants) == GuiFillSelectorPushOffset,
+                      "GuiPushConstants must be exactly the range a GuiFill material reserves "
+                      "ahead of its selector (Veng::GuiFillSelectorPushOffset)");
 
         // Push block for the fullscreen composite/blit fragment (gather.frag): the bindless slots
         // of the sampled source and the sampler.
@@ -176,7 +185,7 @@ namespace Veng::Renderer
         // sinks record identical geometry into their respective targets.
         void RecordRuns(CommandBuffer& passCmd, uvec2 extent)
         {
-            BindlessRegistry& bindless = Context.GetBindlessRegistry();
+            const BindlessRegistry& bindless = Context.GetBindlessRegistry();
             passCmd.SetViewport({0, 0}, extent);
             passCmd.BindVertexBuffer(VertexBuffer);
             passCmd.BindIndexBuffer(IndexBuffer, IndexType::U32);
@@ -188,6 +197,7 @@ namespace Veng::Renderer
                                       UiScale / static_cast<f32>(extent.y)),
                 .GradientBuffer = GradientSlot.Index,
                 .GradientBase = GradientBase,
+                .Time = 0.0f,
             };
 
             optional<Gui::GuiPipeline> boundPipeline;
@@ -283,7 +293,7 @@ namespace Veng::Renderer
                 .Execute(
                     [this](PassContext& ctx)
                     {
-                        BindlessRegistry& bindless = Context.GetBindlessRegistry();
+                        const BindlessRegistry& bindless = Context.GetBindlessRegistry();
                         CommandBuffer& passCmd = ctx.Cmd();
                         passCmd.SetViewport({0, 0}, Extent);
                         passCmd.SetScissor({0, 0}, Extent);

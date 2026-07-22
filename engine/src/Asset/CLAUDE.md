@@ -335,8 +335,8 @@ a `STORAGE_BUFFER_DYNAMIC` descriptor mistranslates inside set 0's bindless Meta
 on MoltenVK. The buffer stays a plain storage buffer bound at full range, and the shader's
 `index * MaterialParamStride` load is unchanged.
 
-A `Material` carries a first-class **`MaterialDomain`** (`Surface` / `PostProcess`,
-`Veng/Asset/Material.h`) selecting its output contract, pipeline shape, standard vertex shader,
+A `Material` carries a first-class **`MaterialDomain`** (`Surface` / `PostProcess` / `Sky` /
+`Translucent` / `GuiFill`, `Veng/Asset/Material.h`) selecting its output contract, pipeline shape, standard vertex shader,
 and invocation site — the parameter schema, bindless handles, `.vmat` authoring, and editor
 inspector are shared across domains. `Surface` is the opaque path made explicit (canonical-layout
 vertex stage, g-buffer MRT output, drawn per-submesh by the geometry pass); `PostProcess` is the
@@ -345,13 +345,30 @@ chain). The lowercase `"domain"` `.vmat.json` key selects it (default `surface`)
 validates the fragment shader's outputs against the domain's contract (Surface → the five-target
 g-buffer MRT, `SV_Target0`..`SV_Target4`, velocity and emissive included; PostProcess → a single
 `SV_Target0`).
-The per-draw selector push offset is domain-keyed — Surface 64 (after the MVP block),
-PostProcess 0.
+
+**`GuiFill` is the UI-fill domain** (`MaterialDomain::GuiFill`): the engine's gui vertex stage, a
+single premultiplied linear `SV_Target0`, drawn per UI quad by the GUI pass. Its analogy to the
+other pass-built domains stops at the color format — a GUI pipeline also needs the cooked gui
+vertex layout, a premultiplied-over blend state, and the pass's own push block, none of which a
+fullscreen domain has an equivalent of. A material in this domain is a **fill source, not a
+silhouette**: the generated entry point wraps the authored graph in the engine's fixed rounded-rect
+SDF coverage and border ring (`GuiFillResolve`), so corner radius, border, clip, and rotation
+compose with it for free and a material can never widen or replace the shape.
+
+The per-draw selector push offset is domain-keyed — Surface and Translucent read their material
+index from the per-draw `DrawData` SSBO and push no selector (`Material::NoSelectorPush`);
+PostProcess and Sky push it at 0; GuiFill pushes it at **`GuiFillSelectorPushOffset` (20)**,
+immediately after the GUI pass's own push block, which it reserves verbatim. That reservation is
+the load-bearing part: without the block's `InvScreenSize` the gui vertex stage cannot reach clip
+space, so a GuiFill pipeline whose layout dropped it would not draw at all. `GuiScenePass`
+`static_assert`s `sizeof(GuiPushConstants)` against the constant, so the two definitions cannot
+drift.
 
 The engine ships the **standard vertex shader per domain in the core pack**: `surface.vert`
-(canonical layout) and `fullscreen.vert` (screenspace). The material contract is **one importable
-engine header per domain** (`engine/assets/core/shaders/Veng/`): `Veng/surface.slang`,
-`Veng/postprocess.slang`, and `Veng/sky.slang`. Each declares the set-0 bindless declarations, the
+(canonical layout), `fullscreen.vert` (screenspace), and `gui.vert` (the gui vertex layout). The
+material contract is **one importable engine header per domain**
+(`engine/assets/core/shaders/Veng/`): `Veng/surface.slang`, `Veng/postprocess.slang`,
+`Veng/sky.slang`, and `Veng/guifill.slang`. Each declares the set-0 bindless declarations, the
 per-frame view block, and its own domain's push block + fragment-input struct; `surface.slang`
 also holds `DrawData`, `GBufferOutput`, and `ComputeMotionVector` (the deferred geometry
 contract). The split is because a fullscreen domain (PostProcess, Sky) declares exactly one

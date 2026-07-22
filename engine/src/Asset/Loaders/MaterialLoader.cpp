@@ -41,6 +41,11 @@ namespace Veng
             case MaterialDomain::PostProcess:
             case MaterialDomain::Sky:
                 return FullscreenSelectorPushOffset;
+            case MaterialDomain::GuiFill:
+                // A GuiFill pipeline reserves the GUI pass's push block — without its
+                // InvScreenSize the gui vertex stage cannot reach clip space — and places the
+                // selector immediately after it.
+                return GuiFillSelectorPushOffset;
             }
             VE_ASSERT(false, "MaterialLoader: unmapped MaterialDomain {}",
                       static_cast<u32>(domain));
@@ -141,9 +146,10 @@ namespace Veng
                 mergeRange(r);
             }
 
-            // A PostProcess material's selector must be covered by a declared push range
-            // at offset 0. A Surface material pushes no selector (it reads its index from
-            // the per-draw DrawData SSBO), so there is nothing to check.
+            // A selector-pushing domain's selector must be covered by a declared push range at
+            // that domain's offset — 0 for a fullscreen material, past the reserved GUI block for
+            // a GuiFill one. A Surface material pushes no selector (it reads its index from the
+            // per-draw DrawData SSBO), so there is nothing to check.
             const u32 selectorOffset = SelectorPushOffsetFor(domain);
             if (selectorOffset != Material::NoSelectorPush)
             {
@@ -267,7 +273,7 @@ namespace Veng
 
         // Domain is stored as the underlying integer; the cook validates the fragment
         // outputs against the domain's contract, so the runtime asserts range and trusts it.
-        VE_ASSERT(header.Domain <= static_cast<u32>(MaterialDomain::Translucent),
+        VE_ASSERT(header.Domain <= static_cast<u32>(MaterialDomain::GuiFill),
                   "material: header Domain {} is out of range for MaterialDomain", header.Domain);
         const auto domain = static_cast<MaterialDomain>(header.Domain);
 

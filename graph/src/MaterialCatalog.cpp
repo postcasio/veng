@@ -87,6 +87,7 @@ namespace VengGraph
         case Veng::MaterialDomain::PostProcess:
         case Veng::MaterialDomain::Sky:
         case Veng::MaterialDomain::Translucent:
+        case Veng::MaterialDomain::GuiFill:
             return {
                 DomainOutputPin{.Name = OutputColorPin, .Type = ValuePin(TypeIdOf<Veng::vec4>())},
             };
@@ -335,6 +336,38 @@ namespace VengGraph
             return {EmittedValue{
                 .Expr = fmt::format("p.{}", field), .Type = ValuePin(vec4Type), .IsConst = false}};
         };
+
+        // --- GuiFill domain inputs: the interpolants a UI fill shades from. They exist only
+        // in this domain because no other fragment stage carries them; the fill's own
+        // silhouette is the engine's, so these are read-only positions and a clock. ---
+        if (domain == Veng::MaterialDomain::GuiFill)
+        {
+            const auto registerSource = [&catalog, &emit](const char* name, Veng::TypeId leaf,
+                                                          const char* pin, const char* expr)
+            {
+                NodeType type;
+                type.Name = name;
+                type.Outputs = {PinDesc{.Name = pin, .Type = ValuePin(leaf)}};
+                type.PropertySize = 0;
+                const NodeTypeId id = catalog.Register(std::move(type));
+                const PinType outType = ValuePin(leaf);
+                const Veng::string source = expr;
+                emit.Emitters[id.Value] =
+                    [outType, source](std::span<const EmittedValue>, std::span<const std::byte>,
+                                      EmitContext&) -> Veng::vector<EmittedValue>
+                { return {EmittedValue{.Expr = source, .Type = outType, .IsConst = false}}; };
+            };
+
+            // The fragment's normalized [-1,1] position within the shape — the space a
+            // gradient fill reduces to a ramp offset, so the two agree by construction.
+            registerSource(GuiBoxCoordTypeName, TypeIdOf<Veng::vec2>(), "Coord",
+                           "GuiFillBoxCoord(input)");
+            // The quad's own UV, which for a fill covering the element runs 0..1 across it.
+            registerSource(GuiUVTypeName, TypeIdOf<Veng::vec2>(), "UV", "input.v_UV");
+            // Seconds, from the GUI pass's push block — an animated fill needs no per-frame
+            // game code and no extra binding.
+            registerSource(GuiTimeTypeName, TypeIdOf<Veng::f32>(), "Time", "g_PC.Time");
+        }
 
         RegisterMathNodeTypes(catalog, emit);
         return types;

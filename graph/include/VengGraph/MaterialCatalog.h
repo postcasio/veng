@@ -141,6 +141,12 @@ namespace VengGraph
     inline constexpr const char* MaxTypeName = "Max";
     /// @brief Stable serialized name of the ScreenUV node type.
     inline constexpr const char* ScreenUVTypeName = "ScreenUV";
+    /// @brief Stable serialized name of the GuiBoxCoord node type (GuiFill domain only).
+    inline constexpr const char* GuiBoxCoordTypeName = "GuiBoxCoord";
+    /// @brief Stable serialized name of the GuiUV node type (GuiFill domain only).
+    inline constexpr const char* GuiUVTypeName = "GuiUV";
+    /// @brief Stable serialized name of the GuiTime node type (GuiFill domain only).
+    inline constexpr const char* GuiTimeTypeName = "GuiTime";
     /// @brief Stable serialized name of the Split node type.
     inline constexpr const char* SplitTypeName = "Split";
     /// @brief Stable serialized name of the Combine node type.
@@ -177,7 +183,8 @@ namespace VengGraph
     /// @brief Returns the fixed output-contract sink pins for a material domain.
     ///
     /// Surface yields Albedo (vec4) + Normal (vec3) + Emissive (vec3), matching the
-    /// authorable GBufferOutput channels. PostProcess yields a single Color (vec4).
+    /// authorable GBufferOutput channels. PostProcess, Sky, Translucent, and GuiFill each
+    /// yield a single Color (vec4).
     [[nodiscard]] Veng::vector<DomainOutputPin> DomainOutputContract(Veng::MaterialDomain domain);
 
     /// @brief Registers the fixed, schema-independent material node types into @p catalog.

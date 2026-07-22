@@ -216,7 +216,7 @@ namespace VengGraph
                       type->Name, produced.size(), type->Outputs.size());
             for (Veng::usize i = 0; i < produced.size(); ++i)
             {
-                const Veng::u16 pin = static_cast<Veng::u16>(i);
+                const auto pin = static_cast<Veng::u16>(i);
                 const Veng::u32 uses = outputUseCount[pinBits(node, pin)];
                 EmittedValue stored = produced[i];
                 if (uses > 1)
@@ -251,7 +251,8 @@ namespace VengGraph
         // Each domain's include declares its own fragment-input struct and push block. Surface and
         // Translucent both draw per-submesh through the canonical vertex stage and read the
         // v_MaterialIndex interpolant (Veng/surface.slang, via Veng/translucent.slang for the
-        // forward domain); a fullscreen (PostProcess/Sky) graph reads the postprocess contract.
+        // forward domain); a fullscreen (PostProcess/Sky) graph reads the postprocess contract; a
+        // GuiFill graph reads the gui vertex stage's interpolants and the reserved GUI push block.
         const char* domainInclude = "Veng/postprocess.slang";
         if (domain == Veng::MaterialDomain::Surface)
         {
@@ -260,6 +261,10 @@ namespace VengGraph
         else if (domain == Veng::MaterialDomain::Translucent)
         {
             domainInclude = "Veng/translucent.slang";
+        }
+        else if (domain == Veng::MaterialDomain::GuiFill)
+        {
+            domainInclude = "Veng/guifill.slang";
         }
         Veng::string source = fmt::format("#include \"{}\"\n\n", domainInclude);
 
@@ -322,6 +327,20 @@ namespace VengGraph
             source += "    MaterialParams p = LoadMaterialParams(input.v_MaterialIndex);\n";
             source += ctx.Body;
             source += fmt::format("    return {};\n}}\n", sinkOr(0, "float4(0,0,0,1)"));
+        }
+        else if (domain == Veng::MaterialDomain::GuiFill)
+        {
+            // A UI fill is a fill *source*: the graph's single Color sink is the straight-alpha
+            // RGBA inside the shape, and GuiFillResolve multiplies it by the engine's fixed
+            // rounded-rect coverage and border ring — the material never owns the silhouette. The
+            // selector rides the reserved GUI push block at Veng::GuiFillSelectorPushOffset, so the
+            // fragment reads it from g_PC exactly as a fullscreen material does.
+            source += "[shader(\"fragment\")]\n";
+            source += "float4 fsMain(GuiFillInputs input) : SV_Target0\n{\n";
+            source += "    MaterialParams p = LoadMaterialParams(g_PC.MaterialIndex);\n";
+            source += ctx.Body;
+            source += fmt::format("    return GuiFillResolve(input, {});\n}}\n",
+                                  sinkOr(0, "input.v_Color"));
         }
         else
         {

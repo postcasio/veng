@@ -820,3 +820,90 @@ TEST_CASE("CompileMaterialGraph: a Dot reduces two vectors to a float written in
     CHECK(Contains(r->Source, "dot("));
     CHECK(Contains(r->Source, ".xxxx"));
 }
+
+TEST_CASE("CompileMaterialGraph: a bare GuiFill output resolves through the engine coverage")
+{
+    NodeCatalog catalog;
+    MaterialEmitTable emit;
+    const MaterialNodeTypes types =
+        RegisterMaterialNodeTypes(catalog, emit, MaterialDomain::GuiFill);
+
+    NodeGraph graph = MakeGraph(catalog);
+    graph.AddNode(types.MaterialOutput);
+
+    const Veng::Result<GeneratedFragment> r =
+        CompileMaterialGraph(graph, catalog, emit, MaterialDomain::GuiFill);
+    REQUIRE(r.has_value());
+    const Veng::string& src = r->Source;
+
+    CHECK(Contains(src, "#include \"Veng/guifill.slang\""));
+    CHECK(Contains(src, "float4 fsMain(GuiFillInputs input) : SV_Target0"));
+    // The selector rides the reserved GUI push block, read the same way a fullscreen
+    // material reads its own.
+    CHECK(Contains(src, "LoadMaterialParams(g_PC.MaterialIndex)"));
+    // The silhouette is never the material's: the authored fill is always wrapped by the
+    // engine's rounded-rect coverage multiply.
+    CHECK(Contains(src, "return GuiFillResolve(input, "));
+    // An unconnected Color sink falls back to the quad's own vertex color.
+    CHECK(Contains(src, "GuiFillResolve(input, input.v_Color)"));
+}
+
+TEST_CASE("MaterialCatalog: the GuiFill domain adds the UI input nodes and only there")
+{
+    NodeCatalog guiCatalog;
+    MaterialEmitTable guiEmit;
+    RegisterMaterialNodeTypes(guiCatalog, guiEmit, MaterialDomain::GuiFill);
+
+    for (const char* name : {GuiBoxCoordTypeName, GuiUVTypeName, GuiTimeTypeName})
+    {
+        const NodeType* type = guiCatalog.Find(name);
+        REQUIRE(type != nullptr);
+        REQUIRE(type->Inputs.empty());
+        REQUIRE(type->Outputs.size() == 1);
+        CHECK(guiEmit.Find(type->Id) != nullptr);
+    }
+    CHECK(guiCatalog.Find(GuiBoxCoordTypeName)->Outputs[0].Type.Type == TypeIdOf<Veng::vec2>());
+    CHECK(guiCatalog.Find(GuiUVTypeName)->Outputs[0].Type.Type == TypeIdOf<Veng::vec2>());
+    CHECK(guiCatalog.Find(GuiTimeTypeName)->Outputs[0].Type.Type == TypeIdOf<Veng::f32>());
+
+    // No other domain's fragment stage carries these interpolants, so no other catalog
+    // offers the nodes.
+    NodeCatalog surfaceCatalog;
+    MaterialEmitTable surfaceEmit;
+    RegisterMaterialNodeTypes(surfaceCatalog, surfaceEmit, MaterialDomain::Surface);
+    CHECK(surfaceCatalog.Find(GuiBoxCoordTypeName) == nullptr);
+    CHECK(surfaceCatalog.Find(GuiUVTypeName) == nullptr);
+    CHECK(surfaceCatalog.Find(GuiTimeTypeName) == nullptr);
+}
+
+TEST_CASE("CompileMaterialGraph: the GuiFill UI inputs emit their interpolants")
+{
+    NodeCatalog catalog;
+    MaterialEmitTable emit;
+    const MaterialNodeTypes types =
+        RegisterMaterialNodeTypes(catalog, emit, MaterialDomain::GuiFill);
+
+    NodeGraph graph = MakeGraph(catalog);
+    const NodeId output = graph.AddNode(types.MaterialOutput);
+    const NodeId sample = graph.AddNode(types.TextureSample);
+    const NodeId boxCoord = AddByName(graph, catalog, GuiBoxCoordTypeName);
+    const NodeId time = AddByName(graph, catalog, GuiTimeTypeName);
+    const NodeId mul = AddByName(graph, catalog, MultiplyTypeName);
+
+    // The box coordinate drives the sampled UV; the frame time splats across the sampled
+    // color — a scrolling, pulsing fill, and the smallest graph that reaches both inputs.
+    REQUIRE(graph.Connect(PinRef{.Node = boxCoord, .Pin = 0}, PinRef{.Node = sample, .Pin = 0})
+                .has_value());
+    REQUIRE(
+        graph.Connect(PinRef{.Node = sample, .Pin = 0}, PinRef{.Node = mul, .Pin = 0}).has_value());
+    REQUIRE(
+        graph.Connect(PinRef{.Node = time, .Pin = 0}, PinRef{.Node = mul, .Pin = 1}).has_value());
+    REQUIRE(
+        graph.Connect(PinRef{.Node = mul, .Pin = 0}, PinRef{.Node = output, .Pin = 0}).has_value());
+
+    const Veng::Result<GeneratedFragment> r =
+        CompileMaterialGraph(graph, catalog, emit, MaterialDomain::GuiFill);
+    REQUIRE(r.has_value());
+    CHECK(Contains(r->Source, "GuiFillBoxCoord(input)"));
+    CHECK(Contains(r->Source, "g_PC.Time"));
+}
