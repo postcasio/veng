@@ -13,8 +13,6 @@
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/TimeOfDay.h>
 
-#include <nlohmann/json.hpp>
-
 using namespace Veng;
 using namespace Veng::Renderer;
 

@@ -4,8 +4,6 @@
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/Entity.h>
 
-#include <nlohmann/json.hpp>
-
 namespace Veng::Mcp
 {
     using Json = nlohmann::json;

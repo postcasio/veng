@@ -13,8 +13,6 @@
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Entity.h>
 
-#include <nlohmann/json.hpp>
-
 using namespace Veng;
 using Json = nlohmann::json;
 
