@@ -39,9 +39,10 @@ Options:
 
 - `--pretty` — indented, human-readable JSON. The default is compact, because a frame-rate
   capture is large.
-- `--events complete|pair` — the scope-span event form. The default, `complete`, emits one
-  event per scope with a duration (half the JSON, and the form both viewers prefer); `pair`
-  emits a separate begin and end event, for the rare case a viewer wants them.
+- `--events complete|pair` — the event form for a **CPU thread lane's** scopes. The default,
+  `complete`, emits one event per scope with a duration (half the JSON, and the form both
+  viewers prefer); `pair` emits a separate begin and end event, for the rare case a viewer
+  wants them. The frame ruler and the GPU lane are async slices in either form — see below.
 
 Exit codes: **0** on success (a truncated capture still converts and exits 0, with a warning
 on stderr) · **1** a usage error · **2** an unreadable input · **3** an unknown format
@@ -71,6 +72,21 @@ The converter maps the capture's tracks onto one process with several threads:
 - **GPU** — the GPU passes on their own lane, running parallel to the CPU threads, so "the
   CPU finished early and waited" is legible. The spans carry real begin/end times and
   nesting, not a duration-only summary laid end to end.
+
+The frame ruler and the GPU lane are emitted as **async slices** — a begin and an end sharing
+an `id` — where a CPU thread lane uses plain duration events. The reason is that neither of
+those two lanes is a stack. GPU work for frame N finishes after frame N+1's CPU work has
+started, so consecutive frames (and consecutive GPU frames) overlap by construction; and two
+GPU passes with no barrier between them genuinely run at once. A duration event says nothing
+about parenthood, leaving a viewer to guess it from timestamp containment — which has no
+answer when two spans merely straddle each other. The `id` states it instead: spans sharing an
+`id` nest, spans on different `id`s are independent and may overlap freely. So Perfetto draws
+what the hardware did rather than flagging the trace as ambiguous.
+
+An async slice belongs to the process rather than to a thread, so Perfetto lists these two
+lanes among the process's async tracks — named after the first slice on each (`GPU Frame`,
+`Frame <n>`) — instead of under the `Frames` and `GPU` thread names. There are as many such
+tracks as the overlap is deep, a handful in practice.
 - **Counters** — a queue depth, draw-call count, or GPU millisecond sample renders as a
   counter track against the timeline (Perfetto), beside the frame it happened in.
 - **Instants** — a load completion or hitch marker sits on the track that raised it.

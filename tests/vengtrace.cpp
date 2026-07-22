@@ -2,10 +2,11 @@
 // 01's committed reference fixture. The decoder is written against docs/trace-format.md (not the
 // engine's writer), so these cases pin the projection: every record type maps with the right shape,
 // event counts and durations round-trip with no drop or duplication, a back-dated GPU pass lands
-// under the frame it measured, drop/truncation accounting travels into the JSON, a truncated
-// capture converts to valid partial JSON with its trailing frame left open, an unknown section is
-// skipped, an unknown version is rejected, and the CLI arg grammar + exit-code map are asserted
-// in-process (mirroring how mcp_cli drives RunClientCli).
+// under the frame it measured, the frame ruler and the virtual lanes emit async slices whose
+// cookies keep same-cookie slices properly nested, drop/truncation accounting travels into the
+// JSON, a truncated capture converts to valid partial JSON with its trailing frame left open, an
+// unknown section is skipped, an unknown version is rejected, and the CLI arg grammar + exit-code
+// map are asserted in-process (mirroring how mcp_cli drives RunClientCli).
 //
 // Device-free pure logic + a committed fixture, so it runs in the default (fast) band.
 
@@ -71,6 +72,49 @@ namespace
         return matches;
     }
 
+    // One async slice, reassembled from its b/e pair. An open slice (a truncated capture's trailing
+    // frame) has no End.
+    struct AsyncSpan
+    {
+        i64 Id = 0;
+        i64 Tid = 0;
+        string Name;
+        string Category;
+        f64 Begin = 0.0;
+        optional<f64> End;
+    };
+
+    // Pairs every b with the e that closes it, matching on cookie the way a viewer does.
+    vector<AsyncSpan> AsyncSpans(const Json& document)
+    {
+        vector<AsyncSpan> spans;
+        std::map<i64, vector<usize>> open;
+        for (const Json& event : document.at("traceEvents"))
+        {
+            const string phase = event.value("ph", string());
+            if (phase == "b")
+            {
+                spans.push_back(AsyncSpan{.Id = event.at("id").get<i64>(),
+                                          .Tid = event.value("tid", i64{0}),
+                                          .Name = event.value("name", string()),
+                                          .Category = event.value("cat", string()),
+                                          .Begin = event.at("ts").get<f64>()});
+                open[spans.back().Id].push_back(spans.size() - 1);
+            }
+            else if (phase == "e")
+            {
+                vector<usize>& stack = open[event.at("id").get<i64>()];
+                REQUIRE_FALSE(stack.empty()); // an end with no begin would be unmatchable
+                AsyncSpan& span = spans[stack.back()];
+                stack.pop_back();
+                CHECK(span.Name == event.value("name", string()));
+                CHECK(span.Category == event.value("cat", string()));
+                span.End = event.at("ts").get<f64>();
+            }
+        }
+        return spans;
+    }
+
     optional<Json> FindEvent(const Json& document, string_view phase, string_view name)
     {
         for (const Json& event : document.at("traceEvents"))
@@ -96,26 +140,28 @@ TEST_CASE(
     REQUIRE_FALSE(document.is_discarded());
     REQUIRE(document.contains("traceEvents"));
 
-    // The fixture carries 5 scope records, 3 counters, 1 instant. In the default (complete) form a
-    // scope is one X event; a frame is also an X on the frame track (4 frames: 9, 10, 11, 12).
+    // The fixture carries 5 scope records, 3 counters, 1 instant. Four scopes sit on thread lanes
+    // and become one X each; the fifth is on the virtual GPU lane and becomes an async b/e pair, as
+    // does each of the 4 frames (9, 10, 11, 12) on the frame track.
     const vector<Json> completes = EventsWithPhase(document, "X");
-    usize scopeCount = 0;
-    usize frameCount = 0;
     for (const Json& event : completes)
     {
-        if (event.value("tid", i64{0}) == i64{2'000'000'000})
-        {
-            ++frameCount;
-        }
-        else
-        {
-            ++scopeCount;
-        }
+        // No complete event survives on the frame track or a virtual lane.
+        CHECK(event.value("tid", i64{0}) < i64{1'000'000'000});
     }
-    CHECK(scopeCount == 5); // event counts round-trip: 5 begin/end scopes in, 5 X out, no drop/dup
-    CHECK(frameCount == 4);
+    CHECK(completes.size() == 4); // event counts round-trip: no drop, no duplication
+    CHECK(EventsWithPhase(document, "b").size() == 5); // 4 frames + the GPU pass
+    CHECK(EventsWithPhase(document, "e").size() == 5);
     CHECK(EventsWithPhase(document, "C").size() == 3); // counters
     CHECK(EventsWithPhase(document, "i").size() == 1); // instant
+
+    for (const Json& event : EventsWithPhase(document, "b"))
+    {
+        // An async slice states its lane by cookie and repeats name + category on the end, which is
+        // what lets a viewer match the pair without guessing.
+        CHECK(event.contains("id"));
+        CHECK(event.contains("cat"));
+    }
 
     // A scope's duration round-trips: "Update" spans 150 ticks at 24 MHz = 6.25 us.
     const optional<Json> update = FindEvent(document, "X", "Update");
@@ -179,23 +225,68 @@ TEST_CASE("vengtrace: a back-dated GPU pass lands under the frame it measured")
     const DecodedTrace trace = DecodeFixture(CompleteFixture());
     const Json document = Json::parse(ConvertToChromeTrace(trace, {}), nullptr, false);
 
-    // The GPU pass is a scope on the virtual GPU pseudo-thread; it measures frame 9, a frame earlier
-    // than the chunk it was recorded in.
-    const optional<Json> gpu = FindEvent(document, "X", "GpuPass");
+    // The GPU pass is an async slice on the virtual GPU pseudo-thread; it measures frame 9, a frame
+    // earlier than the chunk it was recorded in.
+    const vector<AsyncSpan> spans = AsyncSpans(document);
+    const auto find = [&spans](string_view name) -> optional<AsyncSpan>
+    {
+        for (const AsyncSpan& span : spans)
+        {
+            if (span.Name == name)
+            {
+                return span;
+            }
+        }
+        return std::nullopt;
+    };
+
+    const optional<AsyncSpan> gpu = find("GpuPass");
     REQUIRE(gpu.has_value());
-    CHECK(gpu->value("tid", i64{0}) == i64{1'000'000'001});
-    CHECK(gpu->at("args").at("frame").get<u64>() == 9);
+    CHECK(gpu->Tid == i64{1'000'000'001});
+    CHECK(gpu->Category == "gpu");
+    CHECK(FindEvent(document, "b", "GpuPass")->at("args").at("frame").get<u64>() == 9);
 
-    const optional<Json> frame9 = FindEvent(document, "X", "Frame 9");
+    const optional<AsyncSpan> frame9 = find("Frame 9");
     REQUIRE(frame9.has_value());
-    CHECK(frame9->value("tid", i64{0}) == i64{2'000'000'000});
+    CHECK(frame9->Tid == i64{2'000'000'000});
 
-    const f64 gpuStart = gpu->at("ts").get<f64>();
-    const f64 gpuEnd = gpuStart + gpu->at("dur").get<f64>();
-    const f64 frameStart = frame9->at("ts").get<f64>();
-    const f64 frameEnd = frameStart + frame9->at("dur").get<f64>();
-    CHECK(gpuStart >= frameStart);
-    CHECK(gpuEnd <= frameEnd);
+    REQUIRE(gpu->End.has_value());
+    REQUIRE(frame9->End.has_value());
+    CHECK(gpu->Begin >= frame9->Begin);
+    CHECK(*gpu->End <= *frame9->End);
+}
+
+TEST_CASE("vengtrace: async slices sharing a cookie are properly nested")
+{
+    const DecodedTrace trace = DecodeFixture(CompleteFixture());
+    const Json document = Json::parse(ConvertToChromeTrace(trace, {}), nullptr, false);
+
+    // The whole point of the cookie: a viewer never has to infer parenthood from containment, so
+    // slices that share a cookie must nest exactly, and any pair that merely overlaps must sit on
+    // different cookies. Distinct cookies may overlap freely — that is what makes pipelined frames
+    // and interleaved GPU passes representable.
+    std::map<i64, vector<AsyncSpan>> byCookie;
+    for (const AsyncSpan& span : AsyncSpans(document))
+    {
+        byCookie[span.Id].push_back(span);
+    }
+    for (auto& [cookie, spans] : byCookie)
+    {
+        for (usize outer = 0; outer < spans.size(); ++outer)
+        {
+            for (usize inner = outer + 1; inner < spans.size(); ++inner)
+            {
+                const AsyncSpan& a = spans[outer];
+                const AsyncSpan& b = spans[inner];
+                REQUIRE(a.End.has_value());
+                REQUIRE(b.End.has_value());
+                const bool disjoint = (*a.End <= b.Begin) || (*b.End <= a.Begin);
+                const bool nested = (a.Begin <= b.Begin && *b.End <= *a.End) ||
+                                    (b.Begin <= a.Begin && *a.End <= *b.End);
+                CHECK((disjoint || nested));
+            }
+        }
+    }
 }
 
 TEST_CASE("vengtrace: drop and provenance accounting travel into the JSON")
@@ -255,14 +346,24 @@ TEST_CASE(
     }
     CHECK(scopeCount == 3);
 
-    // The trailing frame (11) was still open at the cut, so it is a bare B (running to end of
-    // trace) rather than a completed span; the earlier frame (10) is a complete X.
-    const optional<Json> frame10 = FindEvent(document, "X", "Frame 10");
-    CHECK(frame10.has_value());
-    const optional<Json> frame11Open = FindEvent(document, "B", "Frame 11");
-    REQUIRE(frame11Open.has_value());
-    CHECK_FALSE(frame11Open->contains("dur"));
-    CHECK_FALSE(FindEvent(document, "X", "Frame 11").has_value());
+    // The trailing frame (11) was still open at the cut, so its async slice is a begin with no
+    // matching end and runs to the end of the trace; the earlier frame (10) closes normally.
+    const vector<AsyncSpan> spans = AsyncSpans(document);
+    usize openFrames = 0;
+    for (const AsyncSpan& span : spans)
+    {
+        if (span.Name == "Frame 10")
+        {
+            CHECK(span.End.has_value());
+        }
+        if (span.Name == "Frame 11")
+        {
+            CHECK_FALSE(span.End.has_value());
+            ++openFrames;
+        }
+    }
+    CHECK(openFrames == 1);
+    CHECK_FALSE(FindEvent(document, "e", "Frame 11").has_value());
 }
 
 TEST_CASE("vengtrace: an unknown section is skipped and the capture still converts")
@@ -320,18 +421,12 @@ TEST_CASE("vengtrace: --events pair emits begin/end pairs")
     const Json document =
         Json::parse(ConvertToChromeTrace(trace, {.Events = EventForm::Pair}), nullptr, false);
 
-    // Each of the 5 scopes becomes a B and an E; no scope survives as an X (only frame spans do).
-    CHECK(EventsWithPhase(document, "B").size() >= 5);
-    CHECK(EventsWithPhase(document, "E").size() == 5);
-    usize scopeX = 0;
-    for (const Json& event : EventsWithPhase(document, "X"))
-    {
-        if (event.value("tid", i64{0}) != i64{2'000'000'000})
-        {
-            ++scopeX;
-        }
-    }
-    CHECK(scopeX == 0);
+    // Each of the 4 thread-lane scopes becomes a B and an E, and no scope survives as an X. The
+    // fifth scope is on the virtual GPU lane, which is async in either form.
+    CHECK(EventsWithPhase(document, "B").size() == 4);
+    CHECK(EventsWithPhase(document, "E").size() == 4);
+    CHECK(EventsWithPhase(document, "X").empty());
+    CHECK(EventsWithPhase(document, "b").size() == 5);
 }
 
 // ---- The CLI arg grammar and exit-code contract, driven in-process ----------------------------
@@ -387,7 +482,7 @@ TEST_CASE("vengtrace CLI: --pretty indents and --events pair selects the pair fo
         RunCli({"convert", CompleteFixture().string(), "--out", pair.string(), "--events", "pair"});
     CHECK(pairRun.Code == static_cast<int>(ExitCode::Ok));
     const Json document = Json::parse(ReadBytes(pair), nullptr, false);
-    CHECK(EventsWithPhase(document, "E").size() == 5);
+    CHECK(EventsWithPhase(document, "E").size() == 4);
 }
 
 TEST_CASE("vengtrace CLI: a truncated capture is not an error")
