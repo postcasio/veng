@@ -160,10 +160,11 @@ namespace Veng::Renderer
 
         /// @brief Returns the per-submesh count the g-buffer pass drew in the last Execute.
         ///
-        /// Equals GetFrustumSurvivedCount() — every frustum survivor is a draw under
-        /// CullMode::CPU (a materialless or not-yet-resident survivor counts even though it
-        /// records no command). The terminal stage of the gathered → frustum-survived → drawn
-        /// funnel. Under CullMode::GPU the occlusion stage shows up separately as
+        /// Equals GetFrustumSurvivedCount() — it counts frustum survivors, not draw slots laid
+        /// out (a materialless or not-yet-resident survivor counts even though it records no
+        /// command, and a frame clamped by the per-frame draw-slot budget still reports every
+        /// survivor). What the budget actually granted, and what it dropped, is
+        /// GetDrawBudgetStats(). Under CullMode::GPU the occlusion stage shows up separately as
         /// GetLastGpuSurvivorCount() (the device-side draws after the hi-Z test zeros occluded
         /// commands). Zero before the first Execute.
         [[nodiscard]] u32 GetLastDrawnCount() const;

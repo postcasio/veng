@@ -121,12 +121,27 @@ separates *deciding* from *wiring*:
   static opaque slot layout and its grouping, the skinned slots and their palettes, the translucent
   draws and their sort — are free functions in `DrawGather.{h,cpp}`, beside the `DrawPlan.h` types
   they fill. They take one `DrawGatherInput` bundle by const reference and the genuinely mutable
-  state (the plans, the palette-base map, the shared slot and palette cursors) as explicit
-  by-reference parameters, so mutation is visible at the call site. Threading **one** slot cursor
-  through all three is what keeps the static opaque range contiguous from 0, which the GPU cull
-  arrays index by; the retained cull arm asserts that invariant directly. The grouping loop both the
-  static and skinned phases run is one pure `GroupContiguousSlots` over a span of slots, covered by
+  state (the plans, the palette-base map, the shared `DrawBudget`) as explicit by-reference
+  parameters, so mutation is visible at the call site. Threading **one** budget through all three
+  is what keeps the static opaque range contiguous from 0, which the GPU cull arrays index by; the
+  retained cull arm asserts that invariant directly. The grouping loop both the static and skinned
+  phases run is one pure `GroupContiguousSlots` over a span of slots, covered by
   `tests/unit/draw_grouping.cpp`.
+- **The per-frame budget is a type, not a predicate the phases each re-test.** `DrawBudget`
+  (`DrawBudget.h`, header-only and device-free) owns both cursors, both limits (`MaxCullCandidates`
+  slots, `MaxSkinningMatricesPerFrame` palette matrices), and the per-phase drop counts; a phase
+  calls `TryClaimSlot` — or, for a skinned draw, the single all-or-nothing `TryClaimSkinnedDraw`,
+  which returns a `SkinnedClaim` rather than a bool because a palette failure skips the instance
+  while a slot failure ends the phase — and reports what it abandoned through `RecordDropped`. The
+  reason it is a type is that the same predicate open-coded at three sites is what let the three
+  reactions diverge. **The policy is clamp, drop, count, log once per renderer**: a frame over
+  budget lays out what fits and abandons the rest, `SceneRenderer::GetDrawBudgetStats()` reports
+  the limit, the grants, and the per-phase drops, and the renderer warns once for its lifetime
+  (the latch is the renderer's, so the budget stays I/O-free and unit-testable in the `fast` band
+  — `tests/unit/draw_budget.cpp`). The static phase's count carries a caveat: it triages the
+  skinned and translucent survivors as it lays out its own slots, so its overflow ends the triage
+  too and `StaticDropped` covers every remaining candidate, including ones a later phase would
+  have drawn.
 - **Construction lives in `SceneRendererResources.cpp`** — the `Create` half of the lifetime split
   below, compiled as a **second translation unit of the same class**, not a new type. The six
   `Create*` members keep unchanged signatures and reference `m_Internal` nowhere, so the split needs
@@ -484,9 +499,12 @@ once and falls back to `CullMode::CPU`, and `GetActiveCullMode()` reports the re
 
 `SceneRendererSettings::FrustumCull` (default on) toggles the frustum cull itself; the cull funnel
 is reported by `GetLastVisibleCount()` (gathered submesh candidates) →
-`GetFrustumSurvivedCount()` (frustum survivors) → `GetLastDrawnCount()` (drawn — equal to the
-frustum survivors on the CPU path), with `GetLastGpuSurvivorCount()` the GPU occlusion survivor
-count read back one frame late under `CullMode::GPU`, and `DidBroadphaseRebuildLastFrame()` /
+`GetFrustumSurvivedCount()` (frustum survivors) → `GetLastDrawnCount()` (equal to the frustum
+survivors on the CPU path — it counts survivors, not slots laid out) → `GetDrawBudgetStats()` (the
+slot limit, the slots the three gather phases granted, and the submeshes each dropped once a
+budget was exhausted — the stage that makes a clamped frame legible, since the survivor counts
+above it do not move when the clamp fires), with `GetLastGpuSurvivorCount()` the GPU occlusion
+survivor count read back one frame late under `CullMode::GPU`, and `DidBroadphaseRebuildLastFrame()` /
 `GetBroadphaseNodeCount()` reporting whether the tree rebuilt and its size. Tree maintenance is
 rebuild-on-version-move, not incremental; culling granularity is per-submesh, not meshlet;
 occlusion is temporal hi-Z, not two-pass; shadow views cull on the CPU BVH only.
@@ -620,7 +638,8 @@ integrated light, so the LOD transition holds brightness.
   a `PointFieldStats` block — fields walked, cells total / in-frustum / measured, resolved sprite
   draws issued, sprite points submitted, points the compute pass compacted out, the draw source,
   and aggregate splats drawn — summed across every field. It sits beside the mesh cull-funnel
-  getters (`GetLastVisibleCount` / `GetFrustumSurvivedCount` / `GetLastDrawnCount`): a consumer
+  getters (`GetLastVisibleCount` / `GetFrustumSurvivedCount` / `GetLastDrawnCount` /
+  `GetDrawBudgetStats`): a consumer
   profiling a heavy field reads the sprite/splat split here instead of GPU timestamps.
   `CellsMeasured` is tracked apart from `CellsInFrustum` (a fixed-outcome threshold skips the
   density measure), and `ResolvedDraws` apart from `SpritePoints` (the run-merge collapses draws

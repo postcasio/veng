@@ -4400,4 +4400,152 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     std::filesystem::remove(outArchive);
 }
 
+// The draw-budget overflow case: the only one in the suite whose scene exceeds the per-frame
+// draw-slot budget, so it is the only end-to-end cover of the clamp path. It is cooker-gated
+// (like the albedo oracle) because the slot claim runs only for a material-resident submesh —
+// GatherStaticOpaque skips a materialless or not-yet-loaded one before claiming, so a scene of
+// the shell cases' materialless cubes consumes no slots and can never trip the budget.
+//
+// The budget is a src/Renderer/ constant a tests/gpu/ case cannot name, and hard-coding its
+// value here would both duplicate it a third time and silently stop testing overflow the day it
+// is raised. So the case reads the live limit back from an in-budget frame's
+// GetDrawBudgetStats().SlotLimit and sizes the scene from it.
+//
+// Wall-clock budget: ~2 s. A limit-sized scene is several thousand entities through the
+// broadphase build, the frustum descent, and three full Executes recording a draw per slot —
+// a real cost on every GPU-band run, accepted for the one path with no other coverage.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: a scene over the per-frame draw-slot budget clamps, counts "
+                  "its dropped submeshes, and renders")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const path outArchive = CookAndMountBrick(assets, "veng_gpu_draw_budget.vengpack");
+
+    const AssetResult<AssetHandle<MaterialInstance>> brick =
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443});
+    REQUIRE(brick.has_value());
+    REQUIRE(brick->IsLoaded());
+
+    constexpr uvec2 extent{64, 64};
+
+    const Unique<Scene> scene = Scene::Create(Types);
+
+    // Lights the cluster's camera-facing faces, so a drawn frame is measurably brighter than the
+    // empty one. A Light entity carries no MeshRenderer, so it fills no draw slot.
+    const Entity lightEntity = scene->CreateEntity();
+    scene->Add<Light>(lightEntity) = Light{
+        .Direction = vec3(0.0f, 0.0f, -1.0f),
+        .Color = vec3(1.0f, 1.0f, 1.0f),
+        .Intensity = 2.0f,
+    };
+
+    CameraView camera;
+    camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 0.0f, 2.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = {.Mode = DebugView::Final, .Bloom = false, .Shadows = false, .AO = false},
+    });
+
+    auto Render = [&]() -> vector<u8>
+    {
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer->Execute(
+                    cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
+            });
+        const vector<u8> pixels = renderer->GetOutput()->GetImage()->Download();
+        REQUIRE(pixels.size() == static_cast<size_t>(extent.x) * extent.y * 8);
+        return pixels;
+    };
+
+    // Mean luminance over the frame's central block — the region the cluster covers.
+    auto CenterLuma = [&](const vector<u8>& pixels) -> f64
+    {
+        f64 sum = 0.0;
+        u32 count = 0;
+        for (u32 y = extent.y / 2 - 8; y < extent.y / 2 + 8; ++y)
+        {
+            for (u32 x = extent.x / 2 - 8; x < extent.x / 2 + 8; ++x)
+            {
+                const vec3 c = DecodeTexel(pixels, extent.x, x, y);
+                sum += 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+                ++count;
+            }
+        }
+        return sum / count;
+    };
+
+    // A geometry-free frame: within budget by construction, so its stats report the live limit
+    // and no drops, and its center is the lighting pass's background.
+    const f64 emptyCenter = CenterLuma(Render());
+    const DrawBudgetStats empty = renderer->GetDrawBudgetStats();
+    REQUIRE(empty.SlotLimit > 0);
+    CHECK(empty.SlotsGranted == 0);
+    CHECK(empty.StaticDropped == 0);
+
+    // Deliberately over the limit. Every cube shares one mesh and one resident material, so each
+    // is a single opaque, material-resident submesh — one slot claim apiece.
+    constexpr u32 Overflow = 8;
+    const u32 total = empty.SlotLimit + Overflow;
+
+    const Ref<Mesh> cube = Mesh::BuildSync(Context, Primitives::Cube(0.05f, *brick), "Budget Cube");
+    const AssetHandle<Mesh> cubeHandle = assets.Adopt(cube);
+
+    // A cube lattice inside a 0.6-unit box centered on the origin, comfortably inside the camera
+    // frustum, so every candidate survives the cull and reaches the slot claim.
+    u32 side = 1;
+    while (side * side * side < total)
+    {
+        ++side;
+    }
+    const f32 step = 0.6f / static_cast<f32>(side - 1);
+    for (u32 i = 0; i < total; ++i)
+    {
+        const Entity entity = scene->CreateEntity();
+        scene->Add<Transform>(entity).Position =
+            vec3(-0.3f + static_cast<f32>(i % side) * step,
+                 -0.3f + static_cast<f32>((i / side) % side) * step,
+                 -0.3f + static_cast<f32>(i / (side * side)) * step);
+        scene->Add<MeshRenderer>(entity).Mesh = cubeHandle;
+    }
+
+    const f64 overflowCenter = CenterLuma(Render());
+    const DrawBudgetStats stats = renderer->GetDrawBudgetStats();
+
+    // The frame reached this line at all: the static phase clamps rather than aborting.
+    CHECK(stats.SlotLimit == empty.SlotLimit);
+
+    // The budget filled exactly and stopped, and the count is the overflow the scene was built
+    // to produce — not merely non-zero.
+    CHECK(stats.SlotsGranted == stats.SlotLimit);
+    CHECK(stats.StaticDropped == Overflow);
+    CHECK(stats.SkinnedDropped == 0);
+    CHECK(stats.TranslucentDropped == 0);
+    CHECK(stats.PaletteDropped == 0);
+
+    // Every candidate survived the frustum, so the funnel's frustum stage still reports the whole
+    // scene — the clamp happens after it, which is why the drop count is the only place it shows.
+    CHECK(renderer->GetFrustumSurvivedCount() == total);
+
+    // The clamped frame rendered its granted draws rather than dropping the frame.
+    CHECK(overflowCenter > emptyCenter + 0.02);
+
+    // A sustained overflow is a steady state: the next frame clamps identically (the warning is
+    // latched once per renderer, so only the counters report it).
+    Render();
+    const DrawBudgetStats again = renderer->GetDrawBudgetStats();
+    CHECK(again.SlotsGranted == stats.SlotsGranted);
+    CHECK(again.StaticDropped == stats.StaticDropped);
+
+    std::filesystem::remove(outArchive);
+}
+
 #endif // GPU_GBUFFER_FIXTURE_DIR

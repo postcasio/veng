@@ -28,8 +28,10 @@ namespace Veng::Renderer
     /// @brief Maximum per-submesh candidates a frame's per-draw / cull buffers hold.
     ///
     /// The fixed candidate maximum: the indirect buffer covers this many slots, culled ones
-    /// no-op. A frame exceeding it is clamped (the overflow submeshes are not drawn), asserted
-    /// in a debug build. The renderer's per-draw buffers and the GPU cull's candidate/indirect
-    /// buffers are both sized from it, so it has one owner rather than a copy per side.
+    /// no-op. A frame exceeding it is clamped — the overflow submeshes are not drawn, they are
+    /// counted per gather phase in SceneRenderer::GetDrawBudgetStats(), and the renderer logs a
+    /// warning once for its whole lifetime. The renderer's per-draw buffers and the GPU cull's
+    /// candidate/indirect buffers are both sized from it, so it has one owner rather than a copy
+    /// per side.
     inline constexpr u32 MaxCullCandidates = 4096;
 }
