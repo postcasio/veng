@@ -17,6 +17,11 @@ namespace Veng
         class Context;
         class Viewport;
     }
+
+    namespace Diagnostics
+    {
+        class Profiler;
+    }
 }
 
 namespace Veng::Mcp
@@ -160,5 +165,19 @@ namespace Veng::Mcp
         /// index still names the last *presented* image rather than one acquired for a frame not
         /// yet drawn — so the capture is of a finished frame.
         function<Renderer::Context*()> RenderContext;
+
+        /// @brief Resolves the profiler the capture tools drive, or null when unsupported.
+        ///
+        /// The profile.* tools (profile.start / profile.stop / profile.dump_ring / profile.stats)
+        /// reach the app's Diagnostics::Profiler through here; a host that leaves it null (or returns
+        /// null) makes those tools report the profiler unavailable rather than dereferencing it,
+        /// exactly as a null InjectInput does for input.send. The three capture verbs are registered
+        /// only under AllowMutations (they write files); profile.stats is read-only and always
+        /// registered.
+        ///
+        /// The closure runs on the render thread during Pump(), so it may freely touch the profiler.
+        /// A build without VE_PROFILE still resolves a profiler shell whose capture verbs return a
+        /// clear "disabled" error, which the tools surface as an error result.
+        function<Diagnostics::Profiler*()> Profiler;
     };
 }

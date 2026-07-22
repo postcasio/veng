@@ -2,8 +2,33 @@
 
 #include <chrono>
 
+// The build tree's capture directory, baked at configure time (`<build-dir>/captures/`). Scoped to
+// this TU so it never reaches the public surface; an absent define degrades to a relative default so
+// the profiler compiles in a tree that did not set it.
+#ifndef VENG_CAPTURE_DIR
+#define VENG_CAPTURE_DIR "captures"
+#endif
+
 namespace Veng::Diagnostics
 {
+    path CaptureDirectory()
+    {
+        return path(VENG_CAPTURE_DIR);
+    }
+
+    path ResolveCapturePath(string_view name)
+    {
+        // Only the final component of the requested name is taken, so a name carrying separators
+        // cannot escape the capture directory.
+        path leaf = path(string(name)).filename();
+        if (leaf.empty())
+        {
+            leaf = "capture";
+        }
+        leaf += ".vtrace";
+        return CaptureDirectory() / leaf;
+    }
+
     // The trace clock's tick frequency and its tick-to-nanosecond conversion. Defined
     // unconditionally (they carry no recording state) so a decoder or a hand-built span can
     // convert NowTicks() values regardless of the VE_PROFILE gate.
@@ -34,12 +59,19 @@ namespace Veng::Diagnostics
 
 #if defined(VE_PROFILE) && VE_PROFILE
 
+#include <Veng/Diagnostics/FileTraceSink.h>
+
 #include "TraceFormat.h"
 
+#include <fmt/format.h>
+
+#include <algorithm>
 #include <atomic>
 #include <cstring>
+#include <filesystem>
 #include <mutex>
 #include <unordered_map>
+#include <vector>
 
 namespace Veng::Diagnostics
 {
@@ -261,12 +293,35 @@ namespace Veng::Diagnostics
             std::mutex SnapshotMutex;
             std::unordered_map<NameId, ScopeAggregate> Snapshot;
 
+            // Capture control. The active capture's sink (streaming to a file) and, once ended, the
+            // sink still flushing to disk off-thread. RingEnabled is the standing policy a capture
+            // temporarily overrides; the active Mode/Sink is re-derived from it (ApplyPolicy) when the
+            // capture ends. All touched only from the control thread (the BeginFrame self-terminate
+            // runs there too), so no lock of their own.
+            Unique<FileTraceSink> CaptureSink;
+            Unique<FileTraceSink> DrainingSink;
+            path CaptureFilePath;
+            bool RingEnabled = false;
+            u64 CaptureFrameBudget = 0;
+            u64 CaptureStartFrame = 0;
+
             ThreadState* AttachThread(string_view name);
             void DetachThread(ThreadState* state);
             void EmitThreadTrack(ThreadState& state);
             NameId Intern(string_view text);
             void HandChunkToSink(ThreadState& state, Chunk& chunk);
             void AdvanceFrame();
+
+            static VoidResult EnsureDirectory(const path& file);
+            void AttachSink(TraceSink* sink);
+            void DeliverStateToSink(TraceSink& sink);
+            void ApplyPolicy();
+            void ReapDrainingSink();
+            void EnforceRetention(const path& directory);
+            VoidResult BeginCapture(const path& file, u64 frameCount);
+            Result<path> EndCapture();
+            Result<path> DumpRing(const path& file);
+            CaptureState GetState();
         };
 
         namespace
@@ -533,6 +588,327 @@ namespace Veng::Diagnostics
             }
             Snapshot = std::move(folded);
             FrameIndex.fetch_add(1, std::memory_order_relaxed);
+
+            // A self-terminating capture ends at this frame boundary — never mid-frame, so a decoder
+            // never sees a truncated final frame. Runs after every lock above is released; EndCapture
+            // takes its own.
+            if (CaptureSink && CaptureFrameBudget != 0)
+            {
+                const u64 elapsed = FrameIndex.load(std::memory_order_relaxed) - CaptureStartFrame;
+                if (elapsed >= CaptureFrameBudget)
+                {
+                    (void)EndCapture();
+                }
+            }
+        }
+
+        void ProfilerState::DeliverStateToSink(TraceSink& sink)
+        {
+            // Bring a sink current with every string interned so far, as one full table — a triggered
+            // capture reads it as its opening delta, and a ring dump needs the whole table since its
+            // early chunks (where those ids were interned) may already be gone.
+            {
+                const std::scoped_lock lock(StringMutex);
+                if (!IdToString.empty())
+                {
+                    StringTableDelta delta;
+                    delta.FirstId = 1;
+                    delta.Strings.reserve(IdToString.size());
+                    for (const string& text : IdToString)
+                    {
+                        delta.Strings.emplace_back(text);
+                    }
+                    sink.OnStrings(delta);
+                }
+            }
+
+            // Replay every known track's descriptor so a thread named before the sink attached (Main,
+            // the workers) and every virtual track carries its real name/role rather than a bare id.
+            {
+                const std::scoped_lock lock(RegistryMutex);
+                for (const auto& thread : Threads)
+                {
+                    sink.OnTrack(TrackDescriptor{.Id = thread->Id,
+                                                 .IsVirtual = false,
+                                                 .Role = TrackRole::Cpu,
+                                                 .Name = thread->Name});
+                }
+            }
+            {
+                const std::scoped_lock lock(TrackMutex);
+                for (usize i = 0; i < Tracks.size(); ++i)
+                {
+                    sink.OnTrack(TrackDescriptor{.Id = static_cast<TrackId>(i + 1),
+                                                 .IsVirtual = true,
+                                                 .Role = Tracks[i].Role,
+                                                 .Name = Tracks[i].Name});
+                }
+            }
+        }
+
+        VoidResult ProfilerState::EnsureDirectory(const path& file)
+        {
+            if (!file.has_parent_path())
+            {
+                return {};
+            }
+            std::error_code ec;
+            std::filesystem::create_directories(file.parent_path(), ec);
+            if (ec)
+            {
+                return std::unexpected(fmt::format("cannot create capture directory '{}': {}",
+                                                   file.parent_path().string(), ec.message()));
+            }
+            return {};
+        }
+
+        void ProfilerState::AttachSink(TraceSink* sink)
+        {
+            Sink = sink;
+            if (sink)
+            {
+                DeliverStateToSink(*sink);
+            }
+        }
+
+        void ProfilerState::ApplyPolicy()
+        {
+            // A running capture owns Mode and Sink directly; when none runs, the standing ring policy
+            // decides whether the buffers record into a wrapping ring or stay off.
+            if (CaptureSink)
+            {
+                return;
+            }
+            Sink = nullptr;
+            Mode = RingEnabled ? ProfilerMode::Ring : ProfilerMode::Off;
+        }
+
+        void ProfilerState::ReapDrainingSink()
+        {
+            if (DrainingSink && DrainingSink->HasFinishedWriting())
+            {
+                const path directory = DrainingSink->GetPath().parent_path();
+                DrainingSink.reset();
+                EnforceRetention(directory);
+            }
+        }
+
+        void ProfilerState::EnforceRetention(const path& directory)
+        {
+            const u32 cap = Config.RetainedCaptureCap;
+            if (cap == 0 || directory.empty())
+            {
+                return;
+            }
+            std::error_code ec;
+            if (!std::filesystem::is_directory(directory, ec))
+            {
+                return;
+            }
+
+            struct Entry
+            {
+                path File;
+                std::filesystem::file_time_type Time;
+            };
+            std::vector<Entry> entries;
+            for (const auto& entry : std::filesystem::directory_iterator(directory, ec))
+            {
+                if (ec)
+                {
+                    return;
+                }
+                if (!entry.is_regular_file() || entry.path().extension() != ".vtrace")
+                {
+                    continue;
+                }
+                std::error_code timeError;
+                const auto time = entry.last_write_time(timeError);
+                if (timeError)
+                {
+                    continue;
+                }
+                entries.push_back(Entry{.File = entry.path(), .Time = time});
+            }
+
+            if (entries.size() <= cap)
+            {
+                return;
+            }
+            // Oldest first, so the cap deletes the least-recent captures until the directory is under it.
+            std::ranges::sort(entries,
+                              [](const Entry& a, const Entry& b) { return a.Time < b.Time; });
+            const usize toDelete = entries.size() - cap;
+            for (usize i = 0; i < toDelete; ++i)
+            {
+                std::error_code removeError;
+                std::filesystem::remove(entries[i].File, removeError);
+            }
+        }
+
+        VoidResult ProfilerState::BeginCapture(const path& file, u64 frameCount)
+        {
+            ReapDrainingSink();
+            if (CaptureSink)
+            {
+                return std::unexpected(
+                    fmt::format("a capture is already in flight ('{}'); end it first",
+                                CaptureFilePath.string()));
+            }
+            if (const VoidResult ready = EnsureDirectory(file); !ready)
+            {
+                return std::unexpected(ready.error());
+            }
+
+            Unique<FileTraceSink> sink = FileTraceSink::Create(file, /*ringDump=*/false);
+            if (!sink)
+            {
+                return std::unexpected(
+                    fmt::format("failed to create a capture sink at '{}'", file.string()));
+            }
+
+            CaptureSink = std::move(sink);
+            CaptureFilePath = file;
+            CaptureFrameBudget = frameCount;
+            CaptureStartFrame = FrameIndex.load(std::memory_order_relaxed);
+            // Recording on (Mode != Off), streaming to the file (a non-null sink selects the
+            // hand-off-when-full drain). The standing RingEnabled is untouched — a capture overrides
+            // the active policy but does not change it.
+            Mode = ProfilerMode::Ring;
+            AttachSink(CaptureSink.get());
+            return {};
+        }
+
+        Result<path> ProfilerState::EndCapture()
+        {
+            if (!CaptureSink)
+            {
+                return std::unexpected(string("no capture is running"));
+            }
+
+            u64 droppedThreads = 0;
+            {
+                const std::scoped_lock lock(RegistryMutex);
+                droppedThreads = RegistrationOverflow;
+                // Flush every thread's outstanding chunk up to its published write offset.
+                for (auto& thread : Threads)
+                {
+                    for (auto& chunk : thread->Chunks)
+                    {
+                        HandChunkToSink(*thread, *chunk);
+                    }
+                }
+            }
+            CaptureSink->SetAccounting(DroppedEvents.load(std::memory_order_relaxed),
+                                       droppedThreads);
+            CaptureSink->BeginClose();
+
+            const path written = CaptureFilePath;
+            DrainingSink = std::move(CaptureSink);
+            CaptureFilePath.clear();
+            CaptureFrameBudget = 0;
+            CaptureStartFrame = 0;
+            // Restore the standing policy the capture overrode.
+            ApplyPolicy();
+            return written;
+        }
+
+        Result<path> ProfilerState::DumpRing(const path& file)
+        {
+            ReapDrainingSink();
+            if (CaptureSink)
+            {
+                return std::unexpected(fmt::format(
+                    "a capture is in flight ('{}'); the ring is unavailable until it ends",
+                    CaptureFilePath.string()));
+            }
+            if (const VoidResult ready = EnsureDirectory(file); !ready)
+            {
+                return std::unexpected(ready.error());
+            }
+
+            Unique<FileTraceSink> sink = FileTraceSink::Create(file, /*ringDump=*/true);
+            if (!sink)
+            {
+                return std::unexpected(
+                    fmt::format("failed to create a dump sink at '{}'", file.string()));
+            }
+
+            // The full string table and every track's descriptor, so a dump whose earliest chunks
+            // (carrying the deltas that first interned those ids) were discarded still resolves them.
+            DeliverStateToSink(*sink);
+
+            // Copy a live ring chunk up to its acquire-loaded write offset without disturbing it — the
+            // ring keeps recording — and seal the record byte count into the copy's header.
+            const auto collect = [&sink](ThreadId thread, Chunk& chunk)
+            {
+                const u32 offset = chunk.WriteOffset.load(std::memory_order_acquire);
+                if (offset <= sizeof(ChunkHeader))
+                {
+                    return;
+                }
+                std::vector<u8> bytes(chunk.Data.get(), chunk.Data.get() + offset);
+                const u32 recordBytes = offset - static_cast<u32>(sizeof(ChunkHeader));
+                std::memcpy(bytes.data() + offsetof(ChunkHeader, RecordBytes), &recordBytes,
+                            sizeof(recordBytes));
+                sink->OnChunk(thread, bytes.data(), offset);
+            };
+
+            u64 droppedThreads = 0;
+            {
+                const std::scoped_lock lock(RegistryMutex);
+                droppedThreads = RegistrationOverflow;
+                for (auto& thread : Threads)
+                {
+                    // Each thread's live chunks in sequence order, oldest first — the discarded span
+                    // between them reads as a sequence gap, not silence.
+                    std::vector<Chunk*> live;
+                    for (auto& chunk : thread->Chunks)
+                    {
+                        if (!chunk->IsEmpty())
+                        {
+                            live.push_back(chunk.get());
+                        }
+                    }
+                    std::ranges::sort(live, [](const Chunk* a, const Chunk* b)
+                                      { return a->SequenceNumber < b->SequenceNumber; });
+                    for (Chunk* chunk : live)
+                    {
+                        collect(thread->Id, *chunk);
+                    }
+                }
+            }
+
+            sink->SetAccounting(DroppedEvents.load(std::memory_order_relaxed), droppedThreads);
+            sink->BeginClose();
+
+            const path written = file;
+            DrainingSink = std::move(sink);
+            return written;
+        }
+
+        CaptureState ProfilerState::GetState()
+        {
+            ReapDrainingSink();
+            CaptureState state;
+            if (CaptureSink)
+            {
+                state.Status = CaptureStatus::Capturing;
+                state.FrameBudget = CaptureFrameBudget;
+                state.FramesElapsed =
+                    FrameIndex.load(std::memory_order_relaxed) - CaptureStartFrame;
+                state.Path = CaptureFilePath;
+            }
+            else if (RingEnabled)
+            {
+                state.Status = CaptureStatus::Ring;
+            }
+            else
+            {
+                state.Status = CaptureStatus::Off;
+            }
+            state.WriterDraining = DrainingSink != nullptr;
+            return state;
         }
 
         ThreadState* CurrentThreadState() noexcept
@@ -727,49 +1103,7 @@ namespace Veng::Diagnostics
 
     void Profiler::SetSink(TraceSink* sink)
     {
-        m_State->Sink = sink;
-        if (sink)
-        {
-            // Bring a freshly attached sink current with every string interned so far.
-            {
-                const std::scoped_lock lock(m_State->StringMutex);
-                if (!m_State->IdToString.empty())
-                {
-                    StringTableDelta delta;
-                    delta.FirstId = 1;
-                    delta.Strings.reserve(m_State->IdToString.size());
-                    for (const string& text : m_State->IdToString)
-                    {
-                        delta.Strings.emplace_back(text);
-                    }
-                    sink->OnStrings(delta);
-                }
-            }
-
-            // Replay every known track's descriptor: a thread named before the sink attached (the
-            // main thread, the workers) and every virtual track created before it would otherwise
-            // reach the capture as a bare id.
-            {
-                const std::scoped_lock lock(m_State->RegistryMutex);
-                for (const auto& thread : m_State->Threads)
-                {
-                    sink->OnTrack(TrackDescriptor{.Id = thread->Id,
-                                                  .IsVirtual = false,
-                                                  .Role = TrackRole::Cpu,
-                                                  .Name = thread->Name});
-                }
-            }
-            {
-                const std::scoped_lock lock(m_State->TrackMutex);
-                for (usize i = 0; i < m_State->Tracks.size(); ++i)
-                {
-                    sink->OnTrack(TrackDescriptor{.Id = static_cast<TrackId>(i + 1),
-                                                  .IsVirtual = true,
-                                                  .Role = m_State->Tracks[i].Role,
-                                                  .Name = m_State->Tracks[i].Name});
-                }
-            }
-        }
+        m_State->AttachSink(sink);
     }
 
     TraceSink* Profiler::GetSink() const
@@ -902,6 +1236,32 @@ namespace Veng::Diagnostics
         return m_State->DroppedEvents.load(std::memory_order_relaxed);
     }
 
+    VoidResult Profiler::BeginCapture(const path& path, u64 frameCount)
+    {
+        return m_State->BeginCapture(path, frameCount);
+    }
+
+    Result<path> Profiler::EndCapture()
+    {
+        return m_State->EndCapture();
+    }
+
+    void Profiler::SetRingEnabled(bool enabled)
+    {
+        m_State->RingEnabled = enabled;
+        m_State->ApplyPolicy();
+    }
+
+    Result<path> Profiler::DumpRing(const path& path)
+    {
+        return m_State->DumpRing(path);
+    }
+
+    CaptureState Profiler::GetState() const
+    {
+        return m_State->GetState();
+    }
+
     // A registration is RAII on the thread that created it, so it detaches the calling thread. As a
     // friend of Profiler it reaches the private recording state directly.
     ProfilerThreadRegistration::~ProfilerThreadRegistration()
@@ -1010,6 +1370,39 @@ namespace Veng::Diagnostics
     u64 Profiler::GetDroppedEventCount() const
     {
         return 0;
+    }
+
+    // The capture verbs are documented no-ops under VE_PROFILE=OFF: there is no recording state to
+    // capture, so a request returns a clear error a caller reports rather than failing to build.
+    namespace
+    {
+        VoidResult ProfileDisabled()
+        {
+            return std::unexpected(
+                string("the profiler is disabled in this build (VE_PROFILE=OFF)"));
+        }
+    }
+
+    VoidResult Profiler::BeginCapture(const path& /*path*/, u64 /*frameCount*/)
+    {
+        return ProfileDisabled();
+    }
+
+    Result<path> Profiler::EndCapture()
+    {
+        return std::unexpected(ProfileDisabled().error());
+    }
+
+    void Profiler::SetRingEnabled(bool /*enabled*/) {}
+
+    Result<path> Profiler::DumpRing(const path& /*path*/)
+    {
+        return std::unexpected(ProfileDisabled().error());
+    }
+
+    CaptureState Profiler::GetState() const
+    {
+        return {};
     }
 
     ProfilerThreadRegistration::~ProfilerThreadRegistration() = default;

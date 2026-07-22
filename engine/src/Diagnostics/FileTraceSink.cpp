@@ -194,6 +194,9 @@ namespace Veng::Diagnostics
         std::condition_variable QueueCondition;
         std::deque<WriterItem> Queue;
         bool Closed = false;
+        // Set true after Run() commits the file and returns, so a controller that issued BeginClose
+        // learns when the file is on disk without joining the writer thread.
+        std::atomic<bool> Finished{false};
 
         std::thread Writer;
 
@@ -301,6 +304,9 @@ namespace Veng::Diagnostics
                 }
             }
             Finish(clean);
+            // Publish completion last, with release, so a controller that acquire-loads Finished sees
+            // the committed file.
+            Finished.store(true, std::memory_order_release);
         }
 
         void Finish(bool clean)
@@ -515,6 +521,25 @@ namespace Veng::Diagnostics
                 m_Impl->Writer.join();
             }
         }
+    }
+
+    void FileTraceSink::BeginClose()
+    {
+        {
+            const std::scoped_lock lock(m_Impl->QueueMutex);
+            if (m_Impl->Closed)
+            {
+                return;
+            }
+            m_Impl->Closed = true;
+            m_Impl->Queue.push_back(WriterItem{.What = WriterItem::Kind::Close, .Clean = true});
+        }
+        m_Impl->QueueCondition.notify_one();
+    }
+
+    bool FileTraceSink::HasFinishedWriting() const
+    {
+        return m_Impl->Finished.load(std::memory_order_acquire);
     }
 
     void FileTraceSink::SetAccounting(u64 droppedEvents, u64 droppedThreads)

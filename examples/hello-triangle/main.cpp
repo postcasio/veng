@@ -27,6 +27,7 @@
 #include <Veng/Gui/Overlay.h>
 #include <Veng/Gui/StyleSheet.h>
 
+#include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Mcp/McpHost.h>
 #include <Veng/Mcp/McpServer.h>
 #include <Veng/Mcp/McpServerInfo.h>
@@ -783,7 +784,56 @@ protected:
         PollNetModeRequests();
         PollConnectAndEnter();
         PollSwapDemo();
+        PollProfileCaptureDemo();
         SyncDemoChannel();
+    }
+
+    // The consumer-side profiler hotkey recipe: the engine exposes the capture verbs, and a binding is
+    // a call site over them — there is no engine hotkey registry. F5 toggles a triggered capture, F6
+    // dumps the continuous ring, F7 toggles the ring on and off. The engine resolves each named
+    // capture under its capture directory (no path is invented here). A capture request only ever
+    // returns a Result, so a failure is reported, never fatal.
+    void PollProfileCaptureDemo()
+    {
+        Diagnostics::Profiler& profiler = GetProfiler();
+
+        if (GetInput().WasKeyPressed(Key::F5))
+        {
+            if (profiler.GetState().Status == Diagnostics::CaptureStatus::Capturing)
+            {
+                if (const Result<path> written = profiler.EndCapture())
+                {
+                    Log::Info("Capture written to {}", written.value().string());
+                }
+                else
+                {
+                    Log::Warn("EndCapture failed: {}", written.error());
+                }
+            }
+            else if (const VoidResult begun =
+                         profiler.BeginCapture(Diagnostics::ResolveCapturePath("hotkey"));
+                     !begun)
+            {
+                Log::Warn("BeginCapture failed: {}", begun.error());
+            }
+        }
+        if (GetInput().WasKeyPressed(Key::F6))
+        {
+            if (const Result<path> dumped =
+                    profiler.DumpRing(Diagnostics::ResolveCapturePath("ring")))
+            {
+                Log::Info("Ring dumped to {}", dumped.value().string());
+            }
+            else
+            {
+                Log::Warn("DumpRing failed: {}", dumped.error());
+            }
+        }
+        if (GetInput().WasKeyPressed(Key::F7))
+        {
+            const bool ringOn = profiler.GetState().Status == Diagnostics::CaptureStatus::Ring;
+            profiler.SetRingEnabled(!ringOn);
+        }
     }
 
     // Stamps the HT_ENTER connect-and-enter request once: connect to the named host and travel to
@@ -1006,6 +1056,7 @@ private:
             .ViewportNames = [] { return vector<string>{"primary"}; },
             .InjectInput = [this](Event& event) { GetInputRouter().PostInjectedEvent(event); },
             .RenderContext = [this] { return &GetRenderContext(); },
+            .Profiler = [this] { return &GetProfiler(); },
         });
 
         m_McpServer = Mcp::McpServer::Create(info, *m_McpHost);

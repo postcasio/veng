@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Veng/Veng.h>
+#include <Veng/Result.h>
 #include <Veng/Diagnostics/TraceSink.h>
 
 #include <atomic>
@@ -87,6 +88,36 @@ namespace Veng::Diagnostics
 
         /// @brief The mode the profiler starts in.
         ProfilerMode InitialMode = ProfilerMode::Off;
+    };
+
+    /// @brief What the profiler is doing right now, reported by Profiler::GetState().
+    enum class CaptureStatus : u8
+    {
+        /// @brief Neither a ring nor a capture is running; buffer writes are off.
+        Off,
+        /// @brief The continuous ring is retaining the last N seconds, discarding older chunks on wrap.
+        Ring,
+        /// @brief A capture is streaming events to a file on disk.
+        Capturing,
+    };
+
+    /// @brief A snapshot of the capture subsystem's state, so a caller can report honestly.
+    struct CaptureState
+    {
+        /// @brief What the profiler is doing right now.
+        CaptureStatus Status = CaptureStatus::Off;
+        /// @brief Frames requested for a self-terminating capture; 0 for one that runs until EndCapture.
+        u64 FrameBudget = 0;
+        /// @brief Frames elapsed since the running capture began; 0 when no capture is running.
+        u64 FramesElapsed = 0;
+        /// @brief True while the off-thread writer is still committing a finished capture or dump to disk.
+        ///
+        /// EndCapture and DumpRing hand their chunks to the writer and return without blocking on I/O,
+        /// so the file appears a moment later. A caller that needs the file finished — not merely
+        /// requested — waits until this reads false.
+        bool WriterDraining = false;
+        /// @brief The file the running capture writes, or the last one's file; empty when none.
+        path Path;
     };
 
     /// @brief The last completed frame's rolled-up cost for one scope name.
@@ -272,6 +303,51 @@ namespace Veng::Diagnostics
         /// @brief Returns how many events were dropped for any reason (buffer full in a non-ring mode, etc.).
         [[nodiscard]] u64 GetDroppedEventCount() const;
 
+        /// @brief Begins a triggered capture to @p path, streaming events to a file until it ends.
+        ///
+        /// Switches to capturing mode and constructs a FileTraceSink at @p path. A non-zero
+        /// @p frameCount self-terminates the capture at the frame boundary after that many frames
+        /// (in BeginFrame), the form a scripted or agent-driven capture wants — nobody polls "is it
+        /// done yet" over JSON-RPC; zero runs until EndCapture. The standing ring policy
+        /// (SetRingEnabled) is restored when the capture ends: a capture is a temporary override of
+        /// the standing policy, not a replacement for it.
+        /// @param path        Destination file; its parent directory is created if absent.
+        /// @param frameCount  Frames to record before self-terminating, or 0 to run until EndCapture.
+        /// @return Nothing on success; a located error naming the in-flight capture if one is running.
+        VoidResult BeginCapture(const path& path, u64 frameCount = 0);
+
+        /// @brief Ends the running capture, flushing each thread's outstanding chunk, and returns its path.
+        ///
+        /// Flushes every thread's chunk up to its published write offset, hands the capture to the
+        /// off-thread writer to trailer and commit, and restores the standing ring policy. The write
+        /// completes asynchronously — GetState().WriterDraining reads true until the file is on disk —
+        /// so the calling thread never blocks on I/O. Returning the path rather than assuming the
+        /// caller remembers it is what makes an agent-driven capture a single round trip.
+        /// @return The written path on success; a located error if no capture is running.
+        Result<path> EndCapture();
+
+        /// @brief Enables or disables the continuous ring — the standing policy retaining the last N seconds.
+        ///
+        /// The ring's size is ProfilerConfig::RingDurationSeconds. Enabling it while a capture runs
+        /// records the policy to restore when the capture ends rather than taking effect immediately.
+        /// @param enabled  True to retain a rolling ring, false to stop recording when idle.
+        void SetRingEnabled(bool enabled);
+
+        /// @brief Dumps the retained ring to @p path — the reaction to a hitch that already happened.
+        ///
+        /// Freezes the ring, walks each thread's live chunks in sequence order from the oldest, and
+        /// writes them (with the full string table, since there is no earlier delta to build on)
+        /// through the off-thread writer, then resumes. Because a wrap discards a whole chunk, the
+        /// dump honours the configured duration only to within one chunk — it may carry rather more
+        /// than N seconds, never reliably less. Fails if a capture is running (the buffers are serving
+        /// it, and there is no ring to dump).
+        /// @param path  Destination file; its parent directory is created if absent.
+        /// @return The written path on success; a located error if a capture is running.
+        Result<path> DumpRing(const path& path);
+
+        /// @brief Returns a snapshot of the capture subsystem's state.
+        [[nodiscard]] CaptureState GetState() const;
+
     private:
         friend class ProfilerThreadRegistration;
 
@@ -325,6 +401,23 @@ namespace Veng::Diagnostics
     /// @param ticks  A tick count or tick delta from NowTicks().
     /// @return The equivalent nanoseconds.
     [[nodiscard]] u64 TraceTicksToNanos(u64 ticks) noexcept;
+
+    /// @brief Returns the directory captures are written to: `<build-dir>/captures/`.
+    ///
+    /// Baked at configure time to the build tree's capture directory — gitignored and disposable with
+    /// the build, so a scanner can order captures and attribute them to the build that produced them.
+    /// A tool that names a capture resolves it under here (ResolveCapturePath); no capture path is ever
+    /// a tool argument. Defined regardless of the VE_PROFILE gate — it is path math, no recording state.
+    [[nodiscard]] path CaptureDirectory();
+
+    /// @brief Resolves a capture name to a full path under CaptureDirectory(), with the trace extension.
+    ///
+    /// The engine-side resolution the MCP tools use: an agent names a capture, never a path, and the
+    /// engine places it under the capture directory. Only @p name's final path component is taken, so
+    /// the result always stays inside the capture directory.
+    /// @param name  The capture's base name (without extension).
+    /// @return The resolved path `CaptureDirectory() / <name>.vtrace`.
+    [[nodiscard]] path ResolveCapturePath(string_view name);
 }
 
 // ---------------------------------------------------------------------------

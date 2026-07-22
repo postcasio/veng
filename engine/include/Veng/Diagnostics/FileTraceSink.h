@@ -64,6 +64,21 @@ namespace Veng::Diagnostics
         /// @brief Drains the writer thread, encodes the stream, and commits the file atomically.
         void OnClose() override;
 
+        /// @brief Initiates a clean close without blocking: the writer trailers and commits the file off-thread.
+        ///
+        /// Unlike OnClose, this returns immediately rather than joining the writer, so a capture
+        /// controller closing a large ring dump does not stall on the encode + I/O. The file is
+        /// committed a moment later; poll HasFinishedWriting() to learn when. Idempotent — a second
+        /// call (or a later OnClose) is a no-op once the sink is closing.
+        void BeginClose();
+
+        /// @brief Returns true once the writer thread has committed the file and exited.
+        ///
+        /// False until BeginClose (or OnClose) has been issued and the off-thread encode + atomic
+        /// commit have completed. A capture controller polls this to know a BeginClose'd file is on
+        /// disk before handing its path back.
+        [[nodiscard]] bool HasFinishedWriting() const;
+
         /// @brief Records the dropped-event and dropped-thread counts the Accounting section carries.
         ///
         /// The profiler owns these counts; a capture controller reads them and stamps them here

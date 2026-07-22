@@ -383,6 +383,13 @@ endif ()
 set_source_files_properties(src/Diagnostics/FileTraceSink.cpp PROPERTIES COMPILE_DEFINITIONS
         "VENG_TRACE_VERSION=\"${PROJECT_VERSION}\";VENG_TRACE_GIT_SHA=\"${VENG_TRACE_GIT_SHA}\";VENG_TRACE_GIT_DIRTY=${VENG_TRACE_GIT_DIRTY}")
 
+# The capture directory the profiler resolves a named capture under and enforces its retention cap
+# over: `<build-dir>/captures/`, gitignored and disposable with the build tree, so a scanner can
+# order captures and attribute them to the build that produced them. Baked here at configure time and
+# scoped to the single source, so it never reaches the public surface.
+set_source_files_properties(src/Diagnostics/Profiler.cpp PROPERTIES COMPILE_DEFINITIONS
+        "VENG_CAPTURE_DIR=\"${CMAKE_BINARY_DIR}/captures\"")
+
 # glm and fmt appear in veng's public headers (engine vector/matrix types and
 # string formatting), so they stay PUBLIC. veng::assetpack is PUBLIC too —
 # AssetId and friends appear in the public AssetManager API. nlohmann/json is

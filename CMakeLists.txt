@@ -774,6 +774,7 @@ if (VENG_BUILD_TESTS)
             # planset-75 plan 02:
             tests/unit/diagnostics_spine.cpp
             # planset-75 plan 03:
+            tests/unit/diagnostics_capture.cpp
             # planset-75 plan 05:
     )
     target_link_libraries(veng_test_unit PRIVATE veng::veng doctest::doctest)
@@ -1036,6 +1037,23 @@ if (VENG_BUILD_TESTS)
 
     add_test(NAME mcp_input COMMAND veng_test_mcp_input)
     set_tests_properties(mcp_input PROPERTIES LABELS mcp)
+
+    # The capture-control proof: stand an McpServer up (AllowMutations, a Profiler seam over a live
+    # Diagnostics::Profiler), pump it on a background thread that advances the frame and emits a scope
+    # each iteration, and drive profile.* over loopback — the four verbs present under AllowMutations
+    # and only profile.stats without it, profile.start/profile.stop round-tripping to a real trace
+    # file, profile.dump_ring returning a path, a null Profiler seam reporting the profiler
+    # unavailable, and a shape error surfacing as an isError tool result. Device-free, so it runs in
+    # the default band.
+    add_executable(veng_test_mcp_profile tests/mcp_profile.cpp)
+    target_link_libraries(veng_test_mcp_profile PRIVATE veng::mcp veng::veng
+            nlohmann_json::nlohmann_json)
+    target_compile_definitions(veng_test_mcp_profile PRIVATE JSON_NOEXCEPTION)
+    target_include_directories(veng_test_mcp_profile SYSTEM PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/mcp/src/Vendor)
+
+    add_test(NAME mcp_profile COMMAND veng_test_mcp_profile)
+    set_tests_properties(mcp_profile PROPERTIES LABELS mcp)
 
     # The client proof: stand an McpServer up in-process (a ping tool + an always-failing
     # err tool), pump it on a background thread, and drive McpClient against it — ListTools,

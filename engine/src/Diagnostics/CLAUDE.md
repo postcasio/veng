@@ -276,7 +276,105 @@ and Xcode with no new call site and no per-pass cost in a shipping build.
 <!-- /planset-75 plan 02 -->
 
 <!-- planset-75 plan 03 -->
-<!-- Capture control: BeginCapture/EndCapture, the ring dump, the MCP tools. -->
+## Capture control (plan 03)
+
+The policy layer over plan 00's two buffer behaviours. A capture is something you *start* — from
+code, a key, or over MCP — that ends with a file on disk whose path you are handed back; the
+continuous ring is the same buffers under a different policy, dumped after the fact.
+
+### The `Profiler` capture API
+
+- **`BeginCapture(path, frameCount = 0) -> VoidResult`** — switches to capturing mode and constructs
+  a `FileTraceSink` at `path` (a triggered stream). A non-zero `frameCount` self-terminates the
+  capture at the frame boundary after that many frames (in `BeginFrame`), the form a scripted or
+  agent-driven capture wants; zero runs until `EndCapture`. Fails with a located error if a capture
+  is already in flight (naming it), or if the destination directory cannot be created.
+- **`EndCapture() -> Result<path>`** — flushes every thread's outstanding chunk up to its published
+  write offset, hands the capture to the off-thread writer to trailer and commit, restores the
+  standing ring policy, and returns the written path. Fails if no capture is running (a located
+  error, never an assert — it is reachable from an agent and a keypress).
+- **`SetRingEnabled(bool)`** — the standing continuous-ring policy (size = `RingDurationSeconds`). A
+  capture temporarily overrides the active mode; the ring is re-derived from this flag when the
+  capture ends, so enabling it mid-capture takes effect on `EndCapture`.
+- **`DumpRing(path) -> Result<path>`** — freezes the ring, walks each thread's live chunks in
+  sequence order from the oldest (copied, never disturbing the still-recording ring), writes them
+  with the **full** string table (a ring dump has no earlier delta to build on), and resumes. Fails
+  if a capture is running. Honoured to within one chunk, since a wrap discards a whole chunk.
+- **`GetState() -> CaptureState`** — off / ring / capturing, the frame budget and frames elapsed, the
+  running capture's path, and `WriterDraining`.
+
+**Off-thread finish.** `EndCapture`/`DumpRing` hand their chunks to plan 01's `FileTraceSink` writer
+and return **immediately** — the calling thread's cost is collecting and copying chunks, never the
+encode or I/O. `FileTraceSink::BeginClose()` initiates the trailer + atomic commit without joining,
+and `HasFinishedWriting()` reports when the file is on disk; `GetState().WriterDraining` reflects
+that. A caller that needs the file *finished* (the MCP `profile.stop`/`profile.dump_ring` tools)
+waits on `WriterDraining`, not on a frame. The profiler reaps the drained sink lazily (in `GetState`
+and the next capture op) and enforces the retention cap at that point.
+
+**Retention.** On each reap the `RetainedCaptureCap` is enforced over the just-written file's
+directory, deleting `*.vtrace` oldest-first (by mtime) until the count is under the cap.
+
+**Lifecycle.** A self-terminating capture ends at a frame boundary in `AdvanceFrame`; `~Profiler`
+closes any open capture into a trailered file (the existing sink flush + `OnClose`); every failure
+path is a `Result`, so no capture request aborts. Accounting (`GetDroppedEventCount` /
+`GetRegistrationOverflowCount`) is stamped into the sink via `SetAccounting` before close, so a
+truncated capture is visibly lossy in the file.
+
+**The capture directory.** `CaptureDirectory()` returns `<build-dir>/captures/`, baked at configure
+time (`VENG_CAPTURE_DIR` on `Profiler.cpp`). `ResolveCapturePath(name)` places a named capture under
+it (final path component only, so a name cannot escape). Both are defined regardless of the
+`VE_PROFILE` gate — they are path math.
+
+### The MCP tools — `profile.*`
+
+`mcp/src/ProfileTools.cpp` registers, following the `noun.verb` convention:
+
+- `profile.stats` — the live per-scope aggregates, state, and drop counters. Read-only, **always
+  registered**.
+- `profile.start {frames?, name?}` — begins a capture; returns immediately with the state and planned
+  path (never blocks for the frame budget).
+- `profile.stop` — ends the capture and returns the written path (waits on the writer).
+- `profile.dump_ring {name?}` — dumps the ring and returns the path.
+
+The three write verbs register only under `AllowMutations` (they write files), beside the mutation
+and input families. The host seam is one optional `McpHost` member — `function<Profiler*()> Profiler`
+— null (or returning null) makes the tools report the profiler unavailable, exactly as a null
+`InjectInput` does for `input.send`. **No tool argument is ever a filesystem path**: a tool names a
+capture, the engine resolves it under the capture directory, and the path travels outward in the
+response.
+
+### The consumer hotkey recipe
+
+The engine exposes the verbs; a hotkey is a **consumer call site**, not an engine subsystem. Poll a
+key in `OnUpdate` and call the verbs — `hello-triangle` binds F5/F6/F7 beside its F9–F12:
+
+```cpp
+Diagnostics::Profiler& profiler = GetProfiler();
+if (GetInput().WasKeyPressed(Key::F5))
+{
+    if (profiler.GetState().Status == Diagnostics::CaptureStatus::Capturing)
+    {
+        if (const Result<path> written = profiler.EndCapture())
+            Log::Info("Capture written to {}", written.value().string());
+    }
+    else
+    {
+        (void)profiler.BeginCapture(Diagnostics::ResolveCapturePath("hotkey"));
+    }
+}
+if (GetInput().WasKeyPressed(Key::F6))
+    (void)profiler.DumpRing(Diagnostics::ResolveCapturePath("ring"));
+if (GetInput().WasKeyPressed(Key::F7))
+    profiler.SetRingEnabled(profiler.GetState().Status != Diagnostics::CaptureStatus::Ring);
+```
+
+Every verb returns a `Result`, so a failure is logged, never fatal. No in-HUD capture affordance
+lands here (the HUD is plan 05).
+
+### Under `VE_PROFILE=OFF`
+
+The capture verbs are documented no-ops returning a clear "disabled" error, and the MCP tools report
+the profiler unavailable — both build unchanged, neither aborts.
 <!-- /planset-75 plan 03 -->
 
 <!-- planset-75 plan 07 -->
