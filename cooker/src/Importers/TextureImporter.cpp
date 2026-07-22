@@ -154,11 +154,17 @@ namespace Veng::Cook
         // quality/speed point above the level-0 default.
         constexpr u32 BC7UberLevel = 1;
 
-        // ASTC 4x4 quality preset, expressed as an astcenc effort level in [0, 100]. Golden and
-        // cook determinism depend on this staying fixed: ASTCENC_PRE_MEDIUM (60) paired with the
-        // ISA "none" scalar codec and ASTCENC_INVARIANCE produces reproducible blocks run to run, a
-        // balanced quality/speed point. (ASTCENC_PRE_MEDIUM is a static const float, not constexpr.)
-        const f32 AstcQuality = ASTCENC_PRE_MEDIUM;
+        // ASTC 4x4 quality preset, expressed as an astcenc effort level in [0, 100]. The encode is
+        // the dominant cost of a cold cook, so this sits at ASTCENC_PRE_FAST (30) rather than the
+        // encoder's mid preset: the block size is fixed either way, so effort buys block quality
+        // and costs cook time, and nothing else. The codec is the per-architecture SIMD build
+        // (NEON on Apple Silicon, SSE4.1 on x86_64 — see cooker/CMakeLists.txt), with
+        // ASTCENC_INVARIANCE making the encode bit-reproducible across runs, threads and machines
+        // of the same architecture. Determinism therefore comes from the invariance build option,
+        // not from the effort level — but the level still selects *which* blocks are produced, so
+        // the smoke golden is regenerated whenever it moves.
+        // (The ASTCENC_PRE_* presets are static const float, not constexpr.)
+        const f32 AstcQuality = ASTCENC_PRE_FAST;
 
         // Encodes one RGBA8 mip level (tightly packed, row-major) to ASTC 4x4 LDR blocks through the
         // ARM astc-encoder. The encoder pads partial edge tiles internally, so the full chain down

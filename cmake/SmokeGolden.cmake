@@ -11,7 +11,7 @@
 # The golden is codec-dependent: hello-triangle's textures cook to ASTC 4x4 LDR
 # (the cook default), so the capture is only reproducible on a device that
 # supports textureCompressionASTC_LDR. It was shot on Apple M2 (MoltenVK) with
-# the astc-encoder ASTCENC_PRE_MEDIUM preset; the default golden_compare
+# the astc-encoder ASTCENC_PRE_FAST preset; the default golden_compare
 # tolerance (channel delta 8 over <=0.5% of pixels) absorbs GPU float jitter.
 #
 # Skip contract: hello_triangle has no probe of its own, so this script runs two
