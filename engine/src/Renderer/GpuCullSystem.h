@@ -204,9 +204,6 @@ namespace Veng::Renderer
         GpuCullSystem(Context& context, AssetManager& assets,
                       const SceneRendererSettings& settings);
 
-        /// @brief Maximum per-frame candidates the cull buffers hold (must match SceneRenderer::MaxCullCandidates).
-        static constexpr u32 MaxCullCandidates = 4096;
-
         Context& m_Context;
 
         /// @brief The active cull mode after the device-support fallback (CPU if GPU unsupported).

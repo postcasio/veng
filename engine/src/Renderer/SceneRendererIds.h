@@ -24,4 +24,12 @@ namespace Veng::Renderer
     ///
     /// The renderer builds the SSAO pipeline against this format, and SsaoScenePass owns the image.
     inline constexpr Format SsaoFormat = Format::R8Unorm;
+
+    /// @brief Maximum per-submesh candidates a frame's per-draw / cull buffers hold.
+    ///
+    /// The fixed candidate maximum: the indirect buffer covers this many slots, culled ones
+    /// no-op. A frame exceeding it is clamped (the overflow submeshes are not drawn), asserted
+    /// in a debug build. The renderer's per-draw buffers and the GPU cull's candidate/indirect
+    /// buffers are both sized from it, so it has one owner rather than a copy per side.
+    inline constexpr u32 MaxCullCandidates = 4096;
 }

@@ -740,13 +740,6 @@ namespace Veng::Renderer
         /// the cull compute pipeline live on m_GpuCull. Called once at Create.
         void CreateCullResources();
 
-        /// @brief Maximum per-submesh candidates a frame's per-draw / cull buffers hold.
-        ///
-        /// The fixed candidate maximum (decision 2): the indirect buffer covers this many slots,
-        /// culled ones no-op. A frame exceeding it is clamped (the overflow submeshes are not
-        /// drawn), asserted in a debug build.
-        static constexpr u32 MaxCullCandidates = 4096;
-
         /// @brief Per-draw DrawData SSBO (set used by the surface pipeline's set 1, binding 0).
         ///
         /// Host-visible, ring-buffered for frames-in-flight (MaxCullCandidates records per region);
@@ -765,8 +758,6 @@ namespace Veng::Renderer
         /// modes' draws. MaxCullCandidates elements.
         Ref<Buffer> m_CandidateIdBuffer;
 
-        /// @brief Maximum bone matrices a single skinned instance contributes to the palette.
-        static constexpr u32 MaxBonesPerSkinnedInstance = 256;
         /// @brief Maximum skinning matrices uploaded per frame across all skinned instances.
         static constexpr u32 MaxSkinningMatricesPerFrame = 8192;
 

@@ -2,6 +2,7 @@
 
 #include "DrawPlan.h"
 #include "GpuBlocks.h"
+#include "SceneRendererIds.h"
 
 #include <algorithm>
 #include <bit>
