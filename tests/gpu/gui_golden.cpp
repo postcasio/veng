@@ -648,13 +648,15 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     std::filesystem::remove(outArchive);
 }
 
-TEST_CASE_FIXTURE(
-    Veng::Test::GpuFixture,
-    "gui image golden: an authored <Image> renders its cooked texture with corner-radius + border")
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "gui image golden: an authored <Image> renders every fill shape into its "
+                  "content box")
 {
-    // Cook a UI document whose <Image src=…> names a cooked texture and styles a corner-radius +
-    // border, instantiate + solve + build it, render through GuiScenePass, and pin the composite —
-    // the texture fills the element's box, rounded and framed by the border.
+    // Cook a UI document of five <Image src=…> elements — a rounded, bordered one (the texture
+    // fills the *content* box, inside the border), an unsized one (laid out at its texture's own
+    // pixels by the intrinsic measure), an `object-fit: contain` one letterboxed in a wide box, an
+    // `image-repeat: tile` one, and an `image-slice` frame — instantiate + solve + build them,
+    // render through GuiScenePass, and pin the composite.
     const path fixtureDir = path(GPU_COOKER_FIXTURE_DIR);
     const path packJson = fixtureDir / "ui_image_pack.json";
     const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_ui_image.vengpack";

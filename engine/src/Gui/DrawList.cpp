@@ -290,7 +290,7 @@ namespace Veng::Gui
 
     void DrawList::NineSlice(const Rect& rect, Renderer::TextureHandle texture,
                              Renderer::SamplerHandle sampler, const Insets& sliceUv,
-                             const Insets& sizePx, vec4 tint)
+                             const Insets& sizePx, vec4 tint, const Rect& uv)
     {
         if (rect.IsEmpty())
         {
@@ -308,15 +308,16 @@ namespace Veng::Gui
         const f32 y1 = glm::min(y0 + sizePx.Top, y3);
         const f32 y2 = glm::max(y3 - sizePx.Bottom, y1);
 
-        // Source UV column and row edges from the slice insets (fractions of the texture).
-        const f32 u0 = 0.0f;
-        const f32 u1 = sliceUv.Left;
-        const f32 u2 = 1.0f - sliceUv.Right;
-        const f32 u3 = 1.0f;
-        const f32 v0 = 0.0f;
-        const f32 v1 = sliceUv.Top;
-        const f32 v2 = 1.0f - sliceUv.Bottom;
-        const f32 v3 = 1.0f;
+        // Source UV column and row edges from the slice insets (fractions of the sampled sub-rect,
+        // mapped back into the texture so an atlas region slices like a standalone texture).
+        const f32 u0 = uv.Min.x;
+        const f32 u1 = uv.Min.x + sliceUv.Left * uv.Size.x;
+        const f32 u2 = uv.Min.x + (1.0f - sliceUv.Right) * uv.Size.x;
+        const f32 u3 = uv.Min.x + uv.Size.x;
+        const f32 v0 = uv.Min.y;
+        const f32 v1 = uv.Min.y + sliceUv.Top * uv.Size.y;
+        const f32 v2 = uv.Min.y + (1.0f - sliceUv.Bottom) * uv.Size.y;
+        const f32 v3 = uv.Min.y + uv.Size.y;
 
         const std::array<f32, 4> xs = {x0, x1, x2, x3};
         const std::array<f32, 4> ys = {y0, y1, y2, y3};

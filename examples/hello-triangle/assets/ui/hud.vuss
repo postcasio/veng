@@ -59,3 +59,38 @@
     color: var(--tick-idle);
     margin: 0 6px 0 0;
 }
+
+/* A legend strip of the four ways an <Image> maps its texture into its content box. */
+.legend {
+    flex-direction: row;
+    align-items: flex-start;
+    margin: 10px 0 0 0;
+}
+
+/* The same 24×24 frame art the panel uses, sliced: the corners hold while the box stretches. */
+.chip {
+    width: 66px;
+    height: 20px;
+    image-slice: 8px;
+}
+
+/* No authored size at all — the element takes the texture's own 24×24 pixels. */
+.glyph {
+    margin: 0 0 0 6px;
+}
+
+/* An 8×8 hatch repeated by its own wrapping sampler: one quad, whatever the box's size. */
+.swatch {
+    width: 40px;
+    height: 24px;
+    margin: 0 0 0 6px;
+    image-repeat: tile;
+}
+
+/* A square texture in a wide box, letterboxed rather than stretched. */
+.thumb {
+    width: 40px;
+    height: 24px;
+    margin: 0 0 0 6px;
+    object-fit: contain;
+}

@@ -112,6 +112,11 @@
       "source": "textures/panel_frame.tex.json"
     },
     {
+      "id": "0xEF5D3583C239A2CE",
+      "type": "Texture",
+      "source": "textures/ui_hatch.tex.json"
+    },
+    {
       "id": "0x94B0F44BE80ADA35",
       "type": "StyleSheet",
       "source": "ui/hud.vuss"

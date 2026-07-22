@@ -149,6 +149,15 @@ namespace Veng::Gui
         case StyleProperty::BackgroundRepeat:
             style.BackgroundRepeat = static_cast<ImageRepeat>(declaration.Unit);
             return;
+        case StyleProperty::ObjectFit:
+            style.ObjectFit = static_cast<ImageFit>(declaration.Unit);
+            return;
+        case StyleProperty::ImageRepeat:
+            style.ImageRepeatMode = static_cast<ImageRepeat>(declaration.Unit);
+            return;
+        case StyleProperty::ImageSlice:
+            style.ImageSlice = InsetsFrom(declaration);
+            return;
         case StyleProperty::Opacity:
             style.Opacity = declaration.Values.x;
             return;

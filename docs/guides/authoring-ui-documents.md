@@ -96,7 +96,8 @@ selector engine.
 Layout is **flexbox** (Yoga): `flex-direction`, `justify-content`, `align-items`,
 `flex-grow`/`flex-shrink`/`flex-basis`, `width`/`height` (`px` or `%`), `margin`,
 `padding`, `position`/`inset`. Paint is `background`, `background-gradient`,
-`background-image` (with `background-slice`/`background-fit`/`background-repeat`), `color`
+`background-image` (with `background-slice`/`background-fit`/`background-repeat`),
+`object-fit`/`image-repeat`/`image-slice` (an `Image` element's own fill), `color`
 (text / widget fill), `corner-radius`, `border-width`/`border-color`, `opacity`, and
 `text-align` (`left`/`center`/`right` — a Text element's glyph alignment inside its
 solved box, meaningful when the box is wider than the run, e.g. a Table cell). Colors
@@ -536,17 +537,43 @@ sizeY` selecting a sub-rect of the texture, for an atlas; the whole texture by d
 ```
 
 The `src` texture is a document dependency the loader keeps resident, resolved to a live
-handle at instantiate time through the same `AssetManager` path a font uses. An image is
-**sized by style** — `width`/`height`/flex, like any element — and it **composes with
-`corner-radius` and a border**, so a rounded, framed thumbnail is `corner-radius` +
-`border-width`/`border-color` on the `<Image>` with no extra markup. An image with no
-resolved texture paints its styled box only (its background/border), so a missing texture
-degrades rather than crashes.
+handle at instantiate time through the same `AssetManager` path a font uses. An image
+**composes with `corner-radius` and a border**, so a rounded, framed thumbnail is
+`corner-radius` + `border-width`/`border-color` on the `<Image>` with no extra markup. An
+image with no resolved texture paints its styled box only (its background/border), so a
+missing texture degrades rather than crashes.
 
-> `Image` v1 is a plain textured box. **9-slice** (a border-stable stretch for panels and
-> frames) and **texture-intrinsic sizing** (an image measuring to its texture's pixel
-> dimensions the way `Text` measures its run) are natural follow-ons on the same element,
-> not yet authored.
+**An `<Image>` sizes itself.** Like `Text`, it is a measured leaf: with no authored
+`width`/`height` it lays out at its texture's own pixel size and flexes like any other
+measured content. An authored size still wins, and the fill then maps into the box the way
+`object-fit` says.
+
+**The fill draws in the element's content box** — inside the border *and* the padding — and
+takes the background fill's vocabulary, spelled for the widget:
+
+```css
+/* Nothing authored: the element *is* the texture's pixels, drawn 1:1. */
+.glyph  { }
+/* Aspect-preserving in an authored box: `contain` letterboxes, `cover` crops, `none` is
+   intrinsic pixels, `fill` (the default) stretches. */
+.thumb  { width: 40px; height: 24px; object-fit: contain; }
+/* Tiled at the texture's own pixel size — one quad, whatever the box's size. */
+.swatch { width: 40px; height: 24px; image-repeat: tile; }
+/* Nine-slice frame: the margins are source-texture pixels, as `background-slice`'s are. */
+.chip   { width: 66px; height: 20px; image-slice: 8px; }
+```
+
+`object-fit` / `image-repeat` / `image-slice` are the `<Image>` twins of `background-fit` /
+`background-repeat` / `background-slice` and carry the identical rules: a sliced image takes
+no `corner-radius` and ignores the fit, tiling needs the texture's `*.tex.json` sampler to
+wrap, and a `tile` supersedes the fit. A **sliced** image's intrinsic size is the sum of its
+corner insets — the smallest box at which the frame still reads.
+
+A `uv` sub-rect composes with all of it: the fit and the slice are computed against the
+sub-rect, so an atlas frame fits and slices its own cell, while tiling repeats the whole
+texture (that is what the sampler wraps over). The *measure*, though, reads the whole
+texture — which is what keeps `Document::SetImageUv` a paint-only write that never re-runs
+layout, so a per-frame flipbook advance stays free.
 
 ## 4. Instantiate, bind, and attach
 

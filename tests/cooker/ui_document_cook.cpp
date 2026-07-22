@@ -4,6 +4,7 @@
 // the source texture id + tint + UV, and that the referenced texture is a real archive entry the
 // runtime loader eager-loads as a dependency.
 
+#include <algorithm>
 #include <cstring>
 #include <filesystem>
 #include "support/TempPath.h"
@@ -56,23 +57,27 @@ TEST_CASE("Cooker: an <Image src=…> cooks and records the texture on the recip
     CookedUIDocumentHeader header{};
     std::memcpy(&header, blob.data(), sizeof(header));
     CHECK(header.Version == CookedUIDocumentVersion);
-    // The recipe tree is a Panel root with one Image child.
-    REQUIRE(header.ElementCount == 2);
+    // A Panel root over a tree of Image children, one per fill shape.
+    REQUIRE(header.ElementCount >= 2);
 
     // The element array follows the header + the stylesheet-id list.
     const usize elementsOffset =
         sizeof(CookedUIDocumentHeader) + static_cast<usize>(header.StyleSheetCount) * sizeof(u64);
-    REQUIRE(blob.size() >= elementsOffset + 2 * sizeof(CookedUIElement));
+    REQUIRE(blob.size() >= elementsOffset + header.ElementCount * sizeof(CookedUIElement));
 
-    CookedUIElement panel{};
-    std::memcpy(&panel, blob.data() + elementsOffset, sizeof(panel));
-    CHECK(panel.Kind == static_cast<u32>(Gui::ElementKind::Panel));
+    vector<CookedUIElement> elements(header.ElementCount);
+    std::memcpy(elements.data(), blob.data() + elementsOffset,
+                elements.size() * sizeof(CookedUIElement));
+
+    CHECK(elements[0].Kind == static_cast<u32>(Gui::ElementKind::Panel));
     // The Panel itself sources no texture.
-    CHECK(panel.Src == 0);
+    CHECK(elements[0].Src == 0);
 
-    CookedUIElement image{};
-    std::memcpy(&image, blob.data() + elementsOffset + sizeof(CookedUIElement), sizeof(image));
-    CHECK(image.Kind == static_cast<u32>(Gui::ElementKind::Image));
+    const auto found =
+        std::ranges::find_if(elements, [](const CookedUIElement& e)
+                             { return e.Kind == static_cast<u32>(Gui::ElementKind::Image); });
+    REQUIRE(found != elements.end());
+    const CookedUIElement& image = *found;
 
     // The Image's `src` recorded the texture id, and its tint / UV took the defaults (no tint/uv
     // attribute authored): opaque white, the whole texture.

@@ -6,4 +6,10 @@
   <Panel class="ticks">
     <Text class="tick" count="8">${n:02}</Text>
   </Panel>
+  <Panel class="legend">
+    <Image class="chip" src="0x2B62E4E91B4A08B4"/>
+    <Image class="glyph" src="0x2B62E4E91B4A08B4"/>
+    <Image class="swatch" src="0xEF5D3583C239A2CE"/>
+    <Image class="thumb" src="0x2B62E4E91B4A08B4"/>
+  </Panel>
 </Panel>

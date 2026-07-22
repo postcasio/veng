@@ -94,6 +94,12 @@ namespace Veng::Gui
             return "background-fit";
         case StyleProperty::BackgroundRepeat:
             return "background-repeat";
+        case StyleProperty::ObjectFit:
+            return "object-fit";
+        case StyleProperty::ImageRepeat:
+            return "image-repeat";
+        case StyleProperty::ImageSlice:
+            return "image-slice";
         }
         return "unknown";
     }
@@ -275,6 +281,18 @@ namespace Veng::Gui
         if (name == "background-repeat")
         {
             return StyleProperty::BackgroundRepeat;
+        }
+        if (name == "object-fit")
+        {
+            return StyleProperty::ObjectFit;
+        }
+        if (name == "image-repeat")
+        {
+            return StyleProperty::ImageRepeat;
+        }
+        if (name == "image-slice")
+        {
+            return StyleProperty::ImageSlice;
         }
         return std::nullopt;
     }

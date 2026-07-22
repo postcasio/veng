@@ -134,6 +134,31 @@ shapes, driven by `background-slice` / `background-fit` / `background-repeat`:
   computes: `fill` stretches, `contain`/`cover` letterbox/crop preserving aspect, `none` is
   intrinsic pixels. `ImageFit`/`ImageRepeat` (`Veng/Gui/Style.h`) are the shared fill vocabulary.
 
+### The `Image` widget's fill
+
+**One fill vocabulary, two hosts.** The same three shapes drive the `Image` widget's own content
+through `object-fit` / `image-repeat` / `image-slice` — the widget-side spellings of
+`background-fit` / `background-repeat` / `background-slice`, over the identical
+`ImageFit`/`ImageRepeat`/`Insets` types. Two things differ from a background fill:
+
+- **Which box.** An `Image` fills its **content** box (inside the border *and* the padding, the box
+  a `Text` leaf's run draws in), where a `background-image` fills the padding box.
+- **Intrinsic size.** An `Image` is a **measured leaf** like `Text`/`Button`/`TextInput`: its
+  Yoga measure returns the resident texture's own pixels (`Element::ImageSize`, filled by the
+  instantiate-time resolve), so an `Image` with no authored `width`/`height` lays out at natural
+  scale and flexes like any other measured content instead of collapsing. An authored size still
+  wins, and `object-fit` decides the mapping when the box differs. A **sliced** `Image` measures the
+  sum of its corner insets instead — the smallest box at which the frame still reads. An unresolved
+  texture measures zero. Taking a child turns an `Image` into a container, exactly as it does a
+  `Button` (a measured Yoga node cannot hold children).
+
+**The measure reads the whole texture, never the `uv` sub-rect.** Reading `ImageUv` there would make
+`Document::SetImageUv` a layout input, turning a per-frame atlas flipbook advance into a per-frame
+layout re-solve; the setter keeps its paint-only, no-dirty contract. *Fit* and *slice*, by contrast,
+are computed against the **sampled sub-rect**, so a flipbook frame fits and slices its own cell —
+which is why `DrawList::NineSlice` takes the sub-rect its 3×3 split divides. Tiling repeats the
+whole texture, since that is what the sampler's wrap addresses.
+
 ## The draw floor: a device-free draw list + a `GuiScenePass`
 
 `Gui::DrawList` (`Veng/Gui/DrawList.h`) is a device-free builder of **batched, clipped, textured
@@ -211,9 +236,10 @@ adjacent to it.
 ## Widgets
 
 The built-in, markup-authorable, styleable, focusable controls on the primitives: `Panel` (a styled
-flex box), `Text` (a shaped MSDF leaf, sized by its own shaped run), `Image` (a textured box — a `src` texture with an optional
-`tint`/`uv`, sized by style and composing with `corner-radius`/border on the `DrawList::Texture`
-path; the `Image` widget has no 9-slice or texture-intrinsic sizing), `Button` (`onClick`),
+flex box), `Text` (a shaped MSDF leaf, sized by its own shaped run), `Image` (a textured box — a
+`src` texture with an optional `tint`/`uv`, composing with `corner-radius`/border; it is the
+**second measured leaf**, and it runs the background fill's vocabulary against its own content —
+see [The `Image` widget's fill](#the-image-widgets-fill) below), `Button` (`onClick`),
 `Checkbox` (`value`/`checked`/`onChange`, driving the `:checked` variant), `Slider`
 (`min`/`max`/`step`/`value`/`onChange`), `ProgressBar` (a `[0,1]` fill), `TextInput`
 (`value`/`onChange` — it **paints its own value**: the run draws vertically centred in its content

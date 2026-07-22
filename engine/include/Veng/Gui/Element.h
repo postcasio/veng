@@ -344,6 +344,14 @@ namespace Veng::Gui
         Renderer::TextureHandle ImageTexture;
         /// @brief The bindless sampler slot an Image paints with.
         Renderer::SamplerHandle ImageSampler;
+        /// @brief The source texture's size in pixels — an Image's intrinsic size, zero when unknown.
+        ///
+        /// Filled from the resolved texture's extent, and the only size the layout measure reads:
+        /// an Image with no authored width/height lays out at these pixels, and the fit math maps
+        /// them into the box. It is the *whole* texture, never ImageUv's sub-rect, so re-pointing
+        /// an atlas flipbook stays a paint change. An imperative author setting ImageTexture
+        /// directly should set this too, or the element measures (and fits) as zero-sized.
+        vec2 ImageSize{0.0f};
         /// @brief An Image element's tint, linear straight-alpha RGBA; the style opacity folds into the alpha at paint.
         vec4 ImageTint{1.0f};
         /// @brief The UV sub-rect an Image samples (an atlas region); the whole texture by default.

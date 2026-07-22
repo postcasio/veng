@@ -492,3 +492,48 @@ TEST_CASE("Cooker: a block authoring two background fill sources is a located er
     CHECK(conflict.error().find("loc") != string::npos);
     CHECK(conflict.error().find("background-image") != string::npos);
 }
+
+TEST_CASE("Cooker: the Image fill family parses into its cooked slots")
+{
+    const string located = "loc";
+
+    // `object-fit` and `image-repeat` are the widget-side twins of the background enums, so they
+    // ride Unit against the identical vocabulary.
+    const Result<CookedStyleProperty> fit =
+        ParseStyleDeclaration(Gui::StyleProperty::ObjectFit, "contain", located);
+    REQUIRE(fit.has_value());
+    CHECK(fit->Unit == static_cast<u32>(Gui::ImageFit::Contain));
+
+    const Result<CookedStyleProperty> repeat =
+        ParseStyleDeclaration(Gui::StyleProperty::ImageRepeat, "tile", located);
+    REQUIRE(repeat.has_value());
+    CHECK(repeat->Unit == static_cast<u32>(Gui::ImageRepeat::Tile));
+
+    // `image-slice` takes the four-edge shorthand in CSS order (top, right, bottom, left).
+    const Result<CookedStyleProperty> slice =
+        ParseStyleDeclaration(Gui::StyleProperty::ImageSlice, "1px 2px 3px 4px", located);
+    REQUIRE(slice.has_value());
+    CHECK(slice->Values[0] == doctest::Approx(1.0f));
+    CHECK(slice->Values[1] == doctest::Approx(2.0f));
+    CHECK(slice->Values[2] == doctest::Approx(3.0f));
+    CHECK(slice->Values[3] == doctest::Approx(4.0f));
+
+    // An unknown keyword is a located error rather than a silent default.
+    const Result<CookedStyleProperty> badFit =
+        ParseStyleDeclaration(Gui::StyleProperty::ObjectFit, "scale-down", located);
+    REQUIRE_FALSE(badFit.has_value());
+    CHECK(badFit.error().find("loc") != string::npos);
+
+    // The Image fill properties are not background fill *sources*, so authoring them beside a
+    // background never trips the exclusivity rule.
+    const auto declaration = [](Gui::StyleProperty property)
+    {
+        CookedStyleProperty cp{};
+        cp.Property = static_cast<u32>(property);
+        return cp;
+    };
+    const vector<CookedStyleProperty> beside = {declaration(Gui::StyleProperty::Background),
+                                                declaration(Gui::StyleProperty::ObjectFit),
+                                                declaration(Gui::StyleProperty::ImageSlice)};
+    CHECK(CheckExclusiveFillSources(beside, located).has_value());
+}

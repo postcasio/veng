@@ -308,12 +308,15 @@ namespace Veng::Gui
         /// @param rect     The destination rectangle, in framebuffer pixels.
         /// @param texture  Bindless texture slot to sample.
         /// @param sampler  Bindless sampler slot to sample with.
-        /// @param sliceUv  The 3×3 split as fractions of the texture in [0,1].
+        /// @param sliceUv  The 3×3 split as fractions of the sampled sub-rect in [0,1].
         /// @param sizePx   The corner/edge sizes in the destination, in pixels.
         /// @param tint     Multiplied over the sampled texels, linear straight-alpha RGBA.
+        /// @param uv       The sub-rect of the texture the 3×3 split divides (the whole texture by
+        ///                 default), so an atlas region frames exactly as a standalone texture does.
         void NineSlice(const Rect& rect, Renderer::TextureHandle texture,
                        Renderer::SamplerHandle sampler, const Insets& sliceUv, const Insets& sizePx,
-                       vec4 tint = vec4(1.0f));
+                       vec4 tint = vec4(1.0f),
+                       const Rect& uv = {.Min = {0.0f, 0.0f}, .Size = {1.0f, 1.0f}});
 
         /// @brief Appends a run of shaped text at a pen origin.
         ///

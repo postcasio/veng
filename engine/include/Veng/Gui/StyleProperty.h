@@ -123,12 +123,21 @@ namespace Veng::Gui
         /// @brief Whether the background image stretches or tiles (Style::BackgroundRepeat); Unit is
         /// an ImageRepeat ordinal.
         BackgroundRepeat,
+        /// @brief How an Image maps its texture into its content box (Style::ObjectFit); Unit is an
+        /// ImageFit ordinal.
+        ObjectFit,
+        /// @brief Whether an Image stretches or tiles (Style::ImageRepeatMode); Unit is an
+        /// ImageRepeat ordinal.
+        ImageRepeat,
+        /// @brief An Image's nine-slice margins (Style::ImageSlice); value is four edge distances
+        /// (L/T/R/B) in source-texture pixels.
+        ImageSlice,
     };
 
     /// @brief The number of StyleProperty enumerators — keep in step when appending one.
     ///
     /// The runtime's whole-style property sweeps iterate `[0, StylePropertyCount)`.
-    inline constexpr u32 StylePropertyCount = static_cast<u32>(StyleProperty::BackgroundRepeat) + 1;
+    inline constexpr u32 StylePropertyCount = static_cast<u32>(StyleProperty::ImageSlice) + 1;
 
     /// @brief Canonical USS declaration name of a style property ("flex-direction", "background", …).
     ///

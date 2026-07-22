@@ -624,6 +624,10 @@ namespace Veng::Cook
             return EnumProperty(property, ParseImageFit(v), v, located);
         case StyleProperty::BackgroundRepeat:
             return EnumProperty(property, ParseImageRepeat(v), v, located);
+        case StyleProperty::ObjectFit:
+            return EnumProperty(property, ParseImageFit(v), v, located);
+        case StyleProperty::ImageRepeat:
+            return EnumProperty(property, ParseImageRepeat(v), v, located);
 
         case StyleProperty::Overflow:
         {
@@ -676,6 +680,7 @@ namespace Veng::Cook
         case StyleProperty::Inset:
         case StyleProperty::CornerRadius:
         case StyleProperty::BackgroundSlice:
+        case StyleProperty::ImageSlice:
             return EdgeProperty(property, v, located);
 
         case StyleProperty::Background:

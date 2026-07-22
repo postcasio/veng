@@ -1,3 +1,11 @@
-<Panel style="width: 256px; height: 192px; background: #14141fff; padding: 40px;">
-  <Image src="0x4DE87D318251BC1E" style="width: 176px; height: 112px; corner-radius: 24px; border-width: 5px; border-color: #ffcc33ff;"/>
+<Panel style="width: 256px; height: 192px; background: #14141fff; padding: 8px;">
+  <Panel style="flex-direction: row; align-items: flex-start;">
+    <Image src="0x4DE87D318251BC1E" style="width: 96px; height: 72px; corner-radius: 16px; border-width: 5px; border-color: #ffcc33ff;"/>
+    <Image src="0x4B1583166B212C2A" style="margin: 0 0 0 8px;"/>
+    <Image src="0x4DE87D318251BC1E" style="width: 96px; height: 72px; margin: 0 0 0 8px; background: #303048ff; object-fit: contain;"/>
+  </Panel>
+  <Panel style="flex-direction: row; margin: 8px 0 0 0;">
+    <Image src="0x68D20CFB7FEC7518" style="width: 112px; height: 88px; image-repeat: tile;"/>
+    <Image src="0x4B1583166B212C2A" style="width: 112px; height: 88px; margin: 0 0 0 8px; image-slice: 8px;"/>
+  </Panel>
 </Panel>

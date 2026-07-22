@@ -343,6 +343,27 @@ namespace Veng::Gui
         ImageFit BackgroundFit = ImageFit::Fill;
         /// @brief Whether the background image stretches across the box or tiles at its own size.
         ImageRepeat BackgroundRepeat = ImageRepeat::Stretch;
+        /// @brief How an Image element's texture maps into its content box (`object-fit`).
+        ///
+        /// The widget-side twin of BackgroundFit, and the same vocabulary: it is ignored by a
+        /// sliced or tiled Image, and inert on every kind but Image. Fit is computed against the
+        /// element's *sampled* sub-rect (Element::ImageUv), so an atlas flipbook frame fits its
+        /// own cell rather than the whole sheet.
+        ImageFit ObjectFit = ImageFit::Fill;
+        /// @brief Whether an Image's texture spans its content box once or tiles (`image-repeat`).
+        ///
+        /// Named ImageRepeatMode rather than ImageRepeat only because the enum owns that name. As
+        /// on a background, tiling is a sampler address mode plus a scaled UV rect on one quad, so
+        /// it needs the texture's own sampler to wrap and repeats the *whole* texture (never a
+        /// sub-rect of it).
+        ImageRepeat ImageRepeatMode = ImageRepeat::Stretch;
+        /// @brief Nine-slice margins of an Image's texture, in source-texture pixels (`image-slice`).
+        ///
+        /// All-zero (the default) paints the plain fitted quad. Any non-zero edge draws the Image
+        /// through the nine-slice primitive instead, and makes its intrinsic size the sum of the
+        /// corner insets — the natural minimum at which the frame still reads. A sliced Image is
+        /// unrounded and ignores ObjectFit, exactly as a sliced background is.
+        Insets ImageSlice;
         /// @brief Per-corner background/border radius, in pixels.
         CornerRadii Radii;
         /// @brief Border width and color; a zero width draws no border.

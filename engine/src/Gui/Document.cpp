@@ -249,6 +249,28 @@ namespace Veng::Gui
             const vec2 size = document->MeasureElementText(*element, maxWidth);
             return {.width = size.x, .height = size.y};
         }
+
+        // Measures an Image leaf: its texture's own pixels, so an Image with no authored size lays
+        // out at natural scale and flexes like any other measured content. A sliced Image measures
+        // the sum of its corner insets instead — the smallest box at which the frame still reads,
+        // its center collapsed to nothing. An unresolved texture measures zero rather than
+        // asserting, the tolerance an un-textured Image already gets at paint.
+        YGSize MeasureImage(YGNodeConstRef node, float /*width*/, YGMeasureMode /*widthMode*/,
+                            float /*height*/, YGMeasureMode /*heightMode*/)
+        {
+            const auto* element = static_cast<const Element*>(YGNodeGetContext(node));
+            if (element == nullptr)
+            {
+                return {.width = 0.0f, .height = 0.0f};
+            }
+
+            const Insets& slice = element->ComputedStyle.ImageSlice;
+            if (slice.Left > 0.0f || slice.Top > 0.0f || slice.Right > 0.0f || slice.Bottom > 0.0f)
+            {
+                return {.width = slice.Left + slice.Right, .height = slice.Top + slice.Bottom};
+            }
+            return {.width = element->ImageSize.x, .height = element->ImageSize.y};
+        }
     }
 
     Document::Document()
@@ -331,31 +353,60 @@ namespace Veng::Gui
             return style.OverflowX != Overflow::Visible || style.OverflowY != Overflow::Visible;
         }
 
-        // The box a background image fills, with the corner radii that box carries.
-        struct PaddingBox
+        // A box a texture fill occupies, with the corner radii that box carries.
+        struct FillBox
         {
             Rect Box;
             CornerRadii Radii;
         };
 
-        // Deflates an element's border box to its padding box, so a background image sits behind the
-        // border and the content exactly as CSS paints one. The border ring is drawn over the border
-        // box, so deflating by its width is what keeps the fill from bleeding under it; each corner
-        // radius shrinks by the same width, the CSS inner-radius rule. A zero border is the identity.
-        PaddingBox ToPaddingBox(const Rect& rect, const Style& style)
+        // Deflates a rect by per-edge insets, clamping each axis's pair so the box never inverts and
+        // reducing each corner radius by the larger of its two adjacent insets — the CSS
+        // inner-radius rule, so the deflated corner stays inside the outer one. All-zero insets are
+        // the identity.
+        FillBox DeflateBox(const Rect& rect, const CornerRadii& radii, const Insets& by)
         {
-            const f32 width = std::max(style.BorderStyle.Width, 0.0f);
-            const f32 inset = std::min(width, std::min(rect.Size.x, rect.Size.y) * 0.5f);
-            return PaddingBox{
-                .Box = Rect{.Min = rect.Min + vec2(inset), .Size = rect.Size - vec2(inset * 2.0f)},
+            const auto fit = [](f32 near, f32 far, f32 extent)
+            {
+                const f32 total = std::max(near, 0.0f) + std::max(far, 0.0f);
+                const f32 scale = total > extent && total > 0.0f ? extent / total : 1.0f;
+                return vec2(std::max(near, 0.0f) * scale, std::max(far, 0.0f) * scale);
+            };
+            const vec2 x = fit(by.Left, by.Right, rect.Size.x);
+            const vec2 y = fit(by.Top, by.Bottom, rect.Size.y);
+            return FillBox{
+                .Box = Rect{.Min = rect.Min + vec2(x.x, y.x),
+                            .Size = rect.Size - vec2(x.x + x.y, y.x + y.y)},
                 .Radii =
                     CornerRadii{
-                        .TopLeft = std::max(style.Radii.TopLeft - inset, 0.0f),
-                        .TopRight = std::max(style.Radii.TopRight - inset, 0.0f),
-                        .BottomRight = std::max(style.Radii.BottomRight - inset, 0.0f),
-                        .BottomLeft = std::max(style.Radii.BottomLeft - inset, 0.0f),
+                        .TopLeft = std::max(radii.TopLeft - std::max(x.x, y.x), 0.0f),
+                        .TopRight = std::max(radii.TopRight - std::max(x.y, y.x), 0.0f),
+                        .BottomRight = std::max(radii.BottomRight - std::max(x.y, y.y), 0.0f),
+                        .BottomLeft = std::max(radii.BottomLeft - std::max(x.x, y.y), 0.0f),
                     },
             };
+        }
+
+        // The padding box: the border box less the border ring, so a background image sits behind
+        // the border and the content exactly as CSS paints one.
+        FillBox ToPaddingBox(const Rect& rect, const Style& style)
+        {
+            const f32 width = std::max(style.BorderStyle.Width, 0.0f);
+            return DeflateBox(rect, style.Radii,
+                              Insets{.Left = width, .Top = width, .Right = width, .Bottom = width});
+        }
+
+        // The content box: the padding box less the padding, the box a measured leaf's own content
+        // is laid out and painted in — the same border+padding origin the text runs draw from.
+        FillBox ToContentBox(const Rect& rect, const Style& style)
+        {
+            const f32 width = std::max(style.BorderStyle.Width, 0.0f);
+            const Insets& padding = style.Padding;
+            return DeflateBox(rect, style.Radii,
+                              Insets{.Left = width + padding.Left,
+                                     .Top = width + padding.Top,
+                                     .Right = width + padding.Right,
+                                     .Bottom = width + padding.Bottom});
         }
 
         // A texture fill's destination rectangle and the UV sub-rect it samples, from the fit mode.
@@ -365,16 +416,18 @@ namespace Veng::Gui
             Rect Uv;
         };
 
-        // Maps a texture of `source` pixels into `box` under `fit`. Fill stretches the whole texture
-        // over the box; Cover keeps the box and crops the UV; Contain and None keep the whole texel
-        // aspect and center a smaller destination inside the box (None additionally crops when the
-        // texture is larger than the box, so an intrinsic-size fill never spills).
-        FittedFill FitTexture(const Rect& box, vec2 source, ImageFit fit)
+        // Maps the `base` sub-rect of a texture — `source` pixels of it — into `box` under `fit`.
+        // Fill stretches the sub-rect over the box; Cover keeps the box and crops the UV; Contain
+        // and None keep the whole texel aspect and center a smaller destination inside the box (None
+        // additionally crops when the texture is larger than the box, so an intrinsic-size fill
+        // never spills). `base` is the whole texture for a background fill and the Image widget's
+        // `uv` sub-rect for an atlas frame, so a flipbook cell fits its own cell.
+        FittedFill FitTexture(const Rect& box, vec2 source, ImageFit fit,
+                              const Rect& base = {.Min = vec2(0.0f), .Size = vec2(1.0f)})
         {
-            const Rect wholeUv{.Min = vec2(0.0f), .Size = vec2(1.0f)};
             if (source.x <= 0.0f || source.y <= 0.0f || box.Size.x <= 0.0f || box.Size.y <= 0.0f)
             {
-                return {.Dest = box, .Uv = wholeUv};
+                return {.Dest = box, .Uv = base};
             }
 
             const auto centered = [&](vec2 size)
@@ -382,17 +435,18 @@ namespace Veng::Gui
             const auto croppedUv = [&](vec2 visible)
             {
                 const vec2 size = visible / source;
-                return Rect{.Min = (vec2(1.0f) - size) * 0.5f, .Size = size};
+                return Rect{.Min = base.Min + (vec2(1.0f) - size) * 0.5f * base.Size,
+                            .Size = size * base.Size};
             };
 
             switch (fit)
             {
             case ImageFit::Fill:
-                return {.Dest = box, .Uv = wholeUv};
+                return {.Dest = box, .Uv = base};
             case ImageFit::Contain:
             {
                 const f32 scale = std::min(box.Size.x / source.x, box.Size.y / source.y);
-                return {.Dest = centered(source * scale), .Uv = wholeUv};
+                return {.Dest = centered(source * scale), .Uv = base};
             }
             case ImageFit::Cover:
             {
@@ -405,7 +459,7 @@ namespace Veng::Gui
                 return {.Dest = centered(drawn), .Uv = croppedUv(drawn)};
             }
             }
-            return {.Dest = box, .Uv = wholeUv};
+            return {.Dest = box, .Uv = base};
         }
 
         // Whether any slice edge is set, which is what turns a plain texture fill into a nine-slice.
@@ -613,6 +667,7 @@ namespace Veng::Gui
             {
                 element.ImageTexture = texture.Get()->GetHandle();
                 element.ImageSampler = texture.Get()->GetSamplerHandle();
+                element.ImageSize = vec2(texture.Get()->GetExtent());
                 element.Image = std::move(texture);
             }
         }
@@ -1041,6 +1096,13 @@ namespace Veng::Gui
         {
             YGNodeSetMeasureFunc(node, &MeasureText);
         }
+        // An Image is the other measured leaf: its content is its texture, so its intrinsic size is
+        // that texture's pixels and an Image with no authored width/height lays out at natural
+        // scale instead of collapsing.
+        else if (kind == ElementKind::Image)
+        {
+            YGNodeSetMeasureFunc(node, &MeasureImage);
+        }
         return element;
     }
 
@@ -1063,10 +1125,11 @@ namespace Veng::Gui
         VE_ASSERT(parentNode != nullptr && childNode != nullptr,
                   "Gui::Document::Add: parent element does not belong to this document");
 
-        // A Button or TextInput is a text-measured leaf until it takes a child, at which point it
+        // A Button, TextInput, or Image is a measured leaf until it takes a child, at which point it
         // becomes a container sized by its children like a Panel — a measured Yoga node cannot
         // hold children. Text stays a hard leaf.
-        if ((parent.Kind == ElementKind::Button || parent.Kind == ElementKind::TextInput) &&
+        if ((parent.Kind == ElementKind::Button || parent.Kind == ElementKind::TextInput ||
+             parent.Kind == ElementKind::Image) &&
             YGNodeHasMeasureFunc(parentNode))
         {
             YGNodeSetMeasureFunc(parentNode, nullptr);
@@ -1270,7 +1333,13 @@ namespace Veng::Gui
             case StyleProperty::BackgroundSlice:
             case StyleProperty::BackgroundFit:
             case StyleProperty::BackgroundRepeat:
+            case StyleProperty::ObjectFit:
+            case StyleProperty::ImageRepeat:
                 return false;
+            // A slice makes an Image's intrinsic size the sum of its corner insets, so authoring or
+            // dropping one re-measures the leaf.
+            case StyleProperty::ImageSlice:
+                return true;
             // An overflow axis and the scrollbar layout move layout inputs: a gutter takes its
             // width out of the content box, and turning an axis scrollable re-clamps the offset.
             case StyleProperty::Overflow:
@@ -1333,6 +1402,9 @@ namespace Veng::Gui
             case StyleProperty::BackgroundSlice:
             case StyleProperty::BackgroundFit:
             case StyleProperty::BackgroundRepeat:
+            case StyleProperty::ObjectFit:
+            case StyleProperty::ImageRepeat:
+            case StyleProperty::ImageSlice:
                 return false;
             }
             return false;
@@ -1420,6 +1492,11 @@ namespace Veng::Gui
                 return vec4(style.Inset.Bottom, 0.0f, 0.0f, 0.0f);
             case StyleProperty::Origin:
                 return vec4(style.Origin.x, style.Origin.y, 0.0f, 0.0f);
+            // Read but never written: the slice is not animatable, but it *is* a layout input, and
+            // the layout-move scan compares styles through this reader.
+            case StyleProperty::ImageSlice:
+                return vec4(style.ImageSlice.Left, style.ImageSlice.Top, style.ImageSlice.Right,
+                            style.ImageSlice.Bottom);
             default:
                 return vec4(0.0f);
             }
@@ -2928,7 +3005,7 @@ namespace Veng::Gui
         else if (style.BackgroundImage.IsLoaded())
         {
             const Texture& texture = *style.BackgroundImage.Get();
-            const PaddingBox box = ToPaddingBox(rect, style);
+            const FillBox box = ToPaddingBox(rect, style);
             const vec2 source = vec2(texture.GetExtent());
             const vec4 tint = vec4(1.0f, 1.0f, 1.0f, opacity);
             if (IsSliced(style.BackgroundSlice))
@@ -2969,17 +3046,52 @@ namespace Veng::Gui
             background.a *= opacity;
             list.Quad(rect, background, style.Radii);
         }
-        // An Image paints its resident texture as a rounded quad filling the element's box, over any
-        // background and under the border. It composes with corner-radius through the shape SDF the
-        // same way a Panel background does; the border below draws over it as a frame. The tint folds
-        // in the composited opacity, so a faded Image fades its texture too.
+        // An Image paints its resident texture into its *content* box — inside the border and the
+        // padding, the box its intrinsic measure sized and the box a Text leaf's run draws in —
+        // over any background and under the border. It composes with corner-radius through the
+        // shape SDF the same way a Panel background does; the border below draws over it as a
+        // frame. The tint folds in the composited opacity, so a faded Image fades its texture too.
+        //
+        // The three shapes are the background fill's, against the widget's own properties: sliced
+        // (nine-slice, unrounded), tiled (one quad, a wrapping sampler, a scaled UV), or fitted.
         if (element.Kind == ElementKind::Image && element.ImageTexture.IsValid() &&
             element.ImageSampler.IsValid())
         {
             vec4 tint = element.ImageTint;
             tint.a *= opacity;
-            list.Texture(rect, element.ImageTexture, element.ImageSampler, element.ImageUv, tint,
-                         style.Radii);
+            const FillBox content = ToContentBox(rect, style);
+            // Fit and slice are computed against the *sampled* sub-rect, so an atlas flipbook frame
+            // fits and slices its own cell; tiling repeats the whole texture, which is what the
+            // sampler's wrap addresses.
+            const vec2 sampled = element.ImageSize * element.ImageUv.Size;
+            if (IsSliced(style.ImageSlice))
+            {
+                const Insets& slice = style.ImageSlice;
+                const Insets sliceUv{
+                    .Left = sampled.x > 0.0f ? slice.Left / sampled.x : 0.0f,
+                    .Top = sampled.y > 0.0f ? slice.Top / sampled.y : 0.0f,
+                    .Right = sampled.x > 0.0f ? slice.Right / sampled.x : 0.0f,
+                    .Bottom = sampled.y > 0.0f ? slice.Bottom / sampled.y : 0.0f,
+                };
+                list.NineSlice(content.Box, element.ImageTexture, element.ImageSampler, sliceUv,
+                               slice, tint, element.ImageUv);
+            }
+            else if (style.ImageRepeatMode == ImageRepeat::Tile)
+            {
+                const Rect uv{.Min = element.ImageUv.Min,
+                              .Size = element.ImageSize.x > 0.0f && element.ImageSize.y > 0.0f
+                                          ? content.Box.Size / element.ImageSize
+                                          : element.ImageUv.Size};
+                list.Texture(content.Box, element.ImageTexture, element.ImageSampler, uv, tint,
+                             content.Radii);
+            }
+            else
+            {
+                const FittedFill fill =
+                    FitTexture(content.Box, sampled, style.ObjectFit, element.ImageUv);
+                list.Texture(fill.Dest, element.ImageTexture, element.ImageSampler, fill.Uv, tint,
+                             content.Radii);
+            }
         }
         if (style.BorderStyle.Width > 0.0f)
         {

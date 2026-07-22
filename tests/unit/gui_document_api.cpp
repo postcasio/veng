@@ -346,6 +346,71 @@ TEST_CASE("gui image: Build emits a textured quad for a resident Image, nothing 
     CHECK(topLeft.Color.a == doctest::Approx(0.8f));
 }
 
+TEST_CASE("gui image: an unsized Image takes its texture's pixels, sliced its corner insets")
+{
+    Document doc;
+    doc.SetStyle(doc.Root(),
+                 []
+                 {
+                     Style style;
+                     style.AlignItems = Align::FlexStart;
+                     return style;
+                 }());
+    Element& image = doc.Add(doc.Root(), ElementKind::Image);
+    image.ImageTexture = Renderer::TextureHandle{.Index = 4};
+    image.ImageSampler = Renderer::SamplerHandle{.Index = 1};
+    image.ImageSize = vec2(48.0f, 32.0f);
+    doc.Solve(vec2(200.0f, 200.0f));
+
+    // No authored width/height: the measure hands Yoga the texture's own pixels.
+    CHECK(image.Layout.Size.x == doctest::Approx(48.0f));
+    CHECK(image.Layout.Size.y == doctest::Approx(32.0f));
+
+    // Slicing re-measures to the sum of the corner insets — the smallest box the frame still reads
+    // at, its center collapsed.
+    Style sliced;
+    sliced.ImageSlice = Insets{.Left = 6.0f, .Top = 5.0f, .Right = 6.0f, .Bottom = 5.0f};
+    doc.SetStyle(image, sliced);
+    doc.Solve(vec2(200.0f, 200.0f));
+    CHECK(image.Layout.Size.x == doctest::Approx(12.0f));
+    CHECK(image.Layout.Size.y == doctest::Approx(10.0f));
+}
+
+TEST_CASE("gui image: the fill sizes against the content box, inside the border and padding")
+{
+    Document doc;
+    Element& image = doc.Add(doc.Root(), ElementKind::Image);
+    image.ImageTexture = Renderer::TextureHandle{.Index = 2};
+    image.ImageSampler = Renderer::SamplerHandle{.Index = 1};
+    image.ImageSize = vec2(16.0f, 16.0f);
+    doc.SetStyle(image,
+                 []
+                 {
+                     Style style;
+                     style.Width = Length::Points(64.0f);
+                     style.Height = Length::Points(64.0f);
+                     style.BorderStyle.Width = 4.0f;
+                     style.BorderStyle.Color = vec4(1.0f);
+                     style.Padding =
+                         Insets{.Left = 6.0f, .Top = 6.0f, .Right = 6.0f, .Bottom = 6.0f};
+                     return style;
+                 }());
+    doc.Solve(vec2(200.0f, 200.0f));
+
+    DrawList list;
+    doc.Build(list);
+
+    // The textured quad (emitted before the border ring) starts 10px in on each edge and is 20px
+    // narrower than the 64px border box on each axis.
+    REQUIRE(list.GetVertices().size() >= 4);
+    const GuiVertex& topLeft = list.GetVertices()[0];
+    CHECK(topLeft.Params.z == doctest::Approx(2.0f));
+    CHECK(topLeft.Position.x == doctest::Approx(image.Layout.Min.x + 10.0f));
+    CHECK(topLeft.Position.y == doctest::Approx(image.Layout.Min.y + 10.0f));
+    CHECK(list.GetVertices()[2].Position.x == doctest::Approx(image.Layout.Min.x + 54.0f));
+    CHECK(list.GetVertices()[2].Position.y == doctest::Approx(image.Layout.Min.y + 54.0f));
+}
+
 TEST_CASE("gui draw: style opacity composites down the subtree at build")
 {
     Document doc;

@@ -1,0 +1,14 @@
+{
+  "image": "ui_hatch.png",
+  "srgb": true,
+  "role": "UI",
+  "generate_mips": false,
+  "sampler": {
+    "min": "nearest",
+    "mag": "nearest",
+    "mipmap": "nearest",
+    "wrap_u": "repeat",
+    "wrap_v": "repeat",
+    "anisotropy": 0
+  }
+}

@@ -7,6 +7,16 @@
       "source": "textures/texture.tex.json"
     },
     {
+      "id": "0x4B1583166B212C2A",
+      "type": "Texture",
+      "source": "textures/frame.tex.json"
+    },
+    {
+      "id": "0x68D20CFB7FEC7518",
+      "type": "Texture",
+      "source": "textures/texture_tiled.tex.json"
+    },
+    {
       "id": "0x2D5E729A12F26978",
       "type": "UIDocument",
       "source": "gui/image.vui.xml"
