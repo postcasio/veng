@@ -56,6 +56,7 @@ The load-bearing configure-time options (pass `-D<NAME>=ON|OFF`):
 | `VE_PROFILE` | ON under `VE_DEBUG`, else OFF | Compiles in the diagnostics profiler (scope timing, per-thread trace buffers). It is a `PUBLIC` compile definition on the `veng` target — owned by the engine and propagated to every consumer, **never set by a consumer**, since a consumer whose macro expansion disagrees with the engine it links is an ABI split. With it off, every `VE_PROFILE_*` macro expands to nothing and no event-recording or buffer code is built. |
 | `VENG_ENABLE_CLANG_TIDY` | `OFF` | Runs clang-tidy per-TU during the build. |
 | `VENG_ENABLE_COVERAGE` | `OFF` | Instruments veng's own sources for gcov. |
+| `VENG_TIME_TRACE` | `OFF` | Emits a clang `-ftime-trace` compile profile beside every object file, so the build's own cost is measurable. Turns the configure into a full cold build (the compiler cache is disabled) and lands gigabytes of JSON — see [Build-time tracing](#build-time-tracing). |
 
 ---
 
@@ -241,6 +242,61 @@ the same report reproducible on both toolchains: GNU builds use `gcov`, and Clan
 use `xcrun llvm-cov gcov`, which the script selects on macOS. Third-party sources under
 `_deps/` and the tests themselves are excluded, so the percentage describes first-party
 code the tests are meant to cover.
+
+---
+
+## Build-time tracing
+
+`VENG_TIME_TRACE` (default `OFF`) adds clang's `-ftime-trace` to veng's own targets, so the
+compiler writes a Chrome-Trace profile of each translation unit's own compilation — the
+frontend/backend split, template instantiation, per-header parse cost — beside that TU's
+object file. It is wired at the same boundary as the clang-tidy and coverage options, so
+vendored and fetched sources are never traced and their compile time cannot dilute the
+aggregate.
+
+A tracing build goes in its own tree, `build-trace/`, a sibling of `build-coverage/`, so it
+never disturbs `build-debug`:
+
+```sh
+cmake -B build-trace -S . -DVE_DEBUG=ON -DVENG_TIME_TRACE=ON
+cmake --build build-trace
+```
+
+**Where the output lands.** One `.json` per translation unit, inside the build tree, under
+that target's object directory, named after the object it sits beside — e.g.
+`build-trace/engine/CMakeFiles/veng.dir/src/Renderer/Context.cpp.json`. Nothing moves it;
+that layout is the contract anything reading the traces scans.
+
+**What it costs, up front.** The option disables the compiler cache — `-ftime-trace` writes
+a side output ccache does not reproduce, so a cache hit would yield an object with no trace
+beside it, and a partial tree that reads as a complete one. Every `VENG_TIME_TRACE=ON`
+configure is therefore a **full cold build**: on the order of **ten minutes of wall clock**,
+and, across the ~600 first-party translation units veng builds by default, **roughly 2–6 GB**
+of JSON in the tree. That is the reason the option defaults off.
+
+**It is a measurement build, not a normal one.** The flag changes what the compiler does, not
+merely what it emits: it costs frontend time and writes a file per TU. Compare a tracing
+build's timings only against another tracing build's, never against a normal build's.
+
+**Cleaning up.** Delete `build-trace/` outright — the objects and the JSON are only ever
+regenerated as a pair, so removing the tree reclaims both. Nothing refreshes it on a schedule
+and nothing depends on it being current; it is a deliberately-made artifact you refresh when
+you want to profile the build and remove when you are done. `build-trace/` is gitignored.
+
+**Mirroring it downstream.** A project that consumes veng and wants the same view of *its own*
+build defines the same shape of option over its own targets: a cache option defaulting `OFF`;
+declared ahead of whatever assigns `CMAKE_CXX_COMPILER_LAUNCHER`, so the launcher branch can
+read it; opting out of the compiler cache through that single existing assignment rather than
+adding a second one (CMake bakes the first launcher value into the compile rule and *appends*
+later ones, which is silently wrong rather than an error); disabling any *other* cache
+injection its dependency tree performs, since a third-party `CMakeLists` that sets a **global
+`RULE_LAUNCH_COMPILE`** prefixes every target's compile rule without going near the launcher
+variable at all; applied at the boundary that
+already scopes warnings and precompiled headers to first-party targets; and leaving the
+per-object output location where clang puts it. `-ftime-trace` is clang-specific, so the
+compiler test is `if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")` — `MATCHES`, not `STREQUAL`,
+since `AppleClang` must match — with a `message(WARNING …)` on the else branch rather than a
+silent no-op.
 
 ---
 

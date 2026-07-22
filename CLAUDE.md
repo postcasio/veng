@@ -314,6 +314,55 @@ toolchain). The script fails with an actionable message when either is missing r
 than leaving a half-built tree that reads as success. `_deps/` and `tests/` are excluded
 from the report.
 
+### Build-time tracing
+
+`VENG_TIME_TRACE` (default `OFF`) adds clang's `-ftime-trace` to veng's own targets, wired at
+the same boundary as the clang-tidy and coverage options so vendored sources are never traced.
+The compiler then writes one Chrome-Trace `.json` per translation unit **beside that TU's
+object file** — build tree → target object directory → one `.json` named after the object
+(`build-trace/engine/CMakeFiles/veng.dir/src/Renderer/Context.cpp.json`). Nothing relocates
+it; that layout is the contract anything reading the traces scans.
+
+```sh
+cmake -B build-trace -S . -DVE_DEBUG=ON -DVENG_TIME_TRACE=ON
+cmake --build build-trace
+```
+
+**The tracing tree is `build-trace/`** — a sibling of `build-coverage/`, gitignored, so a
+tracing configure never disturbs `build-debug`. Three things about it are load-bearing:
+
+- **The option disables the compiler cache, and arranges that itself.** `-ftime-trace` writes
+  a side output ccache does not reproduce, so a cache hit yields an object with *no* trace
+  beside it — a partial tree that reads as a complete one. The opt-out goes through the single
+  existing `CMAKE_CXX_COMPILER_LAUNCHER` assignment (CMake bakes the first launcher value into
+  the compile rule and appends later ones, so a second assignment is silently wrong rather
+  than an error). This is also why the option is declared at the *top* of the top-level
+  `CMakeLists.txt`, beside `VE_DEBUG`/`VE_PROFILE` rather than with the other `VENG_*` options
+  further down: it has to be readable when the launcher is assigned. The launcher variable is
+  not the only way a cache gets in, either — a fetched dependency can set a **global
+  `RULE_LAUNCH_COMPILE`**, which prefixes every target's compile rule tree-wide; the tracing
+  block forces that off too (`ASSIMP_BUILD_USE_CCACHE`), ahead of the fetch that would set it.
+- **Every `VENG_TIME_TRACE=ON` configure is a full cold build**: on the order of ten minutes of
+  wall clock, and roughly **2–6 GB** of JSON across veng's ~600 first-party TUs. That is why
+  it defaults off, and why the tree is a deliberately-made, manually-refreshed artifact rather
+  than a by-product. Clean up by deleting `build-trace/` outright — objects and JSON are only
+  ever regenerated as a pair.
+- **It is a measurement build.** The flag changes what the compiler *does*, not just what it
+  emits. Compare a tracing build's timings only against another tracing build's.
+
+The PCH opt-outs (`SKIP_PRECOMPILE_HEADERS`, and the debug encode TUs matching the PCH's
+`__OPTIMIZE__`) are untouched — the flag is orthogonal to both, and those TUs simply trace as
+the no-PCH case, which is itself useful data. `-Werror` is unaffected; `-ftime-trace` produces
+no diagnostics. The flag is clang-specific, so the compiler test is
+`CMAKE_CXX_COMPILER_ID MATCHES "Clang"` (`MATCHES`, since the primary dev host reports
+`AppleClang`), with a `message(WARNING …)` on the else branch rather than a silent no-op.
+
+**A downstream project mirroring this over its own build** follows the same shape: a cache
+option defaulting `OFF`, declared ahead of whatever assigns the compiler launcher, opting out
+of the cache through that one existing assignment, applied at the boundary that already scopes
+warnings and precompiled headers to first-party targets, with the per-object output location
+left where clang puts it.
+
 ### Consuming veng — three modes through one `veng-config`
 
 A game lives **outside** the engine tree and discovers veng as a normal CMake

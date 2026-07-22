@@ -79,11 +79,36 @@ endif ()
 # the engine subdirectory that acts on it.
 option(VE_PROFILE "Compile in the diagnostics profiler (scope timing, trace buffers)" ${VE_DEBUG})
 
+# VENG_TIME_TRACE adds clang's -ftime-trace to veng's own targets, so every translation unit
+# writes a Chrome-Trace profile of its own compilation beside its object file. Declared here,
+# ahead of the ccache block below that reads it and ahead of the subdirectories the flag is
+# applied to. Declaring it beside the other VENG_* build options further down would leave it
+# unset when the compiler launcher is assigned, and a tracing build would then serve objects
+# from the cache with no trace beside them — a wrong answer with nothing to signal it.
+#
+# Three things it settles, each otherwise a way to measure the wrong thing quietly:
+#   - A tracing build is a measurement build, not a normal one. The flag costs frontend time
+#     and writes a file per TU, so timings from a tracing build are compared only against
+#     another tracing build's, never against a normal build's.
+#   - ccache does not reproduce the .json side output, so a cache hit yields an object with no
+#     trace beside it. A tracing build therefore runs with the cache disabled — the compiler
+#     actually doing the work is the only thing worth measuring — which the ccache block below
+#     arranges itself rather than leaving the operator to remember.
+#   - The precompiled-header opt-outs (SKIP_PRECOMPILE_HEADERS, and the rule that the debug
+#     encode TUs match the PCH's __OPTIMIZE__) are untouched. The flag is orthogonal to both;
+#     those TUs are traced like any other and their traces are simply the no-PCH case.
+option(VENG_TIME_TRACE "Emit clang -ftime-trace compile profiles beside each object file" OFF)
+
 # Route compilation through ccache when present, so unchanged TUs are served from
 # cache across rebuilds, clean builds, and branch switches. The #embed / bin2cpp
 # machinery below is written to keep ccache's view of generated sources correct.
+#
+# A tracing build opts out of the cache here, in the one block that assigns the launcher:
+# CMAKE_CXX_COMPILER_LAUNCHER must be assigned exactly once, because CMake bakes the first
+# value into the compile rule and appends any later one, producing a launcher list that is
+# silently wrong rather than an error.
 find_program(CCACHE_PROGRAM ccache)
-if (CCACHE_PROGRAM)
+if (CCACHE_PROGRAM AND NOT VENG_TIME_TRACE)
     # A cached result is keyed on absolute paths, so a checkout at a different path can never
     # reuse another's entries — a linked git worktree only ever writes to the shared cache,
     # evicting entries it will never read. Give one its own store inside its build tree, where
@@ -393,6 +418,37 @@ if (VENG_ENABLE_COVERAGE)
         message(STATUS "coverage instrumentation enabled (gcov)")
     else ()
         message(WARNING "VENG_ENABLE_COVERAGE is ON but the compiler is not GCC/Clang; not instrumenting.")
+    endif ()
+endif ()
+
+# ---------------------------------------------------------------------------
+# Compile-time tracing (opt-in)
+# ---------------------------------------------------------------------------
+
+# -ftime-trace makes clang write a Chrome-Trace .json beside every object it compiles —
+# one file per translation unit, under the target's object directory in the build tree,
+# named after the object. That layout is the contract a trace consumer scans. Applied at the
+# same boundary as the clang-tidy and coverage wiring above — after the FetchContent deps,
+# before veng's own subdirectories — so vendored and fetched sources are never traced and
+# their compile time cannot dilute the aggregate. VENG_TIME_TRACE itself is declared at the
+# top of this file, ahead of the ccache block that reads it.
+#
+# The option is not a silent no-op on a compiler that lacks the flag: a measurement option
+# that quietly does nothing hands the operator an empty report and no explanation.
+if (VENG_TIME_TRACE)
+    if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        add_compile_options(-ftime-trace)
+        # assimp — fetched below by the cooker — turns ccache on for the whole project by
+        # default, and does it through a GLOBAL RULE_LAUNCH_COMPILE that prefixes every target's
+        # compile rule, not through the compiler-launcher variable the block at the top of this
+        # file owns. Leaving it on would route a tracing build through the cache after all, and
+        # a cache hit yields an object with no .json beside it. Forced off here, ahead of the
+        # cooker's FetchContent, so the option's cache-disabled posture actually holds; the
+        # default (non-tracing) build is untouched.
+        set(ASSIMP_BUILD_USE_CCACHE OFF CACHE BOOL "" FORCE)
+        message(STATUS "compile-time tracing enabled (-ftime-trace); the compiler cache is off for this tree")
+    else ()
+        message(WARNING "VENG_TIME_TRACE is ON but the compiler is not Clang; not tracing.")
     endif ()
 endif ()
 
