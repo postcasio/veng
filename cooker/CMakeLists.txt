@@ -76,11 +76,23 @@ FetchContent_MakeAvailable(bc7enc_rdo)
 # A proper CMake project: build one per-architecture SIMD static codec library — NEON on Apple
 # Silicon, SSE4.1 on x86_64 — with no CLI, no shared lib, no tests. Pinned to a tagged release.
 #
-# The SIMD codec is many times faster than the scalar "none" reference. ASTCENC_INVARIANCE keeps
-# the encode bit-reproducible across runs, threads, and machines of the same architecture, so the
-# cook stays deterministic — but cross-ISA output differs, so the smoke golden is regenerated when
-# the codec ISA changes. astc-encoder's own universal (lipo) build is off: a single-arch SIMD lib
-# matches veng's single-arch build (a universal veng build would need the scalar "none" codec).
+# The SIMD codec is many times faster than the scalar "none" reference. astc-encoder's own universal
+# (lipo) build is off: a single-arch SIMD lib matches veng's single-arch build (a universal veng
+# build would need the scalar "none" codec).
+#
+# ASTCENC_INVARIANCE is OFF, which is a deliberate trade rather than a default. It would force the
+# encoder to skip float optimisations whose results depend on vector width and on how blocks are
+# scheduled across threads, buying an encode that is bit-reproducible across runs, thread counts and
+# machines of one architecture. The cook does not need that: an asset's identity is its content hash
+# over the bytes actually stored, the cook cache replays those stored bytes rather than re-deriving
+# them, and a texture is required to be *valid*, not to be one particular valid encoding. What it
+# costs is real encode time on the largest single cost in a cold cook. So the cooked blocks may
+# differ between two fresh cooks of identical sources — including between different thread counts —
+# and every consumer of them is expected to tolerate that.
+#
+# The visible consequence is the smoke golden, which renders cooked textures: it is regenerated when
+# the codec ISA, the effort preset, or this setting changes, and its compare tolerance is what
+# absorbs encode-to-encode variation rather than only GPU float jitter.
 if (CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
     set(ASTCENC_ISA_NEON ON CACHE INTERNAL "")
     set(VENG_ASTCENC_TARGET astcenc-neon-static)
@@ -95,7 +107,7 @@ set(ASTCENC_UNIVERSAL_BUILD OFF CACHE INTERNAL "")
 set(ASTCENC_CLI OFF CACHE INTERNAL "")
 set(ASTCENC_SHAREDLIB OFF CACHE INTERNAL "")
 set(ASTCENC_UNITTEST OFF CACHE INTERNAL "")
-set(ASTCENC_INVARIANCE ON CACHE INTERNAL "")
+set(ASTCENC_INVARIANCE OFF CACHE INTERNAL "")
 FetchContent_Declare(
         astc_encoder
         GIT_REPOSITORY https://github.com/ARM-software/astc-encoder.git

@@ -173,9 +173,11 @@ namespace Veng::Cook
         // The level's blocks are encoded across hardware_concurrency() threads — the encoder's
         // documented model: one context allocated for N threads, then N calls to
         // astcenc_compress_image, each from a distinct thread under its own [0..N-1] index, with the
-        // blocks dynamically scheduled across them. ASTCENC_INVARIANCE makes the encode independent
-        // of thread count, so the cooked blocks are byte-identical at any N and the smoke golden does
-        // not move.
+        // blocks dynamically scheduled across them. The encoder is built with ASTCENC_INVARIANCE
+        // off, so the blocks a level encodes to depend on the thread count and are not reproducible
+        // between two fresh cooks — a deliberate trade for encode speed, reasoned about in
+        // cooker/CMakeLists.txt. Every consumer treats a cooked texture as valid rather than as one
+        // particular encoding; the smoke golden's compare tolerance is what absorbs the variation.
         Result<vector<u8>> EncodeAstcLevel(u8* rgba, u32 width, u32 height, astcenc_profile profile)
         {
             astcenc_config config{};
