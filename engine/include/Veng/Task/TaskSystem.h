@@ -100,6 +100,10 @@ namespace Veng
 
         /// @brief Registers a continuation that runs on the main thread during PumpMainThread().
         ///
+        /// The continuation is queued no later than the moment Get() can return, so waiting for the
+        /// result and then pumping once is enough to run it — a caller never has to pump twice or
+        /// guess. Registering after the result has already landed queues it immediately.
+        ///
         /// If the result has already landed, the continuation is queued immediately;
         /// otherwise the worker queues it on completion. Never runs on a worker thread.
         /// @param fn  Callable accepting Result<Payload>.
@@ -243,12 +247,16 @@ namespace Veng
         /// @brief Pushes a ready continuation onto the main-thread queue.
         void EnqueueMainThread(function<void()> fn);
 
-        /// @brief Called by a worker on job completion: stores the result, wakes Get(), and hands off any Then.
+        /// @brief Called by a worker on job completion: stores the result, queues any Then, wakes Get().
+        ///
+        /// A continuation registered before the result lands is enqueued **while state.Mutex is
+        /// held**, so it is on the pump queue before any waiter can observe Done. That is what makes
+        /// the ordering guarantee on Then() true: wait for the result, pump once, and the
+        /// continuation runs.
         template <typename T>
         void Finish(Detail::TaskState<T>& state,
                     Result<typename Detail::TaskState<T>::Payload> result)
         {
-            function<void()> continuation;
             {
                 const std::lock_guard lock(state.Mutex);
                 state.Value = std::move(result);
@@ -256,17 +264,25 @@ namespace Veng
 
                 if (state.Continuation)
                 {
-                    continuation = [fn = std::move(state.Continuation),
-                                    value = *state.Value]() mutable { fn(std::move(value)); };
+                    // Enqueued under the lock, not after it. Get() waits on Ready holding
+                    // state.Mutex, so it cannot observe Done until this scope ends — enqueueing
+                    // here closes the window where the task is complete, Get() has returned, and
+                    // the continuation is on neither the state nor the pump queue. In that window
+                    // a wait-then-pump-once sequence silently runs nothing: harmless in a frame
+                    // loop that pumps again next frame, a dropped callback in a shutdown or a
+                    // one-shot tool that does not.
+                    //
+                    // The lock order is state.Mutex -> m_MainThreadMutex and holds in one direction
+                    // only. PumpMainThread swaps the queue out under m_MainThreadMutex and releases
+                    // it before invoking anything, so no continuation ever runs holding it and
+                    // nothing acquires state.Mutex beneath it. A pump that invoked continuations
+                    // under its own lock would deadlock against this.
+                    EnqueueMainThread([fn = std::move(state.Continuation),
+                                       value = *state.Value]() mutable { fn(std::move(value)); });
                     state.Continuation = nullptr;
                 }
             }
             state.Ready.notify_all();
-
-            if (continuation)
-            {
-                EnqueueMainThread(std::move(continuation));
-            }
 
             {
                 const std::scoped_lock lock(m_QueueMutex);
