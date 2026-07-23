@@ -4,6 +4,7 @@
 // future-format record refusing the open, and a failed mint-write surfacing as an error.
 
 #include <doctest/doctest.h>
+#include <Veng/Path.h>
 
 #include <Veng/Persistence/LocalAccountStore.h>
 

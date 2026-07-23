@@ -9,7 +9,6 @@
 
 #include <cstdint>
 #include <expected>
-#include <filesystem>
 #include <optional>
 #include <string>
 #include <vector>
@@ -33,8 +32,6 @@ namespace Veng
 
     /// @brief Alias for std::string.
     using string = std::string;
-    /// @brief Alias for std::filesystem::path.
-    using path = std::filesystem::path;
 
     /// @brief Alias for std::vector<T>.
     template <typename T>

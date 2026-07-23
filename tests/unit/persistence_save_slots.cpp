@@ -5,6 +5,7 @@
 // through OpenSlot.
 
 #include <doctest/doctest.h>
+#include <Veng/Path.h>
 
 #include <Veng/Persistence/SaveSlots.h>
 

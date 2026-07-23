@@ -3,6 +3,7 @@
 // manifest, parses it, and checks EntriesOfType filters by AssetTypeId.
 
 #include <doctest/doctest.h>
+#include <Veng/Path.h>
 #include "support/TempPath.h"
 
 #include "AssetSourceIndex.h"

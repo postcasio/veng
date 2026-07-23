@@ -1,4 +1,5 @@
 #include <Veng/LaunchArguments.h>
+#include <Veng/Path.h>
 
 #include <algorithm>
 #include <charconv>

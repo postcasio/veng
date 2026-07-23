@@ -1,4 +1,5 @@
 #include <Veng/Module/ModuleLoader.h>
+#include <Veng/Path.h>
 
 #include <Veng/Assert.h>
 

@@ -1,4 +1,5 @@
 #include "EnvironmentImporter.h"
+#include <Veng/Asset/Path.h>
 
 #include <algorithm>
 #include <cstdlib>

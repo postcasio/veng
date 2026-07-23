@@ -3,6 +3,7 @@
 #include <span>
 
 #include <Veng/Asset/Types.h>
+#include <Veng/Asset/Path.h>
 
 namespace Veng
 {

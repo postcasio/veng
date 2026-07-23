@@ -2,6 +2,7 @@
 
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Asset/Types.h>
+#include <Veng/Asset/Path.h>
 
 // The .vengproj cooked-project file — the runtime entrypoint of a managed game:
 //

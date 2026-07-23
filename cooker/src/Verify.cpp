@@ -1,4 +1,5 @@
 #include <Veng/Cook/Verify.h>
+#include <Veng/Asset/Path.h>
 
 #include <Veng/Asset/Archive.h>
 

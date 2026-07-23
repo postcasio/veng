@@ -3,6 +3,7 @@
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Asset/AssetType.h>
 #include <Veng/Asset/Types.h>
+#include <Veng/Asset/Path.h>
 
 /// @brief Archive integrity verification via xxh3-128 re-hashing.
 ///

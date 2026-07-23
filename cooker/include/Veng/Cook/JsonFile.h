@@ -1,5 +1,7 @@
 #pragma once
 
+#include <Veng/Asset/Path.h>
+
 #include <Veng/Cook/Types.h>
 
 #include <string_view>

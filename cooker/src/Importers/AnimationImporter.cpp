@@ -1,4 +1,5 @@
 #include "AnimationImporter.h"
+#include <Veng/Asset/Path.h>
 
 #include <cmath>
 #include <cstring>

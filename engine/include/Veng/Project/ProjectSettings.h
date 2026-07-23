@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Veng/Veng.h>
+#include <Veng/Path.h>
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Reflection/Reflect.h>
 #include <Veng/Project/BuildConfiguration.h>

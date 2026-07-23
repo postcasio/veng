@@ -1,4 +1,5 @@
 #include "Cli.h"
+#include <Veng/Path.h>
 
 #include <fstream>
 #include <ostream>

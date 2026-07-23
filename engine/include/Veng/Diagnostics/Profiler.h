@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Veng/Veng.h>
+#include <Veng/Path.h>
 #include <Veng/Result.h>
 #include <Veng/Diagnostics/TraceSink.h>
 

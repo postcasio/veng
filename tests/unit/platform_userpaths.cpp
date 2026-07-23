@@ -6,6 +6,7 @@
 // the unwritable-base recoverable-error path.
 
 #include <doctest/doctest.h>
+#include <Veng/Path.h>
 
 #include <cstdlib>
 #include <filesystem>

@@ -4,6 +4,7 @@
 #include <Veng/Net/Blob.h>
 #include <Veng/Result.h>
 #include <Veng/Veng.h>
+#include <Veng/Path.h>
 
 namespace Veng
 {

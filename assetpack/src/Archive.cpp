@@ -1,4 +1,5 @@
 #include <Veng/Asset/Archive.h>
+#include <Veng/Asset/Path.h>
 
 #include <Veng/Asset/AtomicFile.h>
 

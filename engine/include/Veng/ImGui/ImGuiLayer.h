@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Veng/Veng.h>
+#include <Veng/Path.h>
 #include <Veng/ImGui/ImGuiTexture.h>
 #include <Veng/Input/InputConsumer.h>
 

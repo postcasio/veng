@@ -7,6 +7,7 @@
 #include <slang/slang.h>
 
 #include <Veng/Veng.h>
+#include <Veng/Path.h>
 
 // Cooker-internal Slang session search-path policy. The three session setups
 // (ShaderImporter's compile, SlangReflect's struct and fragment-output

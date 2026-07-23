@@ -1,5 +1,7 @@
 #pragma once
 
+#include <Veng/Asset/Path.h>
+
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Asset/AssetType.h>
 #include <Veng/Cook/Types.h>

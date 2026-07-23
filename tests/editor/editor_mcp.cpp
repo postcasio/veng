@@ -10,6 +10,7 @@
 // tests/editor/ device-free precedent.
 
 #include "EditorMcp.h"
+#include <Veng/Path.h>
 #include "support/TempPath.h"
 
 #include "AssetEditorPanel.h"

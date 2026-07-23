@@ -1,4 +1,5 @@
 #include "SkeletonImporter.h"
+#include <Veng/Asset/Path.h>
 
 #include <algorithm>
 #include <cstring>

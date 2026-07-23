@@ -1,5 +1,7 @@
 #pragma once
 
+#include <Veng/Asset/Path.h>
+
 #include <Veng/Result.h>
 #include <Veng/Asset/AssetType.h>
 #include <Veng/Module/ModuleLoader.h>

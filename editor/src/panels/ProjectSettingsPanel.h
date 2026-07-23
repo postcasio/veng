@@ -1,5 +1,7 @@
 #pragma once
 
+#include <Veng/Path.h>
+
 #include <Veng/Project/ProjectSettings.h>
 
 #include <VengEditor/EditorPanel.h>

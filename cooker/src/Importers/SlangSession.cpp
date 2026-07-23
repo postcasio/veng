@@ -1,4 +1,5 @@
 #include "SlangSession.h"
+#include <Veng/Path.h>
 
 namespace Veng::Cook
 {

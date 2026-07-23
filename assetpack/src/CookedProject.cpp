@@ -1,4 +1,5 @@
 #include <Veng/Asset/CookedProject.h>
+#include <Veng/Asset/Path.h>
 
 #include <Veng/Asset/AtomicFile.h>
 

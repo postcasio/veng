@@ -1,4 +1,5 @@
 #include <Veng/Cook/ModuleTypes.h>
+#include <Veng/Asset/Path.h>
 
 #include <Veng/Asset/AssetLoaderRegistry.h>
 #include <Veng/Module/ApplicationRegistry.h>

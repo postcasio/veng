@@ -3,6 +3,7 @@
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Asset/AssetType.h>
 #include <Veng/Veng.h>
+#include <Veng/Path.h>
 
 #include <span>
 

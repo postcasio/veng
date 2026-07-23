@@ -1,4 +1,5 @@
 #include <Veng/Cook/JsonFile.h>
+#include <Veng/Asset/Path.h>
 
 #include <fstream>
 #include <sstream>

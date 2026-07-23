@@ -1,4 +1,5 @@
 #include "panels/UIDocumentSource.h"
+#include <Veng/Path.h>
 
 #include "JsonUtil.h"
 

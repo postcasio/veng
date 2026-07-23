@@ -4,6 +4,7 @@
 #include <span>
 
 #include <Veng/Veng.h>
+#include <Veng/Path.h>
 #include <Veng/Renderer/Types.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>

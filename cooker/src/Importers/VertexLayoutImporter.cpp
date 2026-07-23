@@ -1,4 +1,5 @@
 #include "VertexLayoutImporter.h"
+#include <Veng/Asset/Path.h>
 
 #include <cstring>
 

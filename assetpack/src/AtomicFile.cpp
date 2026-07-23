@@ -1,4 +1,5 @@
 #include <Veng/Asset/AtomicFile.h>
+#include <Veng/Asset/Path.h>
 
 #include <fstream>
 #include <random>

@@ -1,4 +1,5 @@
 #include "AssetChip.h"
+#include <Veng/Path.h>
 
 #include "AssetDragPayload.h"
 #include "AssetSourceIndex.h"

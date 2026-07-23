@@ -13,7 +13,6 @@
 // queue decode+upload, result delivered via the continuation pump). Direct
 // concurrent calls into veng APIs from outside the task system are illegal.
 
-#include <filesystem>
 #include <map>
 #include <unordered_map>
 #include <string>
@@ -72,8 +71,6 @@
 
 namespace Veng
 {
-    /// @brief House alias for std::filesystem::path.
-    using path = std::filesystem::path;
     /// @brief House alias for std::string.
     using string = std::string;
     /// @brief House alias for std::string_view.

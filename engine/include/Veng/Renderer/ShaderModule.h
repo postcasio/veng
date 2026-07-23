@@ -3,6 +3,7 @@
 #include <span>
 
 #include <Veng/Veng.h>
+#include <Veng/Path.h>
 #include <Veng/Result.h>
 
 namespace Veng::Renderer

@@ -1,4 +1,5 @@
 #include "RawImporter.h"
+#include <Veng/Asset/Path.h>
 
 #include <fstream>
 

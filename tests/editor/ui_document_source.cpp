@@ -5,6 +5,7 @@
 // outline, and the asset-chip are not: those need a live ImGui frame and a device.
 
 #include <doctest/doctest.h>
+#include <Veng/Path.h>
 
 #include "AssetSaveModel.h"
 #include "panels/UIDocumentSource.h"

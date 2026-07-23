@@ -1,4 +1,5 @@
 #include "TextureImporter.h"
+#include <Veng/Asset/Path.h>
 
 #include <algorithm>
 #include <array>

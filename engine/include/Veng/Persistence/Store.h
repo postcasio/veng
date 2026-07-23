@@ -3,6 +3,7 @@
 #include <Veng/Reflection/ReflectionTypes.h>
 #include <Veng/Result.h>
 #include <Veng/Veng.h>
+#include <Veng/Path.h>
 
 #include <utility>
 

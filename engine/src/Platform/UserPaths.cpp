@@ -1,4 +1,5 @@
 #include <Veng/Platform/UserPaths.h>
+#include <Veng/Path.h>
 
 #include <cstdlib>
 #include <system_error>

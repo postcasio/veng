@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Veng/Veng.h>
+#include <Veng/Path.h>
 #include <Veng/Diagnostics/TraceSink.h>
 
 // FileTraceSink — the TraceSink that writes the on-disk trace format (docs/trace-format.md) to a
