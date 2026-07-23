@@ -2733,6 +2733,14 @@ namespace Veng::Gui
 
         ApplyEdgeInsets(node, style.Margin, &YGNodeStyleSetMargin);
 
+        // The border edge sits between margin and padding, so the frame is reserved out of the
+        // content box: children land inside it, a measure function is handed the box its content is
+        // actually drawn in, and an auto-sized leaf includes its own frame. The element's rect stays
+        // the border box, which is what every paint site deflates from. Negatives clamp exactly as
+        // ToContentBox does, so layout and paint agree on a malformed width rather than diverging.
+        ApplyEdgeInsets(node, Insets::All(std::max(style.BorderStyle.Width, 0.0f)),
+                        &YGNodeStyleSetBorder);
+
         // A gutter reserves each scrollable axis's bar thickness out of the content box, as extra
         // padding on the edge the bar sits against — so the content never flows under the bar. The
         // space is held whether or not the axis currently overflows, which is what keeps the

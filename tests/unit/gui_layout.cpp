@@ -460,3 +460,92 @@ TEST_CASE("gui layout: a TextInput takes its intrinsic height from its own text"
     doc.Solve(vec2(200.0f, 200.0f));
     CHECK(label.Layout.Size.y == doctest::Approx(field.Layout.Size.y).epsilon(Eps));
 }
+
+TEST_CASE("gui layout: the border is reserved out of the content box")
+{
+    Document doc;
+    // 10px per character wide, 20px per line tall, recording the constraint it was handed so the
+    // case can assert what the content box offered rather than inferring it from the solved size.
+    optional<f32> measuredWidth;
+    doc.SetTextMeasurer(
+        [&measuredWidth](string_view text, const Style&, optional<f32> maxWidth) -> vec2
+        {
+            measuredWidth = maxWidth;
+            return vec2(static_cast<f32>(text.size()) * 10.0f, 20.0f);
+        });
+
+    Style column;
+    column.Direction = FlexDirection::Column;
+    column.AlignItems = Align::FlexStart;
+    doc.SetStyle(doc.Root(), column);
+
+    SUBCASE("an auto-sized bordered leaf sizes to content + padding + two borders")
+    {
+        Element& label = doc.Add(doc.Root(), ElementKind::Text);
+        doc.SetText(label, "GO"); // 2 chars -> 20x20 of content.
+
+        Style boxed;
+        boxed.Padding = Insets::All(6.0f);
+        boxed.BorderStyle = Border{.Width = 3.0f, .Color = vec4(1.0f)};
+        doc.SetStyle(label, boxed);
+
+        doc.Solve(vec2(200.0f, 200.0f));
+        CheckRect(label.Layout, 0.0f, 0.0f, 38.0f, 38.0f);
+    }
+
+    SUBCASE("a bordered container places its child inside the frame")
+    {
+        Style boxed = column;
+        boxed.Padding = Insets::All(6.0f);
+        boxed.BorderStyle = Border{.Width = 3.0f, .Color = vec4(1.0f)};
+        doc.SetStyle(doc.Root(), boxed);
+
+        Style child;
+        child.Width = Length::Points(40.0f);
+        child.Height = Length::Points(40.0f);
+        Element& inner = doc.Add(doc.Root(), ElementKind::Panel);
+        doc.SetStyle(inner, child);
+
+        doc.Solve(vec2(200.0f, 200.0f));
+        CheckRect(inner.Layout, 9.0f, 9.0f, 40.0f, 40.0f);
+    }
+
+    SUBCASE("the width handed to a measure function excludes the border and the padding")
+    {
+        Style boxed;
+        boxed.Width = Length::Points(100.0f);
+        boxed.Padding = Insets::All(6.0f);
+        boxed.BorderStyle = Border{.Width = 3.0f, .Color = vec4(1.0f)};
+
+        Element& label = doc.Add(doc.Root(), ElementKind::Text);
+        doc.SetStyle(label, boxed);
+        doc.SetText(label, "HELLOWORLD");
+
+        doc.Solve(vec2(200.0f, 200.0f));
+        REQUIRE(measuredWidth.has_value());
+        CHECK(*measuredWidth == doctest::Approx(82.0f).epsilon(Eps));
+    }
+
+    SUBCASE("an explicitly sized bordered box keeps its outer size")
+    {
+        Style boxed;
+        boxed.Width = Length::Points(64.0f);
+        boxed.Height = Length::Points(48.0f);
+        boxed.BorderStyle = Border{.Width = 4.0f, .Color = vec4(1.0f)};
+
+        Element& panel = doc.Add(doc.Root(), ElementKind::Panel);
+        doc.SetStyle(panel, boxed);
+
+        Style child;
+        child.FlexGrow = 1.0f;
+        child.AlignSelf = Align::Stretch;
+        Element& inner = doc.Add(panel, ElementKind::Panel);
+        doc.SetStyle(inner, child);
+
+        doc.Solve(vec2(200.0f, 200.0f));
+        // The rect is the border box: the authored size is the outer extent and the frame comes
+        // out of the inside, so the child fills what is left.
+        CheckRect(panel.Layout, 0.0f, 0.0f, 64.0f, 48.0f);
+        CheckRect(inner.Layout, 4.0f, 4.0f, 56.0f, 40.0f);
+    }
+}
