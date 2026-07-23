@@ -29,6 +29,8 @@ namespace Veng
     using usize = std::size_t;
     /// @brief 32-bit floating-point scalar.
     using f32 = float;
+    /// @brief 64-bit floating-point scalar.
+    using f64 = double;
 
     /// @brief Alias for std::string.
     using string = std::string;

@@ -14,6 +14,7 @@
 #include <Veng/Asset/AtomicFile.h>
 #include <Veng/Asset/HexId.h>
 #include <Veng/Cook/CookCache.h>
+#include <Veng/Cook/CookTiming.h>
 #include <Veng/Cook/JsonFile.h>
 #include <Veng/Project/CompressionFormat.h>
 #include <Veng/Project/CompressionRole.h>
@@ -462,8 +463,11 @@ namespace Veng::Cook
                                 std::span<const path> referencePacks, const TypeRegistry* types,
                                 const SystemRegistry* systems, vector<path>* outDependencies,
                                 const BuildConfiguration* config, const path& configFile,
-                                const path& shaderIncludeDir, const CookCache* cache) const
+                                const path& shaderIncludeDir, const CookCache* cache,
+                                CookTiming* timing) const
     {
+        const CookStopwatch manifestWatch;
+
         const Result<json> packResult = ReadAndValidatePack(packJson);
         if (!packResult)
         {
@@ -489,6 +493,11 @@ namespace Veng::Cook
                                                    packJson.string(), refPackResult.error()));
             }
             refPacks.push_back(std::move(*refPackResult));
+        }
+
+        if (timing != nullptr)
+        {
+            timing->ManifestParseSeconds += manifestWatch.Elapsed();
         }
 
         // std::set keeps dependencies sorted and de-duplicated. `entryDeps`/`entryResolutions`, when
@@ -635,10 +644,44 @@ namespace Veng::Cook
         // means the pack is rewritten and the unchanged-pack write skip below cannot apply.
         bool allHits = cache != nullptr;
 
+        // Appends one asset's timing when a report was asked for. The id and type come from the
+        // manifest entry rather than the importer table: that is the same pair the roll-up keys on,
+        // and it is available even for an entry whose type never resolved to an importer.
+        const auto recordAssetTiming = [timing](const json& entry, bool cacheHit, f64 lookupSeconds,
+                                                f64 importSeconds, f64 storeSeconds)
+        {
+            if (timing == nullptr)
+            {
+                return;
+            }
+
+            CookAssetTiming asset;
+            if (entry.is_object())
+            {
+                if (entry.contains("id") && entry["id"].is_string())
+                {
+                    if (const optional<AssetId> id = ParseAssetId(entry["id"].get<string>()))
+                    {
+                        asset.Id = *id;
+                    }
+                }
+                if (entry.contains("type") && entry["type"].is_string())
+                {
+                    asset.Type = entry["type"].get<string>();
+                }
+            }
+            asset.CacheHit = cacheHit;
+            asset.CacheLookupSeconds = lookupSeconds;
+            asset.ImportSeconds = importSeconds;
+            asset.StoreSeconds = storeSeconds;
+            timing->Assets.push_back(std::move(asset));
+        };
+
         const json& assets = pack["assets"];
         for (usize index = 0; index < assets.size(); ++index)
         {
             const json& entry = assets[index];
+            const CookStopwatch entryWatch;
 
             // Compute the entry's cache key up front. A malformed entry (no key possible) simply
             // cooks fresh and reports its own located error from CookEntry.
@@ -722,6 +765,7 @@ namespace Veng::Cook
                         {
                             dependencies.insert(dep.Path);
                         }
+                        recordAssetTiming(entry, true, entryWatch.Elapsed(), 0.0, 0.0);
                         continue;
                     }
                 }
@@ -730,13 +774,18 @@ namespace Veng::Cook
             // Miss (or caching disabled): cook fresh, capturing this entry's own inputs so a hit can
             // be stored. The captured deps/resolutions still flow into the global depfile set too.
             allHits = false;
+            const f64 lookupSeconds = entryWatch.Elapsed();
             vector<path> capturedDeps;
             vector<std::pair<AssetId, path>> capturedResolutions;
             entryDeps = cacheKey ? &capturedDeps : nullptr;
             entryResolutions = cacheKey ? &capturedResolutions : nullptr;
 
             vector<CachedBlob> blobs;
-            const VoidResult entryResult = CookEntry(context, entry, seenIds, blobs, level);
+            f64 storeSeconds = 0.0;
+            const CookStopwatch cookWatch;
+            const VoidResult entryResult =
+                CookEntry(context, entry, seenIds, blobs, level, &storeSeconds);
+            const f64 cookSeconds = cookWatch.Elapsed();
             entryDeps = nullptr;
             entryResolutions = nullptr;
             if (!entryResult)
@@ -757,8 +806,12 @@ namespace Veng::Cook
                     .FreshBytes = blob.Bytes});
             }
 
+            recordAssetTiming(entry, false, lookupSeconds, cookSeconds - storeSeconds,
+                              storeSeconds);
+
             if (cache != nullptr && cacheKey)
             {
+                const CookStopwatch cacheWatch;
                 CookCacheEntry toStore;
                 toStore.Blobs = std::move(blobs);
                 toStore.Resolutions = std::move(capturedResolutions);
@@ -778,6 +831,10 @@ namespace Veng::Cook
                 }
                 pendingStores.push_back(
                     PendingStore{.Key = *cacheKey, .Entry = std::move(toStore)});
+                if (timing != nullptr)
+                {
+                    timing->CacheStoreSeconds += cacheWatch.Elapsed();
+                }
             }
         }
 
@@ -789,6 +846,7 @@ namespace Veng::Cook
         // Compute the pack's identity — TOC digest + total size — from the blob descriptors alone,
         // no bytes needed. assetpack lays out the TOC exactly as it would when writing; the digest
         // (hashing lives here, not in assetpack) is the same one a full build produces.
+        const CookStopwatch tocWatch;
         vector<ArchiveBlobDescriptor> descriptors;
         descriptors.reserve(planned.size());
         for (const PlannedBlob& p : planned)
@@ -797,6 +855,10 @@ namespace Veng::Cook
         }
         const ArchiveTocImage toc = BuildArchiveToc(descriptors);
         const ContentHash digest = Xxh3_128(toc.TocBytes);
+        if (timing != nullptr)
+        {
+            timing->TocDigestSeconds += tocWatch.Elapsed();
+        }
 
         // If every entry hit and the existing pack already has this exact identity, the pack we would
         // write is byte-for-byte what is already on disk — skip reading the blobs back and skip the
@@ -814,6 +876,7 @@ namespace Veng::Cook
 
         // Assemble the archive, materializing each blob's bytes: a freshly cooked blob has them in
         // hand; a cache-hit blob is read back from the cache now that the pack must be written.
+        const CookStopwatch writeWatch;
         ArchiveWriter writer;
         for (PlannedBlob& p : planned)
         {
@@ -839,8 +902,13 @@ namespace Veng::Cook
         {
             return written;
         }
+        if (timing != nullptr)
+        {
+            timing->ArchiveWriteSeconds += writeWatch.Elapsed();
+        }
 
         // Persist the freshly cooked entries now that the pack is on disk.
+        const CookStopwatch storeWatch;
         for (const PendingStore& ps : pendingStores)
         {
             if (const VoidResult stored = cache->Store(ps.Key, ps.Entry); !stored)
@@ -848,6 +916,10 @@ namespace Veng::Cook
                 return std::unexpected(fmt::format("pack '{}': cache store failed: {}",
                                                    packJson.string(), stored.error()));
             }
+        }
+        if (timing != nullptr)
+        {
+            timing->CacheStoreSeconds += storeWatch.Elapsed();
         }
 
         return {};
@@ -934,9 +1006,24 @@ namespace Veng::Cook
     }
 
     VoidResult Cooker::CookEntry(const CookContext& context, const json& entry,
-                                 std::set<u64>& seenIds, vector<CachedBlob>& outBlobs,
-                                 int level) const
+                                 std::set<u64>& seenIds, vector<CachedBlob>& outBlobs, int level,
+                                 f64* outStoreSeconds) const
     {
+        // Compresses and hashes one cooked blob, accumulating that cost apart from the importer's:
+        // a blob store is the same work whatever produced the bytes, so folding it into the
+        // importer's duration would mis-attribute it per asset type.
+        const auto storeBlob =
+            [outStoreSeconds](AssetId id, AssetTypeId type, std::span<const u8> blob, int blobLevel)
+        {
+            const CookStopwatch watch;
+            CachedBlob stored = MakeStoredBlob(id, type, blob, blobLevel);
+            if (outStoreSeconds != nullptr)
+            {
+                *outStoreSeconds += watch.Elapsed();
+            }
+            return stored;
+        };
+
         if (!entry.is_object())
         {
             return std::unexpected("entry is not an object");
@@ -994,7 +1081,7 @@ namespace Veng::Cook
             return std::unexpected(blob.error());
         }
 
-        outBlobs.push_back(MakeStoredBlob(AssetId{.Value = id}, *type, *blob, level));
+        outBlobs.push_back(storeBlob(AssetId{.Value = id}, *type, *blob, level));
 
         // A parent Material whose `*.vmat.json` declares a `defaultInstance` id emits a companion
         // zero-override MaterialInstance at that id, so every direct reference names a real instance
@@ -1045,9 +1132,8 @@ namespace Veng::Cook
                     return std::unexpected(instanceBlob.error());
                 }
 
-                outBlobs.push_back(MakeStoredBlob(AssetId{.Value = defaultInstanceId},
-                                                  AssetTypes::MaterialInstance, *instanceBlob,
-                                                  level));
+                outBlobs.push_back(storeBlob(AssetId{.Value = defaultInstanceId},
+                                             AssetTypes::MaterialInstance, *instanceBlob, level));
             }
         }
 

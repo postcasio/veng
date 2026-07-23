@@ -19,6 +19,8 @@
 
 namespace Veng::Cook
 {
+    struct CookTiming;
+
     /// @brief Parses a pack JSON file into an AssetPack (id/type/source registry).
     ///
     /// Used for cross-pack resolution and AssetId generation.
@@ -147,12 +149,17 @@ namespace Veng::Cook
         ///                         are unchanged is served from the cache (skipping the importer and
         ///                         compression) and a freshly cooked entry is written back to it; the
         ///                         resulting archive is byte-identical either way. Null disables caching.
+        /// @param timing          If non-null, receives this pack's per-asset timings and its share
+        ///                         of the whole-cook phases, appended to whatever the record already
+        ///                         holds so a multi-pack cook accumulates into one report. Null (the
+        ///                         default) measures nothing and changes no behavior.
         [[nodiscard]] VoidResult
         CookPack(const path& packJson, const path& outArchive,
                  std::span<const path> referencePacks = {}, const TypeRegistry* types = nullptr,
                  const SystemRegistry* systems = nullptr, vector<path>* outDependencies = nullptr,
                  const BuildConfiguration* config = nullptr, const path& configFile = {},
-                 const path& shaderIncludeDir = {}, const CookCache* cache = nullptr) const;
+                 const path& shaderIncludeDir = {}, const CookCache* cache = nullptr,
+                 CookTiming* timing = nullptr) const;
 
         /// @brief Cooks one source asset and returns a complete single-entry .vengpack as in-memory bytes.
         ///
@@ -185,9 +192,12 @@ namespace Veng::Cook
         /// Appends every stored blob the entry emits (the asset itself, plus a parent Material's
         /// default MaterialInstance) to `outBlobs`; the caller adds them to the archive and, when a
         /// cache is active, stores them. Records the entry's source dependencies through `context`.
+        /// When `outStoreSeconds` is non-null it accumulates the seconds spent compressing and
+        /// hashing this entry's blobs, so the caller can report importer cost separately from the
+        /// blob-store cost the importer's own duration would otherwise absorb.
         [[nodiscard]] VoidResult CookEntry(const CookContext& context, const json& entry,
                                            std::set<u64>& seenIds, vector<CachedBlob>& outBlobs,
-                                           int level) const;
+                                           int level, f64* outStoreSeconds = nullptr) const;
 
         /// @brief Registered importers keyed by AssetTypeId.
         std::unordered_map<AssetTypeId, Unique<AssetImporter>> m_Importers;

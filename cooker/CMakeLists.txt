@@ -324,6 +324,7 @@ add_library(veng_cook_objs OBJECT
         src/AssetPack.cpp
         src/Cooker.cpp
         src/CookCache.cpp
+        src/CookTiming.cpp
         src/JsonFile.cpp
         src/Verify.cpp
         src/CoreImporters.cpp

@@ -1653,6 +1653,7 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle)
             tests/unit/main.cpp
             tests/cooker/cook_roundtrip.cpp
             tests/cooker/cook_cache.cpp
+            tests/cooker/cook_timing.cpp
             tests/cooker/texture_cook.cpp
             tests/cooker/compression_resolution.cpp
             tests/cooker/mesh_cook.cpp

@@ -3,6 +3,7 @@
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/CookCache.h>
 #include <Veng/Cook/CookModule.h>
+#include <Veng/Cook/CookTiming.h>
 #include <Veng/Cook/Cooker.h>
 #include <Veng/Cook/ModuleTypes.h>
 #include <Veng/Cook/Verify.h>
@@ -27,11 +28,12 @@ namespace
                            "  vengc cook <pack.json> [-o <out.vengpack>] [--reference "
                            "<pack.json>]... [--module <lib>] [--cook-module <lib>] "
                            "[--config <file.buildcfg>] "
-                           "[--shader-include <dir>] [--cache-dir <dir>] [--depfile <out.d>]\n"
+                           "[--shader-include <dir>] [--cache-dir <dir>] [--depfile <out.d>] "
+                           "[--timing[=<out.csv>]]\n"
                            "  vengc cook-project <project.veng> --config <name> --out-dir <dir> "
                            "[--reference <pack.json>]... [--module <lib>] [--cook-module <lib>] "
                            "[--shader-include <dir>] "
-                           "[--cache-dir <dir>] [--depfile <out.d>]\n"
+                           "[--cache-dir <dir>] [--depfile <out.d>] [--timing[=<out.csv>]]\n"
                            "  vengc generate-id [--reference <pack.json>]... [--module <lib>]\n"
                            "  vengc generate-type-id [--module <lib>]\n"
                            "  vengc generate-asset-type [--module <lib>]\n"
@@ -121,6 +123,44 @@ namespace
         }
     }
 
+    // Recognizes `--timing` and `--timing=<file>`. The flag's value is optional and attached with
+    // '=' rather than taken as the next argument, so the bare form stays unambiguous next to a
+    // positional pack path. Returns true when the argument was the flag.
+    bool ParseTimingArg(const string& arg, bool& enabled, optional<path>& file)
+    {
+        constexpr std::string_view Flag = "--timing";
+        if (arg == Flag)
+        {
+            enabled = true;
+            return true;
+        }
+        if (arg.starts_with(string(Flag) + "="))
+        {
+            enabled = true;
+            file = path(arg.substr(Flag.size() + 1));
+            return true;
+        }
+        return false;
+    }
+
+    // Prints the operator summary and, when a file was named, writes the full per-asset table.
+    // Returns false on a write failure so the caller exits nonzero.
+    bool ReportTiming(const CookTiming& timing, const optional<path>& file)
+    {
+        fmt::print("{}", FormatCookTimingSummary(timing));
+        if (!file)
+        {
+            return true;
+        }
+        const VoidResult written = WriteCookTimingTable(*file, timing);
+        if (!written)
+        {
+            fmt::print(stderr, "vengc: {}\n", written.error());
+            return false;
+        }
+        return true;
+    }
+
     // Prints the loaded type table as a name → TypeId manifest (stdout, not persisted).
     void PrintTypeManifest(const TypeRegistry& types)
     {
@@ -145,6 +185,11 @@ namespace
 
 int main(int argc, char** argv)
 {
+    // Started before anything else so a --timing report's total covers the whole invocation, not
+    // just the cook; the per-asset sum is then a share of something an operator can reproduce with
+    // an external stopwatch.
+    const CookStopwatch invocationWatch;
+
     const vector<string> args(argv + 1, argv + argc);
 
     if (args.empty())
@@ -169,10 +214,16 @@ int main(int argc, char** argv)
         optional<path> shaderIncludePath;
         optional<path> cacheDirPath;
         optional<path> depfilePath;
+        bool timingEnabled = false;
+        optional<path> timingFile;
 
         for (usize i = 1; i < args.size(); ++i)
         {
-            if (args[i] == "-o")
+            if (ParseTimingArg(args[i], timingEnabled, timingFile))
+            {
+                // The flag carries its own optional value; nothing further to consume.
+            }
+            else if (args[i] == "-o")
             {
                 if (i + 1 >= args.size())
                 {
@@ -269,6 +320,9 @@ int main(int argc, char** argv)
 
         ImplyRuntimeModule(modulePath, cookModulePath);
 
+        CookTiming timing;
+        const CookStopwatch moduleWatch;
+
         // The module image and its registry must outlive the cook.
         optional<LoadedModuleTypes> moduleTypes;
         if (modulePath)
@@ -290,10 +344,12 @@ int main(int argc, char** argv)
         // cooker, and their code lives in this image.
         const path cookModuleFile = ResolveCookModulePath(modulePath, cookModulePath);
         optional<LoadedCookModule> cookModule = LoadGameCookModule(cookModuleFile);
+        timing.ModuleLoadSeconds = moduleWatch.Elapsed();
 
         // The resolved build configuration drives the texture role → format resolution, the
         // archive compression level, and is recorded as a central depfile input. Absent --config
         // the cook is the zero-config ASTC default.
+        const CookStopwatch configWatch;
         optional<BuildConfiguration> config;
         if (configPath)
         {
@@ -305,6 +361,7 @@ int main(int argc, char** argv)
             }
             config = std::move(*parsed);
         }
+        timing.ProjectParseSeconds = configWatch.Elapsed();
 
         Cooker cooker;
         RegisterBuiltinImporters(cooker);
@@ -328,7 +385,7 @@ int main(int argc, char** argv)
             *packPath, *outPath, referencePacks, types, systems,
             depfilePath ? &dependencies : nullptr, config ? &*config : nullptr,
             configPath ? *configPath : path{}, shaderIncludePath ? *shaderIncludePath : path{},
-            cache ? &*cache : nullptr);
+            cache ? &*cache : nullptr, timingEnabled ? &timing : nullptr);
         if (!result)
         {
             fmt::print(stderr, "vengc: {}\n", result.error());
@@ -337,10 +394,21 @@ int main(int argc, char** argv)
 
         if (depfilePath)
         {
+            const CookStopwatch depfileWatch;
             const VoidResult depResult = WriteDepfile(*depfilePath, *outPath, dependencies);
             if (!depResult)
             {
                 fmt::print(stderr, "vengc: {}\n", depResult.error());
+                return 1;
+            }
+            timing.DepfileSeconds = depfileWatch.Elapsed();
+        }
+
+        if (timingEnabled)
+        {
+            timing.TotalSeconds = invocationWatch.Elapsed();
+            if (!ReportTiming(timing, timingFile))
+            {
                 return 1;
             }
         }
@@ -362,10 +430,16 @@ int main(int argc, char** argv)
         optional<path> cacheDirPath;
         optional<path> depfilePath;
         vector<path> referencePacks;
+        bool timingEnabled = false;
+        optional<path> timingFile;
 
         for (usize i = 1; i < args.size(); ++i)
         {
-            if (args[i] == "--config")
+            if (ParseTimingArg(args[i], timingEnabled, timingFile))
+            {
+                // The flag carries its own optional value; nothing further to consume.
+            }
+            else if (args[i] == "--config")
             {
                 if (i + 1 >= args.size())
                 {
@@ -454,6 +528,9 @@ int main(int argc, char** argv)
             return 1;
         }
 
+        CookTiming timing;
+        const CookStopwatch projectWatch;
+
         const Result<CookProject> project = ParseProject(*projectPath);
         if (!project)
         {
@@ -485,8 +562,11 @@ int main(int argc, char** argv)
                        projectPath->string(), *configName);
             return 1;
         }
+        timing.ProjectParseSeconds = projectWatch.Elapsed();
 
         ImplyRuntimeModule(modulePath, cookModulePath);
+
+        const CookStopwatch moduleWatch;
 
         // The module image and its registry must outlive the cook.
         optional<LoadedModuleTypes> moduleTypes;
@@ -509,6 +589,7 @@ int main(int argc, char** argv)
         // cooker, and their code lives in this image.
         const path cookModuleFile = ResolveCookModulePath(modulePath, cookModulePath);
         optional<LoadedCookModule> cookModule = LoadGameCookModule(cookModuleFile);
+        timing.ModuleLoadSeconds = moduleWatch.Elapsed();
 
         Cooker cooker;
         RegisterBuiltinImporters(cooker);
@@ -555,7 +636,7 @@ int main(int argc, char** argv)
             const VoidResult result = cooker.CookPack(
                 packManifest, outPack, packRefs, types, systems, depfilePath ? &packDeps : nullptr,
                 &*config, configFile, shaderIncludePath ? *shaderIncludePath : path{},
-                cache ? &*cache : nullptr);
+                cache ? &*cache : nullptr, timingEnabled ? &timing : nullptr);
             if (!result)
             {
                 fmt::print(stderr, "vengc: {}\n", result.error());
@@ -580,10 +661,21 @@ int main(int argc, char** argv)
             // The single command produces every pack plus the .vengproj together; a depfile keyed on
             // the project output re-runs the whole cook when any pack source or the project changes.
             dependencies.push_back(*projectPath);
+            const CookStopwatch depfileWatch;
             const VoidResult depResult = WriteDepfile(*depfilePath, outProject, dependencies);
             if (!depResult)
             {
                 fmt::print(stderr, "vengc: {}\n", depResult.error());
+                return 1;
+            }
+            timing.DepfileSeconds = depfileWatch.Elapsed();
+        }
+
+        if (timingEnabled)
+        {
+            timing.TotalSeconds = invocationWatch.Elapsed();
+            if (!ReportTiming(timing, timingFile))
+            {
                 return 1;
             }
         }
