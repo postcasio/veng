@@ -3,6 +3,8 @@
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/CookCache.h>
 #include <Veng/Cook/CookModule.h>
+#include <charconv>
+
 #include <Veng/Cook/CookTiming.h>
 #include <Veng/Cook/Cooker.h>
 #include <Veng/Cook/ModuleTypes.h>
@@ -29,11 +31,12 @@ namespace
                            "<pack.json>]... [--module <lib>] [--cook-module <lib>] "
                            "[--config <file.buildcfg>] "
                            "[--shader-include <dir>] [--cache-dir <dir>] [--depfile <out.d>] "
-                           "[--timing[=<out.csv>]]\n"
+                           "[--timing[=<out.csv>]] [--jobs <n>]\n"
                            "  vengc cook-project <project.veng> --config <name> --out-dir <dir> "
                            "[--reference <pack.json>]... [--module <lib>] [--cook-module <lib>] "
                            "[--shader-include <dir>] "
-                           "[--cache-dir <dir>] [--depfile <out.d>] [--timing[=<out.csv>]]\n"
+                           "[--cache-dir <dir>] [--depfile <out.d>] [--timing[=<out.csv>]] "
+                           "[--jobs <n>]\n"
                            "  vengc generate-id [--reference <pack.json>]... [--module <lib>]\n"
                            "  vengc generate-type-id [--module <lib>]\n"
                            "  vengc generate-asset-type [--module <lib>]\n"
@@ -121,6 +124,23 @@ namespace
         {
             modulePath = *runtime;
         }
+    }
+
+    // Parses a --jobs value: a positive decimal count, or 0 for "the hardware concurrency".
+    // Rejects anything else rather than silently cooking at a count the operator did not ask for.
+    bool ParseJobs(const string& text, u32& jobs)
+    {
+        u32 parsed = 0;
+        const char* first = text.data();
+        const char* last = first + text.size();
+        const std::from_chars_result result = std::from_chars(first, last, parsed);
+        if (result.ec != std::errc{} || result.ptr != last)
+        {
+            fmt::print(stderr, "vengc: --jobs expects a non-negative count, got '{}'\n", text);
+            return false;
+        }
+        jobs = parsed;
+        return true;
     }
 
     // Recognizes `--timing` and `--timing=<file>`. The flag's value is optional and attached with
@@ -216,6 +236,9 @@ int main(int argc, char** argv)
         optional<path> depfilePath;
         bool timingEnabled = false;
         optional<path> timingFile;
+        // The cook's whole concurrency budget, shared by the per-asset pool and any threading an
+        // importer does inside its own Cook. Zero means the hardware concurrency.
+        u32 jobs = 0;
 
         for (usize i = 1; i < args.size(); ++i)
         {
@@ -294,6 +317,18 @@ int main(int argc, char** argv)
                     return 1;
                 }
                 cacheDirPath = path(args[++i]);
+            }
+            else if (args[i] == "--jobs")
+            {
+                if (i + 1 >= args.size())
+                {
+                    fmt::print(stderr, "vengc: --jobs requires an argument\n");
+                    return 1;
+                }
+                if (!ParseJobs(args[++i], jobs))
+                {
+                    return 1;
+                }
             }
             else if (!packPath)
             {
@@ -385,7 +420,7 @@ int main(int argc, char** argv)
             *packPath, *outPath, referencePacks, types, systems,
             depfilePath ? &dependencies : nullptr, config ? &*config : nullptr,
             configPath ? *configPath : path{}, shaderIncludePath ? *shaderIncludePath : path{},
-            cache ? &*cache : nullptr, timingEnabled ? &timing : nullptr);
+            cache ? &*cache : nullptr, timingEnabled ? &timing : nullptr, jobs);
         if (!result)
         {
             fmt::print(stderr, "vengc: {}\n", result.error());
@@ -432,6 +467,9 @@ int main(int argc, char** argv)
         vector<path> referencePacks;
         bool timingEnabled = false;
         optional<path> timingFile;
+        // The cook's whole concurrency budget, shared by the per-asset pool and any threading an
+        // importer does inside its own Cook. Zero means the hardware concurrency.
+        u32 jobs = 0;
 
         for (usize i = 1; i < args.size(); ++i)
         {
@@ -474,6 +512,18 @@ int main(int argc, char** argv)
                     return 1;
                 }
                 cacheDirPath = path(args[++i]);
+            }
+            else if (args[i] == "--jobs")
+            {
+                if (i + 1 >= args.size())
+                {
+                    fmt::print(stderr, "vengc: --jobs requires an argument\n");
+                    return 1;
+                }
+                if (!ParseJobs(args[++i], jobs))
+                {
+                    return 1;
+                }
             }
             else if (args[i] == "--module")
             {
@@ -636,7 +686,7 @@ int main(int argc, char** argv)
             const VoidResult result = cooker.CookPack(
                 packManifest, outPack, packRefs, types, systems, depfilePath ? &packDeps : nullptr,
                 &*config, configFile, shaderIncludePath ? *shaderIncludePath : path{},
-                cache ? &*cache : nullptr, timingEnabled ? &timing : nullptr);
+                cache ? &*cache : nullptr, timingEnabled ? &timing : nullptr, jobs);
             if (!result)
             {
                 fmt::print(stderr, "vengc: {}\n", result.error());

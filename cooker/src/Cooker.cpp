@@ -1,11 +1,14 @@
 #include <Veng/Cook/Cooker.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <span>
 #include <sstream>
+#include <thread>
 
 #include <fmt/format.h>
 #include <xxhash.h>
@@ -78,6 +81,45 @@ namespace Veng::Cook
                 "--cook-module, which implies it) when the type is the game's. Registered types: "
                 "{}",
                 typeName, list);
+        }
+
+        // Runs `task` once per entry of `indices`, across at most `workers` threads: an atomic cursor
+        // hands each thread the next index, so a long asset never leaves the others idle behind a
+        // fixed partition. One worker (or one index) runs the whole set on the calling thread and
+        // spawns nothing, which keeps a single-job cook exactly as sequential as it reads.
+        void RunIndexed(std::span<const usize> indices, u32 workers,
+                        const function<void(usize)>& task)
+        {
+            if (workers <= 1 || indices.size() <= 1)
+            {
+                for (const usize index : indices)
+                {
+                    task(index);
+                }
+                return;
+            }
+
+            std::atomic<usize> next{0};
+            const auto drain = [&]
+            {
+                for (usize i = next.fetch_add(1); i < indices.size(); i = next.fetch_add(1))
+                {
+                    task(indices[i]);
+                }
+            };
+
+            const usize spawned = std::min<usize>(workers, indices.size()) - 1;
+            vector<std::thread> pool;
+            pool.reserve(spawned);
+            for (usize i = 0; i < spawned; ++i)
+            {
+                pool.emplace_back(drain);
+            }
+            drain();
+            for (std::thread& worker : pool)
+            {
+                worker.join();
+            }
         }
 
         // xxh3-128 of a byte range, packed into the format's ContentHash.
@@ -464,7 +506,7 @@ namespace Veng::Cook
                                 const SystemRegistry* systems, vector<path>* outDependencies,
                                 const BuildConfiguration* config, const path& configFile,
                                 const path& shaderIncludeDir, const CookCache* cache,
-                                CookTiming* timing) const
+                                CookTiming* timing, u32 jobs) const
     {
         const CookStopwatch manifestWatch;
 
@@ -500,21 +542,13 @@ namespace Veng::Cook
             timing->ManifestParseSeconds += manifestWatch.Elapsed();
         }
 
-        // std::set keeps dependencies sorted and de-duplicated. `entryDeps`/`entryResolutions`, when
-        // non-null, additionally collect the current entry's own inputs so a cache entry records
-        // exactly what that one asset read; the pointers are retargeted per entry below.
+        // std::set keeps dependencies sorted and de-duplicated. Only the central inputs — the pack
+        // JSON, the reference packs, the configuration — are recorded here; an entry's own inputs
+        // are collected into that entry's slot, because entries cook on worker threads and a shared
+        // container written from several at once would race. The slots merge in at the end.
         std::set<path> dependencies;
-        vector<path>* entryDeps = nullptr;
-        vector<std::pair<AssetId, path>>* entryResolutions = nullptr;
-        auto record = [&](const path& p)
-        {
-            const path normalized = NormalizeDependency(p);
-            dependencies.insert(normalized);
-            if (entryDeps != nullptr)
-            {
-                entryDeps->push_back(normalized);
-            }
-        };
+        const auto record = [&dependencies](const path& p)
+        { dependencies.insert(NormalizeDependency(p)); };
 
         record(packJson);
         for (const path& refPath : referencePacks)
@@ -533,10 +567,10 @@ namespace Veng::Cook
 
         // resolveById is the pure id → source lookup (main pack first, then references in order),
         // with no recording — the cache validation path re-resolves through it to confirm an id
-        // still maps to the same source. `resolve` wraps it to also record the resolved source as a
-        // dependency and, per entry, as a resolution the cache pins.
+        // still maps to the same source, and each entry's own resolver wraps it to record what that
+        // one entry read. It reads only the parsed packs, so any number of workers may call it.
         const AssetPack& mainPack = *mainPackResult;
-        auto resolveById = [&mainPack, &refPacks](AssetId id) -> optional<ResolvedSource>
+        const auto resolveById = [&mainPack, &refPacks](AssetId id) -> optional<ResolvedSource>
         {
             if (const AssetPackEntry* e = mainPack.FindById(id))
             {
@@ -559,30 +593,7 @@ namespace Veng::Cook
             }
             return std::nullopt;
         };
-        auto resolve = [&](AssetId id) -> optional<ResolvedSource>
-        {
-            const optional<ResolvedSource> resolved = resolveById(id);
-            if (resolved)
-            {
-                record(resolved->AbsolutePath);
-                if (entryResolutions != nullptr)
-                {
-                    entryResolutions->emplace_back(id, NormalizeDependency(resolved->AbsolutePath));
-                }
-            }
-            return resolved;
-        };
-
-        const CookContext context{
-            .PackDir = packJson.parent_path(),
-            .Resolve = resolve,
-            .AssetTypes = &m_AssetTypes,
-            .Types = types,
-            .Systems = systems,
-            .Config = config,
-            .ShaderIncludeDir = shaderIncludeDir,
-            .RecordDependency = record,
-        };
+        const path packDir = packJson.parent_path();
 
         // The configuration drives the archive compression level; the zero-config cook uses the
         // default. This is the one place the level field is consumed.
@@ -594,7 +605,7 @@ namespace Veng::Cook
         // vs. absolute --shader-include) key identically rather than each seeding its own entries.
         const string configFingerprint =
             config != nullptr ? FingerprintBuildConfiguration(*config) : string{};
-        const path keyPackDir = NormalizeDependency(context.PackDir);
+        const path keyPackDir = NormalizeDependency(packDir);
         const path keyShaderIncludeDir =
             shaderIncludeDir.empty() ? path{} : NormalizeDependency(shaderIncludeDir);
 
@@ -604,23 +615,32 @@ namespace Veng::Cook
         // repeatedly. Memoizing by path collapses that to one hash per unique file per cook, which
         // dominates the incremental (all-hit) re-cook cost. A file is static across one cook, so the
         // memo is safe within a single CookPack call.
+        //
+        // Workers hash their own entries' dependencies, so the map is mutex-guarded — and the hash
+        // itself runs outside the lock, since serializing the read would undo the point. Two workers
+        // racing on the same unseen path therefore both hash it and one insert wins; a file is
+        // static across the cook, so they compute the same value and the duplicate read is the whole
+        // cost of the race.
+        std::mutex hashMemoMutex;
         std::unordered_map<string, ContentHash> hashMemo;
-        auto hashDep = [&hashMemo](const path& p) -> optional<ContentHash>
+        const auto hashDep = [&hashMemoMutex, &hashMemo](const path& p) -> optional<ContentHash>
         {
             const string key = p.string();
-            if (const auto it = hashMemo.find(key); it != hashMemo.end())
             {
-                return it->second;
+                const std::scoped_lock lock(hashMemoMutex);
+                if (const auto it = hashMemo.find(key); it != hashMemo.end())
+                {
+                    return it->second;
+                }
             }
             const optional<ContentHash> hash = HashFileContents(p);
             if (hash)
             {
+                const std::scoped_lock lock(hashMemoMutex);
                 hashMemo.emplace(key, *hash);
             }
             return hash;
         };
-
-        std::set<u64> seenIds;
 
         // One blob destined for the archive: its descriptor (always known) plus, for a freshly
         // cooked blob, its bytes in hand. A cache-hit blob carries no bytes here — they are read back
@@ -630,72 +650,72 @@ namespace Veng::Cook
             ArchiveBlobDescriptor Descriptor;
             optional<vector<u8>> FreshBytes;
         };
-        vector<PlannedBlob> planned;
 
-        // Fresh cook results to persist after the pack is written (misses only).
-        struct PendingStore
+        // Everything one manifest entry produces, kept in that entry's own slot rather than appended
+        // to a shared container as it finishes. Two properties rest on the slots. The archive TOC is
+        // laid out in manifest order whatever order the workers complete in — the cook cache's
+        // unchanged-pack check hashes that TOC, so a scheduling-dependent order would make every
+        // warm cook rewrite packs it did not need to. And a pack that fails on several entries at
+        // once reports the first entry's error, not whichever worker happened to finish first.
+        struct EntrySlot
         {
-            string Key;
-            CookCacheEntry Entry;
+            optional<string> CacheKey;
+            optional<string> Error;
+            vector<PlannedBlob> Blobs;
+            vector<path> Deps;
+            optional<CookCacheEntry> Store;
+            CookAssetTiming Timing;
+            f64 CacheStoreSeconds = 0.0;
         };
-        vector<PendingStore> pendingStores;
+
+        const json& assets = pack["assets"];
+        vector<EntrySlot> slots(assets.size());
 
         // The pack is served entirely from cache only when every entry hits; one miss (or no cache)
         // means the pack is rewritten and the unchanged-pack write skip below cannot apply.
         bool allHits = cache != nullptr;
 
-        // Appends one asset's timing when a report was asked for. The id and type come from the
-        // manifest entry rather than the importer table: that is the same pair the roll-up keys on,
-        // and it is available even for an entry whose type never resolved to an importer.
-        const auto recordAssetTiming = [timing](const json& entry, bool cacheHit, f64 lookupSeconds,
-                                                f64 importSeconds, f64 storeSeconds)
+        // Phase 1, on the calling thread: every entry's cache lookup. Deliberately serial — it is
+        // the only phase that touches the cook cache, so the cache itself needs no concurrency, and
+        // it costs nothing to keep: a cold cook finds no entries to validate and a fully warm one
+        // measures in milliseconds.
+        vector<usize> misses;
+        for (usize index = 0; index < assets.size(); ++index)
         {
-            if (timing == nullptr)
-            {
-                return;
-            }
+            const json& entry = assets[index];
+            EntrySlot& slot = slots[index];
+            const CookStopwatch entryWatch;
 
-            CookAssetTiming asset;
+            // The id and type come from the manifest entry rather than the importer table: that is
+            // the pair the timing roll-up keys on, and it is available even for an entry whose type
+            // never resolves to an importer.
             if (entry.is_object())
             {
                 if (entry.contains("id") && entry["id"].is_string())
                 {
                     if (const optional<AssetId> id = ParseAssetId(entry["id"].get<string>()))
                     {
-                        asset.Id = *id;
+                        slot.Timing.Id = *id;
                     }
                 }
                 if (entry.contains("type") && entry["type"].is_string())
                 {
-                    asset.Type = entry["type"].get<string>();
+                    slot.Timing.Type = entry["type"].get<string>();
                 }
             }
-            asset.CacheHit = cacheHit;
-            asset.CacheLookupSeconds = lookupSeconds;
-            asset.ImportSeconds = importSeconds;
-            asset.StoreSeconds = storeSeconds;
-            timing->Assets.push_back(std::move(asset));
-        };
-
-        const json& assets = pack["assets"];
-        for (usize index = 0; index < assets.size(); ++index)
-        {
-            const json& entry = assets[index];
-            const CookStopwatch entryWatch;
 
             // Compute the entry's cache key up front. A malformed entry (no key possible) simply
             // cooks fresh and reports its own located error from CookEntry.
-            optional<string> cacheKey;
             if (cache != nullptr && entry.is_object())
             {
-                cacheKey = cache->KeyFor(CookCacheKeyInputs{
+                slot.CacheKey = cache->KeyFor(CookCacheKeyInputs{
                     .EntryJson = entry.dump(),
                     .PackDir = keyPackDir,
                     .ConfigFingerprint = configFingerprint,
                     .ShaderIncludeDir = keyShaderIncludeDir,
                 });
 
-                if (const optional<CookCacheMeta> meta = cache->LoadMeta(*cacheKey))
+                if (const optional<CookCacheMeta> meta = cache->LoadMeta(*slot.CacheKey))
                 {
                     // A cache hit is trusted only if every recorded input is unchanged: each source
                     // file is unchanged (by stat, then hash), and each resolved id still maps to the
@@ -740,18 +760,12 @@ namespace Veng::Cook
 
                     if (valid)
                     {
-                        // Plan the stored blobs by descriptor (no bytes yet), enforcing the same
-                        // id-uniqueness a fresh cook would, and re-record the entry's dependencies so
-                        // the depfile stays complete even though the importer never ran.
+                        // Plan the stored blobs by descriptor (no bytes yet), and re-record the
+                        // entry's dependencies so the depfile stays complete even though the
+                        // importer never ran.
                         for (const CachedBlobMeta& blob : meta->Blobs)
                         {
-                            if (!seenIds.insert(blob.Id.Value).second)
-                            {
-                                return std::unexpected(
-                                    fmt::format("pack '{}': asset[{}]: asset id {} duplicated",
-                                                packJson.string(), index, blob.Id.Value));
-                            }
-                            planned.push_back(PlannedBlob{
+                            slot.Blobs.push_back(PlannedBlob{
                                 .Descriptor =
                                     ArchiveBlobDescriptor{.Id = blob.Id,
                                                           .Type = blob.Type,
@@ -763,40 +777,91 @@ namespace Veng::Cook
                         }
                         for (const CachedDep& dep : meta->SourceDeps)
                         {
-                            dependencies.insert(dep.Path);
+                            slot.Deps.push_back(dep.Path);
                         }
-                        recordAssetTiming(entry, true, entryWatch.Elapsed(), 0.0, 0.0);
+                        slot.Timing.CacheHit = true;
+                        slot.Timing.CacheLookupSeconds = entryWatch.Elapsed();
                         continue;
                     }
                 }
             }
 
-            // Miss (or caching disabled): cook fresh, capturing this entry's own inputs so a hit can
-            // be stored. The captured deps/resolutions still flow into the global depfile set too.
             allHits = false;
-            const f64 lookupSeconds = entryWatch.Elapsed();
-            vector<path> capturedDeps;
-            vector<std::pair<AssetId, path>> capturedResolutions;
-            entryDeps = cacheKey ? &capturedDeps : nullptr;
-            entryResolutions = cacheKey ? &capturedResolutions : nullptr;
+            slot.Timing.CacheLookupSeconds = entryWatch.Elapsed();
+            misses.push_back(index);
+        }
+
+        // The cook's one concurrency budget, split between the driver's per-asset workers and any
+        // threading an importer does inside its own Cook. Splitting it rather than stacking the two
+        // is the point: the texture encode already spawns workers per mip level, and a pool per
+        // importer on top of a pool per asset oversubscribes every core several times over.
+        const u32 budget = jobs > 0 ? jobs : std::max(1u, std::thread::hardware_concurrency());
+        const u32 workers =
+            static_cast<u32>(std::min<usize>(budget, std::max<usize>(misses.size(), 1)));
+        // With more than one worker the budget is already spent on the asset loop, so an importer
+        // encodes on its calling thread; a single-worker cook hands the whole budget inward, which
+        // is what keeps a one-asset pack (or `--jobs 1` raised) as fast as it was.
+        const u32 threadBudget = workers > 1 ? 1u : budget;
+
+        // Guards every importer that has not declared itself reentrant, so at most one such Cook is
+        // in flight at a time. An importer is never *assumed* safe: the default is to hold this.
+        std::mutex serialLock;
+
+        // Phase 2: cook the misses across the workers. Each entry writes only its own slot, and the
+        // context it cooks under records that entry's dependencies and resolutions into the slot too
+        // — nothing shared is written, so the only synchronization is the lock above.
+        const auto cookOne = [&](usize index)
+        {
+            const json& entry = assets[index];
+            EntrySlot& slot = slots[index];
+
+            const auto entryRecord = [&slot](const path& p)
+            { slot.Deps.push_back(NormalizeDependency(p)); };
+            vector<std::pair<AssetId, path>> resolutions;
+            const auto entryResolve = [&](AssetId id) -> optional<ResolvedSource>
+            {
+                const optional<ResolvedSource> resolved = resolveById(id);
+                if (resolved)
+                {
+                    const path normalized = NormalizeDependency(resolved->AbsolutePath);
+                    slot.Deps.push_back(normalized);
+                    resolutions.emplace_back(id, normalized);
+                }
+                return resolved;
+            };
+
+            const CookContext context{
+                .PackDir = packDir,
+                .Resolve = entryResolve,
+                .AssetTypes = &m_AssetTypes,
+                .Types = types,
+                .Systems = systems,
+                .Config = config,
+                .ShaderIncludeDir = shaderIncludeDir,
+                .RecordDependency = entryRecord,
+                .ThreadBudget = threadBudget,
+            };
 
             vector<CachedBlob> blobs;
             f64 storeSeconds = 0.0;
+            f64 waitSeconds = 0.0;
             const CookStopwatch cookWatch;
             const VoidResult entryResult =
-                CookEntry(context, entry, seenIds, blobs, level, &storeSeconds);
+                CookEntry(context, entry, serialLock, blobs, level, &storeSeconds, &waitSeconds);
             const f64 cookSeconds = cookWatch.Elapsed();
-            entryDeps = nullptr;
-            entryResolutions = nullptr;
             if (!entryResult)
             {
-                return std::unexpected(fmt::format("pack '{}': asset[{}]: {}", packJson.string(),
-                                                   index, entryResult.error()));
+                slot.Error = entryResult.error();
+                return;
             }
+
+            slot.Timing.SerializedWaitSeconds = waitSeconds;
+            slot.Timing.ImportSeconds = cookSeconds - storeSeconds - waitSeconds;
+            slot.Timing.StoreSeconds = storeSeconds;
 
             for (const CachedBlob& blob : blobs)
             {
-                planned.push_back(PlannedBlob{
+                slot.Blobs.push_back(PlannedBlob{
                     .Descriptor = ArchiveBlobDescriptor{.Id = blob.Id,
                                                         .Type = blob.Type,
                                                         .Codec = blob.Codec,
@@ -806,19 +871,16 @@ namespace Veng::Cook
                     .FreshBytes = blob.Bytes});
             }
 
-            recordAssetTiming(entry, false, lookupSeconds, cookSeconds - storeSeconds,
-                              storeSeconds);
-
-            if (cache != nullptr && cacheKey)
+            if (cache != nullptr && slot.CacheKey)
             {
                 const CookStopwatch cacheWatch;
                 CookCacheEntry toStore;
                 toStore.Blobs = std::move(blobs);
-                toStore.Resolutions = std::move(capturedResolutions);
+                toStore.Resolutions = std::move(resolutions);
                 // De-duplicate the entry's dependency paths, capturing a stat + content hash for
                 // each; a file that cannot be read is skipped, degrading the entry to a miss next
                 // time rather than being trusted.
-                const std::set<path> uniqueDeps(capturedDeps.begin(), capturedDeps.end());
+                const std::set<path> uniqueDeps(slot.Deps.begin(), slot.Deps.end());
                 for (const path& depPath : uniqueDeps)
                 {
                     const optional<FileStat> st = StatFile(depPath);
@@ -829,13 +891,59 @@ namespace Veng::Cook
                             .Path = depPath, .Size = st->Size, .Mtime = st->Mtime, .Hash = *hash});
                     }
                 }
-                pendingStores.push_back(
-                    PendingStore{.Key = *cacheKey, .Entry = std::move(toStore)});
-                if (timing != nullptr)
-                {
-                    timing->CacheStoreSeconds += cacheWatch.Elapsed();
-                }
+                slot.Store = std::move(toStore);
+                slot.CacheStoreSeconds = cacheWatch.Elapsed();
             }
+        };
+
+        RunIndexed(misses, workers, cookOne);
+
+        // Phase 3, back on the calling thread: walk the slots in manifest order, so the first entry
+        // that failed is the error reported and the TOC is laid out in manifest order.
+        struct PendingStore
+        {
+            string Key;
+            CookCacheEntry Entry;
+        };
+        vector<PlannedBlob> planned;
+        vector<PendingStore> pendingStores;
+        std::set<u64> seenIds;
+        for (usize index = 0; index < slots.size(); ++index)
+        {
+            EntrySlot& slot = slots[index];
+            if (slot.Error)
+            {
+                return std::unexpected(
+                    fmt::format("pack '{}': asset[{}]: {}", packJson.string(), index, *slot.Error));
+            }
+            for (PlannedBlob& blob : slot.Blobs)
+            {
+                if (!seenIds.insert(blob.Descriptor.Id.Value).second)
+                {
+                    return std::unexpected(
+                        fmt::format("pack '{}': asset[{}]: asset id {} duplicated",
+                                    packJson.string(), index, blob.Descriptor.Id.Value));
+                }
+                planned.push_back(std::move(blob));
+            }
+            for (const path& dep : slot.Deps)
+            {
+                dependencies.insert(dep);
+            }
+            if (slot.Store)
+            {
+                pendingStores.push_back(
+                    PendingStore{.Key = *slot.CacheKey, .Entry = std::move(*slot.Store)});
+            }
+            if (timing != nullptr)
+            {
+                timing->CacheStoreSeconds += slot.CacheStoreSeconds;
+                timing->Assets.push_back(std::move(slot.Timing));
+            }
+        }
+        if (timing != nullptr)
+        {
+            timing->Jobs = std::max(timing->Jobs, budget);
         }
 
         if (outDependencies)
@@ -1006,8 +1114,8 @@ namespace Veng::Cook
     }
 
     VoidResult Cooker::CookEntry(const CookContext& context, const json& entry,
-                                 std::set<u64>& seenIds, vector<CachedBlob>& outBlobs, int level,
-                                 f64* outStoreSeconds) const
+                                 std::mutex& serialLock, vector<CachedBlob>& outBlobs, int level,
+                                 f64* outStoreSeconds, f64* outWaitSeconds) const
     {
         // Compresses and hashes one cooked blob, accumulating that cost apart from the importer's:
         // a blob store is the same work whatever produced the bytes, so folding it into the
@@ -1046,11 +1154,6 @@ namespace Veng::Cook
             return std::unexpected("asset id 0 is reserved (invalid AssetId)");
         }
 
-        if (!seenIds.insert(id).second)
-        {
-            return std::unexpected(fmt::format("asset id {} duplicated", id));
-        }
-
         if (!entry.contains("type") || !entry["type"].is_string())
         {
             return std::unexpected("missing or invalid 'type'");
@@ -1075,7 +1178,22 @@ namespace Veng::Cook
             context.RecordDependency(context.PackDir / entry["source"].get<string>());
         }
 
-        const Result<vector<u8>> blob = importerIt->second->Cook(context, entry);
+        // An importer that has not declared itself reentrant runs under the cook's serialization
+        // lock — held for the rest of the entry, so a parent Material's companion instance cook is
+        // covered too. An importer is never assumed safe; declaring nothing means holding this.
+        const AssetImporter& importer = *importerIt->second;
+        std::unique_lock<std::mutex> serialize(serialLock, std::defer_lock);
+        if (importer.Concurrency() != ImporterConcurrency::Parallel)
+        {
+            const CookStopwatch waitWatch;
+            serialize.lock();
+            if (outWaitSeconds != nullptr)
+            {
+                *outWaitSeconds += waitWatch.Elapsed();
+            }
+        }
+
+        const Result<vector<u8>> blob = importer.Cook(context, entry);
         if (!blob)
         {
             return std::unexpected(blob.error());
@@ -1120,12 +1238,6 @@ namespace Veng::Cook
                 {
                     return std::unexpected("'defaultInstance' id 0 is reserved (invalid AssetId)");
                 }
-                if (!seenIds.insert(defaultInstanceId).second)
-                {
-                    return std::unexpected(
-                        fmt::format("default-instance id {} duplicated", defaultInstanceId));
-                }
-
                 const Result<vector<u8>> instanceBlob = CookDefaultInstanceBlob(context, id);
                 if (!instanceBlob)
                 {

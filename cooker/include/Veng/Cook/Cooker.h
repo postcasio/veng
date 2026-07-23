@@ -5,6 +5,7 @@
 #include <Veng/Cook/CookCache.h>
 #include <Veng/Cook/Importer.h>
 
+#include <mutex>
 #include <set>
 #include <span>
 #include <unordered_map>
@@ -153,13 +154,17 @@ namespace Veng::Cook
         ///                         of the whole-cook phases, appended to whatever the record already
         ///                         holds so a multi-pack cook accumulates into one report. Null (the
         ///                         default) measures nothing and changes no behavior.
+        /// @param jobs            The cook's whole concurrency budget: the number of threads the
+        ///                         per-asset work pool and any importer-internal parallelism share
+        ///                         between them. Zero (the default) means the hardware concurrency;
+        ///                         one cooks strictly sequentially on the calling thread.
         [[nodiscard]] VoidResult
         CookPack(const path& packJson, const path& outArchive,
                  std::span<const path> referencePacks = {}, const TypeRegistry* types = nullptr,
                  const SystemRegistry* systems = nullptr, vector<path>* outDependencies = nullptr,
                  const BuildConfiguration* config = nullptr, const path& configFile = {},
                  const path& shaderIncludeDir = {}, const CookCache* cache = nullptr,
-                 CookTiming* timing = nullptr) const;
+                 CookTiming* timing = nullptr, u32 jobs = 0) const;
 
         /// @brief Cooks one source asset and returns a complete single-entry .vengpack as in-memory bytes.
         ///
@@ -187,17 +192,24 @@ namespace Veng::Cook
                                                     const path& shaderIncludeDir = {}) const;
 
     private:
-        /// @brief Cooks one pack entry JSON into `outBlobs` at `level`, enforcing id uniqueness.
+        /// @brief Cooks one pack entry JSON into `outBlobs` at `level`.
         ///
         /// Appends every stored blob the entry emits (the asset itself, plus a parent Material's
         /// default MaterialInstance) to `outBlobs`; the caller adds them to the archive and, when a
-        /// cache is active, stores them. Records the entry's source dependencies through `context`.
-        /// When `outStoreSeconds` is non-null it accumulates the seconds spent compressing and
-        /// hashing this entry's blobs, so the caller can report importer cost separately from the
-        /// blob-store cost the importer's own duration would otherwise absorb.
+        /// cache is active, stores them, and checks the emitted ids for duplicates. Records the
+        /// entry's source dependencies through `context`. When `outStoreSeconds` is non-null it
+        /// accumulates the seconds spent compressing and hashing this entry's blobs, so the caller
+        /// can report importer cost separately from the blob-store cost the importer's own duration
+        /// would otherwise absorb. `outWaitSeconds`, likewise, accumulates the seconds spent waiting
+        /// for `serialLock`, so a serialized importer's queueing is not billed as its own work.
+        ///
+        /// Runs on a worker thread. An importer that does not declare
+        /// ImporterConcurrency::Parallel is dispatched holding `serialLock`, so at most one such
+        /// importer is in flight across the whole cook.
         [[nodiscard]] VoidResult CookEntry(const CookContext& context, const json& entry,
-                                           std::set<u64>& seenIds, vector<CachedBlob>& outBlobs,
-                                           int level, f64* outStoreSeconds = nullptr) const;
+                                           std::mutex& serialLock, vector<CachedBlob>& outBlobs,
+                                           int level, f64* outStoreSeconds = nullptr,
+                                           f64* outWaitSeconds = nullptr) const;
 
         /// @brief Registered importers keyed by AssetTypeId.
         std::unordered_map<AssetTypeId, Unique<AssetImporter>> m_Importers;

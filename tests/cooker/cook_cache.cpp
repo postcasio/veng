@@ -279,6 +279,57 @@ TEST_CASE("CookCache: an unchanged pack is not rewritten")
     CHECK(std::filesystem::last_write_time(out) != firstWrite);
 }
 
+TEST_CASE("CookCache: a parallel cook's warm re-cook rewrites nothing")
+{
+    // The property a parallel driver most easily breaks, and it is a cache-correctness one. The
+    // cook cache concludes a pack on disk is already what would be written by laying out the archive
+    // TOC from cached descriptors and hashing it — so a TOC ordered by completion rather than by the
+    // manifest would make every warm cook rewrite packs it did not need to.
+    const path packDir = UniqueDir("parallelskip");
+    std::filesystem::create_directories(packDir / "data");
+
+    // Enough entries that the pool genuinely runs several at once, and distinct content so a
+    // mis-ordered TOC cannot coincidentally hash the same.
+    constexpr usize AssetCount = 24;
+    string entries;
+    for (usize i = 0; i < AssetCount; ++i)
+    {
+        const path source = packDir / "data" / fmt::format("x{}.bin", i);
+        {
+            std::ofstream out(source, std::ios::binary);
+            out << fmt::format("PARALLEL-PACK-CONTENT-{:04}", i);
+        }
+        entries +=
+            fmt::format(R"({}{{ "id": "0x{:016X}", "type": "Raw", "source": "data/x{}.bin" }})",
+                        i == 0 ? "" : ", ", 0x5000 + i, i);
+    }
+    const path packJson = packDir / "pack.json";
+    {
+        std::ofstream out(packJson);
+        out << fmt::format(R"({{ "version": 1, "assets": [ {} ] }})", entries);
+    }
+
+    Cooker cooker;
+    RegisterBuiltinImporters(cooker);
+    const CookCache cache = OpenCache();
+
+    constexpr u32 Jobs = 8;
+    const path out = UniqueDir("parallelskipout") / "out.vengpack";
+    REQUIRE(cooker
+                .CookPack(packJson, out, {}, nullptr, nullptr, nullptr, nullptr, {}, {}, &cache,
+                          nullptr, Jobs)
+                .has_value());
+    const auto firstWrite = std::filesystem::last_write_time(out);
+
+    // Re-cook with nothing changed, again across the pool: every entry hits, the TOC hashes to the
+    // same digest whatever order the workers ran in, and the pack is left untouched.
+    REQUIRE(cooker
+                .CookPack(packJson, out, {}, nullptr, nullptr, nullptr, nullptr, {}, {}, &cache,
+                          nullptr, Jobs)
+                .has_value());
+    CHECK(std::filesystem::last_write_time(out) == firstWrite);
+}
+
 TEST_CASE("CookCache: two build configurations share a cache dir without contaminating each other")
 {
     const path fixtureDir = path(VENG_COOKER_TEST_FIXTURE_DIR);

@@ -125,11 +125,13 @@ TEST_CASE("CookTiming: the per-asset sum and the named phases reconcile to the t
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
 
+    // Cooked with one job: the reconciliation is a property of a sequential cook, since assets that
+    // ran concurrently sum to more wall time than the invocation contains.
     const CookStopwatch invocation;
     CookTiming timing;
     REQUIRE(cooker
                 .CookPack(packJson, packDir / "out.vengpack", {}, nullptr, nullptr, nullptr,
-                          nullptr, {}, {}, nullptr, &timing)
+                          nullptr, {}, {}, nullptr, &timing, 1)
                 .has_value());
     timing.TotalSeconds = invocation.Elapsed();
 
@@ -143,6 +145,31 @@ TEST_CASE("CookTiming: the per-asset sum and the named phases reconcile to the t
     CHECK(summary.find("assets") != string::npos);
     CHECK(summary.find("remainder") != string::npos);
     CHECK(summary.find("per importer") != string::npos);
+}
+
+TEST_CASE("CookTiming: a parallel cook reports a worker sum, not a wall-clock remainder")
+{
+    const path packDir = UniqueDir("parallelaccount");
+    const path packJson = WriteRawPack(packDir);
+
+    Cooker cooker;
+    RegisterBuiltinImporters(cooker);
+
+    const CookStopwatch invocation;
+    CookTiming timing;
+    REQUIRE(cooker
+                .CookPack(packJson, packDir / "out.vengpack", {}, nullptr, nullptr, nullptr,
+                          nullptr, {}, {}, nullptr, &timing, 4)
+                .has_value());
+    timing.TotalSeconds = invocation.Elapsed();
+
+    // Above one job the per-asset seconds overlap each other, so `total - assets` is not a
+    // remainder and is not offered as one; the report states the budget and labels the sum instead.
+    CHECK(timing.Jobs == 4);
+    const string summary = FormatCookTimingSummary(timing);
+    CHECK(summary.find("4 jobs") != string::npos);
+    CHECK(summary.find("summed across workers") != string::npos);
+    CHECK(summary.find("remainder") == string::npos);
 }
 
 TEST_CASE("CookTiming: the CSV table carries a header and one row per asset")
@@ -175,6 +202,6 @@ TEST_CASE("CookTiming: the CSV table carries a header and one row per asset")
         }
         ++lines;
     }
-    CHECK(header == "id,type,cache_hit,cache_lookup_s,import_s,store_s,total_s");
+    CHECK(header == "id,type,cache_hit,cache_lookup_s,serialized_wait_s,import_s,store_s,total_s");
     CHECK(lines == timing.Assets.size() + 1);
 }

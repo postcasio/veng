@@ -73,23 +73,42 @@ namespace Veng::Cook
         f64 importSeconds = 0.0;
         f64 lookupSeconds = 0.0;
         f64 storeSeconds = 0.0;
+        f64 waitSeconds = 0.0;
         for (const CookAssetTiming& asset : timing.Assets)
         {
             importSeconds += asset.ImportSeconds;
             lookupSeconds += asset.CacheLookupSeconds;
             storeSeconds += asset.StoreSeconds;
+            waitSeconds += asset.SerializedWaitSeconds;
         }
 
-        string out = fmt::format("cook timing — {} assets, {} cache hits / {} fresh\n",
-                                 timing.Assets.size(), hits, timing.Assets.size() - hits);
+        string out =
+            fmt::format("cook timing — {} assets, {} cache hits / {} fresh, {} jobs\n",
+                        timing.Assets.size(), hits, timing.Assets.size() - hits, timing.Jobs);
         out += fmt::format("  total             {:>10.3f} s\n", total);
-        out += fmt::format("  assets            {:>10.3f} s{:>8.1f} %\n", assetSeconds,
-                           Percent(assetSeconds, total));
+        out += fmt::format("  assets            {:>10.3f} s{:>8.1f} %{}\n", assetSeconds,
+                           Percent(assetSeconds, total),
+                           timing.Jobs > 1 ? "  (summed across workers)" : "");
         AppendPhase(out, "import", importSeconds, total);
         AppendPhase(out, "cache lookup", lookupSeconds, total);
         AppendPhase(out, "blob store", storeSeconds, total);
-        out += fmt::format("  remainder         {:>10.3f} s{:>8.1f} %\n", remainder,
-                           Percent(remainder, total));
+        AppendPhase(out, "serialized wait", waitSeconds, total);
+        // Above one job the assets ran concurrently, so total minus their sum is not a remainder —
+        // it can even be negative. The named phases are all measured on the driving thread and stay
+        // meaningful either way, so they are what is reported.
+        if (timing.Jobs > 1)
+        {
+            // Time blocked on the serialization lock is elapsed but not work, so the occupancy
+            // figure excludes it; counting it would report cores that were only ever waiting.
+            out += fmt::format("  workers busy      {:>10.3f}\n",
+                               Percent(assetSeconds - waitSeconds, total) / 100.0);
+            out += "  driver phases\n";
+        }
+        else
+        {
+            out += fmt::format("  remainder         {:>10.3f} s{:>8.1f} %\n", remainder,
+                               Percent(remainder, total));
+        }
         AppendPhase(out, "module load", timing.ModuleLoadSeconds, total);
         AppendPhase(out, "project parse", timing.ProjectParseSeconds, total);
         AppendPhase(out, "manifest parse", timing.ManifestParseSeconds, total);
@@ -97,7 +116,10 @@ namespace Veng::Cook
         AppendPhase(out, "archive write", timing.ArchiveWriteSeconds, total);
         AppendPhase(out, "cache store", timing.CacheStoreSeconds, total);
         AppendPhase(out, "depfile", timing.DepfileSeconds, total);
-        AppendPhase(out, "unattributed", remainder - timing.NamedPhaseSeconds(), total);
+        if (timing.Jobs <= 1)
+        {
+            AppendPhase(out, "unattributed", remainder - timing.NamedPhaseSeconds(), total);
+        }
 
         // The costliest assets, which is what decides whether a cook's cost is a long tail or one
         // dominant asset.
@@ -148,11 +170,13 @@ namespace Veng::Cook
 
     VoidResult WriteCookTimingTable(const path& file, const CookTiming& timing)
     {
-        string csv = "id,type,cache_hit,cache_lookup_s,import_s,store_s,total_s\n";
+        string csv =
+            "id,type,cache_hit,cache_lookup_s,serialized_wait_s,import_s,store_s,total_s\n";
         for (const CookAssetTiming& asset : timing.Assets)
         {
-            csv += fmt::format("0x{:016X},{},{},{:.6f},{:.6f},{:.6f},{:.6f}\n", asset.Id.Value,
-                               asset.Type, asset.CacheHit ? 1 : 0, asset.CacheLookupSeconds,
+            csv += fmt::format("0x{:016X},{},{},{:.6f},{:.6f},{:.6f},{:.6f},{:.6f}\n",
+                               asset.Id.Value, asset.Type, asset.CacheHit ? 1 : 0,
+                               asset.CacheLookupSeconds, asset.SerializedWaitSeconds,
                                asset.ImportSeconds, asset.StoreSeconds, asset.TotalSeconds());
         }
 

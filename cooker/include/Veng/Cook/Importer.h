@@ -70,6 +70,32 @@ namespace Veng::Cook
         /// Importers call this for binary payloads not named in the manifest — a texture's image
         /// file, a mesh model, a shader's .slang source and its includes. Always set by the cooker.
         function<void(const path&)> RecordDependency;
+        /// @brief Threads this Cook call may spawn for parallelism of its own. Never below 1.
+        ///
+        /// The cook has **one** concurrency budget, shared by the driver's per-asset workers and
+        /// any threading inside an importer, so an importer that parallelizes internally does not
+        /// stack a second pool on top of the driver's. An importer that spawns no threads ignores
+        /// this; one that does must not exceed it.
+        u32 ThreadBudget = 1;
+    };
+
+    /// @brief Whether an importer's Cook may run concurrently with other importers' Cook calls.
+    ///
+    /// The cook driver runs a pack's assets across a worker pool. An importer declares which
+    /// scheduling it tolerates; @ref ImporterConcurrency::Serialized is the default because a cook
+    /// that is fast and occasionally wrong is worse than one that is slow.
+    enum class ImporterConcurrency : u8
+    {
+        /// @brief Runs under the cook's serialization lock: never concurrent with another importer.
+        ///
+        /// The safe default. An importer driving a library with process-wide state, or one whose
+        /// reentrancy has not been established, stays here at the cost of the cook's parallelism.
+        Serialized,
+        /// @brief Reentrant: Cook runs on any worker thread, concurrently with any other importer.
+        ///
+        /// Declaring this asserts that Cook touches no mutable state outside its own frame and
+        /// drives no library carrying process-wide state that another concurrent call could reach.
+        Parallel,
     };
 
     /// @brief Offline, Vulkan-free importer interface: one implementation per AssetTypeId.
@@ -84,6 +110,17 @@ namespace Veng::Cook
 
         /// @brief Returns the AssetTypeId this importer handles.
         [[nodiscard]] virtual AssetTypeId Type() const = 0;
+
+        /// @brief Declares how the cook driver may schedule this importer's Cook.
+        ///
+        /// Defaults to @ref ImporterConcurrency::Serialized, so an importer that says nothing is
+        /// never run concurrently. Override with @ref ImporterConcurrency::Parallel only once
+        /// Cook — and every library it drives — is known reentrant.
+        /// @return This importer's concurrency class.
+        [[nodiscard]] virtual ImporterConcurrency Concurrency() const
+        {
+            return ImporterConcurrency::Serialized;
+        }
 
         /// @brief Cooks one pack entry's JSON into cooked blob bytes.
         /// @param context  Cook context providing the pack directory, asset resolver, and dependency recorder.

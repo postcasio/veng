@@ -21,3 +21,6 @@ imgui.ini
 
 # Python bytecode cache, written beside the scripts by any script run.
 __pycache__/
+
+# Sanitizer build tree (a -fsanitize=thread/address configure), a disposable local artifact.
+/build-tsan/

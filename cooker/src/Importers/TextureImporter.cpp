@@ -5,6 +5,8 @@
 #include <array>
 #include <cstring>
 #include <fstream>
+#include <mutex>
+#include <shared_mutex>
 #include <sstream>
 #include <thread>
 
@@ -159,55 +161,111 @@ namespace Veng::Cook
         // the dominant cost of a cold cook, so this sits at ASTCENC_PRE_FAST (30) rather than the
         // encoder's mid preset: the block size is fixed either way, so effort buys block quality
         // and costs cook time, and nothing else. The codec is the per-architecture SIMD build
-        // (NEON on Apple Silicon, SSE4.1 on x86_64 — see cooker/CMakeLists.txt), with
-        // ASTCENC_INVARIANCE making the encode bit-reproducible across runs, threads and machines
-        // of the same architecture. Determinism therefore comes from the invariance build option,
-        // not from the effort level — but the level still selects *which* blocks are produced, so
-        // the smoke golden is regenerated whenever it moves.
+        // (NEON on Apple Silicon, SSE4.1 on x86_64 — see cooker/CMakeLists.txt), built with
+        // ASTCENC_INVARIANCE off, so the blocks depend on the thread count and two fresh cooks are
+        // not byte-identical. The effort level also selects *which* blocks are produced, so the
+        // smoke golden is regenerated whenever either moves.
         // (The ASTCENC_PRE_* presets are static const float, not constexpr.)
         const f32 AstcQuality = ASTCENC_PRE_FAST;
+
+        // astcenc rebuilds two process-global trigonometric tables on *every* astcenc_context_alloc,
+        // not once, so allocating a context while another thread encodes races with that thread's
+        // reads of them. Two things together make that safe without serializing the encode: a context
+        // is cached per thread and reused (so the whole cook allocates a handful), and this lock
+        // orders every allocation against every encode — exclusive to allocate, shared to compress.
+        std::shared_mutex g_AstcTableLock;
+
+        // One thread's reusable encoder context. Held in a thread_local, so it is freed when the
+        // worker that allocated it exits.
+        struct AstcContextCache
+        {
+            astcenc_profile Profile{};
+            u32 ThreadCount = 0;
+            astcenc_context* Context = nullptr;
+
+            ~AstcContextCache()
+            {
+                if (Context != nullptr)
+                {
+                    astcenc_context_free(Context);
+                }
+            }
+        };
+
+        // Returns this thread's encoder context for (@p profile, @p threadCount), allocating one
+        // only when the cached context does not match. A reused context is reset, which is the
+        // encoder's documented way to start a new image on an existing context.
+        Result<astcenc_context*> AcquireAstcContext(astcenc_profile profile, u32 threadCount)
+        {
+            thread_local AstcContextCache cache;
+            if (cache.Context != nullptr && cache.Profile == profile &&
+                cache.ThreadCount == threadCount)
+            {
+                astcenc_compress_reset(cache.Context);
+                return cache.Context;
+            }
+
+            astcenc_context* context = nullptr;
+            {
+                const std::unique_lock tables(g_AstcTableLock);
+                astcenc_config config{};
+                const astcenc_error configStatus =
+                    astcenc_config_init(profile, BlockSize, BlockSize, 1, AstcQuality,
+                                        ASTCENC_FLG_USE_DECODE_UNORM8, &config);
+                if (configStatus != ASTCENC_SUCCESS)
+                {
+                    return std::unexpected(
+                        fmt::format("texture importer: ASTC config init failed: {}",
+                                    astcenc_get_error_string(configStatus)));
+                }
+
+                const astcenc_error allocStatus =
+                    astcenc_context_alloc(&config, threadCount, &context);
+                if (allocStatus != ASTCENC_SUCCESS)
+                {
+                    return std::unexpected(
+                        fmt::format("texture importer: ASTC context alloc failed: {}",
+                                    astcenc_get_error_string(allocStatus)));
+                }
+            }
+
+            if (cache.Context != nullptr)
+            {
+                astcenc_context_free(cache.Context);
+            }
+            cache.Profile = profile;
+            cache.ThreadCount = threadCount;
+            cache.Context = context;
+            return context;
+        }
 
         // Encodes one RGBA8 mip level (tightly packed, row-major) to ASTC 4x4 LDR blocks through the
         // ARM astc-encoder. The encoder pads partial edge tiles internally, so the full chain down
         // to 1x1 encodes. @p profile selects the sRGB-aware LDR profile.
         //
-        // The level's blocks are encoded across hardware_concurrency() threads — the encoder's
-        // documented model: one context allocated for N threads, then N calls to
-        // astcenc_compress_image, each from a distinct thread under its own [0..N-1] index, with the
-        // blocks dynamically scheduled across them. The encoder is built with ASTCENC_INVARIANCE
-        // off, so the blocks a level encodes to depend on the thread count and are not reproducible
-        // between two fresh cooks — a deliberate trade for encode speed, reasoned about in
-        // cooker/CMakeLists.txt. Every consumer treats a cooked texture as valid rather than as one
-        // particular encoding; the smoke golden's compare tolerance is what absorbs the variation.
-        Result<vector<u8>> EncodeAstcLevel(u8* rgba, u32 width, u32 height, astcenc_profile profile)
+        // The level's blocks are encoded across @p threadBudget threads — the encoder's documented
+        // model: one context configured for N threads, then N calls to astcenc_compress_image, each
+        // from a distinct thread under its own [0..N-1] index, with the blocks dynamically scheduled
+        // across them. Under the cook's asset pool the budget is one, so the level encodes on the
+        // calling thread and the parallelism comes from the pool instead.
+        Result<vector<u8>> EncodeAstcLevel(u8* rgba, u32 width, u32 height, astcenc_profile profile,
+                                           u32 threadBudget)
         {
-            astcenc_config config{};
-            const astcenc_error configStatus =
-                astcenc_config_init(profile, BlockSize, BlockSize, 1, AstcQuality,
-                                    ASTCENC_FLG_USE_DECODE_UNORM8, &config);
-            if (configStatus != ASTCENC_SUCCESS)
-            {
-                return std::unexpected(fmt::format("texture importer: ASTC config init failed: {}",
-                                                   astcenc_get_error_string(configStatus)));
-            }
-
             const u32 blocksWide = (width + BlockSize - 1) / BlockSize;
             const u32 blocksHigh = (height + BlockSize - 1) / BlockSize;
             const u32 blockCount = blocksWide * blocksHigh;
 
             // Cap the worker count at the level's block count so a tiny mip does not spawn idle
-            // threads (the encoder schedules whole blocks, never a fraction of one).
-            const u32 hardware = std::max(1u, std::thread::hardware_concurrency());
-            const u32 threadCount = std::min(hardware, std::max(1u, blockCount));
+            // threads (the encoder schedules whole blocks, never a fraction of one), and at the
+            // cook's shared budget so the encode does not stack a pool on the driver's workers.
+            const u32 threadCount = std::min(std::max(1u, threadBudget), std::max(1u, blockCount));
 
-            astcenc_context* context = nullptr;
-            const astcenc_error allocStatus = astcenc_context_alloc(&config, threadCount, &context);
-            if (allocStatus != ASTCENC_SUCCESS)
+            const Result<astcenc_context*> acquired = AcquireAstcContext(profile, threadCount);
+            if (!acquired)
             {
-                return std::unexpected(
-                    fmt::format("texture importer: ASTC context alloc failed: {}",
-                                astcenc_get_error_string(allocStatus)));
+                return std::unexpected(acquired.error());
             }
+            astcenc_context* context = *acquired;
 
             void* slice = rgba;
             astcenc_image image{
@@ -228,9 +286,10 @@ namespace Veng::Cook
             vector<u8> blocks(static_cast<usize>(blocksWide) * blocksHigh * BlockBytes);
 
             // Each thread compresses its share of the blocks under a unique index; thread 0 runs on
-            // the calling thread while the rest run on spawned workers, all joined before the context
-            // is freed.
+            // the calling thread while the rest run on spawned workers, all joined before the shared
+            // lock is dropped.
             vector<astcenc_error> statuses(threadCount, ASTCENC_SUCCESS);
+            const std::shared_lock tables(g_AstcTableLock);
             const auto compressShare = [&](u32 threadIndex)
             {
                 statuses[threadIndex] = astcenc_compress_image(
@@ -248,7 +307,6 @@ namespace Veng::Cook
             {
                 worker.join();
             }
-            astcenc_context_free(context);
 
             for (const astcenc_error status : statuses)
             {
@@ -681,14 +739,20 @@ namespace Veng::Cook
         bc7enc_compress_block_params params{};
         if (codec == TextureCodec::BC7)
         {
-            bc7enc_compress_block_init();
+            // bc7enc_compress_block_init fills process-wide encode tables, so two concurrent
+            // texture cooks would write them at once; call_once makes the fill happen exactly
+            // once and every later reader see it. params_init writes only the local struct.
+            static std::once_flag bc7Init;
+            std::call_once(bc7Init, [] { bc7enc_compress_block_init(); });
             bc7enc_compress_block_params_init(&params);
             params.m_uber_level = BC7UberLevel;
         }
-        // rgbcx backs both BC4 and BC5; init builds its shared block-encode tables once.
+        // rgbcx backs both BC4 and BC5; init builds its shared block-encode tables, likewise
+        // process-wide and likewise filled exactly once.
         if (codec == TextureCodec::BC5 || codec == TextureCodec::BC4)
         {
-            rgbcx::init();
+            static std::once_flag rgbcxInit;
+            std::call_once(rgbcxInit, [] { rgbcx::init(); });
         }
         const astcenc_profile astcProfile = srgbEncode ? ASTCENC_PRF_LDR_SRGB : ASTCENC_PRF_LDR;
 
@@ -712,7 +776,8 @@ namespace Veng::Cook
             }
             else if (codec == TextureCodec::ASTC)
             {
-                const Result<vector<u8>> blocks = EncodeAstcLevel(rgba, lw, lh, astcProfile);
+                const Result<vector<u8>> blocks =
+                    EncodeAstcLevel(rgba, lw, lh, astcProfile, context.ThreadBudget);
                 if (!blocks)
                 {
                     return std::unexpected(blocks.error());

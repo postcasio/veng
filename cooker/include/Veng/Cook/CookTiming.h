@@ -54,7 +54,17 @@ namespace Veng::Cook
         f64 CacheLookupSeconds = 0.0;
 
         /// @brief Seconds spent inside the importer. Zero on a cache hit.
+        ///
+        /// Excludes @ref SerializedWaitSeconds, so this is the importer's own work whether it ran
+        /// concurrently or waited its turn.
         f64 ImportSeconds = 0.0;
+
+        /// @brief Seconds spent waiting for the cook's serialization lock before the importer ran.
+        ///
+        /// Nonzero only for an importer that did not declare itself reentrant, and only when
+        /// another such importer held the lock. Summed across the pack, this is what parallelizing
+        /// the remaining importers could still buy.
+        f64 SerializedWaitSeconds = 0.0;
 
         /// @brief Seconds spent compressing and hashing the entry's blobs. Zero on a cache hit.
         f64 StoreSeconds = 0.0;
@@ -62,7 +72,7 @@ namespace Veng::Cook
         /// @brief Total wall seconds attributed to this asset.
         [[nodiscard]] f64 TotalSeconds() const
         {
-            return CacheLookupSeconds + ImportSeconds + StoreSeconds;
+            return CacheLookupSeconds + SerializedWaitSeconds + ImportSeconds + StoreSeconds;
         }
     };
 
@@ -102,6 +112,14 @@ namespace Veng::Cook
 
         /// @brief Seconds the whole invocation took, measured from the tool's entry point.
         f64 TotalSeconds = 0.0;
+
+        /// @brief The concurrency budget the cook ran under: threads shared by the asset pool and
+        /// any importer-internal parallelism.
+        ///
+        /// Above one, the per-asset seconds below are a **sum across workers**, not a share of the
+        /// wall clock, and their total may exceed @ref TotalSeconds. The report says so rather than
+        /// printing a negative remainder.
+        u32 Jobs = 1;
 
         /// @brief Sum of every asset's total, the share of the cook the per-asset table accounts for.
         [[nodiscard]] f64 AssetSeconds() const;
