@@ -285,6 +285,29 @@ instantiation placed in a precompiled header is serialised into the PCH and is n
 TU**: a PCH caches parsed declarations *and* whatever was instantiated while it was built, so
 such an instantiation appears once and nowhere else.
 
+### What a header in the precompiled header costs
+
+`engine/include/Veng/Veng.h` is the precompiled header for every target here, and it is what a
+downstream project's own precompiled header carries. **What it includes is part of veng's public
+API** — and the interesting half of that is not source-compatibility but cost.
+
+A precompiled header caches parsed **declarations**, not template **instantiations**. A header
+whose instantiations are paid near-universally and used near-nowhere is therefore free to
+re-parse and full price to re-instantiate, **once per translation unit**, in this tree and in
+every consumer's. Adding an include to `Veng.h` signs all of them up for that.
+
+The mechanism that makes an unused header expensive is worth stating on its own, because it is
+not the usual "templates are lazy" intuition: **a call inside a function body — template or not —
+is odr-used at the point that body is parsed, unless the call itself depends on a template
+parameter.** So a non-template inline member of a widely-included class instantiates its whole
+call graph in every unit that merely *parses* the class definition, with no call site anywhere.
+`std::filesystem::path` is exactly that: its `wstring()` / `u16string()` / `u32string()` members
+call the member template `path::string<_ECharT>`, so every unit that saw the class instantiated
+all three — for character types nothing here uses. `<filesystem>` is consequently **not** included
+by `Veng.h`, nor by assetpack's `Asset/Types.h`. The `Veng::path` alias lives in `Veng/Path.h` and
+`Veng/Asset/Path.h`; include one of those where you name a path. A consumer that relied on
+`Veng.h` to supply `<filesystem>` transitively includes it itself.
+
 ### Guarding the build cost
 
 `docs/build-cost-baseline.md` records this tree's whole-tree compile cost — the totals, the

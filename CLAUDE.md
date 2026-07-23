@@ -373,6 +373,81 @@ Two properties of the format anything reading the traces has to know:
   header appears once, in the PCH, and nowhere else. An experiment expecting to see a per-TU cost
   has to place the instantiation where the PCH does not reach.
 
+#### The PCH's include surface is a public contract, and a heavy header in it is not free
+
+`engine/include/Veng/Veng.h` is the precompiled header for **every** target in this tree, and it
+is also what a downstream project's own PCH carries. **What it includes is therefore part of
+veng's public API**, in two distinct senses that both bite:
+
+- **Source-compatibility.** Anything `Veng.h` includes is transitively available to every
+  consumer TU, so removing an include is a break for a consumer that relied on the transitive
+  supply. That is the ordinary include-what-you-use argument and it is the smaller half.
+- **Cost.** A PCH caches parsed *declarations*, not template *instantiations*. So a header
+  whose instantiations are paid near-universally and used near-nowhere costs **every TU in the
+  tree and every TU in every consumer**, regardless of the PCH — free to re-parse, full price to
+  re-instantiate, once per unit. Adding an include to `Veng.h` signs the whole tree, and every
+  downstream tree, up for that bill.
+
+**The worked case: `<filesystem>` is out of `Veng.h` and out of `assetpack`'s `Asset/Types.h`.**
+`std::filesystem::path` is a non-template class whose non-template inline members odr-use member
+templates — `wstring()`/`u16string()`/`u32string()` call `path::string<_ECharT>`, `root_path()`
+calls `path::append<>`, and `filesystem_error`'s constructors call
+`make_shared<_Storage, path, path>`. Every unit that merely *parsed* the class definition
+instantiated all of them at end of translation, for `wchar_t`, `char16_t` and `char32_t`, which
+nothing in the tree uses. Both headers included `<filesystem>` solely to declare the `Veng::path`
+alias, so the alias moved to a header of its own on each side — `Veng/Path.h` and
+`Veng/Asset/Path.h` — and the units that name a path include it directly. The alias, its type and
+its spelling are unchanged. **Consumer-facing:** a project that relied on `Veng.h` to supply
+`<filesystem>` now includes `<Veng/Path.h>` (or `<filesystem>`) itself.
+
+#### A function body odr-uses its whole call graph where the body is parsed
+
+This is the single mechanism behind most of the standard-library instantiation cost this tree has
+removed, and it caught four separate sites — twice after the obvious fix had already been tried.
+State it exactly:
+
+> **A call inside a function body — template or not — is odr-used at the point that body is
+> parsed, unless the call itself depends on a template parameter.**
+
+Three consequences worth having in hand before reaching for a fix:
+
+- **A non-template inline body in a widely-included header costs every includer.** It does not
+  matter that nothing ever calls the function. `FindTypeByName`, an inline convenience free
+  function that walked `registry.All()`, instantiated `unordered_map<u64, TypeInfo>` in every TU
+  that included the header; out-lining it took that to zero.
+- **Wrapping the body in `template <class = void>` is not sufficient.** A member template whose
+  body calls something that depends on none of its parameters is still odr-used while the class
+  definition is parsed. `FieldCollector::Field_` was already a member template and its
+  `Fields.push_back(...)` was still paid by every unit that included `Reflect.h`.
+- **So there are exactly two fixes**: make the *call* dependent (name the callee's type through a
+  template parameter, as `Enumerators()`/`Alternatives()` do), or declare the callee without
+  defining it there (out-line the body into a `.cpp`, as `FindTypeByName`, `FieldCollector::Add`
+  and `CapturingTestSink`'s methods do). Choosing between them is usually a link question — see
+  the `VE_ENUM` constraint under *Reflection* above.
+
+#### Registry storage lives behind an implementation pointer
+
+`AssetTypeRegistry` (assetpack), `TypeRegistry` and `AssetLoaderRegistry` (engine) each spelled
+their `std::unordered_map` storage in a **public class definition**, so every TU that parsed the
+class instantiated the map — an implementation detail of a singleton, imposed on hundreds of
+units' view of the type. The maps now live in an `Impl` struct defined in each registry's own
+implementation TU, reached through an owning pointer. Every accessor keeps its exact signature,
+including the `All()` overloads returning a const reference to the map: naming a specialisation
+in a return type needs no complete type, so a caller pays the instantiation only where it
+actually iterates.
+
+**ABI note.** This changed the **size and layout** of three public classes and made them
+**move-only**, and `FindTypeByName` is now an exported symbol rather than an inline. veng makes no
+stable ABI promise across versions, so a consumer **rebuilds rather than relinks** — but it is a
+rebuild, not a source change.
+
+**`CapturingTestSink` is still declared in a public header.** `Veng/Diagnostics/TraceSink.h` sits
+behind `Profiler.h` and reaches most of the tree, and the class's own comment says it is for the
+test band. Its method bodies are out-lined into `src/Diagnostics/TraceSink.cpp`, so it no longer
+costs a TU that does not construct it — but the *placement* question is untouched: a test-support
+class does not belong in the public profiling surface, and moving it is a design change with
+callers to migrate rather than a cost fix.
+
 #### Guarding the cost
 
 `docs/build-cost-baseline.md` is the tree's checked-in cost baseline and
@@ -576,9 +651,16 @@ vulkan.hpp is configured `VULKAN_HPP_NO_EXCEPTIONS` with
 ### House-style vocabulary
 
 Use the aliases from `Veng.h`, not the std/glm spellings: `string`, `vector<T>`,
-`map`, `optional`, `path`, `function`; `u8`/`u32`/`u64`/`f32`/`usize`; glm types
+`map`, `optional`, `function`; `u8`/`u32`/`u64`/`f32`/`usize`; glm types
 as `vec3`, `mat4`, `uvec2`, `quat`. The public API and sample app are written in
 these and they are part of veng's identity.
+
+**`path` is one of the aliases but is not in `Veng.h`.** It lives in `<Veng/Path.h>`
+(engine) and `<Veng/Asset/Path.h>` (assetpack) — two headers whose entire content is
+the alias and the `<filesystem>` include behind it. Spell it `Veng::path` as before;
+just include the header where you name one. The reason is in
+[Guarding the cost](#guarding-the-cost): `<filesystem>` in a precompiled header is a
+per-TU instantiation bill, not a cached parse.
 
 Renderer code uses engine **vocabulary enums** (`Renderer::Format`, `ImageUsage`,
 `ShaderStage`, …) from `Renderer/Types.h`, never `vk::` enums. The backend maps
@@ -790,23 +872,39 @@ resource that outlives the context still fails loudly: the `Disposed` tripwire (
 
 ### Reflection: the describe block is instantiated where it is used
 
-`VengReflect<T>::Fields()` and `::RegisterDependencies()` are **member templates on a defaulted
-parameter** (`template <class = void>`), not plain static members. They are spelled and called
-exactly like plain statics — no `template` disambiguator is needed at any call site, since the
-calls name no explicit template argument — but a member template's body is instantiated only
-where it is *called*. So the describe-block replay behind them, and both of its `Describe<Sink>`
-instantiations, are compiled only in the translation units that actually call
-`TypeRegistry::Register<T>()`, rather than in every unit that merely includes the describe block.
-The cost follows use rather than inclusion.
+**Four** `VengReflect<T>` accessors are **member templates on a defaulted parameter**
+(`template <class = void>`), not plain static members: `Fields()`, `RegisterDependencies()`,
+`Enumerators()` (emitted by `VE_ENUM`) and `Alternatives()` (emitted by `VE_VARIANT`). They are
+spelled and called exactly like plain statics — no `template` disambiguator is needed at any call
+site, since the calls name no explicit template argument — but a member template's body is
+instantiated only where it is *called*.
+
+Two different costs are deferred that way:
+
+- `Fields()` / `RegisterDependencies()` carry the **describe-block replay** and both of its
+  `Describe<Sink>` instantiations, so those compile only in the units that actually call
+  `TypeRegistry::Register<T>()` rather than in every unit that includes the describe block.
+- `Enumerators()` / `Alternatives()` carry no describe block; what they defer is the **container
+  they build**. Each names its own `vector<…>` through the defaulted parameter, which is the point
+  — see the rule below: the body's `push_back` has to be *dependent*, not merely sitting inside a
+  template, or it is odr-used where the class definition is parsed.
 
 **The authored vocabulary is unchanged.** `VE_REFLECT` / `VE_FIELD` / `VE_ARRAY_FIELD` /
-`VE_LEAF` / `VE_TYPE` / `VE_ENUM` / `VE_VARIANT` are written exactly as before; the form lives
-entirely in the macro expansion and is invisible to an author. The one consumer-visible
-consequence: **a hand-written `VengReflect<T>` specialisation must emit the templated form** for
-those two members, since `Register<T>()` calls them uniformly across the whole trait. The trait
-is public, so this is a real constraint even though the tree contains no hand-written
-specialisation — every one is macro-emitted. `Enumerators()`, which only `VE_ENUM` emits, stays
-a plain static: it carries no describe block and nothing to defer.
+`VE_LEAF` / `VE_TYPE` / `VE_ENUM` / `VE_ENUMERATOR` / `VE_VARIANT` are written exactly as before;
+the form lives entirely in the macro expansion and is invisible to an author. The one
+consumer-visible consequence, and it now covers **all four** accessors: **a hand-written
+`VengReflect<T>` specialisation must emit the templated form**, since `Register<T>()` and the
+enum/variant paths call them uniformly across the trait. The trait is public, so this is a real
+constraint even though the tree contains no hand-written specialisation — every one is
+macro-emitted.
+
+**A `VE_ENUM` block must stay link-independent of `libveng`.** `veng_cook_bootstrap` links
+`assetpack` **only**, and it parses engine headers that carry `VE_ENUM`. So routing any part of a
+describe block's body through an engine `.cpp` — the obvious way to out-line an expensive body —
+breaks that target's link, even though it compiles everywhere else. Whatever a `VE_ENUM` expansion
+emits has to resolve with `assetpack` alone. This is why `Enumerators()` was made *dependent*
+rather than out-lined: the deferral had to be a language mechanism, not a symbol in another
+library.
 
 ### The Native idiom (public/backend split)
 
