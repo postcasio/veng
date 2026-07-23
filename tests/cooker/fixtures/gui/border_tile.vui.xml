@@ -1,0 +1,11 @@
+<Panel stylesheets="0xCEC9F324D25ADC0F" style="width: 256px; height: 192px; background: #14141fff; padding: 8px; font: 0xB547A1C6F4B8B20C;">
+  <Panel class="frame">
+    <Panel class="boxed">
+      <Text>AVA TAT AVA
+TVA AT VAT</Text>
+    </Panel>
+  </Panel>
+  <Panel class="sized-frame">
+    <Panel class="sized-boxed"/>
+  </Panel>
+</Panel>

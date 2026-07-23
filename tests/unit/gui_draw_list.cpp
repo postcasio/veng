@@ -3,6 +3,7 @@
 // CPU data, so this needs no GPU context. Text is exercised by the GPU golden (it needs a
 // resident font atlas); this pins the geometry/run bookkeeping the pass replays.
 
+#include <array>
 #include <cmath>
 
 #include <doctest/doctest.h>
@@ -39,6 +40,32 @@ namespace
     {
         CHECK(actual.x == doctest::Approx(expected.x));
         CHECK(actual.y == doctest::Approx(expected.y));
+    }
+
+    // The shape fragment's per-cell wrap, in the same form the shader spells it:
+    // `uvMin + frac((uv - uvMin) / uvSize) * uvSize`, taken only when both wrap extents are
+    // positive. The cases below drive it with the UVs the draw list actually emitted, so what they
+    // pin is the pair — a quad's UV span folded by the sub-rect the same quad carries — rather than
+    // the formula on its own.
+    vec2 WrapIntoCell(vec2 uv, vec4 wrap)
+    {
+        const vec2 wrapMin{wrap.x, wrap.y};
+        const vec2 wrapSize{wrap.z, wrap.w};
+        if (wrapSize.x <= 0.0f || wrapSize.y <= 0.0f)
+        {
+            return uv;
+        }
+        const vec2 t = (uv - wrapMin) / wrapSize;
+        return wrapMin + vec2(t.x - std::floor(t.x), t.y - std::floor(t.y)) * wrapSize;
+    }
+
+    // The four corners of the quad emitted for cell (row, col) of a nine-slice, in emission order
+    // (top-left, top-right, bottom-right, bottom-left).
+    std::array<const GuiVertex*, 4> Cell(const DrawList& list, usize row, usize col)
+    {
+        const usize base = (row * 3 + col) * 4;
+        return {&list.GetVertices()[base], &list.GetVertices()[base + 1],
+                &list.GetVertices()[base + 2], &list.GetVertices()[base + 3]};
     }
 }
 
@@ -223,6 +250,138 @@ TEST_CASE("gui draw list: a tiled nine-slice wraps each cell within its own sour
     // And the centre repeats on both axes.
     const GuiVertex& bottomRightOfCentre = list.GetVertices()[(1 * 3 + 1) * 4 + 2];
     CHECK(bottomRightOfCentre.Uv == vec2(0.25f + 3.0f * 0.5f, 0.25f + 3.0f * 0.5f));
+}
+
+TEST_CASE("gui draw list: a tiled cell's UV run folds back inside its own sub-rect")
+{
+    // A 64×64 source sliced at 16px against a 100×100 destination: the centre grows 68 against 32
+    // source pixels, so it repeats 2.125 times — non-integral on both axes, which is the case the
+    // fold has to get right at the far edge.
+    DrawList list;
+    list.NineSlice({.Min = {0.0f, 0.0f}, .Size = {100.0f, 100.0f}}, Texture(2), Sampler(0),
+                   Insets::All(0.25f), Insets::All(16.0f), vec4(1.0f),
+                   {.Min = {0.0f, 0.0f}, .Size = {1.0f, 1.0f}}, ImageRepeat::Tile,
+                   vec2(64.0f, 64.0f));
+    REQUIRE(list.GetVertices().size() == 9 * 4);
+
+    const std::array<const GuiVertex*, 4> centre = Cell(list, 1, 1);
+    const vec4 wrap = centre[0]->UvWrap;
+    REQUIRE(wrap == vec4(0.25f, 0.25f, 0.5f, 0.5f));
+
+    // The quad spans 2.125 copies, so its far corner sits 0.125 of a cell past the second seam and
+    // folds to exactly that fraction into the cell — the partial final tile.
+    CHECK(centre[2]->Uv == vec2(0.25f + 2.125f * 0.5f, 0.25f + 2.125f * 0.5f));
+    CheckVec2(WrapIntoCell(centre[2]->Uv, wrap), vec2(0.25f + 0.125f * 0.5f));
+
+    // The seam resolves to one side deterministically rather than oscillating: a UV landing exactly
+    // on a cell boundary is frac()'d to zero and lands on the cell's minimum, at every repeat.
+    for (const f32 whole : {1.0f, 2.0f})
+    {
+        const vec2 onSeam = vec2(0.25f) + vec2(whole) * vec2(0.5f);
+        CHECK(WrapIntoCell(onSeam, wrap) == vec2(0.25f, 0.25f));
+    }
+
+    // Every point of the quad's UV span lands inside the cell's own sub-rect — the whole property
+    // the lane exists for, since a run past the sub-rect would sample the neighbouring cell.
+    const vec2 spanMin = centre[0]->Uv;
+    const vec2 spanMax = centre[2]->Uv;
+    constexpr int Steps = 17;
+    for (int iy = 0; iy <= Steps; ++iy)
+    {
+        for (int ix = 0; ix <= Steps; ++ix)
+        {
+            const vec2 t{static_cast<f32>(ix) / Steps, static_cast<f32>(iy) / Steps};
+            const vec2 wrapped = WrapIntoCell(spanMin + (spanMax - spanMin) * t, wrap);
+            CHECK(wrapped.x >= 0.25f);
+            CHECK(wrapped.x < 0.75f);
+            CHECK(wrapped.y >= 0.25f);
+            CHECK(wrapped.y < 0.75f);
+        }
+    }
+}
+
+TEST_CASE("gui draw list: a cell's repeat count is its destination over its source extent")
+{
+    SUBCASE("exactly one repeat leaves the cell on the untouched path")
+    {
+        // A 64×64 source sliced at 16px against a 64×64 destination: the centre's 32 destination
+        // pixels are its 32 source pixels, so nothing repeats and the quad is the one the
+        // stretching path emitted, wrap lane and all.
+        DrawList list;
+        list.NineSlice({.Min = {0.0f, 0.0f}, .Size = {64.0f, 64.0f}}, Texture(2), Sampler(0),
+                       Insets::All(0.25f), Insets::All(16.0f), vec4(1.0f),
+                       {.Min = {0.0f, 0.0f}, .Size = {1.0f, 1.0f}}, ImageRepeat::Tile,
+                       vec2(64.0f, 64.0f));
+        REQUIRE(list.GetVertices().size() == 9 * 4);
+        for (const GuiVertex& vertex : list.GetVertices())
+        {
+            CHECK(vertex.UvWrap == vec4(0.0f));
+        }
+        const std::array<const GuiVertex*, 4> centre = Cell(list, 1, 1);
+        CHECK(centre[0]->Uv == vec2(0.25f, 0.25f));
+        CHECK(centre[2]->Uv == vec2(0.75f, 0.75f));
+    }
+
+    SUBCASE("a destination smaller than one cell shows a partial tile, not a divide by zero")
+    {
+        // 40×40 against the same source: the centre gets 8 destination pixels of a 32-pixel cell,
+        // so the count falls to 0.25 and the quad spans a quarter of the sub-rect. The fold is then
+        // the identity over that span — a partial first tile, with no seam in it at all.
+        DrawList list;
+        list.NineSlice({.Min = {0.0f, 0.0f}, .Size = {40.0f, 40.0f}}, Texture(2), Sampler(0),
+                       Insets::All(0.25f), Insets::All(16.0f), vec4(1.0f),
+                       {.Min = {0.0f, 0.0f}, .Size = {1.0f, 1.0f}}, ImageRepeat::Tile,
+                       vec2(64.0f, 64.0f));
+        REQUIRE(list.GetVertices().size() == 9 * 4);
+
+        const std::array<const GuiVertex*, 4> centre = Cell(list, 1, 1);
+        CHECK(centre[0]->UvWrap == vec4(0.25f, 0.25f, 0.5f, 0.5f));
+        CHECK(centre[0]->Uv == vec2(0.25f, 0.25f));
+        CHECK(centre[2]->Uv == vec2(0.25f + 0.25f * 0.5f, 0.25f + 0.25f * 0.5f));
+        CheckVec2(WrapIntoCell(centre[2]->Uv, centre[2]->UvWrap), centre[2]->Uv);
+    }
+
+    SUBCASE("a cell with no source extent stretches, because there is nothing to repeat")
+    {
+        // Slice insets summing to the whole texture on one axis: the centre column has zero source
+        // width, so its horizontal count falls back to 1 and its wrap extent is zero, which the
+        // fragment reads as "sample this axis as-is". Tiling a cell that carries no source pixels
+        // is a stretch by definition, not a degenerate repeat.
+        DrawList list;
+        list.NineSlice({.Min = {0.0f, 0.0f}, .Size = {100.0f, 100.0f}}, Texture(2), Sampler(0),
+                       Insets{.Left = 0.5f, .Top = 0.25f, .Right = 0.5f, .Bottom = 0.25f},
+                       Insets::All(16.0f), vec4(1.0f), {.Min = {0.0f, 0.0f}, .Size = {1.0f, 1.0f}},
+                       ImageRepeat::Tile, vec2(64.0f, 64.0f));
+        REQUIRE(list.GetVertices().size() == 9 * 4);
+
+        const std::array<const GuiVertex*, 4> centre = Cell(list, 1, 1);
+        CHECK(centre[0]->UvWrap.z == 0.0f);
+        CHECK(centre[0]->Uv.x == 0.5f);
+        CHECK(centre[2]->Uv.x == 0.5f);
+        CheckVec2(WrapIntoCell(centre[2]->Uv, centre[2]->UvWrap), centre[2]->Uv);
+
+        // No emitted UV is NaN: the guard is what keeps the zero extent out of the division.
+        for (const GuiVertex& vertex : list.GetVertices())
+        {
+            CHECK_FALSE(std::isnan(vertex.Uv.x));
+            CHECK_FALSE(std::isnan(vertex.Uv.y));
+        }
+    }
+
+    SUBCASE("tiling with no source size at all leaves every cell stretched")
+    {
+        // The source extent is what turns a destination into a repeat count; without one there is
+        // no count to derive, so the whole frame takes the path it took before the lane existed.
+        DrawList list;
+        list.NineSlice({.Min = {0.0f, 0.0f}, .Size = {100.0f, 100.0f}}, Texture(2), Sampler(0),
+                       Insets::All(0.25f), Insets::All(16.0f), vec4(1.0f),
+                       {.Min = {0.0f, 0.0f}, .Size = {1.0f, 1.0f}}, ImageRepeat::Tile);
+        REQUIRE(list.GetVertices().size() == 9 * 4);
+        for (const GuiVertex& vertex : list.GetVertices())
+        {
+            CHECK(vertex.UvWrap == vec4(0.0f));
+        }
+    }
 }
 
 TEST_CASE("gui draw list: Clear resets geometry, runs, and the clip stack")

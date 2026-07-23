@@ -1,0 +1,47 @@
+/* The stylesheet half of the box-model composition fixture. Every box here is auto-sized or
+   explicitly sized *around* a border, and every frame around one tiles its cells — so the frame's
+   destination is decided by a measure that now reserves the border, and the repeat count follows
+   from that destination. Authored as rules rather than inline so the frame texture is a dependency
+   of the sheet as well as of the document. */
+
+.frame {
+    align-self: flex-start;
+    padding: 12px;
+    background-image: 0x58856A0F9F4A73A0;
+    background-slice: 8px;
+    background-repeat: tile;
+}
+
+/* Auto-sized on both axes: its width and height come from the text leaf inside it, plus its own
+   padding and two border widths. */
+.boxed {
+    padding: 7px;
+    border-width: 5px;
+    border-color: #7fd4ffff;
+    background: #1b2436ff;
+}
+
+/* The explicit-size half: the outer extent is authored, so the frame comes out of the inside and
+   the stretched child fills what is left. */
+.sized-frame {
+    width: 236px;
+    height: 60px;
+    margin: 8px 0 0 0;
+    padding: 10px;
+    background-image: 0x58856A0F9F4A73A0;
+    background-slice: 8px;
+    background-repeat: tile;
+}
+
+.sized-boxed {
+    flex-grow: 1;
+    align-self: stretch;
+    border-width: 6px;
+    border-color: #ffb35cff;
+    background: #241c14ff;
+}
+
+Text {
+    font-size: 16px;
+    color: #eaeaf2ff;
+}

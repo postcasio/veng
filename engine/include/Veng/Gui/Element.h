@@ -308,7 +308,14 @@ namespace Veng::Gui
         Style ComputedStyle;
         /// @brief The base resolved style — inline + None-state cascade, before any active variant.
         Style BaseStyle;
-        /// @brief The computed rect in document space, filled by Document::Solve.
+        /// @brief The computed **border box** in document space, filled by Document::Solve.
+        ///
+        /// The engine has one box model and this rect is its border box: margin lies outside it,
+        /// while border and padding lie inside it and are both reserved by the layout solve, so the
+        /// content box is this rect deflated by border + padding. That is why every paint site
+        /// deflates from this rect rather than double-counting — the frame is drawn within it, an
+        /// authored `width`/`height` is its outer extent, and an auto-sized element's own border and
+        /// padding are already included here.
         Rect Layout;
 
         /// @brief The state-scoped style variants, in cascade source order.

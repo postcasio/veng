@@ -88,6 +88,30 @@ computed rect back into `Element::Layout`) → `Build(DrawList&)` (walk the laid
 background/border/text/image/widget primitives, clip-pushed where an element clips). A clean
 `Solve` at an unchanged extent is a no-op.
 
+## One box model: the element's rect is its border box
+
+**`Element::Layout` is the element's border box.** Margin lies outside it; **border and padding lie
+inside it and are both reserved by the layout solve** (`ApplyStyle` sets the Yoga border edge beside
+the padding one, from the single uniform `Border::Width`); content — and a measured leaf's own
+shaped or intrinsic size — lives in the content box, which is `Layout` deflated by border +
+padding. There is no `box-sizing` choice and no per-edge border width.
+
+Three consequences, and they are what the paint path was always written against:
+
+- **An authored `width`/`height` is the outer extent.** A `64×48` box with a `4px` border still
+  solves to `64×48`; its frame comes out of the inside and a stretched child fills the remaining
+  `56×40`.
+- **An auto-sized element includes its own frame.** A text leaf measuring `20×20` inside `6px` of
+  padding and a `3px` border solves to `38×38`.
+- **A measure function is handed the box its content is drawn in.** A `100px`-wide leaf with `6px`
+  padding and a `3px` border wraps its text at `82px`, so the last glyphs do not clip.
+
+**So every paint-side deduction is correct, not a double count.** `ToPaddingBox` deflates `Layout`
+by the border; `ToContentBox` by border + padding; the text origin, the text-alignment slack, and
+the `TextInput` line box inset by the same amounts. All of them read the width through one clamp
+(`BorderWidth`), so a **negative** authored `border-width` reserves nothing, paints no ring, and
+deflates nothing — layout and paint agree on a malformed value rather than diverging.
+
 ## Styling
 
 **Typography inherits; nothing else does.** An element shapes and paints its text through the
@@ -152,6 +176,15 @@ shapes, driven by `background-slice` / `background-fit` / `background-repeat`:
   both; the count is `cell destination ÷ cell source`, derived exactly as the unsliced path derives
   its own. **The asymmetry is deliberate:** the texture's address mode stays load-bearing unsliced
   and stops being so sliced, since the sliced fragment no longer asks the sampler to wrap.
+
+  **Tiling a sliced fill only pays when the stretchable cells have something to repeat**, and two
+  common frames have nothing. A frame whose slice insets sum to the whole texture on an axis leaves
+  its edge and centre cells with **zero source extent** — there are no pixels to repeat, so the
+  engine keeps stretching that axis rather than dividing by zero. And a frame whose stretchable
+  middle is a **smooth ramp or a flat region** carries no motif: tiling it introduces a hard
+  discontinuity at every copy, which is strictly worse than the stretch that ramp was drawn for. The
+  feature is for edges and centres that carry a **repeating motif at non-zero source extent** — a
+  hatch, a rivet run, a scanline. Reach for it on that evidence, not because the fill is sliced.
 - **Fitted** (the default) → `DrawList::Texture` with the UV sub-rect and destination `ImageFit`
   computes: `fill` stretches, `contain`/`cover` letterbox/crop preserving aspect, `none` is
   intrinsic pixels. `ImageFit`/`ImageRepeat` (`Veng/Gui/Style.h`) are the shared fill vocabulary.
@@ -279,19 +312,22 @@ author a fragment — an authored `GuiFill` material, drawn on the same vertex s
 by the same silhouette (see [Material fills](#material-fills-an-authored-fill-source) above). The
 image goldens are the render floor every later change holds pixel-stable against: one **per feature**
 (`gui_overlay`, `gui_rotated`, `gui_image`, `gui_background`, `gui_sliced_tile`, `gui_shadow`,
-`gui_material`, `gui_popup`), kept separate on purpose so a moved pixel names the feature that moved it, plus one
-**composition** capture (`gui_composition`) for what only shows when two of them meet — a nine-slice
+`gui_material`, `gui_popup`), kept separate on purpose so a moved pixel names the feature that moved it, plus **two**
+**composition** captures for what only shows when two of them meet: `gui_composition` — a nine-slice
 frame around a tiled `Image`, a material fill inside a clipped scroller, and a shadowed card under an
-open popup. **The vertex format is five files, not one**: the
+open popup — and `gui_box_composition`, where tiled nine-slice frames wrap bordered boxes whose size
+comes from a measure, so the cells' repeat counts are decided by the box model rather than by an
+authored extent. **The vertex format is five files, not one**: the
 `GuiVertex` struct, the cooked `gui.vlayout.json` the pass loads, and the `VSInput`/`VSOutput` of
 `gui.vert.slang` — the shader importer hard-errors at cook time on a reflected-vs-declared
 mismatch, so a new field lands in all of them at once or nothing cooks. **A fragment declares only
 the interpolants it reads**, and the vertex stage may output more: semantics bind the two, not
 member order or count, so `gui_msdf.frag.slang`'s `VSOutput` and the `GuiFillInputs` a material
-reads both omit the gradient-selector and shadow lanes they have no use for. That is the
-established shape here, not an oversight — the validation gate accepts the unread output (it logs
-the SPIR-V interface mismatch at `WARN`), and a fragment that *does* read a lane must declare it at
-the matching semantic.
+reads both omit the **three** lanes they have no use for — the gradient selector, the shadow, and
+the per-cell UV wrap. That is the established shape here, not an oversight — the validation gate
+accepts the unread output (it logs the SPIR-V interface mismatch at `WARN`), and a fragment that
+*does* read a lane must declare it at the matching semantic. The convention is stated on
+`GuiFillInputs` itself, so a consumer authoring a fill meets it where it applies.
 `DrawList` carries a composing **transform stack** (`PushTransform(pivot, angle)` / `PopTransform`)
 applied to vertex positions at quad emission while `RectCoord`/`RectHalf`/UV stay in unrotated
 local space, so a `rotation` style property (scalar degrees, clockwise in the y-down document

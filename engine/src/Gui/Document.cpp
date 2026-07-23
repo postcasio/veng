@@ -390,11 +390,19 @@ namespace Veng::Gui
             };
         }
 
+        // The reserved frame thickness. A negative authored border-width is not a frame, so every
+        // consumer — the layout reservation, the two box deflations, and the paint-side text and
+        // caret insets — reads the width through here and agrees on a malformed value.
+        f32 BorderWidth(const Style& style)
+        {
+            return std::max(style.BorderStyle.Width, 0.0f);
+        }
+
         // The padding box: the border box less the border ring, so a background image sits behind
         // the border and the content exactly as CSS paints one.
         FillBox ToPaddingBox(const Rect& rect, const Style& style)
         {
-            const f32 width = std::max(style.BorderStyle.Width, 0.0f);
+            const f32 width = BorderWidth(style);
             return DeflateBox(rect, style.Radii,
                               Insets{.Left = width, .Top = width, .Right = width, .Bottom = width});
         }
@@ -403,7 +411,7 @@ namespace Veng::Gui
         // is laid out and painted in — the same border+padding origin the text runs draw from.
         FillBox ToContentBox(const Rect& rect, const Style& style)
         {
-            const f32 width = std::max(style.BorderStyle.Width, 0.0f);
+            const f32 width = BorderWidth(style);
             const Insets& padding = style.Padding;
             return DeflateBox(rect, style.Radii,
                               Insets{.Left = width + padding.Left,
@@ -2736,10 +2744,8 @@ namespace Veng::Gui
         // The border edge sits between margin and padding, so the frame is reserved out of the
         // content box: children land inside it, a measure function is handed the box its content is
         // actually drawn in, and an auto-sized leaf includes its own frame. The element's rect stays
-        // the border box, which is what every paint site deflates from. Negatives clamp exactly as
-        // ToContentBox does, so layout and paint agree on a malformed width rather than diverging.
-        ApplyEdgeInsets(node, Insets::All(std::max(style.BorderStyle.Width, 0.0f)),
-                        &YGNodeStyleSetBorder);
+        // the border box, which is what every paint site deflates from.
+        ApplyEdgeInsets(node, Insets::All(BorderWidth(style)), &YGNodeStyleSetBorder);
 
         // A gutter reserves each scrollable axis's bar thickness out of the content box, as extra
         // padding on the edge the bar sits against — so the content never flows under the bar. The
@@ -3189,8 +3195,8 @@ namespace Veng::Gui
         {
             // A Text leaf draws at its content-box origin (inside the border and padding, the box
             // the measure sized); a Button centers its label in its box.
-            vec2 origin = rect.Min + vec2(style.BorderStyle.Width + style.Padding.Left,
-                                          style.BorderStyle.Width + style.Padding.Top);
+            const f32 border = BorderWidth(style);
+            vec2 origin = rect.Min + vec2(border + style.Padding.Left, border + style.Padding.Top);
             if (element.Kind == ElementKind::Button)
             {
                 const vec2 label = MeasureElementText(element, std::nullopt);
@@ -3200,8 +3206,8 @@ namespace Veng::Gui
             {
                 // Center/right alignment distributes the content box's slack ahead of the run — a
                 // paint-only shift, so a content-sized box (no slack) draws exactly as Left does.
-                const f32 content = rect.Size.x - 2.0f * style.BorderStyle.Width -
-                                    style.Padding.Left - style.Padding.Right;
+                const f32 content =
+                    rect.Size.x - 2.0f * border - style.Padding.Left - style.Padding.Right;
                 const f32 slack = content - MeasureElementText(element, std::nullopt).x;
                 if (slack > 0.0f)
                 {
@@ -3275,7 +3281,7 @@ namespace Veng::Gui
         // reserves — so an intrinsically sized field centers with no slack and a taller styled box
         // keeps the run off its frame.
         const Font* const font = ResolveFont(element);
-        const f32 inset = style.BorderStyle.Width;
+        const f32 inset = BorderWidth(style);
         const vec2 contentMin =
             rect.Min + vec2(inset + style.Padding.Left, inset + style.Padding.Top);
         const f32 contentHeight =

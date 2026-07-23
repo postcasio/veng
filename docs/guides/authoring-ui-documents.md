@@ -105,6 +105,20 @@ solved box, meaningful when the box is wider than the run, e.g. a Table cell). C
 are hex `#rrggbb` or `#rrggbbaa`, resolved sRGB→linear at cook time. Register the
 stylesheet in the pack as type `StyleSheet`.
 
+**The box model: an element's rect is its border box.** `margin` is outside it; `border-width` and
+`padding` are inside it and are **both reserved by layout**; content sits in what is left. There is
+no `box-sizing` choice. Three things follow, and they are the ones worth authoring against:
+
+- An authored `width`/`height` is the **outer** extent — a `64px`-wide box with `border-width: 4px`
+  is `64px` wide, and the frame comes out of the inside.
+- An element with **no** authored size grows by its own padding *and* two border widths, so a
+  content-sized panel is never squeezed by its own frame.
+- A measured leaf — a `Text`, `Button`, `TextInput`, or an intrinsically sized `Image` — is measured
+  against its **content** box, so its own frame and padding no longer come out of its content.
+
+The practical consequence when porting authoring that predates this: **padding hand-added to keep
+content off a frame is now double spacing** — delete it rather than keeping both.
+
 **Edge order.** `margin`, `padding`, and `inset` take one to four lengths and follow the
 CSS shorthand rules exactly. Four values run clockwise from the top — **top, right,
 bottom, left**:
@@ -191,6 +205,31 @@ The four corners are fixed-size by definition and never repeat; each edge repeat
 grows on, and the centre on both. The repeat count is not authored — it is the cell's destination
 size divided by its source size, so a box that is not a whole multiple of the cell ends on a partial
 tile, exactly as an unsliced tiled fill does.
+
+**Tile a sliced frame only when its stretchable cells carry a repeating motif at non-zero source
+extent.** Two frames get nothing from it. If the slice insets sum to the whole texture on an axis,
+that axis's edge and centre cells have **no source pixels at all** — there is nothing to repeat, and
+the engine keeps stretching them. And if the stretchable middle is a smooth gradient ramp or a flat
+region, tiling puts a hard seam at every copy, which is worse than the stretch the ramp was drawn
+for. Look at the art before reaching for `tile`: a hatch, a rivet run, or a scanline gains from it;
+a ramp does not.
+
+**Worked example — a tiled frame around a bordered, content-sized box.** The two features meet
+whenever a frame wraps something that sizes itself, because the frame's destination is then decided
+by the box model rather than by an authored extent:
+
+```css
+/* The frame sizes to its child, and its cells repeat against whatever that comes to. */
+.frame-tiled { align-self: flex-start; padding: 12px;
+               background-image: 0x…; background-slice: 8px; background-repeat: tile; }
+/* The child: content + 7px padding + 5px border on every edge, all of it inside its own rect. */
+.boxed      { padding: 7px; border-width: 5px; border-color: #7fd4ff; }
+```
+
+A label measuring `96 × 34` makes `.boxed` solve to `96 + 14 + 10 = 120` wide and `34 + 14 + 10 =
+58` tall, so `.frame-tiled` solves to `144 × 82` and its centre cell tiles `(144 - 16) ÷ 8 = 16`
+times across and `(82 - 16) ÷ 8 = 8.25` down — ending, as it should, on a partial tile. Change the
+border width and both numbers move: the border is real space now, not a ring drawn over the content.
 
 Tiling an **unsliced** fill is a **sampler address mode**, not repeated geometry, so the texture's
 own `*.tex.json` sampler must wrap (`"wrap_u": "repeat"`, the cooked default); a texture authored

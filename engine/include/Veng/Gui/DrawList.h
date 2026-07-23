@@ -86,6 +86,8 @@ namespace Veng::Gui
     ///
     /// A zero width draws no border (a filled shape). A positive width fills only the ring
     /// within Width pixels of the shape's edge, in Color, leaving the interior transparent.
+    /// The ring lies **inside** the quad's own rect and never grows it — the draw-list tier of the
+    /// one box model a document lays out in, where an element's rect is its border box.
     struct Border
     {
         /// @brief Border thickness in pixels; zero fills the whole shape instead.

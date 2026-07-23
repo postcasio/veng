@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "0xB547A1C6F4B8B20C",
+      "type": "Font",
+      "source": "fonts/test.font.json"
+    },
+    {
+      "id": "0x58856A0F9F4A73A0",
+      "type": "Texture",
+      "source": "textures/slice_tile.tex.json"
+    },
+    {
+      "id": "0xCEC9F324D25ADC0F",
+      "type": "StyleSheet",
+      "source": "gui/border_tile.vuss"
+    },
+    {
+      "id": "0x1DA2323442FE2F6A",
+      "type": "UIDocument",
+      "source": "gui/border_tile.vui.xml"
+    }
+  ]
+}

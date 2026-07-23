@@ -380,6 +380,11 @@ namespace Veng::Gui
         /// @brief Per-corner background/border radius, in pixels.
         CornerRadii Radii;
         /// @brief Border width and color; a zero width draws no border.
+        ///
+        /// The width is uniform on all four edges and is **reserved by layout**, inside the
+        /// element's rect: the rect is the border box, so an authored `Width`/`Height` is the outer
+        /// extent and the frame comes out of the inside, while an auto-sized element grows by two
+        /// border widths. A negative width is not a frame and reserves nothing.
         Border BorderStyle;
         /// @brief A drop or inset shadow of the element's box; unset (the default) draws none.
         ///
