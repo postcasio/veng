@@ -41,8 +41,11 @@ struct GuiFillPushConstants
 [[vk::push_constant]] ConstantBuffer<GuiFillPushConstants> g_PC;
 
 // The gui vertex stage's interpolants a fill reads, written by gui.vert. Semantics — not member
-// order — bind these to the vertex outputs, so the gradient selector and shadow lanes a fill never
-// reads are simply not declared here, as the MSDF text path likewise omits them.
+// order — bind these to the vertex outputs, so the gradient selector, shadow, and UV-wrap lanes a
+// fill never reads are simply not declared here, as the MSDF text path likewise omits them. A
+// material fill is not a sliced texture fill: it samples through its own declared parameters, so
+// the per-cell wrap the nine-slice path needs has nothing to act on. That omission is the
+// established convention in this domain, not an oversight.
 struct GuiFillInputs
 {
     float4 sv_position : SV_Position;

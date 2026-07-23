@@ -8,7 +8,9 @@
 // shadow. The interpolated per-fragment local coordinate and the rect half-extent
 // reconstruct the SDF: negative inside, zero on the edge. Corner radius and border
 // width ride the params, the blur/spread/offset of a shadow its own field; the texture
-// and sampler indices are bindless set-0 slots, a negative index meaning untextured.
+// and sampler indices are bindless set-0 slots, a negative index meaning untextured. A
+// textured quad may also carry a UV sub-rect to wrap its sampling within, which is how a
+// nine-slice cell repeats without the sampler running into the neighbouring cell.
 // Output is premultiplied linear RGBA so the pass blends it "over" the scene in linear
 // space.
 
@@ -22,6 +24,7 @@ struct VSOutput
     nointerpolation float4 v_Params : TEXCOORD3;
     nointerpolation uint v_GradientSelector : TEXCOORD4;
     nointerpolation float4 v_Shadow : TEXCOORD5;
+    nointerpolation float4 v_UvWrap : TEXCOORD6;
 };
 
 // The leading members of GuiScenePass's push block, matching the vertex stage: the gradient-record
@@ -144,8 +147,25 @@ float4 fsMain(VSOutput input) : SV_Target
     }
     else if (textureIndex >= 0)
     {
-        float4 texel = g_Textures[NonUniformResourceIndex(textureIndex)].Sample(
-            g_Samplers[NonUniformResourceIndex(samplerIndex)], input.v_Uv);
+        // A zero wrap size means the quad samples its interpolated UV as-is — every fill but a
+        // repeating nine-slice cell. A non-zero one folds the UV back into that cell's sub-rect,
+        // which is how a sliced fill repeats at all: the texture's own address mode wraps at the
+        // *whole texture's* bounds and would sample the neighbouring cell instead.
+        float2 unwrapped = input.v_Uv;
+        float2 uv = unwrapped;
+        float2 wrapSize = input.v_UvWrap.zw;
+        if (wrapSize.x > 0.0 && wrapSize.y > 0.0)
+        {
+            float2 wrapMin = input.v_UvWrap.xy;
+            uv = wrapMin + frac((unwrapped - wrapMin) / wrapSize) * wrapSize;
+        }
+
+        // The derivatives come from the *unwrapped* UV, which is affine across the quad. frac() is
+        // discontinuous at every seam, so an implicit-derivative Sample would spike there and drop
+        // a mipped texture to its smallest level along a one-pixel line — a bright or muddy seam in
+        // exactly the place a tiled frame has to read as continuous.
+        float4 texel = g_Textures[NonUniformResourceIndex(textureIndex)].SampleGrad(
+            g_Samplers[NonUniformResourceIndex(samplerIndex)], uv, ddx(unwrapped), ddy(unwrapped));
         color *= texel;
     }
 

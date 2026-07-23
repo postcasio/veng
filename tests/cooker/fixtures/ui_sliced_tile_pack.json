@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "0xBFD9DEF5D7D033A1",
+      "type": "Texture",
+      "source": "textures/slice_tile.tex.json"
+    },
+    {
+      "id": "0xE14049B10AD81B62",
+      "type": "StyleSheet",
+      "source": "gui/sliced_tile.vuss"
+    },
+    {
+      "id": "0x1C373AA6D6675EB3",
+      "type": "UIDocument",
+      "source": "gui/sliced_tile.vui.xml"
+    }
+  ]
+}

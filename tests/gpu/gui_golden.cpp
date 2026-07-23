@@ -8,7 +8,7 @@
 // document-driven cases below carries its own dump variable and golden on the same pattern
 // (VENG_GUI_ROTATED_GOLDEN_DUMP, VENG_GUI_IMAGE_GOLDEN_DUMP, VENG_GUI_BACKGROUND_GOLDEN_DUMP,
 // VENG_GUI_SHADOW_GOLDEN_DUMP, VENG_GUI_MATERIAL_GOLDEN_DUMP, VENG_GUI_POPUP_GOLDEN_DUMP,
-// VENG_GUI_COMPOSITION_GOLDEN_DUMP).
+// VENG_GUI_SLICED_TILE_GOLDEN_DUMP, VENG_GUI_COMPOSITION_GOLDEN_DUMP).
 //
 // The same font fixture backs one non-rendering case here: a TextInput built with a resident font
 // emits its own value as a glyph run, which needs a real atlas and so cannot live in the
@@ -856,6 +856,112 @@ TEST_CASE_FIXTURE(
 
     const double fraction = static_cast<double>(mismatched) / static_cast<double>(pixelCount);
     MESSAGE("gui background golden: ", mismatched, "/", pixelCount, " pixels exceed delta ",
+            MaxChannelDelta, " (worst ", worst, ")");
+    CHECK(fraction <= MaxMismatchFraction);
+
+    std::filesystem::remove(outArchive);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "gui sliced tile golden: a sliced fill repeats its edges and centre per cell")
+{
+    // Cook a UI document whose frame art carries a directional pattern in every stretchable cell,
+    // and paint it three ways: a wide `background-repeat: tile` panel, the same art stretched
+    // beside it (the contrast that makes the tiling legible), and an `Image` host tiling through
+    // `image-repeat` from a *stylesheet* rule. Every box is authored at a size that is not a whole
+    // multiple of its cell, so the interesting case — the partial tile at the far edge — is in the
+    // capture. The source texture's sampler is `clamp_to_edge`: a sliced fill wraps arithmetically
+    // in the fragment, so the texture's own address mode no longer decides whether it repeats.
+    const path fixtureDir = path(GPU_COOKER_FIXTURE_DIR);
+    const path packJson = fixtureDir / "ui_sliced_tile_pack.json";
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_ui_sliced_tile.vengpack";
+
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    REQUIRE(cooker.CookPack(packJson, outArchive).has_value());
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(outArchive).has_value());
+
+    const AssetResult<AssetHandle<Gui::UIDocument>> recipe =
+        assets.LoadSync<Gui::UIDocument>(AssetId{0x1C373AA6D6675EB3ULL});
+    REQUIRE_MESSAGE(recipe.has_value(),
+                    "load failed: ", recipe ? "" : recipe.error().Detail.c_str());
+    REQUIRE(recipe->IsLoaded());
+
+    const Unique<Gui::Document> document = Gui::Document::Instantiate(*recipe->Get(), assets);
+    REQUIRE(document != nullptr);
+
+    const Ref<Image> sceneImage =
+        Image::Create(Context, {
+                                   .Name = "Gui Sliced Tile Scene",
+                                   .Extent = {Extent.x, Extent.y, 1},
+                                   .Format = Format::RGBA16Sfloat,
+                                   .Usage = ImageUsage::ColorAttachment | ImageUsage::Sampled |
+                                            ImageUsage::TransferSrc,
+                               });
+    const Ref<ImageView> sceneView =
+        ImageView::Create(Context, {.Name = "Gui Sliced Tile Scene View", .Image = sceneImage});
+    ClearImage(Context, sceneView, ClearColor{.R = 0.10f, .G = 0.12f, .B = 0.16f, .A = 1.0f});
+
+    document->Solve(vec2(static_cast<f32>(Extent.x), static_cast<f32>(Extent.y)));
+    Gui::DrawList list;
+    document->Build(list);
+
+    const Unique<GuiScenePass> pass = GuiScenePass::Create({
+        .Context = Context,
+        .Assets = assets,
+        .Extent = Extent,
+        .OutputFormat = Format::RGBA16Sfloat,
+    });
+    pass->SetDrawList(list);
+    Context.ImmediateCommands([&](CommandBuffer& cmd) { pass->Render(cmd, sceneView); });
+
+    const vector<u8> raw = pass->GetOutput()->GetImage()->Download();
+    REQUIRE(raw.size() == static_cast<usize>(Extent.x) * Extent.y * 8);
+    const vector<u8> actual = DecodeHalfRgb(raw, Extent);
+
+    if (const char* dump = std::getenv("VENG_GUI_SLICED_TILE_GOLDEN_DUMP"))
+    {
+        WritePpm(path(dump), actual, Extent);
+        MESSAGE("gui sliced tile golden: wrote capture to ", dump);
+        std::filesystem::remove(outArchive);
+        return;
+    }
+
+    const path golden = path(GUI_GOLDEN_DIR) / "gui_sliced_tile.png";
+    int gw = 0;
+    int gh = 0;
+    int gc = 0;
+    u8* goldenPixels = stbi_load(golden.string().c_str(), &gw, &gh, &gc, 3);
+    REQUIRE_MESSAGE(goldenPixels != nullptr, "gui sliced tile golden: failed to load ",
+                    golden.string());
+    REQUIRE(static_cast<u32>(gw) == Extent.x);
+    REQUIRE(static_cast<u32>(gh) == Extent.y);
+
+    const long pixelCount = static_cast<long>(Extent.x) * Extent.y;
+    long mismatched = 0;
+    int worst = 0;
+    for (long i = 0; i < pixelCount; ++i)
+    {
+        int pixelDelta = 0;
+        for (int c = 0; c < 3; ++c)
+        {
+            const int a = actual[i * 3 + c];
+            const int g = goldenPixels[i * 3 + c];
+            const int d = a > g ? a - g : g - a;
+            pixelDelta = d > pixelDelta ? d : pixelDelta;
+        }
+        worst = pixelDelta > worst ? pixelDelta : worst;
+        if (pixelDelta > MaxChannelDelta)
+        {
+            ++mismatched;
+        }
+    }
+    stbi_image_free(goldenPixels);
+
+    const double fraction = static_cast<double>(mismatched) / static_cast<double>(pixelCount);
+    MESSAGE("gui sliced tile golden: ", mismatched, "/", pixelCount, " pixels exceed delta ",
             MaxChannelDelta, " (worst ", worst, ")");
     CHECK(fraction <= MaxMismatchFraction);
 

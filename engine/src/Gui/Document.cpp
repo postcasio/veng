@@ -3061,9 +3061,13 @@ namespace Veng::Gui
             {
                 // The slice insets author source-texture pixels; the primitive takes the source
                 // split as UV fractions and keeps the destination corners at their source size.
+                // `tile` repeats each stretchable cell within its own sub-rect (the corners stay
+                // fixed), which the fragment wraps arithmetically rather than through the sampler.
                 const Insets& slice = style.BackgroundSlice;
                 list.NineSlice(box.Box, texture.GetHandle(), texture.GetSamplerHandle(),
-                               SliceToUv(slice, source), slice, tint);
+                               SliceToUv(slice, source), slice, tint,
+                               {.Min = {0.0f, 0.0f}, .Size = {1.0f, 1.0f}}, style.BackgroundRepeat,
+                               source);
             }
             else if (style.BackgroundRepeat == ImageRepeat::Tile)
             {
@@ -3115,14 +3119,16 @@ namespace Veng::Gui
             tint.a *= opacity;
             const FillBox content = ToContentBox(rect, style);
             // Fit and slice are computed against the *sampled* sub-rect, so an atlas flipbook frame
-            // fits and slices its own cell; tiling repeats the whole texture, which is what the
-            // sampler's wrap addresses.
+            // fits and slices its own cell. An *unsliced* tile repeats the whole texture, which is
+            // what the sampler's wrap addresses; a sliced one repeats each cell within its own
+            // sub-rect, which only the fragment's arithmetic wrap can express.
             const vec2 sampled = element.ImageSize * element.ImageUv.Size;
             if (IsSliced(style.ImageSlice))
             {
                 const Insets& slice = style.ImageSlice;
                 list.NineSlice(content.Box, element.ImageTexture, element.ImageSampler,
-                               SliceToUv(slice, sampled), slice, tint, element.ImageUv);
+                               SliceToUv(slice, sampled), slice, tint, element.ImageUv,
+                               style.ImageRepeatMode, sampled);
             }
             else if (style.ImageRepeatMode == ImageRepeat::Tile)
             {

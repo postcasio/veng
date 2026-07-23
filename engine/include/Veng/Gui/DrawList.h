@@ -135,6 +135,24 @@ namespace Veng::Gui
         }
     };
 
+    /// @brief Whether a fill spans its box once or repeats at the source's intrinsic pixel size.
+    ///
+    /// Tiling is never repeated geometry: an unsliced fill is one quad with a scaled UV rect the
+    /// texture's own wrapping sampler repeats, so it costs the same however large the box grows —
+    /// and a texture whose `*.tex.json` authors a clamp address mode clamps instead of repeating.
+    /// A *sliced* fill cannot use the sampler, because a wrap at the whole texture's bounds would
+    /// sample the neighbouring cell; it wraps arithmetically in the fragment against a per-quad UV
+    /// sub-rect instead (GuiVertex::UvWrap), so there the address mode does not decide the repeat.
+    /// The draw list speaks the mode because a nine-slice frame decides tiling *per cell* — the
+    /// fixed corners never repeat, the edges repeat along their growing axis, the center on both.
+    enum class ImageRepeat : u8
+    {
+        /// @brief The fill spans the box once, mapped by its ImageFit.
+        Stretch,
+        /// @brief The fill repeats at the texture's intrinsic pixel size from the box's top-left.
+        Tile,
+    };
+
     /// @brief The shape of a gradient fill: how a fragment's box-local position maps to a ramp offset.
     ///
     /// Every kind reduces the fragment's normalized box coordinate (RectCoord / RectHalf, in [-1, 1])
@@ -257,7 +275,19 @@ namespace Veng::Gui
         /// fragment rather than baked into the quad, so the silhouette stays exact under a rounded
         /// corner.
         vec4 Shadow{0.0f};
+        /// @brief The UV sub-rect this quad's sampling wraps within: min in xy, size in zw.
+        ///
+        /// A zero size (the default) means the lane is inactive and the fragment samples the
+        /// interpolated UV exactly as it otherwise would. A non-zero size makes the fragment wrap
+        /// the UV into [min, min + size) arithmetically, which is the only way a nine-slice cell
+        /// can repeat: a wrapping sampler wraps at the *whole texture's* bounds and would sample
+        /// the neighbouring cell instead. The quad's own UV rect spans as many copies of the
+        /// sub-rect as the cell repeats, and the fragment takes its texture derivatives from that
+        /// unwrapped UV, so the seam frac() introduces does not collapse a mipped texture to its
+        /// smallest level along a one-pixel line.
+        vec4 UvWrap{0.0f};
     };
+    static_assert(sizeof(GuiVertex) == 100, "GuiVertex must stay packed with no padding");
 
     /// @brief A contiguous slice of the index stream sharing one pipeline, clip, texture, and material.
     ///
@@ -375,6 +405,13 @@ namespace Veng::Gui
         /// [0,1]); the destination rectangle is divided by the same insets in pixels. Corners
         /// keep their size, edges stretch along one axis, and the center stretches both — the
         /// standard resizable-panel-art primitive. Emitted as nine textured quads.
+        ///
+        /// ImageRepeat::Tile replaces those stretches with repeats of each cell's own source
+        /// sub-rect: the four corners are fixed-size by definition and never repeat, each edge
+        /// repeats along its growing axis only, and the center repeats on both. A repeating cell
+        /// carries its sub-rect in GuiVertex::UvWrap and spans (cell destination ÷ cell source)
+        /// copies of it, which is why the repeat count is derived rather than authored — exactly as
+        /// an unsliced tiled fill derives it from the box and the texture size.
         /// @param rect     The destination rectangle, in framebuffer pixels.
         /// @param texture  Bindless texture slot to sample.
         /// @param sampler  Bindless sampler slot to sample with.
@@ -383,10 +420,15 @@ namespace Veng::Gui
         /// @param tint     Multiplied over the sampled texels, linear straight-alpha RGBA.
         /// @param uv       The sub-rect of the texture the 3×3 split divides (the whole texture by
         ///                 default), so an atlas region frames exactly as a standalone texture does.
+        /// @param repeat   Whether the stretchable cells stretch (the default) or repeat.
+        /// @param sourcePx The sampled sub-rect's size in texels, which is what a repeating cell's
+        ///                 count is measured against; ignored when the cells stretch, and a
+        ///                 degenerate (non-positive) axis stretches rather than dividing by zero.
         void NineSlice(const Rect& rect, Renderer::TextureHandle texture,
                        Renderer::SamplerHandle sampler, const Insets& sliceUv, const Insets& sizePx,
                        vec4 tint = vec4(1.0f),
-                       const Rect& uv = {.Min = {0.0f, 0.0f}, .Size = {1.0f, 1.0f}});
+                       const Rect& uv = {.Min = {0.0f, 0.0f}, .Size = {1.0f, 1.0f}},
+                       ImageRepeat repeat = ImageRepeat::Stretch, vec2 sourcePx = vec2(0.0f));
 
         /// @brief Appends a run of shaped text at a pen origin.
         ///
@@ -489,15 +531,17 @@ namespace Veng::Gui
         /// @param params     Packed fragment params written to every vertex.
         /// @param selector   Gradient record selector (record index plus one); zero for no gradient.
         /// @param shadow     Shadow parameters (see GuiVertex::Shadow); zero for an ordinary quad.
+        /// @param uvWrap     UV sub-rect to wrap within (see GuiVertex::UvWrap); zero for no wrap.
         void PushQuad(const std::array<vec2, 4>& corners, const std::array<vec2, 4>& uvs,
                       vec4 color, vec2 rectHalf, vec2 center, vec4 params, u32 selector = 0,
-                      vec4 shadow = vec4(0.0f));
+                      vec4 shadow = vec4(0.0f), vec4 uvWrap = vec4(0.0f));
 
         /// @brief Emits one textured quad, opening a Shape run keyed by its texture.
-        /// @param radii  Per-corner radius; the shape path uses the uniform radius (zero for square).
+        /// @param radii   Per-corner radius; the shape path uses the uniform radius (zero for square).
+        /// @param uvWrap  UV sub-rect the fragment wraps sampling within; zero samples the UV as-is.
         void EmitTexturedQuad(const Rect& rect, Renderer::TextureHandle texture,
                               Renderer::SamplerHandle sampler, const Rect& uv, vec4 tint,
-                              const CornerRadii& radii = {});
+                              const CornerRadii& radii = {}, vec4 uvWrap = vec4(0.0f));
 
         /// @brief The interleaved vertex stream.
         vector<GuiVertex> m_Vertices;

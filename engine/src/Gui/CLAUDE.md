@@ -131,15 +131,27 @@ corner radii are the element's reduced by the border width (the CSS inner-radius
 shapes, driven by `background-slice` / `background-fit` / `background-repeat`:
 
 - **Sliced** (`background-slice` non-zero, in source-texture pixels) → `DrawList::NineSlice`: the
-  corners keep their source size while edges and center stretch. The sliced path is **unrounded** —
-  the primitive takes no radii, which matches nine-slice art carrying its own corners.
+  corners keep their source size while edges and center stretch — or **repeat**, when
+  `background-repeat: tile` is authored beside the slice (see below). The sliced path is
+  **unrounded** — the primitive takes no radii, which matches nine-slice art carrying its own
+  corners.
 - **Tiled** (`background-repeat: tile`, unsliced) → **one** `DrawList::Texture` quad with the UV
   rect scaled by box ÷ texture size, repeated by the texture's own wrapping sampler. Never a quad
   per tile: the GUI geometry ring is a hard cap behind an unconditional `VE_ASSERT`, so an unbounded
   tile count would abort, and the clip such quads would need would break batching. A texture whose
-  `*.tex.json` authors a clamp address mode therefore clamps rather than tiles. Cell-level tiling of
-  a *sliced* fill is not expressible — repeating a sub-rect of an atlas needs a per-quad UV wrap the
-  shape fragment does not carry — so `tile` is ignored on a sliced fill.
+  `*.tex.json` authors a clamp address mode therefore clamps rather than tiles.
+- **Sliced *and* tiled** → `DrawList::NineSlice` again, with each stretchable cell repeating its own
+  source sub-rect. A wrapping sampler cannot express this: it wraps at the **whole texture's**
+  bounds, so a UV run past a cell samples the neighbouring cell. The cell's sub-rect therefore rides
+  the vertex — `GuiVertex::UvWrap` (`xy` the cell's UV min, `zw` its size, **a zero size meaning the
+  lane is inactive**) — and the fragment wraps arithmetically,
+  `uvMin + frac((uv - uvMin) / uvSize) * uvSize`, sampling with `SampleGrad` off the *unwrapped*
+  UV's derivatives so `frac()`'s seam does not collapse a mipped texture to its smallest level along
+  a one-pixel line. Which cells repeat follows from the slice: the four **corners never do** (they
+  are fixed-size by definition), each edge repeats **along its growing axis only**, and the centre on
+  both; the count is `cell destination ÷ cell source`, derived exactly as the unsliced path derives
+  its own. **The asymmetry is deliberate:** the texture's address mode stays load-bearing unsliced
+  and stops being so sliced, since the sliced fragment no longer asks the sampler to wrap.
 - **Fitted** (the default) → `DrawList::Texture` with the UV sub-rect and destination `ImageFit`
   computes: `fill` stretches, `contain`/`cover` letterbox/crop preserving aspect, `none` is
   intrinsic pixels. `ImageFit`/`ImageRepeat` (`Veng/Gui/Style.h`) are the shared fill vocabulary.
@@ -241,18 +253,19 @@ through `object-fit` / `image-repeat` / `image-slice` — the widget-side spelli
   sum of its corner insets instead — the smallest box at which the frame still reads. An unresolved
   texture measures zero. Taking a child turns an `Image` into a container, exactly as it does a
   `Button` (a measured Yoga node cannot hold children).
-- **Slicing wins over tiling on either host.** `image-repeat: tile` (like `background-repeat: tile`)
-  is ignored once a slice is authored, for the same reason: a wrapping sampler run past a nine-slice
-  cell samples the *neighbouring* atlas region, and correct per-cell wrapping needs a per-quad UV
-  wrap the shape vertex does not carry. A sliced cell therefore stretches. Tiling a frame's edges is
-  a named gap, not a supported combination.
+- **Slicing and tiling compose on either host.** `image-repeat: tile` (like `background-repeat:
+  tile`) beside a slice repeats each cell within its own source sub-rect, through the per-quad
+  `UvWrap` lane described above — the corners hold their size, the edges repeat along the axis they
+  grow on, the centre on both. Nothing about it is widget-specific; the two hosts differ only in
+  which box they fill.
 
 **The measure reads the whole texture, never the `uv` sub-rect.** Reading `ImageUv` there would make
 `Document::SetImageUv` a layout input, turning a per-frame atlas flipbook advance into a per-frame
 layout re-solve; the setter keeps its paint-only, no-dirty contract. *Fit* and *slice*, by contrast,
 are computed against the **sampled sub-rect**, so a flipbook frame fits and slices its own cell —
-which is why `DrawList::NineSlice` takes the sub-rect its 3×3 split divides. Tiling repeats the
-whole texture, since that is what the sampler's wrap addresses.
+which is why `DrawList::NineSlice` takes the sub-rect its 3×3 split divides. *Unsliced* tiling
+repeats the whole texture, since that is what the sampler's wrap addresses; sliced tiling repeats
+each cell of the sub-rect, since the fragment wraps it arithmetically.
 
 ## The draw floor: a device-free draw list + a `GuiScenePass`
 
@@ -265,8 +278,8 @@ authors; the **third** run kind, `GuiPipeline::Material`, is the seam where a co
 author a fragment — an authored `GuiFill` material, drawn on the same vertex stage and multiplied
 by the same silhouette (see [Material fills](#material-fills-an-authored-fill-source) above). The
 image goldens are the render floor every later change holds pixel-stable against: one **per feature**
-(`gui_overlay`, `gui_rotated`, `gui_image`, `gui_background`, `gui_shadow`, `gui_material`,
-`gui_popup`), kept separate on purpose so a moved pixel names the feature that moved it, plus one
+(`gui_overlay`, `gui_rotated`, `gui_image`, `gui_background`, `gui_sliced_tile`, `gui_shadow`,
+`gui_material`, `gui_popup`), kept separate on purpose so a moved pixel names the feature that moved it, plus one
 **composition** capture (`gui_composition`) for what only shows when two of them meet — a nine-slice
 frame around a tiled `Image`, a material fill inside a clipped scroller, and a shadowed card under an
 open popup. **The vertex format is five files, not one**: the

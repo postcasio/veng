@@ -70,20 +70,6 @@ namespace Veng::Gui
         None,
     };
 
-    /// @brief Whether a texture fill stretches across its box or tiles at its intrinsic size.
-    ///
-    /// Tile is a sampler address mode plus a scaled UV rect on one quad, never repeated geometry,
-    /// so a tiled fill costs the same as a stretched one however large the box grows. It therefore
-    /// requires the texture's own sampler to wrap (the cooked default; a `.tex.json` authoring
-    /// `wrap_u`/`wrap_v` as a clamp mode clamps the tiled fill instead of repeating it).
-    enum class ImageRepeat : u8
-    {
-        /// @brief The fill spans the box once, mapped by its ImageFit.
-        Stretch,
-        /// @brief The fill repeats at the texture's intrinsic pixel size from the box's top-left.
-        Tile,
-    };
-
     /// @brief How a sizing value (width, height, flex basis) is expressed.
     enum class LengthKind : u8
     {

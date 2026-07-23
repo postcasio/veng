@@ -1,0 +1,14 @@
+{
+  "image": "slice_tile_24x24.png",
+  "srgb": true,
+  "compression": "None",
+  "generate_mips": false,
+  "sampler": {
+    "min": "nearest",
+    "mag": "nearest",
+    "mipmap": "nearest",
+    "wrap_u": "clamp_to_edge",
+    "wrap_v": "clamp_to_edge",
+    "anisotropy": 0
+  }
+}

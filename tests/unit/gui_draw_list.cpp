@@ -171,6 +171,58 @@ TEST_CASE("gui draw list: a nine-slice emits nine textured tiles in one run")
     CHECK(list.GetRuns()[0].Pipeline == GuiPipeline::Shape);
     CHECK(list.GetRuns()[0].IndexCount == 9 * 6);
     CHECK(list.GetVertices().size() == 9 * 4);
+
+    // Stretching leaves the wrap lane inactive on every cell, which is what makes the fragment
+    // take the path it took before the lane existed.
+    for (const GuiVertex& vertex : list.GetVertices())
+    {
+        CHECK(vertex.UvWrap == vec4(0.0f));
+    }
+}
+
+TEST_CASE("gui draw list: a tiled nine-slice wraps each cell within its own source sub-rect")
+{
+    // A 64×64 source sliced at 16px: each cell is 16 source pixels on its fixed axis and 32 on its
+    // growing one. The destination is 128×128, so the centre grows 96 against 32 source pixels and
+    // each edge grows the same on its one axis — 3 repeats, and 1 on the axis it does not grow on.
+    DrawList list;
+    list.NineSlice({.Min = {0.0f, 0.0f}, .Size = {128.0f, 128.0f}}, Texture(2), Sampler(0),
+                   Insets::All(0.25f), Insets::All(16.0f), vec4(1.0f),
+                   {.Min = {0.0f, 0.0f}, .Size = {1.0f, 1.0f}}, ImageRepeat::Tile,
+                   vec2(64.0f, 64.0f));
+
+    REQUIRE(list.GetVertices().size() == 9 * 4);
+
+    // Cells are emitted row-major, so quad index (row * 3 + col) is that cell of the 3×3 grid.
+    const auto cell = [&](usize row, usize col) -> const GuiVertex&
+    { return list.GetVertices()[(row * 3 + col) * 4]; };
+
+    // The four corners are fixed-size by definition and must take the untouched path.
+    for (const usize row : {usize{0}, usize{2}})
+    {
+        for (const usize col : {usize{0}, usize{2}})
+        {
+            CHECK(cell(row, col).UvWrap == vec4(0.0f));
+        }
+    }
+
+    // The contract the fragment reads: a tiled cell's wrap lane *is* that cell's source sub-rect.
+    CHECK(cell(1, 1).UvWrap == vec4(0.25f, 0.25f, 0.5f, 0.5f));  // centre
+    CHECK(cell(0, 1).UvWrap == vec4(0.25f, 0.0f, 0.5f, 0.25f));  // top edge
+    CHECK(cell(2, 1).UvWrap == vec4(0.25f, 0.75f, 0.5f, 0.25f)); // bottom edge
+    CHECK(cell(1, 0).UvWrap == vec4(0.0f, 0.25f, 0.25f, 0.5f));  // left edge
+    CHECK(cell(1, 2).UvWrap == vec4(0.75f, 0.25f, 0.25f, 0.5f)); // right edge
+
+    // An edge spans repeats of its sub-rect along its growing axis only: the top edge's quad UV
+    // covers three copies horizontally and exactly one vertically.
+    const GuiVertex& topLeftOfTopEdge = cell(0, 1);
+    const GuiVertex& bottomRightOfTopEdge = list.GetVertices()[(0 * 3 + 1) * 4 + 2];
+    CHECK(topLeftOfTopEdge.Uv == vec2(0.25f, 0.0f));
+    CHECK(bottomRightOfTopEdge.Uv == vec2(0.25f + 3.0f * 0.5f, 0.25f));
+
+    // And the centre repeats on both axes.
+    const GuiVertex& bottomRightOfCentre = list.GetVertices()[(1 * 3 + 1) * 4 + 2];
+    CHECK(bottomRightOfCentre.Uv == vec2(0.25f + 3.0f * 0.5f, 0.25f + 3.0f * 0.5f));
 }
 
 TEST_CASE("gui draw list: Clear resets geometry, runs, and the clip stack")

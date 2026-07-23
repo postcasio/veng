@@ -158,7 +158,7 @@ namespace Veng::Gui
 
     void DrawList::PushQuad(const std::array<vec2, 4>& corners, const std::array<vec2, 4>& uvs,
                             vec4 color, vec2 rectHalf, vec2 center, vec4 params, u32 selector,
-                            vec4 shadow)
+                            vec4 shadow, vec4 uvWrap)
     {
         const u32 base = static_cast<u32>(m_Vertices.size());
         for (usize i = 0; i < 4; ++i)
@@ -175,6 +175,7 @@ namespace Veng::Gui
                 .Params = params,
                 .GradientSelector = selector,
                 .Shadow = shadow,
+                .UvWrap = uvWrap,
             });
         }
 
@@ -336,7 +337,7 @@ namespace Veng::Gui
 
     void DrawList::EmitTexturedQuad(const Rect& rect, Renderer::TextureHandle texture,
                                     Renderer::SamplerHandle sampler, const Rect& uv, vec4 tint,
-                                    const CornerRadii& radii)
+                                    const CornerRadii& radii, vec4 uvWrap)
     {
         if (rect.IsEmpty())
         {
@@ -364,7 +365,7 @@ namespace Veng::Gui
         const f32 radius = std::min(radii.TopLeft, std::min(half.x, half.y));
         const vec4 params{radius, 0.0f, static_cast<f32>(texture.Index),
                           static_cast<f32>(sampler.Index)};
-        PushQuad(corners, uvs, tint, half, rect.Center(), params);
+        PushQuad(corners, uvs, tint, half, rect.Center(), params, 0, vec4(0.0f), uvWrap);
     }
 
     void DrawList::Texture(const Rect& rect, Renderer::TextureHandle texture,
@@ -376,7 +377,8 @@ namespace Veng::Gui
 
     void DrawList::NineSlice(const Rect& rect, Renderer::TextureHandle texture,
                              Renderer::SamplerHandle sampler, const Insets& sliceUv,
-                             const Insets& sizePx, vec4 tint, const Rect& uv)
+                             const Insets& sizePx, vec4 tint, const Rect& uv, ImageRepeat repeat,
+                             vec2 sourcePx)
     {
         if (rect.IsEmpty())
         {
@@ -410,6 +412,15 @@ namespace Veng::Gui
         const std::array<f32, 4> us = {u0, u1, u2, u3};
         const std::array<f32, 4> vs = {v0, v1, v2, v3};
 
+        // Texels per unit of UV across the sampled sub-rect, which turns a cell's UV extent into
+        // the source pixels its repeat count is measured against. A degenerate axis leaves the
+        // scale at zero, which the per-cell guard below reads as "stretch this axis".
+        const bool tiling = repeat == ImageRepeat::Tile;
+        const vec2 texelsPerUv{
+            tiling && uv.Size.x > 0.0f ? sourcePx.x / uv.Size.x : 0.0f,
+            tiling && uv.Size.y > 0.0f ? sourcePx.y / uv.Size.y : 0.0f,
+        };
+
         for (usize row = 0; row < 3; ++row)
         {
             for (usize col = 0; col < 3; ++col)
@@ -426,7 +437,28 @@ namespace Veng::Gui
                     .Min = vec2(us[col], vs[row]),
                     .Size = vec2(us[col + 1] - us[col], vs[row + 1] - vs[row]),
                 };
-                EmitTexturedQuad(tileRect, texture, sampler, tileUv, tint);
+
+                // A cell repeats only along the axis it grows on: the outer columns and rows are
+                // the frame's fixed-size corners and edge thicknesses, so column 0/2 never repeats
+                // horizontally and row 0/2 never vertically. The four corners are therefore
+                // untouched — zero UvWrap, the exact quad the stretching path emitted.
+                const vec2 cellSourcePx = tileUv.Size * texelsPerUv;
+                const vec2 repeats{
+                    col == 1 && cellSourcePx.x > 0.0f ? tileRect.Size.x / cellSourcePx.x : 1.0f,
+                    row == 1 && cellSourcePx.y > 0.0f ? tileRect.Size.y / cellSourcePx.y : 1.0f,
+                };
+                if (repeats == vec2(1.0f))
+                {
+                    EmitTexturedQuad(tileRect, texture, sampler, tileUv, tint);
+                    continue;
+                }
+
+                // The quad spans `repeats` copies of the cell's sub-rect and carries that sub-rect
+                // as its wrap bound, so the fragment folds the run-on UV back into the one cell
+                // instead of letting the sampler run into its neighbour.
+                const Rect spannedUv{.Min = tileUv.Min, .Size = tileUv.Size * repeats};
+                const vec4 wrap{tileUv.Min.x, tileUv.Min.y, tileUv.Size.x, tileUv.Size.y};
+                EmitTexturedQuad(tileRect, texture, sampler, spannedUv, tint, {}, wrap);
             }
         }
     }

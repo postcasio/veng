@@ -1,0 +1,12 @@
+/* The stylesheet half of the sliced-tiling fixture: the `Image` host authored in a *rule* rather
+   than inline, so the cook makes the frame texture a dependency of the sheet. The content box is
+   110×50 against 8px insets, so the centre repeats 11.75 × 4.25 times — non-integral on both axes,
+   which is where a stretch and a tile are unmistakably different. */
+
+.tiled-image {
+    width: 110px;
+    height: 50px;
+    margin: 0 0 0 8px;
+    image-slice: 8px;
+    image-repeat: tile;
+}

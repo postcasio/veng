@@ -177,12 +177,28 @@ the document instantiates.
 pixels**: it splits both the texture and the box into a 3×3 grid, so the corners keep their
 source size while the edges stretch along one axis and the center stretches both — the
 resizable-panel-art primitive. A **sliced background takes no `corner-radius`** (nine-slice art
-carries its own corners), and `background-fit`/`background-repeat` do not apply to it.
+carries its own corners), and `background-fit` does not apply to it.
 
-Tiling is a **sampler address mode**, not repeated geometry, so the texture's own
-`*.tex.json` sampler must wrap (`"wrap_u": "repeat"`, the cooked default); a texture authored
-`clamp_to_edge` clamps its tiled fill instead of repeating it. `background-repeat: tile` also
-supersedes `background-fit`, which only maps a single, unrepeated copy.
+`background-repeat: tile` **does** apply to a sliced background, and means "repeat each cell of the
+3×3 grid instead of stretching it":
+
+```css
+/* Nine-slice chrome whose edges and interior repeat their art rather than smearing it. */
+.frame-tiled { background-image: 0x…; background-slice: 8px; background-repeat: tile; }
+```
+
+The four corners are fixed-size by definition and never repeat; each edge repeats along the axis it
+grows on, and the centre on both. The repeat count is not authored — it is the cell's destination
+size divided by its source size, so a box that is not a whole multiple of the cell ends on a partial
+tile, exactly as an unsliced tiled fill does.
+
+Tiling an **unsliced** fill is a **sampler address mode**, not repeated geometry, so the texture's
+own `*.tex.json` sampler must wrap (`"wrap_u": "repeat"`, the cooked default); a texture authored
+`clamp_to_edge` clamps its tiled fill instead of repeating it. A **sliced** fill is the exception:
+a sampler wraps at the whole texture's bounds and would run into the neighbouring cell, so the
+engine wraps each cell arithmetically in the fragment and the texture's address mode does not decide
+whether it repeats. `background-repeat: tile` also supersedes `background-fit`, which only maps a
+single, unrepeated copy.
 
 A state variant is the selector plus a pseudo-state — a `:hover` rule contributes a
 variant the runtime folds over the base style when the element is hovered, easing any
@@ -637,12 +653,13 @@ takes the background fill's vocabulary, spelled for the widget:
 
 `object-fit` / `image-repeat` / `image-slice` are the `<Image>` twins of `background-fit` /
 `background-repeat` / `background-slice` and carry the identical rules: a sliced image takes
-no `corner-radius` and ignores the fit, tiling needs the texture's `*.tex.json` sampler to
-wrap, and a `tile` supersedes the fit. A **sliced** image's intrinsic size is the sum of its
+no `corner-radius` and ignores the fit, *unsliced* tiling needs the texture's `*.tex.json` sampler
+to wrap, `image-repeat: tile` beside `image-slice` repeats each cell of the frame, and a `tile`
+supersedes the fit. A **sliced** image's intrinsic size is the sum of its
 corner insets — the smallest box at which the frame still reads.
 
 A `uv` sub-rect composes with all of it: the fit and the slice are computed against the
-sub-rect, so an atlas frame fits and slices its own cell, while tiling repeats the whole
+sub-rect, so an atlas frame fits and slices its own cell, while *unsliced* tiling repeats the whole
 texture (that is what the sampler wraps over). The *measure*, though, reads the whole
 texture — which is what keeps `Document::SetImageUv` a paint-only write that never re-runs
 layout, so a per-frame flipbook advance stays free.
@@ -695,9 +712,10 @@ Three things are worth naming, because each is a rule rather than a detail of th
 - **Which box each fill sizes against.** `.frame`'s nine-slice fills the panel's *padding* box, so
   the `padding` is what keeps the tiled `Image` off the art; the `Image`'s own fill covers its
   *content* box.
-- **Slicing and tiling do not combine.** `.frame` is sliced, so a `background-repeat: tile` on it
-  would be ignored — its cells stretch. Tiling belongs on the unsliced child, which is why the
-  backdrop is its own element.
+- **Slicing and tiling combine, but they are not the same tiling.** `background-repeat: tile` on
+  `.frame` would repeat each of its nine cells within that cell; `image-repeat: tile` on the
+  unsliced `.backdrop` repeats the whole texture across the box through the sampler. Which one an
+  author wants is a question about the art, not about the box.
 - **The material composes but does not own the shape.** `.readout` rounds because the *engine*
   rounds it; the fragment never sees a corner radius. Put a border on it and the fill disappears.
 
