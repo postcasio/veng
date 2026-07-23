@@ -9,6 +9,7 @@
 #include <Veng/Gui/Element.h>
 #include <Veng/Input.h>
 #include <Veng/Input/InputConsumer.h>
+#include <Veng/Input/RawInput.h>
 #include <Veng/InputEvents.h>
 #include <Veng/InputRouter.h>
 #include <Veng/Renderer/ViewportRegistry.h>
@@ -329,4 +330,39 @@ TEST_CASE("InputRouter: injected text takes the same route as window-sourced tex
     // U+00E9 arrives as one codepoint and lands as its two UTF-8 bytes, not as two edits.
     CHECK(injectedField.Text == "H\xc3\xa9!");
     CHECK(injectedField.Text == windowedField.Text);
+}
+
+TEST_CASE("InputRouter: injected moves feed the mouse-delta axis")
+{
+    Input input(nullptr);
+    const Renderer::ViewportRegistry registry;
+    InputRouter router(nullptr, input, registry);
+    const RawInput raw(input);
+
+    // The snapshot seeds its first position with no delta, so a driven run's opening move reports
+    // nothing; the moves after it are the look motion an agent means.
+    const MouseMovedEvent seed(vec2(100.0f, 100.0f));
+    router.PostInjectedEvent(seed);
+    input.BeginFrame(true);
+    router.DrainInjectedEvents();
+    CHECK(raw.GetAxis(InputDeviceType::MouseAxis, RawInput::MouseAxisX) == doctest::Approx(0.0f));
+
+    const MouseMovedEvent move(vec2(140.0f, 115.0f));
+    router.PostInjectedEvent(move);
+    input.BeginFrame(true);
+    router.DrainInjectedEvents();
+    CHECK(raw.GetAxis(InputDeviceType::MouseAxis, RawInput::MouseAxisX) == doctest::Approx(40.0f));
+    CHECK(raw.GetAxis(InputDeviceType::MouseAxis, RawInput::MouseAxisY) == doctest::Approx(15.0f));
+
+    // Two moves in one batch apply in one segment, so the delta is the whole travel of the batch.
+    router.PostInjectedEvent(MouseMovedEvent(vec2(150.0f, 115.0f)));
+    router.PostInjectedEvent(MouseMovedEvent(vec2(160.0f, 115.0f)));
+    input.BeginFrame(true);
+    router.DrainInjectedEvents();
+    CHECK(raw.GetAxis(InputDeviceType::MouseAxis, RawInput::MouseAxisX) == doctest::Approx(20.0f));
+
+    // A frame with no injected move reports no delta — the axis is per-frame motion, not a level.
+    input.BeginFrame(true);
+    router.DrainInjectedEvents();
+    CHECK(raw.GetAxis(InputDeviceType::MouseAxis, RawInput::MouseAxisX) == doctest::Approx(0.0f));
 }
