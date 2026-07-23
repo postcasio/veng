@@ -116,6 +116,10 @@ namespace Veng::Diagnostics
     /// valid after the profiler recycles the underlying storage; strings are copied
     /// out of the transient delta views. Not for production capture — it grows
     /// without bound.
+    ///
+    /// Every method that touches a container is defined out of line, so a translation
+    /// unit that merely parses this header does not instantiate the retained vectors'
+    /// members.
     class CapturingTestSink final : public TraceSink
     {
     public:
@@ -129,26 +133,10 @@ namespace Veng::Diagnostics
         };
 
         /// @brief Copies the chunk into the retained list.
-        void OnChunk(ThreadId thread, const u8* data, usize bytes) override
-        {
-            CapturedChunk chunk;
-            chunk.Thread = thread;
-            chunk.Bytes.assign(data, data + bytes);
-            m_Chunks.push_back(std::move(chunk));
-        }
+        void OnChunk(ThreadId thread, const u8* data, usize bytes) override;
 
         /// @brief Copies the new strings into the retained table at their ids.
-        void OnStrings(const StringTableDelta& delta) override
-        {
-            if (m_Strings.size() < static_cast<usize>(delta.FirstId) + delta.Strings.size())
-            {
-                m_Strings.resize(static_cast<usize>(delta.FirstId) + delta.Strings.size());
-            }
-            for (usize i = 0; i < delta.Strings.size(); ++i)
-            {
-                m_Strings[delta.FirstId + i] = string(delta.Strings[i]);
-            }
-        }
+        void OnStrings(const StringTableDelta& delta) override;
 
         /// @brief One retained track descriptor: a copy of its id, kind, role, and name.
         struct CapturedTrack
@@ -164,13 +152,7 @@ namespace Veng::Diagnostics
         };
 
         /// @brief Copies the track descriptor into the retained list.
-        void OnTrack(const TrackDescriptor& track) override
-        {
-            m_Tracks.push_back(CapturedTrack{.Id = track.Id,
-                                             .IsVirtual = track.IsVirtual,
-                                             .Role = track.Role,
-                                             .Name = string(track.Name)});
-        }
+        void OnTrack(const TrackDescriptor& track) override;
 
         /// @brief Counts a flush boundary.
         void OnFlush() override { ++m_FlushCount; }
@@ -180,12 +162,9 @@ namespace Veng::Diagnostics
         /// @brief Returns the retained chunks, in arrival order.
         [[nodiscard]] const vector<CapturedChunk>& GetChunks() const { return m_Chunks; }
         /// @brief Returns the retained string for an id, or empty if unknown.
-        [[nodiscard]] string_view GetString(NameId id) const
-        {
-            return id < m_Strings.size() ? string_view(m_Strings[id]) : string_view();
-        }
+        [[nodiscard]] string_view GetString(NameId id) const;
         /// @brief Returns the number of strings retained.
-        [[nodiscard]] usize GetStringCount() const { return m_Strings.size(); }
+        [[nodiscard]] usize GetStringCount() const;
         /// @brief Returns how many times OnFlush was called.
         [[nodiscard]] u32 GetFlushCount() const { return m_FlushCount; }
         /// @brief Returns how many times OnClose was called.
@@ -193,7 +172,7 @@ namespace Veng::Diagnostics
         /// @brief Returns the retained track descriptors, in arrival order.
         [[nodiscard]] const vector<CapturedTrack>& GetTracks() const { return m_Tracks; }
         /// @brief Drops every retained chunk (strings and boundary counts are kept).
-        void ClearChunks() { m_Chunks.clear(); }
+        void ClearChunks();
 
     private:
         /// @brief Retained chunk copies, in arrival order.

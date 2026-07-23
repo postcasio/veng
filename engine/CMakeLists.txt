@@ -114,6 +114,7 @@ add_library(veng SHARED
         src/Diagnostics/FileTraceSink.cpp
         src/Diagnostics/Profiler.cpp
         src/Diagnostics/TraceFile.cpp
+        src/Diagnostics/TraceSink.cpp
         src/ExecutableDirectory.cpp
         src/Input.cpp
         src/Input/Actions.cpp
@@ -177,6 +178,7 @@ add_library(veng SHARED
         src/Net/InputReplication.cpp
         src/Net/Replication.cpp
         src/Reflection/FieldDisplay.cpp
+        src/Reflection/Reflect.cpp
         src/Reflection/TypeRegistry.cpp
         src/Reflection/FieldGate.cpp
         src/Reflection/Serialize.cpp

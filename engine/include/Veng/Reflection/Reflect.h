@@ -70,13 +70,23 @@ namespace Veng::Detail
         /// @brief Accumulated field descriptors.
         vector<FieldDescriptor> Fields;
 
+        /// @brief Appends one already-finished descriptor to Fields.
+        ///
+        /// Defined out of line: the call below it is independent of the member
+        /// templates' parameters, so a body spelling `Fields.push_back` here would be
+        /// odr-used while the class definition is parsed and instantiate
+        /// `vector<FieldDescriptor>::push_back` in every translation unit that
+        /// includes this header.
+        /// @param desc  The descriptor to append.
+        void Add(FieldDescriptor desc);
+
         /// @brief Appends one finished field descriptor to the collected list.
         /// @tparam Owner  The struct type declaring the field.
         /// @tparam Field  The field's value type.
         template <class Owner, class Field>
         void Field_(FieldDescriptor desc)
         {
-            Fields.push_back(FinishField(std::move(desc)));
+            Add(FinishField(std::move(desc)));
         }
 
         /// @brief Appends one finished array-field descriptor, populating its element shims.
@@ -85,7 +95,7 @@ namespace Veng::Detail
         template <class Owner, class Element>
         void ArrayField_(FieldDescriptor desc)
         {
-            Fields.push_back(FinishField(FinishArrayField<Element>(std::move(desc))));
+            Add(FinishField(FinishArrayField<Element>(std::move(desc))));
         }
     };
 
@@ -127,6 +137,14 @@ namespace Veng::Detail
 // but their bodies, and so both Describe instantiations, are compiled only in the
 // translation units that actually register the type rather than in every one that
 // includes the describe block.
+//
+// VE_ENUM's Enumerators() and VE_VARIANT's Alternatives() are member templates for
+// the same reason, and their defaulted parameter is the *container* they build
+// rather than an unused `void`: a call is odr-used where the template is defined
+// unless it depends on a template parameter, so naming the vector type through the
+// parameter is what keeps push_back and the iterator-pair constructor out of every
+// translation unit that merely parses the block. Both are still written and called
+// as plain statics.
 
 /// @brief Opens a VE_ENUM block: declares an enum leaf and starts its enumerator list.
 ///
@@ -154,9 +172,10 @@ namespace Veng::Detail
         static void RegisterDependencies(::Veng::TypeRegistry&)                                    \
         {                                                                                          \
         }                                                                                          \
-        static ::Veng::vector<::Veng::EnumEntry> Enumerators()                                     \
+        template <class Entries = ::Veng::vector<::Veng::EnumEntry>>                               \
+        static Entries Enumerators()                                                               \
         {                                                                                          \
-            ::Veng::vector<::Veng::EnumEntry> entries;
+            Entries entries;
 
 /// @brief Records one enumerator within a VE_ENUM block: its name and the enum constant's value.
 #define VE_ENUMERATOR(Enumerator)                                                                  \
@@ -342,10 +361,11 @@ namespace Veng::Detail
             return static_cast<Type*>(p)->SetActive(id);                                           \
         }                                                                                          \
         static void Clear(void* p) { static_cast<Type*>(p)->Clear(); }                             \
-        static ::Veng::vector<::Veng::TypeId> Alternatives()                                       \
+        template <class Alternates = ::Veng::vector<::Veng::TypeId>>                               \
+        static Alternates Alternatives()                                                           \
         {                                                                                          \
             const auto s = Type::Alternatives();                                                   \
-            return {s.begin(), s.end()};                                                           \
+            return Alternates(s.begin(), s.end());                                                 \
         }                                                                                          \
         template <class = void>                                                                    \
         static void RegisterDependencies(::Veng::TypeRegistry& r)                                  \
