@@ -1,7 +1,6 @@
 #pragma once
 
 #include <Veng/Veng.h>
-#include <Veng/Assert.h>
 #include <Veng/Asset/AssetLoader.h>
 #include <Veng/Asset/AssetType.h>
 
@@ -24,11 +23,23 @@ namespace Veng
     ///          in turn outlive the registry, since the factories and the loaders they produce are
     ///          code in a dlclose-able image. Declaring them outermost-first — module handle,
     ///          registry, manager — satisfies both.
-    class AssetLoaderRegistry
+    class VE_API AssetLoaderRegistry
     {
     public:
         /// @brief Produces a loader for one asset type; invoked once per AssetManager.
         using Factory = function<Unique<AssetLoader>()>;
+
+        /// @brief Constructs an empty registry.
+        AssetLoaderRegistry();
+
+        /// @brief Destroys the registry and the storage it owns.
+        ~AssetLoaderRegistry();
+
+        /// @brief Move-constructs, taking over the source registry's storage.
+        AssetLoaderRegistry(AssetLoaderRegistry&& other) noexcept;
+
+        /// @brief Move-assigns, taking over the source registry's storage.
+        AssetLoaderRegistry& operator=(AssetLoaderRegistry&& other) noexcept;
 
         /// @brief Records a loader factory for an asset type, aborting on a duplicate registration.
         ///
@@ -36,36 +47,20 @@ namespace Veng
         /// reflection TypeRegistry and AssetTypeRegistry apply.
         /// @param type     The asset type the produced loader handles.
         /// @param factory  Produces the loader; must be non-null.
-        void Register(AssetTypeId type, Factory factory)
-        {
-            VE_ASSERT(type.IsValid(),
-                      "AssetLoaderRegistry: cannot register the invalid asset type");
-            VE_ASSERT(factory != nullptr,
-                      "AssetLoaderRegistry: factory for asset type {:#018X} is "
-                      "null",
-                      type.Value);
-            const auto [it, inserted] = m_Factories.try_emplace(type, std::move(factory));
-            VE_ASSERT(inserted,
-                      "AssetLoaderRegistry: asset type {:#018X} already has a loader "
-                      "factory",
-                      type.Value);
-        }
+        void Register(AssetTypeId type, Factory factory);
 
         /// @brief Returns whether a factory is registered for an asset type.
         /// @param type  The asset type to query.
-        [[nodiscard]] bool IsRegistered(AssetTypeId type) const
-        {
-            return m_Factories.contains(type);
-        }
+        [[nodiscard]] bool IsRegistered(AssetTypeId type) const;
 
         /// @brief Returns every registered factory, keyed by asset type.
-        [[nodiscard]] const std::unordered_map<AssetTypeId, Factory>& All() const
-        {
-            return m_Factories;
-        }
+        [[nodiscard]] const std::unordered_map<AssetTypeId, Factory>& All() const;
 
     private:
-        /// @brief Registered factories keyed by the asset type they produce a loader for.
-        std::unordered_map<AssetTypeId, Factory> m_Factories;
+        /// @brief The registry's factory table, defined in the implementation TU.
+        struct Impl;
+
+        /// @brief The owned storage, held by pointer so an including TU sees no table.
+        Unique<Impl> m_Impl;
     };
 }

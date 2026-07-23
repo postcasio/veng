@@ -4,6 +4,7 @@
 
 #include <compare>
 #include <functional>
+#include <memory>
 #include <string_view>
 #include <unordered_map>
 
@@ -167,6 +168,18 @@ namespace Veng
     class AssetTypeRegistry
     {
     public:
+        /// @brief Constructs an empty registry.
+        AssetTypeRegistry();
+
+        /// @brief Destroys the registry and the storage it owns.
+        ~AssetTypeRegistry();
+
+        /// @brief Move-constructs, taking over the source registry's storage.
+        AssetTypeRegistry(AssetTypeRegistry&& other) noexcept;
+
+        /// @brief Move-assigns, taking over the source registry's storage.
+        AssetTypeRegistry& operator=(AssetTypeRegistry&& other) noexcept;
+
         /// @brief Records an asset type, aborting on an id or name collision.
         /// @param info  The type's identity, canonical name, and display metadata.
         void Register(AssetTypeInfo info);
@@ -195,7 +208,7 @@ namespace Veng
 
         /// @brief Returns whether an id is registered.
         /// @param id  The asset type to query.
-        [[nodiscard]] bool IsRegistered(AssetTypeId id) const { return m_Types.contains(id); }
+        [[nodiscard]] bool IsRegistered(AssetTypeId id) const;
 
         /// @brief Canonical manifest name of an id, or its hex spelling when unregistered.
         /// @param id  The asset type to name.
@@ -213,18 +226,14 @@ namespace Veng
         [[nodiscard]] string GetGlyph(AssetTypeId id) const;
 
         /// @brief Returns every registered type, keyed by id.
-        [[nodiscard]] const std::unordered_map<AssetTypeId, AssetTypeInfo>& All() const
-        {
-            return m_Types;
-        }
+        [[nodiscard]] const std::unordered_map<AssetTypeId, AssetTypeInfo>& All() const;
 
     private:
-        /// @brief Registered types keyed by id.
-        std::unordered_map<AssetTypeId, AssetTypeInfo> m_Types;
-        /// @brief Canonical-name index into m_Types, so a manifest name resolves in one lookup.
-        std::unordered_map<string, AssetTypeId> m_ByName;
-        /// @brief Handle-leaf-TypeId index into m_Types, so a reflected field resolves in one lookup.
-        std::unordered_map<u64, AssetTypeId> m_ByHandleField;
+        /// @brief The registry's three lookup tables, defined in the implementation TU.
+        struct Impl;
+
+        /// @brief The owned storage, held by pointer so an including TU sees no table.
+        std::unique_ptr<Impl> m_Impl;
     };
 
     /// @brief Pre-fills a registry with the eighteen asset types the engine defines.

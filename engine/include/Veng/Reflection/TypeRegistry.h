@@ -162,9 +162,21 @@ namespace Veng
     /// Registration is main-thread and startup-only; it must complete before any
     /// Scene that pools the types is used. The registry is owned by the host
     /// (launcher or cooker) and threaded into Scene::Create — no global.
-    class TypeRegistry
+    class VE_API TypeRegistry
     {
     public:
+        /// @brief Constructs an empty registry.
+        TypeRegistry();
+
+        /// @brief Destroys the registry and the storage it owns.
+        ~TypeRegistry();
+
+        /// @brief Move-constructs, taking over the source registry's storage.
+        TypeRegistry(TypeRegistry&& other) noexcept;
+
+        /// @brief Move-assigns, taking over the source registry's storage.
+        TypeRegistry& operator=(TypeRegistry&& other) noexcept;
+
         /// @brief Registers T under VengReflect\<T\>::Id with lifecycle thunks only (no fields).
         ///
         /// Registering two distinct types under the same id is a fatal collision assert.
@@ -201,7 +213,7 @@ namespace Veng
             constexpr TypeId id = VengReflect<T>::Id;
             static_assert(id != InvalidTypeId, "VengReflect<T>::Id must be a non-zero authored id");
 
-            if (m_Types.contains(id))
+            if (IsRegistered(id))
             {
                 return id;
             }
@@ -227,35 +239,33 @@ namespace Veng
         }
 
         /// @brief Returns the TypeInfo for the given id; fatal assert if not registered.
-        [[nodiscard]] const TypeInfo& Info(TypeId id) const
-        {
-            const auto it = m_Types.find(id);
-            VE_ASSERT(it != m_Types.end(), "TypeId {:#018x} is not registered", id);
-            return it->second;
-        }
+        [[nodiscard]] const TypeInfo& Info(TypeId id) const;
 
         /// @brief Returns true if the given TypeId has been registered.
-        [[nodiscard]] bool IsRegistered(TypeId id) const { return m_Types.contains(id); }
+        [[nodiscard]] bool IsRegistered(TypeId id) const;
 
         /// @brief Returns the number of registered types.
-        [[nodiscard]] usize Count() const { return m_Types.size(); }
+        [[nodiscard]] usize Count() const;
 
         /// @brief Read-only view over every registered (id, info) pair.
         ///
         /// For tooling that enumerates the table (a reflected type manifest, an
         /// editor type picker). Iteration order is unspecified.
-        [[nodiscard]] const unordered_map<TypeId, TypeInfo>& All() const { return m_Types; }
+        [[nodiscard]] const unordered_map<TypeId, TypeInfo>& All() const;
 
     private:
+        /// @brief Records `info` under `id`, aborting when the id is already claimed.
+        ///
+        /// The one non-template insertion point, so RegisterImpl's per-type instantiation
+        /// carries no map operation into the calling translation unit.
+        /// @param id    The authored TypeId to record under.
+        /// @param info  The synthesised record.
+        void Insert(TypeId id, TypeInfo info);
+
         /// @brief Synthesises T's lifecycle thunks and inserts a TypeInfo under id; asserts on collision.
         template <class T>
         TypeId RegisterImpl(TypeId id, string name, FieldClass cls, vector<FieldDescriptor> fields)
         {
-            const auto existing = m_Types.find(id);
-            VE_ASSERT(existing == m_Types.end(),
-                      "TypeId collision: '{}' and '{}' both claim TypeId {:#018x}", name,
-                      existing == m_Types.end() ? string{} : existing->second.Name, id);
-
             QualifiedTypeName qualified = SplitQualifiedTypeName(name);
 
             TypeInfo info;
@@ -297,12 +307,15 @@ namespace Veng
                 info.VariantAlternatives = VengReflect<T>::Alternatives();
             }
 
-            m_Types.emplace(id, std::move(info));
+            Insert(id, std::move(info));
             return id;
         }
 
-        /// @brief All registered types, keyed by their authored TypeId.
-        unordered_map<TypeId, TypeInfo> m_Types;
+        /// @brief The registry's type table, defined in the implementation TU.
+        struct Impl;
+
+        /// @brief The owned storage, held by pointer so an including TU sees no table.
+        Unique<Impl> m_Impl;
     };
 
     /// @brief True when `key` is the fully-qualified name of `info`, ignoring a leading "::".
@@ -331,18 +344,8 @@ namespace Veng
     /// @param registry  The registry to search.
     /// @param name      The authored fully-qualified spelling.
     /// @return The matching type's info, or nullptr when no registered type carries that name.
-    [[nodiscard]] inline const TypeInfo* FindTypeByName(const TypeRegistry& registry,
-                                                        std::string_view name)
-    {
-        for (const auto& [id, info] : registry.All())
-        {
-            if (TypeNameMatches(info, name))
-            {
-                return &info;
-            }
-        }
-        return nullptr;
-    }
+    [[nodiscard]] VE_API const TypeInfo* FindTypeByName(const TypeRegistry& registry,
+                                                        std::string_view name);
 }
 
 /// @brief Declares a fieldless struct/component's identity by specialising VengReflect\<T\>.

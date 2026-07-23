@@ -3,11 +3,32 @@
 #include <Veng/Asset/HexId.h>
 
 #include <cstdlib>
+#include <memory>
+#include <utility>
 
 #include <fmt/format.h>
 
 namespace Veng
 {
+    /// @brief The registry's lookup tables, so no header-including TU instantiates them.
+    struct AssetTypeRegistry::Impl
+    {
+        /// @brief Registered types keyed by id.
+        std::unordered_map<AssetTypeId, AssetTypeInfo> Types;
+        /// @brief Canonical-name index into Types, so a manifest name resolves in one lookup.
+        std::unordered_map<string, AssetTypeId> ByName;
+        /// @brief Handle-leaf-TypeId index into Types, so a reflected field resolves in one lookup.
+        std::unordered_map<u64, AssetTypeId> ByHandleField;
+    };
+
+    AssetTypeRegistry::AssetTypeRegistry() : m_Impl(std::make_unique<Impl>()) {}
+
+    AssetTypeRegistry::~AssetTypeRegistry() = default;
+
+    AssetTypeRegistry::AssetTypeRegistry(AssetTypeRegistry&& other) noexcept = default;
+
+    AssetTypeRegistry& AssetTypeRegistry::operator=(AssetTypeRegistry&& other) noexcept = default;
+
     namespace
     {
         // assetpack carries no engine dependency, so it cannot reach VE_ASSERT. A collision is
@@ -28,14 +49,14 @@ namespace Veng
                 fmt::format("asset type '{}' claims the reserved invalid id 0", info.Name));
         }
 
-        if (const auto existing = m_Types.find(info.Id); existing != m_Types.end())
+        if (const auto existing = m_Impl->Types.find(info.Id); existing != m_Impl->Types.end())
         {
             FatalCollision(fmt::format("AssetTypeId collision: '{}' and '{}' both claim {}",
                                        existing->second.Name, info.Name,
                                        FormatHexId(info.Id.Value)));
         }
 
-        if (const auto existing = m_ByName.find(info.Name); existing != m_ByName.end())
+        if (const auto existing = m_Impl->ByName.find(info.Name); existing != m_Impl->ByName.end())
         {
             FatalCollision(fmt::format(
                 "asset type name collision: '{}' is claimed by both {} and {}", info.Name,
@@ -44,31 +65,31 @@ namespace Veng
 
         if (info.HandleFieldType != 0)
         {
-            if (const auto existing = m_ByHandleField.find(info.HandleFieldType);
-                existing != m_ByHandleField.end())
+            if (const auto existing = m_Impl->ByHandleField.find(info.HandleFieldType);
+                existing != m_Impl->ByHandleField.end())
             {
                 FatalCollision(fmt::format("asset handle leaf type {} is claimed by both {} and {}",
                                            FormatHexId(info.HandleFieldType),
                                            FormatHexId(existing->second.Value),
                                            FormatHexId(info.Id.Value)));
             }
-            m_ByHandleField.emplace(info.HandleFieldType, info.Id);
+            m_Impl->ByHandleField.emplace(info.HandleFieldType, info.Id);
         }
 
-        m_ByName.emplace(info.Name, info.Id);
-        m_Types.emplace(info.Id, std::move(info));
+        m_Impl->ByName.emplace(info.Name, info.Id);
+        m_Impl->Types.emplace(info.Id, std::move(info));
     }
 
     const AssetTypeInfo* AssetTypeRegistry::Find(AssetTypeId id) const
     {
-        const auto it = m_Types.find(id);
-        return it == m_Types.end() ? nullptr : &it->second;
+        const auto it = m_Impl->Types.find(id);
+        return it == m_Impl->Types.end() ? nullptr : &it->second;
     }
 
     optional<AssetTypeId> AssetTypeRegistry::FindByName(std::string_view name) const
     {
-        const auto it = m_ByName.find(string(name));
-        if (it == m_ByName.end())
+        const auto it = m_Impl->ByName.find(string(name));
+        if (it == m_Impl->ByName.end())
         {
             return std::nullopt;
         }
@@ -77,8 +98,8 @@ namespace Veng
 
     optional<AssetTypeId> AssetTypeRegistry::FindByHandleField(u64 handleFieldType) const
     {
-        const auto it = m_ByHandleField.find(handleFieldType);
-        if (it == m_ByHandleField.end())
+        const auto it = m_Impl->ByHandleField.find(handleFieldType);
+        if (it == m_Impl->ByHandleField.end())
         {
             return std::nullopt;
         }
@@ -105,6 +126,16 @@ namespace Veng
     {
         const AssetTypeInfo* info = Find(id);
         return info == nullptr || info->Glyph.empty() ? string{"?"} : info->Glyph;
+    }
+
+    bool AssetTypeRegistry::IsRegistered(AssetTypeId id) const
+    {
+        return m_Impl->Types.contains(id);
+    }
+
+    const std::unordered_map<AssetTypeId, AssetTypeInfo>& AssetTypeRegistry::All() const
+    {
+        return m_Impl->Types;
     }
 
     void RegisterBuiltinAssetTypes(AssetTypeRegistry& registry)

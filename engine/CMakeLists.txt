@@ -77,6 +77,7 @@ set_source_files_properties(src/Renderer/Backend/Context.cpp
 add_library(veng SHARED
         src/Application.cpp
         src/Assert.cpp
+        src/Asset/AssetLoaderRegistry.cpp
         src/Asset/AssetManager.cpp
         src/Asset/DataTable.cpp
         src/Asset/DynamicMesh.cpp
@@ -176,6 +177,7 @@ add_library(veng SHARED
         src/Net/InputReplication.cpp
         src/Net/Replication.cpp
         src/Reflection/FieldDisplay.cpp
+        src/Reflection/TypeRegistry.cpp
         src/Reflection/FieldGate.cpp
         src/Reflection/Serialize.cpp
         src/Reflection/JsonSerialize.cpp
