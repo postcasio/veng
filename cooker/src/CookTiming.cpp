@@ -18,6 +18,7 @@ namespace Veng::Cook
             usize Count = 0;
             usize Hits = 0;
             f64 Seconds = 0.0;
+            f64 WaitSeconds = 0.0;
         };
 
         // Percentage of `total`, or zero when there is nothing to divide by — a report that
@@ -121,8 +122,16 @@ namespace Veng::Cook
             AppendPhase(out, "unattributed", remainder - timing.NamedPhaseSeconds(), total);
         }
 
+        // Shares below are of the work the cook did, which above one job is the worker sum rather
+        // than the invocation: dividing concurrent worker seconds by wall seconds is what makes a
+        // share exceed 100 %.
+        const f64 workSeconds = assetSeconds - waitSeconds;
+        const f64 shareBase = timing.Jobs > 1 ? workSeconds : total;
+
         // The costliest assets, which is what decides whether a cook's cost is a long tail or one
-        // dominant asset.
+        // dominant asset. Ranked and reported on work, never on elapsed: a cheap serialized asset
+        // that queued behind an expensive one is not itself expensive, and ranking on elapsed would
+        // put it at the top of the list an optimization is chosen from.
         vector<const CookAssetTiming*> ranked;
         ranked.reserve(timing.Assets.size());
         for (const CookAssetTiming& asset : timing.Assets)
@@ -130,7 +139,7 @@ namespace Veng::Cook
             ranked.push_back(&asset);
         }
         std::ranges::sort(ranked, [](const CookAssetTiming* a, const CookAssetTiming* b)
-                          { return a->TotalSeconds() > b->TotalSeconds(); });
+                          { return a->WorkSeconds() > b->WorkSeconds(); });
 
         const usize shown = std::min(topCount, ranked.size());
         out += fmt::format("\n  top {} assets\n", shown);
@@ -138,7 +147,7 @@ namespace Veng::Cook
         {
             const CookAssetTiming& asset = *ranked[i];
             out += fmt::format("    {:>10.3f} s{:>8.1f} %  {:<20} 0x{:016X}  {}\n",
-                               asset.TotalSeconds(), Percent(asset.TotalSeconds(), total),
+                               asset.WorkSeconds(), Percent(asset.WorkSeconds(), shareBase),
                                asset.Type, asset.Id.Value, asset.CacheHit ? "hit" : "fresh");
         }
 
@@ -148,21 +157,24 @@ namespace Veng::Cook
             ImporterRollup& rollup = byImporter[asset.Type];
             ++rollup.Count;
             rollup.Hits += asset.CacheHit ? 1 : 0;
-            rollup.Seconds += asset.TotalSeconds();
+            rollup.Seconds += asset.WorkSeconds();
+            rollup.WaitSeconds += asset.SerializedWaitSeconds;
         }
 
         vector<std::pair<string, ImporterRollup>> rollups(byImporter.begin(), byImporter.end());
         std::ranges::sort(rollups, [](const auto& a, const auto& b)
                           { return a.second.Seconds > b.second.Seconds; });
 
-        out += fmt::format("\n  per importer ({})\n", rollups.size());
-        out += "    importer              count    hits       total    share        mean\n";
+        out += fmt::format("\n  per importer ({}) — share of the {} {:.3f} s\n", rollups.size(),
+                           timing.Jobs > 1 ? "worker sum" : "invocation", shareBase);
+        out += "    importer              count    hits       total    share        mean      "
+               "queued\n";
         for (const auto& [name, rollup] : rollups)
         {
-            out += fmt::format("    {:<20}{:>7}{:>8}{:>10.3f} s{:>8.1f} %{:>10.3f} s\n", name,
-                               rollup.Count, rollup.Hits, rollup.Seconds,
-                               Percent(rollup.Seconds, total),
-                               rollup.Seconds / static_cast<f64>(rollup.Count));
+            out += fmt::format("    {:<20}{:>7}{:>8}{:>10.3f} s{:>8.1f} %{:>10.3f} s{:>10.3f} s\n",
+                               name, rollup.Count, rollup.Hits, rollup.Seconds,
+                               Percent(rollup.Seconds, shareBase),
+                               rollup.Seconds / static_cast<f64>(rollup.Count), rollup.WaitSeconds);
         }
 
         return out;

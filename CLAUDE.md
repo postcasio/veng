@@ -32,7 +32,10 @@ every module is written against; each module's architecture lives in its own `CL
 - **`cooker/`** — `libveng_cook` + the `vengc` CLI (stb, assimp, Slang, the texture encoders —
   cooker-only deps, never linked by the engine). Its prefab-cooking path links `veng::veng` to
   `dlopen` a game module and reflect its types — the one place the Vulkan-free cooker relaxes
-  its separation. **[cooker/CLAUDE.md](cooker/CLAUDE.md)**.
+  its separation. A cook runs its pack's assets across a **bounded work pool**, so an importer —
+  including one a consumer's cook module supplies — declares its concurrency class; see
+  [The cook is parallel](#the-cook-is-parallel) below.
+  **[cooker/CLAUDE.md](cooker/CLAUDE.md)**.
 - **`graph/`** — `libveng_graph` (`veng::graph`), the shared node-graph + material-codegen
   library; linked PUBLIC by both `libveng_editor` and `libveng_cook` so editor preview and
   offline cook run the identical emit walk. ImGui-free and Vulkan-free.
@@ -575,6 +578,30 @@ CI / ship. The data model is in [engine/CLAUDE.md](engine/CLAUDE.md), the cook
 resolution + CMake selection in [cooker/CLAUDE.md](cooker/CLAUDE.md), and the editor
 surface + host-capability preview gate in [editor/CLAUDE.md](editor/CLAUDE.md).
 
+### The cook is parallel
+
+The single-render-thread rule at the top of this file governs the **runtime**. The **offline
+cook** is the other way round: `vengc` runs a pack's entries across one bounded work pool, and a
+content-heavy cold cook that measured 1.20 of 6 available cores now runs at ~3.8 effective ones.
+Three facts belong here rather than only in the cooker's own guide, because they reach anyone
+consuming veng:
+
+- **`--jobs <n>` is the cook's whole concurrency budget**, defaulting to the hardware concurrency
+  and shared by the asset pool and any threading inside an importer (`CookContext::ThreadBudget`).
+  **`--jobs 1` now means one thread in the process** — the texture encoder previously spawned
+  `hardware_concurrency()` workers per mip level even under a serial asset loop.
+- **An importer declares whether it may overlap, and the default is no.**
+  `AssetImporter::Concurrency()` returns `ImporterConcurrency::Serialized` unless overridden, so an
+  importer that says nothing runs under the cook's serialization lock. A **project's own cook
+  module supplies importers veng never sees**, which makes this a consumer-facing contract: what
+  `Cook` may assume, what it must not touch, and what declaring `Parallel` asserts are written out
+  in [cooker/CLAUDE.md](cooker/CLAUDE.md#the-importer-thread-safety-contract). **Nothing in it asks
+  an importer to be deterministic** — a cooked asset must be *valid*, not one particular valid
+  encoding.
+- **The cook-module ABI is 2.** `AssetImporter` gained a virtual and `CookContext` a trailing
+  field, so a module built against ABI 1 is rejected at the handshake rather than misreading the
+  vtable. A consumer **rebuilds; no source change is required.**
+
 ### The release build (validation OFF)
 
 `VE_DEBUG=ON` enables Vulkan validation layers (`VE_ENABLE_VALIDATION_LAYERS`), and
@@ -615,6 +642,13 @@ the default and catches more. Do not build both routinely.
   `project.vengproj`, and `sample.vengpack` into a fresh directory and run from an
   unrelated working directory — everything resolves beside the launcher, so it still
   writes a correct-sized PPM and exits 0.
+- **A parallel cook is guarded by a warm-cook no-op test, not by a byte comparison.**
+  `tests/cooker/cook_cache.cpp` cooks a pack at 8 jobs, cooks it again, and asserts the second
+  cook rewrote nothing — the property the archive TOC's stability actually serves. Comparing a
+  serial and a parallel cook byte for byte was **rejected**, not merely unavailable: it catches a
+  race only when the race perturbs output on that run, and `astcenc` is built without
+  `ASTCENC_INVARIANCE`, so a texture-bearing pack does not cook to the same bytes twice from an
+  unchanged binary. The thread sanitiser and `vengc verify` are what carry that weight.
 - **Validation errors do NOT fail tests by themselves.** The debug-messenger
   callback (`engine/src/Renderer/Backend/Context.cpp`) only `Log::Error`s on
   validation errors — it never aborts. So a green `ctest` under `VE_DEBUG` only means

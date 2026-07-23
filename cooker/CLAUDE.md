@@ -297,6 +297,157 @@ tree** — `build-debug/` and `build/` never share one.
   `Material` and its default `MaterialInstance`); all of them are stored and replayed together under
   the single entry key.
 
+## The cook is parallel — and an importer declares whether it may be
+
+The driver runs a pack's entries across **one bounded work pool**, not a serial loop. A
+content-heavy cold cook was measured at 1.20 of 6 available cores before this existed; the
+same cook now runs at ~3.8 effective cores. What decides whether two entries overlap is the
+importer's own **concurrency declaration**, and the default is not to overlap.
+
+### The concurrency budget: `--jobs <n>`
+
+**One number for the whole cook**, shared by the per-asset pool and by any threading an importer
+does inside its own `Cook`. `cook` and `cook-project` take `--jobs <n>`; the default (`0`) is
+`std::thread::hardware_concurrency()`.
+
+- **`--jobs 1` means one thread in the whole process** — a strictly sequential asset loop *and*
+  a texture encode on the calling thread. The texture importer used to spawn
+  `hardware_concurrency()` workers per mip level regardless of how the driver ran, so a serial
+  cook was never actually single-threaded. It is now.
+- **An importer that threads internally reads `CookContext::ThreadBudget`** (never below 1) and
+  must not exceed it. Under the pool it is 1: the outer loop already supplies the parallelism, so
+  the correct resolution of the nesting is that the importer encodes on its calling thread rather
+  than opening a second pool on a machine the first already saturates. Stacking the two
+  oversubscribes badly on a fanless machine that throttles under sustained all-core load.
+- **Results are written into per-asset slots, never appended in completion order.** This is a
+  cook-cache requirement, not a determinism one: the cache recognises an unchanged pack by laying
+  out the archive TOC from cached descriptors and hashing it, so a completion-ordered TOC would
+  make every warm cook rewrite packs it did not need to. Slots also make a reported error the
+  first failing entry rather than whichever worker lost the race.
+- **The cook cache needs no concurrency of its own.** Cache lookup runs on the driver thread
+  before the pool starts and cache stores after it joins, so the parallel region contains no
+  cache access at all.
+- **Diagnostics from concurrent importers interleave**, and their order varies run to run. Each
+  located error still names its file and field; only the ordering is scheduling-dependent.
+
+### The importer thread-safety contract
+
+A consumer's cook module supplies importers veng never sees (see
+[Cook modules](#cook-modules--a-games-own-importers)), so this is a **consumer-facing contract**,
+not an internal note.
+
+**What the driver guarantees to `AssetImporter::Cook(context, entry)`:**
+
+- It is called **at most once per manifest entry**, on a worker thread — not necessarily the
+  thread that constructed the importer.
+- `context` and `entry` are that call's own. `context.Resolve` and `context.RecordDependency`
+  record into that entry's private slot and are safe to call from the worker.
+- `context.AssetTypes`, `Types`, `Systems` and `Config` are **read-only for the whole cook**.
+- `context.ThreadBudget` (≥ 1) is how many threads this call may spawn. It is **one shared budget
+  for the whole cook**, not a per-importer allowance.
+- The cook cache is never touched while `Cook` runs.
+
+**To declare `ImporterConcurrency::Parallel`, `Cook` must not:**
+
+- Write state that outlives the call — no file-scope or function-local `static` mutable data, no
+  importer member, no global.
+- Call a library carrying **process-wide mutable state** reachable by another concurrent `Cook`
+  unless that state is itself ordered. **Lazily-initialised global tables are the trap**, and
+  *"it only initialises once"* is a claim to verify against the library's source, not to assume —
+  both real defects the audit found were exactly this shape.
+- Write outside its own returned buffer.
+- Assume any ordering relative to other assets, or any interleaving order for its diagnostics.
+
+**Opting out is doing nothing.** `AssetImporter::Concurrency()` defaults to
+`ImporterConcurrency::Serialized`, which runs the call under the cook's single serialization lock.
+Opting *in* is the explicit override, so an unaudited importer is safe by construction and an
+importer that cannot be *shown* safe is never assumed safe — a cook that is fast and occasionally
+wrong is far worse than one that is slow.
+
+**Nothing in this contract asks an importer to be deterministic.** A cooked asset is required to
+be **valid**, not to be one particular valid encoding, and two runs may legitimately produce
+different bytes (the ASTC encoder is built without `ASTCENC_INVARIANCE`). Reproducibility is not
+a property the cook promises and not one an importer owes.
+
+### What the audit found
+
+Every first-party importer landed in one of two classes; **nothing landed in "unknown but let
+through"**.
+
+| importer | class | why |
+|---|---|---|
+| Texture | **Parallel** | `stb_image`'s failure reason is `thread_local`; `stb_image_resize2`'s tables are read-only; the block encoders' process-global tables are now ordered (below) |
+| Raw | **Parallel** | a file read into a fresh buffer, driving no library |
+| Mesh, Skeleton, Animation | Serialized | assimp — per-call `Importer` instances are the documented pattern, but the `DefaultLogger` singleton and per-format loader state were not established |
+| Shader, Material, MaterialInstance | Serialized | Slang — `createGlobalSession` per call, reentrancy not established |
+| Font | Serialized | FreeType / msdfgen |
+| Environment | Serialized | tinyexr |
+| Prefab, Level, TableSchema, DataTable | Serialized | the module-reflected `TypeRegistry` / `SystemRegistry`; read-only during a cook, but confirming that was more work than serialising them |
+| StyleSheet, UIDocument, InputMap, VertexLayout | Serialized | free — 0.02 s combined across 23 assets on the measured pack |
+
+**Two real defects came out of it, both process-global encoder state:**
+
+- **`astcenc` rebuilds its global `sin_table`/`cos_table` at the end of *every*
+  `astcenc_context_alloc`, not once.** Allocating a context while another thread encodes therefore
+  races with that thread's reads. The encoder context is now **cached per thread** and reused
+  across mips and textures (`astcenc_compress_reset`), with a `std::shared_mutex` ordering
+  allocation (exclusive) against encoding (shared).
+- **`bc7enc_compress_block_init()` and `rgbcx::init()` fill process-global tables on every call**,
+  now behind `std::call_once`. Found by inspection rather than by the sanitiser — the macOS ASTC
+  path does not reach them.
+
+**The serialized band, measured on a content-heavy pack:** 26.66 s of true work (every importer
+but Texture), of which Mesh alone is 15.10 s, against 235.57 s of worker-seconds in the Parallel
+band — **18.5 % of the pre-change cook**. That is the ceiling on any further gain from
+parallelising more importers, and at the current wall time it is *not* the binding constraint:
+a 26.7 s serial floor against a ~60 s wall means throughput binds, not serialisation.
+
+### What is checked, and what was deliberately not
+
+- **The warm-cook no-op test** (`tests/cooker/cook_cache.cpp`) cooks a 24-entry pack at 8 jobs,
+  cooks it again, and asserts the second cook **rewrote nothing**. That is the property the TOC's
+  stability exists to serve — an unchanged pack recognised from metadata and skipped — tested
+  directly rather than through a proxy, and it is indifferent to the encoder's byte-level
+  variability.
+- **A byte comparison between a serial and a parallel cook was rejected, not merely unavailable.**
+  Recorded so it is not re-proposed: it catches a race only when the race happens to perturb
+  output on that run, which is strictly weaker than a thread-sanitiser run, while `vengc verify`
+  already covers output integrity and the suite covers semantics. It would also have been
+  meaningless here — without `ASTCENC_INVARIANCE` a texture-bearing pack does not cook to the same
+  bytes twice even from an unchanged binary, so the comparison would have measured encoder jitter
+  rather than correctness.
+- **A thread-sanitiser run over a cook** exercising every reachable first-party importer is the
+  standard this is held to, and it is clean. **Skeleton and Animation are not exercised** — the
+  repo carries no rigged-model fixture — so what establishes those two is the serialization lock,
+  not the sanitiser.
+
+### Cook-module ABI 1 → 2
+
+`AssetImporter` gained a virtual (`Concurrency()`) and `CookContext` a trailing field
+(`ThreadBudget`), both of which a module built against ABI 1 would misread — a stale vtable and a
+short context. `VENG_COOK_MODULE_ABI_VERSION` is therefore **2**, so the handshake rejects a stale
+cook module loudly instead. A consumer **rebuilds; no source change is required.**
+
+### Reading a `--timing` report
+
+`--timing[=<file>]` on `cook` and `cook-project` (see [`vengc` subcommands](#vengc-subcommands))
+prints an operator summary and optionally writes the full per-asset table as CSV. With no flag
+nothing is sampled and the cook is behaviour-for-behaviour what it is without it.
+
+- **Per-asset and per-importer figures are *work*, never elapsed.** A `Serialized` importer's
+  elapsed includes the time it spent queued on the serialization lock; billing that to the
+  importer inflates a cheap one by however long the expensive ones held the lock and makes the
+  shares sum past the cook. Queueing is reported in the roll-up's own **`queued`** column and in
+  the CSV's `serialized_wait_s`, and is excluded from every total, mean and ranking.
+- **Above one job the asset seconds are a sum across workers**, not a share of the wall clock, so
+  `total − assets` is not a remainder and is not offered as one. The report says so, states the
+  budget, and gives a `workers busy` occupancy figure instead. Per-importer shares are taken
+  against that worker sum, which is what makes them add to 100 %.
+- **At one job the accounting closes**: the report gives the total, the per-asset sum, the named
+  driver phases (module load, project/manifest parse, TOC + digest, archive write, cache
+  bookkeeping, depfile) and an explicit **unattributed** line, so a serial share is stated rather
+  than left as a subtraction the reader has to compute.
+
 ## The prefab-cooking relaxation
 
 The **prefab-cooking path** is the one place the Vulkan-free cooker relaxes its
@@ -360,10 +511,14 @@ so the cooker and the runtime loader share one encoder.
   through; `--shader-include <dir>` to add the engine core shader dir to every Slang session's
   search path so a consumer shader resolves `#include "Veng/surface.slang"`; `--cache-dir <dir>` to
   serve unchanged assets from the cook cache instead of re-encoding them, see [The cook
-  cache](#the-cook-cache)). Engine-internal packs (the core pack, the editor icons) cook this way.
+  cache](#the-cook-cache); `--jobs <n>` to bound the cook's whole concurrency budget and
+  `--timing[=<out.csv>]` to emit the per-asset / per-importer report, see [The cook is
+  parallel](#the-cook-is-parallel--and-an-importer-declares-whether-it-may-be)). Engine-internal
+  packs (the core pack, the editor icons) cook this way.
 - **`cook-project`** — cook a whole **project** for one configuration: `vengc cook-project
   <project.veng> --config <name> --out-dir <dir> [--module <lib>] [--cook-module <lib>]
-  [--reference <pack>]... [--shader-include <dir>] [--cache-dir <dir>]`.
+  [--reference <pack>]... [--shader-include <dir>] [--cache-dir <dir>] [--jobs <n>]
+  [--timing[=<out.csv>]]`.
   `ParseProject` hand-parses the project's `packs`, `configurations`, and `startupLevel`;
   the named configuration is matched by `BuildConfiguration.Name`; each pack cooks into
   `<stem><suffix>.vengpack` and a `<projstem><suffix>.vengproj` (`WriteCookedProject`) names
@@ -423,7 +578,8 @@ passing both is an explicit override of the sibling lookup.
   duplicated machinery. `AssetImporterRegistry::Register` is inline for exactly this reason — an
   out-of-line definition would be an unresolved symbol in the module.
 - **Its own ABI, versioned independently.** `VengCookModuleRegister(VengCookModuleHost*)` with a
-  `VengCookModuleAbiVersion` handshake (`VENG_COOK_MODULE_ABI_VERSION`, currently 1), so a change
+  `VengCookModuleAbiVersion` handshake (`VENG_COOK_MODULE_ABI_VERSION`, currently **2** — see
+  [the ABI bump](#cook-module-abi-1--2)), so a change
   to the importer surface never invalidates every runtime module. `ModuleLoader::Load` is
   parameterized on the version symbol and expected value, so both contracts share one platform
   loader.

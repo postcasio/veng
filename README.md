@@ -154,6 +154,21 @@ vengc verify my_pack.vengpack   # check archive integrity
 At runtime your app mounts the pack and loads assets by id. Geometry can also be
 generated at runtime (cubes, planes, spheres) with no cooker involved.
 
+The cook runs a pack's assets across a work pool, sized by `--jobs <n>` (default: the
+hardware concurrency — `--jobs 1` cooks strictly on one thread). An importer opts into
+running concurrently by overriding `AssetImporter::Concurrency()`; the default is to run
+under the cook's serialization lock, so an importer that says nothing is never scheduled
+concurrently. If your project registers importers of its own through a cook module, the
+contract they must satisfy to declare `Parallel` is in
+[cooker/CLAUDE.md](cooker/CLAUDE.md#the-importer-thread-safety-contract).
+
+`--timing[=<out.csv>]` reports where a cook's time went — the costliest assets and a
+per-importer roll-up, plus the full per-asset table as CSV when a file is named:
+
+```sh
+vengc cook my_pack.json -o my_pack.vengpack --jobs 8 --timing=cook.csv
+```
+
 The `examples/hello-triangle` directory is a complete, working reference for all
 of this — application, scene setup, assets, and build wiring.
 

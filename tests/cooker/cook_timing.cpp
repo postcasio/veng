@@ -172,6 +172,33 @@ TEST_CASE("CookTiming: a parallel cook reports a worker sum, not a wall-clock re
     CHECK(summary.find("remainder") == string::npos);
 }
 
+TEST_CASE("CookTiming: queueing on the serialization lock is not billed to the importer")
+{
+    // Synthesized rather than cooked: the shape being pinned is a cheap serialized importer that
+    // waited a long time behind an expensive one, which needs a pack with a slow importer to
+    // reproduce. The report is a pure function of the record, so the record is written directly.
+    CookTiming timing;
+    timing.Jobs = 8;
+    timing.TotalSeconds = 50.0;
+    timing.Assets.push_back(
+        {.Id = AssetId{1}, .Type = "Cheap", .ImportSeconds = 0.01, .SerializedWaitSeconds = 30.0});
+    timing.Assets.push_back({.Id = AssetId{2}, .Type = "Expensive", .ImportSeconds = 40.0});
+
+    const string summary = FormatCookTimingSummary(timing);
+
+    // The expensive importer leads both lists. Ranking on elapsed would put Cheap first, which is
+    // the misattribution: it was queued for 30 s and did 10 ms of work.
+    REQUIRE(summary.find("Expensive") != string::npos);
+    REQUIRE(summary.find("Cheap") != string::npos);
+    CHECK(summary.find("Expensive") < summary.find("Cheap"));
+
+    // The roll-up bills Cheap its 10 ms of work and reports the 30 s it queued in its own column.
+    const usize lineStart = summary.rfind('\n', summary.rfind("Cheap")) + 1;
+    const string line = summary.substr(lineStart, summary.find('\n', lineStart) - lineStart);
+    CHECK(line.find("0.010 s") != string::npos);
+    CHECK(line.find("30.000 s") != string::npos);
+}
+
 TEST_CASE("CookTiming: the CSV table carries a header and one row per asset")
 {
     const path packDir = UniqueDir("csv");

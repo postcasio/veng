@@ -69,10 +69,20 @@ namespace Veng::Cook
         /// @brief Seconds spent compressing and hashing the entry's blobs. Zero on a cache hit.
         f64 StoreSeconds = 0.0;
 
-        /// @brief Total wall seconds attributed to this asset.
+        /// @brief Total wall seconds attributed to this asset, queueing included.
         [[nodiscard]] f64 TotalSeconds() const
         {
             return CacheLookupSeconds + SerializedWaitSeconds + ImportSeconds + StoreSeconds;
+        }
+
+        /// @brief Seconds of actual work on this asset: @ref TotalSeconds less the lock queueing.
+        ///
+        /// What the report attributes to an importer. Billing the queueing to the importer that
+        /// waited it out inflates a cheap serialized importer by however long the expensive ones
+        /// held the lock, and makes the per-importer shares sum past the cook.
+        [[nodiscard]] f64 WorkSeconds() const
+        {
+            return CacheLookupSeconds + ImportSeconds + StoreSeconds;
         }
     };
 
@@ -144,8 +154,8 @@ namespace Veng::Cook
     /// @brief Writes the full per-asset table as CSV for a tool to consume.
     ///
     /// One header row, then one row per asset:
-    /// `id,type,cache_hit,cache_lookup_s,import_s,store_s,total_s`. The summary carries the
-    /// whole-cook phases; this file is the per-asset table alone.
+    /// `id,type,cache_hit,cache_lookup_s,serialized_wait_s,import_s,store_s,total_s`. The summary
+    /// carries the whole-cook phases; this file is the per-asset table alone.
     /// Errors are located: `"timing '<path>': <reason>"`.
     /// @param file    Destination CSV path.
     /// @param timing  The collected record.
