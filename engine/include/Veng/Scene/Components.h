@@ -440,8 +440,8 @@ namespace Veng
     {
         /// @brief Desired move direction in the pawn's local frame: X right, Y up, Z forward.
         vec3 Move{0.0f};
-        /// @brief Desired look delta this tick: X yaw, Y pitch, in radians-scaling units.
-        vec2 Look{0.0f};
+        /// @brief Desired rotational command this tick: X yaw, Y pitch, Z roll, in radians-scaling units.
+        vec3 Look{0.0f};
         /// @brief Action-flag bitset (jump/fire/...); bit meanings are game policy.
         u32 Actions = 0;
     };

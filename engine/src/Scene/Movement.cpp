@@ -17,7 +17,8 @@ namespace Veng
 
         // Yaw about the world up keeps the pawn upright; pitch about the pawn's local
         // right tilts the facing. Applying yaw on the left and pitch on the right keeps
-        // them independent of accumulated roll.
+        // them independent of accumulated roll. The upright mover consumes no roll: it
+        // ignores the Intent's roll command (Look.z) so a character stays level.
         const quat yaw =
             glm::angleAxis(intent.Look.x * mover.TurnSpeed * delta, vec3(0.0f, 1.0f, 0.0f));
         const quat pitch =

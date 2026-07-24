@@ -13,8 +13,10 @@ namespace Veng
     ///
     /// Translates the transform by the Intent's pawn-local move, rotated into the
     /// transform's current orientation, times the Mover's MoveSpeed and delta; rotates
-    /// it by the Intent's look delta (yaw about local up, pitch about local right) times
-    /// the Mover's TurnSpeed. A zero Intent leaves the transform unchanged. Pure math —
+    /// it by the Intent's rotational command (yaw about local up, pitch about local
+    /// right) times the Mover's TurnSpeed. The roll term (Look.z) is ignored — this
+    /// upright mover keeps a character level. A zero Intent leaves the transform
+    /// unchanged. Pure math —
     /// no scene, no device — so it is the deterministic core both the movement system and
     /// the unit tests drive.
     /// @param transform  The pawn transform mutated in place.

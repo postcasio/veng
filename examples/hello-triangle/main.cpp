@@ -222,7 +222,7 @@ Intent MapInputToIntent(const PlayerInput& input)
 
     Intent intent;
     intent.Move = vec3(move.x, 0.0f, -move.y);
-    intent.Look = vec2(-look.x * YawSensitivity, 0.0f);
+    intent.Look = vec3(-look.x * YawSensitivity, 0.0f, 0.0f);
     intent.Actions = input.IsHeld(Actions::Jump) ? 1u : 0u;
     return intent;
 }

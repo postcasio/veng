@@ -99,7 +99,7 @@ namespace
 
         Intent intent;
         intent.Move = vec3(move.x, 0.0f, -move.y);
-        intent.Look = vec2(-look.x * YawSensitivity, 0.0f);
+        intent.Look = vec3(-look.x * YawSensitivity, 0.0f, 0.0f);
         intent.Actions = input.IsHeld(Jump) ? 1u : 0u;
         return intent;
     }
@@ -195,7 +195,7 @@ TEST_CASE("IntegrateMovement yaws by the look delta times turn speed")
 {
     Transform transform;
     const Mover mover{.MoveSpeed = 1.0f, .TurnSpeed = 2.0f};
-    const Intent intent{.Look = vec2(0.5f, 0.0f)};
+    const Intent intent{.Look = vec3(0.5f, 0.0f, 0.0f)};
 
     IntegrateMovement(transform, intent, mover, 1.0f);
 
@@ -260,6 +260,8 @@ TEST_CASE("Control mapping turns a resolved PlayerInput into the expected Intent
     // Yaw is the negated mouse-X delta scaled by the sensitivity; pitch does not drive the pawn.
     CHECK(intent.Look.x == doctest::Approx(-0.2f * 0.05f));
     CHECK(intent.Look.y == doctest::Approx(0.0f));
+    // Look carries a third rotational axis (roll); this upright mapping commands none.
+    CHECK(intent.Look.z == doctest::Approx(0.0f));
     CHECK(intent.Actions == 1u);
 }
 

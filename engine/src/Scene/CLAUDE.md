@@ -249,7 +249,9 @@ which a game-specific control system reads to produce the abstract `Intent` game
   replicated (the AI/remote path) — so every local human seat must author one.
 
 A game-specific **control** system reads `PlayerInput` by action id and writes the abstract
-**`Intent`** command (local-frame move, look delta, action bitset); a **movement** system
+**`Intent`** command (local-frame move, a three-axis rotational command — yaw, pitch, roll, of
+which the built-in upright mover consumes only yaw and pitch — and an action bitset); a
+**movement** system
 (`MovementSystem`, `Veng/Scene/Movement.h`) and gameplay systems generally consume `Intent` and
 mutate state, scaled per pawn by an optional **`Mover`**. **The layering invariant:** actions →
 `PlayerInput` → control system → `Intent` → gameplay; **only** the control system reads actions,
