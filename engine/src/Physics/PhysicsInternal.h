@@ -11,12 +11,15 @@
 
 #include <Jolt/Core/JobSystemSingleThreaded.h>
 #include <Jolt/Core/TempAllocator.h>
+#include <Jolt/Physics/Body/Body.h>
 #include <Jolt/Physics/Body/BodyID.h>
+#include <Jolt/Physics/Body/BodyLockInterface.h>
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayer.h>
 #include <Jolt/Physics/Collision/ContactListener.h>
 #include <Jolt/Physics/Collision/ObjectLayer.h>
 #include <Jolt/Physics/Collision/Shape/Shape.h>
 #include <Jolt/Physics/Constraints/TwoBodyConstraint.h>
+#include <Jolt/Physics/PhysicsStepListener.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 
 #include <unordered_map>
@@ -252,6 +255,56 @@ namespace Veng::Detail
         }
     };
 
+    /// @brief Applies a per-body gravity field each step, in place of the solver's uniform gravity.
+    ///
+    /// Registered with the solver only while a field is installed. Its OnStep runs before each
+    /// simulation step with every body and constraint locked, so it reads each active dynamic body's
+    /// centre of mass, evaluates the field there through EvaluateGravity, and adds the matching
+    /// force (mass times acceleration). Static and kinematic bodies do not integrate and are
+    /// skipped; a body reached by no source gets no force, which is the free-fall state the field
+    /// model makes real.
+    ///
+    /// The solver's job system is single-threaded, so this runs on the thread that called Step and
+    /// the unsafe active-body list it reads is stable for the callback's duration.
+    class GravityFieldListener final : public JPH::PhysicsStepListener
+    {
+    public:
+        /// @brief The world-space sources to compose; owned by PhysicsWorld::Native.
+        const vector<GravitySourceInstance>* Sources = nullptr;
+
+        /// @brief Adds each active dynamic body its field force for the coming step.
+        /// @param context  The step context, carrying the physics system being stepped.
+        void OnStep(const JPH::PhysicsStepListenerContext& context) override
+        {
+            if (Sources == nullptr || Sources->empty())
+            {
+                return;
+            }
+            const JPH::PhysicsSystem& system = *context.mPhysicsSystem;
+            const JPH::BodyLockInterfaceNoLock& locks = system.GetBodyLockInterfaceNoLock();
+            const JPH::uint active = system.GetNumActiveBodies(JPH::EBodyType::RigidBody);
+            const JPH::BodyID* bodies = system.GetActiveBodiesUnsafe(JPH::EBodyType::RigidBody);
+            for (JPH::uint i = 0; i < active; ++i)
+            {
+                JPH::Body* body = locks.TryGetBody(bodies[i]);
+                if (body == nullptr || !body->IsDynamic())
+                {
+                    continue;
+                }
+                const f32 inverseMass = body->GetMotionProperties()->GetInverseMass();
+                if (inverseMass <= 0.0f)
+                {
+                    continue;
+                }
+                const vec3 position = vec3(FromJolt(body->GetCenterOfMassPosition()));
+                const vec3 acceleration = EvaluateGravity(*Sources, position);
+                // Force is mass times acceleration; the body's mass is the reciprocal of its
+                // inverse mass, so the field applies the same acceleration whatever the body weighs.
+                body->AddForce(ToJolt(acceleration / inverseMass));
+            }
+        }
+    };
+
     /// @brief One live body: its solver handle and the component values it was built from.
     struct BodyRecord
     {
@@ -302,6 +355,12 @@ namespace Veng
         std::unordered_map<u32, Entity> BodyOwners;
         /// @brief Live constraints, keyed by the entity carrying the constraint component.
         std::unordered_map<Entity, Detail::ConstraintRecord> Constraints;
+        /// @brief The installed world-space gravity field, empty when none is set.
+        vector<GravitySourceInstance> GravitySources;
+        /// @brief The step listener applying the field; registered only while a field is installed.
+        Detail::GravityFieldListener GravityListener;
+        /// @brief Whether the field listener is currently registered with the solver.
+        bool GravityFieldActive = false;
         /// @brief Whether a body was created since the last step, so the broad phase is re-optimized.
         bool BroadPhaseDirty = false;
     };

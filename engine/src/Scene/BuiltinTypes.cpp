@@ -6,6 +6,7 @@
 #include <Veng/Gui/Surface.h>
 #include <Veng/Net/Session.h>
 #include <Veng/Physics/Components.h>
+#include <Veng/Physics/Gravity.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Renderer/Atmosphere.h>
 #include <Veng/Renderer/CaptureSurface.h>
@@ -67,6 +68,11 @@ namespace Veng
         registry.Register<FixedConstraint>();
         registry.Register<PointConstraint>();
         registry.Register<HingeConstraint>();
+
+        // Gravity as a field of sources, evaluated per body per step rather than a world constant.
+        // GravityKind, RegionShape and the Region struct register transitively through the
+        // component's fields.
+        registry.Register<GravitySource>();
 
         // Net-anticipation seam: the ownership annotation and the camera-rig relationships
         // (third-person follow, first-person look, point orbit) the View-phase rig reads.

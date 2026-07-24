@@ -3,6 +3,7 @@
 #include <Veng/Veng.h>
 #include <Veng/Result.h>
 #include <Veng/Physics/Components.h>
+#include <Veng/Physics/Gravity.h>
 #include <Veng/Physics/Layers.h>
 #include <Veng/Scene/Entity.h>
 
@@ -117,6 +118,23 @@ namespace Veng
 
         /// @brief Returns the gravitational acceleration applied to every dynamic body.
         [[nodiscard]] vec3 GetGravity() const;
+
+        /// @brief Installs a world-space gravity field, replacing the uniform gravity constant.
+        ///
+        /// Gravity becomes a field evaluated per dynamic body per step through EvaluateGravity: a
+        /// step listener resolves the acceleration at each active dynamic body's centre of mass
+        /// before the step and applies the matching force, so the sources compose by priority and
+        /// blend across their seams. A body reached by no source falls under no gravity at all —
+        /// free-fall is a real state, not a hidden default — which is why installing a field turns
+        /// the world's uniform gravity off: the field is the only source of gravity while it is set.
+        ///
+        /// The sources are copied, so the caller keeps no lifetime obligation. Passing an empty span
+        /// clears the field and restores the world's uniform gravity constant (see SetGravity), so a
+        /// world that never installs a field — or clears the one it had — behaves exactly as a
+        /// world with a single gravity vector.
+        ///
+        /// @param sources  The world-space sources to compose, or an empty span to clear the field.
+        void SetGravitySources(std::span<const GravitySourceInstance> sources);
 
         /// @brief Brings @p entity's body into line with its components, creating it if absent.
         ///

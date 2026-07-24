@@ -37,6 +37,7 @@
 #include <Veng/Input.h>
 #include <Veng/Input/Actions.h>
 #include <Veng/Net/BlobCodec.h>
+#include <Veng/Physics/Gravity.h>
 #include <Veng/Physics/PhysicsSystem.h>
 #include <Veng/Physics/PhysicsWorld.h>
 #include <Veng/Net/Host.h>
@@ -655,6 +656,20 @@ protected:
         // sample opts in, and the level names PhysicsSystem so the world is stepped each Sim tick.
         // The level's authored stack of dynamic cubes falls onto the static ground body.
         scene.SetPhysicsWorld(PhysicsWorld::Create(PhysicsWorldInfo{}));
+
+        // Gravity is a field of sources, not a world constant. The sample authors one Radial source
+        // whose origin sits below the falling stack, so the cubes are drawn toward a point — down
+        // and inward — rather than straight down, the visible proof that "down" is evaluated per
+        // body from the field. Its region covers the cubes; a body outside every source would feel
+        // no gravity at all, which is the free-fall state the field model makes real.
+        const Entity gravityField = scene.CreateEntity();
+        scene.Add<Transform>(gravityField, Transform{.Position = vec3(0.0f, -6.0f, 6.5f)});
+        scene.Add<GravitySource>(gravityField, GravitySource{
+                                                   .Kind = GravityKind::Radial,
+                                                   .Magnitude = 9.81f,
+                                                   .Bounds = Region{.Shape = RegionShape::Sphere,
+                                                                    .HalfExtents = vec3(20.0f)},
+                                               });
 
         // HT_PHYSICS_DEBUG draws the solver's shapes, body states and contacts into the scene's
         // debug-draw sink each tick — the visualization the module is verified through.

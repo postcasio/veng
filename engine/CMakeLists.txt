@@ -158,6 +158,7 @@ add_library(veng SHARED
         src/Persistence/SaveSlots.cpp
         src/Persistence/SessionStore.cpp
         src/Persistence/StorePatterns.cpp
+        src/Physics/Gravity.cpp
         src/Physics/PhysicsSystem.cpp
         src/Physics/PhysicsWorld.cpp
         src/Physics/Queries.cpp

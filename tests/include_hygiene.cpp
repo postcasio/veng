@@ -113,6 +113,7 @@
 #include <Veng/Persistence/Store.h>
 
 #include <Veng/Physics/Components.h>
+#include <Veng/Physics/Gravity.h>
 #include <Veng/Physics/Layers.h>
 #include <Veng/Physics/PhysicsSystem.h>
 #include <Veng/Physics/PhysicsWorld.h>

@@ -848,6 +848,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/constant_motion.cpp
             tests/unit/physics.cpp
             tests/unit/physics_content.cpp
+            tests/unit/gravity.cpp
             tests/unit/camera_rig.cpp
             tests/unit/game_mode.cpp
             tests/unit/viewport_mapping.cpp

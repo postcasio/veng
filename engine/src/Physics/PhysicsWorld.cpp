@@ -277,6 +277,7 @@ namespace Veng
         System.SetGravity(Detail::ToJolt(info.Gravity));
         Contacts.BodyOwners = &BodyOwners;
         System.SetContactListener(&Contacts);
+        GravityListener.Sources = &GravitySources;
     }
 
     PhysicsWorld::PhysicsWorld(const PhysicsWorldInfo& info) : m_Info(info)
@@ -304,12 +305,40 @@ namespace Veng
     void PhysicsWorld::SetGravity(const vec3 gravity)
     {
         m_Info.Gravity = gravity;
-        m_Native->System.SetGravity(Detail::ToJolt(gravity));
+        // While a field is installed it is the only source of gravity, so the solver's uniform
+        // gravity stays at zero; the new constant is restored when the field is cleared.
+        if (!m_Native->GravityFieldActive)
+        {
+            m_Native->System.SetGravity(Detail::ToJolt(gravity));
+        }
     }
 
     vec3 PhysicsWorld::GetGravity() const
     {
-        return Detail::FromJolt(m_Native->System.GetGravity());
+        return m_Info.Gravity;
+    }
+
+    void PhysicsWorld::SetGravitySources(const std::span<const GravitySourceInstance> sources)
+    {
+        m_Native->GravitySources.assign(sources.begin(), sources.end());
+        const bool active = !m_Native->GravitySources.empty();
+        if (active == m_Native->GravityFieldActive)
+        {
+            return;
+        }
+        m_Native->GravityFieldActive = active;
+        if (active)
+        {
+            // The field replaces the uniform gravity: zero the solver's constant so the listener's
+            // per-body force is the only gravity, then a body outside every source truly free-falls.
+            m_Native->System.SetGravity(JPH::Vec3::sZero());
+            m_Native->System.AddStepListener(&m_Native->GravityListener);
+        }
+        else
+        {
+            m_Native->System.RemoveStepListener(&m_Native->GravityListener);
+            m_Native->System.SetGravity(Detail::ToJolt(m_Info.Gravity));
+        }
     }
 
     void PhysicsWorld::CreateBody(const Entity entity, const RigidBody& body,
