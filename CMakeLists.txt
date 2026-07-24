@@ -391,6 +391,55 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(yoga)
 
+# Jolt Physics — the rigid-body solver behind Veng::PhysicsWorld. Linked PRIVATE into
+# libveng: its <Jolt/*.h> headers are confined to engine/src/Physics/, so no public header
+# names a JPH type (the include_hygiene test proves it) and the dependency stays out of
+# veng's exported link interface. EXCLUDE_FROM_ALL + ENABLE_INSTALL OFF build only the
+# `Jolt` target veng links, never Jolt's own samples, viewer, or unit tests.
+#
+# Every option below is a deliberate choice, not a default:
+# - CPP_EXCEPTIONS_ENABLED OFF is the reason this library was reachable at all — veng
+#   builds -fno-exceptions and a stray `throw` is a compile error.
+# - CPP_RTTI_ENABLED OFF shrinks the vendored build; Jolt carries its own type system and
+#   needs no C++ RTTI. veng itself does not build -fno-rtti — the flag is Jolt-scoped.
+# - DOUBLE_PRECISION ON gives JPH::RVec3 double components, so a large-extent world keeps
+#   sub-millimetre positions far from the origin, for a ~5-10% step cost.
+# - CROSS_PLATFORM_DETERMINISTIC ON drops fast-math and FMA contraction so two peers on
+#   different hardware step to the same bits.
+# - USE_ASSERTS follows VE_DEBUG, routing Jolt's assertion hook to VE_ASSERT in the debug
+#   tree exactly as an engine assert breaks.
+# - JPH_USE_DX12 / JPH_USE_VK / JPH_USE_MTL are OFF: they compile Jolt's GPU compute
+#   shaders through dxc/metallib, an external toolchain this build does not carry, and
+#   nothing in veng uses the hair/soft-body compute path.
+# - DEBUG_RENDERER_IN_DEBUG_AND_RELEASE and the profiler are OFF: veng draws physics
+#   through its own Renderer::DebugDraw and profiles through VE_PROFILE_*.
+# - ENABLE_ALL_WARNINGS OFF keeps Jolt's own -Wall -Werror out of this tree, and
+#   INTERPROCEDURAL_OPTIMIZATION OFF keeps a bitcode archive out of libveng's link.
+# - OVERRIDE_CXX_FLAGS OFF leaves the per-configuration flags as veng's tree set them.
+set(CPP_EXCEPTIONS_ENABLED OFF CACHE BOOL "" FORCE)
+set(CPP_RTTI_ENABLED OFF CACHE BOOL "" FORCE)
+set(DOUBLE_PRECISION ON CACHE BOOL "" FORCE)
+set(CROSS_PLATFORM_DETERMINISTIC ON CACHE BOOL "" FORCE)
+set(USE_ASSERTS ${VE_DEBUG} CACHE BOOL "" FORCE)
+set(JPH_USE_DX12 OFF CACHE BOOL "" FORCE)
+set(JPH_USE_VK OFF CACHE BOOL "" FORCE)
+set(JPH_USE_MTL OFF CACHE BOOL "" FORCE)
+set(DEBUG_RENDERER_IN_DEBUG_AND_RELEASE OFF CACHE BOOL "" FORCE)
+set(PROFILER_IN_DEBUG_AND_RELEASE OFF CACHE BOOL "" FORCE)
+set(ENABLE_ALL_WARNINGS OFF CACHE BOOL "" FORCE)
+set(INTERPROCEDURAL_OPTIMIZATION OFF CACHE BOOL "" FORCE)
+set(OVERRIDE_CXX_FLAGS OFF CACHE BOOL "" FORCE)
+set(ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+        JoltPhysics
+        GIT_REPOSITORY https://github.com/jrouwe/JoltPhysics.git
+        GIT_TAG v5.6.0
+        GIT_SHALLOW TRUE
+        SOURCE_SUBDIR Build
+        EXCLUDE_FROM_ALL
+)
+FetchContent_MakeAvailable(JoltPhysics)
+
 # ---------------------------------------------------------------------------
 # clang-tidy (opt-in)
 # ---------------------------------------------------------------------------
@@ -796,6 +845,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/camera_resolve.cpp
             tests/unit/control_movement.cpp
             tests/unit/constant_motion.cpp
+            tests/unit/physics.cpp
             tests/unit/camera_rig.cpp
             tests/unit/game_mode.cpp
             tests/unit/viewport_mapping.cpp

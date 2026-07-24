@@ -36,6 +36,8 @@
 #include <Veng/Input.h>
 #include <Veng/Input/Actions.h>
 #include <Veng/Net/BlobCodec.h>
+#include <Veng/Physics/PhysicsSystem.h>
+#include <Veng/Physics/PhysicsWorld.h>
 #include <Veng/Net/Host.h>
 #include <Veng/Net/Messages.h>
 #include <Veng/Net/Replication.h>
@@ -642,6 +644,18 @@ protected:
     // copy here, adds its extras, and (smoke) waits on residency before the deterministic capture.
     void OnWorldLoaded(WorldInstanceId world, Scene& scene, ResidencyBatch& pending) override
     {
+        // A scene owns no PhysicsWorld by default, so a physics-free level costs nothing; the
+        // sample opts in, and the level names PhysicsSystem so the world is stepped each Sim tick.
+        // The level's authored stack of dynamic cubes falls onto the static ground body.
+        scene.SetPhysicsWorld(PhysicsWorld::Create(PhysicsWorldInfo{}));
+
+        // HT_PHYSICS_DEBUG draws the solver's shapes, body states and contacts into the scene's
+        // debug-draw sink each tick — the visualization the module is verified through.
+        if (std::getenv("HT_PHYSICS_DEBUG") != nullptr)
+        {
+            scene.GetPhysicsWorld()->SetDebugDrawEnabled(true);
+        }
+
         // Seed the editable topology copy from the scene — the level's post knobs (a seeded
         // LevelRenderSettings component) — read by the same query the engine used, so the debug
         // RenderSettingsEditor starts in sync. The exposure and bloom already rode the engine's
@@ -680,6 +694,15 @@ protected:
             // until the world spawn's streamed meshes are resident before the capture frame.
             SetWorldPaused(world, true);
             pending.WaitResident(GetTaskSystem());
+
+            // The world is paused, so the solver would never run and the cubes would be captured
+            // mid-air at their authored heights. Settle them here instead: a fixed number of steps
+            // at the fixed tick, so the pose depends on neither wall clock nor frame count and the
+            // capture stays byte-identical run to run.
+            for (u32 step = 0; step < SmokePhysicsSteps; ++step)
+            {
+                StepPhysics(scene, SmokePhysicsStep);
+            }
         }
         else
         {
@@ -1537,6 +1560,11 @@ private:
 
     // Fixed rotation for the smoke capture, in radians.
     static constexpr f32 SmokeAngle = 0.9f;
+
+    // The Sim tick the world runs at, and how many of them the smoke capture settles the physics
+    // demo for — four seconds, well past the stack coming to rest.
+    static constexpr f32 SmokePhysicsStep = 1.0f / 60.0f;
+    static constexpr u32 SmokePhysicsSteps = 240;
 
     u32 m_FrameCount = 0;
     const char* m_SmokeOutput = nullptr;

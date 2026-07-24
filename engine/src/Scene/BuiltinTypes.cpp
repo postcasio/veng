@@ -5,6 +5,7 @@
 #include <Veng/Gui/Overlay.h>
 #include <Veng/Gui/Surface.h>
 #include <Veng/Net/Session.h>
+#include <Veng/Physics/Components.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Renderer/Atmosphere.h>
 #include <Veng/Renderer/CaptureSurface.h>
@@ -52,6 +53,14 @@ namespace Veng
         // Autonomous constant transform velocity (drift + spin) the ConstantMotionSystem
         // integrates. MotionSpace registers transitively through ConstantMotion.
         registry.Register<ConstantMotion>();
+
+        // Rigid-body simulation: what the solver simulates and the shape it collides with.
+        // MotionType, PhysicsLayer and ColliderShape register transitively through their fields.
+        // PhysicsPose is the solver's own pose channel — runtime-only, so it carries no reflected
+        // field and neither serializes nor rides the wire.
+        registry.Register<RigidBody>();
+        registry.Register<Collider>();
+        registry.Register<PhysicsPose>();
 
         // Net-anticipation seam: the ownership annotation and the camera-rig relationships
         // (third-person follow, first-person look, point orbit) the View-phase rig reads.

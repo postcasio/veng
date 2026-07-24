@@ -30,6 +30,10 @@ Each major system's architecture lives in a `CLAUDE.md` inside its source direct
   `GuiOverlay`/`GuiSurface`/`CaptureSurface` component family).
 - **[src/Net/CLAUDE.md](src/Net/CLAUDE.md)** — `Veng/Net/`, the server-authoritative
   client/server layer (transport, replication, prediction/reconciliation, interest management).
+- **[src/Physics/CLAUDE.md](src/Physics/CLAUDE.md)** — `Veng/Physics/`, rigid-body simulation: the
+  per-`Scene` `PhysicsWorld`, `RigidBody`/`Collider` as reflected components, the fixed step in the
+  Sim phase, the `PhysicsPose`/`SyncTransform` seam and the two-writer hazard, the closed collision
+  layer table, the replay gate, and the Native containment of the vendored solver.
 - **[src/Persistence/CLAUDE.md](src/Persistence/CLAUDE.md)** — `Veng/Persistence/`, the
   durable-state subsystem: the `Store`'s families, opaque record keys, atomic whole-slot flush,
   versioning and migration, and the capture/rehydrate scene hooks.

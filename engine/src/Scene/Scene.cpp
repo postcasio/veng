@@ -2,6 +2,7 @@
 
 #include <Veng/Assert.h>
 #include <Veng/Asset/AssetHandle.h>
+#include <Veng/Physics/PhysicsWorld.h>
 #include <Veng/Reflection/Serialize.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/SceneClone.h>
@@ -103,8 +104,8 @@ namespace Veng
 
     Scene::Scene(TypeRegistry& registry) : m_Registry(&registry) {}
 
-    // Out-of-line so the SceneSimulation pimpl is complete at the Unique<SceneSimulation> destruction
-    // site; the scene owns nothing else that needs a hand-written teardown.
+    // Out-of-line so the SceneSimulation and PhysicsWorld pimpls are complete at their
+    // Unique<T> destruction sites; the scene owns nothing else that needs a hand-written teardown.
     Scene::~Scene() = default;
 
     Unique<Scene> Scene::Create(TypeRegistry& registry)
@@ -116,6 +117,11 @@ namespace Veng
     void Scene::SetSimulation(Unique<SceneSimulation> simulation)
     {
         m_Simulation = std::move(simulation);
+    }
+
+    void Scene::SetPhysicsWorld(Unique<PhysicsWorld> world)
+    {
+        m_PhysicsWorld = std::move(world);
     }
 
     void Scene::StartSimulation(const SystemContext& context)

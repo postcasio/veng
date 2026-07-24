@@ -182,6 +182,8 @@ namespace Veng
     using uvec3 = glm::uvec3;
     /// @brief 4-component unsigned integer vector.
     using uvec4 = glm::uvec4;
+    /// @brief 3-component double vector, for positions whose extent outruns f32 precision.
+    using dvec3 = glm::dvec3;
 
     /// @brief Unsigned size type.
     using usize = std::size_t;

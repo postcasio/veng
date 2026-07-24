@@ -16,6 +16,7 @@ namespace Veng
 
     class Scene;
     class SceneSimulation;
+    class PhysicsWorld;
     struct SystemContext;
     struct AABB;
     struct Hierarchy;
@@ -227,6 +228,18 @@ namespace Veng
 
         /// @brief Returns the attached simulation, or null when the scene has none.
         [[nodiscard]] SceneSimulation* GetSimulation() const { return m_Simulation.get(); }
+
+        /// @brief Attaches (or replaces) the rigid-body simulation space this scene's bodies live in.
+        ///
+        /// A Scene optionally owns a PhysicsWorld the way it optionally owns a SceneSimulation, and
+        /// it owns none by default — a scene with no physics instantiates nothing and costs
+        /// nothing. Passing a null pointer detaches and destroys the held one, which destroys every
+        /// body with it. Clone() does not copy it.
+        /// @param world  The world to own, or null to detach.
+        void SetPhysicsWorld(Unique<PhysicsWorld> world);
+
+        /// @brief Returns the attached physics world, or null when the scene has none.
+        [[nodiscard]] PhysicsWorld* GetPhysicsWorld() const { return m_PhysicsWorld.get(); }
 
         /// @brief Starts the attached simulation over this scene; a no-op when none is attached.
         ///
@@ -677,6 +690,9 @@ namespace Veng
 
         /// @brief The simulation driving this scene's systems, or null when none is attached.
         Unique<SceneSimulation> m_Simulation;
+
+        /// @brief The rigid-body simulation space this scene's bodies live in, or null when none.
+        Unique<PhysicsWorld> m_PhysicsWorld;
 
         template <class...>
         friend class SceneView;

@@ -4,6 +4,7 @@
 #include <Veng/Scene/CameraRig.h>
 #include <Veng/Scene/DeviceAssignmentSystem.h>
 #include <Veng/Scene/InputMappingSystem.h>
+#include <Veng/Physics/PhysicsSystem.h>
 #include <Veng/Scene/Motion.h>
 #include <Veng/Scene/Movement.h>
 #include <Veng/Scene/RemoteInterpolationSystem.h>
@@ -31,6 +32,11 @@ namespace Veng
         registry.Register<CameraRigSystem>();
         registry.Register<AnimationSystem>();
         registry.Register<ConstantMotionSystem>();
+
+        // Steps the scene's PhysicsWorld once per Sim tick. A level names it after the systems that
+        // produce motion, so a kinematic body's target pose for the tick is already written; a level
+        // that does not name it runs no solver.
+        registry.Register<PhysicsSystem>();
 
         // Writes each Remote-tier entity's displayed Transform from its snapshot buffer, in the past.
         // View-phase — presentation only. Idles with no remote entities, so single-player is untouched.

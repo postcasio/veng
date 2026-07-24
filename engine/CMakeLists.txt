@@ -157,6 +157,8 @@ add_library(veng SHARED
         src/Persistence/SaveSlots.cpp
         src/Persistence/SessionStore.cpp
         src/Persistence/StorePatterns.cpp
+        src/Physics/PhysicsSystem.cpp
+        src/Physics/PhysicsWorld.cpp
         src/Platform/UserPaths.cpp
         src/Task/ParallelFor.cpp
         src/Task/TaskSystem.cpp
@@ -401,7 +403,8 @@ set_source_files_properties(src/Diagnostics/Profiler.cpp PROPERTIES COMPILE_DEFI
 # json types directly, so every consumer of that header needs the include resolved
 # through this link. Vulkan, GLFW, VMA and nfd are hidden behind the Native idiom
 # (see Veng/Renderer/Native.h) — no public header pulls them in, so they link
-# PRIVATE and stay out of the consumer include graph.
+# PRIVATE and stay out of the consumer include graph. Jolt joins them: the solver is
+# reached only through PhysicsWorld::Native, so no public header names a JPH type.
 target_link_libraries(veng PUBLIC
         glm::glm
         fmt::fmt
@@ -429,6 +432,7 @@ target_link_libraries(veng PRIVATE
         nfd
         ZLIB::ZLIB
         yogacore
+        Jolt
         ${CMAKE_DL_LIBS}
 )
 
