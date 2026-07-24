@@ -166,7 +166,9 @@ namespace Veng::Renderer
             {
                 if (lastPipeline != group.PipelineMaterial)
                 {
-                    group.PipelineMaterial->Bind(cmd);
+                    // Bind the material's skinned g-buffer pipeline, not its static one: the skinned
+                    // pipeline's layout carries the palette at set 2, so the bind below is valid.
+                    group.PipelineMaterial->BindSkinned(cmd);
                     registry.Bind(cmd);
                     cmd.BindDescriptorSets(DescriptorSetBindInfo{
                         .Sets = {plan.DrawDataSet},

@@ -989,6 +989,7 @@ TEST_CASE_FIXTURE(
 #include <Veng/Cook/Cooker.h>
 #include <Veng/Asset/Material.h>
 #include <Veng/Asset/MaterialInstance.h>
+#include <Veng/Asset/Skeleton.h>
 
 namespace
 {
@@ -4544,6 +4545,111 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const DrawBudgetStats again = renderer->GetDrawBudgetStats();
     CHECK(again.SlotsGranted == stats.SlotsGranted);
     CHECK(again.StaticDropped == stats.StaticDropped);
+
+    std::filesystem::remove(outArchive);
+}
+
+// The skinned g-buffer regression. A skinned mesh's color pass draws through a dedicated
+// pipeline variant — the core skinned surface vertex stage (surface_skinned.vert) paired with
+// the material's fragment, a three-set layout carrying the per-instance skinning palette at set
+// 2. Without that variant the geometry pass binds the material's static two-set pipeline and then
+// binds the palette at set 2, which is invalid (VUID-vkCmdBindDescriptorSets-firstSet-00360) and
+// faults on MoltenVK. This cooks a minimal 2-joint skinned triangle (with the brick surface
+// material) and renders it through the full g-buffer path, asserting the mesh actually drew
+// (non-background albedo texels) — a coverage gap since the only real skinned mesh a test ever
+// rendered was removed, leaving nothing to catch the dropped variant.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: a skinned mesh draws through the g-buffer skinned pipeline")
+{
+    RegisterBuiltinTypes(Types);
+
+    // Cook the skinned fixture pack (a 2-joint skinned triangle carrying the brick surface
+    // material) in-process and mount it; the core pack (auto-mounted) supplies the skinned vertex
+    // layout, the skinned surface vertex shader, and the lighting/blit shaders.
+    const path fixtureDir = path(GPU_GBUFFER_FIXTURE_DIR);
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_skinned.vengpack";
+
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    const VoidResult cookResult =
+        cooker.CookPack(fixtureDir / "skinned_pack.json", outArchive, {}, nullptr, nullptr, nullptr,
+                        nullptr, {}, path(VENG_CORE_SHADER_DIR));
+    REQUIRE(cookResult.has_value());
+
+    AssetManager assets(Context, Tasks, Types);
+    const VoidResult mountResult = assets.Mount(outArchive);
+    REQUIRE(mountResult.has_value());
+
+    // The cooked skinned mesh: the skinned vertex layout, a resolved Skeleton (so IsSkinned()),
+    // and the brick surface material on its single submesh.
+    const AssetResult<AssetHandle<Mesh>> meshResult =
+        assets.LoadSync<Mesh>(AssetId{0x2D13}); // the skinned mesh
+    REQUIRE(meshResult.has_value());
+    REQUIRE(meshResult->IsLoaded());
+    REQUIRE((*meshResult)->IsSkinned());
+
+    constexpr uvec2 extent{128, 128};
+
+    // One skinned entity at the origin, posed at the skeleton's bind pose (the animation system's
+    // output stand-in): a SkinnedPose sized to the bone count drives the palette memcpy path in
+    // the skinned gather, exactly as a real animator would.
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity entity = scene->CreateEntity();
+    scene->Add<Transform>(entity);
+    scene->Add<MeshRenderer>(entity).Mesh = *meshResult;
+
+    const AssetHandle<Skeleton>& skeleton = (*meshResult)->GetSkeleton();
+    REQUIRE(skeleton.IsLoaded());
+    vector<mat4> bindPose;
+    skeleton.Get()->ComputeBindPoseMatrices(bindPose);
+    scene->Add<SkinnedPose>(entity).Skinning = bindPose;
+
+    // The triangle spans roughly x,y in [0,1] on the z=0 plane, front face toward +Z. Frame it
+    // squarely from +Z so the whole primitive falls inside the view.
+    CameraView camera;
+    camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.4f, 0.4f, 2.5f), vec3(0.4f, 0.4f, 0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    // Albedo mode terminates after the g-buffer, so a non-background texel proves the skinned
+    // surface pipeline ran and wrote G0 — the pipeline this test exists to pin.
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = {.Mode = DebugView::Albedo},
+    });
+
+    Context.ImmediateCommands(
+        [&](CommandBuffer& cmd)
+        {
+            renderer->Execute(
+                cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
+        });
+
+    // The gather routed the mesh to the skinned draw list (not a dropped or static slot).
+    CHECK(renderer->GetLastDrawnCount() >= 1);
+
+    const vector<u8> pixels = renderer->GetOutput()->GetImage()->Download();
+    REQUIRE(pixels.size() == static_cast<size_t>(extent.x) * extent.y * 8);
+
+    // The g-buffer albedo cleared to (0.05, 0.05, 0.08); the brick surface writes a red-dominant
+    // albedo. Count texels far from the background — a non-trivial count means the skinned mesh
+    // rasterized real geometry rather than the frame reading as an empty clear.
+    const vec3 background{0.05f, 0.05f, 0.08f};
+    u32 drawnTexels = 0;
+    for (u32 y = 0; y < extent.y; ++y)
+    {
+        for (u32 x = 0; x < extent.x; ++x)
+        {
+            const vec3 c = DecodeTexel(pixels, extent.x, x, y);
+            if (glm::length(c - background) > 0.1f)
+            {
+                ++drawnTexels;
+            }
+        }
+    }
+    CHECK(drawnTexels > 50);
 
     std::filesystem::remove(outArchive);
 }

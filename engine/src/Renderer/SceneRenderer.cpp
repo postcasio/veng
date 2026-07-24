@@ -1345,6 +1345,15 @@ namespace Veng::Renderer
         // renderer-owned frame-in-flight rings PrepareDraws indexes internally.
         PrepareDraws(resolvedView, registry.GetCurrentViewConstantsIndex());
 
+        // Build each skinned draw's surface skinned g-buffer pipeline on the first frame its
+        // material is drawn skinned (idempotent). A material never skinned never pays for the
+        // second pipeline, and the picking pass's skinned variant below reuses this layout — so
+        // this must run before EnsurePipelines.
+        for (const DrawGroup& group : m_Internal->Plan.SkinnedGroups)
+        {
+            group.PipelineMaterial->EnsureSkinnedPipeline(m_Assets);
+        }
+
         // Build the id-writing pipeline variants on the first frame a surface material is available
         // (their layout is shared across surface materials), so the picking pass can re-draw the
         // same survivors. A no-op when picking is off or the pipelines are already built.

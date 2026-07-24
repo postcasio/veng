@@ -73,6 +73,23 @@ namespace Veng
         /// per-draw DrawData SSBO.
         void Bind(Renderer::CommandBuffer& cmd) const;
 
+        /// @brief Binds the parent's skinned g-buffer pipeline for a skinned draw.
+        ///
+        /// The skinned sibling of Bind: it binds the three-set skinned pipeline (set 0 bindless,
+        /// set 1 DrawData, set 2 the skinning palette) so the geometry pass's palette bind at set 2
+        /// is valid. A Surface material reads its selector from the DrawData SSBO, so nothing is
+        /// pushed. Only meaningful for a Surface parent that built a skinned variant.
+        /// @pre The parent has a skinned pipeline (EnsureSkinnedPipeline has run).
+        void BindSkinned(Renderer::CommandBuffer& cmd) const;
+
+        /// @brief Ensures the parent's skinned g-buffer pipeline is built (render-thread, lazy, idempotent).
+        ///
+        /// Delegates to the parent Material. The renderer calls this before a skinned draw so
+        /// BindSkinned has a pipeline to bind. A no-op for a non-Surface parent and after the first
+        /// build.
+        /// @param assets  Asset manager used to load the skinned vertex shader and its layout.
+        void EnsureSkinnedPipeline(AssetManager& assets) const;
+
         /// @brief Returns the frame-folded material selector (GetCurrentFrameBase() + slot index).
         ///
         /// The value the shader uses to index the ring-buffered per-material parameter block. A
@@ -141,6 +158,18 @@ namespace Veng
         [[nodiscard]] const Ref<Renderer::GraphicsPipeline>& GetPipeline() const
         {
             return m_Parent.Get()->GetPipeline();
+        }
+
+        /// @brief Returns the parent's skinned g-buffer pipeline, or null when it has none.
+        [[nodiscard]] const Ref<Renderer::GraphicsPipeline>& GetSkinnedPipeline() const
+        {
+            return m_Parent.Get()->GetSkinnedPipeline();
+        }
+
+        /// @brief Returns the parent's skinned pipeline layout (three sets), or null when it has none.
+        [[nodiscard]] Ref<Renderer::PipelineLayout> GetSkinnedPipelineLayout() const
+        {
+            return m_Parent.Get()->GetSkinnedPipelineLayout();
         }
 
         /// @brief Returns the parent's reflected pipeline layout.

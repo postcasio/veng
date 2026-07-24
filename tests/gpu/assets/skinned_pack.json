@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "0x00000000000023F1",
+      "type": "VertexLayout",
+      "source": "layouts/canonical.vlayout.json"
+    },
+    {
+      "id": "0x0000000000002400",
+      "type": "Shader",
+      "source": "shaders/surface_full.vert.shader.json"
+    },
+    {
+      "id": "0x0000000000002402",
+      "type": "Shader",
+      "source": "shaders/skinned_surface.frag.shader.json"
+    },
+    {
+      "id": "0x0000000000002404",
+      "type": "Material",
+      "source": "materials/skinned_surface.vmat.json"
+    },
+    {
+      "id": "0x0000000000002D01",
+      "type": "Skeleton",
+      "source": "meshes/skinned.skeleton.json"
+    },
+    {
+      "id": "0x0000000000002D13",
+      "type": "Mesh",
+      "source": "meshes/skinned.mesh.json"
+    }
+  ]
+}

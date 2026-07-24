@@ -177,6 +177,24 @@ namespace Veng
         cmd.PushConstants(GetMaterialSelector(), selectorOffset);
     }
 
+    void MaterialInstance::BindSkinned(CommandBuffer& cmd) const
+    {
+        const Material& parent = *m_Parent.Get();
+        const Ref<GraphicsPipeline>& skinned = parent.GetSkinnedPipeline();
+        VE_ASSERT(skinned != nullptr,
+                  "MaterialInstance::BindSkinned: '{}' has no skinned pipeline — a skinned draw "
+                  "needs a cooked Surface material",
+                  m_Name);
+        cmd.BindPipeline(skinned);
+        // A Surface material reads its selector from the per-draw DrawData SSBO, so it pushes
+        // nothing — the skinned surface path is Surface-only, so there is never a selector to push.
+    }
+
+    void MaterialInstance::EnsureSkinnedPipeline(AssetManager& assets) const
+    {
+        m_Parent.Get()->EnsureSkinnedPipeline(assets);
+    }
+
     u32 MaterialInstance::GetMaterialSelector() const
     {
         // Fold the current frame's region base into the selector so the shader's

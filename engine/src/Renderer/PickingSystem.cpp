@@ -146,7 +146,11 @@ namespace Veng::Renderer
                            });
         }
 
-        if (!m_SkinnedPipeline && skinnedMaterial != nullptr)
+        // The skinned id pipeline reuses the material's skinned layout (set 0 bindless, set 1
+        // DrawData, set 2 the palette), not its static two-set layout: the picking pass binds the
+        // palette at set 2 exactly as the g-buffer pass does, so the layout must carry that set.
+        if (!m_SkinnedPipeline && skinnedMaterial != nullptr &&
+            skinnedMaterial->GetSkinnedPipelineLayout() != nullptr)
         {
             const AssetHandle<Veng::Shader> vs =
                 LoadShader(EntityIdSkinnedVertId, "entity-id skinned vertex");
@@ -158,7 +162,7 @@ namespace Veng::Renderer
                                .DepthAttachmentFormat = GBuffer::DepthFormat,
                                .VertexBufferLayout = Mesh::SkinnedLayout(),
                                .InstanceCandidateId = true,
-                               .PipelineLayout = skinnedMaterial->GetPipelineLayout(),
+                               .PipelineLayout = skinnedMaterial->GetSkinnedPipelineLayout(),
                                .ShaderStages =
                                    {
                                        {.Stage = ShaderStage::Vertex, .Module = vs.Get()->Module},

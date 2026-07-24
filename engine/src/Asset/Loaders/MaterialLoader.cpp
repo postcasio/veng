@@ -1,5 +1,7 @@
 #include "MaterialLoader.h"
 
+#include "SurfaceSkinnedPipeline.h"
+
 #include <algorithm>
 #include <cstring>
 
@@ -30,6 +32,12 @@ namespace Veng
         // same gathered geometry through the canonical vertex stage — so it carries the
         // Material::NoSelectorPush sentinel and pushes nothing.
         constexpr u32 FullscreenSelectorPushOffset = 0;
+
+        // The core pack's skinned surface vertex stage (surface_skinned.vert): the canonical
+        // surface vertex stage plus 4-influence linear-blend skinning, reading the per-instance
+        // palette at set 2. A Surface material pairs it with its fragment to build a skinned
+        // g-buffer pipeline (lazily, on first skinned use) whose layout carries the palette set.
+        constexpr AssetId SurfaceSkinnedVertId{0x984BE76D55A4DA7CULL};
 
         u32 SelectorPushOffsetFor(MaterialDomain domain)
         {
@@ -241,6 +249,36 @@ namespace Veng
                     .DepthWriteEnable = true,
                 });
         }
+    }
+
+    Result<Ref<Renderer::GraphicsPipeline>>
+    Detail::BuildSkinnedSurfacePipeline(AssetManager& manager, Renderer::Context& context,
+                                        AssetId id, const Veng::Shader& fragmentShader,
+                                        Renderer::CullMode cullMode)
+    {
+        // The skinned g-buffer pipeline pairs the core skinned surface vertex stage
+        // (surface_skinned.vert — 4-influence linear-blend skinning, the palette at set 2) with
+        // this material's fragment, targeting the same g-buffer formats as the static pipeline. The
+        // layout it reflects carries the third (palette) set the static surface.vert layout lacks,
+        // which is what makes the geometry pass's set-2 palette bind valid for a skinned draw. It
+        // shares the material-loader build path, so a fragment that consumes the full surface
+        // interpolant set links here exactly as it does against the static stage.
+        const AssetResult<AssetHandle<Veng::Shader>> skinnedVs =
+            manager.LoadSync<Veng::Shader>(SurfaceSkinnedVertId);
+        if (!skinnedVs)
+        {
+            return std::unexpected(skinnedVs.error().Detail);
+        }
+
+        Result<Ref<Renderer::PipelineLayout>> layout = BuildPipelineLayout(
+            context, id, MaterialDomain::Surface, *skinnedVs->Get(), fragmentShader);
+        if (!layout)
+        {
+            return std::unexpected(layout.error());
+        }
+
+        return BuildSurfacePipeline(manager, context, id, *layout, *skinnedVs->Get(),
+                                    fragmentShader, cullMode);
     }
 
     AssetResult<Detail::LoadJob> MaterialLoader::Load(AssetManager& manager,
@@ -485,6 +523,7 @@ namespace Veng
         // ── 6. Construct the unregistered Material ───────────────────────────
         const Veng::MaterialInfo info{
             .Name = fmt::format("Material {}", id.Value),
+            .Id = id,
             .Context = &context,
             .Domain = domain,
             .CullMode = cullMode,
@@ -526,6 +565,10 @@ namespace Veng
                     pipeline = std::move(*built);
                 }
 
+                // A Surface material's skinned g-buffer sibling is built lazily, the first time the
+                // material is drawn on a skinned mesh (Material::EnsureSkinnedPipeline) — a material
+                // never skinned never pays for it, and one whose fragment does not consume the full
+                // surface interpolant set (a static-only material) still loads.
                 material->Finalize(std::move(*layout), std::move(pipeline));
                 return {};
             },

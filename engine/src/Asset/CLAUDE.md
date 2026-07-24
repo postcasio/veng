@@ -249,10 +249,17 @@ and the app still runs — only `smoke_golden` (gated to skip on a non-ASTC devi
   **`AnimationSystem`** samples it against the mesh's `Skeleton` each tick into a transient
   **`SkinnedPose`** component (the bone palette, `Skeleton::ComputeSkinningMatrices` =
   `GlobalInverse · modelBone · inverseBind`). The `SceneRenderer` splits its g-buffer draw plan
-  into a static path (the existing GPU-driven-cull pipeline) and a **skinned path**: a second
-  pipeline built from the core `surface_skinned.vert` (4-influence linear-blend skinning) drawn
-  CPU-direct, reading a per-instance **skinning palette** SSBO (ring-buffered, **set 2**;
-  `DrawData.PaletteBase` is each instance's offset). The directional `ShadowScenePass` and the
+  into a static path (the existing GPU-driven-cull pipeline) and a **skinned path** drawn
+  CPU-direct. The skinned path's pipeline is a **per-Surface-material sibling of the static
+  g-buffer pipeline** — the core `surface_skinned.vert` (4-influence linear-blend skinning) paired
+  with the material's own fragment, built **lazily the first time the material is drawn on a
+  skinned mesh** (`Material::EnsureSkinnedPipeline`, driven by the renderer) and reachable through
+  `Material::GetSkinnedPipeline()`, so a material never skinned never pays for it and a static-only
+  material (one whose fragment does not consume the full surface interpolant set) still loads. Its
+  layout carries a third descriptor set the
+  static `surface.vert` layout does not: the per-instance **skinning palette** SSBO (ring-buffered,
+  **set 2**; `DrawData.PaletteBase` is each instance's offset), which the g-buffer pass binds for a
+  skinned draw. The directional `ShadowScenePass` and the
   `PunctualShadowScenePass` both cast a skinned caster's posed shadow through a parallel
   `shadow_depth_skinned.vert` + the palette at set 1, and `surface_skinned.vert` skins both the
   current and previous position (the latter through the previous-frame palette base the renderer

@@ -19,6 +19,7 @@ namespace Veng::Renderer
 
 namespace Veng
 {
+    class AssetManager;
     struct Shader;
     class Texture;
 
@@ -85,6 +86,8 @@ namespace Veng
     {
         /// @brief Debug name for the material.
         string Name;
+        /// @brief The material's AssetId; used for debug names (invalid for a runtime-built material).
+        AssetId Id;
         /// @brief Render context used for resource creation.
         Renderer::Context* Context = nullptr;
 
@@ -171,6 +174,33 @@ namespace Veng
             return m_Pipeline;
         }
 
+        /// @brief Returns the skinned g-buffer sibling pipeline, or null until it is built.
+        ///
+        /// Built lazily by EnsureSkinnedPipeline the first time the material is drawn on a skinned
+        /// mesh; null before that and for a non-Surface domain. The geometry pass binds it for a
+        /// skinned draw so the set-2 palette bind is valid.
+        [[nodiscard]] const Ref<Renderer::GraphicsPipeline>& GetSkinnedPipeline() const
+        {
+            return m_SkinnedPipeline;
+        }
+
+        /// @brief Builds the skinned g-buffer pipeline if it is not built yet (Surface only).
+        ///
+        /// Called on the render thread by the renderer the first time this material is drawn on a
+        /// skinned mesh, so a material never skinned never builds it and a static-only material
+        /// (one whose fragment does not consume the full surface interpolant set) still loads. A
+        /// no-op for a non-Surface domain, and after the first successful build. Fatal if the build
+        /// fails — a fragment used on a skinned mesh must be compatible with the skinned vertex
+        /// stage.
+        /// @param assets  Asset manager used to load the skinned vertex shader and its layout.
+        void EnsureSkinnedPipeline(AssetManager& assets);
+
+        /// @brief Returns the skinned pipeline's three-set layout, or null when the material has no skinned pipeline.
+        ///
+        /// Set 0 bindless, set 1 DrawData, set 2 the skinning palette. The picking pass reuses it to
+        /// build its own skinned id pipeline, so its palette bind at set 2 is valid too.
+        [[nodiscard]] Ref<Renderer::PipelineLayout> GetSkinnedPipelineLayout() const;
+
         /// @brief Returns the reflected pipeline layout (set 0 reserved for bindless; selector push range at the domain's offset).
         ///
         /// A PostProcess pass builds its GraphicsPipeline against this layout using the material's shader modules.
@@ -251,10 +281,13 @@ namespace Veng
 
         Renderer::Context& m_Context;
         string m_Name;
+        /// @brief The material's AssetId (invalid for a runtime-built material); used for debug names.
+        AssetId m_Id;
         MaterialDomain m_Domain = MaterialDomain::Surface;
         Renderer::CullMode m_CullMode = Renderer::CullMode::Back;
         i32 m_SortPriority = 0;
         Ref<Renderer::GraphicsPipeline> m_Pipeline;
+        Ref<Renderer::GraphicsPipeline> m_SkinnedPipeline;
         Ref<Renderer::PipelineLayout> m_PipelineLayout;
 
         AssetHandle<Shader> m_VertexShader;

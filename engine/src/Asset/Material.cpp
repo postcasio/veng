@@ -4,18 +4,22 @@
 
 #include <Veng/Assert.h>
 #include <Veng/Asset/AssetBuild.h>
+#include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Shader.h>
 #include <Veng/Asset/Texture.h>
 #include <Veng/Renderer/Context.h>
+#include <Veng/Renderer/GraphicsPipeline.h>
 #include <Veng/Renderer/PipelineLayout.h>
 #include <Veng/Task/TaskSystem.h>
+
+#include "Loaders/SurfaceSkinnedPipeline.h"
 
 namespace Veng
 {
     using namespace Renderer;
 
     Material::Material(const MaterialInfo& info)
-        : m_Context(*info.Context), m_Name(info.Name), m_Domain(info.Domain),
+        : m_Context(*info.Context), m_Name(info.Name), m_Id(info.Id), m_Domain(info.Domain),
           m_CullMode(info.CullMode), m_SortPriority(info.SortPriority), m_Pipeline(info.Pipeline),
           m_VertexShader(info.VertexShader), m_FragmentShader(info.FragmentShader),
           m_Textures(info.Textures), m_Block(info.Block), m_Fields(info.Fields),
@@ -75,6 +79,26 @@ namespace Veng
     const Ref<Renderer::ShaderModule>& Material::GetFragmentModule() const
     {
         return m_FragmentShader.Get()->Module;
+    }
+
+    Ref<Renderer::PipelineLayout> Material::GetSkinnedPipelineLayout() const
+    {
+        return m_SkinnedPipeline != nullptr ? m_SkinnedPipeline->GetPipelineLayout() : nullptr;
+    }
+
+    void Material::EnsureSkinnedPipeline(AssetManager& assets)
+    {
+        if (m_Domain != MaterialDomain::Surface || m_SkinnedPipeline != nullptr)
+        {
+            return;
+        }
+
+        Result<Ref<Renderer::GraphicsPipeline>> built = Detail::BuildSkinnedSurfacePipeline(
+            assets, m_Context, m_Id, *m_FragmentShader.Get(), m_CullMode);
+        VE_ASSERT(built.has_value(),
+                  "Material::EnsureSkinnedPipeline: '{}' skinned pipeline build failed: {}", m_Name,
+                  built.has_value() ? "" : built.error());
+        m_SkinnedPipeline = std::move(*built);
     }
 
     void Material::Finalize(Ref<Renderer::PipelineLayout> layout,
