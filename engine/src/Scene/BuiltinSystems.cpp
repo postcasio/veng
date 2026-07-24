@@ -5,8 +5,10 @@
 #include <Veng/Scene/CharacterAnimationSystem.h>
 #include <Veng/Scene/DeviceAssignmentSystem.h>
 #include <Veng/Scene/InputMappingSystem.h>
+#include <Veng/Scene/InteractionSystem.h>
 #include <Veng/Physics/CharacterMovementSystem.h>
 #include <Veng/Physics/PhysicsSystem.h>
+#include <Veng/Scene/VehicleSystem.h>
 #include <Veng/Scene/Motion.h>
 #include <Veng/Scene/Movement.h>
 #include <Veng/Scene/RemoteInterpolationSystem.h>
@@ -38,6 +40,14 @@ namespace Veng
         registry.Register<CharacterMovementSystem>();
 
         registry.Register<RootMotionDriveSystem>();
+
+        // Resolves each Interactor's focused Interactable by an Overlap-and-cone sweep, and drains an
+        // InteractRequest landing on a Vehicle into the enter/exit it names. Neither is ordered by
+        // registration — a level names them where its control flow wants them, after the control
+        // system that reads the resolved focus and stamps the request.
+        registry.Register<InteractionSystem>();
+        registry.Register<VehicleSystem>();
+
         registry.Register<CameraRigSystem>();
 
         // Maps a character's finalized motion state onto its animation drive fields (speed →

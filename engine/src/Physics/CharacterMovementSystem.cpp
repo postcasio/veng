@@ -90,6 +90,13 @@ namespace Veng
         for (auto [entity, transform, controller] :
              readScene.View<Transform, CharacterController>())
         {
+            // A disabled controller is not simulated: it is left out of the simulated set, so the
+            // orphan sweep below releases its capsule and its Transform is never overwritten — the
+            // state a seated character (parented to its vehicle) needs.
+            if (!controller.Enabled)
+            {
+                continue;
+            }
             // Advance only the characters this peer owns — a client never fights the snapshot
             // stream for a Server/Remote-tier character.
             if (!HasAuthority(context, scene, entity))

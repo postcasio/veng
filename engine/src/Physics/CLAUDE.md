@@ -234,6 +234,13 @@ character standing on a translating/rotating **kinematic** body moves with it an
 it walks relative to it; while airborne it blends toward the desired by `AirControl`. The general
 fast-surface case is not solved and nothing asks for it.
 
+**A cleared `CharacterController::Enabled` takes a character out of simulation without losing its
+settings.** `CharacterMovementSystem` skips a disabled controller and the orphan sweep releases its
+capsule, so the character stops colliding and stops overwriting its own `Transform` — the state a
+character parented into a vehicle seat needs. Setting it back re-creates the capsule from the
+character's current pose; **`PhysicsWorld::SetCharacterVelocity`** seeds that capsule's velocity
+directly, so a character leaving a moving vehicle carries its velocity rather than starting at rest.
+
 **`CharacterState`** (`VE_TYPE`, runtime-only, never serialized/replicated) is the view output the
 mover writes onto every character each tick — `Grounded`, `GroundNormal`, `Up`, `PlanarSpeed`,
 `VerticalSpeed`, `AirTime`, `GroundEntity` — so gameplay reads a character's ground state without a

@@ -50,6 +50,13 @@ namespace Veng
         f32 JumpImpulse = 5.0f;
         /// @brief Horizontal authority while airborne: 0 is ballistic, 1 is full ground control.
         f32 AirControl = 0.2f;
+        /// @brief Whether the character is simulated; a disabled controller has no capsule.
+        ///
+        /// Cleared to take the character out of simulation without removing its authored settings —
+        /// the CharacterMovementSystem skips a disabled controller and releases its capsule, so a
+        /// seated character stops colliding and stops overwriting its own Transform. Setting it back
+        /// re-creates the capsule from the character's current pose.
+        bool Enabled = true;
     };
 
     /// @brief A character's resolved motion state this tick — the output everything else reads.
@@ -96,6 +103,8 @@ VE_FIELD(JumpImpulse, .DisplayName = "Jump Impulse", .Display = {.Min = 0.0})
 VE_FIELD(AirControl, .DisplayName = "Air Control",
          .Tooltip = "0 is ballistic, 1 is full ground control while airborne",
          .Display = {.Min = 0.0, .Max = 1.0})
+VE_FIELD(Enabled, .DisplayName = "Enabled",
+         .Tooltip = "Cleared takes the character out of simulation without losing its settings")
 VE_REFLECT_END();
 
 VE_TYPE(::Veng::CharacterState, 0x25A2F102E492E78CULL);

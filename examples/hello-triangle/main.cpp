@@ -37,7 +37,9 @@
 #include <Veng/Input.h>
 #include <Veng/Input/Actions.h>
 #include <Veng/Net/BlobCodec.h>
+#include <Veng/Physics/Components.h>
 #include <Veng/Physics/Gravity.h>
+#include <Veng/Physics/Layers.h>
 #include <Veng/Physics/PhysicsSystem.h>
 #include <Veng/Physics/PhysicsWorld.h>
 #include <Veng/Net/Host.h>
@@ -50,11 +52,13 @@
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/CameraRig.h>
 #include <Veng/Scene/Components.h>
+#include <Veng/Scene/Interaction.h>
 #include <Veng/Scene/Movement.h>
 #include <Veng/Scene/Requests.h>
 #include <Veng/Scene/RootMotion.h>
 #include <Veng/Scene/Sockets.h>
 #include <Veng/Scene/Transforms.h>
+#include <Veng/Scene/Vehicle.h>
 #include <Veng/Scene/SceneSystem.h>
 #include <Veng/Scene/SystemRegistry.h>
 #include <Veng/Scene/SceneSimulation.h>
@@ -182,7 +186,12 @@ namespace Actions
     constexpr ActionId Look{0x6DB6F4088653942DULL};
     // Jump button.
     constexpr ActionId Jump{0xB64A2DFE34C4E523ULL};
+    // Interact button: enter a focused vehicle, or leave the one being driven.
+    constexpr ActionId Interact{0xA491C2065BA0FC44ULL};
 }
+
+// The gameplay input context a driver keeps while seated, so Interact still fires to leave.
+constexpr AssetId GameplayInputMapId{0xE65128F84910FBB9ULL};
 
 // The cooked HUD document instantiated over the primary viewport; its stylesheet (with the shared
 // `--accent` / `--tick-idle` tokens) is referenced from the document markup and resolved by the engine.
@@ -253,16 +262,71 @@ public:
                     scene.Get<CameraLook>(viewer->Camera).Pitch += cameraPitchDelta;
                 }
 
-                // The seat may possess no pawn, or one that lacks an Intent slot; skip
-                // rather than fault, so an unwired seat is inert.
-                if (possesses.Pawn == Entity::Null || !scene.IsAlive(possesses.Pawn) ||
-                    !scene.Has<Intent>(possesses.Pawn))
+                // The seat may possess no pawn; skip rather than fault, so an unwired seat is inert.
+                if (possesses.Pawn == Entity::Null || !scene.IsAlive(possesses.Pawn))
                 {
                     return;
                 }
 
-                scene.Get<Intent>(possesses.Pawn) = MapInputToIntent(player);
+                // Interact fires the vehicle seam: while driving a vehicle it leaves it, otherwise it
+                // enters whatever the possessed character is looking at. Firing is a request — the
+                // builtin VehicleSystem drains it — so nothing game-side runs inside the resolve query.
+                if (player.WasTriggered(Actions::Interact))
+                {
+                    FireInteract(scene, possesses.Pawn);
+                }
+
+                // A pawn without an Intent slot (a vehicle being driven has none) simply takes no
+                // movement command here.
+                if (scene.Has<Intent>(possesses.Pawn))
+                {
+                    scene.Get<Intent>(possesses.Pawn) = MapInputToIntent(player);
+                }
             });
+    }
+
+private:
+    // Stamps an InteractRequest to enter or leave a vehicle. When the possessed pawn is itself a
+    // vehicle the seat is driving one, so this leaves it (requesting on behalf of the seated
+    // occupant); otherwise it enters the pawn's focused interactable.
+    static void FireInteract(Scene& scene, const Entity pawn)
+    {
+        if (const Vehicle* vehicle = scene.TryGet<Vehicle>(pawn))
+        {
+            for (const Entity seat : vehicle->Seats)
+            {
+                if (!seat.IsNull() && scene.IsAlive(seat))
+                {
+                    if (const auto* data = scene.TryGet<VehicleSeat>(seat);
+                        data != nullptr && !data->Occupant.IsNull())
+                    {
+                        Stamp(scene, pawn, data->Occupant);
+                        return;
+                    }
+                }
+            }
+            return;
+        }
+
+        if (const Interactor* interactor = scene.TryGet<Interactor>(pawn);
+            interactor != nullptr && !interactor->Focused.IsNull() &&
+            scene.IsAlive(interactor->Focused))
+        {
+            Stamp(scene, interactor->Focused, pawn);
+        }
+    }
+
+    // Stamps the request on `target` naming `actor`, overwriting a not-yet-drained one.
+    static void Stamp(Scene& scene, const Entity target, const Entity actor)
+    {
+        if (auto* existing = scene.TryGet<InteractRequest>(target))
+        {
+            *existing = InteractRequest{.Interactor = actor};
+        }
+        else
+        {
+            scene.Add<InteractRequest>(target, InteractRequest{.Interactor = actor});
+        }
     }
 };
 
@@ -790,6 +854,25 @@ protected:
         {
             Log::Error("hello-triangle: the slab model carries no 'Mount_Top' socket");
         }
+
+        // Make the slab an enterable vehicle: its authored sockets place the seat and the exit, and a
+        // Query-layer body makes it findable by an Interactor's overlap without colliding with
+        // anything (so the settled physics stack is untouched). Walk up, look at it, press Interact to
+        // climb aboard; press again to climb out. It moves nowhere — a Vehicle is the seating seam,
+        // not wheeled dynamics — which is exactly the point.
+        world.Add<RigidBody>(host,
+                             RigidBody{.Motion = MotionType::Static, .Layer = PhysicsLayer::Query});
+        world.Add<Collider>(host, Collider{.Shape = ColliderShape::Box, .Extents = vec3(1.0f)});
+
+        const Entity seat = world.CreateEntity();
+        world.Add<Name>(seat).Value = "Slab Seat";
+        world.Add<VehicleSeat>(
+            seat, VehicleSeat{.Socket = "Mount_Top",
+                              .IsDriver = true,
+                              .ExitSocket = "Mount_Edge",
+                              .Context =
+                                  GetAssetManager().Load<InputMappingContext>(GameplayInputMapId)});
+        world.Add<Vehicle>(host, Vehicle{.Seats = {seat}});
     }
 
     // Opens a second flat-peer world spawning the same startup level and binds it to the corner

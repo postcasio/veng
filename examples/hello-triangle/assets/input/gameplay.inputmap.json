@@ -15,6 +15,11 @@
       "id": "0xB64A2DFE34C4E523",
       "name": "Jump",
       "kind": "Button"
+    },
+    {
+      "id": "0xA491C2065BA0FC44",
+      "name": "Interact",
+      "kind": "Button"
     }
   ],
   "bindings": [
@@ -114,6 +119,14 @@
         "control": 32
       },
       "action": "0xB64A2DFE34C4E523",
+      "axis": "Whole"
+    },
+    {
+      "source": {
+        "device": "Keyboard",
+        "control": 69
+      },
+      "action": "0xA491C2065BA0FC44",
       "axis": "Whole"
     }
   ]

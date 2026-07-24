@@ -324,6 +324,15 @@ namespace Veng
         /// @param entity  The entity whose capsule to destroy.
         void DestroyCharacter(Entity entity);
 
+        /// @brief Sets a character capsule's linear velocity directly; a no-op when it has none.
+        ///
+        /// The capsule composes its velocity from contacts each UpdateCharacter, so this is the seam
+        /// for seeding an initial velocity a later update carries forward — a character leaving a
+        /// moving vehicle keeps the vehicle's velocity rather than starting from rest.
+        /// @param entity    The entity whose capsule velocity to set.
+        /// @param velocity  World-space linear velocity, in metres per second.
+        void SetCharacterVelocity(Entity entity, vec3 velocity);
+
         /// @brief Whether @p entity currently has a character capsule in this world.
         [[nodiscard]] bool HasCharacter(Entity entity) const;
 

@@ -314,6 +314,51 @@ a real `Possesses` link, or a non-null `SeatPrefab` so seat and pawn are distinc
 brings a consumer inside the rule. Widening the engine rule to model a self-controlling seat is a
 design question that has not been settled, so the limit is documented rather than papered over.
 
+## Interaction — proximity focus as data, firing as a request
+
+**`Interactable { string Verb; f32 Range; bool Enabled }`** and
+**`Interactor { f32 Reach; f32 ConeAngle; Entity Focused }`** (`Veng/Scene/Interaction.h`) are the
+two halves of "walk up to something and use it". The builtin **`InteractionSystem`** runs an
+`Overlap` (the physics query) within each interactor's `Reach` every tick, keeps the `Interactable`
+entities that are `Enabled`, fall inside the interactor's view cone (its local −Z is forward,
+matching the socket/camera convention) and within their own `Range`, picks the best by angle then
+distance, and writes it to `Focused` (`Entity::Null` with no candidate). It publishes the resolution
+and nothing more — a prompt is a UI concern reading `Focused` and `Verb`, so the engine supplies the
+resolution and never the presentation. A no-op scene with no `PhysicsWorld` clears every `Focused`.
+
+**Firing is a request, not a callback.** An **`InteractRequest { Entity Interactor; … }`** is stamped
+on the focused entity and drained by whatever system owns that kind of interactable, matching the
+`FocusRequest`/`TravelRequest` idiom exactly (handled → removed, unhandleable → left Pending, failed
+→ marked `Failed` and held a frame). So no game code runs inside the resolve query, and one
+interactable kind — a vehicle — is served by the `VehicleSystem` below without the interaction system
+knowing anything about it.
+
+## Vehicles — the possession-and-seating seam
+
+**`Vehicle { vector<Entity> Seats }`** and
+**`VehicleSeat { string Socket; Entity Occupant; bool IsDriver; string ExitSocket; AssetHandle<InputMappingContext> Context }`**
+(`Veng/Scene/Vehicle.h`) make a vehicle *a thing a character can be inside and control* — the
+possession-and-seating half, deliberately **movement-agnostic**: no wheels, no suspension, no
+constraint, so how a vehicle moves is a consumer's own system attached to the vehicle pawn. Seat
+placement is **entirely mesh sockets** (`AttachToSocket`), so where a pilot sits and climbs out are
+facts about the model.
+
+The builtin **`VehicleSystem`** drains an `InteractRequest` landing on a `Vehicle`. The request's
+`Interactor` chooses the direction — already occupying a seat leaves, otherwise it boards the first
+free seat in preference order. **Enter** disables the character's `CharacterController` (and removes
+its capsule), parents the character to the seat socket, sets `Occupant`, and — for a **driver** seat
+— re-points the controlling seat's `Possesses` at the vehicle and swaps its input context (popping
+the character's top context, pushing the seat's `Context`). `LocalControl` follows for free: the
+per-frame reconcile sees the new `Possesses` and moves the marker, so **no vehicle code runs in the
+marker path**. **Exit** is the exact inverse in reverse order, placing the character at `ExitSocket`
+and re-enabling its controller seeded with the vehicle's current velocity (no discontinuity leaving a
+moving vehicle) — and it is **validated before performed**: the exit socket is overlap-tested against
+solid geometry, and a blocked exit fails and reports rather than placing a character inside a wall. A
+runtime-only **`Seated`** component on the occupant records what entry changed so exit undoes it
+exactly (`VE_TYPE`, never serialized). The `CharacterController` gained an **`Enabled`** flag for
+this: a disabled controller is skipped by `CharacterMovementSystem` and its capsule released, and
+`PhysicsWorld::SetCharacterVelocity` seeds the re-created capsule's velocity on exit.
+
 ## ConstantMotion — the input-free counterpart
 
 **`ConstantMotion` is the input-free counterpart** (`Veng/Scene/Motion.h`): an authored
@@ -400,8 +445,9 @@ constructs it, **pre-registers the engine's reusable systems with `RegisterBuilt
 its own through `VengModuleRegister`, `Application` borrows it) stores `{ SystemId, Name,
 factory }`, **enumerates the catalog** without instantiating anything, resolves an id, and fatally
 rejects a duplicate id. The builtins register in this order (`BuiltinSystems.cpp`):
-`DeviceAssignmentSystem`, `InputMappingSystem`, `MovementSystem`, `RootMotionDriveSystem`,
-`CameraRigSystem`, `CharacterAnimationSystem`, `AnimationSystem`, `ConstantMotionSystem`,
+`DeviceAssignmentSystem`, `InputMappingSystem`, `MovementSystem`, `CharacterMovementSystem`,
+`RootMotionDriveSystem`, `InteractionSystem`, `VehicleSystem`, `CameraRigSystem`,
+`CharacterAnimationSystem`, `AnimationSystem`, `ConstantMotionSystem`, `PhysicsSystem`,
 `RemoteInterpolationSystem`, `TimeOfDaySystem`. Registration is GPU-free (building a system touches no `Context`/device), so
 `RegisterBuiltinSystems` is callable in the headless cooker with no ICD — the cook reflects a
 level's named systems against the same builtins + module catalog the runtime resolves. A

@@ -14,8 +14,10 @@
 #include <Veng/Scene/AnimationBlend.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Camera.h>
+#include <Veng/Scene/Interaction.h>
 #include <Veng/Scene/RemoteInterpolationSystem.h>
 #include <Veng/Scene/Requests.h>
+#include <Veng/Scene/Vehicle.h>
 
 namespace Veng
 {
@@ -86,6 +88,20 @@ namespace Veng
         // reads. CharacterState is a runtime-only output channel, so it carries no reflected field.
         registry.Register<CharacterController>();
         registry.Register<CharacterState>();
+
+        // Proximity interaction: the passive interactable, the active interactor that focuses one,
+        // and the fired request a system owning the interactable drains. InteractRequest is
+        // local-only (it never rides a snapshot).
+        registry.Register<Interactable>();
+        registry.Register<Interactor>();
+        registry.Register<InteractRequest>();
+
+        // A thing a character enters and controls, its seats, and the runtime bookkeeping an occupant
+        // carries so exit undoes entry exactly. Vehicle and VehicleSeat are authored; Seated is a
+        // runtime-only channel carrying no reflected field, so it neither serializes nor replicates.
+        registry.Register<Vehicle>();
+        registry.Register<VehicleSeat>();
+        registry.Register<Seated>();
 
         // Net-anticipation seam: the ownership annotation and the camera-rig relationships
         // (third-person follow, first-person look, point orbit) the View-phase rig reads.

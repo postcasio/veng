@@ -199,6 +199,7 @@ add_library(veng SHARED
         src/Scene/DeviceAssignmentSystem.cpp
         src/Scene/FocusRequestReconcile.cpp
         src/Scene/InputMappingSystem.cpp
+        src/Scene/InteractionSystem.cpp
         src/Scene/LocalControl.cpp
         src/Scene/Motion.cpp
         src/Scene/Movement.cpp
@@ -215,6 +216,7 @@ add_library(veng SHARED
         src/Scene/SystemRegistry.cpp
         src/Scene/TimeOfDay.cpp
         src/Scene/Transforms.cpp
+        src/Scene/VehicleSystem.cpp
         src/Scene/Visibility.cpp
         src/Renderer/SwapChainCompositePass.cpp
         src/Renderer/GatherPass.cpp

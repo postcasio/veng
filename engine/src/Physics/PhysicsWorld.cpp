@@ -793,6 +793,16 @@ namespace Veng
         m_Native->Characters.erase(entity);
     }
 
+    void PhysicsWorld::SetCharacterVelocity(const Entity entity, const vec3 velocity)
+    {
+        const auto found = m_Native->Characters.find(entity);
+        if (found == m_Native->Characters.end())
+        {
+            return;
+        }
+        found->second.Character->SetLinearVelocity(Detail::ToJolt(velocity));
+    }
+
     bool PhysicsWorld::HasCharacter(const Entity entity) const
     {
         return m_Native->Characters.contains(entity);

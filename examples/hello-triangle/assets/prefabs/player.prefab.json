@@ -114,6 +114,10 @@
           "JumpImpulse": 5.0,
           "AirControl": 0.3
         },
+        "::Veng::Interactor": {
+          "Reach": 3.0,
+          "ConeAngle": 0.7853982
+        },
         "::Veng::Authority": {
           "Tier": "Server",
           "Owner": 0

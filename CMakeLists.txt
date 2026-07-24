@@ -850,6 +850,8 @@ if (VENG_BUILD_TESTS)
             tests/unit/physics_content.cpp
             tests/unit/gravity.cpp
             tests/unit/character_controller.cpp
+            tests/unit/interaction.cpp
+            tests/unit/vehicle.cpp
             tests/unit/camera_rig.cpp
             tests/unit/first_person_rig.cpp
             tests/unit/game_mode.cpp
