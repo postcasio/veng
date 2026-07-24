@@ -163,6 +163,7 @@ add_library(veng SHARED
         src/Physics/PhysicsSystem.cpp
         src/Physics/PhysicsWorld.cpp
         src/Physics/Queries.cpp
+        src/Physics/RemoteCharacterBodySystem.cpp
         src/Platform/UserPaths.cpp
         src/Task/ParallelFor.cpp
         src/Task/TaskSystem.cpp

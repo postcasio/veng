@@ -8,6 +8,7 @@
 #include <Veng/Scene/InteractionSystem.h>
 #include <Veng/Physics/CharacterMovementSystem.h>
 #include <Veng/Physics/PhysicsSystem.h>
+#include <Veng/Physics/RemoteCharacterBodySystem.h>
 #include <Veng/Scene/VehicleSystem.h>
 #include <Veng/Scene/Motion.h>
 #include <Veng/Scene/Movement.h>
@@ -58,6 +59,11 @@ namespace Veng
 
         registry.Register<AnimationSystem>();
         registry.Register<ConstantMotionSystem>();
+
+        // Keeps a kinematic collision proxy on every remote character so the local character is
+        // blocked by it. Named before PhysicsSystem so the proxy is driven the tick it appears; a
+        // level with no remote characters never grows one, so single-peer play is untouched.
+        registry.Register<RemoteCharacterBodySystem>();
 
         // Steps the scene's PhysicsWorld once per Sim tick. A level names it after the systems that
         // produce motion, so a kinematic body's target pose for the tick is already written; a level

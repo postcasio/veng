@@ -2,6 +2,8 @@
 
 #include <Veng/Asset/Prefab.h>
 #include <Veng/Log.h>
+#include <Veng/Physics/CharacterController.h>
+#include <Veng/Physics/Components.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
@@ -1464,6 +1466,11 @@ namespace Veng
                     {
                         authority->Tier = Tier::Remote;
                     }
+                    // Drop the physics-rollback marker with the prediction stance that placed it.
+                    if (jc.World->Has<Predicted>(entity))
+                    {
+                        jc.World->Remove<Predicted>(entity);
+                    }
                 }
                 jc.History.Untrack(entity);
             }
@@ -1488,6 +1495,14 @@ namespace Veng
                 else
                 {
                     jc.World->Add<Authority>(entity, Authority{.Tier = Tier::Predicted});
+                }
+                // A predicted character's physics state rolls back: mark it so the mover re-seats its
+                // capsule onto the reconciled pose. Only a character carries the marker — a predicted
+                // entity with no capsule has nothing to re-seat, and everything else in the world is
+                // deterministic-from-tick or static.
+                if (jc.World->Has<CharacterController>(entity) && !jc.World->Has<Predicted>(entity))
+                {
+                    jc.World->Add<Predicted>(entity);
                 }
                 jc.History.Track(entity);
             }

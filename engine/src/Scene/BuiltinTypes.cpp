@@ -88,6 +88,10 @@ namespace Veng
         // reads. CharacterState is a runtime-only output channel, so it carries no reflected field.
         registry.Register<CharacterController>();
         registry.Register<CharacterState>();
+        // The rollback marker: a client stamps it on a locally-controlled character so the mover
+        // re-seats its capsule from the reconciled Transform. Runtime-only, so it carries no
+        // reflected field and neither serializes nor rides the wire.
+        registry.Register<Predicted>();
 
         // Proximity interaction: the passive interactable, the active interactor that focuses one,
         // and the fired request a system owning the interactable drains. InteractRequest is

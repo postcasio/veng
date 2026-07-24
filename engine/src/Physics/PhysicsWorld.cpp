@@ -803,6 +803,65 @@ namespace Veng
         found->second.Character->SetLinearVelocity(Detail::ToJolt(velocity));
     }
 
+    vec3 PhysicsWorld::GetCharacterVelocity(const Entity entity) const
+    {
+        const auto found = m_Native->Characters.find(entity);
+        if (found == m_Native->Characters.end())
+        {
+            return vec3(0.0f);
+        }
+        return Detail::FromJolt(found->second.Character->GetLinearVelocity());
+    }
+
+    void PhysicsWorld::SetCharacterPose(const Entity entity, const PhysicsPose& pose)
+    {
+        const auto found = m_Native->Characters.find(entity);
+        if (found == m_Native->Characters.end())
+        {
+            return;
+        }
+        JPH::CharacterVirtual& character = *found->second.Character;
+        const JPH::Quat rotation = Detail::ToJolt(pose.Rotation);
+        character.SetPosition(Detail::ToJolt(pose.Position));
+        character.SetRotation(rotation);
+        character.SetUp(rotation * JPH::Vec3::sAxisY());
+    }
+
+    vector<u8> PhysicsWorld::SaveCharacterState(const Entity entity) const
+    {
+        const auto found = m_Native->Characters.find(entity);
+        if (found == m_Native->Characters.end())
+        {
+            return {};
+        }
+        JPH::StateRecorderImpl recorder;
+        found->second.Character->SaveState(recorder);
+        const std::string data = recorder.GetData();
+        const auto* bytes = reinterpret_cast<const u8*>(data.data());
+        return {bytes, bytes + data.size()};
+    }
+
+    VoidResult PhysicsWorld::RestoreCharacterState(const Entity entity,
+                                                   const std::span<const u8> state)
+    {
+        const auto found = m_Native->Characters.find(entity);
+        if (found == m_Native->Characters.end())
+        {
+            return std::unexpected(
+                "PhysicsWorld::RestoreCharacterState: the entity has no character capsule");
+        }
+        JPH::StateRecorderImpl recorder;
+        recorder.WriteBytes(state.data(), state.size());
+        recorder.Rewind();
+        found->second.Character->RestoreState(recorder);
+        if (recorder.IsFailed())
+        {
+            return std::unexpected(
+                "PhysicsWorld::RestoreCharacterState: the bytes are not a readable state");
+        }
+        return {};
+    }
+
     bool PhysicsWorld::HasCharacter(const Entity entity) const
     {
         return m_Native->Characters.contains(entity);

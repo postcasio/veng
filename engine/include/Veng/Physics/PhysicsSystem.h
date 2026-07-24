@@ -45,13 +45,14 @@ namespace Veng
     /// kinematic body's target pose for the tick is already written. A level that does not name it
     /// runs no solver, which is what keeps a physics-free scene free.
     ///
-    /// @warning A scene with a PhysicsWorld does not participate in client reconciliation
-    /// rollback. OnUpdate returns early when SystemContext::IsReplay is set, because a replay
-    /// re-runs the whole Sim phase while the solver's own state — velocities, the contact cache,
-    /// sleep — is not in the prediction history and is therefore never restored. Stepping anyway
-    /// would advance the physics clock once per replayed tick against state that was never
-    /// rewound, and the drift from the sim tick is permanent. The gate makes a mispredict of N
-    /// ticks advance the world by exactly one step.
+    /// @warning During a client reconciliation replay (SystemContext::IsReplay), OnUpdate steps only
+    /// when the scene carries a Predicted body. A scene with none does not participate in rollback —
+    /// the solver's own state (dynamic velocities, the contact cache, sleep) is not restored, so a
+    /// replayed step would advance the physics clock against state that was never rewound and drift
+    /// it from the sim tick; such a scene returns early and a mispredict of N ticks advances the
+    /// world by exactly one step. A scene predicting a character does roll back: the step runs during
+    /// replay, re-driving its kinematic bodies to the configuration each replayed tick was actually
+    /// in so the character re-collides correctly. See Physics/CLAUDE.md, "The replay gate".
     class VE_API PhysicsSystem final : public SceneSystem
     {
     public:

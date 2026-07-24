@@ -192,6 +192,17 @@ systems and eases the visual residual through a decaying `PredictionError` rende
 lies; only the render pose eases). So the local pawn responds on the tick its input is sampled;
 remotes stay interpolated.
 
+**A predicted body carries physics through the rollback.** A character's motion runs through a
+kinematic capsule against the collision world, so re-running it means restoring the capsule's state
+and re-driving the world it collides against. The `Predicted` marker (`Veng/Physics/Components.h`)
+declares which bodies roll back — only a locally-controlled character — and `PhysicsSystem` steps
+during a replay when the scene carries one, re-driving its deterministic-from-tick kinematic bodies
+to each replayed tick's configuration; the mover re-seats the capsule onto the reconciled `Transform`
+and `PhysicsWorld::RestoreCharacterState` restores the velocity and ground contact the reflected
+components do not carry. A remote character is not simulated — it interpolates and is made solid by a
+kinematic proxy (`RemoteCharacterBodySystem`) so the local character is blocked by it. The whole path
+is in [../Physics/CLAUDE.md](../Physics/CLAUDE.md), "The replay gate".
+
 ## The compressed wire
 
 The snapshot wire is compressed behind the codec seam (`DeltaCodec`, `Quantize`, `BitStream`). Per

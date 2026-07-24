@@ -333,6 +333,39 @@ namespace Veng
         /// @param velocity  World-space linear velocity, in metres per second.
         void SetCharacterVelocity(Entity entity, vec3 velocity);
 
+        /// @brief Returns a character capsule's world-space linear velocity, or zero when it has none.
+        /// @param entity  The entity whose capsule velocity to read.
+        [[nodiscard]] vec3 GetCharacterVelocity(Entity entity) const;
+
+        /// @brief Teleports a character capsule to @p pose, leaving its velocity untouched; a no-op
+        ///        when it has none.
+        ///
+        /// The seam a client's rollback uses to re-seat a predicted capsule onto the authoritative
+        /// pose after a correction: the reconcile writes the entity's Transform, and the mover pushes
+        /// that pose onto the capsule here before re-simulating. Unlike CreateCharacter it never
+        /// re-creates the capsule, so the capsule's contact and ground state carry across. The
+        /// capsule's up is taken from @p pose.Rotation.
+        /// @param entity  The entity whose capsule to place.
+        /// @param pose    The world-space pose to place it at.
+        void SetCharacterPose(Entity entity, const PhysicsPose& pose);
+
+        /// @brief Captures one character capsule's state — pose, velocity, ground contact — as bytes.
+        ///
+        /// The per-character save side of the rollback seam: it stores exactly one character's worth
+        /// of state, not the world's, because everything else a predicted character collides against
+        /// is either static or a kinematic body recomputed from the tick. The bytes are opaque and
+        /// version-locked to the solver build that produced them; nothing outside this class reads
+        /// them. Empty when @p entity has no capsule.
+        /// @param entity  The entity whose capsule to capture.
+        /// @return The captured state, or an empty vector when @p entity has no capsule.
+        [[nodiscard]] vector<u8> SaveCharacterState(Entity entity) const;
+
+        /// @brief Restores a character capsule from bytes SaveCharacterState produced.
+        /// @param entity  The entity whose capsule to restore; a no-op error when it has none.
+        /// @param state   Bytes from SaveCharacterState on the same capsule.
+        /// @return Success, or an error when @p entity has no capsule or the bytes are not readable.
+        VoidResult RestoreCharacterState(Entity entity, std::span<const u8> state);
+
         /// @brief Whether @p entity currently has a character capsule in this world.
         [[nodiscard]] bool HasCharacter(Entity entity) const;
 

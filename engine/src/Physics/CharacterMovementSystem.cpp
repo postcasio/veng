@@ -40,6 +40,8 @@ namespace Veng
             f32 LastAirTime = 0.0f;
             /// @brief Whether the entity already carries a CharacterState.
             bool HasState = false;
+            /// @brief Whether the entity is a rolled-back predicted character.
+            bool Predicted = false;
         };
 
         /// @brief Rotates @p from toward @p to by at most @p maxAngle radians.
@@ -108,6 +110,7 @@ namespace Veng
                 .Controller = controller,
                 .Pose = PhysicsPose{.Position = dvec3(transform.Position),
                                     .Rotation = transform.Rotation},
+                .Predicted = readScene.Has<Predicted>(entity),
             };
             if (const auto* command = readScene.TryGet<Intent>(entity))
             {
@@ -172,6 +175,16 @@ namespace Veng
             const vec3 desired = (entry.Pose.Rotation * entry.Command.Move) * speed;
             const bool jump =
                 (entry.Command.Actions & static_cast<u32>(CharacterAction::Jump)) != 0;
+
+            // A predicted character's Transform is reconciled against the server: on a correction the
+            // reconcile writes the authoritative pose here and clears nothing on the capsule, so the
+            // capsule is re-seated onto it before this tick's sweep. In steady prediction the
+            // Transform already equals the capsule's own pose (the mover wrote it last tick), so the
+            // re-seat is idempotent; after a rollback restore it is what makes the correction take.
+            if (entry.Predicted)
+            {
+                world->SetCharacterPose(entry.Owner, entry.Pose);
+            }
 
             const CharacterMoveResult result =
                 world->UpdateCharacter(entry.Owner,

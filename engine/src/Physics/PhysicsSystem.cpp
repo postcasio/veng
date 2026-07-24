@@ -111,6 +111,23 @@ namespace Veng
             }
         }
 
+        /// @brief Whether the scene carries any Predicted body — a body that rolls back.
+        ///
+        /// Gates whether the step runs during a reconciliation replay: a scene with none does not
+        /// participate in rollback and is skipped, a scene predicting a character re-drives its
+        /// kinematic world so the character re-collides against the replayed tick's configuration.
+        /// @param scene  The scene to test.
+        [[nodiscard]] bool HasPredictedBody(const Scene& scene)
+        {
+            for (auto [entity, predicted] : scene.View<Predicted>())
+            {
+                (void)entity;
+                (void)predicted;
+                return true;
+            }
+            return false;
+        }
+
         /// @brief Publishes each sensor's overlap set and this tick's enter/exit deltas.
         ///
         /// State a system drains, not an event it subscribes to: the deltas are computed here,
@@ -294,11 +311,22 @@ namespace Veng
 
     void PhysicsSystem::OnUpdate(Scene& scene, const f32 delta, const SystemContext& context)
     {
-        // A reconciliation replay re-runs the whole Sim phase, but the solver's own state —
-        // velocities, the contact cache, sleep — is not in the prediction history and is therefore
-        // never restored. Stepping here would advance the physics clock once per replayed tick
-        // against state that was never rewound, and the drift from the sim tick is permanent.
-        if (context.IsReplay)
+        // A reconciliation replay re-runs the whole Sim phase. A scene with no predicted body does
+        // not participate in rollback: the solver's own state — dynamic velocities, the contact
+        // cache, sleep — is not restored, so stepping here would advance the physics clock against
+        // state that was never rewound and drift it from the sim tick permanently. Such a scene is
+        // gated out, exactly as before.
+        //
+        // A scene predicting a character *does* roll back. The character's capsule state is restored
+        // from the per-tick save and its Transform from the authoritative record (the mover re-seats
+        // the capsule onto it), and the world it collides against is either static or a kinematic
+        // body a deterministic Sim system re-drives from the replayed tick. So the step runs during
+        // replay, re-driving those kinematic bodies to the configuration the tick was actually in —
+        // which is the correctness point: replaying a character against a moving surface's *current*
+        // pose reconciles to a body that was never there. Client-authoritative *dynamic* bodies are
+        // out of scope for prediction (server-authoritative, interpolated), so their replay drift is
+        // not a concern this gate must guard.
+        if (context.IsReplay && !HasPredictedBody(scene))
         {
             return;
         }

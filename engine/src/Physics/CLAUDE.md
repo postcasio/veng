@@ -256,20 +256,54 @@ other authoritative advancers it touches only the characters this peer owns (`Ha
 level names it **before** `PhysicsSystem`, as it names `MovementSystem` before it, so the capsule
 moves against the previous tick's finalized world.
 
-## The replay gate — a physics scene does not roll back
+**A `Predicted` character is re-seated onto its reconciled pose each tick.** The mover pushes a
+`Predicted` character's `Transform` onto its capsule (`SetCharacterPose`) at the start of the tick —
+idempotent in steady prediction (the `Transform` already equals the capsule's own pose the mover
+wrote last tick), and, after a rollback restore, the step that makes the server's correction take on
+the capsule rather than be overwritten by it. See [the replay gate](#the-replay-gate--the-predicted-set-is-what-rolls-back)
+for the whole rollback path.
 
-`PhysicsSystem::OnUpdate` **returns early when `SystemContext::IsReplay` is set.** Reconciliation
-replays the entire Sim phase, but the solver is stateful in ways the prediction history does not
-carry — velocities, the contact cache, sleep state — so nothing restores them before the replay. A
-replayed step would advance the physics clock (`GetStepCount`) an extra time against state that was
-never rewound, and the drift from the sim tick is permanent rather than self-correcting. The gate
-makes a mispredict of N ticks advance the world by **exactly one** step.
+**`RemoteCharacterBodySystem`** (`Veng/Physics/RemoteCharacterBodySystem.h`) is what makes two
+characters block. A remote character — another peer's, mirrored `Tier::Remote` and displayed by the
+`RemoteInterpolationSystem` rather than simulated — carries no capsule, and two `CharacterVirtual`
+capsules do not see each other, so the system keeps a **kinematic** `RigidBody` + capsule `Collider`
+on every remote character, matching its capsule shape and synced to its interpolated `Transform`. The
+local character's capsule is blocked by that kinematic body; the body is never pushed, so the two
+block and neither pushes the other. It is a purely local proxy (the components it adds are not
+replicated), grown against `HasAuthority` and dropped when a character flips local — a no-op on the
+server, where every character is authoritative, and in single-peer play, where there are no remote
+characters. A level names it before `PhysicsSystem`.
 
-So **a scene with a `PhysicsWorld` does not participate in rollback.** That is a stated limitation,
-not an oversight, and `SaveState`/`RestoreState` are the seam a real rewind is built on: they
-capture and restore the whole solver state (poses, velocities, contacts, sleep) as opaque bytes,
-round-trip tested, and `RestoreState` reports unreadable bytes as a `Result` error rather than
-asserting. Nothing predicts through them yet.
+## The replay gate — the predicted set is what rolls back
+
+`PhysicsSystem::OnUpdate` **returns early on `SystemContext::IsReplay` when the scene carries no
+`Predicted` body.** A scene with nothing predicted does not participate in rollback: the solver is
+stateful in ways nothing restored before the replay — dynamic velocities, the contact cache, sleep
+state — so a replayed step would advance the physics clock (`GetStepCount`) against state that was
+never rewound and drift it from the sim tick permanently. For such a scene a mispredict of N ticks
+advances the world by **exactly one** step, as before.
+
+**A scene predicting a character does roll back, and the step runs during replay.** The rolled-back
+set is declared by the **`Predicted`** marker (`Veng/Physics/Components.h`), and it is deliberately
+tiny — only a locally-controlled character carries one. Everything else the character collides
+against is either **static** (never changes) or a **kinematic body a deterministic Sim system
+re-drives from the replayed tick number** — so the world at any past tick is *recomputed*, not
+stored, and the state saved per predicted tick is one character's worth rather than the whole
+world's. During a replay the step therefore runs, re-driving those kinematic bodies to the
+configuration each replayed tick was actually in. That is the correctness point of the whole scheme:
+replaying a character against a moving surface's *current* pose reconciles it to a body that was
+never there. Client-authoritative **dynamic** bodies are out of scope for prediction
+(server-authoritative, interpolated), so their replay drift is not a concern this gate guards.
+
+**The character's own state is saved and restored per character, not per world.**
+`PhysicsWorld::SaveCharacterState`/`RestoreCharacterState` capture and restore one capsule's pose,
+velocity and ground contact as opaque, solver-version-locked bytes — the per-character analogue of
+the whole-world `SaveState`/`RestoreState`. On a correction the reconcile writes the character's
+authoritative `Transform` (and the mover re-seats the capsule onto it — a **`Predicted`** character
+is re-seated from its `Transform` at the start of each `UpdateCharacter`, idempotent in steady
+prediction), and `RestoreCharacterState` restores the velocity and ground contact the components do
+not carry. The whole-world `SaveState`/`RestoreState` remain the seam for a full solver rewind and
+are still round-trip tested; the character rollback does not need them.
 
 ## Layers are a closed table
 
