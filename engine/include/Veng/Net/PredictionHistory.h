@@ -36,6 +36,17 @@ namespace Veng
     /// @return The entities to predict; the pawn should generally be among them.
     using PredictionPolicy = function<vector<Entity>(const Scene& scene, Entity pawn)>;
 
+    /// @brief The engine's default predicted set — what an unset PredictionPolicy falls back to.
+    ///
+    /// The pawn, plus every entity in its Hierarchy subtree that carries replicated state (a purely
+    /// client-local view child carries none and is left Remote). Exposed so a game that narrows
+    /// prediction for one world through PredictionPolicy can defer to the engine default for the
+    /// rest, rather than reimplementing the owner-pawn-subtree walk to keep it.
+    /// @param scene  The client scene the pawn and its subtree live in.
+    /// @param pawn   The pawn to build the predicted set around.
+    /// @return The pawn and its replicated descendants; empty when the pawn is null or dead.
+    [[nodiscard]] VE_API vector<Entity> DefaultPredictedEntities(const Scene& scene, Entity pawn);
+
     namespace Net
     {
         /// @brief One recorded seat input keyed by the client tick it was sampled on — the replay source.

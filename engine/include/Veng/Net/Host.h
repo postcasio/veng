@@ -572,6 +572,13 @@ namespace Veng
         Net::ReplayTick Replay;
         /// @brief The reconciliation compare tolerances and smoothing knobs (defaulted when unset).
         Net::ReconcileTolerances Tolerances;
+        /// @brief Per-key reconcile-tolerances override; unset uses the shared Tolerances on every join.
+        ///
+        /// The tolerances mirror of WorldQuantization: given the WorldKey being joined, returns the
+        /// ReconcileTolerances that join reconciles against, so a world whose linear unit is not the
+        /// metre gets a tolerance grid sized to its own scale rather than passing unbounded drift as
+        /// "matched". Unset threads the shared Tolerances onto every join.
+        function<Net::ReconcileTolerances(const Net::WorldKey&)> WorldTolerances;
         /// @brief Tick-offset controller tuning — the pre-reply default rate and the lead margin.
         ///
         /// The estimator converts RTT/jitter seconds into a tick lead at TickRate. Each join's

@@ -21,54 +21,6 @@ namespace Veng
 {
     namespace
     {
-        // The default prediction policy: the pawn plus every descendant in its Hierarchy subtree that
-        // carries replicated state. A purely client-local (view) child carries none, so it is left as
-        // it is — only the pawn and the replicated attachments it drags along are predicted.
-        vector<Entity> DefaultPredictionSet(const Scene& scene, const Entity pawn)
-        {
-            vector<Entity> set;
-            if (pawn.IsNull() || !scene.IsAlive(pawn))
-            {
-                return set;
-            }
-
-            vector<TypeId> replicated;
-            for (const auto& [id, info] : scene.GetTypeRegistry().All())
-            {
-                if (info.Replicated)
-                {
-                    replicated.push_back(id);
-                }
-            }
-            const auto carriesReplicated = [&](const Entity entity)
-            {
-                for (const TypeId id : replicated)
-                {
-                    if (scene.TryGetComponent(entity, id) != nullptr)
-                    {
-                        return true;
-                    }
-                }
-                return false;
-            };
-
-            // The pawn always predicts; a descendant joins only when it carries replicated state.
-            set.push_back(pawn);
-            vector<Entity> stack;
-            scene.ForEachChild(pawn, [&](const Entity child) { stack.push_back(child); });
-            while (!stack.empty())
-            {
-                const Entity entity = stack.back();
-                stack.pop_back();
-                if (scene.IsAlive(entity) && carriesReplicated(entity))
-                {
-                    set.push_back(entity);
-                }
-                scene.ForEachChild(entity, [&](const Entity child) { stack.push_back(child); });
-            }
-            return set;
-        }
-
         // The local input seat's resolved input — the first (SeatInput, PlayerInput) entity, the one
         // InputMappingSystem fills from local devices (the StampLocalSeatInput seat). Null when the
         // client carries no local input seat (a spectator).
@@ -1367,6 +1319,7 @@ namespace Veng
         Net::TickSyncSettings TickSyncSettings;
         Net::QuantizationSettings Quantization;
         function<Net::QuantizationSettings(const Net::WorldKey&)> WorldQuantization;
+        function<Net::ReconcileTolerances(const Net::WorldKey&)> WorldTolerances;
         function<void(Net::JoinId)> OnLeaveWorld;
         function<void(const Net::WorldKey&, Net::JoinDenyReason)> OnTravelDenied;
 
@@ -1393,6 +1346,9 @@ namespace Veng
             vector<Entity> Predicted;
             u64 LastServerTick = 0;
             Net::TickOffsetEstimator TickSync;
+            // Resolved per key at join from WorldTolerances (or the shared value): a world whose linear
+            // unit is not the metre reconciles against its own scale, not the shared metre grid.
+            Net::ReconcileTolerances Tolerances;
         };
 
         // A requested-but-unaccepted join, correlated to its reply by the token. Payload rides the join
@@ -1517,7 +1473,8 @@ namespace Veng
             {
                 return;
             }
-            jc.Predicted = Policy ? Policy(*jc.World, pawn) : DefaultPredictionSet(*jc.World, pawn);
+            jc.Predicted =
+                Policy ? Policy(*jc.World, pawn) : DefaultPredictedEntities(*jc.World, pawn);
             for (const Entity entity : jc.Predicted)
             {
                 if (!jc.World->IsAlive(entity))
@@ -1658,6 +1615,10 @@ namespace Veng
             // the shared grid onto every join.
             jc.Replication->SetQuantization(WorldQuantization ? WorldQuantization(key)
                                                               : Quantization);
+            // The per-key reconcile tolerances, resolved the same way and for the same reason: a world
+            // in a different linear unit needs its own compare/snap grid, or its client reconciles
+            // unbounded drift as "matched".
+            jc.Tolerances = WorldTolerances ? WorldTolerances(key) : Tolerances;
             // Scope this join's anchor adoptions to the client-shared registry, so the single-source
             // invariant is enforced across every join sharing a scene.
             jc.Replication->SetAdoption(accept.Join, Anchors);
@@ -1703,6 +1664,7 @@ namespace Veng
         state->TickSyncSettings = info.TickSync;
         state->Quantization = info.Quantization;
         state->WorldQuantization = info.WorldQuantization;
+        state->WorldTolerances = info.WorldTolerances;
         state->OnLeaveWorld = info.OnLeaveWorld;
         state->OnTravelDenied = info.OnTravelDenied;
         return Unique<ClientHost>(new ClientHost(std::move(state)));
@@ -1980,7 +1942,7 @@ namespace Veng
                 {
                     (void)Net::Reconcile(*jc->World, jc->History,
                                          jc->Replication->PredictedRecords(),
-                                         applied.LastConsumedInputTick, s.Replay, s.Tolerances);
+                                         applied.LastConsumedInputTick, s.Replay, jc->Tolerances);
                 }
             }
         }

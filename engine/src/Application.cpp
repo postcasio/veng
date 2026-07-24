@@ -671,6 +671,10 @@ namespace Veng
                                                              PointerRouting{}, tick, 0.0f, false,
                                                              /*isReplay=*/true));
             },
+            // Per-key reconcile tolerances, unset by default (every join uses the shared value): a
+            // world in a non-metre unit supplies its own so its client does not reconcile unbounded
+            // drift as "matched".
+            .WorldTolerances = net.ClientWorldTolerances,
             // The controller converts RTT/jitter to a tick lead at the sim rate; its margin carries
             // the snapshot-cadence staleness plus the two-tick buffered-input cushion beyond the
             // round-trip estimate. The world drive reads its target to seed and slew the sim clock.

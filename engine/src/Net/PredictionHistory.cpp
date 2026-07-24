@@ -183,8 +183,9 @@ namespace Veng::Net
                     continue;
                 }
                 const TypeInfo& info = registry.Info(component.Type);
-                ScratchComponent scratch(info);
-                if (VoidResult read = ReadFields(component.Bytes, scratch.Ptr, info, registry);
+                const ScratchComponent scratch(info);
+                if (const VoidResult read =
+                        ReadFields(component.Bytes, scratch.Ptr, info, registry);
                     !read)
                 {
                     continue;
@@ -282,5 +283,53 @@ namespace Veng::Net
     u64 PredictionHistory::NewestTick() const
     {
         return m_Inputs.empty() ? 0 : m_Inputs.back().Tick;
+    }
+}
+
+namespace Veng
+{
+    vector<Entity> DefaultPredictedEntities(const Scene& scene, const Entity pawn)
+    {
+        vector<Entity> set;
+        if (pawn.IsNull() || !scene.IsAlive(pawn))
+        {
+            return set;
+        }
+
+        vector<TypeId> replicated;
+        for (const auto& [id, info] : scene.GetTypeRegistry().All())
+        {
+            if (info.Replicated)
+            {
+                replicated.push_back(id);
+            }
+        }
+        const auto carriesReplicated = [&](const Entity entity)
+        {
+            for (const TypeId id : replicated)
+            {
+                if (scene.TryGetComponent(entity, id) != nullptr)
+                {
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        // The pawn always predicts; a descendant joins only when it carries replicated state.
+        set.push_back(pawn);
+        vector<Entity> stack;
+        scene.ForEachChild(pawn, [&](const Entity child) { stack.push_back(child); });
+        while (!stack.empty())
+        {
+            const Entity entity = stack.back();
+            stack.pop_back();
+            if (scene.IsAlive(entity) && carriesReplicated(entity))
+            {
+                set.push_back(entity);
+            }
+            scene.ForEachChild(entity, [&](const Entity child) { stack.push_back(child); });
+        }
+        return set;
     }
 }

@@ -165,6 +165,14 @@ namespace Veng
         /// client. Unset threads the shared PositionQuantum/PositionExtent/RotationBits onto every join.
         /// Inert off a client.
         function<Net::QuantizationSettings(const Net::WorldKey&)> ClientWorldQuantization;
+        /// @brief Client hook yielding the reconcile tolerances a joined WorldKey uses; unset uses the shared value.
+        ///
+        /// The tolerances counterpart of ClientWorldQuantization: given a WorldKey the client is
+        /// joining, returns the ReconcileTolerances that join reconciles against, so a world whose
+        /// linear unit is not the metre — where the shared metre-scale Position tolerance would pass
+        /// unbounded drift as "matched" and never reach its snap distance — gets a grid sized to its
+        /// own scale. Unset threads the shared Tolerances onto every join. Inert off a client.
+        function<Net::ReconcileTolerances(const Net::WorldKey&)> ClientWorldTolerances;
         /// @brief Whether a joining client auto-joins Net::DefaultWorldKey into the managed world on connect.
         ///
         /// True (the default) is the single-world convenience: the mounted ClientHost requests
