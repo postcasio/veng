@@ -177,6 +177,21 @@ at cook time:
   fixed-size), then the row region; the importer fails the cook if that region would cross the
   4 GiB a `u32` offset can address. Both importers live in `libveng_cook`, which is legal because
   the embedded core pack carries no tables.
+- **A model's named attachment points survive the cook as mesh sockets.** The `MeshImporter`
+  walks the imported node hierarchy and records every node that **carries no mesh and no camera,
+  is not referenced by a skin's joints, and is not the scene/export root** as a
+  `CookedMeshSocket` — name plus transform. That is the whole rule: an empty node in a model is
+  there to mark a place, so it needs no naming convention, no prefix, and no per-project
+  configuration (a project's own `Foo_` convention is then a project matter, unblocked rather than
+  imposed). **The joint exclusion is load-bearing, not a refinement** — a skeleton joint is
+  *exactly* a node with no mesh and no camera, so without it an entire rig becomes sockets, bloating
+  the blob and making a lookup by a joint's name return a static mesh-space point that silently
+  disagrees with the animated joint. A socket's transform is its **full ancestor chain composed
+  down to the root**, then translated by `import.scale` — the same treatment the vertices get, since
+  the importer flattens `scene->mMeshes` without applying node transforms, so a socket read from its
+  own node alone would land in a different space than the geometry. Two sockets sharing a name (or
+  sharing a name after truncation to the cooked 64-byte capacity) is a located cook error: a lookup
+  by name has to resolve to one place. The table is emitted sorted by name.
 - **Skinned meshes, skeletons, and animations** come from a rigged model (FBX, via the
   enabled assimp FBX importer). The `MeshImporter` emits the skinned vertex layout when the
   `*.mesh.json` names a `"skeleton"` id: it caps each vertex to four normalized influences

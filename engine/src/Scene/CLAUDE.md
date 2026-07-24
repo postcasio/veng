@@ -50,6 +50,17 @@ links as a set and bump the spatial version. `GetParent(entity)` and `ForEachChi
 misuse and a fatal `VE_ASSERT`. Only `Parent` is a reflected, persisted field; the three list
 links are derived and rebuilt on prefab spawn, so the serializer and cooker never touch them.
 
+**Attaching to a model's authored place is plain parenting.** `AttachToSocket(scene, child,
+meshEntity, socketName)` (`Veng/Scene/Sockets.h`) resolves the mesh entity's `MeshRenderer`, finds
+the named `MeshSocket` on its resident mesh (see [../Asset/CLAUDE.md](../Asset/CLAUDE.md)),
+`SetParent`s the child under it, and writes the socket's mesh-space transform — position,
+**orientation**, and scale — onto the child's `Transform`. No new scene-graph concept is involved,
+so everything downstream works unchanged: `WorldMatrix` composes, `ComputeWorldMatrices` walks it,
+`DestroyEntity` recurses through it, and a socket on a moving parent carries its child for free. It
+returns **false** rather than asserting when the entity draws nothing, its mesh is not yet resident,
+or the model carries no socket by that name — each is a content or timing condition a consumer
+reports. `FindMeshSocket` is the same resolution without the attachment.
+
 ## Spatial version
 
 A `Scene` carries a monotonic **spatial version counter** (`GetSpatialVersion()`): it bumps on any

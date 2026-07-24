@@ -1,0 +1,9 @@
+{
+  "model": "skinned.gltf",
+  "skeleton": "0x0000000000002D01",
+  "import": {
+    "generate_normals": false,
+    "generate_tangents": false,
+    "join_identical_vertices": false
+  }
+}

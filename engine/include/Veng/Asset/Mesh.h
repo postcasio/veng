@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <span>
+#include <string_view>
 
 #include <Veng/Veng.h>
 #include <Veng/Asset/AssetHandle.h>
@@ -45,6 +46,29 @@ namespace Veng
         static constexpr u32 NoMaterial = ~0u;
     };
 
+    /// @brief A named attachment point on a mesh, in mesh space.
+    ///
+    /// A socket is a place an artist marked on the model — an authored node carrying no
+    /// geometry — recorded verbatim by name so gameplay can put something there. It is
+    /// mesh-space and static: a socket on a skinned mesh does **not** follow the animated
+    /// skeleton, and a consumer wanting a joint anchor wants a different mechanism.
+    ///
+    /// The orientation contract is pinned: a socket's local **-Z is forward** and local
+    /// **+Y is up**, matching the glTF camera/node convention and the engine's y-up scene.
+    /// A socket that is silently 90 degrees out looks nearly right, so treat the rotation as
+    /// load-bearing data rather than decoration.
+    struct MeshSocket
+    {
+        /// @brief The authored node name, verbatim.
+        string Name;
+        /// @brief Mesh-space translation.
+        vec3 Position{0.0f};
+        /// @brief Mesh-space orientation; the socket's forward (-Z) and up (+Y).
+        quat Rotation{1.0f, 0.0f, 0.0f, 0.0f};
+        /// @brief Mesh-space scale; usually unit.
+        vec3 Scale{1.0f};
+    };
+
     /// @brief One interleaved vertex in the canonical layout (48 bytes).
     ///
     /// Field order, sizeof, and offsets are statically asserted to match CanonicalLayout():
@@ -82,6 +106,8 @@ namespace Veng
         vector<AssetHandle<MaterialInstance>> Materials;
         /// @brief Draw ranges; empty → the factory synthesizes one unassigned submesh over [0, Indices.size()).
         vector<SubMesh> SubMeshes;
+        /// @brief Named attachment points, sorted by name.
+        vector<MeshSocket> Sockets;
     };
 
     /// @brief Construction parameters for a GPU Mesh.
@@ -103,6 +129,11 @@ namespace Veng
         AABB Bounds = AABB::Empty();
         /// @brief The mesh's Skeleton when skinned; invalid for a static mesh.
         AssetHandle<Skeleton> Skeleton;
+        /// @brief Named attachment points, sorted by name.
+        ///
+        /// Mesh::FindSocket binary-searches this list, so it must be sorted by Name and carry
+        /// no duplicate name. The cooker emits it that way.
+        vector<MeshSocket> Sockets;
     };
 
     /// @brief Cooked mesh's GPU buffers and draw ranges.
@@ -257,11 +288,25 @@ namespace Veng
         /// @brief Whether the mesh is skinned (carries a Skeleton and the skinned vertex layout).
         [[nodiscard]] bool IsSkinned() const { return m_Skeleton.Id().IsValid(); }
 
+        /// @brief Returns the mesh's named attachment points, sorted by name.
+        ///
+        /// Empty for a model that authored none (and for every mesh from a format carrying no
+        /// named nodes, such as OBJ).
+        [[nodiscard]] std::span<const MeshSocket> GetSockets() const { return m_Sockets; }
+
+        /// @brief Returns the socket named `name`, or nullptr when the mesh has no such socket.
+        ///
+        /// A binary search over the sorted socket list. A missing socket is a content error the
+        /// caller reports — never a fatal assert.
+        /// @param name  The authored node name, matched exactly.
+        /// @return The socket, or nullptr; the pointer is valid for the mesh's lifetime.
+        [[nodiscard]] const MeshSocket* FindSocket(std::string_view name) const;
+
     private:
         explicit Mesh(const MeshInfo& info)
             : m_Name(info.Name), m_VertexBuffer(info.VertexBuffer), m_IndexBuffer(info.IndexBuffer),
               m_Layout(info.Layout), m_SubMeshes(info.SubMeshes), m_Materials(info.Materials),
-              m_Bounds(info.Bounds), m_Skeleton(info.Skeleton)
+              m_Bounds(info.Bounds), m_Skeleton(info.Skeleton), m_Sockets(info.Sockets)
         {
         }
 
@@ -273,6 +318,7 @@ namespace Veng
         vector<AssetHandle<MaterialInstance>> m_Materials;
         AABB m_Bounds = AABB::Empty();
         AssetHandle<Skeleton> m_Skeleton;
+        vector<MeshSocket> m_Sockets;
     };
 
     /// @brief AssetTypeTrait specialization mapping Mesh to AssetTypes::Mesh.

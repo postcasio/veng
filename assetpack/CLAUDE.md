@@ -92,6 +92,15 @@ the format and its serialization — neither importer nor loader.
   gains no reflection dependency, and a new game-mode or render-settings field evolves
   tolerantly within the fixed `CookedLevelVersion` (no bump). The loader rejects a blob whose
   `Version` mismatches.
+- **`AssetTypes::Mesh` carries geometry plus the model's named attachment points.** A
+  **`CookedMeshHeader`** (`CookedMeshVersion`) is followed by the attribute descriptor, the submesh
+  table, a **`CookedMeshSocket[SocketCount]`** table, and then the interleaved vertex and index
+  bytes. A socket is a 64-byte name plus a mesh-space translation / xyzw rotation / scale, sorted by
+  name so a runtime lookup is a binary search and the blob is stable. The rotation is contract, not
+  decoration: a socket's local **-Z is forward** and **+Y is up**, matching the glTF camera/node
+  convention and the engine's y-up scene. The loader rejects a `Version` mismatch — the header is
+  read by a fixed-offset `memcpy`, so an added field would otherwise be misread as garbage rather
+  than tolerated.
 - **`AssetTypes::Skeleton` and `AssetTypes::Animation` carry skinned-character rigs.** A
   **`CookedSkeletonHeader`** (`CookedSkeletonVersion`) is a `BoneCount` plus a column-major
   `GlobalInverse` mat4, followed by `CookedBone[BoneCount]` in topological (parent-before-child)

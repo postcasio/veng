@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "0x0000000000002D11",
+      "type": "Mesh",
+      "source": "meshes/sockets.mesh.json"
+    },
+    {
+      "id": "0x0000000000002D12",
+      "type": "Mesh",
+      "source": "meshes/sockets_scaled.mesh.json"
+    },
+    {
+      "id": "0x0000000000002D13",
+      "type": "Mesh",
+      "source": "meshes/skinned.mesh.json"
+    }
+  ]
+}

@@ -1,0 +1,174 @@
+{
+  "asset": {
+    "version": "2.0",
+    "generator": "veng fixture generator"
+  },
+  "buffers": [
+    {
+      "byteLength": 102,
+      "uri": "data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAABAAIA"
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 36,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 36,
+      "byteLength": 36,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 72,
+      "byteLength": 24,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 96,
+      "byteLength": 6,
+      "target": 34963
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": 5126,
+      "count": 3,
+      "type": "VEC3",
+      "min": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "max": [
+        1.0,
+        1.0,
+        0.0
+      ]
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 3,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 2,
+      "componentType": 5126,
+      "count": 3,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 3,
+      "componentType": 5123,
+      "count": 3,
+      "type": "SCALAR"
+    }
+  ],
+  "meshes": [
+    {
+      "name": "BodyMesh",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TEXCOORD_0": 2
+          },
+          "indices": 3
+        }
+      ]
+    }
+  ],
+  "cameras": [
+    {
+      "type": "perspective",
+      "perspective": {
+        "yfov": 1.0,
+        "znear": 0.1,
+        "zfar": 100.0
+      }
+    }
+  ],
+  "nodes": [
+    {
+      "name": "Root",
+      "children": [
+        1,
+        2,
+        3,
+        4,
+        6
+      ]
+    },
+    {
+      "name": "Body",
+      "mesh": 0
+    },
+    {
+      "name": "Mount_A",
+      "translation": [
+        1.0,
+        2.0,
+        3.0
+      ]
+    },
+    {
+      "name": "Mount_B",
+      "rotation": [
+        0.0,
+        0.7071067811865475,
+        0.0,
+        0.7071067811865476
+      ]
+    },
+    {
+      "name": "Rack",
+      "translation": [
+        0.0,
+        5.0,
+        0.0
+      ],
+      "rotation": [
+        0.0,
+        0.7071067811865475,
+        0.0,
+        0.7071067811865476
+      ],
+      "children": [
+        5
+      ]
+    },
+    {
+      "name": "Mount_C",
+      "translation": [
+        2.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "Eye",
+      "camera": 0,
+      "translation": [
+        0.0,
+        9.0,
+        0.0
+      ]
+    }
+  ],
+  "scenes": [
+    {
+      "nodes": [
+        0
+      ]
+    }
+  ],
+  "scene": 0
+}

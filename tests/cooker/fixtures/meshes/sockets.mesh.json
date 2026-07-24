@@ -1,0 +1,9 @@
+{
+  "model": "sockets.gltf",
+  "import": {
+    "scale": 1.0,
+    "generate_normals": false,
+    "generate_tangents": false,
+    "join_identical_vertices": false
+  }
+}

@@ -22,6 +22,11 @@
       "source": "meshes/cube.mesh.json"
     },
     {
+      "id": "0xECFBCDB0FED94D6C",
+      "type": "Mesh",
+      "source": "meshes/socket_slab.mesh.json"
+    },
+    {
       "id": "0x00000000000003ED",
       "type": "Shader",
       "source": "shaders/brick.frag.shader.json"

@@ -7,9 +7,10 @@ namespace Veng
 {
     /// @brief AssetTypes::Mesh loader.
     ///
-    /// Decodes a CookedMeshHeader + attribute descriptor + submesh table + interleaved
-    /// vertex/index buffers into a Veng::Mesh with two GPU buffers, after validating
-    /// the cooked layout against the engine's canonical VertexBufferLayout.
+    /// Decodes a CookedMeshHeader + attribute descriptor + submesh table + socket table +
+    /// interleaved vertex/index buffers into a Veng::Mesh with two GPU buffers, after
+    /// validating the blob's format version and the cooked layout against the engine's
+    /// canonical VertexBufferLayout.
     class MeshLoader final : public AssetLoader
     {
     public:

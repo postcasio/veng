@@ -18,6 +18,12 @@
 
 namespace Veng
 {
+    /// @brief Maximum byte length (including nul terminator) for names in cooked blobs.
+    ///
+    /// Shared by shader bindings, blocks, attributes, and vertex-layout element names.
+    /// Sized generously for GLSL/Slang identifiers; names are truncated at ShaderNameCapacity - 1.
+    inline constexpr usize ShaderNameCapacity = 64;
+
     /// @brief Channel layout of a cooked texture's encoded blocks.
     ///
     /// Tells the runtime sampler how to interpret a texture's stored channels. Most codecs
@@ -84,12 +90,20 @@ namespace Veng
         u32 ChannelLayout = 0;
     };
 
+    /// @brief The current mesh-format version.
+    ///
+    /// Bumped on any CookedMeshHeader/CookedMeshSocket layout change; the loader rejects a
+    /// blob whose Version != this. The header is read by a fixed-offset memcpy, so a field
+    /// added without a version bump is misread as garbage rather than tolerated.
+    inline constexpr u32 CookedMeshVersion = 1u;
+
     /// @brief Cooked header for a mesh asset.
     ///
     /// The blob is, in order:
     ///   CookedMeshHeader
     ///   CookedVertexAttribute[AttributeCount]   — the interleaved layout
     ///   CookedSubMesh[SubMeshCount]             — draw ranges + material ids
+    ///   CookedMeshSocket[SocketCount]           — named attachment points, sorted by name
     ///   vertex bytes  (VertexCount * VertexStride)
     ///   index bytes   (IndexCount * (IndexType == U16 ? 2 : 4))
     ///
@@ -103,6 +117,8 @@ namespace Veng
     /// referenced Skeleton as a load-time dependency.
     struct CookedMeshHeader
     {
+        /// @brief Must equal CookedMeshVersion; the loader rejects mismatches.
+        u32 Version = 0;
         /// @brief Byte stride per vertex.
         u32 VertexStride = 0;
         /// @brief Number of vertices in the vertex buffer.
@@ -115,8 +131,31 @@ namespace Veng
         u32 SubMeshCount = 0;
         /// @brief Number of CookedVertexAttribute entries following this header.
         u32 AttributeCount = 0;
+        /// @brief Number of CookedMeshSocket entries following the submesh table.
+        u32 SocketCount = 0;
         /// @brief AssetId of the mesh's Skeleton, or 0 for a static (non-skinned) mesh.
         u64 SkeletonId = 0;
+    };
+
+    /// @brief One named attachment point on a cooked mesh, in mesh space.
+    ///
+    /// A socket is a named place on a model: the transform of an authored node that carries
+    /// no geometry. Its rotation is an orientation, not decoration — local -Z is forward and
+    /// local +Y is up, matching the glTF camera/node convention and the engine's y-up scene.
+    /// Entries are sorted by Name so a lookup is a binary search and the blob is stable.
+    ///
+    /// The transform is stored as raw f32 arrays (xyzw for the quaternion) so assetpack gains
+    /// no glm dependency; the engine loader reinterprets them into its glm types.
+    struct CookedMeshSocket
+    {
+        /// @brief Nul-terminated socket name, at most ShaderNameCapacity - 1 bytes.
+        char Name[ShaderNameCapacity] = {};
+        /// @brief Mesh-space translation.
+        f32 Position[3] = {};
+        /// @brief Mesh-space rotation quaternion, xyzw.
+        f32 Rotation[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+        /// @brief Mesh-space scale.
+        f32 Scale[3] = {1.0f, 1.0f, 1.0f};
     };
 
     /// @brief One interleaved vertex attribute, in layout order.
@@ -143,12 +182,6 @@ namespace Veng
         /// @brief AssetId of the material this sub-mesh was authored against.
         u64 MaterialId = 0;
     };
-
-    /// @brief Maximum byte length (including nul terminator) for names in cooked blobs.
-    ///
-    /// Shared by shader bindings, blocks, attributes, and vertex-layout element names.
-    /// Sized generously for GLSL/Slang identifiers; names are truncated at ShaderNameCapacity - 1.
-    inline constexpr usize ShaderNameCapacity = 64;
 
     /// @brief Cooked header for a vertex layout asset.
     ///

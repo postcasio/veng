@@ -1,12 +1,12 @@
 {
-  "model": "cube.obj",
+  "model": "socket_slab.gltf",
   "import": {
     "scale": 1.0,
-    "generate_normals": true,
+    "generate_normals": false,
     "generate_tangents": true,
     "join_identical_vertices": true
   },
   "materials": {
-    "0": "0xB52845655C9A9646"
+    "0": "0x11F4168273089490"
   }
 }

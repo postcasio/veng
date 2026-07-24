@@ -208,6 +208,7 @@ add_library(veng SHARED
         src/Scene/SceneSimulation.cpp
         src/Scene/SceneSystem.cpp
         src/Scene/SceneViewport.cpp
+        src/Scene/Sockets.cpp
         src/Scene/SystemRegistry.cpp
         src/Scene/TimeOfDay.cpp
         src/Scene/Transforms.cpp

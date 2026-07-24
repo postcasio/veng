@@ -70,6 +70,13 @@ namespace Veng
         CookedMeshHeader header;
         std::memcpy(&header, cooked.data(), sizeof(header));
 
+        if (header.Version != CookedMeshVersion)
+        {
+            return std::unexpected(
+                Corrupt(id, fmt::format("mesh: cooked version {} does not match expected {}",
+                                        header.Version, CookedMeshVersion)));
+        }
+
         const optional<Renderer::IndexType> indexType = BridgeIndexType(header.IndexType);
         if (!indexType)
         {
@@ -197,6 +204,33 @@ namespace Veng
         }
         cursor += subMeshBytes;
 
+        // Sockets: the cooked table is sorted by name, which Mesh::FindSocket's binary search
+        // relies on; the loader carries it through verbatim.
+        const usize socketBytes = static_cast<usize>(header.SocketCount) * sizeof(CookedMeshSocket);
+        if (cooked.size() < cursor + socketBytes)
+        {
+            return std::unexpected(Corrupt(id, "mesh: cooked blob smaller than socket table"));
+        }
+
+        vector<Veng::MeshSocket> sockets(header.SocketCount);
+        for (u32 i = 0; i < header.SocketCount; ++i)
+        {
+            CookedMeshSocket cookedSocket;
+            std::memcpy(&cookedSocket, cooked.data() + cursor + i * sizeof(CookedMeshSocket),
+                        sizeof(cookedSocket));
+            cookedSocket.Name[ShaderNameCapacity - 1] = '\0';
+
+            sockets[i] = Veng::MeshSocket{
+                .Name = cookedSocket.Name,
+                .Position = vec3(cookedSocket.Position[0], cookedSocket.Position[1],
+                                 cookedSocket.Position[2]),
+                .Rotation = quat(cookedSocket.Rotation[3], cookedSocket.Rotation[0],
+                                 cookedSocket.Rotation[1], cookedSocket.Rotation[2]),
+                .Scale = vec3(cookedSocket.Scale[0], cookedSocket.Scale[1], cookedSocket.Scale[2]),
+            };
+        }
+        cursor += socketBytes;
+
         const usize vertexBytes = static_cast<usize>(header.VertexCount) * header.VertexStride;
         if (cooked.size() < cursor + vertexBytes)
         {
@@ -269,6 +303,7 @@ namespace Veng
             .Materials = std::move(materials),
             .Bounds = Veng::Mesh::ComputeBounds(vertexData, header.VertexStride),
             .Skeleton = skeleton,
+            .Sockets = std::move(sockets),
         });
 
         return Detail::LoadJob{.Resource = Detail::RefAny(mesh)};

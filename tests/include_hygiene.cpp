@@ -143,6 +143,7 @@
 #include <Veng/Scene/Requests.h>
 #include <Veng/Scene/Resolve.h>
 #include <Veng/Scene/Scene.h>
+#include <Veng/Scene/Sockets.h>
 #include <Veng/Scene/Transforms.h>
 
 #include <Veng/Renderer/Buffer.h>

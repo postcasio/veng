@@ -231,6 +231,15 @@ and the app still runs — only `smoke_golden` (gated to skip on a non-ASTC devi
   builds the list, exactly as `Material` resolves its own texture/shader dependencies — so every
   asset eager-loads its dependencies. A draw iterates submeshes, binding
   `GetMaterials()[MaterialIndex]` per range.
+- **A mesh carries the model's named attachment points.** `Mesh::GetSockets()` is the cooked
+  `MeshSocket` list — name plus a mesh-space TRS — sorted by name, and `Mesh::FindSocket(name)`
+  binary-searches it, returning `nullptr` for a name the model does not carry (a content error the
+  caller reports, never an assert). The orientation is contract: a socket's local **-Z is forward**
+  and **+Y is up**. Which authored nodes become sockets is the cook's decision
+  ([cooker/CLAUDE.md](../../../cooker/CLAUDE.md)); the runtime consumes the table as given.
+  Attaching an entity to one is `AttachToSocket` — see [../Scene/CLAUDE.md](../Scene/CLAUDE.md).
+  A socket is **mesh-space and static**: it does not follow a skinned mesh's animated skeleton, and
+  a joint anchor is a different mechanism.
 - **Skinned meshes carry a skeleton and animate through GPU skinning.** A `Mesh` with a
   `SkeletonId` is **skinned** (`Mesh::IsSkinned()`): its vertices use the skinned layout
   (`Mesh::SkinnedLayout()` — canonical attributes plus `RGBA16Uint` bone indices + `RGBA32Sfloat`

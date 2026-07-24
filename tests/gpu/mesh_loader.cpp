@@ -1,21 +1,28 @@
 // Mesh load test: cooks the mesh fixture pack in-process,
 // mounts it, LoadSync<Mesh>s it through AssetManager, and checks the loaded
 // mesh's vertex/index counts, canonical layout, resident material list +
-// per-submesh material index, and GPU buffer sizes — the load-side proof for the
-// mesh vertical slice.
+// per-submesh material index, GPU buffer sizes, and socket table — the load-side proof for the
+// mesh vertical slice, through to an entity attached at an authored socket.
 
+#include <cstring>
 #include <filesystem>
 #include "support/TempPath.h"
 
 #include <doctest/doctest.h>
 
+#include <Veng/Asset/Archive.h>
 #include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/CookedBlobs.h>
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
 #include <Veng/Renderer/Buffer.h>
 #include <Veng/Asset/Material.h>
 #include <Veng/Asset/MaterialInstance.h>
 #include <Veng/Asset/Mesh.h>
+#include <Veng/Scene/Components.h>
+#include <Veng/Scene/Scene.h>
+#include <Veng/Scene/Sockets.h>
+#include <Veng/Scene/Transforms.h>
 
 #include <gpu/fixture.h>
 
@@ -81,5 +88,89 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(mesh.GetIndexCount() == 36);
     CHECK(mesh.GetIndexBuffer().GetBuffer()->GetSize() == static_cast<u64>(36) * sizeof(u32));
 
+    // cube.obj carries no named nodes, so the cooked mesh carries no sockets.
+    CHECK(mesh.GetSockets().empty());
+
     std::filesystem::remove(outArchive);
+}
+
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "mesh loader: an authored socket round-trips into an attached entity's world pose")
+{
+    const path fixtureDir = path(GPU_COOKER_FIXTURE_DIR);
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_sockets.vengpack";
+
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    REQUIRE(cooker.CookPack(fixtureDir / "socket_pack.json", outArchive).has_value());
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(outArchive).has_value());
+
+    const AssetResult<AssetHandle<Mesh>> handle = assets.LoadSync<Mesh>(AssetId{0x2D11});
+    REQUIRE(handle.has_value());
+    REQUIRE(handle->IsLoaded());
+
+    const Mesh& mesh = *handle->Get();
+    REQUIRE(mesh.GetSockets().size() == 4);
+    REQUIRE(mesh.FindSocket("Mount_C") != nullptr);
+    CHECK(mesh.FindSocket("Body") == nullptr);
+
+    // Cook -> load -> FindSocket -> AttachToSocket -> WorldMatrix: the attached child lands at
+    // the transform the model authored, lifted through the host entity's own placement.
+    TypeRegistry sceneTypes;
+    sceneTypes.Register<Transform>("Transform");
+    sceneTypes.Register<Hierarchy>("Hierarchy");
+    sceneTypes.Register<MeshRenderer>("MeshRenderer");
+    const Unique<Scene> scene = Scene::Create(sceneTypes);
+
+    const Entity host = scene->CreateEntity();
+    scene->Add<Transform>(host, Transform{.Position = vec3(0.0f, 1.0f, 0.0f)});
+    scene->Add<MeshRenderer>(host, MeshRenderer{.Mesh = *handle});
+
+    const Entity child = scene->CreateEntity();
+    REQUIRE(AttachToSocket(*scene, child, host, "Mount_C"));
+    CHECK(scene->GetParent(child) == host);
+
+    // sockets.gltf puts Mount_C at local (2, 0, 0) under a parent translated (0, 5, 0) and turned
+    // a quarter turn about +Y, which composes to (0, 5, -2) in mesh space.
+    const mat4 world = WorldMatrix(*scene, child);
+    CHECK(world[3].x == doctest::Approx(0.0f).epsilon(1e-4));
+    CHECK(world[3].y == doctest::Approx(6.0f).epsilon(1e-4));
+    CHECK(world[3].z == doctest::Approx(-2.0f).epsilon(1e-4));
+
+    // The socket's forward (-Z) rides through the attachment: the parent's quarter turn aims it
+    // down -X in world space.
+    const vec4 forward = world * vec4(0.0f, 0.0f, -1.0f, 0.0f);
+    CHECK(forward.x == doctest::Approx(-1.0f).epsilon(1e-4));
+    CHECK(forward.y == doctest::Approx(0.0f).epsilon(1e-4));
+    CHECK(forward.z == doctest::Approx(0.0f).epsilon(1e-4));
+
+    std::filesystem::remove(outArchive);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "mesh loader: a version-mismatched cooked mesh loads as AssetError::Corrupt")
+{
+    const AssetId meshId{0x0000000000002D21ULL};
+
+    CookedMeshHeader header{};
+    header.Version = CookedMeshVersion + 1; // stale/foreign
+    header.VertexStride = 48;
+    header.IndexType = 1;
+    header.AttributeCount = 4;
+
+    vector<u8> blob(sizeof(header));
+    std::memcpy(blob.data(), &header, sizeof(header));
+
+    AssetManager assets(Context, Tasks, Types);
+    ArchiveWriter writer;
+    writer.Add(meshId, AssetTypes::Mesh, blob);
+    const MountHandle mount = assets.MountMemory(writer.Build(), "stale_mesh");
+
+    const AssetResult<AssetHandle<Mesh>> result = assets.LoadSync<Mesh>(meshId);
+    REQUIRE_FALSE(result.has_value());
+    CHECK(result.error().Kind == AssetError::Corrupt);
+    CHECK(result.error().Id == meshId);
 }

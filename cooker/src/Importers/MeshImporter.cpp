@@ -6,6 +6,7 @@
 #include <fstream>
 #include <span>
 #include <sstream>
+#include <unordered_set>
 
 #include <fmt/format.h>
 
@@ -118,6 +119,64 @@ namespace Veng::Cook
             u16 Bone = 0;
             f32 Weight = 0.0f;
         };
+
+        // Writes a nul-terminated name into a fixed cooked-name field, truncating to capacity.
+        void SetSocketName(char (&dest)[ShaderNameCapacity], const std::string& name)
+        {
+            const usize n = std::min(name.size(), static_cast<usize>(ShaderNameCapacity) - 1);
+            std::memcpy(dest, name.data(), n);
+            dest[n] = '\0';
+        }
+
+        // Names of every node the socket rule excludes on grounds other than carrying geometry:
+        // the skin joints (an aiBone per entry of the model's skins[*].joints) and the camera
+        // nodes. Without the joint exclusion an entire rig becomes sockets — a joint is exactly
+        // a node with no mesh and no camera.
+        std::unordered_set<std::string> ExcludedNodeNames(const aiScene* scene)
+        {
+            std::unordered_set<std::string> excluded;
+            for (unsigned int m = 0; m < scene->mNumMeshes; ++m)
+            {
+                const aiMesh* mesh = scene->mMeshes[m];
+                for (unsigned int b = 0; b < mesh->mNumBones; ++b)
+                {
+                    excluded.insert(mesh->mBones[b]->mName.C_Str());
+                }
+            }
+            for (unsigned int c = 0; c < scene->mNumCameras; ++c)
+            {
+                excluded.insert(scene->mCameras[c]->mName.C_Str());
+            }
+            return excluded;
+        }
+
+        // One authored attachment point: a node name plus its transform in the model's root space.
+        struct SocketNode
+        {
+            std::string Name;
+            aiMatrix4x4 Transform;
+        };
+
+        // Depth-first collects every descendant of `node` that carries no mesh and is not
+        // excluded, composing each one's transform down from `parentTransform`. Called with the
+        // scene root and identity, so the root itself never becomes a socket and the transforms
+        // land in root space — the space the flattened vertices are in.
+        void CollectSockets(const aiNode* node, const aiMatrix4x4& parentTransform,
+                            const std::unordered_set<std::string>& excluded,
+                            vector<SocketNode>& out)
+        {
+            for (unsigned int i = 0; i < node->mNumChildren; ++i)
+            {
+                const aiNode* child = node->mChildren[i];
+                const aiMatrix4x4 transform = parentTransform * child->mTransformation;
+                const std::string name = child->mName.C_Str();
+                if (child->mNumMeshes == 0 && !name.empty() && !excluded.contains(name))
+                {
+                    out.emplace_back(name, transform);
+                }
+                CollectSockets(child, transform, excluded, out);
+            }
+        }
 
         // Reads a per-submesh material override AssetId from { "<index>": "<hexId>" }, or 0 when
         // the submesh has no override. The map key is the decimal submesh index (not an id); the
@@ -415,6 +474,47 @@ namespace Veng::Cook
             {.Format = FormatRGBA32Sfloat, .Offset = 56}, // bone weights
         };
 
+        // Sockets: every mesh-free, non-joint, non-camera node below the scene root, recorded by
+        // name with its root-space transform. The translation takes import.scale exactly as the
+        // vertices do, so a socket lands in the same space as the geometry.
+        vector<SocketNode> socketNodes;
+        CollectSockets(scene->mRootNode, aiMatrix4x4(), ExcludedNodeNames(scene), socketNodes);
+        std::ranges::sort(socketNodes,
+                          [](const SocketNode& a, const SocketNode& b) { return a.Name < b.Name; });
+
+        vector<CookedMeshSocket> sockets;
+        sockets.reserve(socketNodes.size());
+        for (const SocketNode& node : socketNodes)
+        {
+            aiVector3D position;
+            aiVector3D socketScale;
+            aiQuaternion rotation;
+            node.Transform.Decompose(socketScale, rotation, position);
+
+            CookedMeshSocket socket{};
+            SetSocketName(socket.Name, node.Name);
+            socket.Position[0] = position.x * scale;
+            socket.Position[1] = position.y * scale;
+            socket.Position[2] = position.z * scale;
+            socket.Rotation[0] = rotation.x;
+            socket.Rotation[1] = rotation.y;
+            socket.Rotation[2] = rotation.z;
+            socket.Rotation[3] = rotation.w;
+            socket.Scale[0] = socketScale.x;
+            socket.Scale[1] = socketScale.y;
+            socket.Scale[2] = socketScale.z;
+
+            // FindSocket resolves a name to one place, so two sockets sharing a name (or sharing
+            // a truncated name) have no answer — a located cook error, not a silent pick.
+            if (!sockets.empty() && std::strcmp(sockets.back().Name, socket.Name) == 0)
+            {
+                return std::unexpected(
+                    fmt::format("mesh importer: '{}': '{}' declares two sockets named '{}'",
+                                sourcePath.string(), modelPath.string(), socket.Name));
+            }
+            sockets.push_back(socket);
+        }
+
         const usize vertexCount = skinned ? skinnedVertices.size() : staticVertices.size();
         const usize vertexStride = skinned ? sizeof(SkinnedVertex) : sizeof(CanonicalVertex);
         const usize vertexBytes = vertexCount * vertexStride;
@@ -425,20 +525,23 @@ namespace Veng::Cook
                     : std::span<const CookedVertexAttribute>(staticAttributes);
 
         CookedMeshHeader header{};
+        header.Version = CookedMeshVersion;
         header.VertexStride = static_cast<u32>(vertexStride);
         header.VertexCount = static_cast<u32>(vertexCount);
         header.IndexCount = static_cast<u32>(indices.size());
         header.IndexType = IndexTypeU32;
         header.SubMeshCount = static_cast<u32>(subMeshes.size());
         header.AttributeCount = static_cast<u32>(attributes.size());
+        header.SocketCount = static_cast<u32>(sockets.size());
         header.SkeletonId = skeletonId;
 
         const usize attributeBytes = attributes.size() * sizeof(CookedVertexAttribute);
         const usize subMeshBytes = subMeshes.size() * sizeof(CookedSubMesh);
+        const usize socketBytes = sockets.size() * sizeof(CookedMeshSocket);
         const usize indexBytes = indices.size() * sizeof(u32);
 
-        vector<u8> blob(sizeof(CookedMeshHeader) + attributeBytes + subMeshBytes + vertexBytes +
-                        indexBytes);
+        vector<u8> blob(sizeof(CookedMeshHeader) + attributeBytes + subMeshBytes + socketBytes +
+                        vertexBytes + indexBytes);
         usize cursor = 0;
         std::memcpy(blob.data() + cursor, &header, sizeof(header));
         cursor += sizeof(header);
@@ -446,6 +549,11 @@ namespace Veng::Cook
         cursor += attributeBytes;
         std::memcpy(blob.data() + cursor, subMeshes.data(), subMeshBytes);
         cursor += subMeshBytes;
+        if (socketBytes > 0)
+        {
+            std::memcpy(blob.data() + cursor, sockets.data(), socketBytes);
+            cursor += socketBytes;
+        }
         std::memcpy(blob.data() + cursor, vertexSource, vertexBytes);
         cursor += vertexBytes;
         std::memcpy(blob.data() + cursor, indices.data(), indexBytes);

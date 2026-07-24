@@ -2,8 +2,10 @@
 
 #include <Veng/Diagnostics/Profiler.h>
 
+#include <algorithm>
 #include <cstring>
 #include <span>
+#include <string_view>
 #include <utility>
 
 #include <Veng/Assert.h>
@@ -99,8 +101,19 @@ namespace Veng
                 .SubMeshes = std::move(subMeshes),
                 .Materials = data.Materials,
                 .Bounds = Mesh::ComputeBounds(std::span<const CanonicalVertex>(data.Vertices)),
+                .Sockets = data.Sockets,
             };
         }
+    }
+
+    const MeshSocket* Mesh::FindSocket(std::string_view name) const
+    {
+        const auto found = std::ranges::lower_bound(m_Sockets, name, {}, &MeshSocket::Name);
+        if (found == m_Sockets.end() || found->Name != name)
+        {
+            return nullptr;
+        }
+        return &*found;
     }
 
     AABB Mesh::ComputeBounds(std::span<const CanonicalVertex> vertices)

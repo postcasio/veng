@@ -788,6 +788,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/data_table.cpp
             tests/unit/primitives.cpp
             tests/unit/bounds.cpp
+            tests/unit/mesh_sockets.cpp
             tests/unit/visibility.cpp
             tests/unit/frustum.cpp
             tests/unit/spherical_harmonics.cpp
@@ -1712,6 +1713,7 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle)
             tests/cooker/texture_cook.cpp
             tests/cooker/compression_resolution.cpp
             tests/cooker/mesh_cook.cpp
+            tests/cooker/socket_cook.cpp
             tests/cooker/collision_shape_cook.cpp
             tests/cooker/shader_cook.cpp
             tests/cooker/material_cook.cpp

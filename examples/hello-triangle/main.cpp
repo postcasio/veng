@@ -16,6 +16,7 @@
 #include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Asset/Material.h>
 #include <Veng/Asset/MaterialInstance.h>
+#include <Veng/Asset/Mesh.h>
 #include <Veng/Asset/Texture.h>
 #include <Veng/UI/UI.h>
 #include <Veng/UI/DebugPanels.h>
@@ -51,6 +52,7 @@
 #include <Veng/Scene/Movement.h>
 #include <Veng/Scene/Requests.h>
 #include <Veng/Scene/RootMotion.h>
+#include <Veng/Scene/Sockets.h>
 #include <Veng/Scene/Transforms.h>
 #include <Veng/Scene/SceneSystem.h>
 #include <Veng/Scene/SystemRegistry.h>
@@ -184,6 +186,11 @@ namespace Actions
 // The cooked HUD document instantiated over the primary viewport; its stylesheet (with the shared
 // `--accent` / `--tick-idle` tokens) is referenced from the document markup and resolved by the engine.
 constexpr AssetId HudDocumentId{0xB51B7421AFE8CD18ULL};
+
+// The cooked slab model carrying the two authored attachment nodes the socket demo attaches to,
+// and the cube it parents to one of them.
+constexpr AssetId SocketSlabMeshId{0xECFBCDB0FED94D6CULL};
+constexpr AssetId CubeMeshId{0x00000000000003EAULL};
 
 // The single-entity pawn a networked player drives: a capsule with Intent/Mover whose mesh is an
 // inline recipe (so a prefab spawn carries it). Spawned per seat on the server — the listen host's
@@ -687,6 +694,8 @@ protected:
         // Recreates the scene texture.
         ReconfigureScene();
 
+        SetupSocketDemo(scene);
+
         if (m_SmokeOutput)
         {
             // Smoke renders a fixed pose: pause the simulation so the spinners hold the pinned
@@ -738,6 +747,35 @@ protected:
             {
                 OpenSecondaryWorld(GetWorldLevel(world));
             }
+        }
+    }
+
+    // Spawns the socket demo: the slab model, plus a cube parented to the attachment point its
+    // artist named on the deck. Nothing here names the cube's place — Mount_Top's authored
+    // position, orientation and scale are what AttachToSocket writes onto it, so moving the empty
+    // in the model moves the cube. LoadSync makes it one step, so the attach runs against a
+    // resident mesh in the windowed run and in the headless capture alike.
+    void SetupSocketDemo(Scene& world)
+    {
+        AssetManager& assets = GetAssetManager();
+        const AssetResult<AssetHandle<Mesh>> slab = assets.LoadSync<Mesh>(SocketSlabMeshId);
+        const AssetResult<AssetHandle<Mesh>> cube = assets.LoadSync<Mesh>(CubeMeshId);
+        if (!slab || !cube)
+        {
+            return;
+        }
+
+        const Entity host = world.CreateEntity();
+        world.Add<Name>(host).Value = "Socket Slab";
+        world.Add<Transform>(host, Transform{.Position = vec3(2.4f, -0.45f, 7.2f)});
+        world.Add<MeshRenderer>(host, MeshRenderer{.Mesh = *slab});
+
+        const Entity mounted = world.CreateEntity();
+        world.Add<Name>(mounted).Value = "Socket Mount";
+        world.Add<MeshRenderer>(mounted, MeshRenderer{.Mesh = *cube});
+        if (!AttachToSocket(world, mounted, host, "Mount_Top"))
+        {
+            Log::Error("hello-triangle: the slab model carries no 'Mount_Top' socket");
         }
     }
 

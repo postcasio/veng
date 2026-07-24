@@ -1,0 +1,138 @@
+{
+  "asset": {
+    "version": "2.0",
+    "generator": "veng fixture generator"
+  },
+  "buffers": [
+    {
+      "byteLength": 840,
+      "uri": "data:application/octet-stream;base64,mpkZv5qZGb6amRk/mpkZP5qZGb6amRk/mpkZP5qZGT6amRk/mpkZv5qZGT6amRk/mpkZP5qZGb6amRm/mpkZv5qZGb6amRm/mpkZv5qZGT6amRm/mpkZP5qZGT6amRm/mpkZv5qZGb6amRm/mpkZv5qZGb6amRk/mpkZv5qZGT6amRk/mpkZv5qZGT6amRm/mpkZP5qZGb6amRk/mpkZP5qZGb6amRm/mpkZP5qZGT6amRm/mpkZP5qZGT6amRk/mpkZv5qZGT6amRm/mpkZv5qZGT6amRk/mpkZP5qZGT6amRk/mpkZP5qZGT6amRm/mpkZv5qZGb6amRm/mpkZP5qZGb6amRm/mpkZP5qZGb6amRk/mpkZv5qZGb6amRk/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAgD8AAIA/AAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAACAPwAAgD8AAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAIA/AACAPwAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAgD8AAIA/AAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAACAPwAAgD8AAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAIA/AACAPwAAAAAAAIA/AAABAAIAAAACAAMABAAFAAYABAAGAAcACAAJAAoACAAKAAsADAANAA4ADAAOAA8AEAARABIAEAASABMAFAAVABYAFAAWABcA"
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 288,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 288,
+      "byteLength": 288,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 576,
+      "byteLength": 192,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 768,
+      "byteLength": 72,
+      "target": 34963
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC3",
+      "min": [
+        -0.6,
+        -0.15,
+        -0.6
+      ],
+      "max": [
+        0.6,
+        0.15,
+        0.6
+      ]
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 2,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 3,
+      "componentType": 5123,
+      "count": 36,
+      "type": "SCALAR"
+    }
+  ],
+  "meshes": [
+    {
+      "name": "SlabMesh",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TEXCOORD_0": 2
+          },
+          "indices": 3
+        }
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "name": "Slab",
+      "children": [
+        1,
+        2,
+        3
+      ]
+    },
+    {
+      "name": "Deck",
+      "mesh": 0
+    },
+    {
+      "name": "Mount_Top",
+      "translation": [
+        0.0,
+        0.32499999999999996,
+        0.0
+      ],
+      "scale": [
+        0.35,
+        0.35,
+        0.35
+      ]
+    },
+    {
+      "name": "Mount_Edge",
+      "translation": [
+        0.6,
+        0.0,
+        0.0
+      ],
+      "rotation": [
+        0.0,
+        0.7071067811865475,
+        0.0,
+        0.7071067811865476
+      ]
+    }
+  ],
+  "scenes": [
+    {
+      "nodes": [
+        0
+      ]
+    }
+  ],
+  "scene": 0
+}
