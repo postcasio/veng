@@ -777,6 +777,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/seat_focus.cpp
             tests/unit/light_packing.cpp
             tests/unit/shader_interface.cpp
+            tests/unit/surface_shader_contract.cpp
             tests/unit/transient_allocation.cpp
             tests/unit/asset_archive.cpp
             tests/unit/asset_type_registry.cpp
@@ -909,6 +910,10 @@ if (VENG_BUILD_TESTS)
     # round-trip case reads them by absolute path so it runs from any working directory.
     target_compile_definitions(veng_test_unit PRIVATE
             VENG_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
+    # The surface-shader-contract gate reads the core surface verts + the shared vertex header
+    # from the source tree to assert the static/skinned dedupe holds (no drift by construction).
+    target_compile_definitions(veng_test_unit PRIVATE
+            VENG_CORE_SHADER_DIR="${VENG_CORE_SHADER_DIR}")
     # Precompile the foundational header + doctest once per suite: a test TU is
     # otherwise ~90% redundant header parsing. The doctest mains define the
     # implementation macro before their include, which a force-included PCH would
