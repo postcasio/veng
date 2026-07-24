@@ -19,13 +19,17 @@ namespace Veng::Net
     ///
     /// Position rounds to a fixed-point grid of step PositionQuantum spanning [-PositionExtent,
     /// +PositionExtent] per axis; rotation encodes each of its smallest-three components in
-    /// RotationBits. The defaults (1 mm over a ±4 km world, 9-bit rotation) put a moving pawn's
-    /// pose at a small fraction of its f32x7 cost with sub-millimeter and sub-0.2-degree error.
+    /// RotationBits. Both spatial figures are in the world's own linear unit, whatever that is.
+    /// The defaults (a 1 mm grid over a ±4 km span at a metre-denominated world, 9-bit rotation)
+    /// put a moving pawn's pose at a small fraction of its f32x7 cost with sub-quantum and
+    /// sub-0.2-degree error.
     struct QuantizationSettings
     {
-        /// @brief Position grid step in meters; the max per-axis round error is half this.
+        /// @brief Position grid step in the world's linear unit; the max per-axis round error is
+        /// half this.
         f32 PositionQuantum = 0.001f;
-        /// @brief Half the encodable world span per axis in meters; a position past it clamps.
+        /// @brief Half the encodable world span per axis, in the world's linear unit; a position
+        /// past it clamps.
         f32 PositionExtent = 4096.0f;
         /// @brief Bits per smallest-three rotation component (the two index bits are separate).
         u32 RotationBits = 9;

@@ -37,7 +37,8 @@ namespace Veng
         /// @brief The interest radius and boundary-stability knobs.
         struct InterestSettings
         {
-            /// @brief The enter radius in meters; 0 disables interest (every entity relevant).
+            /// @brief The enter radius in the world's linear unit; 0 disables interest (every
+            /// entity relevant).
             f32 Radius = 0.0f;
             /// @brief The leave radius is Radius times this — the hysteresis band that prevents flapping.
             f32 LeaveMultiplier = 1.15f;
@@ -50,7 +51,7 @@ namespace Veng
         {
             /// @brief The candidate entity's wire id.
             NetId Id = InvalidNetId;
-            /// @brief The candidate's distance to the viewer, in meters.
+            /// @brief The candidate's distance to the viewer, in the world's linear unit.
             f32 Distance = 0.0f;
         };
 
