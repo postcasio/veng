@@ -14,18 +14,32 @@ namespace Veng::Net
         // non-largest unit-quaternion component can be) onto the integer grid.
         constexpr f32 SmallestThreeRange = 0.70710678f; // 1/sqrt(2)
 
+        // The level count for a field width. Computed in u64 because a 32-bit field's shift
+        // overflows a u32 before the subtraction that would have brought it back in range.
+        u32 LevelsForBits(u32 bits)
+        {
+            return static_cast<u32>((1ull << bits) - 1ull);
+        }
+
+        // The fixed-point mapping runs in f64, so the achieved grid is the declared quantum at any
+        // extent. An f32 intermediate represents integers exactly only to 2^24, so a field wider
+        // than 24 bits would round the code to a multiple of the f32 ULP at that magnitude —
+        // coarsening the grid by that factor while every declared setting still reads correct.
         u32 QuantizeUnitSigned(f32 value, f32 range, u32 bits)
         {
-            const u32 levels = (1u << bits) - 1u;
-            const f32 normalized = std::clamp((value + range) / (2.0f * range), 0.0f, 1.0f);
-            return static_cast<u32>(std::lround(normalized * static_cast<f32>(levels)));
+            const u32 levels = LevelsForBits(bits);
+            const f64 span = 2.0 * static_cast<f64>(range);
+            const f64 normalized =
+                std::clamp((static_cast<f64>(value) + static_cast<f64>(range)) / span, 0.0, 1.0);
+            return static_cast<u32>(std::llround(normalized * static_cast<f64>(levels)));
         }
 
         f32 DequantizeUnitSigned(u32 code, f32 range, u32 bits)
         {
-            const u32 levels = (1u << bits) - 1u;
-            const f32 normalized = static_cast<f32>(code) / static_cast<f32>(levels);
-            return normalized * 2.0f * range - range;
+            const u32 levels = LevelsForBits(bits);
+            const f64 normalized = static_cast<f64>(code) / static_cast<f64>(levels);
+            return static_cast<f32>(normalized * 2.0 * static_cast<f64>(range) -
+                                    static_cast<f64>(range));
         }
     }
 
@@ -66,7 +80,7 @@ namespace Veng::Net
 
     void EncodeRotation(BitWriter& out, const quat& rotation, const QuantizationSettings& settings)
     {
-        quat q = glm::normalize(rotation);
+        const quat q = glm::normalize(rotation);
 
         // Index of the largest-magnitude component; it is the one dropped and reconstructed.
         const f32 comps[4] = {q.x, q.y, q.z, q.w};

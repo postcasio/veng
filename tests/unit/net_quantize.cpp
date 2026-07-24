@@ -94,6 +94,27 @@ TEST_CASE("Rotation smallest-three round-trips within its angular bound")
     }
 }
 
+TEST_CASE("Position holds its quantum at an extent wider than an f32 intermediate spans")
+{
+    // 2 * 65536 / 0.001 needs 27 bits per axis, so the level count is past 2^24 — the point an f32
+    // fixed-point intermediate stops representing consecutive integers and starts snapping codes to
+    // multiples of its own ULP, coarsening the achieved grid by that factor at every magnitude.
+    const QuantizationSettings settings{.PositionQuantum = 0.001f, .PositionExtent = 65536.0f};
+    CHECK(PositionAxisBits(settings) == 27u);
+
+    for (const vec3 p : {vec3(0.0f), vec3(0.004f, -0.017f, 0.5f), vec3(1.2345f, -67.89f, 250.5f)})
+    {
+        BitWriter bw;
+        EncodePosition(bw, p, settings);
+        BitReader br(bw.Bytes());
+        const vec3 decoded = DecodePosition(br, settings);
+        for (int axis = 0; axis < 3; ++axis)
+        {
+            CHECK(std::abs(decoded[axis] - p[axis]) <= 0.001f);
+        }
+    }
+}
+
 TEST_CASE("PositionAxisBits scales with the quantum and extent")
 {
     CHECK(PositionAxisBits(
