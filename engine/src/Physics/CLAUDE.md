@@ -203,6 +203,52 @@ consumer writes it from whatever it considers authoritative and reads the result
 `Transform` is left entirely to the consumer's own pass. Set (the default), the two stay in step and
 the simple case needs no thought.
 
+## The character controller — a kinematic capsule with per-body up
+
+A **`CharacterController`** (`Veng/Physics/CharacterController.h`) is a walking character: a kinematic
+capsule that owns its position and asks the world what it hit, rather than integrating under the
+solver. It is the component authority; a Jolt **`CharacterVirtual`** is its shadow, created on the
+component's first character tick and destroyed on its removal, keyed by entity in `PhysicsWorld`
+exactly as a body is. The `CharacterVirtual` is contained by the same Native idiom as the solver —
+no public header names it, and it lives in `PhysicsWorld::Native`. A capsule is **not a body in the
+world**: it collides against the world's static and kinematic geometry, but the world's dynamic
+bodies do not see it (no inner body is created), which is out of scope until two characters must
+share a deck.
+
+**The up is re-read every tick from the gravity field, and that is the whole point.** Most
+controllers assume a global up; this one takes its up from `EvaluateGravity` at the capsule's
+position — the *same* evaluator a dynamic body integrates against, so a kinematic character and a
+dynamic crate in one volume agree by construction rather than coincidence. So a character walking a
+curved habitat reorients continuously and one on a rotating surface reorients slowly forever, which a
+constant-vector-per-volume design cannot deliver. **Zero gravity is a defined state**, not a divide
+by zero: reached by no source, the character keeps its last up and floats. Reorientation toward a new
+up is **rate-limited**, so a field discontinuity that survives the field's own blend slews smoothly
+instead of snapping; ordinary curved-surface walking is far below the cap, so there the up is exact.
+
+`PhysicsWorld::UpdateCharacter(entity, CharacterMoveInput, delta)` is the per-tick primitive. It
+takes the resolved up, a desired ground-plane velocity, jump and gravity, and returns a
+`CharacterMoveResult` (grounded, ground normal, **ground entity**, velocity, pose). Velocity
+composition lives inside it, against the capsule's live contacts: while grounded it inherits the
+velocity of the surface it stands on at the contact point (Jolt's own moving-platform support), so a
+character standing on a translating/rotating **kinematic** body moves with it and one walking across
+it walks relative to it; while airborne it blends toward the desired by `AirControl`. The general
+fast-surface case is not solved and nothing asks for it.
+
+**`CharacterState`** (`VE_TYPE`, runtime-only, never serialized/replicated) is the view output the
+mover writes onto every character each tick — `Grounded`, `GroundNormal`, `Up`, `PlanarSpeed`,
+`VerticalSpeed`, `AirTime`, `GroundEntity` — so gameplay reads a character's ground state without a
+second world query. `GroundEntity` is what makes "am I standing on something moving" answerable.
+
+**`CharacterMovementSystem`** (`Veng/Physics/CharacterMovementSystem.h`) is the builtin that drives
+it from `Intent` — the character analogue of `MovementSystem` and its **alternative**, not its
+companion: it sits in the same catalogue slot, so a level names one or the other in its `systems`
+array (a pawn that flies names `MovementSystem`, a pawn that walks names this) and neither knows
+about the other. It reads `Intent`'s local-frame move and action bits (jump/run — `CharacterAction`),
+never raw device state, so an AI or remote `Intent` producer drives a character identically. Like the
+other authoritative advancers it touches only the characters this peer owns (`HasAuthority`), and a
+level names it **before** `PhysicsSystem`, as it names `MovementSystem` before it, so the capsule
+moves against the previous tick's finalized world.
+
 ## The replay gate — a physics scene does not roll back
 
 `PhysicsSystem::OnUpdate` **returns early when `SystemContext::IsReplay` is set.** Reconciliation

@@ -111,45 +111,6 @@ namespace Veng
             }
         }
 
-        /// @brief Resolves the scene's GravitySource components into world-space instances.
-        ///
-        /// Each source is authored in its entity's local frame; the entity's Transform is read as a
-        /// world pose (a physics entity is a scene-graph root, so a parent's transform is not
-        /// composed in) and used to place the field's direction, origin and region in world space.
-        /// A non-uniform scale on the source entity is not applied to the region.
-        /// @param scene  The scene whose GravitySource components are read.
-        /// @param out    Destination vector, cleared then filled.
-        void GatherGravitySources(const Scene& scene, vector<GravitySourceInstance>& out)
-        {
-            out.clear();
-            for (auto [entity, source] : scene.View<GravitySource>())
-            {
-                vec3 position(0.0f);
-                quat rotation(1.0f, 0.0f, 0.0f, 0.0f);
-                if (const auto* transform = scene.TryGet<Transform>(entity))
-                {
-                    position = transform->Position;
-                    rotation = transform->Rotation;
-                }
-
-                Region bounds = source.Bounds;
-                bounds.Center = position + rotation * source.Bounds.Center;
-                bounds.Orientation = rotation * source.Bounds.Orientation;
-
-                out.emplace_back(GravitySourceInstance{
-                    .Kind = source.Kind,
-                    .Direction = rotation * source.Direction,
-                    .Origin = position,
-                    .Magnitude = source.Magnitude,
-                    .InnerRadius = source.InnerRadius,
-                    .OuterRadius = source.OuterRadius,
-                    .Bounds = bounds,
-                    .Priority = source.Priority,
-                    .BlendWidth = source.BlendWidth,
-                });
-            }
-        }
-
         /// @brief Publishes each sensor's overlap set and this tick's enter/exit deltas.
         ///
         /// State a system drains, not an event it subscribes to: the deltas are computed here,
@@ -182,6 +143,37 @@ namespace Veng
                     [](const Entity a, const Entity b) { return a.Index < b.Index; });
                 overlaps.Current = current;
             }
+        }
+    }
+
+    void GatherGravitySources(const Scene& scene, vector<GravitySourceInstance>& out)
+    {
+        out.clear();
+        for (auto [entity, source] : scene.View<GravitySource>())
+        {
+            vec3 position(0.0f);
+            quat rotation(1.0f, 0.0f, 0.0f, 0.0f);
+            if (const auto* transform = scene.TryGet<Transform>(entity))
+            {
+                position = transform->Position;
+                rotation = transform->Rotation;
+            }
+
+            Region bounds = source.Bounds;
+            bounds.Center = position + rotation * source.Bounds.Center;
+            bounds.Orientation = rotation * source.Bounds.Orientation;
+
+            out.emplace_back(GravitySourceInstance{
+                .Kind = source.Kind,
+                .Direction = rotation * source.Direction,
+                .Origin = position,
+                .Magnitude = source.Magnitude,
+                .InnerRadius = source.InnerRadius,
+                .OuterRadius = source.OuterRadius,
+                .Bounds = bounds,
+                .Priority = source.Priority,
+                .BlendWidth = source.BlendWidth,
+            });
         }
     }
 

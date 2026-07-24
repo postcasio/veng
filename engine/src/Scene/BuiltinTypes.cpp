@@ -5,6 +5,7 @@
 #include <Veng/Gui/Overlay.h>
 #include <Veng/Gui/Surface.h>
 #include <Veng/Net/Session.h>
+#include <Veng/Physics/CharacterController.h>
 #include <Veng/Physics/Components.h>
 #include <Veng/Physics/Gravity.h>
 #include <Veng/Reflection/TypeRegistry.h>
@@ -73,6 +74,11 @@ namespace Veng
         // GravityKind, RegionShape and the Region struct register transitively through the
         // component's fields.
         registry.Register<GravitySource>();
+
+        // The walking-character authoring component, and the derived per-tick state everything
+        // reads. CharacterState is a runtime-only output channel, so it carries no reflected field.
+        registry.Register<CharacterController>();
+        registry.Register<CharacterState>();
 
         // Net-anticipation seam: the ownership annotation and the camera-rig relationships
         // (third-person follow, first-person look, point orbit) the View-phase rig reads.

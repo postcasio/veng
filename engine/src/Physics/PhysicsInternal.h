@@ -14,6 +14,7 @@
 #include <Jolt/Physics/Body/Body.h>
 #include <Jolt/Physics/Body/BodyID.h>
 #include <Jolt/Physics/Body/BodyLockInterface.h>
+#include <Jolt/Physics/Character/CharacterVirtual.h>
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayer.h>
 #include <Jolt/Physics/Collision/ContactListener.h>
 #include <Jolt/Physics/Collision/ObjectLayer.h>
@@ -326,6 +327,15 @@ namespace Veng::Detail
         /// @brief The settings the constraint was built from.
         ConstraintSettings Settings;
     };
+
+    /// @brief One live character capsule: the solver object and the controller it was built from.
+    struct CharacterRecord
+    {
+        /// @brief The kinematic capsule, owned by this record.
+        JPH::Ref<JPH::CharacterVirtual> Character;
+        /// @brief The CharacterController settings the capsule was built from, for idempotent reconcile.
+        CharacterController Settings;
+    };
 }
 
 namespace Veng
@@ -355,6 +365,8 @@ namespace Veng
         std::unordered_map<u32, Entity> BodyOwners;
         /// @brief Live constraints, keyed by the entity carrying the constraint component.
         std::unordered_map<Entity, Detail::ConstraintRecord> Constraints;
+        /// @brief Live character capsules, keyed by the entity that owns them.
+        std::unordered_map<Entity, Detail::CharacterRecord> Characters;
         /// @brief The installed world-space gravity field, empty when none is set.
         vector<GravitySourceInstance> GravitySources;
         /// @brief The step listener applying the field; registered only while a field is installed.

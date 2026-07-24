@@ -2,6 +2,7 @@
 
 #include <Veng/Veng.h>
 #include <Veng/Result.h>
+#include <Veng/Physics/CharacterController.h>
 #include <Veng/Physics/Components.h>
 #include <Veng/Physics/Gravity.h>
 #include <Veng/Physics/Layers.h>
@@ -68,6 +69,54 @@ namespace Veng
 
         /// @brief Member-wise equality, so the reconcile pass can leave an unchanged constraint alone.
         bool operator==(const ConstraintSettings&) const = default;
+    };
+
+    /// @brief One tick's drive for a kinematic character capsule.
+    ///
+    /// The gameplay side resolves these — the up from the gravity field, the desired planar
+    /// velocity from Intent — and hands them to UpdateCharacter, which keeps the solver-facing work
+    /// inside the physics module. Velocity composition (inheriting a moving surface, honouring the
+    /// air-control authority, applying the downward push) is done against the capsule's live ground
+    /// contacts, so it is resolved here rather than by the caller.
+    struct CharacterMoveInput
+    {
+        /// @brief World-space up for this tick, unit length; the capsule aligns and slides on it.
+        vec3 Up = vec3(0.0f, 1.0f, 0.0f);
+        /// @brief Desired ground-plane velocity in world space, in metres per second.
+        ///
+        /// Its component along Up is discarded — the capsule's vertical motion is gravity and jumps,
+        /// never the move command.
+        vec3 DesiredPlanarVelocity = vec3(0.0f);
+        /// @brief Whether a jump is requested this tick; taken only while grounded.
+        bool Jump = false;
+        /// @brief Upward speed a taken jump imparts along Up, in metres per second.
+        f32 JumpSpeed = 0.0f;
+        /// @brief Gravity magnitude at the capsule this tick, in metres per second squared.
+        ///
+        /// Zero is free-fall: the capsule keeps its up and drifts, with no downward push.
+        f32 GravityMagnitude = 0.0f;
+        /// @brief Horizontal authority while airborne: 0 keeps the ballistic path, 1 is full control.
+        f32 AirControl = 0.0f;
+    };
+
+    /// @brief The resolved motion state of a character capsule after one UpdateCharacter.
+    ///
+    /// Everything a CharacterState needs, in the physics world's frame. The caller reads it back
+    /// onto the entity rather than re-querying the world.
+    struct CharacterMoveResult
+    {
+        /// @brief Whether the capsule is standing on ground it can move on (not a steep slope).
+        bool Grounded = false;
+        /// @brief World-space normal of the ground under the capsule; zero when airborne.
+        vec3 GroundNormal = vec3(0.0f);
+        /// @brief The entity being stood on, or Entity::Null when airborne or on unowned geometry.
+        Entity GroundEntity = Entity::Null;
+        /// @brief The capsule's world-space linear velocity after the update, in metres per second.
+        vec3 LinearVelocity = vec3(0.0f);
+        /// @brief The capsule's world-space position after the update, at double precision.
+        dvec3 Position{0.0};
+        /// @brief The capsule's world-space orientation after the update.
+        quat Rotation{1.0f, 0.0f, 0.0f, 0.0f};
     };
 
     /// @brief A rigid-body simulation space, owned by at most one Scene.
@@ -256,6 +305,52 @@ namespace Veng
         /// The reconcile pass's orphan sweep reads it, as it reads GetBodyEntities.
         /// @param out  Destination vector, cleared then filled.
         void GetConstraintOwners(vector<Entity>& out) const;
+
+        /// @brief Brings @p entity's character capsule into line with @p controller, creating it if absent.
+        ///
+        /// Idempotent exactly as CreateBody is, so the reconcile pass calls it for every character
+        /// every tick: a capsule that already exists with equal settings is left untouched, pose and
+        /// velocity included, and any difference re-creates it from @p pose. The capsule is a
+        /// CharacterVirtual — a kinematic mover that collides against the world but is not itself a
+        /// body in it, so the world's dynamic bodies do not see it.
+        /// @param entity      The entity the capsule belongs to.
+        /// @param controller  The capsule's shape and feel.
+        /// @param pose        The world-space pose a newly created capsule is placed at; its up is
+        ///                    taken from the rotation.
+        void CreateCharacter(Entity entity, const CharacterController& controller,
+                             const PhysicsPose& pose);
+
+        /// @brief Destroys @p entity's character capsule; a no-op when it has none.
+        /// @param entity  The entity whose capsule to destroy.
+        void DestroyCharacter(Entity entity);
+
+        /// @brief Whether @p entity currently has a character capsule in this world.
+        [[nodiscard]] bool HasCharacter(Entity entity) const;
+
+        /// @brief Returns the number of live character capsules.
+        [[nodiscard]] u32 GetCharacterCount() const;
+
+        /// @brief Fills @p out with every entity that currently has a capsule, in ascending slot order.
+        ///
+        /// The reconcile pass's orphan sweep reads it, as it reads GetBodyEntities.
+        /// @param out  Destination vector, cleared then filled.
+        void GetCharacterEntities(vector<Entity>& out) const;
+
+        /// @brief Advances @p entity's character capsule by one step against the world.
+        ///
+        /// Composes the capsule's velocity from @p input — inheriting the velocity of a moving
+        /// surface it stands on, applying the air-control authority while airborne, adding the
+        /// downward push — sets the capsule's up and aligns its rotation to it, then sweeps it
+        /// through the world so it slides along walls, steps over obstacles below its step height,
+        /// and stops against ones above it. The world's static and kinematic geometry is collided
+        /// against as it stands this tick.
+        /// @param entity  The entity whose capsule to advance; a no-op returning a default result
+        ///               when it has none.
+        /// @param input   The resolved up, desired velocity, jump and gravity for this tick.
+        /// @param delta   The step length in seconds; must be positive.
+        /// @return The capsule's resolved motion state after the step.
+        [[nodiscard]] CharacterMoveResult
+        UpdateCharacter(Entity entity, const CharacterMoveInput& input, f32 delta);
 
         /// @brief Advances the simulation by one fixed step.
         ///

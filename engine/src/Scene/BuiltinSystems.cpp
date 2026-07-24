@@ -4,6 +4,7 @@
 #include <Veng/Scene/CameraRig.h>
 #include <Veng/Scene/DeviceAssignmentSystem.h>
 #include <Veng/Scene/InputMappingSystem.h>
+#include <Veng/Physics/CharacterMovementSystem.h>
 #include <Veng/Physics/PhysicsSystem.h>
 #include <Veng/Scene/Motion.h>
 #include <Veng/Scene/Movement.h>
@@ -28,6 +29,13 @@ namespace Veng
         registry.Register<InputMappingSystem>();
 
         registry.Register<MovementSystem>();
+
+        // The character analogue of MovementSystem and its alternative rather than its companion: a
+        // level names one or the other, so a pawn either flies through MovementSystem or walks
+        // through this. Named before PhysicsSystem, like MovementSystem, so the capsule moves
+        // against the previous tick's finalized world.
+        registry.Register<CharacterMovementSystem>();
+
         registry.Register<RootMotionDriveSystem>();
         registry.Register<CameraRigSystem>();
         registry.Register<AnimationSystem>();

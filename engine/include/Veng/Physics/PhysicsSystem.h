@@ -1,11 +1,24 @@
 #pragma once
 
 #include <Veng/Veng.h>
+#include <Veng/Physics/Gravity.h>
 #include <Veng/Scene/SceneSystem.h>
 
 namespace Veng
 {
     class Scene;
+
+    /// @brief Resolves a scene's GravitySource components into world-space evaluator instances.
+    ///
+    /// Each source is authored in its entity's local frame; the entity's Transform is read as a
+    /// world pose (a physics entity is a scene-graph root, so a parent's transform is not composed
+    /// in) and used to place the field's direction, origin and region in world space. The result is
+    /// what both the physics step's per-body gravity and a character's up-vector query pass to
+    /// EvaluateGravity, so a dynamic body and a character in the same place agree by construction.
+    /// A non-uniform scale on the source entity is not applied to the region.
+    /// @param scene  The scene whose GravitySource components are read.
+    /// @param out    Destination vector, cleared then filled.
+    VE_API void GatherGravitySources(const Scene& scene, vector<GravitySourceInstance>& out);
 
     /// @brief Reconciles a scene's bodies against its components and advances the solver one step.
     ///

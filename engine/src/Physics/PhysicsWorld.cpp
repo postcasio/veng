@@ -154,6 +154,48 @@ namespace Veng
                    a.Geometry.Get() == b.Geometry.Get();
         }
 
+        /// @brief Whether two CharacterController settings would produce the same capsule.
+        [[nodiscard]] bool SameSettings(const CharacterController& a, const CharacterController& b)
+        {
+            return a.Radius == b.Radius && a.Height == b.Height && a.StepHeight == b.StepHeight &&
+                   a.MaxSlopeAngle == b.MaxSlopeAngle && a.WalkSpeed == b.WalkSpeed &&
+                   a.RunSpeed == b.RunSpeed && a.JumpImpulse == b.JumpImpulse &&
+                   a.AirControl == b.AirControl;
+        }
+
+        /// @brief Character mass in kilograms, used only to push down what the capsule stands on.
+        ///
+        /// A CharacterController authors a shape and a feel, not a weight, so the push-down mass is
+        /// a fixed engine value rather than a component field: the capsule does not integrate, so
+        /// the value affects nothing but how hard it presses on a dynamic body beneath it.
+        constexpr f32 CharacterMass = 70.0f;
+
+        /// @brief The capsule's collision padding, held away from geometry to keep the sweep cheap.
+        constexpr f32 CharacterPadding = 0.02f;
+
+        /// @brief Builds the feet-origin capsule a CharacterController describes.
+        ///
+        /// The capsule stands on the entity's origin: a CapsuleShape is centred on its own middle,
+        /// so it is translated up by half the height to put the feet at the origin, which is the
+        /// pose a character Transform names. Height below twice Radius would degenerate the
+        /// cylinder section, so the half height is floored at a small positive value.
+        /// @param controller  The capsule's dimensions.
+        /// @return The built shape.
+        [[nodiscard]] JPH::RefConst<JPH::Shape>
+        BuildCharacterShape(const CharacterController& controller)
+        {
+            const f32 halfCylinder =
+                std::max(1.0e-3f, controller.Height * 0.5f - controller.Radius);
+            const JPH::CapsuleShapeSettings capsule(halfCylinder, controller.Radius);
+            const JPH::RotatedTranslatedShapeSettings settings(
+                JPH::Vec3(0.0f, controller.Height * 0.5f, 0.0f), JPH::Quat::sIdentity(),
+                capsule.Create().Get());
+            const JPH::Shape::ShapeResult result = settings.Create();
+            VE_ASSERT(result.IsValid(), "Failed to build a character capsule: {}",
+                      result.GetError().c_str());
+            return result.Get();
+        }
+
         /// @brief Mixes a 64-bit value, so a pose hash spreads its input bits.
         [[nodiscard]] u64 Mix(u64 value)
         {
@@ -711,6 +753,160 @@ namespace Veng
             out.emplace_back(owner);
         }
         std::ranges::sort(out, [](const Entity a, const Entity b) { return a.Index < b.Index; });
+    }
+
+    void PhysicsWorld::CreateCharacter(const Entity entity, const CharacterController& controller,
+                                       const PhysicsPose& pose)
+    {
+        const auto existing = m_Native->Characters.find(entity);
+        if (existing != m_Native->Characters.end())
+        {
+            if (SameSettings(existing->second.Settings, controller))
+            {
+                return;
+            }
+            DestroyCharacter(entity);
+        }
+
+        JPH::CharacterVirtualSettings settings;
+        settings.mShape = BuildCharacterShape(controller);
+        settings.mMaxSlopeAngle = controller.MaxSlopeAngle;
+        settings.mMass = CharacterMass;
+        settings.mCharacterPadding = CharacterPadding;
+        // Accept only contacts on the lower part of the capsule as supporting, so a wall brushing
+        // the torso is not mistaken for a floor. The plane is in the capsule's local frame, whose
+        // up is +Y; the capsule is rotated each tick so that local up tracks the world up.
+        settings.mSupportingVolume = JPH::Plane(JPH::Vec3::sAxisY(), -controller.Radius);
+
+        // The initial up is the capsule's own up, taken from the pose it is placed at, so a
+        // character authored already aligned to its surface does not lurch on its first tick.
+        const JPH::Quat rotation = Detail::ToJolt(pose.Rotation);
+        auto* character = new JPH::CharacterVirtual(&settings, Detail::ToJolt(pose.Position),
+                                                    rotation, &m_Native->System);
+        character->SetUp(rotation * JPH::Vec3::sAxisY());
+        m_Native->Characters.emplace(
+            entity, Detail::CharacterRecord{.Character = character, .Settings = controller});
+    }
+
+    void PhysicsWorld::DestroyCharacter(const Entity entity)
+    {
+        m_Native->Characters.erase(entity);
+    }
+
+    bool PhysicsWorld::HasCharacter(const Entity entity) const
+    {
+        return m_Native->Characters.contains(entity);
+    }
+
+    u32 PhysicsWorld::GetCharacterCount() const
+    {
+        return static_cast<u32>(m_Native->Characters.size());
+    }
+
+    void PhysicsWorld::GetCharacterEntities(vector<Entity>& out) const
+    {
+        out.clear();
+        out.reserve(m_Native->Characters.size());
+        for (const auto& [entity, record] : m_Native->Characters)
+        {
+            out.emplace_back(entity);
+        }
+        std::ranges::sort(out, [](const Entity a, const Entity b) { return a.Index < b.Index; });
+    }
+
+    CharacterMoveResult PhysicsWorld::UpdateCharacter(const Entity entity,
+                                                      const CharacterMoveInput& input,
+                                                      const f32 delta)
+    {
+        const auto found = m_Native->Characters.find(entity);
+        if (found == m_Native->Characters.end())
+        {
+            return {};
+        }
+        JPH::CharacterVirtual& character = *found->second.Character;
+
+        // Align the capsule to this tick's up: set it for collision, and rotate the capsule so its
+        // own up tracks it. The caller has already rate-limited the up, so a large field
+        // discontinuity slews smoothly rather than snapping here.
+        const JPH::Vec3 up = Detail::ToJolt(input.Up);
+        const JPH::Vec3 oldUp = character.GetUp();
+        character.SetUp(up);
+        character.SetRotation(
+            (JPH::Quat::sFromTo(oldUp, up) * character.GetRotation()).Normalized());
+
+        // Refresh the estimate of the ground body's velocity before composing this tick's velocity,
+        // so a character on a surface that moved last tick inherits the surface's current motion.
+        character.UpdateGroundVelocity();
+
+        const JPH::Vec3 velocity = character.GetLinearVelocity();
+        const JPH::Vec3 verticalVelocity = up * velocity.Dot(up);
+        const JPH::Vec3 groundVelocity = character.GetGroundVelocity();
+        const bool onGround =
+            character.GetGroundState() == JPH::CharacterBase::EGroundState::OnGround;
+
+        // The move command drives the ground plane only; its component along up is discarded so a
+        // desired velocity pointing slightly uphill cannot launch the character.
+        JPH::Vec3 desired = Detail::ToJolt(input.DesiredPlanarVelocity);
+        desired -= up * desired.Dot(up);
+
+        JPH::Vec3 newVelocity;
+        if (onGround && (verticalVelocity - groundVelocity).Dot(up) < 0.1f)
+        {
+            // Grounded and not moving away from the ground: walk relative to the surface, so a
+            // character standing on a moving platform moves with it and one walking across it walks
+            // relative to it. A jump is taken here, adding upward speed along the current up.
+            newVelocity = groundVelocity + desired;
+            if (input.Jump)
+            {
+                newVelocity += up * input.JumpSpeed;
+            }
+        }
+        else
+        {
+            // Airborne: keep the vertical velocity ballistic and blend the horizontal toward the
+            // desired by the air-control authority, so a controller can steer a jump without
+            // overriding its arc.
+            const JPH::Vec3 horizontal = velocity - verticalVelocity;
+            newVelocity = horizontal + (desired - horizontal) * input.AirControl + verticalVelocity;
+        }
+
+        // Gravity is the only downward push; a zero magnitude is free-fall, so the character drifts.
+        const JPH::Vec3 gravity = up * -input.GravityMagnitude;
+        newVelocity += gravity * delta;
+        character.SetLinearVelocity(newVelocity);
+
+        // Stepping is expressed along the current up so a character steps over obstacles on a curved
+        // or tilted surface, not only on a world-flat floor.
+        JPH::CharacterVirtual::ExtendedUpdateSettings updateSettings;
+        updateSettings.mStickToFloorStepDown = up * -found->second.Settings.StepHeight;
+        updateSettings.mWalkStairsStepUp = up * found->second.Settings.StepHeight;
+
+        constexpr auto characterLayer = static_cast<JPH::ObjectLayer>(PhysicsLayer::Character);
+        character.ExtendedUpdate(delta, gravity, updateSettings,
+                                 m_Native->System.GetDefaultBroadPhaseLayerFilter(characterLayer),
+                                 m_Native->System.GetDefaultLayerFilter(characterLayer), {}, {},
+                                 m_Native->Temp);
+
+        const bool grounded =
+            character.GetGroundState() == JPH::CharacterBase::EGroundState::OnGround;
+        Entity groundEntity = Entity::Null;
+        if (const JPH::BodyID ground = character.GetGroundBodyID(); !ground.IsInvalid())
+        {
+            const auto owner = m_Native->BodyOwners.find(ground.GetIndexAndSequenceNumber());
+            if (owner != m_Native->BodyOwners.end())
+            {
+                groundEntity = owner->second;
+            }
+        }
+
+        return CharacterMoveResult{
+            .Grounded = grounded,
+            .GroundNormal = grounded ? Detail::FromJolt(character.GetGroundNormal()) : vec3(0.0f),
+            .GroundEntity = groundEntity,
+            .LinearVelocity = Detail::FromJolt(character.GetLinearVelocity()),
+            .Position = Detail::FromJolt(character.GetPosition()),
+            .Rotation = Detail::FromJolt(character.GetRotation()),
+        };
     }
 
     void PhysicsWorld::Step(const f32 delta)

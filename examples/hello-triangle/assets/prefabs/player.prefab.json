@@ -95,9 +95,15 @@
           ]
         },
         "::Veng::Intent": {},
-        "::Veng::Mover": {
-          "MoveSpeed": 5.0,
-          "TurnSpeed": 2.0
+        "::Veng::CharacterController": {
+          "Radius": 0.4,
+          "Height": 1.8,
+          "StepHeight": 0.3,
+          "MaxSlopeAngle": 0.7853982,
+          "WalkSpeed": 5.0,
+          "RunSpeed": 8.0,
+          "JumpImpulse": 5.0,
+          "AirControl": 0.3
         },
         "::Veng::Authority": {
           "Tier": "Server",
