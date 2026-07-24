@@ -325,6 +325,10 @@ matching the socket/camera convention) and within their own `Range`, picks the b
 distance, and writes it to `Focused` (`Entity::Null` with no candidate). It publishes the resolution
 and nothing more — a prompt is a UI concern reading `Focused` and `Verb`, so the engine supplies the
 resolution and never the presentation. A no-op scene with no `PhysicsWorld` clears every `Focused`.
+Every pose it reads — the interactor's origin and facing, each candidate's position — comes through
+the scene's [physics-pose resolver](#the-physics-pose-resolver--when-the-transform-chain-is-not-the-solvers-frame),
+so focus and range resolve in the frame the solver integrates in, and a candidate's separation from
+the interactor is differenced at double precision before it narrows to f32.
 
 **Firing is a request, not a callback.** An **`InteractRequest { Entity Interactor; … }`** is stamped
 on the focused entity and drained by whatever system owns that kind of interactable, matching the
@@ -332,6 +336,33 @@ on the focused entity and drained by whatever system owns that kind of interacta
 → marked `Failed` and held a frame). So no game code runs inside the resolve query, and one
 interactable kind — a vehicle — is served by the `VehicleSystem` below without the interaction system
 knowing anything about it.
+
+## The physics-pose resolver — when the Transform chain is not the solver's frame
+
+The two systems below both **derive a pose from an entity, test it against the physics world, and
+write the result back**. Composing that pose up the `Transform` chain is right only while the chain
+and the solver share an origin. **`PhysicsPoseResolver`** (`Veng/Physics/PoseResolver.h`) is the
+optional per-scene seam past that, installed beside the world it pairs with
+(`Scene::SetPhysicsPoseResolver` / `GetPhysicsPoseResolver`, a `Unique` the scene owns; `Clone()`
+does not copy it). It is two hooks: **`Resolve(const Scene&, Entity, const mat4& localOffset)`
+→ `PhysicsPose`** (the read — an entity's pose, optionally offset within its own frame, in the
+world's frame) and **`Place(Scene&, Entity, const PhysicsPose&)`** (the write-back, and the report of
+where a resolved placement landed). Either may be left empty and falls back to its default;
+`ResolvePhysicsPose` / `PlaceAtPhysicsPose` are the free functions the engine and a consumer both
+call, and `DefaultResolvePhysicsPose` / `DefaultPlaceAtPhysicsPose` are the fallbacks — `WorldMatrix
+* localOffset` decomposed, and a write onto the entity's local `Transform` with the scale reset. A
+scene installing nothing therefore behaves exactly as before, and installing nothing is the right
+answer for every consumer whose `Transform` *is* the solver's frame.
+
+**Who needs it:** a consumer whose authoritative positions live *outside* the f32 `Transform` — a
+large-extent world where `Transform` is a render-relative projection and the physics space is
+anchored elsewhere. Without the seam its interaction focus never resolves (the overlap sweeps a place
+the solver holds nothing at) and its vehicle exits are validated against the wrong space. It is the
+read-side counterpart of `RigidBody::SyncTransform` (see
+[../Physics/CLAUDE.md](../Physics/CLAUDE.md)): that flag hands a consumer the `Transform` write-back
+the step performs, this seam hands it the poses the engine *reads*. `Resolve` may run inside a live
+query, so it makes no structural change — its `const Scene&` enforces that; `Place` runs outside one
+and may.
 
 ## Vehicles — the possession-and-seating seam
 
@@ -353,7 +384,12 @@ per-frame reconcile sees the new `Possesses` and moves the marker, so **no vehic
 marker path**. **Exit** is the exact inverse in reverse order, placing the character at `ExitSocket`
 and re-enabling its controller seeded with the vehicle's current velocity (no discontinuity leaving a
 moving vehicle) — and it is **validated before performed**: the exit socket is overlap-tested against
-solid geometry, and a blocked exit fails and reports rather than placing a character inside a wall. A
+solid geometry, and a blocked exit fails and reports rather than placing a character inside a wall.
+**One resolved pose serves all three uses** — the overlap validation, the re-created capsule, and the
+character's placement: the exit socket's local matrix is resolved through the scene's
+[physics-pose resolver](#the-physics-pose-resolver--when-the-transform-chain-is-not-the-solvers-frame)
+and handed back through its `Place` hook, which is how a consumer holding its authority outside the
+`Transform` records where the character actually landed. A
 runtime-only **`Seated`** component on the occupant records what entry changed so exit undoes it
 exactly (`VE_TYPE`, never serialized). The `CharacterController` gained an **`Enabled`** flag for
 this: a disabled controller is skipped by `CharacterMovementSystem` and its capsule released, and

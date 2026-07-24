@@ -2,11 +2,11 @@
 
 #include <Veng/Physics/Components.h>
 #include <Veng/Physics/PhysicsWorld.h>
+#include <Veng/Physics/PoseResolver.h>
 #include <Veng/Physics/Queries.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Interaction.h>
 #include <Veng/Scene/Scene.h>
-#include <Veng/Scene/Transforms.h>
 
 #include <array>
 #include <cmath>
@@ -42,10 +42,12 @@ namespace Veng
 
             if (world != nullptr)
             {
-                const mat4 interactorWorld = WorldMatrix(readScene, entity);
-                const vec3 origin = vec3(interactorWorld[3]);
+                // Every pose is resolved in the physics world's frame, so the sweep, the cone and the
+                // range filters all agree with the space the overlap test runs in — including when
+                // the consumer's Transform chain is offset from the solver's origin.
+                const PhysicsPose interactorPose = ResolvePhysicsPose(readScene, entity);
                 const vec3 forward =
-                    glm::normalize(vec3(interactorWorld * vec4(0.0f, 0.0f, -1.0f, 0.0f)));
+                    glm::normalize(interactorPose.Rotation * vec3(0.0f, 0.0f, -1.0f));
 
                 // A sphere of the interactor's Reach gathers every nearby body; the cone and
                 // per-interactable Range filters narrow it. The interactor itself is ignored so a
@@ -53,7 +55,7 @@ namespace Veng
                 const std::array<Entity, 1> ignore{entity};
                 const Collider sphere{.Shape = ColliderShape::Sphere,
                                       .Extents = vec3(interactor.Reach)};
-                Overlap(world, sphere, PhysicsPose{.Position = dvec3(origin)},
+                Overlap(world, sphere, PhysicsPose{.Position = interactorPose.Position},
                         QueryFilter{.Ignore = ignore, .IncludeSensors = true}, candidates);
 
                 for (const Entity candidate : candidates)
@@ -64,8 +66,11 @@ namespace Veng
                         continue;
                     }
 
-                    const vec3 candidatePosition = vec3(WorldMatrix(readScene, candidate)[3]);
-                    const vec3 toCandidate = candidatePosition - origin;
+                    // Differenced at double precision before narrowing: an offset frame puts both
+                    // poses far from the origin, where the separation is the only quantity f32 can
+                    // still carry.
+                    const PhysicsPose candidatePose = ResolvePhysicsPose(readScene, candidate);
+                    const vec3 toCandidate = vec3(candidatePose.Position - interactorPose.Position);
                     const f32 distance = glm::length(toCandidate);
                     if (distance > interactable->Range)
                     {

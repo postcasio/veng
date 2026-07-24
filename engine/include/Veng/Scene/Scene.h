@@ -17,6 +17,7 @@ namespace Veng
     class Scene;
     class SceneSimulation;
     class PhysicsWorld;
+    struct PhysicsPoseResolver;
     struct SystemContext;
     struct AABB;
     struct Hierarchy;
@@ -240,6 +241,24 @@ namespace Veng
 
         /// @brief Returns the attached physics world, or null when the scene has none.
         [[nodiscard]] PhysicsWorld* GetPhysicsWorld() const { return m_PhysicsWorld.get(); }
+
+        /// @brief Installs (or replaces) the mapping between this scene's Transform chain and its
+        ///        physics world's frame.
+        ///
+        /// Installed beside the physics world because it describes the same pairing: the gameplay
+        /// systems that reason in the solver's space read poses through it, so a consumer whose
+        /// authoritative positions live outside the f32 Transform makes interaction focus and vehicle
+        /// enter/exit work in the frame the solver integrates in. A scene with none installed
+        /// composes poses up the Transform chain, which is exactly right while the two share an
+        /// origin. Passing null detaches the held one; Clone() does not copy it.
+        /// @param resolver  The resolver to own, or null to detach.
+        void SetPhysicsPoseResolver(Unique<PhysicsPoseResolver> resolver);
+
+        /// @brief Returns the installed pose resolver, or null when the scene has none.
+        [[nodiscard]] PhysicsPoseResolver* GetPhysicsPoseResolver() const
+        {
+            return m_PhysicsPoseResolver.get();
+        }
 
         /// @brief Starts the attached simulation over this scene; a no-op when none is attached.
         ///
@@ -693,6 +712,9 @@ namespace Veng
 
         /// @brief The rigid-body simulation space this scene's bodies live in, or null when none.
         Unique<PhysicsWorld> m_PhysicsWorld;
+
+        /// @brief The Transform-chain-to-solver-frame mapping, or null when the two share an origin.
+        Unique<PhysicsPoseResolver> m_PhysicsPoseResolver;
 
         template <class...>
         friend class SceneView;

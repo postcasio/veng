@@ -162,6 +162,7 @@ add_library(veng SHARED
         src/Physics/Gravity.cpp
         src/Physics/PhysicsSystem.cpp
         src/Physics/PhysicsWorld.cpp
+        src/Physics/PoseResolver.cpp
         src/Physics/Queries.cpp
         src/Physics/RemoteCharacterBodySystem.cpp
         src/Platform/UserPaths.cpp

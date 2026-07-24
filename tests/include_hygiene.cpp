@@ -117,6 +117,7 @@
 #include <Veng/Physics/Layers.h>
 #include <Veng/Physics/PhysicsSystem.h>
 #include <Veng/Physics/PhysicsWorld.h>
+#include <Veng/Physics/PoseResolver.h>
 #include <Veng/Physics/Queries.h>
 
 #include <Veng/Platform/UserPaths.h>

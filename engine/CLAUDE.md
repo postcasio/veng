@@ -15,8 +15,9 @@ Each major system's architecture lives in a `CLAUDE.md` inside its source direct
   fields), `Viewport` + the gather/composite tail, the pipeline cache, and bindless set 0.
 - **[src/Scene/CLAUDE.md](src/Scene/CLAUDE.md)** — the ECS world (`Scene`, `Entity`, queries,
   `Hierarchy`, the spatial version), and the gameplay layer: seats and cameras, the
-  input → actions → `PlayerInput` → `Intent` control flow, the Sim/View tick split, the
-  `SystemRegistry` catalog, game modes, and `Level`s.
+  input → actions → `PlayerInput` → `Intent` control flow, interaction and vehicles with their
+  `PhysicsPoseResolver` seam, the Sim/View tick split, the `SystemRegistry` catalog, game modes, and
+  `Level`s.
 - **[src/Asset/CLAUDE.md](src/Asset/CLAUDE.md)** — runtime asset loading (`AssetManager`,
   `AssetHandle`, async/sync `Load`, `MountMemory`), meshes/textures/skinning, prefabs, and the
   shader/material model (`Material` / `MaterialInstance`, `MaterialDomain`).

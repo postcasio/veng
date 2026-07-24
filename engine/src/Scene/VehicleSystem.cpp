@@ -5,13 +5,13 @@
 #include <Veng/Physics/Components.h>
 #include <Veng/Physics/Layers.h>
 #include <Veng/Physics/PhysicsWorld.h>
+#include <Veng/Physics/PoseResolver.h>
 #include <Veng/Physics/Queries.h>
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Interaction.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/Sockets.h>
-#include <Veng/Scene/Transforms.h>
 #include <Veng/Scene/Vehicle.h>
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -37,14 +37,6 @@ namespace Veng
         /// @brief Solid layers an exit is validated against — a character may not land inside these.
         constexpr u32 SolidLayers = (1u << static_cast<u32>(PhysicsLayer::Static)) |
                                     (1u << static_cast<u32>(PhysicsLayer::Moving));
-
-        /// @brief Extracts a rotation from a world matrix, tolerating a uniform scale on its basis.
-        [[nodiscard]] quat RotationOf(const mat4& world)
-        {
-            return glm::quat_cast(mat3(glm::normalize(vec3(world[0])),
-                                       glm::normalize(vec3(world[1])),
-                                       glm::normalize(vec3(world[2]))));
-        }
 
         /// @brief The seat entity of @p vehicle occupied by @p character, or Null when it occupies none.
         [[nodiscard]] Entity OccupiedSeat(const Scene& scene, const Vehicle& vehicle,
@@ -180,13 +172,13 @@ namespace Veng
                 return HandleOutcome::Failed;
             }
 
-            const mat4 vehicleWorld = WorldMatrix(scene, vehicleEntity);
             const mat4 socketLocal = glm::translate(mat4(1.0f), exitSocket->Position) *
                                      glm::mat4_cast(exitSocket->Rotation);
-            const mat4 exitWorld = vehicleWorld * socketLocal;
-            const vec3 exitPosition = vec3(exitWorld[3]);
-            const quat exitRotation = RotationOf(exitWorld);
-            const vec3 exitUp = exitRotation * vec3(0.0f, 1.0f, 0.0f);
+            // One value in the physics world's frame serves all three uses below — the overlap
+            // validation, the re-created capsule, and the character's placement — so a consumer whose
+            // Transform chain is offset from the solver supplies the mapping in one place.
+            const PhysicsPose exitPose = ResolvePhysicsPose(scene, vehicleEntity, socketLocal);
+            const vec3 exitUp = exitPose.Rotation * vec3(0.0f, 1.0f, 0.0f);
 
             PhysicsWorld* world = scene.GetPhysicsWorld();
 
@@ -202,9 +194,9 @@ namespace Veng
                                        .Extents = vec3(controller.Radius, cylinderHalf, 0.0f)};
                 // The controller capsule stands on the entity origin; the query capsule is centred, so
                 // it is lifted half a height along the exit up to line the two up.
-                const PhysicsPose at{.Position =
-                                         dvec3(exitPosition + exitUp * (controller.Height * 0.5f)),
-                                     .Rotation = exitRotation};
+                const PhysicsPose at{.Position = exitPose.Position +
+                                                 dvec3(exitUp * (controller.Height * 0.5f)),
+                                     .Rotation = exitPose.Rotation};
                 const std::array<Entity, 2> ignore{vehicleEntity, character};
                 vector<Entity> hits;
                 if (Overlap(world, capsule, at,
@@ -239,14 +231,9 @@ namespace Veng
             }
             // 3'. Clear the occupant.
             scene.Get<VehicleSeat>(seatEntity).Occupant = Entity::Null;
-            // 2'. Detach and place at the exit socket.
+            // 2'. Detach and report the resolved exit pose, which is where the character landed.
             scene.SetParent(character, Entity::Null);
-            Transform& transform = scene.Has<Transform>(character)
-                                       ? scene.Get<Transform>(character)
-                                       : scene.Add<Transform>(character);
-            transform.Position = exitPosition;
-            transform.Rotation = exitRotation;
-            transform.Scale = vec3(1.0f);
+            PlaceAtPhysicsPose(scene, character, exitPose);
             // 1'. Re-enable the controller, seeded with the vehicle's current velocity so leaving a
             //     moving vehicle carries its motion rather than starting from rest.
             if (scene.Has<CharacterController>(character))
@@ -256,9 +243,7 @@ namespace Veng
                 if (world != nullptr)
                 {
                     const vec3 vehicleVelocity = world->GetLinearVelocity(vehicleEntity);
-                    world->CreateCharacter(
-                        character, controller,
-                        PhysicsPose{.Position = dvec3(exitPosition), .Rotation = exitRotation});
+                    world->CreateCharacter(character, controller, exitPose);
                     world->SetCharacterVelocity(character, vehicleVelocity);
                 }
             }

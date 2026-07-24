@@ -19,6 +19,7 @@
 #include <Veng/Physics/Gravity.h>
 #include <Veng/Physics/PhysicsSystem.h>
 #include <Veng/Physics/PhysicsWorld.h>
+#include <Veng/Physics/PoseResolver.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Scene/BuiltinTypes.h>
@@ -38,6 +39,11 @@ using namespace Veng;
 namespace
 {
     constexpr f32 FixedStep = 1.0f / 60.0f;
+
+    // A solver frame anchored away from the Transform chain's origin. The magnitude is irrelevant to
+    // the mechanism — it need only exceed the exit capsule, so that a validation run in the wrong
+    // frame misses what stands in the right one.
+    constexpr dvec3 SolverOrigin(1000.0, 0.0, -2000.0);
 
     struct ContextStorage
     {
@@ -158,6 +164,46 @@ namespace
             World->Add<Possesses>(seat, Possesses{.Pawn = pawn});
             World->Add<InputContextStack>(seat, InputContextStack{.Active = {CharacterContext}});
             return seat;
+        }
+
+        // Where the engine last reported a resolved placement, and for whom — the record a consumer
+        // holding its authority outside the Transform keeps.
+        dvec3 PlacedPosition{0.0};
+        Entity PlacedEntity = Entity::Null;
+
+        // Projects the Transform chain into the offset solver frame and takes the write-back over,
+        // so the engine never touches the character's f32 Transform.
+        void InstallOffsetResolver()
+        {
+            World->SetPhysicsPoseResolver(CreateUnique<PhysicsPoseResolver>(PhysicsPoseResolver{
+                .Resolve =
+                    [](const Scene& scene, const Entity entity, const mat4& localOffset)
+                {
+                    PhysicsPose pose = DefaultResolvePhysicsPose(scene, entity, localOffset);
+                    pose.Position += SolverOrigin;
+                    return pose;
+                },
+                .Place =
+                    [this](Scene&, const Entity entity, const PhysicsPose& pose)
+                {
+                    PlacedEntity = entity;
+                    PlacedPosition = pose.Position;
+                },
+            }));
+        }
+
+        // A solid box standing at a position in the solver's frame, its Transform bound to nothing so
+        // PhysicsPose is the only channel to the solver.
+        Entity AddSolverFrameObstruction(const dvec3 solverPosition, const vec3 halfExtents)
+        {
+            const Entity entity = World->CreateEntity();
+            World->Add<RigidBody>(entity, RigidBody{.Motion = MotionType::Static,
+                                                    .Layer = PhysicsLayer::Static,
+                                                    .SyncTransform = false});
+            World->Add<Collider>(entity,
+                                 Collider{.Shape = ColliderShape::Box, .Extents = halfExtents});
+            World->Add<PhysicsPose>(entity, PhysicsPose{.Position = solverPosition});
+            return entity;
         }
 
         void Interact(const Entity vehicle, const Entity interactor)
@@ -353,6 +399,82 @@ TEST_CASE("Exiting a moving vehicle transfers its velocity with no positional ju
     CHECK(state.PlanarSpeed == doctest::Approx(glm::length(VehicleVelocity)).epsilon(0.1));
     const vec3 moved = world.Get<Transform>(character).Position - exitPosition;
     CHECK(glm::length(moved) < 0.1f);
+}
+
+TEST_CASE(
+    "An offset pose resolver exits in the solver's frame and reports where the character landed")
+{
+    VehicleScene fixture;
+    Scene& world = *fixture.World;
+    fixture.InstallOffsetResolver();
+    const auto [vehicle, seat] = fixture.AddVehicle(vec3(0.0f, 1.0f, 0.0f), vec3(0.0f, 0.5f, 0.0f),
+                                                    vec3(2.0f, -1.0f, 0.0f), true, false);
+    const Entity character = fixture.AddCharacter(vec3(5.0f, 0.1f, 0.0f));
+    fixture.AddControllingSeat(character);
+
+    fixture.Interact(vehicle, character);
+    REQUIRE(world.Get<VehicleSeat>(seat).Occupant == character);
+    fixture.Interact(vehicle, character);
+    REQUIRE(world.Get<VehicleSeat>(seat).Occupant.IsNull());
+
+    // The hull at (0, 1, 0) plus the exit socket's local (2, -1, 0), projected onto the solver's
+    // origin — one resolved pose, reported back at full precision.
+    CHECK(fixture.PlacedEntity == character);
+    CHECK(fixture.PlacedPosition.x == doctest::Approx(SolverOrigin.x + 2.0).epsilon(1.0e-9));
+    CHECK(fixture.PlacedPosition.y == doctest::Approx(0.0).epsilon(1.0e-5));
+    CHECK(fixture.PlacedPosition.z == doctest::Approx(SolverOrigin.z).epsilon(1.0e-9));
+
+    // The consumer's hook owns the write-back, so the engine left the f32 Transform on the seat
+    // socket's place that entry gave it.
+    CHECK(world.Get<Transform>(character).Position.y == doctest::Approx(0.5f).epsilon(0.001));
+
+    // The capsule was re-created at the resolved pose rather than skipped.
+    CHECK(world.GetPhysicsWorld()->HasCharacter(character));
+}
+
+TEST_CASE("The exit is validated in the frame the resolver names, not the Transform chain's")
+{
+    // Installed, the capsule is swept where the character would actually appear, so an obstruction
+    // standing in the solver's frame is found and the exit is refused.
+    {
+        VehicleScene fixture;
+        Scene& world = *fixture.World;
+        fixture.InstallOffsetResolver();
+        const auto [vehicle, seat] = fixture.AddVehicle(
+            vec3(0.0f, 1.0f, 0.0f), vec3(0.0f, 0.5f, 0.0f), vec3(0.0f, -1.0f, 0.0f), true, false);
+        const Entity character = fixture.AddCharacter(vec3(5.0f, 0.1f, 0.0f));
+        fixture.AddControllingSeat(character);
+        fixture.AddSolverFrameObstruction(SolverOrigin, vec3(1.5f));
+        StepPhysics(world, FixedStep);
+
+        fixture.Interact(vehicle, character);
+        REQUIRE(world.Get<VehicleSeat>(seat).Occupant == character);
+        fixture.Interact(vehicle, character);
+
+        REQUIRE(world.Has<InteractRequest>(vehicle));
+        CHECK(world.Get<InteractRequest>(vehicle).Status == RequestStatus::Failed);
+        CHECK(world.Get<VehicleSeat>(seat).Occupant == character);
+    }
+
+    // The same scene with nothing installed sweeps the Transform chain's place, where the solver
+    // holds nothing, and lets the exit through — the gap the seam closes.
+    {
+        VehicleScene fixture;
+        Scene& world = *fixture.World;
+        const auto [vehicle, seat] = fixture.AddVehicle(
+            vec3(0.0f, 1.0f, 0.0f), vec3(0.0f, 0.5f, 0.0f), vec3(0.0f, -1.0f, 0.0f), true, false);
+        const Entity character = fixture.AddCharacter(vec3(5.0f, 0.1f, 0.0f));
+        fixture.AddControllingSeat(character);
+        fixture.AddSolverFrameObstruction(SolverOrigin, vec3(1.5f));
+        StepPhysics(world, FixedStep);
+
+        fixture.Interact(vehicle, character);
+        REQUIRE(world.Get<VehicleSeat>(seat).Occupant == character);
+        fixture.Interact(vehicle, character);
+
+        CHECK_FALSE(world.Has<InteractRequest>(vehicle));
+        CHECK(world.Get<VehicleSeat>(seat).Occupant.IsNull());
+    }
 }
 
 TEST_CASE("Boarding a vehicle whose seats are all taken fails and reports")

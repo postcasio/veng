@@ -9,6 +9,7 @@
 #include <Veng/Physics/Components.h>
 #include <Veng/Physics/PhysicsSystem.h>
 #include <Veng/Physics/PhysicsWorld.h>
+#include <Veng/Physics/PoseResolver.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Components.h>
@@ -21,6 +22,11 @@ using namespace Veng;
 namespace
 {
     constexpr f32 FixedStep = 1.0f / 60.0f;
+
+    // A solver frame anchored away from the Transform chain's origin. The magnitude is irrelevant to
+    // the mechanism — it need only exceed the interactor's reach, so that a sweep run in the wrong
+    // frame finds nothing at all.
+    constexpr dvec3 SolverOrigin(1000.0, 0.0, -2000.0);
 
     // A SystemContext the InteractionSystem never reads into — it resolves purely from scene state.
     struct ContextStorage
@@ -60,6 +66,24 @@ namespace
                                    Interactor{.Reach = 20.0f, .ConeAngle = glm::radians(45.0f)});
         }
 
+        // A static, findable interactable body whose Transform place is @p position but whose body
+        // stands at SolverOrigin + position: the split-frame shape, with the Transform bound to
+        // nothing (SyncTransform cleared) and PhysicsPose the only channel to the solver.
+        Entity AddInteractableInSolverFrame(const vec3 position, const f32 range)
+        {
+            const Entity entity = World->CreateEntity();
+            World->Add<Transform>(entity, Transform{.Position = position});
+            World->Add<RigidBody>(entity, RigidBody{.Motion = MotionType::Static,
+                                                    .Layer = PhysicsLayer::Query,
+                                                    .SyncTransform = false});
+            World->Add<Collider>(entity,
+                                 Collider{.Shape = ColliderShape::Box, .Extents = vec3(0.25f)});
+            World->Add<PhysicsPose>(entity,
+                                    PhysicsPose{.Position = SolverOrigin + dvec3(position)});
+            World->Add<Interactable>(entity, Interactable{.Verb = "Use", .Range = range});
+            return entity;
+        }
+
         // A static, findable interactable body at a world position.
         Entity AddInteractable(const vec3 position, const f32 range, const bool enabled)
         {
@@ -72,6 +96,21 @@ namespace
             World->Add<Interactable>(
                 entity, Interactable{.Verb = "Use", .Range = range, .Enabled = enabled});
             return entity;
+        }
+
+        // Projects the Transform chain into the offset solver frame, delegating the chain composition
+        // to the engine's default — the shape a consumer with an external authoritative store takes.
+        void InstallOffsetResolver()
+        {
+            World->SetPhysicsPoseResolver(CreateUnique<PhysicsPoseResolver>(PhysicsPoseResolver{
+                .Resolve =
+                    [](const Scene& scene, const Entity entity, const mat4& localOffset)
+                {
+                    PhysicsPose pose = DefaultResolvePhysicsPose(scene, entity, localOffset);
+                    pose.Position += SolverOrigin;
+                    return pose;
+                },
+            }));
         }
 
         Entity Resolve()
@@ -136,4 +175,31 @@ TEST_CASE("The best in-cone interactable is preferred by bearing over a closer o
     fixture.AddInteractable(vec3(1.0f, 0.0f, -1.2f), 10.0f, true);
     const Entity ahead = fixture.AddInteractable(vec3(0.0f, 0.0f, -3.0f), 10.0f, true);
     CHECK(fixture.Resolve() == ahead);
+}
+
+TEST_CASE("An offset pose resolver lands focus resolution in the solver's frame")
+{
+    InteractionScene fixture;
+    fixture.InstallOffsetResolver();
+    // Both bodies stand in the solver's frame; only the projection of their Transform places them
+    // ahead of the interactor. Dead ahead, so distance breaks the tie and the nearer wins.
+    const Entity near = fixture.AddInteractableInSolverFrame(vec3(0.0f, 0.0f, -2.0f), 10.0f);
+    fixture.AddInteractableInSolverFrame(vec3(0.0f, 0.0f, -5.0f), 10.0f);
+    CHECK(fixture.Resolve() == near);
+
+    // The cone and range filters run in that same frame, so an out-of-cone candidate is still
+    // rejected rather than admitted by an accidentally-shifted bearing.
+    InteractionScene sideways;
+    sideways.InstallOffsetResolver();
+    sideways.AddInteractableInSolverFrame(vec3(5.0f, 0.0f, -0.1f), 10.0f);
+    CHECK(sideways.Resolve().IsNull());
+}
+
+TEST_CASE("An offset solver frame focuses nothing while no resolver is installed")
+{
+    InteractionScene fixture;
+    // The gap the seam closes: the sweep runs at the interactor's Transform place, where the solver
+    // holds nothing, so no interactable is ever offered.
+    fixture.AddInteractableInSolverFrame(vec3(0.0f, 0.0f, -2.0f), 10.0f);
+    CHECK(fixture.Resolve().IsNull());
 }

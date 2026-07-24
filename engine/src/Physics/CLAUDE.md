@@ -203,6 +203,13 @@ consumer writes it from whatever it considers authoritative and reads the result
 `Transform` is left entirely to the consumer's own pass. Set (the default), the two stay in step and
 the simple case needs no thought.
 
+**`PhysicsPoseResolver` is its read-side counterpart** (`Veng/Physics/PoseResolver.h`). `SyncTransform`
+covers the poses the *step* writes; the gameplay systems that reason in the solver's space —
+interaction focus, vehicle enter/exit — instead *read* a pose composed up the `Transform` chain, which
+is wrong in exactly the same split-frame case. A scene optionally installs a resolver
+(`Scene::SetPhysicsPoseResolver`) mapping entity → solver-space pose and back, and the whole model is
+documented with its consumers in [../Scene/CLAUDE.md](../Scene/CLAUDE.md).
+
 ## The character controller — a kinematic capsule with per-body up
 
 A **`CharacterController`** (`Veng/Physics/CharacterController.h`) is a walking character: a kinematic
