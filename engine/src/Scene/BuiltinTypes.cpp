@@ -11,6 +11,7 @@
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Renderer/Atmosphere.h>
 #include <Veng/Renderer/CaptureSurface.h>
+#include <Veng/Scene/AnimationBlend.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/RemoteInterpolationSystem.h>
@@ -34,6 +35,12 @@ namespace Veng
         registry.Register<Animator>();
         registry.Register<SkinnedPose>();
         registry.Register<RootMotionDelta>();
+
+        // The 1-D locomotion blend space and the discrete states over it, both posed by
+        // AnimationSystem beside a plain Animator. BlendSample and AnimationState register
+        // transitively as the array-element types of their respective components' fields.
+        registry.Register<AnimationBlend>();
+        registry.Register<AnimationStateSet>();
         registry.Register<LightType>();
         registry.Register<Light>();
 

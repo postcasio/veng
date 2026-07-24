@@ -9,6 +9,7 @@
 #include <Veng/Asset/Animation.h>
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Asset/Skeleton.h>
+#include <Veng/Scene/AnimationBlend.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
 
@@ -221,6 +222,350 @@ namespace Veng
         return SampleVec3(channel->Position, time, bind);
     }
 
+    BlendBracket FindBlendBracket(const std::span<const f32> thresholds, const f32 parameter)
+    {
+        const usize count = thresholds.size();
+        if (count == 0)
+        {
+            return {};
+        }
+        if (parameter <= thresholds.front())
+        {
+            return {.Lo = 0, .Hi = 0, .Weight = 0.0f};
+        }
+        if (parameter >= thresholds.back())
+        {
+            return {.Lo = count - 1, .Hi = count - 1, .Weight = 0.0f};
+        }
+        for (usize i = 0; i + 1 < count; ++i)
+        {
+            if (parameter < thresholds[i + 1])
+            {
+                const f32 span = thresholds[i + 1] - thresholds[i];
+                const f32 weight = span > 0.0f ? (parameter - thresholds[i]) / span : 0.0f;
+                return {.Lo = i, .Hi = i + 1, .Weight = weight};
+            }
+        }
+        return {.Lo = count - 1, .Hi = count - 1, .Weight = 0.0f};
+    }
+
+    f32 AdvanceCrossfade(const f32 weight, const f32 fadeIn, const f32 delta)
+    {
+        if (fadeIn <= 0.0f)
+        {
+            return 1.0f;
+        }
+        return glm::clamp(weight + delta / fadeIn, 0.0f, 1.0f);
+    }
+
+    void SampleAnimationLocalPose(const Skeleton& skeleton, const Animation& animation,
+                                  const f32 time, const bool loop, vector<JointPose>& out)
+    {
+        const usize count = skeleton.Bones.size();
+        out.resize(count);
+        for (usize i = 0; i < count; ++i)
+        {
+            const Bone& bone = skeleton.Bones[i];
+            out[i] = JointPose{.Translation = bone.LocalPosition,
+                               .Rotation = bone.LocalRotation,
+                               .Scale = bone.LocalScale};
+        }
+
+        f32 t = time;
+        if (animation.Duration > 0.0f)
+        {
+            t = loop ? std::fmod(time, animation.Duration)
+                     : glm::clamp(time, 0.0f, animation.Duration);
+            if (t < 0.0f)
+            {
+                t += animation.Duration;
+            }
+        }
+
+        for (const AnimationChannel& channel : animation.Channels)
+        {
+            if (channel.BoneIndex >= count)
+            {
+                continue;
+            }
+            const Bone& bone = skeleton.Bones[channel.BoneIndex];
+            out[channel.BoneIndex] =
+                JointPose{.Translation = SampleVec3(channel.Position, t, bone.LocalPosition),
+                          .Rotation = SampleQuat(channel.Rotation, t, bone.LocalRotation),
+                          .Scale = SampleVec3(channel.Scale, t, bone.LocalScale)};
+        }
+    }
+
+    void BlendLocalPoses(const vector<JointPose>& a, const vector<JointPose>& b, const f32 weight,
+                         vector<JointPose>& out)
+    {
+        const usize count = a.size();
+        out.resize(count);
+        for (usize i = 0; i < count; ++i)
+        {
+            // Flip the second quaternion into the first's hemisphere so slerp takes the short arc.
+            quat rb = b[i].Rotation;
+            if (glm::dot(a[i].Rotation, rb) < 0.0f)
+            {
+                rb = -rb;
+            }
+            out[i] = JointPose{.Translation = glm::mix(a[i].Translation, b[i].Translation, weight),
+                               .Rotation = glm::slerp(a[i].Rotation, rb, weight),
+                               .Scale = glm::mix(a[i].Scale, b[i].Scale, weight)};
+        }
+    }
+
+    void ComposeLocalPose(const vector<JointPose>& pose, vector<mat4>& out)
+    {
+        out.resize(pose.size());
+        for (usize i = 0; i < pose.size(); ++i)
+        {
+            out[i] = glm::translate(mat4(1.0f), pose[i].Translation) *
+                     glm::mat4_cast(pose[i].Rotation) * glm::scale(mat4(1.0f), pose[i].Scale);
+        }
+    }
+
+    namespace
+    {
+        // Fills out with the skeleton's bind-pose local TRS — the base an empty blend falls back to.
+        void BindLocalPose(const Skeleton& skeleton, vector<JointPose>& out)
+        {
+            out.resize(skeleton.Bones.size());
+            for (usize i = 0; i < skeleton.Bones.size(); ++i)
+            {
+                const Bone& bone = skeleton.Bones[i];
+                out[i] = JointPose{.Translation = bone.LocalPosition,
+                                   .Rotation = bone.LocalRotation,
+                                   .Scale = bone.LocalScale};
+            }
+        }
+
+        // The blended clip duration the shared phase advances against, so the effective playback
+        // cadence matches the pace being blended toward.
+        f32 BlendReferenceDuration(const AnimationBlend& blend, const BlendBracket& bracket)
+        {
+            const auto duration = [&](const usize index) -> f32
+            {
+                const AssetHandle<Animation>& clip = blend.Samples[index].Clip;
+                return clip.IsLoaded() ? clip.Get()->Duration : 0.0f;
+            };
+            const f32 lo = duration(bracket.Lo);
+            const f32 hi = duration(bracket.Hi);
+            if (bracket.Lo == bracket.Hi || hi <= 0.0f)
+            {
+                return lo;
+            }
+            if (lo <= 0.0f)
+            {
+                return hi;
+            }
+            return glm::mix(lo, hi, bracket.Weight);
+        }
+
+        // Samples the bracketed blend at the shared phase (each clip at phase * its own duration) and
+        // blends by the bracket weight. False when neither bracket clip is resident.
+        bool SampleBlendPose(const Skeleton& skeleton, const AnimationBlend& blend,
+                             const BlendBracket& bracket, const f32 phase, vector<JointPose>& out)
+        {
+            const AssetHandle<Animation>& lo = blend.Samples[bracket.Lo].Clip;
+            const AssetHandle<Animation>& hi = blend.Samples[bracket.Hi].Clip;
+            const bool loLoaded = lo.IsLoaded();
+            const bool hiLoaded = hi.IsLoaded();
+            if (!loLoaded && !hiLoaded)
+            {
+                return false;
+            }
+
+            if (loLoaded && hiLoaded && bracket.Lo != bracket.Hi)
+            {
+                vector<JointPose> poseLo;
+                vector<JointPose> poseHi;
+                SampleAnimationLocalPose(skeleton, *lo.Get(), phase * lo.Get()->Duration, true,
+                                         poseLo);
+                SampleAnimationLocalPose(skeleton, *hi.Get(), phase * hi.Get()->Duration, true,
+                                         poseHi);
+                BlendLocalPoses(poseLo, poseHi, bracket.Weight, out);
+                return true;
+            }
+
+            const AssetHandle<Animation>& only = loLoaded ? lo : hi;
+            SampleAnimationLocalPose(skeleton, *only.Get(), phase * only.Get()->Duration, true,
+                                     out);
+            return true;
+        }
+
+        // Finds the named state, or nullptr for an empty/unknown name.
+        const AnimationState* FindState(const AnimationStateSet& set, const string& name)
+        {
+            if (name.empty())
+            {
+                return nullptr;
+            }
+            for (const AnimationState& state : set.States)
+            {
+                if (state.Name == name)
+                {
+                    return &state;
+                }
+            }
+            return nullptr;
+        }
+
+        // Evaluates one crossfade source: the empty name is the base (blend) pose, a state name is
+        // its clip sampled at the given time (falling back to the base when the clip is not resident).
+        void EvalStateSource(const Skeleton& skeleton, const AnimationStateSet& set,
+                             const string& name, const f32 time, const vector<JointPose>& base,
+                             vector<JointPose>& out)
+        {
+            const AnimationState* state = FindState(set, name);
+            if (state == nullptr || !state->Clip.IsLoaded())
+            {
+                out = base;
+                return;
+            }
+            SampleAnimationLocalPose(skeleton, *state->Clip.Get(), time, state->Loop, out);
+        }
+
+        // Advances the state set's crossfade machine: honoring the requested state, snapping a new
+        // request into a fresh transition, and ramping the crossfade + clip clocks.
+        void UpdateStateSet(AnimationStateSet& set, const f32 clipDelta, const f32 fadeDelta,
+                            const bool playing)
+        {
+            // An unknown requested name resolves to the blend, exactly like an empty one.
+            const string request =
+                FindState(set, set.RequestedState) != nullptr ? set.RequestedState : string();
+            if (request != set.CurrentState)
+            {
+                set.PreviousState = set.CurrentState;
+                set.PreviousTime = set.CurrentTime;
+                set.CurrentState = request;
+                set.CurrentTime = 0.0f;
+                set.Transition = 0.0f;
+            }
+
+            const string& fadeName =
+                set.CurrentState.empty() ? set.PreviousState : set.CurrentState;
+            const AnimationState* fadeState = FindState(set, fadeName);
+            const f32 fadeIn = fadeState != nullptr ? fadeState->FadeIn : 0.0f;
+
+            if (playing)
+            {
+                set.Transition = AdvanceCrossfade(set.Transition, fadeIn, fadeDelta);
+                if (!set.CurrentState.empty())
+                {
+                    set.CurrentTime += clipDelta;
+                }
+                if (!set.PreviousState.empty() && set.Transition < 1.0f)
+                {
+                    set.PreviousTime += clipDelta;
+                }
+            }
+        }
+
+        // The bone whose baked translation is stripped in the blend/state path: the first root-motion
+        // bone any participating clip resolves to (all share the skeleton). -1 when none bake motion.
+        i32 RepresentativeRootBone(const Skeleton& skeleton, const AnimationBlend* blend,
+                                   const AnimationStateSet* set)
+        {
+            const auto tryClip = [&](const AssetHandle<Animation>& clip) -> i32
+            { return clip.IsLoaded() ? FindRootMotionBone(skeleton, *clip.Get()) : -1; };
+
+            if (blend != nullptr)
+            {
+                for (const BlendSample& sample : blend->Samples)
+                {
+                    const i32 bone = tryClip(sample.Clip);
+                    if (bone >= 0)
+                    {
+                        return bone;
+                    }
+                }
+            }
+            if (set != nullptr)
+            {
+                for (const AnimationState& state : set->States)
+                {
+                    const i32 bone = tryClip(state.Clip);
+                    if (bone >= 0)
+                    {
+                        return bone;
+                    }
+                }
+            }
+            return -1;
+        }
+
+        // Poses an entity carrying an AnimationBlend and/or AnimationStateSet into its SkinnedPose:
+        // the phase-synced blend as the base, an optional named state crossfaded over it, and the
+        // baked root translation stripped (the controller owns position).
+        void PoseBlended(const Skeleton& skeleton, const Animator& animator, AnimationBlend* blend,
+                         AnimationStateSet* stateSet, const f32 delta, SkinnedPose& pose)
+        {
+            const bool playing = animator.Playing;
+
+            vector<JointPose> basePose;
+            bool haveBase = false;
+            if (blend != nullptr && !blend->Samples.empty())
+            {
+                vector<f32> thresholds;
+                thresholds.reserve(blend->Samples.size());
+                for (const BlendSample& sample : blend->Samples)
+                {
+                    thresholds.push_back(sample.Threshold);
+                }
+                const BlendBracket bracket = FindBlendBracket(thresholds, blend->Parameter);
+                const f32 referenceDuration = BlendReferenceDuration(*blend, bracket);
+                if (playing && referenceDuration > 0.0f)
+                {
+                    blend->Phase += delta * animator.Speed / referenceDuration;
+                    blend->Phase -= std::floor(blend->Phase);
+                }
+                haveBase = SampleBlendPose(skeleton, *blend, bracket, blend->Phase, basePose);
+            }
+            if (!haveBase)
+            {
+                BindLocalPose(skeleton, basePose);
+            }
+
+            vector<JointPose> finalPose;
+            if (stateSet != nullptr)
+            {
+                UpdateStateSet(*stateSet, delta * animator.Speed, delta, playing);
+                if (stateSet->Transition >= 1.0f ||
+                    stateSet->PreviousState == stateSet->CurrentState)
+                {
+                    EvalStateSource(skeleton, *stateSet, stateSet->CurrentState,
+                                    stateSet->CurrentTime, basePose, finalPose);
+                }
+                else
+                {
+                    vector<JointPose> currentPose;
+                    vector<JointPose> previousPose;
+                    EvalStateSource(skeleton, *stateSet, stateSet->CurrentState,
+                                    stateSet->CurrentTime, basePose, currentPose);
+                    EvalStateSource(skeleton, *stateSet, stateSet->PreviousState,
+                                    stateSet->PreviousTime, basePose, previousPose);
+                    BlendLocalPoses(previousPose, currentPose, stateSet->Transition, finalPose);
+                }
+            }
+            else
+            {
+                finalPose = std::move(basePose);
+            }
+
+            const i32 rootBone = RepresentativeRootBone(skeleton, blend, stateSet);
+            if (rootBone >= 0 && static_cast<usize>(rootBone) < finalPose.size())
+            {
+                finalPose[static_cast<usize>(rootBone)].Translation =
+                    skeleton.Bones[static_cast<usize>(rootBone)].LocalPosition;
+            }
+
+            vector<mat4> localPose;
+            ComposeLocalPose(finalPose, localPose);
+            skeleton.ComputeSkinningMatrices(localPose, pose.Skinning);
+        }
+    }
+
     void AnimationSystem::OnUpdate(Scene& scene, const f32 delta, const SystemContext& /*context*/)
     {
         const Scene& readScene = scene;
@@ -267,6 +612,17 @@ namespace Veng
             const AssetHandle<Skeleton>& skeletonHandle = renderer->Mesh->GetSkeleton();
             if (!skeletonHandle.IsLoaded())
             {
+                continue;
+            }
+
+            // A blend space or state set replaces the single-clip play: pose in blend/state space
+            // into the same SkinnedPose. An Animator carrying neither is the single-clip path below,
+            // unchanged.
+            auto* blend = scene.TryGet<AnimationBlend>(entity);
+            auto* stateSet = scene.TryGet<AnimationStateSet>(entity);
+            if (blend != nullptr || stateSet != nullptr)
+            {
+                PoseBlended(*skeletonHandle.Get(), animator, blend, stateSet, delta, *pose);
                 continue;
             }
 

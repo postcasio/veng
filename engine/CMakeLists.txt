@@ -194,6 +194,7 @@ add_library(veng SHARED
         src/Scene/BuiltinTypes.cpp
         src/Scene/Camera.cpp
         src/Scene/CameraRig.cpp
+        src/Scene/CharacterAnimationSystem.cpp
         src/Scene/ComponentPool.cpp
         src/Scene/DeviceAssignmentSystem.cpp
         src/Scene/FocusRequestReconcile.cpp

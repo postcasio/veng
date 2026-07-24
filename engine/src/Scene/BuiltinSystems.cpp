@@ -2,6 +2,7 @@
 
 #include <Veng/Scene/AnimationSystem.h>
 #include <Veng/Scene/CameraRig.h>
+#include <Veng/Scene/CharacterAnimationSystem.h>
 #include <Veng/Scene/DeviceAssignmentSystem.h>
 #include <Veng/Scene/InputMappingSystem.h>
 #include <Veng/Physics/CharacterMovementSystem.h>
@@ -38,6 +39,13 @@ namespace Veng
 
         registry.Register<RootMotionDriveSystem>();
         registry.Register<CameraRigSystem>();
+
+        // Maps a character's finalized motion state onto its animation drive fields (speed →
+        // AnimationBlend::Parameter, airborne → AnimationStateSet::RequestedState). View-phase and
+        // registered before AnimationSystem so a level naming both feeds the blend the same tick it
+        // is posed; a level driving the blend from elsewhere simply does not name it.
+        registry.Register<CharacterAnimationSystem>();
+
         registry.Register<AnimationSystem>();
         registry.Register<ConstantMotionSystem>();
 

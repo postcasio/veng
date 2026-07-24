@@ -129,7 +129,12 @@ carrying the view/projection — Y flipped for Vulkan clip space), `MeshRenderer
 `AssetHandle<Mesh>` a draw queries — the mesh owns its materials, so a renderer queries
 `(Transform, MeshRenderer)` and draws each submesh with its material), `Animator` (plays an
 `AssetHandle<Animation>` on a skinned-mesh entity; the `AnimationSystem` writes the result into a
-transient `SkinnedPose` the renderer uploads), `Light` (a directional light —
+transient `SkinnedPose` the renderer uploads — or, when the entity also carries an `AnimationBlend`
+or `AnimationStateSet` (`Veng/Scene/AnimationBlend.h`), the phase-synced 1-D blend of the bracketing
+locomotion clips with a named state crossfaded over it, composed in pose space into the same
+`SkinnedPose`; an Animator with neither is the single-clip path unchanged, and the builtin
+`CharacterAnimationSystem` maps a `CharacterState` onto the blend's `Parameter` and requested
+state), `Light` (a directional light —
 `Direction`/`Color`/`Intensity`; `SceneRenderer::Execute` selects the first `Light` entity into
 the `SceneView`, or a zero-intensity default → flat ambient when the scene has none), and
 `ViewPose` (a fieldless runtime-only tag marking an entity whose `Transform` is authored per
@@ -396,8 +401,8 @@ its own through `VengModuleRegister`, `Application` borrows it) stores `{ System
 factory }`, **enumerates the catalog** without instantiating anything, resolves an id, and fatally
 rejects a duplicate id. The builtins register in this order (`BuiltinSystems.cpp`):
 `DeviceAssignmentSystem`, `InputMappingSystem`, `MovementSystem`, `RootMotionDriveSystem`,
-`CameraRigSystem`, `AnimationSystem`, `ConstantMotionSystem`, `RemoteInterpolationSystem`,
-`TimeOfDaySystem`. Registration is GPU-free (building a system touches no `Context`/device), so
+`CameraRigSystem`, `CharacterAnimationSystem`, `AnimationSystem`, `ConstantMotionSystem`,
+`RemoteInterpolationSystem`, `TimeOfDaySystem`. Registration is GPU-free (building a system touches no `Context`/device), so
 `RegisterBuiltinSystems` is callable in the headless cooker with no ICD — the cook reflects a
 level's named systems against the same builtins + module catalog the runtime resolves. A
 `SceneSimulation` is built either from an **ordered `SystemId` set** selecting catalog entries
