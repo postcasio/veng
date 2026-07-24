@@ -226,5 +226,10 @@ namespace Veng
                            .DisplayName = "DataTable",
                            .Glyph = "TBL",
                            .HandleFieldType = AssetHandleFieldTypes::DataTable});
+        registry.Register({.Id = AssetTypes::CollisionShape,
+                           .Name = "CollisionShape",
+                           .DisplayName = "CollisionShape",
+                           .Glyph = "COL",
+                           .HandleFieldType = AssetHandleFieldTypes::CollisionShape});
     }
 }

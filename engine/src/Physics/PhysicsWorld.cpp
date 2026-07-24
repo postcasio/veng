@@ -1,26 +1,27 @@
 #include <Veng/Physics/PhysicsWorld.h>
 
 #include <Veng/Assert.h>
+#include <Veng/Asset/CollisionShape.h>
 #include <Veng/Log.h>
 #include <Veng/Renderer/DebugDraw.h>
 
-#include <Jolt/Jolt.h>
+#include "PhysicsInternal.h"
 
 #include <Jolt/Core/Factory.h>
 #include <Jolt/Core/IssueReporting.h>
-#include <Jolt/Core/JobSystemSingleThreaded.h>
-#include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Body/BodyInterface.h>
-#include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayer.h>
-#include <Jolt/Physics/Collision/ContactListener.h>
-#include <Jolt/Physics/Collision/ObjectLayer.h>
+#include <Jolt/Physics/Body/BodyLock.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
+#include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
+#include <Jolt/Physics/Constraints/FixedConstraint.h>
+#include <Jolt/Physics/Constraints/HingeConstraint.h>
+#include <Jolt/Physics/Constraints/PointConstraint.h>
 #include <Jolt/Physics/PhysicsSettings.h>
-#include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/Physics/StateRecorderImpl.h>
 #include <Jolt/RegisterTypes.h>
 
@@ -29,19 +30,11 @@
 #include <cstdio>
 #include <cstring>
 #include <mutex>
-#include <unordered_map>
 
 namespace Veng
 {
     namespace
     {
-        /// @brief Broad-phase layer holding bodies that never move.
-        constexpr JPH::BroadPhaseLayer BroadPhaseNonMoving(0);
-        /// @brief Broad-phase layer holding bodies that can move.
-        constexpr JPH::BroadPhaseLayer BroadPhaseMoving(1);
-        /// @brief Number of broad-phase layers the world declares.
-        constexpr u32 BroadPhaseLayerCount = 2;
-
         /// @brief Floor on the per-step scratch, so a tiny world still has room to solve.
         constexpr u32 MinTempAllocatorBytes = 8U * 1024U * 1024U;
 
@@ -131,46 +124,8 @@ namespace Veng
             JPH::Factory::sInstance = nullptr;
         }
 
-        /// @brief Converts an engine world-space position into the solver's real-precision vector.
-        [[nodiscard]] JPH::RVec3 ToJolt(const dvec3 value)
-        {
-            return {static_cast<JPH::Real>(value.x), static_cast<JPH::Real>(value.y),
-                    static_cast<JPH::Real>(value.z)};
-        }
-
-        /// @brief Converts an engine direction or velocity into the solver's single-precision vector.
-        [[nodiscard]] JPH::Vec3 ToJolt(const vec3 value)
-        {
-            return {value.x, value.y, value.z};
-        }
-
-        /// @brief Converts an engine orientation into the solver's quaternion (x, y, z, w order).
-        [[nodiscard]] JPH::Quat ToJolt(const quat value)
-        {
-            return {value.x, value.y, value.z, value.w};
-        }
-
-        /// @brief Converts a solver real-precision position into an engine world-space position.
-        [[nodiscard]] dvec3 FromJolt(const JPH::RVec3 value)
-        {
-            return {static_cast<f64>(value.GetX()), static_cast<f64>(value.GetY()),
-                    static_cast<f64>(value.GetZ())};
-        }
-
-        /// @brief Converts a solver single-precision vector into an engine vector.
-        [[nodiscard]] vec3 FromJolt(const JPH::Vec3 value)
-        {
-            return {value.GetX(), value.GetY(), value.GetZ()};
-        }
-
-        /// @brief Converts a solver quaternion into an engine orientation.
-        [[nodiscard]] quat FromJolt(const JPH::Quat value)
-        {
-            return {value.GetW(), value.GetX(), value.GetY(), value.GetZ()};
-        }
-
         /// @brief Maps an engine motion type onto the solver's.
-        [[nodiscard]] JPH::EMotionType ToJolt(const MotionType motion)
+        [[nodiscard]] JPH::EMotionType ToJoltMotion(const MotionType motion)
         {
             switch (motion)
             {
@@ -195,45 +150,8 @@ namespace Veng
         [[nodiscard]] bool SameSettings(const Collider& a, const Collider& b)
         {
             return a.Shape == b.Shape && a.Extents == b.Extents && a.Offset == b.Offset &&
-                   a.Friction == b.Friction && a.Restitution == b.Restitution;
-        }
-
-        /// @brief Builds the solver shape a Collider describes, offset into the body's frame.
-        /// @param collider  The primitive to build.
-        /// @return The built shape; never null (an invalid primitive is a fatal assert).
-        [[nodiscard]] JPH::RefConst<JPH::Shape> BuildShape(const Collider& collider)
-        {
-            JPH::Ref<JPH::ShapeSettings> settings;
-            switch (collider.Shape)
-            {
-            case ColliderShape::Box:
-            {
-                // Jolt refuses a box thinner than its convex radius, so clamp the half extents up
-                // to the default radius rather than asserting inside the solver.
-                const vec3 half = glm::max(collider.Extents, vec3(JPH::cDefaultConvexRadius));
-                settings = new JPH::BoxShapeSettings(ToJolt(half));
-                break;
-            }
-            case ColliderShape::Sphere:
-                settings = new JPH::SphereShapeSettings(collider.Extents.x);
-                break;
-            case ColliderShape::Capsule:
-                settings = new JPH::CapsuleShapeSettings(collider.Extents.y, collider.Extents.x);
-                break;
-            }
-            VE_ASSERT(settings != nullptr, "Unmapped ColliderShape {}",
-                      static_cast<u32>(collider.Shape));
-
-            if (collider.Offset != vec3(0.0f))
-            {
-                settings = new JPH::RotatedTranslatedShapeSettings(
-                    ToJolt(collider.Offset), JPH::Quat::sIdentity(), settings);
-            }
-
-            const JPH::ShapeSettings::ShapeResult result = settings->Create();
-            VE_ASSERT(result.IsValid(), "Collider shape is not buildable: {}",
-                      result.GetError().c_str());
-            return result.Get();
+                   a.Friction == b.Friction && a.Restitution == b.Restitution &&
+                   a.Geometry.Get() == b.Geometry.Get();
         }
 
         /// @brief Mixes a 64-bit value, so a pose hash spreads its input bits.
@@ -246,187 +164,120 @@ namespace Veng
             value ^= value >> 33;
             return value;
         }
-
-        /// @brief One recorded contact, kept for the debug visualization only.
-        struct DebugContact
-        {
-            /// @brief World-space contact point, narrowed to f32 for drawing.
-            vec3 Point;
-            /// @brief Contact normal pointing out of the second body.
-            vec3 Normal;
-        };
-
-        /// @brief The world's layer table: broad-phase mapping plus both collision filters.
-        ///
-        /// One object holds all three interfaces because they answer one question — which pairs may
-        /// touch — off one CollisionMatrix.
-        class LayerTable final : public JPH::BroadPhaseLayerInterface,
-                                 public JPH::ObjectVsBroadPhaseLayerFilter,
-                                 public JPH::ObjectLayerPairFilter
-        {
-        public:
-            /// @brief Builds the table over a collision matrix.
-            /// @param matrix  Which object-layer pairs may collide.
-            explicit LayerTable(const CollisionMatrix& matrix) : m_Matrix(matrix) {}
-
-            /// @brief Returns how many broad-phase layers the world declares.
-            [[nodiscard]] JPH::uint GetNumBroadPhaseLayers() const override
-            {
-                return BroadPhaseLayerCount;
-            }
-
-            /// @brief Maps an object layer onto its broad-phase layer.
-            /// @param layer  The object layer to map.
-            /// @return The broad-phase layer it lives in.
-            [[nodiscard]] JPH::BroadPhaseLayer
-            GetBroadPhaseLayer(const JPH::ObjectLayer layer) const override
-            {
-                const auto engineLayer = static_cast<PhysicsLayer>(layer);
-                const bool moves =
-                    engineLayer != PhysicsLayer::Static && engineLayer != PhysicsLayer::Query;
-                return moves ? BroadPhaseMoving : BroadPhaseNonMoving;
-            }
-
-            /// @brief Whether an object layer may collide with anything in a broad-phase layer.
-            /// @param layer       The object layer being tested.
-            /// @param broadPhase  The broad-phase layer being tested against.
-            /// @return True when at least one object layer inside @p broadPhase collides with @p layer.
-            [[nodiscard]] bool ShouldCollide(const JPH::ObjectLayer layer,
-                                             const JPH::BroadPhaseLayer broadPhase) const override
-            {
-                for (u32 other = 0; other < PhysicsLayerCount; ++other)
-                {
-                    const auto otherLayer = static_cast<PhysicsLayer>(other);
-                    if (GetBroadPhaseLayer(static_cast<JPH::ObjectLayer>(other)) != broadPhase)
-                    {
-                        continue;
-                    }
-                    if (LayersCollide(m_Matrix, static_cast<PhysicsLayer>(layer), otherLayer))
-                    {
-                        return true;
-                    }
-                }
-                return false;
-            }
-
-            /// @brief Whether two object layers may collide.
-            /// @param a  One object layer.
-            /// @param b  The other object layer.
-            /// @return True when the matrix allows the pair.
-            [[nodiscard]] bool ShouldCollide(const JPH::ObjectLayer a,
-                                             const JPH::ObjectLayer b) const override
-            {
-                return LayersCollide(m_Matrix, static_cast<PhysicsLayer>(a),
-                                     static_cast<PhysicsLayer>(b));
-            }
-
-#if defined(JPH_EXTERNAL_PROFILE) || defined(JPH_PROFILE_ENABLED)
-            /// @brief Returns a broad-phase layer's name, for the solver's own profiler.
-            /// @param broadPhase  The layer to name.
-            [[nodiscard]] const char*
-            GetBroadPhaseLayerName(const JPH::BroadPhaseLayer broadPhase) const override
-            {
-                return broadPhase == BroadPhaseMoving ? "Moving" : "NonMoving";
-            }
-#endif
-
-        private:
-            /// @brief Which object-layer pairs may collide.
-            CollisionMatrix m_Matrix;
-        };
-
-        /// @brief Collects contact points during a step, for the debug visualization.
-        ///
-        /// Recording is gated by Enabled so a world with the visualization off pays nothing beyond
-        /// the virtual call. It observes contacts and never changes settings, so it cannot perturb
-        /// the simulation.
-        class ContactRecorder final : public JPH::ContactListener
-        {
-        public:
-            /// @brief Whether contacts are recorded this step.
-            bool Enabled = false;
-            /// @brief Contacts recorded during the current step.
-            vector<DebugContact> Contacts;
-
-            /// @brief Records a newly detected contact manifold.
-            /// @param manifold  The manifold's points and normal.
-            void OnContactAdded(const JPH::Body&, const JPH::Body&,
-                                const JPH::ContactManifold& manifold,
-                                JPH::ContactSettings&) override
-            {
-                Record(manifold);
-            }
-
-            /// @brief Records a contact manifold that persists from the previous step.
-            /// @param manifold  The manifold's points and normal.
-            void OnContactPersisted(const JPH::Body&, const JPH::Body&,
-                                    const JPH::ContactManifold& manifold,
-                                    JPH::ContactSettings&) override
-            {
-                Record(manifold);
-            }
-
-        private:
-            /// @brief Appends every point of @p manifold to the recorded set.
-            /// @param manifold  The manifold to record.
-            void Record(const JPH::ContactManifold& manifold)
-            {
-                if (!Enabled)
-                {
-                    return;
-                }
-                const vec3 normal = FromJolt(manifold.mWorldSpaceNormal);
-                for (JPH::uint i = 0; i < manifold.mRelativeContactPointsOn1.size(); ++i)
-                {
-                    const dvec3 point = FromJolt(manifold.GetWorldSpaceContactPointOn1(i));
-                    Contacts.emplace_back(DebugContact{.Point = vec3(point), .Normal = normal});
-                }
-            }
-        };
-
-        /// @brief One live body: its solver handle and the component values it was built from.
-        struct BodyRecord
-        {
-            /// @brief The solver's handle for this body.
-            JPH::BodyID Id;
-            /// @brief The RigidBody settings the body was built from.
-            RigidBody Body;
-            /// @brief The Collider settings the shape was built from.
-            Collider Shape;
-        };
     }
 
-    struct PhysicsWorld::Native
+    namespace Detail
     {
-        /// @brief Builds the backend state from the world's descriptor.
-        /// @param info  Gravity, the collision matrix, and the body budget.
-        explicit Native(const PhysicsWorldInfo& info)
-            : Layers(info.Matrix), Temp(TempAllocatorBytes(info.MaxBodies))
+        namespace
         {
-            System.Init(info.MaxBodies, AutoBodyMutexCount, info.MaxBodyPairs,
-                        info.MaxContactConstraints, Layers, Layers, Layers);
-            System.SetGravity(ToJolt(info.Gravity));
-            System.SetContactListener(&Contacts);
+            /// @brief Builds the solver shape a cooked CollisionShape describes.
+            /// @param geometry  The cooked points and indices.
+            /// @return The built shape; never null (unbuildable geometry is a fatal assert).
+            [[nodiscard]] JPH::RefConst<JPH::Shape> BuildCookedShape(const CollisionShape& geometry)
+            {
+                JPH::Ref<JPH::ShapeSettings> settings;
+                if (geometry.Geometry == CollisionGeometry::Convex)
+                {
+                    JPH::Array<JPH::Vec3> points;
+                    points.reserve(geometry.Points.size());
+                    for (const vec3 point : geometry.Points)
+                    {
+                        points.push_back(ToJolt(point));
+                    }
+                    settings = new JPH::ConvexHullShapeSettings(points);
+                }
+                else
+                {
+                    JPH::VertexList vertices;
+                    vertices.reserve(geometry.Points.size());
+                    for (const vec3 point : geometry.Points)
+                    {
+                        vertices.push_back(JPH::Float3(point.x, point.y, point.z));
+                    }
+                    JPH::IndexedTriangleList triangles;
+                    triangles.reserve(geometry.GetTriangleCount());
+                    for (usize i = 0; i + 2 < geometry.Indices.size(); i += 3)
+                    {
+                        triangles.push_back(JPH::IndexedTriangle(geometry.Indices[i],
+                                                                 geometry.Indices[i + 1],
+                                                                 geometry.Indices[i + 2], 0));
+                    }
+                    settings = new JPH::MeshShapeSettings(vertices, triangles);
+                }
+
+                const JPH::ShapeSettings::ShapeResult result = settings->Create();
+                VE_ASSERT(result.IsValid(), "CollisionShape is not buildable: {}",
+                          result.GetError().c_str());
+                return result.Get();
+            }
         }
 
-        /// @brief The broad-phase mapping and both collision filters.
-        LayerTable Layers;
-        /// @brief Scratch the solver carves its per-step allocations out of.
-        JPH::TempAllocatorImpl Temp;
-        /// @brief The solver's job system, run on the calling thread.
-        ///
-        /// Single-threaded: veng's render thread is single and sharing a pool with the TaskSystem
-        /// is a separate design question, so the step runs entirely on its caller.
-        JPH::JobSystemSingleThreaded Jobs{JPH::cMaxPhysicsJobs};
-        /// @brief The solver itself.
-        JPH::PhysicsSystem System;
-        /// @brief The contact collector feeding the debug visualization.
-        ContactRecorder Contacts;
-        /// @brief Live bodies, keyed by the entity that owns them.
-        std::unordered_map<Entity, BodyRecord> Bodies;
-        /// @brief Whether a body was created since the last step, so the broad phase is re-optimized.
-        bool BroadPhaseDirty = false;
-    };
+        JPH::RefConst<JPH::Shape> BuildShape(const Collider& collider)
+        {
+            JPH::RefConst<JPH::Shape> shape;
+            if (collider.Shape == ColliderShape::Mesh)
+            {
+                const CollisionShape* geometry = collider.Geometry.Get();
+                if (geometry == nullptr)
+                {
+                    return {};
+                }
+                shape = BuildCookedShape(*geometry);
+            }
+            else
+            {
+                JPH::Ref<JPH::ShapeSettings> settings;
+                switch (collider.Shape)
+                {
+                case ColliderShape::Box:
+                {
+                    // Jolt refuses a box thinner than its convex radius, so clamp the half extents
+                    // up to the default radius rather than asserting inside the solver.
+                    const vec3 half = glm::max(collider.Extents, vec3(JPH::cDefaultConvexRadius));
+                    settings = new JPH::BoxShapeSettings(ToJolt(half));
+                    break;
+                }
+                case ColliderShape::Sphere:
+                    settings = new JPH::SphereShapeSettings(collider.Extents.x);
+                    break;
+                case ColliderShape::Capsule:
+                    settings =
+                        new JPH::CapsuleShapeSettings(collider.Extents.y, collider.Extents.x);
+                    break;
+                case ColliderShape::Mesh:
+                    break;
+                }
+                VE_ASSERT(settings != nullptr, "Unmapped ColliderShape {}",
+                          static_cast<u32>(collider.Shape));
+
+                const JPH::ShapeSettings::ShapeResult result = settings->Create();
+                VE_ASSERT(result.IsValid(), "Collider shape is not buildable: {}",
+                          result.GetError().c_str());
+                shape = result.Get();
+            }
+
+            if (collider.Offset != vec3(0.0f))
+            {
+                const JPH::Ref<JPH::ShapeSettings> offset = new JPH::RotatedTranslatedShapeSettings(
+                    ToJolt(collider.Offset), JPH::Quat::sIdentity(), shape);
+                const JPH::ShapeSettings::ShapeResult result = offset->Create();
+                VE_ASSERT(result.IsValid(), "Collider offset shape is not buildable: {}",
+                          result.GetError().c_str());
+                shape = result.Get();
+            }
+            return shape;
+        }
+    }
+
+    PhysicsWorld::Native::Native(const PhysicsWorldInfo& info)
+        : Layers(info.Matrix), Temp(TempAllocatorBytes(info.MaxBodies))
+    {
+        System.Init(info.MaxBodies, AutoBodyMutexCount, info.MaxBodyPairs,
+                    info.MaxContactConstraints, Layers, Layers, Layers);
+        System.SetGravity(Detail::ToJolt(info.Gravity));
+        Contacts.BodyOwners = &BodyOwners;
+        System.SetContactListener(&Contacts);
+    }
 
     PhysicsWorld::PhysicsWorld(const PhysicsWorldInfo& info) : m_Info(info)
     {
@@ -453,41 +304,72 @@ namespace Veng
     void PhysicsWorld::SetGravity(const vec3 gravity)
     {
         m_Info.Gravity = gravity;
-        m_Native->System.SetGravity(ToJolt(gravity));
+        m_Native->System.SetGravity(Detail::ToJolt(gravity));
     }
 
     vec3 PhysicsWorld::GetGravity() const
     {
-        return FromJolt(m_Native->System.GetGravity());
+        return Detail::FromJolt(m_Native->System.GetGravity());
     }
 
     void PhysicsWorld::CreateBody(const Entity entity, const RigidBody& body,
-                                  const Collider& collider, const PhysicsPose& pose)
+                                  const Collider& collider, const PhysicsPose& pose,
+                                  const bool sensor)
     {
+        const bool triangleMesh = collider.Shape == ColliderShape::Mesh &&
+                                  collider.Geometry.Get() != nullptr &&
+                                  collider.Geometry.Get()->Geometry == CollisionGeometry::Mesh;
+        VE_ASSERT(!(triangleMesh && body.Motion == MotionType::Dynamic),
+                  "Entity {} carries a triangle-mesh CollisionShape on a Dynamic RigidBody; a "
+                  "triangle mesh has no interior and no inertia, so Static and Kinematic are the "
+                  "motion types it may back",
+                  entity.Index);
+
         const auto existing = m_Native->Bodies.find(entity);
         if (existing != m_Native->Bodies.end())
         {
             if (SameSettings(existing->second.Body, body) &&
-                SameSettings(existing->second.Shape, collider))
+                SameSettings(existing->second.Shape, collider) && existing->second.Sensor == sensor)
             {
                 return;
             }
             DestroyBody(entity);
         }
 
-        JPH::BodyCreationSettings settings(BuildShape(collider), ToJolt(pose.Position),
-                                           ToJolt(pose.Rotation), ToJolt(body.Motion),
+        const JPH::RefConst<JPH::Shape> shape = Detail::BuildShape(collider);
+        if (shape == nullptr)
+        {
+            // A ColliderShape::Mesh collider whose geometry has not arrived yet has no shape; the
+            // body is created on the tick it does.
+            return;
+        }
+
+        JPH::BodyCreationSettings settings(shape, Detail::ToJolt(pose.Position),
+                                           Detail::ToJolt(pose.Rotation), ToJoltMotion(body.Motion),
                                            static_cast<JPH::ObjectLayer>(body.Layer));
         settings.mFriction = collider.Friction;
         settings.mRestitution = collider.Restitution;
         settings.mLinearDamping = body.LinearDamping;
         settings.mAngularDamping = body.AngularDamping;
         // A Trigger-layer body reports overlaps and pushes nothing; that is what the layer means.
-        settings.mIsSensor = body.Layer == PhysicsLayer::Trigger;
+        settings.mIsSensor = sensor || body.Layer == PhysicsLayer::Trigger;
+        // A sensor is told about non-dynamic bodies too, so a kinematic mover entering a trigger
+        // volume is reported rather than passing through it unseen.
+        settings.mCollideKinematicVsNonDynamic = settings.mIsSensor;
         if (body.Motion == MotionType::Dynamic && body.Mass > 0.0f)
         {
             settings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
             settings.mMassPropertiesOverride.mMass = body.Mass;
+        }
+        else if (triangleMesh && body.Motion == MotionType::Kinematic)
+        {
+            // A triangle mesh is a surface, not a solid, so the solver cannot derive mass
+            // properties from it and refuses to build the motion state a kinematic body needs.
+            // A kinematic body is driven rather than integrated, so the values are never read;
+            // supplying a unit solid is what makes the body constructible at all.
+            settings.mOverrideMassProperties = JPH::EOverrideMassProperties::MassAndInertiaProvided;
+            settings.mMassPropertiesOverride.SetMassAndInertiaOfSolidBox(
+                JPH::Vec3::sReplicate(1.0f), 1000.0f);
         }
 
         JPH::BodyInterface& bodies = m_Native->System.GetBodyInterface();
@@ -498,7 +380,10 @@ namespace Veng
         VE_ASSERT(!id.IsInvalid(), "PhysicsWorld body budget exhausted (MaxBodies = {})",
                   m_Info.MaxBodies);
 
-        m_Native->Bodies.emplace(entity, BodyRecord{.Id = id, .Body = body, .Shape = collider});
+        m_Native->Bodies.emplace(
+            entity, Detail::BodyRecord{
+                        .Id = id, .Body = body, .Shape = collider, .Sensor = settings.mIsSensor});
+        m_Native->BodyOwners.emplace(id.GetIndexAndSequenceNumber(), entity);
         m_Native->BroadPhaseDirty = true;
     }
 
@@ -509,14 +394,25 @@ namespace Veng
         {
             return;
         }
+        // A constraint outliving one of its bodies would reference a destroyed body, so the pair
+        // goes first.
+        DestroyConstraint(entity);
         JPH::BodyInterface& bodies = m_Native->System.GetBodyInterface();
         bodies.RemoveBody(found->second.Id);
         bodies.DestroyBody(found->second.Id);
+        m_Native->BodyOwners.erase(found->second.Id.GetIndexAndSequenceNumber());
+        m_Native->Contacts.Overlaps.erase(entity);
         m_Native->Bodies.erase(found);
     }
 
     void PhysicsWorld::DestroyAllBodies()
     {
+        for (const auto& [owner, record] : m_Native->Constraints)
+        {
+            m_Native->System.RemoveConstraint(record.Constraint);
+        }
+        m_Native->Constraints.clear();
+
         JPH::BodyInterface& bodies = m_Native->System.GetBodyInterface();
         for (const auto& [entity, record] : m_Native->Bodies)
         {
@@ -524,6 +420,8 @@ namespace Veng
             bodies.DestroyBody(record.Id);
         }
         m_Native->Bodies.clear();
+        m_Native->BodyOwners.clear();
+        m_Native->Contacts.Overlaps.clear();
     }
 
     bool PhysicsWorld::HasBody(const Entity entity) const
@@ -558,7 +456,8 @@ namespace Veng
                                                 ? JPH::EActivation::DontActivate
                                                 : JPH::EActivation::Activate;
         m_Native->System.GetBodyInterface().SetPositionAndRotationWhenChanged(
-            found->second.Id, ToJolt(pose.Position), ToJolt(pose.Rotation), activation);
+            found->second.Id, Detail::ToJolt(pose.Position), Detail::ToJolt(pose.Rotation),
+            activation);
     }
 
     void PhysicsWorld::MoveKinematicBody(const Entity entity, const PhysicsPose& target,
@@ -570,8 +469,9 @@ namespace Veng
         {
             return;
         }
-        m_Native->System.GetBodyInterface().MoveKinematic(found->second.Id, ToJolt(target.Position),
-                                                          ToJolt(target.Rotation), delta);
+        m_Native->System.GetBodyInterface().MoveKinematic(found->second.Id,
+                                                          Detail::ToJolt(target.Position),
+                                                          Detail::ToJolt(target.Rotation), delta);
     }
 
     optional<PhysicsPose> PhysicsWorld::GetBodyPose(const Entity entity) const
@@ -583,8 +483,8 @@ namespace Veng
         }
         const JPH::BodyInterface& bodies = m_Native->System.GetBodyInterface();
         return PhysicsPose{
-            .Position = FromJolt(bodies.GetPosition(found->second.Id)),
-            .Rotation = FromJolt(bodies.GetRotation(found->second.Id)),
+            .Position = Detail::FromJolt(bodies.GetPosition(found->second.Id)),
+            .Rotation = Detail::FromJolt(bodies.GetRotation(found->second.Id)),
         };
     }
 
@@ -595,7 +495,8 @@ namespace Veng
         {
             return;
         }
-        m_Native->System.GetBodyInterface().SetLinearVelocity(found->second.Id, ToJolt(velocity));
+        m_Native->System.GetBodyInterface().SetLinearVelocity(found->second.Id,
+                                                              Detail::ToJolt(velocity));
     }
 
     vec3 PhysicsWorld::GetLinearVelocity(const Entity entity) const
@@ -605,7 +506,8 @@ namespace Veng
         {
             return vec3(0.0f);
         }
-        return FromJolt(m_Native->System.GetBodyInterface().GetLinearVelocity(found->second.Id));
+        return Detail::FromJolt(
+            m_Native->System.GetBodyInterface().GetLinearVelocity(found->second.Id));
     }
 
     void PhysicsWorld::SetAngularVelocity(const Entity entity, const vec3 velocity)
@@ -615,7 +517,8 @@ namespace Veng
         {
             return;
         }
-        m_Native->System.GetBodyInterface().SetAngularVelocity(found->second.Id, ToJolt(velocity));
+        m_Native->System.GetBodyInterface().SetAngularVelocity(found->second.Id,
+                                                               Detail::ToJolt(velocity));
     }
 
     vec3 PhysicsWorld::GetAngularVelocity(const Entity entity) const
@@ -625,7 +528,160 @@ namespace Veng
         {
             return vec3(0.0f);
         }
-        return FromJolt(m_Native->System.GetBodyInterface().GetAngularVelocity(found->second.Id));
+        return Detail::FromJolt(
+            m_Native->System.GetBodyInterface().GetAngularVelocity(found->second.Id));
+    }
+
+    bool PhysicsWorld::IsBodySensor(const Entity entity) const
+    {
+        const auto found = m_Native->Bodies.find(entity);
+        return found != m_Native->Bodies.end() && found->second.Sensor;
+    }
+
+    void PhysicsWorld::GetSensorOverlaps(const Entity sensor, const u32 layerMask,
+                                         vector<Entity>& out) const
+    {
+        out.clear();
+        const auto found = m_Native->Contacts.Overlaps.find(sensor);
+        if (found == m_Native->Contacts.Overlaps.end())
+        {
+            return;
+        }
+        for (const Entity other : found->second)
+        {
+            const auto record = m_Native->Bodies.find(other);
+            if (record == m_Native->Bodies.end())
+            {
+                continue;
+            }
+            if ((layerMask & PhysicsLayerBit(record->second.Body.Layer)) == 0)
+            {
+                continue;
+            }
+            out.emplace_back(other);
+        }
+        std::ranges::sort(out, [](const Entity a, const Entity b) { return a.Index < b.Index; });
+        // The solver reports one manifold per touching sub-shape pair, so a body with several
+        // faces against the sensor arrives more than once.
+        out.erase(std::ranges::unique(out).begin(), out.end());
+    }
+
+    void PhysicsWorld::CreateConstraint(const Entity owner, const ConstraintSettings& settings)
+    {
+        const auto existing = m_Native->Constraints.find(owner);
+        if (existing != m_Native->Constraints.end())
+        {
+            if (existing->second.Settings == settings)
+            {
+                return;
+            }
+            DestroyConstraint(owner);
+        }
+
+        const auto first = m_Native->Bodies.find(owner);
+        const auto second = m_Native->Bodies.find(settings.Target);
+        if (first == m_Native->Bodies.end() || second == m_Native->Bodies.end() ||
+            owner == settings.Target)
+        {
+            return;
+        }
+
+        JPH::BodyInterface& bodies = m_Native->System.GetBodyInterface();
+        JPH::Ref<JPH::TwoBodyConstraintSettings> constraintSettings;
+        switch (settings.Kind)
+        {
+        case ConstraintKind::Fixed:
+        {
+            auto* fixed = new JPH::FixedConstraintSettings();
+            // World-space anchors, so the pair is latched wherever they stand right now rather
+            // than at whatever local frames the two bodies happen to carry.
+            fixed->mAutoDetectPoint = true;
+            constraintSettings = fixed;
+            break;
+        }
+        case ConstraintKind::Point:
+        {
+            auto* point = new JPH::PointConstraintSettings();
+            point->mSpace = JPH::EConstraintSpace::WorldSpace;
+            point->mPoint1 = Detail::ToJolt(settings.Point);
+            point->mPoint2 = Detail::ToJolt(settings.Point);
+            constraintSettings = point;
+            break;
+        }
+        case ConstraintKind::Hinge:
+        {
+            const vec3 axis = glm::length(settings.Axis) > 0.0f ? glm::normalize(settings.Axis)
+                                                                : vec3(0.0f, 1.0f, 0.0f);
+            const vec3 normal = glm::normalize(glm::cross(
+                axis, std::abs(axis.y) < 0.9f ? vec3(0.0f, 1.0f, 0.0f) : vec3(1.0f, 0.0f, 0.0f)));
+            auto* hinge = new JPH::HingeConstraintSettings();
+            hinge->mSpace = JPH::EConstraintSpace::WorldSpace;
+            hinge->mPoint1 = Detail::ToJolt(settings.Point);
+            hinge->mPoint2 = Detail::ToJolt(settings.Point);
+            hinge->mHingeAxis1 = Detail::ToJolt(axis);
+            hinge->mHingeAxis2 = Detail::ToJolt(axis);
+            hinge->mNormalAxis1 = Detail::ToJolt(normal);
+            hinge->mNormalAxis2 = Detail::ToJolt(normal);
+            constraintSettings = hinge;
+            break;
+        }
+        }
+        VE_ASSERT(constraintSettings != nullptr, "Unmapped ConstraintKind {}",
+                  static_cast<u32>(settings.Kind));
+
+        // The no-lock interface, because the world is only ever mutated from the thread that steps
+        // it: taking two write locks that landed in one mutex bucket would deadlock.
+        const JPH::BodyLockInterfaceNoLock& locks = m_Native->System.GetBodyLockInterfaceNoLock();
+        const JPH::BodyLockWrite lockA(locks, first->second.Id);
+        const JPH::BodyLockWrite lockB(locks, second->second.Id);
+        if (!lockA.Succeeded() || !lockB.Succeeded())
+        {
+            return;
+        }
+
+        const JPH::Ref<JPH::TwoBodyConstraint> constraint =
+            constraintSettings->Create(lockA.GetBody(), lockB.GetBody());
+        m_Native->System.AddConstraint(constraint);
+        m_Native->Constraints.emplace(
+            owner, Detail::ConstraintRecord{.Constraint = constraint, .Settings = settings});
+
+        // A constraint only solves on bodies the solver integrates, so both ends are woken: a
+        // sleeping dynamic body would otherwise ignore the new attachment until something else
+        // touched it.
+        bodies.ActivateBody(first->second.Id);
+        bodies.ActivateBody(second->second.Id);
+    }
+
+    void PhysicsWorld::DestroyConstraint(const Entity owner)
+    {
+        const auto found = m_Native->Constraints.find(owner);
+        if (found == m_Native->Constraints.end())
+        {
+            return;
+        }
+        m_Native->System.RemoveConstraint(found->second.Constraint);
+        m_Native->Constraints.erase(found);
+    }
+
+    bool PhysicsWorld::HasConstraint(const Entity owner) const
+    {
+        return m_Native->Constraints.contains(owner);
+    }
+
+    u32 PhysicsWorld::GetConstraintCount() const
+    {
+        return static_cast<u32>(m_Native->Constraints.size());
+    }
+
+    void PhysicsWorld::GetConstraintOwners(vector<Entity>& out) const
+    {
+        out.clear();
+        out.reserve(m_Native->Constraints.size());
+        for (const auto& [owner, record] : m_Native->Constraints)
+        {
+            out.emplace_back(owner);
+        }
+        std::ranges::sort(out, [](const Entity a, const Entity b) { return a.Index < b.Index; });
     }
 
     void PhysicsWorld::Step(const f32 delta)
@@ -638,8 +694,9 @@ namespace Veng
             m_Native->BroadPhaseDirty = false;
         }
 
-        m_Native->Contacts.Enabled = m_DebugDrawEnabled;
+        m_Native->Contacts.DebugEnabled = m_DebugDrawEnabled;
         m_Native->Contacts.Contacts.clear();
+        m_Native->Contacts.Overlaps.clear();
 
         const JPH::EPhysicsUpdateError error = m_Native->System.Update(
             delta, CollisionStepsPerUpdate, &m_Native->Temp, &m_Native->Jobs);
@@ -720,8 +777,8 @@ namespace Veng
         const JPH::BodyInterface& bodies = m_Native->System.GetBodyInterface();
         for (const auto& [entity, record] : m_Native->Bodies)
         {
-            const vec3 center = vec3(FromJolt(bodies.GetPosition(record.Id)));
-            const quat rotation = FromJolt(bodies.GetRotation(record.Id));
+            const vec3 center = vec3(Detail::FromJolt(bodies.GetPosition(record.Id)));
+            const quat rotation = Detail::FromJolt(bodies.GetRotation(record.Id));
 
             vec4 color = StaticColor;
             if (record.Body.Motion == MotionType::Kinematic)
@@ -777,10 +834,48 @@ namespace Veng
                 }
                 break;
             }
+            case ColliderShape::Mesh:
+            {
+                // Cooked geometry is drawn as its triangle edges, or as its hull points' bounding
+                // box when the shape is a convex point cloud with no edge list of its own.
+                const CollisionShape* geometry = record.Shape.Geometry.Get();
+                if (geometry == nullptr)
+                {
+                    break;
+                }
+                if (geometry->Geometry == CollisionGeometry::Mesh)
+                {
+                    for (usize i = 0; i + 2 < geometry->Indices.size(); i += 3)
+                    {
+                        const vec3 a = origin + rotation * geometry->Points[geometry->Indices[i]];
+                        const vec3 b =
+                            origin + rotation * geometry->Points[geometry->Indices[i + 1]];
+                        const vec3 c =
+                            origin + rotation * geometry->Points[geometry->Indices[i + 2]];
+                        sink.DrawLine(a, b, color);
+                        sink.DrawLine(b, c, color);
+                        sink.DrawLine(c, a, color);
+                    }
+                }
+                else
+                {
+                    for (const vec3 point : geometry->Points)
+                    {
+                        const vec3 world = origin + rotation * point;
+                        sink.DrawLine(world - vec3(0.05f, 0.0f, 0.0f),
+                                      world + vec3(0.05f, 0.0f, 0.0f), color);
+                        sink.DrawLine(world - vec3(0.0f, 0.05f, 0.0f),
+                                      world + vec3(0.0f, 0.05f, 0.0f), color);
+                        sink.DrawLine(world - vec3(0.0f, 0.0f, 0.05f),
+                                      world + vec3(0.0f, 0.0f, 0.05f), color);
+                    }
+                }
+                break;
+            }
             }
         }
 
-        for (const DebugContact& contact : m_Native->Contacts.Contacts)
+        for (const Detail::DebugContact& contact : m_Native->Contacts.Contacts)
         {
             sink.DrawLine(contact.Point, contact.Point + contact.Normal * ContactSpikeLength,
                           ContactColor);

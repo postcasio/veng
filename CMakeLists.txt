@@ -846,6 +846,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/control_movement.cpp
             tests/unit/constant_motion.cpp
             tests/unit/physics.cpp
+            tests/unit/physics_content.cpp
             tests/unit/camera_rig.cpp
             tests/unit/game_mode.cpp
             tests/unit/viewport_mapping.cpp
@@ -992,6 +993,10 @@ if (VENG_BUILD_TESTS)
     add_test(NAME death.assert_message COMMAND veng_test_death assert_message)
     set_tests_properties(death.assert_message PROPERTIES LABELS "death;fast"
             PASS_REGULAR_EXPRESSION "assert_message case fired")
+
+    add_test(NAME death.physics_dynamic_triangle_mesh COMMAND veng_test_death physics_dynamic_triangle_mesh)
+    set_tests_properties(death.physics_dynamic_triangle_mesh PROPERTIES LABELS "death;fast"
+            PASS_REGULAR_EXPRESSION "triangle-mesh CollisionShape on a Dynamic RigidBody")
 
     add_test(NAME death.scene_get_stale_entity COMMAND veng_test_death scene_get_stale_entity)
     set_tests_properties(death.scene_get_stale_entity PROPERTIES LABELS "death;fast"
@@ -1707,6 +1712,7 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle)
             tests/cooker/texture_cook.cpp
             tests/cooker/compression_resolution.cpp
             tests/cooker/mesh_cook.cpp
+            tests/cooker/collision_shape_cook.cpp
             tests/cooker/shader_cook.cpp
             tests/cooker/material_cook.cpp
             tests/cooker/material_instance_cook.cpp

@@ -342,6 +342,8 @@ add_library(veng_cook_objs OBJECT
         src/Importers/SkeletonImporter.cpp
         src/Importers/AnimationImporter.cpp
         src/Importers/SkeletonSource.cpp
+        src/Importers/CollisionShapeImporter.cpp
+        src/Importers/ConvexHull.cpp
         src/Importers/EnvironmentImporter.cpp
         src/Importers/FontImporter.cpp
         src/Vendor/StbImage.cpp

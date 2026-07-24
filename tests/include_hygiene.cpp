@@ -23,6 +23,7 @@
 #include <Veng/Asset/AssetHandle.h>
 #include <Veng/Asset/AssetLoader.h>
 #include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/CollisionShape.h>
 #include <Veng/Asset/DataTable.h>
 #include <Veng/Asset/Font.h>
 #include <Veng/Asset/InputMappingContext.h>
@@ -115,6 +116,7 @@
 #include <Veng/Physics/Layers.h>
 #include <Veng/Physics/PhysicsSystem.h>
 #include <Veng/Physics/PhysicsWorld.h>
+#include <Veng/Physics/Queries.h>
 
 #include <Veng/Platform/UserPaths.h>
 

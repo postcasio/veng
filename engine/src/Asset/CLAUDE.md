@@ -41,6 +41,13 @@ engine *mounts* archives and resolves assets against them.
   `InputContextStack` references one or more by id, and `InputMappingSystem` resolves the active
   set against the raw snapshot — the gameplay control flow is
   [../Scene/CLAUDE.md](../Scene/CLAUDE.md).
+- **`AssetTypes::CollisionShape` — solver-neutral collision geometry, CPU-only** (no GPU
+  resource). Its `*.collision.json` source names a model and a mode (`"convex"` / `"mesh"`); the
+  loaded asset is a point list plus, for a triangle mesh, its indices. A `Collider` component
+  references one through an `AssetHandle<CollisionShape>` and it resolves as an ordinary load-time
+  dependency, so a prefab naming one has it resident before the entity spawns. The physics module
+  builds the solver's own shape from it — see
+  [../Physics/CLAUDE.md](../Physics/CLAUDE.md).
 - **`AssetTypes::TableSchema` + `AssetTypes::DataTable` — structured data**, both CPU-only.
   **A column carries a reflection `TypeId`** — there is no table-specific type vocabulary, and a
   cell is encoded, decoded, and validated by the same `WriteFieldValue`/`ReadFieldValue` and
@@ -131,7 +138,7 @@ engine *mounts* archives and resolves assets against them.
   component: `VE_LEAF` the handle leaf with a minted `TypeId`, register the component type that
   holds it, and set `HandleFieldType` to that same leaf id on the `AssetTypeInfo` it registers.
   A leaf no registered type claims is an **error** at both load and cook — never a skipped check.
-  Sixteen of the eighteen builtins claim a leaf. The two that do not — `Shader` and
+  Seventeen of the nineteen builtins claim a leaf. The two that do not — `Shader` and
   `VertexLayout` — are wiring inside the material system: a draw binds a `MaterialInstance`, and
   nothing outside that system can consume a bare shader or vertex layout, so a reference to one
   would be authorable but unusable. They leave `HandleFieldType` 0 and cannot sit on a component.

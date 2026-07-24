@@ -39,6 +39,36 @@ namespace Veng
         u32 MaxContactConstraints = 8192;
     };
 
+    /// @brief Which constraint a ConstraintSettings describes.
+    enum class ConstraintKind : u32
+    {
+        /// @brief Welds the pair, holding the relative pose they had when it was created.
+        Fixed = 0,
+        /// @brief Pins the pair at a shared point, free to rotate about it.
+        Point = 1,
+        /// @brief Leaves the pair one rotational degree of freedom about a shared axis.
+        Hinge = 2,
+    };
+
+    /// @brief One constraint between two bodies, as the reconcile pass supplies it.
+    ///
+    /// A constraint solves for velocity on bodies the solver integrates, so it does nothing
+    /// between two non-dynamic bodies: at least one of the pair must be Dynamic.
+    struct ConstraintSettings
+    {
+        /// @brief Which constraint to build.
+        ConstraintKind Kind = ConstraintKind::Fixed;
+        /// @brief The other body in the pair.
+        Entity Target;
+        /// @brief The shared point, in the world's frame; unused by ConstraintKind::Fixed.
+        dvec3 Point{0.0};
+        /// @brief The hinge axis, in the world's frame; used by ConstraintKind::Hinge only.
+        vec3 Axis = vec3(0.0f, 1.0f, 0.0f);
+
+        /// @brief Member-wise equality, so the reconcile pass can leave an unchanged constraint alone.
+        bool operator==(const ConstraintSettings&) const = default;
+    };
+
     /// @brief A rigid-body simulation space, owned by at most one Scene.
     ///
     /// A Scene optionally owns a PhysicsWorld the way it optionally owns a SceneSimulation, and it
@@ -95,12 +125,20 @@ namespace Veng
         /// exactly as it is, pose and velocity included. Any difference re-creates the body from
         /// @p pose, discarding its velocity and contact state — the components are the authority
         /// and the body is their shadow.
+        /// A ColliderShape::Mesh collider whose CollisionShape handle is not resident has no shape
+        /// yet: the call is a no-op, and the body is created on the tick the asset arrives.
+        ///
         /// @param entity    The entity the body belongs to.
         /// @param body      The motion, layer, mass and damping settings.
-        /// @param collider  The primitive shape and its surface properties.
+        /// @param collider  The shape and its surface properties.
         /// @param pose      The world-space pose to place a newly created body at.
+        /// @param sensor    Whether the body detects overlap and resolves no contact. A body on
+        ///                  PhysicsLayer::Trigger is a sensor regardless.
+        /// @pre A ColliderShape::Mesh collider whose geometry is a triangle mesh is not on a
+        ///      Dynamic body — a triangle mesh has no interior and no inertia, so a dynamic one is
+        ///      a fatal assert here rather than a solver that misbehaves invisibly.
         void CreateBody(Entity entity, const RigidBody& body, const Collider& collider,
-                        const PhysicsPose& pose);
+                        const PhysicsPose& pose, bool sensor = false);
 
         /// @brief Destroys @p entity's body; a no-op when it has none.
         /// @param entity  The entity whose body to destroy.
@@ -157,6 +195,49 @@ namespace Veng
 
         /// @brief Returns a body's angular velocity in radians per second, or zero when it has none.
         [[nodiscard]] vec3 GetAngularVelocity(Entity entity) const;
+
+        /// @brief Whether @p entity's body was created as a sensor.
+        /// @param entity  The entity to query.
+        [[nodiscard]] bool IsBodySensor(Entity entity) const;
+
+        /// @brief Fills @p out with the entities overlapping @p sensor at the end of the last step.
+        ///
+        /// Sorted by entity slot, so a caller can diff two ticks' sets without sorting first. Empty
+        /// when @p sensor has no body, is not a sensor, or nothing overlaps it.
+        ///
+        /// @warning The solver reports contacts for the bodies it simulates, so a dynamic body
+        /// asleep inside a sensor is not in the set. Read it as "overlapping and active".
+        /// @param sensor      The sensor entity.
+        /// @param layerMask   Bit per PhysicsLayer; an overlapping body is reported only when its
+        ///                    layer's bit is set.
+        /// @param out         Destination vector, cleared then filled.
+        void GetSensorOverlaps(Entity sensor, u32 layerMask, vector<Entity>& out) const;
+
+        /// @brief Brings @p owner's constraint into line with @p settings, creating it if absent.
+        ///
+        /// Idempotent, exactly as CreateBody is: a constraint already built from equal settings is
+        /// left alone, and any difference re-creates it. Both bodies must exist — a constraint
+        /// naming an entity with no body is a no-op, and is built on the tick that body arrives.
+        /// @param owner     The entity carrying the constraint component.
+        /// @param settings  Which constraint to build, and against which body.
+        void CreateConstraint(Entity owner, const ConstraintSettings& settings);
+
+        /// @brief Destroys @p owner's constraint; a no-op when it has none.
+        /// @param owner  The entity whose constraint to destroy.
+        void DestroyConstraint(Entity owner);
+
+        /// @brief Whether @p owner currently has a constraint in this world.
+        /// @param owner  The entity to query.
+        [[nodiscard]] bool HasConstraint(Entity owner) const;
+
+        /// @brief Returns the number of live constraints.
+        [[nodiscard]] u32 GetConstraintCount() const;
+
+        /// @brief Fills @p out with every entity that currently has a constraint, in slot order.
+        ///
+        /// The reconcile pass's orphan sweep reads it, as it reads GetBodyEntities.
+        /// @param out  Destination vector, cleared then filled.
+        void GetConstraintOwners(vector<Entity>& out) const;
 
         /// @brief Advances the simulation by one fixed step.
         ///

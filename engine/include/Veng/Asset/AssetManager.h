@@ -175,8 +175,13 @@ namespace Veng
         /// has no content identity, so a reflective serializer records it as "no asset". The
         /// backing cache entry is detached — never inserted into the AssetId map, so CollectGarbage()
         /// leaves it alone. Each call yields a distinct entry; adopting does not deduplicate.
+        ///
+        /// Static, because a detached entry needs nothing from a manager: a resource built with no
+        /// device — a CPU-only asset in a headless tool or test — is wrapped without constructing
+        /// one. Calling it on an instance is unchanged. The Task overload below is not static: it
+        /// needs the task system to run the factory.
         template <typename T>
-        [[nodiscard]] AssetHandle<T> Adopt(Ref<T> resource)
+        [[nodiscard]] static AssetHandle<T> Adopt(Ref<T> resource)
         {
             VE_ASSERT(resource != nullptr, "AssetManager::Adopt: resource is null");
 

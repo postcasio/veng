@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "0x0000000000002C01",
+      "type": "CollisionShape",
+      "source": "meshes/cube.collision.json"
+    },
+    {
+      "id": "0x0000000000002C02",
+      "type": "CollisionShape",
+      "source": "meshes/cube_mesh.collision.json"
+    }
+  ]
+}

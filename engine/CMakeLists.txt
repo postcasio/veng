@@ -95,6 +95,7 @@ add_library(veng SHARED
         src/Asset/Texture.cpp
         src/Asset/Loaders/AnimationLoader.cpp
         src/Asset/Loaders/DataTableLoader.cpp
+        src/Asset/Loaders/CollisionShapeLoader.cpp
         src/Asset/Loaders/TableSchemaLoader.cpp
         src/Asset/Loaders/EnvironmentLoader.cpp
         src/Asset/Loaders/FontLoader.cpp
@@ -159,6 +160,7 @@ add_library(veng SHARED
         src/Persistence/StorePatterns.cpp
         src/Physics/PhysicsSystem.cpp
         src/Physics/PhysicsWorld.cpp
+        src/Physics/Queries.cpp
         src/Platform/UserPaths.cpp
         src/Task/ParallelFor.cpp
         src/Task/TaskSystem.cpp

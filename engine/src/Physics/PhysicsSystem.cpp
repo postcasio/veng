@@ -6,6 +6,8 @@
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
 
+#include <algorithm>
+
 namespace Veng
 {
     namespace
@@ -19,6 +21,8 @@ namespace Veng
             RigidBody Body;
             /// @brief Its Collider settings this tick.
             Collider Shape;
+            /// @brief Whether the entity carries a Sensor.
+            bool IsSensor = false;
         };
 
         /// @brief Reads an entity's authoritative pose for this tick.
@@ -48,6 +52,98 @@ namespace Veng
             }
             return {};
         }
+
+        /// @brief Whether a collider's shape is buildable this tick.
+        ///
+        /// A ColliderShape::Mesh collider whose cooked geometry has not arrived has no shape at
+        /// all, so its entity is skipped exactly as a RigidBody with no Collider is.
+        /// @param collider  The collider to test.
+        [[nodiscard]] bool HasShape(const Collider& collider)
+        {
+            return collider.Shape != ColliderShape::Mesh || collider.Geometry.Get() != nullptr;
+        }
+
+        /// @brief Reconciles the scene's constraint components against the world's constraints.
+        ///
+        /// Runs after the body pass, so a constraint stamped in the same tick as its bodies finds
+        /// them; a constraint naming an entity that has no body yet is left for a later tick.
+        /// @param scene  The scene whose constraint components are read.
+        /// @param world  The world whose constraints are brought into line.
+        void ReconcileConstraints(const Scene& scene, PhysicsWorld& world)
+        {
+            vector<Entity> owners;
+            for (auto [entity, constraint] : scene.View<FixedConstraint>())
+            {
+                world.CreateConstraint(entity, ConstraintSettings{
+                                                   .Kind = ConstraintKind::Fixed,
+                                                   .Target = constraint.Target,
+                                               });
+                owners.emplace_back(entity);
+            }
+            for (auto [entity, constraint] : scene.View<PointConstraint>())
+            {
+                world.CreateConstraint(entity, ConstraintSettings{
+                                                   .Kind = ConstraintKind::Point,
+                                                   .Target = constraint.Target,
+                                                   .Point = dvec3(constraint.Point),
+                                               });
+                owners.emplace_back(entity);
+            }
+            for (auto [entity, constraint] : scene.View<HingeConstraint>())
+            {
+                world.CreateConstraint(entity, ConstraintSettings{
+                                                   .Kind = ConstraintKind::Hinge,
+                                                   .Target = constraint.Target,
+                                                   .Point = dvec3(constraint.Point),
+                                                   .Axis = constraint.Axis,
+                                               });
+                owners.emplace_back(entity);
+            }
+
+            vector<Entity> resident;
+            world.GetConstraintOwners(resident);
+            for (const Entity entity : resident)
+            {
+                if (std::ranges::find(owners, entity) == owners.end())
+                {
+                    world.DestroyConstraint(entity);
+                }
+            }
+        }
+
+        /// @brief Publishes each sensor's overlap set and this tick's enter/exit deltas.
+        ///
+        /// State a system drains, not an event it subscribes to: the deltas are computed here,
+        /// after the step, so no gameplay code runs inside the solver.
+        /// @param scene      The scene whose Sensor entities are published to.
+        /// @param world      The world holding this tick's overlaps.
+        /// @param simulated  The entities the step reconciled, in scene order.
+        void PublishSensorOverlaps(Scene& scene, const PhysicsWorld& world,
+                                   const vector<Simulated>& simulated)
+        {
+            vector<Entity> current;
+            for (const Simulated& entry : simulated)
+            {
+                if (!entry.IsSensor)
+                {
+                    continue;
+                }
+                const Sensor& sensor = scene.Get<Sensor>(entry.Owner);
+                world.GetSensorOverlaps(entry.Owner, sensor.Layers, current);
+
+                auto& overlaps = scene.Get<SensorOverlaps>(entry.Owner);
+                overlaps.Entered.clear();
+                overlaps.Exited.clear();
+                // Both sides are sorted by entity slot, so the deltas are two linear scans.
+                std::ranges::set_difference(
+                    current, overlaps.Current, std::back_inserter(overlaps.Entered),
+                    [](const Entity a, const Entity b) { return a.Index < b.Index; });
+                std::ranges::set_difference(
+                    overlaps.Current, current, std::back_inserter(overlaps.Exited),
+                    [](const Entity a, const Entity b) { return a.Index < b.Index; });
+                overlaps.Current = current;
+            }
+        }
     }
 
     void StepPhysics(Scene& scene, const f32 delta)
@@ -64,17 +160,32 @@ namespace Veng
         const Scene& readScene = scene;
         vector<Simulated> simulated;
         vector<Entity> needPose;
+        vector<Entity> needOverlaps;
         for (auto [entity, body, collider] : readScene.View<RigidBody, Collider>())
         {
-            simulated.emplace_back(Simulated{.Owner = entity, .Body = body, .Shape = collider});
+            if (!HasShape(collider))
+            {
+                continue;
+            }
+            const bool sensor = readScene.Has<Sensor>(entity);
+            simulated.emplace_back(
+                Simulated{.Owner = entity, .Body = body, .Shape = collider, .IsSensor = sensor});
             if (!readScene.Has<PhysicsPose>(entity))
             {
                 needPose.emplace_back(entity);
+            }
+            if (sensor && !readScene.Has<SensorOverlaps>(entity))
+            {
+                needOverlaps.emplace_back(entity);
             }
         }
         for (const Entity entity : needPose)
         {
             scene.Add<PhysicsPose>(entity);
+        }
+        for (const Entity entity : needOverlaps)
+        {
+            scene.Add<SensorOverlaps>(entity);
         }
 
         // The components are the authority and the bodies are their shadow: bring every physics
@@ -82,19 +193,22 @@ namespace Veng
         for (const Simulated& entry : simulated)
         {
             world->CreateBody(entry.Owner, entry.Body, entry.Shape,
-                              ReadPose(readScene, entry.Owner, entry.Body));
+                              ReadPose(readScene, entry.Owner, entry.Body), entry.IsSensor);
         }
 
         vector<Entity> resident;
         world->GetBodyEntities(resident);
         for (const Entity entity : resident)
         {
-            if (!scene.IsAlive(entity) || !readScene.Has<RigidBody>(entity) ||
-                !readScene.Has<Collider>(entity))
+            const Collider* collider =
+                scene.IsAlive(entity) ? readScene.TryGet<Collider>(entity) : nullptr;
+            if (collider == nullptr || !readScene.Has<RigidBody>(entity) || !HasShape(*collider))
             {
                 world->DestroyBody(entity);
             }
         }
+
+        ReconcileConstraints(readScene, *world);
 
         // Push: a static body is placed outright, a kinematic one is swept toward its target so it
         // pushes what it meets instead of passing through. A dynamic body's pose is the solver's.
@@ -136,6 +250,8 @@ namespace Veng
                 }
             }
         }
+
+        PublishSensorOverlaps(scene, *world, simulated);
     }
 
     void PhysicsSystem::OnUpdate(Scene& scene, const f32 delta, const SystemContext& context)

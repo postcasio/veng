@@ -203,6 +203,21 @@ at cook time:
 - **Textures** take an optional `"max_size"` that downscales the decoded image (aspect-
   preserving, sRGB- or linear-correct) before packing, so high-resolution scan art does not
   bloat the blob.
+- **Collision shapes** (`*.collision.json`) turn an authored model into collision geometry. The
+  source names a `"model"` (relative to the source JSON, as a `*.mesh.json` does — there is no
+  `"part"` concept at cook time) and a `"mode"`: `"convex"` reduces the model to its **convex
+  hull's vertices**, `"mesh"` welds its triangles by position into an indexed triangle soup. An
+  optional `"import": { "scale": … }` matches the mesh importer's, so a collision shape and the
+  render mesh cooked from one model stay the same size. Welding is the point of both modes — a
+  render mesh splits a vertex per normal and per UV seam, which a solver has no use for. The hull
+  is the **cooker's own** implementation (`Importers/ConvexHull.{h,cpp}`), which is why
+  `veng_cook_objs` / `libveng_cook` **link no physics library**: the cook emits neutral geometry
+  and the runtime builds the solver's shape from it, so the cooker's dependency set is unchanged
+  and there is no silent-ABI hazard from a physics library's compile-time defines having to match
+  across two targets. A hull exceeding `MaxConvexHullPoints` (2048) is a located cook error rather
+  than a silently expensive asset. The blob layout is in
+  [assetpack/CLAUDE.md](../assetpack/CLAUDE.md); the runtime half in
+  [engine/src/Physics/CLAUDE.md](../engine/src/Physics/CLAUDE.md).
 - **Environments** (`*.env.json`) are equirectangular HDR panoramas: the `EnvironmentImporter`
   decodes an OpenEXR `"image"` with **tinyexr** (linked into the cooker, the one runtime-staged
   vendor lib the cooker also uses), optionally downscales by `"max_size"` (linear), and packs
@@ -378,7 +393,7 @@ through"**.
 |---|---|---|
 | Texture | **Parallel** | `stb_image`'s failure reason is `thread_local`; `stb_image_resize2`'s tables are read-only; the block encoders' process-global tables are now ordered (below) |
 | Raw | **Parallel** | a file read into a fresh buffer, driving no library |
-| Mesh, Skeleton, Animation | Serialized | assimp — per-call `Importer` instances are the documented pattern, but the `DefaultLogger` singleton and per-format loader state were not established |
+| Mesh, Skeleton, Animation, CollisionShape | Serialized | assimp — per-call `Importer` instances are the documented pattern, but the `DefaultLogger` singleton and per-format loader state were not established |
 | Shader, Material, MaterialInstance | Serialized | Slang — `createGlobalSession` per call, reentrancy not established |
 | Font | Serialized | FreeType / msdfgen |
 | Environment | Serialized | tinyexr |

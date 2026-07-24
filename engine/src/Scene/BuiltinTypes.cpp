@@ -54,13 +54,19 @@ namespace Veng
         // integrates. MotionSpace registers transitively through ConstantMotion.
         registry.Register<ConstantMotion>();
 
-        // Rigid-body simulation: what the solver simulates and the shape it collides with.
-        // MotionType, PhysicsLayer and ColliderShape register transitively through their fields.
-        // PhysicsPose is the solver's own pose channel — runtime-only, so it carries no reflected
-        // field and neither serializes nor rides the wire.
+        // Rigid-body simulation: what the solver simulates, the shape it collides with, the
+        // overlap-only sensor, and the three constraints. MotionType, PhysicsLayer and
+        // ColliderShape register transitively through their fields. PhysicsPose and
+        // SensorOverlaps are the solver's own output channels — runtime-only, so they carry no
+        // reflected field and neither serializes nor rides the wire.
         registry.Register<RigidBody>();
         registry.Register<Collider>();
         registry.Register<PhysicsPose>();
+        registry.Register<Sensor>();
+        registry.Register<SensorOverlaps>();
+        registry.Register<FixedConstraint>();
+        registry.Register<PointConstraint>();
+        registry.Register<HingeConstraint>();
 
         // Net-anticipation seam: the ownership annotation and the camera-rig relationships
         // (third-person follow, first-person look, point orbit) the View-phase rig reads.

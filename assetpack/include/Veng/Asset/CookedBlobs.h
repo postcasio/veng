@@ -612,6 +612,49 @@ namespace Veng
         u32 Height = 0;
     };
 
+    /// @brief Geometry a cooked collision shape carries.
+    ///
+    /// Stored as the underlying integer of CookedCollisionShapeHeader::Mode; the engine mirrors
+    /// it as Veng::CollisionGeometry. Integer values are stable — persisted in cooked blobs.
+    enum class CookedCollisionGeometry : u32
+    {
+        /// @brief A point cloud whose convex hull is the shape; the cook stores hull vertices only.
+        Convex = 0,
+        /// @brief Indexed triangles, for non-simulated geometry: a static or kinematic body only.
+        Mesh = 1,
+    };
+
+    /// @brief The current collision-shape-format version.
+    ///
+    /// Bumped on any CookedCollisionShapeHeader or payload layout change; the loader rejects a
+    /// blob whose Version != this.
+    inline constexpr u32 CookedCollisionShapeVersion = 1u;
+
+    /// @brief Cooked header for a collision-shape asset.
+    ///
+    /// The blob is, in order:
+    ///   CookedCollisionShapeHeader
+    ///   f32 points[PointCount * 3]     — vertex positions, xyz, in the shape's local frame
+    ///   u32 indices[IndexCount]        — triangle indices; empty under a Convex mode
+    ///
+    /// The geometry is **engine-owned and solver-neutral**: a point cloud for a convex hull, an
+    /// indexed triangle soup for a mesh, both as raw f32/u32 so assetpack gains no math or
+    /// physics dependency. The solver's own shape is built from it at load, so a solver version
+    /// bump is a rebuild rather than a re-cook and no third-party binary format reaches the
+    /// shipped asset layer. Convex hulling still happens once, offline: a Convex blob carries the
+    /// hull's vertices, not the source model's.
+    struct CookedCollisionShapeHeader
+    {
+        /// @brief Must equal CookedCollisionShapeVersion; the loader rejects mismatches.
+        u32 Version = 0;
+        /// @brief Which geometry follows; underlying CookedCollisionGeometry integer.
+        u32 Mode = 0;
+        /// @brief Number of xyz points following this header.
+        u32 PointCount = 0;
+        /// @brief Number of triangle indices following the points; a multiple of 3, or 0 for Convex.
+        u32 IndexCount = 0;
+    };
+
     /// @brief The current input-map-format version.
     ///
     /// Bumped on any CookedInputMapHeader layout change; the loader rejects a blob whose

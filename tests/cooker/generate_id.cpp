@@ -95,5 +95,5 @@ TEST_CASE("Cooker: GenerateAssetTypeId mints an id that collides with no registe
         CHECK(types.IsRegistered(minted));
     }
 
-    CHECK(types.All().size() == 18 + 32);
+    CHECK(types.All().size() == 19 + 32);
 }

@@ -49,7 +49,14 @@
 #include <Veng/Renderer/ViewportRegistry.h>
 #include <Veng/Renderer/Backend/TypeMapping.h>
 
+#include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/CollisionShape.h>
+
 #include <Veng/Net/Replication.h>
+
+#include <Veng/Physics/Components.h>
+#include <Veng/Physics/PhysicsSystem.h>
+#include <Veng/Physics/PhysicsWorld.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Components.h>
@@ -167,6 +174,34 @@ namespace
         // Proves FatalAssert routes the formatted message to the log sink before
         // aborting.
         VE_ASSERT(false, "assert_message case fired");
+    }
+
+    // -- Physics death cases (pure-logic, no device) -------------------------
+
+    void RunPhysicsDynamicTriangleMesh()
+    {
+        TypeRegistry registry;
+        RegisterBuiltinTypes(registry);
+        const Unique<Scene> scene = Scene::Create(registry);
+        scene->SetPhysicsWorld(PhysicsWorld::Create(PhysicsWorldInfo{}));
+
+        const Ref<CollisionShape> geometry = CreateRef<CollisionShape>();
+        geometry->Geometry = CollisionGeometry::Mesh;
+        geometry->Points = {vec3(-1.0f, 0.0f, -1.0f), vec3(1.0f, 0.0f, -1.0f),
+                            vec3(1.0f, 0.0f, 1.0f)};
+        geometry->Indices = {0, 1, 2};
+
+        Collider collider{.Shape = ColliderShape::Mesh};
+        collider.Geometry = AssetManager::Adopt<CollisionShape>(geometry);
+
+        const Entity entity = scene->CreateEntity();
+        scene->Add<Transform>(entity);
+        scene->Add<RigidBody>(entity, RigidBody{.Motion = MotionType::Dynamic});
+        scene->Add<Collider>(entity, collider);
+
+        // A triangle mesh has no interior and no inertia: Static and Kinematic are the motion
+        // types it may back, and the step refuses the Dynamic one at body creation.
+        StepPhysics(*scene, 1.0f / 60.0f);
     }
 
     // -- ECS death cases (pure-logic, no device) -----------------------------
@@ -511,6 +546,10 @@ int main(int argc, char** argv)
     else if (name == "assert_message")
     {
         RunAssertMessage();
+    }
+    else if (name == "physics_dynamic_triangle_mesh")
+    {
+        RunPhysicsDynamicTriangleMesh();
     }
     else if (name == "scene_get_stale_entity")
     {

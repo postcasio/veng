@@ -1,12 +1,15 @@
-# Physics — rigid bodies, the fixed step, layers, and the solver's containment
+# Physics — rigid bodies, collision content, queries, and the solver's containment
 
 `Veng/Physics/` is the engine's rigid-body simulation: a **`PhysicsWorld`** a `Scene` optionally
-owns, **`RigidBody`/`Collider`** as ordinary reflected components, a fixed step inside the Sim
-phase, a small closed collision-layer table, and a debug visualization through the existing
-`Renderer::DebugDraw`. Project-wide conventions live in [the root CLAUDE.md](../../../CLAUDE.md);
-the ECS world and the Sim/View tick split it steps inside are in
-[../Scene/CLAUDE.md](../Scene/CLAUDE.md); the prediction/reconciliation layer the replay gate
-below defers to is in [../Net/CLAUDE.md](../Net/CLAUDE.md).
+owns, **`RigidBody`/`Collider`** as ordinary reflected components, cooked **`CollisionShape`**
+geometry behind them, **sensors** and **constraints**, the **`Raycast`/`ShapeCast`/`Overlap`**
+query trio, a fixed step inside the Sim phase, a small closed collision-layer table, and a debug
+visualization through the existing `Renderer::DebugDraw`. Project-wide conventions live in
+[the root CLAUDE.md](../../../CLAUDE.md); the ECS world and the Sim/View tick split it steps
+inside are in [../Scene/CLAUDE.md](../Scene/CLAUDE.md); the prediction/reconciliation layer the
+replay gate below defers to is in [../Net/CLAUDE.md](../Net/CLAUDE.md); the cooked-blob layout
+behind `CollisionShape` is in [../../../assetpack/CLAUDE.md](../../../assetpack/CLAUDE.md) and the
+importer that writes it in [../../../cooker/CLAUDE.md](../../../cooker/CLAUDE.md).
 
 ## The world is optional, per-`Scene`, and has its own frame
 
@@ -34,41 +37,154 @@ costs resident memory whether or not the bodies exist.
 ## The components are the authority; the bodies are their shadow
 
 ```
-RigidBody  { Motion (Static|Kinematic|Dynamic); Layer; Mass; LinearDamping; AngularDamping; SyncTransform; }
-Collider   { Shape (Box|Sphere|Capsule); Extents; Offset; Friction; Restitution; }
-PhysicsPose{ dvec3 Position; quat Rotation; }
+RigidBody       { Motion (Static|Kinematic|Dynamic); Layer; Mass; LinearDamping; AngularDamping; SyncTransform; }
+Collider        { Shape (Box|Sphere|Capsule|Mesh); Extents; Offset; Friction; Restitution; Geometry; }
+PhysicsPose     { dvec3 Position; quat Rotation; }
+Sensor          { Layers; }
+SensorOverlaps  { vector<Entity> Current, Entered, Exited; }
+FixedConstraint { Entity Target; }
+PointConstraint { Entity Target; vec3 Point; }
+HingeConstraint { Entity Target; vec3 Point; vec3 Axis; }
 ```
 
-`RigidBody` and `Collider` are plain reflected components, registered in `RegisterBuiltinTypes`,
-authorable in the editor inspector and cooked into prefabs through the existing pipeline — **no new
-asset type, no ABI surface**. An entity needs both to be simulated; a `RigidBody` with no `Collider`
-has no shape and is ignored. Adding the pair at runtime creates the backing body on the next step,
-removing either destroys it, and editing a field re-creates the body with the new settings. The
-three primitives are the shapes that need no cooked data, so a `Collider` is complete on its own.
+`RigidBody`, `Collider`, `Sensor` and the three constraints are plain reflected components,
+registered in `RegisterBuiltinTypes`, authorable in the editor inspector and cooked into prefabs
+through the existing pipeline — **no ABI surface**. An entity needs a `RigidBody` and a `Collider`
+to be simulated; a `RigidBody` with no `Collider` has no shape and is ignored. Adding the pair at
+runtime creates the backing body on the next step, removing either destroys it, and editing a field
+re-creates the body with the new settings. The three primitives are the shapes that need no cooked
+data, so a `Collider` describing one is complete on its own.
+
+`PhysicsPose` is the solver's own pose channel, added by the step to every physics entity. It is
+registered fieldless (`VE_TYPE`), so it never serializes and never rides the wire — it is derived
+state, not authored state. `SensorOverlaps` is the same kind of thing for a sensor's overlap set.
 
 **A body's pose is world space.** A physics entity is expected to be a scene-graph root: its
 `Transform` is read and written as a world pose and a parent's transform is not composed into it.
 
-`PhysicsPose` is the solver's own pose channel, added by the step to every physics entity. It is
-registered fieldless (`VE_TYPE`), so it never serializes and never rides the wire — it is derived
-state, not authored state.
+## Cooked collision geometry — `CollisionShape`
+
+`Collider::Shape = Mesh` takes its shape from the `AssetHandle<CollisionShape>` in
+`Collider::Geometry` instead of from `Extents`. **`CollisionShape` is an ordinary cooked asset**
+(`AssetTypes::CollisionShape`, `Veng/Asset/CollisionShape.h`) carrying either a **convex hull** as
+its hull vertices or an **indexed triangle mesh**, authored as a `*.collision.json` naming a source
+model and a mode:
+
+```json
+{ "model": "hull.glb", "mode": "convex" }
+```
+
+Two properties are load-bearing:
+
+- **The blob is engine-owned geometry, not a solver blob.** A point cloud or an indexed triangle
+  soup as raw `f32`/`u32`; the solver's shape is built at load. A solver's serialized shape form is
+  version-bound, so writing it would make a version bump silently invalidate every cooked shape in
+  every pack — and the blob layout is a public contract living in `assetpack`, a library that must
+  not know the solver exists. This way a solver bump is a **rebuild**, not a re-cook. The cost is
+  one shape construction per asset at load, which is the right trade. **The cooker links no solver
+  at all**: the hulling is the cook's own, so the offline toolchain's dependency set is unchanged.
+- **A triangle mesh may not back a `Dynamic` body.** A triangle mesh is a surface: it has no
+  interior and no inertia, and a dynamic one is a well-known way to get a solver that misbehaves
+  for reasons the consumer cannot see. `PhysicsWorld::CreateBody` **asserts** on the pair rather
+  than letting it be discovered at runtime. `Static` and `Kinematic` are both permitted — a moving
+  piece of architecture is exactly a kinematic triangle mesh — and a kinematic one is given
+  synthetic mass properties, because the solver cannot derive them from a surface and refuses to
+  build the motion state otherwise.
+
+A `ColliderShape::Mesh` collider whose handle is **not resident** has no shape, so the step skips
+it exactly as it skips a `RigidBody` with no `Collider`, and the body is created on the tick the
+asset arrives. Nothing blocks and nothing asserts.
+
+## Sensors are state a system drains
+
+A `Sensor` makes an entity's body detect overlap and resolve no contact. What it touched is
+published on the same entity as a **`SensorOverlaps`** — `Current`, plus this tick's `Entered` and
+`Exited` — rather than delivered as a callback, so a gameplay system reads it in its own phase and
+**no game code runs inside the solver's step**. That is the `FocusRequest`/`TravelRequest` idiom
+applied to contact.
+
+A body on `PhysicsLayer::Trigger` is a sensor whether or not it carries the component — the layer
+means exactly that — but only an entity carrying a `Sensor` is given a `SensorOverlaps`.
+`Sensor::Layers` filters the published set on top of the world's `CollisionMatrix`, which decides
+what the sensor is told about at all.
+
+**The set is "overlapping and active", not "overlapping".** The solver reports contacts for the
+bodies it simulates, so a dynamic body that falls asleep inside a sensor leaves `Current` and is
+reported in `Exited`. Sensor bodies are created with the solver's kinematic-vs-non-dynamic pairing
+enabled, so a kinematic mover crossing a trigger volume *is* reported.
+
+## Constraints — three, and the fixed one is the load-bearing one
+
+`FixedConstraint`, `PointConstraint` and `HingeConstraint` are components naming two entities:
+enough to latch one body to another rigidly, pin a pivot, or hang a door. Deliberately the small
+set, because each constraint type is a tuning surface and an unused one is a maintenance cost.
+
+The reconcile pass runs them **after** the body pass, so a constraint stamped in the same tick as
+its bodies finds them; one naming an entity with no body is inert and is built on the tick that
+body arrives. Removing the component destroys the constraint, and destroying either body destroys
+it too — the component is the authority here as everywhere else in the module.
+
+**Fixed is the one consumers lean on**: attaching a *dynamic* body to a moving *kinematic* one is
+the robust way to carry something, where friction on a fast-moving surface is not. A constraint
+solves for velocity on bodies the solver integrates, so it has **no effect between two non-dynamic
+bodies** — a consumer carrying a kinematic body uses parenting, not a constraint.
+
+## The query surface — `Raycast` / `ShapeCast` / `Overlap`
+
+`Veng/Physics/Queries.h` is three free functions over a `PhysicsWorld`. Each takes an explicit
+**`QueryFilter`** (a layer mask, an ignore-entity span, and whether sensors count) rather than
+reading ambient state, and each returns the **`Entity`** alongside the geometric result so a caller
+lands back in the ECS without a second lookup. All three are **pure** — they mutate nothing, so a
+View-phase consumer may call them.
+
+```cpp
+optional<RayHit>   Raycast  (const PhysicsWorld*, dvec3 origin, vec3 direction, f32 maxDistance,
+                             const QueryFilter& = {});
+optional<ShapeHit> ShapeCast(const PhysicsWorld*, const Collider& shape, const PhysicsPose& from,
+                             dvec3 to, const QueryFilter& = {});
+usize              Overlap  (const PhysicsWorld*, const Collider& shape, const PhysicsPose& at,
+                             const QueryFilter&, vector<Entity>& out);
+```
+
+- **The world is a pointer, and null is empty.** `Raycast(scene.GetPhysicsWorld(), …)` on a scene
+  with no world returns `nullopt` rather than asserting, so an optional-physics scene degrades
+  quietly.
+- **The shape is a `Collider`**, the same vocabulary a body carries — including a
+  `ColliderShape::Mesh` naming a cooked hull. So a mover sweeps *its own shape* with no second
+  description of it. Sweeping a **triangle-mesh** `CollisionShape` is a fatal assert: a concave
+  shape has no sweep.
+- **`ShapeCast` is the one the consumers lean on.** It is what "sweep this hull along this frame's
+  motion and tell me where it stops" reduces to, and it is the primitive under both a kinematic
+  mover and a character controller. `ShapeHit::Fraction` is the fraction of `to - from.Position`
+  travelled, so the stopping pose is `from.Position + (to - from.Position) * Fraction` at
+  `from.Rotation`; `Position` and `Normal` are the contact point and the outward normal of the body
+  hit.
+- **`Overlap` reports intersection, not contact.** A body resting exactly against the volume's face
+  is not inside it — two shapes placed face to face report a penetration of a few times 1e-8 from
+  float rounding alone, so the test admits a hit only past a tenth of a millimetre.
 
 ## The step, and the two-writer hazard
 
 `StepPhysics(Scene&, delta)` is the whole step as a free function, so a headless tool or a test
-drives a scene's physics without building a `SceneSimulation`. It runs four passes:
+drives a scene's physics without building a `SceneSimulation`. It runs five passes:
 
 1. **Reconcile.** Gather every `(RigidBody, Collider)` entity through the *const* view (a structural
    change during iteration is illegal, and adding a `PhysicsPose` is one, so the pass that finds
-   them cannot be the pass that makes them), add the missing `PhysicsPose`s, bring every body into
-   line through the idempotent `PhysicsWorld::CreateBody`, then sweep `GetBodyEntities` for bodies
-   whose entity has lost its components or died.
+   them cannot be the pass that makes them), add the missing `PhysicsPose`s and `SensorOverlaps`,
+   bring every body into line through the idempotent `PhysicsWorld::CreateBody`, then sweep
+   `GetBodyEntities` for bodies whose entity has lost its components or died. Constraints reconcile
+   the same way, after the bodies, through `CreateConstraint`/`GetConstraintOwners`.
 2. **Push.** A `Static` body is placed outright; a `Kinematic` one is *swept* toward its target via
    `MoveKinematicBody`, which is what lets it push dynamic bodies instead of passing through them. A
    `Dynamic` body's pose belongs to the solver and is not pushed.
 3. **Step.** One `PhysicsWorld::Step(delta)`.
 4. **Pull.** Write each body's result into `PhysicsPose`, and into `Transform` for a body whose
    `RigidBody` sets `SyncTransform`.
+5. **Publish.** Write each `Sensor` entity's overlap set into its `SensorOverlaps`, diffing against
+   last tick's for the enter/exit deltas.
+
+**Contacts are found against the pose a step starts from.** A kinematic body teleported across a
+sensor in one tick is therefore reported on the *next* tick, once the step begins with it inside.
 
 **`PhysicsSystem` is the builtin Sim system wrapping that.** Registration in
 `RegisterBuiltinSystems` makes it *resolvable*, not ordered — so **a level that wants physics names
