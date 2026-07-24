@@ -851,6 +851,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/gravity.cpp
             tests/unit/character_controller.cpp
             tests/unit/camera_rig.cpp
+            tests/unit/first_person_rig.cpp
             tests/unit/game_mode.cpp
             tests/unit/viewport_mapping.cpp
             tests/unit/viewport_id.cpp

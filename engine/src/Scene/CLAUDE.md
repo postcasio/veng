@@ -333,16 +333,23 @@ is a pure function of state + intents (the `SystemContext.Input` service is alwa
 reporting the neutral all-zeros state in headless, so an input-reading system needs no guard).
 **View** is client-local presentation derived from finalized Sim state — the `CameraRigSystem`
 (`Veng/Scene/CameraRig.h`) trails a possessed pawn via a `CameraFollow` component, orbits a point
-via a `CameraOrbit` component, and resolves a first-person `CameraLook` (a clamped yaw/pitch
-heading written as the entity's rotation), never authoritative and never on the wire. The rig's
-three arms are the same shape: each is a pure device-free function — `FollowCamera` /
-`OrbitCamera` / `LookRotation` — that the system walks the matching `(Transform, …)` archetype to
-apply. `CameraOrbit` is the point-orbit case the follow rig is not: it circles a `Focus` at a
-clamped `Distance` under `Yaw`/`Pitch` (the pitch clamped by `PitchLimit` off the pole where the
-look-at up collapses), reusing `LookRotation` for the y-up pose and orienting back at the focus, so
-a scene inspector, model viewer, or map/chart view stops hand-rolling the spherical-to-cartesian
-eye placement. Its optional `FocusTarget`/`FocusDamping` glide the focus with the same
-frame-rate-independent `1 − exp(−damping·delta)` smoothing `FollowCamera` uses (zero snaps). An **`Authority { Tier, Owner }`** component marks who
+via a `CameraOrbit` component, looks out of a character's eye via a `FirstPersonRig` component, and
+resolves a plain first-person `CameraLook` (a clamped yaw/pitch heading written as the entity's
+rotation), never authoritative and never on the wire. The rig's arms are the same shape: each is a
+pure device-free function — `FollowCamera` / `OrbitCamera` / `FirstPersonCamera` / `LookRotation` —
+that the system walks the matching `(Transform, …)` archetype to apply. `CameraOrbit` is the
+point-orbit case the follow rig is not: it circles a `Focus` at a clamped `Distance` under
+`Yaw`/`Pitch` (the pitch clamped by `PitchLimit` off the pole where the look-at up collapses),
+reusing `LookRotation` for the y-up pose and orienting back at the focus, so a scene inspector,
+model viewer, or map/chart view stops hand-rolling the spherical-to-cartesian eye placement. Its
+optional `FocusTarget`/`FocusDamping` glide the focus with the same frame-rate-independent
+`1 − exp(−damping·delta)` smoothing `FollowCamera` uses (zero snaps). `FirstPersonRig` is the
+eye-anchored case whose horizon stays level when "up" is not a world constant: it builds the camera
+basis each tick from its `Target`'s resolved up (a `CharacterState::Up` when the target carries
+one), yawing about that up rather than world up — so a character walking a curved habitat keeps a
+level horizon — reads its heading from a sibling `CameraLook`, anchors the eye at `EyeOffset` or a
+named mesh socket, and clamps pitch into `[MinPitch, MaxPitch]`. An entity carrying a
+`FirstPersonRig` is skipped by the plain `CameraLook` arm, so the two never both write its pose. An **`Authority { Tier, Owner }`** component marks who
 simulates an entity: authored entities default `Server`, client-local view entities are `Local`
 (only those two tiers are authored or persisted; `Remote` and `Predicted` are each peer's runtime
 stance toward an entity, never replicated). Its consumer is the net layer's authority filter —

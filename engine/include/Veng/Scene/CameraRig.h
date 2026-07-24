@@ -9,6 +9,8 @@ namespace Veng
     struct CameraFollow;
     struct CameraLook;
     struct CameraOrbit;
+    struct FirstPersonRig;
+    class Scene;
 
     /// @brief Computes the camera Transform that trails a target by a follow relationship.
     ///
@@ -55,14 +57,66 @@ namespace Veng
     /// @return The world-space rotation facing along the heading.
     [[nodiscard]] quat LookRotation(const CameraLook& look);
 
+    /// @brief An orthonormal camera basis: the right, up, and view-forward axes.
+    ///
+    /// Right is the screen-right axis, Up the screen-up axis, and Forward the view direction the
+    /// camera looks along (its local -Z). The three are mutually perpendicular and unit length.
+    struct CameraBasis
+    {
+        /// @brief Screen-right axis (camera local +X).
+        vec3 Right;
+        /// @brief Screen-up axis (camera local +Y).
+        vec3 Up;
+        /// @brief View direction the camera looks along (camera local -Z).
+        vec3 Forward;
+    };
+
+    /// @brief Builds the first-person camera basis about a character's up.
+    ///
+    /// Projects the target's forward onto the plane perpendicular to @p characterUp, yaws it about
+    /// that up by @p yaw, takes right = normalize(cross(forward, up)) — so right is always
+    /// perpendicular to the character's up and the horizon stays level — then pitches the forward
+    /// about right by @p pitch, clamped into [minPitch, maxPitch]. The returned basis's Right is
+    /// coplanar-perpendicular to @p characterUp for every up, which is the property a rig yawing
+    /// about world up cannot hold under a varying up. Pure math — no scene, no device — the
+    /// deterministic core both the rig system and the unit tests drive.
+    /// @param characterUp    The character's up this tick (need not be world up); normalized inside.
+    /// @param targetForward  The target's forward; its component along the up is projected out.
+    /// @param yaw            Heading about the up axis, in radians, relative to the projected forward.
+    /// @param pitch          Elevation about the right axis, in radians, before clamping.
+    /// @param minPitch       Lower pitch clamp, in radians.
+    /// @param maxPitch       Upper pitch clamp, in radians.
+    /// @return The orthonormal right/up/forward basis.
+    [[nodiscard]] CameraBasis FirstPersonBasis(vec3 characterUp, vec3 targetForward, f32 yaw,
+                                               f32 pitch, f32 minPitch, f32 maxPitch);
+
+    /// @brief Computes the first-person camera Transform for one tick.
+    ///
+    /// Builds the basis through FirstPersonBasis, orients the camera down its forward with the
+    /// horizon level against @p characterUp, and places the eye at @p eyeAnchor plus a view bob (a
+    /// vertical and lateral oscillation of amplitude rig.BobAmplitude at phase @p bobPhase; zero
+    /// amplitude leaves the eye exactly at the anchor). Pure math — no scene, no device.
+    /// @param eyeAnchor     The resolved world-space eye position, before the bob.
+    /// @param characterUp   The character's up this tick.
+    /// @param targetForward The target's forward, for the yaw reference.
+    /// @param look          The accumulated Yaw/Pitch heading.
+    /// @param rig           The eye/pitch/bob parameters.
+    /// @param bobPhase      The accumulated bob phase, in radians.
+    /// @return The camera Transform for this tick.
+    [[nodiscard]] Transform FirstPersonCamera(vec3 eyeAnchor, vec3 characterUp, vec3 targetForward,
+                                              const CameraLook& look, const FirstPersonRig& rig,
+                                              f32 bobPhase);
+
     /// @brief View-phase system that resolves each rigged camera's pose.
     ///
     /// Runs in the View phase, so it reads pawn state the Sim phase finalized this tick.
     /// For every entity with (Transform, CameraFollow) whose Target is a live entity with a
     /// Transform, it writes the camera entity's Transform through FollowCamera; for every
     /// entity with (Transform, CameraOrbit) it writes the pose through OrbitCamera; for every
-    /// entity with (Transform, CameraLook) it clamps the look pitch and writes the entity's
-    /// rotation through LookRotation. All go through the scene accessor so the
+    /// entity with (Transform, FirstPersonRig) whose Target is live it writes the pose through
+    /// FirstPersonCamera (eye-anchored, yawing about the target's up); for every entity with
+    /// (Transform, CameraLook) and no FirstPersonRig it clamps the look pitch and writes the
+    /// entity's rotation through LookRotation. All go through the scene accessor so the
     /// spatial-version bookkeeping is correct. The produced camera pose is purely local —
     /// never authoritative, never on the wire.
     class CameraRigSystem final : public SceneSystem
@@ -72,7 +126,8 @@ namespace Veng
         [[nodiscard]] Phase GetPhase() const override { return Phase::View; }
 
         /// @brief Resolves each follow camera behind its Target, each orbit camera around its
-        ///        Focus, and each look camera's rotation.
+        ///        Focus, each first-person camera out of its Target's eye, and each look camera's
+        ///        rotation.
         /// @param scene    The scene whose rigged cameras are updated.
         /// @param delta    Time in seconds since the previous tick.
         /// @param context  Per-tick services (unused).

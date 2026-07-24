@@ -776,6 +776,48 @@ namespace Veng
         f32 FocusDamping = 0.0f;
     };
 
+    /// @brief Camera-rig first-person relationship: an eye-anchored camera that yaws about the
+    ///        target's up rather than the world's.
+    ///
+    /// Read by the View-phase camera rig: each tick it reads the target's resolved up — its
+    /// CharacterState::Up when the target carries one, else the target's own transform up — and
+    /// builds the camera basis against it, so the horizon stays level even where "up" is not a
+    /// world constant (a curved habitat, a rotating deck). The eye sits at the target's position
+    /// offset by EyeOffset in the target's local frame, or — when EyeSocket names a mesh socket on
+    /// the target — at that socket's world position with EyeOffset applied on top. The heading is
+    /// read from a sibling CameraLook (its accumulated Yaw about the up axis and Pitch about the
+    /// horizon), so a control system drives look input into CameraLook exactly as it does for the
+    /// plain look rig; the rig clamps that pitch into [MinPitch, MaxPitch]. Because the rig runs in
+    /// the View phase, the produced camera pose is purely local — never authoritative, never on the
+    /// wire.
+    ///
+    /// Yaw is a heading *relative to the target's forward*, resolved against the target's up each
+    /// tick rather than stored as an absolute direction — an absolute forward would need
+    /// re-projecting every tick and would drift as the up changed. An entity carrying a
+    /// FirstPersonRig is skipped by the plain CameraLook arm, so the two never both write the pose.
+    struct FirstPersonRig
+    {
+        /// @brief The entity the camera looks out of; its up and forward drive the basis.
+        Entity Target = Entity::Null;
+        /// @brief Eye position offset, in the target's (or the named socket's) local frame.
+        vec3 EyeOffset{0.0f, 1.6f, 0.0f};
+        /// @brief Optional mesh socket on the target naming the eye anchor; empty uses EyeOffset alone.
+        string EyeSocket;
+        /// @brief Smallest allowed pitch about the horizon, in radians; negative looks down.
+        f32 MinPitch = -1.4f;
+        /// @brief Largest allowed pitch about the horizon, in radians; positive looks up.
+        f32 MaxPitch = 1.4f;
+        /// @brief View-bob amplitude in metres; 0 disables the bob.
+        f32 BobAmplitude = 0.0f;
+        /// @brief View-bob cycles per metre travelled along the ground plane.
+        f32 BobFrequency = 1.0f;
+        /// @brief Accumulated bob phase, in radians.
+        ///
+        /// Runtime view state advanced from the target's planar speed each tick — not authored and
+        /// not serialized; it starts at zero on spawn.
+        f32 BobPhase = 0.0f;
+    };
+
     /// @brief Per-scene game-mode configuration: the data a scene names to pick its mode.
     ///
     /// Held on the level's settings entity. Names the player prefab a spawn rule
@@ -1336,9 +1378,26 @@ VE_FIELD(FocusTarget, .DisplayName = "Focus Target", .Tooltip = "Point the focus
 VE_FIELD(FocusDamping, .DisplayName = "Focus Damping",
          .Tooltip = "Exponential-smoothing rate per second; 0 snaps", .Display = {.Min = 0.0})
 VE_REFLECT_END();
-// CameraFollow / CameraLook / CameraOrbit are not VE_REPLICATED: View-phase camera rig state,
-// derived locally per client and "never on the wire" (see each struct's doc) — the client owns its
-// own camera.
+VE_REFLECT(::Veng::FirstPersonRig, 0xDDD797C278D97169ULL)
+VE_FIELD(Target, .DisplayName = "Target")
+VE_FIELD(EyeOffset, .DisplayName = "Eye Offset",
+         .Tooltip = "Eye position in the target's (or the socket's) local frame")
+VE_FIELD(
+    EyeSocket, .DisplayName = "Eye Socket",
+    .Tooltip = "Optional mesh socket on the target naming the eye anchor; empty uses Eye Offset")
+VE_FIELD(MinPitch, .DisplayName = "Min Pitch",
+         .Tooltip = "Smallest pitch about the horizon, radians")
+VE_FIELD(MaxPitch, .DisplayName = "Max Pitch",
+         .Tooltip = "Largest pitch about the horizon, radians")
+VE_FIELD(BobAmplitude, .DisplayName = "Bob Amplitude",
+         .Tooltip = "View-bob amplitude in metres; 0 disables", .Display = {.Min = 0.0})
+VE_FIELD(BobFrequency, .DisplayName = "Bob Frequency",
+         .Tooltip = "View-bob cycles per metre travelled", .Display = {.Min = 0.0})
+VE_REFLECT_END();
+
+// CameraFollow / CameraLook / CameraOrbit / FirstPersonRig are not VE_REPLICATED: View-phase camera
+// rig state, derived locally per client and "never on the wire" (see each struct's doc) — the client
+// owns its own camera.
 
 VE_REFLECT(::Veng::GameModeConfig, 0xAE57419CF98B07F8ULL)
 VE_FIELD(PlayerPrefab, .DisplayName = "Player Prefab")

@@ -87,6 +87,7 @@ namespace Veng
         registry.Register<CameraFollow>();
         registry.Register<CameraLook>();
         registry.Register<CameraOrbit>();
+        registry.Register<FirstPersonRig>();
 
         // The wire identity of a replicated entity (server-assigned, runtime-only). Reflected so the
         // inspector can surface the assigned id; the net layer keys snapshots by it.

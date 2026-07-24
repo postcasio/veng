@@ -28,14 +28,23 @@
           "Near": 0.1,
           "Far": 100.0
         },
-        "::Veng::CameraFollow": {
+        "::Veng::FirstPersonRig": {
           "Target": 2,
-          "Offset": [
+          "EyeOffset": [
             0.0,
-            6.0,
-            12.0
+            1.6,
+            0.0
           ],
-          "Damping": 5.0
+          "EyeSocket": "",
+          "MinPitch": -1.4,
+          "MaxPitch": 1.4,
+          "BobAmplitude": 0.0,
+          "BobFrequency": 1.0
+        },
+        "::Veng::CameraLook": {
+          "Yaw": 0.0,
+          "Pitch": 0.0,
+          "PitchLimit": 1.4
         },
         "::Veng::Authority": {
           "Tier": "Local",

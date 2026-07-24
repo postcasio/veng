@@ -210,9 +210,9 @@ inline Net::WorldKey RegimeBKey()
 // reading actions by name. Pure: the same action state always yields the same Intent,
 // whether the actions came from the device, a recording, or the wire, so it is unit-testable
 // without an Input or a scene. WASD advances in the pawn's local frame — the pawn faces its
-// local -Z (the follow camera trails behind looking that way), so the forward action drives
-// move toward -Z. Only the yaw drives the pawn; pitch tilts the follow camera, not the body,
-// and is applied in the control system. The Mover's TurnSpeed scales the yaw.
+// local -Z (the first-person eye looks out that way), so the forward action drives move toward
+// -Z. Only the yaw drives the pawn; pitch tilts the camera about its horizon, not the body, and
+// is applied in the control system. The Mover's TurnSpeed scales the yaw.
 Intent MapInputToIntent(const PlayerInput& input)
 {
     // Mouse X yaws the pawn, negated so moving the mouse right turns the view right (the
@@ -241,18 +241,16 @@ public:
         scene.Each<PlayerInput, Possesses>(
             [&](const Entity seat, PlayerInput& player, Possesses& possesses)
             {
-                // Mouse Y pitches the seat's follow camera around the pawn, clamped so it
-                // never orbits over the top or under the floor — the body stays upright.
+                // Mouse Y pitches the seat's first-person camera about its horizon; the rig clamps
+                // the accumulated pitch into the FirstPersonRig band and keeps the body upright, so
+                // this only feeds the heading. Mouse X yaws the body (below), which the eye follows.
                 constexpr f32 PitchSensitivity = 0.005f;
                 const f32 cameraPitchDelta = -player.GetValue(Actions::Look).y * PitchSensitivity;
                 if (const Viewer* viewer = scene.TryGet<Viewer>(seat);
                     viewer != nullptr && viewer->Camera != Entity::Null &&
-                    scene.IsAlive(viewer->Camera) && scene.Has<CameraFollow>(viewer->Camera))
+                    scene.IsAlive(viewer->Camera) && scene.Has<CameraLook>(viewer->Camera))
                 {
-                    constexpr f32 PitchLimit = 1.2f;
-                    auto& follow = scene.Get<CameraFollow>(viewer->Camera);
-                    follow.Pitch =
-                        std::clamp(follow.Pitch + cameraPitchDelta, -PitchLimit, PitchLimit);
+                    scene.Get<CameraLook>(viewer->Camera).Pitch += cameraPitchDelta;
                 }
 
                 // The seat may possess no pawn, or one that lacks an Intent slot; skip
@@ -336,7 +334,7 @@ VE_SYSTEM(GameplayFocusSystem, 0x538985F20107EF02ULL, "Gameplay Focus");
 
 // The game mode's spawn rule: a Sim-phase system that instantiates the configured player
 // prefab at start and tears it down when play stops. The player prefab authors its own
-// Viewer/Possesses/Camera/CameraFollow wiring, so the rule only picks (the GameModeConfig's
+// Viewer/Possesses/Camera/FirstPersonRig wiring, so the rule only picks (the GameModeConfig's
 // PlayerPrefab) and spawns — no imperative wiring. It spawns at OnStart, before the first
 // Update, so the spawn is deterministic and the pinned smoke frame (which never ticks Update)
 // renders the authored camera pose. A game with richer mode state authors its own components
@@ -825,16 +823,16 @@ protected:
         GetManagedViewports().SetViewportWorld(1, m_SecondWorld);
     }
 
-    // Aims the joined client's local follow camera at the pawn its replicated seat now possesses
-    // (Entity::Null when it possesses none). The Local-tier seat and camera were spawned by the
-    // spawn rule from the same player prefab (its Server-tier pawn skipped); this only names the
-    // camera's target. The pawn itself is a server-owned Remote-tier mirror the interpolation
+    // Aims the joined client's local first-person camera at the pawn its replicated seat now
+    // possesses (Entity::Null when it possesses none). The Local-tier seat and camera were spawned
+    // by the spawn rule from the same player prefab (its Server-tier pawn skipped); this only names
+    // the rig's target. The pawn itself is a server-owned Remote-tier mirror the interpolation
     // system drives — nothing here simulates it.
     void OnClientPossession(Scene& world, const Entity pawn) override
     {
         // The own presentation seat is the local input seat (the one carrying SeatInput — the
         // replicated own seat mirror has none). Point its Possesses at the newly possessed pawn so the
-        // ControlSystem drives that pawn's Intent, and aim its follow camera at it. The client has
+        // ControlSystem drives that pawn's Intent, and aim its first-person rig at it. The client has
         // promoted the pawn to Tier::Predicted, so movement then runs for it on the input tick.
         world.Each<Viewer, SeatInput>(
             [&](const Entity seat, const Viewer& viewer, const SeatInput&)
@@ -844,9 +842,9 @@ protected:
                     world.Get<Possesses>(seat).Pawn = pawn;
                 }
                 if (!viewer.Camera.IsNull() && world.IsAlive(viewer.Camera) &&
-                    world.Has<CameraFollow>(viewer.Camera))
+                    world.Has<FirstPersonRig>(viewer.Camera))
                 {
-                    world.Get<CameraFollow>(viewer.Camera).Target = pawn;
+                    world.Get<FirstPersonRig>(viewer.Camera).Target = pawn;
                 }
             });
     }
@@ -1539,14 +1537,14 @@ private:
             world.Add<NetSpawn>(pawn);
             seatPawns[seat] = pawn;
 
-            // The host's own follow camera (the spawn rule left its Local-tier target null when the
-            // pawn was skipped) aims at the just-spawned pawn — the server-side counterpart of the
+            // The host's own first-person camera (the spawn rule left its Local-tier target null when
+            // the pawn was skipped) aims at the just-spawned pawn — the server-side counterpart of the
             // client's possession wiring.
             const Viewer& viewer = world.Get<Viewer>(seat);
             if (world.Has<SeatInput>(seat) && !viewer.Camera.IsNull() &&
-                world.IsAlive(viewer.Camera) && world.Has<CameraFollow>(viewer.Camera))
+                world.IsAlive(viewer.Camera) && world.Has<FirstPersonRig>(viewer.Camera))
             {
-                world.Get<CameraFollow>(viewer.Camera).Target = pawn;
+                world.Get<FirstPersonRig>(viewer.Camera).Target = pawn;
             }
         }
 
