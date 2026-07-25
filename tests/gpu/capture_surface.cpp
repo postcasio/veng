@@ -53,6 +53,11 @@ namespace
     // A probe material whose capture slots carry descriptive, non-default names (CaptureMap /
     // CaptureSampler), for the configurable-slot case.
     constexpr AssetId NamedProbeInstance{0x2471};
+    // An opaque, depth-writing, double-sided probe material with an authored sample Direction, for
+    // the exclusion cases: it both contributes to and occludes a capture centered on it.
+    constexpr AssetId ShellInstance{0x2491};
+    // A bright red unlit marker, the second mesh the exclusion cases look for in the map.
+    constexpr AssetId MarkerInstance{0x2492};
 
     vec4 DecodeTexel(const vector<u8>& rgba16f, u32 width, u32 x, u32 y)
     {
@@ -161,6 +166,47 @@ namespace
         const auto* mesh = scene.TryGet<MeshRenderer>(entity);
         return mesh->Mesh.Get()->GetMaterials()[0].Get();
     }
+
+    // A scene for the exclusion cases: two meshes in distinct directions from the origin — a green
+    // one straight below (-Y) and a red one straight ahead (+Z), both far outside the camera's frame
+    // — and, at the origin, a small double-sided *opaque* shell carrying the capture material and a
+    // CaptureSurface. The shell stands between a probe at the origin and everything else in every
+    // direction, which is what a pane, canopy or monitor does to a probe sitting on its own surface,
+    // generalized so one scene exercises every direction. Because the shell is opaque it writes
+    // depth, so it hides the geometry beyond it even if it were dropped from color alone.
+    Unique<Scene> BuildExclusionScene(Context& context, AssetManager& assets, TypeRegistry& types,
+                                      const AssetHandle<MaterialInstance>& shellMaterial,
+                                      const AssetHandle<MaterialInstance>& belowMaterial,
+                                      const AssetHandle<MaterialInstance>& aheadMaterial,
+                                      vector<Ref<Mesh>>& meshes, Entity& shellEntity)
+    {
+        Unique<Scene> scene = Scene::Create(types);
+
+        const auto place = [&](const AssetHandle<MaterialInstance>& material, const char* name,
+                               const vec3& position)
+        {
+            const Ref<Mesh> mesh = Mesh::BuildSync(context, Primitives::Cube(4.0f, material), name);
+            meshes.push_back(mesh);
+            const Entity entity = scene->CreateEntity();
+            scene->Add<Transform>(entity).Position = position;
+            scene->Add<MeshRenderer>(entity).Mesh = assets.Adopt(mesh);
+        };
+        place(belowMaterial, "Exclusion Below", vec3(0.0f, -8.0f, 0.0f));
+        place(aheadMaterial, "Exclusion Ahead", vec3(0.0f, 0.0f, 12.0f));
+
+        const Ref<Mesh> shell =
+            Mesh::BuildSync(context, Primitives::Cube(1.4f, shellMaterial), "Exclusion Shell");
+        meshes.push_back(shell);
+        shellEntity = scene->CreateEntity();
+        scene->Add<Transform>(shellEntity);
+        scene->Add<MeshRenderer>(shellEntity).Mesh = assets.Adopt(shell);
+
+        auto& capture = scene->Add<CaptureSurface>(shellEntity);
+        capture.Resolution = 128;
+        capture.Refresh = CaptureRefresh::EveryFrame;
+
+        return scene;
+    }
 }
 
 TEST_CASE_FIXTURE(
@@ -195,7 +241,8 @@ TEST_CASE_FIXTURE(
     vector<u8> output;
     for (u32 frame = 0; frame < SceneCapture::FaceCount; ++frame)
     {
-        auto* const built = capture.Drive(Context, assets, *scene, vec3(0.0f), material);
+        auto* const built =
+            capture.Drive(Context, assets, *scene, surfaceEntity, vec3(0.0f), material);
         REQUIRE(built != nullptr);
         viewport->SetViewState({.World = scene.get(), .Camera = FrontCamera(), .Delta = 0.016f});
         Context.ImmediateCommands(
@@ -256,7 +303,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     vector<u8> output;
     for (u32 frame = 0; frame < SceneCapture::FaceCount; ++frame)
     {
-        auto* const built = capture.Drive(Context, assets, *scene, vec3(0.0f), material);
+        auto* const built =
+            capture.Drive(Context, assets, *scene, surfaceEntity, vec3(0.0f), material);
         REQUIRE(built != nullptr);
         viewport->SetViewState({.World = scene.get(), .Camera = FrontCamera(), .Delta = 0.016f});
         Context.ImmediateCommands(
@@ -306,12 +354,12 @@ TEST_CASE_FIXTURE(
         for (u32 frame = 0; frame < SceneCapture::FaceCount; ++frame)
         {
             CHECK(capture.IsRefreshing());
-            capture.Drive(Context, assets, *scene, vec3(0.0f), material);
+            capture.Drive(Context, assets, *scene, surfaceEntity, vec3(0.0f), material);
         }
 
         // Its FaceCount-face refresh complete, an on-demand capture idles — it pushes no more views.
         CHECK_FALSE(capture.IsRefreshing());
-        capture.Drive(Context, assets, *scene, vec3(0.0f), material);
+        capture.Drive(Context, assets, *scene, surfaceEntity, vec3(0.0f), material);
         CHECK_FALSE(capture.IsRefreshing());
 
         // MarkDirty re-arms it for another full refresh.
@@ -332,7 +380,7 @@ TEST_CASE_FIXTURE(
         for (u32 frame = 0; frame < SceneCapture::FaceCount * 2; ++frame)
         {
             CHECK(capture.IsRefreshing());
-            capture.Drive(Context, assets, *scene, vec3(0.0f), material);
+            capture.Drive(Context, assets, *scene, surfaceEntity, vec3(0.0f), material);
         }
         CHECK(capture.IsRefreshing());
     }
@@ -360,8 +408,8 @@ TEST_CASE_FIXTURE(
     const auto DriveAndRegister = [&](Scene& scene, Entity entity, vector<SceneCapture*>& driveList)
     {
         const auto& capture = scene.Get<CaptureSurface>(entity);
-        auto* const built =
-            capture.Drive(Context, assets, scene, vec3(0.0f), SurfaceMaterial(scene, entity));
+        auto* const built = capture.Drive(Context, assets, scene, entity, vec3(0.0f),
+                                          SurfaceMaterial(scene, entity));
         REQUIRE(built != nullptr);
         driveList.emplace_back(built);
         built->AttachToDriveList(driveList);
@@ -410,4 +458,151 @@ TEST_CASE_FIXTURE(
         scene.reset();
         CHECK(driveList.empty());
     }
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "capture exclusion: a capture never draws the mesh it feeds")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(CookCapturePack()).has_value());
+
+    const AssetResult<AssetHandle<MaterialInstance>> shell =
+        assets.LoadSync<MaterialInstance>(ShellInstance);
+    const AssetResult<AssetHandle<MaterialInstance>> below =
+        assets.LoadSync<MaterialInstance>(BackdropInstance);
+    const AssetResult<AssetHandle<MaterialInstance>> ahead =
+        assets.LoadSync<MaterialInstance>(MarkerInstance);
+    REQUIRE(shell.has_value());
+    REQUIRE(below.has_value());
+    REQUIRE(ahead.has_value());
+
+    vector<Ref<Mesh>> meshes;
+    Entity shellEntity;
+    const Unique<Scene> scene =
+        BuildExclusionScene(Context, assets, Types, *shell, *below, *ahead, meshes, shellEntity);
+    const CaptureSurface& capture = scene->Get<CaptureSurface>(shellEntity);
+    MaterialInstance* const material = SurfaceMaterial(*scene, shellEntity);
+    const Unique<Viewport> viewport = MakeViewport(Context, assets);
+
+    // Drives a full round-robin refresh from `probe` with the shell displaying the capture in
+    // `direction`, and returns the frame center — which is the shell, so the center *is* the
+    // capture's content in that direction.
+    const auto SampleCapturedDirection = [&](const vec3& probe, const vec3& direction)
+    {
+        vector<u8> output;
+        for (u32 frame = 0; frame < SceneCapture::FaceCount; ++frame)
+        {
+            auto* const built =
+                capture.Drive(Context, assets, *scene, shellEntity, probe, material);
+            REQUIRE(built != nullptr);
+            material->SetParam("Direction", vec4(direction, 0.0f));
+            viewport->SetViewState(
+                {.World = scene.get(), .Camera = FrontCamera(), .Delta = 0.016f});
+            Context.ImmediateCommands(
+                [&](CommandBuffer& cmd)
+                {
+                    built->Render(cmd);
+                    viewport->Render(cmd);
+                });
+            output = viewport->GetOutput()->GetImage()->Download();
+        }
+        return SampleBlock(output, Extent, vec2(0.5f, 0.5f));
+    };
+
+    // Both probe placements sit within the shell's own geometry, which is the whole point: a probe on
+    // its own surface is what a pane or monitor produces, and CaptureView::Near (0.05) is far too
+    // small to hide a surface 0.7 or 1.4 units away.
+    SUBCASE("the probe at the entity's own position, inside its own surface")
+    {
+        // Straight down: the green mesh is 8 units below, with the shell's own bottom face 0.7 units
+        // into the ray. The green reaching the map is the shell being absent from color *and* depth —
+        // an opaque shell left in depth would reject the mesh behind it just as thoroughly.
+        const vec4 down = SampleCapturedDirection(vec3(0.0f), vec3(0.0f, -1.0f, 0.0f));
+        CHECK(down.g > 0.5f);
+        CHECK(down.g > down.r + 0.2f);
+        CHECK(down.g > down.b + 0.2f);
+
+        // Straight ahead: the red mesh 12 units out. A second entity in a second direction, so the
+        // capture is shown to drop the one nominated entity rather than the scene's other meshes.
+        const vec4 forward = SampleCapturedDirection(vec3(0.0f), vec3(0.0f, 0.0f, 1.0f));
+        CHECK(forward.r > 0.5f);
+        CHECK(forward.r > forward.g + 0.2f);
+        CHECK(forward.r > forward.b + 0.2f);
+    }
+
+    SUBCASE("the probe on its own mesh's surface")
+    {
+        // On the shell's top face (the 1.4 cube's +Y plane), the case the plane of a pane produces:
+        // looking down, the shell's opposite face is 1.4 units into the ray. The probe samples the
+        // geometry beyond it, not its own back face.
+        const vec4 down = SampleCapturedDirection(vec3(0.0f, 0.7f, 0.0f), vec3(0.0f, -1.0f, 0.0f));
+        CHECK(down.g > 0.5f);
+        CHECK(down.g > down.r + 0.2f);
+        CHECK(down.g > down.b + 0.2f);
+    }
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "capture exclusion: CaptureView::Exclude is the whole mechanism, and its default "
+                  "excludes nothing")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(CookCapturePack()).has_value());
+
+    const AssetResult<AssetHandle<MaterialInstance>> shell =
+        assets.LoadSync<MaterialInstance>(ShellInstance);
+    const AssetResult<AssetHandle<MaterialInstance>> below =
+        assets.LoadSync<MaterialInstance>(BackdropInstance);
+    const AssetResult<AssetHandle<MaterialInstance>> ahead =
+        assets.LoadSync<MaterialInstance>(MarkerInstance);
+    REQUIRE(shell.has_value());
+    REQUIRE(below.has_value());
+    REQUIRE(ahead.has_value());
+
+    vector<Ref<Mesh>> meshes;
+    Entity shellEntity;
+    const Unique<Scene> scene =
+        BuildExclusionScene(Context, assets, Types, *shell, *below, *ahead, meshes, shellEntity);
+    const CaptureSurface& capture = scene->Get<CaptureSurface>(shellEntity);
+    MaterialInstance* const material = SurfaceMaterial(*scene, shellEntity);
+    const Unique<Viewport> viewport = MakeViewport(Context, assets);
+
+    // Drives the component (which binds the output onto the material), then overwrites the pushed
+    // source with an explicit CaptureView so the two runs differ in exactly one field.
+    const auto SampleWithExclusion = [&](const Entity exclude)
+    {
+        vector<u8> output;
+        for (u32 frame = 0; frame < SceneCapture::FaceCount; ++frame)
+        {
+            auto* const built =
+                capture.Drive(Context, assets, *scene, shellEntity, vec3(0.0f), material);
+            REQUIRE(built != nullptr);
+            built->SetView({.World = scene.get(), .Position = vec3(0.0f), .Exclude = exclude});
+            material->SetParam("Direction", vec4(0.0f, -1.0f, 0.0f, 0.0f));
+            viewport->SetViewState(
+                {.World = scene.get(), .Camera = FrontCamera(), .Delta = 0.016f});
+            Context.ImmediateCommands(
+                [&](CommandBuffer& cmd)
+                {
+                    built->Render(cmd);
+                    viewport->Render(cmd);
+                });
+            output = viewport->GetOutput()->GetImage()->Download();
+        }
+        return SampleBlock(output, Extent, vec2(0.5f, 0.5f));
+    };
+
+    // The default: a capture that excludes nothing renders the scene whole, so the shell occludes the
+    // green mesh from a probe inside it and no green reaches the map.
+    const vec4 unexcluded = SampleWithExclusion(Entity::Null);
+    CHECK(unexcluded.g < 0.2f);
+
+    // Naming the entity is the whole difference: the same scene, the same probe, one field.
+    const vec4 excluded = SampleWithExclusion(shellEntity);
+    CHECK(excluded.g > 0.5f);
+    CHECK(excluded.g > excluded.r + 0.2f);
 }

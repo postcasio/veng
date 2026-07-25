@@ -218,8 +218,10 @@ namespace Veng::Renderer
         camera.SetPerspective(glm::radians(90.0f), 1.0f, m_View.Near, m_View.Far);
         camera.SetView(m_View.Position, m_View.Position + FaceForward[face], FaceUp[face]);
 
-        m_Renderer->Execute(cmd,
-                            SceneView{.World = *m_View.World, .Camera = camera, .Delta = 0.0f});
+        m_Renderer->Execute(cmd, SceneView{.World = *m_View.World,
+                                           .Camera = camera,
+                                           .Delta = 0.0f,
+                                           .Exclude = m_View.Exclude});
         cmd.PrepareForAccess(m_Renderer->GetHdrView(), AccessKind::Sample);
 
         // Tile the face's HDR into its atlas cell. The atlas persists across frames (only the

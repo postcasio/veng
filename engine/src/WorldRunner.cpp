@@ -317,7 +317,7 @@ namespace Veng
                 // pointer on destruction, so removing the component/entity/scene unregisters it.
                 const bool hadCapture = surface.GetCapture() != nullptr;
                 Renderer::SceneCapture* capture =
-                    surface.Drive(*m_Context, *m_Assets, scene, position, material);
+                    surface.Drive(*m_Context, *m_Assets, scene, entity, position, material);
                 if (capture != nullptr && !hadCapture)
                 {
                     registerCapture(*capture);

@@ -895,6 +895,50 @@ semaphore** and the output stays **single-copy**; the producer's next-frame `Exe
 it back to `ColorAttachment`. Registration order is the render order; the handoff is same-frame,
 same-queue, and single-copy.
 
+## SceneCapture: the probe primitive, and what it does not draw
+
+`SceneCapture` (`Veng/Renderer/SceneCapture.h`) is the render-to-texture sibling of the viewport: it
+owns one small `SceneRenderer` and, each frame a fresh `CaptureView` is pushed (`SetView`), renders
+the scene through one of **six 90° face cameras** (round-robin, so a full refresh spans six pushed
+frames), tiles the HDR result into a persistent 3×2 face atlas, and resamples that atlas into an
+**octahedral 2D map** a material samples by direction (`OctahedralUV`, `Veng/octahedral.slang`). The
+output is **pre-tonemap linear HDR** and a plain **2D** bindless texture — a cube view cannot ride
+the set-0 bindless array — so it binds onto a material through `Material::SetTextureHandle`. It is
+**push-to-render**: a frame with no fresh `SetView` records nothing, so an idle capture costs
+nothing. `ViewportCompositor` drives the registered captures ahead of every viewport, so a material
+sampling one reads this frame's result. `CaptureSurface` (the reflected component, see
+[../Gui/CLAUDE.md](../Gui/CLAUDE.md)) is the authoring front end.
+
+**A capture never draws the mesh it feeds — a surface is not part of its own environment.**
+`CaptureView::Exclude` names one entity the face renders skip, and `CaptureSurface` sets it to the
+entity it is driving for, so the rule has no authoring surface and cannot be misconfigured. Two
+distinct defects are what it removes, and the geometric one is the worse:
+
+- **It would compound.** A material that adds a term sampled from capture *N−1* appears in capture
+  *N*, so the authored reflection weight sits inside a feedback loop — not divergent at realistic
+  weights, but a shimmer tracking camera motion that no amount of authoring can tune out.
+- **It would occlude.** The probe sits at the entity's world position, which for a pane, mirror or
+  monitor is *on or inside its own surface* — so the mesh does not merely add light, it hides the
+  environment across whatever share of the sphere it subtends. `CaptureView::Near` is `0.05` and
+  cannot be relied on to clip a surface the probe sits on.
+
+**The exclusion is by entity, applied once, in the gather.** `SceneView::Exclude` carries it into
+`SceneRenderer::Execute`, which passes it to `SceneBroadphase::Sync` — so `GatherMeshes` drops the
+entity and it is absent from the candidate list, the per-submesh BVH leaves, and both scene bounds.
+Every consumer downstream therefore misses it in **every domain**: opaque, translucent, colour and
+depth alike. Excluding per-pass would be the same defect wearing a different hat (a mesh dropped
+from colour but left in depth still carves a hole), and excluding by *mesh* or *material* would be
+wrong outright — a `MaterialInstance` is shared by many entities, so it would blank every other user
+of it out of the capture. Because the exclusion is a property of the caller's view and not of the
+scene, it moves no spatial version, so the broadphase treats a **changed** exclusion as its own
+rebuild trigger. `Entity::Null` (the default) excludes nothing and gathers exactly what it gathered
+before, so no other view is affected.
+
+Deliberately **not** here: a general per-entity or per-layer visibility mask (this is one nominated
+entity in a closed producer→consumer pair, with no authoring story to get wrong), **recursive
+probes** (another capture-consuming surface in the map reads a one-frame-old result, invisible at a
+reflection's contrast), and **parallax correction**, which belongs to the consuming material.
+
 ## Pipeline cache
 
 `Context` owns a `vk::PipelineCache` created at device init and threaded into both the graphics

@@ -343,6 +343,15 @@ id, so it is rebound every frame. The material authors the named texture slot; t
 fills it. So a mirror is **authored data**: no app-side `RegisterCapture`, no per-frame game
 code.
 
+**The capture renders the scene *around* the entity, never the entity itself.** A surface is not
+part of its own environment, so the mesh the capture feeds is excluded from it — in every domain
+the capture draws, color and depth alike. It is unconditional and has no authored knob: without
+it, the material's own sampled term would compound into the next capture, and — because the probe
+sits on or inside the very surface it feeds — that mesh would hide the environment behind it (the
+face cameras' near plane is 0.05 units and cannot be relied on to clip a surface the probe sits
+on). Everything *else* in the scene is captured normally, including other capture-consuming
+surfaces, which read a one-frame-old map.
+
 - **`Shape`** records how the material samples the capture — a reflective/refractive object by
   direction (`EnvironmentProbe`), a flat mirror or monitor by its surface parameterization
   (`PlanarReflection`). It is authored data for the material, not a switch on the engine's

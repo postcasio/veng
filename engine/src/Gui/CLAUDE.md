@@ -697,7 +697,11 @@ discovered and driven by the engine (built on first sight, fed to the `RegisterC
 against its lifetime, self-unregistering when the component/entity/scene goes), rebinding the
 capture's output onto the **same-entity** material each frame (the locality rule) so a mirror /
 probe / monitor is authored data. Its `Refresh` is `EveryFrame` or `OnDemand` (render once, then
-idle until `MarkDirty`). So the family is one interface across three targets — `GuiSurface` (a
+idle until `MarkDirty`). **The capture excludes the entity it feeds** (`CaptureView::Exclude`, set by
+the component itself, in every domain the capture draws): a surface is not part of its own
+environment, and a probe sitting on or inside that surface would otherwise both compound its own
+sampled term into the next capture and occlude the environment behind it — see
+[../Renderer/CLAUDE.md](../Renderer/CLAUDE.md). So the family is one interface across three targets — `GuiSurface` (a
 document on a world mesh, HDR, glowing), `GuiOverlay` (a document on the viewport layer stack, LDR,
 screen-space), and `CaptureSurface` (the scene rendered into a texture, sampled by the entity's
 material) — each discovered by `View<…>()` and driven by the engine. Authoring the screen-space and

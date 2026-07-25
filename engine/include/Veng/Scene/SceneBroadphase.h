@@ -28,11 +28,19 @@ namespace Veng
     class SceneBroadphase
     {
     public:
-        /// @brief Brings the tree current with scene.
+        /// @brief Brings the tree current with scene, omitting one nominated entity.
         ///
         /// Rebuilds (re-gather + BVH::Build) iff the scene's spatial version moved
-        /// since the last Sync, or a mesh that was still loading has become resident.
-        void Sync(const Scene& scene);
+        /// since the last Sync, a mesh that was still loading has become resident, or
+        /// @p exclude differs from the entity the current tree was gathered against.
+        ///
+        /// The excluded entity is dropped by the gather itself, so it is absent from
+        /// every consumer of this broadphase — the candidate list, the per-submesh
+        /// leaves, both bounds, and therefore every draw and depth write derived from
+        /// them. There is no domain or pass in which it survives.
+        /// @param scene    Scene to bring the tree current with.
+        /// @param exclude  One entity to omit from the tree entirely; Entity::Null omits none.
+        void Sync(const Scene& scene, Entity exclude = Entity::Null);
 
         /// @brief Returns the live per-mesh gather records in GatherMeshes order.
         ///
@@ -79,7 +87,9 @@ namespace Veng
 
     private:
         /// @brief Re-gathers candidates, rebuilds the BVH, and refreshes the pending set.
-        void Rebuild(const Scene& scene);
+        /// @param scene    Scene to gather from.
+        /// @param exclude  One entity the gather omits; Entity::Null omits none.
+        void Rebuild(const Scene& scene, Entity exclude);
 
         /// @brief The bounding-volume hierarchy over the gathered candidates.
         BVH m_Tree;
@@ -97,6 +107,11 @@ namespace Veng
         AABB m_CasterBounds = AABB::Empty();
         /// @brief != any real version on construction, so the first Sync rebuilds.
         u64 m_LastVersion = ~0ull;
+        /// @brief The entity the current tree was gathered without; a change forces a rebuild.
+        ///
+        /// The scene's spatial version does not move when a caller changes which entity it
+        /// excludes, so the exclusion is its own rebuild trigger.
+        Entity m_LastExclude = Entity::Null;
         /// @brief Set by the most recent Sync call.
         bool m_DidRebuild = false;
     };

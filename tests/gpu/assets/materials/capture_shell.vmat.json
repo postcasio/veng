@@ -1,0 +1,26 @@
+{
+  "defaultInstance": "0x0000000000002491",
+  "domain": "Surface",
+  "cull": "None",
+  "shaders": {
+    "vertex": "0x0000000000002400",
+    "fragment": "0x0000000000002480"
+  },
+  "fields": [
+    {
+      "name": "Texture",
+      "type": "texture",
+      "id": "0x0000000000002329"
+    },
+    {
+      "name": "Sampler",
+      "type": "sampler",
+      "texture": "Texture"
+    },
+    {
+      "name": "Direction",
+      "type": "vec4",
+      "value": [0.0, -1.0, 0.0, 0.0]
+    }
+  ]
+}

@@ -57,5 +57,7 @@ namespace Veng
     /// @param scene     Scene whose resident (Transform, MeshRenderer) entities are gathered.
     /// @param out       Destination; cleared then filled with gathered candidates.
     /// @param outBounds Receives the union of all gathered world bounds.
-    void GatherMeshes(const Scene& scene, vector<VisibleMesh>& out, AABB& outBounds);
+    /// @param exclude   One entity to omit entirely; Entity::Null gathers every candidate.
+    void GatherMeshes(const Scene& scene, vector<VisibleMesh>& out, AABB& outBounds,
+                      Entity exclude = Entity::Null);
 }

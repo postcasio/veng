@@ -8,11 +8,14 @@
 
 namespace Veng
 {
-    void SceneBroadphase::Sync(const Scene& scene)
+    void SceneBroadphase::Sync(const Scene& scene, const Entity exclude)
     {
         const u64 version = scene.GetSpatialVersion();
 
-        bool needRebuild = (version != m_LastVersion);
+        // The exclusion is a property of the caller's view, not of the scene, so it moves no
+        // spatial version — it has to force its own rebuild or the tree keeps the previous
+        // caller's candidate set.
+        bool needRebuild = (version != m_LastVersion) || (exclude != m_LastExclude);
 
         // A mesh finishing async load does not mutate the scene, so it does not bump
         // the spatial version. While candidates are still resolving residency, poll
@@ -41,8 +44,9 @@ namespace Veng
 
         if (needRebuild)
         {
-            Rebuild(scene);
+            Rebuild(scene, exclude);
             m_LastVersion = version;
+            m_LastExclude = exclude;
             m_DidRebuild = true;
         }
         else
@@ -51,9 +55,9 @@ namespace Veng
         }
     }
 
-    void SceneBroadphase::Rebuild(const Scene& scene)
+    void SceneBroadphase::Rebuild(const Scene& scene, const Entity exclude)
     {
-        GatherMeshes(scene, m_Candidates, m_SceneBounds);
+        GatherMeshes(scene, m_Candidates, m_SceneBounds, exclude);
 
         // The caster bound is the union of the shadow-casting candidates alone — the box the
         // shadow projections fit to, so a non-caster (an emissive body co-located with its own
@@ -92,6 +96,10 @@ namespace Veng
         for (auto [entity, transform, renderer] : scene.View<Transform, MeshRenderer>())
         {
             (void)transform;
+            if (entity == exclude)
+            {
+                continue;
+            }
             if (!renderer.Mesh.IsLoaded())
             {
                 m_Pending.push_back(entity);

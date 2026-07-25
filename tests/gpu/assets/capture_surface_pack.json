@@ -45,6 +45,21 @@
       "id": "0x0000000000002461",
       "type": "Material",
       "source": "materials/capture_probe_named.vmat.json"
+    },
+    {
+      "id": "0x0000000000002480",
+      "type": "Shader",
+      "source": "shaders/capture_shell.frag.shader.json"
+    },
+    {
+      "id": "0x0000000000002481",
+      "type": "Material",
+      "source": "materials/capture_shell.vmat.json"
+    },
+    {
+      "id": "0x0000000000002482",
+      "type": "Material",
+      "source": "materials/capture_marker.vmat.json"
     }
   ]
 }

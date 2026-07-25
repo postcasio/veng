@@ -3,6 +3,7 @@
 #include <Veng/Veng.h>
 #include <Veng/Reflection/Reflect.h>
 #include <Veng/Renderer/BindlessRegistry.h>
+#include <Veng/Scene/Entity.h>
 
 namespace Veng
 {
@@ -57,6 +58,12 @@ namespace Veng::Renderer
     /// (RegisterCapture) against the component's lifetime, and drops it — self-unregistering — when the
     /// component, its entity, or its scene goes away. So a reflective or refractive surface, a mirror, or
     /// a monitor is authored data on the entity: no app-side RegisterCapture, no per-frame game code.
+    ///
+    /// The capture renders the scene *around* the entity, never the entity itself: the mesh the capture
+    /// feeds is excluded from its own capture (CaptureView::Exclude), in every domain the capture draws.
+    /// Drawing it would compound the material's own sampled term into the next capture and — because the
+    /// probe sits on or inside the surface it feeds — occlude the environment behind it. The rule is
+    /// unconditional and has no authored knob.
     ///
     /// The output is an octahedral map (pre-tonemap linear HDR) the material samples by direction. Its
     /// handle is a runtime bindless slot, not a cooked asset id, so Drive rebinds it onto the sibling
@@ -140,14 +147,18 @@ namespace Veng::Renderer
         /// capture's output handle onto @p material's named slot every frame (SetTextureHandle writes the
         /// current frame-in-flight region, so the handle must land regardless of whether a face was
         /// pushed).
+        ///
+        /// The pushed source excludes @p entity (CaptureView::Exclude), so the capture never draws the
+        /// mesh it feeds — the rule has no authoring surface and cannot be misconfigured.
         /// @param context   The render context the capture allocates on.
         /// @param assets    The asset manager the capture's SceneRenderer loads its shaders through.
         /// @param world     The scene being captured, pushed as this frame's source.
+        /// @param entity    The entity this component belongs to; excluded from its own capture.
         /// @param position  The entity's world-space position the capture renders from.
         /// @param material  The sibling mesh material to bind the output onto; null skips binding.
         /// @return The owned capture (built on first use), or nullptr when the resolution is invalid.
         SceneCapture* Drive(Context& context, AssetManager& assets, const Scene& world,
-                            const vec3& position, MaterialInstance* material) const;
+                            Entity entity, const vec3& position, MaterialInstance* material) const;
     };
 }
 

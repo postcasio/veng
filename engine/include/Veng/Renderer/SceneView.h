@@ -11,6 +11,7 @@
 #include <Veng/Renderer/Types.h>
 
 #include <Veng/Scene/Camera.h>
+#include <Veng/Scene/Entity.h>
 #include <Veng/Scene/Visibility.h>
 
 #include <array>
@@ -70,6 +71,15 @@ namespace Veng::Renderer
         const CameraView& Camera;
         /// @brief Frame delta time in seconds.
         f32 Delta = 0.0f;
+
+        /// @brief One entity this frame's visibility gather omits; Entity::Null draws every entity.
+        ///
+        /// Applied by the gather that feeds the broadphase, so the entity is absent from the
+        /// candidate list, the per-submesh leaves and the scene bounds — and therefore from every
+        /// domain the frame draws, colour and depth alike. It is a closed producer→consumer rule,
+        /// not a visibility mask: the one caller that sets it is a capture whose output feeds a
+        /// surface, because a surface is not part of its own environment (see CaptureView::Exclude).
+        Entity Exclude = Entity::Null;
 
         /// @brief Interpolation fraction into the next Sim tick, in [0, 1).
         ///

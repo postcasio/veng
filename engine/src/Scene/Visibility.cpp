@@ -11,7 +11,8 @@
 
 namespace Veng
 {
-    void GatherMeshes(const Scene& scene, vector<VisibleMesh>& out, AABB& outBounds)
+    void GatherMeshes(const Scene& scene, vector<VisibleMesh>& out, AABB& outBounds,
+                      const Entity exclude)
     {
         // ComputeWorldMatrices uses Transform pool dense order, matching DensePtr below,
         // so worldMatrices[i] is the world matrix for dense[i].
@@ -26,6 +27,11 @@ namespace Veng
         outBounds = AABB::Empty();
         for (usize i = 0; i < count; ++i)
         {
+            if (dense[i] == exclude)
+            {
+                continue;
+            }
+
             const auto* renderer = scene.TryGet<MeshRenderer>(dense[i]);
             if (renderer == nullptr || !renderer->Mesh.IsLoaded())
             {

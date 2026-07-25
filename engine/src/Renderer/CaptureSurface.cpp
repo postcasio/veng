@@ -87,7 +87,8 @@ namespace Veng::Renderer
     }
 
     SceneCapture* CaptureSurface::Drive(Context& context, AssetManager& assets, const Scene& world,
-                                        const vec3& position, MaterialInstance* material) const
+                                        const Entity entity, const vec3& position,
+                                        MaterialInstance* material) const
     {
         VE_ASSERT(Resolution > 0, "CaptureSurface::Drive: Resolution must be positive (got {})",
                   Resolution);
@@ -122,11 +123,12 @@ namespace Veng::Renderer
         // Push this frame's capture source when the refresh policy calls for it. EveryFrame always
         // pushes; OnDemand pushes only while faces are still owed, then idles — SceneCapture records
         // nothing on a frame with no fresh SetView, so a settled OnDemand capture costs nothing.
+        // The source excludes the driving entity: a surface is not part of its own environment.
         const bool pushThisFrame =
             Refresh == CaptureRefresh::EveryFrame || runtime.PendingFaces > 0;
         if (pushThisFrame)
         {
-            runtime.Capture->SetView({.World = &world, .Position = position});
+            runtime.Capture->SetView({.World = &world, .Position = position, .Exclude = entity});
             if (runtime.PendingFaces > 0)
             {
                 --runtime.PendingFaces;

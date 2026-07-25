@@ -3,6 +3,7 @@
 #include <Veng/Veng.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/SceneRenderer.h>
+#include <Veng/Scene/Entity.h>
 
 namespace Veng
 {
@@ -46,6 +47,16 @@ namespace Veng::Renderer
         const Scene* World = nullptr;
         /// @brief World-space position the six faces render from.
         vec3 Position{0.0f};
+        /// @brief One entity the face renders omit — the surface this capture feeds; Null omits none.
+        ///
+        /// A surface is not part of its own environment. A capture whose output is sampled by a
+        /// mesh's own material sits on or inside that mesh, so drawing it would both compound the
+        /// material's sampled term into the next capture and occlude the environment behind it
+        /// across whatever share of the sphere the mesh subtends — Near clips only what is within
+        /// 5 cm and cannot be relied on to hide a surface the probe sits on. Naming the entity here
+        /// (never a mesh or a material, which are shared by many entities) drops it from the
+        /// capture's visibility gather, so it is absent from every domain the capture draws.
+        Entity Exclude = Entity::Null;
         /// @brief Near plane of the face cameras, in world units.
         f32 Near = 0.05f;
         /// @brief Far plane of the face cameras, in world units.
@@ -63,6 +74,11 @@ namespace Veng::Renderer
     /// map there). The output is pre-tonemap linear HDR, and it is a plain 2D bindless
     /// texture — bindable to a material through SetTextureHandle — because a cube view
     /// cannot ride the set-0 bindless array.
+    ///
+    /// A capture is a sample of an *environment*, and a surface is not part of its own
+    /// environment: CaptureView::Exclude names one entity the face renders skip, so a capture
+    /// feeding a mesh's material never draws that mesh — in any domain, colour or depth. A view
+    /// that excludes nothing (the default) captures the whole scene.
     ///
     /// Driven by the engine: Application::RegisterCapture puts the capture on the capture
     /// drive-list, rendered ahead of every viewport each frame so a material consuming the

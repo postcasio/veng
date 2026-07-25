@@ -1175,12 +1175,13 @@ namespace Veng::Renderer
         }
 
         // Sync the broadphase first: re-gathers and rebuilds only when the scene's spatial
-        // version moved or a mesh finished loading. The scene passes then query its tree.
+        // version moved, a mesh finished loading, or the frame's excluded entity changed. The
+        // scene passes then query its tree, so the exclusion reaches every domain from one place.
         // sceneBounds is the bound union from the same gather, so no separate SceneBounds call is
         // needed; casterBounds excludes the non-casters (so a light's own co-located body never
         // widens its shadow frustum) and drives both the cascade near-extension and the punctual
         // spot/area fit.
-        m_Broadphase.Sync(view.World);
+        m_Broadphase.Sync(view.World, view.Exclude);
         const AABB sceneBounds = m_Broadphase.GetSceneBounds();
         const AABB casterBounds = m_Broadphase.GetCasterBounds();
 
