@@ -25,6 +25,7 @@
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/Transforms.h>
+#include <Veng/Scene/Vehicle.h>
 #include <Veng/Task/TaskSystem.h>
 
 using namespace Veng;
@@ -247,6 +248,52 @@ TEST_CASE("The View-phase rig reads the target's finalized up and writes the cam
     const Transform& out = scene->Get<Transform>(camera);
     CHECK(VecApprox(out.Position, vec3(6.6f, 0.0f, 0.0f)));
     CHECK(glm::dot(out.Rotation * vec3(0.0f, 1.0f, 0.0f), vec3(1.0f, 0.0f, 0.0f)) > 0.99f);
+}
+
+TEST_CASE("A seated target's up comes from its seat, not the frame it last stood in")
+{
+    // CharacterState is not removed when a character sits down and stops being advanced, so its Up
+    // is frozen at the last standing tick. A rig that preferred it would hold the horizon level to
+    // the ground the occupant walked in on while the vehicle rolls out from under it — so while the
+    // target is Seated the rig resolves the up from the target's own transform instead.
+    TypeRegistry registry;
+    RegisterBuiltinTypes(registry);
+    const Unique<Scene> scene = Scene::Create(registry);
+
+    // A hull rolled 90° about its forward axis, so its up maps to world +X.
+    const Entity hull = scene->CreateEntity();
+    Transform hullPose;
+    hullPose.Rotation = glm::angleAxis(glm::radians(-90.0f), vec3(0.0f, 0.0f, 1.0f));
+    scene->Add<Transform>(hull, hullPose);
+
+    // The occupant rides the hull rigidly, carrying a stale standing-up world +Y.
+    const Entity occupant = scene->CreateEntity();
+    scene->Add<Transform>(occupant, Transform{});
+    scene->SetParent(occupant, hull);
+    scene->Add<CharacterState>(occupant,
+                               CharacterState{.Up = vec3(0.0f, 1.0f, 0.0f), .PlanarSpeed = 4.0f});
+
+    const Entity camera = scene->CreateEntity();
+    scene->Add<Transform>(camera, Transform{});
+    scene->Add<FirstPersonRig>(
+        camera, FirstPersonRig{.Target = occupant, .MinPitch = -1.4f, .MaxPitch = 1.4f});
+
+    CameraRigSystem rig;
+    ContextStorage storage;
+
+    // Standing, the stale up is the right answer: the rig follows CharacterState.
+    rig.OnUpdate(*scene, 0.016f, storage.Make());
+    CHECK(glm::dot(scene->Get<Transform>(camera).Rotation * vec3(0.0f, 1.0f, 0.0f),
+                   vec3(0.0f, 1.0f, 0.0f)) > 0.99f);
+
+    // Seated on the rolled hull, the rig follows the hull's frame — and the frozen PlanarSpeed no
+    // longer winds the view bob forward.
+    scene->Add<Seated>(occupant, Seated{.Vehicle = hull});
+    const f32 bobBefore = scene->Get<FirstPersonRig>(camera).BobPhase;
+    rig.OnUpdate(*scene, 0.016f, storage.Make());
+    CHECK(glm::dot(scene->Get<Transform>(camera).Rotation * vec3(0.0f, 1.0f, 0.0f),
+                   vec3(1.0f, 0.0f, 0.0f)) > 0.99f);
+    CHECK(scene->Get<FirstPersonRig>(camera).BobPhase == doctest::Approx(bobBefore));
 }
 
 TEST_CASE("The rig leaves a camera with an unwired target untouched")

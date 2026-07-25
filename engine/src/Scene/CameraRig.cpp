@@ -6,6 +6,7 @@
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/Sockets.h>
 #include <Veng/Scene/Transforms.h>
+#include <Veng/Scene/Vehicle.h>
 
 #include <glm/gtc/constants.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -216,9 +217,16 @@ namespace Veng
                 // The up is the target's resolved up when it carries CharacterState, else its own
                 // transform up — so the rig works before the first character tick and on a target
                 // that is not a character.
+                //
+                // A Seated target reads its own transform instead: a seated occupant's frame is the
+                // seat's, not the one it was last standing in. Its CharacterState is not removed on
+                // entry and stops being advanced, so its Up (and PlanarSpeed) are frozen at the last
+                // standing tick — following those would hold the horizon level to the ground the
+                // occupant walked in on while the vehicle rolls out from under it.
                 vec3 up = targetRotation * vec3(0.0f, 1.0f, 0.0f);
                 f32 planarSpeed = 0.0f;
-                if (const CharacterState* state = scene.TryGet<CharacterState>(rig.Target))
+                const CharacterState* state = scene.TryGet<CharacterState>(rig.Target);
+                if (state != nullptr && !scene.Has<Seated>(rig.Target))
                 {
                     up = state->Up;
                     planarSpeed = state->PlanarSpeed;

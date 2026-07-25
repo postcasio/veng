@@ -780,9 +780,12 @@ namespace Veng
     ///        target's up rather than the world's.
     ///
     /// Read by the View-phase camera rig: each tick it reads the target's resolved up — its
-    /// CharacterState::Up when the target carries one, else the target's own transform up — and
-    /// builds the camera basis against it, so the horizon stays level even where "up" is not a
-    /// world constant (a curved habitat, a rotating deck). The eye sits at the target's position
+    /// CharacterState::Up when the target carries one and is not Seated, else the target's own
+    /// transform up — and builds the camera basis against it, so the horizon stays level even where
+    /// "up" is not a world constant (a curved habitat, a rotating deck). A seated target reads its
+    /// own transform because its frame is the seat's, not the one it was last standing in; its
+    /// CharacterState is not removed on entry and stops being advanced, so following it would hold
+    /// the horizon to the ground the occupant walked in on. The eye sits at the target's position
     /// offset by EyeOffset in the target's local frame, or — when EyeSocket names a mesh socket on
     /// the target — at that socket's world position with EyeOffset applied on top. The heading is
     /// read from a sibling CameraLook (its accumulated Yaw about the up axis and Pitch about the
