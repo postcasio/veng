@@ -56,8 +56,7 @@ namespace Veng::Renderer
         /// be wrongly rejected if it were always required, so CreateDevice() appends it
         /// per-device only when present.
         vector<const char*> DeviceExtensions = vector<const char*>(
-            {VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-             VK_EXT_SHADER_VIEWPORT_INDEX_LAYER_EXTENSION_NAME,
+            {VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_EXT_SHADER_VIEWPORT_INDEX_LAYER_EXTENSION_NAME,
              VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME, VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME});
         vector<const char*> RequiredExtensions;
 
@@ -68,6 +67,20 @@ namespace Veng::Renderer
         Unique<CommandPool> CommandPool;
         Unique<DescriptorPool> DescriptorPool;
         Unique<BindlessRegistry> Bindless;
+
+        /// @brief Whether each frame blits its finished composite into PresentedFrameMirror.
+        ///
+        /// Set by Context::ArmPresentedFrameCapture and never cleared: a presented image cannot be
+        /// read back, so a consumer that wants the finished frame needs the copy taken while the
+        /// frame still owns the image.
+        bool MirrorPresentedFrames = false;
+
+        /// @brief Engine-owned copy of the most recently presented composite, or null.
+        ///
+        /// Created on the first mirrored frame and replaced whenever the swap chain's format or
+        /// extent moves. Released in ReleaseFrameResources so its retire lands while the device
+        /// is alive.
+        Ref<Image> PresentedFrameMirror;
 
         /// @brief One transfer command pool per worker, indexed by worker index.
         ///

@@ -233,9 +233,16 @@ family registers from the editor side.
   CLI requires `--output <file>` to write the PNG and never prints it to stdout),
   **`render.screenshot_window`** (the *presented* frame — the composite of the scene and the UI
   overlay drawn over it, which is what the app looks like on screen; a viewport carries scene
-  colour alone and no UI, so this is the capture an agent drives an interface by. It reads the
-  swap chain's current image at the pump point, where that index still names the last presented
-  frame rather than one acquired for a frame not yet drawn. Requires the surface to grant
+  colour alone and no UI, so this is the capture an agent drives an interface by. **A presented
+  image is not readable** — it belongs to the presentation engine until it is acquired again, so
+  transitioning it for a readback after the present is a write-after-present hazard the
+  synchronization validation layer reports as an error. So registering the render tools **arms the
+  context's presented-frame mirror** (`Context::ArmPresentedFrameCapture`) and the tool reads that:
+  an engine-owned image each frame blits its finished composite into at the end of the frame, the
+  last point at which the frame still owns the swap chain image. Arming at registration — ahead of
+  the first `Pump`, which is what starts the listener thread — means the first call already finds a
+  mirrored frame; the mirror then costs one full-window blit per frame for the context's lifetime,
+  which is why it stays unarmed until a consumer asks. Requires the surface to grant
   transfer-source usage on its swap chain images, and is unavailable headless — where there is
   no swap chain and, because ImGui needs a window, no UI overlay to capture),
   `render.list_viewports` (over `McpHost::ViewportNames`), `render.stats` (cull counts +
@@ -453,4 +460,20 @@ httplib stays PRIVATE and `veng-config` already carries `find_dependency(nlohman
   --mcp` against the hello-triangle project and drive it with `veng-editor --connect` (`--list`,
   `editor.list_panels`, both error paths), exercising the editor exe's gated `--connect` seam end
   to end. `gpu`-labelled, skips 77 with no device/display.
+- **`render.screenshot_window` has no automated coverage, deliberately.** The presented frame exists
+  only where there is a swap chain, so every headless test — the whole `gpu` band and the
+  `validation_gate`, which runs display-free binaries only — is structurally unable to reach it. The
+  one *windowed* server in the band is `editor_mcp_cli_conformance`'s editor, and driving the capture
+  there is **not reliably assertable** for the reason below: at a real window's size the capture can
+  miss its reply window, an outcome that flips run to run with machine load. A test written over it
+  either flakes or passes vacuously, so it is verified by hand: run a windowed consumer under
+  `VE_DEBUG` (`HT_MCP=<port> hello_triangle-launcher`), drive `--connect=<port>
+  render.screenshot_window --output <file>`, and read the consumer's log — a regression prints
+  `WRITE_AFTER_PRESENT hazard detected` at `[ERROR]`.
+- **Either screenshot tool can exceed the 5 s reply window at a real window's size.** The PNG encode
+  runs inside the handler, on the render thread, and a debug build encoding a HiDPI frame (2560×1440
+  is an ordinary 1280×720 window at 2×) can outlast `RequestTimeout` — so the client reports host-busy
+  even though the render thread is pumping normally and `render.stats` answers instantly. It affects
+  `render.screenshot` and `render.screenshot_window` alike, since both encode a full frame. Moving the
+  encode off the render thread (or lengthening the window for a content-block tool) is unbuilt.
 - The editor `editor_mcp` cases cover the `editor.*` tools over a host.

@@ -834,6 +834,21 @@ slot per placement (`MaxPresented` is the budget, asserted at register time). **
 out** as "register N `Presented` viewports with quadrant regions"; it needs no bespoke compositing
 path.
 
+**A presented frame is read back through a mirror, never off the swap chain.** The finished
+composite — scene plus whatever overlay was drawn over it — exists only in the swap chain image, and
+`vkQueuePresentKHR` hands that image to the presentation engine: it is not the application's again
+until it is re-acquired, so transitioning it for a readback afterwards is a **write-after-present
+hazard** the synchronization validation layer reports as an error (and, on MoltenVK, a readback that
+can stall on the held drawable). So `Context::ArmPresentedFrameCapture()` arms a mirror instead:
+`EndFrame` blits the composite into an engine-owned image **immediately before the present
+transition**, the last point at which the frame still owns the swap chain image, and
+`GetPresentedFrameMirror()` hands that copy back to be downloaded as an ordinary owned image. The
+mirror follows the swap chain's format and extent (rebuilt when either moves), needs the surface to
+have granted transfer-source usage (`IsSwapChainCaptureSupported()`), is inert headless, and costs
+one full-window blit per frame — which is why it is armed on demand rather than always on, and why
+nothing arms it unless a consumer asks (`veng::mcp`'s `render.screenshot_window` is the one that
+does).
+
 **Owning the region yields a window↔view mapping.** `WindowToViewport(windowPoint)` hit-tests a
 window point against the region and, on a hit, remaps it to normalized `[0,1]` across the region
 (nullopt outside); `ScreenToWorldRay(windowPoint)` composes that with the camera retained from the

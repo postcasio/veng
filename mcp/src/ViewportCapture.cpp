@@ -171,10 +171,15 @@ namespace Veng::Mcp
                        "(no swap chain, and no UI overlay to capture)"));
         }
 
-        const Ref<Renderer::Image> image = context.GetCurrentSwapChainImage();
+        // A presented image belongs to the presentation engine until it is acquired again, so it is
+        // read through the mirror the frame blitted it into before presenting — never directly,
+        // which would be a write-after-present hazard on the transition the readback needs.
+        const Ref<Renderer::Image> image = context.GetPresentedFrameMirror();
         if (!image)
         {
-            return std::unexpected(string("no presented swap chain image is available"));
+            return std::unexpected(
+                string("no presented frame has been captured yet: the capture mirror is armed but "
+                       "no frame has completed since"));
         }
         const u32 width = image->GetWidth();
         const u32 height = image->GetHeight();

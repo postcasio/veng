@@ -391,10 +391,33 @@ namespace Veng::Renderer
         /// @brief Whether the presented frame can be read back off the swap chain.
         ///
         /// The finished frame — the scene and the UI overlay the composite writes together — exists
-        /// only in the swap chain, so capturing it means reading a presented image. That needs
-        /// transfer-source usage, which the surface grants or withholds; false where it withheld it,
-        /// and false headless, where there is no swap chain and no overlay to capture.
+        /// only in the swap chain, so capturing it means copying out of a swap chain image. That
+        /// needs transfer-source usage, which the surface grants or withholds; false where it
+        /// withheld it, and false headless, where there is no swap chain and no overlay to capture.
+        /// @see ArmPresentedFrameCapture
         [[nodiscard]] bool IsSwapChainCaptureSupported() const;
+
+        /// @brief Arms the presented-frame mirror so the finished frame becomes readable.
+        ///
+        /// A presented image belongs to the presentation engine until it is acquired again, so
+        /// transitioning or copying out of it after the present is a write-after-present hazard —
+        /// the frame cannot be read back off the swap chain once handed over. Arming makes each
+        /// frame blit its finished composite into an engine-owned image at the end of the frame,
+        /// while it still owns the swap chain image; GetPresentedFrameMirror() then reads that copy
+        /// as an ordinary owned image.
+        ///
+        /// Idempotent, and inert headless or where the surface withheld transfer-source usage. The
+        /// mirror costs one full-window blit per frame while armed, so it stays off until a
+        /// consumer asks, and stays armed for the context's lifetime once asked.
+        void ArmPresentedFrameCapture();
+
+        /// @brief Returns the engine-owned image holding the most recently presented frame.
+        ///
+        /// Null while the mirror is unarmed, headless, where the surface withheld transfer-source
+        /// usage, or before the first frame completed since arming. The image tracks the swap
+        /// chain's format and extent, so it is replaced when a resize recreates the swap chain.
+        /// @see ArmPresentedFrameCapture
+        [[nodiscard]] Ref<Image> GetPresentedFrameMirror() const;
 
         /// @brief Registers a callback fired after the swap chain is recreated (e.g. on resize).
         ///
@@ -444,6 +467,14 @@ namespace Veng::Renderer
         [[nodiscard]] Native& GetNative() const;
 
     private:
+        /// @brief Blits the finished composite into the capture mirror, creating it on demand.
+        ///
+        /// Recorded by EndFrame immediately before the present transition — the last point at which
+        /// the frame still owns the swap chain image. A no-op while the mirror is unarmed or the
+        /// surface withheld transfer-source usage.
+        /// @param commandBuffer The frame's command buffer the blit is recorded into.
+        void MirrorPresentedFrame(CommandBuffer& commandBuffer);
+
         /// @brief Drains the retire bins and transfer scratch and releases the per-frame sync state.
         ///
         /// The first half of the destructor's teardown; runs with the device idle.

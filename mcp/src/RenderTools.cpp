@@ -73,6 +73,16 @@ namespace Veng::Mcp
         // render.screenshot_window — the presented frame, the only surface carrying the app's
         // own UI overlay.
         {
+            // The capture reads the context's presented-frame mirror, so it must be armed before a
+            // frame that is to be captured ends. Arming at registration — which precedes the first
+            // Pump, and so the listener thread that could carry a call — means the first call
+            // already finds a mirrored frame.
+            if (Renderer::Context* const context =
+                    host.RenderContext ? host.RenderContext() : nullptr)
+            {
+                context->ArmPresentedFrameCapture();
+            }
+
             McpTool tool;
             tool.Name = "render.screenshot_window";
             tool.Description =

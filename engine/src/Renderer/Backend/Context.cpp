@@ -359,6 +359,10 @@ namespace Veng::Renderer
         // current bin; the drain below reclaims them while the device is alive.
         m_PendingBindlessAcquires.clear();
 
+        // The capture mirror retires like any owned image, so it must be dropped ahead of the
+        // drain below rather than with Native, which outlives the Disposed tripwire.
+        m_Native->PresentedFrameMirror.reset();
+
         // The device is idle (~Context waited). Drain all retire bins before the
         // sync frames and their command buffers go away.
         m_Native->DrainAllRetireBins();
@@ -853,6 +857,10 @@ namespace Veng::Renderer
         // Headless has no swapchain image to transition for presentation.
         if (!IsHeadless())
         {
+            // The capture copy is taken here, before the present hands the image to the
+            // presentation engine — after that the image is no longer the frame's to read.
+            MirrorPresentedFrame(*commandBuffer);
+
             Backend::TransitionImage(*commandBuffer, *GetCurrentSwapChainImage(),
                                      ImageLayout::PresentSrc);
         }
@@ -943,6 +951,56 @@ namespace Veng::Renderer
     {
         // Queried rather than asserted: headless is a legitimate caller and simply cannot capture.
         return m_Native->SwapChain && m_Native->SwapChain->IsCaptureSupported();
+    }
+
+    void Context::ArmPresentedFrameCapture()
+    {
+        m_Native->MirrorPresentedFrames = true;
+    }
+
+    Ref<Image> Context::GetPresentedFrameMirror() const
+    {
+        return m_Native->PresentedFrameMirror;
+    }
+
+    void Context::MirrorPresentedFrame(CommandBuffer& commandBuffer)
+    {
+        if (!m_Native->MirrorPresentedFrames || !IsSwapChainCaptureSupported())
+        {
+            return;
+        }
+
+        const Ref<Image> presented = GetCurrentSwapChainImage();
+        Ref<Image>& mirror = m_Native->PresentedFrameMirror;
+
+        // A resize recreates the swapchain at a new extent (and a display change can move its
+        // format), so the mirror is rebuilt whenever it stops matching.
+        if (mirror == nullptr || mirror->GetExtent() != presented->GetExtent() ||
+            mirror->GetFormat() != presented->GetFormat())
+        {
+            mirror =
+                Image::Create(*this, {
+                                         .Name = "Presented Frame Mirror",
+                                         .Extent = presented->GetExtent(),
+                                         .Format = presented->GetFormat(),
+                                         .Usage = ImageUsage::TransferSrc | ImageUsage::TransferDst,
+                                     });
+        }
+
+        Backend::TransitionImage(commandBuffer, *presented, ImageLayout::TransferSrc);
+        Backend::TransitionImage(commandBuffer, *mirror, ImageLayout::TransferDst);
+
+        const auto extent = ivec3(presented->GetExtent());
+        commandBuffer.BlitImage({
+            .SourceImage = presented,
+            .DestinationImage = mirror,
+            .SourceMipLevel = 0,
+            .DestinationMipLevel = 0,
+            .SourceOffset = {0, 0, 0},
+            .DestinationOffset = {0, 0, 0},
+            .SourceExtent = extent,
+            .DestinationExtent = extent,
+        });
     }
 
     void Context::AddSwapChainInvalidationCallback(std::function<void()> callback)
