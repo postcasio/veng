@@ -788,6 +788,11 @@ if (VENG_BUILD_TESTS)
             tests/unit/asset_manager.cpp
             tests/unit/data_table.cpp
             tests/unit/primitives.cpp
+            # projection_shell.cpp pins Primitives::ProjectionShell's reprojection property —
+            # every vertex reprojected through ProjectToScreen (never the generator's own
+            # inverse, which cancels a vertical mirror) — plus the closed-form reprojection
+            # bound against the exact per-chord error over the real grid.
+            tests/unit/projection_shell.cpp
             tests/unit/bounds.cpp
             tests/unit/mesh_sockets.cpp
             tests/unit/visibility.cpp
@@ -1542,6 +1547,12 @@ if (VENG_BUILD_TESTS)
             # Gui::RenderTarget, and samples that target's GetOutputHandle downstream — asserting
             # the emissive texel round-trips above 1.0 and the producer's barrier leaves it
             # shader-read before the sample. Uses the test shader pack's bindless sampler.
+            # projection_shell.cpp is the document-on-mesh geometry proof: one pattern document
+            # rendered as a screen-space overlay and on a Primitives::ProjectionShell viewed from
+            # its reference pose, compared by sub-pixel edge position against the generator's own
+            # derived reprojection bound — plus a translated-eye control that must break it. It
+            # cooks the gui_surface fixture pack for its Translucent panel material.
+            tests/gpu/projection_shell.cpp
             tests/gpu/gui_hdr_target.cpp
             # ui_document_load.cpp cooks a UIDocument + StyleSheet + Font fixture pack, LoadSyncs
             # the document (pulling its stylesheet + font as dependencies), asserts the recipe tree

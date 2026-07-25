@@ -3,6 +3,9 @@
 // over a solid scene output, downloads the composited result, and fuzzy-compares it to a
 // committed golden PNG. The image floor a change to what *builds* a draw list holds stable.
 //
+// Every case here compares itself through Veng::Test::CheckAgainstGolden (gpu/golden_image.h), so the
+// fuzziness is one number for the whole band rather than one per case.
+//
 // Set VENG_GUI_GOLDEN_DUMP=<path.ppm> to write the capture instead of comparing — the way the
 // golden is (re)generated: dump, sips the PPM to tests/golden/gui_overlay.png, commit. Each of the
 // document-driven cases below carries its own dump variable and golden on the same pattern
@@ -17,15 +20,9 @@
 
 #include <algorithm>
 #include <array>
-#include <cstdlib>
 #include <filesystem>
-#include <fstream>
 
 #include <doctest/doctest.h>
-
-// stb_image's implementation is already compiled into libveng_cook (which this target links),
-// so include only the header — defining the implementation here would duplicate its symbols.
-#include <stb_image.h>
 
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Font.h>
@@ -46,10 +43,8 @@
 #include <Renderer/Passes/GuiScenePass.h>
 
 #include <gpu/fixture.h>
+#include <gpu/golden_image.h>
 #include "support/TempPath.h"
-
-// After the Veng headers, so Veng.h's GLM_FORCE_DEPTH_ZERO_TO_ONE is set before glm.
-#include <glm/gtc/packing.hpp>
 
 using namespace Veng;
 using namespace Veng::Renderer;
@@ -60,11 +55,6 @@ namespace
 
     // The font fixture pack's Font AssetId (tests/cooker/fixtures/font_pack.json).
     constexpr AssetId FontId{0xFB6782CABF076640ULL};
-
-    // Golden fuzziness: the same tolerance shape golden_compare uses, widened slightly for the
-    // MSDF text edges whose derivative-based anti-aliasing can jitter a pixel between drivers.
-    constexpr int MaxChannelDelta = 10;
-    constexpr double MaxMismatchFraction = 0.02;
 
     // Clears an image to a solid color through a one-pass graph — the stand-in scene output the UI
     // composites over.
@@ -126,31 +116,7 @@ namespace
         return {.Image = image, .View = view, .Handle = handle};
     }
 
-    // Converts an RGBA16Sfloat download into 8-bit RGB, clamped to [0,1].
-    vector<u8> DecodeHalfRgb(const vector<u8>& halfBytes, uvec2 extent)
-    {
-        const auto* halves = reinterpret_cast<const u16*>(halfBytes.data());
-        vector<u8> rgb;
-        rgb.reserve(static_cast<usize>(extent.x) * extent.y * 3);
-        for (u32 pixel = 0; pixel < extent.x * extent.y; ++pixel)
-        {
-            for (u32 channel = 0; channel < 3; ++channel)
-            {
-                const f32 value =
-                    glm::clamp(glm::unpackHalf1x16(halves[pixel * 4 + channel]), 0.0f, 1.0f);
-                rgb.push_back(static_cast<u8>(value * 255.0f + 0.5f));
-            }
-        }
-        return rgb;
-    }
-
-    void WritePpm(const path& out, const vector<u8>& rgb, uvec2 extent)
-    {
-        std::ofstream stream(out, std::ios::binary);
-        stream << "P6\n" << extent.x << " " << extent.y << "\n255\n";
-        stream.write(reinterpret_cast<const char*>(rgb.data()),
-                     static_cast<std::streamsize>(rgb.size()));
-    }
+    using Veng::Test::DecodeHalfRgb;
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
@@ -453,48 +419,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     Context.GetBindlessRegistry().Release(samplerHandle);
     Context.GetBindlessRegistry().Release(checker.Handle);
 
-    if (const char* dump = std::getenv("VENG_GUI_GOLDEN_DUMP"))
-    {
-        WritePpm(path(dump), actual, Extent);
-        MESSAGE("gui golden: wrote capture to ", dump);
-        std::filesystem::remove(outArchive);
-        return;
-    }
-
-    const path golden = path(GUI_GOLDEN_DIR) / "gui_overlay.png";
-    int gw = 0;
-    int gh = 0;
-    int gc = 0;
-    u8* goldenPixels = stbi_load(golden.string().c_str(), &gw, &gh, &gc, 3);
-    REQUIRE_MESSAGE(goldenPixels != nullptr, "gui golden: failed to load ", golden.string());
-    REQUIRE(static_cast<u32>(gw) == Extent.x);
-    REQUIRE(static_cast<u32>(gh) == Extent.y);
-
-    const long pixelCount = static_cast<long>(Extent.x) * Extent.y;
-    long mismatched = 0;
-    int worst = 0;
-    for (long i = 0; i < pixelCount; ++i)
-    {
-        int pixelDelta = 0;
-        for (int c = 0; c < 3; ++c)
-        {
-            const int a = actual[i * 3 + c];
-            const int g = goldenPixels[i * 3 + c];
-            const int d = a > g ? a - g : g - a;
-            pixelDelta = d > pixelDelta ? d : pixelDelta;
-        }
-        worst = pixelDelta > worst ? pixelDelta : worst;
-        if (pixelDelta > MaxChannelDelta)
-        {
-            ++mismatched;
-        }
-    }
-    stbi_image_free(goldenPixels);
-
-    const double fraction = static_cast<double>(mismatched) / static_cast<double>(pixelCount);
-    MESSAGE("gui golden: ", mismatched, "/", pixelCount, " pixels exceed delta ", MaxChannelDelta,
-            " (worst ", worst, ")");
-    CHECK(fraction <= MaxMismatchFraction);
+    Veng::Test::CheckAgainstGolden("gui golden", actual, Extent, "VENG_GUI_GOLDEN_DUMP",
+                                   path(GUI_GOLDEN_DIR) / "gui_overlay.png");
 
     std::filesystem::remove(outArchive);
 }
@@ -605,49 +531,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     Context.GetBindlessRegistry().Release(rampHandle);
     Context.GetBindlessRegistry().Release(checker.Handle);
 
-    if (const char* dump = std::getenv("VENG_GUI_ROTATED_GOLDEN_DUMP"))
-    {
-        WritePpm(path(dump), actual, Extent);
-        MESSAGE("gui rotation golden: wrote capture to ", dump);
-        std::filesystem::remove(outArchive);
-        return;
-    }
-
-    const path golden = path(GUI_GOLDEN_DIR) / "gui_rotated.png";
-    int gw = 0;
-    int gh = 0;
-    int gc = 0;
-    u8* goldenPixels = stbi_load(golden.string().c_str(), &gw, &gh, &gc, 3);
-    REQUIRE_MESSAGE(goldenPixels != nullptr, "gui rotation golden: failed to load ",
-                    golden.string());
-    REQUIRE(static_cast<u32>(gw) == Extent.x);
-    REQUIRE(static_cast<u32>(gh) == Extent.y);
-
-    const long pixelCount = static_cast<long>(Extent.x) * Extent.y;
-    long mismatched = 0;
-    int worst = 0;
-    for (long i = 0; i < pixelCount; ++i)
-    {
-        int pixelDelta = 0;
-        for (int c = 0; c < 3; ++c)
-        {
-            const int a = actual[i * 3 + c];
-            const int g = goldenPixels[i * 3 + c];
-            const int d = a > g ? a - g : g - a;
-            pixelDelta = d > pixelDelta ? d : pixelDelta;
-        }
-        worst = pixelDelta > worst ? pixelDelta : worst;
-        if (pixelDelta > MaxChannelDelta)
-        {
-            ++mismatched;
-        }
-    }
-    stbi_image_free(goldenPixels);
-
-    const double fraction = static_cast<double>(mismatched) / static_cast<double>(pixelCount);
-    MESSAGE("gui rotation golden: ", mismatched, "/", pixelCount, " pixels exceed delta ",
-            MaxChannelDelta, " (worst ", worst, ")");
-    CHECK(fraction <= MaxMismatchFraction);
+    Veng::Test::CheckAgainstGolden("gui rotation golden", actual, Extent,
+                                   "VENG_GUI_ROTATED_GOLDEN_DUMP",
+                                   path(GUI_GOLDEN_DIR) / "gui_rotated.png");
 
     std::filesystem::remove(outArchive);
 }
@@ -711,48 +597,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(raw.size() == static_cast<usize>(Extent.x) * Extent.y * 8);
     const vector<u8> actual = DecodeHalfRgb(raw, Extent);
 
-    if (const char* dump = std::getenv("VENG_GUI_IMAGE_GOLDEN_DUMP"))
-    {
-        WritePpm(path(dump), actual, Extent);
-        MESSAGE("gui image golden: wrote capture to ", dump);
-        std::filesystem::remove(outArchive);
-        return;
-    }
-
-    const path golden = path(GUI_GOLDEN_DIR) / "gui_image.png";
-    int gw = 0;
-    int gh = 0;
-    int gc = 0;
-    u8* goldenPixels = stbi_load(golden.string().c_str(), &gw, &gh, &gc, 3);
-    REQUIRE_MESSAGE(goldenPixels != nullptr, "gui image golden: failed to load ", golden.string());
-    REQUIRE(static_cast<u32>(gw) == Extent.x);
-    REQUIRE(static_cast<u32>(gh) == Extent.y);
-
-    const long pixelCount = static_cast<long>(Extent.x) * Extent.y;
-    long mismatched = 0;
-    int worst = 0;
-    for (long i = 0; i < pixelCount; ++i)
-    {
-        int pixelDelta = 0;
-        for (int c = 0; c < 3; ++c)
-        {
-            const int a = actual[i * 3 + c];
-            const int g = goldenPixels[i * 3 + c];
-            const int d = a > g ? a - g : g - a;
-            pixelDelta = d > pixelDelta ? d : pixelDelta;
-        }
-        worst = pixelDelta > worst ? pixelDelta : worst;
-        if (pixelDelta > MaxChannelDelta)
-        {
-            ++mismatched;
-        }
-    }
-    stbi_image_free(goldenPixels);
-
-    const double fraction = static_cast<double>(mismatched) / static_cast<double>(pixelCount);
-    MESSAGE("gui image golden: ", mismatched, "/", pixelCount, " pixels exceed delta ",
-            MaxChannelDelta, " (worst ", worst, ")");
-    CHECK(fraction <= MaxMismatchFraction);
+    Veng::Test::CheckAgainstGolden("gui image golden", actual, Extent, "VENG_GUI_IMAGE_GOLDEN_DUMP",
+                                   path(GUI_GOLDEN_DIR) / "gui_image.png");
 
     std::filesystem::remove(outArchive);
 }
@@ -816,49 +662,9 @@ TEST_CASE_FIXTURE(
     REQUIRE(raw.size() == static_cast<usize>(Extent.x) * Extent.y * 8);
     const vector<u8> actual = DecodeHalfRgb(raw, Extent);
 
-    if (const char* dump = std::getenv("VENG_GUI_BACKGROUND_GOLDEN_DUMP"))
-    {
-        WritePpm(path(dump), actual, Extent);
-        MESSAGE("gui background golden: wrote capture to ", dump);
-        std::filesystem::remove(outArchive);
-        return;
-    }
-
-    const path golden = path(GUI_GOLDEN_DIR) / "gui_background.png";
-    int gw = 0;
-    int gh = 0;
-    int gc = 0;
-    u8* goldenPixels = stbi_load(golden.string().c_str(), &gw, &gh, &gc, 3);
-    REQUIRE_MESSAGE(goldenPixels != nullptr, "gui background golden: failed to load ",
-                    golden.string());
-    REQUIRE(static_cast<u32>(gw) == Extent.x);
-    REQUIRE(static_cast<u32>(gh) == Extent.y);
-
-    const long pixelCount = static_cast<long>(Extent.x) * Extent.y;
-    long mismatched = 0;
-    int worst = 0;
-    for (long i = 0; i < pixelCount; ++i)
-    {
-        int pixelDelta = 0;
-        for (int c = 0; c < 3; ++c)
-        {
-            const int a = actual[i * 3 + c];
-            const int g = goldenPixels[i * 3 + c];
-            const int d = a > g ? a - g : g - a;
-            pixelDelta = d > pixelDelta ? d : pixelDelta;
-        }
-        worst = pixelDelta > worst ? pixelDelta : worst;
-        if (pixelDelta > MaxChannelDelta)
-        {
-            ++mismatched;
-        }
-    }
-    stbi_image_free(goldenPixels);
-
-    const double fraction = static_cast<double>(mismatched) / static_cast<double>(pixelCount);
-    MESSAGE("gui background golden: ", mismatched, "/", pixelCount, " pixels exceed delta ",
-            MaxChannelDelta, " (worst ", worst, ")");
-    CHECK(fraction <= MaxMismatchFraction);
+    Veng::Test::CheckAgainstGolden("gui background golden", actual, Extent,
+                                   "VENG_GUI_BACKGROUND_GOLDEN_DUMP",
+                                   path(GUI_GOLDEN_DIR) / "gui_background.png");
 
     std::filesystem::remove(outArchive);
 }
@@ -922,49 +728,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(raw.size() == static_cast<usize>(Extent.x) * Extent.y * 8);
     const vector<u8> actual = DecodeHalfRgb(raw, Extent);
 
-    if (const char* dump = std::getenv("VENG_GUI_SLICED_TILE_GOLDEN_DUMP"))
-    {
-        WritePpm(path(dump), actual, Extent);
-        MESSAGE("gui sliced tile golden: wrote capture to ", dump);
-        std::filesystem::remove(outArchive);
-        return;
-    }
-
-    const path golden = path(GUI_GOLDEN_DIR) / "gui_sliced_tile.png";
-    int gw = 0;
-    int gh = 0;
-    int gc = 0;
-    u8* goldenPixels = stbi_load(golden.string().c_str(), &gw, &gh, &gc, 3);
-    REQUIRE_MESSAGE(goldenPixels != nullptr, "gui sliced tile golden: failed to load ",
-                    golden.string());
-    REQUIRE(static_cast<u32>(gw) == Extent.x);
-    REQUIRE(static_cast<u32>(gh) == Extent.y);
-
-    const long pixelCount = static_cast<long>(Extent.x) * Extent.y;
-    long mismatched = 0;
-    int worst = 0;
-    for (long i = 0; i < pixelCount; ++i)
-    {
-        int pixelDelta = 0;
-        for (int c = 0; c < 3; ++c)
-        {
-            const int a = actual[i * 3 + c];
-            const int g = goldenPixels[i * 3 + c];
-            const int d = a > g ? a - g : g - a;
-            pixelDelta = d > pixelDelta ? d : pixelDelta;
-        }
-        worst = pixelDelta > worst ? pixelDelta : worst;
-        if (pixelDelta > MaxChannelDelta)
-        {
-            ++mismatched;
-        }
-    }
-    stbi_image_free(goldenPixels);
-
-    const double fraction = static_cast<double>(mismatched) / static_cast<double>(pixelCount);
-    MESSAGE("gui sliced tile golden: ", mismatched, "/", pixelCount, " pixels exceed delta ",
-            MaxChannelDelta, " (worst ", worst, ")");
-    CHECK(fraction <= MaxMismatchFraction);
+    Veng::Test::CheckAgainstGolden("gui sliced tile golden", actual, Extent,
+                                   "VENG_GUI_SLICED_TILE_GOLDEN_DUMP",
+                                   path(GUI_GOLDEN_DIR) / "gui_sliced_tile.png");
 
     std::filesystem::remove(outArchive);
 }
@@ -1026,48 +792,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(raw.size() == static_cast<usize>(Extent.x) * Extent.y * 8);
     const vector<u8> actual = DecodeHalfRgb(raw, Extent);
 
-    if (const char* dump = std::getenv("VENG_GUI_SHADOW_GOLDEN_DUMP"))
-    {
-        WritePpm(path(dump), actual, Extent);
-        MESSAGE("gui shadow golden: wrote capture to ", dump);
-        std::filesystem::remove(outArchive);
-        return;
-    }
-
-    const path golden = path(GUI_GOLDEN_DIR) / "gui_shadow.png";
-    int gw = 0;
-    int gh = 0;
-    int gc = 0;
-    u8* goldenPixels = stbi_load(golden.string().c_str(), &gw, &gh, &gc, 3);
-    REQUIRE_MESSAGE(goldenPixels != nullptr, "gui shadow golden: failed to load ", golden.string());
-    REQUIRE(static_cast<u32>(gw) == Extent.x);
-    REQUIRE(static_cast<u32>(gh) == Extent.y);
-
-    const long pixelCount = static_cast<long>(Extent.x) * Extent.y;
-    long mismatched = 0;
-    int worst = 0;
-    for (long i = 0; i < pixelCount; ++i)
-    {
-        int pixelDelta = 0;
-        for (int c = 0; c < 3; ++c)
-        {
-            const int a = actual[i * 3 + c];
-            const int g = goldenPixels[i * 3 + c];
-            const int d = a > g ? a - g : g - a;
-            pixelDelta = d > pixelDelta ? d : pixelDelta;
-        }
-        worst = pixelDelta > worst ? pixelDelta : worst;
-        if (pixelDelta > MaxChannelDelta)
-        {
-            ++mismatched;
-        }
-    }
-    stbi_image_free(goldenPixels);
-
-    const double fraction = static_cast<double>(mismatched) / static_cast<double>(pixelCount);
-    MESSAGE("gui shadow golden: ", mismatched, "/", pixelCount, " pixels exceed delta ",
-            MaxChannelDelta, " (worst ", worst, ")");
-    CHECK(fraction <= MaxMismatchFraction);
+    Veng::Test::CheckAgainstGolden("gui shadow golden", actual, Extent,
+                                   "VENG_GUI_SHADOW_GOLDEN_DUMP",
+                                   path(GUI_GOLDEN_DIR) / "gui_shadow.png");
 
     std::filesystem::remove(outArchive);
 }
@@ -1143,49 +870,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(raw.size() == static_cast<usize>(Extent.x) * Extent.y * 8);
     const vector<u8> actual = DecodeHalfRgb(raw, Extent);
 
-    if (const char* dump = std::getenv("VENG_GUI_MATERIAL_GOLDEN_DUMP"))
-    {
-        WritePpm(path(dump), actual, Extent);
-        MESSAGE("gui material golden: wrote capture to ", dump);
-        std::filesystem::remove(outArchive);
-        return;
-    }
-
-    const path golden = path(GUI_GOLDEN_DIR) / "gui_material.png";
-    int gw = 0;
-    int gh = 0;
-    int gc = 0;
-    u8* goldenPixels = stbi_load(golden.string().c_str(), &gw, &gh, &gc, 3);
-    REQUIRE_MESSAGE(goldenPixels != nullptr, "gui material golden: failed to load ",
-                    golden.string());
-    REQUIRE(static_cast<u32>(gw) == Extent.x);
-    REQUIRE(static_cast<u32>(gh) == Extent.y);
-
-    const long pixelCount = static_cast<long>(Extent.x) * Extent.y;
-    long mismatched = 0;
-    int worst = 0;
-    for (long i = 0; i < pixelCount; ++i)
-    {
-        int pixelDelta = 0;
-        for (int c = 0; c < 3; ++c)
-        {
-            const int a = actual[i * 3 + c];
-            const int g = goldenPixels[i * 3 + c];
-            const int d = a > g ? a - g : g - a;
-            pixelDelta = d > pixelDelta ? d : pixelDelta;
-        }
-        worst = pixelDelta > worst ? pixelDelta : worst;
-        if (pixelDelta > MaxChannelDelta)
-        {
-            ++mismatched;
-        }
-    }
-    stbi_image_free(goldenPixels);
-
-    const double fraction = static_cast<double>(mismatched) / static_cast<double>(pixelCount);
-    MESSAGE("gui material golden: ", mismatched, "/", pixelCount, " pixels exceed delta ",
-            MaxChannelDelta, " (worst ", worst, ")");
-    CHECK(fraction <= MaxMismatchFraction);
+    Veng::Test::CheckAgainstGolden("gui material golden", actual, Extent,
+                                   "VENG_GUI_MATERIAL_GOLDEN_DUMP",
+                                   path(GUI_GOLDEN_DIR) / "gui_material.png");
 
     std::filesystem::remove(outArchive);
 }
@@ -1295,47 +982,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(raw.size() == static_cast<usize>(Extent.x) * Extent.y * 8);
     const vector<u8> actual = DecodeHalfRgb(raw, Extent);
 
-    if (const char* dump = std::getenv("VENG_GUI_POPUP_GOLDEN_DUMP"))
-    {
-        WritePpm(path(dump), actual, Extent);
-        MESSAGE("gui popup golden: wrote capture to ", dump);
-        return;
-    }
-
-    const path golden = path(GUI_GOLDEN_DIR) / "gui_popup.png";
-    int gw = 0;
-    int gh = 0;
-    int gc = 0;
-    u8* goldenPixels = stbi_load(golden.string().c_str(), &gw, &gh, &gc, 3);
-    REQUIRE_MESSAGE(goldenPixels != nullptr, "gui popup golden: failed to load ", golden.string());
-    REQUIRE(static_cast<u32>(gw) == Extent.x);
-    REQUIRE(static_cast<u32>(gh) == Extent.y);
-
-    const long pixelCount = static_cast<long>(Extent.x) * Extent.y;
-    long mismatched = 0;
-    int worst = 0;
-    for (long i = 0; i < pixelCount; ++i)
-    {
-        int pixelDelta = 0;
-        for (int c = 0; c < 3; ++c)
-        {
-            const int a = actual[i * 3 + c];
-            const int g = goldenPixels[i * 3 + c];
-            const int d = a > g ? a - g : g - a;
-            pixelDelta = d > pixelDelta ? d : pixelDelta;
-        }
-        worst = pixelDelta > worst ? pixelDelta : worst;
-        if (pixelDelta > MaxChannelDelta)
-        {
-            ++mismatched;
-        }
-    }
-    stbi_image_free(goldenPixels);
-
-    const double fraction = static_cast<double>(mismatched) / static_cast<double>(pixelCount);
-    MESSAGE("gui popup golden: ", mismatched, "/", pixelCount, " pixels exceed delta ",
-            MaxChannelDelta, " (worst ", worst, ")");
-    CHECK(fraction <= MaxMismatchFraction);
+    Veng::Test::CheckAgainstGolden("gui popup golden", actual, Extent, "VENG_GUI_POPUP_GOLDEN_DUMP",
+                                   path(GUI_GOLDEN_DIR) / "gui_popup.png");
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
@@ -1446,49 +1094,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(raw.size() == static_cast<usize>(Extent.x) * Extent.y * 8);
     const vector<u8> actual = DecodeHalfRgb(raw, Extent);
 
-    if (const char* dump = std::getenv("VENG_GUI_COMPOSITION_GOLDEN_DUMP"))
-    {
-        WritePpm(path(dump), actual, Extent);
-        MESSAGE("gui composition golden: wrote capture to ", dump);
-        std::filesystem::remove(outArchive);
-        return;
-    }
-
-    const path golden = path(GUI_GOLDEN_DIR) / "gui_composition.png";
-    int gw = 0;
-    int gh = 0;
-    int gc = 0;
-    u8* goldenPixels = stbi_load(golden.string().c_str(), &gw, &gh, &gc, 3);
-    REQUIRE_MESSAGE(goldenPixels != nullptr, "gui composition golden: failed to load ",
-                    golden.string());
-    REQUIRE(static_cast<u32>(gw) == Extent.x);
-    REQUIRE(static_cast<u32>(gh) == Extent.y);
-
-    const long pixelCount = static_cast<long>(Extent.x) * Extent.y;
-    long mismatched = 0;
-    int worst = 0;
-    for (long i = 0; i < pixelCount; ++i)
-    {
-        int pixelDelta = 0;
-        for (int c = 0; c < 3; ++c)
-        {
-            const int a = actual[i * 3 + c];
-            const int g = goldenPixels[i * 3 + c];
-            const int d = a > g ? a - g : g - a;
-            pixelDelta = d > pixelDelta ? d : pixelDelta;
-        }
-        worst = pixelDelta > worst ? pixelDelta : worst;
-        if (pixelDelta > MaxChannelDelta)
-        {
-            ++mismatched;
-        }
-    }
-    stbi_image_free(goldenPixels);
-
-    const double fraction = static_cast<double>(mismatched) / static_cast<double>(pixelCount);
-    MESSAGE("gui composition golden: ", mismatched, "/", pixelCount, " pixels exceed delta ",
-            MaxChannelDelta, " (worst ", worst, ")");
-    CHECK(fraction <= MaxMismatchFraction);
+    Veng::Test::CheckAgainstGolden("gui composition golden", actual, Extent,
+                                   "VENG_GUI_COMPOSITION_GOLDEN_DUMP",
+                                   path(GUI_GOLDEN_DIR) / "gui_composition.png");
 
     std::filesystem::remove(outArchive);
 }
@@ -1551,49 +1159,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(raw.size() == static_cast<usize>(Extent.x) * Extent.y * 8);
     const vector<u8> actual = DecodeHalfRgb(raw, Extent);
 
-    if (const char* dump = std::getenv("VENG_GUI_BOX_COMPOSITION_GOLDEN_DUMP"))
-    {
-        WritePpm(path(dump), actual, Extent);
-        MESSAGE("gui box composition golden: wrote capture to ", dump);
-        std::filesystem::remove(outArchive);
-        return;
-    }
-
-    const path golden = path(GUI_GOLDEN_DIR) / "gui_box_composition.png";
-    int gw = 0;
-    int gh = 0;
-    int gc = 0;
-    u8* goldenPixels = stbi_load(golden.string().c_str(), &gw, &gh, &gc, 3);
-    REQUIRE_MESSAGE(goldenPixels != nullptr, "gui box composition golden: failed to load ",
-                    golden.string());
-    REQUIRE(static_cast<u32>(gw) == Extent.x);
-    REQUIRE(static_cast<u32>(gh) == Extent.y);
-
-    const long pixelCount = static_cast<long>(Extent.x) * Extent.y;
-    long mismatched = 0;
-    int worst = 0;
-    for (long i = 0; i < pixelCount; ++i)
-    {
-        int pixelDelta = 0;
-        for (int c = 0; c < 3; ++c)
-        {
-            const int a = actual[i * 3 + c];
-            const int g = goldenPixels[i * 3 + c];
-            const int d = a > g ? a - g : g - a;
-            pixelDelta = d > pixelDelta ? d : pixelDelta;
-        }
-        worst = pixelDelta > worst ? pixelDelta : worst;
-        if (pixelDelta > MaxChannelDelta)
-        {
-            ++mismatched;
-        }
-    }
-    stbi_image_free(goldenPixels);
-
-    const double fraction = static_cast<double>(mismatched) / static_cast<double>(pixelCount);
-    MESSAGE("gui box composition golden: ", mismatched, "/", pixelCount, " pixels exceed delta ",
-            MaxChannelDelta, " (worst ", worst, ")");
-    CHECK(fraction <= MaxMismatchFraction);
+    Veng::Test::CheckAgainstGolden("gui box composition golden", actual, Extent,
+                                   "VENG_GUI_BOX_COMPOSITION_GOLDEN_DUMP",
+                                   path(GUI_GOLDEN_DIR) / "gui_box_composition.png");
 
     std::filesystem::remove(outArchive);
 }

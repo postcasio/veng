@@ -6,6 +6,8 @@
 #include <glm/geometric.hpp>
 #include <glm/trigonometric.hpp>
 
+#include <Veng/Assert.h>
+
 namespace Veng::Primitives
 {
     namespace
@@ -162,6 +164,170 @@ namespace Veng::Primitives
 
         FinishSubMesh(data, std::move(material));
         return data;
+    }
+
+    MeshData ProjectionShell(const f32 fovY, const f32 aspect, const vec2 rectCenter,
+                             const vec2 rectSize, const f32 radius, const uvec2 subdivisions,
+                             AssetHandle<MaterialInstance> material)
+    {
+        constexpr f32 Pi = 3.14159265358979323846f;
+        VE_ASSERT(radius > 0.0f, "Primitives::ProjectionShell: radius must be > 0 (got {})",
+                  radius);
+        VE_ASSERT(aspect > 0.0f, "Primitives::ProjectionShell: aspect must be > 0 (got {})",
+                  aspect);
+        VE_ASSERT(fovY > 0.0f && fovY < Pi,
+                  "Primitives::ProjectionShell: fovY must lie in (0, pi) radians (got {})", fovY);
+        VE_ASSERT(rectSize.x > 0.0f && rectSize.y > 0.0f,
+                  "Primitives::ProjectionShell: rectSize must be positive on both axes (got {}x{})",
+                  rectSize.x, rectSize.y);
+
+        const u32 nx = std::max(1u, subdivisions.x);
+        const u32 ny = std::max(1u, subdivisions.y);
+
+        const f32 tanHalfFov = std::tan(fovY * 0.5f);
+        const vec2 rectMin = rectCenter - rectSize * 0.5f;
+
+        MeshData data;
+        data.Vertices.reserve(static_cast<usize>(nx + 1) * (ny + 1));
+        data.Indices.reserve(static_cast<usize>(nx) * ny * 6);
+
+        // (nx+1) x (ny+1) grid over the rect. u runs left to right and v top to bottom: the rect
+        // fractions and the UVs share document space's top-left origin, while camera space is +Y up,
+        // hence the single negation on the vertical axis and nowhere else.
+        for (u32 j = 0; j <= ny; ++j)
+        {
+            const f32 v = static_cast<f32>(j) / static_cast<f32>(ny);
+            const f32 fractionY = rectMin.y + v * rectSize.y;
+            for (u32 i = 0; i <= nx; ++i)
+            {
+                const f32 u = static_cast<f32>(i) / static_cast<f32>(nx);
+                const f32 fractionX = rectMin.x + u * rectSize.x;
+
+                // Window fraction -> NDC -> the camera-space ray at unit forward depth. The engine
+                // projection bakes the Vulkan Y flip, so a top-left fraction maps to NDC directly
+                // without a second flip; +Y up is what turns the y-down NDC back over.
+                const vec3 ray((2.0f * fractionX - 1.0f) * aspect * tanHalfFov,
+                               -(2.0f * fractionY - 1.0f) * tanHalfFov, -1.0f);
+                const vec3 direction = glm::normalize(ray);
+
+                // d(position)/du before normalization is +X, so the surface tangent is +X's component
+                // in the tangent plane. Never degenerate: a ray with z = -1 can never point along X.
+                const vec3 tangent =
+                    glm::normalize(vec3(1.0f, 0.0f, 0.0f) - direction * direction.x);
+
+                data.Vertices.push_back(CanonicalVertex{
+                    .Position = direction * radius,
+                    .Normal = -direction,
+                    .Tangent = vec4(tangent, 1.0f),
+                    .UV = vec2(u, v),
+                });
+            }
+        }
+
+        const u32 stride = nx + 1;
+        for (u32 j = 0; j < ny; ++j)
+        {
+            for (u32 i = 0; i < nx; ++i)
+            {
+                const u32 a = j * stride + i;
+                const u32 b = a + 1;
+                const u32 c = a + stride;
+                const u32 d = c + 1;
+
+                // CCW seen from the local origin: +u steps along camera +X while +v steps along
+                // camera -Y, so cross(c - a, b - a) points back at the eye, matching the normals.
+                data.Indices.push_back(a);
+                data.Indices.push_back(c);
+                data.Indices.push_back(b);
+
+                data.Indices.push_back(b);
+                data.Indices.push_back(c);
+                data.Indices.push_back(d);
+            }
+        }
+
+        FinishSubMesh(data, std::move(material));
+        return data;
+    }
+
+    f32 ProjectionShellReprojectionBound(const f32 fovY, const f32 aspect, const vec2 rectCenter,
+                                         const vec2 rectSize, const uvec2 subdivisions,
+                                         const vec2 windowExtent)
+    {
+        constexpr f32 Pi = 3.14159265358979323846f;
+        VE_ASSERT(aspect > 0.0f,
+                  "Primitives::ProjectionShellReprojectionBound: aspect must be > 0 (got {})",
+                  aspect);
+        VE_ASSERT(fovY > 0.0f && fovY < Pi,
+                  "Primitives::ProjectionShellReprojectionBound: fovY must lie in (0, pi) radians "
+                  "(got {})",
+                  fovY);
+        VE_ASSERT(rectSize.x > 0.0f && rectSize.y > 0.0f,
+                  "Primitives::ProjectionShellReprojectionBound: rectSize must be positive on both "
+                  "axes (got {}x{})",
+                  rectSize.x, rectSize.y);
+        VE_ASSERT(windowExtent.x > 0.0f && windowExtent.y > 0.0f,
+                  "Primitives::ProjectionShellReprojectionBound: windowExtent must be positive on "
+                  "both axes (got {}x{})",
+                  windowExtent.x, windowExtent.y);
+
+        const f32 tanHalfFov = std::tan(fovY * 0.5f);
+        // The two squared frustum half-extents at unit forward depth: r(a)^2 = 1 + kx*ax^2 + ky*ay^2.
+        const f32 kx = aspect * aspect * tanHalfFov * tanHalfFov;
+        const f32 ky = tanHalfFov * tanHalfFov;
+
+        const u32 nx = std::max(1u, subdivisions.x);
+        const u32 ny = std::max(1u, subdivisions.y);
+
+        // One cell, in window fractions and in logical points; the worst chord across it is its
+        // diagonal.
+        const vec2 cellFraction(rectSize.x / static_cast<f32>(nx),
+                                rectSize.y / static_cast<f32>(ny));
+        const vec2 cellPoints = cellFraction * windowExtent;
+        const f32 chord = glm::length(cellPoints);
+
+        // The rect's reach in frustum coordinates a = 2f - 1, per axis.
+        const vec2 reach(std::abs(2.0f * rectCenter.x - 1.0f) + rectSize.x,
+                         std::abs(2.0f * rectCenter.y - 1.0f) + rectSize.y);
+
+        const f32 px = kx * cellFraction.x;
+        const f32 py = ky * cellFraction.y;
+        const auto gradientOverRadius = [&](const f32 ax, const f32 ay)
+        { return (px * ax + py * ay) / (1.0f + kx * ax * ax + ky * ay * ay); };
+
+        // The maximum of that rational function over the box [0, reach.x] x [0, reach.y] lies at its
+        // interior stationary point, on an edge's own stationary point, or at a corner. Each candidate
+        // has a closed form; collecting the coordinates and evaluating the cross product covers every
+        // case with no branch on which one won.
+        const f32 aspectOfCell = cellFraction.y / cellFraction.x;
+        const f32 curvature = kx + ky * aspectOfCell * aspectOfCell;
+        const f32 interiorX = 1.0f / std::sqrt(curvature);
+
+        // On the edge ax = reach.x the free ay solves ay^2 + 2*(px/py)*reach.x*ay - r_x^2/ky = 0.
+        const f32 radiusAtEdgeX = 1.0f + kx * reach.x * reach.x;
+        const f32 edgeY = (-px * reach.x +
+                           std::sqrt(px * px * reach.x * reach.x + py * py * radiusAtEdgeX / ky)) /
+                          py;
+        const f32 radiusAtEdgeY = 1.0f + ky * reach.y * reach.y;
+        const f32 edgeX = (-py * reach.y +
+                           std::sqrt(py * py * reach.y * reach.y + px * px * radiusAtEdgeY / kx)) /
+                          px;
+
+        const f32 candidatesX[5] = {0.0f, reach.x, interiorX, edgeX, 1.0f / std::sqrt(kx)};
+        const f32 candidatesY[5] = {0.0f, reach.y, interiorX * aspectOfCell, edgeY,
+                                    1.0f / std::sqrt(ky)};
+
+        f32 worst = 0.0f;
+        for (const f32 candidateX : candidatesX)
+        {
+            for (const f32 candidateY : candidatesY)
+            {
+                worst = std::max(worst, gradientOverRadius(glm::clamp(candidateX, 0.0f, reach.x),
+                                                           glm::clamp(candidateY, 0.0f, reach.y)));
+            }
+        }
+
+        return worst * chord * 0.5f;
     }
 
     MeshData Sphere(f32 radius, u32 rings, u32 segments, AssetHandle<MaterialInstance> material)

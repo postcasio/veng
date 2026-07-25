@@ -67,7 +67,7 @@ TEST_CASE_FIXTURE(
     // The first RenderToTarget materializes the target + pass and records the document.
     Context.ImmediateCommands(
         [&](CommandBuffer& cmd)
-        { CHECK(texture.RenderToTarget(Context, assets, cmd, *document, Extent, 0.016f)); });
+        { CHECK(texture.RenderToTarget(Context, assets, cmd, *document, Extent, 1.0f, 0.016f)); });
     CHECK(texture.WasRenderedLastDrive());
     REQUIRE(texture.GetTarget() != nullptr);
     CHECK(texture.GetTarget()->GetExtent() == Extent);
@@ -85,7 +85,10 @@ TEST_CASE_FIXTURE(
     // the dirty-gate skips the re-record and keeps the persistent target content.
     Context.ImmediateCommands(
         [&](CommandBuffer& cmd)
-        { CHECK_FALSE(texture.RenderToTarget(Context, assets, cmd, *document, Extent, 0.016f)); });
+        {
+            CHECK_FALSE(
+                texture.RenderToTarget(Context, assets, cmd, *document, Extent, 1.0f, 0.016f));
+        });
     CHECK_FALSE(texture.WasRenderedLastDrive());
     // The target was not reallocated across the skip, so the output handle is stable.
     CHECK(texture.GetOutputHandle().Index == firstHandle.Index);
@@ -101,7 +104,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     Context.ImmediateCommands(
         [&](CommandBuffer& cmd)
-        { texture.RenderToTarget(Context, assets, cmd, *document, Extent, 0.016f); });
+        { texture.RenderToTarget(Context, assets, cmd, *document, Extent, 1.0f, 0.016f); });
     REQUIRE(texture.GetTarget() != nullptr);
     CHECK(texture.GetTarget()->GetExtent() == Extent);
 
@@ -110,7 +113,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     constexpr uvec2 Larger{96, 80};
     Context.ImmediateCommands(
         [&](CommandBuffer& cmd)
-        { CHECK(texture.RenderToTarget(Context, assets, cmd, *document, Larger, 0.016f)); });
+        { CHECK(texture.RenderToTarget(Context, assets, cmd, *document, Larger, 1.0f, 0.016f)); });
     CHECK(texture.WasRenderedLastDrive());
     CHECK(texture.GetTarget()->GetExtent() == Larger);
     CHECK(texture.GetOutputHandle().IsValid());

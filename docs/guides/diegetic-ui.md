@@ -66,8 +66,14 @@ entity with. It is authored as prefab data beside a `MeshRenderer`:
 - `Document` is the cooked `UIDocument` recipe; the surface instantiates its own live tree
   from it on first drive (or a document built imperatively in C++ is injected through
   `SetDocument`).
-- `Resolution` is the HDR target size in pixels **and** the extent the document lays out
-  against — pick it for the panel's aspect and text sharpness.
+- `Resolution` is the extent, in **logical points**, the document lays out against — pick it
+  for the panel's aspect and the size its styles are authored at.
+- `PixelScale` (default `1.0`) is **target pixels per logical point**. The HDR target
+  allocates `round(Resolution × PixelScale)` pixels and the draw is magnified into it, so a
+  panel gets a denser target without every authored `font-size` and `padding` doubling. Set
+  `2.0` for a hidpi panel; leave it alone and a point is a pixel, exactly as before. It is
+  clamped on drive so the derived extent is at least one pixel and no larger than the
+  device's `maxImageDimension2D`.
 - `Domain` selects how the document texture becomes scene light (below).
 
 The engine drives every `GuiSurface` in a viewport's bound scene into its target **ahead
@@ -164,6 +170,89 @@ ramp is HDR too, so a gradient stop can glow. Magnitude *is* the glow: a pixel's
 brightness is its emitted radiance directly, and a black or transparent background emits
 nothing.
 
+## Perspective-true shells: a panel that agrees with a screen-space layout
+
+Some diegetic displays are not free to sit anywhere. A cockpit head-up display drawn on the
+canopy, a helmet visor readout, a collimated instrument — each is supposed to look, from the
+one eye position it was designed for, **exactly like a screen-space overlay**, and to skew
+and parallax like a physical pane from anywhere else. `Primitives::ProjectionShell`
+(`Veng/Asset/Primitives.h`) generates that shape.
+
+```cpp
+const MeshData shell = Primitives::ProjectionShell(
+    glm::radians(60.0f),      // fovY of the projection the display must agree with
+    aspect,                   // and its aspect
+    vec2(0.5f, 0.5f),         // rect centre, in window fractions (top-left origin)
+    vec2(0.5f, 0.5f),         // rect size — here the centred half of each axis
+    2.0f,                     // radius: how far in front of the eye the glass sits
+    uvec2(32, 32),            // grid density across the rect
+    panelMaterial);
+const Ref<Mesh> mesh = Mesh::BuildSync(context, shell, "Display Shell");
+```
+
+A regular grid is laid over the normalized screen rect, each grid point is unprojected
+through the given perspective into a camera-space ray, and its vertex is placed at `radius`
+along it. The result is a **spherical-cap section centred on the eye**: every part of the
+display is the same distance away, like collimated HUD glass. A flat quad at fixed depth is
+the alternative and it is *not* equidistant — at 60° vertical FOV and 16:9, its corners sit
+about 16 % further from the eye than its centre at a half-screen rect, and about 55 % further
+at the full frustum, which pushes them out toward whatever hull is in the way.
+
+### The reference pose is the contract
+
+The mesh is generated **in camera space** — origin at the eye, −Z forward, +Y up. Parent it at
+the pose the display is designed to be viewed from (a seat's default eye pose in a hull frame,
+say) and render through a projection of the **same** `fovY` and `aspect`. From that pose the
+document lands on the same screen pixels a screen-space overlay of the same layout would land
+on. From any other pose it is ordinary geometry and drifts — which is the point, not a defect.
+
+Two conventions have to be right, and they differ:
+
+- **Camera space is +Y up.** A vertex above the rect's centre has a larger `y`.
+- **Rect fractions and UVs are top-left origin, y-down** — the same space a document lays out
+  in. A rect fraction of `(0, 0)` is the window's *top-left*.
+
+The engine projection bakes the Vulkan Y flip, so a top-left fraction maps to NDC directly with
+no second flip; the generator's single negation on the vertical axis is what reconciles the two.
+If you write a check for this, project a vertex through **`ProjectToScreen`**
+(`Veng/Scene/Camera.h`) — the projection the renderer actually uses. A check that reprojects
+through the generator's own inverse passes even when the whole document is vertically mirrored,
+because the mirror cancels.
+
+### How far off it is between the vertices
+
+Exactness holds *at the vertices*. Between them the rasterizer interpolates along the flat
+chord rather than the ideal spherical arc, so a feature lands slightly off.
+**`Primitives::ProjectionShellReprojectionBound`** returns that displacement in logical points
+for a given configuration, as a closed form — so an alignment budget, or a test threshold, is
+a derived number rather than a tuned constant:
+
+```cpp
+const f32 slack = Primitives::ProjectionShellReprojectionBound(
+    glm::radians(60.0f), 16.0f / 9.0f, vec2(0.5f), vec2(0.5f), uvec2(32, 32), vec2(1920, 1080));
+// 0.138 logical points at the centred half-screen rect
+// 0.633 at the full frustum, same field of view, same grid
+```
+
+The derivation is on the function itself; three properties are worth knowing at the call site:
+
+- **The error is `O(cell²)`.** Doubling the grid density quarters it. Alignment is bought with
+  tessellation.
+- **It is independent of `radius`.** Scaling every vertex about the eye is exactly what the
+  projection divides back out, so radius is chosen for the clear volume in front of the eye and
+  nothing else.
+- **It grows with the rect.** The full frustum is the widest and worst case on both counts — the
+  largest cells and the steepest part of the frustum — so a display covering a sub-rectangle is
+  both easier to align and easier to fit.
+
+### What it is not
+
+`ProjectionShell` is a **display** shape. It is not authorable as a `MeshSource` prefab shape,
+because its natural inputs — a live aspect, a live rect — are runtime values: a shell is built
+by code and rebuilt when those move. And a `GuiSurface` on one is display-only: the world-space
+pointer mapping in `Veng/Gui/SurfaceInput.h` maps a flat rectangle, so leave `Seat` at
+`Entity::Null` and the mapping is never reached.
+
 ## The one gotcha: hot cores desaturate
 
 A bright, saturated emissive color does **not** keep its hue at its center. The scene tone
@@ -179,9 +268,9 @@ brightest color nearer 1.0; push it well past 1.0 only when you want the hot-emi
 The engine drives the surface automatically, so there is nothing to call each frame. Build
 and run the world; the panel renders its document onto the mesh and, with the scene's
 `Bloom` enabled (a level render setting), its bright text blooms. In the editor, a
-`GuiSurface` is inspectable like any component — its `Document`, `Resolution`, `Domain`,
-and `Seat` show in the reflection inspector, and the referenced document opens in the
-`UIDocumentEditorPanel`.
+`GuiSurface` is inspectable like any component — its `Document`, `Resolution`, `PixelScale`,
+`Domain`, and `Seat` show in the reflection inspector, and the referenced document opens in
+the `UIDocumentEditorPanel`.
 
 ## Making a world panel interactive
 

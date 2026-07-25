@@ -82,8 +82,25 @@ namespace Veng
         /// the first Drive instantiates an independent live tree from it.
         AssetHandle<Gui::UIDocument> Document;
 
-        /// @brief The HDR target size, in pixels, and the extent the document lays out against.
+        /// @brief The extent, in logical points, the document lays out against.
+        ///
+        /// The HDR target is this times PixelScale pixels; at the default scale of 1 the two are the
+        /// same number and a point is a pixel.
         uvec2 Resolution{512, 512};
+
+        /// @brief Physical target pixels per logical layout point (1 = one pixel per point).
+        ///
+        /// Splits the two jobs Resolution would otherwise do: the document still lays out at
+        /// Resolution logical points, while the HDR target allocates round(Resolution * PixelScale)
+        /// pixels and the draw is magnified into it — so authored styles are unchanged and the panel's
+        /// text and edges resolve at the target's density. A hidpi consumer sets 2 rather than
+        /// doubling every authored size. Named PixelScale, not RenderScale, because that name already
+        /// means dynamic scene-resolution scaling on Viewport.
+        ///
+        /// Clamped on drive so the derived extent is allocatable: at least one pixel per axis and
+        /// within the device's maxImageDimension2D — an unclamped scale on a large surface would ask
+        /// for an allocation that fails rather than one that merely looks wrong.
+        f32 PixelScale = 1.0f;
 
         /// @brief Which material path turns the document's HDR texture into scene light.
         GuiSurfaceDomain Domain = GuiSurfaceDomain::Translucent;
@@ -121,8 +138,9 @@ namespace Veng
         ///
         /// Materializes the runtime on first use (instantiating the Document recipe, allocating the
         /// HDR target, and its own GuiScenePass), refreshes bindings, and — when the document is
-        /// dirty, animating, or the resolution changed — lays it out at the resolution, records it
-        /// into the HDR target (leaving the target shader-readable), and binds the target's
+        /// dirty, animating, or the resolution or pixel scale changed — lays it out at Resolution
+        /// logical points, records it magnified into the round(Resolution * PixelScale)-pixel HDR
+        /// target (leaving the target shader-readable), and binds the target's
         /// GetOutputHandle onto @p material for the surface's domain. Records into @p cmd ahead of the
         /// scene pass that samples the panel, so the producer-before-consumer handoff needs no extra
         /// barrier. Each surface owns its GuiScenePass, so its per-frame geometry ring is never shared.
@@ -146,6 +164,7 @@ VE_ENUM_END();
 VE_REFLECT(::Veng::GuiSurface, 0x8D6C050074173888ULL)
 VE_FIELD(Document, .DisplayName = "Document")
 VE_FIELD(Resolution, .DisplayName = "Resolution", .Display = {.Min = 1})
+VE_FIELD(PixelScale, .DisplayName = "Pixel Scale", .Display = {.Min = 0.25, .Max = 4.0})
 VE_FIELD(Domain, .DisplayName = "Domain")
 VE_FIELD(Seat, .DisplayName = "Seat")
 VE_REFLECT_END();

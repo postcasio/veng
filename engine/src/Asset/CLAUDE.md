@@ -204,6 +204,19 @@ and the app still runs — only `smoke_golden` (gated to skip on a non-ASTC devi
   both being in the canonical layout (`Mesh::CanonicalLayout()`), and `AssetManager::Adopt` wraps
   its `Ref<Mesh>` in an (id-less) `AssetHandle<Mesh>` so it is equally usable anywhere a cooked
   handle is — e.g. a `MeshRenderer`.
+- **One generator is projection-derived: `Primitives::ProjectionShell`.** Every other generator's
+  shape is a function of its own dimensions; this one's is a function of a **camera projection**. A
+  grid over a normalized screen rect is unprojected through a given `(fovY, aspect)` into camera-space
+  rays and placed at a fixed radius, so the resulting spherical-cap section reproduces that screen
+  rect exactly when viewed from its own eye point down −Z — and is ordinary geometry from any other
+  pose. It is generated **in camera space**, so the consumer parents it at the pose the display is
+  designed to be viewed from. `Primitives::ProjectionShellReprojectionBound` is its companion: the
+  closed-form between-vertex displacement in logical points, `O(cell²)` and independent of radius,
+  which is what an alignment budget is stated in rather than a tuned constant. It is deliberately
+  **not** a `MeshSource` alternative — its natural inputs (a live aspect, a live rect) are runtime
+  values, so a shell is built by code and rebuilt when they move, never authored into a prefab. The
+  authoring story is
+  [docs/guides/diegetic-ui.md](../../../docs/guides/diegetic-ui.md#perspective-true-shells-a-panel-that-agrees-with-a-screen-space-layout).
 - **A mesh reference's source is `cooked AssetId | inline recipe`.** `MeshRenderer`
   (`Veng/Scene/Components.h`) carries one runtime `AssetHandle<Mesh> Mesh` (the renderer query
   `(Transform, MeshRenderer)` and every draw path read it) plus a serialized **`MeshSource

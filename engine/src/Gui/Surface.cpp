@@ -7,6 +7,7 @@
 #include <Veng/Gui/DocumentHost.h>
 #include <Veng/Gui/DocumentTexture.h>
 #include <Veng/Gui/UIDocument.h>
+#include <Veng/Renderer/Context.h>
 
 namespace Veng
 {
@@ -127,6 +128,18 @@ namespace Veng
         VE_ASSERT(Resolution.x > 0 && Resolution.y > 0,
                   "GuiSurface::Drive: Resolution must be positive (got {}x{})", Resolution.x,
                   Resolution.y);
+        VE_ASSERT(PixelScale > 0.0f, "GuiSurface::Drive: PixelScale must be positive (got {})",
+                  PixelScale);
+
+        // Clamp the scale so the derived target extent is allocatable: at least one pixel on the
+        // smaller axis, and no larger than the device's 2D image limit on the larger one. An
+        // authored scale that overshoots on a 4K surface would otherwise ask for hundreds of MB of
+        // RGBA16Sfloat and fail the allocation outright.
+        const f32 largestAxis = static_cast<f32>(std::max(Resolution.x, Resolution.y));
+        const f32 smallestAxis = static_cast<f32>(std::min(Resolution.x, Resolution.y));
+        const f32 scale =
+            glm::clamp(PixelScale, 1.0f / smallestAxis,
+                       static_cast<f32>(context.GetMaxImageDimension2D()) / largestAxis);
 
         if (!Runtime)
         {
@@ -165,8 +178,8 @@ namespace Veng
         {
             return false;
         }
-        const bool rendered =
-            runtime.Texture.RenderToTarget(context, assets, cmd, *document, Resolution, delta);
+        const bool rendered = runtime.Texture.RenderToTarget(context, assets, cmd, *document,
+                                                             Resolution, scale, delta);
 
         // Bind the target handle onto the surface material every frame: SetTextureHandle writes the
         // current frame-in-flight region, so the handle must land regardless of the dirty-gate.

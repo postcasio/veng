@@ -1,6 +1,7 @@
 #include <Veng/Gui/DocumentTexture.h>
 
 #include <algorithm>
+#include <cmath>
 
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Gui/Document.h>
@@ -17,45 +18,58 @@ namespace Veng::Gui
 
     bool DocumentTexture::RenderToTarget(Renderer::Context& context, AssetManager& assets,
                                          Renderer::CommandBuffer& cmd, Document& document,
-                                         const uvec2 resolution, const f32 delta)
+                                         const uvec2 resolution, const f32 scale, const f32 delta)
     {
         VE_ASSERT(resolution.x > 0 && resolution.y > 0,
                   "DocumentTexture::RenderToTarget: resolution must be positive (got {}x{})",
                   resolution.x, resolution.y);
+        VE_ASSERT(scale > 0.0f, "DocumentTexture::RenderToTarget: scale must be positive (got {})",
+                  scale);
 
         m_RenderedLastDrive = false;
 
-        // Allocate or resize the HDR target to the requested resolution. The pass records at the
-        // target's extent, so it needs no resize of its own.
-        bool resolutionChanged = false;
+        // The target is physical pixels, the layout extent is logical points: one scale factor apart.
+        // Rounded, then floored at one pixel per axis so a small resolution and a small scale cannot
+        // multiply out to a zero extent the target creation would abort on.
+        const uvec2 targetExtent(
+            std::max(1u, static_cast<u32>(std::lround(static_cast<f32>(resolution.x) * scale))),
+            std::max(1u, static_cast<u32>(std::lround(static_cast<f32>(resolution.y) * scale))));
+
+        // Allocate or resize the HDR target. The pass records at the target's extent, so it needs no
+        // resize of its own; the scale is gated on beside the extent because it changes the recorded
+        // magnification even when the extent happens not to move.
+        bool sizingChanged = m_Scale != scale;
         if (!m_Target)
         {
             m_Target = RenderTarget::Create({
                 .Context = context,
-                .Extent = resolution,
+                .Extent = targetExtent,
                 .Name = "GuiSurface Target",
             });
-            m_TargetExtent = resolution;
-            resolutionChanged = true;
+            m_TargetExtent = targetExtent;
+            sizingChanged = true;
         }
-        else if (m_TargetExtent != resolution)
+        else if (m_TargetExtent != targetExtent)
         {
-            m_Target->Resize(resolution);
-            m_TargetExtent = resolution;
-            resolutionChanged = true;
+            m_Target->Resize(targetExtent);
+            m_TargetExtent = targetExtent;
+            sizingChanged = true;
         }
         if (!m_Pass)
         {
             m_Pass = Renderer::GuiScenePass::Create({
                 .Context = context,
                 .Assets = assets,
-                .Extent = resolution,
+                .Extent = targetExtent,
                 .OutputFormat = RenderTarget::ColorFormat,
             });
         }
 
         m_Time += delta;
         m_Pass->SetTime(m_Time);
+        // The draw list is logical points; this is what magnifies it onto the physical target.
+        m_Pass->SetUiScale(scale);
+        m_Scale = scale;
 
         // A material fill's animation rides the pass's clock, so its pixels change with no dirty
         // signal from the tree at all — a document carrying one is re-recorded every drive.
@@ -64,10 +78,10 @@ namespace Veng::Gui
                                 { return run.Pipeline == GuiPipeline::Material; });
 
         // Dirty-gate: re-render only when the layout changed, a transition is animating, or the
-        // resolution moved. A static document keeps its persistent target content and re-records
+        // target sizing moved. A static document keeps its persistent target content and re-records
         // nothing. The caller refreshes the document's data bindings ahead of this call, so a moved
         // binding has already dirtied the layout and is reflected below.
-        const bool needsRender = !m_EverRendered || resolutionChanged || document.IsDirty() ||
+        const bool needsRender = !m_EverRendered || sizingChanged || document.IsDirty() ||
                                  document.IsAnimating() || hasMaterialFill;
         if (needsRender)
         {

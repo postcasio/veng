@@ -615,6 +615,31 @@ saturated hot value (e.g. `rgb(0, 8, 8)`) reads white-hot at its center with a c
 the physically-expected hot-emitter look. Authoring a glowing panel end to end is
 [docs/guides/diegetic-ui.md](../../../docs/guides/diegetic-ui.md).
 
+**A surface's layout extent and its target's pixel count are two numbers, not one.** `Resolution`
+is the extent, in **logical points**, the document lays out against; `PixelScale` (default `1.0`) is
+target pixels per point, so the HDR target allocates `round(Resolution × PixelScale)` and the draw is
+magnified into it through `GuiScenePass::SetUiScale` — the same magnification the overlay path takes
+from its viewport. A hidpi panel therefore sets `2.0` rather than doubling every authored size, and
+the default is byte-identical to one number doing both jobs. Three things make it work rather than
+just allocate more memory: the scale reaches the pass (not only the target), it sits in
+`DocumentTexture`'s dirty gate beside the extent (a scale change moves target pixels *and* the
+magnification while leaving `available` alone, so `Document::Solve`'s own early-out would otherwise
+skip the re-record), and `GuiSurface::Drive` clamps it so the derived extent is at least one pixel
+and within the device's `maxImageDimension2D`.
+
+**The shape a display-on-glass wants is a generator, not a mesh asset.** `Primitives::ProjectionShell`
+(`Veng/Asset/Primitives.h`) is the engine's only **projection-derived** geometry: a grid over a
+normalized screen rect, unprojected through a given perspective and placed at a fixed radius, so the
+resulting spherical-cap section reproduces that screen rect exactly when viewed from its own eye
+point and behaves like an ordinary pane from everywhere else. Its companion
+`ProjectionShellReprojectionBound` is the closed-form between-vertex error in logical points, which is
+what an alignment budget or a test threshold is stated in rather than a tuned constant. The pair is
+covered by `tests/unit/projection_shell.cpp` (the reprojection property, checked through
+`ProjectToScreen` and never the generator's own inverse) and `tests/gpu/projection_shell.cpp` (the
+document-on-mesh geometry proof: overlay versus shell at the reference pose, plus a translated-eye
+control). Authoring one is
+[docs/guides/diegetic-ui.md](../../../docs/guides/diegetic-ui.md#perspective-true-shells-a-panel-that-agrees-with-a-screen-space-layout).
+
 ## The engine-driven scene component family
 
 The screen-space overlay is a reflected component too — the engine-driven scene component family

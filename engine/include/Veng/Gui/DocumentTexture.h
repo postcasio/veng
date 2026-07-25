@@ -27,12 +27,14 @@ namespace Veng::Gui
     /// @brief Renders a document into an owned HDR render target, dirty-gated, for a material to sample.
     ///
     /// The world-space presenter of a Gui::DocumentHost: it owns a persistent HDR (RGBA16Sfloat)
-    /// Gui::RenderTarget and the GuiScenePass that records a live document into it, sized to a
-    /// requested resolution and re-allocated when the resolution changes. Each RenderToTarget lays
-    /// the document out at the resolution and records it — but only when the document is dirty,
-    /// animating, or the resolution moved (a static document keeps its persistent target content and
-    /// records nothing). It exposes the rendered texture's bindless handle (GetOutputHandle) for a
-    /// downstream material to sample; it knows nothing about materials, meshes, or domains.
+    /// Gui::RenderTarget and the GuiScenePass that records a live document into it. The layout extent
+    /// (logical points) and the target extent (pixels) are a scale factor apart, so a hidpi consumer
+    /// magnifies its panel without doubling its authored styles; the target is re-allocated when
+    /// either moves. Each RenderToTarget lays the document out at the requested resolution and
+    /// records it magnified — but only when the document is dirty, animating, or the sizing moved (a
+    /// static document keeps its persistent target content and records nothing). It exposes the
+    /// rendered texture's bindless handle (GetOutputHandle) for a downstream material to sample; it
+    /// knows nothing about materials, meshes, or domains.
     ///
     /// The GPU resources are materialized on the first RenderToTarget. Single-owner; the target and
     /// pass are released at destruction.
@@ -50,23 +52,25 @@ namespace Veng::Gui
 
         /// @brief Renders @p document into the owned HDR target, dirty-gated, leaving it shader-readable.
         ///
-        /// Materializes the target and pass on first use (and re-allocates the target when
-        /// @p resolution changes), then — when the document is dirty, animating, or the resolution
-        /// changed — lays it out at @p resolution, records it into the HDR target through the pass,
-        /// and transitions the target to a sampleable layout. Records into @p cmd ahead of the pass
-        /// that samples the target, so the producer-before-consumer handoff needs no extra barrier.
-        /// The data-binding refresh is the caller's, ahead of this call (see DocumentHost::Drive).
+        /// Materializes the target and pass on first use (and re-allocates the target when the
+        /// derived extent changes), then — when the document is dirty, animating, or the resolution
+        /// or scale changed — lays it out at @p resolution logical points, records it into the HDR
+        /// target through the pass magnified by @p scale, and transitions the target to a sampleable
+        /// layout. Records into @p cmd ahead of the pass that samples the target, so the
+        /// producer-before-consumer handoff needs no extra barrier. The data-binding refresh is the
+        /// caller's, ahead of this call (see DocumentHost::Drive).
         /// @param context     The render context the target and pass allocate on.
         /// @param assets      The asset manager the GuiScenePass loads its gui shaders through.
         /// @param cmd         The command buffer the document render records into.
         /// @param document    The live document to record into the target.
-        /// @param resolution  The HDR target size, in pixels, and the extent the document lays out at.
+        /// @param resolution  The extent, in logical points, the document lays out at.
+        /// @param scale       Target pixels per logical point; the target is round(resolution * scale).
         /// @param delta       The frame time step, in seconds, forwarded to the document drive.
         /// @return True when this call re-recorded the document, false when the dirty-gate skipped it.
-        /// @pre Both components of @p resolution are positive.
+        /// @pre Both components of @p resolution are positive and @p scale is positive.
         bool RenderToTarget(Renderer::Context& context, AssetManager& assets,
                             Renderer::CommandBuffer& cmd, Document& document, uvec2 resolution,
-                            f32 delta);
+                            f32 scale, f32 delta);
 
         /// @brief Returns the rendered texture's bindless handle, for a downstream sampler.
         ///
@@ -89,8 +93,14 @@ namespace Veng::Gui
         Unique<Renderer::GuiScenePass> m_Pass;
         /// @brief The reusable draw-list buffer the document builds into each render.
         DrawList m_Draws;
-        /// @brief The resolution the target was last sized to; a change re-sizes and re-renders.
+        /// @brief The pixel extent the target was last sized to; a change re-sizes and re-renders.
         uvec2 m_TargetExtent{0, 0};
+        /// @brief The magnification the last record used.
+        ///
+        /// Gated on beside the extent: a scale change moves target pixels *and* the draw's
+        /// magnification without moving the layout extent, so Document::Solve's own early-out would
+        /// otherwise leave the target holding a record at the previous scale.
+        f32 m_Scale = 0.0f;
         /// @brief Seconds of drive accumulated from the per-frame delta, pushed as the pass's clock.
         f32 m_Time = 0.0f;
         /// @brief Whether any document render has happened yet (the first is unconditional).

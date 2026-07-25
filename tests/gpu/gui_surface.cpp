@@ -315,6 +315,36 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     RenderFrame();
     CHECK_FALSE(scene->Get<GuiSurface>(panelEntity).WasRenderedLastDrive());
 
+    // A pixel-scale change moves target pixels without moving the layout extent, so the document's
+    // own early-out would skip the re-record if the scale were not in the dirty gate beside the
+    // extent.
+    scene->Get<GuiSurface>(panelEntity).PixelScale = 2.0f;
+    RenderFrame();
+    CHECK(scene->Get<GuiSurface>(panelEntity).WasRenderedLastDrive());
+
+    // The target doubled — and the content is magnified into it rather than drawn 1:1 in a corner,
+    // which is what a target-only change produces. The glowing child covers the middle third, so at
+    // 2x the document's own centre and a point three-quarters of the way across the target are both
+    // inside it; at 1:1 in a corner the latter would be empty.
+    const GuiSurface& scaled = scene->Get<GuiSurface>(panelEntity);
+    REQUIRE(scaled.GetTarget() != nullptr);
+    CHECK(scaled.GetTarget()->GetExtent() == PanelRes * 2u);
+    const vector<u8> scaledPixels = scaled.GetTarget()->GetOutput()->GetImage()->Download();
+    const uvec2 scaledExtent = PanelRes * 2u;
+    const vec4 scaledCenter =
+        DecodeTexel(scaledPixels, scaledExtent.x, scaledExtent.x / 2, scaledExtent.y / 2);
+    CHECK(scaledCenter.g > 1.0f);
+    // Two-thirds across is inside the magnified child (which spans [0.33, 0.67] of the target) and
+    // outside an unmagnified one (which would span [0.165, 0.335]).
+    const vec4 twoThirds =
+        DecodeTexel(scaledPixels, scaledExtent.x, (scaledExtent.x * 5) / 8, scaledExtent.y / 2);
+    CHECK(twoThirds.g > 1.0f);
+
+    // The same scale on the next frame is idle again: the gate compares the scale, it does not
+    // latch on having ever seen one.
+    RenderFrame();
+    CHECK_FALSE(scene->Get<GuiSurface>(panelEntity).WasRenderedLastDrive());
+
     // A structural change to the document dirties its layout, so the next frame re-records.
     Gui::Document* document = scene->Get<GuiSurface>(panelEntity).GetDocument();
     REQUIRE(document != nullptr);
