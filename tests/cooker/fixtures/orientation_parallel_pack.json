@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "0x0000000000002E13",
+      "type": "Mesh",
+      "source": "meshes/parallel_axes.mesh.json"
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "model": "skinned.gltf",
+  "skeleton": "0x0000000000002D01",
+  "import": {
+    "orientation": { "forward": "+Z", "up": "+Y" }
+  }
+}

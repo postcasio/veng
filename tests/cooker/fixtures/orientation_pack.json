@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "0x0000000000002E01",
+      "type": "Mesh",
+      "source": "meshes/cube.mesh.json"
+    },
+    {
+      "id": "0x0000000000002E02",
+      "type": "Mesh",
+      "source": "meshes/cube_oriented.mesh.json"
+    },
+    {
+      "id": "0x0000000000002E03",
+      "type": "Mesh",
+      "source": "meshes/sockets.mesh.json"
+    },
+    {
+      "id": "0x0000000000002E04",
+      "type": "Mesh",
+      "source": "meshes/sockets_oriented.mesh.json"
+    },
+    {
+      "id": "0x0000000000002E05",
+      "type": "CollisionShape",
+      "source": "meshes/cube_mesh.collision.json"
+    },
+    {
+      "id": "0x0000000000002E06",
+      "type": "CollisionShape",
+      "source": "meshes/cube_oriented.collision.json"
+    },
+    {
+      "id": "0x0000000000002E07",
+      "type": "Mesh",
+      "source": "meshes/cube_default_orientation.mesh.json"
+    }
+  ]
+}

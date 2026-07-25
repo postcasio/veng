@@ -20,6 +20,7 @@
 #include <Veng/Cook/JsonFile.h>
 #include <Veng/Renderer/Types.h>
 
+#include "ImportOrientation.h"
 #include "SkeletonSource.h"
 
 namespace Veng::Cook
@@ -77,31 +78,42 @@ namespace Veng::Cook
             return fallback;
         }
 
-        // Fills a CanonicalVertex's shared (non-skin) attributes from assimp mesh data.
-        template <typename Vertex>
-        void FillCommonAttributes(Vertex& vertex, const aiMesh* mesh, unsigned int v, f32 scale)
+        // An assimp vector in the house vocabulary, so the orientation applies to it.
+        vec3 ToVec3(const aiVector3D& v)
         {
-            const aiVector3D position = mesh->mVertices[v];
-            vertex.Position[0] = position.x * scale;
-            vertex.Position[1] = position.y * scale;
-            vertex.Position[2] = position.z * scale;
+            return vec3(v.x, v.y, v.z);
+        }
+
+        // Fills a CanonicalVertex's shared (non-skin) attributes from assimp mesh data, reoriented
+        // out of the source file's declared convention.
+        template <typename Vertex>
+        void FillCommonAttributes(Vertex& vertex, const aiMesh* mesh, unsigned int v, f32 scale,
+                                  const ImportOrientation& orientation)
+        {
+            const vec3 position = orientation.Reorient(ToVec3(mesh->mVertices[v]) * scale);
+            vertex.Position[0] = position.x;
+            vertex.Position[1] = position.y;
+            vertex.Position[2] = position.z;
 
             if (mesh->HasNormals())
             {
-                vertex.Normal[0] = mesh->mNormals[v].x;
-                vertex.Normal[1] = mesh->mNormals[v].y;
-                vertex.Normal[2] = mesh->mNormals[v].z;
+                const vec3 normal = orientation.Reorient(ToVec3(mesh->mNormals[v]));
+                vertex.Normal[0] = normal.x;
+                vertex.Normal[1] = normal.y;
+                vertex.Normal[2] = normal.z;
             }
 
             if (mesh->HasTangentsAndBitangents())
             {
-                vertex.Tangent[0] = mesh->mTangents[v].x;
-                vertex.Tangent[1] = mesh->mTangents[v].y;
-                vertex.Tangent[2] = mesh->mTangents[v].z;
+                const vec3 tangent = orientation.Reorient(ToVec3(mesh->mTangents[v]));
+                vertex.Tangent[0] = tangent.x;
+                vertex.Tangent[1] = tangent.y;
+                vertex.Tangent[2] = tangent.z;
 
                 // Encode handedness: the sign that makes cross(N, T) * w reproduce assimp's
                 // bitangent. This is the single bit that flips across mirrored UV islands and
-                // cannot be derived from N and T alone.
+                // cannot be derived from N and T alone. It is read off the source vectors because
+                // the orientation is a proper rotation, which preserves a cross product's sign.
                 const aiVector3D expected = mesh->mNormals[v] ^ mesh->mTangents[v];
                 vertex.Tangent[3] = (expected * mesh->mBitangents[v] < 0.0f) ? -1.0f : 1.0f;
             }
@@ -263,6 +275,29 @@ namespace Veng::Cook
                               ? import["scale"].get<f32>()
                               : 1.0f;
 
+        // The source file's own forward/up convention, reconciled with the engine's here so every
+        // position, normal, tangent and socket this cook derives lands in one space.
+        const Result<ImportOrientation> parsedOrientation = ParseImportOrientation(import);
+        if (!parsedOrientation)
+        {
+            return std::unexpected(fmt::format("mesh importer: '{}': {}", sourcePath.string(),
+                                               parsedOrientation.error()));
+        }
+        const ImportOrientation& orientation = *parsedOrientation;
+
+        // A skinned mesh's vertices are in bind space, and the bind pose and its animation channels
+        // are cooked from the same model by the Skeleton and Animation importers, which keep the
+        // source's convention. Rotating the geometry alone would leave the skin disagreeing with
+        // the palette that drives it, so the declaration is refused rather than half-applied.
+        if (skinned && !orientation.IsIdentity)
+        {
+            return std::unexpected(fmt::format(
+                "mesh importer: '{}': 'import.orientation' is not supported on a skinned mesh; the "
+                "Skeleton and Animation assets cooked from '{}' keep the source's convention, so a "
+                "rotated skin would disagree with its bind pose",
+                sourcePath.string(), modelPath.string()));
+        }
+
         unsigned int flags = aiProcess_Triangulate;
         if (ImportFlag(import, "join_identical_vertices", true))
         {
@@ -385,7 +420,7 @@ namespace Veng::Cook
                 for (unsigned int v = 0; v < mesh->mNumVertices; ++v)
                 {
                     SkinnedVertex vertex{};
-                    FillCommonAttributes(vertex, mesh, v, scale);
+                    FillCommonAttributes(vertex, mesh, v, scale, orientation);
 
                     vector<Influence>& vertexInfluences = influences[v];
                     std::ranges::sort(vertexInfluences, [](const Influence& a, const Influence& b)
@@ -423,7 +458,7 @@ namespace Veng::Cook
                 for (unsigned int v = 0; v < mesh->mNumVertices; ++v)
                 {
                     CanonicalVertex vertex{};
-                    FillCommonAttributes(vertex, mesh, v, scale);
+                    FillCommonAttributes(vertex, mesh, v, scale, orientation);
                     staticVertices.push_back(vertex);
                 }
             }
@@ -475,8 +510,10 @@ namespace Veng::Cook
         };
 
         // Sockets: every mesh-free, non-joint, non-camera node below the scene root, recorded by
-        // name with its root-space transform. The translation takes import.scale exactly as the
-        // vertices do, so a socket lands in the same space as the geometry.
+        // name with its root-space transform. The translation takes import.scale and the whole
+        // transform takes import.orientation exactly as the vertices do, so a socket lands in the
+        // same space as the geometry — a socket rotated without the geometry (or the reverse) would
+        // silently place whatever attaches there in mid-air.
         vector<SocketNode> socketNodes;
         CollectSockets(scene->mRootNode, aiMatrix4x4(), ExcludedNodeNames(scene), socketNodes);
         std::ranges::sort(socketNodes,
@@ -491,15 +528,22 @@ namespace Veng::Cook
             aiQuaternion rotation;
             node.Transform.Decompose(socketScale, rotation, position);
 
+            // A rotation composed onto the socket's own leaves its scale alone: reorienting
+            // T * R * S rotates the translation and the rotation and touches neither the axes S
+            // measures along nor their lengths.
+            const vec3 place = orientation.Reorient(ToVec3(position) * scale);
+            const quat facing =
+                orientation.Reorient(quat(rotation.w, rotation.x, rotation.y, rotation.z));
+
             CookedMeshSocket socket{};
             SetSocketName(socket.Name, node.Name);
-            socket.Position[0] = position.x * scale;
-            socket.Position[1] = position.y * scale;
-            socket.Position[2] = position.z * scale;
-            socket.Rotation[0] = rotation.x;
-            socket.Rotation[1] = rotation.y;
-            socket.Rotation[2] = rotation.z;
-            socket.Rotation[3] = rotation.w;
+            socket.Position[0] = place.x;
+            socket.Position[1] = place.y;
+            socket.Position[2] = place.z;
+            socket.Rotation[0] = facing.x;
+            socket.Rotation[1] = facing.y;
+            socket.Rotation[2] = facing.z;
+            socket.Rotation[3] = facing.w;
             socket.Scale[0] = socketScale.x;
             socket.Scale[1] = socketScale.y;
             socket.Scale[2] = socketScale.z;

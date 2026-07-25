@@ -14,6 +14,7 @@
 #include <Veng/Cook/JsonFile.h>
 
 #include "ConvexHull.h"
+#include "ImportOrientation.h"
 
 namespace Veng::Cook
 {
@@ -23,12 +24,14 @@ namespace Veng::Cook
         ///
         /// Collision geometry has no submeshes and no materials — the solver wants one surface —
         /// so every assimp mesh is concatenated into a single position and index list.
-        /// @param scene     The imported model.
-        /// @param scale     Uniform scale applied to each position.
-        /// @param points    Destination for the positions.
-        /// @param indices   Destination for the triangle indices.
+        /// @param scene        The imported model.
+        /// @param scale        Uniform scale applied to each position.
+        /// @param orientation  Rotation reconciling the source's axis convention with the engine's.
+        /// @param points       Destination for the positions.
+        /// @param indices      Destination for the triangle indices.
         /// @return An error when a face survived triangulation with other than three indices.
         [[nodiscard]] VoidResult GatherGeometry(const aiScene* scene, const f32 scale,
+                                                const ImportOrientation& orientation,
                                                 vector<vec3>& points, vector<u32>& indices)
         {
             for (unsigned int meshIndex = 0; meshIndex < scene->mNumMeshes; ++meshIndex)
@@ -38,7 +41,8 @@ namespace Veng::Cook
                 for (unsigned int v = 0; v < mesh->mNumVertices; ++v)
                 {
                     const aiVector3D position = mesh->mVertices[v];
-                    points.emplace_back(position.x * scale, position.y * scale, position.z * scale);
+                    points.emplace_back(orientation.Reorient(
+                        vec3(position.x * scale, position.y * scale, position.z * scale)));
                 }
                 for (unsigned int f = 0; f < mesh->mNumFaces; ++f)
                 {
@@ -133,14 +137,20 @@ namespace Veng::Cook
         const path modelPath = sourcePath.parent_path() / shapeJson["model"].get<string>();
         context.RecordDependency(modelPath);
 
-        // The same "import": { "scale": … } a *.mesh.json takes, so a collision shape and the
-        // render mesh cooked from one model stay the same size.
+        // The same "import": { "scale": …, "orientation": … } a *.mesh.json takes, so a collision
+        // shape and the render mesh cooked from one model stay the same size and the same way round.
         const json import = shapeJson.contains("import") && shapeJson["import"].is_object()
                                 ? shapeJson["import"]
                                 : json::object();
         const f32 scale = import.contains("scale") && import["scale"].is_number()
                               ? import["scale"].get<f32>()
                               : 1.0f;
+        const Result<ImportOrientation> parsedOrientation = ParseImportOrientation(import);
+        if (!parsedOrientation)
+        {
+            return std::unexpected(fmt::format("collision shape importer: '{}': {}",
+                                               sourcePath.string(), parsedOrientation.error()));
+        }
 
         Assimp::Importer importer;
         // Drop point/line primitives so every surviving face is a triangle; a modelled hull can
@@ -164,7 +174,9 @@ namespace Veng::Cook
 
         vector<vec3> points;
         vector<u32> indices;
-        if (const VoidResult gathered = GatherGeometry(scene, scale, points, indices); !gathered)
+        if (const VoidResult gathered =
+                GatherGeometry(scene, scale, *parsedOrientation, points, indices);
+            !gathered)
         {
             return std::unexpected(fmt::format("collision shape importer: '{}': {} in '{}'",
                                                sourcePath.string(), gathered.error(),

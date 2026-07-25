@@ -187,11 +187,45 @@ at cook time:
   *exactly* a node with no mesh and no camera, so without it an entire rig becomes sockets, bloating
   the blob and making a lookup by a joint's name return a static mesh-space point that silently
   disagrees with the animated joint. A socket's transform is its **full ancestor chain composed
-  down to the root**, then translated by `import.scale` — the same treatment the vertices get, since
-  the importer flattens `scene->mMeshes` without applying node transforms, so a socket read from its
-  own node alone would land in a different space than the geometry. Two sockets sharing a name (or
+  down to the root**, then translated by `import.scale` and rotated by `import.orientation` — the
+  same treatment the vertices get, since the importer flattens `scene->mMeshes` without applying node
+  transforms, so a socket read from its own node alone would land in a different space than the
+  geometry. Two sockets sharing a name (or
   sharing a name after truncation to the cooked 64-byte capacity) is a located cook error: a lookup
   by name has to resolve to one place. The table is emitted sorted by name.
+- **A source authored in another forward convention is reconciled at import, by
+  `import.orientation`.** veng's model space is **-Z forward, +Y up** — the convention a socket's
+  orientation, a gameplay heading and a vehicle's thrust axis are all stated in — and a source file
+  authored in another one arrives turned, because the importers accept a uniform `import.scale` and
+  no rotation. So the **mesh and collision importers** both take an optional
+  `"import": { "orientation": { "forward": "+Z", "up": "+Y" } }` declaring **the source's own**
+  axes (`+X`/`-X`/`+Y`/`-Y`/`+Z`/`-Z`; a bare `X` reads as `+X`; either key may be omitted and
+  defaults to the engine's). The importer resolves the single rotation taking that convention onto
+  the engine's and applies it to **everything it derives from that file** — vertex positions,
+  normals, tangent directions, the socket table's positions *and* orientations, and a collision
+  shape's welded points. It is one shared helper (`Importers/ImportOrientation.{h,cpp}`), so a mesh
+  and the collision shape cooked from one model reconcile identically. An unknown axis name, and a
+  `forward`/`up` pair on one axis (which leaves the remaining two free and so determines no
+  rotation), are both **located cook errors**.
+
+  Three properties are why this reconciles rather than approximates, and all three are pinned by
+  `tests/cooker/import_orientation.cpp`:
+
+  - **The rotation is a signed permutation.** Both declared axes are axis-aligned and perpendicular,
+    so every matrix entry is exactly 0 or ±1 and each cooked value is an exact swap or sign flip of
+    the source's — never a resampling, at any angle.
+  - **It is proper (determinant +1), so chirality is untouched.** A tangent's stored handedness sign
+    and a triangle's winding therefore need no separate correction and are emitted verbatim; a
+    mirroring "fix" by axis swizzle would invert both silently.
+  - **The default is a no-op down to the bytes.** An absent `"orientation"`, an empty one, and one
+    restating `-Z`/`+Y` all resolve to the identity and are skipped, so every existing asset cooks to
+    the archive it already cooked to.
+
+  **A declared orientation on a skinned mesh is refused**, not silently ignored: the bind pose and
+  the animation channels are cooked from the same model by the `SkeletonImporter` and
+  `AnimationImporter`, which keep the source's convention, so rotating the geometry alone would leave
+  the skin disagreeing with the palette driving it. A partial rotation fails at runtime where a
+  refusal fails at cook time, which is the whole reason the check exists.
 - **Skinned meshes, skeletons, and animations** come from a rigged model (FBX, via the
   enabled assimp FBX importer). The `MeshImporter` emits the skinned vertex layout when the
   `*.mesh.json` names a `"skeleton"` id: it caps each vertex to four normalized influences
@@ -222,9 +256,10 @@ at cook time:
   source names a `"model"` (relative to the source JSON, as a `*.mesh.json` does — there is no
   `"part"` concept at cook time) and a `"mode"`: `"convex"` reduces the model to its **convex
   hull's vertices**, `"mesh"` welds its triangles by position into an indexed triangle soup. An
-  optional `"import": { "scale": … }` matches the mesh importer's, so a collision shape and the
-  render mesh cooked from one model stay the same size. Welding is the point of both modes — a
-  render mesh splits a vertex per normal and per UV seam, which a solver has no use for. The hull
+  optional `"import": { "scale": …, "orientation": … }` matches the mesh importer's, so a collision
+  shape and the render mesh cooked from one model stay the same size and the same way round. Welding
+  is the point of both modes — a render mesh splits a vertex per normal and per UV seam, which a
+  solver has no use for. The hull
   is the **cooker's own** implementation (`Importers/ConvexHull.{h,cpp}`), which is why
   `veng_cook_objs` / `libveng_cook` **link no physics library**: the cook emits neutral geometry
   and the runtime builds the solver's shape from it, so the cooker's dependency set is unchanged

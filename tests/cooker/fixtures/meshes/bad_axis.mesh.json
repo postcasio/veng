@@ -1,0 +1,6 @@
+{
+  "model": "cube.obj",
+  "import": {
+    "orientation": { "forward": "nose", "up": "+Y" }
+  }
+}

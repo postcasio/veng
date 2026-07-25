@@ -1,0 +1,17 @@
+{
+  "model": "cube.obj",
+  "import": {
+    "scale": 1.0,
+    "flip_uv": false,
+    "generate_normals": true,
+    "generate_tangents": true,
+    "join_identical_vertices": true,
+    "orientation": {
+      "forward": "+Z",
+      "up": "+Y"
+    }
+  },
+  "materials": {
+    "0": "0x000000000089582B"
+  }
+}

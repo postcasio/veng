@@ -1,0 +1,7 @@
+{
+  "model": "cube.obj",
+  "mode": "mesh",
+  "import": {
+    "orientation": { "forward": "+X", "up": "+Y" }
+  }
+}

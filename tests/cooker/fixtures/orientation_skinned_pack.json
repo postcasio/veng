@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "0x0000000000002E11",
+      "type": "Mesh",
+      "source": "meshes/skinned_oriented.mesh.json"
+    }
+  ]
+}
