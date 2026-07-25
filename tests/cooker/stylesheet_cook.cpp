@@ -178,6 +178,24 @@ TEST_CASE("Cooker: stylesheet variables substitute, redefine last-wins, and fill
     REQUIRE(panelVar.has_value());
     CheckColorEqual(*panelVar, controlLateBg->Values);
 
+    // An HDR variable: a functional rgb() color, unclamped, reaching the table intact — and the
+    // rule that substituted it holds the same value as the literal control.
+    const Gui::StyleRule* controlHdr = FindRuleByClass(decoded->Rules, "control-hdr");
+    const Gui::StyleRule* panelHdr = FindRuleByClass(decoded->Rules, "panel-hdr");
+    REQUIRE(controlHdr != nullptr);
+    REQUIRE(panelHdr != nullptr);
+    const Gui::StyleDeclaration* controlHdrColor =
+        FindDecl(*controlHdr, Gui::StyleProperty::TextColor);
+    const Gui::StyleDeclaration* panelHdrColor = FindDecl(*panelHdr, Gui::StyleProperty::TextColor);
+    REQUIRE(controlHdrColor != nullptr);
+    REQUIRE(panelHdrColor != nullptr);
+    CheckColorEqual(panelHdrColor->Values, controlHdrColor->Values);
+    const optional<vec4> hdrGlow = sheet->FindVariableColor("hdr-glow");
+    REQUIRE(hdrGlow.has_value());
+    CHECK(hdrGlow->g == doctest::Approx(3.0f));
+    CHECK(hdrGlow->b == doctest::Approx(4.0f));
+    CheckColorEqual(*hdrGlow, controlHdrColor->Values);
+
     // A scalar variable.
     const optional<f32> half = sheet->FindVariableScalar("half");
     REQUIRE(half.has_value());

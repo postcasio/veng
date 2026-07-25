@@ -6,6 +6,7 @@
 --accent-strong: var(--accent);
 --panel: #10203a;
 --half: 0.5;
+--hdr-glow: rgb(0.2, 3, 4);
 --stops: #ff0000 0%, #0000ff 100%;
 
 /* Control rules holding the same literals the var() uses resolve to, so a test can compare a
@@ -13,11 +14,18 @@
 .control-panel { background: #10203a; }
 .control-late { background: #204080; }
 .control-accent { color: #3b82f6; }
+.control-hdr { color: rgb(0.2, 3, 4); }
 
 .panel {
     background: var(--panel);
     color: var(--accent);
     opacity: var(--half);
+}
+
+/* An HDR variable: a functional rgb() color substitutes into a rule and reaches the runtime
+   variable table, whose entry a consumer reads back through FindVariableColor. */
+.panel-hdr {
+    color: var(--hdr-glow);
 }
 
 /* A gradient is a background fill source, and fill sources are exclusive, so the var()-substituted

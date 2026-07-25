@@ -1020,8 +1020,9 @@ namespace Veng::Cook
         using StyleVariableTable = unordered_map<string, vector<CssToken>>;
 
         // Rejoins a variable's token sequence into a declaration value string, matching the value
-        // assembly a rule declaration uses (a `#` + hex recombines, other tokens stay
-        // space-separated), so the resolved value reads identically to an inline literal.
+        // assembly a rule declaration uses (a `#` + hex recombines, a functional color's
+        // parentheses are kept, other tokens stay space-separated), so the resolved value reads
+        // identically to an inline literal.
         string AssembleValue(const vector<CssToken>& tokens)
         {
             string value;
@@ -1034,7 +1035,7 @@ namespace Veng::Cook
                     break;
                 case CssTokenKind::Ident:
                 case CssTokenKind::Value:
-                    if (!value.empty() && value.back() != '#')
+                    if (!value.empty() && value.back() != '#' && value.back() != '(')
                     {
                         value += ' ';
                     }
@@ -1045,6 +1046,12 @@ namespace Veng::Cook
                     break;
                 case CssTokenKind::Comma:
                     value += ',';
+                    break;
+                case CssTokenKind::LParen:
+                    value += '(';
+                    break;
+                case CssTokenKind::RParen:
+                    value += ')';
                     break;
                 default:
                     break;
