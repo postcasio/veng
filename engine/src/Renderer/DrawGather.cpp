@@ -14,6 +14,18 @@
 
 namespace Veng::Renderer
 {
+    bool CastsShadow(const Mesh& mesh, const u32 subMeshIndex)
+    {
+        const std::span<const AssetHandle<MaterialInstance>> materials = mesh.GetMaterials();
+        const SubMesh& subMesh = mesh.GetSubMeshes()[subMeshIndex];
+        if (subMesh.MaterialIndex == SubMesh::NoMaterial ||
+            !materials[subMesh.MaterialIndex].IsLoaded())
+        {
+            return false;
+        }
+        return materials[subMesh.MaterialIndex].Get()->GetDomain() != MaterialDomain::Translucent;
+    }
+
     namespace
     {
         // Last frame's matrix for this entity, or the current one (zero object motion) when first

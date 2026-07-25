@@ -24,6 +24,22 @@ namespace Veng::Renderer
         return (static_cast<u64>(entity.Index) << 32) | static_cast<u64>(entity.Generation);
     }
 
+    /// @brief Whether a submesh contributes to a shadow map — i.e. whether it occludes light.
+    ///
+    /// A submesh casts when it has a resident material that is not Translucent. The domain test is
+    /// the substantive one: a Translucent surface writes no opaque depth, is drawn after the
+    /// lighting it would have to occlude, and is documented as never occluding another translucent
+    /// — so casting a solid, fully-opaque shadow from it contradicts every other way the domain
+    /// behaves, and reads as a pane of glass painting a black rectangle on the floor. An unassigned
+    /// or not-yet-resident material casts nothing, because there is nothing yet to say it should.
+    ///
+    /// Alpha-cut and stained-glass casters are deliberately out of scope: both need the shadow pass
+    /// to shade rather than to rasterize depth, which is a separate capability from this predicate.
+    /// @param mesh          The mesh owning the submesh.
+    /// @param subMeshIndex  Index of the submesh within that mesh.
+    /// @return True when the submesh should be rasterized into a shadow map.
+    [[nodiscard]] bool CastsShadow(const Mesh& mesh, u32 subMeshIndex);
+
     /// @brief The per-frame inputs the three draw-gather phases share.
     ///
     /// Plain data plus the mapped write targets, bundled so each phase takes one const reference

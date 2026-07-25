@@ -1,5 +1,7 @@
 #include "PunctualShadowScenePass.h"
 
+#include "../DrawGather.h"
+
 #include <span>
 
 #include <Veng/Assert.h>
@@ -57,12 +59,6 @@ namespace Veng::Renderer
             mat4 MVP;
             u32 PaletteBase;
         };
-
-        // Packs an Entity into the u64 key the renderer's per-entity palette map uses.
-        u64 PackEntity(Entity e)
-        {
-            return (static_cast<u64>(e.Index) << 32) | static_cast<u64>(e.Generation);
-        }
     }
 
     PunctualShadowScenePass::PunctualShadowScenePass(Context& context, AssetManager& assets,
@@ -224,14 +220,11 @@ namespace Veng::Renderer
                         {
                             return;
                         }
-                        const std::span<const AssetHandle<MaterialInstance>> materials =
-                            mesh.GetMaterials();
-                        const SubMesh& subMesh = mesh.GetSubMeshes()[subMeshIndex];
-                        if (subMesh.MaterialIndex == SubMesh::NoMaterial ||
-                            !materials[subMesh.MaterialIndex].IsLoaded())
+                        if (!CastsShadow(mesh, subMeshIndex))
                         {
                             return;
                         }
+                        const SubMesh& subMesh = mesh.GetSubMeshes()[subMeshIndex];
                         if (lastBound != &mesh)
                         {
                             cmd.BindVertexBuffer(mesh.GetVertexBuffer());
@@ -257,14 +250,11 @@ namespace Veng::Renderer
                         {
                             return;
                         }
-                        const std::span<const AssetHandle<MaterialInstance>> materials =
-                            mesh.GetMaterials();
-                        const SubMesh& subMesh = mesh.GetSubMeshes()[subMeshIndex];
-                        if (subMesh.MaterialIndex == SubMesh::NoMaterial ||
-                            !materials[subMesh.MaterialIndex].IsLoaded())
+                        if (!CastsShadow(mesh, subMeshIndex))
                         {
                             return;
                         }
+                        const SubMesh& subMesh = mesh.GetSubMeshes()[subMeshIndex];
                         const auto baseIt = view.SkinnedPaletteBases->find(PackEntity(item.Owner));
                         if (baseIt == view.SkinnedPaletteBases->end())
                         {

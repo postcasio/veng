@@ -16,6 +16,29 @@
 
 namespace Veng
 {
+    namespace
+    {
+        // The pose a rig's target is *drawn* at this frame, which is not the pose it was simulated
+        // at. The renderer blends a drawn mesh's world transform between the last two Sim-tick
+        // snapshots by the frame's alpha; a rig resolved against the un-interpolated pose therefore
+        // sits a partial tick ahead of everything rigidly attached to that target — a cockpit
+        // interior, a mounted weapon, a held prop — which reads as those pieces swimming against the
+        // view by a fraction of a tick's motion, changing every frame as the alpha sweeps. Following
+        // the drawn pose is what makes an attached-to-the-camera object hold still.
+        //
+        // The camera's own transform is deliberately not interpolated: it is authored per frame
+        // after the tick snapshot, so its live pose already *is* this frame's pose. This resolves
+        // only what it follows.
+        mat4 DrawnTargetPose(const Scene& scene, const Entity target, const f32 alpha)
+        {
+            if (alpha > 0.0f && scene.HasTransformInterpolation())
+            {
+                return scene.GetInterpolatedWorldTransform(target, alpha);
+            }
+            return WorldMatrix(scene, target);
+        }
+    }
+
     Transform FollowCamera(const Transform& current, const mat4& targetWorld,
                            const CameraFollow& follow, const f32 delta)
     {
@@ -143,10 +166,11 @@ namespace Veng
         return result;
     }
 
-    void CameraRigSystem::OnUpdate(Scene& scene, const f32 delta, const SystemContext&)
+    void CameraRigSystem::OnUpdate(Scene& scene, const f32 delta, const SystemContext& context)
     {
+        const f32 alpha = context.Alpha;
         scene.Each<Transform, CameraFollow>(
-            [&scene, delta](const Entity entity, Transform& transform, CameraFollow& follow)
+            [&scene, delta, alpha](const Entity entity, Transform& transform, CameraFollow& follow)
             {
                 if (follow.Target == Entity::Null || !scene.IsAlive(follow.Target) ||
                     !scene.Has<Transform>(follow.Target))
@@ -154,7 +178,7 @@ namespace Veng
                     return;
                 }
 
-                const mat4 targetWorld = WorldMatrix(scene, follow.Target);
+                const mat4 targetWorld = DrawnTargetPose(scene, follow.Target, alpha);
                 transform = FollowCamera(transform, targetWorld, follow, delta);
             });
 
@@ -177,7 +201,7 @@ namespace Veng
             });
 
         scene.Each<Transform, FirstPersonRig>(
-            [&scene, delta](const Entity entity, Transform& transform, FirstPersonRig& rig)
+            [&scene, delta, alpha](const Entity entity, Transform& transform, FirstPersonRig& rig)
             {
                 if (rig.Target == Entity::Null || !scene.IsAlive(rig.Target) ||
                     !scene.Has<Transform>(rig.Target))
@@ -185,7 +209,7 @@ namespace Veng
                     return;
                 }
 
-                const mat4 targetWorld = WorldMatrix(scene, rig.Target);
+                const mat4 targetWorld = DrawnTargetPose(scene, rig.Target, alpha);
                 const vec3 targetPosition = vec3(targetWorld[3]);
                 const quat targetRotation = glm::quat_cast(mat3(targetWorld));
 

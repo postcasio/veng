@@ -265,8 +265,13 @@ punctual record array, or `-1` for unshadowed) rides the `Cone.zw` padding, keep
 fixed. `CascadeCount`, `CascadeSplitLambda`, and `ShadowResolution` (default 1024) are the
 directional CSM knobs; `PunctualShadows` (the on/off toggle) and `PunctualShadowResolution` (the
 per-tile edge length) are the punctual knobs; `DebugView::Cascades` tints each fragment by the
-cascade it selects and `DebugView::PunctualShadows` blits the punctual atlas. This per-light
-shadow cull is the **prime consumer of the BVH broadphase** — one tree queried many times (`N`
+cascade it selects and `DebugView::PunctualShadows` blits the punctual atlas. **A Translucent submesh casts no shadow.** Both shadow passes gate each candidate on
+`Renderer::CastsShadow` (`src/Renderer/DrawGather.h`): a resident material that is not
+`MaterialDomain::Translucent`. The domain writes no opaque depth, is drawn after the lighting it
+would have to occlude, and is documented as never occluding another translucent, so rasterizing a
+solid shadow from it contradicts every other way it behaves. Alpha-cut and stained-glass casters are
+a separate capability — both need the shadow pass to *shade* rather than to rasterize depth. This
+per-light shadow cull is the **prime consumer of the BVH broadphase** — one tree queried many times (`N`
 spot frustums + `6N` cube faces per frame, on top of the camera and cascade queries).
 
 ### Bloom

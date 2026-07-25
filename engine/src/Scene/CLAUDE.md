@@ -435,7 +435,18 @@ basis each tick from its `Target`'s resolved up (a `CharacterState::Up` when the
 one), yawing about that up rather than world up — so a character walking a curved habitat keeps a
 level horizon — reads its heading from a sibling `CameraLook`, anchors the eye at `EyeOffset` or a
 named mesh socket, and clamps pitch into `[MinPitch, MaxPitch]`. An entity carrying a
-`FirstPersonRig` is skipped by the plain `CameraLook` arm, so the two never both write its pose. An **`Authority { Tier, Owner }`** component marks who
+`FirstPersonRig` is skipped by the plain `CameraLook` arm, so the two never both write its pose.
+
+**Both rigs resolve their target at the pose it is *drawn* at, not the one it was simulated at.**
+The renderer blends a drawn mesh's world transform between the last two Sim-tick snapshots by the
+frame's alpha, so `CameraRigSystem` reads its target through `Scene::GetInterpolatedWorldTransform`
+at the same `SystemContext::Alpha`. Resolving against the un-interpolated pose instead puts the
+camera a partial tick ahead of everything rigidly attached to that target — a cockpit interior, a
+mounted weapon, a held prop — which reads as those pieces swimming against the view by a fraction of
+a tick's motion, changing every frame as the alpha sweeps, and growing with the target's speed and
+turn rate. The camera's *own* transform stays un-interpolated and must: it is authored per frame
+after the tick snapshot, so its live pose already is this frame's pose (the same reason
+`InterpolatedLocalMatrix` exempts a `ViewPose`). An **`Authority { Tier, Owner }`** component marks who
 simulates an entity: authored entities default `Server`, client-local view entities are `Local`
 (only those two tiers are authored or persisted; `Remote` and `Predicted` are each peer's runtime
 stance toward an entity, never replicated). Its consumer is the net layer's authority filter —
