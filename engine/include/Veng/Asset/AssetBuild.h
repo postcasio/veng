@@ -80,9 +80,9 @@ namespace Veng::Detail
 
     /// @brief Submits the worker-legal build of a MaterialInstance, returning its streaming result.
     ///
-    /// The worker copies the parent's default block; the returned BuiltAsset's Finalize applies the
-    /// overrides, allocates the per-material SSBO slot, and uploads on the main thread. This is the
-    /// MID build path.
+    /// The worker constructs the instance from the info; the returned BuiltAsset's Finalize seeds
+    /// its block from the parent's default block, applies the overrides, allocates the per-material
+    /// SSBO slot, and uploads on the main thread. This is the MID build path.
     /// @param context Unused; the instance's context rides MaterialInstanceInfo::Context.
     /// @param tasks   Task system the worker job runs on.
     /// @param info    Instance description; its parent and override textures must already be resident.

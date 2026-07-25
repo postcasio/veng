@@ -54,9 +54,9 @@ namespace Veng
     /// ring-buffered SetParam/SetTexture writes are stall-free, landing in the current
     /// frame-in-flight region.
     ///
-    /// A bare parent Material doubles as a zero-override instance — the MaterialInstanceLoader
-    /// resolves a Material-typed id to a default instance, so existing material-id references keep
-    /// loading.
+    /// One AssetId names one asset of one type: a parent Material's id and its cooked
+    /// default-instance id are distinct assets, and a MaterialInstance request for a bare Material
+    /// id is a WrongType, never a synthesized default.
     class MaterialInstance
     {
     public:
@@ -223,20 +223,24 @@ namespace Veng
         friend Ref<MaterialInstance> Detail::BuildAssetSync(Renderer::Context& context,
                                                             const MaterialInstanceInfo& data);
 
-        /// @brief Constructs an unfinalized instance: copies the parent's default block.
+        /// @brief Constructs an unfinalized instance holding its parent handle and overrides.
         ///
-        /// The worker-legal construction step; the parent must already be resident. The result is
-        /// Finalize()d on the render thread (override patch + bindless slot allocation) before use.
+        /// The worker-legal construction step: it touches nothing behind the handles, so the parent
+        /// may still be pending here (a cold async load resolves it as a dependency). The result is
+        /// Finalize()d on the render thread (block seed + override patch + bindless slot
+        /// allocation) before use, and the parent must be resident by then.
         static Ref<MaterialInstance> Prepare(const MaterialInstanceInfo& info)
         {
             return Ref<MaterialInstance>(new MaterialInstance(info));
         }
 
-        /// @brief Applies the overrides, allocates the per-material SSBO slot, and uploads.
+        /// @brief Seeds the block from the parent, applies the overrides, allocates the per-material SSBO slot, and uploads.
         ///
-        /// Runs on the render thread (the override textures are resident by now, so their bindless
-        /// indices resolve). A param override is copied at its parent field's offset; a texture
-        /// override patches the field's handle slot.
+        /// Runs on the render thread (the parent and the override textures are resident by now, so
+        /// the parent's patched default block and the textures' bindless indices resolve). A param
+        /// override is copied at its parent field's offset; a texture override patches the field's
+        /// handle slot.
+        /// @pre The parent material is resident.
         void Finalize();
 
         explicit MaterialInstance(const MaterialInstanceInfo& info);

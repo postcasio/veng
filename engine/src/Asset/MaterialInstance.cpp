@@ -20,12 +20,10 @@ namespace Veng
         : m_Context(*info.Context), m_Name(info.Name), m_Parent(info.Parent),
           m_Overrides(info.Overrides)
     {
-        VE_ASSERT(m_Parent.Get() != nullptr,
-                  "MaterialInstance '{}': parent material is not resident at construction", m_Name);
-
-        // The block is seeded from the parent's default block in Finalize() — the parent's block is
-        // only patched (handle slots resolved) once the parent itself is finalized, which the
-        // dependency ordering guarantees runs before this instance's Finalize.
+        // The parent handle may still be pending here: construction only stores it. The block is
+        // seeded from the parent's default block in Finalize(), where the parent is resident — its
+        // block is only patched (handle slots resolved) once the parent itself is finalized, which
+        // the dependency ordering guarantees runs before this instance's Finalize.
 
         // Override textures are kept resident on the instance.
         for (const MaterialOverride& ov : m_Overrides)
@@ -89,6 +87,8 @@ namespace Veng
     void MaterialInstance::Finalize()
     {
         VE_ASSERT(!m_Registered, "MaterialInstance::Finalize: '{}' already registered", m_Name);
+        VE_ASSERT(m_Parent.Get() != nullptr,
+                  "MaterialInstance::Finalize: '{}' parent material is not resident", m_Name);
 
         // Seed the block from the parent's finalized default block (its handle slots are patched).
         const std::span<const std::byte> defaultBlock = m_Parent.Get()->GetDefaultBlock();

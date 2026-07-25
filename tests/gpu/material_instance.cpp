@@ -144,6 +144,54 @@ TEST_CASE_FIXTURE(
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "material instance: a cold async load finalizes behind its pending parent")
+{
+    const path fixtureDir = path(GPU_GBUFFER_FIXTURE_DIR);
+    const path outArchive =
+        Veng::TestSupport::TempDir() / "veng_gpu_material_instance_async.vengpack";
+
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    REQUIRE(cooker
+                .CookPack(fixtureDir / "gbuffer_pack.json", outArchive, {}, nullptr, nullptr,
+                          nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR))
+                .has_value());
+
+    // The parent material's texture uploads through the async transfer path.
+    Context.InitializeTransferPools(Tasks);
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(outArchive).has_value());
+
+    // A genuinely cold async request: nothing is resident, so the instance's parent Material is
+    // fanned out by this very call and is still pending when the instance is constructed.
+    const AssetHandle<MaterialInstance> handle =
+        assets.Load<MaterialInstance>(BrickDefaultInstanceId);
+    CHECK_FALSE(handle.IsLoaded());
+
+    // The parent was fanned out as a dependency and is itself not yet resident.
+    const Ref<Detail::AssetCacheEntry> parentEntry = assets.CachedEntry(BrickParentId);
+    REQUIRE(parentEntry != nullptr);
+    CHECK(parentEntry->Resource == nullptr);
+
+    for (int i = 0; i < 100 && !handle.IsLoaded(); ++i)
+    {
+        Tasks.WaitForAll();
+        Tasks.PumpMainThread();
+        assets.PumpFinalizes();
+    }
+
+    // The dependency ordering finalized the parent first, so the instance's block was seeded from
+    // a patched default block and it owns a real slot.
+    REQUIRE(handle.IsLoaded());
+    CHECK(handle.Get()->GetParent().IsLoaded());
+    CHECK(handle.Get()->GetPipeline() != nullptr);
+    CHECK(handle.Get()->GetIndex() != MaterialHandle::Invalid);
+
+    std::filesystem::remove(outArchive);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                   "material instance: the cooked default instance caches by id")
 {
     const path fixtureDir = path(GPU_GBUFFER_FIXTURE_DIR);
