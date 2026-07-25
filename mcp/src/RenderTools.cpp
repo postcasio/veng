@@ -38,14 +38,16 @@ namespace Veng::Mcp
 
     void RegisterRenderTools(McpServer& server, const McpHost& host)
     {
-        // render.screenshot — the tonemapped scene-color output of a viewport as a PNG image
-        // content block, plus its pixel dimensions.
+        // render.screenshot — the tonemapped output of a viewport as a PNG image content block,
+        // plus its pixel dimensions. A world's own GuiOverlay is driven onto the viewport's layer
+        // stack, so it is part of that output; only the app's overlay sits outside it.
         {
             McpTool tool;
             tool.Name = "render.screenshot";
             tool.Description =
-                "Captures a viewport's rendered output as a PNG image (tonemapped 8-bit "
-                "scene color). Optional 'viewport' names the viewport (default the primary). "
+                "Captures a viewport's rendered output as a PNG image (tonemapped 8-bit), "
+                "including any GuiOverlay a world drives into that viewport but not the app's "
+                "own overlay. Optional 'viewport' names the viewport (default the primary). "
                 "Returns an image content block; over the --connect CLI it requires --output "
                 "<file> to write the PNG (an image is never printed to stdout).";
             tool.InputSchemaJson =
@@ -68,15 +70,17 @@ namespace Veng::Mcp
             server.RegisterTool(std::move(tool));
         }
 
-        // render.screenshot_window — the presented frame, the only surface carrying the app's UI.
+        // render.screenshot_window — the presented frame, the only surface carrying the app's
+        // own UI overlay.
         {
             McpTool tool;
             tool.Name = "render.screenshot_window";
             tool.Description =
                 "Captures the presented frame as a PNG image — the finished composite of the "
                 "scene and the UI overlay drawn over it, which is what an app's interface looks "
-                "like on screen. render.screenshot captures a viewport instead, which carries "
-                "scene color alone and no UI. Returns an image content block; over the --connect "
+                "like on screen. render.screenshot captures a viewport instead, which carries the "
+                "scene and any GuiOverlay a world drives into it, but not the app's own overlay "
+                "composited over the frame. Returns an image content block; over the --connect "
                 "CLI it requires --output <file> to write the PNG (an image is never printed to "
                 "stdout). Unavailable headless (no swap chain, and no UI overlay to capture) and "
                 "where the surface did not grant transfer-source usage on its swap chain images.";
