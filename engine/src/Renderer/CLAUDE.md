@@ -433,6 +433,24 @@ per-frame push values (no recompile). (The cooked `EnvironmentMap` asset — the
 radiance/irradiance/prefiltered/BRDF maps — is `AssetTypes::Environment`; the `EnvironmentSky`
 source is the scene-authoring front-end that references it.)
 
+### A sky reconstructs its ray without the camera's translation
+
+`SkyViewDirection` (`Veng/sky.slang`) reads **`InvViewRotProj`** — the inverse of
+`Proj x the rotation-only View` — rather than `InvViewProj`. A sky wants the *ray* through a pixel,
+which is a property of where the camera looks and not of where it is; deriving it from
+`InvViewProj` means forming a far-plane world point and subtracting the camera off it, two large
+nearly-equal numbers whose small difference is the answer. That cancellation costs f32 precision in
+proportion to the camera's distance from the world origin, and costs it **unevenly across the
+frame** — worst along the rays whose far point lands furthest out — so a star field shimmers, and
+shimmers worse looking away from the origin than toward it.
+
+Measured on a consumer at one solar radius per scene unit: at 3,400 units from the origin a
+stationary view's sky differed by 1.7/255 frame to frame with 2.3% of pixels moving more than 16
+levels; through the rotation-only inverse it is pixel-identical, and stays so at 80,000 units. The
+matrix is jittered with `Proj`, so it still agrees with what was rasterized. `SkyCubemapBake` writes
+its face basis into both fields — that basis is already a pure direction mapping with no translation
+in it.
+
 ### View constants: the ring-buffered set-0 block
 
 Per-view data rides a **ring-buffered view-constants buffer**, not push constants: the
@@ -443,7 +461,7 @@ in the `Context`-owned `BindlessRegistry`), so it is ringed `framesInFlight * Ma
 deep and each `SceneRenderer::Execute` claims its own slot (`BindlessRegistry::BeginView`, reset
 per frame): two viewports rendering in one frame write distinct regions rather than the second's
 camera clobbering the region the first's draws still read at submit. The shared per-frame light
-buffer rings the same way. Its stride is **512 bytes**. The shadow system's own state — the
+buffer rings the same way. Its stride is **640 bytes**. The shadow system's own state — the
 cascade matrices, splits, and params — rides the **set-1** `ShadowConstants` block instead, so set
 0 stays a lean, material-facing view block (shared by materials, lighting, and SSAO). Push
 constants in the deferred path carry only small per-invocation bindless handle indices and the

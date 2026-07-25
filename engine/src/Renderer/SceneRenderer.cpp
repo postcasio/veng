@@ -1282,8 +1282,15 @@ namespace Veng::Renderer
         const Sh9& skySh = m_SkyResolver->GetSkySh();
 
         const mat4 renderViewProj = renderProj * view.Camera.View();
+        // The same projection against a view stripped to its rotation. A pass wanting the *ray*
+        // through a pixel rather than a point on it reconstructs through this, so it never forms a
+        // far-plane world point and subtracts the camera off it — a cancellation of two large
+        // near-equal numbers that costs f32 precision in proportion to how far the camera is from
+        // the world origin. Jittered with renderProj, so it agrees with what was rasterized.
+        const mat4 renderViewRotProj = renderProj * mat4(mat3(view.Camera.View()));
         ViewConstantsBlock viewConstants{
             .InvViewProj = glm::inverse(renderViewProj),
+            .InvViewRotProj = glm::inverse(renderViewRotProj),
             .CameraPosition = vec4(view.Camera.GetPosition(), 0.0f),
             .View = view.Camera.View(),
             .Proj = renderProj,

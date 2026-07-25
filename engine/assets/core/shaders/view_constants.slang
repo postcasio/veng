@@ -13,6 +13,13 @@
 struct ViewConstants
 {
     float4x4 InvViewProj;    // world-position reconstruction from depth (jittered under TAA)
+    // Inverse of (Proj x rotation-only View): a translation-free view-direction reconstruction, for
+    // a pass that wants the ray through a pixel rather than a point on it. Reconstructing a
+    // direction from InvViewProj forms a far-plane world point and subtracts the camera off it —
+    // two large near-equal numbers whose small difference is the answer — so it loses precision the
+    // further the camera is from the world origin, unevenly across the frame. This has no
+    // translation to cancel. Jittered with Proj, so it agrees with what was rasterized.
+    float4x4 InvViewRotProj;
     float4   CameraPosition; // xyz; w unused
     float4x4 View;           // world → view (view-space depth, SSAO view space)
     float4x4 Proj;           // view → clip (jittered under TAA)
@@ -59,7 +66,7 @@ struct ViewConstants
     uint4 SceneColor;
 };
 
-static const uint ViewConstantsStride = 576;
+static const uint ViewConstantsStride = 640;
 
 [[vk::binding(5, 0)]] ByteAddressBuffer g_ViewConstants;
 

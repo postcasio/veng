@@ -81,6 +81,7 @@ namespace Veng::Renderer
         struct ViewConstantsRegion
         {
             mat4 InvViewProj;
+            mat4 InvViewRotProj;
             vec4 CameraPosition;
             mat4 View;
             mat4 Proj;
@@ -266,6 +267,9 @@ namespace Veng::Renderer
             registry.BeginView();
             ViewConstantsRegion region{};
             region.InvViewProj = m_FaceInvViewProj[face];
+            // The face basis is already a pure direction mapping with no camera translation in it,
+            // so it is its own rotation-only inverse and serves SkyViewDirection unchanged.
+            region.InvViewRotProj = m_FaceInvViewProj[face];
             region.CameraPosition = vec4(0.0f);
             region.RenderScaleUV = vec4(1.0f, 1.0f, 1.0f, 1.0f);
             region.MaxValidUV = vec4(1.0f, 1.0f, 1.0f, 1.0f);
@@ -354,6 +358,9 @@ namespace Veng::Renderer
             registry.BeginView();
             ViewConstantsRegion region{};
             region.InvViewProj = m_FaceInvViewProj[face];
+            // The face basis is already a pure direction mapping with no camera translation in it,
+            // so it is its own rotation-only inverse and serves SkyViewDirection unchanged.
+            region.InvViewRotProj = m_FaceInvViewProj[face];
             region.CameraPosition = vec4(0.0f);
             region.RenderScaleUV = vec4(1.0f, 1.0f, 1.0f, 1.0f);
             region.MaxValidUV = vec4(1.0f, 1.0f, 1.0f, 1.0f);

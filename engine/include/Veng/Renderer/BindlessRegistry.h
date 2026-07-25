@@ -333,7 +333,7 @@ namespace Veng::Renderer
         /// Mirrors the shader-side constant in view_constants.slang; the ViewConstants
         /// block (the camera/view matrices, the sub-rect mapping, the sky SH, the frame
         /// clock, and the scene-color grab handles) is 560 bytes, within the stride.
-        static constexpr u32 ViewConstantsStride = 576;
+        static constexpr u32 ViewConstantsStride = 640;
 
         /// @brief The fixed byte stride of one GpuLight entry in the LightBinding
         /// ByteAddressBuffer.

@@ -15,7 +15,12 @@ namespace Veng::Renderer
     // Mirrors view_constants.slang ViewConstants byte-for-byte.
     struct ViewConstantsBlock
     {
-        mat4 InvViewProj;    // world-position reconstruction from depth (jittered under TAA)
+        mat4 InvViewProj; // world-position reconstruction from depth (jittered under TAA)
+        // Inverse of (Proj x rotation-only View): a translation-free view-direction reconstruction.
+        // Deriving a direction from InvViewProj instead cancels two large near-equal world points,
+        // which loses f32 precision with distance from the world origin; this carries no translation
+        // to cancel. Jittered with Proj, so it matches what was rasterized.
+        mat4 InvViewRotProj;
         vec4 CameraPosition; // xyz; w unused
         mat4 View;           // world → view (the SSAO pass reconstructs view space)
         mat4 Proj;           // view → clip (jittered under TAA)

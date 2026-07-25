@@ -62,17 +62,20 @@ bool SkyIsBackground(SkyPushConstants pc, float2 uv)
     return depth >= 1.0;
 }
 
-// The world-space view direction through a background pixel: the far-plane point unprojected
-// through the inverse view-projection, minus the camera position, normalized. A sky shader
-// evaluates its radiance along this direction.
+// The world-space view direction through a background pixel. A sky shader evaluates its radiance
+// along this direction.
+//
+// Reconstructed through the translation-free InvViewRotProj rather than InvViewProj. The direction
+// is a property of where the camera *looks*, not where it *is*, and taking it from InvViewProj means
+// forming a far-plane world point and subtracting the camera off it — two large, nearly equal
+// numbers whose small difference is the answer. That cancellation costs f32 precision in proportion
+// to the camera's distance from the world origin, and unevenly across the frame (worst where the far
+// point is furthest out), so a star field shimmers and does it worse looking away from the origin.
+// A rotation-only inverse has no translation to cancel and is exact wherever the camera is.
 float3 SkyViewDirection(SkyPushConstants pc, float2 uv)
 {
     ViewConstants vc = LoadViewConstants(pc.ViewConstantsIndex);
     float2 ndcXY = uv * 2.0 - 1.0;
-    float4 worldH = mul(vc.InvViewProj, float4(ndcXY, 1.0, 1.0));
-    // Homogeneous form of (worldH.xyz / worldH.w − camera): normalize cancels the 1/w scale,
-    // so w never divides. The far-plane w collapses to zero in f32 once Far/Near exceeds
-    // ~2^24 (the projection's [2][2] rounds to −1 exactly), which would turn the divided
-    // point into infinities and the direction into NaN for every background pixel.
-    return normalize(worldH.xyz - vc.CameraPosition.xyz * worldH.w);
+    // normalize removes the 1/w, so w never divides and a far-plane w of zero is harmless.
+    return normalize(mul(vc.InvViewRotProj, float4(ndcXY, 1.0, 1.0)).xyz);
 }
