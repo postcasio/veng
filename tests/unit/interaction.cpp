@@ -98,6 +98,20 @@ namespace
             return entity;
         }
 
+        // A static, findable interactable whose box is large enough to hold the interactor: the
+        // enterable case, where the origin the cone is measured to is an interior point.
+        Entity AddLargeInteractable(const vec3 position, const vec3 halfExtents, const f32 range)
+        {
+            const Entity entity = World->CreateEntity();
+            World->Add<Transform>(entity, Transform{.Position = position});
+            World->Add<RigidBody>(
+                entity, RigidBody{.Motion = MotionType::Static, .Layer = PhysicsLayer::Query});
+            World->Add<Collider>(entity,
+                                 Collider{.Shape = ColliderShape::Box, .Extents = halfExtents});
+            World->Add<Interactable>(entity, Interactable{.Verb = "Use", .Range = range});
+            return entity;
+        }
+
         // Projects the Transform chain into the offset solver frame, delegating the chain composition
         // to the engine's default — the shape a consumer with an external authoritative store takes.
         void InstallOffsetResolver()
@@ -202,4 +216,53 @@ TEST_CASE("An offset solver frame focuses nothing while no resolver is installed
     // holds nothing, so no interactable is ever offered.
     fixture.AddInteractableInSolverFrame(vec3(0.0f, 0.0f, -2.0f), 10.0f);
     CHECK(fixture.Resolve().IsNull());
+}
+
+TEST_CASE("An interactable whose body encloses the interactor is focused from inside it")
+{
+    InteractionScene fixture;
+    // The enterable shape: a 4 x 4 x 24 m box holding the interactor, whose *origin* sits 10.6 m
+    // behind an actor facing -Z. The bearing to that origin is a half turn, so no ConeAngle short of
+    // one admits it — and the interactor is standing in it, which is the whole reason it should be
+    // offered. Range covers the offset from the origin to the interactor inside it.
+    const Entity cabin =
+        fixture.AddLargeInteractable(vec3(0.0f, 0.0f, 10.6f), vec3(2.0f, 2.0f, 12.0f), 14.0f);
+    CHECK(fixture.Resolve() == cabin);
+}
+
+TEST_CASE("A large interactable behind the interactor but not enclosing it is still rejected")
+{
+    InteractionScene fixture;
+    // Same bearing, same size class, and inside the reach sweep — but the box starts 15 m astern, so
+    // the interactor is outside it and the cone means what it says. The exemption is enclosure, not
+    // bulk.
+    fixture.AddLargeInteractable(vec3(0.0f, 0.0f, 20.0f), vec3(2.0f, 2.0f, 5.0f), 30.0f);
+    CHECK(fixture.Resolve().IsNull());
+}
+
+TEST_CASE("A candidate genuinely looked at wins over the body the interactor stands in")
+{
+    InteractionScene fixture;
+    // An enclosing body keeps its true bearing for the ranking, so the thing dead ahead is preferred
+    // — being inside something does not capture focus away from what is being looked at.
+    fixture.AddLargeInteractable(vec3(0.0f, 0.0f, 10.6f), vec3(2.0f, 2.0f, 12.0f), 14.0f);
+    const Entity ahead = fixture.AddInteractable(vec3(0.0f, 0.0f, -2.0f), 10.0f, true);
+    CHECK(fixture.Resolve() == ahead);
+}
+
+TEST_CASE("An enclosing interactable is still subject to Enabled and to its own Range")
+{
+    InteractionScene fixture;
+    // Enclosure exempts the cone and nothing else: the two data gates still hold.
+    const Entity cabin =
+        fixture.AddLargeInteractable(vec3(0.0f, 0.0f, 10.6f), vec3(2.0f, 2.0f, 12.0f), 14.0f);
+    fixture.World->Get<Interactable>(cabin).Enabled = false;
+    CHECK(fixture.Resolve().IsNull());
+
+    fixture.World->Get<Interactable>(cabin).Enabled = true;
+    fixture.World->Get<Interactable>(cabin).Range = 5.0f;
+    CHECK(fixture.Resolve().IsNull());
+
+    fixture.World->Get<Interactable>(cabin).Range = 14.0f;
+    CHECK(fixture.Resolve() == cabin);
 }

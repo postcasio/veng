@@ -32,6 +32,11 @@ namespace Veng
     /// picks the best by angle then distance, and writes it to Focused. Forward is the entity's local
     /// -Z in world space, matching the socket and camera convention. The resolution is published;
     /// drawing a prompt from it, and deciding when to fire, are the consumer's.
+    ///
+    /// The cone is a bearing to the candidate's *origin*, so it is only meaningful for a candidate
+    /// the interactor is outside of: a body enclosing the interactor is exempt from it, as is one
+    /// all but coincident with it. Range is not exempt, so an interactable large enough to be
+    /// entered still authors a Range covering the offset from its origin to the interactor inside it.
     struct Interactor
     {
         /// @brief How far the overlap sweep reaches for candidates, in metres.

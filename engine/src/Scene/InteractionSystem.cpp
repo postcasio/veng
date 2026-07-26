@@ -8,6 +8,7 @@
 #include <Veng/Scene/Interaction.h>
 #include <Veng/Scene/Scene.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 
@@ -23,6 +24,12 @@ namespace Veng
             /// @brief The best Interactable found, or Entity::Null when none qualifies.
             Entity Focused;
         };
+
+        /// @brief Radius of the probe that finds the bodies enclosing an interactor, in metres.
+        ///
+        /// Small enough that only a body actually containing the interactor's origin reports, and
+        /// nonzero because a degenerate shape has no overlap.
+        constexpr f32 EnclosureProbeRadius = 0.01f;
     }
 
     void InteractionSystem::OnUpdate(Scene& scene, f32 /*delta*/, const SystemContext& /*context*/)
@@ -34,6 +41,7 @@ namespace Veng
         const Scene& readScene = scene;
         vector<ResolvedInteractor> resolved;
         vector<Entity> candidates;
+        vector<Entity> enclosing;
         for (auto [entity, transform, interactor] : readScene.View<Transform, Interactor>())
         {
             Entity best = Entity::Null;
@@ -57,6 +65,10 @@ namespace Veng
                                       .Extents = vec3(interactor.Reach)};
                 Overlap(world, sphere, PhysicsPose{.Position = interactorPose.Position},
                         QueryFilter{.Ignore = ignore, .IncludeSensors = true}, candidates);
+
+                // The bodies enclosing the interactor, resolved at most once per interactor and only
+                // when the cone actually rejects something — see the cone test below.
+                bool probedEnclosure = false;
 
                 for (const Entity candidate : candidates)
                 {
@@ -86,7 +98,27 @@ namespace Veng
                         angle = std::acos(glm::clamp(glm::dot(forward, direction), -1.0f, 1.0f));
                         if (angle > interactor.ConeAngle)
                         {
-                            continue;
+                            // A body the interactor stands *inside* is trivially in cone too, for the
+                            // same reason a coincident one is: the bearing is measured to the
+                            // candidate's origin, which for an enclosing body is an interior point
+                            // that may lie anywhere — including straight behind. Without this an
+                            // interactable large enough to be entered is unfocusable from within it at
+                            // any orientation. It keeps its true bearing for the ranking below, so
+                            // anything genuinely looked at still wins over the room one is in.
+                            if (!probedEnclosure)
+                            {
+                                const Collider probe{.Shape = ColliderShape::Sphere,
+                                                     .Extents = vec3(EnclosureProbeRadius)};
+                                Overlap(world, probe,
+                                        PhysicsPose{.Position = interactorPose.Position},
+                                        QueryFilter{.Ignore = ignore, .IncludeSensors = true},
+                                        enclosing);
+                                probedEnclosure = true;
+                            }
+                            if (std::ranges::find(enclosing, candidate) == enclosing.end())
+                            {
+                                continue;
+                            }
                         }
                     }
 

@@ -340,6 +340,20 @@ the scene's [physics-pose resolver](#the-physics-pose-resolver--when-the-transfo
 so focus and range resolve in the frame the solver integrates in, and a candidate's separation from
 the interactor is differenced at double precision before it narrows to f32.
 
+**The cone is a bearing to the candidate's origin, so a body the interactor is *inside* is exempt from
+it.** That origin is a well-defined direction only for a candidate the interactor stands outside of;
+for an enclosing body it is an interior point that may lie anywhere, including straight behind — so
+without the exemption an interactable large enough to be **entered** (a vehicle cabin, a lift car, a
+room-scale machine) is unfocusable from within it at *every* orientation, and no `ConeAngle` under a
+half turn fixes it. It is the same statement the near-coincident exemption already makes, at body
+scale rather than at the numerical limit. The set of enclosing bodies is one small-sphere `Overlap`
+about the interactor's origin, resolved at most once per interactor and only when the cone rejects a
+candidate, so an interactor with nothing behind it pays nothing. An enclosing candidate keeps its
+**true bearing** for the best-candidate ranking, so anything genuinely looked at still wins over the
+room one is standing in. **`Range` is deliberately not exempt** — it stays a plain authored distance
+budget to the origin, so an enterable interactable authors a `Range` that covers the offset from its
+origin to an interactor inside it.
+
 **Firing is a request, not a callback.** An **`InteractRequest { Entity Interactor; … }`** is stamped
 on the focused entity and drained by whatever system owns that kind of interactable, matching the
 `FocusRequest`/`TravelRequest` idiom exactly (handled → removed, unhandleable → left Pending, failed
