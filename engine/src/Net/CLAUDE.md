@@ -183,6 +183,41 @@ applies latest-wins, marks replicated entities **`Tier::Remote`**, and buffers e
 snapshot for the **View-phase `RemoteInterpolationSystem`**, which renders a remote ~2 snapshot
 intervals in the past.
 
+### The four faces of a null reference
+
+A replicated `Entity` field encodes as its target's `NetId`, and the reserved null id (zero) is
+what a null or unreplicated target encodes to. On the receiver that null id and an id not yet bound
+both resolve to `Entity::Null`, so **four genuinely different situations collapse onto one
+consumer-visible outcome** — a reference that arrives absent — and only the encoder still knows
+which is which:
+
+- **A deliberately null field.** Correct; nothing to say.
+- **A field naming a destroyed entity.** The encode branch is `local.IsNull() ||
+  !scene.IsAlive(local)`, so a stale handle takes the deliberate-null path. Ordinary end-of-life
+  churn, self-correcting, and **not reported** — reporting it would flood the diagnostic.
+- **A field naming a replicated entity whose id has not yet bound on the receiver.** This one rides
+  its real `NetId` and collapses only at *decode*. Correct — a legitimate join-window transient.
+- **A field naming an entity that will never replicate** because it carries no `NetIdentity`. The
+  bug: indistinguishable from the first three on any peer, so the encoder is the last place that can
+  say so.
+
+`MakeEncodeRef`'s remap discriminates on the **target's own `NetIdentity` component**, never on the
+encoded value — an entity carrying `NetIdentity` with an unassigned id (reachable: `Host::SpawnSeat`
+writes ids by hand and `AssignServerNetIds` skips an entity that already carries the component)
+encodes identically to one carrying none, so the check is on the component. When the target is alive
+and carries none, `UnreplicatedReferenceReporter` emits **one `Log::Error`** naming the component
+type, field, referring entity, and target — the four facts the receiver never sees. It is a
+`Log::Error`, not a fatal assert: this is API misuse discovered mid-frame on a running server, where
+aborting the host over one wrong field would trade a visible bug for an outage, so every other entity
+keeps replicating. The report is **deduplicated per (component type, field, referring entity)** for
+the replication instance's lifetime and **bounded** — past a distinct-site cap it emits one summary
+line and falls silent. A field that deliberately names a local target opts out at the declaration
+(`FieldDescriptor::AllowUnreplicatedReference`, set on `Viewer.Camera`, whose camera is a client-local
+entity by design), so the engine's own commonest replicated seat draws no diagnostic. The check rides
+the shared `RemapComponentReferences` walk through an optional per-leaf diagnostic sink the encoder
+passes and prefab spawning / `Scene::Clone` do not, so those two paths — where a reference to a
+not-yet-spawned entity is legitimate — stay silent, and the encoded bytes are unchanged either way.
+
 A client promotes the entities its seat owns to **`Tier::Predicted`** and re-runs the real Sim
 systems for them each tick (`PredictionHistory` records tick/input/state); on an authoritative
 snapshot the **`Net::Reconciliation`** pass compares the recorded prediction at the snapshot's

@@ -1,5 +1,5 @@
 // The same minimal module as test_module.cpp, but its target forces a stale
-// VENG_MODULE_ABI_VERSION (-DVENG_MODULE_ABI_VERSION=7u, one behind the engine's), so its
+// VENG_MODULE_ABI_VERSION (-DVENG_MODULE_ABI_VERSION=8u, one behind the engine's), so its
 // exported VengModuleAbiVersion disagrees with the engine's. Proves the loader's
 // handshake rejects a stale module without ever calling its entry.
 

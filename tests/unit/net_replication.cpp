@@ -6,6 +6,7 @@
 
 #include <doctest/doctest.h>
 
+#include <Veng/Log.h>
 #include <Veng/Net/Replication.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/BuiltinTypes.h>
@@ -15,10 +16,43 @@
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
 
+#include <algorithm>
+#include <string_view>
+
 using namespace Veng;
 
 namespace
 {
+    // Appends every Log::Error message body to @p out for the guard's lifetime, restoring the
+    // default sink on destruction so a failing assertion never leaves a later test logging into a
+    // dangling capture. The sink writes through the borrowed vector, not the guard, so the guard
+    // itself carries no mutated state.
+    struct ErrorCapture
+    {
+        explicit ErrorCapture(vector<string>& out)
+        {
+            Log::SetSink(
+                [&out](const Log::Level level, const std::string_view message)
+                {
+                    if (level == Log::Level::Error)
+                    {
+                        out.emplace_back(message);
+                    }
+                });
+        }
+
+        ~ErrorCapture() { Log::SetSink(nullptr); }
+
+        ErrorCapture(const ErrorCapture&) = delete;
+        ErrorCapture& operator=(const ErrorCapture&) = delete;
+    };
+
+    // True when any captured error message contains @p needle.
+    bool AnyContains(const vector<string>& errors, std::string_view needle)
+    {
+        return std::ranges::any_of(errors, [needle](const string& e)
+                                   { return e.find(needle) != string::npos; });
+    }
     // Little-endian framing helpers matching the codec, for hand-crafting adversarial packets.
     void AppendU32LE(vector<u8>& out, u32 value)
     {
@@ -220,6 +254,169 @@ TEST_CASE("A reference to an unreplicated target encodes as the null wire id")
     const auto* possesses = client->TryGet<Possesses>(clientSeat);
     REQUIRE(possesses != nullptr);
     CHECK(possesses->Pawn.IsNull());
+}
+
+TEST_CASE("The unreplicated-reference diagnostic discriminates on the target component")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+
+    // A seat whose Possesses.Pawn names an alive, Local-tier target (no NetIdentity) is the one
+    // case the encoder reports; the other three collapse to the same null wire value but are silent.
+    const auto buildSeatToward = [&types](Entity (*makeTarget)(Scene&)) -> Unique<Scene>
+    {
+        Unique<Scene> scene = Scene::Create(types);
+        const Entity target = makeTarget(*scene);
+        const Entity seat = scene->CreateEntity();
+        scene->Add<Possesses>(seat, Possesses{.Pawn = target});
+        NetIdAllocator allocator;
+        AssignServerNetIds(*scene, allocator);
+        return scene;
+    };
+
+    SUBCASE("an alive, unreplicated target is reported once, naming the component, field, entities")
+    {
+        const Unique<Scene> scene = buildSeatToward(
+            [](Scene& s)
+            {
+                const Entity t = s.CreateEntity();
+                s.Add<Authority>(t, Authority{.Tier = Tier::Local});
+                return t;
+            });
+
+        vector<string> errors;
+        const ErrorCapture capture(errors);
+        UnreplicatedReferenceReporter reporter;
+        (void)EncodeSnapshot(*scene, 1, 0, 0, 0, &reporter);
+
+        REQUIRE(errors.size() == 1);
+        CHECK(AnyContains(errors, "Possesses"));
+        CHECK(AnyContains(errors, "Pawn"));
+        CHECK(AnyContains(errors, "NetIdentity"));
+
+        // The report does not repeat per tick for the same (type, field, referring entity).
+        (void)EncodeSnapshot(*scene, 2, 0, 0, 0, &reporter);
+        CHECK(errors.size() == 1);
+    }
+
+    SUBCASE("a deliberately null field is silent")
+    {
+        const Unique<Scene> scene = buildSeatToward([](Scene&) { return Entity::Null; });
+        vector<string> errors;
+        const ErrorCapture capture(errors);
+        UnreplicatedReferenceReporter reporter;
+        (void)EncodeSnapshot(*scene, 1, 0, 0, 0, &reporter);
+        CHECK(errors.empty());
+    }
+
+    SUBCASE("a field naming a destroyed entity is silent")
+    {
+        Unique<Scene> scene = Scene::Create(types);
+        const Entity target = scene->CreateEntity();
+        scene->Add<Authority>(target, Authority{.Tier = Tier::Local});
+        const Entity seat = scene->CreateEntity();
+        scene->Add<Possesses>(seat, Possesses{.Pawn = target});
+        NetIdAllocator allocator;
+        AssignServerNetIds(*scene, allocator);
+        scene->DestroyEntity(target); // the seat's Possesses.Pawn is now a stale handle
+
+        vector<string> errors;
+        const ErrorCapture capture(errors);
+        UnreplicatedReferenceReporter reporter;
+        (void)EncodeSnapshot(*scene, 1, 0, 0, 0, &reporter);
+        CHECK(errors.empty());
+    }
+
+    SUBCASE("a replicated target is silent, including one whose id is not yet assigned")
+    {
+        // A target carrying NetIdentity replicates; an unassigned id (the seat-spawn transient)
+        // encodes identically to no component, so the discriminator is the component, not the id.
+        const Unique<Scene> scene = buildSeatToward(
+            [](Scene& s)
+            {
+                const Entity t = s.CreateEntity();
+                s.Add<NetIdentity>(t).Id = InvalidNetId; // carries the component, id unbound
+                return t;
+            });
+
+        vector<string> errors;
+        const ErrorCapture capture(errors);
+        UnreplicatedReferenceReporter reporter;
+        (void)EncodeSnapshot(*scene, 1, 0, 0, 0, &reporter);
+        CHECK(errors.empty());
+    }
+}
+
+TEST_CASE("A distinct second offender of the same (type, field) is still reported")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    Unique<Scene> scene = Scene::Create(types);
+
+    // Two seats, each possessing its own alive Local-tier pawn: the dedup is keyed on the referring
+    // entity too, so "which one of these is wrong" is not hidden behind the first.
+    for (int i = 0; i < 2; ++i)
+    {
+        const Entity target = scene->CreateEntity();
+        scene->Add<Authority>(target, Authority{.Tier = Tier::Local});
+        const Entity seat = scene->CreateEntity();
+        scene->Add<Possesses>(seat, Possesses{.Pawn = target});
+    }
+    NetIdAllocator allocator;
+    AssignServerNetIds(*scene, allocator);
+
+    vector<string> errors;
+    const ErrorCapture capture(errors);
+    UnreplicatedReferenceReporter reporter;
+    (void)EncodeSnapshot(*scene, 1, 0, 0, 0, &reporter);
+    CHECK(errors.size() == 2);
+}
+
+TEST_CASE("A field opting out of the diagnostic (Viewer.Camera) is silent")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    Unique<Scene> scene = Scene::Create(types);
+
+    // Viewer.Camera deliberately names a client-local camera and declares
+    // AllowUnreplicatedReference, so the engine's own commonest replicated seat draws nothing.
+    const Entity camera = scene->CreateEntity();
+    scene->Add<Camera>(camera);
+    scene->Add<Authority>(camera, Authority{.Tier = Tier::Local});
+    const Entity seat = scene->CreateEntity();
+    scene->Add<Viewer>(seat, Viewer{.Camera = camera});
+    NetIdAllocator allocator;
+    AssignServerNetIds(*scene, allocator);
+
+    vector<string> errors;
+    const ErrorCapture capture(errors);
+    UnreplicatedReferenceReporter reporter;
+    (void)EncodeSnapshot(*scene, 1, 0, 0, 0, &reporter);
+    CHECK(errors.empty());
+}
+
+TEST_CASE(
+    "The diagnostic is a side effect: encoded bytes are identical with and without a reporter")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    Unique<Scene> scene = Scene::Create(types);
+
+    const Entity target = scene->CreateEntity();
+    scene->Add<Authority>(target, Authority{.Tier = Tier::Local});
+    const Entity seat = scene->CreateEntity();
+    scene->Add<Possesses>(seat, Possesses{.Pawn = target});
+    NetIdAllocator allocator;
+    AssignServerNetIds(*scene, allocator);
+
+    const vector<u8> withoutReporter = EncodeSnapshot(*scene, 1, 0);
+    vector<string> errors;
+    const ErrorCapture capture(errors);
+    UnreplicatedReferenceReporter reporter;
+    const vector<u8> withReporter = EncodeSnapshot(*scene, 1, 0, 0, 0, &reporter);
+
+    CHECK(withoutReporter == withReporter);
+    CHECK(errors.size() == 1); // the reporter still fired, it just changed no bytes
 }
 
 TEST_CASE("Dirty gating: only components changed since the acked tick are sent")

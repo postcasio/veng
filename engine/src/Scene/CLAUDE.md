@@ -313,11 +313,15 @@ the `Viewer` and the gameplay state, with no separate pawn to possess — resolv
 and is never marked. That shape is reachable in ordinary use: a server-spawned seat whose
 `SeatPrefab` is left null is created bare and then associated with a prefab whose **root is the
 controlled entity**, so on the client the seat's wire id names that root and its replicated
-`Possesses.Pawn` arrives `Entity::Null` (an `Entity` reference does not cross the wire). A consumer
+`Possesses.Pawn` arrives `Entity::Null` — not because a reference cannot cross the wire (it can:
+`MakeEncodeRef`/`MakeDecodeRef` carry a replicated `Entity` field as its target's `NetId`), but
+because the host never assigned `Possesses.Pawn`, so null is what replicates. A consumer
 in that shape gets no marker and no `OnClientPossession`, and — because the marker's absence reads
 exactly like "this peer controls nothing" — the failure is silent rather than loud. Giving the seat
 a real `Possesses` link, or a non-null `SeatPrefab` so seat and pawn are distinct entities, is what
-brings a consumer inside the rule. Widening the engine rule to model a self-controlling seat is a
+brings a consumer inside the rule. (Where the pawn *is* assigned but names an unreplicated entity,
+the encoder now says so — see [../Net/CLAUDE.md](../Net/CLAUDE.md), "The four faces of a null
+reference".) Widening the engine rule to model a self-controlling seat is a
 design question that has not been settled, so the limit is documented rather than papered over.
 
 ## Interaction — proximity focus as data, firing as a request

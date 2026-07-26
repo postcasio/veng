@@ -95,5 +95,15 @@ namespace Veng
         /// with no TypeRegistry in scope (the node-graph JSON serializer) reads names through this
         /// rather than requiring a registry lookup.
         std::span<const EnumEntry> Enumerators;
+
+        /// @brief Reference-only: declares that this Entity field may name a non-replicated target.
+        ///
+        /// A replicated Entity field naming an entity that is alive but carries no NetIdentity
+        /// encodes as the reserved null wire id and arrives absent on every peer — normally an
+        /// authoring error the replication encoder reports (see RemapComponentReferences and the
+        /// Net/Replication encoder). Set this true where a field deliberately names a client-local
+        /// (Local-tier) entity, so the diagnostic is suppressed for it. Default false. The
+        /// serializer never touches it.
+        bool AllowUnreplicatedReference = false;
     };
 }

@@ -1307,9 +1307,9 @@ if (VENG_BUILD_TESTS)
 
     add_library(veng_test_bad_version_module SHARED tests/module/bad_version_module.cpp)
     target_link_libraries(veng_test_bad_version_module PRIVATE veng::veng)
-    # ABI 5 is the version immediately before the GuiDriverRegistry member landed (ABI 6): a module
-    # built against it must be rejected at load, never entered.
-    target_compile_definitions(veng_test_bad_version_module PRIVATE VENG_MODULE_ABI_VERSION=7u)
+    # ABI 8 is the version immediately before the FieldDescriptor::AllowUnreplicatedReference flag
+    # landed (ABI 9): a module built against it must be rejected at load, never entered.
+    target_compile_definitions(veng_test_bad_version_module PRIVATE VENG_MODULE_ABI_VERSION=8u)
 
     # The cook-module pair, mirroring the runtime pair above: one good module registering an
     # importer for the asset type veng_test_module registers the identity of, one forced onto a

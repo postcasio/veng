@@ -68,12 +68,12 @@ extern "C"
 /// @brief ABI version token baked into both host and module at compile time.
 ///
 /// Bumped whenever VengModuleHost's layout, or the layout of anything a module passes through
-/// it, changes — a stale module registering an AssetTypeInfo of the wrong size is exactly the
-/// silent corruption this token exists to turn into a loud rejection.
+/// it, changes — a stale module registering a FieldDescriptor or AssetTypeInfo of the wrong size
+/// is exactly the silent corruption this token exists to turn into a loud rejection.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 8u
+#define VENG_MODULE_ABI_VERSION 9u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

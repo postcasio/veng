@@ -22,6 +22,18 @@ namespace Veng
     /// @param fieldPtr  Pointer to the AssetHandle field within the destination component.
     using AssetHandleFixup = function<void(void* fieldPtr)>;
 
+    /// @brief Visits each Entity reference leaf during the remap walk, before it is rewritten.
+    ///
+    /// Called at every FieldClass::Reference leaf (once per element of a reference array) with
+    /// the field descriptor declaring the reference and the reference's pre-remap, source-space
+    /// target — so a caller can inspect a reference the walk is about to translate. The
+    /// replication encoder passes one to report a replicated field naming a non-replicated
+    /// target; the prefab-spawn and clone paths pass none (the default empty), where such a
+    /// reference is legitimate and draws no diagnostic.
+    /// @param field   The field descriptor declaring the reference.
+    /// @param target  The reference's value before remap.
+    using EntityReferenceDiagnostic = function<void(const FieldDescriptor& field, Entity target)>;
+
     /// @brief Walks a populated component's fields, remapping Entity references and visiting AssetHandle fields.
     ///
     /// One recursion shared by Prefab::SpawnInto and Scene::Clone. After a component
@@ -35,7 +47,10 @@ namespace Veng
     /// @param registry    Registry used to resolve nested struct/variant field types.
     /// @param remap       Maps a source Entity reference to the destination Entity.
     /// @param assetHandle Visits each AssetHandle field for path-specific rehydration.
+    /// @param diagnose    Optional per-reference inspector, called with each reference's pre-remap
+    ///                    target; empty (the default) on the spawn and clone paths.
     VE_API void RemapComponentReferences(void* obj, const TypeInfo& type,
                                          const TypeRegistry& registry, const EntityRemap& remap,
-                                         const AssetHandleFixup& assetHandle);
+                                         const AssetHandleFixup& assetHandle,
+                                         const EntityReferenceDiagnostic& diagnose = {});
 }

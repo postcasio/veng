@@ -321,16 +321,21 @@ and calls `Run()`.
   (`string`, `vector`, `Ref<T>` flow across freely). veng is **not** a binary-plugin platform — a
   module is recompiled with the engine from one tree. A one-integer `VengModuleAbiVersion`
   handshake (checked by `ModuleLoader` before the entry runs) **rejects a stale module loudly at
-  load**. The ABI is at **version 8** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
+  load**. The ABI is at **version 9** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
   header is authoritative). The host struct is `{ ApplicationRegistry& App; TypeRegistry& Types;
   SystemRegistry& Systems; AssetTypeRegistry& AssetTypes; AssetLoaderRegistry& AssetLoaders;
   GuiDriverRegistry* Drivers; EditorRegistry* Editor; }` — the `Drivers` registry (the
   per-instance presentation-binding catalog, see [src/Gui/CLAUDE.md](src/Gui/CLAUDE.md)) bumped
   the ABI 5 → 6, and the asset-type + loader-factory pair (game-defined asset types, see
-  [src/Asset/CLAUDE.md](src/Asset/CLAUDE.md)) bumped it 6 → 7. Version 8 leaves the host struct
-  alone: what changed is `AssetTypeInfo`, which a module passes *through* `AssetTypes` **by
+  [src/Asset/CLAUDE.md](src/Asset/CLAUDE.md)) bumped it 6 → 7. Version 8 left the host struct
+  alone: what changed was `AssetTypeInfo`, which a module passes *through* `AssetTypes` **by
   value** and which grew `HandleFieldType`, so a stale module would register a short struct —
-  the handshake covers everything crossing the boundary, not only the host layout. The
+  the handshake covers everything crossing the boundary, not only the host layout. **Version 9**
+  is the same class of change one level down: `FieldDescriptor` grew an
+  `AllowUnreplicatedReference` flag (a reflected `Entity` field declaring it may name a
+  non-replicated target — see [src/Net/CLAUDE.md](src/Net/CLAUDE.md)), and a module registers its
+  component descriptors *through* `Types`, so a module built against ABI 8 would register a short
+  descriptor and be read past its end. The
   gameplay *simulation* layer still adds **no** ABI surface: game modes are systems + components,
   the system catalog rides a per-system trait the way a component's `TypeId` does, and a `Level`
   is an asset — registered through the existing registries or authored as data, never through a

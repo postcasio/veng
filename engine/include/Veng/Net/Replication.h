@@ -18,6 +18,7 @@ namespace Veng
     class Prefab;
     class AssetManager;
     class TypeRegistry;
+    struct FieldDescriptor;
 
     /// @brief The wire identity of a replicated entity — a server-assigned id the two ends agree on.
     ///
@@ -174,6 +175,59 @@ namespace Veng
     /// @brief Serialized size of a snapshot packet header: the server tick, input feedback, and last-consumed input tick.
     inline constexpr usize SnapshotHeaderSize = sizeof(u64) + sizeof(i32) + sizeof(u64);
 
+    /// @brief One-shot diagnostic for a replicated Entity field naming an alive, unreplicated target.
+    ///
+    /// A replicated component's Entity field that names an entity which is alive but carries no
+    /// NetIdentity encodes as the reserved null wire id and arrives Entity::Null on every peer,
+    /// indistinguishable there from a deliberately-null field — so the encoder is the last place
+    /// that can tell it is a wire-up error and say so. This reporter turns that case into one
+    /// Log::Error naming the component type, field, referring entity, and target. A deliberately
+    /// null field, a field naming a destroyed entity (a self-correcting stale handle), a field
+    /// naming a replicated entity (one carrying NetIdentity, whether or not its id is yet assigned),
+    /// and a field marked FieldDescriptor::AllowUnreplicatedReference all produce nothing —
+    /// discrimination is on the target component, never on the encoded value.
+    ///
+    /// Encode runs per entity per field per tick, so the report is deduplicated per (component
+    /// type, field, referring entity) for the reporter's lifetime, and bounded: past a cap of
+    /// distinct sites it emits one summary line and falls silent.
+    class VE_API UnreplicatedReferenceReporter
+    {
+    public:
+        /// @brief Reports @p field on @p referrer if @p target is alive-but-unreplicated and new.
+        ///
+        /// A no-op unless @p target is alive, carries no NetIdentity, and the field does not opt
+        /// out — and then only the first time this (component type, field, referring entity) is
+        /// seen, up to the distinct-site cap.
+        /// @param scene          The scene the reference lives in (queried for liveness/NetIdentity).
+        /// @param registry       The type registry resolving @p componentType's name for the message.
+        /// @param componentType  The replicated component carrying the field.
+        /// @param field          The reference field's descriptor (its name and opt-out flag).
+        /// @param referrer       The entity carrying the component.
+        /// @param target         The referenced entity, in @p scene's space (pre-remap).
+        void ReportIfUnreplicated(const Scene& scene, const TypeRegistry& registry,
+                                  TypeId componentType, const FieldDescriptor& field,
+                                  Entity referrer, Entity target);
+
+    private:
+        /// @brief The distinct (type, field, referring entity) sites reported before the cap.
+        static constexpr usize DistinctSiteCap = 64;
+
+        /// @brief A reported site: the component type, field name, and referring entity handle.
+        struct Site
+        {
+            TypeId Type = InvalidTypeId;
+            string Field;
+            u32 Index = Entity::InvalidIndex;
+            u32 Generation = 0;
+            auto operator<=>(const Site&) const = default;
+        };
+
+        /// @brief The sites already reported, so a persistent error costs one line, not one per tick.
+        set<Site> m_Reported;
+        /// @brief Set once the distinct-site cap is hit; further reports are suppressed.
+        bool m_Capped = false;
+    };
+
     /// @brief Encodes a snapshot of the scene's dirty replicated state into a self-delimiting packet.
     ///
     /// Walks every entity carrying a NetIdentity and, for each Replicated component whose change tick
@@ -198,10 +252,14 @@ namespace Veng
     ///                               ReplicationServer::SetInputFeedback); zero for none.
     /// @param lastConsumedInputTick  The client tick whose input the server had consumed when it simulated
     ///                               this state (see ReplicationServer::SetLastConsumedInputTick); zero for none.
+    /// @param reporter               Optional diagnostic for a replicated reference naming a non-replicated
+    ///                               target; null (the default) draws no diagnostic. The encoded bytes are
+    ///                               identical either way — the report is a side effect, not a format change.
     /// @return The encoded packet bytes.
-    [[nodiscard]] VE_API vector<u8> EncodeSnapshot(const Scene& scene, u64 serverTick,
-                                                   u64 sinceTick, i32 inputFeedback = 0,
-                                                   u64 lastConsumedInputTick = 0);
+    [[nodiscard]] VE_API vector<u8>
+    EncodeSnapshot(const Scene& scene, u64 serverTick, u64 sinceTick, i32 inputFeedback = 0,
+                   u64 lastConsumedInputTick = 0,
+                   UnreplicatedReferenceReporter* reporter = nullptr);
 
     /// @brief Applies a snapshot packet to @p scene, latest-wins and recoverable.
     ///
@@ -399,6 +457,8 @@ namespace Veng
         Settings m_Settings;
         unordered_map<Net::ConnectionId, ConnectionState> m_Connections;
         unordered_map<NetId, AssetId> m_EntityPrefabs;
+        /// @brief Reports a replicated reference naming an alive, unreplicated target, once per site.
+        UnreplicatedReferenceReporter m_RefReporter;
     };
 
     /// @brief The client end of state replication: applies spawn/despawn and latest-wins snapshots.

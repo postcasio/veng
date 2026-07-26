@@ -173,9 +173,13 @@ namespace Veng
         // One component's live value as wire bytes: the reflection serializer's WriteFields form with
         // its Entity references translated to NetIds, computed out of line so the live component is
         // never mutated. This is the "current value" the delta codec deltas and the client reconstructs.
+        // With a reporter, each Entity reference is checked against the source scene before the remap
+        // translates it, so a replicated field naming an alive but unreplicated target is reported —
+        // the encoded bytes are identical with or without one.
         vector<u8> EncodeComponentWireBytes(const Scene& scene, Entity entity, TypeId typeId,
                                             const TypeInfo& info, const TypeRegistry& registry,
-                                            const EntityRemap& encodeRef)
+                                            const EntityRemap& encodeRef,
+                                            UnreplicatedReferenceReporter* reporter)
         {
             const AssetHandleFixup keepAsset = [](void*) {};
             const void* component = scene.TryGetComponent(entity, typeId);
@@ -184,7 +188,18 @@ namespace Veng
             WriteFields(valueCopy, component, info, registry);
             const ScratchComponent scratch(info);
             ReadFields(valueCopy, scratch.Ptr, info, registry).value();
-            RemapComponentReferences(scratch.Ptr, info, registry, encodeRef, keepAsset);
+
+            EntityReferenceDiagnostic diagnose;
+            if (reporter != nullptr)
+            {
+                diagnose = [&scene, &registry, reporter, referrer = entity,
+                            typeId](const FieldDescriptor& field, Entity target)
+                {
+                    reporter->ReportIfUnreplicated(scene, registry, typeId, field, referrer,
+                                                   target);
+                };
+            }
+            RemapComponentReferences(scratch.Ptr, info, registry, encodeRef, keepAsset, diagnose);
 
             vector<u8> wire;
             WriteFields(wire, scratch.Ptr, info, registry);
@@ -211,10 +226,10 @@ namespace Veng
         // TypeId the entity actually holds and answers whether it belongs in the payload; the
         // selection is the caller's, so the encode loop itself has no notion of a change tick.
         template <typename Select>
-        EncodedComponents EncodeComponentsWhere(const Scene& scene, Entity entity,
-                                                const vector<TypeId>& replicated,
-                                                const TypeRegistry& registry,
-                                                const EntityRemap& encodeRef, Select select)
+        EncodedComponents
+        EncodeComponentsWhere(const Scene& scene, Entity entity, const vector<TypeId>& replicated,
+                              const TypeRegistry& registry, const EntityRemap& encodeRef,
+                              Select select, UnreplicatedReferenceReporter* reporter)
         {
             EncodedComponents result;
             for (const TypeId typeId : replicated)
@@ -228,8 +243,8 @@ namespace Veng
                     continue;
                 }
                 const TypeInfo& info = registry.Info(typeId);
-                const vector<u8> wire =
-                    EncodeComponentWireBytes(scene, entity, typeId, info, registry, encodeRef);
+                const vector<u8> wire = EncodeComponentWireBytes(scene, entity, typeId, info,
+                                                                 registry, encodeRef, reporter);
                 AppendComponentRecord(result.Bytes, typeId, wire, {}, /*forceFull=*/false,
                                       InvalidTypeId, registry, Net::QuantizationSettings{});
                 ++result.Count;
@@ -243,12 +258,13 @@ namespace Veng
         EncodedComponents EncodeDirtyComponents(const Scene& scene, Entity entity,
                                                 const vector<TypeId>& replicated, u64 sinceTick,
                                                 const TypeRegistry& registry,
-                                                const EntityRemap& encodeRef)
+                                                const EntityRemap& encodeRef,
+                                                UnreplicatedReferenceReporter* reporter)
         {
             const auto changedSince = [&scene, entity, sinceTick](const TypeId typeId)
             { return scene.GetComponentChangeTick(entity, typeId) > sinceTick; };
             return EncodeComponentsWhere(scene, entity, replicated, registry, encodeRef,
-                                         changedSince);
+                                         changedSince, reporter);
         }
 
         // Every replicated component the entity currently carries — the spawn/baseline form.
@@ -257,10 +273,12 @@ namespace Veng
         EncodedComponents EncodeAllComponents(const Scene& scene, Entity entity,
                                               const vector<TypeId>& replicated,
                                               const TypeRegistry& registry,
-                                              const EntityRemap& encodeRef)
+                                              const EntityRemap& encodeRef,
+                                              UnreplicatedReferenceReporter* reporter)
         {
-            return EncodeComponentsWhere(scene, entity, replicated, registry, encodeRef,
-                                         [](TypeId) { return true; });
+            return EncodeComponentsWhere(
+                scene, entity, replicated, registry, encodeRef, [](TypeId) { return true; },
+                reporter);
         }
 
         // The per-(NetId, TypeId) baseline store the delta decoder patches against and updates. Null
@@ -486,8 +504,58 @@ namespace Veng
         return targets.size();
     }
 
+    void UnreplicatedReferenceReporter::ReportIfUnreplicated(const Scene& scene,
+                                                             const TypeRegistry& registry,
+                                                             TypeId componentType,
+                                                             const FieldDescriptor& field,
+                                                             Entity referrer, Entity target)
+    {
+        if (m_Capped || field.AllowUnreplicatedReference)
+        {
+            return;
+        }
+        // A deliberate null and a destroyed target share this branch and are both silent: a null
+        // reference is legitimate, and a stale handle self-corrects. The discriminator is the
+        // target's own component, never the value it encodes to.
+        if (target.IsNull() || !scene.IsAlive(target))
+        {
+            return;
+        }
+        // A target carrying NetIdentity replicates — correct even while its id is still unassigned
+        // (Host::SpawnSeat writes ids by hand; AssignServerNetIds skips an entity already carrying
+        // the component), so an unbound id is a legitimate transient, not this error.
+        if (scene.TryGetComponent(target, TypeIdOf<NetIdentity>()) != nullptr)
+        {
+            return;
+        }
+
+        const Site site{.Type = componentType,
+                        .Field = field.Name,
+                        .Index = referrer.Index,
+                        .Generation = referrer.Generation};
+        if (m_Reported.contains(site))
+        {
+            return;
+        }
+        if (m_Reported.size() >= DistinctSiteCap)
+        {
+            m_Capped = true;
+            Log::Error("replication: further replicated references to alive but unreplicated "
+                       "entities suppressed after {} distinct fields",
+                       DistinctSiteCap);
+            return;
+        }
+        m_Reported.insert(site);
+        Log::Error("replication: {}::{} on entity {}:{} names entity {}:{}, which is alive but "
+                   "carries no NetIdentity — the reference encodes as null and arrives absent on "
+                   "every peer. Give the target a NetIdentity to replicate it, or set the field's "
+                   "AllowUnreplicatedReference if it deliberately names a local entity.",
+                   registry.Info(componentType).Name, field.Name, referrer.Index,
+                   referrer.Generation, target.Index, target.Generation);
+    }
+
     vector<u8> EncodeSnapshot(const Scene& scene, u64 serverTick, u64 sinceTick, i32 inputFeedback,
-                              u64 lastConsumedInputTick)
+                              u64 lastConsumedInputTick, UnreplicatedReferenceReporter* reporter)
     {
         const TypeRegistry& registry = scene.GetTypeRegistry();
         const vector<TypeId> replicated = ReplicatedTypeIds(registry);
@@ -500,8 +568,8 @@ namespace Veng
 
         for (auto [entity, identity] : scene.View<NetIdentity>())
         {
-            const EncodedComponents encoded =
-                EncodeDirtyComponents(scene, entity, replicated, sinceTick, registry, encodeRef);
+            const EncodedComponents encoded = EncodeDirtyComponents(
+                scene, entity, replicated, sinceTick, registry, encodeRef, reporter);
             if (encoded.Count == 0)
             {
                 continue;
@@ -680,7 +748,7 @@ namespace Veng
             // The spawn carries every replicated component the entity currently holds, so the client
             // is whole without waiting a snapshot round.
             const EncodedComponents encoded =
-                EncodeAllComponents(scene, entity, replicated, registry, encodeRef);
+                EncodeAllComponents(scene, entity, replicated, registry, encodeRef, &m_RefReporter);
 
             // An anchored entity replicates its opaque anchor in the spawn record (beside the prefab
             // id), read before the client creates any entity so the claimant resolves at spawn time.
@@ -812,8 +880,8 @@ namespace Veng
                         continue;
                     }
                     const TypeInfo& info = registry.Info(typeId);
-                    const vector<u8> wire =
-                        EncodeComponentWireBytes(scene, entity, typeId, info, registry, encodeRef);
+                    const vector<u8> wire = EncodeComponentWireBytes(
+                        scene, entity, typeId, info, registry, encodeRef, &m_RefReporter);
 
                     std::span<const u8> baseline;
                     if (const auto entIt = state.Baseline.find(identity.Id);

@@ -18,7 +18,8 @@
 namespace Veng
 {
     void RemapComponentReferences(void* obj, const TypeInfo& type, const TypeRegistry& registry,
-                                  const EntityRemap& remap, const AssetHandleFixup& assetHandle)
+                                  const EntityRemap& remap, const AssetHandleFixup& assetHandle,
+                                  const EntityReferenceDiagnostic& diagnose)
     {
         for (const FieldDescriptor& field : type.Fields)
         {
@@ -29,6 +30,11 @@ namespace Veng
             case FieldClass::Reference:
             {
                 Entity& entity = *static_cast<Entity*>(fieldPtr);
+                // The inspector sees the source-space target, before remap rewrites it.
+                if (diagnose)
+                {
+                    diagnose(field, entity);
+                }
                 entity = remap(entity);
                 break;
             }
@@ -42,7 +48,7 @@ namespace Veng
             case FieldClass::Struct:
             {
                 const TypeInfo& nested = registry.Info(field.Type);
-                RemapComponentReferences(fieldPtr, nested, registry, remap, assetHandle);
+                RemapComponentReferences(fieldPtr, nested, registry, remap, assetHandle, diagnose);
                 break;
             }
 
@@ -57,7 +63,7 @@ namespace Veng
                 {
                     const TypeId active = info.VariantActiveType(fieldPtr);
                     RemapComponentReferences(memberPtr, registry.Info(active), registry, remap,
-                                             assetHandle);
+                                             assetHandle, diagnose);
                 }
                 break;
             }
@@ -79,11 +85,17 @@ namespace Veng
                     else if (element.Class == FieldClass::Reference)
                     {
                         Entity& entity = *static_cast<Entity*>(elementPtr);
+                        // The array field carries any opt-out; report against it per element.
+                        if (diagnose)
+                        {
+                            diagnose(field, entity);
+                        }
                         entity = remap(entity);
                     }
                     else if (element.Class == FieldClass::Struct)
                     {
-                        RemapComponentReferences(elementPtr, element, registry, remap, assetHandle);
+                        RemapComponentReferences(elementPtr, element, registry, remap, assetHandle,
+                                                 diagnose);
                     }
                 }
                 break;
