@@ -253,6 +253,97 @@ by code and rebuilt when those move. And a `GuiSurface` on one is display-only: 
 pointer mapping in `Veng/Gui/SurfaceInput.h` maps a flat rectangle, so leave `Seat` at
 `Entity::Null` and the mapping is never reached.
 
+## Curved panels: a display that looks like a curved physical object
+
+A shell's exactness has a geometric consequence worth stating plainly, because it decides
+which of the two primitives a display wants: **a shell's centre of curvature is its eye point,
+so from that eye its curvature is invisible by construction.** Every vertex is equidistant and
+every normal points back at the eye, so the surface presents no depth cue, no varying incidence
+angle, and no compression — it reads as flat, which is exactly what it is engineered to do.
+Adjusting the radius does not change that (the reprojection bound is radius-independent for the
+same reason), and the shell has no parameter that decouples its curvature from its viewing
+distance, because having one would break its contract.
+
+A display that should *look* curved — a curved monitor, a curved instrument fascia, a bent
+signage board — is therefore a different shape: **`Primitives::CurvedPanel`**, a section of a
+cylinder's lateral surface, curved about its local +Y and flat along it.
+
+```cpp
+const vec2 size = Primitives::CurvedPanelSizeForRect(
+    glm::radians(60.0f), aspect,   // the projection the footprint is expressed against
+    vec2(0.85f, 0.60f),            // cover this much of the view, in window fractions
+    0.75f,                         // how far ahead of the eye the panel's centre sits
+    1.0f);                         // curvature radius — a 1000R panel viewed from 750 mm
+const MeshData panel = Primitives::CurvedPanel(size, 1.0f, uvec2(32, 8), panelMaterial);
+const Ref<Mesh> mesh = Mesh::BuildSync(context, panel, "Display Panel");
+```
+
+`size.x` is the panel's **arc length** across the curve and `size.y` its straight height — the
+physical extent, the way a panel's spec sheet states it, not a chord width. The local origin is
+the panel's centre *on its surface*, its normal there is +Z, and its centre of curvature is at
+local `(0, 0, +curvatureRadius)`, so the flanks bend *toward* the viewer. UVs are the same
+top-left-origin, y-down convention the shell uses, and the same `ProjectToScreen` warning applies
+verbatim.
+
+### Choosing between the two
+
+The choice is not about taste, it is about which property is load-bearing:
+
+- **`ProjectionShell` — exact agreement with a screen-space layout.** From its reference eye the
+  document lands on the pixels a screen-space overlay of the same layout would land on, to within
+  `ProjectionShellReprojectionBound` (a fraction of a logical point at a sane grid density). Reach
+  for it when a feature has to line up with something computed in screen space, and when the
+  canvas↔screen mapping being a pure translation is what makes world-anchored placement work.
+- **`CurvedPanel` — a curved physical object.** Its curvature is decoupled from the viewing
+  distance, so the surface has genuine compression toward the flanks, a normal that fans out
+  across it (which is what gives a sheen or fresnel term something to vary over), and a visible
+  bow. It makes **no** claim to reproduce a screen rect: at a 1000R panel viewed from 750 mm a
+  feature near the flank sits **tens of logical points** inward from where a shell would put it.
+  That displacement is the deliverable, not an error to tune away, which is also why there is no
+  bound function analogous to the shell's — between-vertex displacement against a screen-space
+  layout is the geometry, not error.
+
+Two consequences of spending that exactness are worth planning for:
+
+- **A panel's farthest point is its corner, and the corner moves outward as the panel flattens.**
+  A shell puts every vertex at one distance; a panel does not, so the clear volume in front of the
+  eye bounds how gently it may curve, not just how large it may be. Check the corners against
+  whatever geometry surrounds the display before settling on a radius.
+- **World-anchored placement goes through the panel's own hit function.** A layout placed from the
+  document's own extent — anything anchored to the canvas — is indifferent to the mesh's shape and
+  is correct on the first run. Anything anchored to a *world* position needs the ray→panel
+  mapping: transform the eye and the target into panel space and ask
+  **`Primitives::CurvedPanelHit`** for the document coordinate.
+
+```cpp
+// worldFromPanel is the panel entity's world transform.
+const mat4 panelFromWorld = glm::inverse(worldFromPanel);
+const vec3 eye(panelFromWorld * vec4(eyeWorld, 1.0f));
+const vec3 target(panelFromWorld * vec4(targetWorld, 1.0f));
+if (const optional<vec2> uv = Primitives::CurvedPanelHit(size, 1.0f, eye, target - eye))
+{
+    // uv is in the same top-left-origin, y-down space the document lays out in.
+}
+```
+
+It returns `nullopt` when the ray reaches no part of the panel — off its edges, or onto its back —
+so a marker culls itself. Use it rather than hand-rolling the intersection: a hand-rolled solve
+and the generator will disagree about the parameterization at exactly the moment a marker drifts
+off its target, and the most common way to get it wrong is to take the nearer of the two cylinder
+roots instead of the nearer one that lands on the panel (which reads as correct culling near the
+edges).
+
+### The flat end of the range
+
+There is no sentinel radius meaning flat. A large `curvatureRadius` degenerates smoothly toward
+`Plane`'s geometry — the deviation is the sagitta, `size.x² / (8·curvatureRadius)` — and
+`curvatureRadius > 0` is required, because `Plane` already is the flat shape and a sentinel would
+be a second spelling of one. Density buys something different here than on a shell, too: a
+shell's grid buys alignment against a closed-form bound, a panel's buys silhouette and shading
+smoothness. The vertical count is nearly free — the panel is straight along +Y, so a single band
+is geometrically exact and further bands exist only to give a fragment shader vertex data to
+interpolate.
+
 ## The one gotcha: hot cores desaturate
 
 A bright, saturated emissive color does **not** keep its hue at its center. The scene tone

@@ -793,6 +793,11 @@ if (VENG_BUILD_TESTS)
             # inverse, which cancels a vertical mirror) — plus the closed-form reprojection
             # bound against the exact per-chord error over the real grid.
             tests/unit/projection_shell.cpp
+            # curved_panel.cpp pins Primitives::CurvedPanel and its two companions: the frame and the
+            # y-down UVs through ProjectToScreen, CurvedPanelHit inverting the generator's
+            # parameterization at every vertex (including the far-root regime a nearer-root solve
+            # misses), and CurvedPanelSizeForRect's edges landing on a screen rect's edge rays.
+            tests/unit/curved_panel.cpp
             tests/unit/bounds.cpp
             tests/unit/mesh_sockets.cpp
             tests/unit/visibility.cpp

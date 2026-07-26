@@ -640,6 +640,13 @@ document-on-mesh geometry proof: overlay versus shell at the reference pose, plu
 control). Authoring one is
 [docs/guides/diegetic-ui.md](../../../docs/guides/diegetic-ui.md#perspective-true-shells-a-panel-that-agrees-with-a-screen-space-layout).
 
+**A display that should look curved is the other generator, `Primitives::CurvedPanel`.** A shell's
+centre of curvature *is* its eye point, so from that eye its curvature is invisible by construction —
+a panel's curvature is instead decoupled from its viewing distance, at the cost of the exact
+screen-space agreement. Its `CurvedPanelHit` companion is what a document on one uses to place a
+world-anchored marker, since the canvas↔screen mapping is no longer a translation. The choice between
+the two is written up beside the shell's section in the same guide.
+
 ## The engine-driven scene component family
 
 The screen-space overlay is a reflected component too — the engine-driven scene component family

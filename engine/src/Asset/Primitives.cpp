@@ -330,6 +330,215 @@ namespace Veng::Primitives
         return worst * chord * 0.5f;
     }
 
+    MeshData CurvedPanel(const vec2 size, const f32 curvatureRadius, const uvec2 subdivisions,
+                         AssetHandle<MaterialInstance> material)
+    {
+        VE_ASSERT(curvatureRadius > 0.0f,
+                  "Primitives::CurvedPanel: curvatureRadius must be > 0 (got {})", curvatureRadius);
+        VE_ASSERT(size.x > 0.0f && size.y > 0.0f,
+                  "Primitives::CurvedPanel: size must be positive on both axes (got {}x{})", size.x,
+                  size.y);
+
+        const u32 nx = std::max(1u, subdivisions.x);
+        const u32 ny = std::max(1u, subdivisions.y);
+
+        // The panel spans [-halfAngle, +halfAngle] about the axis. A column's angle is linear in u
+        // because size.x is an arc length and the columns are spaced uniformly along it.
+        const f32 halfAngle = size.x * 0.5f / curvatureRadius;
+        const f32 halfHeight = size.y * 0.5f;
+
+        MeshData data;
+        data.Vertices.reserve(static_cast<usize>(nx + 1) * (ny + 1));
+        data.Indices.reserve(static_cast<usize>(nx) * ny * 6);
+
+        for (u32 j = 0; j <= ny; ++j)
+        {
+            const f32 v = static_cast<f32>(j) / static_cast<f32>(ny);
+            // UVs are top-left origin and y-down while the panel is +Y up, hence the single negation
+            // on the vertical axis and nowhere else.
+            const f32 y = halfHeight - v * size.y;
+            for (u32 i = 0; i <= nx; ++i)
+            {
+                const f32 u = static_cast<f32>(i) / static_cast<f32>(nx);
+                const f32 angle = (u * 2.0f - 1.0f) * halfAngle;
+                const f32 sinAngle = std::sin(angle);
+                const f32 cosAngle = std::cos(angle);
+
+                // The axis runs through (0, y, +curvatureRadius), so the surface point is one radius
+                // from it and the panel's centre column sits at the local origin. The sagitta is
+                // written as 2R·sin²(angle/2) rather than R·(1 - cos angle), which keeps its
+                // precision as the panel flattens and the cosine approaches 1.
+                const f32 halfSin = std::sin(angle * 0.5f);
+                const f32 sagitta = 2.0f * curvatureRadius * halfSin * halfSin;
+
+                // The normal points back at the axis, so the panel faces +Z and its flanks bend
+                // toward a viewer there; the tangent is d(position)/d(angle), already unit length.
+                data.Vertices.push_back(CanonicalVertex{
+                    .Position = vec3(curvatureRadius * sinAngle, y, sagitta),
+                    .Normal = vec3(-sinAngle, 0.0f, cosAngle),
+                    .Tangent = vec4(cosAngle, 0.0f, sinAngle, 1.0f),
+                    .UV = vec2(u, v),
+                });
+            }
+        }
+
+        const u32 stride = nx + 1;
+        for (u32 j = 0; j < ny; ++j)
+        {
+            for (u32 i = 0; i < nx; ++i)
+            {
+                const u32 a = j * stride + i;
+                const u32 b = a + 1;
+                const u32 c = a + stride;
+                const u32 d = c + 1;
+
+                // CCW seen from +Z: +u steps along +X while +v steps along -Y, so
+                // cross(c - a, b - a) points at +Z, matching the normals.
+                data.Indices.push_back(a);
+                data.Indices.push_back(c);
+                data.Indices.push_back(b);
+
+                data.Indices.push_back(b);
+                data.Indices.push_back(c);
+                data.Indices.push_back(d);
+            }
+        }
+
+        FinishSubMesh(data, std::move(material));
+        return data;
+    }
+
+    optional<vec2> CurvedPanelHit(const vec2 size, const f32 curvatureRadius, const vec3 origin,
+                                  const vec3 direction)
+    {
+        VE_ASSERT(curvatureRadius > 0.0f,
+                  "Primitives::CurvedPanelHit: curvatureRadius must be > 0 (got {})",
+                  curvatureRadius);
+        VE_ASSERT(size.x > 0.0f && size.y > 0.0f,
+                  "Primitives::CurvedPanelHit: size must be positive on both axes (got {}x{})",
+                  size.x, size.y);
+
+        // Ray against the infinite cylinder of radius curvatureRadius about the line x = 0,
+        // z = curvatureRadius running along Y: the height component drops out of the quadratic
+        // entirely, so the solve is two-dimensional in XZ.
+        const f32 a = direction.x * direction.x + direction.z * direction.z;
+        if (a <= 0.0f)
+        {
+            // A ray along the axis lies either everywhere or nowhere on the surface; neither is a hit.
+            return std::nullopt;
+        }
+
+        const f32 b = 2.0f * (origin.x * direction.x + (origin.z - curvatureRadius) * direction.z);
+        // Expanded rather than written as |origin - axis|^2 - radius^2: that form differences two
+        // squares of magnitude radius^2, and a near-flat panel's large radius reduces the remainder
+        // to rounding noise.
+        const f32 c = origin.x * origin.x + origin.z * origin.z - 2.0f * curvatureRadius * origin.z;
+        const f32 discriminant = b * b - 4.0f * a * c;
+        if (discriminant < 0.0f)
+        {
+            return std::nullopt;
+        }
+
+        // The stable quadratic. One of (-b ± sqrt(discriminant)) cancels, and at a large radius both
+        // terms are of order radius, so the textbook form loses exactly the root that matters.
+        const f32 q = -0.5f * (b + std::copysign(std::sqrt(discriminant), b));
+        if (q == 0.0f)
+        {
+            // A double root at t = 0: the ray starts on the surface and never re-enters it.
+            return std::nullopt;
+        }
+
+        const f32 first = q / a;
+        const f32 second = c / q;
+        const f32 distances[2] = {std::min(first, second), std::max(first, second)};
+
+        const f32 halfAngle = size.x * 0.5f / curvatureRadius;
+        const f32 halfHeight = size.y * 0.5f;
+
+        // Ascending, so the first root that lands on the panel's front is the nearest such hit — not
+        // merely the nearest root, which for an eye outside the cylinder is the back-facing entry
+        // point and often outside the panel's extent as well.
+        for (const f32 hitDistance : distances)
+        {
+            if (hitDistance <= 0.0f)
+            {
+                continue;
+            }
+
+            const vec3 point = origin + direction * hitDistance;
+            if (std::abs(point.y) > halfHeight)
+            {
+                continue;
+            }
+
+            // The angle about the axis, measured the way the generator measures it: sine along +X,
+            // cosine from the axis out toward the panel's centre column.
+            const f32 angle = std::atan2(point.x, curvatureRadius - point.z);
+            if (std::abs(angle) > halfAngle)
+            {
+                continue;
+            }
+
+            // Front face only. The outward normal points back at the axis (unnormalized here, which
+            // a sign test does not care about), so a ray arriving from the +Z side has a negative dot.
+            const vec3 normal(-point.x, 0.0f, curvatureRadius - point.z);
+            if (glm::dot(direction, normal) >= 0.0f)
+            {
+                continue;
+            }
+
+            return vec2(0.5f + angle / (2.0f * halfAngle), 0.5f - point.y / size.y);
+        }
+
+        return std::nullopt;
+    }
+
+    vec2 CurvedPanelSizeForRect(const f32 fovY, const f32 aspect, const vec2 rectSize,
+                                const f32 distance, const f32 curvatureRadius)
+    {
+        constexpr f32 Pi = 3.14159265358979323846f;
+        constexpr f64 QuarterTurn = 1.57079632679489661923;
+        VE_ASSERT(aspect > 0.0f, "Primitives::CurvedPanelSizeForRect: aspect must be > 0 (got {})",
+                  aspect);
+        VE_ASSERT(fovY > 0.0f && fovY < Pi,
+                  "Primitives::CurvedPanelSizeForRect: fovY must lie in (0, pi) radians (got {})",
+                  fovY);
+        VE_ASSERT(distance > 0.0f,
+                  "Primitives::CurvedPanelSizeForRect: distance must be > 0 (got {})", distance);
+        VE_ASSERT(curvatureRadius > 0.0f,
+                  "Primitives::CurvedPanelSizeForRect: curvatureRadius must be > 0 (got {})",
+                  curvatureRadius);
+        VE_ASSERT(rectSize.x > 0.0f && rectSize.y > 0.0f,
+                  "Primitives::CurvedPanelSizeForRect: rectSize must be positive on both axes (got "
+                  "{}x{})",
+                  rectSize.x, rectSize.y);
+
+        // Evaluated in double: as the panel flattens the two terms of the half-arc cancel to
+        // O(distance/curvatureRadius) and their difference is then multiplied by the radius, so f32
+        // cancellation would surface as noise in the near-flat width.
+        const f64 tanHalfFov = std::tan(static_cast<f64>(fovY) * 0.5);
+        const f64 eyeDistance = static_cast<f64>(distance);
+        const f64 radius = static_cast<f64>(curvatureRadius);
+
+        // The rect's horizontal edge ray as a screen tangent. A rect fraction spans that fraction of
+        // the whole window, so its half-extent in NDC is the fraction itself.
+        const f64 edgeTangent =
+            static_cast<f64>(rectSize.x) * static_cast<f64>(aspect) * tanHalfFov;
+        const f64 alpha = std::atan(edgeTangent);
+        const f64 argument = (eyeDistance - radius) * std::sin(alpha) / radius;
+
+        // phi_edge, the half-arc the panel subtends about its own axis. An argument past 1 has no
+        // solution — the eye is outside the cylinder and the edge ray misses it — so the arc clamps
+        // to the silhouette, the widest this curvature admits from that eye.
+        const f64 halfArc = argument > 1.0
+                                ? std::asin(radius / (eyeDistance - radius)) + QuarterTurn
+                                : alpha + std::asin(argument);
+
+        return vec2(
+            static_cast<f32>(2.0 * radius * halfArc),
+            static_cast<f32>(2.0 * eyeDistance * tanHalfFov * static_cast<f64>(rectSize.y)));
+    }
+
     MeshData Sphere(f32 radius, u32 rings, u32 segments, AssetHandle<MaterialInstance> material)
     {
         rings = std::max(3u, rings);

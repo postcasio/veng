@@ -119,6 +119,147 @@ namespace Veng::Primitives
                                                        vec2 rectSize, uvec2 subdivisions,
                                                        vec2 windowExtent);
 
+    /// @brief Cylindrical display panel: a rectangular sheet bent about its local +Y axis and flat along it.
+    ///
+    /// The geometry of a curved monitor, a curved instrument fascia, a bent signage board — a section
+    /// of a cylinder's lateral surface, curved on one axis only. `size` is the panel's own physical
+    /// extent: `size.x` is the **arc length** across the curve — the quantity that stays fixed as the
+    /// curvature changes and the one a panel's spec sheet states, not the chord width — and `size.y`
+    /// the straight height.
+    ///
+    /// The frame is stated rather than left to be inferred, because a sign error in it is invisible.
+    /// The local origin is the panel's centre point *on its surface*; the surface normal there is
+    /// **+Z**; the **centre of curvature is at local `(0, 0, +curvatureRadius)`** — on the normal's
+    /// side, so the flanks bend *toward* a viewer out on +Z. That is the curved-monitor direction and
+    /// the opposite of a dish. Normals point outward at that viewer, tangents follow +U, the winding
+    /// faces +Z, one submesh.
+    ///
+    /// **UVs are top-left origin, y-down**: `(0,0)` is the panel's top-left corner seen from +Z and V
+    /// increases downward — the same convention ProjectionShell documents. It is not a free choice,
+    /// it is what lets a panel sample a document in the orientation the document lays out in.
+    /// @warning A generator written to "+Y up" without stating which way V runs produces a
+    ///          vertically mirrored document, and a test that reprojects a vertex through the
+    ///          generator's own inverse passes anyway. Check the mapping with ProjectToScreen
+    ///          (Veng/Scene/Camera.h), which is the projection the renderer actually uses.
+    ///
+    /// **Vertices are spaced uniformly in arc length**, not uniformly in the angle they subtend at any
+    /// eye. That is the physical property — a panel's pixels are evenly spaced *on the glass* — and it
+    /// is a substantive part of what makes the result read as a panel rather than as a screen-space
+    /// overlay, so it is contract rather than an implementation detail a reader may assume either way.
+    ///
+    /// What density buys here differs from a ProjectionShell's: a shell's grid buys *alignment*
+    /// against a closed-form bound, while a panel's buys **silhouette and shading smoothness** — the
+    /// faceting visible along the curve and the granularity of the normal's sweep across it. The `y`
+    /// count is nearly free: the panel is straight along +Y, so a single band is geometrically exact
+    /// and further bands exist only to give a fragment shader vertex data to interpolate.
+    ///
+    /// A large `curvatureRadius` degenerates smoothly toward Plane's flat geometry — the deviation
+    /// from flat is the sagitta `2·curvatureRadius·sin²(size.x/(4·curvatureRadius))`, which falls as
+    /// `size.x²/(8·curvatureRadius)` — and nothing divides by a vanishing quantity on the way. There
+    /// is no sentinel value meaning flat: `curvatureRadius > 0` is required, and Plane is the flat
+    /// shape. An arc length past `2·pi·curvatureRadius` wraps the cylinder and the sheet overlaps
+    /// itself.
+    /// @param size             Panel extent in world units: x the arc length across the curve, y the straight height.
+    /// @param curvatureRadius  Radius of the cylinder the panel is a section of, in world units.
+    /// @param subdivisions     Grid cells per axis across the panel; clamped to at least 1 each.
+    /// @param material         Material recorded on the produced submesh; empty leaves it unassigned.
+    /// @pre `curvatureRadius > 0` and both components of `size` are > 0.
+    /// @see CurvedPanelHit, CurvedPanelSizeForRect
+    [[nodiscard]] MeshData CurvedPanel(vec2 size, f32 curvatureRadius, uvec2 subdivisions,
+                                       AssetHandle<MaterialInstance> material = {});
+
+    /// @brief Panel UV where a panel-space ray meets a curved panel's front face.
+    ///
+    /// The inverse of CurvedPanel's parameterization, in that panel's own local frame — origin at the
+    /// surface centre, normal +Z, centre of curvature at `(0, 0, +curvatureRadius)`. It is what makes
+    /// a curved display usable for anything world-anchored — a marker, a reticle, a label over a thing
+    /// in the scene: transform the eye and the target into panel space and the returned UV is the
+    /// document coordinate to draw at. Without it a consumer hand-rolls a ray-cylinder intersection,
+    /// and the two disagree about the panel's parameterization at exactly the moment a marker drifts
+    /// off its target.
+    ///
+    /// Three properties of the solve, each of which the obvious implementation gets wrong:
+    ///
+    /// - **The nearer of the two cylinder roots *that lies on the panel* wins, not simply the nearer
+    ///   root.** A ray can enter the infinite cylinder outside the panel's arc or above its height
+    ///   and still reach the panel on the far root — the ordinary case for an eye more than
+    ///   `2·curvatureRadius` from the axis, where the whole panel sits behind the cylinder's near
+    ///   flank. Solving only the nearer root produces a marker that vanishes near the panel's edges,
+    ///   which is easy to mistake for correct culling.
+    /// - **The front face only.** A panel is a display and its back is not a place to draw. The near
+    ///   root of a ray entering the cylinder always presents the back, so rejecting it is also what
+    ///   lets the far root be found.
+    /// - **A UV, never a world point.** The consumer wants the document coordinate; the world point
+    ///   is `origin + t·direction` and was already recoverable.
+    /// @param size             Panel extent as passed to CurvedPanel: x the arc length, y the straight height.
+    /// @param curvatureRadius  Cylinder radius as passed to CurvedPanel.
+    /// @param origin           Ray origin, in the panel's local space.
+    /// @param direction        Ray direction, in the panel's local space; need not be normalized.
+    /// @return The panel UV — top-left origin, y-down, matching CurvedPanel — of the front-face hit
+    ///         at the smallest `t > 0`, or `nullopt` when the ray reaches no part of the panel: it
+    ///         misses the cylinder, its intersections fall outside the arc or the height, it runs
+    ///         parallel to the axis, or it meets only the back.
+    /// @pre `curvatureRadius > 0` and both components of `size` are > 0.
+    /// @warning The mapping inverts the generator only while the panel does not wrap the cylinder
+    ///          (`size.x <= 2·pi·curvatureRadius`). A wrapped panel's overlapping arcs share angles
+    ///          about the axis, so the returned UV names the position within the first turn.
+    /// @see CurvedPanel
+    [[nodiscard]] optional<vec2> CurvedPanelHit(vec2 size, f32 curvatureRadius, vec3 origin,
+                                                vec3 direction);
+
+    /// @brief Curved-panel size whose edges land on the edge rays of a normalized screen rect.
+    ///
+    /// The bridge between "this display should cover 85 % of the view's width" and the physical
+    /// metres CurvedPanel takes. A panel of `curvatureRadius`, centred `distance` ahead of an eye on
+    /// its own normal (the eye on the panel's +Z, looking down the panel's −Z), has exactly the
+    /// returned `size` when its edges sit on the edge rays of the boresight-centred screen rect
+    /// `rectSize` — in `[0,1]` window fractions, the same fractions ProjectionShell takes. It lives
+    /// here rather than in a consumer because it has a closed form that is not obvious and is easy to
+    /// get wrong by iteration.
+    ///
+    /// The derivation, so the implementation is checkable rather than trusted. Put the eye at the
+    /// origin looking down −Z, write `d` for `distance` and `R` for `curvatureRadius`, and place the
+    /// panel's centre at `(0, 0, −d)` with its axis of curvature through `(0, y, −d + R)`. A surface
+    /// point at arc angle `φ` from the centre is
+    ///
+    ///     P(φ) = ( R·sin φ,  y,  −d + R − R·cos φ )
+    ///
+    /// and it lies on the ray of screen tangent `t` when `P.x / (−P.z) = t`, i.e.
+    /// `R·sin φ = t·(d − R) + t·R·cos φ`. Collecting the two sinusoids as a single phase —
+    /// `R·sin φ − t·R·cos φ = R·√(1+t²)·sin(φ − α)` with `α = atan(t)` — and using
+    /// `t/√(1+t²) = sin α` gives the half-arc directly:
+    ///
+    ///     φ_edge = α + asin( (d − R)·sin α / R ),      α = atan( rectSize.x·aspect·tan(fovY/2) )
+    ///
+    /// so `size.x = 2·R·φ_edge`. The height needs no solve, being the flat case: the panel is straight
+    /// along +Y, so at its centre column `size.y = 2·d·tan(fovY/2)·rectSize.y`. Away from that column
+    /// the surface bows toward the eye, so the top and bottom edges project *outside* the rect at the
+    /// flanks — that bow is what a curved panel is, not an error in the solve.
+    ///
+    /// Three regimes, all supported: `R = d` is the eye-centred arc, where `φ_edge = α` and the width
+    /// is `2·d·atan(t)` measured along the arc; `R ≫ d` tends to the flat `2·d·t`; and `R < d` — the
+    /// centre of curvature in front of the eye, a panel wrapping more tightly than an eye-centred arc
+    /// — merely takes the `asin` argument positive and is bounded there like the others.
+    ///
+    /// **An unsolvable combination clamps, and never returns a NaN.** The `asin` argument exceeds 1
+    /// exactly when the eye lies outside the cylinder (`R < d/2`) and the rect's edge ray misses that
+    /// cylinder altogether — the curvature closes the panel off before it reaches the requested rect.
+    /// The returned width is then the widest the curvature admits: the arc out to the surface's
+    /// silhouette as seen from the eye, `φ_edge = asin(R/(d − R)) + pi/2`, which agrees with the
+    /// solved branch at the boundary. The height is unaffected, so a clamped result is a panel
+    /// narrower than requested rather than a degenerate one.
+    /// @param fovY             Vertical field of view in radians of the projection the rect is expressed against.
+    /// @param aspect           Viewport width divided by height of that same projection.
+    /// @param rectSize         Size of the covered screen rect, in [0,1] window fractions, centred on the boresight.
+    /// @param distance         Distance from the eye to the panel's surface centre, in world units.
+    /// @param curvatureRadius  Radius of the cylinder the panel is a section of, in world units.
+    /// @return The `size` to hand CurvedPanel: x the arc length across the curve, y the straight height.
+    /// @pre `aspect > 0`, `0 < fovY < pi`, `distance > 0`, `curvatureRadius > 0`, and both components
+    ///      of `rectSize` are > 0.
+    /// @see CurvedPanel
+    [[nodiscard]] vec2 CurvedPanelSizeForRect(f32 fovY, f32 aspect, vec2 rectSize, f32 distance,
+                                              f32 curvatureRadius);
+
     /// @brief UV sphere of `radius` with `rings` latitude bands and `segments` longitude bands (min 3 each).
     ///
     /// Smooth normals; UVs are (longitude, latitude). One submesh.

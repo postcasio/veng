@@ -217,6 +217,20 @@ and the app still runs — only `smoke_golden` (gated to skip on a non-ASTC devi
   values, so a shell is built by code and rebuilt when they move, never authored into a prefab. The
   authoring story is
   [docs/guides/diegetic-ui.md](../../../docs/guides/diegetic-ui.md#perspective-true-shells-a-panel-that-agrees-with-a-screen-space-layout).
+- **`Primitives::CurvedPanel` is the other display shape, and the two answer different questions.**
+  A section of a cylinder's lateral surface, curved about its local +Y and flat along it — a curved
+  monitor, a curved instrument fascia, a bent signage board. Its `size.x` is an **arc length**, its
+  centre of curvature sits at local `(0, 0, +curvatureRadius)` so the flanks bend toward the viewer,
+  and its vertices are spaced uniformly in arc length (a panel's pixels are evenly spaced on the
+  glass). The distinction from the shell is that a panel's **curvature is decoupled from its viewing
+  distance**, so it genuinely looks curved where a shell — whose centre of curvature *is* its eye
+  point — cannot; it makes no claim to reproduce a screen rect, which is why it has no bound function.
+  Two closed-form companions come with it: **`CurvedPanelHit`** (the panel-space ray → UV that places a
+  world-anchored marker on one, front face only, taking the nearer root *that lands on the panel*) and
+  **`CurvedPanelSizeForRect`** (the size covering a normalized screen rect's angular footprint,
+  clamping to the curvature's silhouette rather than emitting a NaN when a combination is unsolvable).
+  Both primitives keep their own contract; the consumer-facing choice is written up in
+  [docs/guides/diegetic-ui.md](../../../docs/guides/diegetic-ui.md#curved-panels-a-display-that-looks-like-a-curved-physical-object).
 - **A mesh reference's source is `cooked AssetId | inline recipe`.** `MeshRenderer`
   (`Veng/Scene/Components.h`) carries one runtime `AssetHandle<Mesh> Mesh` (the renderer query
   `(Transform, MeshRenderer)` and every draw path read it) plus a serialized **`MeshSource
