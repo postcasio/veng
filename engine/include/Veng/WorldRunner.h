@@ -261,6 +261,11 @@ namespace Veng
         /// capture driving) for Renderer::CaptureSurface components, materializing each one's
         /// SceneCapture on first sight and registering it through @p registerCapture, then pushing this
         /// frame's capture source. Requires the runner to have been given a context and asset manager.
+        ///
+        /// A capture binds onto the first MaterialInstance of its sibling MeshRenderer's mesh — a cooked
+        /// asset shared by every entity drawing it — so two capture-bearing entities on one mesh asset
+        /// resolve to one instance and one slot. That is reported once per runner as a warning rather
+        /// than silently resolved; see Renderer::CaptureSurface.
         /// @param registerCapture  Registers a newly-materialized capture on the compositor drive-list.
         void DriveCaptureSurfaces(const function<void(Renderer::SceneCapture&)>& registerCapture);
 
@@ -296,5 +301,8 @@ namespace Veng
 
         /// @brief The instance counter minting world ids; never reused, so a stale id resolves to nothing.
         u64 m_NextId = 1;
+
+        /// @brief Latch for the shared-capture-material warning, so it is logged once per runner.
+        bool m_WarnedSharedCaptureMaterial = false;
     };
 }

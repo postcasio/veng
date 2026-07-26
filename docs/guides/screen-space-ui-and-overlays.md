@@ -337,11 +337,25 @@ The engine **discovers** the component in the driven scene and **drives** it: it
 owned `SceneCapture` from the authored config on first sight, feeds it to the capture drive-list
 (`RegisterCapture`) against the component's lifetime, and drops it — **self-unregistering** —
 when the component, its entity, or its scene goes away. Each frame it renders the scene from the
-entity's world position and **rebinds the capture's output handle onto the same-entity
-material** — the `GuiSurface` locality rule: the handle is a runtime bindless slot, not a cooked
-id, so it is rebound every frame. The material authors the named texture slot; the component
-fills it. So a mirror is **authored data**: no app-side `RegisterCapture`, no per-frame game
-code.
+entity's world position and **rebinds the capture's output handle onto the sibling
+`MeshRenderer`'s material**: the handle is a runtime bindless slot, not a cooked id, so it is
+rebound every frame. The material authors the named texture slot; the component fills it. So a
+mirror is **authored data**: no app-side `RegisterCapture`, no per-frame game code.
+
+**The bound material is the mesh *asset*'s, so give each capturing entity its own mesh.** The
+target is the first `MaterialInstance` of the mesh the `MeshRenderer` names — a cooked, shared
+asset. Two entities drawing the *same* mesh asset therefore resolve to one material instance and
+one texture slot: the last driven wins, and both surfaces sample that single probe. The engine
+logs a warning the first time it sees one frame bind two captures onto one instance, so the case
+is reported rather than silent; the fix is authoring-side — a mesh asset (or a material instance)
+per capturing entity.
+
+**Teardown reverts the material.** When the component, its entity, or its scene goes away, the
+slots the drive filled are cleared: the texture and sampler slots take an invalid handle and the
+centre slot a zero `vec4`. That is what stops the material sampling a bindless slot the capture's
+release has handed back to the free list — without it the surface does not revert, it freezes on
+whatever texture claims that slot next. A consumer re-pointing a `MeshRenderer` at a different
+mesh calls `CaptureSurface::Unbind()` for the same reason.
 
 **The capture renders the scene *around* the entity, never the entity itself.** A surface is not
 part of its own environment, so the mesh the capture feeds is excluded from it — in every domain
@@ -360,10 +374,37 @@ surfaces, which read a one-frame-old map.
 - **`Refresh`** is the policy: **`EveryFrame`** (a live mirror or moving probe) or **`OnDemand`**
   (render one full refresh, then idle until a system calls `MarkDirty` — a probe for a scene
   that changes rarely). A settled `OnDemand` capture records nothing until re-dirtied.
+- **`TextureSlot`** / **`SamplerSlot`** name the material fields the output handle and the clamp
+  sampler bind onto (defaulting to `Texture` / `Sampler`) — author descriptive names to match a
+  descriptively-named material.
+- **`CenterSlot`** names a `vec4` `Param` field the drive fills with the **probe's world position**
+  in `xyz` and a **validity flag** in `w` (1 once a capture output exists, 0 before the first drive
+  and after teardown). Empty (the default) publishes nothing.
 
 The output is an octahedral map (pre-tonemap linear HDR). Point the sibling material's sampled
 texture slot at it (authored with a placeholder texture the component overrides each frame), and
 the surface reflects, refracts, or displays the scene-from-here.
+
+**A close reflection wants the centre, not just the direction.** Sampling the map by the bare
+reflection direction treats the probe as infinitely distant, which is right for a sky and wrong by
+the whole extent of the reflected content when that content is a metre away. The correction is to
+intersect the reflected ray with a proxy volume about the probe and sample the *probe → hit*
+direction instead — which needs the position the map was rendered from, and a fragment has no route
+to its own draw's world matrix. So author `CenterSlot`, declare the matching `vec4` field, and gate
+the sample on `w`:
+
+```hlsl
+if (p.ProbeCenter.w <= 0.5) { return Unreflected(); }   // no capture yet, or torn down
+const float3 fromCenter = world - p.ProbeCenter.xyz;
+const float b = dot(fromCenter, dir);
+const float c = dot(fromCenter, fromCenter) - radius * radius;
+const float3 hit = fromCenter + dir * (-b + sqrt(max(b * b - c, 0.0)));
+return SampleOctahedral(p.CaptureMap, normalize(hit));
+```
+
+The `w` gate is not optional: a handle slot holds an unpopulated sentinel before the first drive and
+again after teardown, and indexing the bindless array with it is undefined. The flag is the only
+thing that distinguishes that state from a probe legitimately sitting at the world origin.
 
 ## Verifying it
 

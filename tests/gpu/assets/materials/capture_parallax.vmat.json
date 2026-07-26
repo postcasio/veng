@@ -1,0 +1,30 @@
+{
+  "defaultInstance": "0x00000000000024B1",
+  "domain": "Translucent",
+  "shaders": {
+    "vertex": "0x0000000000002400",
+    "fragment": "0x00000000000024A0"
+  },
+  "fields": [
+    {
+      "name": "Texture",
+      "type": "texture",
+      "id": "0x0000000000002329"
+    },
+    {
+      "name": "Sampler",
+      "type": "sampler",
+      "texture": "Texture"
+    },
+    {
+      "name": "Center",
+      "type": "vec4",
+      "value": [0.0, 0.0, 0.0, 0.0]
+    },
+    {
+      "name": "Display",
+      "type": "vec4",
+      "value": [0.0, 0.0, 0.0, 0.0]
+    }
+  ]
+}

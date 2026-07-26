@@ -4,6 +4,7 @@
 #include <Veng/Asset/MaterialInstance.h>
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Diagnostics/Profiler.h>
+#include <Veng/Log.h>
 #include <Veng/Renderer/CaptureSurface.h>
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
@@ -287,6 +288,12 @@ namespace Veng
         VE_ASSERT(m_Context != nullptr && m_Assets != nullptr,
                   "WorldRunner::DriveCaptureSurfaces needs a context and asset manager");
 
+        // The MaterialInstances driven this pass, so a second capture binding onto one already bound is
+        // reported rather than silently winning: the target is the sibling mesh *asset*'s cooked
+        // instance, shared by every entity drawing that asset, so two such entities have one slot
+        // between them.
+        vector<const MaterialInstance*> boundMaterials;
+
         // Registration gates capture driving, not run-state: iterate every world regardless of
         // started/paused, so a paused world still drives its mirrors and a view-less world's captures
         // are engine-driven.
@@ -299,7 +306,7 @@ namespace Veng
                 // mirror placed at it). The surface's material is the sibling MeshRenderer's first.
                 const vec3 position = vec3(WorldMatrix(scene, entity)[3]);
 
-                MaterialInstance* material = nullptr;
+                AssetHandle<MaterialInstance> material;
                 if (const auto* mesh = scene.TryGet<MeshRenderer>(entity); mesh != nullptr)
                 {
                     if (mesh->Mesh.IsLoaded())
@@ -308,8 +315,28 @@ namespace Veng
                             mesh->Mesh.Get()->GetMaterials();
                         if (!materials.empty() && materials[0].IsLoaded())
                         {
-                            material = materials[0].Get();
+                            material = materials[0];
                         }
+                    }
+                }
+
+                if (const MaterialInstance* const target = material.Get(); target != nullptr)
+                {
+                    if (std::ranges::find(boundMaterials, target) != boundMaterials.end())
+                    {
+                        if (!m_WarnedSharedCaptureMaterial)
+                        {
+                            m_WarnedSharedCaptureMaterial = true;
+                            Log::Warn("Two CaptureSurfaces drive material '{}' in one frame: it "
+                                      "belongs to a shared mesh asset, so they overwrite each "
+                                      "other's output and both sample one probe. Give each "
+                                      "capturing entity its own mesh asset or material instance.",
+                                      target->GetName());
+                        }
+                    }
+                    else
+                    {
+                        boundMaterials.emplace_back(target);
                     }
                 }
 

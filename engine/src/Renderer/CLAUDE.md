@@ -937,7 +937,9 @@ before, so no other view is affected.
 Deliberately **not** here: a general per-entity or per-layer visibility mask (this is one nominated
 entity in a closed producer→consumer pair, with no authoring story to get wrong), **recursive
 probes** (another capture-consuming surface in the map reads a one-frame-old result, invisible at a
-reflection's contrast), and **parallax correction**, which belongs to the consuming material.
+reflection's contrast), and **parallax correction**, whose math belongs to the consuming material —
+`CaptureSurface::CenterSlot` publishes the world position the map was rendered from, plus a validity
+flag, so the material has the one input it cannot derive for itself.
 
 ## Pipeline cache
 

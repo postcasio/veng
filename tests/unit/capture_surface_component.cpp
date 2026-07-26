@@ -50,6 +50,7 @@ TEST_CASE("CaptureSurface reflects its authored config but not the runtime recor
     CHECK(HasField(info, "Refresh"));
     CHECK(HasField(info, "TextureSlot"));
     CHECK(HasField(info, "SamplerSlot"));
+    CHECK(HasField(info, "CenterSlot"));
     CHECK_FALSE(HasField(info, "Runtime"));
 }
 
@@ -66,7 +67,7 @@ TEST_CASE("CaptureSurface authored config round-trips through the reflection ser
     const Json authored = {
         {"Shape", "PlanarReflection"},     {"Resolution", 512},
         {"Refresh", "OnDemand"},           {"TextureSlot", "CaptureMap"},
-        {"SamplerSlot", "CaptureSampler"},
+        {"SamplerSlot", "CaptureSampler"}, {"CenterSlot", "CaptureCenter"},
     };
 
     CaptureSurface surface;
@@ -77,6 +78,7 @@ TEST_CASE("CaptureSurface authored config round-trips through the reflection ser
     CHECK(surface.Refresh == CaptureRefresh::OnDemand);
     CHECK(surface.TextureSlot == "CaptureMap");
     CHECK(surface.SamplerSlot == "CaptureSampler");
+    CHECK(surface.CenterSlot == "CaptureCenter");
 
     // Re-serializing yields the same authored record — the on-disk field identity is stable, and the
     // runtime never appears in the document.
@@ -86,6 +88,7 @@ TEST_CASE("CaptureSurface authored config round-trips through the reflection ser
     CHECK(out["Refresh"] == "OnDemand");
     CHECK(out["TextureSlot"] == "CaptureMap");
     CHECK(out["SamplerSlot"] == "CaptureSampler");
+    CHECK(out["CenterSlot"] == "CaptureCenter");
     CHECK_FALSE(out.contains("Runtime"));
 }
 
@@ -100,6 +103,8 @@ TEST_CASE("CaptureSurface defaults are the every-frame environment probe")
     // The slot names default to the built-in Texture / Sampler binding.
     CHECK(surface.TextureSlot == "Texture");
     CHECK(surface.SamplerSlot == "Sampler");
+    // The centre slot is off by default: a material sampling only by direction declares no such field.
+    CHECK(surface.CenterSlot.empty());
     CHECK(surface.GetCapture() == nullptr);
     CHECK_FALSE(surface.GetOutputHandle().IsValid());
     // An every-frame capture reports refreshing before it ever drives — it re-renders each frame.
@@ -117,5 +122,21 @@ TEST_CASE("CaptureSurface MarkDirty re-arms an on-demand refresh before the runt
 
     surface.MarkDirty();
     CHECK(surface.IsRefreshing());
+    CHECK(surface.GetCapture() == nullptr);
+}
+
+TEST_CASE("CaptureSurface Unbind is idempotent and reachable before anything is bound")
+{
+    // The teardown inverse holds no material until a drive gives it one, so it is callable before the
+    // runtime exists, callable again once MarkDirty has materialized the record, and repeatable —
+    // which is what lets the destructor call it unconditionally. All three paths reach no material
+    // and therefore no GPU resource, so this runs with no Context.
+    CaptureSurface surface;
+    surface.Unbind();
+    CHECK(surface.GetCapture() == nullptr);
+
+    surface.MarkDirty();
+    surface.Unbind();
+    surface.Unbind();
     CHECK(surface.GetCapture() == nullptr);
 }

@@ -60,6 +60,16 @@
       "id": "0x0000000000002482",
       "type": "Material",
       "source": "materials/capture_marker.vmat.json"
+    },
+    {
+      "id": "0x00000000000024A0",
+      "type": "Shader",
+      "source": "shaders/capture_parallax.frag.shader.json"
+    },
+    {
+      "id": "0x00000000000024A1",
+      "type": "Material",
+      "source": "materials/capture_parallax.vmat.json"
     }
   ]
 }

@@ -702,9 +702,43 @@ The **third** family member is **`CaptureSurface`** (`Veng/Renderer/CaptureSurfa
 render-to-texture sibling: a reflected component that puts a `SceneCapture` on an entity,
 discovered and driven by the engine (built on first sight, fed to the `RegisterCapture` drive-list
 against its lifetime, self-unregistering when the component/entity/scene goes), rebinding the
-capture's output onto the **same-entity** material each frame (the locality rule) so a mirror /
-probe / monitor is authored data. Its `Refresh` is `EveryFrame` or `OnDemand` (render once, then
-idle until `MarkDirty`). **The capture excludes the entity it feeds** (`CaptureView::Exclude`, set by
+capture's output onto the sibling `MeshRenderer`'s material each frame so a mirror / probe /
+monitor is authored data. Its `Refresh` is `EveryFrame` or `OnDemand` (render once, then
+idle until `MarkDirty`).
+
+**The locality is per mesh *asset*, not per entity.** The bound target is the first
+`MaterialInstance` of the mesh the sibling `MeshRenderer` names — a **cooked, shared** asset, so two
+entities drawing one mesh asset resolve to one instance and one texture slot: the last driven wins
+and both sample that single probe. N independently captured surfaces therefore need N mesh assets (or
+N material instances), and the engine **warns once per run** when one drive pass binds two captures
+onto the same instance rather than resolving it silently. A per-entity material override is
+deliberately *not* built — that is a change to the material model, not to the capture.
+
+**A capture also publishes where it was rendered from.** `CenterSlot` (empty = off, beside
+`TextureSlot`/`SamplerSlot`) names a `Param` field the drive fills with `vec4(probe position,
+validity)` each frame. A **parallax-correcting** fragment needs the centre — the map is a view from
+the probe while the sampling ray leaves the fragment, so the correction intersects that ray with a
+proxy volume about the probe and re-takes the direction from there — and `SurfaceFragmentInput` gives
+a fragment no route to its own draw's world matrix, so without the slot a consumer reimplements the
+drive's own position lookup in a system of its own. The fourth component is a **validity flag**, 1
+only once an output slot exists: without it a fragment cannot distinguish "no capture yet" from "a
+probe at the world origin" and would index the bindless array with an unpopulated handle, so the flag
+is what makes its fallback branch reachable. (A `nointerpolation float3 v_ObjectOrigin` on
+`SurfaceFragmentInput` would serve *any* surface material, but it changes the shared vertex contract —
+the five files the format spans plus every surface fragment — for a need one consuming domain has.)
+
+**Teardown is the exact inverse of the bind.** `CaptureSurface::Unbind` — the `GuiOverlay::Detach`
+counterpart — writes the unbound state back onto the material the last drive bound: an invalid handle
+into the texture and sampler slots and a zero `vec4` into the centre, so the validity flag reads 0 and
+the consumer's fallback is taken. The component's destructor calls it, so removing the component,
+destroying the entity, or dropping the scene stops the material naming a bindless slot the capture's
+release hands back to the free list — without it the sampled result does not revert, it freezes on
+whatever registers into that slot next. The component holds the material it bound **resident** for
+exactly that reason, which is why `Drive` takes an `AssetHandle<MaterialInstance>` rather than a raw
+pointer. A handle slot returns to the unbound sentinel, not to a cooked default: these slots are
+runtime-bound, and a fragment reading one without checking the validity flag indexes the array with it.
+
+**The capture excludes the entity it feeds** (`CaptureView::Exclude`, set by
 the component itself, in every domain the capture draws): a surface is not part of its own
 environment, and a probe sitting on or inside that surface would otherwise both compound its own
 sampled term into the next capture and occlude the environment behind it — see

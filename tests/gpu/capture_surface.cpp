@@ -9,8 +9,12 @@
 //    color reached the frame only via the capture the component built and drove;
 //  - the refresh policy: an EveryFrame capture always reports refreshing, while an OnDemand capture
 //    reports refreshing only until its FaceCount-face refresh completes, then idles until MarkDirty;
+//  - the published probe centre: with CenterSlot named, the drive writes the world position it
+//    rendered from into the material's centre field with a validity flag, which a
+//    parallax-correcting consumer needs and cannot derive from its fragment inputs;
 //  - teardown: a capture built and registered against a component unregisters itself from the
-//    drive-list when the component is removed, its entity destroyed, or its scene dropped.
+//    drive-list when the component is removed, its entity destroyed, or its scene dropped — and the
+//    material it fed stops sampling the capture rather than freezing on a released bindless slot.
 //
 // The render runs under the validation gate, so the capture's producer-before-consumer handoff (the
 // octahedral map left shader-readable before the surface pass samples it) is validation-clean or the
@@ -58,6 +62,9 @@ namespace
     constexpr AssetId ShellInstance{0x2491};
     // A bright red unlit marker, the second mesh the exclusion cases look for in the map.
     constexpr AssetId MarkerInstance{0x2492};
+    // A probe material that reads the published centre: it falls back to bright magenta on a zero
+    // validity flag, and can display the centre itself instead of the capture (its Display param).
+    constexpr AssetId ParallaxInstance{0x24B1};
 
     vec4 DecodeTexel(const vector<u8>& rgba16f, u32 width, u32 x, u32 y)
     {
@@ -160,11 +167,12 @@ namespace
         return scene;
     }
 
-    // The sibling material of the surface entity (the first material of its MeshRenderer mesh).
-    MaterialInstance* SurfaceMaterial(const Scene& scene, Entity entity)
+    // The sibling material of the surface entity (the first material of its MeshRenderer mesh) — the
+    // resident handle Drive takes, so the component can hold it while it has slots bound on it.
+    AssetHandle<MaterialInstance> SurfaceMaterial(const Scene& scene, Entity entity)
     {
         const auto* mesh = scene.TryGet<MeshRenderer>(entity);
-        return mesh->Mesh.Get()->GetMaterials()[0].Get();
+        return mesh->Mesh.Get()->GetMaterials()[0];
     }
 
     // A scene for the exclusion cases: two meshes in distinct directions from the origin — a green
@@ -233,7 +241,7 @@ TEST_CASE_FIXTURE(
 
     const Unique<Viewport> viewport = MakeViewport(Context, assets);
     const CaptureSurface& capture = scene->Get<CaptureSurface>(surfaceEntity);
-    MaterialInstance* const material = SurfaceMaterial(*scene, surfaceEntity);
+    const AssetHandle<MaterialInstance> material = SurfaceMaterial(*scene, surfaceEntity);
 
     // Drive a full round-robin refresh (one cube face per frame). Each frame builds/pushes the
     // capture from the entity's origin, records the capture ahead of the viewport, and renders the
@@ -296,7 +304,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     auto& capture = scene->Get<CaptureSurface>(surfaceEntity);
     capture.TextureSlot = "CaptureMap";
     capture.SamplerSlot = "CaptureSampler";
-    MaterialInstance* const material = SurfaceMaterial(*scene, surfaceEntity);
+    const AssetHandle<MaterialInstance> material = SurfaceMaterial(*scene, surfaceEntity);
 
     const Unique<Viewport> viewport = MakeViewport(Context, assets);
 
@@ -348,7 +356,7 @@ TEST_CASE_FIXTURE(
             BuildCaptureScene(Context, assets, Types, *probe, *backdrop, CaptureRefresh::OnDemand,
                               meshes, surfaceEntity);
         auto& capture = scene->Get<CaptureSurface>(surfaceEntity);
-        MaterialInstance* const material = SurfaceMaterial(*scene, surfaceEntity);
+        const AssetHandle<MaterialInstance> material = SurfaceMaterial(*scene, surfaceEntity);
 
         // While faces are still owed, the capture reports refreshing; each drive pushes one.
         for (u32 frame = 0; frame < SceneCapture::FaceCount; ++frame)
@@ -375,7 +383,7 @@ TEST_CASE_FIXTURE(
             BuildCaptureScene(Context, assets, Types, *probe, *backdrop, CaptureRefresh::EveryFrame,
                               meshes, surfaceEntity);
         const auto& capture = scene->Get<CaptureSurface>(surfaceEntity);
-        MaterialInstance* const material = SurfaceMaterial(*scene, surfaceEntity);
+        const AssetHandle<MaterialInstance> material = SurfaceMaterial(*scene, surfaceEntity);
 
         for (u32 frame = 0; frame < SceneCapture::FaceCount * 2; ++frame)
         {
@@ -383,6 +391,179 @@ TEST_CASE_FIXTURE(
             capture.Drive(Context, assets, *scene, surfaceEntity, vec3(0.0f), material);
         }
         CHECK(capture.IsRefreshing());
+    }
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "capture surface: the drive publishes the probe centre and its validity flag")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(CookCapturePack()).has_value());
+
+    const AssetResult<AssetHandle<MaterialInstance>> parallax =
+        assets.LoadSync<MaterialInstance>(ParallaxInstance);
+    const AssetResult<AssetHandle<MaterialInstance>> backdrop =
+        assets.LoadSync<MaterialInstance>(BackdropInstance);
+    REQUIRE(parallax.has_value());
+    REQUIRE(backdrop.has_value());
+
+    vector<Ref<Mesh>> meshes;
+    Entity surfaceEntity;
+    const Unique<Scene> scene =
+        BuildCaptureScene(Context, assets, Types, *parallax, *backdrop, CaptureRefresh::EveryFrame,
+                          meshes, surfaceEntity);
+    auto& capture = scene->Get<CaptureSurface>(surfaceEntity);
+    capture.CenterSlot = "Center";
+    const AssetHandle<MaterialInstance> material = SurfaceMaterial(*scene, surfaceEntity);
+    const Unique<Viewport> viewport = MakeViewport(Context, assets);
+
+    // Renders one frame (recording @p built's capture ahead of it when one drove) and returns the
+    // frame center — which the surface entity fills, so the center *is* what the material produced.
+    const auto RenderFrame = [&](SceneCapture* built)
+    {
+        viewport->SetViewState({.World = scene.get(), .Camera = FrontCamera(), .Delta = 0.016f});
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                if (built != nullptr)
+                {
+                    built->Render(cmd);
+                }
+                viewport->Render(cmd);
+            });
+        const vector<u8> output = viewport->GetOutput()->GetImage()->Download();
+        return SampleBlock(output, Extent, vec2(0.5f, 0.5f));
+    };
+
+    // Before any drive the material's cooked centre is zero, so its validity flag is clear and the
+    // fragment takes its magenta fallback. That the branch is reachable at all is the point of the
+    // flag: it is what distinguishes an unpopulated handle slot from a probe at the world origin.
+    material->SetParam("Display", vec4(0.0f));
+    const vec4 unbound = RenderFrame(nullptr);
+    CHECK(unbound.r > 0.4f);
+    CHECK(unbound.b > 0.4f);
+    CHECK(unbound.g < 0.15f);
+
+    // Driving from a named world position publishes it: with Display set, the surface renders the
+    // published centre as radiance. Three axes in turn, so the value is shown to be the position
+    // handed to Drive rather than a constant, the origin, or the entity's own transform.
+    material->SetParam("Display", vec4(1.0f, 0.0f, 0.0f, 0.0f));
+
+    const vec4 up = RenderFrame(
+        capture.Drive(Context, assets, *scene, surfaceEntity, vec3(0.0f, 4.0f, 0.0f), material));
+    CHECK(up.g > 0.6f);
+    CHECK(up.g > up.r + 0.3f);
+    CHECK(up.g > up.b + 0.3f);
+
+    const vec4 right = RenderFrame(
+        capture.Drive(Context, assets, *scene, surfaceEntity, vec3(4.0f, 0.0f, 0.0f), material));
+    CHECK(right.r > 0.6f);
+    CHECK(right.r > right.g + 0.3f);
+    CHECK(right.r > right.b + 0.3f);
+
+    const vec4 forward = RenderFrame(
+        capture.Drive(Context, assets, *scene, surfaceEntity, vec3(0.0f, 0.0f, 4.0f), material));
+    CHECK(forward.b > 0.6f);
+    CHECK(forward.b > forward.r + 0.3f);
+    CHECK(forward.b > forward.g + 0.3f);
+
+    // An empty CenterSlot publishes nothing, so the last centre stands: the slot is opt-in, and a
+    // material that only samples by direction declares no such field for the drive to find.
+    capture.CenterSlot.clear();
+    const vec4 unpublished = RenderFrame(
+        capture.Drive(Context, assets, *scene, surfaceEntity, vec3(0.0f, 4.0f, 0.0f), material));
+    CHECK(unpublished.b > 0.6f);
+    CHECK(unpublished.b > unpublished.g + 0.3f);
+}
+
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "capture surface: teardown unbinds, so the material stops sampling the released capture")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(CookCapturePack()).has_value());
+
+    const AssetResult<AssetHandle<MaterialInstance>> parallax =
+        assets.LoadSync<MaterialInstance>(ParallaxInstance);
+    const AssetResult<AssetHandle<MaterialInstance>> backdrop =
+        assets.LoadSync<MaterialInstance>(BackdropInstance);
+    REQUIRE(parallax.has_value());
+    REQUIRE(backdrop.has_value());
+
+    // Drives a full refresh (so the surface is showing the captured backdrop), tears the binding down
+    // the requested way, and renders one more frame with nothing driving the capture.
+    const auto RunTeardown = [&](const bool removeComponent)
+    {
+        vector<Ref<Mesh>> meshes;
+        Entity surfaceEntity;
+        const Unique<Scene> scene =
+            BuildCaptureScene(Context, assets, Types, *parallax, *backdrop,
+                              CaptureRefresh::EveryFrame, meshes, surfaceEntity);
+        auto& capture = scene->Get<CaptureSurface>(surfaceEntity);
+        capture.CenterSlot = "Center";
+        const AssetHandle<MaterialInstance> material = SurfaceMaterial(*scene, surfaceEntity);
+        material->SetParam("Display", vec4(0.0f));
+        const Unique<Viewport> viewport = MakeViewport(Context, assets);
+
+        const auto RenderFrame = [&](SceneCapture* built)
+        {
+            viewport->SetViewState(
+                {.World = scene.get(), .Camera = FrontCamera(), .Delta = 0.016f});
+            Context.ImmediateCommands(
+                [&](CommandBuffer& cmd)
+                {
+                    if (built != nullptr)
+                    {
+                        built->Render(cmd);
+                    }
+                    viewport->Render(cmd);
+                });
+            const vector<u8> output = viewport->GetOutput()->GetImage()->Download();
+            return SampleBlock(output, Extent, vec2(0.5f, 0.5f));
+        };
+
+        vec4 captured{0.0f};
+        for (u32 frame = 0; frame < SceneCapture::FaceCount; ++frame)
+        {
+            auto* const built =
+                capture.Drive(Context, assets, *scene, surfaceEntity, vec3(0.0f), material);
+            REQUIRE(built != nullptr);
+            captured = RenderFrame(built);
+        }
+        CHECK(captured.g > 0.6f);
+        CHECK(captured.g > captured.r + 0.3f);
+        CHECK(captured.g > captured.b + 0.3f);
+
+        if (removeComponent)
+        {
+            scene->Remove<CaptureSurface>(surfaceEntity);
+        }
+        else
+        {
+            capture.Unbind();
+        }
+
+        // With the slots cleared the validity flag reads 0 and the fragment takes its fallback. A
+        // teardown that left them bound renders this frame identically to the one above, because the
+        // material still names the bindless slot the capture's release handed back to the free list.
+        const vec4 reverted = RenderFrame(nullptr);
+        CHECK(reverted.r > 0.4f);
+        CHECK(reverted.b > 0.4f);
+        CHECK(reverted.g < 0.15f);
+    };
+
+    SUBCASE("removing the component clears what its drive bound")
+    {
+        RunTeardown(true);
+    }
+
+    SUBCASE("an explicit Unbind clears it while the component lives on")
+    {
+        RunTeardown(false);
     }
 }
 
@@ -483,7 +664,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const Unique<Scene> scene =
         BuildExclusionScene(Context, assets, Types, *shell, *below, *ahead, meshes, shellEntity);
     const CaptureSurface& capture = scene->Get<CaptureSurface>(shellEntity);
-    MaterialInstance* const material = SurfaceMaterial(*scene, shellEntity);
+    const AssetHandle<MaterialInstance> material = SurfaceMaterial(*scene, shellEntity);
     const Unique<Viewport> viewport = MakeViewport(Context, assets);
 
     // Drives a full round-robin refresh from `probe` with the shell displaying the capture in
@@ -568,7 +749,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const Unique<Scene> scene =
         BuildExclusionScene(Context, assets, Types, *shell, *below, *ahead, meshes, shellEntity);
     const CaptureSurface& capture = scene->Get<CaptureSurface>(shellEntity);
-    MaterialInstance* const material = SurfaceMaterial(*scene, shellEntity);
+    const AssetHandle<MaterialInstance> material = SurfaceMaterial(*scene, shellEntity);
     const Unique<Viewport> viewport = MakeViewport(Context, assets);
 
     // Drives the component (which binds the output onto the material), then overwrites the pushed

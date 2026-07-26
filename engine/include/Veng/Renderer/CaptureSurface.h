@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Veng/Veng.h>
+#include <Veng/Asset/AssetHandle.h>
 #include <Veng/Reflection/Reflect.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Scene/Entity.h>
@@ -67,18 +68,32 @@ namespace Veng::Renderer
     ///
     /// The output is an octahedral map (pre-tonemap linear HDR) the material samples by direction. Its
     /// handle is a runtime bindless slot, not a cooked asset id, so Drive rebinds it onto the sibling
-    /// material's named texture slot each frame — the GuiSurface locality rule and per-frame rebind. The
-    /// material authors the named slot (Material::SetTextureHandle, the no-resident-asset path) and this
-    /// component fills it.
+    /// material's named texture slot each frame — the GuiSurface per-frame rebind. The material authors
+    /// the named slot (Material::SetTextureHandle, the no-resident-asset path) and this component fills
+    /// it, beside a sampler slot and an optional probe-centre slot (see CenterSlot).
+    ///
+    /// **The bound material is the sibling mesh *asset*'s, which is shared by every entity drawing that
+    /// asset.** The target is the first MaterialInstance of the mesh the sibling MeshRenderer names — a
+    /// cooked asset, not a per-entity copy — so two entities drawing one mesh asset resolve to one
+    /// MaterialInstance and one texture slot: the last driven wins and both sample that single probe.
+    /// The locality is therefore per mesh asset, not per entity. A scene wanting N independently
+    /// captured surfaces gives each its own mesh asset (or its own material instance); the engine
+    /// warns once per run when it sees one drive pass bind two captures onto the same MaterialInstance.
     ///
     /// The runtime resources (the SceneCapture and its sampler) are materialized on the first Drive, which
     /// needs the render context and asset manager the engine supplies; a component that never drives
-    /// allocates none.
+    /// allocates none. Teardown is the exact inverse of the bind: the component's destruction clears
+    /// the slots it filled (see Unbind), so the material stops naming a bindless slot the capture's
+    /// release has handed back to the free list.
     struct CaptureSurface
     {
         /// @brief Default-constructs an unmaterialized capture (its runtime is empty until Drive).
         CaptureSurface();
-        /// @brief Releases the owned capture, self-unregistering it from the drive-list.
+        /// @brief Releases the owned capture, self-unregistering it from the drive-list, and unbinds.
+        ///
+        /// The release hands the capture's output slot back to the bindless free list, so the material
+        /// Drive last bound is cleared first (see Unbind) rather than left naming a slot the next
+        /// registration reuses.
         ~CaptureSurface();
         /// @brief Move-constructs, transferring the runtime state.
         CaptureSurface(CaptureSurface&&) noexcept;
@@ -109,6 +124,27 @@ namespace Veng::Renderer
         /// Drive binds the capture's clamp sampler onto the material field of this name (a
         /// SamplerHandle-kind field). The default "Sampler" preserves the built-in binding.
         string SamplerSlot = "Sampler";
+
+        /// @brief Name of the sibling material's slot the probe's world centre binds onto; empty is off.
+        ///
+        /// Named, Drive writes a vec4 onto the material's Param field of this name every frame: `xyz` is
+        /// the world position the map was rendered from, and `w` is a **validity flag** — 1 once the
+        /// capture's output slot exists, 0 before the first Drive materializes it and again once
+        /// teardown clears the slot. Empty (the default) publishes nothing, so a material that only
+        /// samples by direction declares no such field.
+        ///
+        /// A fragment that parallax-corrects its sample needs the centre: the map is a view from the
+        /// probe while the sampling ray leaves the fragment, so the correction intersects that ray with
+        /// a proxy volume about the probe and re-takes the direction from there. Sampling by the bare
+        /// reflection direction instead treats the probe as infinitely distant, which is wrong by the
+        /// whole extent of the reflected content when that content is close. SurfaceFragmentInput
+        /// carries no route to a draw's own world matrix, so without this slot a consumer reimplements
+        /// the position lookup the engine's capture drive already performs.
+        ///
+        /// The flag is what makes a consumer's fallback branch reachable: without it a fragment cannot
+        /// tell "no capture yet" from "a capture centred on the world origin", and would index the
+        /// bindless texture array with an unpopulated handle slot.
+        string CenterSlot;
 
         /// @brief Runtime capture state, materialized on the first Drive; empty until then.
         mutable Unique<CaptureSurfaceRuntime> Runtime;
@@ -146,19 +182,40 @@ namespace Veng::Renderer
         /// refresh is outstanding for OnDemand — so a settled OnDemand capture records nothing. Binds the
         /// capture's output handle onto @p material's named slot every frame (SetTextureHandle writes the
         /// current frame-in-flight region, so the handle must land regardless of whether a face was
-        /// pushed).
+        /// pushed), beside the sampler and — when CenterSlot names one — @p position with its validity
+        /// flag. Only slots the material declares at the matching field kind are written.
         ///
         /// The pushed source excludes @p entity (CaptureView::Exclude), so the capture never draws the
         /// mesh it feeds — the rule has no authoring surface and cannot be misconfigured.
+        ///
+        /// The material is taken as a resident handle rather than a raw pointer because the component
+        /// keeps whatever it bound resident, so its teardown can clear those slots (see Unbind) after
+        /// every other owner of the material has let go.
         /// @param context   The render context the capture allocates on.
         /// @param assets    The asset manager the capture's SceneRenderer loads its shaders through.
         /// @param world     The scene being captured, pushed as this frame's source.
         /// @param entity    The entity this component belongs to; excluded from its own capture.
         /// @param position  The entity's world-space position the capture renders from.
-        /// @param material  The sibling mesh material to bind the output onto; null skips binding.
+        /// @param material  The sibling mesh material to bind onto; an unloaded handle skips binding.
         /// @return The owned capture (built on first use), or nullptr when the resolution is invalid.
         SceneCapture* Drive(Context& context, AssetManager& assets, const Scene& world,
-                            Entity entity, const vec3& position, MaterialInstance* material) const;
+                            Entity entity, const vec3& position,
+                            const AssetHandle<MaterialInstance>& material) const;
+
+        /// @brief Clears the material slots the last Drive filled — the exact inverse of its bind.
+        ///
+        /// Writes the unbound state back onto the material Drive last bound: an invalid handle into the
+        /// texture and sampler slots and a zero vec4 into the centre slot, so the centre's validity flag
+        /// reads 0 and a consumer takes its no-capture fallback branch. Only slots this component
+        /// actually wrote are touched, and it forgets the binding — so it is idempotent, and a no-op
+        /// before the first Drive. The destructor calls it, which is what keeps a material from sampling
+        /// a bindless slot the capture's release has handed back; a consumer that re-points a
+        /// MeshRenderer at a different mesh calls it to release the old material.
+        ///
+        /// @warning A handle slot returns to the unbound sentinel, not to any cooked default the
+        ///          material authored for it — these slots are runtime-bound. A fragment reading one
+        ///          without checking the centre's validity flag indexes the bindless array with it.
+        void Unbind() const;
     };
 }
 
@@ -178,4 +235,5 @@ VE_FIELD(Resolution, .DisplayName = "Resolution", .Display = {.Min = 1})
 VE_FIELD(Refresh, .DisplayName = "Refresh")
 VE_FIELD(TextureSlot, .DisplayName = "Texture Slot")
 VE_FIELD(SamplerSlot, .DisplayName = "Sampler Slot")
+VE_FIELD(CenterSlot, .DisplayName = "Center Slot")
 VE_REFLECT_END();
