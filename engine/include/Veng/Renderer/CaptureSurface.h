@@ -49,6 +49,26 @@ namespace Veng::Renderer
         OnDemand,
     };
 
+    /// @brief Which frame the capture's six faces are oriented in.
+    ///
+    /// The capture still renders from the entity's world position either way; this selects the
+    /// orientation of the face cameras, and so the frame the resulting octahedral map is sampled in.
+    enum class CaptureAlignment : u8
+    {
+        /// @brief Render the faces along fixed world axes — a world-oriented map sampled by world direction.
+        World,
+        /// @brief Render the faces in the entity's own frame — a body-fixed map sampled in the entity's frame.
+        ///
+        /// A probe rigidly attached to a moving body (a cockpit canopy, a car mirror, a monitor on a
+        /// moving platform) sees a body-fixed interior that a world-aligned map smears across its
+        /// round-robin refresh as the body turns, since a full refresh spans SceneCapture::FaceCount
+        /// frames. Orienting the faces to the entity holds that interior still in the map, so the
+        /// refresh latency falls only on content outside the body — distant, lower-contrast, and weakly
+        /// reflected. The consuming material samples the map by a direction expressed in the entity's
+        /// local frame (its reconstructed object axes), not by the world direction a world-aligned map takes.
+        Entity,
+    };
+
     /// @brief A scene entity's declaration of a render-to-texture capture the engine discovers and drives.
     ///
     /// A reflected scene component, the render-to-texture sibling of GuiSurface: where GuiSurface maps a
@@ -111,6 +131,9 @@ namespace Veng::Renderer
 
         /// @brief When the engine re-renders the capture (see CaptureRefresh).
         CaptureRefresh Refresh = CaptureRefresh::EveryFrame;
+
+        /// @brief Which frame the capture's faces are oriented in (see CaptureAlignment).
+        CaptureAlignment Alignment = CaptureAlignment::World;
 
         /// @brief Name of the sibling material's texture slot the capture output binds onto.
         ///
@@ -198,6 +221,10 @@ namespace Veng::Renderer
         /// @param entity    The entity this component belongs to; excluded from its own capture.
         /// @param position  The world-space position the capture renders from, published as the centre.
         /// @param alpha     Interpolation fraction the captured content is drawn at, in [0, 1).
+        /// @param faceBasis Orthonormal basis the face cameras are oriented by — identity for a
+        ///                  World-aligned capture, the entity's own draw rotation for an Entity-aligned
+        ///                  one (see CaptureAlignment and CaptureView::FaceBasis). The caller resolves it
+        ///                  at @p alpha alongside @p position so the faces and the content share one pose.
         /// @param material  The sibling mesh material to bind onto; an unloaded handle skips binding.
         /// @pre @p position is resolved at @p alpha — for an entity-tracking probe, through
         ///      Scene::GetInterpolatedWorldTransform at this same alpha. The two place the capture's
@@ -207,7 +234,7 @@ namespace Veng::Renderer
         ///      sweeps (see CaptureView::Alpha).
         /// @return The owned capture (built on first use), or nullptr when the resolution is invalid.
         SceneCapture* Drive(Context& context, AssetManager& assets, const Scene& world,
-                            Entity entity, const vec3& position, f32 alpha,
+                            Entity entity, const vec3& position, f32 alpha, const mat3& faceBasis,
                             const AssetHandle<MaterialInstance>& material) const;
 
         /// @brief Clears the material slots the last Drive filled — the exact inverse of its bind.
@@ -237,10 +264,16 @@ VE_ENUMERATOR(EveryFrame)
 VE_ENUMERATOR(OnDemand)
 VE_ENUM_END();
 
+VE_ENUM(::Veng::Renderer::CaptureAlignment, 0xBF0441F13ADF33AFULL)
+VE_ENUMERATOR(World)
+VE_ENUMERATOR(Entity)
+VE_ENUM_END();
+
 VE_REFLECT(::Veng::Renderer::CaptureSurface, 0x59B48CAC6127A406ULL)
 VE_FIELD(Shape, .DisplayName = "Shape")
 VE_FIELD(Resolution, .DisplayName = "Resolution", .Display = {.Min = 1})
 VE_FIELD(Refresh, .DisplayName = "Refresh")
+VE_FIELD(Alignment, .DisplayName = "Alignment")
 VE_FIELD(TextureSlot, .DisplayName = "Texture Slot")
 VE_FIELD(SamplerSlot, .DisplayName = "Sampler Slot")
 VE_FIELD(CenterSlot, .DisplayName = "Center Slot")

@@ -216,7 +216,10 @@ namespace Veng::Renderer
 
         CameraView camera;
         camera.SetPerspective(glm::radians(90.0f), 1.0f, m_View.Near, m_View.Far);
-        camera.SetView(m_View.Position, m_View.Position + FaceForward[face], FaceUp[face]);
+        // The face bases are oriented by the view's basis: identity renders along fixed world axes,
+        // and the carrier's own rotation renders the faces in the carrier's frame (see FaceBasis).
+        camera.SetView(m_View.Position, m_View.Position + m_View.FaceBasis * FaceForward[face],
+                       m_View.FaceBasis * FaceUp[face]);
 
         m_Renderer->Execute(cmd, SceneView{.World = *m_View.World,
                                            .Camera = camera,

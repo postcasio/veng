@@ -254,8 +254,8 @@ TEST_CASE_FIXTURE(
     vector<u8> output;
     for (u32 frame = 0; frame < SceneCapture::FaceCount; ++frame)
     {
-        auto* const built =
-            capture.Drive(Context, assets, *scene, surfaceEntity, vec3(0.0f), 0.0f, material);
+        auto* const built = capture.Drive(Context, assets, *scene, surfaceEntity, vec3(0.0f), 0.0f,
+                                          mat3(1.0f), material);
         REQUIRE(built != nullptr);
         viewport->SetViewState({.World = scene.get(), .Camera = FrontCamera(), .Delta = 0.016f});
         Context.ImmediateCommands(
@@ -280,6 +280,61 @@ TEST_CASE_FIXTURE(
     // center only through the capture, never a direct line of sight.
     const vec4 corner = SampleBlock(output, Extent, vec2(0.08f, 0.08f), 2);
     CHECK(corner.g < 0.2f);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "capture surface: an entity-aligned basis orients the faces, so the map rotates "
+                  "with the carrier")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(CookCapturePack()).has_value());
+
+    const AssetResult<AssetHandle<MaterialInstance>> probe =
+        assets.LoadSync<MaterialInstance>(ProbeInstance);
+    const AssetResult<AssetHandle<MaterialInstance>> backdrop =
+        assets.LoadSync<MaterialInstance>(BackdropInstance);
+    REQUIRE(probe.has_value());
+    REQUIRE(backdrop.has_value());
+
+    vector<Ref<Mesh>> meshes;
+    Entity surfaceEntity;
+    const Unique<Scene> scene =
+        BuildCaptureScene(Context, assets, Types, *probe, *backdrop, CaptureRefresh::EveryFrame,
+                          meshes, surfaceEntity);
+
+    const Unique<Viewport> viewport = MakeViewport(Context, assets);
+    const CaptureSurface& capture = scene->Get<CaptureSurface>(surfaceEntity);
+    const AssetHandle<MaterialInstance> material = SurfaceMaterial(*scene, surfaceEntity);
+
+    // The probe material samples the map in the -Y direction, where the green backdrop sits, so a
+    // world-aligned capture renders green there (the first case). A basis rotating the carrier 180
+    // degrees about X aims the -Y face at world +Y instead — empty scene — so the same -Y sample now
+    // reads black. That the captured content moves with the basis is the whole of entity-alignment:
+    // the faces are oriented in the carrier's frame, and the map is sampled in it.
+    const mat3 flipX(vec3(1.0f, 0.0f, 0.0f), vec3(0.0f, -1.0f, 0.0f), vec3(0.0f, 0.0f, -1.0f));
+
+    vector<u8> output;
+    for (u32 frame = 0; frame < SceneCapture::FaceCount; ++frame)
+    {
+        auto* const built = capture.Drive(Context, assets, *scene, surfaceEntity, vec3(0.0f), 0.0f,
+                                          flipX, material);
+        REQUIRE(built != nullptr);
+        viewport->SetViewState({.World = scene.get(), .Camera = FrontCamera(), .Delta = 0.016f});
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                built->Render(cmd);
+                viewport->Render(cmd);
+            });
+        output = viewport->GetOutput()->GetImage()->Download();
+    }
+
+    // The -Y sample now looks at empty world +Y, so the surface is no longer green-dominant — where a
+    // world-aligned capture (mat3(1.0f)) rendered it green from the same scene and sample direction.
+    const vec4 center = SampleBlock(output, Extent, vec2(0.5f, 0.5f));
+    CHECK(center.g < 0.3f);
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
@@ -316,8 +371,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     vector<u8> output;
     for (u32 frame = 0; frame < SceneCapture::FaceCount; ++frame)
     {
-        auto* const built =
-            capture.Drive(Context, assets, *scene, surfaceEntity, vec3(0.0f), 0.0f, material);
+        auto* const built = capture.Drive(Context, assets, *scene, surfaceEntity, vec3(0.0f), 0.0f,
+                                          mat3(1.0f), material);
         REQUIRE(built != nullptr);
         viewport->SetViewState({.World = scene.get(), .Camera = FrontCamera(), .Delta = 0.016f});
         Context.ImmediateCommands(
@@ -367,12 +422,14 @@ TEST_CASE_FIXTURE(
         for (u32 frame = 0; frame < SceneCapture::FaceCount; ++frame)
         {
             CHECK(capture.IsRefreshing());
-            capture.Drive(Context, assets, *scene, surfaceEntity, vec3(0.0f), 0.0f, material);
+            capture.Drive(Context, assets, *scene, surfaceEntity, vec3(0.0f), 0.0f, mat3(1.0f),
+                          material);
         }
 
         // Its FaceCount-face refresh complete, an on-demand capture idles — it pushes no more views.
         CHECK_FALSE(capture.IsRefreshing());
-        capture.Drive(Context, assets, *scene, surfaceEntity, vec3(0.0f), 0.0f, material);
+        capture.Drive(Context, assets, *scene, surfaceEntity, vec3(0.0f), 0.0f, mat3(1.0f),
+                      material);
         CHECK_FALSE(capture.IsRefreshing());
 
         // MarkDirty re-arms it for another full refresh.
@@ -393,7 +450,8 @@ TEST_CASE_FIXTURE(
         for (u32 frame = 0; frame < SceneCapture::FaceCount * 2; ++frame)
         {
             CHECK(capture.IsRefreshing());
-            capture.Drive(Context, assets, *scene, surfaceEntity, vec3(0.0f), 0.0f, material);
+            capture.Drive(Context, assets, *scene, surfaceEntity, vec3(0.0f), 0.0f, mat3(1.0f),
+                          material);
         }
         CHECK(capture.IsRefreshing());
     }
@@ -457,19 +515,21 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     material->SetParam("Display", vec4(1.0f, 0.0f, 0.0f, 0.0f));
 
     const vec4 up = RenderFrame(capture.Drive(Context, assets, *scene, surfaceEntity,
-                                              vec3(0.0f, 4.0f, 0.0f), 0.0f, material));
+                                              vec3(0.0f, 4.0f, 0.0f), 0.0f, mat3(1.0f), material));
     CHECK(up.g > 0.6f);
     CHECK(up.g > up.r + 0.3f);
     CHECK(up.g > up.b + 0.3f);
 
-    const vec4 right = RenderFrame(capture.Drive(Context, assets, *scene, surfaceEntity,
-                                                 vec3(4.0f, 0.0f, 0.0f), 0.0f, material));
+    const vec4 right =
+        RenderFrame(capture.Drive(Context, assets, *scene, surfaceEntity, vec3(4.0f, 0.0f, 0.0f),
+                                  0.0f, mat3(1.0f), material));
     CHECK(right.r > 0.6f);
     CHECK(right.r > right.g + 0.3f);
     CHECK(right.r > right.b + 0.3f);
 
-    const vec4 forward = RenderFrame(capture.Drive(Context, assets, *scene, surfaceEntity,
-                                                   vec3(0.0f, 0.0f, 4.0f), 0.0f, material));
+    const vec4 forward =
+        RenderFrame(capture.Drive(Context, assets, *scene, surfaceEntity, vec3(0.0f, 0.0f, 4.0f),
+                                  0.0f, mat3(1.0f), material));
     CHECK(forward.b > 0.6f);
     CHECK(forward.b > forward.r + 0.3f);
     CHECK(forward.b > forward.g + 0.3f);
@@ -477,8 +537,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // An empty CenterSlot publishes nothing, so the last centre stands: the slot is opt-in, and a
     // material that only samples by direction declares no such field for the drive to find.
     capture.CenterSlot.clear();
-    const vec4 unpublished = RenderFrame(capture.Drive(Context, assets, *scene, surfaceEntity,
-                                                       vec3(0.0f, 4.0f, 0.0f), 0.0f, material));
+    const vec4 unpublished =
+        RenderFrame(capture.Drive(Context, assets, *scene, surfaceEntity, vec3(0.0f, 4.0f, 0.0f),
+                                  0.0f, mat3(1.0f), material));
     CHECK(unpublished.b > 0.6f);
     CHECK(unpublished.b > unpublished.g + 0.3f);
 }
@@ -534,8 +595,8 @@ TEST_CASE_FIXTURE(
         vec4 captured{0.0f};
         for (u32 frame = 0; frame < SceneCapture::FaceCount; ++frame)
         {
-            auto* const built =
-                capture.Drive(Context, assets, *scene, surfaceEntity, vec3(0.0f), 0.0f, material);
+            auto* const built = capture.Drive(Context, assets, *scene, surfaceEntity, vec3(0.0f),
+                                              0.0f, mat3(1.0f), material);
             REQUIRE(built != nullptr);
             captured = RenderFrame(built);
         }
@@ -595,7 +656,7 @@ TEST_CASE_FIXTURE(
     {
         const auto& capture = scene.Get<CaptureSurface>(entity);
         auto* const built = capture.Drive(Context, assets, scene, entity, vec3(0.0f), 0.0f,
-                                          SurfaceMaterial(scene, entity));
+                                          mat3(1.0f), SurfaceMaterial(scene, entity));
         REQUIRE(built != nullptr);
         driveList.emplace_back(built);
         built->AttachToDriveList(driveList);
@@ -680,8 +741,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         vector<u8> output;
         for (u32 frame = 0; frame < SceneCapture::FaceCount; ++frame)
         {
-            auto* const built =
-                capture.Drive(Context, assets, *scene, shellEntity, probe, 0.0f, material);
+            auto* const built = capture.Drive(Context, assets, *scene, shellEntity, probe, 0.0f,
+                                              mat3(1.0f), material);
             REQUIRE(built != nullptr);
             material->SetParam("Direction", vec4(direction, 0.0f));
             viewport->SetViewState(
@@ -764,8 +825,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         vector<u8> output;
         for (u32 frame = 0; frame < SceneCapture::FaceCount; ++frame)
         {
-            auto* const built =
-                capture.Drive(Context, assets, *scene, shellEntity, vec3(0.0f), 0.0f, material);
+            auto* const built = capture.Drive(Context, assets, *scene, shellEntity, vec3(0.0f),
+                                              0.0f, mat3(1.0f), material);
             REQUIRE(built != nullptr);
             built->SetView({.World = scene.get(), .Position = vec3(0.0f), .Exclude = exclude});
             material->SetParam("Direction", vec4(0.0f, -1.0f, 0.0f, 0.0f));

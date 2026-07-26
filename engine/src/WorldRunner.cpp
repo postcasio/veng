@@ -311,7 +311,21 @@ namespace Veng
                 // Resolving the un-interpolated pose instead puts the probe a partial tick from that
                 // mesh and from everything else rigidly attached to it, by an offset that reopens and
                 // collapses each tick as the alpha sweeps and grows with speed and turn rate.
-                const vec3 position = vec3(scene.GetInterpolatedWorldTransform(entity, alpha)[3]);
+                const mat4 drawTransform = scene.GetInterpolatedWorldTransform(entity, alpha);
+                const vec3 position = vec3(drawTransform[3]);
+
+                // An Entity-aligned capture orients its faces in the carrier's own frame, so a
+                // body-fixed environment stays still in the map as the body turns; a World-aligned one
+                // keeps the identity and renders along fixed world axes. The basis is the draw
+                // transform's rotation with any scale divided out.
+                mat3 faceBasis(1.0f);
+                if (surface.Alignment == Renderer::CaptureAlignment::Entity)
+                {
+                    faceBasis = mat3(drawTransform);
+                    faceBasis[0] = glm::normalize(faceBasis[0]);
+                    faceBasis[1] = glm::normalize(faceBasis[1]);
+                    faceBasis[2] = glm::normalize(faceBasis[2]);
+                }
 
                 // The surface's material is the sibling MeshRenderer's first.
                 AssetHandle<MaterialInstance> material;
@@ -351,8 +365,8 @@ namespace Veng
                 // Register the capture on first materialization; the SceneCapture erases its own
                 // pointer on destruction, so removing the component/entity/scene unregisters it.
                 const bool hadCapture = surface.GetCapture() != nullptr;
-                Renderer::SceneCapture* capture =
-                    surface.Drive(*m_Context, *m_Assets, scene, entity, position, alpha, material);
+                Renderer::SceneCapture* capture = surface.Drive(
+                    *m_Context, *m_Assets, scene, entity, position, alpha, faceBasis, material);
                 if (capture != nullptr && !hadCapture)
                 {
                     registerCapture(*capture);

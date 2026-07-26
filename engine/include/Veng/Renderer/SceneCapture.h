@@ -47,6 +47,17 @@ namespace Veng::Renderer
         const Scene* World = nullptr;
         /// @brief World-space position the six faces render from.
         vec3 Position{0.0f};
+        /// @brief Orientation applied to the six face cameras' bases.
+        ///
+        /// Identity (the default) renders the faces along fixed world axes, so the octahedral map is a
+        /// world-oriented environment sampled by a world-space direction. A caller that passes the
+        /// capture carrier's own rotation renders the faces in that carrier's frame instead, and the
+        /// map is then sampled by a direction expressed in the carrier's local frame. For a probe
+        /// rigidly attached to a moving body this holds the body-fixed environment — a cockpit interior,
+        /// a cabin — still in the map as the body turns, so the round-robin refresh no longer lags it;
+        /// only content outside the body inherits that latency, where it reads far weaker. The basis
+        /// must be orthonormal — a scaled column skews the faces.
+        mat3 FaceBasis{1.0f};
         /// @brief One entity the face renders omit — the surface this capture feeds; Null omits none.
         ///
         /// A surface is not part of its own environment. A capture whose output is sampled by a
