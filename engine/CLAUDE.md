@@ -94,7 +94,11 @@ above and three collaborators it drives each frame:
   each viewport's camera from the `WorldRunner` by the viewport's `{ WorldInstanceId, Viewer }`
   binding and pushes it (`PushViews`) — a one-directional gameplay→render bridge.
 - **`WorldRunner`** (`Veng/WorldRunner.h`) — the sim-domain scheduler. It owns a **flat set of
-  first-class worlds** and ticks every one each frame.
+  first-class worlds** and ticks every one each frame. Its per-frame render-side drive is narrower
+  than its tick: `DriveCaptureSurfaces` walks only the worlds a view **presents**, asked through the
+  caller's `IsPresented` hook (`Application::IsWorldPresented`), since a capture rendered from a world
+  nothing shows can be sampled by nothing — see
+  [src/Renderer/CLAUDE.md](src/Renderer/CLAUDE.md).
 
 **Every `Viewport` has a `ViewportId`.** Minted at `Viewport::Create` and retired at destruction,
 resolved through the `Context`-owned **`ViewportRegistry`** (the render-domain registry joining

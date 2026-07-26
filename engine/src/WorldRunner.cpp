@@ -281,11 +281,13 @@ namespace Veng
         return WorldPauseScope(*this, world);
     }
 
-    void WorldRunner::DriveCaptureSurfaces(
-        const function<void(Renderer::SceneCapture&)>& registerCapture)
+    WorldCaptureDriveResult WorldRunner::DriveCaptureSurfaces(const WorldCaptureDriveInfo& info)
     {
-        VE_ASSERT(m_Context != nullptr && m_Assets != nullptr,
-                  "WorldRunner::DriveCaptureSurfaces needs a context and asset manager");
+        VE_ASSERT(
+            info.Register != nullptr && info.IsPresented != nullptr,
+            "WorldRunner::DriveCaptureSurfaces needs both a Register and an IsPresented hook");
+
+        WorldCaptureDriveResult result;
 
         // The MaterialInstances driven this pass, so a second capture binding onto one already bound is
         // reported rather than silently winning: the target is the sibling mesh *asset*'s cooked
@@ -293,11 +295,19 @@ namespace Veng
         // between them.
         vector<const MaterialInstance*> boundMaterials;
 
-        // Registration gates capture driving, not run-state: iterate every world regardless of
-        // started/paused, so a paused world still drives its mirrors and a view-less world's captures
-        // are engine-driven.
+        // Pause is not what gates capture driving: a paused world a viewport still presents drives its
+        // mirrors. Presentation is — a capture feeds a material sampled by a mesh drawn in some view,
+        // so a world no view shows has nowhere its capture could be seen.
         for (const Unique<World>& world : m_Worlds)
         {
+            if (!info.IsPresented(world->Id))
+            {
+                ++result.WorldsSkipped;
+                result.SurfacesReArmed += ReArmCaptureSurfaces(*world);
+                continue;
+            }
+            ++result.WorldsDriven;
+
             const Scene& scene = world->GetScene();
             // The world's own interpolation fraction, not the frame's: the drive walks every world,
             // and each advances its Sim on its own clock.
@@ -364,14 +374,38 @@ namespace Veng
 
                 // Register the capture on first materialization; the SceneCapture erases its own
                 // pointer on destruction, so removing the component/entity/scene unregisters it.
+                VE_ASSERT(m_Context != nullptr && m_Assets != nullptr,
+                          "WorldRunner::DriveCaptureSurfaces: driving a presented world's capture "
+                          "surface needs a context and asset manager");
                 const bool hadCapture = surface.GetCapture() != nullptr;
                 Renderer::SceneCapture* capture = surface.Drive(
                     *m_Context, *m_Assets, scene, entity, position, alpha, faceBasis, material);
+                ++result.SurfacesDriven;
                 if (capture != nullptr && !hadCapture)
                 {
-                    registerCapture(*capture);
+                    info.Register(*capture);
                 }
             }
         }
+
+        return result;
+    }
+
+    u32 WorldRunner::ReArmCaptureSurfaces(const World& world)
+    {
+        // Only a capture that has already rendered holds content to go stale; one that never
+        // materialized has nothing to re-arm and materializing it here would allocate for a world
+        // nothing is looking at. An EveryFrame capture refreshes on its own, so the re-arm is what
+        // an OnDemand one needs to not resume mid-refresh from a scene that has since moved on.
+        u32 reArmed = 0;
+        for (auto [entity, surface] : world.GetScene().View<Renderer::CaptureSurface>())
+        {
+            if (surface.GetCapture() != nullptr)
+            {
+                surface.MarkDirty();
+                ++reArmed;
+            }
+        }
+        return reArmed;
     }
 }

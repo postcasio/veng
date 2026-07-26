@@ -390,6 +390,36 @@ namespace Veng
         }
     }
 
+    bool ManagedViewportSet::IsWorldPresented(const WorldInstanceId world) const
+    {
+        if (!world.IsValid())
+        {
+            return false;
+        }
+
+        for (const ManagedViewport& managed : m_Viewports)
+        {
+            if (managed.Info.World == world)
+            {
+                return true;
+            }
+        }
+        for (const BoundViewport& bound : m_Bound)
+        {
+            if (bound.World == world)
+            {
+                return true;
+            }
+        }
+
+        // A rebind's destination is presented for the whole in-flight window, including a
+        // present-on-ready wait that spans many frames: the swap happens in one frame, so the
+        // destination's presentation-gated work has to already be warm when it does.
+        const auto destinedFor = [world](const auto& pending) { return pending.World == world; };
+        return std::ranges::any_of(m_PendingRebinds, destinedFor) ||
+               std::ranges::any_of(m_PendingReadyRebinds, destinedFor);
+    }
+
     optional<WorldInstanceId> ManagedViewportSet::GetPendingViewportWorld(const usize index) const
     {
         // Supersession keeps at most one pending rebind per index across both lists, so the first match

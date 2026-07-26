@@ -828,6 +828,36 @@ namespace Veng
         }
     }
 
+    bool Application::IsWorldPresented(const WorldInstanceId world) const
+    {
+        if (!world.IsValid())
+        {
+            return false;
+        }
+
+        // The engine-owned bindings first: an indexed managed viewport, an overlay's bound viewport, or
+        // an in-flight rebind destined for the world (which counts for its whole wait).
+        if (m_ManagedViewports != nullptr && m_ManagedViewports->IsWorldPresented(world))
+        {
+            return true;
+        }
+
+        // Then any viewport a consumer registered and drives itself. Those name a Scene in the
+        // ViewState they push rather than a world handle, so the world's scene identity is what
+        // resolves them — an Offscreen viewport counts too, since a material or panel samples its
+        // output. Without this arm a self-driven viewport's world would read as unpresented and lose
+        // the per-world work presentation gates.
+        const World* resolved = m_WorldRunner->ResolveWorld(world);
+        if (resolved == nullptr || resolved->LiveScene == nullptr)
+        {
+            return false;
+        }
+        const Scene* scene = resolved->LiveScene;
+        return std::ranges::any_of(m_Compositor.GetViewports(),
+                                   [scene](const Renderer::Viewport* viewport)
+                                   { return viewport->GetPresentedScene() == scene; });
+    }
+
     void Application::SyncPresentationPins()
     {
         if (!m_Directory)
@@ -2048,10 +2078,15 @@ namespace Veng
             return;
         }
 
-        // Build, register, and push this frame's source into every world's authored capture surfaces,
-        // so a scene-declared capture joins the drive-list beside any imperatively-registered ones.
-        m_WorldRunner->DriveCaptureSurfaces([this](Renderer::SceneCapture& capture)
-                                            { RegisterCapture(capture); });
+        // Build, register, and push this frame's source into every presented world's authored capture
+        // surfaces, so a scene-declared capture joins the drive-list beside any imperatively-registered
+        // ones. A world no view shows drives none: its captures could not be sampled, and several live
+        // worlds at once is ordinary (make-before-break travel plus a keep-warm dwell), so the drive
+        // would otherwise scale the frame's view budget by the number of worlds held warm.
+        m_WorldRunner->DriveCaptureSurfaces({
+            .Register = [this](Renderer::SceneCapture& capture) { RegisterCapture(capture); },
+            .IsPresented = [this](const WorldInstanceId world) { return IsWorldPresented(world); },
+        });
 
         // The engine render phase, uniform for every app and not overridable. The compositor
         // renders every registered capture first (so a material sampling a capture's output reads

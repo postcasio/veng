@@ -116,6 +116,38 @@ namespace Veng
         function<void(WorldInstanceId world, Scene& scene, u64 tick)> AfterSimStep;
     };
 
+    /// @brief How one WorldRunner::DriveCaptureSurfaces pass resolves presentation and registration.
+    ///
+    /// The runner holds no back-reference out of the sim domain, so it cannot know which of its worlds
+    /// a view shows; presentation answers that through IsPresented, and the compositor drive-list is
+    /// joined through Register. Both hooks are required.
+    struct WorldCaptureDriveInfo
+    {
+        /// @brief Registers a newly-materialized capture on the compositor drive-list.
+        function<void(Renderer::SceneCapture&)> Register;
+        /// @brief Whether any view presents a world — the gate on driving that world's captures.
+        ///
+        /// A capture feeds a material sampled by a mesh drawn in some view, so a world no view shows
+        /// can have no capture of its own sampled and its captures are work nobody can see. A world
+        /// being rebound onto a viewport counts as presented for the whole rebind (see
+        /// ManagedViewportSet::IsWorldPresented), so a make-before-break swap presents a warm probe
+        /// rather than a blank one.
+        function<bool(WorldInstanceId)> IsPresented;
+    };
+
+    /// @brief What one WorldRunner::DriveCaptureSurfaces pass did across the open worlds.
+    struct WorldCaptureDriveResult
+    {
+        /// @brief Worlds whose capture surfaces were driven, because a view presents them.
+        u32 WorldsDriven = 0;
+        /// @brief Worlds skipped whole, because no view presents them.
+        u32 WorldsSkipped = 0;
+        /// @brief Capture surfaces driven across the driven worlds.
+        u32 SurfacesDriven = 0;
+        /// @brief Capture surfaces re-armed in skipped worlds, so a resumed one refreshes.
+        u32 SurfacesReArmed = 0;
+    };
+
     /// @brief An RAII refcounted pause on one world, released when the scope drops.
     ///
     /// While any WorldPauseScope on a world is held the world is paused; the scopes nest (stacked
@@ -255,19 +287,29 @@ namespace Veng
         /// @return The installed scene.
         Scene& InstallScene(WorldInstanceId world, Unique<Scene> scene);
 
-        /// @brief Discovers each world's CaptureSurface components and drives them into the compositor.
+        /// @brief Discovers the presented worlds' CaptureSurface components and drives them into the compositor.
         ///
-        /// Iterates every world's scene (regardless of pause — registration, not run-state, gates
+        /// Iterates every **presented** world's scene (regardless of pause — pause is not what gates
         /// capture driving) for Renderer::CaptureSurface components, materializing each one's
-        /// SceneCapture on first sight and registering it through @p registerCapture, then pushing this
-        /// frame's capture source. Requires the runner to have been given a context and asset manager.
+        /// SceneCapture on first sight and registering it through @p info.Register, then pushing this
+        /// frame's capture source. Requires the runner to have been given a context and asset manager
+        /// whenever a presented world holds a capture surface.
+        ///
+        /// A world @p info.IsPresented rejects is skipped whole: with no view showing it, nothing can
+        /// sample a capture rendered from it, so the face render, its scene walk, and its view slot are
+        /// all waste — and several live worlds is the ordinary state of a runner holding worlds warm,
+        /// so the waste multiplies straight into the frame's view budget. Each already-materialized
+        /// capture in a skipped world is re-armed (CaptureSurface::MarkDirty) instead, so a world that
+        /// becomes presented again rebuilds its maps over the following frames rather than resuming
+        /// from content captured before it went dark.
         ///
         /// A capture binds onto the first MaterialInstance of its sibling MeshRenderer's mesh — a cooked
         /// asset shared by every entity drawing it — so two capture-bearing entities on one mesh asset
         /// resolve to one instance and one slot. That is reported once per runner as a warning rather
         /// than silently resolved; see Renderer::CaptureSurface.
-        /// @param registerCapture  Registers a newly-materialized capture on the compositor drive-list.
-        void DriveCaptureSurfaces(const function<void(Renderer::SceneCapture&)>& registerCapture);
+        /// @param info  The registration and presentation hooks this pass drives through.
+        /// @return What the pass drove, skipped, and re-armed.
+        WorldCaptureDriveResult DriveCaptureSurfaces(const WorldCaptureDriveInfo& info);
 
         /// @brief Returns the owned worlds in id order, for per-world presentation drives.
         [[nodiscard]] const vector<Unique<World>>& GetWorlds() const { return m_Worlds; }
@@ -280,6 +322,15 @@ namespace Veng
 
         /// @brief Mints the next never-reused world id from the instance counter.
         [[nodiscard]] WorldInstanceId MintId();
+
+        /// @brief Re-arms every already-materialized capture in a world whose captures are suppressed.
+        ///
+        /// A capture frozen while its world is unpresented holds the scene as it was when the world went
+        /// dark, so each one that has rendered is marked dirty and rebuilds its faces once the world is
+        /// presented again. A capture that never materialized has nothing to re-arm.
+        /// @param world  The skipped world whose capture surfaces are re-armed.
+        /// @return How many surfaces were re-armed.
+        static u32 ReArmCaptureSurfaces(const World& world);
 
         /// @brief Increments a world's pause refcount (a WorldPauseScope open).
         void AcquirePause(WorldInstanceId world);

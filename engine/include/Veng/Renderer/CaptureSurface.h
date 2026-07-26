@@ -198,7 +198,10 @@ namespace Veng::Renderer
         /// scene content changed so the frozen map is rebuilt. An EveryFrame capture refreshes anyway,
         /// so this is a no-op for it. Before the runtime materializes, it is remembered and applied on
         /// the first Drive.
-        void MarkDirty();
+        ///
+        /// Const because the refresh state lives in the runtime record, not the authored config — the
+        /// same reason Drive is const, so a read-only view of a scene can still re-arm a capture.
+        void MarkDirty() const;
 
         /// @brief Returns the owned capture, or nullptr before the first Drive materializes it.
         [[nodiscard]] SceneCapture* GetCapture() const;

@@ -9,8 +9,8 @@
 //    handle (SetWorldPaused / IsWorldPaused are handle-keyed; no privileged primary);
 //  - SystemContext carries Tasks always, View + Debug for a presented world, and View == nullopt for
 //    a view-less world and around a never-pushed viewport (no crash);
-//  - the engine drives captures over every open world, including a paused one (open-state, not
-//    run-state, gates capture driving).
+//  - the engine drives a presented world's captures even while its sim is paused, and drives none of
+//    an unpresented world's (presentation, not run-state, gates capture driving).
 //
 // It needs a Context for the Application (viewports, captures), so it rides the gpu band though it
 // pins no pixels. Each world is opened through the runner from a synthetic empty-prefab Level naming
@@ -342,7 +342,8 @@ TEST_CASE("SystemContext carries Tasks always and View/Debug only for a presente
     app.Run({});
 }
 
-TEST_CASE("The engine drives captures over every open world, including a paused one")
+TEST_CASE("The engine drives a presented world's captures even paused, and none of an unpresented "
+          "world's")
 {
     TypeRegistry types;
     RegisterBuiltinTypes(types);
@@ -350,30 +351,52 @@ TEST_CASE("The engine drives captures over every open world, including a paused 
 
     DriveApp app(HeadlessInfo(), types, systems);
 
-    Scene* secondary = nullptr;
-    Entity captureEntity = Entity::Null;
+    Scene* presented = nullptr;
+    Scene* dark = nullptr;
+    Entity presentedCapture = Entity::Null;
+    Entity darkCapture = Entity::Null;
+
+    const auto addCapture = [](Scene& scene, Entity& entity)
+    {
+        entity = scene.CreateEntity();
+        scene.Add<Transform>(entity);
+        scene.Add<Renderer::CaptureSurface>(entity).Resolution = 16;
+    };
 
     app.InitFn = [&](DriveApp& a)
     {
         a.AddWorld({}); // world #0, empty
 
-        // A secondary open world with a CaptureSurface entity, its sim paused so only open-state —
-        // not run-state — can drive its capture.
-        secondary = &a.AddWorld({});
-        captureEntity = secondary->CreateEntity();
-        secondary->Add<Transform>(captureEntity);
-        auto& capture = secondary->Add<Renderer::CaptureSurface>(captureEntity);
-        capture.Resolution = 16;
-        secondary->GetSimulation()->SetPaused(true);
+        // Two further open worlds, each with a CaptureSurface entity, both with their sim paused: one
+        // presented through a viewport the app pushes each frame, one presented by nothing.
+        presented = &a.AddWorld({});
+        addCapture(*presented, presentedCapture);
+        presented->GetSimulation()->SetPaused(true);
+
+        dark = &a.AddWorld({});
+        addCapture(*dark, darkCapture);
+        dark->GetSimulation()->SetPaused(true);
+
+        a.AddPresentedViewport();
     };
 
-    app.StepFn = [&](DriveApp&, int frame)
+    app.StepFn = [&](DriveApp& a, int frame)
     {
+        // Presented from the first frame on: the engine resolves presentation from the scene a
+        // registered viewport's pushed ViewState names, so a consumer driving its own viewport is
+        // covered as an engine-managed binding is.
+        a.Viewports.front()->SetViewState({.World = presented, .Delta = 0.016f});
+
         if (frame == 2)
         {
-            // The engine materialized the secondary (paused) world's capture — it drove it despite
-            // the pause, because open-state alone gates capture driving.
-            CHECK(secondary->Get<Renderer::CaptureSurface>(captureEntity).GetCapture() != nullptr);
+            // The presented world's capture materialized despite the pause — run-state is not what
+            // gates capture driving.
+            CHECK(presented->Get<Renderer::CaptureSurface>(presentedCapture).GetCapture() !=
+                  nullptr);
+
+            // The world no view shows drove nothing: with no view to sample it, its capture would be a
+            // scene render and a view slot spent on an image nothing can read.
+            CHECK(dark->Get<Renderer::CaptureSurface>(darkCapture).GetCapture() == nullptr);
         }
     };
 

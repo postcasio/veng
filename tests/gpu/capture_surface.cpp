@@ -903,8 +903,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         .Assets = &assets,
         .Context = &Context,
     });
-    // Registration gates capture driving, not run state, so the world needs no started simulation
-    // (which would in turn need a start context this case has no use for).
+    // Run state does not gate capture driving, so the world needs no started simulation (which would
+    // in turn need a start context this case has no use for) — only presentation does.
     const WorldInstanceId world = runner.OpenWorld(WorldOpenInfo{.StartSimulation = false});
     Scene& scene = runner.InstallScene(world, std::move(built));
     const Unique<Viewport> viewport = MakeViewport(Context, assets);
@@ -915,7 +915,10 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     {
         runner.ResolveWorld(world)->LastAlpha = alpha;
         SceneCapture* driven = nullptr;
-        runner.DriveCaptureSurfaces([&](SceneCapture& c) { driven = &c; });
+        runner.DriveCaptureSurfaces({
+            .Register = [&](SceneCapture& c) { driven = &c; },
+            .IsPresented = [](WorldInstanceId) { return true; },
+        });
         if (driven == nullptr)
         {
             driven = scene.Get<CaptureSurface>(surfaceEntity).GetCapture();
@@ -951,4 +954,90 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const vec4 atHalf = DriveAndRender(0.5f);
     CHECK(atHalf.b > atZero.b + 0.02f);
     CHECK(atHalf.b < atOne.b - 0.02f);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "capture surface: only a presented world's captures are driven, and a world that "
+                  "goes dark is re-armed")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(CookCapturePack()).has_value());
+
+    const AssetResult<AssetHandle<MaterialInstance>> probe =
+        assets.LoadSync<MaterialInstance>(ProbeInstance);
+    const AssetResult<AssetHandle<MaterialInstance>> backdrop =
+        assets.LoadSync<MaterialInstance>(BackdropInstance);
+    REQUIRE(probe.has_value());
+    REQUIRE(backdrop.has_value());
+
+    // Two live worlds, each carrying one on-demand capture surface — the ordinary state of a runner
+    // holding worlds warm while one of them is on screen.
+    SystemRegistry systems;
+    WorldRunner runner({
+        .Types = &Types,
+        .Systems = &systems,
+        .Assets = &assets,
+        .Context = &Context,
+    });
+
+    vector<Ref<Mesh>> meshes;
+    Entity firstEntity;
+    Entity secondEntity;
+    Unique<Scene> firstScene = BuildCaptureScene(Context, assets, Types, *probe, *backdrop,
+                                                 CaptureRefresh::OnDemand, meshes, firstEntity);
+    Unique<Scene> secondScene = BuildCaptureScene(Context, assets, Types, *probe, *backdrop,
+                                                  CaptureRefresh::OnDemand, meshes, secondEntity);
+
+    const WorldInstanceId first = runner.OpenWorld(WorldOpenInfo{.StartSimulation = false});
+    runner.InstallScene(first, std::move(firstScene));
+    const WorldInstanceId second = runner.OpenWorld(WorldOpenInfo{.StartSimulation = false});
+    runner.InstallScene(second, std::move(secondScene));
+
+    const auto SurfaceOf = [&](const WorldInstanceId world, const Entity entity) -> const auto&
+    { return runner.ResolveWorld(world)->GetScene().Get<CaptureSurface>(entity); };
+
+    WorldInstanceId presented = first;
+    u32 registered = 0;
+    const auto Drive = [&]
+    {
+        return runner.DriveCaptureSurfaces({
+            .Register = [&registered](SceneCapture&) { ++registered; },
+            .IsPresented = [&presented](const WorldInstanceId world) { return world == presented; },
+        });
+    };
+
+    // Only the presented world is walked: its surface materializes and registers a capture, while the
+    // world nothing shows is skipped whole — no capture built, so no face render and no view slot.
+    const WorldCaptureDriveResult firstPass = Drive();
+    CHECK(firstPass.WorldsDriven == 1);
+    CHECK(firstPass.WorldsSkipped == 1);
+    CHECK(firstPass.SurfacesDriven == 1);
+    CHECK(registered == 1);
+    CHECK(SurfaceOf(first, firstEntity).GetCapture() != nullptr);
+    CHECK(SurfaceOf(second, secondEntity).GetCapture() == nullptr);
+    // The unpresented capture is not quietly settled either: it still owes its first refresh, so
+    // presenting that world renders a map rather than leaving one blank.
+    CHECK(SurfaceOf(second, secondEntity).IsRefreshing());
+
+    // Settle the presented world's on-demand refresh: one face per driven frame.
+    for (u32 face = 1; face < SceneCapture::FaceCount; ++face)
+    {
+        Drive();
+    }
+    CHECK_FALSE(SurfaceOf(first, firstEntity).IsRefreshing());
+
+    // Presentation moves to the other world. The world that went dark drives nothing, and its settled
+    // capture is re-armed — so when it is presented again it rebuilds its map instead of resuming from
+    // the scene as it stood before it went out of view.
+    presented = second;
+    const WorldCaptureDriveResult secondPass = Drive();
+    CHECK(secondPass.WorldsDriven == 1);
+    CHECK(secondPass.WorldsSkipped == 1);
+    CHECK(secondPass.SurfacesDriven == 1);
+    CHECK(secondPass.SurfacesReArmed == 1);
+    CHECK(SurfaceOf(first, firstEntity).IsRefreshing());
+    CHECK(SurfaceOf(second, secondEntity).GetCapture() != nullptr);
+    CHECK(registered == 2);
 }

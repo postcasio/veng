@@ -120,7 +120,7 @@ namespace Veng::Renderer
         }
     }
 
-    void CaptureSurface::MarkDirty()
+    void CaptureSurface::MarkDirty() const
     {
         if (!Runtime)
         {

@@ -644,6 +644,20 @@ namespace Veng
         /// @return The pending destination world, or nullopt when no rebind is in flight for the index.
         [[nodiscard]] optional<WorldInstanceId> GetPendingManagedViewportWorld(usize index) const;
 
+        /// @brief Returns whether any view shows a world this frame — the engine's presentation query.
+        ///
+        /// A world is presented when a managed viewport's applied binding names it, an overlay's bound
+        /// viewport names it, an in-flight rebind is destined for it (for the rebind's whole wait, so
+        /// make-before-break has a warm destination), or any viewport a consumer registered and drives
+        /// itself pushed this world's scene in its ViewState. Worlds are flat peers and several are live
+        /// at once in the ordinary case, so this is what separates the world the player is looking at
+        /// from the ones being held warm — the engine gates its own per-world render work on it (the
+        /// authored capture surfaces above all), and a consumer with per-world work of its own can gate
+        /// on the same answer.
+        /// @param world  The world to test; an invalid or closed handle is never presented.
+        /// @return True when some view shows @p world this frame.
+        [[nodiscard]] bool IsWorldPresented(WorldInstanceId world) const;
+
         /// @brief Returns the destination a present-on-ready rebind abandoned on timeout, else invalid.
         ///
         /// Forwards to ManagedViewportSet::GetAbandonedPresentWorld: the failure surface of

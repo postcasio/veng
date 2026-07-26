@@ -905,9 +905,19 @@ frames), tiles the HDR result into a persistent 3×2 face atlas, and resamples t
 output is **pre-tonemap linear HDR** and a plain **2D** bindless texture — a cube view cannot ride
 the set-0 bindless array — so it binds onto a material through `Material::SetTextureHandle`. It is
 **push-to-render**: a frame with no fresh `SetView` records nothing, so an idle capture costs
-nothing. `ViewportCompositor` drives the registered captures ahead of every viewport, so a material
-sampling one reads this frame's result. `CaptureSurface` (the reflected component, see
+nothing. `ViewportCompositor` drives the registered captures ahead of every viewport, so a
+material sampling one reads this frame's result. `CaptureSurface` (the reflected component, see
 [../Gui/CLAUDE.md](../Gui/CLAUDE.md)) is the authoring front end.
+
+**A capture in a world nothing presents is not driven.** A capture feeds a material sampled by a mesh
+drawn in some view, so a world no view shows has nowhere its capture could be seen — and worlds are
+flat peers of which several are live at once in the ordinary case, so driving every live world's
+captures multiplies the per-frame view budget by the number of worlds held warm. `WorldRunner`'s
+per-frame drive therefore asks presentation first (`Application::IsWorldPresented` — a managed or
+bound viewport's binding, a viewport a consumer drives itself, or an in-flight rebind's destination
+for its whole wait, so a make-before-break swap presents a warm probe) and skips an unpresented world
+whole, re-arming its already-materialized captures (`CaptureSurface::MarkDirty`) so a world that
+becomes visible again rebuilds its maps instead of resuming from what it saw before it went dark.
 
 **A capture never draws the mesh it feeds — a surface is not part of its own environment.**
 `CaptureView::Exclude` names one entity the face renders skip, and `CaptureSurface` sets it to the

@@ -207,6 +207,19 @@ namespace Veng
         /// @param seats  The buffer filled with the presenting seats; cleared on entry.
         void CollectPresentingSeats(WorldInstanceId world, vector<Entity>& seats) const;
 
+        /// @brief Returns whether any viewport in this set presents a world, in-flight rebinds included.
+        ///
+        /// The presentation query the sim domain has no back-reference for: a world is presented when
+        /// some indexed managed viewport's applied binding names it, some bound (overlay) viewport
+        /// names it, or an in-flight rebind of either kind is destined for it. A **pending destination
+        /// counts**, which is what make-before-break needs — the destination of a
+        /// RebindWorldWhenReady is presented for its whole wait, so the per-world work its
+        /// presentation gates (its capture surfaces above all) is warm on the frame it becomes
+        /// visible rather than blank.
+        /// @param world  The world to test; an invalid handle is never presented.
+        /// @return True when a viewport in this set presents or is being rebound onto @p world.
+        [[nodiscard]] bool IsWorldPresented(WorldInstanceId world) const;
+
         /// @brief Returns the destination of a viewport's in-flight rebind, or nullopt when none is pending.
         ///
         /// The world a recorded rebind (deferred RebindWorld or present-on-ready RebindWorldWhenReady)
