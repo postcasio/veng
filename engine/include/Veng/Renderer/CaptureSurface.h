@@ -135,6 +135,26 @@ namespace Veng::Renderer
         /// @brief Which frame the capture's faces are oriented in (see CaptureAlignment).
         CaptureAlignment Alignment = CaptureAlignment::World;
 
+        /// @brief Whether the face renders cast shadows — both directional and punctual.
+        ///
+        /// Off by default, with the rest of the capture's lean battery set: a capture is usually a
+        /// coarse environment term sampled by direction, where an unshadowed render is cheap and the
+        /// error is invisible under a reflection's contrast.
+        ///
+        /// **It stops being invisible when the captured environment is an enclosed interior.** Every
+        /// surface inside an enclosure is lit by the directional source as though the enclosure's own
+        /// walls did not occlude it, so a cabin, a room, or the inside of any shell renders uniformly
+        /// flooded — brightest exactly where it should be deepest, and with no contact darkening to
+        /// give the space its shape. A probe reflecting that interior therefore shows a lit box, and
+        /// the defect reads as the material's fault rather than the capture's. An interior probe wants
+        /// this on; an exterior one does not.
+        ///
+        /// The cost is **one depth-only pass per driven frame**, not six: a capture renders one face
+        /// per frame, so enabling shadows adds the shadow pass to that single face render, not to a
+        /// whole refresh at once. Both shadow batteries are topology changes in the face renderer, so
+        /// this is read once when the runtime materializes on the first Drive and is not live-tunable.
+        bool Shadows = false;
+
         /// @brief Name of the sibling material's texture slot the capture output binds onto.
         ///
         /// Drive binds the capture's octahedral output handle onto the material field of this name
@@ -274,6 +294,7 @@ VE_FIELD(Shape, .DisplayName = "Shape")
 VE_FIELD(Resolution, .DisplayName = "Resolution", .Display = {.Min = 1})
 VE_FIELD(Refresh, .DisplayName = "Refresh")
 VE_FIELD(Alignment, .DisplayName = "Alignment")
+VE_FIELD(Shadows, .DisplayName = "Shadows")
 VE_FIELD(TextureSlot, .DisplayName = "Texture Slot")
 VE_FIELD(SamplerSlot, .DisplayName = "Sampler Slot")
 VE_FIELD(CenterSlot, .DisplayName = "Center Slot")

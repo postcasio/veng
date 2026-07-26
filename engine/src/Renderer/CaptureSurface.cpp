@@ -79,13 +79,18 @@ namespace Veng::Renderer
         }
 
         /// @brief A lean renderer config for a capture: the heavy per-view batteries multiply by six
-        ///        faces, and the capture samples pre-tonemap HDR, so bloom/AO/shadows/SSR are dropped.
-        SceneRendererSettings CaptureSettings()
+        ///        faces, and the capture samples pre-tonemap HDR, so bloom/AO/SSR are dropped.
+        ///
+        /// Shadows are the one battery the authoring surface can ask back, because an enclosed
+        /// interior renders flooded without them (see CaptureSurface::Shadows). Both shadow flags
+        /// move together: an interior wants the enclosure's own occlusion, whichever kind of light
+        /// is casting it.
+        SceneRendererSettings CaptureSettings(bool shadows)
         {
             SceneRendererSettings settings;
             settings.Bloom = false;
-            settings.Shadows = false;
-            settings.PunctualShadows = false;
+            settings.Shadows = shadows;
+            settings.PunctualShadows = shadows;
             settings.AO = false;
             settings.SSR = false;
             settings.TAA = false;
@@ -166,7 +171,7 @@ namespace Veng::Renderer
                 .Context = context,
                 .Assets = assets,
                 .FaceResolution = Resolution,
-                .Settings = CaptureSettings(),
+                .Settings = CaptureSettings(Shadows),
             });
             runtime.Sampler = Sampler::Create(context, {
                                                            .Name = "CaptureSurface Sampler",

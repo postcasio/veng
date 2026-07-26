@@ -934,6 +934,20 @@ scene, it moves no spatial version, so the broadphase treats a **changed** exclu
 rebuild trigger. `Entity::Null` (the default) excludes nothing and gathers exactly what it gathered
 before, so no other view is affected.
 
+**A capture's batteries are lean, and shadows are the one an interior probe asks back.** Bloom, AO,
+SSR and TAA are dropped unconditionally — the capture samples pre-tonemap HDR, so the post chain
+never reaches its output, and the rest is cost multiplied across the faces. Shadows are dropped by
+default for the same reason, but they are the one battery with a case where the omission is
+*visible*: an **enclosed interior** captured without them is lit by the directional source as though
+its own walls did not occlude, so a cabin or a room renders uniformly flooded — brightest where it
+should be deepest, and with no contact darkening to give the space its shape. A probe reflecting
+that interior then shows a lit box, and the defect reads as the consuming material's fault.
+`CaptureSurface::Shadows` (default off) turns both shadow batteries back on for that case. The cost
+is **one depth-only pass per driven frame, not six** — a capture renders one face per frame, so the
+shadow pass rides that single face render. Both flags move together: an interior wants its
+enclosure's occlusion whichever kind of light casts it. They are topology changes in the face
+renderer, so the field is read when the runtime materializes and is not live-tunable.
+
 Deliberately **not** here: a general per-entity or per-layer visibility mask (this is one nominated
 entity in a closed producer→consumer pair, with no authoring story to get wrong), **recursive
 probes** (another capture-consuming surface in the map reads a one-frame-old result, invisible at a

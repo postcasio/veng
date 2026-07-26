@@ -48,6 +48,8 @@ TEST_CASE("CaptureSurface reflects its authored config but not the runtime recor
     CHECK(HasField(info, "Shape"));
     CHECK(HasField(info, "Resolution"));
     CHECK(HasField(info, "Refresh"));
+    CHECK(HasField(info, "Alignment"));
+    CHECK(HasField(info, "Shadows"));
     CHECK(HasField(info, "TextureSlot"));
     CHECK(HasField(info, "SamplerSlot"));
     CHECK(HasField(info, "CenterSlot"));
@@ -61,13 +63,20 @@ TEST_CASE("CaptureSurface authored config round-trips through the reflection ser
     const JsonFieldHooks hooks = StubHooks();
     const TypeInfo& info = registry.Info(registry.IdOf<CaptureSurface>());
 
-    // Author the component as a cook would emit it — a planar mirror at 512, refreshing on demand,
-    // binding onto descriptive non-default slot names — then read it back through the same walker the
-    // prefab loader runs. Enums serialize as their enumerator names.
+    // Author the component as a cook would emit it — a planar mirror at 512, refreshing on demand in
+    // its carrier's own frame with shadows asked back, binding onto descriptive non-default slot
+    // names — then read it back through the same walker the prefab loader runs. Every field is
+    // authored away from its default, so a field the walker drops fails rather than reading as its
+    // default. Enums serialize as their enumerator names.
     const Json authored = {
-        {"Shape", "PlanarReflection"},     {"Resolution", 512},
-        {"Refresh", "OnDemand"},           {"TextureSlot", "CaptureMap"},
-        {"SamplerSlot", "CaptureSampler"}, {"CenterSlot", "CaptureCenter"},
+        {"Shape", "PlanarReflection"},
+        {"Resolution", 512},
+        {"Refresh", "OnDemand"},
+        {"Alignment", "Entity"},
+        {"Shadows", true},
+        {"TextureSlot", "CaptureMap"},
+        {"SamplerSlot", "CaptureSampler"},
+        {"CenterSlot", "CaptureCenter"},
     };
 
     CaptureSurface surface;
@@ -76,6 +85,8 @@ TEST_CASE("CaptureSurface authored config round-trips through the reflection ser
     CHECK(surface.Shape == CaptureShape::PlanarReflection);
     CHECK(surface.Resolution == 512u);
     CHECK(surface.Refresh == CaptureRefresh::OnDemand);
+    CHECK(surface.Alignment == CaptureAlignment::Entity);
+    CHECK(surface.Shadows);
     CHECK(surface.TextureSlot == "CaptureMap");
     CHECK(surface.SamplerSlot == "CaptureSampler");
     CHECK(surface.CenterSlot == "CaptureCenter");
@@ -86,6 +97,8 @@ TEST_CASE("CaptureSurface authored config round-trips through the reflection ser
     CHECK(out["Shape"] == "PlanarReflection");
     CHECK(out["Resolution"] == 512);
     CHECK(out["Refresh"] == "OnDemand");
+    CHECK(out["Alignment"] == "Entity");
+    CHECK(out["Shadows"] == true);
     CHECK(out["TextureSlot"] == "CaptureMap");
     CHECK(out["SamplerSlot"] == "CaptureSampler");
     CHECK(out["CenterSlot"] == "CaptureCenter");
@@ -100,6 +113,10 @@ TEST_CASE("CaptureSurface defaults are the every-frame environment probe")
     CHECK(surface.Shape == CaptureShape::EnvironmentProbe);
     CHECK(surface.Resolution == 256u);
     CHECK(surface.Refresh == CaptureRefresh::EveryFrame);
+    // World-aligned faces and no shadows are the lean exterior-probe defaults: an interior probe asks
+    // both back, and pays for them, because an enclosure renders flooded without its own occlusion.
+    CHECK(surface.Alignment == CaptureAlignment::World);
+    CHECK_FALSE(surface.Shadows);
     // The slot names default to the built-in Texture / Sampler binding.
     CHECK(surface.TextureSlot == "Texture");
     CHECK(surface.SamplerSlot == "Sampler");
