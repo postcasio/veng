@@ -3,7 +3,7 @@
 // (and light) buffer is shared across every viewport on the Context; if it rings only by
 // frame-in-flight, the second viewport's Execute overwrites the region the first's draws
 // still read at submit, so both render through the last camera — a material preview bleeding
-// into the level viewport. BindlessRegistry::BeginView gives each render its own region;
+// into the level viewport. BindlessRegistry::TryBeginView gives each render its own region;
 // this asserts the near viewport shows the cube (its camera) while the away viewport (looking
 // away, registered last) shows background, which the shared-region bug would flip.
 

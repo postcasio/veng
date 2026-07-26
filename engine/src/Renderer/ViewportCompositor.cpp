@@ -3,6 +3,8 @@
 #include <Veng/Assert.h>
 #include <Veng/Diagnostics/Profiler.h>
 #include <Veng/ImGui/ImGuiLayer.h>
+#include <Veng/Log.h>
+#include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/GatherPass.h>
@@ -11,6 +13,8 @@
 #include <Veng/Renderer/SwapChainCompositePass.h>
 #include <Veng/Renderer/Viewport.h>
 #include <Veng/Window.h>
+
+#include "CaptureRotation.h"
 
 #include <algorithm>
 
@@ -105,11 +109,12 @@ namespace Veng::Renderer
     void ViewportCompositor::RenderRegistered(CommandBuffer& cmd)
     {
         // Scene captures render first, so a material sampling a capture's output reads this frame's
-        // result during the viewport renders that follow.
-        for (SceneCapture* capture : m_Captures)
-        {
-            capture->Render(cmd);
-        }
+        // result during the viewport renders that follow. Rendering first is also what puts them
+        // ahead of the viewports in the frame's view budget, so the drive spends only what it can
+        // leave the viewports: a missing reflection is a blemish, a viewport that could not claim a
+        // slot is a stale window. One slot per registered viewport is the floor, which a viewport
+        // whose sky re-bakes this frame still exceeds — that bake gives way instead and retries.
+        DriveCaptures(cmd);
 
         // Then every registered viewport in registration order (each does its own Execute + Sample
         // barrier), so viewport outputs are in Sample layout before a later consumer samples them.
@@ -121,6 +126,46 @@ namespace Veng::Renderer
             VE_PROFILE_SCOPE_DYNAMIC(label);
             viewport->Render(cmd);
         }
+    }
+
+    void ViewportCompositor::DriveCaptures(CommandBuffer& cmd)
+    {
+        if (m_Captures.empty())
+        {
+            return;
+        }
+
+        const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
+        const u32 reserved = static_cast<u32>(m_Viewports.size());
+        const usize count = m_Captures.size();
+
+        // Round-robin from where the last budget-limited frame stopped, so a capture set larger than
+        // the budget refreshes in turn. A capture renders one cube face per driven frame anyway, so
+        // what an over-budget frame costs is refresh latency, not a capture that never renders.
+        m_CaptureCursor %= count;
+        usize driven = 0;
+        while (driven < count)
+        {
+            // A capture with no fresh view records nothing and claims no slot, so the budget is
+            // measured against the registry each step rather than assumed one per capture — a set of
+            // settled on-demand captures displaces nothing.
+            if (!CaptureDriveHasRoom(registry.GetRemainingViews(), reserved))
+            {
+                break;
+            }
+            m_Captures[CaptureDriveIndex(m_CaptureCursor, driven, count)]->Render(cmd);
+            ++driven;
+        }
+
+        if (driven < count && !m_WarnedCaptureBudget)
+        {
+            m_WarnedCaptureBudget = true;
+            Log::Warn(
+                "ViewportCompositor: the frame's {} view slots cover {} viewport(s) and {} of "
+                "{} scene captures; the rest hold their last map and refresh on later frames.",
+                BindlessRegistry::MaxViewsPerFrame, reserved, driven, count);
+        }
+        m_CaptureCursor = NextCaptureCursor(m_CaptureCursor, driven, count);
     }
 
     void ViewportCompositor::Composite(CommandBuffer& cmd)

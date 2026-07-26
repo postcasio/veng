@@ -37,6 +37,7 @@
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/SceneCapture.h>
 #include <Veng/Renderer/Viewport.h>
+#include <Veng/Renderer/ViewportCompositor.h>
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
@@ -1040,4 +1041,75 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(SurfaceOf(first, firstEntity).IsRefreshing());
     CHECK(SurfaceOf(second, secondEntity).GetCapture() != nullptr);
     CHECK(registered == 2);
+}
+
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "capture surface: a spent view budget drops captures instead of aborting, and the "
+    "presented viewport keeps its slot")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(CookCapturePack()).has_value());
+
+    const AssetResult<AssetHandle<MaterialInstance>> backdrop =
+        assets.LoadSync<MaterialInstance>(BackdropInstance);
+    REQUIRE(backdrop.has_value());
+
+    // A scene whose one bright cube fills the frame, so the viewport's own render is legible in its
+    // output: it rendered iff the centre is bright.
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Ref<Mesh> cube =
+        Mesh::BuildSync(Context, Primitives::Cube(2.0f, *backdrop), "Budget Cube");
+    const Entity cubeEntity = scene->CreateEntity();
+    scene->Add<Transform>(cubeEntity);
+    scene->Add<MeshRenderer>(cubeEntity).Mesh = assets.Adopt(cube);
+
+    ViewportCompositor compositor(Context);
+    const Unique<Viewport> viewport = MakeViewport(Context, assets);
+    viewport->SetViewState({.World = scene.get(), .Camera = FrontCamera(), .Delta = 0.016f});
+    compositor.RegisterViewport(*viewport);
+
+    // More captures than the frame can afford. Each claims one view slot per driven frame, so the
+    // budget is narrowed by hand instead of by registering thirty-odd renderers: the drive's decision
+    // reads the same either way.
+    constexpr u32 CaptureCount = 6;
+    constexpr u32 SlotsLeftForFrame = 4;
+    vector<Unique<SceneCapture>> captures;
+    for (u32 i = 0; i < CaptureCount; ++i)
+    {
+        captures.push_back(SceneCapture::Create({
+            .Context = Context,
+            .Assets = assets,
+            .FaceResolution = 32,
+        }));
+        compositor.RegisterCapture(*captures.back());
+    }
+
+    BindlessRegistry& registry = Context.GetBindlessRegistry();
+    registry.OnFrameAcquired(0);
+    while (registry.GetRemainingViews() > SlotsLeftForFrame)
+    {
+        CHECK(registry.TryBeginView());
+    }
+    for (const Unique<SceneCapture>& capture : captures)
+    {
+        capture->SetView({.World = scene.get()});
+    }
+
+    // The frame records without aborting: three captures fit beside the viewport's reserved slot, the
+    // rest hold their last map.
+    Context.ImmediateCommands([&](CommandBuffer& cmd) { compositor.RenderRegistered(cmd); });
+
+    // Every slot is spent and none was overdrawn — the whole budget was claimed, one of it the
+    // viewport's, and the claim past the end is refused rather than fatal.
+    CHECK(registry.GetRemainingViews() == 0);
+    CHECK_FALSE(registry.TryBeginView());
+
+    // The viewport rendered: the captures gave way to it, which is the priority a stale window would
+    // have inverted.
+    const vector<u8> output = viewport->GetOutput()->GetImage()->Download();
+    const vec4 center = SampleBlock(output, Extent, vec2(0.5f, 0.5f));
+    CHECK(center.g > 0.6f);
 }

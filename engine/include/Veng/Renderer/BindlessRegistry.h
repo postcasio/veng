@@ -192,14 +192,29 @@ namespace Veng::Renderer
         /// @return The base material slot index for the current frame-in-flight.
         [[nodiscard]] u32 GetCurrentFrameBase() const;
 
-        /// @brief Advances to the next view slot within the current frame-in-flight.
+        /// @brief Claims the next view slot within the current frame-in-flight, or reports the budget spent.
         ///
         /// Called once per Viewport::Render (per SceneRenderer::Execute), before its
         /// WriteViewConstants / WriteLights, so that two viewports rendering in one frame write
         /// distinct regions and each's draws read its own. OnFrameAcquired resets the slot to the
-        /// first each frame. Asserts if more than MaxViewsPerFrame viewports render in one frame.
+        /// first each frame.
+        ///
+        /// A frame wanting more than MaxViewsPerFrame views is a resource limit ordinary content can
+        /// reach, not a contract violation, so the claim fails rather than aborting: it returns false,
+        /// leaves the current slot alone, and warns once per registry. A caller that is refused
+        /// records nothing this frame — writing the shared regions without a slot of its own would
+        /// clobber the one another view's draws still read at submit.
         /// @pre Called before WriteViewConstants / WriteLights for this Execute.
-        void BeginView();
+        /// @return True when a slot was claimed; false when the frame's view budget is spent.
+        [[nodiscard]] bool TryBeginView();
+
+        /// @brief The view slots still claimable in the current frame-in-flight.
+        ///
+        /// MaxViewsPerFrame minus the slots claimed so far. A driver of many views spends a bounded
+        /// budget against this — reserving what the presented viewports need before the captures
+        /// claim theirs — rather than discovering the ceiling on a refused claim.
+        /// @return The number of slots TryBeginView can still grant this frame.
+        [[nodiscard]] u32 GetRemainingViews() const;
 
         /// @brief Writes the per-frame view-constants block into the current view slot's region
         /// of the shared view-constants buffer.
@@ -213,7 +228,7 @@ namespace Veng::Renderer
         void WriteViewConstants(std::span<const std::byte> block);
 
         /// @brief The current view slot's index into the shared view-constants buffer
-        /// (frameInFlight * MaxViewsPerFrame + the BeginView slot).
+        /// (frameInFlight * MaxViewsPerFrame + the TryBeginView slot).
         ///
         /// A pass pushes it so the shader's index * ViewConstantsStride load reads this view's
         /// region. Distinct per viewport render, so two viewports in one frame do not collide.
@@ -306,15 +321,17 @@ namespace Veng::Renderer
         /// Viewport::Render writes its own camera and lights. Ringing only by frame-in-flight
         /// would let a second viewport's Execute clobber the region the first's draws still read
         /// at submit (both record into one frame's command buffer, reading the final host value).
-        /// So each buffer holds framesInFlight * MaxViewsPerFrame regions; BeginView advances a
+        /// So each buffer holds framesInFlight * MaxViewsPerFrame regions; TryBeginView advances a
         /// per-frame view slot each Execute, and GetCurrentViewConstantsIndex() folds it in.
         /// The budget covers every view-slot consumer sharing one frame: the presented viewports
-        /// (the editor renders one per visible panel), one face per registered scene capture —
-        /// captures in view-less worlds are deliberately driven too — and the sky cubemap bake,
-        /// whose material and atmosphere passes each claim six face slots in the frame a sky
-        /// (re)bakes. Sized so a bake spike stacked on several live captures stays inside the
-        /// budget; a region costs ~6 KB (view constants + lights + area vertices), so headroom
-        /// is cheap.
+        /// (the editor renders one per visible panel), one face per registered scene capture whose
+        /// world a view presents, and the sky cubemap bake, whose material and atmosphere passes
+        /// each claim six face slots in the frame a sky (re)bakes (twice that on the SH tier, whose
+        /// readback bake claims its own six). A region costs ~6 KB (view constants + lights + area
+        /// vertices), so the budget is memory the whole ring pays: raising it costs
+        /// framesInFlight * that per added slot. Content that wants more views than this in one
+        /// frame is spent against rather than aborted on — the captures give way first (see
+        /// ViewportCompositor::RenderRegistered), and a refused claim records nothing.
         static constexpr u32 MaxViewsPerFrame = 32;
 
         /// @brief The fixed byte stride of one material's parameter block in the
@@ -485,10 +502,13 @@ namespace Veng::Renderer
 
         /// @brief Distinct viewport renders seen so far in the current frame-in-flight.
         ///
-        /// Reset to 0 by OnFrameAcquired; BeginView takes the current slot from it and increments.
+        /// Reset to 0 by OnFrameAcquired; TryBeginView takes the current slot from it and increments.
         u32 m_ViewsThisFrame = 0;
 
-        /// @brief The view slot the current Execute writes and reads (set by BeginView).
+        /// @brief The view slot the current Execute writes and reads (set by TryBeginView).
         u32 m_ViewSlot = 0;
+
+        /// @brief Latch for the spent-view-budget warning, so it is logged once per registry.
+        bool m_ViewBudgetWarned = false;
     };
 }

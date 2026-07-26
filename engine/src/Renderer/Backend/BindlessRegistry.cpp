@@ -3,6 +3,7 @@
 #include <cstring>
 
 #include <Veng/Assert.h>
+#include <Veng/Log.h>
 #include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
@@ -140,7 +141,8 @@ namespace Veng::Renderer
         m_Set->Write(MaterialParamBinding, m_MaterialParamBuffer);
 
         // Ringed by framesInFlight * MaxViewsPerFrame: each viewport render owns a distinct region
-        // within the frame (BeginView advances the slot), so two viewports in one frame do not clobber.
+        // within the frame (TryBeginView advances the slot), so two viewports in one frame do not
+        // clobber.
         m_ViewConstantsBuffer =
             Buffer::Create(context, {
                                         .Name = "Bindless ViewConstants",
@@ -392,14 +394,34 @@ namespace Veng::Renderer
         return m_Context.GetCurrentFrameInFlight() * MaxMaterials;
     }
 
-    void BindlessRegistry::BeginView()
+    bool BindlessRegistry::TryBeginView()
     {
-        VE_ASSERT(m_ViewsThisFrame < MaxViewsPerFrame,
-                  "BindlessRegistry::BeginView: more than MaxViewsPerFrame ({}) viewports rendered "
-                  "in one frame",
-                  MaxViewsPerFrame);
+        if (m_ViewsThisFrame >= MaxViewsPerFrame)
+        {
+            // A budget reached by ordinary content, so the frame degrades instead of aborting: the
+            // refused view records nothing and the slot the last grant handed out stays current, so
+            // no write lands in a region another view's draws read at submit.
+            if (!m_ViewBudgetWarned)
+            {
+                m_ViewBudgetWarned = true;
+                Log::Warn(
+                    "BindlessRegistry: this frame wants more than the {} view slots one frame "
+                    "holds; the views past that render nothing. Scene captures give way "
+                    "before presented viewports do.",
+                    MaxViewsPerFrame);
+            }
+            return false;
+        }
         m_ViewSlot = m_ViewsThisFrame;
         ++m_ViewsThisFrame;
+        return true;
+    }
+
+    u32 BindlessRegistry::GetRemainingViews() const
+    {
+        // TryBeginView is the only path that advances the counter and it never grants past the
+        // budget, so the subtraction cannot wrap.
+        return MaxViewsPerFrame - m_ViewsThisFrame;
     }
 
     void BindlessRegistry::WriteViewConstants(std::span<const std::byte> block)

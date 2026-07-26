@@ -245,14 +245,28 @@ namespace Veng::Renderer
         // ambient tier then read that one cube, so they agree by construction. Recorded into cmd
         // before the graph the skybox pass samples the cube through, and before the scene claims its
         // own view slot below — the bake writes six face view-constants regions into distinct view
-        // slots, so it must run ahead of the frame's own BeginView. A direct or no-sky source bakes
+        // slots, so it must run ahead of the frame's own view claim. A direct or no-sky source bakes
         // nothing.
         const bool bakedMaterial = m_ResolvedSkyKind == SkySourceKind::Material &&
                                    m_ResolvedSkyBaked && view.SkyMaterial.IsLoaded();
         const bool bakedAtmosphere =
             m_ResolvedSkyKind == SkySourceKind::Atmosphere && m_ResolvedSkyBaked;
-        if (bakedMaterial || bakedAtmosphere)
+        const bool baking = bakedMaterial || bakedAtmosphere;
+
+        // A bake is all-or-nothing against the frame's remaining view budget: a half-filled cube
+        // marked clean would show a permanently wrong sky, so a frame without room for every face —
+        // twice as many on the SH tier, whose readback bake claims its own set — records no bake at
+        // all and leaves the dirty signal standing for the next frame with room. This frame's skybox
+        // then samples the cube as the last bake left it.
+        const u32 bakeSlots = m_ResolvedSkyLighting == SkyLighting::SH
+                                  ? 2 * SkyCubemapBake::CubeFaces
+                                  : SkyCubemapBake::CubeFaces;
+        const bool bakeAffordable =
+            m_Context.GetBindlessRegistry().GetRemainingViews() >= bakeSlots;
+
+        if (baking && bakeAffordable)
         {
+
             // The dirty signal: for a material, its resolved instance changing; for the atmosphere,
             // its params or the sun direction changing (both feed the baked sky radiance + disc).
             const MaterialInstance* material = bakedMaterial ? view.SkyMaterial.Get() : nullptr;
@@ -331,7 +345,7 @@ namespace Veng::Renderer
                 m_SkyCubeConvolved = false;
             }
         }
-        else
+        else if (!baking)
         {
             m_LastBakedSkyMaterial = nullptr;
             m_SkyCubeConvolved = false;

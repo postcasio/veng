@@ -63,6 +63,12 @@ namespace Veng::Renderer
         SkyCubemapBake(const SkyCubemapBake&) = delete;
         SkyCubemapBake& operator=(const SkyCubemapBake&) = delete;
 
+        /// @brief Faces in the radiance cube, and so the view slots one bake claims.
+        ///
+        /// A bake renders one fullscreen draw per face and each face claims its own view slot, so a
+        /// caller checks the frame's remaining view budget against this before recording one.
+        static constexpr u32 CubeFaces = 6;
+
         /// @brief Records the six face renders of `material` into the radiance cube.
         ///
         /// The caller gates this on its sky dirty signal; each call overwrites the cube in place.
@@ -73,6 +79,7 @@ namespace Veng::Renderer
         /// @param cmd      The command buffer the face renders are recorded into.
         /// @param material The resident Sky-domain material to bake.
         /// @pre material's domain is MaterialDomain::Sky and its param block is uploaded this frame.
+        /// @pre The frame's remaining view budget covers CubeFaces slots — the caller reserves them.
         void Bake(CommandBuffer& cmd, const MaterialInstance& material);
 
         /// @brief Bakes `material` and returns a host-side snapshot of the six radiance faces.
@@ -87,6 +94,7 @@ namespace Veng::Renderer
         /// @param material The resident Sky-domain material to bake.
         /// @return The six cube faces, layer-major, RGBA16F (`GetFaceSize()`² texels each).
         /// @pre material's domain is MaterialDomain::Sky and its param block is uploaded this frame.
+        /// @pre The frame's remaining view budget covers CubeFaces slots — the caller reserves them.
         [[nodiscard]] vector<u8> BakeAndDownload(const MaterialInstance& material);
 
         /// @brief Records the six face renders of the procedural atmosphere into the radiance cube.
@@ -105,6 +113,7 @@ namespace Veng::Renderer
         /// @param sunDirection  The normalized toward-sun direction.
         /// @param intensity     Scales the baked sky radiance + sun disc.
         /// @pre `atmosphereSet`'s LUTs were generated for `atmosphere` this frame.
+        /// @pre The frame's remaining view budget covers CubeFaces slots — the caller reserves them.
         void BakeAtmosphere(CommandBuffer& cmd, const Ref<GraphicsPipeline>& pipeline,
                             const Ref<DescriptorSet>& atmosphereSet, const Atmosphere& atmosphere,
                             const vec3& sunDirection, f32 intensity);
@@ -124,6 +133,7 @@ namespace Veng::Renderer
         /// @param intensity     Scales the baked sky radiance + sun disc.
         /// @return The six cube faces, layer-major, RGBA16F (`GetFaceSize()`² texels each).
         /// @pre `atmosphereSet`'s LUTs were generated for `atmosphere`.
+        /// @pre The frame's remaining view budget covers CubeFaces slots — the caller reserves them.
         [[nodiscard]] vector<u8> BakeAtmosphereAndDownload(const Ref<GraphicsPipeline>& pipeline,
                                                            const Ref<DescriptorSet>& atmosphereSet,
                                                            const Atmosphere& atmosphere,
@@ -156,8 +166,9 @@ namespace Veng::Renderer
         u32 m_FaceSize;
 
         Ref<Image> m_CubeImage;
-        Ref<ImageView> m_CubeView;                 // Cube view — sampled by the skybox pass
-        std::array<Ref<ImageView>, 6> m_FaceViews; // one single-layer view per face — rendered
+        Ref<ImageView> m_CubeView; // Cube view — sampled by the skybox pass
+        std::array<Ref<ImageView>, CubeFaces>
+            m_FaceViews; // one single-layer view per face — rendered
 
         Ref<Image> m_DepthImage;     // 1×1 stand-in, holds the far-plane value (1.0)
         Ref<ImageView> m_DepthView;  // sampled as a color texture by the fragment's depth read
@@ -172,6 +183,6 @@ namespace Veng::Renderer
 
         // The six per-face InvViewProj matrices: each maps a fullscreen [0,1]² UV to the face's
         // world direction, matching the cube image-view layer order so shared edges agree.
-        std::array<mat4, 6> m_FaceInvViewProj;
+        std::array<mat4, CubeFaces> m_FaceInvViewProj;
     };
 }

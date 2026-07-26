@@ -84,6 +84,11 @@ namespace Veng::Renderer
         /// Captures render first (each into its own target), then every viewport in registration order
         /// (each doing its own Execute + Sample barrier), so every output is in Sample layout before a
         /// later consumer samples it.
+        ///
+        /// The capture drive spends only the part of the frame's view budget it can leave the
+        /// viewports — one slot each is reserved — and round-robins across frames when the captures
+        /// outnumber what is left, so a capture set larger than the budget refreshes in turn rather
+        /// than the frame failing (see BindlessRegistry::MaxViewsPerFrame).
         /// @param cmd  The command buffer to record into.
         void RenderRegistered(CommandBuffer& cmd);
 
@@ -122,6 +127,15 @@ namespace Veng::Renderer
         void ResolveTrackingLayouts();
 
     private:
+        /// @brief Renders the registered captures against the view budget left over from the viewports.
+        ///
+        /// Reserves one view slot per registered viewport, then drives captures round-robin from
+        /// m_CaptureCursor while the registry has a slot to spare, leaving the cursor on the first
+        /// capture it could not afford so the next frame resumes there. Warns once per compositor when
+        /// a frame cannot drive them all.
+        /// @param cmd  The command buffer to record into.
+        void DriveCaptures(CommandBuffer& cmd);
+
         /// @brief Borrowed render context for the swapchain and per-frame command buffer.
         Context& m_Context;
 
@@ -130,6 +144,12 @@ namespace Veng::Renderer
 
         /// @brief Non-owning, ordered list of scene captures rendered ahead of the viewports.
         vector<SceneCapture*> m_Captures;
+
+        /// @brief Index into m_Captures the next frame's bounded capture drive resumes at.
+        usize m_CaptureCursor = 0;
+
+        /// @brief Latch for the spent-capture-budget warning, so it is logged once per compositor.
+        bool m_WarnedCaptureBudget = false;
 
         /// @brief The gather pass assembling the Presented viewports; present only with the tail.
         Unique<GatherPass> m_Gather;

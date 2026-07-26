@@ -82,16 +82,20 @@ namespace Veng::Renderer
 
         /// @brief Records the atmosphere LUT gate and the baked-sky cube + SH projection.
         ///
-        /// The pre-graph generation that must run before the frame's registry.BeginView(): the
+        /// The pre-graph generation that must run before the frame's registry.TryBeginView(): the
         /// procedural-atmosphere LUTs (regenerated only on a param change, a baked atmosphere on its
         /// own immediate-submit path), the baked material/atmosphere cube bake (on the dirty signal),
         /// the SH-tier readback projection, the IBL-tier convolution, and the environment-sky SH
         /// projection. The bake writes six face view-constants regions into distinct view slots, so
-        /// it must precede the frame's own BeginView.
+        /// it must precede the frame's own TryBeginView.
+        ///
+        /// A bake is all-or-nothing against the frame's remaining view budget: a frame with fewer
+        /// slots left than the bake needs skips it whole and leaves the sky dirty, so the next frame
+        /// with room bakes it rather than a half-filled cube being marked clean.
         /// @param cmd         The frame command buffer the direct-path generation records into.
         /// @param view        The resolved SceneView (atmosphere params, sky material, sun direction).
         /// @param skyPipeline The renderer-owned atmosphere sky pipeline the atmosphere bake renders through.
-        /// @pre Must run before registry.BeginView() — the bake claims view slots the frame then reads.
+        /// @pre Must run before registry.TryBeginView() — the bake claims view slots the frame then reads.
         void RecordPreBeginView(CommandBuffer& cmd, const SceneView& view,
                                 const Ref<GraphicsPipeline>& skyPipeline);
 

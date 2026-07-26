@@ -23,8 +23,6 @@ namespace Veng::Renderer
 {
     namespace
     {
-        constexpr u32 CubeFaces = 6;
-
         // The IBL consumer set's bindings the skybox pipeline reads: the radiance cube at 0, the
         // linear sampler at 4. The bake writes its cube + sampler into a set with this layout so
         // the skybox pass samples the baked cube exactly as it samples the environment radiance.
@@ -118,7 +116,7 @@ namespace Veng::Renderer
             return m;
         }
 
-        std::array<mat4, CubeFaces> BuildFaceMatrices()
+        std::array<mat4, SkyCubemapBake::CubeFaces> BuildFaceMatrices()
         {
             return {
                 FaceInvViewProj({0, 0, -1}, {0, -1, 0}, {1, 0, 0}),  // +X
@@ -260,11 +258,16 @@ namespace Veng::Renderer
 
         // Render each face into its single-layer view with the face's fixed basis in the view
         // constants and the far-plane stand-in in the depth slot. Each face claims its own view slot
-        // (BeginView) so the six face constants coexist; the material fragment reconstructs the ray
-        // from the slot the face pushes.
+        // so the six face constants coexist; the material fragment reconstructs the ray from the slot
+        // the face pushes. The caller reserved the whole cube's slots, so a refused claim here is a
+        // broken precondition rather than a budget the frame can degrade against.
         for (u32 face = 0; face < CubeFaces; ++face)
         {
-            registry.BeginView();
+            const bool claimed = registry.TryBeginView();
+            VE_ASSERT(claimed,
+                      "SkyCubemapBake::Bake: the frame's view budget does not cover {} cube faces; "
+                      "the caller must reserve them before recording a bake",
+                      CubeFaces);
             ViewConstantsRegion region{};
             region.InvViewProj = m_FaceInvViewProj[face];
             // The face basis is already a pure direction mapping with no camera translation in it,
@@ -351,11 +354,17 @@ namespace Veng::Renderer
 
         // Render each face into its single-layer view with the face's fixed basis in the view
         // constants and the far-plane stand-in in the depth slot. Each face claims its own view slot
-        // (BeginView) so the six face constants coexist; the atmosphere fragment reconstructs the
-        // ray from the slot the face pushes and samples the LUT set bound at set 1.
+        // so the six face constants coexist; the atmosphere fragment reconstructs the ray from the
+        // slot the face pushes and samples the LUT set bound at set 1. The caller reserved the whole
+        // cube's slots, so a refused claim here is a broken precondition, not a budget to degrade
+        // against.
         for (u32 face = 0; face < CubeFaces; ++face)
         {
-            registry.BeginView();
+            const bool claimed = registry.TryBeginView();
+            VE_ASSERT(claimed,
+                      "SkyCubemapBake::BakeAtmosphere: the frame's view budget does not cover {} "
+                      "cube faces; the caller must reserve them before recording a bake",
+                      CubeFaces);
             ViewConstantsRegion region{};
             region.InvViewProj = m_FaceInvViewProj[face];
             // The face basis is already a pure direction mapping with no camera translation in it,

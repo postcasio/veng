@@ -25,8 +25,8 @@ exemplar, built as part of the engine tree via `add_subdirectory`.
   (their spinners drift apart as each ticks on its own clock) — the multi-world path exercised by a
   real app, not only the tests. Smoke configures a single viewport and opens one world, so the
   golden capture (viewport 0's output) is byte-identical; net launches skip the second world so the
-  hosted/joined world stays the sole world. Two views is well within the fixed 16-simultaneous-view
-  ceiling (`MaxViewsPerFrame` / `MaxPresented`).
+  hosted/joined world stays the sole world. Two views is well within both fixed ceilings — 32 view slots
+  per frame (`MaxViewsPerFrame`) and 16 presented placements (`MaxPresented`).
 - **It is the live consumer of mesh sockets.** `OnWorldLoaded` loads `meshes/socket_slab.gltf`'s
   cooked mesh — a slab whose model authors two named empties — places it beside the physics stack,
   and parents a cube to its `Mount_Top` socket through `AttachToSocket`. Nothing in the C++ names

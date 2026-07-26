@@ -1242,18 +1242,24 @@ namespace Veng::Renderer
 
         BindlessRegistry& registry = m_Context.GetBindlessRegistry();
 
-        // The sky-resolve subsystem records its pre-graph generation before the frame's BeginView:
+        // The sky-resolve subsystem records its pre-graph generation before the frame's view claim:
         // the atmosphere LUT gate (a baked atmosphere on its own immediate-submit path), the
         // baked-sky cube bake on the dirty signal, the SH-tier readback projection, the IBL-tier
         // convolution, and the environment-sky SH projection. The bake writes six face
         // view-constants regions into distinct view slots, so it must run ahead of the frame's own
-        // BeginView below.
+        // TryBeginView below.
         m_SkyResolver->RecordPreBeginView(cmd, resolvedView, m_SkyPipeline);
 
         // Claim this Execute's view slot before any shared-buffer write below: the view-constants
         // and light buffers are shared across every viewport, so each render writes its own region
-        // rather than clobbering the one another viewport's draws still read this frame.
-        registry.BeginView();
+        // rather than clobbering the one another viewport's draws still read this frame. A frame
+        // whose view budget is spent leaves this render's targets as the last frame left them —
+        // stale content, which is what a budget degrades to; the alternative is writing over a
+        // region another view's draws still read.
+        if (!registry.TryBeginView())
+        {
+            return;
+        }
         registry.WriteLights(std::as_bytes(std::span(packed.Lights.data(), packed.LightCount)));
         registry.WriteAreaVertices(
             std::as_bytes(std::span(packed.AreaVertices.data(), packed.AreaVertexCount)));
@@ -1384,7 +1390,7 @@ namespace Veng::Renderer
         m_SkyResolver->RecordPreReplay(cmd, resolvedView);
 
         // The atmosphere LUTs were generated ahead of the atmosphere bake, before the frame's
-        // BeginView (a baked atmosphere reads them per face); nothing more to record here.
+        // view claim (a baked atmosphere reads them per face); nothing more to record here.
 
         m_Internal->Graph->Execute(cmd, bindings, &resolvedView);
 

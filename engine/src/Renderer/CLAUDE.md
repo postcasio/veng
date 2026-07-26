@@ -458,10 +458,24 @@ Per-view data rides a **ring-buffered view-constants buffer**, not push constant
 SSAO view/projection live in a set-0 buffer selected by an index fold (a dynamic-offset descriptor
 mistranslates in set 0 on MoltenVK). This buffer is **shared across every `Viewport`** (it lives
 in the `Context`-owned `BindlessRegistry`), so it is ringed `framesInFlight * MaxViewsPerFrame`
-deep and each `SceneRenderer::Execute` claims its own slot (`BindlessRegistry::BeginView`, reset
+deep and each `SceneRenderer::Execute` claims its own slot (`BindlessRegistry::TryBeginView`, reset
 per frame): two viewports rendering in one frame write distinct regions rather than the second's
 camera clobbering the region the first's draws still read at submit. The shared per-frame light
-buffer rings the same way. Its stride is **640 bytes**. The shadow system's own state — the
+buffer rings the same way.
+
+**`MaxViewsPerFrame` (32) is a budget spent against, not a contract.** Its consumers are the
+registered viewports (one slot each), one face per driven scene capture, and a sky cube bake (six
+slots, twelve on the SH tier whose readback bake claims its own six) in the frame a sky is dirty —
+so ordinary content can want more than one frame holds, and the ceiling is sized by memory the whole
+ring pays (`framesInFlight * MaxViewsPerFrame` regions of ~6 KB). `TryBeginView` therefore **returns
+false rather than asserting** when the budget is spent, warning once, and each consumer degrades:
+`SceneRenderer::Execute` records nothing and its target keeps the last frame's content, a sky bake is
+skipped **whole** and left dirty for the next frame with room (a half-filled cube marked clean would
+be permanently wrong), and `ViewportCompositor::RenderRegistered` reserves one slot per registered
+viewport before driving the captures at all — so **captures give way before viewports do**, a missing
+reflection over a stale window. An over-budget capture set is driven **round-robin** across frames
+from a retained cursor (`CaptureRotation.h`, the device-free arithmetic), which costs each map refresh
+latency instead of starving whichever captures registered last. Its stride is **640 bytes**. The shadow system's own state — the
 cascade matrices, splits, and params — rides the **set-1** `ShadowConstants` block instead, so set
 0 stays a lean, material-facing view block (shared by materials, lighting, and SSAO). Push
 constants in the deferred path carry only small per-invocation bindless handle indices and the
@@ -905,7 +919,8 @@ frames), tiles the HDR result into a persistent 3×2 face atlas, and resamples t
 output is **pre-tonemap linear HDR** and a plain **2D** bindless texture — a cube view cannot ride
 the set-0 bindless array — so it binds onto a material through `Material::SetTextureHandle`. It is
 **push-to-render**: a frame with no fresh `SetView` records nothing, so an idle capture costs
-nothing. `ViewportCompositor` drives the registered captures ahead of every viewport, so a
+nothing. `ViewportCompositor` drives the registered captures ahead of every viewport — within the
+view budget it can leave those viewports, round-robin across frames when they do not all fit — so a
 material sampling one reads this frame's result. `CaptureSurface` (the reflected component, see
 [../Gui/CLAUDE.md](../Gui/CLAUDE.md)) is the authoring front end.
 
