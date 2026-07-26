@@ -3,6 +3,7 @@
 #include <Veng/Net/Host.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/Components.h>
+#include <Veng/Scene/InputMappingSystem.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Net/WorldEnvelope.h>
 
@@ -148,17 +149,33 @@ namespace Veng
 
     void StampLocalSeatInput(InputSendBuffer& send, const Scene& world, const u64 clientTick)
     {
-        // The local input seat is the first (SeatInput, PlayerInput) entity — the one InputMappingSystem
-        // resolves from local devices. A client with none (a spectator) stamps nothing.
+        // The local input seat is a (SeatInput, PlayerInput) entity — the one InputMappingSystem
+        // resolves from local devices. Prefer the locally-owned one when a peer holds several, and
+        // fall back to the first so a single-seat client is unchanged. A client with none (a
+        // spectator) stamps nothing.
         bool stamped = false;
+        const PlayerInput* firstInput = nullptr;
         world.Each<SeatInput, PlayerInput>(
-            [&](const Entity, const SeatInput&, const PlayerInput& input)
+            [&](const Entity seat, const SeatInput&, const PlayerInput& input)
             {
-                if (!stamped)
+                if (stamped)
+                {
+                    return;
+                }
+                if (IsLocallyOwned(world, seat))
                 {
                     send.Stamp(clientTick, input.State);
                     stamped = true;
+                    return;
+                }
+                if (firstInput == nullptr)
+                {
+                    firstInput = &input;
                 }
             });
+        if (!stamped && firstInput != nullptr)
+        {
+            send.Stamp(clientTick, firstInput->State);
+        }
     }
 }

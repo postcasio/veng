@@ -11,6 +11,7 @@
 #include <Veng/Renderer/ViewportCompositor.h>
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
+#include <Veng/Scene/InputMappingSystem.h>
 #include <Veng/Scene/LocalControl.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/SceneSimulation.h>
@@ -25,16 +26,26 @@ namespace Veng
     Entity ResolvePresentationSeat(const Scene& scene, const Entity boundViewer)
     {
         // The bound seat survives the rebind only when its scene-local handle still names a live Viewer
-        // in the destination scene; otherwise fall to the scene's sole/first Viewer, then to no seat.
+        // in the destination scene; otherwise prefer a locally-owned Viewer, then fall to the scene's
+        // first, then to no seat. The locally-owned preference is what picks this peer's own seat when
+        // a scene holds one per peer; with a single Viewer the first is that one, so nothing regresses.
         if (!boundViewer.IsNull() && scene.IsAlive(boundViewer) && scene.Has<Viewer>(boundViewer))
         {
             return boundViewer;
         }
+        Entity firstViewer = Entity::Null;
         for (auto [entity, viewer] : scene.View<Viewer>())
         {
-            return entity;
+            if (IsLocallyOwned(scene, entity))
+            {
+                return entity;
+            }
+            if (firstViewer.IsNull())
+            {
+                firstViewer = entity;
+            }
         }
-        return Entity::Null;
+        return firstViewer;
     }
 
     bool IsWorldPresentable(const WorldRunner& runner, const WorldInstanceId world)

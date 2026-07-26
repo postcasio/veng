@@ -665,6 +665,22 @@ namespace Veng
     {
     };
 
+    /// @brief Marks the seat this peer owns locally, so its input resolves from local devices.
+    ///
+    /// The net layer publishes it on a joining client's own seat as that seat binds, and removes it
+    /// when the join is released. It is the fact `IsLocallyOwned` (Veng/Scene/InputMappingSystem.h)
+    /// reads: because `Viewer` is always-relevant, a peer receives one replicated seat per peer, and
+    /// this marker is what tells its own from the others'. A peer's seat that arrives through the
+    /// stream carries none.
+    ///
+    /// The marker is **local-only**: it carries no reflected field, so it never serializes, never
+    /// persists, and never rides the wire — it is published on the machine that owns the seat and
+    /// means nothing off it. With no marker anywhere in a scene — single-player, headless, a host's
+    /// own seat — every seat resolves locally, the pre-replication default.
+    struct LocalSeat
+    {
+    };
+
     /// @brief Marks the pawn a presenting viewport's own seat controls on this machine.
     ///
     /// The engine's answer to "which pawn is mine?", derived in two steps that are both required:
@@ -1340,6 +1356,10 @@ VE_TYPE(::Veng::PrefabSource, 0xD0EA6653C1F9B14DULL);
 
 // A fieldless mark: the component's presence is the whole signal, so there is nothing to reflect.
 VE_TYPE(::Veng::NetSpawn, 0xF6B2DEC39DC3F319ULL);
+
+// Registered without a reflected field, so it neither serializes nor rides the wire: the marker is
+// local-only, published by the net layer on the seat this peer owns and meaningless off its machine.
+VE_TYPE(::Veng::LocalSeat, 0x8689D3B182EB53CEULL);
 
 // Registered without a reflected field, so it neither serializes nor rides the wire: the marker is
 // per-process presentation state the engine derives per frame, meaningless off its machine.

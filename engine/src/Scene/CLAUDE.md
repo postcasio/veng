@@ -220,8 +220,14 @@ which a game-specific control system reads to produce the abstract `Intent` game
   place it before the control system that reads `PlayerInput` (registration order does not reorder
   the list). It iterates `(Viewer, InputContextStack, PlayerInput, SeatInput)` seats, so a world
   with none — the input-free minimal template — resolves nothing, a clean no-op with no guard; in
-  headless the neutral snapshot resolves to all-`None`. `IsLocallyOwned` returns true for every
-  seat; it is the seam the net layer keys on.
+  headless the neutral snapshot resolves to all-`None`. `IsLocallyOwned` decides which seat this peer
+  owns: a joining client publishes a `LocalSeat` marker on its own seat (removed on release) and the
+  predicate answers `true` only for the marked one; a host with no marker answers from `Authority`
+  (a seat a remote connection owns, `Owner != 0`, is that peer's); with nothing published — single
+  player, headless, a host's own seat — every seat resolves locally, the pre-replication default. The
+  three first-match seat scans (`ResolvePresentationSeat`, `StampLocalSeatInput`, `FirstKeyboardSeat`)
+  prefer the locally-owned seat through it, falling back to the first so a single-seat scene is
+  unchanged.
     **A context can be gated on gameplay focus as authored data.** An `InputMapData`
   (`Veng/Asset/InputMappingContext.h`) carries a reflected **`RequiresGameplayFocus`** flag
   (authored `"requiresGameplayFocus"`, tolerant-read so existing cooked maps are unchanged); when

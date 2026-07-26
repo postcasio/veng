@@ -10,10 +10,24 @@ namespace Veng
 {
     bool IsLocallyOwned(const Scene& scene, Entity seat)
     {
-        // No remote ownership exists yet: every seat resolves locally. The net layer maps
-        // Authority tier/owner to local ownership here.
-        (void)scene;
-        (void)seat;
+        // A joining client publishes a LocalSeat marker on its own seat. Once any seat carries it,
+        // exactly the marked seat is locally owned; the peers' replicated seats are not.
+        if (scene.TryGetFirst<LocalSeat>() != nullptr)
+        {
+            return scene.Has<LocalSeat>(seat);
+        }
+
+        // No marker published, so a host answers from Authority: a seat a remote connection owns
+        // (Owner != 0) belongs to that peer, not this one. Authority does not replicate, so this
+        // branch never fires on a joining client — the marker path above answers there.
+        if (const auto* authority = scene.TryGet<Authority>(seat);
+            authority != nullptr && authority->Owner != 0)
+        {
+            return false;
+        }
+
+        // Nothing published and no remote owner — single-player, headless, or a host's own seat — so
+        // the seat resolves locally, the pre-replication default every single-seat scene keeps.
         return true;
     }
 

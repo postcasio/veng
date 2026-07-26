@@ -30,6 +30,7 @@
 #include "support/TestComponents.h"
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
+#include <Veng/Scene/InputMappingSystem.h>
 #include <Veng/Scene/Movement.h>
 #include <Veng/Scene/RemoteInterpolationSystem.h>
 #include <Veng/Scene/Scene.h>
@@ -791,6 +792,71 @@ TEST_CASE("Two clients each see both pawns and drive only their own")
     // A never moved B (authority stayed with each owner's input on the server).
     CHECK(worldA.Get<Transform>(aSeesB).Position.x < 0.0f);
     CHECK(worldB.Get<Transform>(bSeesA).Position.x > 0.0f);
+}
+
+TEST_CASE("A client holding three seats owns exactly the one ClientHost::Seat names")
+{
+    const auto hub = CreateRef<Hub>();
+    const u32 serverEndpoint = hub->Register();
+    auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
+    ServerWorld server(*serverT);
+
+    // Three connections, so each client's scene holds three replicated Viewer seats — its own and
+    // two others'. Three, not two: with two, a predicate that returns "the seat that is not the
+    // first" would still pass.
+    auto clientTa = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    auto clientTb = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    auto clientTc = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    ClientWorld clientA(*clientTa);
+    ClientWorld clientB(*clientTb);
+    ClientWorld clientC(*clientTc);
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    for (u64 tick = 1; tick <= 90; ++tick)
+    {
+        now += Delta;
+        server.SimStep(tick, Delta);
+        server.NetPump(now, tick);
+        clientA.Frame(now, tick, Delta, std::nullopt);
+        clientB.Frame(now, tick, Delta, std::nullopt);
+        clientC.Frame(now, tick, Delta, std::nullopt);
+    }
+
+    REQUIRE(server.Host->Server().Connections().size() == 3);
+    REQUIRE(clientA.Host->IsJoined());
+
+    // The three seats' wire ids, resolved server-side, then looked up in clientA's own reconstruction.
+    Scene& worldA = *clientA.Host->World();
+    const auto seatOnA = [&](const ConnectionId conn)
+    {
+        const Entity serverSeat = server.Host->SeatFor(conn);
+        REQUIRE_FALSE(serverSeat.IsNull());
+        const NetId seatNet = server.World->Get<NetIdentity>(serverSeat).Id;
+        return clientA.Host->Replication().Map().Lookup(seatNet);
+    };
+    const Entity aOwn = seatOnA(clientA.Client->AssignedId());
+    const Entity aSeesB = seatOnA(clientB.Client->AssignedId());
+    const Entity aSeesC = seatOnA(clientC.Client->AssignedId());
+    REQUIRE_FALSE(aOwn.IsNull());
+    REQUIRE_FALSE(aSeesB.IsNull());
+    REQUIRE_FALSE(aSeesC.IsNull());
+
+    // The seat the net layer published the marker on is exactly the one ClientHost::Seat names, and
+    // IsLocallyOwned answers true for it alone among the three.
+    CHECK(aOwn == clientA.Host->Seat());
+    CHECK(worldA.Has<Veng::LocalSeat>(aOwn));
+    CHECK_FALSE(worldA.Has<Veng::LocalSeat>(aSeesB));
+    CHECK_FALSE(worldA.Has<Veng::LocalSeat>(aSeesC));
+    CHECK(IsLocallyOwned(worldA, aOwn));
+    CHECK_FALSE(IsLocallyOwned(worldA, aSeesB));
+    CHECK_FALSE(IsLocallyOwned(worldA, aSeesC));
+
+    // A join release drops the marker: clientA leaves, and the clear ahead of the wire-owned teardown
+    // removes its LocalSeat, so its scene publishes none and IsLocallyOwned falls back to the local
+    // default rather than answering through a dead handle.
+    clientA.Host->Leave(clientA.Host->CurrentJoinId());
+    CHECK(worldA.TryGetFirst<Veng::LocalSeat>() == nullptr);
 }
 
 TEST_CASE("Interest management: two clients far apart each hear only their own neighborhood")
@@ -3248,7 +3314,6 @@ TEST_CASE("Two hosted worlds with different quantization envelopes each decode o
     interp.SetSettings(RemoteInterpolationSystem::Settings{
         .SnapshotInterval = 2, .InterpolationDelayIntervals = 2, .SimTickRate = 60.0});
     std::unordered_map<u16, Unique<Scene>> scenes; // by JoinId
-    std::deque<u16> loadOrder;                     // JoinId assignment is request order
     Unique<ClientHost> clientHost = ClientHost::Create(ClientHostInfo{
         .Client = *client,
         .Assets = FakeAssets(),
@@ -6232,7 +6297,7 @@ TEST_CASE("A message on an unregistered channel drops with a one-shot per-channe
     struct SinkGuard
     {
         ~SinkGuard() { Log::SetSink(nullptr); }
-    } guard;
+    } const guard;
     Log::SetSink(
         [&warnings](const Log::Level level, const std::string_view message)
         {
@@ -6886,7 +6951,7 @@ TEST_CASE("A seatless data world's pump grows no input state, and a sparse snaps
     Unique<ServerHost> host = std::move(*hostR);
 
     DataWorldClient client(*clientT, DefaultWorldKey);
-    InputSendBuffer send(InputSendBuffer::Settings{.Redundancy = 3});
+    const InputSendBuffer send(InputSendBuffer::Settings{.Redundancy = 3});
     std::unordered_map<u64, InputJitterBuffer> jitter;
 
     f64 now = 0.0;

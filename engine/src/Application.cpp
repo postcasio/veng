@@ -30,6 +30,7 @@
 
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
+#include <Veng/Scene/InputMappingSystem.h>
 #include <Veng/Scene/LocalControl.h>
 #include <Veng/Scene/Requests.h>
 #include <Veng/Scene/Scene.h>
@@ -1492,20 +1493,31 @@ namespace Veng
 
     namespace
     {
-        // The scene-local keyboard/mouse seat a captured pointer routes to: the first
-        // (Viewer, SeatInput) with UsesKeyboardMouse, Entity::Null when the scene has none.
+        // The scene-local keyboard/mouse seat a captured pointer routes to: a (Viewer, SeatInput)
+        // with UsesKeyboardMouse, preferring the locally-owned one when a peer holds several and
+        // falling back to the first, Entity::Null when the scene has none. With a single such seat
+        // the first is that one, so nothing regresses.
         Entity FirstKeyboardSeat(const Scene& scene)
         {
-            Entity keyboardSeat = Entity::Null;
+            Entity firstKeyboard = Entity::Null;
+            Entity localKeyboard = Entity::Null;
             scene.Each<Viewer, SeatInput>(
                 [&](const Entity seat, const Viewer&, const SeatInput& devices)
                 {
-                    if (keyboardSeat == Entity::Null && devices.UsesKeyboardMouse)
+                    if (!devices.UsesKeyboardMouse)
                     {
-                        keyboardSeat = seat;
+                        return;
+                    }
+                    if (firstKeyboard == Entity::Null)
+                    {
+                        firstKeyboard = seat;
+                    }
+                    if (localKeyboard == Entity::Null && IsLocallyOwned(scene, seat))
+                    {
+                        localKeyboard = seat;
                     }
                 });
-            return keyboardSeat;
+            return localKeyboard != Entity::Null ? localKeyboard : firstKeyboard;
         }
     }
 

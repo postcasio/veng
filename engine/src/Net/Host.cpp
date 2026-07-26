@@ -1428,6 +1428,14 @@ namespace Veng
             }
             jc.Seat = seat;
 
+            // Publish this join's own seat so the scene-level IsLocallyOwned predicate tells it from
+            // the peers' replicated seats. The marker is local-only — never replicated — so a peer's
+            // seat that reaches this client through the stream carries none.
+            if (!jc.World->Has<LocalSeat>(seat))
+            {
+                jc.World->Add<LocalSeat>(seat);
+            }
+
             const Possesses* possesses = jc.World->TryGet<Possesses>(seat);
             if (possesses == nullptr)
             {
@@ -1524,6 +1532,13 @@ namespace Veng
             // spawned/adopted set in the scene.
             if (jc.World != nullptr)
             {
+                // Drop the local-seat marker before the wire-owned teardown, so a seat that outlives
+                // its wire id (an adopted claimant) stops answering as locally owned.
+                if (!jc.Seat.IsNull() && jc.World->IsAlive(jc.Seat) &&
+                    jc.World->Has<LocalSeat>(jc.Seat))
+                {
+                    jc.World->Remove<LocalSeat>(jc.Seat);
+                }
                 Repredict(jc, Entity::Null);
                 jc.Replication->Leave(*jc.World);
             }

@@ -134,6 +134,10 @@ namespace Veng
         registry.Register<PrefabSource>();
         registry.Register<NetSpawn>();
 
+        // The seat a peer owns locally, published by the net layer and read by IsLocallyOwned. Carries
+        // no reflected field, so it never serializes and never rides the wire — it is local-only.
+        registry.Register<LocalSeat>();
+
         // The pawn a presenting viewport's own seat controls, derived and stamped by the engine
         // each frame. Runtime-only: it carries no reflected field, so it never serializes and never
         // rides the wire.

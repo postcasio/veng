@@ -8,16 +8,22 @@ namespace Veng
 {
     class Scene;
 
-    /// @brief Whether a seat is simulated on this client, so its input resolves locally.
+    /// @brief Whether a seat is owned by this peer, so its input resolves from local devices.
     ///
-    /// The seam the net layer keys on: a locally-owned seat's PlayerInput is filled by
-    /// resolving the raw snapshot against its InputContextStack; a remote or AI seat's
-    /// arrives replicated or synthesized. Today it returns true for every seat — no remote
-    /// ownership exists yet — threaded now so the resolve-per-seat shape is right when
-    /// replication lands. It does not gate on Authority::Tier yet.
+    /// A locally-owned seat's PlayerInput is filled by resolving the raw snapshot against its
+    /// InputContextStack; a remote or AI seat's arrives replicated or synthesized. Because Viewer is
+    /// always-relevant a peer receives one replicated seat per peer, so the answer is decided in
+    /// three steps:
+    ///
+    /// - A joining client publishes a LocalSeat marker on its own seat. When any seat in the scene
+    ///   carries it, exactly the marked seat is locally owned and the peers' replicated seats are not.
+    /// - Otherwise a host reads Authority: a seat a remote connection owns (Owner != 0) is that
+    ///   peer's, not this one's. Authority does not replicate, so this never fires on a client.
+    /// - With nothing published and no remote owner — single-player, headless, a host's own seat —
+    ///   the seat is locally owned, the pre-replication default.
     /// @param scene  The scene the seat lives in.
     /// @param seat   The seat entity to test.
-    /// @return True while the seat is simulated locally.
+    /// @return True while the seat is owned by this peer.
     [[nodiscard]] VE_API bool IsLocallyOwned(const Scene& scene, Entity seat);
 
     /// @brief Builtin Sim system that resolves each seat's active contexts into its PlayerInput.
