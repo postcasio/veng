@@ -81,25 +81,25 @@ namespace Veng::Renderer
         m_HdrHandle = bindless.Register(m_Renderer->GetHdrView());
 
         const u32 res = m_FaceResolution;
-        m_AtlasImage = Image::Create(m_Context, {
-                                                    .Name = "SceneCapture Atlas",
-                                                    .Extent = {res * 3, res * 2, 1},
-                                                    .Format = CaptureFormat,
-                                                    .Usage = ImageUsage::ColorAttachment |
-                                                             ImageUsage::Sampled,
-                                                });
-        m_AtlasView =
-            ImageView::Create(m_Context, {.Name = "SceneCapture Atlas View", .Image = m_AtlasImage});
+        m_AtlasImage =
+            Image::Create(m_Context, {
+                                         .Name = "SceneCapture Atlas",
+                                         .Extent = {res * 3, res * 2, 1},
+                                         .Format = CaptureFormat,
+                                         .Usage = ImageUsage::ColorAttachment | ImageUsage::Sampled,
+                                     });
+        m_AtlasView = ImageView::Create(m_Context,
+                                        {.Name = "SceneCapture Atlas View", .Image = m_AtlasImage});
         m_AtlasHandle = bindless.Register(m_AtlasView);
 
         // The octahedral map at 2R×2R holds roughly the six faces' solid-angle density.
-        m_OctahedralImage = Image::Create(m_Context, {
-                                                         .Name = "SceneCapture Octahedral",
-                                                         .Extent = {res * 2, res * 2, 1},
-                                                         .Format = CaptureFormat,
-                                                         .Usage = ImageUsage::ColorAttachment |
-                                                                  ImageUsage::Sampled,
-                                                     });
+        m_OctahedralImage =
+            Image::Create(m_Context, {
+                                         .Name = "SceneCapture Octahedral",
+                                         .Extent = {res * 2, res * 2, 1},
+                                         .Format = CaptureFormat,
+                                         .Usage = ImageUsage::ColorAttachment | ImageUsage::Sampled,
+                                     });
         m_OctahedralView = ImageView::Create(
             m_Context, {.Name = "SceneCapture Octahedral View", .Image = m_OctahedralImage});
         m_OctahedralHandle = bindless.Register(m_OctahedralView);
@@ -130,11 +130,11 @@ namespace Veng::Renderer
             loadShader(OctahedralFragId, "octahedral resample fragment");
 
         m_CopyLayout = PipelineLayout::Create(
-            m_Context, {
-                           .Name = "SceneCapture Copy Layout",
-                           .PushConstantRanges = {PushConstantRange::Of<CopyPush>(
-                               ShaderStage::Fragment)},
-                       });
+            m_Context,
+            {
+                .Name = "SceneCapture Copy Layout",
+                .PushConstantRanges = {PushConstantRange::Of<CopyPush>(ShaderStage::Fragment)},
+            });
         m_CopyPipeline = GraphicsPipeline::Create(
             m_Context, {
                            .Name = "SceneCapture Copy Pipeline",
@@ -221,7 +221,8 @@ namespace Veng::Renderer
         m_Renderer->Execute(cmd, SceneView{.World = *m_View.World,
                                            .Camera = camera,
                                            .Delta = 0.0f,
-                                           .Exclude = m_View.Exclude});
+                                           .Exclude = m_View.Exclude,
+                                           .Alpha = m_View.Alpha});
         cmd.PrepareForAccess(m_Renderer->GetHdrView(), AccessKind::Sample);
 
         // Tile the face's HDR into its atlas cell. The atlas persists across frames (only the

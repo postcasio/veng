@@ -1,9 +1,12 @@
 // Fixed-timestep render interpolation cases. Two device-free surfaces: the pure InterpolateTransform
 // blend (lerp position/scale, slerp rotation) and the Scene transform-history ring feeding
 // GetInterpolatedWorldTransform. These pin the analytic blend, the two-tick snapshot roll, the
-// hierarchy compose, the static-scene convergence, and the fall-back to the live pose — no device.
+// hierarchy compose, the static-scene convergence, the fall-back to the live pose, and the arc an
+// offset child of a turning parent sweeps as the alpha crosses a tick — no device.
 
 #include <doctest/doctest.h>
+
+#include <cmath>
 
 #include <glm/gtc/epsilon.hpp>
 
@@ -179,4 +182,42 @@ TEST_CASE("scene interpolation: a ViewPose child stays live under an interpolate
     // ancestor interpolation composes with the child's per-frame pose.
     const mat4 childWorld = scene->GetInterpolatedWorldTransform(child, 0.5f);
     CHECK(glm::all(glm::epsilonEqual(Translation(childWorld), vec3(11, 0, 0), 1e-5f)));
+}
+
+TEST_CASE("scene interpolation: an offset child of a turning parent sweeps a tick's arc by alpha")
+{
+    TypeRegistry registry = MakeRegistry();
+    const Unique<Scene> scene = Scene::Create(registry);
+
+    // A carrier yawing at a steady rate with something rigidly mounted well off its origin — the
+    // geometry shared by every attachment resolved against a moving parent (a mounted camera rig, a
+    // socketed prop, a capture probe on the mesh it feeds). A 0.35 rad/s yaw at a 60 Hz tick.
+    const f32 radius = 12.79f;
+    const f32 tickAngle = 0.35f / 60.0f;
+
+    const Entity parent = scene->CreateEntity();
+    scene->Add<Transform>(parent, Transform{.Rotation = glm::angleAxis(0.0f, vec3(0, 1, 0))});
+    const Entity child = scene->CreateEntity();
+    scene->Add<Transform>(child, Transform{.Position = {0.0f, 0.0f, -radius}});
+    scene->SetParent(child, parent);
+
+    scene->SnapshotTransformHistory();
+    scene->Get<Transform>(parent).Rotation = glm::angleAxis(tickAngle, vec3(0, 1, 0));
+    scene->SnapshotTransformHistory();
+
+    // The un-interpolated world matrix is the blend's alpha=1 endpoint, not a pose independent of it.
+    const vec3 unInterpolated = Translation(WorldMatrix(*scene, child));
+    CHECK(glm::all(glm::epsilonEqual(Translation(scene->GetInterpolatedWorldTransform(child, 1.0f)),
+                                     unInterpolated, 1e-5f)));
+
+    // So resolving an attachment against the un-interpolated pose while the frame draws the blended
+    // one is wrong by exactly the arc the alpha has yet to sweep: a whole tick's worth at alpha 0,
+    // nothing at alpha 1. That error is not a constant lag — it reopens and collapses once per tick
+    // as the alpha sweeps, and it grows with both the mount radius and the turn rate.
+    const f32 chord = 2.0f * radius * std::sin(tickAngle * 0.5f);
+    CHECK(chord == doctest::Approx(0.0746f).epsilon(0.01));
+    CHECK(glm::distance(Translation(scene->GetInterpolatedWorldTransform(child, 0.0f)),
+                        unInterpolated) == doctest::Approx(chord).epsilon(0.001));
+    CHECK(glm::distance(Translation(scene->GetInterpolatedWorldTransform(child, 0.5f)),
+                        unInterpolated) == doctest::Approx(chord * 0.5f).epsilon(0.01));
 }

@@ -178,8 +178,9 @@ namespace Veng::Renderer
         /// Materializes the runtime on first use (creating the SceneCapture at the authored resolution
         /// and its sampler) and returns the capture so the caller registers it on the drive-list the
         /// first time it appears. Pushes this frame's capture source (SceneCapture::SetView from @p
-        /// position) when the refresh policy calls for it — every frame for EveryFrame, only while a
-        /// refresh is outstanding for OnDemand — so a settled OnDemand capture records nothing. Binds the
+        /// position, at @p alpha) when the refresh policy calls for it — every frame for EveryFrame,
+        /// only while a refresh is outstanding for OnDemand — so a settled OnDemand capture records
+        /// nothing. Binds the
         /// capture's output handle onto @p material's named slot every frame (SetTextureHandle writes the
         /// current frame-in-flight region, so the handle must land regardless of whether a face was
         /// pushed), beside the sampler and — when CenterSlot names one — @p position with its validity
@@ -195,11 +196,18 @@ namespace Veng::Renderer
         /// @param assets    The asset manager the capture's SceneRenderer loads its shaders through.
         /// @param world     The scene being captured, pushed as this frame's source.
         /// @param entity    The entity this component belongs to; excluded from its own capture.
-        /// @param position  The entity's world-space position the capture renders from.
+        /// @param position  The world-space position the capture renders from, published as the centre.
+        /// @param alpha     Interpolation fraction the captured content is drawn at, in [0, 1).
         /// @param material  The sibling mesh material to bind onto; an unloaded handle skips binding.
+        /// @pre @p position is resolved at @p alpha — for an entity-tracking probe, through
+        ///      Scene::GetInterpolatedWorldTransform at this same alpha. The two place the capture's
+        ///      camera and its content on one pose; resolving the position against the
+        ///      un-interpolated pose instead offsets everything rigidly attached to the capture's
+        ///      carrier by a fraction of a tick's motion, which changes every frame as the alpha
+        ///      sweeps (see CaptureView::Alpha).
         /// @return The owned capture (built on first use), or nullptr when the resolution is invalid.
         SceneCapture* Drive(Context& context, AssetManager& assets, const Scene& world,
-                            Entity entity, const vec3& position,
+                            Entity entity, const vec3& position, f32 alpha,
                             const AssetHandle<MaterialInstance>& material) const;
 
         /// @brief Clears the material slots the last Drive filled — the exact inverse of its bind.

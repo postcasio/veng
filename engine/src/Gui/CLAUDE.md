@@ -727,6 +727,19 @@ is what makes its fallback branch reachable. (A `nointerpolation float3 v_Object
 `SurfaceFragmentInput` would serve *any* surface material, but it changes the shared vertex contract —
 the five files the format spans plus every surface fragment — for a need one consuming domain has.)
 
+**The capture is placed at the pose its entity is *drawn* at, not the one it was simulated at.** The
+drive resolves the position through `Scene::GetInterpolatedWorldTransform` at the world's own
+`LastAlpha` and hands that alpha to `Drive` as well, so `CaptureView::Position` (the face cameras and
+the published centre) and `CaptureView::Alpha` (the content the face renders draw) sit on one pose —
+the same pose the renderer draws the mesh the capture feeds at. This is the `CameraRigSystem` rule
+applied to a probe, and for the same reason: a capture resolved against the un-interpolated pose sits
+a partial tick from its own carrier, so everything rigidly attached to that carrier is sampled from
+the wrong place by an offset that **reopens and collapses once per tick** as the alpha sweeps — read
+as vibration rather than lag, growing with the carrier's speed and turn rate and with the mount
+radius. See [../Scene/CLAUDE.md](../Scene/CLAUDE.md) for the camera-rig statement of it. Because the
+drive walks every world and each ticks on its own clock, the alpha is read per world, not once per
+frame.
+
 **Teardown is the exact inverse of the bind.** `CaptureSurface::Unbind` — the `GuiOverlay::Detach`
 counterpart — writes the unbound state back onto the material the last drive bound: an invalid handle
 into the texture and sampler slots and a zero `vec4` into the centre, so the validity flag reads 0 and

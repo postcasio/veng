@@ -57,6 +57,14 @@ namespace Veng::Renderer
         /// (never a mesh or a material, which are shared by many entities) drops it from the
         /// capture's visibility gather, so it is absent from every domain the capture draws.
         Entity Exclude = Entity::Null;
+        /// @brief Interpolation fraction the face renders draw the scene at, in [0, 1).
+        ///
+        /// Forwarded to the face renderer as SceneView::Alpha, so the captured content sits at the
+        /// pose the frame draws rather than at the last Sim tick's. It must be the same alpha
+        /// @ref Position was resolved at: the two together place the camera and the geometry on one
+        /// pose, and a mismatch offsets everything rigidly attached to the capture's own carrier by
+        /// that fraction of a tick's motion — which changes every frame as the alpha sweeps.
+        f32 Alpha = 0.0f;
         /// @brief Near plane of the face cameras, in world units.
         f32 Near = 0.05f;
         /// @brief Far plane of the face cameras, in world units.

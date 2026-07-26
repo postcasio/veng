@@ -145,7 +145,7 @@ namespace Veng::Renderer
     }
 
     SceneCapture* CaptureSurface::Drive(Context& context, AssetManager& assets, const Scene& world,
-                                        const Entity entity, const vec3& position,
+                                        const Entity entity, const vec3& position, const f32 alpha,
                                         const AssetHandle<MaterialInstance>& material) const
     {
         VE_ASSERT(Resolution > 0, "CaptureSurface::Drive: Resolution must be positive (got {})",
@@ -186,7 +186,8 @@ namespace Veng::Renderer
             Refresh == CaptureRefresh::EveryFrame || runtime.PendingFaces > 0;
         if (pushThisFrame)
         {
-            runtime.Capture->SetView({.World = &world, .Position = position, .Exclude = entity});
+            runtime.Capture->SetView(
+                {.World = &world, .Position = position, .Exclude = entity, .Alpha = alpha});
             if (runtime.PendingFaces > 0)
             {
                 --runtime.PendingFaces;

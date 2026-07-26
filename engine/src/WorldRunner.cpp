@@ -10,7 +10,6 @@
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/SceneSimulation.h>
-#include <Veng/Scene/Transforms.h>
 
 #include <algorithm>
 #include <string>
@@ -300,12 +299,21 @@ namespace Veng
         for (const Unique<World>& world : m_Worlds)
         {
             const Scene& scene = world->GetScene();
+            // The world's own interpolation fraction, not the frame's: the drive walks every world,
+            // and each advances its Sim on its own clock.
+            const f32 alpha = world->LastAlpha;
+
             for (auto [entity, surface] : scene.View<Renderer::CaptureSurface>())
             {
-                // The capture renders from the entity's world position (a probe centered on it, a
-                // mirror placed at it). The surface's material is the sibling MeshRenderer's first.
-                const vec3 position = vec3(WorldMatrix(scene, entity)[3]);
+                // The capture renders from the pose the entity is *drawn* at (a probe centered on it,
+                // a mirror placed at it) — the same pose the mesh it feeds is drawn at, since the
+                // renderer blends a drawn transform between the last two Sim ticks by this alpha.
+                // Resolving the un-interpolated pose instead puts the probe a partial tick from that
+                // mesh and from everything else rigidly attached to it, by an offset that reopens and
+                // collapses each tick as the alpha sweeps and grows with speed and turn rate.
+                const vec3 position = vec3(scene.GetInterpolatedWorldTransform(entity, alpha)[3]);
 
+                // The surface's material is the sibling MeshRenderer's first.
                 AssetHandle<MaterialInstance> material;
                 if (const auto* mesh = scene.TryGet<MeshRenderer>(entity); mesh != nullptr)
                 {
@@ -344,7 +352,7 @@ namespace Veng
                 // pointer on destruction, so removing the component/entity/scene unregisters it.
                 const bool hadCapture = surface.GetCapture() != nullptr;
                 Renderer::SceneCapture* capture =
-                    surface.Drive(*m_Context, *m_Assets, scene, entity, position, material);
+                    surface.Drive(*m_Context, *m_Assets, scene, entity, position, alpha, material);
                 if (capture != nullptr && !hadCapture)
                 {
                     registerCapture(*capture);
