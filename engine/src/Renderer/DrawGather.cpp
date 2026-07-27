@@ -317,9 +317,17 @@ namespace Veng::Renderer
                 .PrevWorld = prevWorld,
             };
 
-            // Sort key: the submesh center in view space. The camera looks down -Z, so a farther
-            // submesh has a more negative z; sorting ascending by z draws farthest first.
-            const vec3 center = (item.WorldBounds.Min + item.WorldBounds.Max) * 0.5f;
+            // Sort key: the submesh's *own* center in view space. The camera looks down -Z, so a
+            // farther submesh has a more negative z; sorting ascending by z draws farthest first.
+            // The mesh's whole bound gives every submesh of one mesh the same key, which leaves
+            // their relative order arbitrary — so a mesh partitioned into submeshes precisely to be
+            // ordered against itself, or against something concentric with it, sorts as though it
+            // had not been. A submesh's bound is folded at load, so this is a matrix-vector product
+            // per draw. A submesh whose range referenced no vertices has an empty bound and falls
+            // back to the mesh's.
+            const vec3 center = subMesh.Bounds.IsEmpty()
+                                    ? (item.WorldBounds.Min + item.WorldBounds.Max) * 0.5f
+                                    : vec3(item.World * vec4(subMesh.Bounds.Center(), 1.0f));
             const f32 viewDepth = (viewMatrix * vec4(center, 1.0f)).z;
 
             plan.Draws.push_back(TranslucentDraw{
