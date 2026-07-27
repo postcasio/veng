@@ -307,7 +307,17 @@ namespace Veng::Renderer
         /// @brief Maximum registered byte-address storage buffers.
         static constexpr u32 MaxStorageBuffers = 256;
         /// @brief Maximum registered material slots.
-        static constexpr u32 MaxMaterials = 256;
+        ///
+        /// The table is engine-wide rather than per scene: a consumer holding several worlds open
+        /// at once — a transition that keeps the departing world resident while the arriving one
+        /// builds, a world rendered to a capture beside the presented one — draws every one of them
+        /// from this table, so the budget a single scene appears to need is not the figure that has
+        /// to fit. Exhausting it is a fatal assert rather than a soft failure, so the cap is set
+        /// where a plausible multi-world consumer stays clear of it. It costs only the parameter
+        /// buffer it sizes (framesInFlight * MaxMaterials * MaterialParamStride, a few hundred
+        /// kilobytes of host-mapped storage); no descriptor array is indexed by it, and no shader
+        /// reads it — a draw is handed a slot index with the frame base already folded in.
+        static constexpr u32 MaxMaterials = 512;
 
         /// @brief The fixed cap on lights the deferred lighting pass loops per pixel.
         ///
