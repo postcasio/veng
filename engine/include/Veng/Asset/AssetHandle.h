@@ -70,6 +70,15 @@ namespace Veng
             return m_Entry != nullptr && m_Entry->Resource != nullptr;
         }
 
+        /// @brief Returns true when the handle names an asset, resident or still loading.
+        ///
+        /// The distinction IsLoaded() cannot draw: a handle from an asynchronous Load/Build names a
+        /// real asset from the moment it is returned, but is not resident until its continuation
+        /// runs. Code that *stores* a handle for later use must test this rather than IsLoaded() (or
+        /// the bool conversion, which is residency) — treating a not-yet-resident handle as absent
+        /// discards it permanently, and the asset landing a frame later cannot undo that.
+        [[nodiscard]] bool IsValid() const { return m_Entry != nullptr; }
+
         /// @brief Returns the asset's id (may be invalid for runtime-adopted resources).
         [[nodiscard]] AssetId Id() const { return m_Id; }
 

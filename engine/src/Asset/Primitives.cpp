@@ -17,7 +17,12 @@ namespace Veng::Primitives
         // submeshes reference it by; an empty handle records nothing and leaves them unassigned.
         u32 RecordMaterial(MeshData& data, AssetHandle<MaterialInstance> material)
         {
-            if (!material)
+            // IsValid, never IsLoaded: a material from the asynchronous Build lands a frame or more
+            // after the generator runs, and recording it by residency would drop it and bake
+            // NoMaterial into the submesh, so the mesh could never draw however long the material
+            // took to arrive. The draw gather already skips a submesh whose material is not yet
+            // resident, so carrying the pending handle degrades for a frame instead of forever.
+            if (!material.IsValid())
             {
                 return SubMesh::NoMaterial;
             }

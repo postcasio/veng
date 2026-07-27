@@ -1,8 +1,8 @@
-// Primitive-generator unit cases: pure CPU geometry, no Context, no Vulkan.
+// Primitive-generator unit cases: pure CPU geometry, no Vulkan device.
 // These pin the math — counts, triangle winding, unit-length normals/tangents,
-// AABB extents, and the default no-material wiring. The populated-material path
-// needs a GPU AssetHandle<Material>, so it is exercised elsewhere; here every
-// generator is called with the empty default handle.
+// AABB extents, and the default no-material wiring. Most generators here are
+// called with the empty default handle; the last case covers the *pending*
+// handle an asynchronous build returns, which needs a manager but no device.
 
 #include <doctest/doctest.h>
 
@@ -11,8 +11,13 @@
 
 #include <glm/geometric.hpp>
 
+#include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/MaterialInstance.h>
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Asset/Primitives.h>
+#include <Veng/Reflection/TypeRegistry.h>
+#include <Veng/Renderer/Context.h>
+#include <Veng/Task/TaskSystem.h>
 
 using namespace Veng;
 
@@ -666,4 +671,43 @@ TEST_CASE("Capsule: segments and rings clamp to minimums")
 
     CHECK(clamped.Vertices.size() == explicitMin.Vertices.size());
     CHECK(clamped.Indices.size() == explicitMin.Indices.size());
+}
+
+TEST_CASE("Primitives: a generator records a material handle that is not yet resident")
+{
+    // The asynchronous Build returns a handle naming a real asset that becomes resident a frame or
+    // more later. A generator runs immediately after, so it sees the pending handle — and recording
+    // it by residency would drop it and bake NoMaterial into the submesh, which the draw gather
+    // skips forever. The material landing afterwards cannot undo that, so the mesh would never draw.
+    Renderer::Context context;
+    TaskSystem tasks;
+    TypeRegistry types;
+    AssetManager manager(context, tasks, types);
+
+    // A factory that is never pumped, so the handle stays pending for the whole case.
+    const AssetHandle<MaterialInstance> pending =
+        manager.Adopt<MaterialInstance>(tasks.Submit([] { return Ref<MaterialInstance>(); }));
+
+    REQUIRE_FALSE(pending.IsLoaded());
+    REQUIRE(pending.IsValid());
+
+    const MeshData data = Primitives::Icosphere(1.0f, 1, pending);
+
+    REQUIRE(data.Materials.size() == 1);
+    REQUIRE_FALSE(data.SubMeshes.empty());
+    for (const SubMesh& submesh : data.SubMeshes)
+    {
+        CHECK(submesh.MaterialIndex != SubMesh::NoMaterial);
+        CHECK(submesh.MaterialIndex < data.Materials.size());
+    }
+
+    // An empty handle still means "no material" — the distinction the fix turns on.
+    const MeshData bare = Primitives::Icosphere(1.0f, 1, AssetHandle<MaterialInstance>{});
+    CHECK(bare.Materials.empty());
+    for (const SubMesh& submesh : bare.SubMeshes)
+    {
+        CHECK(submesh.MaterialIndex == SubMesh::NoMaterial);
+    }
+
+    tasks.WaitForAll();
 }
