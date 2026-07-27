@@ -245,8 +245,9 @@ namespace Veng
         /// (bindless registration) lands on the main-thread continuation pump, after which
         /// IsLoaded() is true. Like Adopt, the handle carries the invalid AssetId and its cache
         /// entry is detached — a runtime resource has no content identity. Supported for Texture,
-        /// Mesh, and Material; the arguments are the asset's build description (a TextureData, a
-        /// MeshData + name, or a MaterialInfo + pipeline layout).
+        /// Mesh, Material, and MaterialInstance; the arguments are the asset's build description (a
+        /// TextureData, a MeshData + name, a MaterialInfo + pipeline layout, or a
+        /// MaterialInstanceInfo).
         /// @tparam T     The asset resource type to build.
         /// @tparam Args  The asset's build-description arguments.
         /// @param args   Forwarded to the per-type build (e.g. a TextureData, or a MeshData + name).
@@ -295,8 +296,8 @@ namespace Veng
         /// The blocking sibling of Build<T>: it constructs, uploads, and finalizes the asset inline
         /// (the finalize — bindless registration — runs on the calling thread, so call this on the
         /// render thread), then adopts the ready resource. Like Build, the handle carries the
-        /// invalid AssetId and its cache entry is detached. Supported for Texture, Mesh, and
-        /// Material.
+        /// invalid AssetId and its cache entry is detached. Supported for Texture, Mesh, Material,
+        /// and MaterialInstance.
         /// @tparam T     The asset resource type to build.
         /// @tparam Args  The asset's build-description arguments.
         /// @param args   Forwarded to the per-type build (e.g. a TextureData, or a MeshData + name).
