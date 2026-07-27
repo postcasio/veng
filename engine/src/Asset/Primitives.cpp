@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 #include <glm/geometric.hpp>
 #include <glm/trigonometric.hpp>
@@ -12,18 +13,25 @@ namespace Veng::Primitives
 {
     namespace
     {
-        // Appends a single submesh over the full index range. A valid material handle is
-        // recorded as the mesh's resident material; an empty handle leaves the submesh unassigned.
+        // Records a valid material handle as the mesh's resident material and returns the index
+        // submeshes reference it by; an empty handle records nothing and leaves them unassigned.
+        u32 RecordMaterial(MeshData& data, AssetHandle<MaterialInstance> material)
+        {
+            if (!material)
+            {
+                return SubMesh::NoMaterial;
+            }
+
+            const u32 index = static_cast<u32>(data.Materials.size());
+            data.Materials.push_back(std::move(material));
+            return index;
+        }
+
+        // Appends a single submesh over the full index range, carrying the recorded material.
         void FinishSubMesh(MeshData& data, AssetHandle<MaterialInstance> material)
         {
             const u32 indexCount = static_cast<u32>(data.Indices.size());
-
-            u32 materialIndex = SubMesh::NoMaterial;
-            if (material)
-            {
-                materialIndex = static_cast<u32>(data.Materials.size());
-                data.Materials.push_back(std::move(material));
-            }
+            const u32 materialIndex = RecordMaterial(data, std::move(material));
 
             data.SubMeshes.push_back(SubMesh{
                 .IndexOffset = 0,
@@ -1022,6 +1030,94 @@ namespace Veng::Primitives
         }
 
         FinishSubMesh(data, std::move(material));
+        return data;
+    }
+
+    MeshData Annulus(f32 innerRadius, f32 outerRadius, u32 radialSegments, u32 angularSegments,
+                     u32 angularSubmeshes, AssetHandle<MaterialInstance> material)
+    {
+        radialSegments = std::max(1u, radialSegments);
+        angularSegments = std::max(3u, angularSegments);
+        angularSubmeshes = std::max(1u, angularSubmeshes);
+
+        // Equal sectors: raise the column count to the next multiple so every sector spans the
+        // same arc and no quad straddles a boundary.
+        if (const u32 remainder = angularSegments % angularSubmeshes; remainder != 0)
+        {
+            angularSegments += angularSubmeshes - remainder;
+        }
+
+        if (innerRadius > outerRadius)
+        {
+            std::swap(innerRadius, outerRadius);
+        }
+
+        constexpr f32 Pi = 3.14159265358979323846f;
+
+        MeshData data;
+        data.Vertices.reserve(static_cast<usize>(angularSegments + 1) * (radialSegments + 1));
+        data.Indices.reserve(static_cast<usize>(angularSegments) * radialSegments * 6);
+
+        // (angularSegments+1) columns around the ring x (radialSegments+1) rows across it, laid
+        // out angular-major so each sector's quads form one contiguous index range. The seam
+        // columns duplicate so UVs do not wrap.
+        for (u32 j = 0; j <= angularSegments; ++j)
+        {
+            const f32 v = static_cast<f32>(j) / static_cast<f32>(angularSegments);
+            const f32 theta = v * 2.0f * Pi;
+            const f32 cosTheta = std::cos(theta);
+            const f32 sinTheta = std::sin(theta);
+
+            for (u32 i = 0; i <= radialSegments; ++i)
+            {
+                const f32 u = static_cast<f32>(i) / static_cast<f32>(radialSegments);
+                const f32 radius = innerRadius + (outerRadius - innerRadius) * u;
+
+                data.Vertices.push_back(CanonicalVertex{
+                    .Position = vec3(cosTheta * radius, 0.0f, sinTheta * radius),
+                    .Normal = vec3(0.0f, 1.0f, 0.0f),
+                    // +U direction (increasing radius), pointing radially outward.
+                    .Tangent = vec4(cosTheta, 0.0f, sinTheta, 1.0f),
+                    .UV = vec2(u, v),
+                });
+            }
+        }
+
+        const u32 stride = radialSegments + 1;
+        for (u32 j = 0; j < angularSegments; ++j)
+        {
+            for (u32 i = 0; i < radialSegments; ++i)
+            {
+                const u32 a = j * stride + i;
+                const u32 b = a + 1;      // one step outward
+                const u32 c = a + stride; // one step around
+                const u32 d = c + 1;
+
+                // CCW seen from above (+Y looking down -Y), matching Plane. Radial-then-angular
+                // order inverts one triangle per quad, so the angular step leads both.
+                data.Indices.push_back(a);
+                data.Indices.push_back(c);
+                data.Indices.push_back(b);
+
+                data.Indices.push_back(b);
+                data.Indices.push_back(c);
+                data.Indices.push_back(d);
+            }
+        }
+
+        // The sectors share one vertex grid and one material; only the index range differs. The
+        // column count is a multiple of the sector count, so the division is exact.
+        const u32 materialIndex = RecordMaterial(data, std::move(material));
+        const u32 indicesPerSector = static_cast<u32>(data.Indices.size()) / angularSubmeshes;
+        for (u32 sector = 0; sector < angularSubmeshes; ++sector)
+        {
+            data.SubMeshes.push_back(SubMesh{
+                .IndexOffset = sector * indicesPerSector,
+                .IndexCount = indicesPerSector,
+                .MaterialIndex = materialIndex,
+            });
+        }
+
         return data;
     }
 

@@ -300,6 +300,49 @@ namespace Veng::Primitives
                                  u32 majorSegments = 32, u32 minorSegments = 16,
                                  AssetHandle<MaterialInstance> material = {});
 
+    /// @brief Flat annulus in the XZ plane (+Y normal): a ring of `innerRadius` to `outerRadius`, centered at the origin.
+    ///
+    /// The one flat closed shape with a hole — the companion of Plane's flat sheet and of the
+    /// Torus that sweeps a tube around the same profile. Tessellated into `radialSegments` x
+    /// `angularSegments` quads, one submesh by default.
+    ///
+    /// **UVs are radial**, which is the reason to generate the shape rather than mask a quad: `u`
+    /// is the normalized radial fraction across the ring (0 at the inner edge, 1 at the outer), so
+    /// a radial profile is a 1D texture lookup or a 1D function of `u`, and `v` is the angular
+    /// fraction around the ring, so wrapping a texture around it is a `v` repeat. The angular seam
+    /// column duplicates at 0 and a full turn, so `v` spans [0,1] rather than wrapping to 0 at the
+    /// seam. Tangents follow +U, radially outward.
+    ///
+    /// The winding is counter-clockwise seen from +Y, matching Plane, so the back-face default
+    /// culls both undersides identically. The annulus is single-sided in exactly the sense Plane
+    /// is: a two-sided ring is the material's CullMode::None, not a second geometry variant.
+    ///
+    /// `angularSubmeshes` (min 1) splits the ring into that many equal angular sectors, each its
+    /// own submesh sharing the one material. It partitions the **index buffer**, not the vertices
+    /// — the sectors share one vertex grid — and `angularSegments` is raised to the next multiple
+    /// of it so the sectors are equal and no quad straddles a boundary. One submesh, the default,
+    /// is the ordinary case; a translucent annulus wants several, because a renderer that sorts
+    /// translucent geometry per submesh cannot order a single-submesh ring against anything
+    /// concentric with it — every part of the ring carries the same view depth, while its near and
+    /// far arcs need opposite orders. Sectors give the sorter something to work with and cost one
+    /// draw each.
+    ///
+    /// A zero `innerRadius` is legal and gives a filled disc; its innermost band is a centre fan,
+    /// where one triangle per quad collapses to zero area at the origin. An `innerRadius` past
+    /// `outerRadius` is swapped rather than producing inverted geometry.
+    /// @param innerRadius       Radius of the hole, in units; 0 gives a filled disc.
+    /// @param outerRadius       Radius of the outer edge, in units.
+    /// @param radialSegments    Quad bands across the ring; clamped to at least 1.
+    /// @param angularSegments   Quad columns around the ring; clamped to at least 3, then raised
+    ///                          to the next multiple of `angularSubmeshes`.
+    /// @param angularSubmeshes  Equal angular sectors, one submesh each; clamped to at least 1.
+    /// @param material          Material recorded on the produced submeshes; empty leaves them unassigned.
+    /// @return CPU-side MeshData in the canonical vertex layout.
+    [[nodiscard]] MeshData Annulus(f32 innerRadius = 0.25f, f32 outerRadius = 0.5f,
+                                   u32 radialSegments = 1, u32 angularSegments = 32,
+                                   u32 angularSubmeshes = 1,
+                                   AssetHandle<MaterialInstance> material = {});
+
     /// @brief Capsule about the Y axis: a cylinder of `height` capped by two hemispheres of `radius`, centered at the origin.
     ///
     /// `segments` longitude columns (min 3) shared by the band and both caps; each hemisphere has

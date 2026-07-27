@@ -6,6 +6,7 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <cmath>
 
 #include <glm/geometric.hpp>
@@ -63,8 +64,10 @@ namespace
         }
     }
 
-    // Shared invariants every primitive's MeshData must satisfy.
-    void CheckCommonInvariants(const MeshData& data)
+    // Shared invariants every primitive's MeshData must satisfy. `expectedSubMeshes` is the
+    // submesh count the generator's arguments call for; whatever the count, the submeshes must
+    // tile the index range end to end with no gap and no overlap.
+    void CheckCommonInvariants(const MeshData& data, usize expectedSubMeshes = 1)
     {
         // Triangle list.
         CHECK(data.Indices.size() % 3 == 0);
@@ -76,14 +79,20 @@ namespace
             CHECK(index < data.Vertices.size());
         }
 
-        // Exactly one submesh covering the whole index range.
-        REQUIRE(data.SubMeshes.size() == 1);
-        CHECK(data.SubMeshes[0].IndexOffset == 0);
-        CHECK(data.SubMeshes[0].IndexCount == data.Indices.size());
+        REQUIRE(data.SubMeshes.size() == expectedSubMeshes);
 
-        // No-material default: empty list, unassigned submesh.
+        // No-material default: empty list, unassigned submeshes.
         CHECK(data.Materials.empty());
-        CHECK(data.SubMeshes[0].MaterialIndex == SubMesh::NoMaterial);
+
+        usize covered = 0;
+        for (const SubMesh& submesh : data.SubMeshes)
+        {
+            CHECK(submesh.IndexOffset == covered);
+            CHECK(submesh.IndexCount % 3 == 0);
+            CHECK(submesh.MaterialIndex == SubMesh::NoMaterial);
+            covered += submesh.IndexCount;
+        }
+        CHECK(covered == data.Indices.size());
 
         // Normals unit length; tangents unit (xyz), orthogonal to normal, w = ±1.
         for (const CanonicalVertex& v : data.Vertices)
@@ -98,6 +107,49 @@ namespace
         }
 
         CheckWindingMatchesNormals(data);
+    }
+
+    // Two generator calls produced the same geometry: same grid, same indices, same submesh
+    // ranges. Compared exactly, not approximately — the arguments are meant to reduce to the
+    // identical arithmetic, so any difference at all is the failure.
+    void CheckIdenticalGeometry(const MeshData& a, const MeshData& b)
+    {
+        REQUIRE(a.Vertices.size() == b.Vertices.size());
+        REQUIRE(a.Indices.size() == b.Indices.size());
+        REQUIRE(a.SubMeshes.size() == b.SubMeshes.size());
+
+        for (usize i = 0; i < a.Vertices.size(); ++i)
+        {
+            CHECK(a.Vertices[i].Position == b.Vertices[i].Position);
+            CHECK(a.Vertices[i].Normal == b.Vertices[i].Normal);
+            CHECK(a.Vertices[i].Tangent == b.Vertices[i].Tangent);
+            CHECK(a.Vertices[i].UV == b.Vertices[i].UV);
+        }
+
+        CHECK(a.Indices == b.Indices);
+
+        for (usize i = 0; i < a.SubMeshes.size(); ++i)
+        {
+            CHECK(a.SubMeshes[i].IndexOffset == b.SubMeshes[i].IndexOffset);
+            CHECK(a.SubMeshes[i].IndexCount == b.SubMeshes[i].IndexCount);
+            CHECK(a.SubMeshes[i].MaterialIndex == b.SubMeshes[i].MaterialIndex);
+        }
+    }
+
+    // Distance from the Y axis — the radius a vertex of a shape swept about that axis sits at.
+    f32 RingRadius(const vec3& position)
+    {
+        return std::sqrt(position.x * position.x + position.z * position.z);
+    }
+
+    // Twice the area of the triangle at index-list offset `triangle * 3`, as the cross product
+    // of two of its edges: zero length means a degenerate triangle.
+    vec3 TriangleCross(const MeshData& data, usize triangle)
+    {
+        const vec3& p0 = data.Vertices[data.Indices[triangle * 3 + 0]].Position;
+        const vec3& p1 = data.Vertices[data.Indices[triangle * 3 + 1]].Position;
+        const vec3& p2 = data.Vertices[data.Indices[triangle * 3 + 2]].Position;
+        return glm::cross(p1 - p0, p2 - p0);
     }
 }
 
@@ -358,6 +410,228 @@ TEST_CASE("Torus: vertex count grows with segments")
     const usize moreMinor = Primitives::Torus(0.5f, 0.2f, 8, 12).Vertices.size();
     CHECK(moreMajor > coarse);
     CHECK(moreMinor > coarse);
+}
+
+TEST_CASE("Annulus: counts, planarity, radial bounds, radial UVs and +Y winding")
+{
+    const f32 inner = 0.4f;
+    const f32 outer = 1.0f;
+    const u32 radial = 3;
+    const u32 angular = 24;
+    const MeshData data = Primitives::Annulus(inner, outer, radial, angular);
+
+    CHECK(data.Vertices.size() == static_cast<usize>(angular + 1) * (radial + 1));
+    CHECK(data.Indices.size() == static_cast<usize>(angular) * radial * 6);
+    CheckCommonInvariants(data);
+
+    usize innerEdge = 0;
+    usize outerEdge = 0;
+    f32 minAngularUv = 1.0f;
+    f32 maxAngularUv = 0.0f;
+
+    for (const CanonicalVertex& v : data.Vertices)
+    {
+        // Flat in XZ at Y = 0, +Y normal.
+        CHECK(v.Position.y == doctest::Approx(0.0f));
+        CHECK(v.Normal.x == doctest::Approx(0.0f));
+        CHECK(v.Normal.y == doctest::Approx(1.0f));
+        CHECK(v.Normal.z == doctest::Approx(0.0f));
+
+        const f32 r = RingRadius(v.Position);
+        CHECK(r >= inner - 1e-4f);
+        CHECK(r <= outer + 1e-4f);
+
+        // u is the normalized radial fraction, so it recovers the vertex's own radius.
+        CHECK(inner + (outer - inner) * v.UV.x == doctest::Approx(r).epsilon(0.001f));
+        CHECK(v.UV.y >= 0.0f);
+        CHECK(v.UV.y <= 1.0f);
+
+        // The tangent follows +u, pointing radially outward.
+        const vec3 outward = glm::normalize(vec3(v.Position.x, 0.0f, v.Position.z));
+        CHECK(glm::dot(outward, vec3(v.Tangent)) == doctest::Approx(1.0f).epsilon(0.001f));
+
+        if (v.UV.x == 0.0f)
+        {
+            ++innerEdge;
+            CHECK(r == doctest::Approx(inner));
+        }
+        if (v.UV.x == 1.0f)
+        {
+            ++outerEdge;
+            CHECK(r == doctest::Approx(outer));
+        }
+
+        minAngularUv = std::min(minAngularUv, v.UV.y);
+        maxAngularUv = std::max(maxAngularUv, v.UV.y);
+    }
+
+    // One vertex per angular index sits on each edge ring, exactly at that radius.
+    CHECK(innerEdge == static_cast<usize>(angular) + 1);
+    CHECK(outerEdge == static_cast<usize>(angular) + 1);
+
+    // The seam column duplicates, so v spans the full [0,1] instead of wrapping back to 0.
+    CHECK(minAngularUv == doctest::Approx(0.0f));
+    CHECK(maxAngularUv == doctest::Approx(1.0f));
+
+    // No triangle is inverted — the failure a radial-then-angular index order produces on one of
+    // the two triangles per quad, which a per-vertex normal check cannot see.
+    for (usize triangle = 0; triangle < data.Indices.size() / 3; ++triangle)
+    {
+        const vec3 geometric = TriangleCross(data, triangle);
+        REQUIRE(glm::length(geometric) > 1e-9f);
+        CHECK(glm::normalize(geometric).y == doctest::Approx(1.0f).epsilon(0.001f));
+    }
+}
+
+TEST_CASE("Annulus: segment counts clamp to their minimums")
+{
+    CheckIdenticalGeometry(Primitives::Annulus(0.2f, 0.5f, 0, 0, 0),
+                           Primitives::Annulus(0.2f, 0.5f, 1, 3, 1));
+}
+
+TEST_CASE("Annulus: vertex count grows with segments")
+{
+    const usize coarse = Primitives::Annulus(0.2f, 0.5f, 1, 8).Vertices.size();
+    const usize moreRadial = Primitives::Annulus(0.2f, 0.5f, 4, 8).Vertices.size();
+    const usize moreAngular = Primitives::Annulus(0.2f, 0.5f, 1, 16).Vertices.size();
+
+    CHECK(moreRadial > coarse);
+    CHECK(moreAngular > coarse);
+}
+
+TEST_CASE("Annulus: an inner radius past the outer is swapped, not inverted")
+{
+    CheckIdenticalGeometry(Primitives::Annulus(1.0f, 0.4f, 2, 16),
+                           Primitives::Annulus(0.4f, 1.0f, 2, 16));
+}
+
+TEST_CASE("Annulus: one angular submesh matches omitting the parameter")
+{
+    CheckIdenticalGeometry(Primitives::Annulus(0.4f, 1.0f, 2, 16, 1),
+                           Primitives::Annulus(0.4f, 1.0f, 2, 16));
+}
+
+TEST_CASE("Annulus: angular submeshes partition the index buffer into equal sectors")
+{
+    const f32 inner = 0.4f;
+    const f32 outer = 1.0f;
+    const u32 radial = 2;
+    const u32 angular = 24;
+    const u32 sectors = 4;
+
+    const MeshData split = Primitives::Annulus(inner, outer, radial, angular, sectors);
+    const MeshData whole = Primitives::Annulus(inner, outer, radial, angular);
+
+    // Contiguous, non-overlapping, covering the whole range.
+    CheckCommonInvariants(split, sectors);
+
+    // The sectors partition the index buffer, not the vertices: one grid, the same indices in the
+    // same order, only the submesh table differing.
+    CHECK(split.Vertices.size() == whole.Vertices.size());
+    CHECK(split.Indices == whole.Indices);
+
+    const u32 perSector = static_cast<u32>(whole.Indices.size()) / sectors;
+    for (const SubMesh& submesh : split.SubMeshes)
+    {
+        CHECK(submesh.IndexCount == perSector);
+    }
+
+    // Each sector spans exactly its own 1/N of the turn.
+    for (u32 sector = 0; sector < sectors; ++sector)
+    {
+        const SubMesh& submesh = split.SubMeshes[sector];
+        f32 minAngularUv = 2.0f;
+        f32 maxAngularUv = -1.0f;
+        for (u32 k = 0; k < submesh.IndexCount; ++k)
+        {
+            const f32 v = split.Vertices[split.Indices[submesh.IndexOffset + k]].UV.y;
+            minAngularUv = std::min(minAngularUv, v);
+            maxAngularUv = std::max(maxAngularUv, v);
+        }
+
+        CHECK(minAngularUv ==
+              doctest::Approx(static_cast<f32>(sector) / static_cast<f32>(sectors)));
+        CHECK(maxAngularUv ==
+              doctest::Approx(static_cast<f32>(sector + 1) / static_cast<f32>(sectors)));
+    }
+}
+
+TEST_CASE("Annulus: angular segments round up to a multiple of the sector count")
+{
+    // 10 columns over 4 sectors rounds to 12, so no sector is short and no quad straddles a
+    // boundary.
+    const MeshData data = Primitives::Annulus(0.4f, 1.0f, 1, 10, 4);
+
+    CHECK(data.Vertices.size() == static_cast<usize>(12 + 1) * 2);
+    CHECK(data.Indices.size() == static_cast<usize>(12) * 6);
+    CheckCommonInvariants(data, 4);
+
+    for (const SubMesh& submesh : data.SubMeshes)
+    {
+        CHECK(submesh.IndexCount == 18);
+    }
+}
+
+TEST_CASE("Annulus: a zero inner radius is a filled disc")
+{
+    const u32 radial = 2;
+    const u32 angular = 16;
+    const MeshData data = Primitives::Annulus(0.0f, 0.75f, radial, angular);
+
+    CheckCommonInvariants(data);
+
+    // The inner edge ring collapses onto the origin, so there is no hole.
+    usize atOrigin = 0;
+    for (const CanonicalVertex& v : data.Vertices)
+    {
+        if (RingRadius(v.Position) < 1e-6f)
+        {
+            ++atOrigin;
+        }
+    }
+    CHECK(atOrigin == static_cast<usize>(angular) + 1);
+
+    // The only degenerate triangles are the centre fan's: one per quad in the innermost band,
+    // whose two inner corners are both the origin. Nothing outside that band degenerates.
+    usize degenerate = 0;
+    for (usize triangle = 0; triangle < data.Indices.size() / 3; ++triangle)
+    {
+        if (glm::length(TriangleCross(data, triangle)) <= 1e-9f)
+        {
+            ++degenerate;
+        }
+    }
+    CHECK(degenerate == static_cast<usize>(angular));
+}
+
+TEST_CASE("Annulus: summed triangle area converges to the analytic ring area")
+{
+    constexpr f32 Pi = 3.14159265358979323846f;
+    const f32 inner = 0.3f;
+    const f32 outer = 0.9f;
+    const f64 exact =
+        static_cast<f64>(Pi) * (static_cast<f64>(outer) * outer - static_cast<f64>(inner) * inner);
+
+    // A wrong radius interpolation keeps every vertex inside the radial bounds, so the per-vertex
+    // checks pass and only the enclosed area moves.
+    f64 previousError = exact;
+    for (const u32 angular : {8u, 32u, 128u, 512u})
+    {
+        const MeshData data = Primitives::Annulus(inner, outer, 2, angular);
+
+        f64 area = 0.0;
+        for (usize triangle = 0; triangle < data.Indices.size() / 3; ++triangle)
+        {
+            area += 0.5 * static_cast<f64>(glm::length(TriangleCross(data, triangle)));
+        }
+
+        const f64 error = std::abs(area - exact);
+        CHECK(error < previousError);
+        previousError = error;
+    }
+
+    // The chords of a 512-column ring are indistinguishable from the ideal arcs at this scale.
+    CHECK(previousError < exact * 1e-4);
 }
 
 TEST_CASE("Capsule: invariants, radius/full-extent AABB, surface distance")

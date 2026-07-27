@@ -235,7 +235,7 @@ and the app still runs — only `smoke_golden` (gated to skip on a non-ASTC devi
   (`Veng/Scene/Components.h`) carries one runtime `AssetHandle<Mesh> Mesh` (the renderer query
   `(Transform, MeshRenderer)` and every draw path read it) plus a serialized **`MeshSource
   Source`** — a `Variant<CubeShape, PlaneShape, SphereShape, IcosphereShape, CylinderShape,
-  ConeShape, TorusShape, CapsuleShape>`, each alternative carrying that shape's parameters plus an
+  ConeShape, TorusShape, CapsuleShape, AnnulusShape>`, each alternative carrying that shape's parameters plus an
   `AssetHandle<Material>`. An empty `Source` means the authored cooked `Mesh` is used as-is; a
   non-empty `Source` is the inline procedural recipe, so a prefab persists "icosphere, radius 0.8,
   4 subdivisions, brick material" inline rather than as an unaddressable runtime handle. Both

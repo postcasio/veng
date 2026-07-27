@@ -59,6 +59,13 @@ namespace Veng
             return Primitives::Capsule(capsule.Radius, capsule.Height, capsule.Segments,
                                        capsule.Rings, capsule.Material);
         }
+        if (kind == TypeIdOf<AnnulusShape>())
+        {
+            const auto& annulus = *static_cast<const AnnulusShape*>(member);
+            return Primitives::Annulus(annulus.InnerRadius, annulus.OuterRadius,
+                                       annulus.RadialSegments, annulus.AngularSegments,
+                                       annulus.AngularSubmeshes, annulus.Material);
+        }
 
         return std::nullopt;
     }

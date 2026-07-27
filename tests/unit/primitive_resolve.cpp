@@ -122,6 +122,22 @@ TEST_CASE("BuildShapeMeshData(Capsule) matches Primitives::Capsule")
     CHECK(built->Indices.size() == expected.Indices.size());
 }
 
+TEST_CASE("BuildShapeMeshData(Annulus) matches Primitives::Annulus")
+{
+    const MeshSource source = MakeSource(AnnulusShape{.InnerRadius = 0.4f,
+                                                      .OuterRadius = 1.0f,
+                                                      .RadialSegments = 2,
+                                                      .AngularSegments = 24,
+                                                      .AngularSubmeshes = 4});
+    const optional<MeshData> built = BuildShapeMeshData(source);
+    REQUIRE(built.has_value());
+
+    const MeshData expected = Primitives::Annulus(0.4f, 1.0f, 2, 24, 4);
+    CHECK(built->Vertices.size() == expected.Vertices.size());
+    CHECK(built->Indices.size() == expected.Indices.size());
+    CHECK(built->SubMeshes.size() == expected.SubMeshes.size());
+}
+
 TEST_CASE("MeshRenderer round-trips its recipe source through reflection")
 {
     TypeRegistry registry;

@@ -183,13 +183,30 @@ namespace Veng
         AssetHandle<MaterialInstance> Material;
     };
 
+    /// @brief Annulus shape recipe: the parameters of Primitives::Annulus plus its material.
+    struct AnnulusShape
+    {
+        /// @brief Radius of the hole; 0 gives a filled disc.
+        f32 InnerRadius = 0.25f;
+        /// @brief Radius of the outer edge.
+        f32 OuterRadius = 0.5f;
+        /// @brief Quad band count across the ring.
+        u32 RadialSegments = 1;
+        /// @brief Quad column count around the ring.
+        u32 AngularSegments = 32;
+        /// @brief Equal angular sectors the ring splits into, one submesh each.
+        u32 AngularSubmeshes = 1;
+        /// @brief Material instance recorded on the generated submeshes.
+        AssetHandle<MaterialInstance> Material;
+    };
+
     /// @brief The inline procedural source of a MeshRenderer's mesh: one shape recipe or empty.
     ///
     /// The active alternative is the primitive kind and carries that kind's parameters plus
     /// its material. Empty means the MeshRenderer's cooked Mesh is used as authored; a
     /// non-empty alternative is built into the MeshRenderer's Mesh at spawn/edit.
     using MeshSource = Variant<CubeShape, PlaneShape, SphereShape, IcosphereShape, CylinderShape,
-                               ConeShape, TorusShape, CapsuleShape>;
+                               ConeShape, TorusShape, CapsuleShape, AnnulusShape>;
 
     /// @brief Component that binds a scene entity to a renderable mesh.
     ///
@@ -1219,6 +1236,15 @@ VE_FIELD(Radius, .DisplayName = "Radius", .Display = {.Min = 0.001})
 VE_FIELD(Height, .DisplayName = "Height", .Display = {.Min = 0.001})
 VE_FIELD(Segments, .DisplayName = "Segments", .Display = {.Min = 3})
 VE_FIELD(Rings, .DisplayName = "Rings", .Display = {.Min = 1})
+VE_FIELD(Material, .DisplayName = "Material")
+VE_REFLECT_END();
+
+VE_REFLECT(::Veng::AnnulusShape, 0xC5E6FA972870D259ULL)
+VE_FIELD(InnerRadius, .DisplayName = "Inner Radius", .Display = {.Min = 0.0})
+VE_FIELD(OuterRadius, .DisplayName = "Outer Radius", .Display = {.Min = 0.001})
+VE_FIELD(RadialSegments, .DisplayName = "Radial Segments", .Display = {.Min = 1})
+VE_FIELD(AngularSegments, .DisplayName = "Angular Segments", .Display = {.Min = 3})
+VE_FIELD(AngularSubmeshes, .DisplayName = "Angular Submeshes", .Display = {.Min = 1})
 VE_FIELD(Material, .DisplayName = "Material")
 VE_REFLECT_END();
 
