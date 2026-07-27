@@ -12,6 +12,9 @@
 //  - the published probe centre: with CenterSlot named, the drive writes the world position it
 //    rendered from into the material's centre field with a validity flag, which a
 //    parallax-correcting consumer needs and cannot derive from its fragment inputs;
+//  - the published capture frame: with OrientationSlot named, the drive writes the basis the faces
+//    were oriented by as a quaternion — the identity for a world-aligned capture, the carrier's own
+//    rotation for an entity-aligned one — and teardown returns it to the identity;
 //  - teardown: a capture built and registered against a component unregisters itself from the
 //    drive-list when the component is removed, its entity destroyed, or its scene dropped — and the
 //    material it fed stops sampling the capture rather than freezing on a released bindless slot.
@@ -22,6 +25,7 @@
 
 #include <doctest/doctest.h>
 
+#include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/packing.hpp>
 
 #include <Veng/Asset/AssetManager.h>
@@ -543,6 +547,106 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                                   0.0f, mat3(1.0f), material));
     CHECK(unpublished.b > 0.6f);
     CHECK(unpublished.b > unpublished.g + 0.3f);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "capture surface: the drive publishes the frame the faces were oriented in")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(CookCapturePack()).has_value());
+
+    const AssetResult<AssetHandle<MaterialInstance>> parallax =
+        assets.LoadSync<MaterialInstance>(ParallaxInstance);
+    const AssetResult<AssetHandle<MaterialInstance>> backdrop =
+        assets.LoadSync<MaterialInstance>(BackdropInstance);
+    REQUIRE(parallax.has_value());
+    REQUIRE(backdrop.has_value());
+
+    vector<Ref<Mesh>> meshes;
+    Entity surfaceEntity;
+    const Unique<Scene> scene =
+        BuildCaptureScene(Context, assets, Types, *parallax, *backdrop, CaptureRefresh::EveryFrame,
+                          meshes, surfaceEntity);
+    auto& capture = scene->Get<CaptureSurface>(surfaceEntity);
+    capture.OrientationSlot = "Orientation";
+    const AssetHandle<MaterialInstance> material = SurfaceMaterial(*scene, surfaceEntity);
+    const Unique<Viewport> viewport = MakeViewport(Context, assets);
+
+    // The centre slot stays unnamed and its validity flag is set by hand, so the fragment's fallback
+    // is not what this case reads — and the unbind below then touches the frame slot alone, which is
+    // what makes the identity it writes there observable.
+    material->SetParam("Center", vec4(0.0f, 0.0f, 0.0f, 1.0f));
+
+    const auto RenderFrame = [&](SceneCapture* built)
+    {
+        viewport->SetViewState({.World = scene.get(), .Camera = FrontCamera(), .Delta = 0.016f});
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                if (built != nullptr)
+                {
+                    built->Render(cmd);
+                }
+                viewport->Render(cmd);
+            });
+        const vector<u8> output = viewport->GetOutput()->GetImage()->Download();
+        return SampleBlock(output, Extent, vec2(0.5f, 0.5f));
+    };
+
+    const auto DriveWith = [&](const mat3& faceBasis)
+    {
+        return capture.Drive(Context, assets, *scene, surfaceEntity, vec3(0.0f), 0.0f, faceBasis,
+                             material);
+    };
+    const auto Quarter = [](const vec3& axis)
+    { return mat3(glm::rotate(mat4(1.0f), glm::radians(90.0f), axis)); };
+
+    // The identity basis a World-aligned capture is driven with publishes the identity rotation: an
+    // imaginary part of zero and a real part of one. That is what lets a consumer read the slot with
+    // no branch on the alignment — world space is a frame like any other.
+    material->SetParam("Display", vec4(0.0f, 1.0f, 0.0f, 0.0f));
+    const vec4 worldXyz = RenderFrame(DriveWith(mat3(1.0f)));
+    CHECK(worldXyz.r < 0.15f);
+    CHECK(worldXyz.g < 0.15f);
+    CHECK(worldXyz.b < 0.15f);
+
+    material->SetParam("Display", vec4(0.0f, 0.0f, 1.0f, 0.0f));
+    const vec4 worldW = RenderFrame(DriveWith(mat3(1.0f)));
+    CHECK(worldW.r > 0.5f);
+    CHECK(std::abs(worldW.r - worldW.g) < 0.05f);
+    CHECK(std::abs(worldW.r - worldW.b) < 0.05f);
+
+    // A carrier's own rotation publishes as that rotation: a quarter turn about an axis puts the
+    // quaternion's imaginary part on that axis, so the channel that lights up names the axis. Two
+    // axes in turn, so the value is shown to be the basis handed to Drive rather than a constant.
+    material->SetParam("Display", vec4(0.0f, 1.0f, 0.0f, 0.0f));
+
+    const vec4 aboutY = RenderFrame(DriveWith(Quarter(vec3(0.0f, 1.0f, 0.0f))));
+    CHECK(aboutY.g > 0.4f);
+    CHECK(aboutY.g > aboutY.r + 0.3f);
+    CHECK(aboutY.g > aboutY.b + 0.3f);
+
+    const vec4 aboutX = RenderFrame(DriveWith(Quarter(vec3(1.0f, 0.0f, 0.0f))));
+    CHECK(aboutX.r > 0.4f);
+    CHECK(aboutX.r > aboutX.g + 0.3f);
+    CHECK(aboutX.r > aboutX.b + 0.3f);
+
+    // Teardown returns the frame to the identity rather than to a zero vec4: the centre's flag is
+    // what gates a consumer's sample, so an unbound frame is unread — but a zero quaternion
+    // normalizes to a NaN in one that reads it ungated, and the identity is world space.
+    capture.Unbind();
+    const vec4 unboundXyz = RenderFrame(nullptr);
+    CHECK(unboundXyz.r < 0.15f);
+    CHECK(unboundXyz.g < 0.15f);
+    CHECK(unboundXyz.b < 0.15f);
+
+    material->SetParam("Display", vec4(0.0f, 0.0f, 1.0f, 0.0f));
+    const vec4 unboundW = RenderFrame(nullptr);
+    CHECK(unboundW.r > 0.5f);
+    CHECK(std::abs(unboundW.r - unboundW.g) < 0.05f);
+    CHECK(std::abs(unboundW.r - unboundW.b) < 0.05f);
 }
 
 TEST_CASE_FIXTURE(

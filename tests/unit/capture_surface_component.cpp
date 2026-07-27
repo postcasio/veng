@@ -9,6 +9,9 @@
 
 #include <algorithm>
 
+#include <glm/gtc/epsilon.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+
 #include <Veng/Reflection/JsonSerialize.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Renderer/CaptureSurface.h>
@@ -35,6 +38,12 @@ namespace
         hooks.WriteReference = [](Entity) -> Json { return Json(nullptr); };
         return hooks;
     }
+
+    // A consuming fragment's own read of the orientation slot: xyz imaginary, w real.
+    quat Unpack(const vec4& packed)
+    {
+        return {packed.w, packed.x, packed.y, packed.z};
+    }
 }
 
 TEST_CASE("CaptureSurface reflects its authored config but not the runtime record")
@@ -53,6 +62,7 @@ TEST_CASE("CaptureSurface reflects its authored config but not the runtime recor
     CHECK(HasField(info, "TextureSlot"));
     CHECK(HasField(info, "SamplerSlot"));
     CHECK(HasField(info, "CenterSlot"));
+    CHECK(HasField(info, "OrientationSlot"));
     CHECK_FALSE(HasField(info, "Runtime"));
 }
 
@@ -77,6 +87,7 @@ TEST_CASE("CaptureSurface authored config round-trips through the reflection ser
         {"TextureSlot", "CaptureMap"},
         {"SamplerSlot", "CaptureSampler"},
         {"CenterSlot", "CaptureCenter"},
+        {"OrientationSlot", "CaptureFrame"},
     };
 
     CaptureSurface surface;
@@ -90,6 +101,7 @@ TEST_CASE("CaptureSurface authored config round-trips through the reflection ser
     CHECK(surface.TextureSlot == "CaptureMap");
     CHECK(surface.SamplerSlot == "CaptureSampler");
     CHECK(surface.CenterSlot == "CaptureCenter");
+    CHECK(surface.OrientationSlot == "CaptureFrame");
 
     // Re-serializing yields the same authored record — the on-disk field identity is stable, and the
     // runtime never appears in the document.
@@ -102,6 +114,7 @@ TEST_CASE("CaptureSurface authored config round-trips through the reflection ser
     CHECK(out["TextureSlot"] == "CaptureMap");
     CHECK(out["SamplerSlot"] == "CaptureSampler");
     CHECK(out["CenterSlot"] == "CaptureCenter");
+    CHECK(out["OrientationSlot"] == "CaptureFrame");
     CHECK_FALSE(out.contains("Runtime"));
 }
 
@@ -120,8 +133,10 @@ TEST_CASE("CaptureSurface defaults are the every-frame environment probe")
     // The slot names default to the built-in Texture / Sampler binding.
     CHECK(surface.TextureSlot == "Texture");
     CHECK(surface.SamplerSlot == "Sampler");
-    // The centre slot is off by default: a material sampling only by direction declares no such field.
+    // The centre and frame slots are off by default: a material sampling only by direction in world
+    // space declares neither field.
     CHECK(surface.CenterSlot.empty());
+    CHECK(surface.OrientationSlot.empty());
     CHECK(surface.GetCapture() == nullptr);
     CHECK_FALSE(surface.GetOutputHandle().IsValid());
     // An every-frame capture reports refreshing before it ever drives — it re-renders each frame.
@@ -142,13 +157,46 @@ TEST_CASE("CaptureSurface MarkDirty re-arms an on-demand refresh before the runt
     CHECK(surface.GetCapture() == nullptr);
 }
 
+TEST_CASE("PackCaptureOrientation publishes the identity for a world-aligned capture")
+{
+    // A World-aligned capture is driven with the identity basis — its faces are the world axes, so
+    // the map's frame is world space. Publishing the identity rotation rather than nothing is what
+    // lets a consumer read the slot with no branch on the alignment.
+    const vec4 packed = PackCaptureOrientation(mat3(1.0f));
+    CHECK(packed.x == doctest::Approx(0.0f).epsilon(1e-6));
+    CHECK(packed.y == doctest::Approx(0.0f).epsilon(1e-6));
+    CHECK(packed.z == doctest::Approx(0.0f).epsilon(1e-6));
+    CHECK(packed.w == doctest::Approx(1.0f).epsilon(1e-6));
+}
+
+TEST_CASE("PackCaptureOrientation packs the capture-frame → world rotation, xyz then w")
+{
+    // An Entity-aligned capture is driven with its carrier's draw rotation. The published quaternion
+    // has to agree with that basis on every direction, since the consumer rotates by its conjugate
+    // to express a world direction in the map's frame — a transposed or misordered packing lands
+    // here rather than as a reflection sampled from the wrong part of the map.
+    const mat3 basis =
+        mat3(glm::rotate(mat4(1.0f), glm::radians(50.0f), glm::normalize(vec3(0.3f, 1.0f, -0.6f))));
+    const quat rotation = Unpack(PackCaptureOrientation(basis));
+    CHECK(glm::length(rotation) == doctest::Approx(1.0f).epsilon(1e-5));
+
+    const vec3 directions[] = {vec3(1.0f, 0.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f),
+                               vec3(0.0f, 0.0f, 1.0f), glm::normalize(vec3(0.4f, -0.7f, 0.5f))};
+    for (const vec3& local : directions)
+    {
+        const vec3 world = basis * local;
+        CHECK(glm::all(glm::epsilonEqual(rotation * local, world, 1e-5f)));
+        CHECK(glm::all(glm::epsilonEqual(glm::conjugate(rotation) * world, local, 1e-5f)));
+    }
+}
+
 TEST_CASE("CaptureSurface Unbind is idempotent and reachable before anything is bound")
 {
     // The teardown inverse holds no material until a drive gives it one, so it is callable before the
     // runtime exists, callable again once MarkDirty has materialized the record, and repeatable —
     // which is what lets the destructor call it unconditionally. All three paths reach no material
     // and therefore no GPU resource, so this runs with no Context.
-    CaptureSurface surface;
+    const CaptureSurface surface;
     surface.Unbind();
     CHECK(surface.GetCapture() == nullptr);
 

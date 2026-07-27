@@ -22,6 +22,11 @@
       "value": [0.0, 0.0, 0.0, 0.0]
     },
     {
+      "name": "Orientation",
+      "type": "vec4",
+      "value": [0.0, 0.0, 0.0, 0.0]
+    },
+    {
       "name": "Display",
       "type": "vec4",
       "value": [0.0, 0.0, 0.0, 0.0]

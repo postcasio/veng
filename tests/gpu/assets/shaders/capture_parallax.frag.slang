@@ -6,19 +6,22 @@
 // needs from the engine is the world position the map was rendered from and a flag saying whether a
 // capture exists at all, and this material makes both readable off a rendered frame.
 //
-// Three branches, in the order a real consumer takes them: an unbound centre (w == 0) returns a
+// Five branches, in the order a real consumer takes them: an unbound centre (w == 0) returns a
 // bright magenta fallback — the only branch that may run while the handle slots hold an unpopulated
 // sentinel, which is the whole reason the flag exists; Display.x set returns the published centre as
-// radiance, so a frame reads back the position the drive said the probe sat at; otherwise it samples
-// the capture in a fixed direction, the ordinary consuming path.
+// radiance, so a frame reads back the position the drive said the probe sat at; Display.y and
+// Display.z return the published frame's imaginary and real parts, a quaternion being four numbers
+// where a frame carries three channels; otherwise it samples the capture in a fixed direction, the
+// ordinary consuming path.
 struct MaterialParams
 {
     uint  Texture;
     uint  Sampler;
     uint  Pad0;
     uint  Pad1;
-    float4 Center;  // engine-published: xyz the probe's world position, w 1 while a capture is bound
-    float4 Display; // x selects what the fragment shows: 0 the captured colour, 1 the centre itself
+    float4 Center;      // engine-published: xyz the probe's world position, w 1 while a capture is bound
+    float4 Orientation; // engine-published: the capture's frame as a quaternion, xyz then w
+    float4 Display;     // selects what the fragment shows: x the centre, y the frame's xyz, z its w
 };
 
 MaterialParams LoadMaterialParams(uint index)
@@ -41,6 +44,16 @@ float4 fsMain(SurfaceFragmentInput input) : SV_Target0
     if (p.Display.x > 0.5)
     {
         return float4(p.Center.xyz, 1.0);
+    }
+
+    if (p.Display.y > 0.5)
+    {
+        return float4(p.Orientation.xyz, 1.0);
+    }
+
+    if (p.Display.z > 0.5)
+    {
+        return float4(p.Orientation.www, 1.0);
     }
 
     const float2 uv = OctahedralUV(float3(0.0, -1.0, 0.0));

@@ -31,10 +31,15 @@ namespace Veng::Renderer
         string BoundSamplerSlot;
         /// @brief Centre-slot name the last drive filled on BoundMaterial; empty when it filled none.
         string BoundCenterSlot;
+        /// @brief Orientation-slot name the last drive filled on BoundMaterial; empty when none.
+        string BoundOrientationSlot;
     };
 
     namespace
     {
+        /// @brief The rotation an unbound orientation slot carries — world space, in xyzw order.
+        constexpr vec4 IdentityOrientation{0.0f, 0.0f, 0.0f, 1.0f};
+
         /// @brief Whether a material declares a field of the given name and kind.
         bool HasField(const MaterialInstance& material, std::string_view name,
                       MaterialField::FieldKind kind)
@@ -70,12 +75,20 @@ namespace Veng::Renderer
                 {
                     material->SetParam(runtime.BoundCenterSlot, vec4(0.0f));
                 }
+                // The frame goes back to the identity rather than to zero: the centre's flag is what
+                // gates the sample, so this value is unread once unbound, and a zero quaternion
+                // normalizes to a NaN in a consumer that reads it without the gate.
+                if (!runtime.BoundOrientationSlot.empty())
+                {
+                    material->SetParam(runtime.BoundOrientationSlot, IdentityOrientation);
+                }
             }
 
             runtime.BoundMaterial = {};
             runtime.BoundTextureSlot.clear();
             runtime.BoundSamplerSlot.clear();
             runtime.BoundCenterSlot.clear();
+            runtime.BoundOrientationSlot.clear();
         }
 
         /// @brief A lean renderer config for a capture: the heavy per-view batteries multiply by six
@@ -103,6 +116,12 @@ namespace Veng::Renderer
         // Clearing before the members release keeps the capture's output slot live while the material
         // that named it is overwritten, so no frame can be recorded against a freed slot.
         ClearBoundSlots(*this);
+    }
+
+    vec4 PackCaptureOrientation(const mat3& faceBasis)
+    {
+        const quat rotation = glm::normalize(glm::quat_cast(faceBasis));
+        return vec4(rotation.x, rotation.y, rotation.z, rotation.w);
     }
 
     CaptureSurface::CaptureSurface() = default;
@@ -213,6 +232,7 @@ namespace Veng::Renderer
             runtime.BoundTextureSlot.clear();
             runtime.BoundSamplerSlot.clear();
             runtime.BoundCenterSlot.clear();
+            runtime.BoundOrientationSlot.clear();
 
             const TextureHandle output = runtime.Capture->GetOutputHandle();
             if (HasField(*target, TextureSlot, MaterialField::FieldKind::TextureHandle))
@@ -234,10 +254,19 @@ namespace Veng::Renderer
                 target->SetParam(CenterSlot, vec4(position, output.IsValid() ? 1.0f : 0.0f));
                 runtime.BoundCenterSlot = CenterSlot;
             }
+            // The frame the faces were oriented in, so a fragment can express a world direction in
+            // the map's own frame. It carries no flag of its own — the centre's w already reports
+            // whether a capture is bound, and both slots are written by the same drive.
+            if (!OrientationSlot.empty() &&
+                HasField(*target, OrientationSlot, MaterialField::FieldKind::Param))
+            {
+                target->SetParam(OrientationSlot, PackCaptureOrientation(faceBasis));
+                runtime.BoundOrientationSlot = OrientationSlot;
+            }
 
             // Hold the material resident only when something was actually written onto it.
             if (!runtime.BoundTextureSlot.empty() || !runtime.BoundSamplerSlot.empty() ||
-                !runtime.BoundCenterSlot.empty())
+                !runtime.BoundCenterSlot.empty() || !runtime.BoundOrientationSlot.empty())
             {
                 runtime.BoundMaterial = material;
             }

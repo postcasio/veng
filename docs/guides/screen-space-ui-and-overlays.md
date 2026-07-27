@@ -380,6 +380,11 @@ surfaces, which read a one-frame-old map.
 - **`CenterSlot`** names a `vec4` `Param` field the drive fills with the **probe's world position**
   in `xyz` and a **validity flag** in `w` (1 once a capture output exists, 0 before the first drive
   and after teardown). Empty (the default) publishes nothing.
+- **`OrientationSlot`** names a `vec4` `Param` field the drive fills with the **frame the faces were
+  oriented in**, as a unit quaternion (`xyz` imaginary, `w` real) rotating the capture's frame into
+  world space. A `World`-aligned capture publishes the identity `(0, 0, 0, 1)`; an `Entity`-aligned
+  one publishes its carrier's rotation. Empty (the default) publishes nothing, and teardown restores
+  the identity. It has no flag of its own — the centre's `w` covers both.
 
 The output is an octahedral map (pre-tonemap linear HDR). Point the sibling material's sampled
 texture slot at it (authored with a placeholder texture the component overrides each frame), and
@@ -405,6 +410,25 @@ return SampleOctahedral(p.CaptureMap, normalize(hit));
 The `w` gate is not optional: a handle slot holds an unpopulated sentinel before the first drive and
 again after teardown, and indexing the bindless array with it is undefined. The flag is the only
 thing that distinguishes that state from a probe legitimately sitting at the world origin.
+
+**An entity-aligned capture wants the frame too.** Its map's faces are the carrier's axes, so a
+direction sampled in world space reads the wrong part of it the moment the carrier turns — and a
+fragment has no route to the carrier's frame either. Author `OrientationSlot` beside the centre,
+declare a second `vec4`, and rotate by the conjugate of what it carries:
+
+```hlsl
+// q is the capture frame → world rotation; its conjugate takes a world direction into the map.
+float3 ToCaptureFrame(float4 q, float3 v)
+{
+    const float3 axis = -q.xyz;   // the conjugate's imaginary part
+    return v + 2.0 * cross(axis, cross(axis, v) + q.w * v);
+}
+```
+
+Every direction the correction touches — the probe-relative offset, the reflected ray, the proxy
+volume the ray is intersected with — is then expressed in that one frame, and the material carries no
+knowledge of how its own surface is oriented. A world-aligned capture publishes the identity here, so
+the same fragment serves both alignments unchanged.
 
 ## Verifying it
 

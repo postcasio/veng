@@ -90,7 +90,8 @@ namespace Veng::Renderer
     /// handle is a runtime bindless slot, not a cooked asset id, so Drive rebinds it onto the sibling
     /// material's named texture slot each frame — the GuiSurface per-frame rebind. The material authors
     /// the named slot (Material::SetTextureHandle, the no-resident-asset path) and this component fills
-    /// it, beside a sampler slot and an optional probe-centre slot (see CenterSlot).
+    /// it, beside a sampler slot and the optional probe-centre and capture-frame slots (see
+    /// CenterSlot and OrientationSlot).
     ///
     /// **The bound material is the sibling mesh *asset*'s, which is shared by every entity drawing that
     /// asset.** The target is the first MaterialInstance of the mesh the sibling MeshRenderer names — a
@@ -189,6 +190,29 @@ namespace Veng::Renderer
         /// bindless texture array with an unpopulated handle slot.
         string CenterSlot;
 
+        /// @brief Name of the sibling material's slot the capture's frame binds onto; empty is off.
+        ///
+        /// Named, Drive writes a vec4 onto the material's Param field of this name every frame: the
+        /// rotation the faces were oriented by, as a unit quaternion packed `xyz` imaginary and `w`
+        /// real (PackCaptureOrientation). It rotates a direction expressed in the capture's frame
+        /// into world space, so a fragment expresses a world direction in the map's frame by
+        /// rotating by its conjugate. Empty (the default) publishes nothing.
+        ///
+        /// **A World-aligned capture publishes the identity rotation (0, 0, 0, 1)**, because its
+        /// faces are the world axes and the map's frame *is* world space — so a consumer written
+        /// against this slot needs no branch on the alignment, and switching a capture between the
+        /// two alignments changes only the published value.
+        ///
+        /// An Entity-aligned capture's map is a body-fixed environment (see CaptureAlignment), so a
+        /// material sampling it by direction has to express that direction in the carrier's own
+        /// frame — and SurfaceFragmentInput gives a fragment no route to that frame. Without this
+        /// slot a consumer reconstructs one from whatever interpolated geometry it has, which is
+        /// valid only for the single surface orientation the reconstruction was derived for.
+        ///
+        /// It carries no validity flag of its own: CenterSlot's `w` already reports whether the
+        /// capture is bound, and a material correcting a sample declares both slots or neither.
+        string OrientationSlot;
+
         /// @brief Runtime capture state, materialized on the first Drive; empty until then.
         mutable Unique<CaptureSurfaceRuntime> Runtime;
 
@@ -229,8 +253,9 @@ namespace Veng::Renderer
         /// nothing. Binds the
         /// capture's output handle onto @p material's named slot every frame (SetTextureHandle writes the
         /// current frame-in-flight region, so the handle must land regardless of whether a face was
-        /// pushed), beside the sampler and — when CenterSlot names one — @p position with its validity
-        /// flag. Only slots the material declares at the matching field kind are written.
+        /// pushed), beside the sampler, — when CenterSlot names one — @p position with its validity
+        /// flag, and — when OrientationSlot names one — @p faceBasis as a quaternion. Only slots the
+        /// material declares at the matching field kind are written.
         ///
         /// The pushed source excludes @p entity (CaptureView::Exclude), so the capture never draws the
         /// mesh it feeds — the rule has no authoring surface and cannot be misconfigured.
@@ -264,7 +289,10 @@ namespace Veng::Renderer
         ///
         /// Writes the unbound state back onto the material Drive last bound: an invalid handle into the
         /// texture and sampler slots and a zero vec4 into the centre slot, so the centre's validity flag
-        /// reads 0 and a consumer takes its no-capture fallback branch. Only slots this component
+        /// reads 0 and a consumer takes its no-capture fallback branch. The orientation slot takes the
+        /// identity rotation rather than a zero vec4 — the centre's flag is what gates the sample, so
+        /// the frame is unread here, and a quaternion slot left at zero normalizes to a NaN in a
+        /// consumer that reads it ungated. Only slots this component
         /// actually wrote are touched, and it forgets the binding — so it is idempotent, and a no-op
         /// before the first Drive. The destructor calls it, which is what keeps a material from sampling
         /// a bindless slot the capture's release has handed back; a consumer that re-points a
@@ -275,6 +303,18 @@ namespace Veng::Renderer
         ///          without checking the centre's validity flag indexes the bindless array with it.
         void Unbind() const;
     };
+
+    /// @brief Packs a capture's face basis into the vec4 an orientation slot carries.
+    ///
+    /// The basis is orthonormal, so the rotation it expresses is a unit quaternion; the vec4 holds
+    /// it `xyz` imaginary and `w` real, which is the packing every consumer of
+    /// CaptureSurface::OrientationSlot reads. The identity basis — what a World-aligned capture is
+    /// driven with — packs to (0, 0, 0, 1). The result is normalized, so a basis carrying the
+    /// rounding a normalized draw rotation leaves still yields a unit quaternion.
+    ///
+    /// @param faceBasis Orthonormal basis the face cameras are oriented by (see CaptureAlignment).
+    /// @return The capture-frame → world rotation as a quaternion, in xyzw order.
+    [[nodiscard]] VE_API vec4 PackCaptureOrientation(const mat3& faceBasis);
 }
 
 VE_ENUM(::Veng::Renderer::CaptureShape, 0x497C9B89E8057D21ULL)
@@ -301,4 +341,5 @@ VE_FIELD(Shadows, .DisplayName = "Shadows")
 VE_FIELD(TextureSlot, .DisplayName = "Texture Slot")
 VE_FIELD(SamplerSlot, .DisplayName = "Sampler Slot")
 VE_FIELD(CenterSlot, .DisplayName = "Center Slot")
+VE_FIELD(OrientationSlot, .DisplayName = "Orientation Slot")
 VE_REFLECT_END();

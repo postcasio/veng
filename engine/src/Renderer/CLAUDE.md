@@ -978,7 +978,8 @@ entity in a closed producer→consumer pair, with no authoring story to get wron
 probes** (another capture-consuming surface in the map reads a one-frame-old result, invisible at a
 reflection's contrast), and **parallax correction**, whose math belongs to the consuming material —
 `CaptureSurface::CenterSlot` publishes the world position the map was rendered from, plus a validity
-flag, so the material has the one input it cannot derive for itself.
+flag, and `CaptureSurface::OrientationSlot` the frame the faces were oriented in as a quaternion, so
+the material has the two inputs it cannot derive for itself.
 
 ## Pipeline cache
 

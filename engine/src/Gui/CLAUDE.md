@@ -727,6 +727,20 @@ is what makes its fallback branch reachable. (A `nointerpolation float3 v_Object
 `SurfaceFragmentInput` would serve *any* surface material, but it changes the shared vertex contract —
 the five files the format spans plus every surface fragment — for a need one consuming domain has.)
 
+**And which frame it was rendered in.** `OrientationSlot` (empty = off, beside the centre) names a
+`Param` field the drive fills with the face basis as a **unit quaternion**, `xyz` imaginary and `w`
+real — the capture-frame → world rotation, so a fragment expresses a world direction in the map's
+frame by rotating by its conjugate. An **`Entity`-aligned** capture's map is a body-fixed environment,
+which is exactly the case a direction sampled in world space is wrong for; `SurfaceFragmentInput`
+gives a fragment no route to the carrier's frame, so without the slot a consumer reconstructs one out
+of its interpolated normal and tangent — valid only for the single surface orientation it was derived
+for, and silently wrong for a second panel on the same material at another angle. A **`World`-aligned
+capture publishes the identity rotation** (0, 0, 0, 1) rather than nothing, so the consumer needs no
+branch on the alignment and switching between the two changes only the published value. The slot
+carries no validity flag of its own — the centre's `w` already reports the binding, and a material
+correcting a sample declares both slots or neither. `PackCaptureOrientation` is the encoding, pure and
+device-free beside the component.
+
 **The capture is placed at the pose its entity is *drawn* at, not the one it was simulated at.** The
 drive resolves the position through `Scene::GetInterpolatedWorldTransform` at the world's own
 `LastAlpha` and hands that alpha to `Drive` as well, so `CaptureView::Position` (the face cameras and
@@ -742,8 +756,9 @@ frame.
 
 **Teardown is the exact inverse of the bind.** `CaptureSurface::Unbind` — the `GuiOverlay::Detach`
 counterpart — writes the unbound state back onto the material the last drive bound: an invalid handle
-into the texture and sampler slots and a zero `vec4` into the centre, so the validity flag reads 0 and
-the consumer's fallback is taken. The component's destructor calls it, so removing the component,
+into the texture and sampler slots, a zero `vec4` into the centre (so the validity flag reads 0 and
+the consumer's fallback is taken), and the **identity rotation** into the frame — not a zero `vec4`,
+which normalizes to a NaN in a consumer reading it past the gate. The component's destructor calls it, so removing the component,
 destroying the entity, or dropping the scene stops the material naming a bindless slot the capture's
 release hands back to the free list — without it the sampled result does not revert, it freezes on
 whatever registers into that slot next. The component holds the material it bound **resident** for
