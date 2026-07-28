@@ -5,6 +5,7 @@
 #include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Gui/GuiConsumer.h>
 #include <Veng/Log.h>
+#include <Veng/Platform/UserPaths.h>
 #include <Veng/Time.h>
 
 #include <Veng/Asset/Mesh.h>
@@ -222,7 +223,26 @@ namespace Veng
         // ImGui needs a window (GLFW backend), so it's only available windowed.
         if (!m_Info.Headless && m_Info.ImGui)
         {
-            m_ImGuiLayer = ImGuiLayer::Create(*m_Info.ImGui, m_RenderContext, *m_Window);
+            // The layout file's default is resolved here rather than in the layer, because the
+            // application name that keys the per-user configuration directory lives on this info
+            // and nowhere else. An unresolvable directory leaves the path unset, which the layer
+            // reads as "persist no layout" — the safe reading, since the alternative is ImGui's
+            // own working-directory-relative default.
+            ImGuiLayerInfo imguiInfo = *m_Info.ImGui;
+            if (!imguiInfo.IniPath)
+            {
+                if (const Result<path> configDir = UserConfigDir(m_Info.Name))
+                {
+                    imguiInfo.IniPath = *configDir / "imgui.ini";
+                }
+                else
+                {
+                    Log::Warn("imgui: no writable configuration directory ({}); the UI layout "
+                              "will not persist across runs",
+                              configDir.error());
+                }
+            }
+            m_ImGuiLayer = ImGuiLayer::Create(imguiInfo, m_RenderContext, *m_Window);
         }
 
         // Routes the window's events to the consumer registry and the Input snapshot by focus.

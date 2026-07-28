@@ -63,6 +63,19 @@ launcher's `main` returns so a headless or server-shaped consumer can report a f
 Calling `RequestExit(status)` from `OnInitialize` is the fatal-startup-failure path — the world
 bootstrap is skipped and the run loop never starts, while `OnShutdown`, the session save, and
 every destructor still run.
+
+**The engine writes nothing relative to the working directory, and does not move it.** A shipped
+application cannot assume its working directory is writable — inside a macOS bundle it is the
+bundle, whose contents are sealed by the code signature — so every engine-owned file has an
+explicit home. ImGui's layout is the one that would otherwise default to a relative path: the
+layer takes `ImGuiLayerInfo::IniPath`, and `Application` fills an unset one with
+`UserConfigDir(ApplicationInfo::Name) / "imgui.ini"`, falling back to persisting no layout at all
+(with a warning) when no writable configuration directory resolves. The other half is GLFW, whose
+Cocoa init `chdir`s into a bundle's `Contents/Resources` by default; `Window` disables that
+(`GLFW_COCOA_CHDIR_RESOURCES`), because relocating the host process's working directory is not the
+windowing layer's call. A consumer choosing its own path — `ApplicationInfo::PipelineCachePath` is
+the other such knob — is unaffected by either.
+
 `Application` owns the `AssetManager` (`GetAssetManager()`), the render `Context`, and the
 `TaskSystem` (`GetTaskSystem()`), and threads them explicitly into each other (per-worker
 transfer pools in the `Context`, the manager's loaders on the task system). The `TaskSystem` — a

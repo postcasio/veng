@@ -31,6 +31,17 @@ namespace Veng
         /// @brief Path to an icon font merged on top of the default; overrides the embedded
         ///        engine default (FontAwesome Solid) when set.
         optional<path> IconFontPath;
+        /// @brief File ImGui persists its layout to; nullopt disables layout persistence.
+        ///
+        /// `Application` fills this when the caller leaves it unset, with
+        /// `UserConfigDir(ApplicationInfo::Name) / "imgui.ini"` — so a layout survives a restart
+        /// and lands somewhere the process may actually write. ImGui's own default is the
+        /// *relative* path `imgui.ini`, which resolves against the working directory: inside a
+        /// macOS application bundle that is the bundle itself, so the app would rewrite its own
+        /// sealed contents. Reaching nullopt here therefore means no writable configuration
+        /// directory could be resolved, and no layout is persisted rather than one being written
+        /// somewhere unpredictable.
+        optional<path> IniPath;
     };
 
     /// @brief Owns the ImGui/imnodes contexts, the Vulkan backend, a dedicated descriptor pool,
@@ -140,6 +151,12 @@ namespace Veng
 
         /// @brief Textures awaiting deferred destruction.
         vector<PendingTextureRemoval> m_PendingTextureRemovals;
+
+        /// @brief Backing store for `ImGuiIO::IniFilename`.
+        ///
+        /// ImGui borrows that pointer for the context's lifetime rather than copying the string,
+        /// so the characters have to outlive the context; empty when no ini is persisted.
+        string m_IniPath;
 
         /// @brief Tracks whether UI was rendered in the current frame.
         ///

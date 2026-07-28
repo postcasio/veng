@@ -281,7 +281,16 @@ int main()
         window.get());
 
     Unique<TaskSystem> tasks = CreateUnique<TaskSystem>(TaskSystemInfo{.WorkerCount = 2});
-    Unique<ImGuiLayer> imgui = ImGuiLayer::Create({}, context, *window);
+
+    // The layout file is given an explicit home, and the info carrying it is a temporary: ImGui
+    // borrows IniFilename for the context's lifetime rather than copying it, so a layer that held
+    // the caller's path by reference would leave a dangling pointer that mostly works. Checking
+    // the characters after the temporary has died is what catches that.
+    const path iniPath = Veng::TestSupport::TempDir() / "veng_multi_viewport_imgui.ini";
+    Unique<ImGuiLayer> imgui =
+        ImGuiLayer::Create(ImGuiLayerInfo{.IniPath = iniPath}, context, *window);
+    Check(ImGui::GetIO().IniFilename != nullptr && path(ImGui::GetIO().IniFilename) == iniPath,
+          "ImGui layout path is the one the layer was given");
 
     {
         TypeRegistry types;

@@ -52,6 +52,13 @@ namespace Veng
 
             glfwSetErrorCallback(GLFWErrorCallback);
 
+            // GLFW's Cocoa init chdir's the process into a bundle's Contents/Resources when it
+            // finds one, so every relative path the process touches — its own and its host's —
+            // silently resolves inside the application bundle, which is read-only in every sense
+            // that matters (its contents are sealed by the code signature). Relocating the host
+            // process's working directory is not the windowing layer's call to make.
+            glfwInitHint(GLFW_COCOA_CHDIR_RESOURCES, GLFW_FALSE);
+
             if (glfwInit() != GLFW_TRUE)
             {
                 VE_ASSERT(false, "Failed to initialize GLFW!");

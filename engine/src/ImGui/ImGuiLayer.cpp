@@ -95,6 +95,21 @@ namespace Veng
 
         auto& io = ImGui::GetIO();
         io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+
+        // ImGui borrows this pointer rather than copying the string, so the path is held by the
+        // layer. Its own default is the relative `imgui.ini`, resolved against the working
+        // directory — which an application has no guarantee it may write to, and which inside a
+        // macOS bundle is the bundle itself. So the path is always explicit here, and no path at
+        // all means no persistence rather than a write to wherever the process happens to stand.
+        if (info.IniPath)
+        {
+            m_IniPath = info.IniPath->string();
+            io.IniFilename = m_IniPath.c_str();
+        }
+        else
+        {
+            io.IniFilename = nullptr;
+        }
 #ifdef VE_DEBUG
         io.ConfigDebugIsDebuggerPresent = true;
 #endif
