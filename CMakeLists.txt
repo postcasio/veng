@@ -416,6 +416,10 @@ FetchContent_MakeAvailable(yoga)
 # - ENABLE_ALL_WARNINGS OFF keeps Jolt's own -Wall -Werror out of this tree, and
 #   INTERPROCEDURAL_OPTIMIZATION OFF keeps a bitcode archive out of libveng's link.
 # - OVERRIDE_CXX_FLAGS OFF leaves the per-configuration flags as veng's tree set them.
+# - USE_STATIC_MSVC_RUNTIME_LIBRARY OFF is required, not preferred: Jolt defaults it ON, and
+#   a /MTd static-CRT archive cannot link into libveng.dll, which MSVC builds against the
+#   dynamic CRT (LNK2038, one line per Jolt object).
+set(USE_STATIC_MSVC_RUNTIME_LIBRARY OFF CACHE BOOL "" FORCE)
 set(CPP_EXCEPTIONS_ENABLED OFF CACHE BOOL "" FORCE)
 set(CPP_RTTI_ENABLED OFF CACHE BOOL "" FORCE)
 set(DOUBLE_PRECISION ON CACHE BOOL "" FORCE)
@@ -521,8 +525,14 @@ endif ()
 # test-name literals carry; /utf-8 pins both the source and execution charsets.
 # Added at the same boundary as the warnings below so only veng's own targets
 # inherit it.
+# /Yl- suppresses the __@@_PchSym_@... marker MSVC injects into every precompiled-header
+# object. That symbol exists so a static library built with a PCH pulls the PCH's own object
+# in at link, which nothing here needs — every PCH object is linked into its target directly.
+# It is not merely redundant: WINDOWS_EXPORT_ALL_SYMBOLS folds it into the generated
+# exports.def as a data symbol named `__`, which resolves to nothing and fails the link of
+# every shared target carrying a PCH (LNK2001, then LNK1120).
 if (MSVC)
-    add_compile_options(/utf-8)
+    add_compile_options(/utf-8 /Yl-)
 endif ()
 
 # ---------------------------------------------------------------------------

@@ -6,6 +6,9 @@
 #include <doctest/doctest.h>
 
 #include <array>
+// CAPTURE streams a DebugViewNames entry, and string_view's operator<< needs a complete
+// basic_ostream — doctest only forward-declares it.
+#include <ostream>
 
 #include "Renderer/FrameTopology.h"
 

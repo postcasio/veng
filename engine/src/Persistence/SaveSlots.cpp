@@ -89,8 +89,15 @@ namespace Veng
             {
                 return 0;
             }
-            const auto seconds = std::chrono::time_point_cast<std::chrono::seconds>(
-                std::chrono::file_clock::to_sys(written));
+            // file_clock's epoch is unspecified and an implementation supplies either to_sys or
+            // to_utc, not both, so neither spelling is portable; clock_cast bridges them but
+            // reaches the leap-second table through the timezone database, which is a throwing
+            // runtime dependency. Offsetting by the two clocks' current readings names neither
+            // conversion, at the cost of the microseconds between the two now() calls — below the
+            // second this truncates to, and the stamp is advisory ordering rather than a timestamp.
+            const auto systemTime = std::chrono::system_clock::now() +
+                                    (written - std::filesystem::file_time_type::clock::now());
+            const auto seconds = std::chrono::time_point_cast<std::chrono::seconds>(systemTime);
             return static_cast<i64>(seconds.time_since_epoch().count());
         }
     }

@@ -7,6 +7,7 @@
 #include <Veng/Scene/Scene.h>
 
 #include <algorithm>
+#include <iterator>
 
 namespace Veng
 {

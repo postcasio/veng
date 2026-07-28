@@ -54,6 +54,17 @@ function(veng_add_game NAME)
     add_library(${NAME} SHARED ${ARG_SOURCES})
     target_link_libraries(${NAME} PRIVATE veng::veng)
 
+    # A game module is linked against, not only dlopen'd: its cook module, its editor module, and
+    # its test binaries all resolve its symbols. macOS/Linux export them via default visibility, so
+    # on MSVC auto-export to match — the same reason libveng itself does. /Yl- comes with it rather
+    # than separately: auto-export folds the __@@_PchSym_@... marker MSVC injects into every
+    # precompiled-header object into the generated exports.def as a data symbol named `__`, which
+    # resolves to nothing and fails the module's own link.
+    if (MSVC)
+        set_target_properties(${NAME} PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+        target_compile_options(${NAME} PRIVATE /Yl-)
+    endif ()
+
     add_executable(${NAME}-launcher ${VENG_LAUNCHER_MAIN})
     target_link_libraries(${NAME}-launcher PRIVATE veng::veng)
 
