@@ -192,9 +192,11 @@ namespace Veng
 
         /// @brief Rolls the snapshot forward for a new frame; called once at the top of the loop.
         ///
-        /// Copies current key/button/pad state to previous and clears the per-frame mouse and
-        /// scroll deltas, so the edges and deltas the router then applies via ApplyEvent are
-        /// this frame's. With no events applied the state stays neutral (nothing pressed).
+        /// Copies current key/button/pad state to previous, so the edges the router then applies via
+        /// ApplyEvent are this frame's. With no events applied the state stays neutral (nothing
+        /// pressed). The per-frame mouse and scroll deltas clear here **unconditionally**, on every
+        /// frame: they are a once-per-frame quantity and no gate applies to them. The Sim-tick
+        /// deltas are a separate cadence entirely — see BeginSimTick.
         ///
         /// @p rollEdges gates that roll on whether the previous frame consumed the edges. Under a
         /// fixed-timestep drive a frame can run zero Sim ticks (frame rate above the tick rate), and an
@@ -204,14 +206,42 @@ namespace Veng
         /// tick and the action would never fire: a released key/button whose press has not yet crossed a
         /// roll therefore holds its down level (its release is *deferred*) and is applied on the next
         /// roll, guaranteeing every physical press is observed down for at least one tick and released on
-        /// a later one. The caller passes false to hold the latched state (and accumulate deltas) while
-        /// no tick ran, and true once a tick has consumed it (which then applies any deferred releases).
-        /// A key/button held across ticks is unaffected either way.
-        /// @param rollEdges  True to roll edges/deltas and apply deferred releases this frame (the
-        ///                   previous frame ran a Sim tick); false to hold them latched for the next
+        /// a later one. The caller passes false to hold the latched state while no tick ran, and true
+        /// once a tick has consumed it (which then applies any deferred releases). A key/button held
+        /// across ticks is unaffected either way.
+        /// @param rollEdges  True to roll edges and apply deferred releases this frame (the previous
+        ///                   frame ran a Sim tick); false to hold them latched for the next
         ///                   tick-running frame.
         /// @pre Must run before the event drain so ApplyEvent writes into a fresh frame.
         void BeginFrame(bool rollEdges = true);
+
+        /// @brief Latches the pointer motion accumulated since the previous Sim tick as this tick's delta.
+        ///
+        /// The pointer deltas have **two cadences**, because they are consumed at two rates. A frame
+        /// consumer (a UI drag, a debug panel, an editor camera) is sampled once per frame and reads
+        /// GetMouseDelta / GetScrollDelta. A fixed-rate Sim consumer runs at the tick rate, which is
+        /// unrelated to the frame rate — so reading the per-frame delta from a Sim tick drops the
+        /// motion of every frame no tick observed and counts one frame's motion once per tick when a
+        /// frame runs several. Motion therefore also accumulates into a separate running total that
+        /// only this call consumes: it moves the total into the per-tick delta (GetSimMouseDelta /
+        /// GetSimScrollDelta) and zeroes the total, so a tick's delta is exactly the motion since the
+        /// previous tick at any frame-rate-to-tick-rate ratio, and stays stable for the whole tick
+        /// however many systems read it.
+        ///
+        /// @pre Called once per Sim step, before the step's systems run — and for **one** stepping
+        ///      consumer of the pointer, since the call consumes the shared accumulation. The engine
+        ///      calls it for the steps of the single world the pointer routes to; a second world's
+        ///      steps must not, or the routed world is left with nothing.
+        void BeginSimTick();
+
+        /// @brief Discards the accumulated and latched Sim deltas without a tick consuming them.
+        ///
+        /// The counterpart of BeginSimTick for a frame no Sim step ran on because nothing was
+        /// simulating: motion made while the simulation is stopped or paused must not bank into the
+        /// delta the resuming tick reads, which would arrive as one jump of the whole stopped
+        /// stretch's travel. A frame that ran no step merely because the accumulator has not yet
+        /// filled a tick calls neither, holding the motion for the tick-running frame that follows.
+        void DropSimDeltas();
 
         /// @brief Folds one input event into the current snapshot.
         ///
@@ -251,10 +281,29 @@ namespace Veng
         ///
         /// Works while the mouse is captured: relative motion accumulates so a fly
         /// camera reads continuous deltas with the OS cursor hidden and locked.
+        ///
+        /// This is the **per-frame** cadence, for a consumer sampled once per frame. A fixed-rate
+        /// Sim consumer reads GetSimMouseDelta instead — see BeginSimTick for why the two differ.
         [[nodiscard]] vec2 GetMouseDelta() const;
 
         /// @brief Returns the scroll wheel delta accumulated this frame as (x, y).
+        ///
+        /// The **per-frame** cadence, like GetMouseDelta; GetSimScrollDelta is the per-tick one.
         [[nodiscard]] vec2 GetScrollDelta() const;
+
+        /// @brief Returns the mouse motion latched for the current Sim tick, in pixels.
+        ///
+        /// The motion accumulated since the previous tick, moved here by BeginSimTick and constant
+        /// for the whole tick, so every Sim system reading it within one tick agrees and the sum
+        /// across ticks is the whole injected motion whatever the frame-to-tick ratio.
+        [[nodiscard]] vec2 GetSimMouseDelta() const;
+
+        /// @brief Returns the scroll wheel delta latched for the current Sim tick as (x, y).
+        ///
+        /// The per-tick counterpart of GetScrollDelta. A wheel notch is a count, so summing the
+        /// notches since the previous tick is what a tick wants: read per-frame instead, a single
+        /// notch is applied once per tick of a multi-tick frame.
+        [[nodiscard]] vec2 GetSimScrollDelta() const;
 
         /// @brief Captures or releases the mouse cursor.
         ///
@@ -346,6 +395,15 @@ namespace Veng
 
         /// @brief Scroll delta accumulated this frame.
         vec2 m_ScrollDelta = {0, 0};
+
+        /// @brief Mouse motion summed since the last BeginSimTick, spanning however many frames that is.
+        vec2 m_SimMouseAccumulator = {0, 0};
+        /// @brief Scroll delta summed since the last BeginSimTick, spanning however many frames that is.
+        vec2 m_SimScrollAccumulator = {0, 0};
+        /// @brief The mouse motion BeginSimTick latched for the current Sim tick.
+        vec2 m_SimMouseDelta = {0, 0};
+        /// @brief The scroll delta BeginSimTick latched for the current Sim tick.
+        vec2 m_SimScrollDelta = {0, 0};
 
         /// @brief False until the first move event seeds m_MousePosition, so the opening move reports no delta.
         bool m_HavePosition = false;

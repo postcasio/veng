@@ -158,6 +158,9 @@ TEST_CASE("The pointer follows the cursor's region and never reaches the pad sea
     input.ApplyEvent(MouseMovedEvent{vec2(85, 193)});
     input.BeginFrame();
     input.ApplyEvent(MouseMovedEvent{vec2(100, 200)});
+    // A seat view resolves at the fixed Sim rate, so latch a tick the way Application does before a
+    // Sim step's systems run — its look and wheel arms read the per-tick deltas.
+    input.BeginSimTick();
 
     const std::array regions = Quadrants();
     const PointerRouting pointer = SelectPointerOwner(regions, ivec2(100, 200));
@@ -207,6 +210,7 @@ TEST_CASE("Moving the cursor across the seam transfers the look action to the re
     {
         input.BeginFrame();
         input.ApplyEvent(MouseMovedEvent{vec2(step.Cursor)});
+        input.BeginSimTick();
 
         const PointerRouting pointer = SelectPointerOwner(regions, step.Cursor);
         REQUIRE(pointer.Owner == step.ExpectedOwner);
@@ -245,6 +249,7 @@ TEST_CASE("A captured cursor routes the pointer wholly to the keyboard seat rega
     input.ApplyEvent(MouseMovedEvent{vec2(700, 200)});
     input.BeginFrame();
     input.ApplyEvent(MouseMovedEvent{vec2(715, 207)});
+    input.BeginSimTick();
 
     const PointerRouting captured{.Owner = SeatA, .LocalPosition = {}};
 

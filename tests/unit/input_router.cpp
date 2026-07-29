@@ -366,3 +366,110 @@ TEST_CASE("InputRouter: injected moves feed the mouse-delta axis")
     router.DrainInjectedEvents();
     CHECK(raw.GetAxis(InputDeviceType::MouseAxis, RawInput::MouseAxisX) == doctest::Approx(0.0f));
 }
+
+TEST_CASE("Input: a Sim tick reads the motion since the previous tick at any frame-to-tick ratio")
+{
+    // The property a fixed-rate consumer needs, and the one a per-frame delta cannot give it. The
+    // frame rate and the tick rate are unrelated, so a tick reading the per-frame delta drops the
+    // motion of every frame no tick observed and re-reads one frame's motion once per tick when a
+    // frame runs several. What must hold instead is conservation: the deltas a run of ticks observes
+    // sum to the motion the device produced, whatever ratio the two rates sat at.
+    Input input(nullptr);
+
+    // Seeds the position with no delta, as the snapshot's first move always does.
+    input.BeginFrame(true);
+    input.ApplyEvent(MouseMovedEvent(vec2(100.0f, 100.0f)));
+
+    const auto moveTo = [&input](const f32 x)
+    { input.ApplyEvent(MouseMovedEvent(vec2(x, 100.0f))); };
+
+    SUBCASE("one tick per frame is the baseline")
+    {
+        f32 observed = 0.0f;
+        for (u32 frame = 0; frame < 4; ++frame)
+        {
+            input.BeginFrame(true);
+            moveTo(110.0f + 10.0f * static_cast<f32>(frame));
+            input.BeginSimTick();
+            observed += input.GetSimMouseDelta().x;
+        }
+        CHECK(observed == doctest::Approx(40.0f));
+    }
+
+    SUBCASE("several frames per tick lose nothing")
+    {
+        // The high-frame-rate case: four frames of motion, one tick. Every frame's travel has to
+        // reach that tick, where a per-frame delta would have kept only the last frame's.
+        for (u32 frame = 0; frame < 4; ++frame)
+        {
+            input.BeginFrame(true);
+            moveTo(110.0f + 10.0f * static_cast<f32>(frame));
+        }
+        // What the per-frame accessor holds at this point is the *last* frame's travel alone, which is
+        // exactly the motion a tick reading it would have kept of the four frames.
+        CHECK(input.GetMouseDelta().x == doctest::Approx(10.0f));
+
+        input.BeginSimTick();
+        CHECK(input.GetSimMouseDelta().x == doctest::Approx(40.0f));
+    }
+
+    SUBCASE("several ticks per frame count nothing twice")
+    {
+        // The low-frame-rate case, and the one that reads as hypersensitivity: one frame of motion,
+        // three ticks. The first tick takes it and the rest observe nothing, so the sum is the travel
+        // once. A per-frame delta would have handed all three the same 40 and moved the hull 120.
+        input.BeginFrame(true);
+        moveTo(140.0f);
+
+        f32 observed = 0.0f;
+        f32 perFrameObserved = 0.0f;
+        for (u32 tick = 0; tick < 3; ++tick)
+        {
+            input.BeginSimTick();
+            observed += input.GetSimMouseDelta().x;
+            perFrameObserved += input.GetMouseDelta().x;
+        }
+        CHECK(observed == doctest::Approx(40.0f));
+        // The defect, stated as a number: reading the per-frame delta per tick triples it.
+        CHECK(perFrameObserved == doctest::Approx(120.0f));
+    }
+
+    SUBCASE("a tick's delta is stable for every reader within the tick")
+    {
+        // Several Sim systems read within one tick and must agree — the latch is what makes the
+        // quantity a tick's rather than the first reader's.
+        input.BeginFrame(true);
+        moveTo(140.0f);
+        input.BeginSimTick();
+        CHECK(input.GetSimMouseDelta().x == doctest::Approx(40.0f));
+        CHECK(input.GetSimMouseDelta().x == doctest::Approx(40.0f));
+        CHECK(input.GetSimMouseDelta().x == doctest::Approx(40.0f));
+    }
+
+    SUBCASE("motion made while nothing simulates is dropped rather than banked")
+    {
+        // A stopped or paused stretch must not arrive as the resuming tick's look.
+        input.BeginFrame(true);
+        moveTo(400.0f);
+        input.DropSimDeltas();
+        input.BeginSimTick();
+        CHECK(input.GetSimMouseDelta().x == doctest::Approx(0.0f));
+
+        // And the accumulation resumes cleanly afterwards.
+        input.BeginFrame(true);
+        moveTo(410.0f);
+        input.BeginSimTick();
+        CHECK(input.GetSimMouseDelta().x == doctest::Approx(10.0f));
+    }
+
+    SUBCASE("the per-frame cadence is unchanged for a per-frame consumer")
+    {
+        // A UI drag or a debug panel is sampled once per frame and must still see this frame's travel
+        // and nothing else, whether or not a tick ran.
+        input.BeginFrame(true);
+        moveTo(130.0f);
+        CHECK(input.GetMouseDelta().x == doctest::Approx(30.0f));
+        input.BeginFrame(true);
+        CHECK(input.GetMouseDelta().x == doctest::Approx(0.0f));
+    }
+}

@@ -2018,8 +2018,20 @@ namespace Veng
                 return 1.0f;
             },
             .BeforeSimStep =
-                [this](const WorldInstanceId world, Scene& scene, const u64 tick)
+                [this, &scoped](const WorldInstanceId world, Scene& scene, const u64 tick)
             {
+                // Latch the pointer motion accumulated since this world's previous step as the step's
+                // delta, so a seat resolving at the fixed rate reads the motion since the last tick
+                // rather than since the last frame. The accumulation is one shared pointer stream and
+                // the call consumes it, so only the routed scene's steps take it: another world's
+                // seats read neutral mouse anyway (SeatInputView::OwnsPointer), and draining on their
+                // behalf would leave the routed world nothing. With no scene routed nothing can read
+                // the mouse, so every step drains — that keeps an unrouted stretch from banking.
+                if (scoped.Scene == nullptr || &scene == scoped.Scene)
+                {
+                    m_Input->BeginSimTick();
+                }
+
                 if (IsWorldNetActive(world) && RoleForWorld(world) == NetRole::Server)
                 {
                     scene.SetChangeTick(tick);
@@ -2061,6 +2073,16 @@ namespace Veng
         // The edge latch: a frame with a live world that ran no tick holds its edges for the next
         // tick-running frame; a frame with no active world never latches (it rolls next frame).
         m_PreviousFrameLatchedInput = ticked.AnyActive && !ticked.AnyTicked;
+
+        // The Sim-delta accumulation follows the same distinction. A frame that ran no tick under a
+        // live world is mid-accumulation and holds its motion for the tick-running frame to come; a
+        // frame with nothing simulating drops it, so a stopped or paused stretch's whole travel does
+        // not arrive as the resuming tick's look. Mirrors the runner resetting an inactive world's
+        // clock so resuming chases no backlog.
+        if (!ticked.AnyActive)
+        {
+            m_Input->DropSimDeltas();
+        }
 
         {
             VE_PROFILE_SCOPE("Frame/Update");

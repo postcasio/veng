@@ -108,9 +108,12 @@ namespace Veng
             {
                 return 0.0f;
             }
-            // Look delta stays raw pixels (translation-invariant, so sensitivity-invariant across
-            // region size); position reports the pointer's region-local coordinate.
-            const vec2 delta = m_Input.GetMouseDelta();
+            // The per-tick deltas, not the per-frame ones: a seat resolves at the fixed Sim rate, so
+            // its look and wheel must be the motion since the previous tick rather than since the
+            // previous frame (see Input::BeginSimTick). Look delta stays raw pixels
+            // (translation-invariant, so sensitivity-invariant across region size); position reports
+            // the pointer's region-local coordinate.
+            const vec2 delta = m_Input.GetSimMouseDelta();
             switch (code)
             {
             case RawInput::MouseAxisX:
@@ -122,9 +125,9 @@ namespace Veng
             case MousePositionY:
                 return m_Pointer.LocalPosition.y;
             case RawInput::MouseScrollX:
-                return m_Input.GetScrollDelta().x;
+                return m_Input.GetSimScrollDelta().x;
             case RawInput::MouseScrollY:
-                return m_Input.GetScrollDelta().y;
+                return m_Input.GetSimScrollDelta().y;
             default:
                 return 0.0f;
             }

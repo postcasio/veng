@@ -9,10 +9,16 @@ namespace Veng
 
     void Input::BeginFrame(const bool rollEdges)
     {
+        // The per-frame deltas are a once-per-frame quantity, so they clear every frame regardless of
+        // the edge gate. Motion a Sim tick has not consumed is held in m_Sim*Accumulator instead,
+        // which BeginSimTick drains — the two cadences are independent.
+        m_MouseDelta = {0, 0};
+        m_ScrollDelta = {0, 0};
+
         // A frame that ran no Sim tick leaves the edges latched: holding the previous state keeps a
-        // pressed/released edge observable, and holding the deltas accumulates this frame's motion,
-        // until a tick-running frame consumes them. The roll below advances the previous state to the
-        // current one, clearing the edge — so it runs only when the previous frame consumed it.
+        // pressed/released edge observable until a tick-running frame consumes it. The roll below
+        // advances the previous state to the current one, clearing the edge — so it runs only when
+        // the previous frame consumed it.
         if (!rollEdges)
         {
             return;
@@ -51,11 +57,22 @@ namespace Veng
         {
             m_PreviousGamepadButtons[slot] = m_Gamepads[slot].Buttons;
         }
+    }
 
-        // Deltas are per-frame: the router accumulates this frame's move/scroll events
-        // into them via ApplyEvent after this roll.
-        m_MouseDelta = {0, 0};
-        m_ScrollDelta = {0, 0};
+    void Input::BeginSimTick()
+    {
+        m_SimMouseDelta = m_SimMouseAccumulator;
+        m_SimScrollDelta = m_SimScrollAccumulator;
+        m_SimMouseAccumulator = {0, 0};
+        m_SimScrollAccumulator = {0, 0};
+    }
+
+    void Input::DropSimDeltas()
+    {
+        m_SimMouseAccumulator = {0, 0};
+        m_SimScrollAccumulator = {0, 0};
+        m_SimMouseDelta = {0, 0};
+        m_SimScrollDelta = {0, 0};
     }
 
     void Input::ApplyEvent(const Event& event)
@@ -132,7 +149,9 @@ namespace Veng
             // (correct under a captured cursor's virtual coordinate).
             if (m_HavePosition)
             {
-                m_MouseDelta += position - m_MousePosition;
+                const vec2 travel = position - m_MousePosition;
+                m_MouseDelta += travel;
+                m_SimMouseAccumulator += travel;
             }
             m_MousePosition = position;
             m_HavePosition = true;
@@ -140,7 +159,9 @@ namespace Veng
         }
         case EventType::MouseScrolled:
         {
-            m_ScrollDelta += static_cast<const MouseScrolledEvent&>(event).GetOffset();
+            const vec2 offset = static_cast<const MouseScrolledEvent&>(event).GetOffset();
+            m_ScrollDelta += offset;
+            m_SimScrollAccumulator += offset;
             break;
         }
         case EventType::KeyRepeat:
@@ -204,6 +225,16 @@ namespace Veng
     vec2 Input::GetScrollDelta() const
     {
         return m_ScrollDelta;
+    }
+
+    vec2 Input::GetSimMouseDelta() const
+    {
+        return m_SimMouseDelta;
+    }
+
+    vec2 Input::GetSimScrollDelta() const
+    {
+        return m_SimScrollDelta;
     }
 
     void Input::SetMouseCaptured(const bool captured)

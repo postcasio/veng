@@ -13,9 +13,9 @@ namespace Veng
 
     /// @brief Adapts the engine's Veng::Input snapshot to the resolver's RawInputView.
     ///
-    /// The thin bridge InputMappingSystem feeds ResolveActions: it reads only this tick's
-    /// state from the borrowed Veng::Input, so the resolver derives action phase from the
-    /// previous ActionState it is threaded, not from any previous-raw query. A gamepad source
+    /// The thin, seat-agnostic bridge a once-per-frame caller feeds ResolveActions: it reads only
+    /// the current state from the borrowed Veng::Input, so the resolver derives action phase from
+    /// the previous ActionState it is threaded, not from any previous-raw query. A gamepad source
     /// reads the single designated pad — the first connected GamepadId — so single-seat play is
     /// controller-drivable. Public so the editor's input-mapping preview reuses the identical
     /// read surface.
@@ -24,6 +24,13 @@ namespace Veng
     /// MouseScrollX / MouseScrollY (the wheel delta components); keyboard/mouse-button codes are
     /// the raw Key / MouseButton values a binding stores; gamepad Control codes are the
     /// GamepadButton / GamepadAxis indices.
+    ///
+    /// Its mouse and wheel arms read the **per-frame** deltas (Input::GetMouseDelta /
+    /// GetScrollDelta), matching its once-per-frame callers. A **fixed-rate Sim** consumer must not
+    /// resolve through this adapter: at any frame rate other than the tick rate the per-frame delta
+    /// is the wrong quantity for a tick (see Input::BeginSimTick). SeatInputView is the Sim-rate
+    /// view, and InputMappingSystem — the engine's sole Sim-side reader of raw device state — uses
+    /// it, not this.
     class RawInput final : public RawInputView
     {
     public:
@@ -88,6 +95,14 @@ namespace Veng
     /// The keyboard / mouse-button / mouse-delta / scroll / gamepad Control codes match RawInput's
     /// mapping; the pointer-position codes (MousePositionX / MousePositionY) are additional
     /// MouseAxis codes.
+    ///
+    /// **This view resolves at the fixed simulation rate**, so unlike RawInput its look-delta and
+    /// wheel arms read Input's per-**tick** deltas (GetSimMouseDelta / GetSimScrollDelta), latched by
+    /// Input::BeginSimTick. That is what makes a seat's resolved input a well-defined per-tick
+    /// quantity — the sum over ticks is the motion the device actually produced, independent of how
+    /// many frames elapsed, and it is stable across every system reading it within one tick. It also
+    /// matters beyond feel: the resolved PlayerInput is what a client replicates and what a
+    /// reconciliation replay re-runs, and neither can be keyed to a frame count.
     class SeatInputView final : public RawInputView
     {
     public:

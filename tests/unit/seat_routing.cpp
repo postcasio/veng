@@ -362,6 +362,9 @@ TEST_CASE("A seat reads the pointer only while it owns the quadrant, position lo
     input.ApplyEvent(MouseMovedEvent{vec2(685, 193)});
     input.BeginFrame();
     input.ApplyEvent(MouseMovedEvent{vec2(700, 200)});
+    // A seat view resolves at the fixed Sim rate, so its look and wheel arms read the per-tick
+    // deltas: latch a tick the way Application does before a Sim step's systems run.
+    input.BeginSimTick();
 
     const std::array regions = QuadrantRegions();
     const PointerRouting routing = SelectPointerOwner(regions, ivec2(700, 200));
@@ -397,6 +400,7 @@ TEST_CASE("A UsesKeyboardMouse=false seat reads neutral mouse even over its own 
     input.ApplyEvent(MouseMovedEvent{vec2(85, 193)});
     input.BeginFrame();
     input.ApplyEvent(MouseMovedEvent{vec2(100, 200)});
+    input.BeginSimTick();
 
     const std::array regions = QuadrantRegions();
     const PointerRouting routing = SelectPointerOwner(regions, ivec2(100, 200));
@@ -423,6 +427,7 @@ TEST_CASE("Scroll axes read the wheel delta, region-gated like the other pointer
     input.BeginFrame();
     input.ApplyEvent(MouseMovedEvent{vec2(700, 200)});
     input.ApplyEvent(MouseScrolledEvent{vec2(0.5f, -2.0f)});
+    input.BeginSimTick();
 
     const std::array regions = QuadrantRegions();
     const PointerRouting routing = SelectPointerOwner(regions, ivec2(700, 200));
@@ -473,6 +478,7 @@ TEST_CASE("A captured cursor routes wholly to the single keyboard seat regardles
     input.ApplyEvent(MouseMovedEvent{vec2(0, 0)});
     input.BeginFrame();
     input.ApplyEvent(MouseMovedEvent{vec2(15, 7)});
+    input.BeginSimTick();
 
     const PointerRouting captured{.Owner = SeatA, .LocalPosition = {}};
 
