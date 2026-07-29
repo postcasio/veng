@@ -128,6 +128,7 @@ add_library(veng SHARED
         src/ManagedViewports.cpp
         src/Math/AABB.cpp
         src/Math/BVH.cpp
+        src/Math/Colorimetry.cpp
         src/Math/Frustum.cpp
         src/Math/Noise.cpp
         src/Module/ApplicationRegistry.cpp

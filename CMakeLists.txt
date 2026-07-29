@@ -812,6 +812,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/mesh_sockets.cpp
             tests/unit/visibility.cpp
             tests/unit/frustum.cpp
+            tests/unit/colorimetry.cpp
             tests/unit/spherical_harmonics.cpp
             tests/unit/ibl_cube_sh.cpp
             tests/unit/bvh.cpp
