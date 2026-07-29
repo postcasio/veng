@@ -110,9 +110,11 @@ namespace Veng
             }
             // The per-tick deltas, not the per-frame ones: a seat resolves at the fixed Sim rate, so
             // its look and wheel must be the motion since the previous tick rather than since the
-            // previous frame (see Input::BeginSimTick). Look delta stays raw pixels
-            // (translation-invariant, so sensitivity-invariant across region size); position reports
-            // the pointer's region-local coordinate.
+            // previous frame (see Input::BeginSimTick). Look delta stays raw and unscaled — in the
+            // window's own logical points, which is what the cursor callback reports and which differ
+            // from framebuffer pixels by the content scale on a HiDPI display. Being a translation it
+            // is region-invariant, so sensitivity does not change with the region's size; position
+            // reports the pointer's region-local coordinate instead.
             const vec2 delta = m_Input.GetSimMouseDelta();
             switch (code)
             {

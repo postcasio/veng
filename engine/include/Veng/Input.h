@@ -277,7 +277,8 @@ namespace Veng
         /// @brief Returns the current mouse cursor position in window-space pixels.
         [[nodiscard]] vec2 GetMousePosition() const;
 
-        /// @brief Returns the change in mouse position since the previous frame, in pixels.
+        /// @brief Returns the change in mouse position since the previous frame, in the window's
+        ///        logical points.
         ///
         /// Works while the mouse is captured: relative motion accumulates so a fly
         /// camera reads continuous deltas with the OS cursor hidden and locked.
@@ -291,7 +292,8 @@ namespace Veng
         /// The **per-frame** cadence, like GetMouseDelta; GetSimScrollDelta is the per-tick one.
         [[nodiscard]] vec2 GetScrollDelta() const;
 
-        /// @brief Returns the mouse motion latched for the current Sim tick, in pixels.
+        /// @brief Returns the mouse motion latched for the current Sim tick, in the window's logical
+        ///        points.
         ///
         /// The motion accumulated since the previous tick, moved here by BeginSimTick and constant
         /// for the whole tick, so every Sim system reading it within one tick agrees and the sum
