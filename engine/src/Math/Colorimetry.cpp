@@ -1,5 +1,11 @@
 #include <Veng/Math/Colorimetry.h>
 
+#include <algorithm>
+#include <cmath>
+#include <numbers>
+
+#include <Veng/Assert.h>
+
 namespace Veng
 {
     namespace
@@ -107,6 +113,24 @@ namespace Veng
             }
             return vec3(static_cast<f32>(x), static_cast<f32>(y), static_cast<f32>(z));
         }
+
+        // CODATA. The 2019 SI redefinition fixed all three exactly, so these are definitions
+        // rather than measurements and carry no uncertainty to propagate.
+        constexpr f64 PlanckConstant = 6.62607015e-34;  // J s
+        constexpr f64 SpeedOfLight = 299792458.0;       // m / s
+        constexpr f64 BoltzmannConstant = 1.380649e-23; // J / K
+
+        // 2 h c^2, W m^2 sr^-1 — the numerator of Planck's law in its wavelength form.
+        constexpr f64 PlanckNumerator = 2.0 * PlanckConstant * SpeedOfLight * SpeedOfLight;
+
+        // h c / k, m K — the second radiation constant, 1.4387769e-2.
+        constexpr f64 SecondRadiationConstant = PlanckConstant * SpeedOfLight / BoltzmannConstant;
+
+        // 2 pi^5 k^4 / (15 h^3 c^2), W m^-2 K^-4. Spelled as the derived value rather than
+        // recomputed from the three above so it is checkable against the published constant.
+        constexpr f64 StefanBoltzmannConstant = 5.670374419e-8;
+
+        constexpr f64 NanometresPerMetre = 1.0e9;
     }
 
     const Spectrum& CieObserverX()
@@ -178,5 +202,64 @@ namespace Veng
     vec3 LinearRgbToXyz(vec3 rgb)
     {
         return RgbToXyzMatrix() * rgb;
+    }
+
+    f32 PlanckSpectralRadiance(f32 wavelengthNm, f32 temperatureK)
+    {
+        VE_ASSERT(wavelengthNm > 0.0f,
+                  "PlanckSpectralRadiance: wavelength must be positive, got {}", wavelengthNm);
+        VE_ASSERT(temperatureK > 0.0f,
+                  "PlanckSpectralRadiance: temperature must be positive, got {}", temperatureK);
+
+        const f64 wavelength = static_cast<f64>(wavelengthNm) / NanometresPerMetre;
+        const f64 exponent =
+            SecondRadiationConstant / (wavelength * static_cast<f64>(temperatureK));
+        // expm1 rather than exp - 1: on the long-wavelength limb the exponent is small and the
+        // subtraction would cancel away most of the significand.
+        const f64 denominator = std::expm1(exponent);
+        if (!std::isfinite(denominator))
+        {
+            return 0.0f;
+        }
+        const f64 wavelength2 = wavelength * wavelength;
+        const f64 wavelength5 = wavelength2 * wavelength2 * wavelength;
+        const f64 perMetre = PlanckNumerator / (wavelength5 * denominator);
+        return static_cast<f32>(perMetre / NanometresPerMetre);
+    }
+
+    f32 BlackbodyTotalRadiance(f32 temperatureK)
+    {
+        VE_ASSERT(temperatureK >= 0.0f,
+                  "BlackbodyTotalRadiance: temperature must be non-negative, got {}", temperatureK);
+        const f64 temperature = static_cast<f64>(temperatureK);
+        const f64 squared = temperature * temperature;
+        return static_cast<f32>(StefanBoltzmannConstant * squared * squared / std::numbers::pi);
+    }
+
+    Spectrum BlackbodySpectrum(f32 temperatureK)
+    {
+        const f32 temperature =
+            std::clamp(temperatureK, BlackbodyMinTemperature, BlackbodyMaxTemperature);
+        Spectrum spectrum{};
+        for (u32 i = 0; i < SpectrumSampleCount; ++i)
+        {
+            spectrum.Samples[i] = PlanckSpectralRadiance(Spectrum::WavelengthAt(i), temperature);
+        }
+        return spectrum;
+    }
+
+    vec2 BlackbodyChromaticity(f32 temperatureK)
+    {
+        return XyzToChromaticity(SpectrumToXyz(BlackbodySpectrum(temperatureK)));
+    }
+
+    vec3 BlackbodyColor(f32 temperatureK)
+    {
+        const vec3 xyz = SpectrumToXyz(BlackbodySpectrum(temperatureK));
+        if (xyz.y <= 0.0f)
+        {
+            return vec3(0.0f);
+        }
+        return XyzToLinearRgb(xyz / xyz.y);
     }
 }

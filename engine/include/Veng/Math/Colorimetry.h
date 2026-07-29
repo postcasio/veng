@@ -233,4 +233,94 @@ namespace Veng
     /// @return Tristimulus values.
     /// @see XyzToLinearRgb
     [[nodiscard]] VE_API vec3 LinearRgbToXyz(vec3 rgb);
+
+    /// @brief Coldest temperature the band-sampled blackbody functions are defined at, in kelvin.
+    ///
+    /// The lower end of the range the CIE tabulates the Planckian locus over, and roughly a
+    /// flame. Colder than this a blackbody's visible-band radiance falls away toward the limit
+    /// of what a float carries, and its chromaticity — already outside the working primaries'
+    /// gamut on the red side — stops meaning anything. BlackbodySpectrum, BlackbodyChromaticity
+    /// and BlackbodyColor clamp to this rather than extrapolate.
+    inline constexpr f32 BlackbodyMinTemperature = 1000.0f;
+
+    /// @brief Hottest temperature the band-sampled blackbody functions are defined at, in kelvin.
+    ///
+    /// Past the hottest thermal emitters, and far enough up the locus that the chromaticity has
+    /// converged: 50000 K sits within 0.001 of the infinite-temperature limit in both x and y,
+    /// so clamping here discards no colour anyone can see.
+    inline constexpr f32 BlackbodyMaxTemperature = 50000.0f;
+
+    /// @brief Planck's law: the spectral radiance of an ideal blackbody at one wavelength.
+    ///
+    /// `2hc^2 / (lambda^5 (exp(hc / (lambda k T)) - 1))`, evaluated in double and returned in
+    /// **W sr^-1 m^-2 nm^-1** — per nanometre, to match the wavelength argument's unit. The
+    /// constants are CODATA: h, c and k are SI-exact since the 2019 redefinition.
+    ///
+    /// This is the law itself and is **not** clamped to the temperature range above: a caller
+    /// integrating outside the visible band, or checking the law against Wien's displacement or
+    /// Stefan-Boltzmann, has every reason to evaluate it anywhere. A temperature cold enough to
+    /// overflow the exponential returns zero rather than a denormal.
+    /// @param wavelengthNm  Wavelength in nanometres; must be positive.
+    /// @param temperatureK  Absolute temperature in kelvin; must be positive.
+    /// @return Spectral radiance in W sr^-1 m^-2 nm^-1.
+    [[nodiscard]] VE_API f32 PlanckSpectralRadiance(f32 wavelengthNm, f32 temperatureK);
+
+    /// @brief Stefan-Boltzmann: an ideal blackbody's radiance summed over all wavelengths.
+    ///
+    /// `sigma T^4 / pi`, in **W sr^-1 m^-2** — the integral of PlanckSpectralRadiance over the
+    /// whole spectrum, which is the absolute level a caller scales BlackbodyColor by when it
+    /// wants the emitter's real magnitude rather than its colour. Unclamped, like the law it
+    /// integrates. The visible band's share of it is not proportional to T^4: the fraction of the
+    /// curve falling inside 380-780 nm itself moves with temperature, peaking near 6000 K.
+    /// @param temperatureK  Absolute temperature in kelvin; must be non-negative.
+    /// @return Total radiance in W sr^-1 m^-2.
+    [[nodiscard]] VE_API f32 BlackbodyTotalRadiance(f32 temperatureK);
+
+    /// @brief Samples Planck's law onto the band as absolute spectral radiance.
+    ///
+    /// Every sample is PlanckSpectralRadiance at that sample's wavelength, so the spectrum
+    /// carries the emitter's true magnitude and SpectrumToXyz is the conversion it wants. Across
+    /// the temperature range that magnitude spans sixteen orders of magnitude at 380 nm and
+    /// eleven in luminance, which is why BlackbodyColor rather than this is what a consumer
+    /// usually wants.
+    /// @param temperatureK  Absolute temperature in kelvin, clamped to
+    ///                      [BlackbodyMinTemperature, BlackbodyMaxTemperature].
+    /// @return Spectral radiance in W sr^-1 m^-2 nm^-1 at each sampled wavelength.
+    [[nodiscard]] VE_API Spectrum BlackbodySpectrum(f32 temperatureK);
+
+    /// @brief Returns a blackbody's CIE 1931 chromaticity — a point on the Planckian locus.
+    ///
+    /// The colour with the level divided out, and the form the locus is published in, so it is
+    /// the value to check an implementation or a table against.
+    ///
+    /// **An ideal radiator is not a measured source.** A real thermal emitter departs from the
+    /// locus — line absorption, self-absorption in a cool outer layer, molecular bands, and a
+    /// non-uniform emitting surface all move its colour — and an astronomical source's published
+    /// colour index reflects that. This is the ideal blackbody, which is the right model for a
+    /// colour-temperature knob and a first-order model for a thermal emitter, not a substitute
+    /// for a measured spectrum.
+    /// @param temperatureK  Absolute temperature in kelvin, clamped to
+    ///                      [BlackbodyMinTemperature, BlackbodyMaxTemperature].
+    /// @return CIE 1931 (x, y) on the Planckian locus.
+    [[nodiscard]] VE_API vec2 BlackbodyChromaticity(f32 temperatureK);
+
+    /// @brief Returns a blackbody's colour in the working space, normalized to unit luminance.
+    ///
+    /// **Normalized means Y = 1 exactly**: the triple's Rec.709 relative luminance is one, so
+    /// multiplying it by a luminance in the caller's own unit yields a triple carrying that
+    /// luminance. That is the composable normalization — level is owned by whatever knows the
+    /// emitter's output, and BlackbodyTotalRadiance is available when that is the blackbody's
+    /// own. Handing a caller the absolute radiance instead would have it multiply an already
+    /// enormous number by its own luminance term.
+    ///
+    /// Individual channels routinely leave [0, 1] in both directions, and below about 1900 K the
+    /// blue channel is **negative**: a deep red blackbody is outside the working primaries' gamut,
+    /// which XyzToLinearRgb reports rather than clamps away. The same ideal-radiator caveat as
+    /// BlackbodyChromaticity applies.
+    /// @param temperatureK  Absolute temperature in kelvin, clamped to
+    ///                      [BlackbodyMinTemperature, BlackbodyMaxTemperature].
+    /// @return Unclamped linear RGB with Y = 1.
+    /// @see BlackbodyChromaticity
+    /// @see BlackbodyTotalRadiance
+    [[nodiscard]] VE_API vec3 BlackbodyColor(f32 temperatureK);
 }
