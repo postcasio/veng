@@ -11,10 +11,10 @@
 // only its fragment declares a push block. It declares exactly one push_constant block, so it
 // does not include Veng/surface.slang, whose g_PC (the surface push) would collide with it.
 
-// The per-material block byte stride. Mirrors BindlessRegistry::MaterialParamStride; one
+// The per-material block byte stride. Mirrors BindlessRegistry::MaterialParamStride, and moves only with it; one
 // stride is shared across every material so a single ByteAddressBuffer holds a different
 // per-shader parameter layout, read at index * MaterialParamStride.
-static const uint MaterialParamStride = 256;
+static const uint MaterialParamStride = 384;
 
 // The canonical per-frame view-constants block (set 0, binding 5) is declared in
 // view_constants.slang — the single source for the lighting, SSAO, and material shaders.

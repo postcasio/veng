@@ -21,7 +21,7 @@ struct MaterialParams
     float4 Factors;       // authored param
 };
 
-static const uint MaterialParamStride = 256;
+static const uint MaterialParamStride = 384;
 
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
 [[vk::binding(1, 0)]] SamplerState g_Samplers[];

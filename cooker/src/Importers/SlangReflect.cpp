@@ -131,9 +131,35 @@ namespace Veng::Cook
             return true;
         }
 
+        // Slang normalizes the fragment depth semantic to "SV_DEPTH". It names the depth
+        // attachment rather than a color one, so it is not a render target and carries no
+        // target index.
+        bool IsDepthSemantic(const char* semantic)
+        {
+            if (!semantic)
+            {
+                return false;
+            }
+            static constexpr std::string_view Name = "SV_DEPTH";
+            const std::string_view s(semantic);
+            if (s.size() != Name.size())
+            {
+                return false;
+            }
+            for (usize i = 0; i < Name.size(); ++i)
+            {
+                if (std::toupper(static_cast<unsigned char>(s[i])) != Name[i])
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         // Walks the entry result layout — either a bare SV_TargetN or a struct of
-        // varyings (MRT) — and collects each render target. Missing SV_Target is a
-        // located error.
+        // varyings (MRT) — and collects each render target. An SV_Depth member is dropped
+        // rather than collected: it writes the depth attachment, so it is not part of the
+        // domain's color-target set. Any other semantic is a located error.
         Result<vector<ReflectedFragmentOutput>>
         CollectOutputs(slang::VariableLayoutReflection* result, std::string_view entry)
         {
@@ -149,6 +175,10 @@ namespace Veng::Cook
                 for (unsigned i = 0; i < typeLayout->getFieldCount(); ++i)
                 {
                     slang::VariableLayoutReflection* field = typeLayout->getFieldByIndex(i);
+                    if (IsDepthSemantic(field->getSemanticName()))
+                    {
+                        continue;
+                    }
                     if (!IsTargetSemantic(field->getSemanticName()))
                     {
                         return std::unexpected(

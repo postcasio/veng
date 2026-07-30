@@ -6,7 +6,7 @@
 // (the test lays out a single float4 there).
 [[vk::binding(4, 0)]] ByteAddressBuffer g_MaterialParams;
 
-static const uint MaterialParamStride = 256;
+static const uint MaterialParamStride = 384;
 
 struct PushConstants
 {

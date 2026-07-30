@@ -10,10 +10,10 @@
 // The set-0 bindings mirror the BindlessRegistry layout (sampled images = 0, samplers = 1,
 // per-material block = 4, view constants = 5).
 
-// The per-material block byte stride. Mirrors BindlessRegistry::MaterialParamStride; one
+// The per-material block byte stride. Mirrors BindlessRegistry::MaterialParamStride, and moves only with it; one
 // stride is shared across every material so a single ByteAddressBuffer holds a different
 // per-shader parameter layout, read at index * MaterialParamStride.
-static const uint MaterialParamStride = 256;
+static const uint MaterialParamStride = 384;
 
 // The canonical per-frame view-constants block (set 0, binding 5) is declared in
 // view_constants.slang — the single source for the lighting, SSAO, and material shaders.
@@ -83,6 +83,41 @@ struct GBufferOutput
     float2 Velocity : SV_Target3;  // screen-space motion vector (curUV - prevUV)
     float3 Emissive : SV_Target4;  // linear HDR emissive radiance (non-negative)
 };
+
+// The same g-buffer set with a fragment-written depth. Returning this instead of GBufferOutput
+// replaces the rasterized depth with the written value for both the depth test and the depth
+// write, so a material whose drawn geometry does not stand where its shading says it does can
+// sort by a value it computes instead. The targets are declared here rather than in the material
+// so the two forms cannot drift apart.
+//
+// Two costs come with it. The draw loses early-Z rejection, since the depth is not known until
+// the fragment has run. And the deferred lighting pass reconstructs world position from the depth
+// attachment, so a written value moves that fragment's reconstructed position along its own view
+// ray — the view vector is unchanged, a directional light is unaffected, and a positional light
+// sees the fragment at the distance the depth names.
+struct GBufferDepthOutput
+{
+    float4 Albedo   : SV_Target0;
+    float4 Normal   : SV_Target1;
+    float4 ORM      : SV_Target2;
+    float2 Velocity : SV_Target3;
+    float3 Emissive : SV_Target4;
+    float  Depth    : SV_Depth;
+};
+
+// Carries a g-buffer result into the depth-writing form, so a fragment fills the targets exactly
+// as it would without depth and names the depth once at the end.
+GBufferDepthOutput WithDepth(GBufferOutput gbuffer, float depth)
+{
+    GBufferDepthOutput o;
+    o.Albedo = gbuffer.Albedo;
+    o.Normal = gbuffer.Normal;
+    o.ORM = gbuffer.ORM;
+    o.Velocity = gbuffer.Velocity;
+    o.Emissive = gbuffer.Emissive;
+    o.Depth = depth;
+    return o;
+}
 
 // The per-object screen-space motion vector from the vertex stage's unjittered current
 // and previous clip positions: the UV displacement from this pixel's previous position

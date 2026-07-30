@@ -7,7 +7,7 @@
 [[vk::binding(3, 0)]] ByteAddressBuffer g_Buffers[];
 [[vk::binding(4, 0)]] ByteAddressBuffer g_MaterialParams;
 
-static const uint MaterialParamStride = 256;
+static const uint MaterialParamStride = 384;
 
 struct MaterialParams
 {

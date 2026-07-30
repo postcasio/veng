@@ -12,8 +12,8 @@
 // skybox composite. It reuses the fullscreen vertex stage (no per-vertex sky state), like a
 // PostProcess material, so only its fragment declares a push block.
 
-// The per-material block byte stride. Mirrors BindlessRegistry::MaterialParamStride.
-static const uint MaterialParamStride = 256;
+// The per-material block byte stride. Mirrors BindlessRegistry::MaterialParamStride, and moves only with it.
+static const uint MaterialParamStride = 384;
 
 // The canonical per-frame view-constants block (set 0, binding 5): the sky reconstructs
 // the view ray from InvViewProj + CameraPosition and maps the sub-rect depth UV through it.

@@ -25,7 +25,7 @@ namespace Veng::Cook
         // The per-material block buffer stride. Mirrors
         // Renderer::BindlessRegistry::MaterialParamStride; restated here so the
         // cooker gains no renderer-header dependency.
-        constexpr u32 MaterialParamStride = 256;
+        constexpr u32 MaterialParamStride = 384;
 
         // Cooked names are fixed-size, nul-terminated char arrays (CookedBlobs.h);
         // truncate rather than fail on an over-long identifier.
@@ -287,7 +287,9 @@ namespace Veng::Cook
         // PostProcess: single float4 SV_Target0. Sky: single float4 SV_Target0 (background
         // radiance, not a g-buffer MRT). Translucent: single float4 SV_Target0 (final HDR color +
         // alpha, forward-blended into the scene, not a g-buffer MRT). GuiFill: single float4
-        // SV_Target0 (premultiplied UI fill). Mismatch is a located cook error.
+        // SV_Target0 (premultiplied UI fill). Mismatch is a located cook error. An SV_Depth
+        // member is not a color target and never reaches this check — the reflection drops it,
+        // so any domain may write depth alongside its targets.
         const Result<vector<ReflectedFragmentOutput>> outputs =
             ReflectFragmentOutputs(fragSource, fragEntry, context.ShaderIncludeDir);
         if (!outputs)

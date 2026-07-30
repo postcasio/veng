@@ -1,0 +1,15 @@
+{
+  "domain": "Translucent",
+  "cull": "None",
+  "shaders": {
+    "vertex": "0x0000000000001005",
+    "fragment": "0x00000000000010D2"
+  },
+  "fields": [
+    {
+      "name": "Color",
+      "type": "vec4",
+      "value": [0.2, 0.6, 0.9, 0.5]
+    }
+  ]
+}

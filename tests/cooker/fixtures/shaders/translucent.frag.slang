@@ -10,7 +10,7 @@ struct MaterialParams
     float4 Color; // HDR color + coverage in a
 };
 
-static const uint MaterialParamStride = 256;
+static const uint MaterialParamStride = 384;
 
 [[vk::binding(4, 0)]] ByteAddressBuffer g_MaterialParams;
 

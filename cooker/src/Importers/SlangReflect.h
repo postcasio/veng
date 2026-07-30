@@ -78,9 +78,11 @@ namespace Veng::Cook
     /// fragment entry point `entry`.
     ///
     /// Each SV_TargetN semantic on the result is collected with its scalar/vector
-    /// type. Returns a located error ("material importer: ...") on compile failure,
-    /// a missing or non-fragment entry point, or an output carrying no SV_Target
-    /// semantic. Targets are returned sorted by TargetIndex.
+    /// type. An SV_Depth member is skipped — it writes the depth attachment rather than a
+    /// color one, so it belongs to no domain's target set. Returns a located error
+    /// ("material importer: ...") on compile failure, a missing or non-fragment entry
+    /// point, or an output carrying neither semantic. Targets are returned sorted by
+    /// TargetIndex.
     /// @param slangSource The Slang module source (a .slang file or graph-generated text).
     /// @param entry       Name of the fragment entry point to reflect.
     /// @param shaderIncludeDir Engine core shader dir added to the Slang search path so the

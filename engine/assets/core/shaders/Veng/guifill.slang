@@ -12,10 +12,10 @@
 // so corner radius, border, clip, and rotation compose with a material fill exactly as they do
 // with a flat color or a gradient.
 
-// The per-material block byte stride. Mirrors BindlessRegistry::MaterialParamStride; one stride is
+// The per-material block byte stride. Mirrors BindlessRegistry::MaterialParamStride, and moves only with it; one stride is
 // shared across every material so a single ByteAddressBuffer holds a different per-shader
 // parameter layout, read at index * MaterialParamStride.
-static const uint MaterialParamStride = 256;
+static const uint MaterialParamStride = 384;
 
 // The set-0 bindless arrays a UI fill reads: the sampled images + samplers, the byte-address
 // storage-buffer array, and the per-material param block. Mirrors the BindlessRegistry layout.

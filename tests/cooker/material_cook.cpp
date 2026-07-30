@@ -471,6 +471,30 @@ TEST_CASE("Cooker: a translucent material cooks with domain 3")
     std::filesystem::remove(outArchive);
 }
 
+TEST_CASE("Cooker: a fragment writing SV_Depth beside its target cooks")
+{
+    // SV_Depth names the depth attachment, not a color one, so it is dropped from the reflected
+    // target set and the domain still sees exactly its own targets. The fixture's fragment
+    // returns a struct of float4 SV_Target0 + float SV_Depth against the single-target
+    // Translucent contract, which would fail the count check if the depth member were collected.
+    const path packJson = FixtureDir / "material_translucent_depth_pack.json";
+    const path outArchive =
+        Veng::TestSupport::TempDir() / "veng_cooker_material_translucent_depth.vengpack";
+
+    const Result<ArchiveReader> reader = CookMaterialPack(packJson, outArchive);
+    REQUIRE(reader.has_value());
+
+    const optional<ArchiveEntry> entry = reader->Find(AssetId{0xC87});
+    REQUIRE(entry.has_value());
+
+    CookedMaterialHeader header{};
+    std::memcpy(&header, entry->Blob.data(), sizeof(header));
+    CHECK(header.Domain == 3u);    // Translucent
+    CHECK(header.FieldCount == 1); // Color
+
+    std::filesystem::remove(outArchive);
+}
+
 TEST_CASE("Cooker: an unknown cull mode is a located cook error")
 {
     // Cull modes are serialized by enumerator name ("Back"/"Front"/"None"); a

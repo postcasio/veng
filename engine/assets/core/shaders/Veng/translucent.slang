@@ -10,7 +10,7 @@
 // own struct to pack its fields at the reflected offsets — so it is not part of this contract).
 //
 // A Translucent material's fragment stage outputs a single float4 SV_Target0: HDR linear color in
-// rgb and coverage in a. The forward translucent pass draws it into the lit HDR scene-color target
+// rgb and coverage in a — or a TranslucentDepthOutput below, which adds a fragment-written depth. The forward translucent pass draws it into the lit HDR scene-color target
 // after deferred lighting and the sky composite and before the bloom/tonemap tail, so translucents
 // bloom and tonemap with the scene. The pass depth-TESTs against the opaque depth buffer with depth
 // writes OFF (a translucent surface never occludes another), sorts submeshes back-to-front by view
@@ -32,6 +32,16 @@
 // Veng/postprocess.slang, and Veng/sky.slang.
 
 #include "Veng/surface.slang"
+
+// The Translucent output with a fragment-written depth. A fragment returns this instead of a bare
+// float4 SV_Target0 when the depth it should test against is not the depth its geometry
+// rasterized to. The pass keeps depth writes off, so the written value decides this fragment's
+// depth test and still occludes nothing; the draw loses early-Z rejection.
+struct TranslucentDepthOutput
+{
+    float4 Color : SV_Target0;  // HDR linear color in rgb, coverage in a (un-premultiplied)
+    float  Depth : SV_Depth;
+};
 
 // True when the pre-translucent scene-color copy is populated this frame (the renderer's
 // Refraction setting is on); SampleSceneColor returns black otherwise.
