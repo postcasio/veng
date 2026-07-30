@@ -27,9 +27,12 @@ namespace Veng
         // view by a fraction of a tick's motion, changing every frame as the alpha sweeps. Following
         // the drawn pose is what makes an attached-to-the-camera object hold still.
         //
-        // The camera's own transform is deliberately not interpolated: it is authored per frame
-        // after the tick snapshot, so its live pose already *is* this frame's pose. This resolves
-        // only what it follows.
+        // This resolves the *target* and nothing else — it is not a statement about the camera.
+        // A camera carries no `ViewPose`, so `GetInterpolatedWorldTransform` blends its history
+        // like any other entity's, and a caller that needs the vantage this frame is drawn from
+        // must ask for it at the frame's alpha exactly as the gather does. What is authored per
+        // frame here is the camera's transform *for the next snapshot*, which is a different
+        // thing from the pose the current frame renders.
         mat4 DrawnTargetPose(const Scene& scene, const Entity target, const f32 alpha)
         {
             if (alpha > 0.0f && scene.HasTransformInterpolation())

@@ -302,6 +302,14 @@ namespace Veng
         /// no interpolation applies; a ViewPose level resolves its live Transform (a per-frame authored
         /// pose is already this frame's — see ViewPose). A View system (a camera rig) reads this so the
         /// camera and the meshes it frames share one interpolated pose.
+        ///
+        /// **The exemption is the ViewPose tag and nothing else.** An entity whose Transform is written
+        /// per frame but which carries no tag is blended from history like any other, which resolves a
+        /// pose one frame stale — so a View system that authors a pose owes it the tag, and a caller
+        /// reading a *vantage* back out (a camera, a rig's anchor) must pass the frame's alpha rather
+        /// than reach for WorldMatrix. Neither error is visible while the eye is still: both scale with
+        /// how far the pose travels within a frame, so they present as content sliding against the view
+        /// under motion and vanish when it stops.
         /// @param entity  The entity to resolve.
         /// @param alpha   The interpolation fraction in [0, 1] (0 = previous tick, 1 = current).
         /// @return The interpolated world matrix.
