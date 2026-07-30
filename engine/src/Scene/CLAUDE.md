@@ -127,7 +127,12 @@ mutated through `SetParent`/`Detach`/`MoveBefore`; `WorldMatrix`/`ComputeWorldMa
 (the component whose FovY/Near/Far and world transform build a `CameraView`, the value type
 carrying the view/projection — Y flipped for Vulkan clip space), `MeshRenderer` (holds the
 `AssetHandle<Mesh>` a draw queries — the mesh owns its materials, so a renderer queries
-`(Transform, MeshRenderer)` and draws each submesh with its material), `Animator` (plays an
+`(Transform, MeshRenderer)` and draws each submesh with its material — plus two independent
+switches: `CastsShadows` drops it from the shadow views alone, and **`Visible`** drops it from the
+gather entirely, so it is neither drawn, nor a caster, nor part of the scene bound. `Visible` is
+what hiding something reaches for: removing the component loses the resolved mesh and any sibling
+bound onto it — a `GuiSurface` draws its document *into* that mesh — and collapsing the
+`Transform` scale takes every child with it, a camera riding the hull included), `Animator` (plays an
 `AssetHandle<Animation>` on a skinned-mesh entity; the `AnimationSystem` writes the result into a
 transient `SkinnedPose` the renderer uploads — or, when the entity also carries an `AnimationBlend`
 or `AnimationStateSet` (`Veng/Scene/AnimationBlend.h`), the phase-synced 1-D blend of the bracketing
@@ -149,7 +154,9 @@ A `Scene` reduces to a world-space bound on demand: `SceneBounds(scene)`
 (`Veng/Scene/Transforms.h`) unions every resident `(Transform, MeshRenderer)` entity's world-space
 mesh bound, reusing `ComputeWorldMatrices`' one amortized pass — recompute-on-demand, no
 dirty-flag cache. `GatherMeshes` (`Veng/Scene/Visibility.h`) is the pure one-shot candidate gather
-over the same pass (world matrix + world-space `AABB` + resident mesh per entity); the
+over the same pass (world matrix + world-space `AABB` + resident mesh per entity, skipping a
+renderer whose `Visible` is clear — the one place that flag is honoured, so nothing downstream
+re-tests it); the
 `SceneBroadphase` caches that gather and builds the BVH from it, re-gathering only when the
 scene's spatial version moves (or a still-loading mesh becomes resident). The broadphase is a BVH
 with **per-submesh leaves**, the granularity the renderer's GPU-driven hi-Z occlusion culling

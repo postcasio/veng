@@ -43,7 +43,7 @@ TEST_CASE("GatherMeshes: two mesh entities yield two VisibleMeshes in dense orde
     TypeRegistry types;
     RegisterBuiltins(types);
 
-    AssetManager manager(context, tasks, types);
+    const AssetManager manager(context, tasks, types);
     Unique<Scene> scene = Scene::Create(types);
 
     const AABB unit{.Min = vec3(-0.5f), .Max = vec3(0.5f)};
@@ -92,7 +92,7 @@ TEST_CASE("GatherMeshes: non-resident and MeshRenderer-less entities contribute 
     TypeRegistry types;
     RegisterBuiltins(types);
 
-    AssetManager manager(context, tasks, types);
+    const AssetManager manager(context, tasks, types);
     Unique<Scene> scene = Scene::Create(types);
 
     // A MeshRenderer with a default (unloaded) handle.
@@ -140,7 +140,7 @@ TEST_CASE("GatherMeshes: outBounds equals SceneBounds (the by-product agrees)")
     TypeRegistry types;
     RegisterBuiltins(types);
 
-    AssetManager manager(context, tasks, types);
+    const AssetManager manager(context, tasks, types);
     Unique<Scene> scene = Scene::Create(types);
 
     const AssetHandle<Mesh> mesh =
@@ -174,7 +174,7 @@ TEST_CASE("GatherMeshes: a pre-filled out vector is cleared first")
     TypeRegistry types;
     RegisterBuiltins(types);
 
-    AssetManager manager(context, tasks, types);
+    const AssetManager manager(context, tasks, types);
     Unique<Scene> scene = Scene::Create(types);
 
     const AssetHandle<Mesh> mesh =
@@ -190,4 +190,47 @@ TEST_CASE("GatherMeshes: a pre-filled out vector is cleared first")
 
     CHECK(out.size() == 1);
     CHECK(out[0].Owner == e);
+}
+
+TEST_CASE("MeshRenderer::Visible excludes a mesh from the gather and from the scene bound")
+{
+    Renderer::Context context;
+    TaskSystem tasks;
+    TypeRegistry types;
+    RegisterBuiltins(types);
+
+    const AssetManager manager(context, tasks, types);
+    Unique<Scene> scene = Scene::Create(types);
+
+    const AssetHandle<Mesh> mesh =
+        manager.Adopt<Mesh>(BoundsMesh(AABB{.Min = vec3(-0.5f), .Max = vec3(0.5f)}));
+
+    const Entity shown = scene->CreateEntity();
+    scene->Add<Transform>(shown, Transform{.Position = vec3(10.0f, 0.0f, 0.0f)});
+    scene->Add<MeshRenderer>(shown, MeshRenderer{.Mesh = mesh});
+
+    const Entity hidden = scene->CreateEntity();
+    scene->Add<Transform>(hidden, Transform{.Position = vec3(-100.0f, 0.0f, 0.0f)});
+    scene->Add<MeshRenderer>(hidden, MeshRenderer{.Mesh = mesh, .Visible = false});
+
+    vector<VisibleMesh> out;
+    AABB outBounds = AABB::Empty();
+    GatherMeshes(*scene, out, outBounds);
+
+    // Only the visible one is a draw, and the hidden one does not stretch the bound the shadow
+    // projections fit to — which is the half a CastsShadows-only flag would have left behind.
+    CHECK(out.size() == 1);
+    CHECK(out[0].Owner == shown);
+    CHECK(outBounds.Min.x == doctest::Approx(9.5f));
+    CHECK(SceneBounds(*scene).Min.x == doctest::Approx(9.5f));
+
+    // The switch is live and symmetric: flipping it back restores the draw exactly.
+    scene->Get<MeshRenderer>(hidden).Visible = true;
+    GatherMeshes(*scene, out, outBounds);
+    CHECK(out.size() == 2);
+    CHECK(outBounds.Min.x == doctest::Approx(-100.5f));
+
+    // Hiding a mesh is not the same as dropping its renderer: the handle survives, so nothing
+    // has to be re-resolved to show it again.
+    CHECK(scene->Get<MeshRenderer>(hidden).Mesh.IsLoaded());
 }

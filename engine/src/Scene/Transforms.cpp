@@ -96,7 +96,7 @@ namespace Veng
         for (usize i = 0; i < count; ++i)
         {
             const auto* renderer = scene.TryGet<MeshRenderer>(dense[i]);
-            if (renderer == nullptr || !renderer->Mesh.IsLoaded())
+            if (renderer == nullptr || !renderer->Visible || !renderer->Mesh.IsLoaded())
             {
                 continue;
             }

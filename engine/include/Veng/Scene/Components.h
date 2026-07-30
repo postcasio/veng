@@ -239,6 +239,19 @@ namespace Veng
         /// frustum. Set it false for geometry that must not occlude — an emissive body co-located
         /// with its own light, a skybox proxy, a held first-person prop.
         bool CastsShadows = true;
+        /// @brief Whether this mesh is drawn at all.
+        ///
+        /// True (the default) draws it normally. False excludes it from the render gather
+        /// entirely — no camera draw, no shadow, and no contribution to the scene bound — so it is
+        /// the whole-mesh switch that CastsShadows is the shadow-only half of. It changes nothing
+        /// else about the entity: the mesh stays resident, the transform chain still composes, and
+        /// children (a socket-attached part, a camera riding the hull) are untouched, so hiding a
+        /// parent does not hide what hangs off it.
+        ///
+        /// This is what a caller wanting to hide something should reach for. Removing the
+        /// MeshRenderer instead loses the resolved mesh and any sibling component bound onto it,
+        /// and collapsing the Transform scale drags every child down with it.
+        bool Visible = true;
     };
 
     /// @brief How an Animator treats a clip's baked root motion.
@@ -1254,6 +1267,7 @@ VE_REFLECT(::Veng::MeshRenderer, 0x3C5CB13E46E0450BULL)
 VE_FIELD(Mesh, .DisplayName = "Mesh")
 VE_FIELD(Source, .DisplayName = "Source")
 VE_FIELD(CastsShadows, .DisplayName = "Casts shadows")
+VE_FIELD(Visible, .DisplayName = "Visible")
 VE_REFLECT_END();
 
 VE_ENUM(::Veng::RootMotionMode, 0x2F4A31CEE94569AFULL)
