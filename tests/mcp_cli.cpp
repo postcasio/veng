@@ -9,7 +9,9 @@
 //   - --connect=<port> --list                  -> 0, listing carries the registered tools.
 //   - --connect=<port> --list --search <substr> -> 0, listing narrows to the match.
 //   - --connect=<port> ping message=hi          -> 0, payload on out.
-//   - --connect=<port> err                      -> 4, label-prefixed error on err, out empty.
+//   - --connect=<port> err                      -> 4, "<label>: <tool>: <reason>" on err pinned
+//                                                  exactly (the tool named once, by the server),
+//                                                  out empty.
 //   - --connect=<port> does.not.exist           -> 3, protocol-error path (unknown tool is a
 //                                                  JSON-RPC error over tools/call? no — the
 //                                                  server reports it as an isError result, so
@@ -42,6 +44,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <cstdio>
 #include <fstream>
 #include <sstream>
@@ -62,6 +65,19 @@ namespace
             std::fprintf(stderr, "FAIL: %s\n", what);
             ++g_Failures;
         }
+    }
+
+    // How many times a substring occurs in a line — the check that a tool name is attached
+    // by exactly one party.
+    int Occurrences(const std::string& text, const std::string& needle)
+    {
+        int count = 0;
+        for (std::size_t at = text.find(needle); at != std::string::npos;
+             at = text.find(needle, at + needle.size()))
+        {
+            ++count;
+        }
+        return count;
     }
 
     // Convenience: run RunClientCli with a fixed label and captured sinks.
@@ -188,17 +204,24 @@ int main()
                   "ping payload echoed the message on out");
         }
 
-        // Tool result isError: exit 4, label-prefixed line on err, out empty.
+        // Tool result isError: exit 4, out empty, and the assembled line pinned exactly —
+        // the label the client owns, then the tool named once by the server, then the
+        // handler's reason. Counting the occurrences is the point: the tool name is
+        // attached at one place, so it can appear neither twice nor not at all.
         const RunResult toolErr = Run({"--connect=" + portStr, "err"});
         Check(toolErr.Code == 4, "err tool exited 4");
         Check(toolErr.Out.empty(), "err tool wrote nothing to out");
-        Check(toolErr.Err.rfind("veng-test: err:", 0) == 0, "err tool line is label+tool prefixed");
+        Check(toolErr.Err == "veng-test: err: deliberate tool failure\n",
+              "the err line is label, tool, reason — assembled exactly once each");
+        Check(Occurrences(toolErr.Err, "err:") == 1, "the tool is named once in the err line");
 
         // Unknown tool: the server reports it as an isError tool result, so it is the tool-error
-        // row (exit 4), matching mcp_client's observation.
+        // row (exit 4), matching mcp_client's observation. The unresolved name is framed by the
+        // same layer path, so it too is named once.
         const RunResult unknown = Run({"--connect=" + portStr, "does.not.exist"});
         Check(unknown.Code == 4, "unknown tool exited 4 (isError tool result)");
-        Check(unknown.Err.rfind("veng-test:", 0) == 0, "unknown tool line is label-prefixed");
+        Check(unknown.Err == "veng-test: does.not.exist: no such tool\n",
+              "the unknown-tool line names the requested tool once");
 
         // key=value typing: limit reaches the tool as a JSON number, name as a string.
         const RunResult typed = Run({"--connect=" + portStr, "echo_args", "limit=2", "name=foo"});

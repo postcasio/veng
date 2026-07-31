@@ -239,7 +239,12 @@ prefixed with the invoking exe's name (`<label>` below — `veng-editor`, `hello
 | Usage / bad args (incl. an image tool called without `--output`) | — | usage line | `1` |
 | Connection refused / no response / timeout | — | `<label>: cannot reach <host>:<port>: …` | `2` |
 | JSON-RPC protocol error (an `error` object) | — | `<label>: rpc error: <message>` | `3` |
-| Tool result `isError: true` (including an unknown tool name) | — | `<label>: <tool>: <error text>` | `4` |
+| Tool result `isError: true` (including an unknown tool name) | — | `<label>: <error text>` | `4` |
+
+The tool appears **once** in that line, and the server puts it there: a failed `tools/call`
+reports `<tool>: <reason>`, so the client prefixes only the exe's own label. A tool handler
+therefore returns the reason alone — a handler that names itself as well makes the tool read
+twice.
 
 ### A worked example
 

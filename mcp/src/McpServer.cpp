@@ -134,16 +134,22 @@ namespace Veng::Mcp
 
         /// @brief Wraps a handler's returned JSON string in an MCP tool result.
         ///
-        /// A located error becomes an isError result carrying the error text. A success
-        /// from a plain tool becomes a single text content block; a success from a
+        /// A located error becomes an isError result whose text is the called tool's name
+        /// followed by the error: this is the one point at which a failed call's error text
+        /// is assembled, so the layer names the tool and a handler's own error carries the
+        /// reason alone. A `tools/call` naming no tool frames the reason without a prefix.
+        /// A success from a plain tool becomes a single text content block; a success from a
         /// content-block tool (@p returnsContentBlocks) is the `content` array itself,
         /// spliced in verbatim (falling back to a text block if it is not a valid array).
-        Json MakeToolResult(const Result<string>& handlerResult, bool returnsContentBlocks)
+        Json MakeToolResult(string_view toolName, const Result<string>& handlerResult,
+                            bool returnsContentBlocks)
         {
             if (!handlerResult)
             {
-                return Json{{"content", Json::array({Json{{"type", "text"},
-                                                          {"text", handlerResult.error()}}})},
+                const string text = toolName.empty()
+                                        ? handlerResult.error()
+                                        : fmt::format("{}: {}", toolName, handlerResult.error());
+                return Json{{"content", Json::array({Json{{"type", "text"}, {"text", text}}})},
                             {"isError", true}};
             }
 
@@ -212,9 +218,9 @@ namespace Veng::Mcp
                 const auto it = native.Tools.find(name);
                 if (it == native.Tools.end())
                 {
-                    return MakeResult(
-                        id, MakeToolResult(std::unexpected(fmt::format("unknown tool '{}'", name)),
-                                           /*returnsContentBlocks=*/false));
+                    return MakeResult(id,
+                                      MakeToolResult(name, std::unexpected(string("no such tool")),
+                                                     /*returnsContentBlocks=*/false));
                 }
 
                 const bool returnsContentBlocks = it->second.ReturnsContentBlocks;
@@ -232,8 +238,9 @@ namespace Veng::Mcp
                     if (native.ShuttingDown)
                     {
                         return MakeResult(
-                            id, MakeToolResult(std::unexpected(string("server is shutting down")),
-                                               returnsContentBlocks));
+                            id,
+                            MakeToolResult(name, std::unexpected(string("server is shutting down")),
+                                           returnsContentBlocks));
                     }
                     native.Queue.push_back(request);
                 }
@@ -245,13 +252,14 @@ namespace Veng::Mcp
                 {
                     return MakeResult(
                         id,
-                        MakeToolResult(std::unexpected(string(
+                        MakeToolResult(name,
+                                       std::unexpected(string(
                                            "host busy — the render thread did not pump in time")),
                                        returnsContentBlocks));
                 }
                 const Result<string> value = std::move(request->Value);
                 lock.unlock();
-                return MakeResult(id, MakeToolResult(value, returnsContentBlocks));
+                return MakeResult(id, MakeToolResult(name, value, returnsContentBlocks));
             }
 
             if (isNotification)

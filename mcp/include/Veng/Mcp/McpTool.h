@@ -42,6 +42,10 @@ namespace Veng::Mcp
         /// client as an MCP `isError` tool result (not a JSON-RPC protocol error).
         /// When ReturnsContentBlocks is set, the returned string is the `content`
         /// array itself. Must not block on another MCP request (no re-entrancy).
+        ///
+        /// A located error carries the **reason alone**: the server prefixes Name to it
+        /// when it assembles the isError result, so a handler that also names itself
+        /// makes the tool appear twice in the reported error.
         function<Result<string>(string_view argsJson)> Handler;
     };
 }
