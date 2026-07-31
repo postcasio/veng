@@ -1493,6 +1493,12 @@ if (VENG_BUILD_TESTS)
             # settles then re-arms, every-frame never idles), and teardown unregistering the
             # capture from the drive-list on component/entity/scene destruction.
             tests/gpu/capture_surface.cpp
+            # world_slot_budget.cpp drives a headless Application through Run(), opening and closing
+            # worlds whose systems hold bindless material instances, and reads BindlessRegistry's
+            # free counts across the cycles: a closed world's slots come back, and worlds open at
+            # once hold the sum of their pools. It needs a Context for the registry, so it rides the
+            # gpu band though it pins no pixels.
+            tests/gpu/world_slot_budget.cpp
             # level_overlay.cpp drives a headless Application through Run(), opening/closing
             # LevelOverlay handles from OnUpdate and asserting the router/scene/pause state (it needs
             # a Context for the overlay's viewport, so it rides the gpu band though it pins no pixels).
