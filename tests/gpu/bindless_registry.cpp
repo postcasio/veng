@@ -11,12 +11,19 @@
 //      Context::AcquireNextFrame() has cycled back to the frame-in-flight
 //      index the release happened on (SlotArray::PendingRelease, mirroring
 //      the per-frame retire bins).
+//   3. Build a batch of textures asking for one sampling description and read
+//      the sampler array's occupancy across it — proves AcquireSampler bounds
+//      the array by the distinct descriptions in play rather than by how many
+//      resources sample through them, and that a description differing in a
+//      field the GPU acts on still takes a slot of its own.
 
 #include <array>
+#include <string>
 
 #include <doctest/doctest.h>
 
 #include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/Texture.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/GraphicsPipeline.h>
@@ -227,4 +234,69 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "bindless registry: released slots are
     bindless.Release(handleB);
     bindless.Release(handleC);
     bindless.Release(handleD);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "bindless registry: textures sharing a sampling description share one slot")
+{
+    AssetManager assets(Context, Tasks, Types);
+    const BindlessRegistry& bindless = Context.GetBindlessRegistry();
+
+    constexpr std::array<u8, 4> pixel = {255, 255, 255, 255};
+
+    // Every texture but the last asks for the same sampling and a different debug name, so the
+    // name plays no part in what is shared.
+    const auto BuildTexture = [&](const string& name, const AddressMode address)
+    {
+        return assets.BuildSync<Texture>(TextureData{
+            .Name = name,
+            .Extent = {1, 1},
+            .Format = Format::RGBA8Unorm,
+            .Pixels = pixel,
+            .Sampler =
+                {
+                    .AddressModeU = address,
+                    .AddressModeV = address,
+                    .AddressModeW = address,
+                },
+        });
+    };
+
+    // The baseline is taken after one build rather than before it: the first texture in a run is
+    // what mints the shared sampler, so the readings bracket what a further texture costs instead
+    // of asserting the first one away.
+    vector<AssetHandle<Texture>> textures;
+    textures.push_back(BuildTexture("Shared Sampler Warm-up", AddressMode::ClampToEdge));
+
+    const BindlessCapacity before = bindless.GetFreeSlots();
+    REQUIRE(before.Samplers > 0);
+
+    constexpr u32 Count = 32;
+    for (u32 i = 0; i < Count; i++)
+    {
+        textures.push_back(
+            BuildTexture("Shared Sampler " + std::to_string(i), AddressMode::ClampToEdge));
+    }
+
+    const BindlessCapacity after = bindless.GetFreeSlots();
+
+    // A sampler is pure state, so an identical description is the same sampler: the whole batch
+    // reads through the slot the warm-up took. Each texture still holds an image slot of its own,
+    // which is what makes the sampler reading a statement about sharing rather than about nothing
+    // having been built.
+    CHECK(after.Samplers == before.Samplers);
+    CHECK(after.Textures == before.Textures - Count);
+
+    const u32 sharedSlot = textures.front().Get()->GetSamplerHandle().Index;
+    for (const AssetHandle<Texture>& texture : textures)
+    {
+        REQUIRE(texture.Get() != nullptr);
+        CHECK(texture.Get()->GetSamplerHandle().Index == sharedSlot);
+    }
+
+    // A description that differs in a field the GPU acts on takes a slot of its own — the cache
+    // matches on the sampling, not on the asking.
+    const AssetHandle<Texture> repeating = BuildTexture("Repeating", AddressMode::Repeat);
+    CHECK(bindless.GetFreeSlots().Samplers == before.Samplers - 1);
+    CHECK(repeating.Get()->GetSamplerHandle().Index != sharedSlot);
 }

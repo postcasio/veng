@@ -196,7 +196,6 @@ namespace Veng::Renderer
         BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
         bindless.Release(m_SceneHandle);
         bindless.Release(m_ReflectionSampleHandle);
-        bindless.Release(m_ReflectionSamplerHandle);
         bindless.Release(m_HiZSampleHandle);
     }
 
@@ -224,11 +223,9 @@ namespace Veng::Renderer
         BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
         bindless.Release(m_SceneHandle);
         bindless.Release(m_ReflectionSampleHandle);
-        bindless.Release(m_ReflectionSamplerHandle);
         bindless.Release(m_HiZSampleHandle);
         m_SceneHandle = {};
         m_ReflectionSampleHandle = {};
-        m_ReflectionSamplerHandle = {};
         m_HiZSampleHandle = {};
 
         // SSR targets exist only when SSR runs (the toggle or the Reflections debug arm).
@@ -303,19 +300,21 @@ namespace Veng::Renderer
         m_ReflectionSampleHandle = bindless.Register(m_ReflectionSampleView);
 
         // Trilinear over the chain so the composite's roughness LOD blends between mips smoothly.
-        m_ReflectionSampler =
-            Sampler::Create(m_Context, {
-                                           .Name = "SceneRenderer SSR Reflection Sampler",
-                                           .MagFilter = Filter::Linear,
-                                           .MinFilter = Filter::Linear,
-                                           .MipmapMode = MipmapMode::Linear,
-                                           .AddressModeU = AddressMode::ClampToEdge,
-                                           .AddressModeV = AddressMode::ClampToEdge,
-                                           .AddressModeW = AddressMode::ClampToEdge,
-                                           .AnisotropyEnabled = false,
-                                           .MaxLod = static_cast<f32>(mipCount),
-                                       });
-        m_ReflectionSamplerHandle = bindless.Register(m_ReflectionSampler);
+        // The sample view carries the chain's level count and is what bounds the LOD, so the
+        // description names no clamp of its own and stays the same across every extent.
+        const SharedSampler shared = bindless.AcquireSampler({
+            .Name = "SceneRenderer SSR Reflection Sampler",
+            .MagFilter = Filter::Linear,
+            .MinFilter = Filter::Linear,
+            .MipmapMode = MipmapMode::Linear,
+            .AddressModeU = AddressMode::ClampToEdge,
+            .AddressModeV = AddressMode::ClampToEdge,
+            .AddressModeW = AddressMode::ClampToEdge,
+            .AnisotropyEnabled = false,
+            .MaxLod = LodClampNone,
+        });
+        m_ReflectionSampler = shared.Sampler;
+        m_ReflectionSamplerHandle = shared.Handle;
 
         // Per-level blur sets (the bloom down/up set layout: sampled source + sampler + storage
         // dest). Set k reads mip k-1 and writes mip k; index 0 produces mip 1.

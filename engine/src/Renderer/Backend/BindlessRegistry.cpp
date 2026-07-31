@@ -1,5 +1,6 @@
 #include <Veng/Renderer/BindlessRegistry.h>
 
+#include <bit>
 #include <cstring>
 
 #include <Veng/Assert.h>
@@ -16,6 +17,37 @@
 
 namespace Veng::Renderer
 {
+    namespace
+    {
+        // Bit-pattern equality for a sampler's float fields. Two descriptions differing by an
+        // epsilon produce two different Vulkan samplers, so the cache must treat them as different
+        // too; comparing the bits also makes the relation reflexive for a NaN LOD, which `==` is
+        // not — a description carrying one would otherwise miss against itself and take a fresh
+        // slot on every ask.
+        bool SameBits(f32 a, f32 b)
+        {
+            return std::bit_cast<u32>(a) == std::bit_cast<u32>(b);
+        }
+
+        // True when two descriptions ask the GPU for the same sampling. Compared field by field:
+        // SamplerInfo carries a string, floats and enumerators of several widths, so a memcmp would
+        // read the padding between them and a hash over the object would hash it. Name is a debug
+        // label and is deliberately absent — it changes nothing about how the sampler filters.
+        bool SameSampling(const SamplerInfo& a, const SamplerInfo& b)
+        {
+            return a.MagFilter == b.MagFilter && a.MinFilter == b.MinFilter &&
+                   a.MipmapMode == b.MipmapMode && a.AddressModeU == b.AddressModeU &&
+                   a.AddressModeV == b.AddressModeV && a.AddressModeW == b.AddressModeW &&
+                   SameBits(a.MipLodBias, b.MipLodBias) &&
+                   a.AnisotropyEnabled == b.AnisotropyEnabled &&
+                   SameBits(a.MaxAnisotropy, b.MaxAnisotropy) &&
+                   a.CompareEnable == b.CompareEnable && a.CompareOp == b.CompareOp &&
+                   SameBits(a.MinLod, b.MinLod) && SameBits(a.MaxLod, b.MaxLod) &&
+                   a.BorderColor == b.BorderColor &&
+                   a.UnnormalizedCoordinates == b.UnnormalizedCoordinates;
+        }
+    }
+
     void BindlessRegistry::SlotArray::Init(u32 capacity, u32 framesInFlight)
     {
         Slots.resize(capacity);
@@ -277,6 +309,25 @@ namespace Veng::Renderer
         return SamplerHandle{index};
     }
 
+    SharedSampler BindlessRegistry::AcquireSampler(const SamplerInfo& info)
+    {
+        for (const SamplerCacheEntry& entry : m_SharedSamplers)
+        {
+            if (SameSampling(entry.Info, info))
+            {
+                return entry.Shared;
+            }
+        }
+
+        const Ref<Sampler> sampler = Sampler::Create(m_Context, info);
+        const u32 index = m_Samplers.Allocate(sampler, "sampler");
+        WriteSampler(index, sampler);
+
+        const SharedSampler shared{.Sampler = sampler, .Handle = SamplerHandle{index}};
+        m_SharedSamplers.emplace_back(SamplerCacheEntry{.Info = info, .Shared = shared});
+        return shared;
+    }
+
     StorageImageHandle BindlessRegistry::RegisterStorage(const Ref<ImageView>& storage)
     {
         const u32 index = m_StorageImages.Allocate(storage, "storage image");
@@ -350,6 +401,18 @@ namespace Veng::Renderer
         {
             return;
         }
+
+        // A shared slot is indexed by every caller that asked for its description, none of which
+        // can see the others, so freeing it here would hand a live slot back to the free list and
+        // let the next Register overwrite a sampler still being drawn through.
+        for (const SamplerCacheEntry& entry : m_SharedSamplers)
+        {
+            VE_ASSERT(entry.Shared.Handle.Index != handle.Index,
+                      "BindlessRegistry::Release: sampler slot {} holds the shared '{}', which the "
+                      "registry owns; only a Register(Ref<Sampler>) slot is a caller's to release",
+                      handle.Index, entry.Info.Name);
+        }
+
         m_Samplers.ReleaseDeferred(handle.Index, m_Context.GetCurrentFrameInFlight());
     }
 

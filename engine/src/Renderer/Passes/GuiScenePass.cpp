@@ -115,7 +115,6 @@ namespace Veng::Renderer
         Ref<GraphicsPipeline> ScenePipeline;   // opaque scene copy into the composite
         Ref<GraphicsPipeline> OverlayPipeline; // premultiplied-over UI blit into the composite
 
-        Ref<Sampler> Sampler;
         SamplerHandle SamplerSlot;
 
         // The offscreen UI image (linear premultiplied alpha) and the composite target.
@@ -535,15 +534,16 @@ namespace Veng::Renderer
         m_Impl->OverlayPipeline =
             buildBlitPipeline("GuiScenePass Overlay Pipeline", PremultipliedOver());
 
-        m_Impl->Sampler = Sampler::Create(context, {
-                                                       .Name = "GuiScenePass Sampler",
-                                                       .MagFilter = Filter::Linear,
-                                                       .MinFilter = Filter::Linear,
-                                                       .AddressModeU = AddressMode::ClampToEdge,
-                                                       .AddressModeV = AddressMode::ClampToEdge,
-                                                       .AddressModeW = AddressMode::ClampToEdge,
-                                                   });
-        m_Impl->SamplerSlot = context.GetBindlessRegistry().Register(m_Impl->Sampler);
+        m_Impl->SamplerSlot = context.GetBindlessRegistry()
+                                  .AcquireSampler({
+                                      .Name = "GuiScenePass Sampler",
+                                      .MagFilter = Filter::Linear,
+                                      .MinFilter = Filter::Linear,
+                                      .AddressModeU = AddressMode::ClampToEdge,
+                                      .AddressModeV = AddressMode::ClampToEdge,
+                                      .AddressModeW = AddressMode::ClampToEdge,
+                                  })
+                                  .Handle;
 
         // Ring the geometry per frame-in-flight, sized to a generous UI budget.
         constexpr u32 MaxVertices = 1u << 16;
@@ -583,7 +583,6 @@ namespace Veng::Renderer
 
     GuiScenePass::~GuiScenePass()
     {
-        m_Impl->Context.GetBindlessRegistry().Release(m_Impl->SamplerSlot);
         m_Impl->Context.GetBindlessRegistry().Release(m_Impl->GradientSlot);
     }
 

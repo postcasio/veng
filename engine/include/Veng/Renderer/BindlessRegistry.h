@@ -3,6 +3,7 @@
 #include <span>
 
 #include <Veng/Veng.h>
+#include <Veng/Renderer/Sampler.h>
 #include <Veng/Renderer/Types.h>
 
 /// @brief The global bindless descriptor subsystem.
@@ -14,7 +15,6 @@ namespace Veng::Renderer
     class DescriptorSet;
     class DescriptorSetLayout;
     class ImageView;
-    class Sampler;
 
     /// @brief Slot index into the per-material block buffer (set 0, binding MaterialParamBinding).
     ///
@@ -87,6 +87,16 @@ namespace Veng::Renderer
         [[nodiscard]] bool IsValid() const { return Index != Invalid; }
     };
 
+    /// @brief A sampler shared by every caller asking for the same sampling description,
+    /// paired with the registry slot it occupies.
+    struct SharedSampler
+    {
+        /// @brief The shared sampler object.
+        Ref<Sampler> Sampler;
+        /// @brief The slot the sampler occupies in the registry's sampler array.
+        SamplerHandle Handle;
+    };
+
     /// @brief The slots still allocatable in each of the registry's arrayed bindings.
     ///
     /// Each field counts the free slots of its array's fixed capacity (the Max* constants on
@@ -140,7 +150,38 @@ namespace Veng::Renderer
         [[nodiscard]] TextureHandle Register(const Ref<ImageView>& sampled);
 
         /// @brief Registers a sampler and returns its handle.
+        ///
+        /// The slot is the caller's to release. Prefer AcquireSampler, which allocates one slot
+        /// per distinct sampling description instead of one per caller.
         [[nodiscard]] SamplerHandle Register(const Ref<Sampler>& sampler);
+
+        /// @brief Returns the shared sampler for a description, creating and registering it on the
+        /// first ask and handing the same one back for every description matching it after.
+        ///
+        /// A sampler is a pure state object — nothing about it varies with the image it reads — so
+        /// the distinct descriptions a build uses number in the single digits however many
+        /// resources sample through them. Registering one per resource instead scales the sampler
+        /// array with the texture array, and the sampler array is by far the smaller of the two;
+        /// going through here keeps the live count at the number of distinct descriptions.
+        ///
+        /// This is for a sampler a shader reaches by handle. A sampler written into an
+        /// author-declared descriptor set takes no slot in set 0 and wants none, so it stays on
+        /// Sampler::Create — asking here would spend an array slot on a sampler nothing indexes.
+        ///
+        /// SamplerInfo::Name is a debug label and takes no part in the match, so a shared sampler
+        /// carries the name the first caller gave it. Every other field is compared exactly, floats
+        /// by their bit pattern, since each of them changes what the GPU does.
+        ///
+        /// **The registry keeps a shared sampler for the rest of its own life**: the slot is never
+        /// released, because no caller holding it can tell whether it is the last. That is what
+        /// bounds the array by the number of distinct descriptions rather than by what is alive at
+        /// once, and it is why releasing a shared handle is a contract violation — see
+        /// Release(SamplerHandle).
+        ///
+        /// Runs on the thread that drives the registry, the same one Register runs on.
+        /// @param info The sampling description; its Name is used only if this ask mints the sampler.
+        /// @return The shared sampler and the slot it occupies.
+        [[nodiscard]] SharedSampler AcquireSampler(const SamplerInfo& info);
 
         /// @brief Registers a storage image view and returns its handle.
         [[nodiscard]] StorageImageHandle RegisterStorage(const Ref<ImageView>& storage);
@@ -179,6 +220,10 @@ namespace Veng::Renderer
         void Release(TextureHandle handle);
 
         /// @brief Deferred release of a sampler handle. A default-constructed (invalid) handle is a no-op.
+        ///
+        /// The handle must be one Register(const Ref<Sampler>&) returned. A slot AcquireSampler
+        /// handed out belongs to the registry and is shared by every caller that asked for the same
+        /// description, so releasing one asserts rather than freeing a slot others still index.
         void Release(SamplerHandle handle);
 
         /// @brief Deferred release of a storage image handle. A default-constructed (invalid) handle is a no-op.
@@ -330,6 +375,13 @@ namespace Veng::Renderer
         /// @brief Maximum registered sampled images.
         static constexpr u32 MaxTextures = 1024;
         /// @brief Maximum registered samplers.
+        ///
+        /// An eighth of MaxTextures, because a sampler is a pure state object and the array counts
+        /// distinct *descriptions* rather than resources: AcquireSampler hands one slot to every
+        /// caller wanting the same filtering, addressing and LOD settings, so the occupancy of a
+        /// build is the handful of combinations it uses and does not grow with how many textures
+        /// load. A caller taking a slot of its own through Register(const Ref<Sampler>&) — a
+        /// description built per resource, an experiment — spends against this directly.
         static constexpr u32 MaxSamplers = 128;
         /// @brief Maximum registered storage images.
         static constexpr u32 MaxStorageImages = 512;
@@ -467,6 +519,24 @@ namespace Veng::Renderer
         SlotArray m_Textures;
         /// @brief Slot allocator for the sampler array.
         SlotArray m_Samplers;
+
+        /// @brief One shared sampler and the description it answers for.
+        struct SamplerCacheEntry
+        {
+            /// @brief The description the sampler was created from.
+            SamplerInfo Info;
+            /// @brief The shared sampler and its slot.
+            SharedSampler Shared;
+        };
+
+        /// @brief The shared samplers, one per distinct description AcquireSampler has been asked for.
+        ///
+        /// Searched linearly. The entry count is the number of distinct descriptions the build uses
+        /// and can never exceed MaxSamplers, so a scan is cheaper than hashing a struct of floats
+        /// and enumerators — and it needs no hash to agree with the field-by-field equality the
+        /// search already applies, which is where a memcmp or a whole-struct hash would go wrong on
+        /// the padding between those fields.
+        vector<SamplerCacheEntry> m_SharedSamplers;
         /// @brief Slot allocator for the storage-image array.
         SlotArray m_StorageImages;
         /// @brief Slot allocator for the byte-address storage-buffer array.

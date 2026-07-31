@@ -104,17 +104,18 @@ namespace Veng::Renderer
             m_Context, {.Name = "SceneCapture Octahedral View", .Image = m_OctahedralImage});
         m_OctahedralHandle = bindless.Register(m_OctahedralView);
 
-        m_Sampler = Sampler::Create(m_Context, {
-                                                   .Name = "SceneCapture Sampler",
-                                                   .MagFilter = Filter::Linear,
-                                                   .MinFilter = Filter::Linear,
-                                                   .MipmapMode = MipmapMode::Nearest,
-                                                   .AddressModeU = AddressMode::ClampToEdge,
-                                                   .AddressModeV = AddressMode::ClampToEdge,
-                                                   .AddressModeW = AddressMode::ClampToEdge,
-                                                   .AnisotropyEnabled = false,
-                                               });
-        m_SamplerHandle = bindless.Register(m_Sampler);
+        m_SamplerHandle = bindless
+                              .AcquireSampler({
+                                  .Name = "SceneCapture Sampler",
+                                  .MagFilter = Filter::Linear,
+                                  .MinFilter = Filter::Linear,
+                                  .MipmapMode = MipmapMode::Nearest,
+                                  .AddressModeU = AddressMode::ClampToEdge,
+                                  .AddressModeV = AddressMode::ClampToEdge,
+                                  .AddressModeW = AddressMode::ClampToEdge,
+                                  .AnisotropyEnabled = false,
+                              })
+                              .Handle;
 
         auto loadShader = [&](const AssetId id, const char* what) -> AssetHandle<Veng::Shader>
         {
@@ -177,7 +178,6 @@ namespace Veng::Renderer
         bindless.Release(m_HdrHandle);
         bindless.Release(m_AtlasHandle);
         bindless.Release(m_OctahedralHandle);
-        bindless.Release(m_SamplerHandle);
     }
 
     void SceneCapture::SetView(const CaptureView& view)

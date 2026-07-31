@@ -77,10 +77,6 @@ namespace Veng::Renderer
 
         m_Context.GetBindlessRegistry().Release(m_OutputHandle);
         m_Context.GetBindlessRegistry().Release(m_CompositeHandle);
-        if (m_SurfaceSamplerHandle.IsValid())
-        {
-            m_Context.GetBindlessRegistry().Release(m_SurfaceSamplerHandle);
-        }
 
         m_Context.GetViewportRegistry().Retire(m_Id);
     }
@@ -473,20 +469,20 @@ namespace Veng::Renderer
         const Scene& world = *m_ViewState.World;
         for (auto [entity, surface] : world.View<GuiSurface>())
         {
-            // Lazily create the shared document sampler on the first surface encountered, so a scene
-            // without any GuiSurface allocates nothing. Each surface owns its own pass and target.
-            if (!m_SurfaceSampler)
+            // Take the document sampler on the first surface encountered, so a scene without any
+            // GuiSurface asks for nothing. Each surface owns its own pass and target.
+            if (!m_SurfaceSamplerHandle.IsValid())
             {
-                m_SurfaceSampler =
-                    Sampler::Create(m_Context, {
-                                                   .Name = "GuiSurface Sampler",
-                                                   .MagFilter = Filter::Linear,
-                                                   .MinFilter = Filter::Linear,
-                                                   .AddressModeU = AddressMode::ClampToEdge,
-                                                   .AddressModeV = AddressMode::ClampToEdge,
-                                                   .AddressModeW = AddressMode::ClampToEdge,
-                                               });
-                m_SurfaceSamplerHandle = m_Context.GetBindlessRegistry().Register(m_SurfaceSampler);
+                m_SurfaceSamplerHandle = m_Context.GetBindlessRegistry()
+                                             .AcquireSampler({
+                                                 .Name = "GuiSurface Sampler",
+                                                 .MagFilter = Filter::Linear,
+                                                 .MinFilter = Filter::Linear,
+                                                 .AddressModeU = AddressMode::ClampToEdge,
+                                                 .AddressModeV = AddressMode::ClampToEdge,
+                                                 .AddressModeW = AddressMode::ClampToEdge,
+                                             })
+                                             .Handle;
             }
 
             // The panel binds onto its sibling MeshRenderer's first material (the mesh it draws onto).
