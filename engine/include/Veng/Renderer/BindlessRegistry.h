@@ -87,6 +87,25 @@ namespace Veng::Renderer
         [[nodiscard]] bool IsValid() const { return Index != Invalid; }
     };
 
+    /// @brief The slots still allocatable in each of the registry's arrayed bindings.
+    ///
+    /// Each field counts the free slots of its array's fixed capacity (the Max* constants on
+    /// BindlessRegistry). A slot Release() has queued is not counted until its deferred window
+    /// expires, so the figures report what a Register() call can be handed right now.
+    struct BindlessCapacity
+    {
+        /// @brief Free slots in the sampled-image array, of MaxTextures.
+        u32 Textures = 0;
+        /// @brief Free slots in the sampler array, of MaxSamplers.
+        u32 Samplers = 0;
+        /// @brief Free slots in the storage-image array, of MaxStorageImages.
+        u32 StorageImages = 0;
+        /// @brief Free slots in the byte-address storage-buffer array, of MaxStorageBuffers.
+        u32 StorageBuffers = 0;
+        /// @brief Free slots in the material block table, of MaxMaterials.
+        u32 Materials = 0;
+    };
+
     /// @brief The global bindless descriptor set: set 0, reserved in every
     /// PipelineLayout so it can be bound once and never rebound for the rest of a pass.
     ///
@@ -272,6 +291,16 @@ namespace Veng::Renderer
         /// the load lands in this view's region, exactly as GetCurrentLightBase does for lights.
         /// @return The base area-vertex index for the current view slot.
         [[nodiscard]] u32 GetCurrentAreaVertexBase() const;
+
+        /// @brief The free slots left in each arrayed binding (see BindlessCapacity).
+        ///
+        /// Every array has a fixed capacity whose exhaustion is fatal, so how much of one is left is
+        /// worth being able to read: a diagnostic reports how close a build is running to a cap, and
+        /// a subsystem's own case asserts the slots it took come back when it is dropped — the count
+        /// is an invariant across a build/teardown pair, whatever the caps happen to be. It is the
+        /// arrayed-binding counterpart to GetRemainingViews.
+        /// @return The free slot counts, sampled at the moment of the call.
+        [[nodiscard]] BindlessCapacity GetFreeSlots() const;
 
         /// @brief Returns the descriptor set layout for set 0.
         [[nodiscard]] const Ref<DescriptorSetLayout>& GetSet0Layout() const { return m_Layout; }

@@ -17,7 +17,10 @@
 //    rotation for an entity-aligned one — and teardown returns it to the identity;
 //  - teardown: a capture built and registered against a component unregisters itself from the
 //    drive-list when the component is removed, its entity destroyed, or its scene dropped — and the
-//    material it fed stops sampling the capture rather than freezing on a released bindless slot.
+//    material it fed stops sampling the capture rather than freezing on a released bindless slot;
+//  - slot ownership: a surface built, driven and dropped leaves the bindless registry's free counts
+//    where it found them, so a consumer building and dropping scenes over a run holds a steady count
+//    rather than walking each array's fixed capacity down to its fatal exhaustion.
 //
 // The render runs under the validation gate, so the capture's producer-before-consumer handoff (the
 // octahedral map left shader-readable before the surface pass samples it) is validation-clean or the
@@ -809,6 +812,79 @@ TEST_CASE_FIXTURE(
 
         scene.reset();
         CHECK(driveList.empty());
+    }
+}
+
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "capture surface: a built and dropped surface returns every bindless slot it took")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(CookCapturePack()).has_value());
+
+    const AssetResult<AssetHandle<MaterialInstance>> probe =
+        assets.LoadSync<MaterialInstance>(ProbeInstance);
+    const AssetResult<AssetHandle<MaterialInstance>> backdrop =
+        assets.LoadSync<MaterialInstance>(BackdropInstance);
+    REQUIRE(probe.has_value());
+    REQUIRE(backdrop.has_value());
+
+    const BindlessRegistry& registry = Context.GetBindlessRegistry();
+
+    // A release is deferred until AcquireNextFrame has cycled past every frame-in-flight that could
+    // still be sampling the slot, so both readings are taken after a full cycle — otherwise the
+    // counts would report the deferral rather than the ownership.
+    const auto SettleReleases = [&]
+    {
+        for (u32 frame = 0; frame < Context.GetMaxFramesInFlight() + 1; ++frame)
+        {
+            Context.BeginFrame();
+            Context.EndFrame();
+        }
+    };
+
+    // One build-and-drop of a scene carrying a capture surface, driven once — the drive is what
+    // materializes the capture and the sampler the material reads its output through, so a surface
+    // that never drove holds nothing to hand back.
+    const auto BuildDriveAndDrop = [&]
+    {
+        vector<Ref<Mesh>> meshes;
+        Entity surfaceEntity;
+        const Unique<Scene> scene =
+            BuildCaptureScene(Context, assets, Types, *probe, *backdrop, CaptureRefresh::EveryFrame,
+                              meshes, surfaceEntity);
+        auto& capture = scene->Get<CaptureSurface>(surfaceEntity);
+        capture.Resolution = 32;
+        REQUIRE(capture.Drive(Context, assets, *scene, surfaceEntity, vec3(0.0f), 0.0f, mat3(1.0f),
+                              SurfaceMaterial(*scene, surfaceEntity)) != nullptr);
+    };
+
+    // The baseline is taken after one cycle, not before it: the first capture built in a run loads
+    // the shared engine assets its renderer needs, and those stay resident in the asset manager for
+    // the rest of it. What a leak shows up in is the steady-state cost of a cycle, so that is what
+    // the readings bracket.
+    BuildDriveAndDrop();
+    SettleReleases();
+    const BindlessCapacity before = registry.GetFreeSlots();
+    REQUIRE(before.Samplers > 0);
+
+    // The count is the invariant, not any particular figure: a cycle that hands back one slot fewer
+    // than it took exhausts its array after as many cycles as the array holds slots, and exhaustion
+    // is fatal. Several cycles, so a delta is read as a per-cycle rate rather than a one-off.
+    constexpr u32 Cycles = 8;
+    for (u32 cycle = 0; cycle < Cycles; ++cycle)
+    {
+        BuildDriveAndDrop();
+        SettleReleases();
+
+        const BindlessCapacity after = registry.GetFreeSlots();
+        CHECK(after.Samplers == before.Samplers);
+        CHECK(after.Textures == before.Textures);
+        CHECK(after.StorageImages == before.StorageImages);
+        CHECK(after.StorageBuffers == before.StorageBuffers);
+        CHECK(after.Materials == before.Materials);
     }
 }
 

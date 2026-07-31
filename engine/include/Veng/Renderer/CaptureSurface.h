@@ -112,9 +112,10 @@ namespace Veng::Renderer
         CaptureSurface();
         /// @brief Releases the owned capture, self-unregistering it from the drive-list, and unbinds.
         ///
-        /// The release hands the capture's output slot back to the bindless free list, so the material
-        /// Drive last bound is cleared first (see Unbind) rather than left naming a slot the next
-        /// registration reuses.
+        /// The release hands the capture's output slot and the runtime's own sampler slot back to the
+        /// bindless free list, so the material Drive last bound is cleared first (see Unbind) rather
+        /// than left naming a slot the next registration reuses. Every slot a drive took comes back,
+        /// so a consumer that builds and drops surfaces over a run holds a steady count.
         ~CaptureSurface();
         /// @brief Move-constructs, transferring the runtime state.
         CaptureSurface(CaptureSurface&&) noexcept;
