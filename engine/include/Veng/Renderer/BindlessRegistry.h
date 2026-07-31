@@ -92,7 +92,11 @@ namespace Veng::Renderer
     struct SharedSampler
     {
         /// @brief The shared sampler object.
-        Ref<Sampler> Sampler;
+        ///
+        /// The type is named qualified because the member takes the same name: an unqualified
+        /// `Sampler` here would mean the class before this declaration and the member after it,
+        /// which is ill-formed however willingly a compiler takes it.
+        Ref<Veng::Renderer::Sampler> Sampler;
         /// @brief The slot the sampler occupies in the registry's sampler array.
         SamplerHandle Handle;
     };
