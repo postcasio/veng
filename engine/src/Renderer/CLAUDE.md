@@ -1002,3 +1002,17 @@ slot reclaim through the same per-frame retire window. **`PipelineLayout` reserv
 pipeline** for the registry, bound once per pipeline bind (`registry.Bind(cmd)`), not per draw —
 draws select array elements via push-constant indices. Author-declared descriptor sets shift to
 **set 1+**.
+
+**Samplers are shared, not registered per resource.** A sampler is pure state — nothing about it
+varies with the image it reads — so `AcquireSampler(const SamplerInfo&)` is the way in: it keys a
+cache on every field the GPU acts on (the debug `Name` excluded, floats compared by bit pattern)
+and hands back the same `Ref<Sampler>` + `SamplerHandle` for a description already seen. The
+occupancy of the sampler array is therefore the handful of filtering/addressing/LOD combinations a
+build actually uses, not one slot per texture asset and five or six more per `SceneRenderer`. The
+registry keeps a shared sampler for its own lifetime and its slot is **never released** — a caller
+cannot know it is the last — so `Release(SamplerHandle)` asserts when handed one. The plain
+`Register(const Ref<Sampler>&)` overload remains for a caller that genuinely wants a slot of its
+own; a sampler bound only into an author-declared set wants no set-0 slot at all and stays on
+`Sampler::Create`. A description that names the whole mip chain writes `MaxLod = LodClampNone`
+rather than the image's level count, so an otherwise identical description does not fork per
+texture — the image view's level range bounds the sampled mip regardless.

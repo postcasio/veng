@@ -49,10 +49,12 @@ namespace Veng
 
     /// @brief An Image + ImageView + Sampler, sampled bindlessly (set 0) after Finalize() registers it.
     ///
-    /// Creation (image/view/sampler create + upload) is worker-legal; registration into the
-    /// bindless registry is deferred to the main-thread Finalize() step so the async asset
-    /// path can run creation on a worker and finalize on the render-thread continuation.
-    /// GetHandle()/GetSamplerHandle() are valid only after Finalize().
+    /// Creation (image/view create + upload) is worker-legal; registration into the bindless
+    /// registry is deferred to the main-thread Finalize() step so the async asset path can run
+    /// creation on a worker and finalize on the render-thread continuation. The sampler is taken
+    /// in that same step — it is shared across every texture asking for the same settings, out of
+    /// the registry's cache, which is reached only from the thread that drives the registry.
+    /// GetSampler()/GetHandle()/GetSamplerHandle() are valid only after Finalize().
     class Texture
     {
     public:
@@ -70,7 +72,10 @@ namespace Veng
         /// @brief Returns the ImageView used for sampling.
         [[nodiscard]] const Ref<Renderer::ImageView>& GetView() const { return m_View; }
 
-        /// @brief Returns the Sampler.
+        /// @brief Returns the Sampler (valid after Finalize()).
+        ///
+        /// Shared with every other texture whose sampling settings match; it is the bindless
+        /// registry's, not this texture's, so it outlives the texture.
         [[nodiscard]] const Ref<Renderer::Sampler>& GetSampler() const { return m_Sampler; }
 
         /// @brief Returns the texture's pixel format.
@@ -102,19 +107,19 @@ namespace Veng
 
         /// @brief Prepares a Texture with a blocking upload, leaving it unregistered.
         ///
-        /// Constructs the image/view/sampler and uploads the pixels through the blocking
+        /// Constructs the image and view and uploads the pixels through the blocking
         /// UploadSync path. The result must be Finalize()d on the render thread before sampling.
-        /// @param context Render context the image/view/sampler are created on.
+        /// @param context Render context the image and view are created on.
         /// @param data    Texture description (extent, format, pixels, sampler settings).
         /// @return The unregistered texture.
         static Ref<Texture> PrepareSync(Renderer::Context& context, const TextureData& data);
 
         /// @brief Prepares a Texture with an async transfer-queue upload, leaving it unregistered.
         ///
-        /// Constructs the image/view/sampler and records the upload on the transfer queue,
+        /// Constructs the image and view and records the upload on the transfer queue,
         /// returning the unregistered texture and a Task that completes once the upload is
         /// submitted. The result must be Finalize()d on the render thread before sampling.
-        /// @param context    Render context the image/view/sampler are created on.
+        /// @param context    Render context the image and view are created on.
         /// @param data       Texture description (extent, format, pixels, sampler settings).
         /// @param tasks      Task system the async upload is recorded through.
         /// @param outUpload  Receives the upload task to wait on before Finalize().
@@ -138,6 +143,10 @@ namespace Veng
 
         Ref<Renderer::Image> m_Image;
         Ref<Renderer::ImageView> m_View;
+
+        /// @brief The sampling settings Finalize() asks the registry's shared cache for.
+        Renderer::SamplerInfo m_SamplerInfo;
+        /// @brief The shared sampler, filled by Finalize().
         Ref<Renderer::Sampler> m_Sampler;
 
         Renderer::TextureHandle m_TextureHandle;

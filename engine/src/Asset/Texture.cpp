@@ -68,13 +68,15 @@ namespace Veng
                                                 .MipLevels = mipLevels,
                                             });
 
-        SamplerInfo samplerInfo = info.Sampler;
-        samplerInfo.Name = m_Name + " Sampler";
-        // The sampler must cover the texture's whole mip chain: SamplerInfo's
-        // MaxLod default (1) would clamp minification to the top two levels and
-        // alias the lower mips out of use.
-        samplerInfo.MaxLod = static_cast<f32>(mipLevels);
-        m_Sampler = Sampler::Create(context, samplerInfo);
+        m_SamplerInfo = info.Sampler;
+        m_SamplerInfo.Name = m_Name + " Sampler";
+        // The sampler must cover the texture's whole mip chain: SamplerInfo's MaxLod default (1)
+        // would clamp minification to the top two levels and alias the lower mips out of use.
+        // Lifting the clamp entirely rather than setting it to this texture's level count leaves
+        // the view's own level range as the only bound on the sampled mip — which it already is,
+        // the clamp never having reached below it — and keeps two textures whose settings agree
+        // from asking for different samplers merely because their chains are different lengths.
+        m_SamplerInfo.MaxLod = LodClampNone;
     }
 
     Ref<Texture> Texture::PrepareSync(Context& context, const TextureData& data)
@@ -170,9 +172,9 @@ namespace Veng
             return;
         }
 
-        auto& bindless = m_Context.GetBindlessRegistry();
-        bindless.Release(m_TextureHandle);
-        bindless.Release(m_SamplerHandle);
+        // The view slot is this texture's own and comes back; the sampler slot is shared with every
+        // other texture asking for the same settings and stays with the registry.
+        m_Context.GetBindlessRegistry().Release(m_TextureHandle);
     }
 
     void Texture::Finalize()
@@ -181,7 +183,13 @@ namespace Veng
 
         auto& bindless = m_Context.GetBindlessRegistry();
         m_TextureHandle = bindless.Register(m_View);
-        m_SamplerHandle = bindless.Register(m_Sampler);
+
+        // The sampler is taken here rather than alongside the image: the shared cache is the
+        // registry's, so it is reached only from the thread Register runs on, and construction is
+        // worker-legal. A sampler holds no pixels, so nothing about it needed the worker anyway.
+        const SharedSampler shared = bindless.AcquireSampler(m_SamplerInfo);
+        m_Sampler = shared.Sampler;
+        m_SamplerHandle = shared.Handle;
         m_Registered = true;
 
         // The view is sampled bindlessly through set 0, so the RenderGraph never

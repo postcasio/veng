@@ -266,23 +266,23 @@ namespace Veng::Renderer
         // Every stage reads its sources through one linear clamp-to-edge sampler: the layers and
         // tile records are sampled at fractional offsets, and clamping is what keeps a kernel that
         // reaches past the valid sub-rect from wrapping.
-        m_Sampler = Sampler::Create(m_Context, {
-                                                   .Name = "SceneRenderer DoF Sampler",
-                                                   .MagFilter = Filter::Linear,
-                                                   .MinFilter = Filter::Linear,
-                                                   .MipmapMode = MipmapMode::Nearest,
-                                                   .AddressModeU = AddressMode::ClampToEdge,
-                                                   .AddressModeV = AddressMode::ClampToEdge,
-                                                   .AddressModeW = AddressMode::ClampToEdge,
-                                                   .AnisotropyEnabled = false,
-                                               });
-        m_SamplerHandle = m_Context.GetBindlessRegistry().Register(m_Sampler);
+        const SharedSampler shared = m_Context.GetBindlessRegistry().AcquireSampler({
+            .Name = "SceneRenderer DoF Sampler",
+            .MagFilter = Filter::Linear,
+            .MinFilter = Filter::Linear,
+            .MipmapMode = MipmapMode::Nearest,
+            .AddressModeU = AddressMode::ClampToEdge,
+            .AddressModeV = AddressMode::ClampToEdge,
+            .AddressModeW = AddressMode::ClampToEdge,
+            .AnisotropyEnabled = false,
+        });
+        m_Sampler = shared.Sampler;
+        m_SamplerHandle = shared.Handle;
     }
 
     DofChain::~DofChain()
     {
         ReleaseHandles();
-        m_Context.GetBindlessRegistry().Release(m_SamplerHandle);
     }
 
     void DofChain::ReleaseHandles()
