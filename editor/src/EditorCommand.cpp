@@ -271,7 +271,13 @@ namespace VengEditor
         Scene* scene = ctx.Scene;
         if (scene != nullptr && scene->IsAlive(m_Entity))
         {
-            scene->AddComponent(m_Entity, m_TypeId);
+            // A Revert whose removal was refused (a sibling requires this type) leaves the
+            // component in place, and adding twice is fatal; the one already there is this
+            // command's own add, so keeping it is what re-applying means.
+            if (scene->TryGetComponent(m_Entity, m_TypeId) == nullptr)
+            {
+                scene->AddComponent(m_Entity, m_TypeId);
+            }
             ctx.ResolveEntity(m_Entity);
         }
     }
@@ -309,7 +315,12 @@ namespace VengEditor
         {
             return;
         }
-        scene->AddComponent(m_Entity, m_TypeId);
+        // An Apply the scene refused (a sibling requires this type) left the component in place;
+        // adding twice is fatal, so restore over the existing slot instead.
+        if (scene->TryGetComponent(m_Entity, m_TypeId) == nullptr)
+        {
+            scene->AddComponent(m_Entity, m_TypeId);
+        }
         RestoreComponentBytes(ctx, m_Entity, m_TypeId, m_Snapshot);
     }
 

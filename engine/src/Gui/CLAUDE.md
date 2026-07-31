@@ -610,9 +610,12 @@ HDR color a `GuiSurface` needs is authored with the cooker's **`rgb()` / `rgba()
 syntax (a component may exceed 1.0, distinct from sRGB hex) and the HDR gradient ramp. The engine
 drives every `GuiSurface` in a viewport's bound scene into its target ahead of the scene render, so
 a panel authored as prefab data needs no per-frame game code; its document data-binds like any
-other (`{obj.field}`). Because a bright emissive core desaturates through the scene tonemapper, a
-saturated hot value (e.g. `rgb(0, 8, 8)`) reads white-hot at its center with a colored bloom halo —
-the physically-expected hot-emitter look. Authoring a glowing panel end to end is
+other (`{obj.field}`). The surface **declares its sibling `MeshRenderer` required** (`VE_REQUIRES`),
+the mesh being where the document lands, so `Scene::RemoveComponent` refuses to strip the renderer
+while the surface is beside it — see [../Scene/CLAUDE.md](../Scene/CLAUDE.md), "The ECS world".
+Because a bright emissive core desaturates through the scene tonemapper, a saturated hot value
+(e.g. `rgb(0, 8, 8)`) reads white-hot at its center with a colored bloom halo — the
+physically-expected hot-emitter look. Authoring a glowing panel end to end is
 [docs/guides/diegetic-ui.md](../../../docs/guides/diegetic-ui.md).
 
 **A surface's layout extent and its target's pixel count are two numbers, not one.** `Resolution`

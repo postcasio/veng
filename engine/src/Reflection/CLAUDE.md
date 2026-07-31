@@ -46,6 +46,16 @@ a **fieldless component** with **`VE_TYPE`** — all three macros specialise the
 `FieldClassOf<T>()` read it directly and the registry has one `Register<T>()` path (no separate
 leaf registration).
 
+Beside the identity trait sit four **separate specialisation points**, each authored by its own
+macro next to the describe block and read into `TypeInfo` by `Register<T>()`: `VE_REPLICATED`
+(`Replicated`), `VE_ALWAYS_RELEVANT` (`AlwaysRelevant`), `VE_VIEW_OUTPUT` (`ViewOutput`), and
+**`VE_REQUIRES(Type, Siblings…)`** (`Requires`, the sibling components an entity carrying the type
+must keep — see [../Scene/CLAUDE.md](../Scene/CLAUDE.md) for the removal gate that reads it). Being
+separate from `VengReflect<T>` is what lets them compose with every reflection macro without
+touching one. `VengRequires<T>::Required()` is a member template on a defaulted parameter for the
+same reason `Enumerators()` is: the `vector` it builds must be dependent, so it instantiates only
+where `Register<T>()` calls it.
+
 ## The field model
 
 The layer pairs the open `TypeId` space with a **closed** `FieldClass`

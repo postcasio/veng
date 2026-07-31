@@ -20,6 +20,18 @@ namespace Veng
         /// VE_LEAF(…, Enum) leaves it absent, so its TypeInfo::Enumerators stays empty.
         template <class T>
         concept HasEnumerators = requires { VengReflect<T>::Enumerators(); };
+
+        /// @brief Collects the TypeIds of a component's required siblings, in declaration order.
+        ///
+        /// The pack VE_REQUIRES expands its type list into; naming the vector inside a template is
+        /// what keeps it instantiated only where the specialisation's Required() is called.
+        /// @tparam Ts  The required sibling component types.
+        /// @return Their TypeIds, in the order written.
+        template <class... Ts>
+        vector<TypeId> RequiredIds()
+        {
+            return {TypeIdOf<Ts>()...};
+        }
     }
 
     /// @brief Primary template authoring whether a type replicates over the wire; false unless VE_REPLICATED marks it.
@@ -66,6 +78,29 @@ namespace Veng
     {
         /// @brief Whether the type is a view/presentation output; false for the primary template.
         static constexpr bool ViewOutput = false;
+    };
+
+    /// @brief Primary template authoring the sibling components a type requires; empty unless VE_REQUIRES marks it.
+    ///
+    /// TypeRegistry::Register<T>() reads VengRequires<T>::Required() into TypeInfo::Requires. A
+    /// required sibling is one this component resolves off its own entity to do its work, so
+    /// Scene::RemoveComponent refuses to remove a component while a live requirer sits beside it —
+    /// the dependent never resolves a sibling that has gone. A separate specialisation point from
+    /// VengReflect<T>, like VengReplication<T>, so it composes with every reflection macro. Empty
+    /// unless VE_REQUIRES marks it.
+    /// @tparam T  The type whose required siblings are authored.
+    template <class T>
+    struct VengRequires
+    {
+        /// @brief The required siblings' TypeIds; empty for the primary template.
+        ///
+        /// A member template on a defaulted parameter, like VengReflect's accessors: the vector it
+        /// builds is then instantiated only where Register<T>() calls it.
+        template <class = void>
+        static vector<TypeId> Required()
+        {
+            return {};
+        }
     };
 
     /// @brief The recorded description of a registered type.
@@ -120,6 +155,14 @@ namespace Veng
         /// wire owns — the one class of component (beyond request/command components) a driver is
         /// permitted to write. False for every unmarked type. Set from VengViewOutput<T>::ViewOutput.
         bool ViewOutput = false;
+        /// @brief The sibling components an entity carrying this type must keep, authored via VE_REQUIRES.
+        ///
+        /// Scene::RemoveComponent refuses to remove a component named here from an entity that also
+        /// carries this one, and names this type as the requirer — so a component resolving a
+        /// sibling off its entity cannot be left resolving one that has gone. It constrains removal
+        /// only: an entity mid-assembly may carry this component before its siblings. Empty for
+        /// every unmarked type. Set from VengRequires<T>::Required().
+        vector<TypeId> Requires;
         /// @brief Field descriptors for Struct-class types; empty for leaves.
         vector<FieldDescriptor> Fields;
         /// @brief The type's default presentation, authored via VE_DISPLAY; the type-default arm of the cascade.
@@ -284,6 +327,7 @@ namespace Veng
             info.Class = cls;
             info.Fields = std::move(fields);
             info.Display = VengDisplay<T>::Get();
+            info.Requires = VengRequires<T>::Required();
             info.Replicated = VengReplication<T>::Replicated;
             info.AlwaysRelevant = VengAlwaysRelevant<T>::AlwaysRelevant;
             info.ViewOutput = VengViewOutput<T>::ViewOutput;

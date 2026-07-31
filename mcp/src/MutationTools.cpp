@@ -97,7 +97,7 @@ namespace Veng::Mcp
         /// the entity would render nothing until re-spawned.
         void RebuildMeshSourceIfPresent(Scene& scene, AssetManager& assets, Entity entity)
         {
-            if (MeshRenderer* renderer = scene.TryGet<MeshRenderer>(entity))
+            if (auto* renderer = scene.TryGet<MeshRenderer>(entity))
             {
                 if (renderer->Source.HasValue())
                 {
@@ -169,10 +169,10 @@ namespace Veng::Mcp
 
         /// @brief Removes one component from one entity, returning `{ id, removed }` or a located error.
         ///
-        /// Rejects a dead target, the unremovable Hierarchy link, and an absent component as
-        /// located errors, then routes through ApplyMutation. The single verb surfaces a failure
-        /// as the whole-call error, the batch verb as that item's result. Shared by
-        /// entity.remove_component and entity.remove_component_many.
+        /// Rejects a dead target, the unremovable Hierarchy link, an absent component, and one a
+        /// sibling declares required as located errors, then routes through ApplyMutation. The
+        /// single verb surfaces a failure as the whole-call error, the batch verb as that item's
+        /// result. Shared by entity.remove_component and entity.remove_component_many.
         Result<Json> RemoveComponentOne(const McpHost& host, Scene& scene, Entity target,
                                         TypeId type)
         {
@@ -188,6 +188,15 @@ namespace Veng::Mcp
             {
                 return std::unexpected(fmt::format("entity does not have component '{}'",
                                                    host.Types.Info(type).QualifiedName));
+            }
+            // Ask before mutating: the scene refuses a component a sibling requires, and the
+            // routed editor path would otherwise stack an undo entry over a removal that never
+            // happened. Reporting it here also names the requirer the caller has to remove first.
+            if (const TypeId requirer = scene.FindRequirer(target, type); requirer != InvalidTypeId)
+            {
+                return std::unexpected(fmt::format(
+                    "component '{}' is required by '{}' on the same entity",
+                    host.Types.Info(type).QualifiedName, host.Types.Info(requirer).QualifiedName));
             }
 
             McpMutation mutation;
@@ -279,7 +288,8 @@ namespace Veng::Mcp
             tool.Name = "entity.remove_component";
             tool.Description = "Removes a component from an entity. Argument: "
                                "{ id: { index, generation }, component: <QualifiedName> }. The "
-                               "Hierarchy component is not removable.";
+                               "Hierarchy component is not removable, and neither is one another "
+                               "component on the same entity declares it requires.";
             tool.InputSchemaJson =
                 R"({"type":"object","required":["id","component"],"properties":{"id":{"type":"object"},)"
                 R"("component":{"type":"string"}}})";
@@ -323,8 +333,9 @@ namespace Veng::Mcp
                 "Removes up to 20 components across entities in one call. Argument: "
                 "{ items: [ { id: { index, generation }, component: <QualifiedName> }, … ] }. "
                 "Applies each independently and returns { results: [ { id, removed } | "
-                "{ id, error } ] } — a dead entity, an absent or unregistered component, or the "
-                "unremovable Hierarchy link fails that item without aborting the rest.";
+                "{ id, error } ] } — a dead entity, an absent or unregistered component, the "
+                "unremovable Hierarchy link, or a component another on the same entity requires "
+                "fails that item without aborting the rest.";
             tool.InputSchemaJson =
                 R"({"type":"object","required":["items"],"properties":{"items":{"type":"array",)"
                 R"("maxItems":20,"items":{"type":"object","required":["id","component"],)"

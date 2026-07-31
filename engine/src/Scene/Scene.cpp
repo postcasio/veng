@@ -733,16 +733,54 @@ namespace Veng
         return slot;
     }
 
-    void Scene::RemoveRaw(Entity entity, TypeId id)
+    TypeId Scene::FindRequirer(const Entity entity, const TypeId id) const
     {
-        if (ComponentPool* pool = TryPoolFor(id))
+        VE_ASSERT(IsAlive(entity), "FindRequirer on a dead or stale entity");
+
+        for (const auto& [poolId, pool] : m_Pools)
         {
-            if (IsSpatialId(id))
+            if (poolId == id || !pool->Contains(entity))
             {
-                BumpSpatial();
+                continue;
             }
-            pool->Remove(entity);
+            const vector<TypeId>& required = m_Registry->Info(poolId).Requires;
+            if (std::ranges::find(required, id) != required.end())
+            {
+                return poolId;
+            }
         }
+        return InvalidTypeId;
+    }
+
+    VoidResult Scene::RemoveRaw(Entity entity, TypeId id)
+    {
+        ComponentPool* pool = TryPoolFor(id);
+        if (pool == nullptr)
+        {
+            return {};
+        }
+
+        // Refuse while a sibling declares this component required, so the requirer is never left
+        // resolving a component that has gone. Only a component the entity actually carries can be
+        // refused — removing one it lacks is the documented no-op and breaks nobody. DestroyEntity
+        // tears its pools down directly and is deliberately not routed through here: the requirer
+        // goes with the entity.
+        if (pool->Contains(entity))
+        {
+            if (const TypeId requirer = FindRequirer(entity, id); requirer != InvalidTypeId)
+            {
+                return std::unexpected(fmt::format(
+                    "cannot remove '{}': '{}' on the same entity requires it",
+                    m_Registry->Info(id).QualifiedName, m_Registry->Info(requirer).QualifiedName));
+            }
+        }
+
+        if (IsSpatialId(id))
+        {
+            BumpSpatial();
+        }
+        pool->Remove(entity);
+        return {};
     }
 
     void* Scene::TryGetRaw(Entity entity, TypeId id)

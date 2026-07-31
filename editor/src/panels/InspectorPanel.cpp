@@ -6,6 +6,7 @@
 #include "FieldWidget.h"
 
 #include <Veng/Asset/AssetManager.h>
+#include <Veng/Log.h>
 #include <Veng/Reflection/Serialize.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/Components.h>
@@ -68,7 +69,18 @@ namespace VengEditor
         // walk has returned. Snapshot the component's bytes first so the command can restore it.
         if (remove)
         {
-            void* component = scene->TryGetComponent(entity, removeId);
+            // A component a sibling requires is refused by the scene, and a command pushed over a
+            // removal that never happened would re-add a present component on undo — a fatal
+            // double-add. Report the requirer instead of stacking that command.
+            const TypeId requirer = scene->FindRequirer(entity, removeId);
+            void* component =
+                requirer == InvalidTypeId ? scene->TryGetComponent(entity, removeId) : nullptr;
+            if (requirer != InvalidTypeId)
+            {
+                const TypeRegistry& types = scene->GetTypeRegistry();
+                Log::Warn("Cannot remove '{}': '{}' on the same entity requires it.",
+                          types.Info(removeId).QualifiedName, types.Info(requirer).QualifiedName);
+            }
             if (component != nullptr)
             {
                 const TypeInfo& info = scene->GetTypeRegistry().Info(removeId);

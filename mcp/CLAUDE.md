@@ -261,7 +261,9 @@ family registers from the editor side.
   structural error as the whole call, then **apply each edit independently**, reporting a
   per-item `{ id, error }` for one that can't be performed — a stale entity (including one an
   earlier destroy in the same batch already took), an absent or unregistered component, the
-  unremovable `Hierarchy` link — without aborting the rest. The cap mirrors the list tools'
+  unremovable `Hierarchy` link, or a component another on the same entity declares it requires
+  (`VE_REQUIRES`, checked through `Scene::FindRequirer` before the mutation is routed) — without
+  aborting the rest. The cap mirrors the list tools'
   pagination limit: a context-volume convention for a single trusted local client, not a DoS
   defense.
 - **`input.*`** (`src/InputTools.cpp`, registered only when `AllowMutations` is set — injecting

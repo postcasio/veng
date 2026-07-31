@@ -2,6 +2,7 @@
 
 #include <Veng/Veng.h>
 #include <Veng/Assert.h>
+#include <Veng/Result.h>
 #include <Veng/Scene/Entity.h>
 #include <Veng/Scene/SceneSystem.h>
 #include <Veng/Reflection/TypeRegistry.h>
@@ -345,12 +346,31 @@ namespace Veng
         /// The templated Remove\<T\> resolves T to TypeId and forwards here; the
         /// editor inspector, which only knows a component's TypeId, calls it
         /// directly. A no-op when the entity lacks the component.
+        ///
+        /// **Refused** while a sibling on the same entity declares this type required (VE_REQUIRES):
+        /// the component stays and the error names both types. Removing the requirer first is what
+        /// a caller that means to dismantle the pair does; FindRequirer answers the question ahead
+        /// of the call. DestroyEntity is not gated — a whole entity going away breaks no sibling.
+        /// @param entity  The entity to remove from.
+        /// @param id      The component type to remove.
+        /// @return Success, or an error naming the sibling that requires this component.
         /// @pre The entity must be alive.
-        void RemoveComponent(Entity entity, TypeId id)
+        VoidResult RemoveComponent(Entity entity, TypeId id)
         {
             VE_ASSERT(IsAlive(entity), "RemoveComponent on a dead or stale entity");
-            RemoveRaw(entity, id);
+            return RemoveRaw(entity, id);
         }
+
+        /// @brief Returns the component on the entity that declares @p id required, if any.
+        ///
+        /// The question RemoveComponent answers by refusing: a tool offering removal asks first and
+        /// reports the reason (or hides the affordance) rather than issuing a call it knows fails.
+        /// With several requirers the first in pool order is returned — one is enough to refuse.
+        /// @param entity  The entity to search.
+        /// @param id      The component type whose requirers are sought.
+        /// @return The requiring component's TypeId, or InvalidTypeId when the removal is free.
+        /// @pre The entity must be alive.
+        [[nodiscard]] TypeId FindRequirer(Entity entity, TypeId id) const;
 
         /// @brief Adds component T (initialized from value) to the entity and returns a reference to it.
         template <class T>
@@ -363,12 +383,17 @@ namespace Veng
             return component;
         }
 
-        /// @brief Removes component T from the entity.
+        /// @brief Removes component T from the entity, refusing while a sibling requires it.
+        ///
+        /// @see RemoveComponent for the requirement gate and the error it reports.
+        /// @tparam T  The component type to remove.
+        /// @param entity  The entity to remove from.
+        /// @return Success, or an error naming the sibling that requires T.
         template <class T>
-        void Remove(Entity entity)
+        VoidResult Remove(Entity entity)
         {
             VE_ASSERT(IsAlive(entity), "Remove on a dead or stale entity");
-            RemoveRaw(entity, m_Registry->IdOf<T>());
+            return RemoveRaw(entity, m_Registry->IdOf<T>());
         }
 
         /// @brief Returns a pointer to component T on the entity, or nullptr if absent.
@@ -628,7 +653,7 @@ namespace Veng
         // Type-erased façade; templated members resolve T → TypeId and forward here.
         // IsAlive is asserted by the caller before each of these.
         void* AddRaw(Entity entity, TypeId id);
-        void RemoveRaw(Entity entity, TypeId id);
+        VoidResult RemoveRaw(Entity entity, TypeId id);
         void* TryGetRaw(Entity entity, TypeId id);
         [[nodiscard]] const void* TryGetRaw(Entity entity, TypeId id) const;
         [[nodiscard]] bool HasRaw(Entity entity, TypeId id) const;

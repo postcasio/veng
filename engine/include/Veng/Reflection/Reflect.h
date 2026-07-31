@@ -325,6 +325,28 @@ namespace Veng::Detail
         static constexpr bool AlwaysRelevant = true;                                               \
     }
 
+/// @brief Declares the sibling components a component requires, by specialising VengRequires\<T\>.
+///
+/// Placed beside the type's describe block (like VE_REPLICATED), it names the components this one
+/// resolves off its own entity to do its work. TypeRegistry::Register<T>() reads them into
+/// TypeInfo::Requires, and Scene::RemoveComponent then **refuses** to remove a named component from
+/// an entity that also carries this one, reporting which type required it — so a component cannot
+/// be left resolving a sibling that has gone. Every type is named fully qualified from global scope.
+///
+/// It constrains removal only. An entity mid-assembly (a prefab populating, a system building an
+/// entity component by component) may carry the requirer before its siblings, so adding is never
+/// gated and a requirement may sit unmet.
+#define VE_REQUIRES(Type, ...)                                                                     \
+    template <>                                                                                    \
+    struct ::Veng::VengRequires<Type>                                                              \
+    {                                                                                              \
+        template <class = void>                                                                    \
+        static ::Veng::vector<::Veng::TypeId> Required()                                           \
+        {                                                                                          \
+            return ::Veng::Detail::RequiredIds<__VA_ARGS__>();                                     \
+        }                                                                                          \
+    }
+
 /// @brief Declares a Variant\<Ts...\>'s identity by specialising VengReflect\<T\>.
 ///
 /// Type already is a Variant\<Ts...\> (or an alias of one), so the alternatives are
