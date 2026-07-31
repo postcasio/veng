@@ -33,6 +33,21 @@ reflected type a `Scene` pools** — see [../Reflection/CLAUDE.md](../Reflection
 `TypeId` and registration; pools are made lazily on first `Add` of a type, and there is no
 separate component-id space.
 
+**A component declares the siblings it resolves, and removal honours the declaration.**
+`VE_REQUIRES(::Ns::Component, ::Ns::Sibling, …)` beside a describe block records the required
+`TypeId`s in `TypeInfo::Requires`, and `Scene::RemoveComponent` / `Remove<T>` then return a
+**`VoidResult`** that **fails** — the component untouched, the error naming both types — while a
+requirer sits on the same entity. `Scene::FindRequirer(entity, id)` is the same question asked
+ahead of the call, which is what a tool offering removal (the MCP `entity.remove_component` verb,
+the editor inspector) uses so it reports the reason instead of issuing a call it knows fails, and
+so it never stacks an undo entry over a removal that did not happen. The declaration constrains
+**removal only**: an entity mid-assembly may carry the requirer before its siblings, so `Add` is
+never gated and a requirement may sit unmet. `DestroyEntity` is not gated either — it tears its
+pools down directly, and the requirer goes with the entity. `GuiSurface` → `MeshRenderer` is the
+declaration the engine ships: the document is drawn into the sibling renderer's material and has
+nowhere else to land, so stripping the renderer would leave the surface resolving a component that
+has gone.
+
 `Scene::ForEachComponent(Entity, const function<void(TypeId, void*)>&)` iterates every pool that
 holds the entity, calling the visitor with each component's `TypeId` and an erased pointer — the
 type-agnostic enumeration the editor inspector walks (templated `Get`/`Has` need the type at

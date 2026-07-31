@@ -5,6 +5,7 @@
 #include <Veng/Gui/UIDocument.h>
 #include <Veng/Reflection/Reflect.h>
 #include <Veng/Renderer/BindlessRegistry.h>
+#include <Veng/Scene/Components.h>
 #include <Veng/Scene/Entity.h>
 
 namespace Veng
@@ -58,6 +59,10 @@ namespace Veng
     /// stepped, a binding moved, or the target resolution changed — so a static panel costs one
     /// allocation and no per-frame repaint. Display-only: the panel data-binds and draws, but does not
     /// hit-test or take focus.
+    ///
+    /// The sibling MeshRenderer is where the document lands, so the surface declares it required
+    /// (VE_REQUIRES): Scene::RemoveComponent refuses to strip the renderer while a surface sits
+    /// beside it, naming this type as the reason.
     ///
     /// The runtime resources (the live document, the HDR target) are materialized on the first Drive.
     /// A cooked Document recipe is instantiated automatically; an imperatively-built document is
@@ -168,3 +173,7 @@ VE_FIELD(PixelScale, .DisplayName = "Pixel Scale", .Display = {.Min = 0.25, .Max
 VE_FIELD(Domain, .DisplayName = "Domain")
 VE_FIELD(Seat, .DisplayName = "Seat")
 VE_REFLECT_END();
+
+// The document is drawn into the sibling MeshRenderer's material and has nowhere else to land, so
+// the renderer cannot be removed out from under a live surface: Scene::RemoveComponent refuses it.
+VE_REQUIRES(::Veng::GuiSurface, ::Veng::MeshRenderer);

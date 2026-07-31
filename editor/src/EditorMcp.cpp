@@ -172,7 +172,14 @@ namespace VengEditor
                     return;
                 }
                 const TypeRegistry& types = scene->GetTypeRegistry();
-                void* component = scene->AddComponent(m_Entity, m_TypeId);
+                // Reuse the slot when the component is already there: a Revert whose removal was
+                // refused (a sibling requires this type) leaves it in place, and adding twice is
+                // fatal. Seeding the existing slot from the bytes lands the same state.
+                void* component = scene->TryGetComponent(m_Entity, m_TypeId);
+                if (component == nullptr)
+                {
+                    component = scene->AddComponent(m_Entity, m_TypeId);
+                }
                 const TypeInfo& info = types.Info(m_TypeId);
                 const VoidResult read = ReadFields(m_Bytes, component, info, types);
                 VE_ASSERT(read.has_value(), "AddSeededComponentCommand: ReadFields failed for '{}'",
@@ -727,18 +734,24 @@ namespace VengEditor
             const Json values = mutation.Values.empty()
                                     ? Json::object()
                                     : Json::parse(mutation.Values, nullptr, false);
-            // Build the seeded bytes on a temporary default component (added, filled, removed) so
-            // the pushed command is one undoable unit carrying add + values together — a single
-            // editor.undo removes the whole thing, and redo re-adds it with its values intact.
-            void* scratch = scene->AddComponent(mutation.Target, mutation.Component);
+            // Build the seeded bytes on standalone storage, so the pushed command is one undoable
+            // unit carrying add + values together — a single editor.undo removes the whole thing,
+            // and redo re-adds it with its values intact. The entity is never made to carry a
+            // half-built component, and no add/remove round trip runs against the removal gate.
+            void* scratch = ::operator new(info.Size, std::align_val_t{info.Align});
+            info.DefaultConstruct(scratch);
             const VoidResult applied = Mcp::JsonToFields(values, scratch, info, types);
+            vector<u8> bytes;
+            if (applied)
+            {
+                bytes = snapshot(scratch, info);
+            }
+            info.Destruct(scratch);
+            ::operator delete(scratch, std::align_val_t{info.Align});
             if (!applied)
             {
-                scene->RemoveComponent(mutation.Target, mutation.Component);
                 return false;
             }
-            vector<u8> bytes = snapshot(scratch, info);
-            scene->RemoveComponent(mutation.Target, mutation.Component);
             stack->Push(CreateUnique<AddSeededComponentCommand>(mutation.Target, mutation.Component,
                                                                 std::move(bytes)));
             return true;

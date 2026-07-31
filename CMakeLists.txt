@@ -830,6 +830,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/atmosphere.cpp
             tests/unit/sun_position.cpp
             tests/unit/scene_ecs.cpp
+            tests/unit/component_requires.cpp
             tests/unit/scene_queries.cpp
             tests/unit/scene_version.cpp
             tests/unit/scene_clone.cpp
