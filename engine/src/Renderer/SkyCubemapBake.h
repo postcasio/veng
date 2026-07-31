@@ -173,8 +173,8 @@ namespace Veng::Renderer
         Ref<Image> m_DepthImage;     // 1×1 stand-in, holds the far-plane value (1.0)
         Ref<ImageView> m_DepthView;  // sampled as a color texture by the fragment's depth read
         TextureHandle m_DepthHandle; // bindless slot for the stand-in depth
-        Ref<Sampler> m_DepthSampler; // the sampler the fragment reads the stand-in depth through
-        SamplerHandle m_DepthSamplerHandle; // its bindless slot
+        // the shared bindless slot the fragment reads the stand-in depth through
+        SamplerHandle m_DepthSamplerHandle;
 
         Ref<DescriptorSet> m_ConsumerSet; // the skybox pass binds this to sample the baked cube
 
