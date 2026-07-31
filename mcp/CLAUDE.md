@@ -148,6 +148,14 @@ in `tools/list`) and a `ReturnsContentBlocks` flag: a plain tool's returned JSON
 a single text content block; a content-block tool (e.g. `render.screenshot`, returning an image
 block) returns the `content` array itself, spliced in verbatim.
 
+**The layer names the tool, the handler names the reason.** `MakeToolResult` in
+`McpServer.cpp` is the single point at which a failed call's text is assembled, and it
+prefixes the name `tools/call` dispatched on — so the reported error reads `<tool>: <reason>`
+whether the failure came from the handler, an unresolved tool name, the request timeout, or
+shutdown, and a handler never has to know what it is registered as. The client half adds only
+its own `<label>` on top (`<label>: <tool>: <reason>`); a handler that prefixes its own name
+as well makes the tool read twice, which is the shape the split exists to prevent.
+
 ## The transport and the vendored-httplib exception boundary
 
 The transport is **loopback Streamable HTTP** over cpp-httplib, bound to `127.0.0.1` by

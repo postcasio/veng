@@ -7,7 +7,8 @@
 //   - CallTool("ping", "{...}") returns a successful McpCallResult, IsError == false, the
 //     echoed payload in Content.
 //   - CallTool on the `err` tool returns a successful Result with IsError == true (the
-//     tool-error shape the CLI later maps to a distinct exit code).
+//     tool-error shape the CLI later maps to a distinct exit code), its Content the tool's
+//     name then the handler's reason — the server attaches the name, the handler does not.
 //   - CallTool on an unknown tool returns a Result whose McpCallResult.IsError is true —
 //     the server reports an unknown tool as a tools/call error result, not a protocol
 //     error, so it is not a Result error here.
@@ -159,6 +160,10 @@ int main()
             if (errCall)
             {
                 Check(errCall->IsError, "err surfaced as a tool-level error (IsError true)");
+                // The server names the tool in a failed call's text; the handler supplied the
+                // reason alone. This is the contract the CLI's one-label line rests on.
+                Check(errCall->Content == "err: deliberate tool failure",
+                      "the isError text is the tool name then the handler's reason");
             }
 
             const Result<Mcp::McpCallResult> unknown = client.CallTool("does.not.exist", "{}");
@@ -166,6 +171,8 @@ int main()
             if (unknown)
             {
                 Check(unknown->IsError, "unknown tool surfaced as a tool-level error");
+                Check(unknown->Content == "does.not.exist: no such tool",
+                      "an unresolved name is framed by the same path");
             }
         }
 

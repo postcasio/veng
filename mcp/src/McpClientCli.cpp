@@ -256,7 +256,10 @@ namespace Veng::Mcp
 
             if (call->IsError)
             {
-                err << fmt::format("{}: {}: {}\n", label, tool, call->Content);
+                // The reported error already names the tool — the server attaches the name
+                // where it dispatches, so the client adds only its own label. The client-side
+                // failures below are not the server's to name, so they name the tool themselves.
+                err << fmt::format("{}: {}\n", label, call->Content);
                 return static_cast<int>(ExitCode::ToolError);
             }
 
