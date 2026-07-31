@@ -380,6 +380,17 @@ namespace Veng::Renderer
         m_Materials.ReleaseDeferred(handle.Index, m_Context.GetCurrentFrameInFlight());
     }
 
+    BindlessCapacity BindlessRegistry::GetFreeSlots() const
+    {
+        return BindlessCapacity{
+            .Textures = static_cast<u32>(m_Textures.Free.size()),
+            .Samplers = static_cast<u32>(m_Samplers.Free.size()),
+            .StorageImages = static_cast<u32>(m_StorageImages.Free.size()),
+            .StorageBuffers = static_cast<u32>(m_StorageBuffers.Free.size()),
+            .Materials = static_cast<u32>(m_Materials.Free.size()),
+        };
+    }
+
     void BindlessRegistry::Bind(CommandBuffer& cmd, PipelineBindPoint bindPoint) const
     {
         cmd.BindDescriptorSets({
