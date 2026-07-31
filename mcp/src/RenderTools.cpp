@@ -7,6 +7,7 @@
 #include <Veng/Mcp/McpTool.h>
 
 #include <Veng/Asset/AssetManager.h>
+#include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Renderer/Viewport.h>
@@ -172,6 +173,38 @@ namespace Veng::Mcp
                             {"broadphase_rebuilt", renderer.DidBroadphaseRebuildLastFrame()},
                             {"broadphase_nodes", renderer.GetBroadphaseNodeCount()},
                             {"gpu_frame_time_ms", host.Assets.GetContext().GetLastGpuFrameTimeMs()}}
+                    .dump();
+            };
+            server.RegisterTool(std::move(tool));
+        }
+
+        // render.bindless — how much of each arrayed binding is left. Every one has a fixed
+        // capacity whose exhaustion is a fatal assert on an otherwise ordinary registration, and
+        // nothing warns on the way down — a free list just gets shorter. Read across a consumer's
+        // own open/close cycle it separates the two ways an array runs out: a count that returns to
+        // where it started names simultaneous occupancy, one that steps down per cycle names a leak.
+        {
+            McpTool tool;
+            tool.Name = "render.bindless";
+            tool.Description =
+                "Reports the bindless registry's arrayed bindings: free slots and total capacity "
+                "for textures, samplers, storage images, storage buffers, and materials. Takes no "
+                "arguments.";
+            tool.InputSchemaJson = R"({"type":"object","properties":{}})";
+            tool.Handler = [&host](string_view) -> Result<string>
+            {
+                using Registry = Renderer::BindlessRegistry;
+                const Renderer::BindlessCapacity free =
+                    host.Assets.GetContext().GetBindlessRegistry().GetFreeSlots();
+                return Json{
+                    {"textures", {{"free", free.Textures}, {"capacity", Registry::MaxTextures}}},
+                    {"samplers", {{"free", free.Samplers}, {"capacity", Registry::MaxSamplers}}},
+                    {"storage_images",
+                     {{"free", free.StorageImages}, {"capacity", Registry::MaxStorageImages}}},
+                    {"storage_buffers",
+                     {{"free", free.StorageBuffers}, {"capacity", Registry::MaxStorageBuffers}}},
+                    {"materials", {{"free", free.Materials}, {"capacity", Registry::MaxMaterials}}},
+                }
                     .dump();
             };
             server.RegisterTool(std::move(tool));

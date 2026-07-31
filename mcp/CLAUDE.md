@@ -254,7 +254,13 @@ family registers from the editor side.
   transfer-source usage on its swap chain images, and is unavailable headless — where there is
   no swap chain and, because ImGui needs a window, no UI overlay to capture),
   `render.list_viewports` (over `McpHost::ViewportNames`), `render.stats` (cull counts +
-  `GetLastGpuFrameTimeMs`). The PNG encode uses stb_image_write, vendored PRIVATE into
+  `GetLastGpuFrameTimeMs`), **`render.bindless`** (free slots and capacity for each of the
+  registry's five arrayed bindings, over `BindlessRegistry::GetFreeSlots`). The last takes no
+  viewport: every array has a fixed capacity whose exhaustion is a fatal assert on an otherwise
+  ordinary registration, and nothing warns on the way down, so how much of one is left is worth
+  being able to read from outside. Read across a consumer's own open/close cycle it separates the
+  two ways an array runs out — a count returning to where it started names simultaneous occupancy,
+  one stepping down per cycle names a leak. The PNG encode uses stb_image_write, vendored PRIVATE into
   `src/Vendor/StbImageWrite.cpp` — never a public header. A null/unknown viewport reports "no
   viewport".
 - **`world.load_prefab` and the `entity.*` mutation verbs**
