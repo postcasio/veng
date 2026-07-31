@@ -44,9 +44,8 @@ namespace Veng
     /// The panorama image is uploaded and registered into the bindless registry so the
     /// SceneRenderer's IBL-generation compute can sample it by handle to build the cubemap,
     /// irradiance, and prefiltered-specular maps. Like Texture, creation/upload are
-    /// worker-legal and bindless registration is deferred to the main-thread Finalize(), which is
-    /// also where the shared sampler is taken from the registry's cache.
-    /// GetSampler()/GetHandle()/GetSamplerHandle() are valid only after Finalize().
+    /// worker-legal and bindless registration is deferred to the main-thread Finalize().
+    /// GetHandle()/GetSamplerHandle() are valid only after Finalize().
     class EnvironmentMap
     {
     public:
@@ -64,10 +63,7 @@ namespace Veng
         /// @brief Returns the panorama ImageView used for sampling.
         [[nodiscard]] const Ref<Renderer::ImageView>& GetView() const { return m_View; }
 
-        /// @brief Returns the panorama Sampler (valid after Finalize()).
-        ///
-        /// Shared with every other resource whose sampling settings match; it is the bindless
-        /// registry's, not this panorama's, so it outlives the environment.
+        /// @brief Returns the panorama Sampler.
         [[nodiscard]] const Ref<Renderer::Sampler>& GetSampler() const { return m_Sampler; }
 
         /// @brief Returns the panorama dimensions in pixels.
@@ -83,14 +79,14 @@ namespace Veng
         friend class EnvironmentLoader;
 
         /// @brief Prepares an EnvironmentMap with a blocking upload, leaving it unregistered.
-        /// @param context Render context the panorama image and view are created on.
+        /// @param context Render context the panorama image/view/sampler are created on.
         /// @param data    EnvironmentMap description (extent, format, pixels).
         /// @return The unregistered environment.
         static Ref<EnvironmentMap> PrepareSync(Renderer::Context& context,
                                                const EnvironmentMapData& data);
 
         /// @brief Prepares an EnvironmentMap with an async transfer-queue upload, leaving it unregistered.
-        /// @param context    Render context the panorama image and view are created on.
+        /// @param context    Render context the panorama image/view/sampler are created on.
         /// @param data       EnvironmentMap description (extent, format, pixels).
         /// @param tasks      Task system the async upload is recorded through.
         /// @param outUpload  Receives the upload task to wait on before Finalize().

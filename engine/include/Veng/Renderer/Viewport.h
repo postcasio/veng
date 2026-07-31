@@ -844,12 +844,13 @@ namespace Veng::Renderer
         /// @brief The composite view m_CompositeHandle names; compared to re-register only on change.
         Ref<ImageView> m_RegisteredCompositeView;
 
-        /// @brief Bindless slot of the linear clamp sampler bound alongside a GuiSurface document
-        /// handle.
+        /// @brief The linear clamp sampler bound alongside a GuiSurface document handle.
         ///
-        /// The registry's shared one, so it is common to every surface in every viewport (a sampler
-        /// is read-only state); each surface owns its own pass and HDR target. Taken on the first
-        /// frame the scene holds a GuiSurface; invalid until then.
+        /// Shared across the scene's surfaces (a read-only sampler); each surface owns its own pass
+        /// and HDR target. Created on the first frame the scene holds a GuiSurface; null until then.
+        Ref<Sampler> m_SurfaceSampler;
+
+        /// @brief Bindless slot naming m_SurfaceSampler; allocated with the sampler.
         SamplerHandle m_SurfaceSamplerHandle;
     };
 }

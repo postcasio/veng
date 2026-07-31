@@ -16,7 +16,11 @@ namespace Veng::Renderer
 
         /// @brief The owned capture, self-unregistering from the drive-list on destruction.
         Unique<SceneCapture> Capture;
-        /// @brief Bindless slot of the shared sampler the material reads the capture output through.
+        /// @brief The context Sampler is registered against; null while no registration is held.
+        Context* Owner = nullptr;
+        /// @brief The sampler the material reads the capture output through.
+        Ref<Sampler> Sampler;
+        /// @brief Bindless handle of Sampler, bound alongside the capture output.
         SamplerHandle SamplerHandle;
         /// @brief Faces still owed before the current refresh settles; 0 leaves an OnDemand capture idle.
         u32 PendingFaces = SceneCapture::FaceCount;
@@ -115,9 +119,14 @@ namespace Veng::Renderer
         // that named it is overwritten, so no frame can be recorded against a freed slot.
         ClearBoundSlots(*this);
 
-        // The sampler slot is not released: it is the registry's shared clamp sampler, named by
-        // every other surface and pass wanting the same settings, so returning it here would free a
-        // slot still being drawn through. The capture releases the texture slots it took.
+        // The sampler slot is the runtime's own registration — the capture releases the texture slots
+        // it took, and nothing else names this one — so dropping the runtime is what returns it. The
+        // release is deferred, and the registry holds a Ref of its own, so the slot outlives the
+        // frames that may still be sampling through it.
+        if (Owner != nullptr)
+        {
+            Owner->GetBindlessRegistry().Release(SamplerHandle);
+        }
     }
 
     vec4 PackCaptureOrientation(const mat3& faceBasis)
@@ -184,9 +193,8 @@ namespace Veng::Renderer
         }
         CaptureSurfaceRuntime& runtime = *Runtime;
 
-        // Build the capture on first use and take the sampler its output is read through. That is a
-        // clamp sampler over the octahedral map — the same edge-clamp the capture's own resample
-        // uses, and the same one every other clamped blit in the engine reads through.
+        // Build the capture and its output sampler on first use. The sampler is a clamp sampler over
+        // the octahedral map — the same edge-clamp the capture's own resample uses.
         if (!runtime.Capture)
         {
             runtime.Capture = SceneCapture::Create({
@@ -195,16 +203,16 @@ namespace Veng::Renderer
                 .FaceResolution = Resolution,
                 .Settings = CaptureSettings(Shadows),
             });
-            runtime.SamplerHandle = context.GetBindlessRegistry()
-                                        .AcquireSampler({
-                                            .Name = "CaptureSurface Sampler",
-                                            .MagFilter = Filter::Linear,
-                                            .MinFilter = Filter::Linear,
-                                            .AddressModeU = AddressMode::ClampToEdge,
-                                            .AddressModeV = AddressMode::ClampToEdge,
-                                            .AddressModeW = AddressMode::ClampToEdge,
-                                        })
-                                        .Handle;
+            runtime.Sampler = Sampler::Create(context, {
+                                                           .Name = "CaptureSurface Sampler",
+                                                           .MagFilter = Filter::Linear,
+                                                           .MinFilter = Filter::Linear,
+                                                           .AddressModeU = AddressMode::ClampToEdge,
+                                                           .AddressModeV = AddressMode::ClampToEdge,
+                                                           .AddressModeW = AddressMode::ClampToEdge,
+                                                       });
+            runtime.SamplerHandle = context.GetBindlessRegistry().Register(runtime.Sampler);
+            runtime.Owner = &context;
         }
 
         // Push this frame's capture source when the refresh policy calls for it. EveryFrame always

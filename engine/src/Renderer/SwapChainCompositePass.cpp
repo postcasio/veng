@@ -60,6 +60,7 @@ namespace Veng::Renderer
     {
         Renderer::Context& Context;
         ImGuiLayer& ImGui;
+        Ref<Sampler> Sampler;
         AssetHandle<Shader> CompositeVS;
         AssetHandle<Shader> CompositeFS;
         Ref<PipelineLayout> Layout;
@@ -102,6 +103,17 @@ namespace Veng::Renderer
         m_Impl->PaperWhiteNits = info.PaperWhiteNits;
         m_Impl->PeakNits = info.PeakNits;
 
+        m_Impl->Sampler = Sampler::Create(
+            info.Context, {
+                              .Name = "SwapChain Composite Sampler",
+                              // ClampToEdge prevents sampling garbage past the swapchain extent.
+                              .MagFilter = Filter::Linear,
+                              .MinFilter = Filter::Linear,
+                              .AddressModeU = AddressMode::ClampToEdge,
+                              .AddressModeV = AddressMode::ClampToEdge,
+                              .AddressModeW = AddressMode::ClampToEdge,
+                          });
+
         const AssetResult<AssetHandle<Shader>> vs = info.Assets.LoadSync<Shader>(FullscreenVertId);
         VE_ASSERT(vs.has_value(), "{}", vs.error().Detail);
         m_Impl->CompositeVS = *vs;
@@ -132,18 +144,7 @@ namespace Veng::Renderer
 
         BindlessRegistry& bindless = info.Context.GetBindlessRegistry();
         m_Impl->ImGuiHandle = bindless.Register(m_Impl->ImGuiView);
-        m_Impl->SamplerHandle = bindless
-                                    .AcquireSampler({
-                                        .Name = "SwapChain Composite Sampler",
-                                        // ClampToEdge prevents sampling garbage past the
-                                        // swapchain extent.
-                                        .MagFilter = Filter::Linear,
-                                        .MinFilter = Filter::Linear,
-                                        .AddressModeU = AddressMode::ClampToEdge,
-                                        .AddressModeV = AddressMode::ClampToEdge,
-                                        .AddressModeW = AddressMode::ClampToEdge,
-                                    })
-                                    .Handle;
+        m_Impl->SamplerHandle = bindless.Register(m_Impl->Sampler);
         m_Impl->SceneHandle = bindless.Register(info.SceneSource);
     }
 
@@ -152,6 +153,7 @@ namespace Veng::Renderer
         BindlessRegistry& bindless = m_Impl->Context.GetBindlessRegistry();
         bindless.Release(m_Impl->SceneHandle);
         bindless.Release(m_Impl->ImGuiHandle);
+        bindless.Release(m_Impl->SamplerHandle);
     }
 
     void SwapChainCompositePass::RebuildPipeline(Format swapChainFormat)

@@ -210,6 +210,7 @@ namespace Veng::Renderer
         bindless.Release(m_EmissiveHandle);
         bindless.Release(m_LtcMatHandle);
         bindless.Release(m_LtcMagHandle);
+        bindless.Release(m_SamplerHandle);
     }
 
     void SceneRenderer::Rebuild()

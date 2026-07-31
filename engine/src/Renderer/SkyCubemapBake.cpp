@@ -187,14 +187,13 @@ namespace Veng::Renderer
         m_DepthView = ImageView::Create(
             m_Context, {.Name = "Sky Bake Stand-in Depth View", .Image = m_DepthImage});
         m_DepthHandle = m_Context.GetBindlessRegistry().Register(m_DepthView);
-        m_DepthSamplerHandle = m_Context.GetBindlessRegistry()
-                                   .AcquireSampler({
-                                       .Name = "Sky Bake Depth Sampler",
-                                       .AddressModeU = AddressMode::ClampToEdge,
-                                       .AddressModeV = AddressMode::ClampToEdge,
-                                       .AddressModeW = AddressMode::ClampToEdge,
-                                   })
-                                   .Handle;
+        m_DepthSampler = Sampler::Create(m_Context, {
+                                                        .Name = "Sky Bake Depth Sampler",
+                                                        .AddressModeU = AddressMode::ClampToEdge,
+                                                        .AddressModeV = AddressMode::ClampToEdge,
+                                                        .AddressModeW = AddressMode::ClampToEdge,
+                                                    });
+        m_DepthSamplerHandle = m_Context.GetBindlessRegistry().Register(m_DepthSampler);
 
         // The consumer set the skybox pass binds: the baked cube at the radiance binding, plus a
         // linear clamp sampler at the sampler binding — the IBL consumer set's shape for those two.
@@ -216,7 +215,9 @@ namespace Veng::Renderer
 
     SkyCubemapBake::~SkyCubemapBake()
     {
-        m_Context.GetBindlessRegistry().Release(m_DepthHandle);
+        BindlessRegistry& registry = m_Context.GetBindlessRegistry();
+        registry.Release(m_DepthHandle);
+        registry.Release(m_DepthSamplerHandle);
     }
 
     void SkyCubemapBake::EnsurePipeline(const MaterialInstance& material)

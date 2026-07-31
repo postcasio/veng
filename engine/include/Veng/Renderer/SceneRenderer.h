@@ -590,6 +590,9 @@ namespace Veng::Renderer
         /// @brief The pre-translucent refraction grab — scene-color/depth intermediates and the copy pipeline.
         Unique<RefractionGrab> m_Refraction;
 
+        /// @brief Shared sampler fullscreen passes use to sample the g-buffer and HDR target.
+        Ref<Sampler> m_Sampler;
+
         /// @brief Bindless slots for the g-buffer/HDR views and the shared sampler.
         ///
         /// Registered once at Create; re-registered on Resize (old slots released through the
@@ -603,8 +606,7 @@ namespace Veng::Renderer
         TextureHandle m_DepthHandle;
         /// @brief Bindless slot for the HDR view.
         TextureHandle m_HdrHandle;
-        /// @brief Bindless slot of the linear clamp sampler the fullscreen passes read the g-buffer
-        /// and HDR target through, shared out of the registry across every SceneRenderer.
+        /// @brief Bindless slot for the shared sampler.
         SamplerHandle m_SamplerHandle;
 
         /// @brief Engine-owned lighting pipeline writing the HDR format.

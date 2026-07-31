@@ -26,6 +26,18 @@ namespace Veng
                                                 .Name = m_Name + " View",
                                                 .Image = m_Image,
                                             });
+
+        // Linear filtering with horizontal wrap matches equirectangular sampling — the
+        // direction-to-UV mapping in the IBL-generation compute wraps in U at the seam.
+        m_Sampler = Sampler::Create(context, {
+                                                 .Name = m_Name + " Sampler",
+                                                 .MagFilter = Filter::Linear,
+                                                 .MinFilter = Filter::Linear,
+                                                 .MipmapMode = MipmapMode::Linear,
+                                                 .AddressModeU = AddressMode::Repeat,
+                                                 .AddressModeV = AddressMode::ClampToEdge,
+                                                 .AddressModeW = AddressMode::ClampToEdge,
+                                             });
     }
 
     Ref<EnvironmentMap> EnvironmentMap::PrepareSync(Context& context,
@@ -52,9 +64,9 @@ namespace Veng
             return;
         }
 
-        // The view slot is this panorama's own and comes back; the sampler slot is the registry's
-        // shared one and stays with it.
-        m_Context.GetBindlessRegistry().Release(m_TextureHandle);
+        auto& bindless = m_Context.GetBindlessRegistry();
+        bindless.Release(m_TextureHandle);
+        bindless.Release(m_SamplerHandle);
     }
 
     void EnvironmentMap::Finalize()
@@ -63,21 +75,7 @@ namespace Veng
 
         auto& bindless = m_Context.GetBindlessRegistry();
         m_TextureHandle = bindless.Register(m_View);
-
-        // Linear filtering with horizontal wrap matches equirectangular sampling — the
-        // direction-to-UV mapping in the IBL-generation compute wraps in U at the seam. Taken from
-        // the shared cache here rather than at construction, which is worker-legal.
-        const SharedSampler shared = bindless.AcquireSampler({
-            .Name = m_Name + " Sampler",
-            .MagFilter = Filter::Linear,
-            .MinFilter = Filter::Linear,
-            .MipmapMode = MipmapMode::Linear,
-            .AddressModeU = AddressMode::Repeat,
-            .AddressModeV = AddressMode::ClampToEdge,
-            .AddressModeW = AddressMode::ClampToEdge,
-        });
-        m_Sampler = shared.Sampler;
-        m_SamplerHandle = shared.Handle;
+        m_SamplerHandle = bindless.Register(m_Sampler);
         m_Registered = true;
 
         // The panorama is sampled bindlessly through set 0, so the RenderGraph never sees it

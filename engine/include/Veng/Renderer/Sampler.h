@@ -7,15 +7,6 @@ namespace Veng::Renderer
 {
     class Context;
 
-    /// @brief The SamplerInfo::MaxLod value that applies no upper clamp of its own, leaving the
-    /// image view's level count as the only bound on the mip a sample reads.
-    ///
-    /// The backend clamps the selected level into the view's range regardless, so any value at or
-    /// above the deepest level a view can carry behaves identically; this is the one to write when
-    /// the whole chain is wanted, because it does not vary with the image and so keeps otherwise
-    /// identical descriptions identical.
-    inline constexpr f32 LodClampNone = 1000.0f;
-
     /// @brief Construction parameters for a Sampler.
     struct SamplerInfo
     {

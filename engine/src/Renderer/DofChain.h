@@ -213,8 +213,7 @@ namespace Veng::Renderer
         /// @brief Layout for m_CompositePipeline (the composite push block).
         Ref<PipelineLayout> m_CompositeLayout;
 
-        /// @brief Linear clamp-to-edge sampler every stage reads its sources through, shared out of
-        /// the bindless registry with every other consumer of the same settings.
+        /// @brief Linear clamp-to-edge sampler every stage reads its sources through.
         Ref<Sampler> m_Sampler;
         /// @brief Bindless slot for m_Sampler (the composite's bindless sampler index).
         SamplerHandle m_SamplerHandle;

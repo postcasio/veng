@@ -38,6 +38,7 @@ namespace Veng::Renderer
     struct GatherPass::Impl
     {
         Renderer::Context& Context;
+        Ref<Sampler> Sampler;
         AssetHandle<Shader> GatherVS;
         AssetHandle<Shader> GatherFS;
         Ref<PipelineLayout> Layout;
@@ -95,20 +96,18 @@ namespace Veng::Renderer
     GatherPass::GatherPass(const GatherPassInfo& info)
         : m_Impl(CreateUnique<Impl>(Impl{.Context = info.Context}))
     {
-        m_Impl->SamplerHandle = info.Context.GetBindlessRegistry()
-                                    .AcquireSampler({
-                                        .Name = "Gather Placement Sampler",
-                                        // Linear + ClampToEdge: a same-resolution placement samples
-                                        // at texel centers (1:1, bit-identical to the source); a
-                                        // placement rendered below its region (RenderScale < 1) is
-                                        // upscaled smoothly.
-                                        .MagFilter = Filter::Linear,
-                                        .MinFilter = Filter::Linear,
-                                        .AddressModeU = AddressMode::ClampToEdge,
-                                        .AddressModeV = AddressMode::ClampToEdge,
-                                        .AddressModeW = AddressMode::ClampToEdge,
-                                    })
-                                    .Handle;
+        m_Impl->Sampler = Sampler::Create(
+            info.Context, {
+                              .Name = "Gather Placement Sampler",
+                              // Linear + ClampToEdge: a same-resolution placement samples at
+                              // texel centers (1:1, bit-identical to the source); a placement
+                              // rendered below its region (RenderScale < 1) is upscaled smoothly.
+                              .MagFilter = Filter::Linear,
+                              .MinFilter = Filter::Linear,
+                              .AddressModeU = AddressMode::ClampToEdge,
+                              .AddressModeV = AddressMode::ClampToEdge,
+                              .AddressModeW = AddressMode::ClampToEdge,
+                          });
 
         const AssetResult<AssetHandle<Shader>> vs = info.Assets.LoadSync<Shader>(FullscreenVertId);
         VE_ASSERT(vs.has_value(), "{}", vs.error().Detail);
@@ -142,11 +141,14 @@ namespace Veng::Renderer
             });
 
         m_Impl->CreateAssemblyTarget(info.Extent);
+
+        m_Impl->SamplerHandle = info.Context.GetBindlessRegistry().Register(m_Impl->Sampler);
     }
 
     GatherPass::~GatherPass()
     {
         m_Impl->ReleasePlacementHandles();
+        m_Impl->Context.GetBindlessRegistry().Release(m_Impl->SamplerHandle);
     }
 
     void GatherPass::SetPlacements(std::span<const CompositePlacement> placements)

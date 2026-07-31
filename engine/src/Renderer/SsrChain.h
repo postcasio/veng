@@ -177,10 +177,9 @@ namespace Veng::Renderer
         Ref<ImageView> m_ReflectionSampleView;
         /// @brief Bindless slot for m_ReflectionSampleView.
         TextureHandle m_ReflectionSampleHandle;
-        /// @brief Trilinear clamp-to-edge sampler over the reflection mip chain (roughness LOD),
-        /// shared out of the bindless registry with every other consumer of the same settings.
+        /// @brief Trilinear clamp-to-edge sampler over the reflection mip chain (roughness LOD).
         Ref<Sampler> m_ReflectionSampler;
-        /// @brief Bindless slot for m_ReflectionSampler; the registry's, so it stays valid.
+        /// @brief Bindless slot for m_ReflectionSampler.
         SamplerHandle m_ReflectionSamplerHandle;
         /// @brief One blur-downsample set per produced level k (reads mip k-1, writes mip k).
         std::vector<Ref<DescriptorSet>> m_BlurSets;

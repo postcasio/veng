@@ -182,8 +182,9 @@ namespace Veng::Renderer
         /// @brief Bindless handle of m_OctahedralView — the consumer-facing output.
         TextureHandle m_OctahedralHandle;
 
-        /// @brief Bindless slot of the clamp sampler the atlas copy and the resample both read
-        /// through, shared out of the registry with every other consumer of the same settings.
+        /// @brief Clamp sampler shared by the atlas copy and the resample.
+        Ref<Sampler> m_Sampler;
+        /// @brief Bindless handle of m_Sampler.
         SamplerHandle m_SamplerHandle;
 
         /// @brief Fullscreen copy pipeline (HDR → atlas cell) + layout.

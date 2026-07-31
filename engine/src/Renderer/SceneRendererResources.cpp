@@ -332,16 +332,15 @@ namespace Veng::Renderer
         m_EmissiveView = ImageView::Create(
             m_Context, {.Name = "SceneRenderer GBuffer Emissive View", .Image = m_EmissiveImage});
 
-        if (!m_SamplerHandle.IsValid())
+        if (!m_Sampler)
         {
-            m_SamplerHandle = bindless
-                                  .AcquireSampler({
-                                      .Name = "SceneRenderer GBuffer Sampler",
-                                      .AddressModeU = AddressMode::ClampToEdge,
-                                      .AddressModeV = AddressMode::ClampToEdge,
-                                      .AddressModeW = AddressMode::ClampToEdge,
-                                  })
-                                  .Handle;
+            m_Sampler = Sampler::Create(m_Context, {
+                                                       .Name = "SceneRenderer GBuffer Sampler",
+                                                       .AddressModeU = AddressMode::ClampToEdge,
+                                                       .AddressModeV = AddressMode::ClampToEdge,
+                                                       .AddressModeW = AddressMode::ClampToEdge,
+                                                   });
+            m_SamplerHandle = bindless.Register(m_Sampler);
         }
 
         m_AlbedoHandle = bindless.Register(m_AlbedoView);
