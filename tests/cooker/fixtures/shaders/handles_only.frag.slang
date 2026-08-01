@@ -10,7 +10,7 @@ struct MaterialParams
     uint Pad1;
 };
 
-static const uint MaterialParamStride = 384;
+static const uint MaterialParamStride = 512;
 
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
 [[vk::binding(1, 0)]] SamplerState g_Samplers[];

@@ -25,7 +25,7 @@ namespace Veng::Cook
         // The per-material block buffer stride. Mirrors
         // Renderer::BindlessRegistry::MaterialParamStride; restated here so the
         // cooker gains no renderer-header dependency.
-        constexpr u32 MaterialParamStride = 384;
+        constexpr u32 MaterialParamStride = 512;
 
         // Cooked names are fixed-size, nul-terminated char arrays (CookedBlobs.h);
         // truncate rather than fail on an over-long identifier.
