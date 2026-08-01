@@ -48,7 +48,8 @@ every module is written against; each module's architecture lives in its own `CL
   by `libveng`. **[mcp/CLAUDE.md](mcp/CLAUDE.md)**.
 - **`examples/`** — `hello-triangle` (the maximal sample, consumed **in-tree**) and `template`
   (the minimal sample, consumed **out-of-tree** via `find_package(veng)`) — the two co-migrated
-  consumption exemplars. **[examples/CLAUDE.md](examples/CLAUDE.md)**.
+  consumption exemplars. **[examples/CLAUDE.md](examples/CLAUDE.md)** also carries the `HT_SMOKE`
+  capture contract, the golden-regeneration runbook, and the relocatable-set check.
 - **`tests/`** — `include_hygiene`, `headless_smoke`, `compute_dispatch`, plus the `unit`,
   `death`, `gpu`, and `cooker` suites (and `shaders/`, `support/`).
 - **`docs/`** — the Doxygen wiring and the task-oriented guides under
@@ -426,30 +427,25 @@ Three consequences worth having in hand before reaching for a fix:
   template parameter, as `Enumerators()`/`Alternatives()` do), or declare the callee without
   defining it there (out-line the body into a `.cpp`, as `FindTypeByName`, `FieldCollector::Add`
   and `CapturingTestSink`'s methods do). Choosing between them is usually a link question — see
-  the `VE_ENUM` constraint under *Reflection* above.
+  the `VE_ENUM` link constraint in
+  [engine/src/Reflection/CLAUDE.md](engine/src/Reflection/CLAUDE.md).
 
-#### Registry storage lives behind an implementation pointer
+#### A registry's container storage lives behind an implementation pointer
 
-`AssetTypeRegistry` (assetpack), `TypeRegistry` and `AssetLoaderRegistry` (engine) each spelled
-their `std::unordered_map` storage in a **public class definition**, so every TU that parsed the
-class instantiated the map — an implementation detail of a singleton, imposed on hundreds of
-units' view of the type. The maps now live in an `Impl` struct defined in each registry's own
-implementation TU, reached through an owning pointer. Every accessor keeps its exact signature,
-including the `All()` overloads returning a const reference to the map: naming a specialisation
-in a return type needs no complete type, so a caller pays the instantiation only where it
-actually iterates.
+**No public class definition spells a `std::unordered_map` — or any other heavyweight container —
+as a member.** A container named in a class definition is instantiated by every TU that merely
+parses the class, so a singleton's storage detail is charged to hundreds of units' view of the
+type. The house shape is an `Impl` struct defined in the registry's own implementation TU, reached
+through an owning pointer, with every accessor keeping its exact signature — including an `All()`
+overload returning a const reference to the map, since naming a specialisation in a return type
+needs no complete type, so a caller pays the instantiation only where it actually iterates.
 
-**ABI note.** This changed the **size and layout** of three public classes and made them
-**move-only**, and `FindTypeByName` is now an exported symbol rather than an inline. veng makes no
-stable ABI promise across versions, so a consumer **rebuilds rather than relinks** — but it is a
-rebuild, not a source change.
-
-**`CapturingTestSink` is still declared in a public header.** `Veng/Diagnostics/TraceSink.h` sits
-behind `Profiler.h` and reaches most of the tree, and the class's own comment says it is for the
-test band. Its method bodies are out-lined into `src/Diagnostics/TraceSink.cpp`, so it no longer
-costs a TU that does not construct it — but the *placement* question is untouched: a test-support
-class does not belong in the public profiling surface, and moving it is a design change with
-callers to migrate rather than a cost fix.
+The three registries built this way are **`AssetTypeRegistry`**
+([assetpack/CLAUDE.md](assetpack/CLAUDE.md)), **`TypeRegistry`**
+([engine/src/Reflection/CLAUDE.md](engine/src/Reflection/CLAUDE.md)) and **`AssetLoaderRegistry`**
+([engine/src/Asset/CLAUDE.md](engine/src/Asset/CLAUDE.md)); all three are **move-only** as a
+consequence. veng makes no stable ABI promise across versions, so a layout change of this kind has
+a consumer **rebuild rather than relink** — a rebuild, not a source change.
 
 #### Guarding the cost
 
@@ -581,26 +577,17 @@ surface + host-capability preview gate in [editor/CLAUDE.md](editor/CLAUDE.md).
 ### The cook is parallel
 
 The single-render-thread rule at the top of this file governs the **runtime**. The **offline
-cook** is the other way round: `vengc` runs a pack's entries across one bounded work pool, and a
-content-heavy cold cook that measured 1.20 of 6 available cores now runs at ~3.8 effective ones.
-Three facts belong here rather than only in the cooker's own guide, because they reach anyone
-consuming veng:
+cook** is the other way round: `vengc` runs a pack's entries across one bounded work pool, and
+`--jobs <n>` is that cook's whole concurrency budget — shared by the asset pool and by any
+threading inside an importer.
 
-- **`--jobs <n>` is the cook's whole concurrency budget**, defaulting to the hardware concurrency
-  and shared by the asset pool and any threading inside an importer (`CookContext::ThreadBudget`).
-  **`--jobs 1` now means one thread in the process** — the texture encoder previously spawned
-  `hardware_concurrency()` workers per mip level even under a serial asset loop.
-- **An importer declares whether it may overlap, and the default is no.**
-  `AssetImporter::Concurrency()` returns `ImporterConcurrency::Serialized` unless overridden, so an
-  importer that says nothing runs under the cook's serialization lock. A **project's own cook
-  module supplies importers veng never sees**, which makes this a consumer-facing contract: what
-  `Cook` may assume, what it must not touch, and what declaring `Parallel` asserts are written out
-  in [cooker/CLAUDE.md](cooker/CLAUDE.md#the-importer-thread-safety-contract). **Nothing in it asks
-  an importer to be deterministic** — a cooked asset must be *valid*, not one particular valid
-  encoding.
-- **The cook-module ABI is 2.** `AssetImporter` gained a virtual and `CookContext` a trailing
-  field, so a module built against ABI 1 is rejected at the handshake rather than misreading the
-  vtable. A consumer **rebuilds; no source change is required.**
+This reaches anyone consuming veng, because **a project's own cook module supplies importers veng
+never sees**: `AssetImporter::Concurrency()` returns `ImporterConcurrency::Serialized` unless
+overridden, so an importer that says nothing runs under the cook's serialization lock, and
+declaring `Parallel` is an assertion with a contract behind it. The budget, the contract (what
+`Cook` may assume, what it must not touch, and what `Parallel` asserts), and the cook-module ABI
+handshake are in
+[cooker/CLAUDE.md](cooker/CLAUDE.md#the-cook-is-parallel--and-an-importer-declares-whether-it-may-be).
 
 ### The release build (validation OFF)
 
@@ -619,36 +606,15 @@ the default and catches more. Do not build both routinely.
 
 ## Verification — read before you trust a green run
 
-- **The `HT_SMOKE` capture is golden-checked.** Smoke mode renders a fixed pose
-  (`HelloTriangleApp::SmokeAngle`), so the capture is reproducible run to run; the
-  windowed app still rotates by accumulated wall-clock `delta`. The `smoke_golden`
-  ctest renders the scene headless and fuzzy-compares it against
-  `tests/golden/hello_triangle_scene.png` (`ctest --test-dir build-debug -R
-  smoke_golden`). It is labelled `gpu` and skips cleanly with no Vulkan ICD. The
-  capture runs through the **launcher** (which `dlopen`s `libhello_triangle`), the
-  real shipping path. If a deliberate render change moves the capture, regenerate
-  the golden:
-  ```sh
-  HT_SMOKE=/tmp/ht.ppm build-debug/examples/hello-triangle/hello_triangle-launcher
-  sips -s format png /tmp/ht.ppm --out tests/golden/hello_triangle_scene.png
-  ```
-  The capture is a 1280×720 RGB PPM (≈ 2,764,816 bytes).
-- **`hello_triangle_launcher_smoke` covers the shipping path automatically.** It
-  runs `hello_triangle-launcher` under `HT_SMOKE` and asserts exit 0 — the one test
-  exercising the full `dlopen` → `VengModuleRegister` → registry → `Run()` chain
-  end-to-end. Labelled `gpu` (`SKIP_RETURN_CODE 77`), it skips with no device and
-  runs under the validation gate like the rest of the `gpu` band. The launcher + lib +
-  project + pack are a **relocatable set**: copy the launcher, `libhello_triangle.*`,
-  `project.vengproj`, and `sample.vengpack` into a fresh directory and run from an
-  unrelated working directory — everything resolves beside the launcher, so it still
-  writes a correct-sized PPM and exits 0.
-- **A parallel cook is guarded by a warm-cook no-op test, not by a byte comparison.**
-  `tests/cooker/cook_cache.cpp` cooks a pack at 8 jobs, cooks it again, and asserts the second
-  cook rewrote nothing — the property the archive TOC's stability actually serves. Comparing a
-  serial and a parallel cook byte for byte was **rejected**, not merely unavailable: it catches a
-  race only when the race perturbs output on that run, and `astcenc` is built without
-  `ASTCENC_INVARIANCE`, so a texture-bearing pack does not cook to the same bytes twice from an
-  unchanged binary. The thread sanitiser and `vengc verify` are what carry that weight.
+- **A green `gpu` band is not a green render.** The rendered output is checked by the
+  `smoke_golden` / `hello_triangle_launcher_smoke` pair over the `HT_SMOKE` capture, which is what
+  makes `hello-triangle` the verification floor — the capture's contract, its golden-regeneration
+  runbook, and the relocatable-set check are in
+  [examples/CLAUDE.md](examples/CLAUDE.md#the-ht_smoke-capture-and-the-two-smoke-tests).
+- **A parallel cook is guarded by a warm-cook no-op test, not by a byte comparison.** A
+  serial-versus-parallel byte comparison was **rejected**, not merely unavailable; the reasoning,
+  and what carries the weight instead (the thread sanitiser and `vengc verify`), is in
+  [cooker/CLAUDE.md](cooker/CLAUDE.md#what-is-checked-and-what-was-deliberately-not).
 - **Validation errors do NOT fail tests by themselves.** The debug-messenger
   callback (`engine/src/Renderer/Backend/Context.cpp`) only `Log::Error`s on
   validation errors — it never aborts. So a green `ctest` under `VE_DEBUG` only means
@@ -894,51 +860,11 @@ and are not `Ref`s: an `AssetHandle` is refcounted indirection into the
 `Ref` lives in the `BindlessRegistry`. Both release through the same per-frame
 retire path; the GPU `Ref`s *inside* an asset still follow the rule above.
 
-An app's engine resources are its members, released by its destructor — which runs
-before the engine's own members (`AssetManager`, `TaskSystem`, `Context`, the
-registries) tear down, so every service the release touches is still alive; member
-declaration order (and explicit destructor logic) encodes any intra-app ordering. A
-shutdown *operation* that is not a resource release — one that must run while the app
-is fully alive, e.g. flushing state ahead of the engine's own durability save — goes
-in the app's `OnShutdown()` override, which `Run` invokes before teardown begins. A
-resource that outlives the context still fails loudly: the `Disposed` tripwire (set in
-`~Context`) asserts on any handle retiring after teardown.
-
-### Reflection: the describe block is instantiated where it is used
-
-**Four** `VengReflect<T>` accessors are **member templates on a defaulted parameter**
-(`template <class = void>`), not plain static members: `Fields()`, `RegisterDependencies()`,
-`Enumerators()` (emitted by `VE_ENUM`) and `Alternatives()` (emitted by `VE_VARIANT`). They are
-spelled and called exactly like plain statics — no `template` disambiguator is needed at any call
-site, since the calls name no explicit template argument — but a member template's body is
-instantiated only where it is *called*.
-
-Two different costs are deferred that way:
-
-- `Fields()` / `RegisterDependencies()` carry the **describe-block replay** and both of its
-  `Describe<Sink>` instantiations, so those compile only in the units that actually call
-  `TypeRegistry::Register<T>()` rather than in every unit that includes the describe block.
-- `Enumerators()` / `Alternatives()` carry no describe block; what they defer is the **container
-  they build**. Each names its own `vector<…>` through the defaulted parameter, which is the point
-  — see the rule below: the body's `push_back` has to be *dependent*, not merely sitting inside a
-  template, or it is odr-used where the class definition is parsed.
-
-**The authored vocabulary is unchanged.** `VE_REFLECT` / `VE_FIELD` / `VE_ARRAY_FIELD` /
-`VE_LEAF` / `VE_TYPE` / `VE_ENUM` / `VE_ENUMERATOR` / `VE_VARIANT` are written exactly as before;
-the form lives entirely in the macro expansion and is invisible to an author. The one
-consumer-visible consequence, and it now covers **all four** accessors: **a hand-written
-`VengReflect<T>` specialisation must emit the templated form**, since `Register<T>()` and the
-enum/variant paths call them uniformly across the trait. The trait is public, so this is a real
-constraint even though the tree contains no hand-written specialisation — every one is
-macro-emitted.
-
-**A `VE_ENUM` block must stay link-independent of `libveng`.** `veng_cook_bootstrap` links
-`assetpack` **only**, and it parses engine headers that carry `VE_ENUM`. So routing any part of a
-describe block's body through an engine `.cpp` — the obvious way to out-line an expensive body —
-breaks that target's link, even though it compiles everywhere else. Whatever a `VE_ENUM` expansion
-emits has to resolve with `assetpack` alone. This is why `Enumerators()` was made *dependent*
-rather than out-lined: the deferral had to be a language mechanism, not a symbol in another
-library.
+**Hold engine resources as members and let the destructor release them** — `Application`'s
+teardown order guarantees every service a release touches is still alive, and a resource that
+outlives the context fails loudly rather than silently. A shutdown *operation* that is not a
+resource release belongs in `OnShutdown()`, not in a destructor. The ordering, the `OnShutdown`
+seam and the `Disposed` tripwire are in [engine/CLAUDE.md](engine/CLAUDE.md#application).
 
 ### The Native idiom (public/backend split)
 

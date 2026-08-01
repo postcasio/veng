@@ -30,6 +30,12 @@ the format and its serialization — neither importer nor loader.
   It is a **host-owned instance threaded by reference**, never a global: assetpack is static and
   linked into libveng, the cooker, the bootstrap cooker, and the editor, so a global would give
   each image its own divergent copy. `RegisterBuiltinAssetTypes` pre-fills the nineteen builtins.
+  Its `std::unordered_map` storage lives in an `Impl` struct defined in the registry's own
+  implementation TU rather than in the public class definition, so a TU that merely parses the
+  class instantiates no map; every accessor keeps its exact signature (including the `All()`
+  overloads returning a const reference to the map) and the class is consequently **move-only**.
+  See [the root CLAUDE.md](../CLAUDE.md#a-registrys-container-storage-lives-behind-an-implementation-pointer)
+  for the rule.
 - **An archive is built from a pure `{ id, type, source }` manifest.** The format
   carries no per-asset settings — those live in the per-asset JSON sources the
   manifest points at, consumed by the cooker, not by this library.

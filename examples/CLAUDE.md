@@ -34,11 +34,37 @@ exemplar, built as part of the engine tree via `add_subdirectory`.
   writes, so moving the empty in the model moves the cube. It is also the visual proof in the
   golden capture.
 - The `HT_SMOKE` capture and the `smoke_golden` / `hello_triangle_launcher_smoke` tests are the
-  verification floor — the runbook (including golden regeneration) is in the
+  tree's verification floor — see below, and the validation gate in the
   [root CLAUDE.md](../CLAUDE.md), "Verification".
 - Its MCP wiring (`StartMcpServerIfRequested`, env-gated behind `HT_MCP`; the fixed-port
   `hello_triangle-run` / editor convenience targets) is the worked MCP reference — see
   [mcp/CLAUDE.md](../mcp/CLAUDE.md).
+
+### The `HT_SMOKE` capture and the two smoke tests
+
+**The `HT_SMOKE` capture is golden-checked.** Smoke mode renders a fixed pose
+(`HelloTriangleApp::SmokeAngle`), so the capture is reproducible run to run; the windowed app still
+rotates by accumulated wall-clock `delta`. The `smoke_golden` ctest renders the scene headless and
+fuzzy-compares it against `tests/golden/hello_triangle_scene.png`
+(`ctest --test-dir build-debug -R smoke_golden`). It is labelled `gpu` and skips cleanly with no
+Vulkan ICD. The capture runs through the **launcher** (which `dlopen`s `libhello_triangle`), the
+real shipping path. If a deliberate render change moves the capture, regenerate the golden:
+
+```sh
+HT_SMOKE=/tmp/ht.ppm build-debug/examples/hello-triangle/hello_triangle-launcher
+sips -s format png /tmp/ht.ppm --out tests/golden/hello_triangle_scene.png
+```
+
+The capture is a 1280×720 RGB PPM (≈ 2,764,816 bytes).
+
+**`hello_triangle_launcher_smoke` covers the shipping path automatically.** It runs
+`hello_triangle-launcher` under `HT_SMOKE` and asserts exit 0 — the one test exercising the full
+`dlopen` → `VengModuleRegister` → registry → `Run()` chain end to end. Labelled `gpu`
+(`SKIP_RETURN_CODE 77`), it skips with no device and runs under the validation gate like the rest
+of the `gpu` band. The launcher + lib + project + pack are a **relocatable set**: copy the
+launcher, `libhello_triangle.*`, `project.vengproj`, and `sample.vengpack` into a fresh directory
+and run from an unrelated working directory — everything resolves beside the launcher, so it still
+writes a correct-sized PPM and exits 0.
 
 ## `template/` — the minimal sample, consumed out-of-tree
 

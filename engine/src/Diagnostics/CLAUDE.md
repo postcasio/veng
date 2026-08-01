@@ -136,6 +136,13 @@ bracketing the caller's block. The `TraceSink` seam takes **completed chunks**, 
 ships a `NullTraceSink` (the default) and a `CapturingTestSink` (retains chunks in memory for tests);
 `FileTraceSink` is the on-disk sink described below.
 
+**`CapturingTestSink` is declared in a public header, and that placement is a known wart.**
+`Veng/Diagnostics/TraceSink.h` sits behind `Profiler.h` and reaches most of the tree, so a
+test-support class rides the public profiling surface. Its method bodies are out-lined into
+`src/Diagnostics/TraceSink.cpp`, so it costs nothing to a TU that does not construct it — but the
+*placement* question is untouched: moving it is a design change with callers to migrate rather
+than a cost fix.
+
 ### The gate
 
 `VE_PROFILE` is a CMake option, ON under `VE_DEBUG` and OFF otherwise, and a **`PUBLIC` compile

@@ -56,6 +56,51 @@ touching one. `VengRequires<T>::Required()` is a member template on a defaulted 
 same reason `Enumerators()` is: the `vector` it builds must be dependent, so it instantiates only
 where `Register<T>()` calls it.
 
+**The registry's own storage lives behind an implementation pointer.** `TypeRegistry`'s
+`std::unordered_map` sits in an `Impl` struct defined in its implementation TU, not in the public
+class definition, so a TU that merely parses the class instantiates no map; `FindTypeByName` is an
+exported symbol rather than an inline for the same reason. Every accessor keeps its exact
+signature, including the `All()` overloads returning a const reference to the map. The class is
+consequently **move-only**. This is the house shape for a registry — see
+[the root CLAUDE.md](../../../CLAUDE.md#a-registrys-container-storage-lives-behind-an-implementation-pointer).
+
+## The describe block is instantiated where it is used
+
+**Four** `VengReflect<T>` accessors are **member templates on a defaulted parameter**
+(`template <class = void>`), not plain static members: `Fields()`, `RegisterDependencies()`,
+`Enumerators()` (emitted by `VE_ENUM`) and `Alternatives()` (emitted by `VE_VARIANT`). They are
+spelled and called exactly like plain statics — no `template` disambiguator is needed at any call
+site, since the calls name no explicit template argument — but a member template's body is
+instantiated only where it is *called*.
+
+Two different costs are deferred that way:
+
+- `Fields()` / `RegisterDependencies()` carry the **describe-block replay** and both of its
+  `Describe<Sink>` instantiations, so those compile only in the units that actually call
+  `TypeRegistry::Register<T>()` rather than in every unit that includes the describe block.
+- `Enumerators()` / `Alternatives()` carry no describe block; what they defer is the **container
+  they build**. Each names its own `vector<…>` through the defaulted parameter, which is the point:
+  the body's `push_back` has to be *dependent*, not merely sitting inside a template, or it is
+  odr-used where the class definition is parsed. The general mechanism is in
+  [the root CLAUDE.md](../../../CLAUDE.md#a-function-body-odr-uses-its-whole-call-graph-where-the-body-is-parsed).
+
+**The authored vocabulary is unchanged.** `VE_REFLECT` / `VE_FIELD` / `VE_ARRAY_FIELD` /
+`VE_LEAF` / `VE_TYPE` / `VE_ENUM` / `VE_ENUMERATOR` / `VE_VARIANT` are written exactly as before;
+the form lives entirely in the macro expansion and is invisible to an author. The one
+consumer-visible consequence, and it covers **all four** accessors: **a hand-written
+`VengReflect<T>` specialisation must emit the templated form**, since `Register<T>()` and the
+enum/variant paths call them uniformly across the trait. The trait is public, so this is a real
+constraint even though the tree contains no hand-written specialisation — every one is
+macro-emitted.
+
+**A `VE_ENUM` block must stay link-independent of `libveng`.** `veng_cook_bootstrap` links
+`assetpack` **only**, and it parses engine headers that carry `VE_ENUM`. So routing any part of a
+describe block's body through an engine `.cpp` — the obvious way to out-line an expensive body —
+breaks that target's link, even though it compiles everywhere else. Whatever a `VE_ENUM` expansion
+emits has to resolve with `assetpack` alone. This is why `Enumerators()` was made *dependent*
+rather than out-lined: the deferral had to be a language mechanism, not a symbol in another
+library.
+
 ## The field model
 
 The layer pairs the open `TypeId` space with a **closed** `FieldClass`

@@ -64,6 +64,17 @@ Calling `RequestExit(status)` from `OnInitialize` is the fatal-startup-failure p
 bootstrap is skipped and the run loop never starts, while `OnShutdown`, the session save, and
 every destructor still run.
 
+**Teardown order is what makes "hold engine resources as members" safe.** An app's engine
+resources are its members, released by its destructor — which runs *before* the engine's own
+members (`AssetManager`, `TaskSystem`, `Context`, the registries) tear down, so every service the
+release touches is still alive; member declaration order (and explicit destructor logic) encodes
+any intra-app ordering. A shutdown *operation* that is not a resource release — one that must run
+while the app is fully alive, e.g. flushing state ahead of the engine's own durability save — goes
+in the app's **`OnShutdown()`** override, which `Run` invokes before teardown begins. A resource
+that outlives the context still fails loudly: the `Disposed` tripwire (set in `~Context`) asserts
+on any handle retiring after teardown. The ownership rule these serve (`Ref` vs `Unique`, the
+per-frame retire path) is in [the root CLAUDE.md](../CLAUDE.md#resource-ownership--lifetime).
+
 **The engine writes nothing relative to the working directory, and does not move it.** A shipped
 application cannot assume its working directory is writable — inside a macOS bundle it is the
 bundle, whose contents are sealed by the code signature — so every engine-owned file has an

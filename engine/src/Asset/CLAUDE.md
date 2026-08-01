@@ -127,6 +127,12 @@ engine *mounts* archives and resolves assets against them.
   @warning The registries hold owned polymorphic objects whose code lives in a `dlclose`-able
   image, so the module handle must outlive them *and* the `AssetManager` built from them. Hosts
   enforce this structurally, by declaring the handle first in the owning struct.
+- **`AssetLoaderRegistry`'s storage lives behind an implementation pointer.** Its
+  `std::unordered_map` sits in an `Impl` struct defined in the registry's own implementation TU
+  rather than in the public class definition, so a TU that merely parses the class instantiates no
+  map; every accessor keeps its exact signature and the class is consequently **move-only**. See
+  [the root CLAUDE.md](../../../CLAUDE.md#a-registrys-container-storage-lives-behind-an-implementation-pointer)
+  for the rule.
 - **`AssetHandle<T>` on a component resolves through `AssetTypeInfo::HandleFieldType`.** A
   reflected field is a leaf `TypeId`, not an asset type, so something must map the two. That
   something is the asset type's own registration: `HandleFieldType` carries the reflection
