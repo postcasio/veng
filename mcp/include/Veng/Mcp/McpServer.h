@@ -16,11 +16,17 @@ namespace Veng::Mcp
     /// Threading contract:
     /// - RegisterTool is called on the render thread at construction, before the server
     ///   serves engine tools — never concurrently with Pump().
-    /// - Pump() runs on the render thread; it is the only place a tool handler executes,
-    ///   so a handler may freely touch engine state. A handler must not block on another
-    ///   MCP request (no re-entrancy).
-    /// - The network thread touches only the immutable tool registry (for `tools/list`)
-    ///   and the request queue; it never touches engine state.
+    /// - Pump() runs on the render thread; it is where a tool handler executes unless the
+    ///   tool declares otherwise, so a handler may freely touch engine state. A handler must
+    ///   not block on another MCP request (no re-entrancy).
+    /// - A tool that declares McpTool::RunsOffPump is the one exception: its OffPumpHandler
+    ///   runs on the network thread that received the request and must touch no engine state
+    ///   at all. Its optional McpTool::PumpedPrologue still runs at the pump point, so the
+    ///   snapshot such a handler reads is taken where reading it is safe. At most two
+    ///   off-pump handlers run at once and never two for one tool; a call exceeding either
+    ///   bound is refused with a located off-pump-busy error rather than queued.
+    /// - The network thread touches only the immutable tool registry (for `tools/list`), the
+    ///   request queue, and an off-pump handler that declared it needs no engine state.
     ///
     /// It is Unique, single-owner: dropping the Unique stops the listener thread and
     /// closes the socket (RAII — that is the whole of cleanup).
@@ -40,6 +46,11 @@ namespace Veng::Mcp
         static Unique<McpServer> Create(const McpServerInfo& info, const McpHost& host);
 
         /// @brief Stops the listener thread, closes the socket, and drains in-flight requests.
+        ///
+        /// Every queued and waiting request resolves with a shutdown error so its network
+        /// thread unblocks. An off-pump handler already running is in no queue, so it is
+        /// signalled through McpOffPumpRequest::IsCancelled instead: teardown then costs the
+        /// handler's poll interval rather than its remaining runtime.
         ~McpServer();
 
         McpServer(const McpServer&) = delete;
@@ -48,7 +59,10 @@ namespace Veng::Mcp
         /// @brief Registers a tool, surfaced to clients via `tools/list` and `tools/call`.
         ///
         /// Called on the render thread at construction, before the server serves — not
-        /// concurrently with Pump(). Asserts fatally on a duplicate tool name.
+        /// concurrently with Pump(). Asserts fatally on a duplicate tool name, and on a
+        /// threading declaration that does not hold together: a tool must supply exactly one
+        /// of McpTool::Handler and McpTool::OffPumpHandler, matching its McpTool::RunsOffPump
+        /// flag, and may declare an McpTool::PumpedPrologue only when it runs off the pump.
         /// @param tool  The tool to register.
         void RegisterTool(McpTool tool);
 
@@ -56,7 +70,8 @@ namespace Veng::Mcp
         ///
         /// For each pending `tools/call`, runs the tool handler on the calling thread,
         /// stores its result, and wakes the blocked network thread. Called once per frame
-        /// by the owner at a scene-safe point (before any scene iteration).
+        /// by the owner at a scene-safe point (before any scene iteration). An off-pump
+        /// tool's pumped prologue is queued and run here too; its handler is not.
         void Pump();
 
         /// @brief Returns the bound port (resolves a requested Port of 0 to the actual one).

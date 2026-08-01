@@ -75,7 +75,10 @@ tool. Both halves live in the one library and share its vendored transport.
   flagged `isError`. An image content block is binary: it is written to the `--output <file>`
   the client requires for it, **never** printed to stdout (no base64 in any form) — the file
   write is a client-side concern, honoring "no MCP tool argument is ever a filesystem path"
-  (`--output` is a CLI argument, not a server tool argument). The grammar and the exit-code table
+  (`--output` is a CLI argument, not a server tool argument). **`--timeout <seconds>`** (1–86400)
+  raises `McpClientInfo::TimeoutSeconds` off its 10 s default, which is what makes a long
+  off-pump tool reachable from a shell at all: a handler no longer bounded by the pump's 5 s
+  window is still bounded by the client's read. The grammar and the exit-code table
   are the normative copy — [docs/guides/consuming-mcp.md](../docs/guides/consuming-mcp.md)'s
   "Driving a running server from the shell" is the reader-facing view.
 
@@ -89,7 +92,10 @@ device, no module load.
 
 Every engine-touching tool runs on the **render thread** at the pump point. The network
 thread never touches a `Scene`, a `Viewport`, or the `AssetManager` directly; it enqueues
-and blocks.
+and blocks. A tool may **declare that it touches no engine state** and leave the pump — see
+[A tool may declare it runs off the pump](#a-tool-may-declare-it-runs-off-the-pump) — but the
+declaration narrows nothing for the tools that do not make it, which is all of the built-in
+ones.
 
 This is the **inverse** of `TaskSystem`:
 `TaskSystem` lands *off-thread* work *on* the render thread through a pumped queue; the MCP
@@ -113,15 +119,59 @@ of the wiring.
   network thread ever reads the tool registry, which is **immutable once serving** — read
   off-thread by `tools/list` without a lock. `RegisterTool` after the server has started is a
   fatal assert.
-- **A request times out.** The network thread waits a bounded window (`RequestTimeout`, 5s)
-  for the render thread to pump; on expiry it returns a host-busy error rather than blocking
-  forever. A **synchronous main-thread modal** stalls the pump for its whole window: a native
+- **A pumped request times out.** The network thread waits a bounded window (`RequestTimeout`,
+  5s) for the render thread to pump; on expiry it returns a host-busy error rather than blocking
+  forever. The handler is *not* cancelled by that — the next pump still runs it and writes into a
+  slot the caller has abandoned — which is one of the two reasons the off-pump declaration
+  exists. An off-pump handler waits on no pump and so has no such window; its prologue does. A **synchronous main-thread modal** stalls the pump for its whole window: a native
   file dialog (or a debugger breakpoint) holds the render thread, so `Pump()` does not run and
   in-flight requests time out until the modal returns. A tool handler must not block on another
   MCP request — there is no re-entrancy.
 - **Shutdown drains cleanly.** The destructor sets `ShuttingDown`, resolves every queued and
   in-flight request with a shutdown error so its network thread unblocks, stops the listener,
-  and joins.
+  and joins. It sets the off-pump cancellation flag *first*, because a running off-pump
+  handler is in no queue to drain and stopping the listener joins the pool it runs on.
+
+## A tool may declare it runs off the pump
+
+The pumped path is right for the great majority of tools and wrong for exactly one class: a
+handler whose work is a **pure computation over data it owns**. Such a handler gains nothing
+from the render thread and imposes two costs on it — it holds the frame open for its whole
+duration, and it is bounded by a `RequestTimeout` it cannot benefit from (the waiter gives up,
+the next pump runs the handler anyway, and the result lands in a slot nobody is reading). So
+`McpTool` carries a threading declaration, and **the default is the safe one**: a tool that
+says nothing runs exactly where it always did.
+
+- **`RunsOffPump` + `OffPumpHandler`.** The flag routes the call to `OffPumpHandler`, which
+  the server invokes **on the network thread that received the request** — no queue, no wait,
+  no `RequestTimeout`, because it is not waiting for the render thread's cadence. The contract
+  is stated at the declaration site (`Veng/Mcp/McpTool.h`) because getting it wrong is a data
+  race presenting as an unrelated intermittent: such a handler may read its arguments, its
+  prologue's snapshot, and data it builds itself, and may touch **no** engine state whatever.
+  `RegisterTool` asserts the declaration holds together — exactly one of the two handlers,
+  matching the flag.
+- **`PumpedPrologue` is the seam for the one shape the flag cannot express**: a long pure
+  computation over a *small snapshot* of engine state. The prologue runs at the ordinary pump
+  point under the pumped path's rules and timeout (it is expected to be microseconds), and its
+  JSON string reaches the handler as `McpOffPumpRequest::Snapshot`; a prologue that fails
+  reports its error and the handler does not run. It is **host-run, not handler-callable** — an
+  off-pump handler cannot reach back to the pump mid-flight, so the no-re-entrancy rule holds.
+- **Concurrency is bounded by the host, not by the vendored pool.** cpp-httplib's connection
+  pool (`max(8, cores − 1)` threads) is no guarantee at all — eight concurrent expensive reads
+  reached from a socket are a denial of service against the app's own CPU, the frame stall
+  arriving by another route. The host guarantees **at most two off-pump handlers in flight**,
+  and **no re-entry** (one call per tool at a time); a call over either bound is refused with a
+  distinct located `off-pump busy` error rather than queued behind them.
+- **Cancellation, because shutdown cannot wait on a walk.** `~McpServer` drains the queue, but
+  a running off-pump handler is in no queue and joining the listener joins the pool — so
+  teardown would block for the handler's full remaining duration, a multi-second hang at exit
+  that reads as a defect. The destructor sets a flag the handler polls through
+  `McpOffPumpRequest::IsCancelled`; the declaration site states the granularity (every few
+  milliseconds) and that returning promptly is required, not optional.
+- **The client can wait as long as the tool now runs.** `RunClientCli` takes
+  `--timeout <seconds>` (1–86400), threaded into `McpClientInfo::TimeoutSeconds`, so a caller
+  can raise the 10 s default above a long handler's runtime. Without it the capability would
+  exist and no shipped client could reach the far end of it.
 
 ## The public surface: httplib-free, not JSON-library-free
 
@@ -146,7 +196,11 @@ alone) — it is not an *extra* dependency `veng::mcp` adds on top.
 An `McpTool` also carries an `InputSchemaJson` (surfaced verbatim as the tool's `inputSchema`
 in `tools/list`) and a `ReturnsContentBlocks` flag: a plain tool's returned JSON is wrapped in
 a single text content block; a content-block tool (e.g. `render.screenshot`, returning an image
-block) returns the `content` array itself, spliced in verbatim.
+block) returns the `content` array itself, spliced in verbatim. The off-pump declaration
+(`RunsOffPump`, `PumpedPrologue`, `OffPumpHandler`) keeps the same JSON-string discipline: an
+`OffPumpHandler` is `Result<string>(const McpOffPumpRequest&)`, and the request bundles the
+arguments, the prologue's snapshot, and the cancellation predicate as plain strings and a
+`function<bool()>`, so the surface names no JSON type there either.
 
 **The layer names the tool, the handler names the reason.** `MakeToolResult` in
 `McpServer.cpp` is the single point at which a failed call's text is assembled, and it
@@ -197,7 +251,13 @@ Two structural facts back this up. **No MCP tool argument is ever a filesystem p
 engine reference crosses the wire as an opaque `AssetId`, matching `AssetManager`'s own external
 contract: `Mount` takes a raw path and is never exposed to a tool, so an agent addresses assets
 by id exactly as cooked data does, never by path. And **every engine-touching call runs at the
-render-thread pump point**, never on the network thread — so a request cannot race scene state.
+render-thread pump point**, never on the network thread — so a request cannot race scene state,
+unless a tool declares it touches none. That declaration
+([above](#a-tool-may-declare-it-runs-off-the-pump)) makes the guarantee **contractual rather
+than structural** for the tool that makes it: it is stated at the declaration site, checked at
+registration only for its shape, and no built-in tool makes it. A consumer's own off-pump tool
+is the party responsible for it, and the bounded two-in-flight gate is what keeps such a tool
+from turning the socket into a CPU denial of service.
 
 ## Reflection is the (de)serializer
 
@@ -331,8 +391,11 @@ client, not a DoS defense.
 `McpHost` (`Veng/Mcp/McpHost.h`) mirrors `VengModuleHost`: the references and provider closures
 the app fills so the built-in tools reach live state. The built-in tools capture the host by
 reference, so the host must **outlive the server** (the app owns both). Every accessor runs on
-the render thread during `Pump()`, so a closure may freely touch engine state. The fully
-assembled struct:
+the render thread during `Pump()`, so a closure may freely touch engine state — which holds
+because the host is reached only from the pumped path (every built-in tool, plus a declared
+`PumpedPrologue`). It is **out of reach of an off-pump handler**: reaching an accessor from one
+would touch engine state off the render thread, the thing that handler's contract forbids. The
+fully assembled struct:
 
 ```cpp
 struct McpHost
@@ -438,7 +501,13 @@ httplib stays PRIVATE and `veng-config` already carries `find_dependency(nlohman
 ## Tests
 
 - **`mcp_loopback`** — the headless loopback smoke: construct, pump, and drive the JSON-RPC
-  handshake (`initialize` / `tools/list` / `tools/call ping`).
+  handshake (`initialize` / `tools/list` / `tools/call ping`). It owns when `Pump()` runs, which
+  is what makes it the home of the **off-pump** cases too: a pumped tool resolving *at* the pump
+  and an off-pump tool resolving *without* one (a pumped call parked with the pump stopped, an
+  off-pump call answered over its head), the prologue running on the pumping thread with its
+  snapshot reaching a handler on another, a failing prologue reported with the handler never
+  run, the two-in-flight bound and the one-call-per-tool refusal, and `~McpServer` returning
+  promptly with a long off-pump handler mid-run.
 - **`mcp_world`** — the read-only world tools over a populated scene (`FieldsToJson`,
   pagination).
 - **`mcp_screenshot`** — `render.screenshot` (`gpu`-labelled: the viewport `Download` → PNG
@@ -454,7 +523,10 @@ httplib stays PRIVATE and `veng-config` already carries `find_dependency(nlohman
   `McpClient::ListTools` + `CallTool ping` + both failure paths (protocol error, tool `isError`).
 - **`mcp_cli`** — `RunClientCli` in-process against an in-process server: the arg grammar,
   `--list` / `--search`, `--json`, the `key=value` assembly, the exit-code map, and the
-  label-prefixed error lines — driven directly (bypassing any `main`).
+  label-prefixed error lines — driven directly (bypassing any `main`). It also pins `--timeout`
+  against an off-pump tool that runs **11 s**, past the client's 10 s default: the raised
+  timeout carries the result back, which is the case the flag exists for, and the test spends
+  those seconds deliberately.
 - **`mcp_include_hygiene`** — compiles every `Veng/Mcp/` public header (the client's
   `McpClient.h` / `McpClientInfo.h` / `McpClientCli.h` among them) linking only the PUBLIC deps,
   guarding the surface's httplib-free contract (nlohmann rides the transitive `veng::veng` edge,

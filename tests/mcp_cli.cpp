@@ -23,6 +23,10 @@
 //   - make_image (an image content-block tool)   -> without --output a usage error (exit 1, no
 //                                                  base64 to any sink); with --output the decoded
 //                                                  image bytes land in the file.
+//   - --timeout 60 slow_walk                     -> 0: an off-pump handler running 11 s, past the
+//                                                  client's 10 s default read timeout, returns its
+//                                                  result rather than a connection error.
+//   - --timeout with no value / a word / 0        -> 1 usage.
 //
 // Pure logic + loopback, no GPU, so it runs in the default band.
 
@@ -163,6 +167,30 @@ int main()
     };
     server->RegisterTool(std::move(image));
 
+    // An off-pump tool that outlives the client's 10 s default read timeout, so --timeout is
+    // the difference between reaching its result and giving up before it arrives. It polls
+    // its cancellation at the granularity the declaration site asks for, so a teardown while
+    // it runs would not wait for the remainder.
+    Mcp::McpTool slow;
+    slow.Name = "slow_walk";
+    slow.Description = "Runs off the pump for longer than the client's default timeout.";
+    slow.InputSchemaJson = R"({"type":"object"})";
+    slow.RunsOffPump = true;
+    slow.OffPumpHandler = [](const Mcp::McpOffPumpRequest& request) -> Result<string>
+    {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(11000);
+        while (std::chrono::steady_clock::now() < deadline)
+        {
+            if (request.IsCancelled())
+            {
+                return std::unexpected(std::string("cancelled"));
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        return Json{{"walked", true}}.dump();
+    };
+    server->RegisterTool(std::move(slow));
+
     const u16 port = server->GetPort();
     Check(port != 0, "GetPort resolved an ephemeral port");
     const std::string portStr = std::to_string(port);
@@ -283,6 +311,19 @@ int main()
         }
         std::remove(imagePath.c_str());
 
+        // --timeout raises the client's read window above its 10 s default, which is what an
+        // off-pump tool needs from a client: it is no longer bounded by the pump's 5 s busy
+        // span, so the client's own read is the only remaining ceiling. The handler runs for
+        // 11 s — past the default — and the raised timeout carries its result back.
+        const RunResult slowCall = Run({"--connect=" + portStr, "--timeout", "60", "slow_walk"});
+        Check(slowCall.Code == 0, "an 11 s off-pump tool exits 0 under a raised --timeout");
+        Check(slowCall.Err.empty(), "the raised-timeout call wrote nothing to err");
+        {
+            const Json payload = Json::parse(slowCall.Out, nullptr, false);
+            Check(payload.is_object() && payload.value("walked", false),
+                  "the off-pump result outlived the client's default read timeout");
+        }
+
         // Dead port: exit 2 within the timeout, connection line on err.
         const RunResult dead = Run({"--connect=1", "ping"});
         Check(dead.Code == 2, "dead port exited 2 (cannot reach)");
@@ -314,6 +355,17 @@ int main()
 
         const RunResult badPort = Run({"--connect=notaport", "--list"});
         Check(badPort.Code == 1, "a non-numeric --connect port is a usage error");
+
+        const RunResult timeoutNoValue = Run({"--connect=" + portStr, "--list", "--timeout"});
+        Check(timeoutNoValue.Code == 1, "--timeout with no value is a usage error");
+
+        const RunResult timeoutWord = Run({"--connect=" + portStr, "--list", "--timeout", "soon"});
+        Check(timeoutWord.Code == 1, "a non-numeric --timeout is a usage error");
+
+        // Zero is rejected rather than read as "wait forever" — the transport treats a zero
+        // timeout as immediate expiry, which is the opposite of what the flag is asked for.
+        const RunResult timeoutZero = Run({"--connect=" + portStr, "--list", "--timeout", "0"});
+        Check(timeoutZero.Code == 1, "--timeout 0 is a usage error");
     }
 
     done.store(true);

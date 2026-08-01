@@ -173,6 +173,43 @@ namespace Veng::Mcp
             return out;
         }
 
+        /// @brief The largest --timeout the client accepts, in seconds (a day).
+        ///
+        /// A bound, not a policy: it keeps a typo ("--timeout 100000000") from reading as a
+        /// request that never gives up, while leaving any real long-running tool room.
+        constexpr unsigned long MaxTimeoutSeconds = 86400;
+
+        /// @brief Parses a --timeout value into whole seconds.
+        ///
+        /// Digits only, at least one second and at most MaxTimeoutSeconds; anything else is
+        /// nullopt, which the caller reports as a usage error. Zero is rejected rather than
+        /// read as "no timeout" — the transport treats 0 as an immediate expiry.
+        optional<u32> ParseTimeoutSeconds(string_view text)
+        {
+            if (text.empty())
+            {
+                return std::nullopt;
+            }
+            unsigned long parsed = 0;
+            for (const char c : text)
+            {
+                if (std::isdigit(static_cast<unsigned char>(c)) == 0)
+                {
+                    return std::nullopt;
+                }
+                parsed = parsed * 10 + static_cast<unsigned long>(c - '0');
+                if (parsed > MaxTimeoutSeconds)
+                {
+                    return std::nullopt;
+                }
+            }
+            if (parsed == 0)
+            {
+                return std::nullopt;
+            }
+            return static_cast<u32>(parsed);
+        }
+
         /// @brief Lowercases an ASCII string for case-insensitive --search matching.
         string ToLowerAscii(string_view text)
         {
@@ -336,6 +373,7 @@ namespace Veng::Mcp
         optional<string> search;
         optional<string> outputPath;
         optional<string> jsonArgs;
+        optional<u32> timeoutSeconds;
         vector<std::pair<string, string>> keyValues;
 
         for (usize i = 0; i < args.size(); ++i)
@@ -375,6 +413,21 @@ namespace Veng::Mcp
                     return UsageError(err, label, "--output needs a file argument");
                 }
                 outputPath = args[++i];
+            }
+            else if (arg == "--timeout")
+            {
+                if (i + 1 >= args.size())
+                {
+                    return UsageError(err, label, "--timeout needs a seconds argument");
+                }
+                timeoutSeconds = ParseTimeoutSeconds(args[++i]);
+                if (!timeoutSeconds)
+                {
+                    return UsageError(
+                        err, label,
+                        fmt::format("--timeout takes a whole number of seconds from 1 to {}",
+                                    MaxTimeoutSeconds));
+                }
             }
             else if (arg == "--json")
             {
@@ -464,6 +517,10 @@ namespace Veng::Mcp
         Mcp::McpClientInfo info;
         info.Host = target->Host;
         info.Port = target->Port;
+        if (timeoutSeconds)
+        {
+            info.TimeoutSeconds = *timeoutSeconds;
+        }
 
         Result<Unique<McpClient>> client = McpClient::Create(info);
         if (!client)

@@ -6,7 +6,9 @@ one `McpServer`, hand it the systems you want reachable through an `McpHost`, an
 once per frame; the server runs a loopback MCP endpoint on a background thread and marshals
 every engine-touching request onto the render thread, so an agent can list and inspect
 entities, screenshot a viewport, read render stats, and — behind an explicit gate — mutate
-the world.
+the world. A tool of your own whose work touches no engine state can
+[declare that](#registering-your-own-tool-and-where-it-runs) and stop stalling the frame it is
+answering from.
 
 The library is not linked by `libveng` and adds no dependency to any app that does not ask
 for it. Link it explicitly and the whole of the wiring is: fill an `McpHost`, construct the
@@ -132,7 +134,66 @@ the socket.
   exactly as a real window event; leave it null and `input.send` reports injection unavailable.
 
 Every closure runs on the render thread during `Pump()`, so it may freely touch engine
-state.
+state. The host is reached only from there — by the built-in tools and by a pumped prologue —
+and never from an off-pump handler, which by contract touches no engine state at all.
+
+## Registering your own tool, and where it runs
+
+Fill an `McpTool` and hand it to `RegisterTool` before the first `Pump()` (the registry is
+immutable once the server is serving). By default the handler runs **on the render thread at
+the pump point**, which is what makes touching engine state legal:
+
+```cpp
+Mcp::McpTool tool;
+tool.Name = "mygame.score";
+tool.Description = "Reads the current score.";
+tool.InputSchemaJson = R"({"type":"object"})";
+tool.Handler = [this](string_view) -> Result<string> { return ReadScoreAsJson(); };
+m_McpServer->RegisterTool(std::move(tool));
+```
+
+**A handler whose work is a pure computation can leave the pump.** The pump is a single point
+in the frame, so a handler that runs for a second holds the frame open for a second — and it is
+bounded by a 5 s wait it gains nothing from (the caller gives up, the next pump runs the handler
+regardless, and the result lands where nobody is reading). A tool may declare that its work
+needs none of the render thread:
+
+```cpp
+Mcp::McpTool walk;
+walk.Name = "mygame.search";
+walk.Description = "Searches the loaded catalogue (runs off the pump).";
+walk.InputSchemaJson = R"({"type":"object","properties":{"radius":{"type":"number"}}})";
+walk.RunsOffPump = true;
+
+// Optional: a snapshot taken at the pump point, where reading engine state is safe.
+// Expected to be microseconds — it runs under the pumped path's ordinary timeout.
+walk.PumpedPrologue = [this]() -> Result<string> { return SnapshotOriginAsJson(); };
+
+// Runs on the network thread. Reads the arguments, the snapshot, and data it builds itself —
+// and NOTHING else. Polls IsCancelled so shutdown does not wait for the whole walk.
+walk.OffPumpHandler = [](const Mcp::McpOffPumpRequest& request) -> Result<string>
+{
+    return SearchFrom(request.Arguments, request.Snapshot, request.IsCancelled);
+};
+m_McpServer->RegisterTool(std::move(walk));
+```
+
+What you are accepting by setting the flag, in full:
+
+- **No engine state, at all.** Not the scene, the renderer, the asset manager, or anything else
+  the render thread owns — only the arguments, the snapshot, and what the handler builds. This
+  is a contract the server cannot check; getting it wrong is a data race that will present as an
+  unrelated intermittent somewhere else.
+- **Poll `IsCancelled` every few milliseconds and return promptly when it is set.** The server's
+  destructor sets it, and teardown waits for the handler either way — the poll is what makes
+  that wait short instead of the handler's whole remaining runtime.
+- **At most two off-pump handlers run at once, and never two for one tool.** A call over either
+  bound is refused with an `off-pump busy` error result rather than queued.
+- **The prologue is host-run, not handler-callable.** The handler cannot reach back to the pump
+  mid-flight, so the no-re-entrancy rule is unchanged.
+
+Everything that does not set the flag is unaffected: a tool that says nothing runs exactly where
+it always did.
 
 ## The tools an agent sees
 
@@ -203,8 +264,8 @@ the server's own "listening on `<ip>:<port>`" line.
 The grammar is identical on both front ends; only the program you invoke differs:
 
 ```sh
-veng-editor     --connect=<port|host:port> <tool-name> [key=value ...] [--json '<obj>'] [--raw] [--output <file>]
-<name>-launcher --connect=<port|host:port> --list [--search <query>]
+veng-editor     --connect=<port|host:port> <tool-name> [key=value ...] [--json '<obj>'] [--raw] [--output <file>] [--timeout <s>]
+<name>-launcher --connect=<port|host:port> --list [--search <query>] [--timeout <s>]
 ```
 
 - **`--connect=<port>`** targets `127.0.0.1:<port>` (the server's default loopback bind);
@@ -224,6 +285,11 @@ veng-editor     --connect=<port|host:port> <tool-name> [key=value ...] [--json '
   returns an image — **`render.screenshot`**, **`editor.screenshot_panel`** — **requires**
   `--output`: an image is never printed to stdout in any form, so calling such a tool without
   `--output` is a usage error (exit `1`).
+- **`--timeout <seconds>`** raises the client's connect/read timeout above its **10 s** default
+  (1 to 86400; anything else is a usage error). Valid in both modes. Reach for it when calling a
+  tool that declares it runs off the pump: such a tool is no longer bounded by the server's 5 s
+  pump window, so the client's read timeout becomes the limit, and a call that outlasts it fails
+  as a connection error (exit `2`) while the handler runs on to completion.
 
 ### The exit-code contract
 
@@ -321,6 +387,12 @@ model agent-reachable.
 - **No tool argument is a filesystem path.** Every engine reference crosses the wire as an
   opaque `AssetId`, matching the `AssetManager`'s own external contract — an agent addresses
   assets by id, never by path.
+- **A request cannot race scene state, unless a tool declares it touches none.** Every
+  engine-touching call runs at the render-thread pump point. The off-pump declaration makes that
+  guarantee contractual rather than structural for the one tool that makes it — no built-in tool
+  does, and a consumer that sets the flag owns the promise. The host still bounds such handlers
+  at two in flight, so an off-pump tool reached from a socket cannot become a CPU denial of
+  service against the app.
 
 Authentication, non-loopback exposure, and server→client streaming are out of scope of this
 transport.

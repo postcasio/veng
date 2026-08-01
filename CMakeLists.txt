@@ -1139,9 +1139,14 @@ if (VENG_BUILD_TESTS)
 
     # The loopback proof: an McpServer on Port 0 + a `ping` tool, a background pump
     # loop, and a real HTTP initialize -> tools/list -> tools/call round-trip from a
-    # client. It compiles the vendored httplib client into its own TU (exceptions on,
-    # like the rest of the suite) + nlohmann/json, so it needs no new dependency. Pure
-    # logic + loopback socket, no GPU, so it runs in the default band.
+    # client. Because the harness owns when Pump() runs, it also proves the off-pump
+    # declaration: a pumped tool resolving AT the pump and an off-pump tool resolving
+    # WITHOUT one, the pumped-prologue seam (including a prologue that fails), the
+    # two-in-flight bound and the one-call-per-tool refusal, and a destructor returning
+    # promptly with an off-pump handler mid-run. It compiles the vendored httplib client
+    # into its own TU (exceptions on, like the rest of the suite) + nlohmann/json, so it
+    # needs no new dependency. Pure logic + loopback socket, no GPU, so it runs in the
+    # default band.
     add_executable(veng_test_mcp_loopback tests/mcp_loopback.cpp)
     target_link_libraries(veng_test_mcp_loopback PRIVATE veng::mcp nlohmann_json::nlohmann_json)
     target_compile_definitions(veng_test_mcp_loopback PRIVATE JSON_NOEXCEPTION)
@@ -1235,7 +1240,9 @@ if (VENG_BUILD_TESTS)
     # pump it on a background thread, and drive RunClientCli with argument vectors and captured
     # ostringstream sinks — the arg grammar, the payload-to-stdout / error-to-stderr / exit-code
     # map, --list/--search, key=value JSON typing, --json, and the label-prefixed error lines.
-    # nlohmann here only asserts on the echoed payloads. Device-free, so it runs in the default band.
+    # It also drives --timeout against an off-pump tool that runs 11 s — past the client's 10 s
+    # default read timeout — so the test spends that long deliberately. nlohmann here only asserts
+    # on the echoed payloads. Device-free, so it runs in the default band.
     add_executable(veng_test_mcp_cli tests/mcp_cli.cpp)
     target_link_libraries(veng_test_mcp_cli PRIVATE veng::mcp veng::veng
             nlohmann_json::nlohmann_json)

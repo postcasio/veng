@@ -25,6 +25,10 @@ namespace Veng::Mcp
     /// - In tool mode, `key=value` pairs assemble the `arguments` object, each value parsed as
     ///   JSON with a string fallback; `--json '<object>'` supplies the object verbatim and is
     ///   mutually exclusive with any `key=value` (and must parse as a JSON object).
+    /// - `--timeout <seconds>` raises the client's connect/read timeout from its 10 s default
+    ///   (1 to 86400 seconds; anything else is a usage error). A tool that declares it runs
+    ///   off the pump can run for longer than that default, and without this flag the caller
+    ///   gives up before the result arrives. Valid in both tool and `--list` mode.
     /// - `--raw` prints the full `result` object instead of the concatenated text payload;
     ///   `--output <file>` writes an image content block (base64-decoded) to the given path,
     ///   overwriting it. A tool that returns an image content block (e.g. `render.screenshot`,

@@ -91,6 +91,12 @@ namespace Veng::Mcp
     /// owns both). Every accessor runs on the render thread during McpServer::Pump(), so a
     /// closure may freely touch engine state.
     ///
+    /// That holds because the host is reached only from the pumped path: the built-in tools
+    /// all run there, and so does an McpTool::PumpedPrologue. The host is **out of reach of
+    /// an off-pump handler** (McpTool::OffPumpHandler) — reaching an accessor from one would
+    /// touch engine state off the render thread, which is exactly what that handler's
+    /// contract forbids. What such a handler needs from the engine it takes in its prologue.
+    ///
     /// A game fills CurrentWorld with its managed world and Viewport with the primary
     /// viewport; the editor fills them from the active document's scene and its panel
     /// viewports. A null CurrentWorld() (no world loaded, a closed document) makes the world
