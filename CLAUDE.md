@@ -698,11 +698,11 @@ prefix** — `IsMouseDoubleClicked()`, `IsKeyPressed()`, not bare
 `MouseDoubleClicked()`/`KeyPressed()`. A value getter that is not a predicate takes
 no prefix beyond `Get` and reads as a plain noun where natural (`PopupMousePosition()`).
 
-### Comments — factual reasons, not planning history
+### Comments — factual reasons, not history
 
 A code comment states a fact about the code as it is *now*. It does not narrate
-how the code got here or what is planned for it. The roadmap lives outside this
-repo; git history records the evolution. Neither belongs in a comment.
+how the code got here or what is planned for it. Git history records the
+evolution; it does not belong in a comment.
 
 There are **two tiers** of comment, and the rules below apply to both:
 
@@ -713,9 +713,6 @@ There are **two tiers** of comment, and the rules below apply to both:
   the local *why* — never a restatement of what the next line does.
 
 **Forbidden in either tier:**
-- **Plan/planset citations.** No `(plan 09)`, `(planset-5/05)`, "see plans/…". The
-  reader of the code has no reason to care which plan landed it. Strip the
-  reference; keep whatever factual statement remains.
 - **Future-work / temporariness.** No "for now", "v1 only / later we will",
   "future work", "not yet supported". If a limitation is real, state it as a
   present-tense fact ("veng is single-threaded; no synchronization is provided")
@@ -758,9 +755,8 @@ ReconfigureScene`) rather than re-deriving it; or (c) inventories structure the 
 already shows. Keep the load-bearing why; drop the tour. (Doc comments on a public
 declaration are the exception: a full `@brief` plus contract is the goal there.)
 
-The test: if a sentence would still be true and useful to someone who has never
-seen the roadmap and does not care about the project's history, keep it.
-Otherwise cut it.
+The test: if a sentence would still be true and useful to someone who does not
+care about the project's history, keep it. Otherwise cut it.
 
 #### Doc comments are Doxygen, and the API is fully documented
 
@@ -890,15 +886,7 @@ deps PUBLIC and the backend libs PRIVATE.
 
 ## Working norms
 
-The **engine roadmap lives at the workspace root** — in `plans/`, a sibling of this repo,
-tracked by neither (it is kept out of the public engine tree; see the workspace `CLAUDE.md`).
-`plans/README.md` indexes the **plansets** (numbered coherent phases) and `plans/future/` (a
-vision/holding area). Each planset/future README carries the detail, decisions, and per-plan
-status column.
-
-**Plan work** — one planset per session, on the user's cue, dispatching its plans as
-appropriate (independent plans in parallel, dependent plans in sequence, derived from
-the plans' direction). Per plan:
+**Every unit of work lands the same way.** Per change:
 1. Implement it.
 2. Migrate **both** `examples/hello-triangle` (consumed **in-tree**) and
    `examples/template` (consumed **out-of-tree** via `find_package(veng)`) in the *same*
@@ -916,10 +904,8 @@ the plans' direction). Per plan:
    no golden; its conformance tests configure + build it standalone, run `template-launcher`
    under `TEMPLATE_SMOKE` and check both its exit status and what it logged, then probe
    `veng-editor --version`.
-4. Update the plan's status column in the roadmap (at the workspace root).
-5. Commit the code, one commit per plan in this repo, with a descriptive-sentence
-   subject (match `git log`) and a `Co-Authored-By` trailer. Roadmap-only edits — status
-   columns, planset drafts — live at the workspace root and are committed to neither repo.
+4. Commit the code, one commit per coherent change, with a descriptive-sentence
+   subject (match `git log`) and a `Co-Authored-By` trailer.
 
 **When a new `AssetId` is needed**, use a clearly-marked placeholder id while
 implementing — don't break flow to mint one mid-task. Once the build is working

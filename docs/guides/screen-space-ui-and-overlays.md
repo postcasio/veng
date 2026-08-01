@@ -26,7 +26,7 @@ stylesheet, and font are authored the same way) and is the screen-space companio
 
 ## The family: one discovery-and-drive pattern, three targets
 
-planset-52's `GuiSurface` established the pattern: a **reflected scene component** the
+`GuiSurface` established the pattern: a **reflected scene component** the
 **Viewport** discovers in the scene it renders (`world.View<GuiSurface>()`) and **drives**
 each frame. Two more components join it, all discovered the same way and differing only in
 where the engine drives them:
