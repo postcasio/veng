@@ -917,9 +917,9 @@ the plans' direction). Per plan:
    under `TEMPLATE_SMOKE` and check both its exit status and what it logged, then probe
    `veng-editor --version`.
 4. Update the plan's status column in the roadmap (at the workspace root).
-5. Commit the code, one commit per plan in this repo: `Plan NN: <summary>`, with a
-   `Co-Authored-By` trailer. Roadmap-only edits — status columns, planset drafts — live at
-   the workspace root and are committed to neither repo.
+5. Commit the code, one commit per plan in this repo, with a descriptive-sentence
+   subject (match `git log`) and a `Co-Authored-By` trailer. Roadmap-only edits — status
+   columns, planset drafts — live at the workspace root and are committed to neither repo.
 
 **When a new `AssetId` is needed**, use a clearly-marked placeholder id while
 implementing — don't break flow to mint one mid-task. Once the build is working
