@@ -13,7 +13,7 @@
 // PostProcess material, so only its fragment declares a push block.
 
 // The per-material block byte stride. Mirrors BindlessRegistry::MaterialParamStride, and moves only with it.
-static const uint MaterialParamStride = 512;
+static const uint MaterialParamStride = 1024;
 
 // The canonical per-frame view-constants block (set 0, binding 5): the sky reconstructs
 // the view ray from InvViewProj + CameraPosition and maps the sub-rect depth UV through it.

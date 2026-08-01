@@ -15,7 +15,7 @@
 // The per-material block byte stride. Mirrors BindlessRegistry::MaterialParamStride, and moves only with it; one stride is
 // shared across every material so a single ByteAddressBuffer holds a different per-shader
 // parameter layout, read at index * MaterialParamStride.
-static const uint MaterialParamStride = 512;
+static const uint MaterialParamStride = 1024;
 
 // The set-0 bindless arrays a UI fill reads: the sampled images + samplers, the byte-address
 // storage-buffer array, and the per-material param block. Mirrors the BindlessRegistry layout.

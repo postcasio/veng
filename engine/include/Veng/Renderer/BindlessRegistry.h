@@ -399,9 +399,9 @@ namespace Veng::Renderer
         /// from this table, so the budget a single scene appears to need is not the figure that has
         /// to fit. Exhausting it is a fatal assert rather than a soft failure, so the cap is set
         /// where a plausible multi-world consumer stays clear of it. It costs only the parameter
-        /// buffer it sizes (framesInFlight * MaxMaterials * MaterialParamStride, a few hundred
-        /// kilobytes of host-mapped storage); no descriptor array is indexed by it, and no shader
-        /// reads it — a draw is handed a slot index with the frame base already folded in.
+        /// buffer it sizes (framesInFlight * MaxMaterials * MaterialParamStride, half a megabyte
+        /// of host-mapped storage per frame-in-flight); no descriptor array is indexed by it, and
+        /// no shader reads it — a draw is handed a slot index with the frame base already folded in.
         static constexpr u32 MaxMaterials = 512;
 
         /// @brief The fixed cap on lights the deferred lighting pass loops per pixel.
@@ -436,18 +436,20 @@ namespace Veng::Renderer
         /// so a single ByteAddressBuffer can hold a different per-material block layout
         /// per shader, read at index * MaterialParamStride. A block exceeding this is a
         /// cook-time error, so the figure is what bounds how much a single material may
-        /// describe — thirty-two float4s. That bound is the whole reason the number is
+        /// describe — sixty-four float4s. That bound is the whole reason the number is
         /// generous: a block sitting within one aligned float4 of the ceiling turns every
         /// added field into a packing exercise, which is exactly what a shared stride
-        /// exists to spare an author. It costs framesInFlight * MaxMaterials * this, well
-        /// under a megabyte of host-mapped storage.
+        /// exists to spare an author, and it is the largest material classes — the ones
+        /// carrying a domain's full parameter surface — that press on it first. It costs
+        /// framesInFlight * MaxMaterials * this, half a megabyte of host-mapped storage
+        /// per frame-in-flight.
         ///
         /// **Mirrored on the shader side and in the cooker, all of which move together**:
         /// `MaterialParamStride` in Veng/surface.slang, Veng/postprocess.slang, Veng/sky.slang
         /// and Veng/guifill.slang (the four domain contract headers a material includes), and
         /// the cooker's own copy in Importers/MaterialImporter.cpp, which restates it so the
         /// cooker gains no renderer-header dependency.
-        static constexpr u32 MaterialParamStride = 512;
+        static constexpr u32 MaterialParamStride = 1024;
 
         /// @brief The fixed byte stride of one frame-in-flight's view-constants region in
         /// the ViewConstantsBinding ByteAddressBuffer.
