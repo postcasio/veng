@@ -1027,9 +1027,9 @@ three are worker-legal) and the job is **held** until they land. Only the set-0 
 **adopted** target is not the service's to allocate, so a job made entirely of them takes no hop and
 runs at the next pump; so does any job when no task system is attached, which is the device-free
 posture the unit and gpu fixtures run in. The hold is one flag on the queue record derived from
-*every* reason a job is not selectable (`Allocating || Probing`), so the allocation hold and the
-cache-probe hold **compose**: a cached job goes from one to the other without becoming selectable at
-the seam. `GeneratedTextureStats::Allocating` reports it beside `Probing`.
+*every* reason a job is not selectable (`Allocating || Probing || Restoring`), so the allocation
+hold and the cache-probe hold **compose**: a cached job goes from one to the other without becoming
+selectable at the seam. `GeneratedTextureStats::Allocating` reports it beside `Probing`.
 
 The **scheduling core is device-free**. `GeneratedTextureQueue` (`src/Renderer/GeneratedTextureQueue.h`,
 renderer-internal) holds the job records and the selection rule and knows nothing about images, so

@@ -84,14 +84,20 @@ namespace Veng::Renderer
 
     Task<void> Buffer::Upload(TaskSystem& tasks, const std::span<const u8> data, const u64 offset)
     {
+        // Copy the bytes since the span may not survive the call; the vector
+        // overload is the no-copy path for a caller that owns them.
+        return Upload(tasks, vector<u8>(data.begin(), data.end()), offset);
+    }
+
+    Task<void> Buffer::Upload(TaskSystem& tasks, vector<u8>&& data, const u64 offset)
+    {
         // HOST_VISIBLE | HOST_COHERENT: upload is a plain memcpy — no staging,
         // no GPU command, no timeline gate. Capture an owning Ref so the buffer
-        // survives until the job runs; copy the bytes since the span may not.
+        // survives until the job runs.
         Ref<Buffer> self = shared_from_this();
-        vector<u8> bytes(data.begin(), data.end());
 
-        return tasks.Submit([self = std::move(self), bytes = std::move(bytes), offset]
-                            { self->UploadSync(bytes, offset); });
+        return tasks.Submit([self = std::move(self), bytes = std::move(data), offset]
+                            { self->UploadSync(bytes, offset); }, m_Name);
     }
 
     void* Buffer::GetMappedData() const

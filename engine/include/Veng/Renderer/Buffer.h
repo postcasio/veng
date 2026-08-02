@@ -73,13 +73,26 @@ namespace Veng::Renderer
         /// A Buffer is always HOST_VISIBLE | HOST_COHERENT, so the upload is a plain memcpy
         /// with no staging, no GPU command, and no device wait — the job runs UploadSync
         /// off the main thread. The buffer is kept alive for the job's duration via
-        /// shared_from_this().
+        /// shared_from_this(). The span need not outlive the call, which forces a copy of
+        /// the bytes on the calling thread; a caller that owns its bytes should move them
+        /// through the vector overload instead.
         /// @param tasks  The task system to dispatch the upload job on.
         /// @param data   Bytes to write.
         /// @param offset Byte offset into the buffer (default 0).
         /// @return A Task that completes once the memcpy has run.
         [[nodiscard]] Task<void> Upload(TaskSystem& tasks, std::span<const u8> data,
                                         u64 offset = 0);
+
+        /// @brief Moves caller-owned bytes into a worker-thread upload, returning immediately.
+        ///
+        /// The overload for a caller that owns its bytes: the vector is moved into the job,
+        /// so no thread copies anything but the memcpy into the buffer itself. Semantics
+        /// otherwise match the span overload.
+        /// @param tasks  The task system to dispatch the upload job on.
+        /// @param data   Bytes to write; consumed by the call.
+        /// @param offset Byte offset into the buffer (default 0).
+        /// @return A Task that completes once the memcpy has run.
+        [[nodiscard]] Task<void> Upload(TaskSystem& tasks, vector<u8>&& data, u64 offset = 0);
 
         /// @brief Downloads the full buffer contents to the host, blocking until complete.
         /// @return A byte vector containing a snapshot of the buffer.

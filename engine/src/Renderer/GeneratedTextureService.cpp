@@ -421,16 +421,19 @@ namespace Veng::Renderer
             }
         }
 
-        auto staging = Buffer::Create(m_Context, {
-                                                     .Name = "GeneratedTextureRestore",
-                                                     .Size = layout->TexelBytes,
-                                                     .Usage = BufferUsage::TransferSrc,
-                                                     .HostMapped = true,
-                                                 });
+        // Sized for the whole payload: the header's few bytes ride along at the front so the
+        // vector uploads whole, and the copy regions simply start past them.
+        auto staging =
+            Buffer::Create(m_Context, {
+                                          .Name = "GeneratedTextureRestore",
+                                          .Size = layout->TexelOffset + layout->TexelBytes,
+                                          .Usage = BufferUsage::TransferSrc,
+                                          .HostMapped = true,
+                                      });
 
         PendingRestore restore{.Staging = staging};
         restore.TargetOffsets.reserve(layout->Shapes.size());
-        u64 offset = 0;
+        u64 offset = layout->TexelOffset;
         for (const GeneratedTextureBlobShape& shape : layout->Shapes)
         {
             restore.TargetOffsets.push_back(offset);
@@ -440,14 +443,9 @@ namespace Veng::Renderer
         job->Restoring = true;
         UpdateHold(*job);
 
-        // The host copy is the size of the whole target set, so it runs on a worker: the payload is
-        // moved onto it rather than copied, and the buffer is held until the memcpy has run.
-        const usize texelOffset = layout->TexelOffset;
-        const usize texelBytes = layout->TexelBytes;
-        Task<void> upload = GetWorkers()->Submit(
-            [staging = std::move(staging), bytes = std::move(*payload), texelOffset, texelBytes]
-            { staging->UploadSync(std::span<const u8>(bytes.data() + texelOffset, texelBytes)); },
-            "GeneratedTextureCacheRestore");
+        // The host copy is the size of the whole target set, so it runs on a worker: the payload
+        // is moved onto it rather than copied, and the buffer is held until the memcpy has run.
+        Task<void> upload = staging->Upload(*GetWorkers(), std::move(*payload));
         upload.Then([this, key, serial](Result<std::monostate>) { ResolveRestore(key, serial); });
     }
 
