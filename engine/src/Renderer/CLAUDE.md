@@ -1051,6 +1051,56 @@ any mip and any array layer (`CommandBuffer::CopyImageSubresourceToBuffer` is th
 device. `Image::Download` stays the synchronous sibling for tooling that genuinely wants the bytes
 now (a screenshot); nothing on a frame path should reach for it.
 
+## The fluid solver: advecting whatever it is handed
+
+`FluidSim` (`Veng/Renderer/FluidSim.h`) is a **2D stable-fluids solver over caller-supplied
+images**. It renders nothing, owns no meaning, and makes no aesthetic decisions: what a dye channel
+*is*, what the initial fields look like, and how many steps are worth running belong entirely to the
+caller, and the solver **never fills initial conditions**. The scheme is Jos Stam's, reimplemented
+from his published papers — the mathematics, not anyone's code.
+
+- **The fields are the caller's.** A velocity image (`RG16Sfloat` or `RG32Sfloat`, in grid cells per
+  unit of simulated time, its extent *is* the grid) plus up to `MaxFluidDyes` dye images
+  (`R16Sfloat` / `RG16Sfloat` / `RGBA16Sfloat`), optionally a relaxation target, a damping mask and
+  a per-row metric. The solver allocates only its own transients — one `RGBA32Sfloat` advection
+  scratch, a curl field, a divergence field, and two ping-ponged pressure images — at the caller's
+  resolution.
+- **One step, six-ish dispatches plus the Jacobi count.** Advect the velocity through itself; take
+  its curl; apply vorticity confinement, relaxation toward the target, and the damping mask; take
+  the divergence; run `JacobiIterations` (default `DefaultFluidJacobiIterations`, 20) pressure
+  relaxations from zero; subtract the gradient; then advect each dye through the projected velocity
+  with its own dissipation. `RecordStep(cmd)` records exactly that into whatever command buffer it
+  is handed, leaving every field in a sampled layout.
+- **Per-axis wrap and a per-row metric are the only geometry.** `FluidWrap::Periodic` folds a
+  coordinate around; `FluidWrap::Clamped` clamps it and has the projection zero the wall-normal
+  velocity at the outermost texels (free slip). The metric scales the x-derivative and the
+  x-advection step per row — a **stretch on the grid**, documented as nothing more; a caller reads
+  whatever it likes into rows being shorter here than there.
+- **Nothing rides bindless and nothing touches the render graph.** Every kernel binds its own set 1
+  and the solver records its own barriers, the `AtmospherePrecompute` pattern. A caller amortizing a
+  long spin-up wraps `RecordStep` in `GeneratedTextureService` ticks; **the solver holds no reference
+  to the service**, so the dependency points one way and the solver is equally usable with a bare
+  command buffer.
+
+**Why the force, gradient and store stages are shader families.** A storage image's format qualifier
+must match the image it writes, and those three stages write the *caller's* fields, so each has one
+variant per accepted format (`engine/assets/core/shaders/fluid/`, a body header plus a two-line
+per-format includer). Advection escapes that: it cannot run in place, so it writes the solver's own
+fixed-format scratch and a store pass — which also applies the dissipation — moves the result back
+out. That is why one advection kernel serves the velocity field and every dye.
+
+**Two properties the tests pin, and one they deliberately do not.** The solve restarts from zero
+pressure each step (iteration 0 reads no neighbours), so a step is a pure function of its inputs and
+`tests/gpu/fluid_sim.cpp`'s digest case runs the same configuration twice and gets the same bytes;
+that digest is **pinned on the reference host and re-pinned freely**, since cross-device bit-identity
+is not promised. The projection's residual has a floor that is **not** a convergence failure:
+divergence and the pressure gradient are two-texel-wide differences while the Jacobi stencil is the
+compact Laplacian, so a collocated grid keeps a `sin²(k/2)` share of each mode (~2.4 % on that
+case's seed) however many iterations run — a staggered grid is what removes it, and this solver is
+deliberately the collocated scheme. The device-free half of the configuration check
+(`src/Renderer/FluidSimShape.h`, the `FrameTopology` precedent) and the CPU reference for one
+advection tap are pinned in `tests/unit/fluid_sim_config.cpp` with no ICD.
+
 ## Pipeline cache
 
 `Context` owns a `vk::PipelineCache` created at device init and threaded into both the graphics

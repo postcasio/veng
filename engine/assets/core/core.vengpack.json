@@ -337,6 +337,61 @@
       "source": "shaders/atmosphere/atmosphere_sky.frag.shader.json"
     },
     {
+      "id": "0xCC8B143D733ED851",
+      "type": "Shader",
+      "source": "shaders/fluid/fluid_advect.comp.shader.json"
+    },
+    {
+      "id": "0x0FF6D4D6031B3A93",
+      "type": "Shader",
+      "source": "shaders/fluid/fluid_curl.comp.shader.json"
+    },
+    {
+      "id": "0x1EBD6BA0C390AD64",
+      "type": "Shader",
+      "source": "shaders/fluid/fluid_divergence.comp.shader.json"
+    },
+    {
+      "id": "0xDAB7BDBBC17B8EC0",
+      "type": "Shader",
+      "source": "shaders/fluid/fluid_jacobi.comp.shader.json"
+    },
+    {
+      "id": "0x8C2D87D6B86AB109",
+      "type": "Shader",
+      "source": "shaders/fluid/fluid_forces_rg16f.comp.shader.json"
+    },
+    {
+      "id": "0x3600119D4E791247",
+      "type": "Shader",
+      "source": "shaders/fluid/fluid_forces_rg32f.comp.shader.json"
+    },
+    {
+      "id": "0xB286EB1C8F507BC5",
+      "type": "Shader",
+      "source": "shaders/fluid/fluid_gradient_rg16f.comp.shader.json"
+    },
+    {
+      "id": "0x933684ECFE2EE090",
+      "type": "Shader",
+      "source": "shaders/fluid/fluid_gradient_rg32f.comp.shader.json"
+    },
+    {
+      "id": "0xBB5660E9FEB406EC",
+      "type": "Shader",
+      "source": "shaders/fluid/fluid_store_r16f.comp.shader.json"
+    },
+    {
+      "id": "0x95A5A51A78586C78",
+      "type": "Shader",
+      "source": "shaders/fluid/fluid_store_rg16f.comp.shader.json"
+    },
+    {
+      "id": "0x91261CFBF53859F5",
+      "type": "Shader",
+      "source": "shaders/fluid/fluid_store_rgba16f.comp.shader.json"
+    },
+    {
       "id": "0xA0C295968AB1FB31",
       "type": "Shader",
       "source": "shaders/debug_line.vert.shader.json"

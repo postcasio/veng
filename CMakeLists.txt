@@ -825,6 +825,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/hi_z_history.cpp
             tests/unit/frame_topology.cpp
             tests/unit/generated_texture_queue.cpp
+            tests/unit/fluid_sim_config.cpp
             tests/unit/draw_grouping.cpp
             tests/unit/draw_budget.cpp
             tests/unit/taa_jitter.cpp
@@ -1491,6 +1492,7 @@ if (VENG_BUILD_TESTS)
             tests/gpu/sh_consistency.cpp
             tests/gpu/environment_ibl.cpp
             tests/gpu/generated_texture.cpp
+            tests/gpu/fluid_sim.cpp
             tests/gpu/gui_surface.cpp
             # gui_editing_keys.cpp routes real KeyPressed events (Backspace/Delete/arrows/Home/End)
             # through InputRouter and the real GuiConsumer into a document attached to a live

@@ -1,0 +1,4 @@
+{
+  "source": "fluid_gradient_rg32f.comp.slang",
+  "entry": "csMain"
+}
