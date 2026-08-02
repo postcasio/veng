@@ -1,5 +1,7 @@
 #include <Veng/Renderer/CommandBuffer.h>
 
+#include <algorithm>
+
 #include <Veng/Assert.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/Backend/Barrier.h>
@@ -392,6 +394,31 @@ namespace Veng::Renderer
                             .y = static_cast<i32>(offset.y),
                             .z = 0},
             .imageExtent = {.width = extent.x, .height = extent.y, .depth = 1}};
+
+        m_Native->CommandBuffer.copyImageToBuffer(image->GetNative().Image,
+                                                  vk::ImageLayout::eTransferSrcOptimal,
+                                                  buffer->GetNative().Buffer, 1, &region);
+    }
+
+    void CommandBuffer::CopyImageSubresourceToBuffer(const Ref<Image>& image,
+                                                     const Ref<Buffer>& buffer, const u32 mipLevel,
+                                                     const u32 arrayLayer)
+    {
+        const uvec3 extent = image->GetExtent();
+        const u32 width = std::max(1u, extent.x >> mipLevel);
+        const u32 height = std::max(1u, extent.y >> mipLevel);
+        const u32 depth = std::max(1u, extent.z >> mipLevel);
+
+        const vk::BufferImageCopy region = {
+            .bufferOffset = 0,
+            .bufferRowLength = 0,
+            .bufferImageHeight = 0,
+            .imageSubresource = {.aspectMask = Utils::GetAspectFlags(ToVk(image->GetFormat())),
+                                 .mipLevel = mipLevel,
+                                 .baseArrayLayer = arrayLayer,
+                                 .layerCount = 1},
+            .imageOffset = {.x = 0, .y = 0, .z = 0},
+            .imageExtent = {.width = width, .height = height, .depth = depth}};
 
         m_Native->CommandBuffer.copyImageToBuffer(image->GetNative().Image,
                                                   vk::ImageLayout::eTransferSrcOptimal,

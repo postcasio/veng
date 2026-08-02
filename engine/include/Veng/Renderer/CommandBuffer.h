@@ -262,6 +262,18 @@ namespace Veng::Renderer
         void CopyImageRegionToBuffer(const Ref<Image>& image, const Ref<Buffer>& buffer,
                                      uvec2 offset, uvec2 extent);
 
+        /// @brief Copies one mip level of one array layer of an image into a buffer at byte 0.
+        ///
+        /// The whole level is copied, tightly packed, with the depth axis folded in so a Type3D
+        /// image's level spans all its z slices. CopyImageToBuffer is the mip-0, layer-0 case; this
+        /// is what a layered or mipped image's readback needs.
+        /// @param image      Transfer source; must be in TransferSrc layout.
+        /// @param buffer     Transfer destination; receives the level from byte 0.
+        /// @param mipLevel   The mip level to copy.
+        /// @param arrayLayer The array layer to copy.
+        void CopyImageSubresourceToBuffer(const Ref<Image>& image, const Ref<Buffer>& buffer,
+                                          u32 mipLevel, u32 arrayLayer);
+
         /// @brief Blits one image region into another.
         void BlitImage(const BlitImageInfo& info);
 

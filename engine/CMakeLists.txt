@@ -258,6 +258,9 @@ add_library(veng SHARED
         src/Renderer/VolumeMarch.cpp
         src/Renderer/Passes/VolumeScenePass.cpp
         src/Renderer/EnvironmentIbl.cpp
+        src/Renderer/AsyncReadback.cpp
+        src/Renderer/GeneratedTextureQueue.cpp
+        src/Renderer/GeneratedTextureService.cpp
         src/Renderer/RenderGraph.cpp
         src/Renderer/SceneCapture.cpp
         src/Renderer/CaptureSurface.cpp

@@ -49,13 +49,25 @@ namespace Veng::Renderer
             return {.BlockWidth = 4, .BlockHeight = 4, .Bytes = 8};
         case Format::R8Unorm:
             return {.BlockWidth = 1, .BlockHeight = 1, .Bytes = 1};
+        case Format::R16Sfloat:
+            return {.BlockWidth = 1, .BlockHeight = 1, .Bytes = 2};
         case Format::RGBA8Unorm:
         case Format::RGBA8Srgb:
         case Format::BGRA8Srgb:
         case Format::B10G11R11Ufloat:
+        case Format::A2B10G10R10Unorm:
+        case Format::RG16Sfloat:
+        case Format::R32Sfloat:
+        case Format::R32Uint:
             return {.BlockWidth = 1, .BlockHeight = 1, .Bytes = 4};
         case Format::RGBA16Sfloat:
+        case Format::RGBA16Uint:
+        case Format::RG32Sfloat:
             return {.BlockWidth = 1, .BlockHeight = 1, .Bytes = 8};
+        case Format::RGB32Sfloat:
+            return {.BlockWidth = 1, .BlockHeight = 1, .Bytes = 12};
+        case Format::RGBA32Sfloat:
+            return {.BlockWidth = 1, .BlockHeight = 1, .Bytes = 16};
         default:
             return {.BlockWidth = 1, .BlockHeight = 1, .Bytes = 0};
         }

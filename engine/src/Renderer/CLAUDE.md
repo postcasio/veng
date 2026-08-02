@@ -981,6 +981,76 @@ reflection's contrast), and **parallax correction**, whose math belongs to the c
 flag, and `CaptureSurface::OrientationSlot` the frame the faces were oriented in as a quaternion, so
 the material has the two inputs it cannot derive for itself.
 
+## Generated textures: compute something expensive once, then sample it
+
+`GeneratedTextureService` (`Veng/Renderer/GeneratedTextureService.h`) is the engine's answer to
+"fill a persistent texture with GPU work too expensive to pay per frame". It is **`Context`-owned**
+(`Context::GetGeneratedTextures()`) and **pumped once per frame from `BeginFrame`**, before any pass
+records, so a job's result is sampleable by the passes of the frame that finished it.
+
+A **job** is `{target images, tick count, tick callback, priority}`, keyed by a caller-chosen `u64`:
+
+- **A target is an `ImageInfo`** — any format, extent, **layer count and mip count**, or an already
+  created image to `Adopt`. So a 2D map, a 6-layer cube and a mip chain are all just targets. Each
+  declares the **`ProducerAccess`** its ticks write through (`StorageWrite` for compute,
+  `ColorAttachment` for a face render), which is also what decides the image usage the service ORs
+  in beside `Sampled`. `Bindless` registers the sampled view into set 0 and is legal only for a
+  single-layer 2D target — the array is strictly 2D; everything layered binds through the
+  consumer's own descriptor set, as the sky and IBL paths do.
+- **A tick is the amortization quantum.** The tick callback is
+  `void(CommandBuffer&, const GeneratedTextureTickContext&)` and may record compute dispatches,
+  raster passes, or both — the six face renders of a cube are six raster ticks, an octahedral
+  downsample chain is one tick per mip. `GeneratedTexture::GetView(mip, layer)` hands back the
+  subresource views a tick binds, created on first ask and cached; a view is a view, so the same
+  one serves as a storage image or as a color attachment.
+- **The service inserts the barriers around the ticks and nothing else.** Before each tick every
+  target is prepared for its `ProducerAccess` — the transition out of `Undefined` on the first tick,
+  a write-after-write barrier ordering tick N+1 behind tick N after that — and on the tick that
+  exhausts a job every target is transitioned to `Sample`, the completion fires, and the job becomes
+  queryable as **resident** (`IsResident` / `Find`, held until `Release`).
+- **Scheduling is priority-then-FIFO, re-evaluated per tick**, spending a tick budget per frame
+  (`SetTickBudget`, `UnlimitedTickBudget` for none). Raising a queued job's priority therefore
+  preempts a running one at the *next tick*, not the next job. Requests are **idempotent on the
+  key**, so re-requesting every frame while the result is still wanted is the intended usage;
+  `Cancel` tears an unfinished job down and simply releases its targets.
+
+**Nothing ever waits.** No immediate submits, no fences on the render thread, no job started outside
+the pump. A consumer whose approach outruns its bake gets "the result lands a moment later", never a
+hitch — it keeps drawing whatever it drew before. And the service makes **no policy decisions**:
+what to generate, when, at what resolution, and how long to hold it belong to the caller entirely.
+
+The **scheduling core is device-free**. `GeneratedTextureQueue` (`src/Renderer/GeneratedTextureQueue.h`,
+renderer-internal) holds the job records and the selection rule and knows nothing about images, so
+the whole policy surface — idempotent keys, priority ordering, budget accounting across mixed jobs —
+is pinned by `tests/unit/generated_texture_queue.cpp` against a mock tick recorder with no ICD, the
+`FrameTopology` / `DrawBudget` precedent. `tests/gpu/generated_texture.cpp` carries the GPU half.
+
+**It records around the render graph, not through it.** `TransientDesc` is 2D single-layer only and
+a compiled graph is static between `Rebuild`s, neither of which suits a per-frame-varying set of
+layered, mipped targets — so the service records into the frame command buffer with explicit
+barriers, exactly as `AtmospherePrecompute` already does, just budgeted. `AtmospherePrecompute`,
+`EnvironmentIbl`, `SkyCubemapBake` and the picking readback are four in-tree hand-rollings of its
+parts; they keep their current shapes, and are named here because they are what the API was shaped
+against rather than because anything migrates.
+
+### The frame-deferred readback
+
+`AsyncReadback` (`Veng/Renderer/AsyncReadback.h`, `Context::GetAsyncReadback()`) gets a finished
+image's bytes to the CPU without blocking: `Request` allocates a host-mapped staging buffer, the
+copy rides the frame's command buffer at the same pump point, and the completion is delivered on the
+main thread once `GetMaxFramesInFlight()` frames have passed — the point at which the staging
+frame's fence has provably been waited. It is the picking system's pattern
+(`PickingSystem::ServiceRequest` / `PollPickId`) promoted to a public utility, and it is usable with
+or without the service: it reads any image carrying `TransferSrc` plus a view-compatible usage, at
+any mip and any array layer (`CommandBuffer::CopyImageSubresourceToBuffer` is the copy underneath —
+`CopyImageToBuffer` is its mip-0, layer-0 case). The subresource is left prepared for
+`AsyncReadbackRequest::RestoreTo`, `Sample` by default, because a bindless-sampled image left in
+`TransferSrc` would be read in the wrong layout.
+
+**There is no wait path to call.** The class never submits, never waits a fence, and never idles the
+device. `Image::Download` stays the synchronous sibling for tooling that genuinely wants the bytes
+now (a screenshot); nothing on a frame path should reach for it.
+
 ## Pipeline cache
 
 `Context` owns a `vk::PipelineCache` created at device init and threaded into both the graphics

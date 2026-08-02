@@ -11,7 +11,9 @@
 #include <Veng/Renderer/Backend/Natives.h>
 #include <Veng/Renderer/Backend/TypeMapping.h>
 
+#include <Veng/Renderer/AsyncReadback.h>
 #include <Veng/Renderer/CommandBuffer.h>
+#include <Veng/Renderer/GeneratedTextureService.h>
 #include <Veng/Renderer/Native.h>
 #include <Veng/Task/TaskSystem.h>
 #include <Veng/Window.h>
@@ -323,6 +325,12 @@ namespace Veng::Renderer
 
         m_Native->Bindless = CreateUnique<BindlessRegistry>(*this);
 
+        // The two frame-amortized services. Both record into the frame's command buffer at the
+        // top of BeginFrame and hold engine resources, so they are constructed after the bindless
+        // registry they register into and dropped before it in ReleaseFrameResources.
+        m_GeneratedTextures = CreateUnique<GeneratedTextureService>(*this);
+        m_AsyncReadback = CreateUnique<AsyncReadback>(*this);
+
         // GPU frame timing: a (start, end) timestamp pair per frame-in-flight. Available only
         // when the graphics queue family reports valid timestamp bits and the device a non-zero
         // period; otherwise GetLastGpuFrameTimeMs() stays zero and BeginFrame/EndFrame skip the
@@ -362,6 +370,11 @@ namespace Veng::Renderer
         // The capture mirror retires like any owned image, so it must be dropped ahead of the
         // drain below rather than with Native, which outlives the Disposed tripwire.
         m_Native->PresentedFrameMirror.reset();
+
+        // Same for the frame-amortized services: their targets, views and staging buffers retire,
+        // and their bindless slots release, so both must go while the registry and bins are alive.
+        m_GeneratedTextures.reset();
+        m_AsyncReadback.reset();
 
         // The device is idle (~Context waited). Drain all retire bins before the
         // sync frames and their command buffers go away.
@@ -845,6 +858,12 @@ namespace Veng::Renderer
         }
         m_PendingBindlessAcquires.clear();
 
+        // Amortized generation and readback record here, at the top of the frame and ahead of
+        // every pass: a job's result is sampleable by the passes of the frame that finished it,
+        // and a readback staged now is delivered once this frame's fence has been waited again.
+        m_GeneratedTextures->Pump(*commandBuffer, m_GeneratedTextures->GetTickBudget());
+        m_AsyncReadback->Pump(*commandBuffer);
+
         return *commandBuffer;
     }
 
@@ -1064,6 +1083,16 @@ namespace Veng::Renderer
     BindlessRegistry& Context::GetBindlessRegistry() const
     {
         return *m_Native->Bindless;
+    }
+
+    GeneratedTextureService& Context::GetGeneratedTextures() const
+    {
+        return *m_GeneratedTextures;
+    }
+
+    AsyncReadback& Context::GetAsyncReadback() const
+    {
+        return *m_AsyncReadback;
     }
 
     void Context::EnqueueBindlessAcquire(const Ref<ImageView>& view)

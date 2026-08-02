@@ -18,8 +18,10 @@ namespace Veng
 
 namespace Veng::Renderer
 {
+    class AsyncReadback;
     class BindlessRegistry;
     class CommandBuffer;
+    class GeneratedTextureService;
     class Semaphore;
     class SynchronizationFrame;
     class TimelineSemaphore;
@@ -439,6 +441,20 @@ namespace Veng::Renderer
         /// Valid from the end of Initialize() until the context is destroyed. See BindlessRegistry.h.
         [[nodiscard]] BindlessRegistry& GetBindlessRegistry() const;
 
+        /// @brief Returns the generated-texture service: persistent textures filled across frames.
+        ///
+        /// Pumped once per frame by BeginFrame with the service's own tick budget, before any pass
+        /// records. Valid from the end of Initialize() until the context is torn down.
+        /// See GeneratedTextureService.h.
+        [[nodiscard]] GeneratedTextureService& GetGeneratedTextures() const;
+
+        /// @brief Returns the frame-deferred image readback pump.
+        ///
+        /// Pumped once per frame by BeginFrame, in the same window as the generated-texture
+        /// service. Valid from the end of Initialize() until the context is torn down.
+        /// See AsyncReadback.h.
+        [[nodiscard]] AsyncReadback& GetAsyncReadback() const;
+
         /// @brief Returns the render-domain viewport identity registry.
         ///
         /// The ViewportId -> Viewport map every Viewport mints into at Create and retires from at
@@ -535,6 +551,16 @@ namespace Veng::Renderer
         /// the whole Context lifetime and outlives every Viewport that mints into it, so a viewport
         /// retiring in its destructor always reaches a live registry.
         ViewportRegistry m_ViewportRegistry;
+
+        /// @brief The generated-texture service, created in Initialize and pumped by BeginFrame.
+        ///
+        /// It holds images, views and bindless slots, so it is dropped in ReleaseFrameResources
+        /// ahead of the retire drain rather than with the members, which outlive the Disposed
+        /// tripwire.
+        Unique<GeneratedTextureService> m_GeneratedTextures;
+
+        /// @brief The frame-deferred readback pump, created and released beside the service above.
+        Unique<AsyncReadback> m_AsyncReadback;
 
         /// @brief Backend Vulkan state (instance, device, queues, swapchain, sync frames).
         Unique<Native> m_Native;
