@@ -643,6 +643,29 @@ the default and catches more. Do not build both routinely.
   (`cmake/ValidationGate.cmake`; allowlist currently empty). The benign MoltenVK
   "buffer robustness" warning is logged at `WARN`, not `ERROR`, and is ignored.
 
+### Tests assert properties, not portraits
+
+A test's claim is a **property** the code must keep being true — monotone, conserved,
+ordered, bounded — never a portrait of the implementation as it stood the day a change
+landed. Four shapes are defects in a new test:
+
+- **A shadow implementation as the control**: reconstructing the previous algorithm (a
+  legacy path, a new term switched off) and asserting the new output's relationship to
+  it. That comparison is one-time acceptance evidence; distill it into an absolute bound
+  on the current output and let the shadow die.
+- **An acceptance sweep checked in as a unit case**: verify a change at full breadth
+  once, in the session; check in the cheapest test that would catch the property
+  breaking later (stratified cases, boundaries, coarse grids).
+- **Per-iteration asserts in a big loop**: accumulate extrema/counters and assert the
+  aggregate once; in-loop asserts are for small loops of genuinely distinct claims.
+- **"Nothing may change" as an implicit claim**: a deliberate, labelled change-detector
+  (a golden with a regeneration runbook, like `smoke_golden`) is fine; a lattice of
+  tight tolerances over a swept population that every legitimate improvement fails is a
+  pin wearing a property's clothes.
+
+The budget: a unit case runs in milliseconds, the heaviest earns a few seconds, nothing
+earns ten — the suite's cost is paid by every future change.
+
 ## Core conventions
 
 ### Error policy: no exceptions, ever
