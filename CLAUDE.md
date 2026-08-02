@@ -59,20 +59,39 @@ every module is written against; each module's architecture lives in its own `CL
 
 ```sh
 # Default build — VE_DEBUG=ON (Vulkan validation on). Configure once, then build.
-cmake -B build-debug -S . -DVE_DEBUG=ON
+cmake -B build-debug -S .
 cmake --build build-debug -j 4
 ctest --test-dir build-debug -j 4 --output-on-failure
 ```
 
-**`VE_DEBUG` selects the build type too.** With no explicit `CMAKE_BUILD_TYPE`, a
-`VE_DEBUG=ON` tree configures as **Debug** and a validation-OFF tree as **Release**, so
-the debug tree is genuinely unoptimized and debuggable rather than `-O3` wearing the
-name. `-g` is added to veng's own targets under `VE_DEBUG` regardless of type, so a
-tree pinned to Release still yields `file:line` backtraces out of `libveng`. The
-cooker's codec hot loops opt back into `-O2` under Debug, so a debug cook does not run
-its encoders unoptimized. Pass `-DCMAKE_BUILD_TYPE=…` to override. **An existing tree
-keeps whatever type its cache already holds** — a tree configured before this landed
-stays Release until it is deleted and configured afresh.
+**The canonical tree names carry their configuration, enforced at configure time.**
+When veng is the top-level project and the binary dir's basename is one of the four
+canonical names, `CMakeLists.txt` fixes the tree's settings from its name:
+
+| tree basename | build type | `VE_DEBUG` | `VE_PROFILE` | `VENG_ENABLE_COVERAGE` |
+|---|---|---|---|---|
+| `build` | Release | OFF | OFF | OFF |
+| `build-debug` | Debug | ON | OFF | OFF |
+| `build-debug-profiling` | Debug | ON | ON | OFF |
+| `build-coverage` | Debug | ON | OFF | ON |
+
+A variable unset in the cache is forced to the table's value — so the bare configure
+above yields the documented tree with no flags — and a value contradicting the table
+(a stale cache, or an explicit `-D`) is a **configure-time error**, never silently
+corrected: flipping any of these is a full rebuild and must be chosen by picking the
+right tree name, deleting the tree, or using a non-canonical name. Any other basename
+(worktree trees, CI dirs, scratch trees) is untouched and takes flags as usual.
+`VE_DEBUG` and `VE_PROFILE` are **independent knobs** — neither implies nor excludes
+the other; `build-debug-profiling` (validation *and* profiler) is the standing
+profiling tree, and `VE_PROFILE` defaults plain OFF everywhere.
+
+For a non-canonical tree name, `VE_DEBUG` still selects the build-type default: with
+no explicit `CMAKE_BUILD_TYPE`, a `VE_DEBUG=ON` tree configures as **Debug** and a
+validation-OFF tree as **Release**, so the debug tree is genuinely unoptimized and
+debuggable rather than `-O3` wearing the name. `-g` is added to veng's own targets
+under `VE_DEBUG` regardless of type, so a tree pinned to Release still yields
+`file:line` backtraces out of `libveng`. The cooker's codec hot loops opt back into
+`-O2` under Debug, so a debug cook does not run its encoders unoptimized.
 
 **Build and test the debug build only — do not build twice.** The `build-debug`
 tree above (`VE_DEBUG=ON`) is the one build an agent configures, builds, and tests

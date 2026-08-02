@@ -36,13 +36,19 @@ cmake --build build
 This produces the engine library (`libveng`), the asset cooker (`vengc`), the
 trace converter (`vengtrace`), and the sample application.
 
-To enable Vulkan validation layers while developing, configure a separate build
-directory with `-DVE_DEBUG=ON`:
+To enable Vulkan validation layers while developing, configure a separate
+`build-debug` tree — the name alone selects the configuration:
 
 ```sh
-cmake -B build-debug -S . -DVE_DEBUG=ON
+cmake -B build-debug -S .
 cmake --build build-debug
 ```
+
+The canonical tree names (`build`, `build-debug`, `build-debug-profiling`,
+`build-coverage`) carry their configuration: configuring one with no flags yields
+the documented settings, and a `-D` (or a stale cache) contradicting the name is a
+configure-time error rather than a silent flip. Any other directory name takes
+flags as usual.
 
 ---
 
@@ -53,7 +59,7 @@ The load-bearing configure-time options (pass `-D<NAME>=ON|OFF`):
 | Option | Default | Effect |
 |--------|---------|--------|
 | `VE_DEBUG` | `OFF` | Vulkan validation layers, asserts, `-Werror`; also selects a Debug build type. |
-| `VE_PROFILE` | ON under `VE_DEBUG`, else OFF | Compiles in the diagnostics profiler (scope timing, per-thread trace buffers). It is a `PUBLIC` compile definition on the `veng` target — owned by the engine and propagated to every consumer, **never set by a consumer**, since a consumer whose macro expansion disagrees with the engine it links is an ABI split. With it off, every `VE_PROFILE_*` macro expands to nothing and no event-recording or buffer code is built. |
+| `VE_PROFILE` | `OFF` | Compiles in the diagnostics profiler (scope timing, per-thread trace buffers). It is a `PUBLIC` compile definition on the `veng` target — owned by the engine and propagated to every consumer, **never set by a consumer**, since a consumer whose macro expansion disagrees with the engine it links is an ABI split. With it off, every `VE_PROFILE_*` macro expands to nothing and no event-recording or buffer code is built. |
 | `VENG_ENABLE_CLANG_TIDY` | `OFF` | Runs clang-tidy per-TU during the build. |
 | `VENG_ENABLE_COVERAGE` | `OFF` | Instruments veng's own sources for gcov. |
 | `VENG_TIME_TRACE` | `OFF` | Emits a clang `-ftime-trace` compile profile beside every object file, so the build's own cost is measurable. Turns the configure into a full cold build (the compiler cache is disabled) and lands gigabytes of JSON — see [Build-time tracing](#build-time-tracing). |

@@ -41,6 +41,83 @@ set(CMAKE_VISIBILITY_INLINES_HIDDEN OFF)
 # per-TU flags, whether or not the in-build linter (below) is enabled.
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# The four canonical build-tree names carry their configuration, enforced here so a tree's name
+# and its cache can never disagree. A drift between the two is invisible — the option lives in
+# CMakeCache.txt, nothing in a build's output says which way it went, and a validation-less
+# "build-debug" runs the validation gate proving nothing — so the name is made authoritative:
+#
+#   build                  Release  VE_DEBUG=OFF  VE_PROFILE=OFF  VENG_ENABLE_COVERAGE=OFF
+#   build-debug            Debug    VE_DEBUG=ON   VE_PROFILE=OFF  VENG_ENABLE_COVERAGE=OFF
+#   build-debug-profiling  Debug    VE_DEBUG=ON   VE_PROFILE=ON   VENG_ENABLE_COVERAGE=OFF
+#   build-coverage         Debug    VE_DEBUG=ON   VE_PROFILE=OFF  VENG_ENABLE_COVERAGE=ON
+#
+# A variable unset in the cache is forced to the table's value, so a bare `cmake -B build-debug`
+# yields the documented tree. A value already set and contradicting the table — a stale cache or
+# an explicit -D — is a hard error, never silently corrected: flipping any of these is a full
+# rebuild and must be chosen, not inherited. Any other basename (worktrees, CI dirs, scratch
+# trees) is untouched, and so is every subproject build. VE_DEBUG and VE_PROFILE are independent
+# knobs — neither implies nor excludes the other; the per-tree rows above are the whole policy.
+# Placed ahead of the VE_DEBUG declaration and the build-type default below, which the forced
+# values pre-empt for canonical names and which still serve every other tree.
+if (PROJECT_IS_TOP_LEVEL)
+    get_filename_component(VENG_TREE_NAME "${CMAKE_BINARY_DIR}" NAME)
+    set(VENG_TREE_CANONICAL TRUE)
+    if (VENG_TREE_NAME STREQUAL "build")
+        set(VENG_TREE_BUILD_TYPE Release)
+        set(VENG_TREE_VE_DEBUG OFF)
+        set(VENG_TREE_VE_PROFILE OFF)
+        set(VENG_TREE_VENG_ENABLE_COVERAGE OFF)
+    elseif (VENG_TREE_NAME STREQUAL "build-debug")
+        set(VENG_TREE_BUILD_TYPE Debug)
+        set(VENG_TREE_VE_DEBUG ON)
+        set(VENG_TREE_VE_PROFILE OFF)
+        set(VENG_TREE_VENG_ENABLE_COVERAGE OFF)
+    elseif (VENG_TREE_NAME STREQUAL "build-debug-profiling")
+        set(VENG_TREE_BUILD_TYPE Debug)
+        set(VENG_TREE_VE_DEBUG ON)
+        set(VENG_TREE_VE_PROFILE ON)
+        set(VENG_TREE_VENG_ENABLE_COVERAGE OFF)
+    elseif (VENG_TREE_NAME STREQUAL "build-coverage")
+        set(VENG_TREE_BUILD_TYPE Debug)
+        set(VENG_TREE_VE_DEBUG ON)
+        set(VENG_TREE_VE_PROFILE OFF)
+        set(VENG_TREE_VENG_ENABLE_COVERAGE ON)
+    else ()
+        set(VENG_TREE_CANONICAL FALSE)
+    endif ()
+    if (VENG_TREE_CANONICAL)
+        if (NOT CMAKE_BUILD_TYPE)
+            set(CMAKE_BUILD_TYPE "${VENG_TREE_BUILD_TYPE}" CACHE STRING "Build type" FORCE)
+            set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS Debug Release RelWithDebInfo MinSizeRel)
+        elseif (NOT CMAKE_BUILD_TYPE STREQUAL VENG_TREE_BUILD_TYPE)
+            message(FATAL_ERROR
+                    "the tree '${VENG_TREE_NAME}' means CMAKE_BUILD_TYPE=${VENG_TREE_BUILD_TYPE}, "
+                    "but this configure carries CMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}. The settings "
+                    "follow the tree's name; drop the flag, or delete the tree and reconfigure, or "
+                    "use a differently-named tree.")
+        endif ()
+        foreach (VENG_TREE_VAR VE_DEBUG VE_PROFILE VENG_ENABLE_COVERAGE)
+            if (NOT DEFINED ${VENG_TREE_VAR} AND NOT DEFINED CACHE{${VENG_TREE_VAR}})
+                set(${VENG_TREE_VAR} ${VENG_TREE_${VENG_TREE_VAR}} CACHE BOOL
+                        "Fixed by the canonical tree name ${VENG_TREE_NAME}" FORCE)
+            else ()
+                if (${VENG_TREE_VAR})
+                    set(VENG_TREE_ACTUAL ON)
+                else ()
+                    set(VENG_TREE_ACTUAL OFF)
+                endif ()
+                if (NOT VENG_TREE_ACTUAL STREQUAL VENG_TREE_${VENG_TREE_VAR})
+                    message(FATAL_ERROR
+                            "the tree '${VENG_TREE_NAME}' means ${VENG_TREE_VAR}=${VENG_TREE_${VENG_TREE_VAR}}, "
+                            "but this configure carries ${VENG_TREE_VAR}=${VENG_TREE_ACTUAL}. The settings "
+                            "follow the tree's name; drop the flag, or delete the tree and reconfigure, or "
+                            "use a differently-named tree.")
+                endif ()
+            endif ()
+        endforeach ()
+    endif ()
+endif ()
+
 # Declared here rather than beside the other options below because the build-type default
 # immediately after it keys off this value, and both have to be settled before the FetchContent
 # dependencies are configured.
@@ -69,7 +146,9 @@ if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif ()
 
 # VE_PROFILE compiles in the diagnostics profiler (scope timing, per-thread trace buffers). It
-# defaults ON under VE_DEBUG and OFF otherwise, matching the other debug-tier features, and is a
+# defaults OFF regardless of VE_DEBUG — the two are independent knobs, and profiling is chosen by
+# tree name (build-debug-profiling, via the canonical-tree table above) or by an explicit -D in a
+# non-canonical tree, never inherited from another setting. It is a
 # PUBLIC compile definition on the veng target (engine/CMakeLists.txt) — owned by the engine and
 # propagated to every consumer, never set by a consumer. A consumer whose macro expansion disagrees
 # with the engine it links is an ABI split over shared profiler state, which manifests as corruption
@@ -77,7 +156,7 @@ endif ()
 # cache options are VENG_*) is deliberate: it doubles as the compile definition consumers test in
 # their own sources, and consumer-visible definitions carry the VE_ prefix. Declared here, ahead of
 # the engine subdirectory that acts on it.
-option(VE_PROFILE "Compile in the diagnostics profiler (scope timing, trace buffers)" ${VE_DEBUG})
+option(VE_PROFILE "Compile in the diagnostics profiler (scope timing, trace buffers)" OFF)
 
 # VENG_TIME_TRACE adds clang's -ftime-trace to veng's own targets, so every translation unit
 # writes a Chrome-Trace profile of its own compilation beside its object file. Declared here,
