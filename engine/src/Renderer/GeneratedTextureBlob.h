@@ -47,6 +47,20 @@ namespace Veng::Renderer
         vector<u8> Texels;
     };
 
+    /// @brief A payload's header, read without copying the texels behind it.
+    ///
+    /// What a restore needs in order to decide whether the entry is usable and where its texels
+    /// begin, so a hit costs a header parse rather than a copy of the whole payload.
+    struct GeneratedTextureBlobLayout
+    {
+        /// @brief One shape per target, in the order the job declared them.
+        vector<GeneratedTextureBlobShape> Shapes;
+        /// @brief Byte offset of the first target's texels within the payload.
+        usize TexelOffset = 0;
+        /// @brief Bytes of texels the shapes account for, which is the rest of the payload.
+        usize TexelBytes = 0;
+    };
+
     /// @brief Bytes one array layer of one mip level of a shape occupies.
     /// @param shape     The image shape.
     /// @param mipLevel  The mip level.
@@ -66,6 +80,17 @@ namespace Veng::Renderer
     [[nodiscard]] usize GeneratedTextureMipOffset(const GeneratedTextureBlobShape& shape,
                                                   u32 mipLevel);
 
+    /// @brief Begins a payload: the header for @p shapes, in a buffer sized for the texels too.
+    ///
+    /// The returned buffer holds the header and has capacity reserved for @p texelBytes more, so a
+    /// caller appends the texels straight onto it and the payload is assembled with one copy of
+    /// them rather than two.
+    /// @param shapes      One shape per target, in the order the job declared them.
+    /// @param texelBytes  Bytes of texels that will follow; must equal what the shapes describe.
+    /// @return The header bytes, or an empty buffer when the shapes and the byte count disagree.
+    [[nodiscard]] vector<u8>
+    BeginGeneratedTextureBlob(const vector<GeneratedTextureBlobShape>& shapes, usize texelBytes);
+
     /// @brief Encodes shapes and texels into one cache payload.
     ///
     /// Returns an empty buffer when the texels do not add up to what the shapes describe, so a
@@ -75,10 +100,19 @@ namespace Veng::Renderer
     /// @return The payload bytes, or an empty buffer when the blob is inconsistent.
     [[nodiscard]] vector<u8> EncodeGeneratedTextureBlob(const GeneratedTextureBlob& blob);
 
+    /// @brief Reads a cache payload's header, leaving its texels where they are.
+    ///
+    /// Every length is checked against what remains, so a truncated or foreign payload reads as
+    /// nullopt rather than past its end.
+    /// @param payload  The bytes a cache read returned.
+    /// @return The shapes and where their texels begin, or nullopt when the payload is not one.
+    [[nodiscard]] optional<GeneratedTextureBlobLayout>
+    ReadGeneratedTextureBlobHeader(std::span<const u8> payload);
+
     /// @brief Decodes a cache payload back into shapes and texels.
     ///
-    /// Every length is checked against what remains, so a truncated or foreign payload decodes to
-    /// nullopt rather than reading past its end.
+    /// The copying sibling of ReadGeneratedTextureBlobHeader, for a caller that wants the texels
+    /// as a vector rather than in place.
     /// @param payload  The bytes a cache read returned.
     /// @return The decoded blob, or nullopt when the payload is not one.
     [[nodiscard]] optional<GeneratedTextureBlob>

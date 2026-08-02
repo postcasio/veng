@@ -382,6 +382,29 @@ namespace Veng::Renderer
             Ref<Buffer> Staging;
             /// @brief Byte offset of each target's levels within the staging buffer.
             vector<u64> TargetOffsets;
+            /// @brief Whether the worker copying the payload into the buffer has finished.
+            bool Staged = false;
+        };
+
+        /// @brief A completed job's texels, read back into one buffer and waiting to be written out.
+        ///
+        /// It holds no reference to the job, so releasing a result while its levels are still in
+        /// flight neither strands the store nor dangles: the result was computed, and it is stored.
+        struct PendingStore
+        {
+            /// @brief The key the payload is stored under.
+            string CacheKey;
+            /// @brief The images read back, in the order the job declared them.
+            ///
+            /// Held rather than their shapes because a shape is a renderer-internal type, and an
+            /// image's shape is immutable, so re-deriving it when the levels land is free.
+            vector<Ref<Image>> Images;
+            /// @brief The host-mapped buffer every target's levels are copied into.
+            Ref<Buffer> Staging;
+            /// @brief Texel bytes across every target, which is the buffer's size.
+            usize Bytes = 0;
+            /// @brief The pump the copies were recorded into.
+            u64 StagedPump = 0;
         };
 
         /// @brief A job's GPU half: the targets it fills and the callbacks that fill and finish it.
@@ -406,7 +429,9 @@ namespace Veng::Renderer
             bool Allocating = false;
             /// @brief Whether a probe of the cache is in flight.
             bool Probing = false;
-            /// @brief A hit's staged texels, applied by the next pump.
+            /// @brief Whether a hit's texels are still being copied into their staging buffer.
+            bool Restoring = false;
+            /// @brief A hit's staged texels, applied by the pump once they are staged.
             optional<PendingRestore> Restore;
         };
 
@@ -429,9 +454,9 @@ namespace Veng::Renderer
 
         /// @brief Holds a job for as long as anything it is waiting on is still outstanding.
         ///
-        /// One flag on the queue record carries every reason a job is not selectable, so the
-        /// reasons compose: a job whose targets are still being created and which then probes the
-        /// cache is never briefly selectable at the seam between the two.
+        /// One flag on the queue record carries every reason a job is not selectable — its targets
+        /// still being created, a cache probe in flight, a hit's texels still being staged — so the
+        /// reasons compose and a job is never briefly selectable at the seam between two of them.
         /// @param job The job whose hold to re-derive.
         void UpdateHold(const Job& job);
 
@@ -461,9 +486,18 @@ namespace Veng::Renderer
         /// @param payload  The stored payload, or nullopt on a miss.
         void ResolveProbe(GeneratedTextureKey key, u64 serial, optional<vector<u8>> payload);
 
-        /// @brief Reads a completed job's targets back and stores them under its cache key.
+        /// @brief Marks a hit's staging buffer filled, so the next pump copies it into the targets.
+        /// @param key     The restoring job's key.
+        /// @param serial  The restoring job's serial; a mismatch drops the answer.
+        void ResolveRestore(GeneratedTextureKey key, u64 serial);
+
+        /// @brief Records a completed job's targets into one staging buffer for a later store.
+        /// @param cmd The frame's command buffer the copies are recorded into.
         /// @param job The job whose targets are filled.
-        void SubmitStore(const Job& job);
+        void SubmitStore(CommandBuffer& cmd, const Job& job);
+
+        /// @brief Hands every readable staged store to a worker that encodes and writes it.
+        void FlushStores();
 
         /// @brief Copies every staged restore into its targets and marks those jobs resident.
         /// @param cmd       The frame's command buffer the copies are recorded into.
@@ -479,6 +513,10 @@ namespace Veng::Renderer
         /// Held by pointer so a job's address survives another being added or dropped — a
         /// completion may request the next job, and the tick loop re-finds by key around it.
         vector<Unique<Job>> m_Jobs;
+        /// @brief Completed jobs' texels on their way to the cache, in staging order.
+        vector<PendingStore> m_Stores;
+        /// @brief Pumps run so far; a store's copies are readable framesInFlight pumps after theirs.
+        u64 m_PumpCount = 0;
         /// @brief Ticks the pump may spend per frame.
         u32 m_TickBudget = DefaultTickBudget;
         /// @brief Ticks the most recent pump spent.

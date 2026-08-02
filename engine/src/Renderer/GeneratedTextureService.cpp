@@ -7,7 +7,6 @@
 #include <Veng/Assert.h>
 #include <Veng/Log.h>
 #include <Veng/Persistence/DerivedDataCache.h>
-#include <Veng/Renderer/AsyncReadback.h>
 #include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
@@ -100,10 +99,11 @@ namespace Veng::Renderer
             return true;
         }
 
-        // The per-mip copy regions restoring one target from a staging buffer, all layers of a mip
-        // at once — the layout the levels were stored in and the one CopyBufferToImage expects.
-        vector<BufferImageCopyRegion> RestoreRegions(const GeneratedTextureBlobShape& shape,
-                                                     const u64 baseOffset)
+        // The per-mip copy regions joining one target and a staging buffer, all layers of a mip at
+        // once — the layout the levels are stored in and the one the copies in both directions
+        // expect.
+        vector<BufferImageCopyRegion> LevelRegions(const GeneratedTextureBlobShape& shape,
+                                                   const u64 baseOffset)
         {
             vector<BufferImageCopyRegion> regions;
             regions.reserve(shape.MipLevels);
@@ -125,17 +125,6 @@ namespace Veng::Renderer
         struct TargetBatch
         {
             vector<Unique<GeneratedTexture>> Targets;
-        };
-
-        // The shared state a job's readbacks accumulate into. It holds no reference to the job, so
-        // releasing a completed job while its levels are still arriving neither strands the store
-        // nor dangles: the result was computed, and it is stored.
-        struct StoreCollector
-        {
-            string CacheKey;
-            GeneratedTextureBlob Blob;
-            u32 Outstanding = 0;
-            bool Failed = false;
         };
     }
 
@@ -295,7 +284,7 @@ namespace Veng::Renderer
 
     void GeneratedTextureService::UpdateHold(const Job& job)
     {
-        m_Queue->SetHeld(job.Key, job.Allocating || job.Probing);
+        m_Queue->SetHeld(job.Key, job.Allocating || job.Probing || job.Restoring);
     }
 
     void GeneratedTextureService::SubmitAllocation(Job& job,
@@ -414,15 +403,18 @@ namespace Veng::Renderer
             return;
         }
 
-        const optional<GeneratedTextureBlob> blob = DecodeGeneratedTextureBlob(*payload);
-        if (!blob.has_value() || blob->Shapes.size() != job->Targets.size())
+        // Only the header is read here: the texels stay in the payload until a worker copies them
+        // into the staging buffer, so a hit costs the frame thread a parse rather than the payload.
+        const optional<GeneratedTextureBlobLayout> layout =
+            ReadGeneratedTextureBlobHeader(*payload);
+        if (!layout.has_value() || layout->Shapes.size() != job->Targets.size())
         {
             miss();
             return;
         }
         for (usize i = 0; i < job->Targets.size(); i++)
         {
-            if (blob->Shapes[i] != ShapeOf(*job->Targets[i]->GetImage()))
+            if (layout->Shapes[i] != ShapeOf(*job->Targets[i]->GetImage()))
             {
                 miss();
                 return;
@@ -431,21 +423,45 @@ namespace Veng::Renderer
 
         auto staging = Buffer::Create(m_Context, {
                                                      .Name = "GeneratedTextureRestore",
-                                                     .Size = blob->Texels.size(),
+                                                     .Size = layout->TexelBytes,
                                                      .Usage = BufferUsage::TransferSrc,
                                                      .HostMapped = true,
                                                  });
-        staging->UploadSync(blob->Texels);
 
-        PendingRestore restore{.Staging = std::move(staging)};
-        restore.TargetOffsets.reserve(blob->Shapes.size());
+        PendingRestore restore{.Staging = staging};
+        restore.TargetOffsets.reserve(layout->Shapes.size());
         u64 offset = 0;
-        for (const GeneratedTextureBlobShape& shape : blob->Shapes)
+        for (const GeneratedTextureBlobShape& shape : layout->Shapes)
         {
             restore.TargetOffsets.push_back(offset);
             offset += GeneratedTextureShapeBytes(shape);
         }
         job->Restore = std::move(restore);
+        job->Restoring = true;
+        UpdateHold(*job);
+
+        // The host copy is the size of the whole target set, so it runs on a worker: the payload is
+        // moved onto it rather than copied, and the buffer is held until the memcpy has run.
+        const usize texelOffset = layout->TexelOffset;
+        const usize texelBytes = layout->TexelBytes;
+        Task<void> upload = GetWorkers()->Submit(
+            [staging = std::move(staging), bytes = std::move(*payload), texelOffset, texelBytes]
+            { staging->UploadSync(std::span<const u8>(bytes.data() + texelOffset, texelBytes)); },
+            "GeneratedTextureCacheRestore");
+        upload.Then([this, key, serial](Result<std::monostate>) { ResolveRestore(key, serial); });
+    }
+
+    void GeneratedTextureService::ResolveRestore(const GeneratedTextureKey key, const u64 serial)
+    {
+        Job* job = FindJob(key);
+        if (job == nullptr || job->Serial != serial || !job->Restoring)
+        {
+            return;
+        }
+        // The hold is deliberately not re-derived: the job's ticks would overwrite the texels the
+        // next pump is about to copy in, so it stays unselectable right through to resident.
+        job->Restoring = false;
+        job->Restore->Staged = true;
     }
 
     void GeneratedTextureService::ApplyRestores(CommandBuffer& cmd,
@@ -453,7 +469,7 @@ namespace Veng::Renderer
     {
         for (const Unique<Job>& job : m_Jobs)
         {
-            if (!job->Restore.has_value())
+            if (!job->Restore.has_value() || !job->Restore->Staged)
             {
                 continue;
             }
@@ -461,7 +477,7 @@ namespace Veng::Renderer
             {
                 const GeneratedTexture& target = *job->Targets[i];
                 const vector<BufferImageCopyRegion> regions =
-                    RestoreRegions(ShapeOf(*target.GetImage()), job->Restore->TargetOffsets[i]);
+                    LevelRegions(ShapeOf(*target.GetImage()), job->Restore->TargetOffsets[i]);
                 cmd.PrepareForAccess(target.GetSampledView(), AccessKind::TransferDst);
                 cmd.CopyBufferToImage(job->Restore->Staging, target.GetImage(), regions);
                 cmd.PrepareForAccess(target.GetSampledView(), AccessKind::Sample);
@@ -478,79 +494,108 @@ namespace Veng::Renderer
         }
     }
 
-    void GeneratedTextureService::SubmitStore(const Job& job)
+    void GeneratedTextureService::SubmitStore(CommandBuffer& cmd, const Job& job)
     {
-        auto collector = CreateRef<StoreCollector>();
-        collector->CacheKey = job.CacheKey;
-        collector->Blob.Shapes.reserve(job.Targets.size());
-
         usize total = 0;
         for (const Unique<GeneratedTexture>& target : job.Targets)
         {
-            const GeneratedTextureBlobShape shape = ShapeOf(*target->GetImage());
-            collector->Blob.Shapes.push_back(shape);
-            total += GeneratedTextureShapeBytes(shape);
+            total += GeneratedTextureShapeBytes(ShapeOf(*target->GetImage()));
         }
-        collector->Blob.Texels.resize(total);
+        if (total == 0)
+        {
+            return;
+        }
 
-        AsyncReadback& readback = m_Context.GetAsyncReadback();
-        usize base = 0;
+        // One buffer for the whole target set, not one per subresource: the levels of a target are
+        // contiguous within it, which is the layout a per-mip all-layers copy already writes.
+        PendingStore store{
+            .CacheKey = job.CacheKey,
+            .Staging = Buffer::Create(m_Context,
+                                      {
+                                          .Name = fmt::format("{} (Cache)", job.CacheKey),
+                                          .Size = total,
+                                          .Usage = BufferUsage::TransferDst,
+                                          .HostMapped = true,
+                                      }),
+            .Bytes = total,
+            .StagedPump = m_PumpCount,
+        };
+        store.Images.reserve(job.Targets.size());
+
+        u64 base = 0;
         for (const Unique<GeneratedTexture>& target : job.Targets)
         {
             const GeneratedTextureBlobShape shape = ShapeOf(*target->GetImage());
-            for (u32 mip = 0; mip < shape.MipLevels; mip++)
-            {
-                const usize layerBytes = GeneratedTextureLayerBytes(shape, mip);
-                for (u32 layer = 0; layer < shape.Layers; layer++)
-                {
-                    const usize destination = base + GeneratedTextureMipOffset(shape, mip) +
-                                              (static_cast<usize>(layer) * layerBytes);
-                    collector->Outstanding++;
-                    const AsyncReadbackHandle handle = readback.Request({
-                        .Name = fmt::format("{} (Cache)", target->GetImage()->GetName()),
-                        .Image = target->GetImage(),
-                        .MipLevel = mip,
-                        .ArrayLayer = layer,
-                        .RestoreTo = AccessKind::Sample,
-                        .OnComplete =
-                            [this, collector, destination, layerBytes](std::span<const u8> bytes)
-                        {
-                            if (bytes.size() == layerBytes)
-                            {
-                                std::ranges::copy(bytes, collector->Blob.Texels.begin() +
-                                                             static_cast<isize>(destination));
-                            }
-                            else
-                            {
-                                collector->Failed = true;
-                            }
-                            collector->Outstanding--;
-                            if (collector->Outstanding > 0 || collector->Failed)
-                            {
-                                return;
-                            }
-
-                            vector<u8> encoded = EncodeGeneratedTextureBlob(collector->Blob);
-                            if (encoded.empty() || m_Cache == nullptr || m_Tasks == nullptr)
-                            {
-                                return;
-                            }
-                            m_StoredTotal++;
-                            DerivedDataCache* cache = m_Cache;
-                            m_Tasks->Submit([cache, storeKey = collector->CacheKey,
-                                             encoded = std::move(encoded)]
-                                            { cache->Store(storeKey, encoded); },
-                                            "GeneratedTextureCacheStore");
-                        },
-                    });
-                    if (!handle.IsValid())
-                    {
-                        collector->Failed = true;
-                        collector->Outstanding--;
-                    }
-                }
-            }
+            const vector<BufferImageCopyRegion> regions = LevelRegions(shape, base);
+            cmd.PrepareForAccess(target->GetSampledView(), AccessKind::TransferSrc);
+            cmd.CopyImageToBuffer(target->GetImage(), store.Staging, regions);
+            cmd.PrepareForAccess(target->GetSampledView(), AccessKind::Sample);
+            store.Images.push_back(target->GetImage());
             base += GeneratedTextureShapeBytes(shape);
+        }
+
+        m_Stores.push_back(std::move(store));
+    }
+
+    void GeneratedTextureService::FlushStores()
+    {
+        if (m_Stores.empty())
+        {
+            return;
+        }
+
+        // A copy recorded framesInFlight pumps ago rode a frame whose fence AcquireNextFrame has
+        // since waited, so the mapped bytes are the finished GPU result.
+        const u64 latency = m_Context.GetMaxFramesInFlight();
+        vector<PendingStore> ready;
+        vector<PendingStore> waiting;
+        waiting.reserve(m_Stores.size());
+        for (PendingStore& store : m_Stores)
+        {
+            if (m_PumpCount - store.StagedPump >= latency)
+            {
+                ready.push_back(std::move(store));
+            }
+            else
+            {
+                waiting.push_back(std::move(store));
+            }
+        }
+        m_Stores = std::move(waiting);
+
+        for (PendingStore& store : ready)
+        {
+            if (m_Cache == nullptr || m_Tasks == nullptr)
+            {
+                continue;
+            }
+
+            vector<GeneratedTextureBlobShape> shapes;
+            shapes.reserve(store.Images.size());
+            for (const Ref<Image>& image : store.Images)
+            {
+                shapes.push_back(ShapeOf(*image));
+            }
+
+            m_StoredTotal++;
+            DerivedDataCache* cache = m_Cache;
+            // The encode is a pure byte transform over a payload the size of the target set, so it
+            // runs beside the file write rather than on the frame thread. Holding the buffer is
+            // what keeps the mapping alive until the worker has read it.
+            m_Tasks->Submit(
+                [cache, storeKey = std::move(store.CacheKey), shapes = std::move(shapes),
+                 staging = std::move(store.Staging), bytes = store.Bytes]
+                {
+                    vector<u8> payload = BeginGeneratedTextureBlob(shapes, bytes);
+                    if (payload.empty())
+                    {
+                        return;
+                    }
+                    const auto* mapped = static_cast<const u8*>(staging->GetMappedData());
+                    payload.insert(payload.end(), mapped, mapped + bytes);
+                    cache->Store(storeKey, payload);
+                },
+                "GeneratedTextureCacheStore");
         }
     }
 
@@ -676,6 +721,12 @@ namespace Veng::Renderer
     void GeneratedTextureService::Pump(CommandBuffer& cmd, const u32 budget)
     {
         m_TicksLastPump = 0;
+        m_PumpCount++;
+
+        // Ahead of the early-out: a store outlives the job it read, so a set of jobs that have all
+        // gone resident still has bytes to hand over.
+        FlushStores();
+
         if (m_Queue->GetPendingCount() == 0)
         {
             return;
@@ -736,7 +787,7 @@ namespace Veng::Renderer
             }
             if (!job->CacheKey.empty() && m_Cache != nullptr && m_Tasks != nullptr)
             {
-                SubmitStore(*job);
+                SubmitStore(cmd, *job);
             }
             if (!job->OnComplete)
             {

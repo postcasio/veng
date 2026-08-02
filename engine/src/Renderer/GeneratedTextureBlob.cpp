@@ -18,6 +18,13 @@ namespace Veng::Renderer
         // A shape count past this is a corrupt header, not a job: a job's targets are a handful.
         constexpr u32 MaxShapes = 64;
 
+        // Bytes the header occupies: the magic, the version, the shape count, and seven u32 fields
+        // per shape.
+        usize HeaderBytes(const usize shapeCount)
+        {
+            return BlobMagic.size() + (2 * sizeof(u32)) + (shapeCount * 7 * sizeof(u32));
+        }
+
         template <typename T>
         void Put(vector<u8>& out, const T value)
         {
@@ -91,10 +98,11 @@ namespace Veng::Renderer
         return offset;
     }
 
-    vector<u8> EncodeGeneratedTextureBlob(const GeneratedTextureBlob& blob)
+    vector<u8> BeginGeneratedTextureBlob(const vector<GeneratedTextureBlobShape>& shapes,
+                                         const usize texelBytes)
     {
         usize expected = 0;
-        for (const GeneratedTextureBlobShape& shape : blob.Shapes)
+        for (const GeneratedTextureBlobShape& shape : shapes)
         {
             const usize bytes = GeneratedTextureShapeBytes(shape);
             if (bytes == 0)
@@ -103,17 +111,19 @@ namespace Veng::Renderer
             }
             expected += bytes;
         }
-        if (blob.Shapes.empty() || blob.Shapes.size() > MaxShapes || expected != blob.Texels.size())
+        if (shapes.empty() || shapes.size() > MaxShapes || expected != texelBytes)
         {
             return {};
         }
 
         vector<u8> out;
-        out.reserve(blob.Texels.size() + 64);
+        // The texels are appended onto this buffer, so reserving for them here is what keeps the
+        // payload one allocation and the texels one copy.
+        out.reserve(texelBytes + HeaderBytes(shapes.size()));
         out.insert(out.end(), BlobMagic.begin(), BlobMagic.end());
         Put<u32>(out, FormatVersion);
-        Put<u32>(out, static_cast<u32>(blob.Shapes.size()));
-        for (const GeneratedTextureBlobShape& shape : blob.Shapes)
+        Put<u32>(out, static_cast<u32>(shapes.size()));
+        for (const GeneratedTextureBlobShape& shape : shapes)
         {
             Put<u32>(out, static_cast<u32>(shape.TexelFormat));
             Put<u32>(out, static_cast<u32>(shape.Type));
@@ -123,11 +133,22 @@ namespace Veng::Renderer
             Put<u32>(out, shape.Layers);
             Put<u32>(out, shape.MipLevels);
         }
+        return out;
+    }
+
+    vector<u8> EncodeGeneratedTextureBlob(const GeneratedTextureBlob& blob)
+    {
+        vector<u8> out = BeginGeneratedTextureBlob(blob.Shapes, blob.Texels.size());
+        if (out.empty())
+        {
+            return {};
+        }
         out.insert(out.end(), blob.Texels.begin(), blob.Texels.end());
         return out;
     }
 
-    optional<GeneratedTextureBlob> DecodeGeneratedTextureBlob(const std::span<const u8> payload)
+    optional<GeneratedTextureBlobLayout>
+    ReadGeneratedTextureBlobHeader(const std::span<const u8> payload)
     {
         Reader reader{.Bytes = payload};
         u32 version = 0;
@@ -138,8 +159,8 @@ namespace Veng::Renderer
             return std::nullopt;
         }
 
-        GeneratedTextureBlob blob;
-        blob.Shapes.reserve(shapeCount);
+        GeneratedTextureBlobLayout layout;
+        layout.Shapes.reserve(shapeCount);
         usize expected = 0;
         for (u32 i = 0; i < shapeCount; i++)
         {
@@ -166,14 +187,28 @@ namespace Veng::Renderer
                 return std::nullopt;
             }
             expected += bytes;
-            blob.Shapes.push_back(shape);
+            layout.Shapes.push_back(shape);
         }
 
         if (payload.size() - reader.Offset != expected)
         {
             return std::nullopt;
         }
-        blob.Texels.assign(payload.data() + reader.Offset, payload.data() + payload.size());
-        return blob;
+        layout.TexelOffset = reader.Offset;
+        layout.TexelBytes = expected;
+        return layout;
+    }
+
+    optional<GeneratedTextureBlob> DecodeGeneratedTextureBlob(const std::span<const u8> payload)
+    {
+        const optional<GeneratedTextureBlobLayout> layout = ReadGeneratedTextureBlobHeader(payload);
+        if (!layout.has_value())
+        {
+            return std::nullopt;
+        }
+        return GeneratedTextureBlob{
+            .Shapes = layout->Shapes,
+            .Texels = {payload.begin() + static_cast<isize>(layout->TexelOffset), payload.end()},
+        };
     }
 }

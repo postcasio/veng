@@ -11,6 +11,7 @@
 // pure sizing arithmetic over a byte layout, so its round trip and its rejections are pinned here
 // beside the cache that carries its payloads.
 
+#include <algorithm>
 #include <atomic>
 #include <filesystem>
 #include <fstream>
@@ -307,6 +308,25 @@ TEST_CASE("generated texture blob: shapes and texels round-trip")
     REQUIRE(decoded.has_value());
     CHECK(decoded->Shapes == blob.Shapes);
     CHECK(decoded->Texels == blob.Texels);
+
+    // The store assembles the payload as a header with the texels appended, and the restore reads
+    // that header without copying them back out. Both halves are the same bytes as the round trip
+    // above, which is what lets each side of the round trip skip a copy of the whole payload.
+    vector<u8> assembled = BeginGeneratedTextureBlob(blob.Shapes, blob.Texels.size());
+    REQUIRE_FALSE(assembled.empty());
+    CHECK(assembled.capacity() >= assembled.size() + blob.Texels.size());
+    assembled.insert(assembled.end(), blob.Texels.begin(), blob.Texels.end());
+    CHECK(assembled == payload);
+
+    const optional<GeneratedTextureBlobLayout> layout = ReadGeneratedTextureBlobHeader(payload);
+    REQUIRE(layout.has_value());
+    CHECK(layout->Shapes == blob.Shapes);
+    CHECK(layout->TexelBytes == blob.Texels.size());
+    CHECK(std::equal(payload.begin() + static_cast<isize>(layout->TexelOffset), payload.end(),
+                     blob.Texels.begin(), blob.Texels.end()));
+
+    // And a byte count that does not match the shapes is refused rather than reserved for.
+    CHECK(BeginGeneratedTextureBlob(blob.Shapes, blob.Texels.size() - 1).empty());
 }
 
 TEST_CASE("generated texture blob: a payload that is not one decodes to nothing")

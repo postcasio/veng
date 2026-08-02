@@ -249,6 +249,18 @@ namespace Veng::Renderer
         /// @brief Copies the contents of an image into a buffer.
         void CopyImageToBuffer(const Ref<Image>& image, const Ref<Buffer>& buffer);
 
+        /// @brief Copies an image into a buffer as one region per supplied mip level.
+        ///
+        /// The image→buffer mirror of CopyBufferToImage(buffer, image, regions): one
+        /// VkBufferImageCopy per region, each writing a level's tightly-packed texels across
+        /// **every** array layer at BufferOffset, so a whole mip chain reads back into one buffer
+        /// in one command rather than one staging buffer per subresource.
+        /// @param image   Transfer source; must be in TransferSrc layout.
+        /// @param buffer  Transfer destination, large enough for every region.
+        /// @param regions One entry per mip level to copy.
+        void CopyImageToBuffer(const Ref<Image>& image, const Ref<Buffer>& buffer,
+                               std::span<const BufferImageCopyRegion> regions);
+
         /// @brief Copies a rectangular mip-0 region of an image into a buffer, one tightly-packed region.
         ///
         /// Records a single VkBufferImageCopy of the @p extent texels at @p offset into the buffer

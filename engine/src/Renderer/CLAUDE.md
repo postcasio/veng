@@ -1055,7 +1055,8 @@ frame's fence has provably been waited. It is the picking system's pattern
 (`PickingSystem::ServiceRequest` / `PollPickId`) promoted to a public utility, and it is usable with
 or without the service: it reads any image carrying `TransferSrc` plus a view-compatible usage, at
 any mip and any array layer (`CommandBuffer::CopyImageSubresourceToBuffer` is the copy underneath —
-`CopyImageToBuffer` is its mip-0, layer-0 case). The subresource is left prepared for
+the region-less `CopyImageToBuffer` is its mip-0, layer-0 case, and the multi-region overload beside
+it reads a whole mip chain into one buffer). The subresource is left prepared for
 `AsyncReadbackRequest::RestoreTo`, `Sample` by default, because a bindless-sampled image left in
 `TransferSrc` would be read in the wrong layout.
 
@@ -1074,18 +1075,28 @@ unconditionally — with no cache attached the field is inert.
 
 The round trip in both directions, and where each half runs:
 
-- **The probe.** `Request` creates the targets, **holds** the job in the scheduling queue — the key
-  is live, so a re-request is still idempotent and the job still reads as pending, but no tick is
-  spent on work the cache may already hold — and submits the read to a worker. The answer lands on
-  the main thread through the continuation pump: a miss releases the hold and the job runs; a hit
-  stages the stored texels into a host-mapped buffer, and the next pump copies them into the
+- **The probe.** `Request` **holds** the job in the scheduling queue — the key is live, so a
+  re-request is still idempotent and the job still reads as pending, but no tick is spent on work
+  the cache may already hold — and submits the read to a worker. The answer lands on the main
+  thread through the continuation pump: a miss releases the hold and the job runs; a hit reads the
+  payload's **header only**, checks the shapes, and hands the payload to a worker that copies its
+  texels into a host-mapped buffer, still held. The next pump after that copies the buffer into the
   targets ahead of the tick loop, marks the job resident, and fires its completion. A restored
   job's texels are therefore sampleable by the same frame's passes, exactly as one whose last tick
   ran that pump, and `TicksLastPump` never counts a restore.
-- **The store.** A cached job that completes the ordinary way is read back through `AsyncReadback`,
-  one request per `(mip, layer)`, accumulated into a shared collector holding **no reference to the
-  job** — so releasing the result while its levels are still arriving neither strands the store nor
-  dangles. The last level encodes the blob and hands it to a worker to write.
+- **The store.** A cached job that completes the ordinary way is read back into **one** host-mapped
+  buffer — one `CopyImageToBuffer` per target, one region per mip covering every layer, at the
+  offset that target's levels occupy — recorded into the same pump's command buffer and readable
+  `framesInFlight` pumps later. The pending store holds **no reference to the job**, so releasing
+  the result while its levels are in flight neither strands the store nor dangles. When the bytes
+  are readable a worker builds the payload and writes it.
+
+**No copy the size of the payload runs on the frame thread**, in either direction. That is what the
+shapes above are for: the store's readback is one buffer rather than one per `(mip, layer)`, its
+encode reserves the header in a buffer already sized for the texels so they are copied once, on a
+worker, and the restore parses a header instead of decoding a payload and runs its host copy on a
+worker too. The service's own hold is what makes both safe — a job is unselectable for as long as
+*anything* it waits on is outstanding, so a restore's ticks can never race the texels landing.
 
 Two constraints follow from the copies. A cached target the service creates has `TransferSrc` and
 `TransferDst` folded into its usage; an **adopted** target carrying neither is simply not cached and logs why, since the service does not own its
@@ -1095,10 +1106,10 @@ image they do not describe are worse than no cache at all.
 
 The byte layout is `src/Renderer/GeneratedTextureBlob.h`, a renderer-internal, device-free codec
 (the `FrameTopology` precedent): shapes, then every target's levels **mip-major, layer-minor**,
-which is both the order the readbacks deliver them in and the order a per-mip, all-layers
-`CopyBufferToImage` expects. `tests/unit/derived_data_cache.cpp` pins the codec beside the cache
-that carries it; the end-to-end transparency property is the last case in
-`tests/gpu/generated_texture.cpp`.
+which is the order a per-mip, all-layers copy reads and writes them in both directions.
+`tests/unit/derived_data_cache.cpp` pins the codec beside the cache that carries it — including
+that the header-plus-appended-texels the store assembles is byte-for-byte the payload a whole
+encode produces; the end-to-end transparency property is in `tests/gpu/generated_texture.cpp`.
 
 ## The fluid solver: advecting whatever it is handed
 
