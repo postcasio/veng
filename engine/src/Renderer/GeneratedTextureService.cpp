@@ -120,6 +120,13 @@ namespace Veng::Renderer
             return regions;
         }
 
+        // A job's created targets on their way back from the worker that created them. Ref-held
+        // because a Task's payload is copied to reach its continuation and a target is move-only.
+        struct TargetBatch
+        {
+            vector<Unique<GeneratedTexture>> Targets;
+        };
+
         // The shared state a job's readbacks accumulate into. It holds no reference to the job, so
         // releasing a completed job while its levels are still arriving neither strands the store
         // nor dangles: the result was computed, and it is stored.
@@ -133,7 +140,7 @@ namespace Veng::Renderer
     }
 
     GeneratedTexture::GeneratedTexture(Context& context, const GeneratedTextureTargetInfo& info)
-        : m_Context(context), m_ProducerAccess(info.ProducerAccess)
+        : m_Context(context), m_ProducerAccess(info.ProducerAccess), m_WantsBindless(info.Bindless)
     {
         if (info.Adopt)
         {
@@ -156,15 +163,19 @@ namespace Veng::Renderer
                          .BaseArrayLayer = 0,
                          .ArrayLayers = m_Image->GetLayers(),
                      });
+    }
 
-        if (info.Bindless)
+    void GeneratedTexture::RegisterBindless()
+    {
+        if (!m_WantsBindless || m_Handle.IsValid())
         {
-            VE_ASSERT(m_Image->GetLayers() == 1 && m_Image->GetType() == ImageType::Type2D,
-                      "generated texture '{}' asked for a bindless slot but is not a single-layer "
-                      "2D image; set 0's sampled-image array is strictly 2D",
-                      m_Image->GetName());
-            m_Handle = context.GetBindlessRegistry().Register(m_Sampled);
+            return;
         }
+        VE_ASSERT(m_Image->GetLayers() == 1 && m_Image->GetType() == ImageType::Type2D,
+                  "generated texture '{}' asked for a bindless slot but is not a single-layer "
+                  "2D image; set 0's sampled-image array is strictly 2D",
+                  m_Image->GetName());
+        m_Handle = m_Context.GetBindlessRegistry().Register(m_Sampled);
     }
 
     GeneratedTexture::~GeneratedTexture()
@@ -243,33 +254,116 @@ namespace Veng::Renderer
         job->OnTick = std::move(request.OnTick);
         job->OnComplete = std::move(request.OnComplete);
         job->CacheKey = cached ? std::move(request.CacheKey) : string{};
-        job->Targets.reserve(request.Targets.size());
-        for (usize i = 0; i < request.Targets.size(); i++)
+
+        vector<GeneratedTextureTargetInfo> targets = std::move(request.Targets);
+        for (usize i = 0; i < targets.size(); i++)
         {
-            GeneratedTextureTargetInfo target = request.Targets[i];
-            target.Image.Name = fmt::format("{}[{}]", request.Name, i);
+            targets[i].Image.Name = fmt::format("{}[{}]", request.Name, i);
             if (cached)
             {
                 // A cached target is read back to be stored and written into to be restored, so it
                 // needs both transfer usages whatever its producer access is.
-                target.Image.Usage =
-                    target.Image.Usage | ImageUsage::TransferSrc | ImageUsage::TransferDst;
+                targets[i].Image.Usage =
+                    targets[i].Image.Usage | ImageUsage::TransferSrc | ImageUsage::TransferDst;
             }
-            job->Targets.push_back(
-                Unique<GeneratedTexture>(new GeneratedTexture(m_Context, target)));
-        }
-
-        if (cached && !TargetsAreCacheable(job->Targets, job->CacheKey))
-        {
-            job->CacheKey.clear();
         }
 
         Job& added = *m_Jobs.emplace_back(std::move(job));
-        if (!added.CacheKey.empty())
+
+        // An image the service creates can be hundreds of megabytes, and Request is called from the
+        // frame pump — so the creation goes to a worker and the job waits for it. An adopted target
+        // is not the service's to allocate, so a job made entirely of them takes no hop.
+        const bool allocates =
+            std::ranges::any_of(targets, [](const GeneratedTextureTargetInfo& target)
+                                { return target.Adopt == nullptr; });
+        if (allocates && GetWorkers() != nullptr)
         {
-            SubmitProbe(added);
+            SubmitAllocation(added, std::move(targets));
+            return true;
         }
+
+        added.Targets.reserve(targets.size());
+        for (const GeneratedTextureTargetInfo& target : targets)
+        {
+            added.Targets.push_back(
+                Unique<GeneratedTexture>(new GeneratedTexture(m_Context, target)));
+            added.Targets.back()->RegisterBindless();
+        }
+        BeginJob(added);
         return true;
+    }
+
+    void GeneratedTextureService::UpdateHold(const Job& job)
+    {
+        m_Queue->SetHeld(job.Key, job.Allocating || job.Probing);
+    }
+
+    void GeneratedTextureService::SubmitAllocation(Job& job,
+                                                   vector<GeneratedTextureTargetInfo> targets)
+    {
+        job.Allocating = true;
+        UpdateHold(job);
+
+        const GeneratedTextureKey key = job.Key;
+        const u64 serial = job.Serial;
+        Context& context = m_Context;
+
+        // A Task's payload is copied on the way to its continuation, so the move-only targets
+        // travel behind a Ref rather than as the payload itself.
+        Task<Ref<TargetBatch>> allocation = GetWorkers()->Submit(
+            [&context, targets = std::move(targets)]
+            {
+                auto batch = CreateRef<TargetBatch>();
+                batch->Targets.reserve(targets.size());
+                for (const GeneratedTextureTargetInfo& target : targets)
+                {
+                    batch->Targets.push_back(
+                        Unique<GeneratedTexture>(new GeneratedTexture(context, target)));
+                }
+                return batch;
+            },
+            "GeneratedTextureAllocate");
+        allocation.Then(
+            [this, key, serial](Result<Ref<TargetBatch>> batch)
+            {
+                ResolveAllocation(key, serial,
+                                  batch.has_value() && *batch != nullptr
+                                      ? std::move((*batch)->Targets)
+                                      : vector<Unique<GeneratedTexture>>{});
+            });
+    }
+
+    void GeneratedTextureService::ResolveAllocation(const GeneratedTextureKey key, const u64 serial,
+                                                    vector<Unique<GeneratedTexture>> targets)
+    {
+        Job* job = FindJob(key);
+        if (job == nullptr || job->Serial != serial || !job->Allocating)
+        {
+            // The job was cancelled, released, or re-requested while the worker ran. The targets go
+            // out of scope here, on the main thread, through the ordinary retire path.
+            return;
+        }
+        job->Allocating = false;
+        job->Targets = std::move(targets);
+        for (const Unique<GeneratedTexture>& target : job->Targets)
+        {
+            target->RegisterBindless();
+        }
+        BeginJob(*job);
+    }
+
+    void GeneratedTextureService::BeginJob(Job& job)
+    {
+        if (!job.CacheKey.empty() && !TargetsAreCacheable(job.Targets, job.CacheKey))
+        {
+            job.CacheKey.clear();
+        }
+        if (!job.CacheKey.empty())
+        {
+            SubmitProbe(job);
+            return;
+        }
+        UpdateHold(job);
     }
 
     void GeneratedTextureService::SetCache(DerivedDataCache* cache, TaskSystem* tasks)
@@ -283,8 +377,8 @@ namespace Veng::Renderer
     {
         // Held until the answer lands: the key is live, so a re-request is still idempotent, but no
         // tick is spent on work the cache may already hold.
-        m_Queue->SetHeld(job.Key, true);
         job.Probing = true;
+        UpdateHold(job);
 
         const GeneratedTextureKey key = job.Key;
         const u64 serial = job.Serial;
@@ -312,7 +406,7 @@ namespace Veng::Renderer
         }
         job->Probing = false;
 
-        const auto miss = [&] { m_Queue->SetHeld(key, false); };
+        const auto miss = [&] { UpdateHold(*job); };
 
         if (!payload.has_value())
         {
@@ -540,6 +634,10 @@ namespace Veng::Renderer
             if (job->Probing)
             {
                 stats.Probing++;
+            }
+            if (job->Allocating)
+            {
+                stats.Allocating++;
             }
         }
         for (const GeneratedTextureJobRecord& record : m_Queue->GetJobs())

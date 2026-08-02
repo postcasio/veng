@@ -1,6 +1,6 @@
 // GeneratedTextureService and AsyncReadback against a live device.
 //
-// The four properties the service exists to guarantee:
+// The properties the service exists to guarantee:
 //   1. Amortization is invisible to the result. The same many-tick job run under a budget of 1, 2
 //      and unlimited ticks per frame produces byte-identical texels — only how many frames it took
 //      differs.
@@ -15,6 +15,9 @@
 //      ticks have run, a later job under the same cache key completes from disk with none of its
 //      ticks running and the identical texels, and with the cache's files gone the same request
 //      simply runs its ticks again.
+//   6. A request allocates nothing on the calling thread: the targets are created on a worker, the
+//      set-0 slot is minted when they land, and the allocation hold and the cache-probe hold
+//      compose so the job is never selectable at the seam between them.
 //
 // The ticks here are raster clears rather than compute dispatches deliberately: a clear over a
 // render area needs no pipeline, no shader and no descriptor set, so what the cases measure is the
@@ -496,4 +499,92 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // Detach before the fixture tears the cache down beneath the service.
     service.SetCache(nullptr, nullptr);
     CHECK(service.Release(EvictedKey));
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "generated texture: targets are created off the frame thread, and the holds "
+                  "compose")
+{
+    const TempCacheRoot root;
+    const Result<Unique<DerivedDataCache>> cache =
+        DerivedDataCache::Open({.Root = root.Dir, .Generation = "alloc-case"});
+    REQUIRE(cache.has_value());
+
+    GeneratedTextureService& service = Context.GetGeneratedTextures();
+    const BindlessRegistry& bindless = Context.GetBindlessRegistry();
+    service.SetCache(cache->get(), &Tasks);
+    service.SetTickBudget(GeneratedTextureService::UnlimitedTickBudget);
+
+    constexpr GeneratedTextureKey BakedKey = 0x5721'A110ull;
+    constexpr GeneratedTextureKey CancelledKey = 0x5721'A111ull;
+    const u32 freeBefore = bindless.GetFreeSlots().Textures;
+
+    constexpr string_view CacheKey = "alloc/8x8";
+
+    u32 ticks = 0;
+    GeneratedTextureRequest request = StripeJob(BakedKey, "AllocBake");
+    request.CacheKey = string(CacheKey);
+    request.Targets[0].Bindless = true;
+    request.OnTick = [&ticks](CommandBuffer& cmd, const GeneratedTextureTickContext& context)
+    {
+        ticks++;
+        StripeTick(cmd, context);
+    };
+    REQUIRE(service.Request(std::move(request)));
+
+    // Nothing was allocated on the requesting thread: no image, so no set-0 slot to mint yet.
+    CHECK(service.GetStats().Allocating == 1u);
+    CHECK(service.GetStats().Probing == 0u);
+    CHECK(bindless.GetFreeSlots().Textures == freeBefore);
+
+    // And a frame that runs before the targets land spends no tick on the held job.
+    Context.BeginFrame();
+    Context.EndFrame();
+    CHECK(ticks == 0u);
+    CHECK(service.GetStats().TicksLastPump == 0u);
+
+    // The targets land on the main thread, which is where the slot is minted — and the job goes
+    // straight on to its cache probe rather than becoming selectable at the seam.
+    Tasks.WaitForAll();
+    Tasks.PumpMainThread();
+    CHECK(service.GetStats().Allocating == 0u);
+    CHECK(service.GetStats().Probing == 1u);
+    CHECK(bindless.GetFreeSlots().Textures == freeBefore - 1);
+
+    DriveWithTasks(Context, Tasks, [&] { return service.IsResident(BakedKey); });
+    CHECK(service.IsResident(BakedKey));
+    CHECK(ticks == StripeTicks);
+
+    // Let the store finish before the case ends: the cache is destroyed with this scope, and a
+    // worker still writing into it would outlive it.
+    DriveWithTasks(Context, Tasks, [&] { return (*cache)->Contains(string(CacheKey)); });
+    CHECK((*cache)->Contains(string(CacheKey)));
+
+    // A job cancelled while its targets are still being created tears down cleanly: the worker's
+    // targets are dropped when they arrive, no tick ever runs, and no completion fires.
+    u32 cancelledTicks = 0;
+    u32 cancelledCompletions = 0;
+    GeneratedTextureRequest doomed = StripeJob(CancelledKey, "CancelledAlloc");
+    doomed.OnTick =
+        [&cancelledTicks](CommandBuffer& cmd, const GeneratedTextureTickContext& context)
+    {
+        cancelledTicks++;
+        StripeTick(cmd, context);
+    };
+    doomed.OnComplete = [&cancelledCompletions](const GeneratedTextureResult&)
+    { cancelledCompletions++; };
+    REQUIRE(service.Request(std::move(doomed)));
+    CHECK(service.GetStats().Allocating == 1u);
+
+    CHECK(service.Cancel(CancelledKey));
+    CHECK_FALSE(service.IsPending(CancelledKey));
+    Tasks.WaitForAll();
+    DriveWithTasks(Context, Tasks, [] { return false; }, 3);
+    CHECK(cancelledTicks == 0u);
+    CHECK(cancelledCompletions == 0u);
+    CHECK(service.GetStats().CancelledTotal == 1u);
+
+    service.SetCache(nullptr, nullptr);
+    Tasks.WaitForAll();
+    CHECK(service.Release(BakedKey));
 }

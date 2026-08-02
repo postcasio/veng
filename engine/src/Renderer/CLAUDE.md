@@ -1019,6 +1019,18 @@ the pump. A consumer whose approach outruns its bake gets "the result lands a mo
 hitch — it keeps drawing whatever it drew before. And the service makes **no policy decisions**:
 what to generate, when, at what resolution, and how long to hold it belong to the caller entirely.
 
+**Allocation is not on the frame thread either.** `Request` is called from the pump, and a target
+pair at the top of the size range is hundreds of megabytes of VMA allocation — so the images, their
+views and their samplers are created on a task-system worker (`VolumeField::Build`'s precedent: all
+three are worker-legal) and the job is **held** until they land. Only the set-0 registration a
+`Bindless` target asks for stays on the main thread, in the continuation that adopts the targets. An
+**adopted** target is not the service's to allocate, so a job made entirely of them takes no hop and
+runs at the next pump; so does any job when no task system is attached, which is the device-free
+posture the unit and gpu fixtures run in. The hold is one flag on the queue record derived from
+*every* reason a job is not selectable (`Allocating || Probing`), so the allocation hold and the
+cache-probe hold **compose**: a cached job goes from one to the other without becoming selectable at
+the seam. `GeneratedTextureStats::Allocating` reports it beside `Probing`.
+
 The **scheduling core is device-free**. `GeneratedTextureQueue` (`src/Renderer/GeneratedTextureQueue.h`,
 renderer-internal) holds the job records and the selection rule and knows nothing about images, so
 the whole policy surface — idempotent keys, priority ordering, budget accounting across mixed jobs —

@@ -59,8 +59,9 @@ namespace Veng::Renderer
         /// @brief Whether to register the sampled view in the bindless registry.
         ///
         /// Set 0's sampled-image array is strictly 2D, so this is legal only for a single-layer
-        /// Type2D target; the handle is minted at request and is stable for the target's lifetime,
-        /// but the texels it names are undefined until the job completes.
+        /// Type2D target; the handle is minted on the main thread once the target exists and is
+        /// stable for the target's lifetime, but the texels it names are undefined until the job
+        /// completes.
         bool Bindless = false;
     };
 
@@ -110,6 +111,12 @@ namespace Veng::Renderer
 
         GeneratedTexture(Context& context, const GeneratedTextureTargetInfo& info);
 
+        /// @brief Takes the set-0 slot the target asked for, if it asked for one.
+        ///
+        /// Split out of construction because the image, its view and its sampler are created off
+        /// the frame thread while the registry is main-thread-only.
+        void RegisterBindless();
+
         /// @brief The context views are created on and the bindless slot is released to.
         Context& m_Context;
         /// @brief The created or adopted image.
@@ -118,6 +125,8 @@ namespace Veng::Renderer
         Ref<ImageView> m_Sampled;
         /// @brief The access the ticks write through.
         AccessKind m_ProducerAccess;
+        /// @brief Whether the target asked for a set-0 slot.
+        bool m_WantsBindless = false;
         /// @brief The bindless slot, invalid when the target is not registered.
         TextureHandle m_Handle;
 
@@ -215,6 +224,8 @@ namespace Veng::Renderer
         u32 TicksLastPump = 0;
         /// @brief Jobs waiting on a cache probe, which spend no ticks while they wait.
         u32 Probing = 0;
+        /// @brief Jobs waiting on their targets to be created, which spend no ticks while they wait.
+        u32 Allocating = 0;
         /// @brief Jobs completed over the service's lifetime.
         u64 CompletedTotal = 0;
         /// @brief Jobs cancelled before completing, over the service's lifetime.
@@ -237,6 +248,10 @@ namespace Veng::Renderer
     /// **A frame never waits.** There are no immediate submits, no fences on the render thread, and
     /// no job is started outside the pump. An approach faster than a job degrades to "the result
     /// lands a moment later", never to a hitch: the caller keeps drawing whatever it drew before.
+    /// That extends to the targets themselves: a target image is created on a task-system worker
+    /// and the job is held until it lands, so a request for a large mip-mapped target costs the
+    /// frame a submit rather than the allocation. Only the set-0 registration a Bindless target
+    /// asks for runs on the main thread, once the image exists.
     ///
     /// **The service makes no policy decisions.** What to generate, when, at what resolution, and
     /// how long to hold it belong to the caller entirely; the service schedules and owns lifetime.
@@ -275,8 +290,10 @@ namespace Veng::Renderer
         /// @brief Requests a job, idempotently on its key.
         ///
         /// A key already live — queued, running, or resident — is left exactly as it is and the
-        /// request is dropped, so re-requesting each frame is the intended usage. The targets are
-        /// created here, on the calling (render) thread; the first tick runs at the next pump.
+        /// request is dropped, so re-requesting each frame is the intended usage. A job with a
+        /// target to create is held while a worker creates it and runs its first tick at the pump
+        /// after that lands; a job whose targets are all adopted has nothing to allocate and runs
+        /// at the next pump. Cancel and Release are safe against an allocation still in flight.
         /// @param request The job to run.
         /// @return True when the job was added; false when the key was already live or the request
         ///         named no targets or no tick callback.
@@ -351,6 +368,13 @@ namespace Veng::Renderer
         /// @param budget Maximum ticks to spend this frame.
         void Pump(CommandBuffer& cmd, u32 budget);
 
+        /// @brief Names the task system the service's own off-thread work runs on.
+        ///
+        /// Threaded in by Context once the application's task system exists. With none the service
+        /// creates targets inline on the calling thread, which is the device-free/test posture.
+        /// @param tasks The application's task system, or null.
+        void SetTaskSystem(TaskSystem* tasks) { m_ContextTasks = tasks; }
+
         /// @brief A cache hit's texels, staged and waiting for the pump to copy them into place.
         struct PendingRestore
         {
@@ -378,11 +402,19 @@ namespace Veng::Renderer
             function<void(const GeneratedTextureResult&)> OnComplete;
             /// @brief The cache key the result is stored under; empty when the job is not cached.
             string CacheKey;
+            /// @brief Whether the worker creating the job's targets has yet to report back.
+            bool Allocating = false;
             /// @brief Whether a probe of the cache is in flight.
             bool Probing = false;
             /// @brief A hit's staged texels, applied by the next pump.
             optional<PendingRestore> Restore;
         };
+
+        /// @brief The task system the service's off-thread work runs on, or null when it has none.
+        [[nodiscard]] TaskSystem* GetWorkers() const
+        {
+            return m_Tasks != nullptr ? m_Tasks : m_ContextTasks;
+        }
 
         /// @brief The job for a key, or null when the key is not live.
         [[nodiscard]] Job* FindJob(GeneratedTextureKey key);
@@ -394,6 +426,30 @@ namespace Veng::Renderer
         /// @param countCancelled  Whether to count the drop against CancelledTotal.
         /// @return True when a job was dropped.
         bool Drop(GeneratedTextureKey key, bool countCancelled);
+
+        /// @brief Holds a job for as long as anything it is waiting on is still outstanding.
+        ///
+        /// One flag on the queue record carries every reason a job is not selectable, so the
+        /// reasons compose: a job whose targets are still being created and which then probes the
+        /// cache is never briefly selectable at the seam between the two.
+        /// @param job The job whose hold to re-derive.
+        void UpdateHold(const Job& job);
+
+        /// @brief Submits the worker that creates a job's targets, holding it until they land.
+        /// @param job      The job to allocate for; left held and marked allocating.
+        /// @param targets  The target descriptions, moved onto the worker.
+        void SubmitAllocation(Job& job, vector<GeneratedTextureTargetInfo> targets);
+
+        /// @brief Adopts a resolved allocation's targets, or drops them when the job is gone.
+        /// @param key      The allocating job's key.
+        /// @param serial   The allocating job's serial; a mismatch drops the targets.
+        /// @param targets  The created targets.
+        void ResolveAllocation(GeneratedTextureKey key, u64 serial,
+                               vector<Unique<GeneratedTexture>> targets);
+
+        /// @brief Starts a job whose targets exist: probes the cache for it, or releases it to run.
+        /// @param job The job whose targets are created and registered.
+        void BeginJob(Job& job);
 
         /// @brief Submits the worker probe of the cache for a job, holding it until the answer.
         /// @param job The job to probe for; left held and marked probing.
@@ -441,6 +497,8 @@ namespace Veng::Renderer
         DerivedDataCache* m_Cache = nullptr;
         /// @brief The task system the cache's file I/O runs on, or null when none is attached.
         TaskSystem* m_Tasks = nullptr;
+        /// @brief The task system Context threaded in, used when no cache supplies one.
+        TaskSystem* m_ContextTasks = nullptr;
         /// @brief Monotonic source for Job::Serial.
         u64 m_NextSerial = 1;
     };

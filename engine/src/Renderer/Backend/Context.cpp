@@ -499,6 +499,10 @@ namespace Veng::Renderer
             m_Native->AllocationPoolOverride = nullptr;
         }
 
+        // The same pool the generated-texture service creates its targets on, so a large image
+        // allocation costs the frame a submit rather than the allocation itself.
+        m_GeneratedTextures->SetTaskSystem(&taskSystem);
+
         Log::Info("Created {0} per-worker transfer command pool(s)", workerCount);
     }
 
