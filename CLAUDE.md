@@ -923,8 +923,27 @@ deps PUBLIC and the backend libs PRIVATE.
    no golden; its conformance tests configure + build it standalone, run `template-launcher`
    under `TEMPLATE_SMOKE` and check both its exit status and what it logged, then probe
    `veng-editor --version`.
-4. Commit the code, one commit per coherent change, with a descriptive-sentence
-   subject (match `git log`) and a `Co-Authored-By` trailer.
+4. Commit the code, one commit per coherent change, per **Commit messages** below.
+
+### Commit messages
+
+**The subject is one descriptive sentence, present tense, stating what is true of the tree
+after the commit** — the voice `git log` already speaks. Aim under ~72 characters, no
+trailing period, and no prefix of any kind: no `Plan NN:`, no conventional-commit `type:`,
+no module tag.
+
+**The body carries only what the diff and the docs cannot say** — the constraint that
+forced this shape, the alternative rejected, what moved and how far. One to three
+sentences; **an empty body is correct** when the subject says it all. Never restate the
+diff, never narrate the work (no "this commit adds…", no "previously… now…" chains), and
+never carry documentation — a paragraph explaining behavior belongs in a doc comment or a
+`CLAUDE.md` the change updates, which the body may point to instead. A piggybacked
+small-defect fix gets one line naming it.
+
+**Plan, planset, and roadmap references are forbidden** in commit messages, exactly as in
+code comments: the message describes the change on its own terms, as if no roadmap
+existed. Trailers are the one structured element: `Co-Authored-By` when co-authored,
+nothing else routinely.
 
 **When a new `AssetId` is needed**, use a clearly-marked placeholder id while
 implementing — don't break flow to mint one mid-task. Once the build is working
