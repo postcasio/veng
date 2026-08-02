@@ -35,6 +35,12 @@ namespace Veng::Renderer
         u32 TicksDone = 0;
         /// @brief The job's lifecycle state.
         GeneratedTextureState State = GeneratedTextureState::Queued;
+        /// @brief Whether the job is live but excluded from selection, so no tick is spent on it.
+        ///
+        /// A job whose result may already exist elsewhere is held while that is being established:
+        /// the key is live (so a re-request is still idempotent and the job counts as pending), but
+        /// running a tick would spend the work the answer might make unnecessary.
+        bool Held = false;
     };
 
     /// @brief Priority-then-FIFO scheduling over a keyed job set, spending a per-frame tick budget.
@@ -70,6 +76,20 @@ namespace Veng::Renderer
         /// @return True when a job was found.
         bool SetPriority(u64 key, i32 priority);
 
+        /// @brief Excludes a job from selection, or restores it, leaving its progress untouched.
+        /// @param key   The job's key.
+        /// @param held  True to exclude the job from selection, false to make it selectable again.
+        /// @return True when a job was found.
+        bool SetHeld(u64 key, bool held);
+
+        /// @brief Marks a job resident without spending its ticks, for a result obtained elsewhere.
+        ///
+        /// The job's remaining ticks are abandoned, not run: its targets were filled by something
+        /// other than its tick callback, so running one would overwrite the result.
+        /// @param key The job's key.
+        /// @return True when a job that was not already resident was marked.
+        bool MarkResident(u64 key);
+
         /// @brief The record for a key, or null when the key is not live.
         [[nodiscard]] const GeneratedTextureJobRecord* Find(u64 key) const;
 
@@ -79,8 +99,11 @@ namespace Veng::Renderer
         /// @brief Every live job's record, in insertion order.
         [[nodiscard]] const vector<GeneratedTextureJobRecord>& GetJobs() const { return m_Jobs; }
 
-        /// @brief The number of jobs with ticks still to run.
+        /// @brief The number of jobs that are not yet resident, held ones included.
         [[nodiscard]] u32 GetPendingCount() const;
+
+        /// @brief The number of jobs a tick could be spent on right now.
+        [[nodiscard]] u32 GetSelectableCount() const;
 
         /// @brief The number of jobs whose ticks are exhausted.
         [[nodiscard]] u32 GetResidentCount() const;

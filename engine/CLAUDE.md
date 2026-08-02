@@ -37,7 +37,8 @@ Each major system's architecture lives in a `CLAUDE.md` inside its source direct
   layer table, the replay gate, and the Native containment of the vendored solver.
 - **[src/Persistence/CLAUDE.md](src/Persistence/CLAUDE.md)** — `Veng/Persistence/`, the
   durable-state subsystem: the `Store`'s families, opaque record keys, atomic whole-slot flush,
-  versioning and migration, and the capture/rehydrate scene hooks.
+  versioning and migration, and the capture/rehydrate scene hooks — plus its opposite number, the
+  `DerivedDataCache`, where expendable derived blobs live under a generation that wipes them.
 - **[src/Diagnostics/CLAUDE.md](src/Diagnostics/CLAUDE.md)** — `Veng/Diagnostics/`, the CPU
   instrumentation subsystem: the `VE_PROFILE_*` scope/counter/instant vocabulary, per-thread chunk
   rings and their release/acquire publication, RAII thread registration, virtual tracks and the

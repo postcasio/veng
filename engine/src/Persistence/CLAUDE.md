@@ -324,3 +324,57 @@ rejects it with any extension, which covers the store's other two files (`accoun
 `account.corrupt`) at creation as well as at enumeration. Enumeration skips non-directories
 independently, so a root holding these files lists cleanly either way; the stem rule is what stops
 a slot being *created* over one.
+
+## The derived-data cache
+
+`Veng/Persistence/DerivedDataCache.h` is the subsystem's other half, and it is the store's
+opposite in every property that matters. The store is **durable state**: a record is the truth, a
+flush is a commit point, and losing one is data loss. The cache is **expendable derived content**:
+an entry is a saving, a miss is free, and the only cost of losing every entry is recomputing what
+was a pure function of the caller's inputs to begin with. They share a directory-per-instance
+shape and nothing else — no families, no records, no reflection, no lock.
+
+An entry is `(generation, key, blob)`, both strings caller-composed and opaque. What goes in a
+blob is the caller's business; the cache never interprets one.
+
+### Invalidation is whole-cache, on purpose
+
+The **generation** is the entire invalidation model: open with one differing from the recorded one
+and every entry is deleted before the first read. The alternative — a per-entry validity key
+naming each input — fails the day one input is forgotten, and the failure is silent and
+indistinguishable from correct output. A generation is coarse enough that forgetting is loud: get
+it wrong and either everything re-derives or nothing does.
+
+The header documents the two ingredients a caller composes one from: content digests of the
+archives it has mounted (`ReadArchiveIdentity`, `Veng/Asset/Archive.h`) and a version constant it
+owns, for the inputs that live in code rather than in an archive. The cache supplies neither — it
+cannot know what a caller's results depend on.
+
+### Caps, and what may be deleted
+
+The caps are LRU over **both entry count and total bytes**, evaluated on insert, oldest-touched
+first; a successful read touches. Eviction deletes **only through the index**, so the cache can
+never remove a file it did not write. Within its root it owns the `cache.` file-name prefix — the
+`cache.index` and one `cache.<id>.blob` per entry — and a wipe sweeps only that prefix, mirroring
+what the store's `slot.` prefix does for a slot directory. A root shared with other content keeps
+it.
+
+### Damage is a miss, never an error
+
+Every blob carries a magic, a format version, its payload length and a CRC-32 of the payload, and
+`Read` checks all four. Truncated, bit-flipped, missing, foreign — each reads as a miss, and the
+entry is dropped so the same damage is not met twice. That is what makes the write path cheap:
+blobs and the index are written temp-then-rename but are **not fsynced**, because the digest
+already turns a half-written file into a miss and a device flush per blob would cost the frame
+budget the cache exists to protect.
+
+Nothing here returns an error a caller must handle. `Open` fails only when its root cannot be
+created; everything after that degrades to "the caller does the work it would have done anyway".
+
+### Threading
+
+Every method takes the instance's mutex, so any thread may read or store — which is the intended
+usage, since file I/O belongs on a task-system worker and never on the render thread.
+`Renderer::GeneratedTextureService` is the in-tree consumer and shows the shape: a probe and a
+store are both worker jobs, and the results land back on the main thread through the continuation
+pump (see [../Renderer/CLAUDE.md](../Renderer/CLAUDE.md)).

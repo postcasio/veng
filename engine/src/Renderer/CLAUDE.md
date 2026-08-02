@@ -1051,6 +1051,43 @@ any mip and any array layer (`CommandBuffer::CopyImageSubresourceToBuffer` is th
 device. `Image::Download` stays the synchronous sibling for tooling that genuinely wants the bytes
 now (a screenshot); nothing on a frame path should reach for it.
 
+### A result can outlive the process
+
+`SetCache(cache, tasks)` attaches a `DerivedDataCache` (`Veng/Persistence/DerivedDataCache.h`) and
+the task system its file I/O runs on, and a job carrying a `CacheKey` is then answered from disk
+when an earlier run computed the same thing. **The cache is transparent**: a hit is a texture that
+arrives without the job's ticks running, a miss is the job running exactly as if no cache existed,
+and a deleted cache directory is a valid state at any moment. A consumer sets a `CacheKey`
+unconditionally — with no cache attached the field is inert.
+
+The round trip in both directions, and where each half runs:
+
+- **The probe.** `Request` creates the targets, **holds** the job in the scheduling queue — the key
+  is live, so a re-request is still idempotent and the job still reads as pending, but no tick is
+  spent on work the cache may already hold — and submits the read to a worker. The answer lands on
+  the main thread through the continuation pump: a miss releases the hold and the job runs; a hit
+  stages the stored texels into a host-mapped buffer, and the next pump copies them into the
+  targets ahead of the tick loop, marks the job resident, and fires its completion. A restored
+  job's texels are therefore sampleable by the same frame's passes, exactly as one whose last tick
+  ran that pump, and `TicksLastPump` never counts a restore.
+- **The store.** A cached job that completes the ordinary way is read back through `AsyncReadback`,
+  one request per `(mip, layer)`, accumulated into a shared collector holding **no reference to the
+  job** — so releasing the result while its levels are still arriving neither strands the store nor
+  dangles. The last level encodes the blob and hands it to a worker to write.
+
+Two constraints follow from the copies. A cached target the service creates has `TransferSrc` and
+`TransferDst` folded into its usage; an **adopted** target carrying neither is simply not cached and logs why, since the service does not own its
+creation. And the **stored shape must match
+exactly** — format, type, extent, layers, mips — or the entry is a miss: texels uploaded into an
+image they do not describe are worse than no cache at all.
+
+The byte layout is `src/Renderer/GeneratedTextureBlob.h`, a renderer-internal, device-free codec
+(the `FrameTopology` precedent): shapes, then every target's levels **mip-major, layer-minor**,
+which is both the order the readbacks deliver them in and the order a per-mip, all-layers
+`CopyBufferToImage` expects. `tests/unit/derived_data_cache.cpp` pins the codec beside the cache
+that carries it; the end-to-end transparency property is the last case in
+`tests/gpu/generated_texture.cpp`.
+
 ## The fluid solver: advecting whatever it is handed
 
 `FluidSim` (`Veng/Renderer/FluidSim.h`) is a **2D stable-fluids solver over caller-supplied

@@ -168,3 +168,53 @@ TEST_CASE("GeneratedTextureQueue: a zero tick count is one tick, and a zero budg
     CHECK(queue.Spend(1, one.Tick(), one.Complete()) == 1u);
     CHECK(one.Log == std::vector<std::string>{"1.0", "1!"});
 }
+
+TEST_CASE("GeneratedTextureQueue: a held job stays live and selectable neighbours run past it")
+{
+    GeneratedTextureQueue queue;
+    queue.Add(1, 2, 10); // The higher priority, so it would win every selection.
+    queue.Add(2, 1, 0);
+
+    CHECK(queue.SetHeld(1, true));
+    CHECK_FALSE(queue.SetHeld(3, true));
+
+    // Held is not removed: the key is still live, so a re-request is still dropped, and the job
+    // still counts as pending.
+    CHECK(queue.Contains(1));
+    CHECK_FALSE(queue.Add(1, 2, 10));
+    CHECK(queue.GetPendingCount() == 2u);
+    CHECK(queue.GetSelectableCount() == 1u);
+    CHECK(queue.NextKey() == optional<u64>{2});
+
+    Recorder held;
+    CHECK(queue.Spend(GeneratedTextureQueue::UnlimitedTicks, held.Tick(), held.Complete()) == 1u);
+    CHECK(held.Log == std::vector<std::string>{"2.0", "2!"});
+    CHECK(queue.Find(1)->TicksDone == 0u);
+
+    // Releasing the hold resumes it from where it was — at the beginning, since no tick ran.
+    CHECK(queue.SetHeld(1, false));
+    Recorder released;
+    CHECK(queue.Spend(GeneratedTextureQueue::UnlimitedTicks, released.Tick(),
+                      released.Complete()) == 2u);
+    CHECK(released.Log == std::vector<std::string>{"1.0", "1.1", "1!"});
+}
+
+TEST_CASE("GeneratedTextureQueue: a job marked resident abandons its remaining ticks")
+{
+    GeneratedTextureQueue queue;
+    queue.Add(1, 8, 0);
+    queue.SetHeld(1, true);
+
+    CHECK(queue.MarkResident(1));
+    CHECK(queue.Find(1)->State == GeneratedTextureState::Resident);
+    CHECK(queue.GetResidentCount() == 1u);
+    CHECK(queue.GetPendingCount() == 0u);
+    CHECK_FALSE(queue.MarkResident(1));
+    CHECK_FALSE(queue.MarkResident(2));
+
+    // No tick is spent on it, and no completion fires — its targets were filled elsewhere.
+    Recorder recorder;
+    CHECK(queue.Spend(GeneratedTextureQueue::UnlimitedTicks, recorder.Tick(),
+                      recorder.Complete()) == 0u);
+    CHECK(recorder.Log.empty());
+}

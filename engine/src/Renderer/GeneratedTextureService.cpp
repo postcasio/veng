@@ -6,10 +6,15 @@
 
 #include <Veng/Assert.h>
 #include <Veng/Log.h>
+#include <Veng/Persistence/DerivedDataCache.h>
+#include <Veng/Renderer/AsyncReadback.h>
+#include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/ImageView.h>
+#include <Veng/Task/TaskSystem.h>
 
+#include "GeneratedTextureBlob.h"
 #include "GeneratedTextureQueue.h"
 
 namespace Veng::Renderer
@@ -55,6 +60,76 @@ namespace Veng::Renderer
             }
             return image.GetLayers() > 1 ? ImageViewType::Array2D : ImageViewType::Type2D;
         }
+
+        // The stored shape of a live target, which is what a cached payload must match exactly.
+        GeneratedTextureBlobShape ShapeOf(const Image& image)
+        {
+            return {
+                .TexelFormat = image.GetFormat(),
+                .Type = image.GetType(),
+                .Extent = image.GetExtent(),
+                .Layers = image.GetLayers(),
+                .MipLevels = image.GetMipLevels(),
+            };
+        }
+
+        // Whether every target can take part in a cache round trip. A created target has the
+        // transfer usages folded in; an adopted one is the caller's to size and to declare.
+        bool TargetsAreCacheable(const vector<Unique<GeneratedTexture>>& targets,
+                                 const string& cacheKey)
+        {
+            for (const Unique<GeneratedTexture>& target : targets)
+            {
+                const Image& image = *target->GetImage();
+                if (!HasFlag(image.GetUsage(), ImageUsage::TransferSrc) ||
+                    !HasFlag(image.GetUsage(), ImageUsage::TransferDst))
+                {
+                    Log::Warn("generated-texture job '{}' is not cached: target '{}' carries "
+                              "neither transfer usage",
+                              cacheKey, image.GetName());
+                    return false;
+                }
+                if (GeneratedTextureShapeBytes(ShapeOf(image)) == 0)
+                {
+                    Log::Warn("generated-texture job '{}' is not cached: target '{}' has a format "
+                              "with no known byte size",
+                              cacheKey, image.GetName());
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        // The per-mip copy regions restoring one target from a staging buffer, all layers of a mip
+        // at once — the layout the levels were stored in and the one CopyBufferToImage expects.
+        vector<BufferImageCopyRegion> RestoreRegions(const GeneratedTextureBlobShape& shape,
+                                                     const u64 baseOffset)
+        {
+            vector<BufferImageCopyRegion> regions;
+            regions.reserve(shape.MipLevels);
+            for (u32 mip = 0; mip < shape.MipLevels; mip++)
+            {
+                regions.push_back({
+                    .BufferOffset = baseOffset + GeneratedTextureMipOffset(shape, mip),
+                    .MipLevel = mip,
+                    .Extent = {std::max(1u, shape.Extent.x >> mip),
+                               std::max(1u, shape.Extent.y >> mip),
+                               std::max(1u, shape.Extent.z >> mip)},
+                });
+            }
+            return regions;
+        }
+
+        // The shared state a job's readbacks accumulate into. It holds no reference to the job, so
+        // releasing a completed job while its levels are still arriving neither strands the store
+        // nor dangles: the result was computed, and it is stored.
+        struct StoreCollector
+        {
+            string CacheKey;
+            GeneratedTextureBlob Blob;
+            u32 Outstanding = 0;
+            bool Failed = false;
+        };
     }
 
     GeneratedTexture::GeneratedTexture(Context& context, const GeneratedTextureTargetInfo& info)
@@ -160,20 +235,229 @@ namespace Veng::Renderer
             return false;
         }
 
+        const bool cached = !request.CacheKey.empty() && m_Cache != nullptr && m_Tasks != nullptr;
+
         auto job = CreateUnique<Job>();
         job->Key = request.Key;
+        job->Serial = m_NextSerial++;
         job->OnTick = std::move(request.OnTick);
         job->OnComplete = std::move(request.OnComplete);
+        job->CacheKey = cached ? std::move(request.CacheKey) : string{};
         job->Targets.reserve(request.Targets.size());
         for (usize i = 0; i < request.Targets.size(); i++)
         {
             GeneratedTextureTargetInfo target = request.Targets[i];
             target.Image.Name = fmt::format("{}[{}]", request.Name, i);
+            if (cached)
+            {
+                // A cached target is read back to be stored and written into to be restored, so it
+                // needs both transfer usages whatever its producer access is.
+                target.Image.Usage =
+                    target.Image.Usage | ImageUsage::TransferSrc | ImageUsage::TransferDst;
+            }
             job->Targets.push_back(
                 Unique<GeneratedTexture>(new GeneratedTexture(m_Context, target)));
         }
-        m_Jobs.push_back(std::move(job));
+
+        if (cached && !TargetsAreCacheable(job->Targets, job->CacheKey))
+        {
+            job->CacheKey.clear();
+        }
+
+        Job& added = *m_Jobs.emplace_back(std::move(job));
+        if (!added.CacheKey.empty())
+        {
+            SubmitProbe(added);
+        }
         return true;
+    }
+
+    void GeneratedTextureService::SetCache(DerivedDataCache* cache, TaskSystem* tasks)
+    {
+        const bool attached = cache != nullptr && tasks != nullptr;
+        m_Cache = attached ? cache : nullptr;
+        m_Tasks = attached ? tasks : nullptr;
+    }
+
+    void GeneratedTextureService::SubmitProbe(Job& job)
+    {
+        // Held until the answer lands: the key is live, so a re-request is still idempotent, but no
+        // tick is spent on work the cache may already hold.
+        m_Queue->SetHeld(job.Key, true);
+        job.Probing = true;
+
+        const GeneratedTextureKey key = job.Key;
+        const u64 serial = job.Serial;
+        DerivedDataCache* cache = m_Cache;
+        string cacheKey = job.CacheKey;
+
+        Task<optional<vector<u8>>> probe =
+            m_Tasks->Submit([cache, cacheKey = std::move(cacheKey)]
+                            { return cache->Read(cacheKey); }, "GeneratedTextureCacheProbe");
+        probe.Then(
+            [this, key, serial](Result<optional<vector<u8>>> payload)
+            {
+                ResolveProbe(key, serial,
+                             payload.has_value() ? std::move(*payload) : optional<vector<u8>>{});
+            });
+    }
+
+    void GeneratedTextureService::ResolveProbe(const GeneratedTextureKey key, const u64 serial,
+                                               optional<vector<u8>> payload)
+    {
+        Job* job = FindJob(key);
+        if (job == nullptr || job->Serial != serial || !job->Probing)
+        {
+            return;
+        }
+        job->Probing = false;
+
+        const auto miss = [&] { m_Queue->SetHeld(key, false); };
+
+        if (!payload.has_value())
+        {
+            miss();
+            return;
+        }
+
+        const optional<GeneratedTextureBlob> blob = DecodeGeneratedTextureBlob(*payload);
+        if (!blob.has_value() || blob->Shapes.size() != job->Targets.size())
+        {
+            miss();
+            return;
+        }
+        for (usize i = 0; i < job->Targets.size(); i++)
+        {
+            if (blob->Shapes[i] != ShapeOf(*job->Targets[i]->GetImage()))
+            {
+                miss();
+                return;
+            }
+        }
+
+        auto staging = Buffer::Create(m_Context, {
+                                                     .Name = "GeneratedTextureRestore",
+                                                     .Size = blob->Texels.size(),
+                                                     .Usage = BufferUsage::TransferSrc,
+                                                     .HostMapped = true,
+                                                 });
+        staging->UploadSync(blob->Texels);
+
+        PendingRestore restore{.Staging = std::move(staging)};
+        restore.TargetOffsets.reserve(blob->Shapes.size());
+        u64 offset = 0;
+        for (const GeneratedTextureBlobShape& shape : blob->Shapes)
+        {
+            restore.TargetOffsets.push_back(offset);
+            offset += GeneratedTextureShapeBytes(shape);
+        }
+        job->Restore = std::move(restore);
+    }
+
+    void GeneratedTextureService::ApplyRestores(CommandBuffer& cmd,
+                                                vector<GeneratedTextureKey>& restored)
+    {
+        for (const Unique<Job>& job : m_Jobs)
+        {
+            if (!job->Restore.has_value())
+            {
+                continue;
+            }
+            for (usize i = 0; i < job->Targets.size(); i++)
+            {
+                const GeneratedTexture& target = *job->Targets[i];
+                const vector<BufferImageCopyRegion> regions =
+                    RestoreRegions(ShapeOf(*target.GetImage()), job->Restore->TargetOffsets[i]);
+                cmd.PrepareForAccess(target.GetSampledView(), AccessKind::TransferDst);
+                cmd.CopyBufferToImage(job->Restore->Staging, target.GetImage(), regions);
+                cmd.PrepareForAccess(target.GetSampledView(), AccessKind::Sample);
+            }
+            // The staging buffer retires into this frame's bin, so it outlives the copy it was
+            // recorded into and is destroyed once that frame's fence has been waited.
+            job->Restore.reset();
+            // The texels came out of the cache, so there is nothing left to put back into it.
+            job->CacheKey.clear();
+            m_Queue->MarkResident(job->Key);
+            m_CompletedTotal++;
+            m_RestoredTotal++;
+            restored.push_back(job->Key);
+        }
+    }
+
+    void GeneratedTextureService::SubmitStore(const Job& job)
+    {
+        auto collector = CreateRef<StoreCollector>();
+        collector->CacheKey = job.CacheKey;
+        collector->Blob.Shapes.reserve(job.Targets.size());
+
+        usize total = 0;
+        for (const Unique<GeneratedTexture>& target : job.Targets)
+        {
+            const GeneratedTextureBlobShape shape = ShapeOf(*target->GetImage());
+            collector->Blob.Shapes.push_back(shape);
+            total += GeneratedTextureShapeBytes(shape);
+        }
+        collector->Blob.Texels.resize(total);
+
+        AsyncReadback& readback = m_Context.GetAsyncReadback();
+        usize base = 0;
+        for (const Unique<GeneratedTexture>& target : job.Targets)
+        {
+            const GeneratedTextureBlobShape shape = ShapeOf(*target->GetImage());
+            for (u32 mip = 0; mip < shape.MipLevels; mip++)
+            {
+                const usize layerBytes = GeneratedTextureLayerBytes(shape, mip);
+                for (u32 layer = 0; layer < shape.Layers; layer++)
+                {
+                    const usize destination = base + GeneratedTextureMipOffset(shape, mip) +
+                                              (static_cast<usize>(layer) * layerBytes);
+                    collector->Outstanding++;
+                    const AsyncReadbackHandle handle = readback.Request({
+                        .Name = fmt::format("{} (Cache)", target->GetImage()->GetName()),
+                        .Image = target->GetImage(),
+                        .MipLevel = mip,
+                        .ArrayLayer = layer,
+                        .RestoreTo = AccessKind::Sample,
+                        .OnComplete =
+                            [this, collector, destination, layerBytes](std::span<const u8> bytes)
+                        {
+                            if (bytes.size() == layerBytes)
+                            {
+                                std::ranges::copy(bytes, collector->Blob.Texels.begin() +
+                                                             static_cast<isize>(destination));
+                            }
+                            else
+                            {
+                                collector->Failed = true;
+                            }
+                            collector->Outstanding--;
+                            if (collector->Outstanding > 0 || collector->Failed)
+                            {
+                                return;
+                            }
+
+                            vector<u8> encoded = EncodeGeneratedTextureBlob(collector->Blob);
+                            if (encoded.empty() || m_Cache == nullptr || m_Tasks == nullptr)
+                            {
+                                return;
+                            }
+                            m_StoredTotal++;
+                            DerivedDataCache* cache = m_Cache;
+                            m_Tasks->Submit([cache, storeKey = collector->CacheKey,
+                                             encoded = std::move(encoded)]
+                                            { cache->Store(storeKey, encoded); },
+                                            "GeneratedTextureCacheStore");
+                        },
+                    });
+                    if (!handle.IsValid())
+                    {
+                        collector->Failed = true;
+                        collector->Outstanding--;
+                    }
+                }
+            }
+            base += GeneratedTextureShapeBytes(shape);
+        }
     }
 
     bool GeneratedTextureService::Cancel(const GeneratedTextureKey key)
@@ -248,7 +532,16 @@ namespace Veng::Renderer
     {
         GeneratedTextureStats stats{.TicksLastPump = m_TicksLastPump,
                                     .CompletedTotal = m_CompletedTotal,
-                                    .CancelledTotal = m_CancelledTotal};
+                                    .CancelledTotal = m_CancelledTotal,
+                                    .RestoredTotal = m_RestoredTotal,
+                                    .StoredTotal = m_StoredTotal};
+        for (const Unique<Job>& job : m_Jobs)
+        {
+            if (job->Probing)
+            {
+                stats.Probing++;
+            }
+        }
         for (const GeneratedTextureJobRecord& record : m_Queue->GetJobs())
         {
             switch (record.State)
@@ -291,6 +584,10 @@ namespace Veng::Renderer
         }
 
         vector<GeneratedTextureKey> completed;
+
+        // A restored job's texels land ahead of the tick loop, so its targets are sampleable by the
+        // same frame's passes, exactly as a job whose last tick ran this pump.
+        ApplyRestores(cmd, completed);
 
         m_TicksLastPump = m_Queue->Spend(
             budget,
@@ -335,7 +632,15 @@ namespace Veng::Renderer
         for (const GeneratedTextureKey key : completed)
         {
             const Job* job = FindJob(key);
-            if (job == nullptr || !job->OnComplete)
+            if (job == nullptr)
+            {
+                continue;
+            }
+            if (!job->CacheKey.empty() && m_Cache != nullptr && m_Tasks != nullptr)
+            {
+                SubmitStore(*job);
+            }
+            if (!job->OnComplete)
             {
                 continue;
             }

@@ -7,8 +7,15 @@
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/Types.h>
 
+namespace Veng
+{
+    class DerivedDataCache;
+    class TaskSystem;
+}
+
 namespace Veng::Renderer
 {
+    class Buffer;
     class CommandBuffer;
     class Context;
     class GeneratedTextureQueue;
@@ -164,6 +171,19 @@ namespace Veng::Renderer
         string Name = "GeneratedTexture";
         /// @brief The images the job fills; at least one.
         vector<GeneratedTextureTargetInfo> Targets;
+        /// @brief The key this job's result is cached under, or empty for a job that is not cached.
+        ///
+        /// Set it and the service probes the attached cache before running a single tick: a hit
+        /// uploads the stored texels and completes the job with the tick callback never invoked, a
+        /// miss runs the job normally and stores its targets once they are filled. The key is the
+        /// caller's to compose and must name everything the result depends on that the cache's
+        /// generation does not.
+        ///
+        /// It is inert with no cache attached, so a consumer may set it unconditionally. A target
+        /// the service creates has the transfer usages a store and a restore need folded in; an
+        /// adopted target carrying neither is simply not cached, and the job logs why.
+        /// @see GeneratedTextureService::SetCache
+        string CacheKey;
         /// @brief The number of ticks the job takes; the amortization quantum.
         ///
         /// The caller sizes a tick so one is a bounded slice of GPU work — one solver step, one
@@ -193,10 +213,16 @@ namespace Veng::Renderer
         u32 Resident = 0;
         /// @brief Ticks spent by the most recent pump.
         u32 TicksLastPump = 0;
+        /// @brief Jobs waiting on a cache probe, which spend no ticks while they wait.
+        u32 Probing = 0;
         /// @brief Jobs completed over the service's lifetime.
         u64 CompletedTotal = 0;
         /// @brief Jobs cancelled before completing, over the service's lifetime.
         u64 CancelledTotal = 0;
+        /// @brief Jobs completed from the cache without running a tick.
+        u64 RestoredTotal = 0;
+        /// @brief Job results written to the cache.
+        u64 StoredTotal = 0;
     };
 
     /// @brief Persistent GPU textures filled by caller-recorded jobs the frame amortizes.
@@ -214,6 +240,13 @@ namespace Veng::Renderer
     ///
     /// **The service makes no policy decisions.** What to generate, when, at what resolution, and
     /// how long to hold it belong to the caller entirely; the service schedules and owns lifetime.
+    ///
+    /// **A result can outlive the process.** Attach a DerivedDataCache and a job carrying a
+    /// CacheKey is answered from disk when the same result was computed on an earlier run: the
+    /// probe and the store both run on task-system workers, so neither the render thread nor a
+    /// frame ever waits on a file. The cache is transparent — a hit is a texture that arrives
+    /// without the job's ticks running, a miss is the job running exactly as if no cache existed,
+    /// and a deleted cache directory is a valid state at any moment.
     ///
     /// Owned by Context and pumped once per frame from BeginFrame with the service's own tick
     /// budget, so every consumer of one context shares one budget. It records around the
@@ -279,6 +312,23 @@ namespace Veng::Renderer
         /// @return The result, whose target span is valid until the job is released.
         [[nodiscard]] optional<GeneratedTextureResult> Find(GeneratedTextureKey key) const;
 
+        /// @brief Attaches the cache a keyed job is answered from and stored into, or detaches it.
+        ///
+        /// Both arguments travel together: the cache says where results live and the task system
+        /// says which workers the file I/O runs on, and neither is usable without the other, so
+        /// passing null for either detaches. Detaching leaves jobs already in flight alone — a
+        /// probe that has been submitted still resolves — and simply stops answering or storing
+        /// anything after that.
+        ///
+        /// The service never opens or owns the cache: what generation it holds and how big it may
+        /// grow are the caller's decisions, made where the caller knows what its results depend on.
+        /// @param cache  The cache, or null to detach.
+        /// @param tasks  The task system probes and stores run on, or null to detach.
+        void SetCache(DerivedDataCache* cache, TaskSystem* tasks);
+
+        /// @brief The attached cache, or null when none is.
+        [[nodiscard]] DerivedDataCache* GetCache() const { return m_Cache; }
+
         /// @brief Sets the ticks the pump may spend per frame across every job.
         /// @param ticksPerFrame The budget, or UnlimitedTickBudget for no amortization.
         void SetTickBudget(u32 ticksPerFrame) { m_TickBudget = ticksPerFrame; }
@@ -301,17 +351,37 @@ namespace Veng::Renderer
         /// @param budget Maximum ticks to spend this frame.
         void Pump(CommandBuffer& cmd, u32 budget);
 
+        /// @brief A cache hit's texels, staged and waiting for the pump to copy them into place.
+        struct PendingRestore
+        {
+            /// @brief The host-mapped buffer holding every target's levels.
+            Ref<Buffer> Staging;
+            /// @brief Byte offset of each target's levels within the staging buffer.
+            vector<u64> TargetOffsets;
+        };
+
         /// @brief A job's GPU half: the targets it fills and the callbacks that fill and finish it.
         struct Job
         {
             /// @brief The caller's key.
             GeneratedTextureKey Key = 0;
+            /// @brief Distinguishes this job from a later one re-using the same key.
+            ///
+            /// A probe resolving after its job was cancelled and the key re-requested would
+            /// otherwise restore one job's texels into another's targets.
+            u64 Serial = 0;
             /// @brief The images the job fills.
             vector<Unique<GeneratedTexture>> Targets;
             /// @brief Records one tick's GPU work.
             function<void(CommandBuffer&, const GeneratedTextureTickContext&)> OnTick;
             /// @brief Fired once the job's ticks are exhausted.
             function<void(const GeneratedTextureResult&)> OnComplete;
+            /// @brief The cache key the result is stored under; empty when the job is not cached.
+            string CacheKey;
+            /// @brief Whether a probe of the cache is in flight.
+            bool Probing = false;
+            /// @brief A hit's staged texels, applied by the next pump.
+            optional<PendingRestore> Restore;
         };
 
         /// @brief The job for a key, or null when the key is not live.
@@ -324,6 +394,25 @@ namespace Veng::Renderer
         /// @param countCancelled  Whether to count the drop against CancelledTotal.
         /// @return True when a job was dropped.
         bool Drop(GeneratedTextureKey key, bool countCancelled);
+
+        /// @brief Submits the worker probe of the cache for a job, holding it until the answer.
+        /// @param job The job to probe for; left held and marked probing.
+        void SubmitProbe(Job& job);
+
+        /// @brief Applies a resolved probe: stages a hit's texels, or releases the job to run.
+        /// @param key      The probed job's key.
+        /// @param serial   The probed job's serial; a mismatch drops the answer.
+        /// @param payload  The stored payload, or nullopt on a miss.
+        void ResolveProbe(GeneratedTextureKey key, u64 serial, optional<vector<u8>> payload);
+
+        /// @brief Reads a completed job's targets back and stores them under its cache key.
+        /// @param job The job whose targets are filled.
+        void SubmitStore(const Job& job);
+
+        /// @brief Copies every staged restore into its targets and marks those jobs resident.
+        /// @param cmd       The frame's command buffer the copies are recorded into.
+        /// @param restored  Receives the keys whose completions the caller must fire.
+        void ApplyRestores(CommandBuffer& cmd, vector<GeneratedTextureKey>& restored);
 
         /// @brief The context targets are created on.
         Context& m_Context;
@@ -342,7 +431,17 @@ namespace Veng::Renderer
         u64 m_CompletedTotal = 0;
         /// @brief Jobs cancelled before completing, over the service's lifetime.
         u64 m_CancelledTotal = 0;
+        /// @brief Jobs completed from the cache without running a tick.
+        u64 m_RestoredTotal = 0;
+        /// @brief Job results written to the cache.
+        u64 m_StoredTotal = 0;
         /// @brief True while a caller's tick callback is running; requests and cancels are barred.
         bool m_InTick = false;
+        /// @brief The cache keyed jobs are answered from, or null when none is attached.
+        DerivedDataCache* m_Cache = nullptr;
+        /// @brief The task system the cache's file I/O runs on, or null when none is attached.
+        TaskSystem* m_Tasks = nullptr;
+        /// @brief Monotonic source for Job::Serial.
+        u64 m_NextSerial = 1;
     };
 }

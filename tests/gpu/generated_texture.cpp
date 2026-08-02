@@ -11,6 +11,10 @@
 //   4. The frame-deferred readback returns exactly the texels a synchronous Image::Download of the
 //      same image returns, and not before GetMaxFramesInFlight() frames have passed. There is no
 //      wait path to assert the render thread stays out of — the primitive has none to call.
+//   5. The persistent cache is transparent end to end: a keyed job's result is stored once its
+//      ticks have run, a later job under the same cache key completes from disk with none of its
+//      ticks running and the identical texels, and with the cache's files gone the same request
+//      simply runs its ticks again.
 //
 // The ticks here are raster clears rather than compute dispatches deliberately: a clear over a
 // render area needs no pipeline, no shader and no descriptor set, so what the cases measure is the
@@ -19,10 +23,14 @@
 // Skips cleanly (exit 77) on a machine with no Vulkan ICD, like the rest of the gpu band.
 
 #include <array>
+#include <atomic>
+#include <filesystem>
 #include <vector>
 
 #include <doctest/doctest.h>
 
+#include <Veng/Path.h>
+#include <Veng/Persistence/DerivedDataCache.h>
 #include <Veng/Renderer/AsyncReadback.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/CommandBuffer.h>
@@ -33,6 +41,7 @@
 #include <Veng/Renderer/Types.h>
 
 #include <gpu/fixture.h>
+#include <support/TempPath.h>
 
 using namespace Veng;
 using namespace Veng::Renderer;
@@ -49,6 +58,22 @@ namespace
         return {.R = static_cast<f32>(tick * 32) / 255.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f};
     }
 
+    // Clears row `TickIndex` of the target to that tick's colour.
+    void StripeTick(CommandBuffer& cmd, const GeneratedTextureTickContext& context)
+    {
+        cmd.BeginRendering({
+            .Offset = {0, static_cast<i32>(context.TickIndex)},
+            .Extent = {StripeEdge, 1},
+            .ColorAttachments = {{
+                .ImageView = context.Targets[0]->GetView(0),
+                .LoadOp = LoadOp::Clear,
+                .StoreOp = StoreOp::Store,
+                .ClearValue = StripeColor(context.TickIndex),
+            }},
+        });
+        cmd.EndRendering();
+    }
+
     // A job whose tick i clears row i of an 8x8 target: many ticks, each a bounded slice, with a
     // result that says exactly which ticks ran and in what order.
     GeneratedTextureRequest StripeJob(const GeneratedTextureKey key, const string& name)
@@ -63,21 +88,7 @@ namespace
                 .ProducerAccess = AccessKind::ColorAttachment,
             }},
             .TickCount = StripeTicks,
-            .OnTick =
-                [](CommandBuffer& cmd, const GeneratedTextureTickContext& context)
-            {
-                cmd.BeginRendering({
-                    .Offset = {0, static_cast<i32>(context.TickIndex)},
-                    .Extent = {StripeEdge, 1},
-                    .ColorAttachments = {{
-                        .ImageView = context.Targets[0]->GetView(0),
-                        .LoadOp = LoadOp::Clear,
-                        .StoreOp = StoreOp::Store,
-                        .ClearValue = StripeColor(context.TickIndex),
-                    }},
-                });
-                cmd.EndRendering();
-            },
+            .OnTick = StripeTick,
         };
     }
 
@@ -344,4 +355,145 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     DriveUntil(Context, [] { return false; }, Context.GetMaxFramesInFlight() + 2);
     CHECK(secondDeliveries == 0u);
     CHECK(readback.GetCompletedCount() == 1u);
+}
+
+// --- the persistent cache ------------------------------------------------------------------------
+
+namespace
+{
+    // A fresh, unique cache directory per case under the process's scratch tree, removed on
+    // destruction.
+    struct TempCacheRoot
+    {
+        path Dir;
+
+        TempCacheRoot()
+        {
+            static std::atomic<u64> counter{0};
+            Dir = TestSupport::TempDir() /
+                  fmt::format("gtc-{}", counter.fetch_add(1, std::memory_order_relaxed));
+            std::filesystem::remove_all(Dir);
+        }
+
+        ~TempCacheRoot() { std::filesystem::remove_all(Dir); }
+    };
+
+    // The frame loop as an application runs it: continuations first, then the frame whose pump
+    // reacts to them. The cache's probes and stores land through that queue, so a driver that does
+    // not pump never sees a hit.
+    u32 DriveWithTasks(Renderer::Context& context, TaskSystem& tasks, const function<bool()>& done,
+                       const u32 limit = 64)
+    {
+        u32 frames = 0;
+        while (!done() && frames < limit)
+        {
+            tasks.PumpMainThread();
+            context.BeginFrame();
+            context.EndFrame();
+            frames++;
+        }
+        tasks.PumpMainThread();
+        return frames;
+    }
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "generated texture: a cached job is answered from disk without running a tick")
+{
+    const TempCacheRoot root;
+    const Result<Unique<DerivedDataCache>> cache =
+        DerivedDataCache::Open({.Root = root.Dir, .Generation = "gpu-case"});
+    REQUIRE(cache.has_value());
+
+    GeneratedTextureService& service = Context.GetGeneratedTextures();
+    service.SetCache(cache->get(), &Tasks);
+    service.SetTickBudget(GeneratedTextureService::UnlimitedTickBudget);
+
+    constexpr string_view CacheKey = "stripe/8x8";
+    constexpr GeneratedTextureKey ColdKey = 0x5721'CA01ull;
+    constexpr GeneratedTextureKey WarmKey = 0x5721'CA02ull;
+    constexpr GeneratedTextureKey EvictedKey = 0x5721'CA03ull;
+
+    // The cold run: nothing to answer from, so the job's ticks fill the target.
+    u32 coldTicks = 0;
+    GeneratedTextureRequest cold = StripeJob(ColdKey, "CachedBake");
+    cold.CacheKey = string(CacheKey);
+    cold.OnTick = [&coldTicks](CommandBuffer& cmd, const GeneratedTextureTickContext& context)
+    {
+        coldTicks++;
+        StripeTick(cmd, context);
+    };
+    REQUIRE(service.Request(std::move(cold)));
+
+    DriveWithTasks(Context, Tasks, [&] { return service.IsResident(ColdKey); });
+    REQUIRE(service.IsResident(ColdKey));
+    CHECK(coldTicks == StripeTicks);
+    CHECK(service.GetStats().RestoredTotal == 0u);
+
+    Context.WaitIdle();
+    const std::vector<u8> baked = service.Find(ColdKey)->Targets[0]->GetImage()->Download();
+
+    // The store rides the readback pump, so it lands some frames after the completion.
+    DriveWithTasks(Context, Tasks, [&] { return (*cache)->Contains(string(CacheKey)); });
+    REQUIRE((*cache)->Contains(string(CacheKey)));
+    CHECK(service.GetStats().StoredTotal == 1u);
+    CHECK(service.Release(ColdKey));
+
+    // The warm run: a different job key, the same cache key. Its tick would fill the target with a
+    // different pattern, so texels equal to the cold run's can only have come off the disk.
+    u32 warmTicks = 0;
+    GeneratedTextureRequest warm = StripeJob(WarmKey, "CachedBake");
+    warm.CacheKey = string(CacheKey);
+    warm.OnTick = [&warmTicks](CommandBuffer& cmd, const GeneratedTextureTickContext& context)
+    {
+        warmTicks++;
+        cmd.BeginRendering({
+            .Extent = {StripeEdge, StripeEdge},
+            .ColorAttachments = {{
+                .ImageView = context.Targets[0]->GetView(0),
+                .LoadOp = LoadOp::Clear,
+                .StoreOp = StoreOp::Store,
+                .ClearValue = ClearColor{.R = 1.0f, .G = 1.0f, .B = 1.0f, .A = 1.0f},
+            }},
+        });
+        cmd.EndRendering();
+    };
+    REQUIRE(service.Request(std::move(warm)));
+
+    DriveWithTasks(Context, Tasks, [&] { return service.IsResident(WarmKey); });
+    REQUIRE(service.IsResident(WarmKey));
+    CHECK(warmTicks == 0u);
+    CHECK(service.GetStats().RestoredTotal == 1u);
+    CHECK(service.GetStats().TicksLastPump == 0u);
+
+    Context.WaitIdle();
+    CHECK(service.Find(WarmKey)->Targets[0]->GetImage()->Download() == baked);
+    CHECK(service.Release(WarmKey));
+
+    // And the cache is never a source of truth: delete every file under it and the same request
+    // simply runs its ticks again.
+    std::filesystem::remove_all(root.Dir);
+    std::filesystem::create_directories(root.Dir);
+
+    u32 evictedTicks = 0;
+    GeneratedTextureRequest evicted = StripeJob(EvictedKey, "CachedBake");
+    evicted.CacheKey = string(CacheKey);
+    evicted.OnTick = [&evictedTicks](CommandBuffer& cmd, const GeneratedTextureTickContext& context)
+    {
+        evictedTicks++;
+        StripeTick(cmd, context);
+    };
+    REQUIRE(service.Request(std::move(evicted)));
+
+    DriveWithTasks(Context, Tasks, [&] { return service.IsResident(EvictedKey); });
+    REQUIRE(service.IsResident(EvictedKey));
+    CHECK(evictedTicks == StripeTicks);
+    CHECK(service.GetStats().RestoredTotal == 1u);
+
+    Context.WaitIdle();
+    CHECK(service.Find(EvictedKey)->Targets[0]->GetImage()->Download() == baked);
+
+    // Detach before the fixture tears the cache down beneath the service.
+    service.SetCache(nullptr, nullptr);
+    CHECK(service.Release(EvictedKey));
 }

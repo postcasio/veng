@@ -43,6 +43,30 @@ namespace Veng::Renderer
         return true;
     }
 
+    bool GeneratedTextureQueue::SetHeld(const u64 key, const bool held)
+    {
+        GeneratedTextureJobRecord* record = FindMutable(key);
+        if (record == nullptr)
+        {
+            return false;
+        }
+        record->Held = held;
+        return true;
+    }
+
+    bool GeneratedTextureQueue::MarkResident(const u64 key)
+    {
+        GeneratedTextureJobRecord* record = FindMutable(key);
+        if (record == nullptr || record->State == GeneratedTextureState::Resident)
+        {
+            return false;
+        }
+        record->TicksDone = record->TickCount;
+        record->State = GeneratedTextureState::Resident;
+        record->Held = false;
+        return true;
+    }
+
     const GeneratedTextureJobRecord* GeneratedTextureQueue::Find(const u64 key) const
     {
         const auto it = std::ranges::find(m_Jobs, key, &GeneratedTextureJobRecord::Key);
@@ -62,6 +86,13 @@ namespace Veng::Renderer
                                   { return job.State != GeneratedTextureState::Resident; }));
     }
 
+    u32 GeneratedTextureQueue::GetSelectableCount() const
+    {
+        return static_cast<u32>(std::ranges::count_if(
+            m_Jobs, [](const GeneratedTextureJobRecord& job)
+            { return job.State != GeneratedTextureState::Resident && !job.Held; }));
+    }
+
     u32 GeneratedTextureQueue::GetResidentCount() const
     {
         return static_cast<u32>(
@@ -74,7 +105,7 @@ namespace Veng::Renderer
         const GeneratedTextureJobRecord* best = nullptr;
         for (const GeneratedTextureJobRecord& job : m_Jobs)
         {
-            if (job.State == GeneratedTextureState::Resident)
+            if (job.State == GeneratedTextureState::Resident || job.Held)
             {
                 continue;
             }
