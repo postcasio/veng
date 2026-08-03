@@ -387,7 +387,13 @@ TEST_CASE("generated texture blob: shapes and texels round-trip")
     CHECK(GeneratedTextureMipOffset(blob.Shapes[0], 1) == 64u);
     CHECK(GeneratedTextureMipOffset(blob.Shapes[0], 2) == 80u);
 
-    blob.Texels.resize(84 + 96);
+    // The second shape's base is aligned past the first's 84 bytes — the copy-legality the layout
+    // promises: a buffer-image copy's offset must be a texel-block multiple whatever precedes it.
+    CHECK(GeneratedTextureShapeOffset(blob.Shapes, 1) == 96u);
+    CHECK(GeneratedTextureShapeOffset(blob.Shapes, 1) % GeneratedTextureShapeAlignment == 0u);
+    CHECK(GeneratedTextureTexelBytes(blob.Shapes) == 192u);
+
+    blob.Texels.resize(GeneratedTextureTexelBytes(blob.Shapes));
     for (usize i = 0; i < blob.Texels.size(); i++)
     {
         blob.Texels[i] = static_cast<u8>(i * 7);
@@ -414,6 +420,7 @@ TEST_CASE("generated texture blob: shapes and texels round-trip")
     REQUIRE(layout.has_value());
     CHECK(layout->Shapes == blob.Shapes);
     CHECK(layout->TexelBytes == blob.Texels.size());
+    CHECK(layout->TexelOffset % GeneratedTextureShapeAlignment == 0u);
     CHECK(std::equal(payload.begin() + static_cast<isize>(layout->TexelOffset), payload.end(),
                      blob.Texels.begin(), blob.Texels.end()));
 
@@ -456,9 +463,12 @@ TEST_CASE("generated texture blob: a header parses out of a bounded prefix of th
     CHECK(ReadGeneratedTextureBlobPrefix(headerOnly).has_value());
     CHECK_FALSE(ReadGeneratedTextureBlobHeader(headerOnly).has_value());
 
-    // A prefix too short to hold the shapes it announces is not a header at all.
-    CHECK_FALSE(ReadGeneratedTextureBlobPrefix(std::span(payload).first(whole->TexelOffset - 1))
-                    .has_value());
+    // A prefix too short to hold the shapes it announces is not a header at all. The header ends
+    // ahead of the aligned texel region, so the truncation must cut into the last shape's fields
+    // rather than into the alignment padding a parse never reads.
+    const usize headerEnd = 8 + (2 * sizeof(u32)) + (whole->Shapes.size() * 7 * sizeof(u32));
+    CHECK_FALSE(
+        ReadGeneratedTextureBlobPrefix(std::span(payload).first(headerEnd - 1)).has_value());
 
     // The levels a tail restore reads are the shape's own trailing bytes: the offset of the level it
     // starts at, through to the end of the shape, contiguous because levels run mip-major.

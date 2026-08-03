@@ -476,11 +476,10 @@ namespace Veng::Renderer
 
         PendingRestore restore{.Staging = staging};
         restore.TargetOffsets.reserve(layout->Shapes.size());
-        u64 offset = layout->TexelOffset;
-        for (const GeneratedTextureBlobShape& shape : layout->Shapes)
+        for (usize i = 0; i < layout->Shapes.size(); i++)
         {
-            restore.TargetOffsets.push_back(offset);
-            offset += GeneratedTextureShapeBytes(shape);
+            restore.TargetOffsets.push_back(layout->TexelOffset +
+                                            GeneratedTextureShapeOffset(layout->Shapes, i));
         }
         job->Restore = std::move(restore);
         job->Restoring = true;
@@ -531,27 +530,32 @@ namespace Veng::Renderer
 
         // What each target wants is the tail of its stored shape's texels: the levels from its own
         // offset onward, which are contiguous because the levels run mip-major. So one range per
-        // target, and the staging buffer holds those ranges and nothing else.
+        // target, and the staging buffer holds those ranges and nothing else — each range's base
+        // aligned like the blob's own, since the upload out of this buffer has the same
+        // texel-block-multiple offset requirement as any other buffer-image copy.
         struct Wanted
         {
             u64 Source = 0;
             u64 Bytes = 0;
+            u64 Destination = 0;
         };
         vector<Wanted> wanted;
         wanted.reserve(layout->Shapes.size());
         vector<u64> targetOffsets;
         targetOffsets.reserve(layout->Shapes.size());
-        u64 source = 0;
         u64 total = 0;
         for (usize i = 0; i < layout->Shapes.size(); i++)
         {
             const GeneratedTextureBlobShape& shape = layout->Shapes[i];
             const usize shapeBytes = GeneratedTextureShapeBytes(shape);
             const usize skipped = GeneratedTextureMipOffset(shape, job->CacheMipOffsets[i]);
+            total = (total + (GeneratedTextureShapeAlignment - 1)) &
+                    ~(GeneratedTextureShapeAlignment - 1);
             targetOffsets.push_back(total);
-            wanted.push_back({.Source = source + skipped, .Bytes = shapeBytes - skipped});
+            wanted.push_back({.Source = GeneratedTextureShapeOffset(layout->Shapes, i) + skipped,
+                              .Bytes = shapeBytes - skipped,
+                              .Destination = total});
             total += shapeBytes - skipped;
-            source += shapeBytes;
         }
         if (total == 0)
         {
@@ -577,7 +581,6 @@ namespace Veng::Renderer
         Task<bool> restore = m_Tasks->Submit(
             [cache, cacheKey = job->CacheKey, staging, wanted = std::move(wanted), texelOffset]
             {
-                u64 destination = 0;
                 for (const Wanted& range : wanted)
                 {
                     const optional<vector<u8>> bytes =
@@ -586,8 +589,7 @@ namespace Veng::Renderer
                     {
                         return false;
                     }
-                    staging->UploadSync(*bytes, destination);
-                    destination += range.Bytes;
+                    staging->UploadSync(*bytes, range.Destination);
                 }
                 return true;
             },
@@ -658,11 +660,16 @@ namespace Veng::Renderer
 
     void GeneratedTextureService::SubmitStore(CommandBuffer& cmd, const Job& job)
     {
-        usize total = 0;
+        vector<GeneratedTextureBlobShape> shapes;
+        shapes.reserve(job.Targets.size());
         for (const Unique<GeneratedTexture>& target : job.Targets)
         {
-            total += GeneratedTextureShapeBytes(ShapeOf(*target->GetImage()));
+            shapes.push_back(ShapeOf(*target->GetImage()));
         }
+        // The blob's own padded region size, so the staging bytes are appendable behind the
+        // header verbatim — and each shape's base is aligned, which a copy's buffer offset
+        // requires (a texel-block multiple; the shapes ahead of it can sum to anything).
+        const usize total = GeneratedTextureTexelBytes(shapes);
         if (total == 0)
         {
             return;
@@ -684,16 +691,15 @@ namespace Veng::Renderer
         };
         store.Images.reserve(job.Targets.size());
 
-        u64 base = 0;
-        for (const Unique<GeneratedTexture>& target : job.Targets)
+        for (usize i = 0; i < job.Targets.size(); i++)
         {
-            const GeneratedTextureBlobShape shape = ShapeOf(*target->GetImage());
-            const vector<BufferImageCopyRegion> regions = LevelRegions(shape, base);
+            const Unique<GeneratedTexture>& target = job.Targets[i];
+            const vector<BufferImageCopyRegion> regions =
+                LevelRegions(shapes[i], GeneratedTextureShapeOffset(shapes, i));
             cmd.PrepareForAccess(target->GetSampledView(), AccessKind::TransferSrc);
             cmd.CopyImageToBuffer(target->GetImage(), store.Staging, regions);
             cmd.PrepareForAccess(target->GetSampledView(), AccessKind::Sample);
             store.Images.push_back(target->GetImage());
-            base += GeneratedTextureShapeBytes(shape);
         }
 
         m_Stores.push_back(std::move(store));

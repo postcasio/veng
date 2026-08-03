@@ -39,7 +39,8 @@ namespace Veng::Renderer
     {
         /// @brief One shape per target, in the order the job declared them.
         vector<GeneratedTextureBlobShape> Shapes;
-        /// @brief Every target's texels, concatenated in shape order.
+        /// @brief The whole texel region: every target's texels in shape order, each shape's
+        ///        base at GeneratedTextureShapeOffset, padding included.
         ///
         /// Within one target the levels run mip-major, layer-minor — mip 0's layers first, then
         /// mip 1's — which is both the order the readbacks deliver them in and the order a
@@ -55,11 +56,21 @@ namespace Veng::Renderer
     {
         /// @brief One shape per target, in the order the job declared them.
         vector<GeneratedTextureBlobShape> Shapes;
-        /// @brief Byte offset of the first target's texels within the payload.
+        /// @brief Byte offset of the texel region within the payload, aligned to
+        ///        GeneratedTextureShapeAlignment.
         usize TexelOffset = 0;
-        /// @brief Bytes of texels the shapes account for, which is the rest of the payload.
+        /// @brief Bytes the texel region occupies — the shapes' texels plus the alignment
+        ///        padding between them, which is the rest of the payload.
         usize TexelBytes = 0;
     };
+
+    /// @brief Alignment of the texel region and of every shape's base within it.
+    ///
+    /// A buffer-image copy requires its buffer offset to be a multiple of the texel block size,
+    /// and the shapes ahead of a target can sum to anything — a 4-byte-texel chain ends on a
+    /// 4-byte boundary that an 8-byte-texel target then inherits. Sixteen covers every texel
+    /// size the codec stores, so a region computed off these offsets is always copy-legal.
+    inline constexpr usize GeneratedTextureShapeAlignment = 16;
 
     /// @brief The most bytes a payload's header can occupy, whatever it describes.
     ///
@@ -88,6 +99,19 @@ namespace Veng::Renderer
     /// @return The offset from the start of that shape's texels.
     [[nodiscard]] usize GeneratedTextureMipOffset(const GeneratedTextureBlobShape& shape,
                                                   u32 mipLevel);
+
+    /// @brief Byte offset of one shape's texels within a payload's texel region.
+    /// @param shapes  The payload's shapes, in declaration order.
+    /// @param index   The shape whose base is wanted.
+    /// @return The offset from the start of the texel region, aligned to
+    ///         GeneratedTextureShapeAlignment.
+    [[nodiscard]] usize GeneratedTextureShapeOffset(const vector<GeneratedTextureBlobShape>& shapes,
+                                                    usize index);
+
+    /// @brief Bytes a payload's whole texel region occupies, alignment padding included.
+    /// @param shapes  The payload's shapes, in declaration order.
+    /// @return The padded byte size, or 0 when any shape's format has no known size.
+    [[nodiscard]] usize GeneratedTextureTexelBytes(const vector<GeneratedTextureBlobShape>& shapes);
 
     /// @brief Begins a payload: the header for @p shapes, in a buffer sized for the texels too.
     ///

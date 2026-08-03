@@ -13,7 +13,16 @@ namespace Veng::Renderer
         // The payload's own identity, checked ahead of the shapes it prefixes. The cache validates
         // that a blob is intact; this validates that it is a texture blob of this layout.
         constexpr std::array<u8, 8> BlobMagic = {'V', 'N', 'G', '.', 'G', 'T', 'X', '1'};
-        constexpr u32 FormatVersion = 1;
+        // Version 2 aligned the texel region and every shape's base to
+        // GeneratedTextureShapeAlignment; a version-1 payload's offsets are tightly packed and
+        // unreadable through this layout, so the check turns one into an ordinary miss.
+        constexpr u32 FormatVersion = 2;
+
+        [[nodiscard]] constexpr usize AlignShapeBase(const usize offset)
+        {
+            return (offset + (GeneratedTextureShapeAlignment - 1)) &
+                   ~(GeneratedTextureShapeAlignment - 1);
+        }
 
         // A shape count past this is a corrupt header, not a job: a job's targets are a handful.
         constexpr u32 MaxShapes = 64;
@@ -101,20 +110,43 @@ namespace Veng::Renderer
         return offset;
     }
 
+    usize GeneratedTextureShapeOffset(const vector<GeneratedTextureBlobShape>& shapes,
+                                      const usize index)
+    {
+        usize offset = 0;
+        for (usize i = 0; i < index && i < shapes.size(); i++)
+        {
+            offset = AlignShapeBase(offset + GeneratedTextureShapeBytes(shapes[i]));
+        }
+        return offset;
+    }
+
+    usize GeneratedTextureTexelBytes(const vector<GeneratedTextureBlobShape>& shapes)
+    {
+        usize offset = 0;
+        for (usize i = 0; i < shapes.size(); i++)
+        {
+            const usize bytes = GeneratedTextureShapeBytes(shapes[i]);
+            if (bytes == 0)
+            {
+                return 0;
+            }
+            // No padding after the last shape: the payload's exact-length check counts what the
+            // region holds, not the next base nothing follows.
+            offset += bytes;
+            if (i + 1 < shapes.size())
+            {
+                offset = AlignShapeBase(offset);
+            }
+        }
+        return offset;
+    }
+
     vector<u8> BeginGeneratedTextureBlob(const vector<GeneratedTextureBlobShape>& shapes,
                                          const usize texelBytes)
     {
-        usize expected = 0;
-        for (const GeneratedTextureBlobShape& shape : shapes)
-        {
-            const usize bytes = GeneratedTextureShapeBytes(shape);
-            if (bytes == 0)
-            {
-                return {};
-            }
-            expected += bytes;
-        }
-        if (shapes.empty() || shapes.size() > MaxShapes || expected != texelBytes)
+        const usize expected = GeneratedTextureTexelBytes(shapes);
+        if (shapes.empty() || shapes.size() > MaxShapes || expected == 0 || expected != texelBytes)
         {
             return {};
         }
@@ -122,7 +154,7 @@ namespace Veng::Renderer
         vector<u8> out;
         // The texels are appended onto this buffer, so reserving for them here is what keeps the
         // payload one allocation and the texels one copy.
-        out.reserve(texelBytes + HeaderBytes(shapes.size()));
+        out.reserve(texelBytes + AlignShapeBase(HeaderBytes(shapes.size())));
         out.insert(out.end(), BlobMagic.begin(), BlobMagic.end());
         Put<u32>(out, FormatVersion);
         Put<u32>(out, static_cast<u32>(shapes.size()));
@@ -136,6 +168,8 @@ namespace Veng::Renderer
             Put<u32>(out, shape.Layers);
             Put<u32>(out, shape.MipLevels);
         }
+        // The texel region starts aligned, so the first shape's base is copy-legal like the rest.
+        out.resize(AlignShapeBase(out.size()), 0);
         return out;
     }
 
@@ -164,7 +198,6 @@ namespace Veng::Renderer
 
         GeneratedTextureBlobLayout layout;
         layout.Shapes.reserve(shapeCount);
-        usize expected = 0;
         for (u32 i = 0; i < shapeCount; i++)
         {
             u32 texelFormat = 0;
@@ -184,17 +217,15 @@ namespace Veng::Renderer
             }
             shape.TexelFormat = static_cast<Format>(texelFormat);
             shape.Type = static_cast<ImageType>(type);
-            const usize bytes = GeneratedTextureShapeBytes(shape);
-            if (bytes == 0)
+            if (GeneratedTextureShapeBytes(shape) == 0)
             {
                 return std::nullopt;
             }
-            expected += bytes;
             layout.Shapes.push_back(shape);
         }
 
-        layout.TexelOffset = reader.Offset;
-        layout.TexelBytes = expected;
+        layout.TexelOffset = AlignShapeBase(reader.Offset);
+        layout.TexelBytes = GeneratedTextureTexelBytes(layout.Shapes);
         return layout;
     }
 
@@ -204,7 +235,8 @@ namespace Veng::Renderer
         const optional<GeneratedTextureBlobLayout> layout = ReadGeneratedTextureBlobPrefix(payload);
         // The one check a prefix cannot make: the texels behind the header are exactly as many as
         // the shapes describe, so a truncated or padded payload is not decoded into the wrong texels.
-        if (!layout.has_value() || payload.size() - layout->TexelOffset != layout->TexelBytes)
+        if (!layout.has_value() || payload.size() < layout->TexelOffset ||
+            payload.size() - layout->TexelOffset != layout->TexelBytes)
         {
             return std::nullopt;
         }
