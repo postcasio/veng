@@ -530,7 +530,12 @@ occlusion test within the GPU path; with it off the GPU path issues every camera
 The submission shape is the **`drawIndirectCount`-free** form MoltenVK supports
 (`multiDrawIndirect` + `drawIndirectFirstInstance`, the candidate id carried in each command's
 `firstInstance` and read as an instance-rate vertex attribute); both modes drive the **same
-buffer-indexed surface shader**, differing only in submission. `CullMode::GPU` is gated on
+buffer-indexed surface shader**, differing only in submission. The vertex stage reads that candidate
+id to fetch its `DrawData`, and it also **passes the id through to the fragment** as a
+`nointerpolation` interpolant on `SurfaceFragmentInput` (`v_CandidateId`), so a surface or
+translucent **fragment** can call `LoadDrawData(v_CandidateId)` and reach the same per-draw record —
+its `World` model matrix among other fields — rather than only the vertex stage reaching it; a
+fragment that ignores the field renders identically. `CullMode::GPU` is gated on
 `Context::IsGpuDrivenCullingSupported()`: on a device lacking either feature the renderer logs
 once and falls back to `CullMode::CPU`, and `GetActiveCullMode()` reports the real mode.
 
