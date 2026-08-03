@@ -1080,7 +1080,8 @@ The round trip in both directions, and where each half runs:
   the cache may already hold — and submits the read to a worker. The answer lands on the main
   thread through the continuation pump: a miss releases the hold and the job runs; a hit reads the
   payload's **header only**, checks the shapes, and hands the payload to a worker that copies its
-  texels into a host-mapped buffer, still held. The next pump after that copies the buffer into the
+  texels into a host-mapped buffer, still held (a **tail** job — below — reads the header on its own
+  and has its worker read the levels it wants straight into that buffer). The next pump after that copies the buffer into the
   targets ahead of the tick loop, marks the job resident, and fires its completion. A restored
   job's texels are therefore sampleable by the same frame's passes, exactly as one whose last tick
   ran that pump, and `TicksLastPump` never counts a restore.
@@ -1100,9 +1101,30 @@ worker too. The service's own hold is what makes both safe — a job is unselect
 
 Two constraints follow from the copies. A cached target the service creates has `TransferSrc` and
 `TransferDst` folded into its usage; an **adopted** target carrying neither is simply not cached and logs why, since the service does not own its
-creation. And the **stored shape must match
-exactly** — format, type, extent, layers, mips — or the entry is a miss: texels uploaded into an
+creation. And the **stored shape must match**
+— format, type, extent, layers, mips — or the entry is a miss: texels uploaded into an
 image they do not describe are worse than no cache at all.
+
+**A target may hold the coarse tail of a chain rather than the whole of it.**
+`GeneratedTextureTargetInfo::CacheMipOffset` names the mip level of the *stored* shape that this
+target's own mip 0 restores from, so the shape test becomes "the stored shape reduced by this many
+levels is exactly this target's shape" — the plain equality above being its zero case. It exists for
+the consumer that generates a chain at full resolution and holds only its coarse levels in memory:
+without it, holding N resolutions means storing N entries of overlapping texels, keyed per
+resolution, and re-deriving whichever one the cache last evicted. The tail's levels are contiguous
+within the entry (levels run mip-major), so it is one byte range per target, read through
+`DerivedDataCache::ReadRange` — the restore's I/O is the levels the target holds, not the levels the
+entry does, and the staging buffer is sized the same way. Three properties bound it:
+
+- **A tail restores but never stores.** It holds less than the entry it read, and writing that back
+  would replace the entry with a fragment of it — so a tail target is only ever useful against an
+  entry some other job wrote at full shape.
+- **It buys the cache's digest check for the range read** (see
+  [../Persistence/CLAUDE.md](../Persistence/CLAUDE.md)); a whole-shape restore still verifies it.
+- **The offset is checked, not assumed.** A declared level whose reduced shape is not the target's is
+  a miss like any other, and a miss runs the ticks — so a tail target's tick callback must be able
+  to fill it at its own shape, which is also what covers an entry evicted between the probe and the
+  levels.
 
 The byte layout is `src/Renderer/GeneratedTextureBlob.h`, a renderer-internal, device-free codec
 (the `FrameTopology` precedent): shapes, then every target's levels **mip-major, layer-minor**,

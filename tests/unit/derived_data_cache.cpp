@@ -421,6 +421,56 @@ TEST_CASE("generated texture blob: shapes and texels round-trip")
     CHECK(BeginGeneratedTextureBlob(blob.Shapes, blob.Texels.size() - 1).empty());
 }
 
+TEST_CASE("generated texture blob: a header parses out of a bounded prefix of the payload")
+{
+    using namespace Veng::Renderer;
+
+    GeneratedTextureBlob blob;
+    blob.Shapes.push_back({.TexelFormat = Format::RGBA8Unorm,
+                           .Type = ImageType::Type2D,
+                           .Extent = {8, 8, 1},
+                           .Layers = 1,
+                           .MipLevels = 4});
+    blob.Texels.resize(GeneratedTextureShapeBytes(blob.Shapes[0]));
+    const vector<u8> payload = EncodeGeneratedTextureBlob(blob);
+    REQUIRE_FALSE(payload.empty());
+
+    const optional<GeneratedTextureBlobLayout> whole = ReadGeneratedTextureBlobHeader(payload);
+    REQUIRE(whole.has_value());
+
+    // The bound is a bound: a prefix of it parses to the same layout the whole payload does, and
+    // TexelBytes is what the shapes require rather than what the prefix holds. That is what lets a
+    // reader ask a random-access source for a fixed number of bytes and learn where the texels are.
+    REQUIRE(payload.size() > whole->TexelOffset);
+    CHECK(whole->TexelOffset <= MaxGeneratedTextureBlobHeaderBytes);
+    const optional<GeneratedTextureBlobLayout> prefix = ReadGeneratedTextureBlobPrefix(
+        std::span(payload).first(std::min(payload.size(), MaxGeneratedTextureBlobHeaderBytes)));
+    REQUIRE(prefix.has_value());
+    CHECK(prefix->Shapes == whole->Shapes);
+    CHECK(prefix->TexelOffset == whole->TexelOffset);
+    CHECK(prefix->TexelBytes == whole->TexelBytes);
+
+    // The exact reader is the prefix reader plus the length check, so a payload missing texels is a
+    // header to one and nothing to the other.
+    const std::span<const u8> headerOnly = std::span(payload).first(whole->TexelOffset);
+    CHECK(ReadGeneratedTextureBlobPrefix(headerOnly).has_value());
+    CHECK_FALSE(ReadGeneratedTextureBlobHeader(headerOnly).has_value());
+
+    // A prefix too short to hold the shapes it announces is not a header at all.
+    CHECK_FALSE(ReadGeneratedTextureBlobPrefix(std::span(payload).first(whole->TexelOffset - 1))
+                    .has_value());
+
+    // The levels a tail restore reads are the shape's own trailing bytes: the offset of the level it
+    // starts at, through to the end of the shape, contiguous because levels run mip-major.
+    const GeneratedTextureBlobShape& shape = whole->Shapes[0];
+    usize tailBytes = 0;
+    for (u32 level = 1; level < shape.MipLevels; level++)
+    {
+        tailBytes += GeneratedTextureLayerBytes(shape, level) * shape.Layers;
+    }
+    CHECK(GeneratedTextureShapeBytes(shape) - GeneratedTextureMipOffset(shape, 1) == tailBytes);
+}
+
 TEST_CASE("generated texture blob: a payload that is not one decodes to nothing")
 {
     using namespace Veng::Renderer;

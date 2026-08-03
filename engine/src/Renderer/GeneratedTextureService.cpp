@@ -99,6 +99,26 @@ namespace Veng::Renderer
             return true;
         }
 
+        // Whether a stored shape reduced by `mipOffset` levels is exactly a target's own shape: the
+        // match a tail target asks for, and at a zero offset the plain equality a whole-shape target
+        // asks for. Stated as a reduction of the stored shape rather than a widening of the
+        // target's, because a chain whose extent has clamped at one texel cannot be widened back
+        // unambiguously.
+        bool MatchesStoredShape(const GeneratedTextureBlobShape& stored, const Image& image,
+                                const u32 mipOffset)
+        {
+            if (mipOffset >= stored.MipLevels)
+            {
+                return false;
+            }
+            GeneratedTextureBlobShape tail = stored;
+            tail.MipLevels = stored.MipLevels - mipOffset;
+            tail.Extent = {std::max(1u, stored.Extent.x >> mipOffset),
+                           std::max(1u, stored.Extent.y >> mipOffset),
+                           std::max(1u, stored.Extent.z >> mipOffset)};
+            return tail == ShapeOf(image);
+        }
+
         // The per-mip copy regions joining one target and a staging buffer, all layers of a mip at
         // once — the layout the levels are stored in and the one the copies in both directions
         // expect.
@@ -245,9 +265,12 @@ namespace Veng::Renderer
         job->CacheKey = cached ? std::move(request.CacheKey) : string{};
 
         vector<GeneratedTextureTargetInfo> targets = std::move(request.Targets);
+        job->CacheMipOffsets.reserve(targets.size());
         for (usize i = 0; i < targets.size(); i++)
         {
             targets[i].Image.Name = fmt::format("{}[{}]", request.Name, i);
+            job->CacheMipOffsets.push_back(targets[i].CacheMipOffset);
+            job->CacheTail = job->CacheTail || targets[i].CacheMipOffset != 0;
             if (cached)
             {
                 // A cached target is read back to be stored and written into to be restored, so it
@@ -374,6 +397,26 @@ namespace Veng::Renderer
         DerivedDataCache* cache = m_Cache;
         string cacheKey = job.CacheKey;
 
+        // A tail job wants a fraction of the entry, so it reads the header first and the levels it
+        // wants after — two seeks against one file rather than a copy of every byte stored. A
+        // whole-shape job's wanted range *is* the payload, so it reads it in one go and gets the
+        // entry's digest checked into the bargain.
+        if (job.CacheTail)
+        {
+            Task<optional<vector<u8>>> probe = m_Tasks->Submit(
+                [cache, cacheKey = std::move(cacheKey)]
+                { return cache->ReadRange(cacheKey, 0, MaxGeneratedTextureBlobHeaderBytes); },
+                "GeneratedTextureCacheProbe");
+            probe.Then(
+                [this, key, serial](Result<optional<vector<u8>>> header)
+                {
+                    ResolveTailProbe(key, serial,
+                                     header.has_value() ? std::move(*header)
+                                                        : optional<vector<u8>>{});
+                });
+            return;
+        }
+
         Task<optional<vector<u8>>> probe =
             m_Tasks->Submit([cache, cacheKey = std::move(cacheKey)]
                             { return cache->Read(cacheKey); }, "GeneratedTextureCacheProbe");
@@ -414,7 +457,7 @@ namespace Veng::Renderer
         }
         for (usize i = 0; i < job->Targets.size(); i++)
         {
-            if (layout->Shapes[i] != ShapeOf(*job->Targets[i]->GetImage()))
+            if (!MatchesStoredShape(layout->Shapes[i], *job->Targets[i]->GetImage(), 0))
             {
                 miss();
                 return;
@@ -447,6 +490,127 @@ namespace Veng::Renderer
         // is moved onto it rather than copied, and the buffer is held until the memcpy has run.
         Task<void> upload = staging->Upload(*GetWorkers(), std::move(*payload));
         upload.Then([this, key, serial](Result<std::monostate>) { ResolveRestore(key, serial); });
+    }
+
+    void GeneratedTextureService::ResolveTailProbe(const GeneratedTextureKey key, const u64 serial,
+                                                   optional<vector<u8>> header)
+    {
+        Job* job = FindJob(key);
+        if (job == nullptr || job->Serial != serial || !job->Probing)
+        {
+            return;
+        }
+        job->Probing = false;
+
+        const auto miss = [&] { UpdateHold(*job); };
+
+        if (!header.has_value())
+        {
+            miss();
+            return;
+        }
+
+        // The prefix parse rather than the exact one: the texels the shapes describe are on disk and
+        // deliberately not in hand, so "the payload is exactly this long" is a check the header alone
+        // cannot make and the cache's own length check already made.
+        const optional<GeneratedTextureBlobLayout> layout = ReadGeneratedTextureBlobPrefix(*header);
+        if (!layout.has_value() || layout->Shapes.size() != job->Targets.size())
+        {
+            miss();
+            return;
+        }
+        for (usize i = 0; i < job->Targets.size(); i++)
+        {
+            if (!MatchesStoredShape(layout->Shapes[i], *job->Targets[i]->GetImage(),
+                                    job->CacheMipOffsets[i]))
+            {
+                miss();
+                return;
+            }
+        }
+
+        // What each target wants is the tail of its stored shape's texels: the levels from its own
+        // offset onward, which are contiguous because the levels run mip-major. So one range per
+        // target, and the staging buffer holds those ranges and nothing else.
+        struct Wanted
+        {
+            u64 Source = 0;
+            u64 Bytes = 0;
+        };
+        vector<Wanted> wanted;
+        wanted.reserve(layout->Shapes.size());
+        vector<u64> targetOffsets;
+        targetOffsets.reserve(layout->Shapes.size());
+        u64 source = 0;
+        u64 total = 0;
+        for (usize i = 0; i < layout->Shapes.size(); i++)
+        {
+            const GeneratedTextureBlobShape& shape = layout->Shapes[i];
+            const usize shapeBytes = GeneratedTextureShapeBytes(shape);
+            const usize skipped = GeneratedTextureMipOffset(shape, job->CacheMipOffsets[i]);
+            targetOffsets.push_back(total);
+            wanted.push_back({.Source = source + skipped, .Bytes = shapeBytes - skipped});
+            total += shapeBytes - skipped;
+            source += shapeBytes;
+        }
+        if (total == 0)
+        {
+            miss();
+            return;
+        }
+
+        auto staging = Buffer::Create(m_Context, {
+                                                     .Name = "GeneratedTextureRestore",
+                                                     .Size = total,
+                                                     .Usage = BufferUsage::TransferSrc,
+                                                     .HostMapped = true,
+                                                 });
+        job->Restore =
+            PendingRestore{.Staging = staging, .TargetOffsets = std::move(targetOffsets)};
+        job->Restoring = true;
+        UpdateHold(*job);
+
+        // The reads and the copies into the mapping are one worker's work, so a target's levels are
+        // never held in a second buffer beside the one they are going to.
+        DerivedDataCache* cache = m_Cache;
+        const u64 texelOffset = layout->TexelOffset;
+        Task<bool> restore = m_Tasks->Submit(
+            [cache, cacheKey = job->CacheKey, staging, wanted = std::move(wanted), texelOffset]
+            {
+                u64 destination = 0;
+                for (const Wanted& range : wanted)
+                {
+                    const optional<vector<u8>> bytes =
+                        cache->ReadRange(cacheKey, texelOffset + range.Source, range.Bytes);
+                    if (!bytes.has_value() || bytes->size() != range.Bytes)
+                    {
+                        return false;
+                    }
+                    staging->UploadSync(*bytes, destination);
+                    destination += range.Bytes;
+                }
+                return true;
+            },
+            "GeneratedTextureCacheRestore");
+        restore.Then(
+            [this, key, serial](Result<bool> read)
+            {
+                if (read.has_value() && *read)
+                {
+                    ResolveRestore(key, serial);
+                    return;
+                }
+                // The entry went, or came back short, between the header and the levels. The job
+                // falls back to running its ticks, which is what a miss would have done.
+                Job* pending = FindJob(key);
+                if (pending == nullptr || pending->Serial != serial || !pending->Restoring)
+                {
+                    return;
+                }
+                pending->Restoring = false;
+                pending->Restore.reset();
+                UpdateHold(*pending);
+            });
     }
 
     void GeneratedTextureService::ResolveRestore(const GeneratedTextureKey key, const u64 serial)
@@ -783,7 +947,10 @@ namespace Veng::Renderer
             {
                 continue;
             }
-            if (!job->CacheKey.empty() && m_Cache != nullptr && m_Tasks != nullptr)
+            // A tail job holds part of a chain, so what it could store is less than the entry it read
+            // from — it restores and never writes back.
+            if (!job->CacheKey.empty() && !job->CacheTail && m_Cache != nullptr &&
+                m_Tasks != nullptr)
             {
                 SubmitStore(cmd, *job);
             }

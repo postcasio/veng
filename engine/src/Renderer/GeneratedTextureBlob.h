@@ -14,9 +14,9 @@ namespace Veng::Renderer
 {
     /// @brief One target's image shape, as stored beside its texels.
     ///
-    /// Everything a restore needs to know that the payload alone does not say. A stored shape that
-    /// differs in any field from the target waiting for it makes the whole entry unusable: the
-    /// texels would be uploaded into an image they do not describe.
+    /// Everything a restore needs to know that the payload alone does not say. A stored shape the
+    /// target waiting for it does not answer to makes the whole entry unusable: the texels would be
+    /// uploaded into an image they do not describe.
     struct GeneratedTextureBlobShape
     {
         /// @brief The texel format.
@@ -60,6 +60,15 @@ namespace Veng::Renderer
         /// @brief Bytes of texels the shapes account for, which is the rest of the payload.
         usize TexelBytes = 0;
     };
+
+    /// @brief The most bytes a payload's header can occupy, whatever it describes.
+    ///
+    /// The header is self-delimiting once its shape count is read and the count is bounded, so a
+    /// caller reading a payload out of a random-access source reads this many bytes and parses
+    /// whatever arrives (ReadGeneratedTextureBlobPrefix), rather than reading the payload whole to
+    /// find out where its texels start.
+    inline constexpr usize MaxGeneratedTextureBlobHeaderBytes =
+        8 + (2 * sizeof(u32)) + (64 * 7 * sizeof(u32));
 
     /// @brief Bytes one array layer of one mip level of a shape occupies.
     /// @param shape     The image shape.
@@ -108,6 +117,18 @@ namespace Veng::Renderer
     /// @return The shapes and where their texels begin, or nullopt when the payload is not one.
     [[nodiscard]] optional<GeneratedTextureBlobLayout>
     ReadGeneratedTextureBlobHeader(std::span<const u8> payload);
+
+    /// @brief Reads a payload's header out of a prefix of it, the texels not needing to be present.
+    ///
+    /// Everything ReadGeneratedTextureBlobHeader checks except the one thing a prefix cannot answer
+    /// — that the texels following the header are exactly as many as the shapes describe. The
+    /// returned TexelBytes is therefore what the shapes *require* rather than what is in hand, which
+    /// is what a caller reading the texels in ranges needs to know before it asks for them.
+    /// MaxGeneratedTextureBlobHeaderBytes is a prefix that always suffices.
+    /// @param prefix  The payload's leading bytes.
+    /// @return The shapes and where their texels begin, or nullopt when the prefix is not a header.
+    [[nodiscard]] optional<GeneratedTextureBlobLayout>
+    ReadGeneratedTextureBlobPrefix(std::span<const u8> prefix);
 
     /// @brief Decodes a cache payload back into shapes and texels.
     ///

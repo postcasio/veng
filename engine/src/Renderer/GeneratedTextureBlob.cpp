@@ -20,10 +20,13 @@ namespace Veng::Renderer
 
         // Bytes the header occupies: the magic, the version, the shape count, and seven u32 fields
         // per shape.
-        usize HeaderBytes(const usize shapeCount)
+        constexpr usize HeaderBytes(const usize shapeCount)
         {
             return BlobMagic.size() + (2 * sizeof(u32)) + (shapeCount * 7 * sizeof(u32));
         }
+
+        static_assert(HeaderBytes(MaxShapes) == MaxGeneratedTextureBlobHeaderBytes,
+                      "the published header bound must be the largest header this codec writes");
 
         template <typename T>
         void Put(vector<u8>& out, const T value)
@@ -148,9 +151,9 @@ namespace Veng::Renderer
     }
 
     optional<GeneratedTextureBlobLayout>
-    ReadGeneratedTextureBlobHeader(const std::span<const u8> payload)
+    ReadGeneratedTextureBlobPrefix(const std::span<const u8> prefix)
     {
-        Reader reader{.Bytes = payload};
+        Reader reader{.Bytes = prefix};
         u32 version = 0;
         u32 shapeCount = 0;
         if (!reader.TakeMagic(BlobMagic) || !reader.Take(version) || version != FormatVersion ||
@@ -190,12 +193,21 @@ namespace Veng::Renderer
             layout.Shapes.push_back(shape);
         }
 
-        if (payload.size() - reader.Offset != expected)
+        layout.TexelOffset = reader.Offset;
+        layout.TexelBytes = expected;
+        return layout;
+    }
+
+    optional<GeneratedTextureBlobLayout>
+    ReadGeneratedTextureBlobHeader(const std::span<const u8> payload)
+    {
+        const optional<GeneratedTextureBlobLayout> layout = ReadGeneratedTextureBlobPrefix(payload);
+        // The one check a prefix cannot make: the texels behind the header are exactly as many as
+        // the shapes describe, so a truncated or padded payload is not decoded into the wrong texels.
+        if (!layout.has_value() || payload.size() - layout->TexelOffset != layout->TexelBytes)
         {
             return std::nullopt;
         }
-        layout.TexelOffset = reader.Offset;
-        layout.TexelBytes = expected;
         return layout;
     }
 

@@ -63,6 +63,26 @@ namespace Veng::Renderer
         /// stable for the target's lifetime, but the texels it names are undefined until the job
         /// completes.
         bool Bindless = false;
+
+        /// @brief The mip level of the cached shape this target's own mip 0 restores from.
+        ///
+        /// Zero — the default — means the target and the stored shape are one image. A nonzero value
+        /// declares this target the **coarse tail** of a larger stored chain: the entry matches when
+        /// the stored shape reduced by this many mip levels is exactly this target's shape, and the
+        /// restore copies the stored levels from this one onward. A consumer that generates a chain
+        /// at full resolution but holds only its coarse levels in memory reads its own entry back
+        /// this way instead of storing a second entry per resolution it may want to hold.
+        ///
+        /// Two consequences follow from a tail holding part of a chain rather than a whole one. The
+        /// job **restores but never stores** — writing a fragment back would replace the entry with
+        /// less than it holds — so a tail target is only ever useful against an entry some other job
+        /// wrote at full shape. And its levels are read as a byte range of the payload, so the
+        /// entry's digest is not verified (DerivedDataCache::ReadRange says what that costs); a
+        /// full-shape restore still verifies it.
+        ///
+        /// Inert on a job with no cache key, and on a miss: the ticks then run and fill the target at
+        /// its own shape, exactly as they would have with no cache attached.
+        u32 CacheMipOffset = 0;
     };
 
     /// @brief One image a job fills, resolved: the image, its views, and its bindless slot.
@@ -425,6 +445,12 @@ namespace Veng::Renderer
             function<void(const GeneratedTextureResult&)> OnComplete;
             /// @brief The cache key the result is stored under; empty when the job is not cached.
             string CacheKey;
+            /// @brief Each target's declared mip level within the cached shape, in target order.
+            vector<u32> CacheMipOffsets;
+            /// @brief Whether any target is a tail of the cached chain rather than the whole of it.
+            ///
+            /// The job then reads its levels as byte ranges of the entry and never stores its own.
+            bool CacheTail = false;
             /// @brief Whether the worker creating the job's targets has yet to report back.
             bool Allocating = false;
             /// @brief Whether a probe of the cache is in flight.
@@ -485,6 +511,16 @@ namespace Veng::Renderer
         /// @param serial   The probed job's serial; a mismatch drops the answer.
         /// @param payload  The stored payload, or nullopt on a miss.
         void ResolveProbe(GeneratedTextureKey key, u64 serial, optional<vector<u8>> payload);
+
+        /// @brief Applies a tail job's resolved probe, which read the entry's header alone.
+        ///
+        /// The tail path's counterpart to ResolveProbe: the shapes are matched against targets that
+        /// are mip tails of them, and the levels each target wants are then read as byte ranges of
+        /// the entry rather than sliced out of a payload already in memory.
+        /// @param key     The probed job's key.
+        /// @param serial  The probed job's serial; a mismatch drops the answer.
+        /// @param header  The entry's leading bytes, or nullopt on a miss.
+        void ResolveTailProbe(GeneratedTextureKey key, u64 serial, optional<vector<u8>> header);
 
         /// @brief Marks a hit's staging buffer filled, so the next pump copies it into the targets.
         /// @param key     The restoring job's key.

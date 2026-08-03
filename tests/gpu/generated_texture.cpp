@@ -95,6 +95,44 @@ namespace
         };
     }
 
+    constexpr u32 ChainEdge = 8;
+    constexpr u32 ChainMips = 4;
+
+    // Clears mip level `TickIndex` of the target to that level's own colour, so the stored chain
+    // says which level any restored texel came from.
+    void ChainTick(CommandBuffer& cmd, const GeneratedTextureTickContext& context)
+    {
+        const u32 edge = std::max(1u, ChainEdge >> context.TickIndex);
+        cmd.BeginRendering({
+            .Extent = {edge, edge},
+            .ColorAttachments = {{
+                .ImageView = context.Targets[0]->GetView(context.TickIndex),
+                .LoadOp = LoadOp::Clear,
+                .StoreOp = StoreOp::Store,
+                .ClearValue = StripeColor(context.TickIndex),
+            }},
+        });
+        cmd.EndRendering();
+    }
+
+    // A job filling every level of a four-level chain, each level a distinct flat colour.
+    GeneratedTextureRequest ChainJob(const GeneratedTextureKey key)
+    {
+        return {
+            .Key = key,
+            .Name = "ChainBake",
+            .Targets = {{
+                .Image = {.Extent = {ChainEdge, ChainEdge, 1},
+                          .MipLevels = ChainMips,
+                          .Format = Format::RGBA8Unorm,
+                          .Usage = ImageUsage::TransferSrc},
+                .ProducerAccess = AccessKind::ColorAttachment,
+            }},
+            .TickCount = ChainMips,
+            .OnTick = ChainTick,
+        };
+    }
+
     // Drives frames until `done` reports true, or gives up after a generous bound so a stalled
     // service fails the case instead of hanging it. Returns the frames driven.
     u32 DriveUntil(Renderer::Context& context, const function<bool()>& done, const u32 limit = 64)
@@ -499,6 +537,120 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // Detach before the fixture tears the cache down beneath the service.
     service.SetCache(nullptr, nullptr);
     CHECK(service.Release(EvictedKey));
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "generated texture: a target declaring a mip offset restores the chain's tail")
+{
+    const TempCacheRoot root;
+    const Result<Unique<DerivedDataCache>> cache =
+        DerivedDataCache::Open({.Root = root.Dir, .Generation = "gpu-case"});
+    REQUIRE(cache.has_value());
+
+    GeneratedTextureService& service = Context.GetGeneratedTextures();
+    service.SetCache(cache->get(), &Tasks);
+    service.SetTickBudget(GeneratedTextureService::UnlimitedTickBudget);
+
+    constexpr string_view CacheKey = "chain/8x8";
+    constexpr GeneratedTextureKey WholeKey = 0x5721'CB01ull;
+    constexpr GeneratedTextureKey TailKey = 0x5721'CB02ull;
+    constexpr GeneratedTextureKey WrongKey = 0x5721'CB03ull;
+    constexpr u32 TailOffset = 2;
+
+    GeneratedTextureRequest whole = ChainJob(WholeKey);
+    whole.CacheKey = string(CacheKey);
+    REQUIRE(service.Request(std::move(whole)));
+    DriveWithTasks(Context, Tasks, [&] { return service.IsResident(WholeKey); });
+    REQUIRE(service.IsResident(WholeKey));
+    DriveWithTasks(Context, Tasks, [&] { return (*cache)->Contains(string(CacheKey)); });
+    REQUIRE((*cache)->Contains(string(CacheKey)));
+    CHECK(service.Release(WholeKey));
+
+    // A target two levels down the stored chain, under the same cache key. Its tick would clear it
+    // white, so texels carrying level 2's own colour can only have come off the disk — and from
+    // that level rather than any other, which is the whole of what the offset claims.
+    const u32 tailEdge = ChainEdge >> TailOffset;
+    u32 tailTicks = 0;
+    const GeneratedTextureRequest tail{
+        .Key = TailKey,
+        .Name = "ChainTail",
+        .Targets = {{
+            .Image = {.Extent = {tailEdge, tailEdge, 1},
+                      .MipLevels = ChainMips - TailOffset,
+                      .Format = Format::RGBA8Unorm,
+                      .Usage = ImageUsage::TransferSrc},
+            .ProducerAccess = AccessKind::ColorAttachment,
+            .CacheMipOffset = TailOffset,
+        }},
+        .CacheKey = string(CacheKey),
+        .TickCount = 1,
+        .OnTick =
+            [&tailTicks, tailEdge](CommandBuffer& cmd, const GeneratedTextureTickContext& context)
+        {
+            tailTicks++;
+            cmd.BeginRendering({
+                .Extent = {tailEdge, tailEdge},
+                .ColorAttachments = {{
+                    .ImageView = context.Targets[0]->GetView(0),
+                    .LoadOp = LoadOp::Clear,
+                    .StoreOp = StoreOp::Store,
+                    .ClearValue = ClearColor{.R = 1.0f, .G = 1.0f, .B = 1.0f, .A = 1.0f},
+                }},
+            });
+            cmd.EndRendering();
+        },
+    };
+    const u64 storedBefore = service.GetStats().StoredTotal;
+    REQUIRE(service.Request(tail));
+
+    DriveWithTasks(Context, Tasks, [&] { return service.IsResident(TailKey); });
+    REQUIRE(service.IsResident(TailKey));
+    CHECK(tailTicks == 0u);
+
+    Context.WaitIdle();
+    const std::vector<u8> restored = service.Find(TailKey)->Targets[0]->GetImage()->Download();
+    REQUIRE(restored.size() == static_cast<usize>(tailEdge) * tailEdge * 4);
+    const auto expectedRed = static_cast<u8>(TailOffset * 32);
+    usize wrongTexels = 0;
+    for (usize texel = 0; texel < restored.size(); texel += 4)
+    {
+        wrongTexels += restored[texel] == expectedRed && restored[texel + 3] == 0xFF ? 0u : 1u;
+    }
+    CHECK(wrongTexels == 0u);
+
+    // A tail holds less than the entry it read, so it must never write one back.
+    DriveWithTasks(Context, Tasks, [&] { return false; }, 4);
+    CHECK(service.GetStats().StoredTotal == storedBefore);
+    CHECK(service.Release(TailKey));
+
+    // And the offset is checked rather than assumed: the same target declaring the level above it
+    // does not answer to a 2x2 shape, so the entry is a miss and the ticks run.
+    u32 wrongTicks = 0;
+    GeneratedTextureRequest wrong = tail;
+    wrong.Key = WrongKey;
+    wrong.Targets[0].CacheMipOffset = TailOffset - 1;
+    wrong.OnTick =
+        [&wrongTicks, tailEdge](CommandBuffer& cmd, const GeneratedTextureTickContext& context)
+    {
+        wrongTicks++;
+        cmd.BeginRendering({
+            .Extent = {tailEdge, tailEdge},
+            .ColorAttachments = {{
+                .ImageView = context.Targets[0]->GetView(0),
+                .LoadOp = LoadOp::Clear,
+                .StoreOp = StoreOp::Store,
+                .ClearValue = ClearColor{.R = 1.0f, .G = 1.0f, .B = 1.0f, .A = 1.0f},
+            }},
+        });
+        cmd.EndRendering();
+    };
+    REQUIRE(service.Request(std::move(wrong)));
+    DriveWithTasks(Context, Tasks, [&] { return service.IsResident(WrongKey); });
+    REQUIRE(service.IsResident(WrongKey));
+    CHECK(wrongTicks == 1u);
+
+    service.SetCache(nullptr, nullptr);
+    CHECK(service.Release(WrongKey));
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
