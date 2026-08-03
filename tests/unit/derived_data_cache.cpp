@@ -226,6 +226,98 @@ TEST_CASE("derived data cache: a damaged blob reads as a miss and is removed")
     }
 }
 
+TEST_CASE("derived data cache: a range read is the whole read restricted to its span")
+{
+    const TempRoot root;
+    const Unique<DerivedDataCache> cache = OpenCache(root.Dir, "gen");
+    const vector<u8> payload = Bytes(3, 1024);
+    REQUIRE(cache->Store("k", payload));
+
+    // Every range is the corresponding span of what the whole read returns — the property that
+    // makes the two interchangeable for a caller that knows its own layout. Swept over offsets and
+    // lengths that between them cover the interior, both edges, and past the end.
+    usize mismatched = 0;
+    for (const u64 offset : {u64{0}, u64{1}, u64{511}, u64{1023}})
+    {
+        for (const u64 length : {u64{1}, u64{7}, u64{512}, u64{4096}})
+        {
+            const optional<vector<u8>> range = cache->ReadRange("k", offset, length);
+            REQUIRE(range.has_value());
+            const usize expected = std::min<usize>(length, payload.size() - offset);
+            mismatched += range->size() == expected &&
+                                  std::equal(range->begin(), range->end(),
+                                             payload.begin() + static_cast<isize>(offset))
+                              ? 0u
+                              : 1u;
+        }
+    }
+    CHECK(mismatched == 0u);
+
+    // An offset at or past the end, and a zero length, are empty answers rather than misses: the
+    // entry was found, and a caller reading a prefix of an entry shorter than the prefix must be
+    // able to tell that from "no entry".
+    for (const u64 offset : {u64{1024}, u64{4096}})
+    {
+        const optional<vector<u8>> past = cache->ReadRange("k", offset, 16);
+        REQUIRE(past.has_value());
+        CHECK(past->empty());
+    }
+    const optional<vector<u8>> empty = cache->ReadRange("k", 0, 0);
+    REQUIRE(empty.has_value());
+    CHECK(empty->empty());
+
+    // A key that is not there is a miss on both readers alike.
+    CHECK_FALSE(cache->ReadRange("absent", 0, 16).has_value());
+
+    // And a range read touches, so it participates in the LRU order exactly as a whole read does.
+    const DerivedDataCacheStats stats = cache->GetStats();
+    CHECK(stats.Hits == 19u);
+    CHECK(stats.Misses == 1u);
+}
+
+TEST_CASE("derived data cache: a range read rejects a damaged entry and keeps a bit-flipped one")
+{
+    const TempRoot root;
+
+    SUBCASE("a truncated entry is a miss and is removed")
+    {
+        const Unique<DerivedDataCache> cache = OpenCache(root.Dir, "gen");
+        REQUIRE(cache->Store("k", Bytes(9, 256)));
+        const vector<path> files = BlobFiles(root.Dir);
+        REQUIRE(files.size() == 1u);
+        std::filesystem::resize_file(files[0], 64);
+
+        CHECK_FALSE(cache->ReadRange("k", 0, 16).has_value());
+        CHECK_FALSE(cache->Contains("k"));
+        CHECK(BlobFiles(root.Dir).empty());
+    }
+
+    SUBCASE("a flipped byte reads through, which is what the whole read is for")
+    {
+        // The payload digest covers the payload entire, so a range read cannot check it without
+        // reading every byte it exists to avoid. This is that cost, asserted rather than implied:
+        // the range hands back what is on disk and the whole read still rejects the entry.
+        const Unique<DerivedDataCache> cache = OpenCache(root.Dir, "gen");
+        REQUIRE(cache->Store("k", Bytes(9, 256)));
+        const vector<path> files = BlobFiles(root.Dir);
+        REQUIRE(files.size() == 1u);
+        {
+            std::fstream stream(files[0], std::ios::binary | std::ios::in | std::ios::out);
+            REQUIRE(stream.good());
+            stream.seekp(30, std::ios::beg);
+            const char flipped = 0x5A;
+            stream.write(&flipped, 1);
+        }
+
+        const optional<vector<u8>> range = cache->ReadRange("k", 0, 32);
+        REQUIRE(range.has_value());
+        CHECK(range->size() == 32u);
+        CHECK(cache->Contains("k"));
+        CHECK_FALSE(cache->Read("k").has_value());
+        CHECK_FALSE(cache->Contains("k"));
+    }
+}
+
 TEST_CASE("derived data cache: an interrupted write leaves nothing behind")
 {
     const TempRoot root;

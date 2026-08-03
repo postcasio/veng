@@ -32,6 +32,10 @@ namespace Veng
         constexpr std::array<u8, 8> BlobMagic = {'V', 'N', 'G', '.', 'D', 'D', 'B', '1'};
         constexpr u32 FormatVersion = 1;
 
+        // Bytes a blob file's header occupies ahead of the payload: the magic, the format version,
+        // the payload digest, and the payload length. Named because a range read seeks past it.
+        constexpr u64 BlobHeaderBytes = BlobMagic.size() + (2 * sizeof(u32)) + sizeof(u64);
+
         // Bounds on what an index file may claim, so a corrupt header cannot drive an allocation.
         // The index the cache writes is bounded by the caps, which are far below these.
         constexpr u32 MaxIndexEntries = 1u << 20;
@@ -140,6 +144,47 @@ namespace Veng
             return bytes;
         }
 
+        // A file's size and the bytes of it a range asked for.
+        struct FileRange
+        {
+            u64 FileSize = 0;
+            vector<u8> Bytes;
+        };
+
+        // At most `length` bytes of a file from `offset`, beside the file's own size. A range
+        // reaching past the end yields what is there rather than failing, so a caller may ask for a
+        // fixed-size prefix of a file whose length it does not know; only a file that cannot be
+        // opened, sized, or read reports nothing.
+        [[nodiscard]] optional<FileRange> ReadFileRange(const path& file, const u64 offset,
+                                                        const u64 length)
+        {
+            std::ifstream stream(file, std::ios::binary | std::ios::ate);
+            if (!stream)
+            {
+                return std::nullopt;
+            }
+            const std::streamsize size = stream.tellg();
+            if (size < 0)
+            {
+                return std::nullopt;
+            }
+            FileRange range{.FileSize = static_cast<u64>(size)};
+            const u64 available =
+                offset < range.FileSize ? std::min(length, range.FileSize - offset) : 0;
+            if (available == 0)
+            {
+                return range;
+            }
+            stream.seekg(static_cast<std::streamoff>(offset), std::ios::beg);
+            range.Bytes.resize(static_cast<usize>(available));
+            if (!stream.read(reinterpret_cast<char*>(range.Bytes.data()),
+                             static_cast<std::streamsize>(available)))
+            {
+                return std::nullopt;
+            }
+            return range;
+        }
+
         // Writes to a sibling temp file and renames it into place. The write is not fsynced: this
         // is expendable content, and the payload digest already turns a half-written file into a
         // miss, so buying durability with a device flush per blob would cost the frame budget the
@@ -221,6 +266,19 @@ namespace Veng
         {
             return Root /
                    fmt::format("{}{:016x}{}", DerivedDataCache::FilePrefix, fileId, BlobExtension);
+        }
+
+        // Forgets an entry whose blob turned out unusable: the file, the byte accounting, the index
+        // record, and the index on disk. A corrupted entry therefore costs one recomputation rather
+        // than one per read.
+        void DropUnusable(const std::unordered_map<string, CacheEntry>::iterator& entry)
+        {
+            std::error_code ec;
+            std::filesystem::remove(BlobPath(entry->second.FileId), ec);
+            TotalBytes -= entry->second.Bytes;
+            Entries.erase(entry);
+            Misses++;
+            WriteIndex();
         }
 
         // Serializes the index and renames it into place. A failure leaves the prior index whole,
@@ -470,12 +528,7 @@ namespace Veng
 
         if (!usable)
         {
-            std::error_code ec;
-            std::filesystem::remove(file, ec);
-            m_State->TotalBytes -= it->second.Bytes;
-            m_State->Entries.erase(it);
-            m_State->Misses++;
-            m_State->WriteIndex();
+            m_State->DropUnusable(it);
             return std::nullopt;
         }
 
@@ -483,6 +536,63 @@ namespace Veng
         m_State->Hits++;
         m_State->WriteIndex();
         return payload;
+    }
+
+    optional<vector<u8>> DerivedDataCache::ReadRange(const string_view key, const u64 offset,
+                                                     const u64 length)
+    {
+        const std::scoped_lock lock(m_State->Mutex);
+
+        const auto it = m_State->Entries.find(string(key));
+        if (it == m_State->Entries.end())
+        {
+            m_State->Misses++;
+            return std::nullopt;
+        }
+
+        // The blob's own header is read first and in full: it is what says the file is one of ours,
+        // is this format, and holds the payload length the range is bounded against.
+        const path file = m_State->BlobPath(it->second.FileId);
+        const optional<FileRange> header = ReadFileRange(file, 0, BlobHeaderBytes);
+        u64 payloadBytes = 0;
+        bool usable = false;
+        if (header.has_value() && header->Bytes.size() == BlobHeaderBytes)
+        {
+            Reader reader{.Bytes = header->Bytes};
+            u32 version = 0;
+            u32 digest = 0;
+            u64 declared = 0;
+            if (reader.TakeMagic(BlobMagic) && reader.Take(version) && version == FormatVersion &&
+                reader.Take(digest) && reader.Take(declared) &&
+                header->FileSize - reader.Offset == declared)
+            {
+                payloadBytes = declared;
+                usable = true;
+            }
+        }
+        if (!usable)
+        {
+            m_State->DropUnusable(it);
+            return std::nullopt;
+        }
+
+        vector<u8> bytes;
+        if (offset < payloadBytes && length > 0)
+        {
+            const optional<FileRange> range = ReadFileRange(
+                file, BlobHeaderBytes + offset, std::min(length, payloadBytes - offset));
+            if (!range.has_value())
+            {
+                m_State->DropUnusable(it);
+                return std::nullopt;
+            }
+            bytes = std::move(range->Bytes);
+        }
+
+        it->second.Touch = m_State->NextTouch++;
+        m_State->Hits++;
+        m_State->WriteIndex();
+        return bytes;
     }
 
     bool DerivedDataCache::Store(const string_view key, const std::span<const u8> payload)
@@ -497,7 +607,7 @@ namespace Veng
         const std::scoped_lock lock(m_State->Mutex);
 
         vector<u8> bytes;
-        bytes.reserve(payload.size() + 24);
+        bytes.reserve(payload.size() + BlobHeaderBytes);
         bytes.insert(bytes.end(), BlobMagic.begin(), BlobMagic.end());
         Put<u32>(bytes, FormatVersion);
         Put<u32>(bytes, PayloadDigest(payload));

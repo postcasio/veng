@@ -111,6 +111,32 @@ namespace Veng
         /// @return The stored payload, or nullopt on a miss.
         [[nodiscard]] optional<vector<u8>> Read(string_view key);
 
+        /// @brief Reads at most @p length bytes of an entry's payload from @p offset, touching it.
+        ///
+        /// The sibling of Read for an entry too large to want whole: only the requested span is read
+        /// off disk, so the I/O costs the bytes asked for rather than the bytes the entry holds. A
+        /// caller that knows its payload's internal layout reads one region of a large entry this
+        /// way instead of storing a second entry per region it might want.
+        ///
+        /// **The payload digest is not checked, and that is the whole difference from Read.** It
+        /// covers the payload entire, so verifying it would read every byte the range exists to
+        /// avoid. What is still checked is the blob's header — its identity, its format version, and
+        /// the payload length it declares against the file's size — so a missing, foreign,
+        /// truncated, or half-written entry misses here exactly as it does through Read, and is
+        /// removed on the same terms. What only Read catches is a flipped byte inside an otherwise
+        /// intact file; a caller wanting that guarantee reads the entry whole.
+        ///
+        /// **A short read is a success, not a miss.** A range reaching past the payload's end yields
+        /// what is there, and an offset at or past the end — or a zero length — yields an empty
+        /// buffer, so a caller may read a fixed-size prefix of an entry whose length it does not yet
+        /// know and learn the length from what it parses. nullopt means the entry is not there or
+        /// not usable; it never means the range was.
+        /// @param key     The caller's key.
+        /// @param offset  Byte offset within the payload.
+        /// @param length  The most bytes to read.
+        /// @return The bytes read, or nullopt on a miss.
+        [[nodiscard]] optional<vector<u8>> ReadRange(string_view key, u64 offset, u64 length);
+
         /// @brief Writes an entry, replacing any entry already under the key, then applies the caps.
         ///
         /// The blob is written to a temp file and renamed into place, and the index is rewritten

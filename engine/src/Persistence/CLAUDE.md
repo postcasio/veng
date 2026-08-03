@@ -359,6 +359,25 @@ never remove a file it did not write. Within its root it owns the `cache.` file-
 what the store's `slot.` prefix does for a slot directory. A root shared with other content keeps
 it.
 
+### A large entry can be read a piece at a time
+
+`ReadRange(key, offset, length)` reads at most `length` bytes of a payload from `offset`, so a
+caller that knows its own blob's internal layout pays the I/O of the region it wants rather than of
+the entry it sits in — the alternative being a second entry stored per region a caller might ask
+for, which is the per-entry-key failure the generation model exists to avoid, one level down. A
+short read is a success (an offset past the end yields an empty buffer), which is what lets a caller
+read a fixed-size prefix of an entry whose length it does not yet know and learn the length from
+what it parses; nullopt still means the entry is not there or not usable.
+
+**It gives up exactly one check, and that is the whole of the trade.** The payload digest covers the
+payload entire, so verifying it would read every byte the range exists to avoid — a range read
+therefore checks the blob's header (identity, format version, and the declared length against the
+file's size) and nothing more. Truncated, missing and foreign entries still miss and are still
+dropped; a flipped byte inside an otherwise intact file reads through. A caller that wants that
+guarantee reads the entry whole, and `tests/unit/derived_data_cache.cpp` asserts both halves —
+that a range is the corresponding span of the whole read, and that a bit-flip one reader rejects the
+other hands back.
+
 ### Damage is a miss, never an error
 
 Every blob carries a magic, a format version, its payload length and a CRC-32 of the payload, and
