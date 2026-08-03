@@ -54,7 +54,7 @@ SurfaceFragmentInput vsMain(VSInput input)
         input.a_BoneWeights.w * g_Palette[prevBase + input.a_BoneIndices.w];
     float4 prevSkinnedPos = mul(skinPrev, float4(input.a_Position, 1.0));
 
-    return AssembleSurfaceVertex(draw, view, skinnedPos, skinnedNormal,
+    return AssembleSurfaceVertex(draw, input.a_CandidateId, view, skinnedPos, skinnedNormal,
                                  float4(skinnedTangent, input.a_Tangent.w), input.a_UV,
                                  prevSkinnedPos);
 }

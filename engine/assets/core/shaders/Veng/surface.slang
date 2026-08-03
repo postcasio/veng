@@ -173,4 +173,8 @@ struct SurfaceFragmentInput
     nointerpolation uint v_MaterialIndex : TEXCOORD1;  // per-draw material selector from the vertex stage
     float4 v_CurClip : TEXCOORD2;   // unjittered current clip position (g-buffer motion vector)
     float4 v_PrevClip : TEXCOORD3;  // unjittered previous clip position (g-buffer motion vector)
+    // This draw's candidate id, so a fragment can identify its own draw and load its DrawData —
+    // LoadDrawData(v_CandidateId) — to read the same per-instance record the vertex stage used
+    // (e.g. its model matrix). Ignored by a fragment that does not need it.
+    nointerpolation uint v_CandidateId : TEXCOORD4;
 };

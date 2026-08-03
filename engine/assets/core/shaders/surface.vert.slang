@@ -27,6 +27,6 @@ SurfaceFragmentInput vsMain(VSInput input)
     // A static mesh's object-space vertex is the canonical attribute set unchanged, and its
     // previous object position equals its current — only World/PrevWorld move it.
     float4 objPos = float4(input.a_Position, 1.0);
-    return AssembleSurfaceVertex(draw, view, objPos, input.a_Normal, input.a_Tangent, input.a_UV,
-                                 objPos);
+    return AssembleSurfaceVertex(draw, input.a_CandidateId, view, objPos, input.a_Normal,
+                                 input.a_Tangent, input.a_UV, objPos);
 }

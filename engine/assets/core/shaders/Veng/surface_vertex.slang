@@ -13,10 +13,11 @@
 // per-draw World / PrevWorld and the view projection. The caller supplies the object-space
 // position (pre-World, post-skinning for a skinned mesh), normal, tangent, and UV, plus the
 // previous-frame object-space position — equal to the current position for a static mesh (only
-// World/PrevWorld move it), the previous-frame deformation for a skinned one.
-SurfaceFragmentInput AssembleSurfaceVertex(DrawData draw, ViewConstants view, float4 objPos,
-                                           float3 objNormal, float4 objTangent, float2 uv,
-                                           float4 prevObjPos)
+// World/PrevWorld move it), the previous-frame deformation for a skinned one. The candidate id is
+// passed through to the fragment so a fragment can reload this draw's DrawData (LoadDrawData).
+SurfaceFragmentInput AssembleSurfaceVertex(DrawData draw, uint candidateId, ViewConstants view,
+                                           float4 objPos, float3 objNormal, float4 objTangent,
+                                           float2 uv, float4 prevObjPos)
 {
     // The normal matrix (inverse-transpose of World's upper 3x3) is carried as its
     // three columns; transforming a vector is the column-weighted sum, matching the
@@ -41,5 +42,6 @@ SurfaceFragmentInput AssembleSurfaceVertex(DrawData draw, ViewConstants view, fl
     output.v_WorldTangent =
         float4(c0 * objTangent.x + c1 * objTangent.y + c2 * objTangent.z, objTangent.w);
     output.v_MaterialIndex = draw.MaterialIndex;
+    output.v_CandidateId = candidateId;
     return output;
 }

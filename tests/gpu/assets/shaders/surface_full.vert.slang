@@ -1,8 +1,9 @@
 #include "Veng/surface.slang"
 
 // Full surface vertex stage (gpu fixture): writes the complete SurfaceFragmentInput interpolant
-// set (UV, world normal, world tangent, material selector, current/previous clip) the engine's
-// Veng/surface.slang declares, so a fragment taking SurfaceFragmentInput links against it. The
+// set (UV, world normal, world tangent, material selector, current/previous clip, candidate id)
+// the engine's Veng/surface.slang declares, so a fragment taking SurfaceFragmentInput links
+// against it. The
 // trimmed brick.vert fixture omits the tangent; the translucent fixture material uses this full
 // stage instead so its Veng/translucent.slang fragment (which re-exports SurfaceFragmentInput)
 // matches the vertex output exactly.
@@ -38,5 +39,6 @@ SurfaceFragmentInput vsMain(VSInput input)
         float4(c0 * input.a_Tangent.x + c1 * input.a_Tangent.y + c2 * input.a_Tangent.z,
                input.a_Tangent.w);
     output.v_MaterialIndex = draw.MaterialIndex;
+    output.v_CandidateId = input.a_CandidateId;
     return output;
 }
