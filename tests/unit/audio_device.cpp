@@ -9,9 +9,8 @@
 #include <Veng/Audio/AudioBuffer.h>
 #include <Veng/Audio/AudioDevice.h>
 #include <Veng/Audio/AudioEngine.h>
+#include <Veng/Audio/TripleBuffer.h>
 #include <Veng/Audio/Voice.h>
-
-#include "Audio/TripleBuffer.h"
 
 #include <algorithm>
 #include <atomic>

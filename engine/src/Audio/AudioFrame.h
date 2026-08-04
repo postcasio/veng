@@ -8,17 +8,22 @@
 
 namespace Veng::Audio
 {
+    struct IAudioGenerator;
+
     /// @brief One voice as the real-time mixer sees it: an immutable, POD description.
     ///
-    /// The source is a raw pointer into an AudioBuffer whose lifetime the reclamation handshake
-    /// guarantees for as long as any published frame can reference it (see the module CLAUDE.md).
-    /// The struct leaves room for a generator source without committing to it here.
+    /// The source is either a raw pointer into an AudioBuffer's PCM or a borrowed IAudioGenerator;
+    /// the reclamation handshake guarantees either outlives any published frame that can reference
+    /// it (see the module CLAUDE.md).
     struct VoiceSnapshot
     {
         /// @brief Whether this slot holds a live voice.
         bool Active = false;
         /// @brief The voice generation, matching the RT-side playback cursor identity.
         u32 Generation = 0;
+
+        /// @brief The on-demand sample source, or null for a PCM voice.
+        IAudioGenerator* Generator = nullptr;
 
         /// @brief Interleaved PCM samples, or null.
         const f32* Pcm = nullptr;

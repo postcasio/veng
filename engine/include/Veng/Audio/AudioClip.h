@@ -96,6 +96,14 @@ namespace Veng::Audio
         /// @return The clip, or a message describing why the blob is not a valid audio clip.
         static Result<Ref<AudioClip>> Decode(std::span<const u8> cooked);
 
+        /// @brief Wraps a runtime-built PCM buffer as a resident Pcm clip.
+        ///
+        /// The code-built path behind AudioEngine::CreateClip: the resulting clip is a Pcm clip in
+        /// every respect except provenance, indistinguishable downstream from a cooked one.
+        /// @param buffer The resident float PCM (must be non-null).
+        /// @return The clip.
+        static Ref<AudioClip> CreatePcm(Ref<AudioBuffer> buffer);
+
         /// @brief Returns how the clip stores its samples.
         [[nodiscard]] AudioStorage Storage() const { return m_Storage; }
         /// @brief Returns the codec of an Encoded clip's payload (None for a Pcm clip).

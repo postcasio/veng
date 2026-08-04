@@ -6,6 +6,15 @@
 
 namespace Veng::Audio
 {
+    /// @brief The format of a code-built sample buffer handed to AudioEngine::CreateClip.
+    struct AudioBufferFormat
+    {
+        /// @brief Sample rate in Hz; 0 asks the engine to use the device's output rate.
+        u32 SampleRate = 0;
+        /// @brief Channel count of the interleaved samples (1 = mono, 2 = stereo).
+        u32 Channels = 1;
+    };
+
     /// @brief An immutable, ref-counted block of interleaved 32-bit float PCM.
     ///
     /// A voice reads its samples from an AudioBuffer. The buffer is the reclamation unit the

@@ -4,10 +4,12 @@
 #include <Veng/Audio/AudioBus.h>
 #include <Veng/Audio/AudioBuffer.h>
 #include <Veng/Audio/AudioClip.h>
+#include <Veng/Audio/AudioGenerator.h>
 #include <Veng/Audio/Voice.h>
 #include <Veng/Asset/AssetHandle.h>
 
 #include <array>
+#include <span>
 
 namespace Veng::Audio
 {
@@ -107,6 +109,30 @@ namespace Veng::Audio
         /// @brief Returns the master reverb parameters.
         [[nodiscard]] ReverbParams GetReverbParams() const;
 
+        /// @brief Wraps a code-built sample buffer as an AudioClip handle.
+        ///
+        /// Copies @p samples into a device-readable buffer and Adopts it as an AudioClip: the
+        /// result plays through PlayOneShot/PlayAt, attaches to an AudioSource, or feeds the music
+        /// director — a clip in every respect except provenance. The finite-one-shot runtime path
+        /// (the generator path is IAudioGenerator + PlayGenerator).
+        /// @param samples Interleaved float PCM (length must be a multiple of format.Channels).
+        /// @param format  The sample rate and channel count; a 0 rate uses the device output rate.
+        /// @return A resident clip handle.
+        [[nodiscard]] AssetHandle<AudioClip> CreateClip(std::span<const f32> samples,
+                                                        AudioBufferFormat format);
+
+        /// @brief Registers an on-demand generator as a voice, arbitrating against the voice budget.
+        ///
+        /// The engine holds the borrowed @p generator pointer for the voice's lifetime; the caller
+        /// owns it and guarantees it outlives the voice, releasing it only after StopVoice returns.
+        /// A Spatial voice is placed at params.Position and spatialized against the listener exactly
+        /// as a clip is (move it later with SetVoicePose); a non-spatial voice routes to its bus at
+        /// params.Gain. Same budget arbitration as AddVoice.
+        /// @param generator The sample source (must be non-null; not owned).
+        /// @param params    The voice registration parameters.
+        /// @return A handle to the voice, or an invalid handle if it was rejected.
+        VoiceHandle PlayGenerator(IAudioGenerator* generator, const GeneratorVoiceParams& params);
+
         /// @brief Registers a voice playing a buffer, arbitrating against the voice budget.
         ///
         /// Takes a free slot when one exists; when the budget is full, evicts the quietest active
@@ -128,8 +154,12 @@ namespace Veng::Audio
 
         /// @brief Stops a voice and routes its source to reclamation (no effect on a stale handle).
         ///
-        /// The source is freed only once the mixing thread's generation counter has passed the last
-        /// snapshot that referenced the voice, so it can never be freed mid-mix.
+        /// A buffer voice's source is queued for deferred free and released once the mixing thread's
+        /// generation counter passes the last snapshot that referenced it, so it can never be freed
+        /// mid-mix. A generator voice's reclamation is the same handshake made synchronous: the call
+        /// removes the generator from the live snapshot and returns only once the callback has
+        /// consumed a frame past it, so the caller may then free the borrowed generator with no
+        /// use-after-free.
         /// @param voice The handle.
         void StopVoice(VoiceHandle voice);
 
@@ -206,8 +236,10 @@ namespace Veng::Audio
             bool Active = false;
             /// @brief The slot's current generation.
             u32 Generation = 0;
-            /// @brief The owned PCM source.
+            /// @brief The owned PCM source (null for a generator voice).
             Ref<AudioBuffer> Source;
+            /// @brief The borrowed on-demand source (null for a buffer voice); not owned.
+            IAudioGenerator* Generator = nullptr;
             /// @brief The mix parameters.
             VoiceParams Params;
         };
@@ -261,6 +293,13 @@ namespace Veng::Audio
 
         /// @brief Deactivates a slot and routes its source to reclamation.
         void RetireSlot(u32 slot);
+
+        /// @brief Reserves a voice slot, evicting the quietest active voice when the budget is full.
+        ///
+        /// Returns a free slot, or the slot of a voice evicted because @p incomingGain is louder,
+        /// or InvalidSlot when the budget is full and the incoming voice would be the quietest.
+        /// @param incomingGain The incoming voice's pre-spatialization gain.
+        [[nodiscard]] u32 AllocateSlot(f32 incomingGain);
 
         /// @brief Folds a positioned voice's metadata and the listener into final mix parameters.
         [[nodiscard]] VoiceParams SpatializeManaged(const Managed& managed,

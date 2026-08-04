@@ -146,6 +146,37 @@ Beyond authored `AudioSource`s, any system fires sound through `SystemContext::A
   sequence. A level's authored initial track is the reflected `MusicState` component, read via
   `Scene::TryGetFirst` on world start and handed to the director once at its authored fade.
 
+## Runtime-generated audio
+
+Two runtime paths put code-made sound into the mix; pick by whether the sound is *finished* or
+*ongoing*.
+
+- **`AudioEngine::CreateClip(span<const f32>, AudioBufferFormat)`** — for a **finite one-shot built
+  once**. It copies a code-built PCM buffer into an `AudioBuffer`, wraps it via `AudioClip::CreatePcm`,
+  and `AssetManager::Adopt`s it as an `AudioClip` handle. The result is a Pcm clip in every respect
+  except provenance: it plays through `PlayOneShot`/`PlayAt`, attaches to an `AudioSource`, or feeds
+  the director, indistinguishable downstream from a cooked clip.
+- **`IAudioGenerator` + `AudioEngine::PlayGenerator(gen, GeneratorVoiceParams)`** — for an
+  **unbounded, continuously-varying voice** the mixer pulls from. The engine holds a *borrowed*
+  pointer (the caller owns the generator and guarantees it outlives the voice) and, internally,
+  drives it as one mono voice at the device rate; `Render` fills the samples on the mixing thread.
+  Pitch (Doppler) is applied by resampling that stream, so a generator voice shares the clip
+  attenuation/pan/Doppler/occlusion path with **no generator-specific case** — a spatial generator
+  is a `Spatial` `Managed` voice moved each frame with `SetVoicePose` (position is a placement, never
+  a generator param). A generator voice never retires by exhaustion; only `StopVoice` removes it.
+
+> **`IAudioGenerator::Render` runs on the real-time mixing thread. It must be lock-free,
+> allocation-free, and call no engine API — the same contract the snapshot bridge rests on. Live
+> synthesis state reaches it *only* through a `GeneratorParams<T>` block (`Set` on the main/View
+> thread, `Get` inside `Render`), never a direct call into `Render` from another thread.**
+
+`GeneratorParams<T>` is the plan-00 triple buffer (`TripleBuffer.h`, now a public header) scoped to
+one voice's POD parameters, so `Set` and `Get` at unrelated rates never tear and the RT reader never
+spins. **Reclaiming a generator is the reclamation handshake made synchronous:** `StopVoice` on a
+generator handle removes it from the live snapshot, publishes, and returns only once the callback's
+consumed serial has passed that frame — after which the caller may free the borrowed generator with
+no use-after-free (on the null device `StopVoice` drives the mixer itself, there being no RT thread).
+
 ## The self-test tone
 
 `GenerateSelfTestTone` builds a short, faded sine burst — a bounded, finite mono buffer.

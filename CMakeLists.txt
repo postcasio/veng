@@ -864,6 +864,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/audio_spatial.cpp
             tests/unit/audio_system.cpp
             tests/unit/audio_api.cpp
+            tests/unit/audio_generation.cpp
             tests/unit/pure_logic.cpp
             tests/unit/task_system.cpp
             tests/unit/parallel_for.cpp

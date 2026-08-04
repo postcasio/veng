@@ -2,20 +2,25 @@
 #include <Veng/Audio/AudioEngine.h>
 
 #include <Veng/Assert.h>
+#include <Veng/Asset/AssetManager.h>
 #include <Veng/Log.h>
+
+#include <Veng/Audio/TripleBuffer.h>
 
 #include "AudioFrame.h"
 #include "Reverb.h"
 #include "SpscRing.h"
-#include "TripleBuffer.h"
 
 #include <miniaudio.h>
 
 #include <glm/geometric.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <numbers>
+#include <span>
+#include <thread>
 
 namespace Veng::Audio
 {
@@ -27,6 +32,9 @@ namespace Veng::Audio
         // The most frames a single null-device pump advances, so a stalled first frame (or a
         // breakpoint) cannot ask the mixer to grind through minutes of virtual time.
         constexpr u32 kMaxPumpFrames = 4800;
+        // A generator voice's Pitch is clamped to this before resampling, bounding how many source
+        // samples one chunk pulls (and so the GenScratch size); a Doppler ratio never approaches it.
+        constexpr f32 kMaxGeneratorPitch = 4.0f;
 
         void EqualPowerPan(f32 pan, f32& leftGain, f32& rightGain)
         {
@@ -93,6 +101,13 @@ namespace Veng::Audio
             u32 Generation = 0;
             bool Finished = false;
             f32 OcclusionState = 0.0f;
+            /// @brief Generator resampler: fractional read position between GenS0 and GenS1, [0, 1).
+            f64 GenFrac = 0.0;
+            /// @brief Generator resampler: the two source samples the current output interpolates.
+            f32 GenS0 = 0.0f;
+            f32 GenS1 = 0.0f;
+            /// @brief Whether the two-sample interpolation window has been primed for this voice.
+            bool GenPrimed = false;
         };
         std::array<RtVoice, MaxVoices> RtVoices{};
 
@@ -112,6 +127,8 @@ namespace Veng::Audio
         vector<f32> WetR;
         /// @brief Per-voice mono render scratch (sized kMaxChunkFrames).
         vector<f32> VoiceScratch;
+        /// @brief Generator source-render scratch (sized for the widest resample per chunk).
+        vector<f32> GenScratch;
 
         /// @brief The last null-device pump output, for headless inspection and tests.
         vector<f32> NullOutput;
@@ -136,6 +153,11 @@ namespace Veng::Audio
             WetL.assign(kMaxChunkFrames, 0.0f);
             WetR.assign(kMaxChunkFrames, 0.0f);
             VoiceScratch.assign(kMaxChunkFrames, 0.0f);
+            // The most source samples a chunk resamples: floor(GenFrac + frames * pitch) + 1, bounded
+            // by the pitch clamp; a fixed margin covers the +1 and the fractional carry.
+            GenScratch.assign(
+                static_cast<usize>(kMaxChunkFrames) * static_cast<usize>(kMaxGeneratorPitch) + 4,
+                0.0f);
             MasterReverb.Prepare(sampleRate);
         }
     };
@@ -192,6 +214,56 @@ namespace Veng::Audio
                 {static_cast<f32*>(output), static_cast<usize>(frameCount) * channels}, frameCount);
         }
 
+        // Pulls one chunk of mono samples from a generator voice into native.VoiceScratch, applying
+        // its occlusion low-pass. The generator renders at the device rate; Pitch (Doppler) is
+        // applied by linearly resampling that stream through a two-sample interpolation window
+        // (GenS0/GenS1) advanced by a fractional cursor. Each chunk pulls exactly the source samples
+        // the cursor crosses — no lookahead is rendered and dropped — so a stateful generator
+        // advances contiguously across chunks with no seam. Render is the only foreign code the RT
+        // thread runs; the contract binds it.
+        void RenderGeneratorChunk(AudioDevice::Native& native, const VoiceSnapshot& voice,
+                                  AudioDevice::Native::RtVoice& rt, u32 frames)
+        {
+            const f64 ratio = static_cast<f64>(std::clamp(voice.Pitch, 0.01f, kMaxGeneratorPitch));
+            f32* batch = native.GenScratch.data();
+
+            // Prime the interpolation window from the generator's first two samples, once per voice.
+            if (!rt.GenPrimed)
+            {
+                voice.Generator->Render(batch, 2, 1, native.SampleRate);
+                rt.GenS0 = batch[0];
+                rt.GenS1 = batch[1];
+                rt.GenFrac = 0.0;
+                rt.GenPrimed = true;
+            }
+
+            // The cursor advances ratio per output frame; the number of integer boundaries it crosses
+            // is exactly how many new source samples this chunk consumes (GenFrac starts in [0, 1)).
+            const u64 pulls = static_cast<u64>(rt.GenFrac + static_cast<f64>(frames) * ratio);
+            VE_ASSERT(pulls <= native.GenScratch.size(),
+                      "generator chunk pulls {} source samples, scratch holds {}", pulls,
+                      native.GenScratch.size());
+            voice.Generator->Render(batch, static_cast<u32>(pulls), 1, native.SampleRate);
+
+            const f32 occlusionCoef = 1.0f - std::clamp(voice.Occlusion, 0.0f, 1.0f) * 0.98f;
+            f64 frac = rt.GenFrac;
+            u64 pullIdx = 0;
+            for (u32 i = 0; i < frames; ++i)
+            {
+                const f32 sample = rt.GenS0 + (rt.GenS1 - rt.GenS0) * static_cast<f32>(frac);
+                rt.OcclusionState += occlusionCoef * (sample - rt.OcclusionState);
+                native.VoiceScratch[i] = rt.OcclusionState;
+                frac += ratio;
+                while (frac >= 1.0)
+                {
+                    rt.GenS0 = rt.GenS1;
+                    rt.GenS1 = batch[pullIdx++];
+                    frac -= 1.0;
+                }
+            }
+            rt.GenFrac = frac;
+        }
+
         // Mixes one bounded chunk of the snapshot into an interleaved stereo output. Runs on the
         // real-time callback thread (or the main thread in null mode) and touches only the device's
         // own RT state — never the engine or any scene API.
@@ -210,7 +282,9 @@ namespace Veng::Audio
             {
                 const VoiceSnapshot& voice = frame.Voices[slot];
                 AudioDevice::Native::RtVoice& rt = native.RtVoices[slot];
-                if (!voice.Active || voice.Pcm == nullptr || voice.PcmFrameCount == 0)
+                const bool isGenerator = voice.Generator != nullptr;
+                if (!voice.Active ||
+                    (!isGenerator && (voice.Pcm == nullptr || voice.PcmFrameCount == 0)))
                 {
                     continue;
                 }
@@ -220,36 +294,50 @@ namespace Veng::Audio
                     rt.Generation = voice.Generation;
                     rt.Finished = false;
                     rt.OcclusionState = 0.0f;
+                    rt.GenFrac = 0.0;
+                    rt.GenS0 = 0.0f;
+                    rt.GenS1 = 0.0f;
+                    rt.GenPrimed = false;
                 }
                 if (rt.Finished)
                 {
                     continue;
                 }
 
-                const f64 srcRate = voice.PcmSampleRate == 0
-                                        ? static_cast<f64>(sampleRate)
-                                        : static_cast<f64>(voice.PcmSampleRate);
-                const f64 ratio = (srcRate / static_cast<f64>(sampleRate)) *
-                                  static_cast<f64>(std::max(voice.Pitch, 0.0f));
-                const f32 occlusionCoef = 1.0f - std::clamp(voice.Occlusion, 0.0f, 1.0f) * 0.98f;
-
                 bool exhausted = false;
-                for (u32 i = 0; i < frames; ++i)
+                if (isGenerator)
                 {
-                    if (rt.Cursor >= static_cast<f64>(voice.PcmFrameCount) && !voice.Loop)
+                    // An on-demand generator is unbounded; it renders at the device rate and never
+                    // retires by exhaustion — only StopVoice removes it.
+                    RenderGeneratorChunk(native, voice, rt, frames);
+                }
+                else
+                {
+                    const f64 srcRate = voice.PcmSampleRate == 0
+                                            ? static_cast<f64>(sampleRate)
+                                            : static_cast<f64>(voice.PcmSampleRate);
+                    const f64 ratio = (srcRate / static_cast<f64>(sampleRate)) *
+                                      static_cast<f64>(std::max(voice.Pitch, 0.0f));
+                    const f32 occlusionCoef =
+                        1.0f - std::clamp(voice.Occlusion, 0.0f, 1.0f) * 0.98f;
+
+                    for (u32 i = 0; i < frames; ++i)
                     {
-                        native.VoiceScratch[i] = 0.0f;
-                        exhausted = true;
-                        continue;
-                    }
-                    f32 sample = SampleMono(voice, rt.Cursor);
-                    rt.OcclusionState += occlusionCoef * (sample - rt.OcclusionState);
-                    sample = rt.OcclusionState;
-                    native.VoiceScratch[i] = sample;
-                    rt.Cursor += ratio;
-                    if (voice.Loop && rt.Cursor >= static_cast<f64>(voice.PcmFrameCount))
-                    {
-                        rt.Cursor -= static_cast<f64>(voice.PcmFrameCount);
+                        if (rt.Cursor >= static_cast<f64>(voice.PcmFrameCount) && !voice.Loop)
+                        {
+                            native.VoiceScratch[i] = 0.0f;
+                            exhausted = true;
+                            continue;
+                        }
+                        f32 sample = SampleMono(voice, rt.Cursor);
+                        rt.OcclusionState += occlusionCoef * (sample - rt.OcclusionState);
+                        sample = rt.OcclusionState;
+                        native.VoiceScratch[i] = sample;
+                        rt.Cursor += ratio;
+                        if (voice.Loop && rt.Cursor >= static_cast<f64>(voice.PcmFrameCount))
+                        {
+                            rt.Cursor -= static_cast<f64>(voice.PcmFrameCount);
+                        }
                     }
                 }
 
@@ -520,50 +608,111 @@ namespace Veng::Audio
         return m_Reverb;
     }
 
-    VoiceHandle AudioEngine::AddVoice(const Ref<AudioBuffer>& buffer, const VoiceParams& params)
+    u32 AudioEngine::AllocateSlot(const f32 incomingGain)
     {
-        VE_ASSERT(buffer, "AddVoice requires a non-null buffer");
-
-        u32 slot = VoiceHandle::InvalidSlot;
         for (u32 i = 0; i < MaxVoices; ++i)
         {
             if (!m_Voices[i].Active)
             {
-                slot = i;
-                break;
+                return i;
             }
         }
+        // Budget full: evict the quietest active voice, but only if the incoming voice is louder —
+        // otherwise it is the one that loses, and the request is rejected.
+        u32 quietest = VoiceHandle::InvalidSlot;
+        f32 quietestGain = incomingGain;
+        for (u32 i = 0; i < MaxVoices; ++i)
+        {
+            if (m_Voices[i].Active && m_Voices[i].Params.Gain < quietestGain)
+            {
+                quietestGain = m_Voices[i].Params.Gain;
+                quietest = i;
+            }
+        }
+        if (quietest == VoiceHandle::InvalidSlot)
+        {
+            return VoiceHandle::InvalidSlot;
+        }
+        RetireSlot(quietest);
+        return quietest;
+    }
 
+    VoiceHandle AudioEngine::AddVoice(const Ref<AudioBuffer>& buffer, const VoiceParams& params)
+    {
+        VE_ASSERT(buffer, "AddVoice requires a non-null buffer");
+
+        const u32 slot = AllocateSlot(params.Gain);
         if (slot == VoiceHandle::InvalidSlot)
         {
-            // Budget full: evict the quietest active voice, but only if the incoming voice is
-            // louder — otherwise it is the one that loses, and the request is rejected.
-            u32 quietest = VoiceHandle::InvalidSlot;
-            f32 quietestGain = params.Gain;
-            for (u32 i = 0; i < MaxVoices; ++i)
-            {
-                if (m_Voices[i].Active && m_Voices[i].Params.Gain < quietestGain)
-                {
-                    quietestGain = m_Voices[i].Params.Gain;
-                    quietest = i;
-                }
-            }
-            if (quietest == VoiceHandle::InvalidSlot)
-            {
-                return {};
-            }
-            RetireSlot(quietest);
-            slot = quietest;
+            return {};
         }
 
         Voice& voice = m_Voices[slot];
         voice.Generation += 1;
         voice.Active = true;
         voice.Source = buffer;
+        voice.Generator = nullptr;
         voice.Params = params;
         // A raw voice carries no engine-owned metadata; PlayOneShot / PlayAt / the director stamp the
         // slot after this returns, so a reused slot never inherits its predecessor's managed role.
         m_Managed[slot] = Managed{};
+        ++m_ActiveCount;
+        return VoiceHandle{.Slot = slot, .Generation = voice.Generation};
+    }
+
+    AssetHandle<AudioClip> AudioEngine::CreateClip(const std::span<const f32> samples,
+                                                   const AudioBufferFormat format)
+    {
+        const u32 channels = format.Channels == 0 ? 1 : format.Channels;
+        const u32 sampleRate =
+            format.SampleRate == 0 ? m_Device.GetSampleRate() : format.SampleRate;
+        Ref<AudioBuffer> buffer = AudioBuffer::Create(samples, channels, sampleRate);
+        return AssetManager::Adopt<AudioClip>(AudioClip::CreatePcm(std::move(buffer)));
+    }
+
+    VoiceHandle AudioEngine::PlayGenerator(IAudioGenerator* generator,
+                                           const GeneratorVoiceParams& params)
+    {
+        VE_ASSERT(generator != nullptr, "PlayGenerator requires a non-null generator");
+
+        // A spatial generator carries the same Managed metadata a PlayAt voice does, so it is
+        // re-spatialized by UpdateManagedVoices and moved by SetVoicePose through the one shared
+        // path; a non-spatial generator routes straight to its bus with static params.
+        Managed managed;
+        VoiceParams voiceParams;
+        if (params.Spatial)
+        {
+            managed = Managed{.Kind = ManagedKind::Spatial,
+                              .Bus = params.Bus,
+                              .BaseGain = params.Gain,
+                              .BasePitch = params.Pitch,
+                              .Loop = false,
+                              .WorldPos = params.Position,
+                              .Velocity = params.Velocity,
+                              .MinDistance = params.MinDistance,
+                              .MaxDistance = params.MaxDistance,
+                              .Occlusion = params.OcclusionFactor};
+            voiceParams = SpatializeManaged(managed, m_Listener);
+        }
+        else
+        {
+            voiceParams = VoiceParams{
+                .Bus = params.Bus, .Gain = params.Gain, .Pitch = params.Pitch, .Loop = false};
+        }
+
+        const u32 slot = AllocateSlot(params.Gain);
+        if (slot == VoiceHandle::InvalidSlot)
+        {
+            return {};
+        }
+
+        Voice& voice = m_Voices[slot];
+        voice.Generation += 1;
+        voice.Active = true;
+        voice.Source = nullptr;
+        voice.Generator = generator;
+        voice.Params = voiceParams;
+        m_Managed[slot] = managed;
         ++m_ActiveCount;
         return VoiceHandle{.Slot = slot, .Generation = voice.Generation};
     }
@@ -584,9 +733,41 @@ namespace Veng::Audio
 
     void AudioEngine::StopVoice(VoiceHandle voice)
     {
-        if (IsVoiceLive(voice))
+        if (!IsVoiceLive(voice))
         {
-            RetireSlot(voice.Slot);
+            return;
+        }
+        const bool isGenerator = m_Voices[voice.Slot].Generator != nullptr;
+        RetireSlot(voice.Slot);
+        if (!isGenerator)
+        {
+            // A buffer voice's source is reclaimed asynchronously through the deferred-free queue.
+            return;
+        }
+
+        // A generator is caller-owned and borrowed, so its reclamation is the plan-00 handshake made
+        // synchronous: publish a frame that no longer names the generator, then wait until the mixer
+        // has consumed it. Once the consumed serial reaches that frame the callback can never reach
+        // the generator again, so the caller may free it the moment this returns.
+        Publish();
+        const u64 target = m_PublishedSerial;
+        if (m_Device.IsNull())
+        {
+            // No real-time thread exists; drive the mixer here to advance the consumed serial past
+            // the removal (mixing one frame latches the just-published generator-free snapshot).
+            std::array<f32, 8> scratch{};
+            const u32 channels = std::min<u32>(m_Device.GetChannels(), 8);
+            while (m_Device.GetConsumedSerial() < target)
+            {
+                m_Device.RenderBlock(std::span<f32>(scratch.data(), channels), 1);
+            }
+        }
+        else
+        {
+            while (m_Device.GetConsumedSerial() < target)
+            {
+                std::this_thread::yield();
+            }
         }
     }
 
@@ -635,15 +816,26 @@ namespace Veng::Audio
         {
             VoiceSnapshot& snapshot = frame.Voices[slot];
             const Voice& voice = m_Voices[slot];
-            if (voice.Active && voice.Source)
+            if (voice.Active && (voice.Source || voice.Generator))
             {
-                const std::span<const f32> samples = voice.Source->Samples();
                 snapshot.Active = true;
                 snapshot.Generation = voice.Generation;
-                snapshot.Pcm = samples.data();
-                snapshot.PcmFrameCount = voice.Source->FrameCount();
-                snapshot.PcmChannels = voice.Source->Channels();
-                snapshot.PcmSampleRate = voice.Source->SampleRate();
+                snapshot.Generator = voice.Generator;
+                if (voice.Source)
+                {
+                    const std::span<const f32> samples = voice.Source->Samples();
+                    snapshot.Pcm = samples.data();
+                    snapshot.PcmFrameCount = voice.Source->FrameCount();
+                    snapshot.PcmChannels = voice.Source->Channels();
+                    snapshot.PcmSampleRate = voice.Source->SampleRate();
+                }
+                else
+                {
+                    snapshot.Pcm = nullptr;
+                    snapshot.PcmFrameCount = 0;
+                    snapshot.PcmChannels = 0;
+                    snapshot.PcmSampleRate = 0;
+                }
                 snapshot.Bus = voice.Params.Bus;
                 snapshot.Gain = voice.Params.Gain;
                 snapshot.Pan = voice.Params.Pan;
@@ -655,6 +847,7 @@ namespace Veng::Audio
             else
             {
                 snapshot.Active = false;
+                snapshot.Generator = nullptr;
                 snapshot.Pcm = nullptr;
                 snapshot.PcmFrameCount = 0;
             }
@@ -710,7 +903,7 @@ namespace Veng::Audio
         f32 quietestGain = incomingGain;
         for (u32 i = 0; i < MaxVoices; ++i)
         {
-            if (!m_Voices[i].Active)
+            if (!m_Voices[i].Active || m_Voices[i].Generator != nullptr)
             {
                 continue;
             }
@@ -843,7 +1036,7 @@ namespace Veng::Audio
         for (u32 i = 0; i < MaxVoices; ++i)
         {
             const ManagedKind kind = m_Managed[i].Kind;
-            if (m_Voices[i].Active &&
+            if (m_Voices[i].Active && m_Voices[i].Generator == nullptr &&
                 (kind == ManagedKind::OneShot || kind == ManagedKind::Spatial))
             {
                 ++count;

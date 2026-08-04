@@ -5,6 +5,7 @@
 
 #include <fmt/format.h>
 
+#include <Veng/Assert.h>
 #include <Veng/Asset/CookedBlobs.h>
 
 // stb_vorbis is compiled once in src/Vendor/StbVorbis.cpp; here we take declarations only. The
@@ -185,6 +186,19 @@ namespace Veng::Audio
         }
 
         return std::unexpected(fmt::format("audio clip: unknown storage kind {}", header->Storage));
+    }
+
+    Ref<AudioClip> AudioClip::CreatePcm(Ref<AudioBuffer> buffer)
+    {
+        VE_ASSERT(buffer != nullptr, "AudioClip::CreatePcm requires a non-null buffer");
+        auto clip = Ref<AudioClip>(new AudioClip());
+        clip->m_Storage = AudioStorage::Pcm;
+        clip->m_Codec = AudioCodec::None;
+        clip->m_SampleRate = buffer->SampleRate();
+        clip->m_Channels = buffer->Channels();
+        clip->m_FrameCount = buffer->FrameCount();
+        clip->m_Buffer = std::move(buffer);
+        return clip;
     }
 
     Result<Unique<VorbisMemoryDecoder>> AudioClip::OpenDecoder() const
