@@ -28,14 +28,31 @@ namespace Veng
         f32 SensorHeight = 0.0f;
     };
 
+    /// @brief The clip-space depth-inversion matrix that turns a standard [0, 1] ZO
+    ///        projection into reverse-Z.
+    ///
+    /// Left-multiplied onto a Y-flipped `glm::perspective`/`glm::ortho`/`glm::*ZO` result,
+    /// it maps clip depth z∈[0, 1] to [1, 0] (near→1, far→0) while leaving x, y and w
+    /// untouched — so the near/far distances the projection was built from are unchanged and
+    /// only the NDC depth convention moves. Every projection in the engine (camera g-buffer
+    /// and shadow atlas alike) is built through this, keeping one depth convention engine-wide.
+    /// @return The 4×4 inversion, column-major for GLM.
+    [[nodiscard]] inline mat4 ReverseZClip()
+    {
+        return mat4(1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, -1.0f, 0.0f, 0.0f,
+                    0.0f, 1.0f, 1.0f);
+    }
+
     /// @brief Plain CPU value type that builds the view and projection matrices a SceneView carries.
     ///
     /// The render-ready view-projection the renderer consumes through SceneView, the
     /// resolved side of the recipe→resolved pairing (a Camera component produces a
     /// CameraView). Pure math, no backend handles.
     /// Projection follows the engine's Vulkan clip conventions: a column-major GLM
-    /// perspective with Y flipped (Vulkan clip space has Y pointing down). Matrices are
-    /// recomputed on demand from stored parameters.
+    /// perspective with Y flipped (Vulkan clip space has Y pointing down) and depth
+    /// reverse-Z — the near plane maps to NDC z = 1 and the far plane to z = 0, which
+    /// spreads a float depth buffer's precision across the near field instead of the far.
+    /// Matrices are recomputed on demand from stored parameters.
     class CameraView
     {
     public:
@@ -48,7 +65,8 @@ namespace Veng
         {
             mat4 projection = glm::perspective(fovYRadians, aspect, near, far);
             projection[1][1] *= -1.0f; // Vulkan's clip space has Y pointing down.
-            m_Projection = projection;
+            // Reverse-Z: invert the [0, 1] clip depth so near→1, far→0.
+            m_Projection = ReverseZClip() * projection;
             m_Near = near;
             m_Far = far;
         }
@@ -57,7 +75,7 @@ namespace Veng
         ///
         /// Parallel projection: no perspective foreshortening, so a face directly
         /// facing the camera projects at uniform scale regardless of depth. Follows
-        /// the same Vulkan clip conventions as SetPerspective (Y flipped, ZO depth).
+        /// the same Vulkan clip conventions as SetPerspective (Y flipped, reverse-Z depth).
         /// @param halfWidth   Half the view volume's width in world units.
         /// @param halfHeight  Half the view volume's height in world units.
         /// @param near        Near clip distance.
@@ -66,7 +84,8 @@ namespace Veng
         {
             mat4 projection = glm::ortho(-halfWidth, halfWidth, -halfHeight, halfHeight, near, far);
             projection[1][1] *= -1.0f; // Vulkan's clip space has Y pointing down.
-            m_Projection = projection;
+            // Reverse-Z: invert the [0, 1] clip depth so near→1, far→0.
+            m_Projection = ReverseZClip() * projection;
             m_Near = near;
             m_Far = far;
         }

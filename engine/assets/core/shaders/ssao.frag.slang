@@ -146,10 +146,10 @@ float fsMain(VSOutput input) : SV_Target
 
     float depth = g_Textures[NonUniformResourceIndex(g_PC.DepthTexture)].Sample(samp, gUV).r;
 
-    // The cleared depth (1.0) marks the background, where there is no geometry to
-    // occlude — leave it fully unoccluded so the lighting pass's background ambient
+    // The reverse-Z cleared depth (0.0) marks the background, where there is no geometry
+    // to occlude — leave it fully unoccluded so the lighting pass's background ambient
     // is unchanged.
-    if (depth >= 1.0)
+    if (depth <= 0.0)
         return 1.0;
 
     float4x4 invProj = Inverse4x4(vc.Proj);

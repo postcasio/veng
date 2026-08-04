@@ -5,8 +5,8 @@
 // No draw issues — this pins the math before the GPU cull wires it into indirect
 // draw.
 //
-// The scene: a half-covered max-Z depth field — the left screen half is a near
-// occluder (small stored depth), the right half is empty background (far depth 1).
+// The scene: a half-covered min-Z depth field — reverse-Z, so the left screen half is a
+// near occluder (large stored depth) and the right half is empty background (far depth 0).
 // The field is reduced into a real pyramid through the core reduction, then world
 // AABBs are projected by a perspective camera and tested:
 //   - behind the occluder, footprint inside the left half      -> occluded (0)
@@ -60,9 +60,9 @@ namespace
     // The occluder plane sits this far from the camera; its stored NDC depth is
     // derived from the camera projection (Vulkan ZO depth is nonlinear, so a fixed
     // depth literal would not correspond to a meaningful distance). The far
-    // background in the right half stores depth 1.
+    // background in the right half stores the reverse-Z far depth 0.
     constexpr float OccluderDistance = 1.0f;
-    constexpr float BackgroundDepth = 1.0f;
+    constexpr float BackgroundDepth = 0.0f;
 
     struct ReducePush
     {
@@ -106,7 +106,7 @@ namespace
         return Projected{.Uv = vec2(ndc) * 0.5f + 0.5f, .Depth = ndc.z, .W = clip.w};
     }
 
-    // Reduces a row-major R32 depth field (extent w×h) into a real max-Z pyramid through
+    // Reduces a row-major R32 depth field (extent w×h) into a real min-Z pyramid through
     // the core reduction, runs the isolation occlusion test over the candidates against
     // it with the given previous-frame view-projection, and returns one visibility flag
     // per candidate (1 = drawn, 0 = occluded). The GPU plumbing every occlusion case shares.
@@ -392,22 +392,23 @@ TEST_CASE_FIXTURE(Test::GpuFixture, "Hi-Z occlusion test reports occluded vs vis
     };
 
     // Construction sanity: the occluded candidate's nearest corner must project deeper
-    // than the occluder, fully inside the left half; the in-front nearer.
+    // than the occluder, fully inside the left half; the in-front nearer. Reverse-Z:
+    // deeper is the smaller device depth, nearer the larger.
     {
-        // Nearest corner = largest z (closest to 0) of the AABB = BoundsMax.z. The
+        // Nearest corner = largest world z (closest to 0) of the AABB = BoundsMax.z. The
         // occluded candidate's whole footprint must sit inside the left half and project
-        // deeper than the occluder.
+        // deeper than the occluder (smaller device depth under reverse-Z).
         const Projected nMin = Project(
             viewProj, vec3(occluded.BoundsMin.x, occluded.BoundsMin.y, occluded.BoundsMax.z));
         const Projected nMax = Project(
             viewProj, vec3(occluded.BoundsMax.x, occluded.BoundsMax.y, occluded.BoundsMax.z));
-        REQUIRE(nMin.Depth > occluderDepth);
+        REQUIRE(nMin.Depth < occluderDepth);
         REQUIRE(nMax.Uv.x < 0.5f);
     }
     {
         const Projected n =
             Project(viewProj, vec3(inFront.BoundsMin.x, inFront.BoundsMin.y, inFront.BoundsMax.z));
-        REQUIRE(n.Depth < occluderDepth);
+        REQUIRE(n.Depth > occluderDepth);
     }
 
     // Small bias: enough to make the tie draw, below the occluder/background gap.
@@ -429,11 +430,11 @@ TEST_CASE_FIXTURE(Test::GpuFixture,
 {
     // A footprint wider than the largest power of two <= maxDim picks a mip one past the
     // pyramid's last level (CeilLog2 overflowing bit_width's range). On a non-power-of-two
-    // extent that Load reads out of range — on MoltenVK returning 0 (near), which falsely
-    // occludes the one object large enough to hit it: a screen-filling ground plane. The
-    // mip pick must clamp to the last real mip, whose single coarse texel is the
-    // conservative global max-Z. Width 192 makes a full-screen footprint select that
-    // overflow mip (mips run 0..7; 192 > 128 picks 8).
+    // extent that Load reads out of range — a driver returning a large (near) value there
+    // would falsely occlude the one object large enough to hit it, a screen-filling ground
+    // plane. The mip pick must clamp to the last real mip, whose single coarse texel is the
+    // conservative global min-Z under reverse-Z. Width 192 makes a full-screen footprint
+    // select that overflow mip (mips run 0..7; 192 > 128 picks 8).
     constexpr u32 NonPotWidth = 192;
     constexpr u32 NonPotHeight = 192;
 

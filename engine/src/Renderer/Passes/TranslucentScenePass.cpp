@@ -76,7 +76,8 @@ namespace Veng::Renderer
                 .CullMode = parent->GetCullMode(),
                 .DepthTestEnable = true,
                 .DepthWriteEnable = false,
-                .DepthCompareOp = CompareOp::LessOrEqual,
+                // Reverse-Z: a nearer fragment has larger depth.
+                .DepthCompareOp = CompareOp::GreaterOrEqual,
             });
 
         return m_Pipelines.emplace(parent, std::move(pipeline)).first->second;

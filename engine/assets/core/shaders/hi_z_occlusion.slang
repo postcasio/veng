@@ -1,13 +1,14 @@
 // Conservative hi-Z occlusion test, shared by the isolation compute pass and the
 // GPU cull. A candidate's world AABB is projected to a screen-space footprint and
-// tested against the previous frame's max-Z hi-Z pyramid: a candidate fully behind
+// tested against the previous frame's min-Z hi-Z pyramid: a candidate fully behind
 // the farthest stored depth over its whole footprint is occluded.
 //
 // Conservative is the correctness bar: every uncertainty (a near-plane crossing, an
 // off-screen footprint, a straddling depth, a tie) resolves to NOT occluded, so the
 // test may leave a hidden draw in but never drops a visible one. The pyramid stores
-// max (farthest) depth per texel (see hi_z_reduce.comp), the reduction that makes
-// "fully behind the nearest stored depth" sound for the engine's [0,1] depth.
+// the farthest depth per texel (see hi_z_reduce.comp); under reverse-Z (near = 1, far
+// = 0) the farthest depth is the min, the reduction that makes "fully behind the
+// stored depth" sound for the engine's depth.
 
 // floor(log2(x)) for a positive integer, by bit scan. ceil(log2(x)) is FloorLog2 of
 // (x rounded up to the next power of two): a power of two keeps its own log, anything
@@ -35,10 +36,10 @@ bool IsOccluded(float3 boundsMin, float3 boundsMax, float4x4 prevViewProj,
                 Texture2D<float> hiZ, uint2 hiZBaseExtent, float depthBias)
 {
     // Project the 8 corners. Track the screen-space [0,1] xy bound and the nearest
-    // (minimum) projected depth — the candidate's closest point to the camera.
+    // (reverse-Z: maximum) projected depth — the candidate's closest point to the camera.
     float2 uvMin = float2(1e30, 1e30);
     float2 uvMax = float2(-1e30, -1e30);
-    float zMin = 1e30;
+    float zMax = -1e30;
 
     [unroll]
     for (uint i = 0u; i < 8u; ++i)
@@ -62,7 +63,7 @@ bool IsOccluded(float3 boundsMin, float3 boundsMax, float4x4 prevViewProj,
 
         uvMin = min(uvMin, uv);
         uvMax = max(uvMax, uv);
-        zMin = min(zMin, ndc.z);
+        zMax = max(zMax, ndc.z);
     }
 
     // A footprint reaching outside the screen is the frustum cull's concern, not
@@ -86,7 +87,7 @@ bool IsOccluded(float3 boundsMin, float3 boundsMax, float4x4 prevViewProj,
     // the last (e.g. a 1281..1280-wide footprint picks mip 11 on a 1280-wide pyramid
     // whose last mip is 10); that Load reads out of range and returns garbage, which a
     // large object (the ground plane) hits and gets falsely culled by. Clamp to the
-    // last real mip — its single coarse texel is the conservative global max-Z.
+    // last real mip — its single coarse texel is the conservative global min-Z.
     uint maxLevel = firstbithigh(max(hiZBaseExtent.x, hiZBaseExtent.y));
     uint level = min(CeilLog2(uint(ceil(max(maxFootprintPx, 1.0)))), maxLevel);
 
@@ -101,10 +102,10 @@ bool IsOccluded(float3 boundsMin, float3 boundsMax, float4x4 prevViewProj,
     texMin = clamp(texMin, int2(0, 0), maxCoord);
     texMax = clamp(texMax, int2(0, 0), maxCoord);
 
-    // Max of the covered texels (up to a 2x2 neighborhood) is the farthest occluder
-    // depth over the footprint. The footprint spans at most two texels per axis at
-    // the chosen level, so the inner bound is small and statically unrollable.
-    float dFar = 0.0;
+    // Min of the covered texels (up to a 2x2 neighborhood) is the farthest occluder
+    // depth over the footprint under reverse-Z. The footprint spans at most two texels
+    // per axis at the chosen level, so the inner bound is small and statically unrollable.
+    float dFar = 1.0;
     [unroll]
     for (int ty = 0; ty <= 1; ++ty)
     {
@@ -112,11 +113,13 @@ bool IsOccluded(float3 boundsMin, float3 boundsMax, float4x4 prevViewProj,
         for (int tx = 0; tx <= 1; ++tx)
         {
             int2 coord = int2(min(texMin.x + tx, texMax.x), min(texMin.y + ty, texMax.y));
-            dFar = max(dFar, hiZ.Load(int3(coord, int(level))));
+            dFar = min(dFar, hiZ.Load(int3(coord, int(level))));
         }
     }
 
     // Occluded iff the candidate's nearest point is strictly behind the farthest
-    // stored depth over the whole footprint. The bias keeps a tie drawing.
-    return zMin > dFar + depthBias;
+    // stored depth over the whole footprint. Reverse-Z: behind is the smaller depth,
+    // so the candidate's nearest (largest) depth must fall below dFar. The bias keeps
+    // a tie drawing.
+    return zMax < dFar - depthBias;
 }

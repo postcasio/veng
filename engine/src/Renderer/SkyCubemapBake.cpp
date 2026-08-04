@@ -252,9 +252,10 @@ namespace Veng::Renderer
         }
         m_JobKey = NextSkyBakeJobKey();
 
-        // A 1×1 stand-in depth image holding the far-plane value (1.0), bound in the fragment's depth
-        // slot so SkyIsBackground passes for every baked pixel — there is no g-buffer at bake time.
-        // Sampled as a color texture (the fragment reads .r), so it is an R32Sfloat sampled image.
+        // A 1×1 stand-in depth image holding the far-plane value (reverse-Z: 0.0), bound in the
+        // fragment's depth slot so SkyIsBackground passes for every baked pixel — there is no
+        // g-buffer at bake time. Sampled as a color texture (the fragment reads .r), so it is an
+        // R32Sfloat sampled image.
         m_DepthImage =
             Image::Create(m_Context, {
                                          .Name = "Sky Bake Stand-in Depth",
@@ -262,7 +263,7 @@ namespace Veng::Renderer
                                          .Format = Format::R32Sfloat,
                                          .Usage = ImageUsage::Sampled | ImageUsage::TransferDst,
                                      });
-        constexpr f32 farPlane = 1.0f;
+        constexpr f32 farPlane = 0.0f;
         m_DepthImage->UploadSync(
             std::span<const u8>(reinterpret_cast<const u8*>(&farPlane), sizeof(farPlane)));
         m_DepthView = ImageView::Create(

@@ -525,7 +525,8 @@ pass runs a **hi-Z occlusion test** over each candidate's screen-space AABB agai
 (1 for a survivor, 0 for an occluded candidate, which executes as a no-op), and the geometry pass
 issues the whole fixed buffer through a single `vkCmdDrawIndexedIndirect` per mesh group. The
 compute does **not** re-run frustum culling — the BVH already did; it adds only occlusion. The
-hi-Z pyramid is a **max-Z mip chain** reduced from the depth target by compute into a
+hi-Z pyramid is a **min-Z mip chain** (the farthest depth per texel under the engine's reverse-Z)
+reduced from the depth target by compute into a
 renderer-owned, cross-frame-persisted resource (temporal hi-Z: the test reads last frame's chain,
 so a history-invalid frame — frame 0, the frame after a `Resize`/`Configure`, or a large view
 delta — is frustum-only, never a stale false-cull). `SceneRendererSettings::Occlusion` gates the

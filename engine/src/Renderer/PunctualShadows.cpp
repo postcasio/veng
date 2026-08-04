@@ -9,6 +9,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <Veng/Assert.h>
+#include <Veng/Scene/Camera.h>
 
 namespace Veng::Renderer
 {
@@ -101,6 +102,8 @@ namespace Veng::Renderer
 
         mat4 proj = glm::perspectiveZO(fovy, 1.0f, near, far);
         proj[1][1] *= -1.0f; // Vulkan clip space has Y pointing down.
+        // Reverse-Z: the shadow atlas follows the engine-wide near→1, far→0 convention.
+        proj = ReverseZClip() * proj;
 
         return {.ViewProj = proj * view, .Near = near, .Far = far, .Fovy = fovy};
     }
@@ -125,6 +128,8 @@ namespace Veng::Renderer
 
         mat4 proj = glm::perspectiveZO(std::numbers::pi_v<f32> / 2.0f, 1.0f, near, far);
         proj[1][1] *= -1.0f; // Vulkan clip space has Y pointing down.
+        // Reverse-Z: the shadow atlas follows the engine-wide near→1, far→0 convention.
+        proj = ReverseZClip() * proj;
 
         PointShadowView result{};
         result.Near = near;

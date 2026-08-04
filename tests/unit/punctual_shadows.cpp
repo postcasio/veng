@@ -102,13 +102,13 @@ TEST_CASE("ComputeSpotShadowView: range fit — far at range, near clips, carrie
     CHECK(view.Far == doctest::Approx(range));
     CHECK(view.Near == doctest::Approx(std::max(range * 0.05f, 0.05f)));
 
-    // A point at range along the axis projects to z ≈ 1.
+    // A point at range along the axis projects to z ≈ 0 (reverse-Z far plane).
     const vec3 atFar = position + glm::normalize(direction) * range;
-    CHECK(ProjectNdc(view.ViewProj, atFar).z == doctest::Approx(1.0f).epsilon(0.001));
+    CHECK(ProjectNdc(view.ViewProj, atFar).z == doctest::Approx(0.0f).epsilon(0.001));
 
-    // A point nearer than Near projects to z < 0 (clipped by the near plane).
+    // A point nearer than Near projects to z > 1 (reverse-Z: clipped by the near plane).
     const vec3 nearer = position + glm::normalize(direction) * (view.Near * 0.5f);
-    CHECK(ProjectNdc(view.ViewProj, nearer).z < 0.0f);
+    CHECK(ProjectNdc(view.ViewProj, nearer).z > 1.0f);
 }
 
 TEST_CASE("ComputeSpotShadowView: a small far bound tightens the cone, near, and far")

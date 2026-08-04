@@ -76,7 +76,8 @@ float4 fsMain(VSOutput input) : SV_Target
     SamplerState samp = g_Samplers[g_PC.Sampler];
     float sceneDepth = g_Textures[g_PC.DepthTexture].Sample(samp, input.v_SampleUV).r;
     const float bias = 0.00005;
-    if (input.v_NdcDepth > sceneDepth + bias)
+    // Reverse-Z: a point behind the surface has the smaller device depth.
+    if (input.v_NdcDepth < sceneDepth - bias)
     {
         color *= 0.35;
     }

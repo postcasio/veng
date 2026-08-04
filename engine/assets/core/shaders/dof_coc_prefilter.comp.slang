@@ -46,8 +46,9 @@ void csMain(uint3 id : SV_DispatchThreadID)
 
     float3 color = g_Color.SampleLevel(g_Sampler, uv, 0.0).rgb;
     float rawDepth = g_Depth.SampleLevel(g_Sampler, uv, 0.0).r;
-    // Both terms of the projection's depth row are negative under a right-handed ZO projection,
-    // so the guard has to floor the divisor's *magnitude*, not clamp it positive.
+    // DepthParams is filled from the actual (reverse-Z) projection's depth row, so the
+    // reconstruction inverts whatever it maps; the guard floors the divisor's *magnitude*
+    // rather than clamping it to a sign, staying correct as those terms change sign.
     float denom = rawDepth + g_PC.DepthParams.x;
     denom = denom >= 0.0 ? max(denom, 1e-6) : min(denom, -1e-6);
     float viewDepth = g_PC.DepthParams.y / denom;

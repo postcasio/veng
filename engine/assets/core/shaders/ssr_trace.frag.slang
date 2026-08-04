@@ -76,8 +76,8 @@ float4 fsMain(VSOutput input) : SV_Target
     float2 uv = input.v_UV;
 
     float depth = g_Textures[NonUniformResourceIndex(g_PC.DepthTexture)].Sample(samp, uv).r;
-    // The cleared background has no surface to reflect from.
-    if (depth >= 1.0)
+    // The cleared background (reverse-Z far = 0.0) has no surface to reflect from.
+    if (depth <= 0.0)
         return float4(0.0, 0.0, 0.0, 0.0);
 
     float roughness = g_Textures[NonUniformResourceIndex(g_PC.OrmTexture)].Sample(samp, uv).g;
@@ -148,19 +148,20 @@ float4 fsMain(VSOutput input) : SV_Target
             break;
 
         // Hi-Z empty-space skip: when the ray is heading deeper, look up the closest surface
-        // over a coarse min-Z cell; if the ray is in front of all of it, jump toward that
+        // over a coarse max-Z cell; if the ray is in front of all of it, jump toward that
         // surface in one stride (capped to the cell's span so it can't leap past a nearer
         // surface in a neighboring cell). Only the fine steps near a surface do the depth test.
-        if (stepVec.z > 1e-7)
+        // Reverse-Z: deeper is a decreasing device depth, and the nearest surface is the max.
+        if (stepVec.z < -1e-7)
         {
             int2 baseCoord = clamp(int2(ray.xy * float2(g_PC.Extent)), int2(0, 0),
                                    int2(g_PC.Extent) - 1);
             int2 cellCoord = baseCoord >> skipLevel;
-            float cellMinZ =
+            float cellMaxZ =
                 g_Textures[NonUniformResourceIndex(g_PC.HiZTexture)].Load(int3(cellCoord, int(skipLevel))).r;
-            if (ray.z < cellMinZ)
+            if (ray.z > cellMaxZ)
             {
-                float stepsToSurface = (cellMinZ - ray.z) / stepVec.z;
+                float stepsToSurface = (cellMaxZ - ray.z) / stepVec.z;
                 uint jump = uint(clamp(floor(stepsToSurface), 1.0, skipCap));
                 prevRay = ray;
                 prevDeltaZ = -1.0;
@@ -170,7 +171,7 @@ float4 fsMain(VSOutput input) : SV_Target
         }
 
         float sampleDepth = g_Textures[NonUniformResourceIndex(g_PC.DepthTexture)].Sample(samp, ray.xy).r;
-        if (sampleDepth >= 1.0)
+        if (sampleDepth <= 0.0)
         {
             // No geometry here (background): the ray is in front of nothing, so reset the
             // crossing state rather than carrying a stale "behind" gap across the gap.

@@ -209,20 +209,23 @@ TEST_CASE("ProjectToScreen maps world points to top-left-origin pixels and rejec
     CHECK(!ProjectToScreen(camera, vec3(0.0f, 0.0f, 10.0f), extent).has_value());
 }
 
-TEST_CASE("far-plane view-direction reconstruction survives extreme Far/Near ratios")
+TEST_CASE("background view-direction reconstruction survives extreme Far/Near ratios")
 {
     // The sky, TAA, and volume-field shaders reconstruct a background pixel's view ray as
-    // normalize(InvViewProj·(ndc, 1, 1).xyz − camera·w) — the homogeneous form. The divided
-    // form (xyz / w − camera) fails at extreme depth ranges: once Far/Near exceeds ~2^24 the
-    // projection's [2][2] rounds to −1 exactly, the far-plane w collapses to zero in f32, and
-    // the division sends every background direction to NaN. Pins both facts: the collapse is
-    // real at the extreme ratio, and the homogeneous form stays exact through it.
+    // normalize(InvViewProj·(ndc, 1, 1).xyz − camera·w) — the homogeneous form, whose direction
+    // is independent of the chosen NDC z. Under reverse-Z the NDC z = 1 the shaders pass is the
+    // *near* plane, which reconstructs well-conditioned however extreme Far/Near grows — the
+    // f32 w that collapsed to zero under forward-Z (at the far plane, once Far/Near passes ~2^24)
+    // does not collapse here. Pins both: the reconstructed direction stays exact, and the w stays
+    // bounded away from zero so even the divided form is usable.
     const vec3 eye{0.0f, 1.5f, 4.0f};
     const vec3 target{-1.0f, 1.5f, 4.0f};
     const vec2 ndc{0.30f, -0.20f};
     const f32 far = 20000.0f;
 
-    // The f64 reference direction, from unrounded double-precision matrices end to end.
+    // The f64 reference direction, from unrounded double-precision matrices end to end. The
+    // direction through a pixel is a property of the pixel, not the depth convention, so a
+    // plain forward-Z reference gives the same ray the reverse-Z pipeline reconstructs.
     const auto reference = [&](f64 near) -> glm::dvec3
     {
         glm::dmat4 proj = glm::perspective(glm::radians(60.0), 16.0 / 9.0, near, f64{far});
@@ -234,7 +237,7 @@ TEST_CASE("far-plane view-direction reconstruction survives extreme Far/Near rat
     };
 
     // The f32 pipeline exactly as the renderer and shaders evaluate it: a CameraView
-    // projection, an f32 matrix inverse, and the shader's reconstruction expressions.
+    // projection (reverse-Z), an f32 matrix inverse, and the shader's reconstruction expressions.
     const auto reconstruct = [&](f32 ratio)
     {
         CameraView camera;
@@ -246,6 +249,12 @@ TEST_CASE("far-plane view-direction reconstruction survives extreme Far/Near rat
     const auto degreesOff = [&](vec3 dir, glm::dvec3 truth)
     { return glm::degrees(std::acos(glm::clamp(glm::dot(glm::dvec3(dir), truth), -1.0, 1.0))); };
 
+    // The direction is reconstructed from the reverse-Z near-plane point (NDC z = 1), whose
+    // world position is a small difference near the eye — an f32 cancellation the far-plane form
+    // avoided — so the bound is a fraction of a degree rather than the 0.01 the far form held.
+    // Still far below any visible offset, and the property is robustness across the ratios.
+    constexpr f64 MaxOffDegrees = 0.05;
+
     // Ordinary ratio: both forms agree with the reference.
     {
         const f32 ratio = 1.0e4f;
@@ -253,19 +262,19 @@ TEST_CASE("far-plane view-direction reconstruction survives extreme Far/Near rat
         const glm::dvec3 truth = reference(f64{far} / f64{ratio});
         const vec3 divided = glm::normalize(vec3(worldH) / worldH.w - eye);
         const vec3 homogeneous = glm::normalize(vec3(worldH) - eye * worldH.w);
-        CHECK(degreesOff(divided, truth) < 0.01);
-        CHECK(degreesOff(homogeneous, truth) < 0.01);
+        CHECK(degreesOff(divided, truth) < MaxOffDegrees);
+        CHECK(degreesOff(homogeneous, truth) < MaxOffDegrees);
     }
 
-    // Extreme ratio: the far-plane w collapses to zero, so the divided form is unusable —
-    // only the homogeneous form reconstructs the direction.
+    // Extreme ratio: reverse-Z samples the near plane (NDC z = 1), which stays well-conditioned,
+    // so w does not collapse and the homogeneous form reconstructs the direction exactly.
     {
         const f32 ratio = 6.7e7f;
         const vec4 worldH = reconstruct(ratio);
         const glm::dvec3 truth = reference(f64{far} / f64{ratio});
-        CHECK(worldH.w == 0.0f);
+        CHECK(std::abs(worldH.w) > 1.0e-3f);
         const vec3 homogeneous = glm::normalize(vec3(worldH) - eye * worldH.w);
-        CHECK(degreesOff(homogeneous, truth) < 0.01);
+        CHECK(degreesOff(homogeneous, truth) < MaxOffDegrees);
     }
 }
 

@@ -1,14 +1,14 @@
-// Hi-Z max-Z reduction correctness. Builds a known depth field, runs the core
+// Hi-Z min-Z reduction correctness. Builds a known depth field, runs the core
 // pack's hi_z_reduce.comp through the per-mip (subresource) render-graph surface
 // (RenderGraph::ImportImageMips / PassContext::ResolvedMip), reads back every mip,
 // and compares each against a CPU reference reduction.
 //
 // Two properties are pinned:
 //   - Odd-extent handling: an odd parent dimension folds its dropped row/column
-//     into the max (the 3x3 clamp), so no far sample is lost from the pyramid.
+//     into the min (the 3x3 clamp), so no far sample is lost from the pyramid.
 //   - Conservatism: a single far texel buried in a near footprint survives to the
-//     coarsest mip — max-Z over [0,1] depth never reports a footprint nearer than
-//     its farthest sample.
+//     coarsest mip — min-Z over reverse-Z [0,1] depth (far = 0) never reports a
+//     footprint nearer than its farthest sample.
 //
 // The chain is one image with a full mip chain; the reduction binds one per-mip
 // storage view per dispatch, so this also exercises the per-mip graph surface and
@@ -62,7 +62,7 @@ namespace
     }
 
     // The CPU reference reduction the GPU must match. mip[0] is a 1:1 copy of the
-    // source field; mip[k] maxes the 2x2 footprint of mip[k-1], folding the dropped
+    // source field; mip[k] mins the 2x2 footprint of mip[k-1], folding the dropped
     // row/column when a parent dimension is odd (the 3x3 clamp).
     std::vector<std::vector<float>> ReferenceReduce(const std::vector<float>& field, u32 w, u32 h)
     {
@@ -101,22 +101,22 @@ namespace
                     const i32 bx = static_cast<i32>(x) * 2;
                     const i32 by = static_cast<i32>(y) * 2;
                     float m = At(bx, by);
-                    m = std::max(m, At(bx + 1, by));
-                    m = std::max(m, At(bx, by + 1));
-                    m = std::max(m, At(bx + 1, by + 1));
+                    m = std::min(m, At(bx + 1, by));
+                    m = std::min(m, At(bx, by + 1));
+                    m = std::min(m, At(bx + 1, by + 1));
                     if (oddX)
                     {
-                        m = std::max(m, At(bx + 2, by));
-                        m = std::max(m, At(bx + 2, by + 1));
+                        m = std::min(m, At(bx + 2, by));
+                        m = std::min(m, At(bx + 2, by + 1));
                     }
                     if (oddY)
                     {
-                        m = std::max(m, At(bx, by + 2));
-                        m = std::max(m, At(bx + 1, by + 2));
+                        m = std::min(m, At(bx, by + 2));
+                        m = std::min(m, At(bx + 1, by + 2));
                     }
                     if (oddX && oddY)
                     {
-                        m = std::max(m, At(bx + 2, by + 2));
+                        m = std::min(m, At(bx + 2, by + 2));
                     }
                     out[static_cast<size_t>(y) * dst.x + x] = m;
                 }
@@ -176,9 +176,9 @@ TEST_CASE_FIXTURE(Test::GpuFixture, "Hi-Z reduction matches the CPU reference (o
     const AssetResult<AssetHandle<Shader>> reduceCs = assets.LoadSync<Shader>(HiZReduceCompId);
     REQUIRE_MESSAGE(reduceCs.has_value(), "load hi_z_reduce.comp from the core pack");
 
-    // A varied depth field, plus a single far texel (1.0) buried in an otherwise
-    // near (0.0) region — the conservatism probe: that far value must survive to
-    // every coarser mip covering it.
+    // A varied depth field, plus a single far texel (reverse-Z: 0.0) buried in an
+    // otherwise near (1.0) region — the conservatism probe: that far value must survive
+    // to every coarser mip covering it, since min-Z keeps the smallest (farthest) sample.
     std::vector<float> field(static_cast<size_t>(W) * H);
     for (u32 y = 0; y < H; ++y)
     {
@@ -188,8 +188,8 @@ TEST_CASE_FIXTURE(Test::GpuFixture, "Hi-Z reduction matches the CPU reference (o
                 0.1f + 0.05f * static_cast<float>((x * 3 + y * 7) % 11);
         }
     }
-    field[0] = 0.0f; // a near texel at the origin's 2x2
-    field[1] = 1.0f; // the far texel that must propagate up the chain
+    field[0] = 1.0f; // a near texel at the origin's 2x2
+    field[1] = 0.0f; // the far texel that must propagate up the chain
 
     const u32 mips = MipCountFor(W, H);
 
@@ -328,13 +328,13 @@ TEST_CASE_FIXTURE(Test::GpuFixture, "Hi-Z reduction matches the CPU reference (o
         extent = {std::max(extent.x >> 1, 1u), std::max(extent.y >> 1, 1u)};
     }
 
-    // The conservatism probe: the far texel (1.0) at (1,0) sits in mip 0's origin
-    // 2x2, so every coarser mip texel covering the origin must be >= 1.0 - eps.
+    // The conservatism probe: the far texel (0.0) at (1,0) sits in mip 0's origin
+    // 2x2, so every coarser mip texel covering the origin must be <= 0.0 + eps.
     for (u32 k = 1; k < mips; ++k)
     {
         const u32 w = std::max(W >> k, 1u);
         const u32 h = std::max(H >> k, 1u);
         const std::vector<float> got = DownloadMip(Context, hiZ, mipViews[k], k, w, h);
-        CHECK(got[0] == doctest::Approx(1.0f).epsilon(1e-5));
+        CHECK(got[0] == doctest::Approx(0.0f).epsilon(1e-5));
     }
 }

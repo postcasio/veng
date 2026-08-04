@@ -110,9 +110,10 @@ TEST_CASE("ComputeCascades: interior slice points project inside their cascade")
     {
         // Interpolate a center-of-screen world point between the near and far
         // frustum centers by the view-depth fraction (linear in view depth).
+        // Reverse-Z: the near plane is NDC z = 1 and the far plane z = 0.
         const f32 fraction = (viewDepth - near) / (far - near);
-        const vec4 nearH = invViewProj * vec4(0.0f, 0.0f, 0.0f, 1.0f);
-        const vec4 farH = invViewProj * vec4(0.0f, 0.0f, 1.0f, 1.0f);
+        const vec4 nearH = invViewProj * vec4(0.0f, 0.0f, 1.0f, 1.0f);
+        const vec4 farH = invViewProj * vec4(0.0f, 0.0f, 0.0f, 1.0f);
         const vec3 nearPoint = vec3(nearH) / nearH.w;
         const vec3 farPoint = vec3(farH) / farH.w;
         return nearPoint + (farPoint - nearPoint) * fraction;
@@ -294,7 +295,7 @@ TEST_CASE("ComputeCascades: scene bound extends cascade 0's near plane toward th
     // A bound tall along the light axis (a tower of casters above the ground) extends
     // cascade 0's near plane toward the light, so a caster above the frustum slice
     // still projects within the cascade's depth range rather than being clipped at the
-    // near plane (ndc.z < 0).
+    // near plane (reverse-Z: ndc.z > 1).
     const AABB tall{.Min = vec3(-20.0f, -1.0f, -20.0f), .Max = vec3(20.0f, 30.0f, 20.0f)};
     const CascadeData data = ComputeCascades(camera, lightDir, tall, settings);
 
@@ -386,11 +387,11 @@ TEST_CASE("ComputeCascades: PancakeNear keeps the render near tight and the cull
         ComputeCascades(camera, lightDir, tall, CascadeSettings{.PancakeNear = true});
     const CascadeData extended = ComputeCascades(camera, lightDir, tall, CascadeSettings{});
 
-    // The high caster falls before the pancaked render near (ndc.z < 0 — the depth
-    // clamp flattens it at raster time) but inside the cull matrix's depth range.
+    // The high caster falls before the pancaked render near (reverse-Z: ndc.z > 1 — the
+    // depth clamp flattens it at raster time) but inside the cull matrix's depth range.
     const vec3 highCaster(0.0f, 25.0f, 0.0f);
     const vec4 renderClip = pancaked.ViewProj[0] * vec4(highCaster, 1.0f);
-    CHECK(vec3(renderClip).z / renderClip.w < 0.0f);
+    CHECK(vec3(renderClip).z / renderClip.w > 1.0f);
     const vec4 cullClip = pancaked.CullViewProj[0] * vec4(highCaster, 1.0f);
     const f32 cullZ = vec3(cullClip).z / cullClip.w;
     CHECK(cullZ >= 0.0f);

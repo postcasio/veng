@@ -770,13 +770,13 @@ namespace Veng::Renderer
         const CameraView& camera = m_ViewState.Camera;
         const mat4 invViewProj = glm::inverse(camera.ViewProjection());
 
-        // Unproject the near (z=0) and far (z=1) clip points of this pixel; the ray runs
-        // through both. The origin is the unprojected near point, not the camera position:
-        // under an orthographic projection every pixel's ray is parallel and the camera
-        // position lies on none of them; under perspective the near point sits on the eye
-        // ray, so both agree.
-        const vec4 nearClip = invViewProj * vec4(ndc, 0.0f, 1.0f);
-        const vec4 farClip = invViewProj * vec4(ndc, 1.0f, 1.0f);
+        // Unproject the near and far clip points of this pixel; the ray runs through both.
+        // Reverse-Z: the near plane is NDC z = 1 and the far plane is z = 0. The origin is the
+        // unprojected near point, not the camera position: under an orthographic projection
+        // every pixel's ray is parallel and the camera position lies on none of them; under
+        // perspective the near point sits on the eye ray, so both agree.
+        const vec4 nearClip = invViewProj * vec4(ndc, 1.0f, 1.0f);
+        const vec4 farClip = invViewProj * vec4(ndc, 0.0f, 1.0f);
         const vec3 nearWorld = vec3(nearClip) / nearClip.w;
         const vec3 farWorld = vec3(farClip) / farClip.w;
 

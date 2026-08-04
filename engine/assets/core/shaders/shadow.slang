@@ -2,8 +2,9 @@
 // an immutable comparison sampler for hardware SampleCmp, and the per-frame
 // ShadowConstants dynamic uniform. The atlas is one 2D image holding all cascades
 // in tiles; each cascade's ShadowConstants matrix bakes in the tile UV remap, so
-// mul(CascadeViewProj[k], world) lands in cascade k's tile. The comparison sampler
-// does the LESS-or-equal compare in hardware with a 2×2 PCF; this header owns the
+// mul(CascadeViewProj[k], world) lands in cascade k's tile. The atlas is reverse-Z
+// (near→1, far→0), so a lit fragment has the larger depth and the comparison sampler
+// does the greater-or-equal compare in hardware with a 2×2 PCF; this header owns the
 // cascade select, the per-tile SampleCmp with scaled bias + tile-UV clamp, and the
 // cascade-boundary cross-fade.
 static const uint MaxCascades = 4;
@@ -91,7 +92,8 @@ float SampleAtlasTile(Texture2D atlas, SamplerComparisonState cmp, float4x4 tile
     float2 clampMin = tileMin + 0.5 * texel;
     float2 clampMax = tileMax - 0.5 * texel;
 
-    float refDepth = lightNdc.z - bias;
+    // Reverse-Z: the bias pushes the reference toward the light, which is the larger depth.
+    float refDepth = lightNdc.z + bias;
 
     float visibility = 0.0;
     float weight = 0.0;
@@ -320,7 +322,8 @@ float AreaShadowSample(int slot, float3 worldPos, float3 N, float3 L, float ligh
     float nDotL = saturate(dot(N, L));
     float slope = clamp(1.0 - nDotL, 0.0, 1.0);
     float bias = record.Params.w * (1.0 + 2.0 * slope);
-    float refDepth = ndc.z - bias;
+    // Reverse-Z: the bias pushes the reference toward the light, which is the larger depth.
+    float refDepth = ndc.z + bias;
 
     uint atlasW = 0;
     uint atlasH = 0;
@@ -341,6 +344,7 @@ float AreaShadowSample(int slot, float3 worldPos, float3 N, float3 L, float ligh
     float sizeFactor = saturate(lightRadius / range);
 
     // Blocker search: average the depth of Poisson taps nearer the light than the receiver.
+    // Reverse-Z: nearer the light is the larger depth, so a blocker has d > refDepth.
     const int BlockerTaps = 12;
     float searchTexels = 1.5 + sizeFactor * 24.0;
     float blockerSum = 0.0;
@@ -351,7 +355,7 @@ float AreaShadowSample(int slot, float3 worldPos, float3 N, float3 L, float ligh
         float2 sUv = clamp(uv + AreaDiskOffset(AreaPoissonDisk[i], rot, searchTexels, texel),
                            clampMin, clampMax);
         float d = g_PunctualAtlas.Load(int3(int2(sUv * atlasDims), 0)).r;
-        if (d < refDepth)
+        if (d > refDepth)
         {
             blockerSum += d;
             blockerCount += 1.0;
@@ -365,7 +369,8 @@ float AreaShadowSample(int slot, float3 worldPos, float3 N, float3 L, float ligh
     float avgBlocker = blockerSum / blockerCount;
 
     // PCSS penumbra: proportional to the receiver→blocker gap and the light's size, in texels.
-    float penumbra = (refDepth - avgBlocker) / max(avgBlocker, 1e-4);
+    // Reverse-Z: the blocker sits nearer the light (larger depth), so the gap is avgBlocker − refDepth.
+    float penumbra = (avgBlocker - refDepth) / max(avgBlocker, 1e-4);
     float filterTexels = clamp(1.0 + penumbra * sizeFactor * 64.0, 1.0, 24.0);
 
     // Variable-radius PCF over the full rotated Poisson disk through the hardware comparison sampler.

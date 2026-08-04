@@ -72,15 +72,17 @@ float4 fsMain(VSOutput input) : SV_Target
     float2 sampleUV = ScaledSampleUV(input.v_UV, vc.RenderScaleUV.xy, vc.MaxValidUV.xy);
     float depth = g_Textures[NonUniformResourceIndex(g_PC.DepthTexture)].Sample(samp, sampleUV).r;
 
-    // Geometry already shaded this pixel; leave the lit color untouched.
-    if (depth < 1.0)
+    // Geometry already shaded this pixel; leave the lit color untouched. Reverse-Z: the
+    // cleared background sits at depth 0, so any drawn pixel has depth > 0.
+    if (depth > 0.0)
     {
         discard;
     }
 
-    // Unproject the far-plane point through the inverse view-projection and form the view ray
-    // homogeneously — dividing by worldH.w would NaN every pixel at extreme Far/Near, where
-    // the far-plane w collapses to zero in f32 (see Veng/sky.slang SkyViewDirection).
+    // Unproject a point along the pixel's view ray through the inverse view-projection and form
+    // the ray homogeneously — dividing by worldH.w would NaN every pixel at extreme Far/Near,
+    // where the far-plane w collapses to zero in f32 (see Veng/sky.slang SkyViewDirection). The
+    // chosen NDC z is immaterial: normalize() makes the direction independent of it.
     float2 ndcXY = input.v_UV * 2.0 - 1.0;
     float4 worldH = mul(vc.InvViewProj, float4(ndcXY, 1.0, 1.0));
     float3 dir = normalize(worldH.xyz - vc.CameraPosition.xyz * worldH.w);

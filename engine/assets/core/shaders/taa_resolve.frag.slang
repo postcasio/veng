@@ -166,13 +166,13 @@ float4 fsMain(VSOutput input) : SV_Target0
 
     // Find this pixel's previous-frame screen position. Geometry uses the per-object
     // motion vector the surface pass wrote into the g-buffer (camera + object motion); the
-    // background (cleared depth) has no velocity, so it reprojects by reconstructing the
-    // far-plane world position from depth and projecting through last frame's view-projection.
+    // background (reverse-Z cleared depth 0) has no velocity, so it reprojects by reconstructing
+    // the far-plane world position from depth and projecting through last frame's view-projection.
     const float depth = g_Textures[NonUniformResourceIndex(g_PC.DepthTexture)].Sample(samp, uv).r;
     ViewConstants vc = LoadViewConstants(g_PC.ViewConstantsIndex);
 
     float2 prevUv;
-    if (depth < 1.0)
+    if (depth > 0.0)
     {
         const float2 velocity =
             g_Textures[NonUniformResourceIndex(g_PC.VelocityTexture)].Sample(samp, uv).rg;

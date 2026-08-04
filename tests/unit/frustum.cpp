@@ -80,17 +80,17 @@ TEST_CASE("The ZO near plane is the Vulkan/GL discriminator")
     const Frustum frustum = Frustum::FromViewProjection(viewProj);
 
     // A point just in front of the near plane (near=1): closer than near but not
-    // against the camera. Its clip.z < 0 (outside the Vulkan z=0 near) while
-    // clip.z + clip.w > 0 (it would pass the GL row4+row3 near). The divergence
-    // slab — between the GL near (ndc.z=-1) and the ZO near (ndc.z=0) — is exactly
-    // where the ZO and GL forms disagree.
+    // against the camera. Under reverse-Z the near plane is ndc.z = 1 (clip.z = clip.w),
+    // so this point has clip.z > clip.w (ndc.z > 1) while clip.w stays positive (it is
+    // genuinely in front of the camera, not the GL slab below z = -1).
     const vec3 inSlab(0.0f, 0.0f, -0.95f);
     const vec4 clip = viewProj * vec4(inSlab, 1.0f);
-    REQUIRE(clip.z < 0.0f);
-    REQUIRE(clip.z + clip.w > 0.0f);
+    REQUIRE(clip.z > clip.w);
+    REQUIRE(clip.w > 0.0f);
 
-    // The ZO extraction culls it (the near plane is the third clip row alone).
-    // A GL-form near plane would wrongly keep it — this is the regression guard.
+    // The ZO extraction culls it: the reverse-Z near plane is the (row3 − row2, z ≤ w)
+    // half-space, so a point past it is rejected — the regression guard that the
+    // extraction is the Vulkan ZO form, not the GL one.
     CHECK_FALSE(PointInside(frustum, inSlab));
 
     // A point just past the near plane (inside the ZO frustum) is kept.

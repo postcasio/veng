@@ -71,17 +71,17 @@ float3 SampleSceneColor(ViewConstants vc, float2 logicalUV)
     return g_Textures[vc.SceneColor.x].SampleLevel(g_Samplers[vc.SceneColor.y], uv, 0.0).rgb;
 }
 
-// Samples the pre-translucent opaque depth at a logical [0,1] screen UV — raw [0,1], smaller
-// nearer, copied beside the scene color. A refracting material depth-gates a distorted
-// sample against its own sv_position.z: a sampled depth nearer than the fragment belongs to
-// geometry in front of the refractor, whose light never passed through it, so the sample is
-// foreground contamination to reject. Point fields write no depth, so they cannot be gated.
-// Returns the far plane (1) when the copy is unavailable.
+// Samples the pre-translucent opaque depth at a logical [0,1] screen UV — raw [0,1], reverse-Z
+// so larger is nearer, copied beside the scene color. A refracting material depth-gates a
+// distorted sample against its own sv_position.z: a sampled depth nearer than the fragment
+// belongs to geometry in front of the refractor, whose light never passed through it, so the
+// sample is foreground contamination to reject. Point fields write no depth, so they cannot be
+// gated. Returns the far plane (reverse-Z: 0) when the copy is unavailable.
 float SampleSceneDepth(ViewConstants vc, float2 logicalUV)
 {
     if (!SceneColorAvailable(vc))
     {
-        return 1.0;
+        return 0.0;
     }
     const float2 uv = ScaledSampleUV(saturate(logicalUV), vc.RenderScaleUV.xy, vc.MaxValidUV.xy);
     return g_Textures[vc.SceneColor.w].SampleLevel(g_Samplers[vc.SceneColor.y], uv, 0.0).r;

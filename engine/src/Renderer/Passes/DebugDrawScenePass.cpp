@@ -422,7 +422,8 @@ namespace Veng::Renderer
                                },
                            .DepthTestEnable = true,
                            .DepthWriteEnable = false,
-                           .DepthCompareOp = CompareOp::LessOrEqual,
+                           // Reverse-Z: a nearer fragment has larger depth.
+                           .DepthCompareOp = CompareOp::GreaterOrEqual,
                        });
 
         m_RegionStride = static_cast<u64>(MaxBillboards) * sizeof(GpuBillboardPick);

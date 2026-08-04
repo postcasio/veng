@@ -66,8 +66,9 @@ namespace
 
         const vec2 ndc = *fraction * 2.0f - 1.0f;
         const mat4 invViewProj = glm::inverse(camera.ViewProjection());
-        const vec4 nearClip = invViewProj * vec4(ndc, 0.0f, 1.0f);
-        const vec4 farClip = invViewProj * vec4(ndc, 1.0f, 1.0f);
+        // Reverse-Z: the near plane is NDC z = 1, the far plane z = 0.
+        const vec4 nearClip = invViewProj * vec4(ndc, 1.0f, 1.0f);
+        const vec4 farClip = invViewProj * vec4(ndc, 0.0f, 1.0f);
         const vec3 nearWorld = vec3(nearClip) / nearClip.w;
         const vec3 farWorld = vec3(farClip) / farClip.w;
 

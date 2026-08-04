@@ -30,18 +30,19 @@ namespace Veng::Renderer
 {
     namespace
     {
-        // The hi-Z max-Z reduction compute shader.
+        // The hi-Z min-Z reduction compute shader.
         constexpr AssetId HiZReduceCompId{0xCB20C4EF8A20ADBCULL};
 
         // The GPU occlusion-cull → indirect-draw compute shader.
         constexpr AssetId OcclusionCullCompId{0x5FE19B500FD44B52ULL};
 
-        // Single-channel float for the hi-Z pyramid; the reduction stores max depth.
+        // Single-channel float for the hi-Z pyramid; the reduction stores the farthest
+        // depth per texel, which under reverse-Z is the min.
         constexpr Format HiZFormat = Format::R32Sfloat;
 
         // The hi-Z reduction push block: the destination and source mip extents, so a
         // boundary invocation skips out-of-range texels and an odd parent dimension
-        // folds its dropped row/column into the max (matches hi_z_reduce.comp).
+        // folds its dropped row/column into the min (matches hi_z_reduce.comp).
         struct HiZReducePush
         {
             uvec2 DestExtent;

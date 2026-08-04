@@ -1,14 +1,14 @@
-// SSR min-Z depth reduction: one destination mip per dispatch. Each invocation owns one
-// destination texel and folds the MIN of its source-mip footprint into it — the closest
+// SSR max-Z depth reduction: one destination mip per dispatch. Each invocation owns one
+// destination texel and folds the MAX of its source-mip footprint into it — the closest
 // surface over that footprint. This is the opposite reduction from the occlusion-culling
-// max-Z pyramid: SSR marches a ray and needs "is the nearest surface in this region at
+// min-Z pyramid: SSR marches a ray and needs "is the nearest surface in this region at
 // depth Z" so it can declare a cell empty in front of the ray and skip it, whereas
 // occlusion culling needs the farthest depth.
 //
 // The source is a plain Texture2D (point Load): mip 0 reads the D32Sfloat depth target,
-// mip n>0 the prior R32Sfloat min-Z mip, through the same pipeline. Engine [0,1] depth
-// (near = 0, far = 1), so the background's cleared 1.0 is the farthest value and a real
-// surface's smaller depth wins the min.
+// mip n>0 the prior R32Sfloat max-Z mip, through the same pipeline. Reverse-Z depth
+// (near = 1, far = 0), so the background's cleared 0.0 is the farthest value and a real
+// surface's larger depth wins the max.
 //
 // Set 0 is reserved for the bindless registry; this closed producer->consumer reduction
 // binds its own resources on set 1 (the hi-Z reduce set layout: sampled source + storage dest).
@@ -39,21 +39,22 @@ void csMain(uint3 id : SV_DispatchThreadID)
     if (id.x >= g_PC.DestExtent.x || id.y >= g_PC.DestExtent.y)
         return;
 
-    // Each dest texel folds the MIN of its proportional source footprint — the closest surface
-    // over that region. The footprint is [start, end) per axis, an exclusive ceil so adjacent
-    // dest cells share a boundary texel: overlap only makes the min more conservative (it never
-    // reports a region emptier than it is, so it never skips a real hit). This one mapping covers
-    // the 1:1 mip-0 copy at full SSR resolution, the 2:1 chain steps (including an odd parent
-    // dimension), and the N:1 mip-0 downsample when SSR runs below full resolution (4:1 at quarter).
+    // Each dest texel folds the MAX of its proportional source footprint — the closest surface
+    // over that region under reverse-Z. The footprint is [start, end) per axis, an exclusive ceil
+    // so adjacent dest cells share a boundary texel: overlap only makes the max more conservative
+    // (it never reports a region emptier than it is, so it never skips a real hit). This one
+    // mapping covers the 1:1 mip-0 copy at full SSR resolution, the 2:1 chain steps (including an
+    // odd parent dimension), and the N:1 mip-0 downsample when SSR runs below full resolution
+    // (4:1 at quarter).
     uint2 start = (id.xy * g_PC.SourceExtent) / g_PC.DestExtent;
     uint2 end = ((id.xy + 1u) * g_PC.SourceExtent + g_PC.DestExtent - 1u) / g_PC.DestExtent;
 
-    float m = 1.0; // engine far depth (background); a nearer surface wins the min
+    float m = 0.0; // reverse-Z far depth (background); a nearer surface wins the max
     for (uint y = start.y; y < end.y; ++y)
     {
         for (uint x = start.x; x < end.x; ++x)
         {
-            m = min(m, LoadClamped(int2(int(x), int(y))));
+            m = max(m, LoadClamped(int2(int(x), int(y))));
         }
     }
 

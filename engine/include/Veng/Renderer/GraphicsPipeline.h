@@ -45,7 +45,11 @@ namespace Veng::Renderer
         /// @brief Enable depth writes.
         bool DepthWriteEnable = false;
         /// @brief Depth comparison operator.
-        CompareOp DepthCompareOp = CompareOp::LessOrEqual;
+        ///
+        /// Defaults to reverse-Z: the engine's projections map the near plane to NDC z = 1
+        /// and the far plane to z = 0, so a nearer fragment has a larger depth and passes on
+        /// GreaterOrEqual.
+        CompareOp DepthCompareOp = CompareOp::GreaterOrEqual;
         /// @brief Clamp rasterized depth to the viewport range instead of clipping at near/far.
         ///
         /// Legal only when Context::IsDepthClampSupported() is true. The shadow pass uses it

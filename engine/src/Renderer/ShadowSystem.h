@@ -145,7 +145,7 @@ namespace Veng::Renderer
         /// @brief Ordinary clamp sampler for the debug blit's raw depth reads.
         Ref<Sampler> m_BlitSampler;
 
-        /// @brief 1×1 D32 dummy atlas cleared to depth = 1 (full visibility) for the off path.
+        /// @brief 1×1 D32 dummy atlas cleared to depth = 0 (reverse-Z far = full visibility) for the off path.
         Ref<Image> m_DummyImage;
         /// @brief View over m_DummyImage.
         Ref<ImageView> m_DummyView;

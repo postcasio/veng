@@ -44,10 +44,11 @@ float4 fsMain(VSOutput input) : SV_Target
 
     float4 color = input.v_Color;
 
-    // A fragment whose depth is greater than the scene depth is behind geometry — occluded.
-    // A small bias absorbs depth-buffer slop so a gizmo coplanar with a surface is not flagged.
+    // Reverse-Z: a fragment whose depth is less than the scene depth is behind geometry —
+    // occluded. A small bias absorbs depth-buffer slop so a gizmo coplanar with a surface is
+    // not flagged.
     const float bias = 0.00005;
-    if (input.v_NdcDepth > sceneDepth + bias)
+    if (input.v_NdcDepth < sceneDepth - bias)
     {
         color.rgb *= g_PC.OccludedFade;
         color.a *= g_PC.OccludedFade;

@@ -44,8 +44,9 @@ float4 fsMain(VSOutput input) : SV_Target
     float sceneDepth =
         g_Textures[NonUniformResourceIndex(g_PC.DepthTexture)].Sample(samp, sampleUV).r;
 
+    // Reverse-Z: a smaller device depth is behind the scene geometry.
     const float bias = 0.00005;
-    if (input.v_NdcDepth > sceneDepth + bias)
+    if (input.v_NdcDepth < sceneDepth - bias)
     {
         color.rgb *= g_PC.OccludedFade;
         color.a *= g_PC.OccludedFade;

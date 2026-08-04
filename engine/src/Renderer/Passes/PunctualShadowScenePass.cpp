@@ -190,10 +190,10 @@ namespace Veng::Renderer
                 .Resource = io.PunctualShadowMap,
                 .Load = LoadOp::Clear,
                 .Store = StoreOp::Store,
-                // The whole atlas clears to depth = 1; a tile beyond the live
-                // record/face count keeps this clear and is never sampled (the
+                // The whole atlas clears to depth = 0 (reverse-Z far); a tile beyond the
+                // live record/face count keeps this clear and is never sampled (the
                 // lighting pass gates on the record's type/slot).
-                .Clear = ClearDepth{.Depth = 1.0f, .Stencil = 0},
+                .Clear = ClearDepth{.Depth = 0.0f, .Stencil = 0},
             })
             .Execute(
                 [this, resolution](PassContext& inner)

@@ -30,7 +30,8 @@ namespace Veng::Renderer
                 // Stored so the billboard id pass can depth-test against the mesh depth
                 // (discarding an icon behind geometry) before the target is discarded.
                 .Store = StoreOp::Store,
-                .Clear = ClearDepth{.Depth = 1.0f, .Stencil = 0},
+                // Reverse-Z: the far plane is 0.
+                .Clear = ClearDepth{.Depth = 0.0f, .Stencil = 0},
             });
         builder.Execute([this](PassContext& inner) { Record(Wrap(inner)); });
     }

@@ -23,12 +23,12 @@ namespace Veng::Renderer
         // The eight world-space corners of a frustum slice, interpolated from the
         // full frustum's near→far corner pairs by the slice's split fractions. The
         // full frustum corners come from the inverse view-proj over the NDC cube
-        // (Vulkan z range [0, 1]); the near/far pair share x,y so the linear-in-
-        // view-depth interpolation is exact.
+        // (reverse-Z: near plane at z = 1, far plane at z = 0); the near/far pair share
+        // x,y so the linear-in-view-depth interpolation is exact.
         std::array<vec3, 8> SliceCorners(const mat4& invViewProj, f32 nearFraction, f32 farFraction)
         {
-            // The four near and four far corners of the full frustum, NDC z in
-            // [0, 1] for Vulkan clip space.
+            // The four near and four far corners of the full frustum. Under reverse-Z the
+            // near plane is NDC z = 1 and the far plane is NDC z = 0.
             std::array<vec3, 4> frustumNear{};
             std::array<vec3, 4> frustumFar{};
             const std::array<vec2, 4> ndcXY = {vec2(-1.0f, -1.0f), vec2(1.0f, -1.0f),
@@ -36,8 +36,8 @@ namespace Veng::Renderer
 
             for (usize i = 0; i < 4; ++i)
             {
-                const vec4 nearH = invViewProj * vec4(ndcXY[i].x, ndcXY[i].y, 0.0f, 1.0f);
-                const vec4 farH = invViewProj * vec4(ndcXY[i].x, ndcXY[i].y, 1.0f, 1.0f);
+                const vec4 nearH = invViewProj * vec4(ndcXY[i].x, ndcXY[i].y, 1.0f, 1.0f);
+                const vec4 farH = invViewProj * vec4(ndcXY[i].x, ndcXY[i].y, 0.0f, 1.0f);
                 frustumNear[i] = vec3(nearH) / nearH.w;
                 frustumFar[i] = vec3(farH) / farH.w;
             }
@@ -353,12 +353,13 @@ namespace Veng::Renderer
 
             mat4 ortho = glm::orthoZO(left, right, bottom, top, renderNearDistance, farDistance);
             ortho[1][1] *= -1.0f; // Vulkan clip space has Y pointing down.
-            data.ViewProj[k] = ortho * lightView;
+            // Reverse-Z: the shadow atlas follows the engine-wide near→1, far→0 convention.
+            data.ViewProj[k] = ReverseZClip() * ortho * lightView;
 
             mat4 cullOrtho =
                 glm::orthoZO(left, right, bottom, top, extendedNearDistance, farDistance);
             cullOrtho[1][1] *= -1.0f;
-            data.CullViewProj[k] = cullOrtho * lightView;
+            data.CullViewProj[k] = ReverseZClip() * cullOrtho * lightView;
 
             data.TexelWorldSize[k] = worldUnitsPerTexel;
             data.DepthRange[k] = farDistance - renderNearDistance;

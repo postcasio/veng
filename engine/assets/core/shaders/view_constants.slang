@@ -60,7 +60,7 @@ struct ViewConstants
     // color (lighting + sky + emissive, copied ahead of the translucent pass), y its sampler
     // index, z 1 when the copy ran this frame (the renderer's Refraction setting is on) and
     // 0 otherwise — a shader must gate on z before sampling x or w — and w the copied opaque
-    // depth (raw [0,1], smaller nearer), so a refracting material can reject a distorted
+    // depth (raw [0,1], reverse-Z so larger is nearer), so a refracting material can reject a distorted
     // sample whose geometry is in front of it. This is what lets a Translucent material
     // refract or distort the scene behind it; see Veng/translucent.slang for the helpers.
     uint4 SceneColor;

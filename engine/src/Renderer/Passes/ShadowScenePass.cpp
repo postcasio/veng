@@ -218,9 +218,9 @@ namespace Veng::Renderer
                 .Resource = io.ShadowMap,
                 .Load = LoadOp::Clear,
                 .Store = StoreOp::Store,
-                // The whole atlas clears to depth = 1; an unused tile (the fourth
-                // cell at three cascades) keeps this clear and is never selected.
-                .Clear = ClearDepth{.Depth = 1.0f, .Stencil = 0},
+                // The whole atlas clears to depth = 0 (reverse-Z far); an unused tile (the
+                // fourth cell at three cascades) keeps this clear and is never selected.
+                .Clear = ClearDepth{.Depth = 0.0f, .Stencil = 0},
             })
             .Execute(
                 [this, resolution, columns, cascadeCount](PassContext& inner)

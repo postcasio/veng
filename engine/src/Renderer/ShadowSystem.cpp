@@ -57,7 +57,8 @@ namespace Veng::Renderer
                                            .AddressModeW = AddressMode::ClampToEdge,
                                            .AnisotropyEnabled = false,
                                            .CompareEnable = true,
-                                           .CompareOp = CompareOp::LessOrEqual,
+                                           // Reverse-Z shadow atlas: a lit sample has larger depth.
+                                           .CompareOp = CompareOp::GreaterOrEqual,
                                            .BorderColor = BorderColor::OpaqueWhite,
                                        });
 
@@ -126,8 +127,8 @@ namespace Veng::Renderer
                                                        .AnisotropyEnabled = false,
                                                    });
 
-        // 1×1 D32 dummy atlas cleared to depth = 1 (full visibility), bound when no
-        // shadow pass is wired so the layout is always satisfied. Transitioned to
+        // 1×1 D32 dummy atlas cleared to depth = 0 (reverse-Z far = full visibility), bound
+        // when no shadow pass is wired so the layout is always satisfied. Transitioned to
         // ShaderReadOnly immediately so the lighting pass samples a valid layout even
         // when it does not declare .Sample on it.
         m_DummyImage =
@@ -151,7 +152,7 @@ namespace Veng::Renderer
                         .Resource = target,
                         .Load = LoadOp::Clear,
                         .Store = StoreOp::Store,
-                        .Clear = ClearDepth{.Depth = 1.0f, .Stencil = 0},
+                        .Clear = ClearDepth{.Depth = 0.0f, .Stencil = 0},
                     })
                     .Execute([](PassContext&) {});
                 const RenderGraph::ImportBinding binding{.Id = target, .View = m_DummyView};
@@ -262,8 +263,9 @@ namespace Veng::Renderer
                                              .Image = m_PunctualImage,
                                          });
 
-        // Clear to depth = 1 (full visibility) and transition to ShaderReadOnly so
-        // binding 4 is in a valid sampleable layout before the punctual pass runs.
+        // Clear to depth = 0 (reverse-Z far = full visibility) and transition to
+        // ShaderReadOnly so binding 4 is in a valid sampleable layout before the punctual
+        // pass runs.
         m_Context.ImmediateCommands(
             [&](CommandBuffer& cmd)
             {
@@ -274,7 +276,7 @@ namespace Veng::Renderer
                         .Resource = target,
                         .Load = LoadOp::Clear,
                         .Store = StoreOp::Store,
-                        .Clear = ClearDepth{.Depth = 1.0f, .Stencil = 0},
+                        .Clear = ClearDepth{.Depth = 0.0f, .Stencil = 0},
                     })
                     .Execute([](PassContext&) {});
                 const RenderGraph::ImportBinding binding{.Id = target, .View = m_PunctualView};

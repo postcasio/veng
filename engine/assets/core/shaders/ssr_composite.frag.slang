@@ -51,7 +51,8 @@ float4 fsMain(VSOutput input) : SV_Target
     float3 scene = g_Textures[NonUniformResourceIndex(g_PC.SceneColorTexture)].Sample(samp, uv).rgb;
 
     float depth = g_Textures[NonUniformResourceIndex(g_PC.DepthTexture)].Sample(samp, uv).r;
-    if (depth >= 1.0)
+    // Reverse-Z: the cleared background sits at depth 0.
+    if (depth <= 0.0)
         return float4(scene, 1.0);
 
     float4 orm = g_Textures[NonUniformResourceIndex(g_PC.OrmTexture)].Sample(samp, uv);

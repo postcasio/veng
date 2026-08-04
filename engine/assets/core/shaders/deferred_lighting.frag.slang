@@ -388,12 +388,12 @@ float4 fsMain(VSOutput input) : SV_Target
     float4 orm    = g_Textures[NonUniformResourceIndex(g_PC.OrmTexture)].Sample(samp, sampleUV);
     float depth   = g_Textures[NonUniformResourceIndex(g_PC.DepthTexture)].Sample(samp, sampleUV).r;
 
-    // Background (cleared depth = 1.0): no geometry was drawn here, so these pixels belong to
-    // the skybox pass. Leave them black. The cleared g-buffer (occlusion 1, normal 0) otherwise
-    // drives the IBL specular term — reflect(-V, 0) = -V samples the prefiltered (low-resolution)
-    // environment along the view ray — which would paint a blurry skybox over the background even
-    // when the skybox pass is disabled.
-    if (depth >= 1.0)
+    // Background (reverse-Z cleared depth = 0.0): no geometry was drawn here, so these pixels
+    // belong to the skybox pass. Leave them black. The cleared g-buffer (occlusion 1, normal 0)
+    // otherwise drives the IBL specular term — reflect(-V, 0) = -V samples the prefiltered
+    // (low-resolution) environment along the view ray — which would paint a blurry skybox over the
+    // background even when the skybox pass is disabled.
+    if (depth <= 0.0)
     {
         return float4(0.0, 0.0, 0.0, 1.0);
     }
@@ -575,7 +575,7 @@ float4 fsMain(VSOutput input) : SV_Target
     // G4 emissive: the linear HDR radiance the surface fragment authored, added into the
     // pixel's outgoing light. Placement here is equivalent to a post-lighting composite: the
     // skybox pass discards foreground pixels and geometry is foreground by definition, so
-    // emissive on geometry survives the sky composite identically; the background (depth >= 1.0,
+    // emissive on geometry survives the sky composite identically; the background (depth <= 0.0,
     // returned black above) carries none.
     float3 emissive = g_Textures[NonUniformResourceIndex(g_PC.EmissiveTexture)].Sample(samp, sampleUV).rgb;
 

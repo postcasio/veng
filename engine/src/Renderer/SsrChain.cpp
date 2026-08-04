@@ -36,16 +36,17 @@ namespace Veng::Renderer
         // Linear float HDR format for the scene-color intermediate and reflection chain.
         constexpr Format HdrFormat = Format::RGBA16Sfloat;
         constexpr ImageUsage HdrUsage = ImageUsage::ColorAttachment | ImageUsage::Sampled;
-        // Single-channel float for the min-Z pyramid; the reduction stores min depth.
+        // Single-channel float for the max-Z pyramid; under reverse-Z the reduction stores
+        // the nearest surface, which is the max depth.
         constexpr Format HiZFormat = Format::R32Sfloat;
 
         // The reflection mip chain stops this many levels short of 1×1 — a rough reflection needs
         // no 1-px mip.
         constexpr u32 SsrReflectionTileShift = 3;
 
-        // The min-Z reduce push block, matching ssr_hiz_reduce.comp: the destination and source
+        // The max-Z reduce push block, matching ssr_hiz_reduce.comp: the destination and source
         // mip extents, so a boundary invocation skips out-of-range texels and an odd parent
-        // dimension folds its dropped row/column into the min.
+        // dimension folds its dropped row/column into the max.
         struct MinZReducePush
         {
             uvec2 DestExtent;
@@ -127,7 +128,7 @@ namespace Veng::Renderer
         const AssetHandle<Veng::Shader> ssrBlurCs =
             LoadShader(SsrBlurDownCompId, "SSR blur downsample");
         const AssetHandle<Veng::Shader> ssrHiZReduceCs =
-            LoadShader(SsrHiZReduceCompId, "SSR min-Z reduce");
+            LoadShader(SsrHiZReduceCompId, "SSR max-Z reduce");
 
         // Builds a fullscreen pipeline (shared vertex stage) over a layout, naming the color format.
         auto MakePipeline = [&](const char* name, const Ref<PipelineLayout>& layout,
@@ -147,8 +148,8 @@ namespace Veng::Renderer
                            });
         };
 
-        // The min-Z reduction reuses the hi-Z reduce layout/set layout (sampled source + storage
-        // dest + the reduce push) — only the reduce operator (min vs max) differs.
+        // The max-Z reduction reuses the hi-Z reduce layout/set layout (sampled source + storage
+        // dest + the reduce push) — only the reduce operator (max vs min) differs.
         m_HiZReducePipeline = ComputePipeline::Create(
             m_Context, {
                            .Name = "SceneRenderer SSR MinZ Reduce Pipeline",
@@ -258,7 +259,7 @@ namespace Veng::Renderer
             m_Context, {.Name = "SceneRenderer SSR Scene View", .Image = m_SceneImage});
         m_SceneHandle = bindless.Register(m_SceneView);
 
-        // The trace, min-Z pyramid, and blur chain run at the SSR resolution (the scene color
+        // The trace, max-Z pyramid, and blur chain run at the SSR resolution (the scene color
         // above stays full-res: the trace samples it by reflected UV, the composite by logical UV).
         const uvec2 ssrExtent = RenderExtent();
 
@@ -336,9 +337,9 @@ namespace Veng::Renderer
             }
         }
 
-        // Min-Z depth pyramid (mirrors the hi-Z reduction, opposite reduction): a full mip chain
+        // Max-Z depth pyramid (mirrors the hi-Z reduction, opposite reduction): a full mip chain
         // the trace marches through to skip empty space. Reduced from this frame's depth before the
-        // trace; distinct from the occlusion-culling max-Z pyramid.
+        // trace; distinct from the occlusion-culling min-Z pyramid.
         const u32 hizMips = maxDim == 0 ? 1u : std::bit_width(maxDim);
         m_HiZImage =
             Image::Create(m_Context, {
@@ -369,7 +370,7 @@ namespace Veng::Renderer
         m_HiZSampleHandle = bindless.Register(m_HiZSampleView);
 
         // Per-mip reduction sets (the hi-Z reduce set layout): set k binds mip k's source (the
-        // depth target for k=0, min-Z mip k-1 otherwise) and mip k's destination storage view.
+        // depth target for k=0, max-Z mip k-1 otherwise) and mip k's destination storage view.
         m_HiZReduceSets.clear();
         m_HiZReduceSets.reserve(hizMips);
         for (u32 level = 0; level < hizMips; level++)
@@ -398,7 +399,7 @@ namespace Veng::Renderer
         const u32 hizMips = static_cast<u32>(m_HiZMips.size());
         const uvec2 ssrExtent = RenderExtent();
 
-        // Min-Z reduction: build this frame's closest-surface pyramid from the depth target
+        // Max-Z reduction: build this frame's closest-surface pyramid from the depth target
         // before the trace. One dispatch per mip; mip 0 ingests the full-res depth target into
         // the SSR-resolution pyramid (a downsample when SSR runs below full res, a 1:1 copy at
         // Full), deeper mips halve the prior. The per-mip graph surface derives the
@@ -461,7 +462,7 @@ namespace Veng::Renderer
                 .Sample(normalId)
                 .Sample(ormId)
                 .Sample(depthId);
-            // The trace Loads the whole min-Z chain by bindless handle; declaring each mip
+            // The trace Loads the whole max-Z chain by bindless handle; declaring each mip
             // sampled drives the graph-derived General → ShaderReadOnly transition after the
             // reduction wrote it.
             for (u32 level = 0; level < hizMips; level++)

@@ -58,7 +58,8 @@ namespace Veng::Renderer
                 .Load = LoadOp::Clear,
                 // Stored: the lighting pass reads depth as a texture.
                 .Store = StoreOp::Store,
-                .Clear = ClearDepth{.Depth = 1.0f, .Stencil = 0},
+                // Reverse-Z: the far plane is 0, so an un-drawn pixel clears to 0.
+                .Clear = ClearDepth{.Depth = 0.0f, .Stencil = 0},
             });
 
         // GPU mode reads the cull-written commands as indirect args; declaring the

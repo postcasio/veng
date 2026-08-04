@@ -142,7 +142,8 @@ namespace Veng::Renderer
                                .CullMode = CullMode::Back,
                                .DepthTestEnable = true,
                                .DepthWriteEnable = true,
-                               .DepthCompareOp = CompareOp::LessOrEqual,
+                               // Reverse-Z: a nearer fragment has larger depth.
+                               .DepthCompareOp = CompareOp::GreaterOrEqual,
                            });
         }
 
@@ -171,7 +172,8 @@ namespace Veng::Renderer
                                .CullMode = CullMode::Back,
                                .DepthTestEnable = true,
                                .DepthWriteEnable = true,
-                               .DepthCompareOp = CompareOp::LessOrEqual,
+                               // Reverse-Z: a nearer fragment has larger depth.
+                               .DepthCompareOp = CompareOp::GreaterOrEqual,
                            });
         }
     }

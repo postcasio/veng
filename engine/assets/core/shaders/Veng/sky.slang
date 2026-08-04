@@ -49,9 +49,10 @@ struct SkyFragmentInput
 };
 
 // True when the pixel is background (nothing was drawn there): the g-buffer depth is at the
-// far plane. A sky fragment discards a foreground pixel so it never overwrites lit geometry
-// — the sky is a background composite. Reads the depth through set-0 bindless at the
-// dynamic-resolution-mapped UV, matching how the lit target was written.
+// far plane. Under reverse-Z the far plane is depth 0, which is also the cleared value, so a
+// background pixel reads depth <= 0. A sky fragment discards a foreground pixel so it never
+// overwrites lit geometry — the sky is a background composite. Reads the depth through set-0
+// bindless at the dynamic-resolution-mapped UV, matching how the lit target was written.
 bool SkyIsBackground(SkyPushConstants pc, float2 uv)
 {
     ViewConstants vc = LoadViewConstants(pc.ViewConstantsIndex);
@@ -59,7 +60,7 @@ bool SkyIsBackground(SkyPushConstants pc, float2 uv)
     float depth = g_Textures[NonUniformResourceIndex(pc.DepthTexture)]
                       .Sample(g_Samplers[NonUniformResourceIndex(pc.DepthSampler)], sampleUV)
                       .r;
-    return depth >= 1.0;
+    return depth <= 0.0;
 }
 
 // The world-space view direction through a background pixel. A sky shader evaluates its radiance

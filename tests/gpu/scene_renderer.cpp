@@ -2582,8 +2582,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                      .AO = false},
     });
 
-    // The fraction of blit texels that read non-black (shade = 1 - depth > 0): a
-    // cleared atlas (all depth 1) blits to all-black, so any meaningful fraction of
+    // The fraction of blit texels that read non-black (reverse-Z: shade = depth > 0): a
+    // cleared atlas (all depth 0) blits to all-black, so any meaningful fraction of
     // lit texels means a caster wrote real depth into a tile.
     auto LitFraction = [&](const vector<u8>& pixels) -> f64
     {
@@ -2619,8 +2619,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         const vector<u8> pixels = RenderOutput(Context, *renderer, *scene, camera);
         REQUIRE(pixels.size() == static_cast<size_t>(extent.x) * extent.y * 8);
 
-        // A real, non-uniform map: some texels are lit (a caster wrote depth < 1) but
-        // not all (the tile beyond the caster, and the empty tiles, stay at the clear).
+        // A real, non-uniform map: some texels are lit (reverse-Z: a caster wrote depth > 0)
+        // but not all (the tile beyond the caster, and the empty tiles, stay at the clear).
         // The spot fills only its single tile (1/24 of the atlas), so the lit fraction
         // is small but distinctly above the all-black a cleared atlas would blit.
         const f64 frac = LitFraction(pixels);
