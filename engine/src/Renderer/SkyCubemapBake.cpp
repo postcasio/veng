@@ -1,6 +1,7 @@
 #include "SkyCubemapBake.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstring>
 
 #include <fmt/format.h>
@@ -13,6 +14,7 @@
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/DescriptorSet.h>
 #include <Veng/Renderer/DescriptorSetLayout.h>
+#include <Veng/Renderer/GeneratedTextureService.h>
 #include <Veng/Renderer/GraphicsPipeline.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
@@ -29,6 +31,14 @@ namespace Veng::Renderer
         // the skybox pass samples the baked cube exactly as it samples the environment radiance.
         constexpr u32 RadianceBinding = 0;
         constexpr u32 SamplerBinding = 4;
+
+        // A process-unique key per bake instance, so two SkyCubemapBakes sharing one context's
+        // generated-texture service never collide on the service's key space.
+        GeneratedTextureKey NextSkyBakeJobKey()
+        {
+            static std::atomic<u64> counter{0};
+            return (0x536B'7942'0000'0000ull) | counter.fetch_add(1, std::memory_order_relaxed);
+        }
 
         // The Sky material's per-draw push block (Veng/sky.slang SkyPushConstants): the frame-folded
         // material selector, the g-buffer depth handle + sampler, and the view-constants region the
@@ -210,6 +220,38 @@ namespace Veng::Renderer
                                              }));
         }
 
+        // The scratch cube an amortized bake fills a face at a time. Mip 0 only — it is copied into
+        // the displayed cube (which owns the reduction chain) once every face has been rendered, so
+        // it needs no mips of its own. TransferSrc for that copy; the service ORs in the rest.
+        m_ScratchImage = Image::Create(m_Context, {
+                                                      .Name = "Sky Bake Scratch Cube",
+                                                      .Extent = {m_FaceSize, m_FaceSize, 1},
+                                                      .MipLevels = 1,
+                                                      .Layers = CubeFaces,
+                                                      .Format = m_SceneColorFormat,
+                                                      .Usage = ImageUsage::Sampled |
+                                                               ImageUsage::ColorAttachment |
+                                                               ImageUsage::TransferSrc,
+                                                  });
+        m_ScratchView = ImageView::Create(m_Context, {
+                                                         .Name = "Sky Bake Scratch Cube View",
+                                                         .Image = m_ScratchImage,
+                                                         .ViewType = ImageViewType::Array2D,
+                                                         .ArrayLayers = CubeFaces,
+                                                     });
+        for (u32 face = 0; face < CubeFaces; ++face)
+        {
+            m_ScratchFaceViews[face] = ImageView::Create(
+                m_Context, {
+                               .Name = fmt::format("Sky Bake Scratch Face {} View", face),
+                               .Image = m_ScratchImage,
+                               .ViewType = ImageViewType::Type2D,
+                               .BaseArrayLayer = face,
+                               .ArrayLayers = 1,
+                           });
+        }
+        m_JobKey = NextSkyBakeJobKey();
+
         // A 1×1 stand-in depth image holding the far-plane value (1.0), bound in the fragment's depth
         // slot so SkyIsBackground passes for every baked pixel — there is no g-buffer at bake time.
         // Sampled as a color texture (the fragment reads .r), so it is an R32Sfloat sampled image.
@@ -251,10 +293,34 @@ namespace Veng::Renderer
             m_Context, {.Name = "Sky Bake Consumer Set", .Layout = consumerLayout});
         m_ConsumerSet->Write(RadianceBinding, m_CubeView);
         m_ConsumerSet->Write(SamplerBinding, sampler);
+
+        // Clear the displayed cube to black and leave it sampled, so the skybox pass samples a
+        // defined cube from the very first frame — the amortized fill lands a bake into it a few
+        // frames later, and before that there is nothing baked to show. The synchronous bake used to
+        // fill it in the frame it was first sampled; the amortized fill does not, so it is seeded
+        // here instead.
+        m_Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                cmd.PrepareForAccess(m_CubeView, AccessKind::TransferDst);
+                const vk::ClearColorValue black{std::array<f32, 4>{0.0f, 0.0f, 0.0f, 1.0f}};
+                const vk::ImageSubresourceRange range{.aspectMask = vk::ImageAspectFlagBits::eColor,
+                                                      .baseMipLevel = 0,
+                                                      .levelCount = 1,
+                                                      .baseArrayLayer = 0,
+                                                      .layerCount = CubeFaces};
+                GetVkCommandBuffer(cmd).clearColorImage(GetVkImage(*m_CubeImage),
+                                                        vk::ImageLayout::eTransferDstOptimal,
+                                                        &black, 1, &range);
+                cmd.PrepareForAccess(m_CubeView, AccessKind::Sample);
+            });
     }
 
     SkyCubemapBake::~SkyCubemapBake()
     {
+        // Tear down any amortized bake still in flight so its tick/completion callbacks — which
+        // capture this — never fire after it is gone.
+        CancelBake();
         m_Context.GetBindlessRegistry().Release(m_DepthHandle);
     }
 
@@ -560,5 +626,231 @@ namespace Veng::Renderer
             });
 
         return staging->Download();
+    }
+
+    void SkyCubemapBake::RecordScratchFace(CommandBuffer& cmd, const MaterialInstance& material,
+                                           const u32 face)
+    {
+        BindlessRegistry& registry = m_Context.GetBindlessRegistry();
+        const u32 selector = material.GetMaterialSelector();
+
+        // One face's worth of Bake, into the scratch cube: claim a view slot for the face basis and
+        // draw the material fragment through it. Recorded from a service tick at the top of the
+        // frame, where the view budget is freshly reset, so the single claim is affordable.
+        const bool claimed = registry.TryBeginView();
+        VE_ASSERT(claimed,
+                  "SkyCubemapBake::RecordScratchFace: the frame's view budget is spent; an "
+                  "amortized bake claims one view slot per tick");
+        ViewConstantsRegion region{};
+        region.InvViewProj = m_FaceInvViewProj[face];
+        region.InvViewRotProj = m_FaceInvViewProj[face];
+        region.CameraPosition = vec4(0.0f);
+        region.RenderScaleUV = vec4(1.0f, 1.0f, 1.0f, 1.0f);
+        region.MaxValidUV = vec4(1.0f, 1.0f, 1.0f, 1.0f);
+        registry.WriteViewConstants(std::as_bytes(std::span(&region, 1)));
+        const u32 viewIndex = registry.GetCurrentViewConstantsIndex();
+
+        cmd.PrepareForAccess(m_ScratchFaceViews[face], AccessKind::ColorAttachment);
+        cmd.BeginRendering({
+            .Extent = {m_FaceSize, m_FaceSize},
+            .ColorAttachments = {{
+                .ImageView = m_ScratchFaceViews[face],
+                .LoadOp = LoadOp::Clear,
+                .StoreOp = StoreOp::Store,
+                .ClearValue = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
+            }},
+        });
+        cmd.BindPipeline(m_Pipeline);
+        cmd.SetViewport({0, 0}, {m_FaceSize, m_FaceSize});
+        cmd.SetScissor({0, 0}, {m_FaceSize, m_FaceSize});
+        registry.Bind(cmd);
+        cmd.PushConstants(SkyMaterialPushConstants{
+            .MaterialIndex = selector,
+            .DepthTexture = m_DepthHandle.Index,
+            .DepthSampler = m_DepthSamplerHandle.Index,
+            .ViewConstantsIndex = viewIndex,
+        });
+        cmd.DrawFullscreenTriangle();
+        cmd.EndRendering();
+        ++m_FaceRendersRecorded;
+    }
+
+    void SkyCubemapBake::RecordScratchAtmosphereFace(CommandBuffer& cmd,
+                                                     const Ref<GraphicsPipeline>& pipeline,
+                                                     const Ref<DescriptorSet>& atmosphereSet,
+                                                     const Atmosphere& atmosphere,
+                                                     const vec3& sunDirection, const f32 intensity,
+                                                     const u32 face)
+    {
+        BindlessRegistry& registry = m_Context.GetBindlessRegistry();
+
+        const bool claimed = registry.TryBeginView();
+        VE_ASSERT(claimed,
+                  "SkyCubemapBake::RecordScratchAtmosphereFace: the frame's view budget is spent; "
+                  "an amortized bake claims one view slot per tick");
+        ViewConstantsRegion region{};
+        region.InvViewProj = m_FaceInvViewProj[face];
+        region.InvViewRotProj = m_FaceInvViewProj[face];
+        region.CameraPosition = vec4(0.0f);
+        region.RenderScaleUV = vec4(1.0f, 1.0f, 1.0f, 1.0f);
+        region.MaxValidUV = vec4(1.0f, 1.0f, 1.0f, 1.0f);
+        registry.WriteViewConstants(std::as_bytes(std::span(&region, 1)));
+        const u32 viewIndex = registry.GetCurrentViewConstantsIndex();
+
+        cmd.PrepareForAccess(m_ScratchFaceViews[face], AccessKind::ColorAttachment);
+        cmd.BeginRendering({
+            .Extent = {m_FaceSize, m_FaceSize},
+            .ColorAttachments = {{
+                .ImageView = m_ScratchFaceViews[face],
+                .LoadOp = LoadOp::Clear,
+                .StoreOp = StoreOp::Store,
+                .ClearValue = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
+            }},
+        });
+        cmd.BindPipeline(pipeline);
+        cmd.SetViewport({0, 0}, {m_FaceSize, m_FaceSize});
+        cmd.SetScissor({0, 0}, {m_FaceSize, m_FaceSize});
+        registry.Bind(cmd);
+        cmd.BindDescriptorSets(DescriptorSetBindInfo{
+            .Sets = {atmosphereSet},
+            .FirstSet = 1,
+            .PipelineBindPoint = PipelineBindPoint::Graphics,
+        });
+        cmd.PushConstants(AtmosphereSkyPushConstants{
+            .DepthTexture = m_DepthHandle.Index,
+            .Sampler = m_DepthSamplerHandle.Index,
+            .ViewConstantsIndex = viewIndex,
+            .Enabled = 1u,
+            .SunDirection = sunDirection,
+            .Intensity = intensity,
+            .RayleighScattering = atmosphere.RayleighScattering,
+            .RayleighHeight = atmosphere.RayleighHeight,
+            .MieScattering = atmosphere.MieScattering,
+            .MieExtinction = atmosphere.MieExtinction,
+            .OzoneAbsorption = atmosphere.OzoneAbsorption,
+            .MieHeight = atmosphere.MieHeight,
+            .MieAnisotropy = atmosphere.MieAnisotropy,
+            .OzoneCenter = atmosphere.OzoneCenter,
+            .OzoneWidth = atmosphere.OzoneWidth,
+            .PlanetRadius = atmosphere.PlanetRadius,
+            .AtmosphereRadius = atmosphere.AtmosphereRadius,
+            .SunAngularRadius = atmosphere.SunAngularRadius,
+            .SunIrradiance = atmosphere.SunIrradiance,
+        });
+        cmd.DrawFullscreenTriangle();
+        cmd.EndRendering();
+        ++m_FaceRendersRecorded;
+    }
+
+    void SkyCubemapBake::AbandonBake()
+    {
+        CancelBake();
+    }
+
+    void SkyCubemapBake::CancelBake()
+    {
+        if (m_BakeState != BakeState::Idle)
+        {
+            m_Context.GetGeneratedTextures().Cancel(m_JobKey);
+            m_BakeState = BakeState::Idle;
+        }
+    }
+
+    void SkyCubemapBake::RequestBake(GeneratedTextureService& service,
+                                     const MaterialInstance& material)
+    {
+        EnsurePipeline(material);
+
+        // Supersede whatever bake is outstanding: a fresh dirty signal wants the newest content in
+        // the scratch cube, not a completed or half-filled older one.
+        CancelBake();
+
+        const MaterialInstance* materialPtr = &material;
+        GeneratedTextureRequest request{
+            .Key = m_JobKey,
+            .Name = "Sky Bake",
+            .Targets = {{
+                .Adopt = m_ScratchImage,
+                .ProducerAccess = AccessKind::ColorAttachment,
+                .SampledViewType = ImageViewType::Cube,
+            }},
+            .TickCount = CubeFaces,
+            .OnTick =
+                [this, materialPtr](CommandBuffer& cmd, const GeneratedTextureTickContext& context)
+            { RecordScratchFace(cmd, *materialPtr, context.TickIndex); },
+            .OnComplete = [this](const GeneratedTextureResult&)
+            { m_BakeState = BakeState::Landed; },
+        };
+        service.Request(std::move(request));
+        m_BakeState = BakeState::Pending;
+    }
+
+    void SkyCubemapBake::RequestBakeAtmosphere(GeneratedTextureService& service,
+                                               const Ref<GraphicsPipeline>& pipeline,
+                                               const Ref<DescriptorSet>& atmosphereSet,
+                                               const Atmosphere& atmosphere,
+                                               const vec3& sunDirection, const f32 intensity)
+    {
+        CancelBake();
+
+        GeneratedTextureRequest request{
+            .Key = m_JobKey,
+            .Name = "Sky Bake Atmosphere",
+            .Targets = {{
+                .Adopt = m_ScratchImage,
+                .ProducerAccess = AccessKind::ColorAttachment,
+                .SampledViewType = ImageViewType::Cube,
+            }},
+            .TickCount = CubeFaces,
+            .OnTick =
+                [this, pipeline, atmosphereSet, atmosphere, sunDirection,
+                 intensity](CommandBuffer& cmd, const GeneratedTextureTickContext& context)
+            {
+                RecordScratchAtmosphereFace(cmd, pipeline, atmosphereSet, atmosphere, sunDirection,
+                                            intensity, context.TickIndex);
+            },
+            .OnComplete = [this](const GeneratedTextureResult&)
+            { m_BakeState = BakeState::Landed; },
+        };
+        service.Request(std::move(request));
+        m_BakeState = BakeState::Pending;
+    }
+
+    bool SkyCubemapBake::RecordAmortized(CommandBuffer& cmd)
+    {
+        if (m_BakeState != BakeState::Landed)
+        {
+            return false;
+        }
+
+        // The scratch cube holds a complete bake. Copy its six faces into the displayed cube's mip 0
+        // in one step — an atomic swap of content, so the skybox never samples a half-filled cube —
+        // and leave the displayed cube sampled for this frame's skybox pass. The reduction chain the
+        // SH readback needs is regenerated from the fresh mip 0 by the caller's RecordReductionMips.
+        cmd.PrepareForAccess(m_ScratchView, AccessKind::TransferSrc);
+        cmd.PrepareForAccess(m_MipViews[0], AccessKind::TransferDst);
+        const vk::ImageCopy copy{
+            .srcSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
+                               .mipLevel = 0,
+                               .baseArrayLayer = 0,
+                               .layerCount = CubeFaces},
+            .srcOffset = {.x = 0, .y = 0, .z = 0},
+            .dstSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
+                               .mipLevel = 0,
+                               .baseArrayLayer = 0,
+                               .layerCount = CubeFaces},
+            .dstOffset = {.x = 0, .y = 0, .z = 0},
+            .extent = {.width = m_FaceSize, .height = m_FaceSize, .depth = 1},
+        };
+        GetVkCommandBuffer(cmd).copyImage(
+            GetVkImage(*m_ScratchImage), vk::ImageLayout::eTransferSrcOptimal,
+            GetVkImage(*m_CubeImage), vk::ImageLayout::eTransferDstOptimal, 1, &copy);
+        cmd.PrepareForAccess(m_CubeView, AccessKind::Sample);
+
+        // Drop the completed job (its adopted target is this bake's own scratch image, which stays)
+        // so the key is free for the next re-bake.
+        m_Context.GetGeneratedTextures().Release(m_JobKey);
+        m_BakeState = BakeState::Idle;
+        return true;
     }
 }

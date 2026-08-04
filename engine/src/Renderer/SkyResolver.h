@@ -220,6 +220,14 @@ namespace Veng::Renderer
         /// pointer compare misses — the material analogue of the atmosphere's param dirty gate.
         u32 m_LastBakedSkyMaterialRevision = 0;
 
+        /// @brief Whether the displayed bake cube has ever been filled with valid radiance.
+        ///
+        /// False until the SH cold seed bakes it in place or the first amortized bake lands and is
+        /// copied in. Gates the lighting tiers off an undefined cube: the SH readback and the IBL
+        /// convolution only read the displayed cube once it holds a real bake. Cleared when the
+        /// resolved source stops being baked.
+        bool m_DisplayCubeValid = false;
+
         /// @brief Whether the current bake cube's IBL convolution is up to date; gates re-convolution.
         ///
         /// On the same dirty signal as the bake, a baked source lit via IBL runs GenerateFromCube

@@ -249,13 +249,13 @@ namespace Veng::Renderer
             }
         }
 
-        // Bake a baked-mode sky into its radiance cube on the sky dirty signal, so a static sky
-        // bakes once and the skybox pass samples the cube this frame. Every baked source — an
-        // authored material or the procedural atmosphere — fills the same cube; display and any
-        // ambient tier then read that one cube, so they agree by construction. Recorded into cmd
-        // before the graph the skybox pass samples the cube through, and before the scene claims its
-        // own view slot below — the bake writes six face view-constants regions into distinct view
-        // slots, so it must run ahead of the frame's own view claim. A direct or no-sky source bakes
+        // Bake a baked-mode sky into its radiance cube on the sky dirty signal. Every baked source —
+        // an authored material or the procedural atmosphere — fills the same cube; display and any
+        // ambient tier then read that one cube, so they agree by construction. The display bake is
+        // amortized through GeneratedTextureService: on the dirty signal a job fills a scratch cube
+        // one face per tick, and RecordAmortized copies it into the displayed cube once every face
+        // is rendered — so a jump never blocks a frame on six fullscreen sky evaluations, and the
+        // previous cube keeps being sampled until the new one lands. A direct or no-sky source bakes
         // nothing.
         const bool bakedMaterial = m_ResolvedSkyKind == SkySourceKind::Material &&
                                    m_ResolvedSkyBaked && view.SkyMaterial.IsLoaded();
@@ -263,22 +263,8 @@ namespace Veng::Renderer
             m_ResolvedSkyKind == SkySourceKind::Atmosphere && m_ResolvedSkyBaked;
         const bool baking = bakedMaterial || bakedAtmosphere;
 
-        // A bake is all-or-nothing against the frame's remaining view budget: a half-filled cube
-        // marked clean would show a permanently wrong sky, so a frame without room for every face
-        // records no bake at all and leaves the dirty signal standing for the next frame with room.
-        // This frame's skybox then samples the cube as the last bake left it. The SH tier's first
-        // bake needs twice as many, because its cold-start readback bakes a second cube through an
-        // immediate submit that still draws from this frame's view budget; every later SH re-bake
-        // reads the display bake back deferred and claims only the display bake's own six.
-        const bool shColdSeed = m_ResolvedSkyLighting == SkyLighting::SH && !m_SkyShValid;
-        const u32 bakeSlots =
-            shColdSeed ? 2 * SkyCubemapBake::CubeFaces : SkyCubemapBake::CubeFaces;
-        const bool bakeAffordable =
-            m_Context.GetBindlessRegistry().GetRemainingViews() >= bakeSlots;
-
-        if (baking && bakeAffordable)
+        if (baking)
         {
-
             // The dirty signal: for a material, its resolved instance changing; for the atmosphere,
             // its params or the sun direction changing (both feed the baked sky radiance + disc).
             const MaterialInstance* material = bakedMaterial ? view.SkyMaterial.Get() : nullptr;
@@ -297,14 +283,17 @@ namespace Veng::Renderer
                             view.SunDirection != m_LastBakedAtmosphereSun;
             }
 
-            // The SH tier's cold start runs first, before the frame's display bake records into cmd:
-            // while no coefficients have been projected yet — a sky's first bake, or a tier just
-            // switched to SH — there is nothing to defer to, so a single synchronous readback of the
-            // reduced cube seeds them. Its immediate submit (bake + reduce + copy + download) records
+            // The SH tier's cold start: on the very first SH frame no coefficients have been
+            // projected and the amortized display bake has not landed, so a single synchronous
+            // reduced-cube readback seeds them — and, baking into the displayed cube in place, gives
+            // the first SH frame a valid sky rather than an empty one. Its immediate submit records
             // barriers off the persistent image-layout tracker, so it must see the tracker as the
-            // display bake left it last frame, not as this frame's not-yet-submitted display bake
-            // would. It bakes its own cube, so it seeds even on a frame the display bake is clean.
-            if (shColdSeed)
+            // last completed bake left it. Bounded to the first SH activation (every later re-bake
+            // reads the amortized display cube back deferred); it claims its own six view slots, so
+            // it only runs on a frame with room, retrying otherwise.
+            const bool shColdSeed = m_ResolvedSkyLighting == SkyLighting::SH && !m_SkyShValid;
+            if (shColdSeed &&
+                m_Context.GetBindlessRegistry().GetRemainingViews() >= SkyCubemapBake::CubeFaces)
             {
                 const vector<u8> faces =
                     bakedMaterial
@@ -315,22 +304,22 @@ namespace Veng::Renderer
                 m_SkySh = EnvironmentIbl::ProjectCubeToIrradianceSh(
                     faces, m_SkyBake->GetShReadbackFaceSize());
                 m_SkyShValid = true;
+                m_DisplayCubeValid = true;
             }
 
-            // The display bake into the frame command buffer, so the skybox pass samples the cube
-            // this frame. Recorded before the deferred SH readback and the IBL convolution (below),
-            // both of which read the cube this bake fills.
+            // Request the amortized display bake on the dirty signal; the fill spreads across the
+            // frame budget and the previous cube stands until it lands.
             if (bakeDirty)
             {
                 if (bakedMaterial)
                 {
-                    m_SkyBake->Bake(cmd, *material);
+                    m_SkyBake->RequestBake(m_Context.GetGeneratedTextures(), *material);
                 }
                 else
                 {
-                    m_SkyBake->BakeAtmosphere(cmd, skyPipeline, m_Atmosphere->GetSet(),
-                                              view.Atmosphere, view.SunDirection,
-                                              view.AtmosphereIntensity);
+                    m_SkyBake->RequestBakeAtmosphere(m_Context.GetGeneratedTextures(), skyPipeline,
+                                                     m_Atmosphere->GetSet(), view.Atmosphere,
+                                                     view.SunDirection, view.AtmosphereIntensity);
                     m_LastBakedAtmosphere = view.Atmosphere;
                     m_LastBakedAtmosphereSun = view.SunDirection;
                     m_BakedAtmosphereValid = true;
@@ -339,20 +328,29 @@ namespace Veng::Renderer
                 m_LastBakedSkyMaterialRevision = material != nullptr ? material->GetRevision() : 0;
             }
 
-            // The steady-state SH readback: every re-bake after the first reads the display bake's
-            // own cube back without blocking, from a reduced level, with the projection deferred a
-            // frame or two — so a static or occasionally-rebaked SH sky costs one bake. Skipped on
-            // the cold bake, whose coefficients were seeded synchronously above.
-            if (bakeDirty && m_ResolvedSkyLighting == SkyLighting::SH && !shColdSeed)
+            // A completed bake copies its scratch cube into the displayed cube this frame, then the
+            // lighting tiers refresh from the freshly-copied cube. Recorded before the graph the
+            // skybox and lighting passes sample it through.
+            const bool landed = m_SkyBake->RecordAmortized(cmd);
+            if (landed)
+            {
+                m_DisplayCubeValid = true;
+            }
+
+            // The steady-state SH readback: a landed bake's own displayed cube is read back reduced,
+            // without blocking, the projection deferred a frame or two — so a static or occasionally
+            // re-baked SH sky costs one bake. Skipped when the cold seed already produced this
+            // frame's coefficients.
+            if (landed && m_ResolvedSkyLighting == SkyLighting::SH && !shColdSeed)
             {
                 BeginDeferredShReadback(cmd);
             }
 
-            // IBL convolves the freshly-filled bake cube into the split-sum maps in this command
-            // buffer, on the same bake dirty signal, so a static sky pays it once.
+            // IBL convolves the displayed cube into the split-sum maps when it changes (a bake
+            // landed) or on first entry to the tier with a valid cube — a static sky pays it once.
             if (m_ResolvedSkyLighting == SkyLighting::IBL)
             {
-                if (bakeDirty || !m_SkyCubeConvolved)
+                if (m_DisplayCubeValid && (landed || !m_SkyCubeConvolved))
                 {
                     m_Ibl->EnsureInitialized(cmd);
                     m_Ibl->GenerateFromCube(cmd, m_SkyBake->GetCubeView(),
@@ -365,11 +363,14 @@ namespace Veng::Renderer
                 m_SkyCubeConvolved = false;
             }
         }
-        else if (!baking)
+        else
         {
+            // The source stopped being baked: drop any bake in flight and forget the displayed cube.
+            m_SkyBake->AbandonBake();
             m_LastBakedSkyMaterial = nullptr;
             m_SkyCubeConvolved = false;
             m_BakedAtmosphereValid = false;
+            m_DisplayCubeValid = false;
         }
 
         // An environment sky on the SH tier lights the diffuse term from its radiance cube — the

@@ -22,6 +22,10 @@ namespace Veng::Renderer
     class Sampler;
     class DescriptorSet;
     class DescriptorSetLayout;
+    class GeneratedTextureService;
+
+    /// @brief A caller-chosen identity for a generated-texture job (mirrors GeneratedTextureService).
+    using GeneratedTextureKey = u64;
 
     /// @brief Bakes a fullscreen sky evaluation into an owned radiance cubemap the skybox path samples.
     ///
@@ -34,12 +38,18 @@ namespace Veng::Renderer
     /// pixel passes the background test). The fragment's param block and bound handles bind exactly
     /// as in the direct path; the fragment is unchanged and unaware it is baked.
     ///
-    /// One cube at a caller-chosen face resolution, created off the bindless registry the way the
-    /// IBL radiance image is; re-bakes overwrite in place, so VRAM is one cube regardless of how
-    /// often the sky changes. Bake records on the caller's dirty signal (the source swapped or its
+    /// The displayed cube is created off the bindless registry the way the IBL radiance image is;
+    /// the synchronous Bake records on the caller's dirty signal (the source swapped or its
     /// params/bound buffers changed), so a static sky bakes once. Exposes a Cube image view + a
     /// consumer descriptor set matching the IBL set's radiance binding, so the skybox pass samples
     /// the baked cube exactly as it samples a resident environment's radiance cube.
+    ///
+    /// A bake is also available **amortized**: RequestBake fills a second, scratch cube one face per
+    /// GeneratedTextureService tick rather than six draws in one frame, and RecordAmortized copies
+    /// the finished scratch cube into the displayed one on completion — so a dirty sky never blocks
+    /// a frame on six fullscreen sky evaluations, and the previous cube stands until the new lands.
+    /// The scratch cube is the reason VRAM is two cubes, not one; only the displayed one carries the
+    /// reduction chain.
     class SkyCubemapBake
     {
     public:
@@ -169,6 +179,57 @@ namespace Veng::Renderer
         /// @param cmd The command buffer the reduction blits are recorded into.
         void RecordReductionMips(CommandBuffer& cmd);
 
+        /// @brief Requests an amortized bake of `material` into the scratch cube through the service.
+        ///
+        /// The non-blocking counterpart to Bake: instead of recording all six face draws into one
+        /// frame, it submits a GeneratedTextureService job that fills the scratch cube one face per
+        /// tick, spread across the frame budget. The displayed cube keeps being sampled untouched
+        /// until the job completes, at which point RecordAmortized() copies the finished scratch cube
+        /// into the displayed cube in one step. A request supersedes any bake still in flight, so a
+        /// re-bake on a fresh dirty signal replaces the pending one rather than queuing behind it.
+        /// @param service  The service the job runs through.
+        /// @param material The resident Sky-domain material to bake.
+        /// @pre material's domain is MaterialDomain::Sky and its param block is uploaded this frame.
+        void RequestBake(GeneratedTextureService& service, const MaterialInstance& material);
+
+        /// @brief Requests an amortized bake of the procedural atmosphere into the scratch cube.
+        ///
+        /// The atmosphere sibling of RequestBake: fills the scratch cube one atmosphere face per
+        /// service tick, binding the LUT set at set 1 and pushing the sun/params exactly as
+        /// BakeAtmosphere does. Supersedes any bake still in flight.
+        /// @param service       The service the job runs through.
+        /// @param pipeline      The atmosphere sky pipeline, built against the cube-face format.
+        /// @param atmosphereSet The renderer's atmosphere LUT set (scattering/transmittance/sampler).
+        /// @param atmosphere    The atmosphere parameters the LUTs were generated for.
+        /// @param sunDirection  The normalized toward-sun direction.
+        /// @param intensity     Scales the baked sky radiance + sun disc.
+        /// @pre `atmosphereSet`'s LUTs were generated for `atmosphere` and stay resident until done.
+        void RequestBakeAtmosphere(GeneratedTextureService& service,
+                                   const Ref<GraphicsPipeline>& pipeline,
+                                   const Ref<DescriptorSet>& atmosphereSet,
+                                   const Atmosphere& atmosphere, const vec3& sunDirection,
+                                   f32 intensity);
+
+        /// @brief Tears down any amortized bake in flight, e.g. when the source stops being baked.
+        void AbandonBake();
+
+        /// @brief Whether an amortized bake is still filling the scratch cube.
+        ///
+        /// True from RequestBake/RequestBakeAtmosphere until the job's last tick has run. A caller
+        /// deferring the lighting-tier readback until the bake lands polls this.
+        [[nodiscard]] bool IsBakePending() const { return m_BakeState == BakeState::Pending; }
+
+        /// @brief Copies a just-landed amortized bake into the displayed cube, once.
+        ///
+        /// Records nothing until an amortized bake has completed; on the frame after completion it
+        /// copies the finished scratch cube into the displayed cube (leaving it in a sampled layout)
+        /// and returns true, so the caller knows to refresh whatever it derives from the cube (the
+        /// SH readback, the IBL convolution). Records into `cmd` before the graph that samples the
+        /// cube. A no-op returning false on every other frame.
+        /// @param cmd The command buffer the copy is recorded into.
+        /// @return True on the one frame the displayed cube was refreshed from a completed bake.
+        bool RecordAmortized(CommandBuffer& cmd);
+
         /// @brief The consumer descriptor set the skybox pass binds to sample the baked cube.
         ///
         /// Matches the IBL consumer set's radiance binding (binding 0 the cube, binding 4 the
@@ -203,6 +264,26 @@ namespace Veng::Renderer
         /// @brief Builds the per-face graphics pipeline from the bound material's shaders, once per identity.
         void EnsurePipeline(const MaterialInstance& material);
 
+        /// @brief Records one material face render into the scratch cube (the amortized tick body).
+        void RecordScratchFace(CommandBuffer& cmd, const MaterialInstance& material, u32 face);
+
+        /// @brief Records one atmosphere face render into the scratch cube (the amortized tick body).
+        void RecordScratchAtmosphereFace(CommandBuffer& cmd, const Ref<GraphicsPipeline>& pipeline,
+                                         const Ref<DescriptorSet>& atmosphereSet,
+                                         const Atmosphere& atmosphere, const vec3& sunDirection,
+                                         f32 intensity, u32 face);
+
+        /// @brief Supersedes any in-flight/landed bake and resets the amortization state to idle.
+        void CancelBake();
+
+        /// @brief The lifecycle of an amortized bake filling the scratch cube.
+        enum class BakeState
+        {
+            Idle,    ///< No amortized bake outstanding.
+            Pending, ///< A job is filling the scratch cube, face by face.
+            Landed,  ///< The job completed; RecordAmortized() will copy the result across.
+        };
+
         Context& m_Context;
         Format m_SceneColorFormat;
         u32 m_FaceSize;
@@ -216,6 +297,19 @@ namespace Veng::Renderer
         // One all-six-layers view per mip from 0 to m_ShReadbackMip — for the reduction/readback
         // layout transitions (the raw blit itself addresses subresources directly).
         vector<Ref<ImageView>> m_MipViews;
+
+        // The scratch cube an amortized bake fills a face at a time, held off the displayed cube so
+        // the skybox samples the last completed bake untouched while the next fills. Mip-0 only: it
+        // is copied into the displayed cube (which carries the reduction chain) on completion.
+        Ref<Image> m_ScratchImage;
+        Ref<ImageView> m_ScratchView; // all six layers, mip 0 — for the copy's layout transitions
+        std::array<Ref<ImageView>, CubeFaces> m_ScratchFaceViews; // one single-layer view per face
+
+        // The amortized bake's service job key (unique per instance) and its lifecycle state. The
+        // material path also records the resolved instance's identity + revision so a re-request for
+        // the same content is idempotent while a genuine change supersedes.
+        GeneratedTextureKey m_JobKey;
+        BakeState m_BakeState = BakeState::Idle;
 
         Ref<Image> m_DepthImage;     // 1×1 stand-in, holds the far-plane value (1.0)
         Ref<ImageView> m_DepthView;  // sampled as a color texture by the fragment's depth read

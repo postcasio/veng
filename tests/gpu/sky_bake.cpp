@@ -45,6 +45,7 @@
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/DescriptorSetLayout.h>
+#include <Veng/Renderer/GeneratedTextureService.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/Native.h>
@@ -140,6 +141,37 @@ namespace
             });
 
         return staging->Download();
+    }
+
+    // Drives a SceneRenderer's amortized sky bake to completion and returns the rendered frame.
+    // RequestBake is recorded from an Execute; the GeneratedTextureService fills the scratch cube
+    // across pumped frames (unlimited budget so one pump suffices); a final Execute copies the
+    // landed bake into the displayed cube and samples it. A Direct/None sky bakes nothing, so the
+    // pumped frames are inert and the two Executes render the identical frame — the helper is
+    // correct for either mode, which is what lets a case compare baked against direct through it.
+    vector<u8> RenderSkyToCompletion(Context& context, SceneRenderer& renderer, Scene& scene,
+                                     const CameraView& camera, const uvec2 extent)
+    {
+        context.GetGeneratedTextures().SetTickBudget(GeneratedTextureService::UnlimitedTickBudget);
+        const auto execute = [&]
+        {
+            context.ImmediateCommands(
+                [&](CommandBuffer& cmd)
+                {
+                    renderer.Execute(
+                        cmd, Renderer::SceneView{.World = scene, .Camera = camera, .Delta = 0.0f});
+                });
+        };
+        execute(); // request the amortized bake against the (not-yet-filled) displayed cube
+        for (u32 i = 0; i < 4; ++i)
+        {
+            context.BeginFrame();
+            context.EndFrame();
+        }
+        execute(); // copy the landed bake into the displayed cube and sample it
+        vector<u8> pixels = renderer.GetOutput()->GetImage()->Download();
+        REQUIRE(pixels.size() == static_cast<usize>(extent.x) * extent.y * 8);
+        return pixels;
     }
 
     AssetHandle<MaterialInstance> CookAndLoadAnalyticSky(AssetManager& assets)
@@ -451,6 +483,71 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "sky bake: an amortized bake fills its cube one face per tick, not six draws in "
+                  "one frame")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+    const AssetHandle<MaterialInstance> material = CookAndLoadAnalyticSky(assets);
+
+    const Unique<EnvironmentIbl> ibl = EnvironmentIbl::Create(Context, assets);
+
+    constexpr u32 FaceSize = 64;
+    const Unique<SkyCubemapBake> bake =
+        SkyCubemapBake::Create(Context, ibl->GetSetLayout(), Format::RGBA16Sfloat, FaceSize);
+
+    GeneratedTextureService& service = Context.GetGeneratedTextures();
+    // A budget of one tick is amortization at its most granular: one face may be recorded per
+    // frame, so the property under test — the six faces spread across ticks rather than landing in
+    // one frame — shows as one face render per pumped frame.
+    service.SetTickBudget(1);
+
+    const u64 before = bake->GetFaceRendersRecorded();
+    bake->RequestBake(service, *material.Get());
+    CHECK(bake->IsBakePending());
+    // The request records nothing itself: the six draws are the service's to spend, not this frame's.
+    CHECK(bake->GetFaceRendersRecorded() == before);
+
+    for (u32 face = 0; face < SkyCubemapBake::CubeFaces; ++face)
+    {
+        CHECK(bake->GetFaceRendersRecorded() - before == face);
+        CHECK(bake->IsBakePending());
+        Context.BeginFrame();
+        Context.EndFrame();
+        // Exactly one more face than last frame — never the whole cube in one frame.
+        CHECK(bake->GetFaceRendersRecorded() - before == face + 1);
+    }
+
+    // Every face rendered, one per frame, and the fill is done.
+    CHECK(bake->GetFaceRendersRecorded() - before == SkyCubemapBake::CubeFaces);
+    CHECK_FALSE(bake->IsBakePending());
+
+    // The completed scratch cube copies into the displayed cube once, on a recorded frame; a second
+    // call is a no-op because the bake is no longer landed.
+    bool copied = false;
+    Context.ImmediateCommands([&](CommandBuffer& cmd) { copied = bake->RecordAmortized(cmd); });
+    CHECK(copied);
+    Context.ImmediateCommands([&](CommandBuffer& cmd) { CHECK_FALSE(bake->RecordAmortized(cmd)); });
+
+    // And the displayed cube the copy filled carries the material's analytic radiance, so the
+    // amortized path produced the same cube a synchronous bake would — read a spread of texels.
+    const vector<u8> faces = DownloadCube(Context, *bake);
+    constexpr f32 Eps = 0.02f;
+    for (u32 face = 0; face < 6; ++face)
+    {
+        for (const uvec2 t : {uvec2(FaceSize / 4, FaceSize / 4), uvec2(FaceSize / 2, FaceSize / 2),
+                              uvec2(3 * FaceSize / 4, 3 * FaceSize / 4)})
+        {
+            const vec2 uv((static_cast<f32>(t.x) + 0.5f) / static_cast<f32>(FaceSize),
+                          (static_cast<f32>(t.y) + 0.5f) / static_cast<f32>(FaceSize));
+            const vec3 expected = 0.5f + 0.5f * FaceDirection(face, uv);
+            const vec3 actual = DecodeTexel(faces, FaceSize, face, t.x, t.y);
+            CHECK(glm::length(actual - expected) < Eps);
+        }
+    }
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                   "sky bake: a baked material sky renders through the skybox path and matches the "
                   "same material rendered direct, flipping mode with an internal recompile")
 {
@@ -482,15 +579,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     auto RenderWithMode = [&](SkyMode mode) -> vector<u8>
     {
         source->Mode = mode;
-        Context.ImmediateCommands(
-            [&](CommandBuffer& cmd)
-            {
-                renderer->Execute(
-                    cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
-            });
-        const vector<u8> pixels = renderer->GetOutput()->GetImage()->Download();
-        REQUIRE(pixels.size() == static_cast<usize>(extent.x) * extent.y * 8);
-        return pixels;
+        return RenderSkyToCompletion(Context, *renderer, *scene, camera, extent);
     };
 
     const vector<u8> direct = RenderWithMode(SkyMode::Direct);
@@ -572,15 +661,7 @@ namespace
         {
             Source->Mode = mode;
             SkyComponent->Lighting = tier;
-            Ctx.ImmediateCommands(
-                [&](CommandBuffer& cmd)
-                {
-                    Renderer->Execute(
-                        cmd, Renderer::SceneView{.World = *World, .Camera = Camera, .Delta = 0.0f});
-                });
-            vector<u8> pixels = Renderer->GetOutput()->GetImage()->Download();
-            REQUIRE(pixels.size() == static_cast<usize>(Extent.x) * Extent.y * 8);
-            return pixels;
+            return RenderSkyToCompletion(Ctx, *Renderer, *World, Camera, Extent);
         }
     };
 
