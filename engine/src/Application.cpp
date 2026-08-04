@@ -2,6 +2,7 @@
 
 #include <Veng/Assert.h>
 #include <Veng/Asset/CookedProject.h>
+#include <Veng/Audio/AudioDevice.h>
 #include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Gui/GuiConsumer.h>
 #include <Veng/Log.h>
@@ -48,6 +49,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdlib>
 #include <deque>
 #include <span>
 #include <unordered_map>
@@ -210,6 +212,15 @@ namespace Veng
         m_AssetManager = CreateUnique<AssetManager>(
             m_RenderContext, *m_TaskSystem, m_TypeRegistry,
             AssetManagerInfo{.AssetTypes = m_Info.AssetTypes, .Loaders = m_Info.AssetLoaders});
+
+        // The audio subsystem. A headless run (CI, a dedicated server, the cooker) takes the null
+        // backend; a windowed run tries the hardware device and falls to null when none initializes.
+        // The self-test tone is gated behind an environment flag so it never sounds on an ordinary
+        // launch.
+        m_AudioDevice = Audio::AudioDevice::Create(Audio::AudioDeviceInfo{
+            .Backend = m_Info.Headless ? Audio::AudioBackend::Null : Audio::AudioBackend::Auto,
+            .RunSelfTest = std::getenv("VENG_AUDIO_SELFTEST") != nullptr,
+        });
 
         // The sim-domain scheduler owning every open world. Given the live device services, so it can
         // spawn cooked-level worlds and drive their capture surfaces.
@@ -1858,6 +1869,15 @@ namespace Veng
         // land before AcquireNextFrame or their GPU-state mutation is frame-ambiguous.
         // PumpMainThread carries its own scope.
         m_TaskSystem->PumpMainThread();
+
+        // Drive the audio subsystem's main-thread half: publish the current mix state, advance the
+        // null device's virtual clock, and reap finished voices and reclaimed resources. A real
+        // device mixes on its own callback thread.
+        if (m_AudioDevice)
+        {
+            VE_PROFILE_SCOPE("Frame/AudioPump");
+            m_AudioDevice->Pump(delta);
+        }
 
         // Finalize resident async loads (bindless registration + cache swap) before
         // BeginFrame, in the same main-thread window as the continuation pump.

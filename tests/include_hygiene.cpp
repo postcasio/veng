@@ -41,6 +41,12 @@
 #include <Veng/Application.h>
 #include <Veng/Assert.h>
 
+#include <Veng/Audio/AudioBuffer.h>
+#include <Veng/Audio/AudioBus.h>
+#include <Veng/Audio/AudioDevice.h>
+#include <Veng/Audio/AudioEngine.h>
+#include <Veng/Audio/Voice.h>
+
 #include <Veng/Diagnostics/FileTraceSink.h>
 #include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Diagnostics/TraceSink.h>

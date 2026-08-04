@@ -77,6 +77,10 @@ set_source_files_properties(src/Renderer/Backend/Context.cpp
 add_library(veng SHARED
         src/Application.cpp
         src/Assert.cpp
+        src/Audio/AudioBus.cpp
+        src/Audio/AudioBuffer.cpp
+        src/Audio/AudioDevice.cpp
+        src/Audio/Reverb.cpp
         src/Asset/AssetLoaderRegistry.cpp
         src/Asset/AssetManager.cpp
         src/Asset/DataTable.cpp
@@ -303,6 +307,7 @@ add_library(veng SHARED
         $<TARGET_OBJECTS:veng_backend_objs>
         src/Vendor/ImGui.cpp
         src/Vendor/TinyExr.cpp
+        src/Vendor/MiniAudio.cpp
 )
 add_library(veng::veng ALIAS veng)
 
@@ -328,6 +333,10 @@ target_include_directories(veng PRIVATE
         ${tinyexr_SOURCE_DIR}
         ${stb_SOURCE_DIR}
 )
+
+# miniaudio is a private include: the Audio sources and the vendor implementation TU parse
+# <miniaudio.h>, but no public header does, so the ma_* types stay behind the Native idiom.
+target_include_directories(veng PRIVATE ${miniaudio_SOURCE_DIR})
 
 target_compile_definitions(veng PRIVATE VE_BUILD_SHARED)
 
@@ -465,4 +474,13 @@ target_precompile_headers(veng PRIVATE include/Veng/Veng.h)
 set_source_files_properties(
         src/Vendor/ImGui.cpp
         src/Vendor/TinyExr.cpp
+        src/Vendor/MiniAudio.cpp
         PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+
+# miniaudio spawns its own playback thread and links no libraries at build time on Apple (it
+# runtime-links Core Audio) or Windows; on other Unixes it needs pthread and libm. libveng already
+# links ${CMAKE_DL_LIBS} for dlopen.
+if (NOT APPLE AND NOT WIN32)
+    find_package(Threads REQUIRED)
+    target_link_libraries(veng PRIVATE Threads::Threads m)
+endif ()

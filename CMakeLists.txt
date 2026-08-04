@@ -391,6 +391,16 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(stb)
 
+# miniaudio (header-only); the audio device + mixing backend, hidden behind the Native idiom.
+# Its implementation is compiled once via engine/src/Vendor/MiniAudio.cpp; the header itself is a
+# private include of libveng, so no public header sees a ma_* type.
+FetchContent_Declare(
+        miniaudio
+        GIT_REPOSITORY https://github.com/mackron/miniaudio.git
+        GIT_TAG 0.11.25
+)
+FetchContent_MakeAvailable(miniaudio)
+
 # zstd — archive-blob compression. Linked PUBLIC by assetpack: the runtime
 # inflates a compressed blob on resolve, so the codec reaches libveng; the cooker
 # gets the compressor transitively. zstd is a codec, not a source importer, so
@@ -850,6 +860,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/main.cpp
             tests/unit/sanity.cpp
             tests/unit/animation.cpp
+            tests/unit/audio_device.cpp
             tests/unit/pure_logic.cpp
             tests/unit/task_system.cpp
             tests/unit/parallel_for.cpp

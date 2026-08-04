@@ -39,6 +39,12 @@ Each major system's architecture lives in a `CLAUDE.md` inside its source direct
   durable-state subsystem: the `Store`'s families, opaque record keys, atomic whole-slot flush,
   versioning and migration, and the capture/rehydrate scene hooks — plus its opposite number, the
   `DerivedDataCache`, where expendable derived blobs live under a generation that wipes them.
+- **[src/Audio/CLAUDE.md](src/Audio/CLAUDE.md)** — `Veng/Audio/`, the audio subsystem: miniaudio
+  behind the Native idiom as `AudioDevice`/`AudioEngine`, the fixed `Master/Music/SFX/UI/Ambience`
+  bus tree, the real-time mixing thread fed by a triple-buffered voice snapshot, the reclamation
+  handshake and lock-free retired-voice channel, the master reverb node, the single `MaxVoices`
+  budget, and the null device (headless / device-loss). The callback thread is the one sanctioned
+  exception to the single-thread rule, and touches no engine state.
 - **[src/Diagnostics/CLAUDE.md](src/Diagnostics/CLAUDE.md)** — `Veng/Diagnostics/`, the CPU
   instrumentation subsystem: the `VE_PROFILE_*` scope/counter/instant vocabulary, per-thread chunk
   rings and their release/acquire publication, RAII thread registration, virtual tracks and the

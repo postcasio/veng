@@ -51,6 +51,10 @@ namespace Veng
     {
         class Client;
     }
+    namespace Audio
+    {
+        class AudioDevice;
+    }
 
     /// @brief Returns the directory containing the running executable.
     ///
@@ -1479,6 +1483,14 @@ namespace Veng
         /// Application resolves standalone travels and drives presentation pins through it; the ServerHost
         /// consumes it (ServerHostInfo::Directory) when hosting is stood up.
         Unique<WorldDirectory> m_Directory;
+
+        /// @brief The audio subsystem; the device, the mixing thread, and the bus tree.
+        ///
+        /// Declared after the asset manager and world runner so it destructs before them: its
+        /// destructor stops and joins the mixing thread, so the real-time callback is quiesced
+        /// before any clip or generator a voice may reference is freed. Constructed in Initialize
+        /// with a null backend when Headless, and pumped once per frame.
+        Unique<Audio::AudioDevice> m_AudioDevice;
 
         /// @brief The pimpl'd net hosts + input buffers; null unless a net launch mode is active.
         ///

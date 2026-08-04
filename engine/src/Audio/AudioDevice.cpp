@@ -1,0 +1,676 @@
+#include <Veng/Audio/AudioDevice.h>
+#include <Veng/Audio/AudioEngine.h>
+
+#include <Veng/Assert.h>
+#include <Veng/Log.h>
+
+#include "AudioFrame.h"
+#include "Reverb.h"
+#include "SpscRing.h"
+#include "TripleBuffer.h"
+
+#include <miniaudio.h>
+
+#include <algorithm>
+#include <cmath>
+#include <numbers>
+
+namespace Veng::Audio
+{
+    namespace
+    {
+        // The largest block the mixer processes at once; a callback asking for more is split into
+        // chunks so the scratch buffers below stay a fixed, pre-allocated size (allocation-free RT).
+        constexpr u32 kMaxChunkFrames = 1024;
+        // The most frames a single null-device pump advances, so a stalled first frame (or a
+        // breakpoint) cannot ask the mixer to grind through minutes of virtual time.
+        constexpr u32 kMaxPumpFrames = 4800;
+
+        void EqualPowerPan(f32 pan, f32& leftGain, f32& rightGain)
+        {
+            const f32 t =
+                (std::clamp(pan, -1.0f, 1.0f) * 0.5f + 0.5f) * (std::numbers::pi_v<f32> * 0.5f);
+            leftGain = std::cos(t);
+            rightGain = std::sin(t);
+        }
+
+        f32 FrameMono(const VoiceSnapshot& voice, u64 frame)
+        {
+            const u64 base = frame * voice.PcmChannels;
+            f32 sum = 0.0f;
+            for (u32 c = 0; c < voice.PcmChannels; ++c)
+            {
+                sum += voice.Pcm[base + c];
+            }
+            return sum / static_cast<f32>(voice.PcmChannels);
+        }
+
+        f32 SampleMono(const VoiceSnapshot& voice, f64 cursor)
+        {
+            const u64 i0 = static_cast<u64>(cursor);
+            const f32 frac = static_cast<f32>(cursor - static_cast<f64>(i0));
+            u64 i1 = i0 + 1;
+            if (voice.Loop)
+            {
+                i1 %= voice.PcmFrameCount;
+            }
+            else if (i1 >= voice.PcmFrameCount)
+            {
+                i1 = i0;
+            }
+            const f32 s0 = FrameMono(voice, i0);
+            const f32 s1 = FrameMono(voice, i1);
+            return s0 + (s1 - s0) * frac;
+        }
+
+        f32 OnePoleCoefficient(f32 cutoffHz, u32 sampleRate)
+        {
+            const f32 nyquist = static_cast<f32>(sampleRate) * 0.5f;
+            if (cutoffHz <= 0.0f || cutoffHz >= nyquist)
+            {
+                return 1.0f;
+            }
+            return 1.0f - std::exp(-2.0f * std::numbers::pi_v<f32> * cutoffHz /
+                                   static_cast<f32>(sampleRate));
+        }
+    }
+
+    struct AudioDevice::Native
+    {
+        /// @brief The main-thread → RT snapshot bridge.
+        TripleBuffer<AudioFrame> Snapshots;
+        /// @brief The RT → main-thread retired-voice channel.
+        SpscRing<RetiredVoice, 256> Retired;
+        /// @brief The generation (published serial) the mixer has consumed up to.
+        std::atomic<u64> ConsumedSerial{0};
+
+        /// @brief RT-owned per-voice playback state.
+        struct RtVoice
+        {
+            f64 Cursor = 0.0;
+            u32 Generation = 0;
+            bool Finished = false;
+            f32 OcclusionState = 0.0f;
+        };
+        std::array<RtVoice, MaxVoices> RtVoices{};
+
+        /// @brief Per-bus low-pass state (stereo).
+        std::array<f32, AudioBusCount> BusLpL{};
+        std::array<f32, AudioBusCount> BusLpR{};
+
+        /// @brief The first-party master reverb node.
+        Reverb MasterReverb;
+
+        /// @brief Per-bus stereo accumulation scratch (sized kMaxChunkFrames * 2).
+        std::array<vector<f32>, AudioBusCount> BusAccum;
+        /// @brief The mono reverb-send accumulation (sized kMaxChunkFrames).
+        vector<f32> ReverbSend;
+        /// @brief The stereo wet reverb output (sized kMaxChunkFrames each).
+        vector<f32> WetL;
+        vector<f32> WetR;
+        /// @brief Per-voice mono render scratch (sized kMaxChunkFrames).
+        vector<f32> VoiceScratch;
+
+        /// @brief The last null-device pump output, for headless inspection and tests.
+        vector<f32> NullOutput;
+
+        u32 Channels = 2;
+        u32 SampleRate = 48000;
+
+        /// @brief Whether a real miniaudio device was initialized.
+        bool HasDevice = false;
+        /// @brief The miniaudio playback device (valid only when HasDevice).
+        ma_device Device{};
+
+        void PrepareScratch(u32 sampleRate, u32 channels)
+        {
+            Channels = channels;
+            SampleRate = sampleRate;
+            for (auto& bus : BusAccum)
+            {
+                bus.assign(static_cast<usize>(kMaxChunkFrames) * 2, 0.0f);
+            }
+            ReverbSend.assign(kMaxChunkFrames, 0.0f);
+            WetL.assign(kMaxChunkFrames, 0.0f);
+            WetR.assign(kMaxChunkFrames, 0.0f);
+            VoiceScratch.assign(kMaxChunkFrames, 0.0f);
+            MasterReverb.Prepare(sampleRate);
+        }
+    };
+
+    // -- self-test tone ------------------------------------------------------
+
+    SelfTestTone GenerateSelfTestTone(u32 sampleRate)
+    {
+        SelfTestTone tone;
+        tone.SampleRate = sampleRate;
+        tone.Channels = 1;
+        tone.FrameCount = static_cast<u64>(sampleRate) / 4; // 0.25 s
+        tone.Samples.resize(tone.FrameCount);
+
+        constexpr f32 amplitude = 0.2f;
+        constexpr f32 frequency = 440.0f;
+        const u64 fadeFrames = std::min<u64>(tone.FrameCount / 8, sampleRate / 100);
+        f32 peak = 0.0f;
+        for (u64 i = 0; i < tone.FrameCount; ++i)
+        {
+            const f32 phase = 2.0f * std::numbers::pi_v<f32> * frequency * static_cast<f32>(i) /
+                              static_cast<f32>(sampleRate);
+            f32 envelope = 1.0f;
+            if (fadeFrames > 0)
+            {
+                if (i < fadeFrames)
+                {
+                    envelope = static_cast<f32>(i) / static_cast<f32>(fadeFrames);
+                }
+                else if (i >= tone.FrameCount - fadeFrames)
+                {
+                    envelope =
+                        static_cast<f32>(tone.FrameCount - 1 - i) / static_cast<f32>(fadeFrames);
+                }
+            }
+            const f32 sample = std::sin(phase) * amplitude * envelope;
+            tone.Samples[i] = sample;
+            peak = std::max(peak, std::abs(sample));
+        }
+        tone.Peak = peak;
+        return tone;
+    }
+
+    // -- device --------------------------------------------------------------
+
+    namespace
+    {
+        void DeviceDataCallback(ma_device* device, void* output, const void* /*input*/,
+                                ma_uint32 frameCount)
+        {
+            auto* self = static_cast<AudioDevice*>(device->pUserData);
+            const u32 channels = self->GetChannels();
+            self->RenderBlock(
+                {static_cast<f32*>(output), static_cast<usize>(frameCount) * channels}, frameCount);
+        }
+
+        // Mixes one bounded chunk of the snapshot into an interleaved stereo output. Runs on the
+        // real-time callback thread (or the main thread in null mode) and touches only the device's
+        // own RT state — never the engine or any scene API.
+        void MixChunk(AudioDevice::Native& native, const AudioFrame& frame, f32* out, u32 frames)
+        {
+            const u32 sampleRate = native.SampleRate;
+            const u32 channels = native.Channels;
+
+            for (auto& bus : native.BusAccum)
+            {
+                std::fill_n(bus.data(), static_cast<usize>(frames) * 2, 0.0f);
+            }
+            std::fill_n(native.ReverbSend.data(), frames, 0.0f);
+
+            for (u32 slot = 0; slot < MaxVoices; ++slot)
+            {
+                const VoiceSnapshot& voice = frame.Voices[slot];
+                AudioDevice::Native::RtVoice& rt = native.RtVoices[slot];
+                if (!voice.Active || voice.Pcm == nullptr || voice.PcmFrameCount == 0)
+                {
+                    continue;
+                }
+                if (rt.Generation != voice.Generation)
+                {
+                    rt.Cursor = 0.0;
+                    rt.Generation = voice.Generation;
+                    rt.Finished = false;
+                    rt.OcclusionState = 0.0f;
+                }
+                if (rt.Finished)
+                {
+                    continue;
+                }
+
+                const f64 srcRate = voice.PcmSampleRate == 0
+                                        ? static_cast<f64>(sampleRate)
+                                        : static_cast<f64>(voice.PcmSampleRate);
+                const f64 ratio = (srcRate / static_cast<f64>(sampleRate)) *
+                                  static_cast<f64>(std::max(voice.Pitch, 0.0f));
+                const f32 occlusionCoef = 1.0f - std::clamp(voice.Occlusion, 0.0f, 1.0f) * 0.98f;
+
+                bool exhausted = false;
+                for (u32 i = 0; i < frames; ++i)
+                {
+                    if (rt.Cursor >= static_cast<f64>(voice.PcmFrameCount) && !voice.Loop)
+                    {
+                        native.VoiceScratch[i] = 0.0f;
+                        exhausted = true;
+                        continue;
+                    }
+                    f32 sample = SampleMono(voice, rt.Cursor);
+                    rt.OcclusionState += occlusionCoef * (sample - rt.OcclusionState);
+                    sample = rt.OcclusionState;
+                    native.VoiceScratch[i] = sample;
+                    rt.Cursor += ratio;
+                    if (voice.Loop && rt.Cursor >= static_cast<f64>(voice.PcmFrameCount))
+                    {
+                        rt.Cursor -= static_cast<f64>(voice.PcmFrameCount);
+                    }
+                }
+
+                f32 leftGain = 0.0f;
+                f32 rightGain = 0.0f;
+                EqualPowerPan(voice.Pan, leftGain, rightGain);
+                const f32 gain = std::max(voice.Gain, 0.0f);
+                vector<f32>& bus = native.BusAccum[static_cast<usize>(voice.Bus)];
+                const f32 send = std::clamp(voice.ReverbSend, 0.0f, 1.0f);
+                for (u32 i = 0; i < frames; ++i)
+                {
+                    const f32 s = native.VoiceScratch[i] * gain;
+                    bus[i * 2] += s * leftGain;
+                    bus[i * 2 + 1] += s * rightGain;
+                    native.ReverbSend[i] += s * send;
+                }
+
+                if (exhausted && !voice.Loop)
+                {
+                    rt.Finished = true;
+                    native.Retired.Push(RetiredVoice{.Slot = slot, .Generation = voice.Generation});
+                }
+            }
+
+            // Sum the category buses into the master, each through its own low-pass and gain, then
+            // apply the master's own low-pass and gain, then add the reverb wet.
+            vector<f32>& master = native.BusAccum[static_cast<usize>(AudioBus::Master)];
+            for (usize b = 0; b < AudioBusCount; ++b)
+            {
+                if (b == static_cast<usize>(AudioBus::Master))
+                {
+                    continue;
+                }
+                vector<f32>& bus = native.BusAccum[b];
+                const f32 coef = OnePoleCoefficient(frame.BusLowpassCutoff[b], sampleRate);
+                const f32 gain = std::max(frame.BusGain[b], 0.0f);
+                const f32 busSend = std::clamp(frame.BusReverbSend[b], 0.0f, 1.0f);
+                for (u32 i = 0; i < frames; ++i)
+                {
+                    native.BusLpL[b] += coef * (bus[i * 2] - native.BusLpL[b]);
+                    native.BusLpR[b] += coef * (bus[i * 2 + 1] - native.BusLpR[b]);
+                    const f32 l = native.BusLpL[b] * gain;
+                    const f32 r = native.BusLpR[b] * gain;
+                    master[i * 2] += l;
+                    master[i * 2 + 1] += r;
+                    native.ReverbSend[i] += (l + r) * 0.5f * busSend;
+                }
+            }
+
+            const auto masterIdx = static_cast<usize>(AudioBus::Master);
+            const f32 masterCoef =
+                OnePoleCoefficient(frame.BusLowpassCutoff[masterIdx], sampleRate);
+            const f32 masterGain = std::max(frame.BusGain[masterIdx], 0.0f);
+            const f32 masterSend = std::clamp(frame.BusReverbSend[masterIdx], 0.0f, 1.0f);
+            for (u32 i = 0; i < frames; ++i)
+            {
+                native.BusLpL[masterIdx] += masterCoef * (master[i * 2] - native.BusLpL[masterIdx]);
+                native.BusLpR[masterIdx] +=
+                    masterCoef * (master[i * 2 + 1] - native.BusLpR[masterIdx]);
+                master[i * 2] = native.BusLpL[masterIdx];
+                master[i * 2 + 1] = native.BusLpR[masterIdx];
+                native.ReverbSend[i] += (master[i * 2] + master[i * 2 + 1]) * 0.5f * masterSend;
+            }
+
+            native.MasterReverb.ProcessBlock(native.ReverbSend.data(), native.WetL.data(),
+                                             native.WetR.data(), frames, frame.Reverb);
+            const f32 wet = std::clamp(frame.Reverb.Wet, 0.0f, 1.0f);
+
+            for (u32 i = 0; i < frames; ++i)
+            {
+                const f32 left = master[i * 2] * masterGain + native.WetL[i] * wet;
+                const f32 right = master[i * 2 + 1] * masterGain + native.WetR[i] * wet;
+                if (channels == 1)
+                {
+                    out[i] = (left + right) * 0.5f;
+                }
+                else
+                {
+                    out[static_cast<usize>(i) * channels] = left;
+                    out[static_cast<usize>(i) * channels + 1] = right;
+                    for (u32 c = 2; c < channels; ++c)
+                    {
+                        out[static_cast<usize>(i) * channels + c] = 0.0f;
+                    }
+                }
+            }
+        }
+    }
+
+    AudioDevice::AudioDevice(const AudioDeviceInfo& info)
+        : m_Engine(CreateUnique<AudioEngine>(*this)), m_Native(CreateUnique<Native>()),
+          m_Channels(info.Channels == 0 ? 2 : info.Channels),
+          m_SampleRate(info.SampleRate == 0 ? 48000 : info.SampleRate)
+    {
+        bool started = false;
+        if (info.Backend == AudioBackend::Auto)
+        {
+            ma_device_config config = ma_device_config_init(ma_device_type_playback);
+            config.playback.format = ma_format_f32;
+            config.playback.channels = m_Channels;
+            config.sampleRate = info.SampleRate;
+            config.dataCallback = &DeviceDataCallback;
+            config.pUserData = this;
+            if (ma_device_init(nullptr, &config, &m_Native->Device) == MA_SUCCESS)
+            {
+                m_Channels = m_Native->Device.playback.channels;
+                m_SampleRate = m_Native->Device.sampleRate;
+                m_Native->HasDevice = true;
+                m_Backend = AudioBackend::Auto;
+                started = ma_device_start(&m_Native->Device) == MA_SUCCESS;
+                if (!started)
+                {
+                    ma_device_uninit(&m_Native->Device);
+                    m_Native->HasDevice = false;
+                }
+            }
+        }
+
+        if (!started)
+        {
+            m_Backend = AudioBackend::Null;
+            if (m_SampleRate == 0)
+            {
+                m_SampleRate = 48000;
+            }
+        }
+
+        m_Native->PrepareScratch(m_SampleRate, m_Channels);
+
+        Log::Info("Audio: {} backend, {} Hz, {} channels", IsNull() ? "null" : "hardware",
+                  m_SampleRate, m_Channels);
+
+        if (info.RunSelfTest)
+        {
+            RunSelfTest();
+        }
+    }
+
+    AudioDevice::~AudioDevice()
+    {
+        // Stop and join the callback thread before any referenced resource can be freed. Once the
+        // device is uninit'd the RT thread is quiesced, so the engine's deferred sources release
+        // safely as members destruct.
+        if (m_Native && m_Native->HasDevice)
+        {
+            ma_device_uninit(&m_Native->Device);
+            m_Native->HasDevice = false;
+        }
+    }
+
+    Unique<AudioDevice> AudioDevice::Create(const AudioDeviceInfo& info)
+    {
+        return Unique<AudioDevice>(new AudioDevice(info));
+    }
+
+    AudioDevice::Native& AudioDevice::GetNative() const
+    {
+        return *m_Native;
+    }
+
+    u64 AudioDevice::GetConsumedSerial() const
+    {
+        return m_Native->ConsumedSerial.load(std::memory_order_acquire);
+    }
+
+    std::span<const f32> AudioDevice::GetDebugMixBuffer() const
+    {
+        return m_Native->NullOutput;
+    }
+
+    void AudioDevice::RunSelfTest()
+    {
+        const SelfTestTone tone = GenerateSelfTestTone(m_SampleRate);
+        const Ref<AudioBuffer> buffer =
+            AudioBuffer::Create(tone.Samples, tone.Channels, tone.SampleRate);
+        m_Engine->AddVoice(buffer,
+                           VoiceParams{.Bus = AudioBus::Master, .Gain = 1.0f, .Loop = false});
+    }
+
+    void AudioDevice::Pump(f32 deltaSeconds)
+    {
+        m_Engine->Publish();
+
+        if (IsNull())
+        {
+            u32 frames =
+                static_cast<u32>(std::lround(deltaSeconds * static_cast<f32>(m_SampleRate)));
+            frames = std::min(frames, kMaxPumpFrames);
+            if (frames > 0)
+            {
+                m_Native->NullOutput.assign(static_cast<usize>(frames) * m_Channels, 0.0f);
+                RenderBlock(m_Native->NullOutput, frames);
+            }
+        }
+
+        m_Engine->DrainRetired();
+        m_Engine->CollectDeferred();
+    }
+
+    void AudioDevice::RenderBlock(std::span<f32> output, u32 frames)
+    {
+        Native& native = *m_Native;
+        native.Snapshots.FetchNewest();
+        const AudioFrame& frame = native.Snapshots.FrontBuffer();
+
+        const u32 channels = native.Channels;
+        VE_ASSERT(output.size() >= static_cast<usize>(frames) * channels,
+                  "RenderBlock output span {} too small for {} frames of {} channels",
+                  output.size(), frames, channels);
+
+        u32 done = 0;
+        while (done < frames)
+        {
+            const u32 chunk = std::min(frames - done, kMaxChunkFrames);
+            MixChunk(native, frame, output.data() + static_cast<usize>(done) * channels, chunk);
+            done += chunk;
+        }
+
+        native.ConsumedSerial.store(frame.Serial, std::memory_order_release);
+    }
+
+    // -- engine --------------------------------------------------------------
+
+    AudioEngine::AudioEngine(AudioDevice& device) : m_Device(device) {}
+
+    void AudioEngine::SetBusGain(AudioBus bus, f32 gain)
+    {
+        m_BusGain[static_cast<usize>(bus)] = std::max(gain, 0.0f);
+    }
+
+    f32 AudioEngine::GetBusGain(AudioBus bus) const
+    {
+        return m_BusGain[static_cast<usize>(bus)];
+    }
+
+    void AudioEngine::SetBusLowpassCutoff(AudioBus bus, f32 cutoffHz)
+    {
+        m_BusLowpassCutoff[static_cast<usize>(bus)] = std::max(cutoffHz, 0.0f);
+    }
+
+    f32 AudioEngine::GetBusLowpassCutoff(AudioBus bus) const
+    {
+        return m_BusLowpassCutoff[static_cast<usize>(bus)];
+    }
+
+    void AudioEngine::SetBusReverbSend(AudioBus bus, f32 send)
+    {
+        m_BusReverbSend[static_cast<usize>(bus)] = std::clamp(send, 0.0f, 1.0f);
+    }
+
+    f32 AudioEngine::GetBusReverbSend(AudioBus bus) const
+    {
+        return m_BusReverbSend[static_cast<usize>(bus)];
+    }
+
+    void AudioEngine::SetReverbParams(const ReverbParams& params)
+    {
+        m_Reverb = params;
+    }
+
+    ReverbParams AudioEngine::GetReverbParams() const
+    {
+        return m_Reverb;
+    }
+
+    VoiceHandle AudioEngine::AddVoice(const Ref<AudioBuffer>& buffer, const VoiceParams& params)
+    {
+        VE_ASSERT(buffer, "AddVoice requires a non-null buffer");
+
+        u32 slot = VoiceHandle::InvalidSlot;
+        for (u32 i = 0; i < MaxVoices; ++i)
+        {
+            if (!m_Voices[i].Active)
+            {
+                slot = i;
+                break;
+            }
+        }
+
+        if (slot == VoiceHandle::InvalidSlot)
+        {
+            // Budget full: evict the quietest active voice, but only if the incoming voice is
+            // louder — otherwise it is the one that loses, and the request is rejected.
+            u32 quietest = VoiceHandle::InvalidSlot;
+            f32 quietestGain = params.Gain;
+            for (u32 i = 0; i < MaxVoices; ++i)
+            {
+                if (m_Voices[i].Active && m_Voices[i].Params.Gain < quietestGain)
+                {
+                    quietestGain = m_Voices[i].Params.Gain;
+                    quietest = i;
+                }
+            }
+            if (quietest == VoiceHandle::InvalidSlot)
+            {
+                return {};
+            }
+            RetireSlot(quietest);
+            slot = quietest;
+        }
+
+        Voice& voice = m_Voices[slot];
+        voice.Generation += 1;
+        voice.Active = true;
+        voice.Source = buffer;
+        voice.Params = params;
+        ++m_ActiveCount;
+        return VoiceHandle{.Slot = slot, .Generation = voice.Generation};
+    }
+
+    bool AudioEngine::IsVoiceLive(VoiceHandle voice) const
+    {
+        return voice.IsValid() && voice.Slot < MaxVoices && m_Voices[voice.Slot].Active &&
+               m_Voices[voice.Slot].Generation == voice.Generation;
+    }
+
+    void AudioEngine::SetVoiceParams(VoiceHandle voice, const VoiceParams& params)
+    {
+        if (IsVoiceLive(voice))
+        {
+            m_Voices[voice.Slot].Params = params;
+        }
+    }
+
+    void AudioEngine::StopVoice(VoiceHandle voice)
+    {
+        if (IsVoiceLive(voice))
+        {
+            RetireSlot(voice.Slot);
+        }
+    }
+
+    usize AudioEngine::GetActiveVoiceCount() const
+    {
+        return m_ActiveCount;
+    }
+
+    void AudioEngine::RetireSlot(u32 slot)
+    {
+        Voice& voice = m_Voices[slot];
+        if (!voice.Active)
+        {
+            return;
+        }
+        if (voice.Source)
+        {
+            // The source may still be referenced by the most recently published frame, so it is
+            // freed only once the mixer's consumed generation passes this serial.
+            m_Deferred.push_back(
+                Deferred{.Source = std::move(voice.Source), .SafeAfterSerial = m_PublishedSerial});
+        }
+        voice.Active = false;
+        voice.Source = nullptr;
+        if (m_ActiveCount > 0)
+        {
+            --m_ActiveCount;
+        }
+    }
+
+    void AudioEngine::Publish()
+    {
+        AudioDevice::Native& native = m_Device.GetNative();
+        AudioFrame& frame = native.Snapshots.BackBuffer();
+
+        for (usize b = 0; b < AudioBusCount; ++b)
+        {
+            frame.BusGain[b] = m_BusGain[b];
+            frame.BusLowpassCutoff[b] = m_BusLowpassCutoff[b];
+            frame.BusReverbSend[b] = m_BusReverbSend[b];
+        }
+        frame.Reverb = m_Reverb;
+
+        for (u32 slot = 0; slot < MaxVoices; ++slot)
+        {
+            VoiceSnapshot& snapshot = frame.Voices[slot];
+            const Voice& voice = m_Voices[slot];
+            if (voice.Active && voice.Source)
+            {
+                const std::span<const f32> samples = voice.Source->Samples();
+                snapshot.Active = true;
+                snapshot.Generation = voice.Generation;
+                snapshot.Pcm = samples.data();
+                snapshot.PcmFrameCount = voice.Source->FrameCount();
+                snapshot.PcmChannels = voice.Source->Channels();
+                snapshot.PcmSampleRate = voice.Source->SampleRate();
+                snapshot.Bus = voice.Params.Bus;
+                snapshot.Gain = voice.Params.Gain;
+                snapshot.Pan = voice.Params.Pan;
+                snapshot.Pitch = voice.Params.Pitch;
+                snapshot.Occlusion = voice.Params.Occlusion;
+                snapshot.ReverbSend = voice.Params.ReverbSend;
+                snapshot.Loop = voice.Params.Loop;
+            }
+            else
+            {
+                snapshot.Active = false;
+                snapshot.Pcm = nullptr;
+                snapshot.PcmFrameCount = 0;
+            }
+        }
+
+        frame.Serial = ++m_PublishedSerial;
+        native.Snapshots.Publish();
+    }
+
+    void AudioEngine::DrainRetired()
+    {
+        AudioDevice::Native& native = m_Device.GetNative();
+        RetiredVoice retired;
+        while (native.Retired.Pop(retired))
+        {
+            if (retired.Slot < MaxVoices && m_Voices[retired.Slot].Active &&
+                m_Voices[retired.Slot].Generation == retired.Generation)
+            {
+                RetireSlot(retired.Slot);
+            }
+        }
+    }
+
+    void AudioEngine::CollectDeferred()
+    {
+        const u64 consumed = m_Device.GetConsumedSerial();
+        std::erase_if(m_Deferred, [consumed](const Deferred& deferred)
+                      { return consumed > deferred.SafeAfterSerial; });
+    }
+}
