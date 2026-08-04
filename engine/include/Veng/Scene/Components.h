@@ -1128,6 +1128,12 @@ namespace Veng
         /// A larger value sharpens the cascades at a memory/bandwidth cost. Clamped to the device
         /// maximum by the renderer; the default matches the renderer's own ShadowResolution default.
         u32 ShadowResolution = 1024;
+        /// @brief The scene's authored flat-fallback ambient, multiplied by surface occlusion.
+        ///
+        /// The ambient a surface receives in a scene with no lit sky (no environment, no SH/IBL sky
+        /// tier). Mapped into the per-frame view and pushed into the lighting pass; the default is
+        /// the engine's flat ambient, so a level authoring none renders unchanged.
+        vec3 AmbientFloor{0.12f, 0.13f, 0.16f};
         /// @brief Whether the SSAO battery is enabled.
         bool AO = true;
         /// @brief Whether screen-space reflections run.
@@ -1555,6 +1561,7 @@ VE_FIELD(Shadows, .DisplayName = "Shadows")
 VE_FIELD(PunctualShadows, .DisplayName = "Punctual / Area Shadows")
 VE_FIELD(MaxShadowDistance, .DisplayName = "Max Shadow Distance", .Display = {.Min = 0.0})
 VE_FIELD(ShadowResolution, .DisplayName = "Shadow Resolution", .Display = {.Min = 1})
+VE_FIELD(AmbientFloor, .DisplayName = "Ambient Floor")
 VE_FIELD(AO, .DisplayName = "SSAO")
 VE_FIELD(SSR, .DisplayName = "Screen-Space Reflections")
 VE_FIELD(Refraction, .DisplayName = "Refraction (Scene-Color Grab)")

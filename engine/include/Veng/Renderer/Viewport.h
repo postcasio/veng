@@ -86,6 +86,10 @@ namespace Veng::Renderer
         f32 AutoExposureLowPercentile = 0.0f;
         /// @brief Upper percentile of the lit-pixel histogram the metering averages to, in [0, 1].
         f32 AutoExposureHighPercentile = 1.0f;
+        /// @brief The scene's authored flat-fallback ambient (no lit sky), multiplied by occlusion.
+        ///
+        /// The default is the engine's flat ambient, so a consumer authoring none is unchanged.
+        vec3 AmbientFloor{0.12f, 0.13f, 0.16f};
         /// @brief Bloom bright-pass luminance knee, display-referred (1.0 = the post-exposure
         /// white point).
         f32 BloomThreshold = 1.0f;

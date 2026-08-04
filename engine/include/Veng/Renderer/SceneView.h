@@ -168,6 +168,15 @@ namespace Veng::Renderer
         /// from the meter. Ignored when auto-exposure is off.
         f32 AutoExposureHighPercentile = 1.0f;
 
+        /// @brief The scene's authored flat-fallback ambient, multiplied by surface occlusion.
+        ///
+        /// Read by the lighting pass every Execute and pushed into both lighting pipelines. It is
+        /// the ambient a surface receives in a scene with no lit sky — neither an environment nor
+        /// an SH/IBL sky tier is active — so lowering it darkens shadowed surfaces in an unlit
+        /// scene. Filled from the authored LevelRenderSettings; the default is the engine's flat
+        /// ambient, so a scene authoring none renders exactly as before.
+        vec3 AmbientFloor{0.12f, 0.13f, 0.16f};
+
         /// @brief Environment map for the skybox and image-based lighting; empty for none.
         ///
         /// The renderer fills this from the resolved Sky component each Execute (its source is an
@@ -186,10 +195,12 @@ namespace Veng::Renderer
         /// Filled from the resolved Sky component's Intensity. Ignored when the atmosphere sky is off.
         f32 AtmosphereIntensity = 1.0f;
 
-        /// @brief Scales the dynamic SH skylight ambient; read by the lighting pass each Execute.
+        /// @brief Scales the SH skylight ambient; read by the lighting pass each Execute.
         ///
-        /// Filled from the resolved Sky component's Intensity. Effective only when the resolved sky
-        /// lights the scene via SH and no environment is bound (the second ambient arm, below IBL).
+        /// Filled from the resolved Sky component's Intensity for every SH-lighting source — the
+        /// procedural atmosphere and a baked material sky alike. Effective only when the resolved
+        /// sky lights the scene via SH and no environment is bound (the second ambient arm, below
+        /// IBL).
         f32 SkylightIntensity = 1.0f;
 
         /// @brief Whether the procedural atmosphere sky renders this frame.

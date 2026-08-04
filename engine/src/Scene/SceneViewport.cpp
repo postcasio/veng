@@ -68,6 +68,7 @@ namespace Veng
         settings.Refraction = render.Refraction;
         settings.DepthOfField = render.DepthOfField;
 
+        view.AmbientFloor = render.AmbientFloor;
         view.Exposure = render.Exposure;
         view.Tonemapper = render.Tonemapper;
         view.AutoExposureMaxLuminance = render.AutoExposureMaxLuminance;

@@ -79,6 +79,9 @@ struct PushConstants
     uint IblEnabled;          // 1 = split-sum IBL ambient; 0 = flat ambient fallback
     uint SkylightOn;          // 1 = SH skylight ambient (second arm, below IBL); 0 = flat fallback
     uint PrefilterMipCount;   // prefiltered specular mip count (roughness -> LOD)
+    // A scene's authored ambient in a scene with no lit sky: the flat fallback ambient, multiplied
+    // by the surface occlusion. 16-byte aligned (std430 vec3), so a scalar follows it in the same slot.
+    float3 AmbientFloor;
     float EnvIntensity;       // scales the IBL ambient
     float SkylightIntensity;  // scales the SH skylight ambient
     uint LtcMatTexture;       // LTC inverse-matrix LUT bindless index (area lights)
@@ -99,11 +102,6 @@ struct VSOutput
 };
 
 static const float Pi = 3.14159265358979323846;
-
-// A constant hemispheric ambient, multiplied by the surface's occlusion term so
-// occlusion reads visibly. Sized larger than a flat fill so the occlusion channel
-// (and Plan 05's SSAO, which folds into the same term) is perceptible.
-static const float3 AmbientColor = float3(0.12, 0.13, 0.16);
 
 // GGX / Trowbridge-Reitz normal distribution.
 float DistributionGGX(float nDotH, float roughness)
@@ -571,7 +569,7 @@ float4 fsMain(VSOutput input) : SV_Target
     }
     else
     {
-        ambient = AmbientColor * albedo * ambientOcclusion;
+        ambient = g_PC.AmbientFloor * albedo * ambientOcclusion;
     }
 
     // G4 emissive: the linear HDR radiance the surface fragment authored, added into the

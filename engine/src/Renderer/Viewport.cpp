@@ -382,6 +382,7 @@ namespace Veng::Renderer
             .AutoExposureSpeed = m_ViewState.AutoExposureSpeed,
             .AutoExposureLowPercentile = m_ViewState.AutoExposureLowPercentile,
             .AutoExposureHighPercentile = m_ViewState.AutoExposureHighPercentile,
+            .AmbientFloor = m_ViewState.AmbientFloor,
             .BloomThreshold = m_ViewState.BloomThreshold,
             .BloomIntensity = m_ViewState.BloomIntensity,
             .BloomRadius = m_ViewState.BloomRadius,

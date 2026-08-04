@@ -294,6 +294,7 @@ add_library(veng SHARED
         src/Renderer/Passes/SkyboxScenePass.cpp
         src/Renderer/SkyCubemapBake.cpp
         src/Renderer/SkyResolver.cpp
+        src/Renderer/SkySourceResolve.cpp
         src/Renderer/AtmospherePrecompute.cpp
         src/Renderer/Passes/SkyScenePass.cpp
         src/Renderer/Passes/DofCompositeScenePass.cpp

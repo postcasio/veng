@@ -3,6 +3,7 @@
 #include "EnvironmentIbl.h"
 #include "SkyCubemapBake.h"
 #include "AtmospherePrecompute.h"
+#include "SkySourceResolve.h"
 
 #include <algorithm>
 #include <span>
@@ -128,47 +129,10 @@ namespace Veng::Renderer
             m_MultipleSkyWarned = true;
         }
 
-        SkySourceKind kind = SkySourceKind::None;
-        SkyLighting lighting = SkyLighting::None;
-        bool baked = false;
-
-        if (sky != nullptr && sky->Source.HasValue())
-        {
-            lighting = sky->Lighting;
-            const TypeId active = sky->Source.ActiveType();
-            const void* source = sky->Source.ActivePtr();
-            if (active == TypeIdOf<EnvironmentSky>())
-            {
-                const auto* environment = static_cast<const EnvironmentSky*>(source);
-                view.Environment = environment->Map;
-                view.EnvironmentIntensity = sky->Intensity;
-                kind = SkySourceKind::Environment;
-            }
-            else if (active == TypeIdOf<AtmosphereSky>())
-            {
-                const auto* atmosphere = static_cast<const AtmosphereSky*>(source);
-                view.Atmosphere = atmosphere->Params;
-                view.AtmosphereEnabled = true;
-                view.AtmosphereIntensity = sky->Intensity;
-                view.SkylightIntensity = sky->Intensity;
-                kind = SkySourceKind::Atmosphere;
-                // Baked renders the atmosphere into a radiance cube the skybox path samples; direct
-                // runs it per pixel every frame. The two render the same sky; the author picks per
-                // the sky's dynamics and the renderer honors it (no silent switch).
-                baked = atmosphere->Mode == SkyMode::Baked;
-            }
-            else if (active == TypeIdOf<MaterialSky>())
-            {
-                const auto* material = static_cast<const MaterialSky*>(source);
-                view.SkyMaterial = material->Material;
-                kind = SkySourceKind::Material;
-                // Baked runs the material into a radiance cube the skybox path samples; direct runs
-                // it per pixel every frame. The two render the same sky; the author picks per the
-                // sky's dynamics and the renderer honors it (no silent switch).
-                baked = material->Mode == SkyMode::Baked;
-                view.EnvironmentIntensity = sky->Intensity;
-            }
-        }
+        const ResolvedSkySource resolved = ResolveSkySource(sky, view);
+        const SkySourceKind kind = resolved.Kind;
+        const SkyLighting lighting = resolved.Lighting;
+        const bool baked = resolved.Baked;
 
         // The source × mode × tier resolution table, now in its final unified shape: every source is
         // a radiance-cube producer, so a lighting tier is active exactly when the source fills a

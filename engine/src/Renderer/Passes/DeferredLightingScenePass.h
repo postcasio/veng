@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstddef>
+
 #include <Veng/Veng.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/RenderGraph.h>
@@ -14,7 +16,9 @@ namespace Veng::Renderer
 
     // The deferred-lighting fragment push block: g-buffer bindless slots (including the G4
     // emissive read), view-constants index, and light buffer base + live count.
-    // Matches deferred_lighting.frag PushConstants byte-for-byte.
+    // Matches deferred_lighting.frag PushConstants byte-for-byte. AmbientFloor is a vec3 at a
+    // 16-byte-aligned offset so the std430 vec3 in the shader and the align-4 glm::vec3 here land
+    // at the same offset, with the following scalar packed into its 4th slot.
     struct LightingPushConstants
     {
         u32 AlbedoTexture;
@@ -29,6 +33,7 @@ namespace Veng::Renderer
         u32 IblEnabled;        // 1 = sample the IBL set's maps; 0 = flat ambient fallback
         u32 SkylightOn;        // 1 = SH skylight ambient (second arm); 0 = flat ambient fallback
         u32 PrefilterMipCount; // prefiltered specular mip count (roughness → LOD)
+        vec3 AmbientFloor;     // scene's authored flat-fallback ambient (no lit sky)
         f32 EnvIntensity;      // scales the IBL ambient
         f32 SkylightIntensity; // scales the SH skylight ambient
         u32 LtcMatTexture;     // LTC inverse-matrix LUT bindless slot (area lights)
@@ -36,9 +41,12 @@ namespace Veng::Renderer
         u32 AreaVertexBase;    // current frame's base index into the area-vertex buffer
     };
 
+    static_assert(offsetof(LightingPushConstants, AmbientFloor) % 16 == 0,
+                  "AmbientFloor must sit on a 16-byte std430 boundary to match the shader vec3");
+
     // The SSAO-enabled lighting variant's push block: the base + IBL fields plus the AO
-    // bindless slot. Matches deferred_lighting_ssao.frag PushConstants byte-for-byte
-    // (sixteen u32s — one pad reaches a 16-byte boundary).
+    // bindless slot. Matches deferred_lighting_ssao.frag PushConstants byte-for-byte (the trailing
+    // pad reaches a 16-byte boundary). AmbientFloor sits at the same aligned offset as the base.
     struct SsaoLightingPushConstants
     {
         u32 AlbedoTexture;
@@ -53,6 +61,7 @@ namespace Veng::Renderer
         u32 IblEnabled;
         u32 SkylightOn;
         u32 PrefilterMipCount;
+        vec3 AmbientFloor;
         f32 EnvIntensity;
         f32 SkylightIntensity;
         u32 LtcMatTexture;
@@ -61,6 +70,12 @@ namespace Veng::Renderer
         u32 SsaoTexture;
         u32 Pad1;
     };
+
+    static_assert(offsetof(SsaoLightingPushConstants, AmbientFloor) % 16 == 0,
+                  "AmbientFloor must sit on a 16-byte std430 boundary to match the shader vec3");
+    static_assert(offsetof(LightingPushConstants, AmbientFloor) ==
+                      offsetof(SsaoLightingPushConstants, AmbientFloor),
+                  "AmbientFloor must sit at one offset across both lighting push blocks");
 
     /// @brief The fullscreen deferred-lighting pass.
     ///
