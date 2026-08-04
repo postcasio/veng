@@ -95,6 +95,13 @@ namespace Veng
 
     void SceneSimulation::Stop(Scene& scene, const SystemContext& context)
     {
+        // Idempotent against Start: stopping a never-started or already-stopped simulation runs no
+        // OnStop. A close path that stops the simulation before dropping its world is then safe even
+        // when an earlier path already stopped it, so end-play never runs twice.
+        if (!m_Started)
+        {
+            return;
+        }
         m_Started = false;
         for (const Unique<SceneSystem>& system : m_Systems)
         {

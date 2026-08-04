@@ -65,7 +65,11 @@ namespace Veng
         void UpdatePhase(Scene& scene, SceneSystem::Phase phase, f32 delta,
                          const SystemContext& context);
 
-        /// @brief Calls OnStop on each system, in registration order.
+        /// @brief Calls OnStop on each system, in registration order; a no-op when not started.
+        ///
+        /// Idempotent against Start: stopping a never-started or already-stopped simulation runs no
+        /// OnStop, so a close path that stops the simulation before dropping its world is safe even
+        /// when an earlier path already stopped it.
         /// @param scene    The scene the systems operate over.
         /// @param context  Per-tick services forwarded to each system.
         void Stop(Scene& scene, const SystemContext& context);

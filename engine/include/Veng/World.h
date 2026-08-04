@@ -2,6 +2,7 @@
 
 #include <Veng/Veng.h>
 #include <Veng/Asset/ResidencyBatch.h>
+#include <Veng/Scene/SceneSystem.h>
 #include <Veng/Scene/SimClock.h>
 
 namespace Veng
@@ -52,6 +53,16 @@ namespace Veng
 
         /// @brief The world spawn's not-yet-resident assets, held until the world starts.
         ResidencyBatch Pending;
+
+        /// @brief Builds the SystemContext this world's simulation is started and stopped with.
+        ///
+        /// Captured from WorldOpenInfo::MakeStartContext at open. OpenWorld starts the simulation
+        /// with it, and CloseWorld stops it with a fresh call, so each system's OnStop runs with the
+        /// same live services (the audio engine et al.) its OnStart and ticks saw. Empty when the
+        /// opener supplied none — a deferred-start or device-free world — leaving CloseWorld no
+        /// context to stop with, so it drops the world without running OnStop rather than fabricating
+        /// one.
+        function<SystemContext()> MakeContext;
 
         /// @brief This frame's interpolation fraction from the last Sim step, for the View push.
         f32 LastAlpha = 0.0f;

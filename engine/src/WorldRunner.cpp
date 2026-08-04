@@ -97,6 +97,9 @@ namespace Veng
             }
         }
         world->LiveScene = world->OwnedScene.get();
+        // Capture the context factory so CloseWorld can stop the simulation symmetrically with the
+        // start below; a fresh call at close rebuilds a context over the same live services.
+        world->MakeContext = info.MakeStartContext;
 
         const WorldInstanceId id = world->Id;
         Scene& scene = *world->LiveScene;
@@ -126,6 +129,23 @@ namespace Veng
         {
             return;
         }
+
+        // End-play before teardown: run each system's OnStop while its scene is still live, symmetric
+        // with OpenWorld starting the simulation. Destructing the world (Scene::~Scene → the systems)
+        // runs no OnStop — a destructor has no SystemContext to supply — so a system that releases an
+        // engine-owned resource in OnStop depends on this stop, not on destruction. Guarded on a
+        // started simulation and a captured context factory: a deferred-start or device-free world
+        // carries no factory and is dropped without a fabricated context rather than crashing (the
+        // same guard OpenWorld puts on the start). Stopping is idempotent, so a caller that already
+        // stopped before closing takes a harmless second no-op here.
+        const World& closing = **it;
+        Scene& scene = closing.GetScene();
+        if (const SceneSimulation* sim = scene.GetSimulation();
+            sim != nullptr && sim->IsStarted() && closing.MakeContext)
+        {
+            scene.StopSimulation(closing.MakeContext());
+        }
+
         m_Worlds.erase(it);
     }
 

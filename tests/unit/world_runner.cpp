@@ -45,6 +45,19 @@ namespace
 
         void OnUpdate(Scene& scene, f32, const SystemContext&) override { ++Updates[&scene]; }
     };
+
+    // A probe recording how many times its OnStop (end-play) ran per scene, so a close path that
+    // must run OnStop exactly once — never zero, never twice — is checkable by handle. Reads only
+    // the scene, never the forwarded context.
+    struct StopProbe final : SceneSystem
+    {
+        static inline std::map<const Scene*, int> Stops;
+
+        static void Reset() { Stops.clear(); }
+
+        void OnUpdate(Scene&, f32, const SystemContext&) override {}
+        void OnStop(Scene& scene, const SystemContext&) override { ++Stops[&scene]; }
+    };
 }
 
 namespace Veng
@@ -61,6 +74,13 @@ namespace Veng
     {
         static constexpr SystemId Id = 0x0071D000000000A2ULL;
         static string Name() { return "OtherProbe"; }
+    };
+
+    template <>
+    struct VengSystem<StopProbe>
+    {
+        static constexpr SystemId Id = 0x0071D000000000A3ULL;
+        static string Name() { return "StopProbe"; }
     };
 }
 
@@ -93,6 +113,18 @@ namespace
             .SimTickRate = 60,
             .StartSimulation = true,
             .Systems = vector<SystemId>{SystemIdOf<TickProbe>()},
+            .MakeStartContext = [&storage] { return storage.Make(); },
+        };
+    }
+
+    // A WorldOpenInfo for an empty-scene world running the OnStop-recording probe, started with the
+    // fake context — so closing it exercises the runner's end-play stop.
+    WorldOpenInfo StopWorld(ContextStorage& storage)
+    {
+        return WorldOpenInfo{
+            .SimTickRate = 60,
+            .StartSimulation = true,
+            .Systems = vector<SystemId>{SystemIdOf<StopProbe>()},
             .MakeStartContext = [&storage] { return storage.Make(); },
         };
     }
@@ -234,6 +266,56 @@ TEST_CASE("Closing a world resolves its id to nothing and leaves a peer untouche
     // Only the surviving world ticked (the closed world's scene was destroyed).
     CHECK(TickProbe::Updates[sceneB] == 2);
     CHECK(runner.ResolveWorld(b)->Clock.GetTick() == 2);
+}
+
+TEST_CASE("Closing a started world through the runner runs its systems' OnStop exactly once")
+{
+    StopProbe::Reset();
+
+    TypeRegistry types;
+    SystemRegistry systems;
+    systems.Register<StopProbe>();
+    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+
+    ContextStorage storage;
+    const WorldInstanceId a = runner.OpenWorld(StopWorld(storage));
+    const Scene* scene = &runner.ResolveWorld(a)->GetScene();
+
+    // A started, unclosed world has not run end-play yet.
+    CHECK(StopProbe::Stops.find(scene) == StopProbe::Stops.end());
+
+    runner.CloseWorld(a);
+
+    // Closing stops the simulation before dropping the world, so OnStop ran once for this scene —
+    // the contract a system releasing a resource in OnStop depends on. The id then resolves to nothing.
+    CHECK(StopProbe::Stops[scene] == 1);
+    CHECK(runner.ResolveWorld(a) == nullptr);
+}
+
+TEST_CASE("A world stopped before closing runs OnStop once, not twice")
+{
+    StopProbe::Reset();
+
+    TypeRegistry types;
+    SystemRegistry systems;
+    systems.Register<StopProbe>();
+    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+
+    ContextStorage storage;
+    const WorldInstanceId a = runner.OpenWorld(StopWorld(storage));
+    Scene& scene = runner.ResolveWorld(a)->GetScene();
+    const Scene* key = &scene;
+
+    // Stop the simulation by hand first — the overlay-close idiom, which stops while the scene is
+    // live and then closes the world. This runs OnStop once.
+    scene.StopSimulation(storage.Make());
+    CHECK(StopProbe::Stops[key] == 1);
+
+    // CloseWorld's own stop lands on an already-stopped simulation and is a no-op (Stop is idempotent),
+    // so end-play runs exactly once across the two stops, never twice.
+    runner.CloseWorld(a);
+    CHECK(StopProbe::Stops[key] == 1);
+    CHECK(runner.ResolveWorld(a) == nullptr);
 }
 
 TEST_CASE("A paused world's sim does not advance while a peer's does")
