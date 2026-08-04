@@ -79,13 +79,14 @@ float4 fsMain(VSOutput input) : SV_Target
         discard;
     }
 
-    // Unproject a point along the pixel's view ray through the inverse view-projection and form
-    // the ray homogeneously — dividing by worldH.w would NaN every pixel at extreme Far/Near,
-    // where the far-plane w collapses to zero in f32 (see Veng/sky.slang SkyViewDirection). The
-    // chosen NDC z is immaterial: normalize() makes the direction independent of it.
+    // The view ray direction through this background pixel, reconstructed through the
+    // translation-free InvViewRotProj (see Veng/sky.slang SkyViewDirection). A far point through
+    // InvViewProj minus the camera is a difference of two large near-equal numbers whose
+    // cancellation grows with the camera's distance from the world origin — and reverse-Z makes
+    // it worse, since NDC z = 1 is now the near plane (a small baseline) rather than the far.
+    // A rotation-only inverse has no camera term to cancel and is exact wherever the camera is.
     float2 ndcXY = input.v_UV * 2.0 - 1.0;
-    float4 worldH = mul(vc.InvViewProj, float4(ndcXY, 1.0, 1.0));
-    float3 dir = normalize(worldH.xyz - vc.CameraPosition.xyz * worldH.w);
+    float3 dir = normalize(mul(vc.InvViewRotProj, float4(ndcXY, 1.0, 1.0)).xyz);
     float3 sunDir = normalize(g_PC.SunDirection);
 
     float3 sky = SkyRadiance(a, dir, sunDir, 0.5);

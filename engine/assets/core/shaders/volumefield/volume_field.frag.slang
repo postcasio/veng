@@ -71,15 +71,15 @@ float4 fsMain(VSOutput input) : SV_Target
     float2 sampleUV = ScaledSampleUV(input.v_UV, vc.RenderScaleUV.xy, vc.MaxValidUV.xy);
     float depth = g_Textures[NonUniformResourceIndex(g_PC.DepthTexture)].Sample(samp, sampleUV).r;
 
-    // The view ray from the camera through this pixel, and the world position of the nearest opaque
-    // surface (reverse-Z: depth == 0 is the cleared background — the far plane). The ray direction
-    // forms homogeneously — dividing by the far-plane w would NaN every pixel at extreme Far/Near,
-    // where it collapses to zero in f32 (see Veng/sky.slang SkyViewDirection); the chosen NDC z is
-    // immaterial to the normalized direction.
+    // The view ray from the camera through this pixel (reverse-Z: depth == 0 is the cleared
+    // background — the far plane). The direction is reconstructed through the translation-free
+    // InvViewRotProj (see Veng/sky.slang SkyViewDirection), so it has no camera term to cancel and
+    // stays exact however far the camera is from the world origin — where a far point through
+    // InvViewProj minus the camera loses f32 precision, the worse since reverse-Z's NDC z = 1 is
+    // the near plane. The origin is the camera itself.
     float2 ndcXY = input.v_UV * 2.0 - 1.0;
-    float4 farH = mul(vc.InvViewProj, float4(ndcXY, 1.0, 1.0));
     float3 origin = vc.CameraPosition.xyz;
-    float3 dir = normalize(farH.xyz - origin * farH.w);
+    float3 dir = normalize(mul(vc.InvViewRotProj, float4(ndcXY, 1.0, 1.0)).xyz);
     float sceneDistance = (depth > 0.0) ? length(WorldFromDepth(vc, ndcXY, depth) - origin) : 1e30;
 
     // Slab intersection of the ray with the field's AABB (mirrors Renderer::ComputeMarchSegment).
