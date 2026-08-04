@@ -1867,6 +1867,7 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle)
             tests/cooker/mesh_cook.cpp
             tests/cooker/socket_cook.cpp
             tests/cooker/collision_shape_cook.cpp
+            tests/cooker/audio_clip.cpp
             tests/cooker/import_orientation.cpp
             tests/cooker/shader_cook.cpp
             tests/cooker/material_cook.cpp

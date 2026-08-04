@@ -79,6 +79,7 @@ add_library(veng SHARED
         src/Assert.cpp
         src/Audio/AudioBus.cpp
         src/Audio/AudioBuffer.cpp
+        src/Audio/AudioClip.cpp
         src/Audio/AudioDevice.cpp
         src/Audio/Reverb.cpp
         src/Asset/AssetLoaderRegistry.cpp
@@ -98,6 +99,7 @@ add_library(veng SHARED
         src/Asset/Skeleton.cpp
         src/Asset/Texture.cpp
         src/Asset/Loaders/AnimationLoader.cpp
+        src/Asset/Loaders/AudioClipLoader.cpp
         src/Asset/Loaders/DataTableLoader.cpp
         src/Asset/Loaders/CollisionShapeLoader.cpp
         src/Asset/Loaders/TableSchemaLoader.cpp
@@ -308,6 +310,7 @@ add_library(veng SHARED
         src/Vendor/ImGui.cpp
         src/Vendor/TinyExr.cpp
         src/Vendor/MiniAudio.cpp
+        src/Vendor/StbVorbis.cpp
 )
 add_library(veng::veng ALIAS veng)
 
@@ -376,6 +379,10 @@ endif ()
 target_compile_options(veng PRIVATE -fno-exceptions)
 set_source_files_properties(src/Vendor/TinyExr.cpp PROPERTIES
         COMPILE_DEFINITIONS TINYEXR_USE_EXCEPTIONS=0)
+
+# stb_vorbis is third-party code not held to veng's warning bar; -w keeps its own warnings from
+# tripping the debug build's -Werror (the same posture the cooker takes for its vendor TUs).
+set_source_files_properties(src/Vendor/StbVorbis.cpp PROPERTIES COMPILE_OPTIONS "-w")
 
 if (VE_DEBUG)
     target_compile_definitions(veng PUBLIC VE_ENABLE_VALIDATION_LAYERS=1 VE_DEBUG=1)
@@ -475,6 +482,7 @@ set_source_files_properties(
         src/Vendor/ImGui.cpp
         src/Vendor/TinyExr.cpp
         src/Vendor/MiniAudio.cpp
+        src/Vendor/StbVorbis.cpp
         PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 
 # miniaudio spawns its own playback thread and links no libraries at build time on Apple (it

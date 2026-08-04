@@ -116,6 +116,18 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(astc_encoder)
 
+# dr_libs — the single-header dr_wav decoder behind the AudioImporter's WAV source path, cooker-only
+# (never linked into libveng, which decodes only the stream-mode Vorbis form at runtime). Header-only
+# (stb pattern): DR_WAV_IMPLEMENTATION is defined in exactly one cooker TU (src/Vendor/DrWav.cpp);
+# every other site includes the header for declarations only. The repo carries no build targets, so
+# populating it adds only the header search path below.
+FetchContent_Declare(
+        dr_libs
+        GIT_REPOSITORY https://github.com/mackron/dr_libs.git
+        GIT_TAG 50bb723e6a459dbb781e26cefee4fd9ca6714d6a
+)
+FetchContent_MakeAvailable(dr_libs)
+
 # FreeType — font-outline loader for the FontImporter's MSDF generation, cooker-only (never linked
 # into libveng, which uploads the cooked atlas and decodes nothing). msdfgen finds it through the
 # Freetype::Freetype target, so it is fetched here before msdf-atlas-gen below and its target
@@ -347,7 +359,10 @@ add_library(veng_cook_objs OBJECT
         src/Importers/ImportOrientation.cpp
         src/Importers/EnvironmentImporter.cpp
         src/Importers/FontImporter.cpp
+        src/Importers/AudioImporter.cpp
         src/Vendor/StbImage.cpp
+        src/Vendor/StbVorbis.cpp
+        src/Vendor/DrWav.cpp
         src/Vendor/TinyExr.cpp
         src/Vendor/XxHash.cpp
         ${bc7enc_rdo_SOURCE_DIR}/bc7enc.cpp
@@ -371,6 +386,7 @@ target_include_directories(veng_cook_objs PUBLIC
 # via src/Vendor/TinyExr.cpp.
 target_include_directories(veng_cook_objs PRIVATE
         ${stb_SOURCE_DIR}
+        ${dr_libs_SOURCE_DIR}
         ${xxhash_SOURCE_DIR}
         ${tinyexr_SOURCE_DIR}
         ${bc7enc_rdo_SOURCE_DIR}
@@ -392,13 +408,21 @@ set_source_files_properties(src/Vendor/TinyExr.cpp PROPERTIES
 target_precompile_headers(veng_cook_objs PRIVATE <Veng/Veng.h>)
 set_source_files_properties(
         src/Vendor/StbImage.cpp
+        src/Vendor/StbVorbis.cpp
+        src/Vendor/DrWav.cpp
         src/Vendor/TinyExr.cpp
         src/Vendor/XxHash.cpp
         src/Importers/TextureImporter.cpp
         src/Importers/FontImporter.cpp
+        src/Importers/AudioImporter.cpp
         ${bc7enc_rdo_SOURCE_DIR}/bc7enc.cpp
         ${bc7enc_rdo_SOURCE_DIR}/rgbcx.cpp
         PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+
+# stb_vorbis / dr_wav are third-party code not held to veng's warning bar; -w keeps their own
+# warnings from tripping the debug build's -Werror, matching the other vendor TUs' posture.
+set_source_files_properties(src/Vendor/StbVorbis.cpp src/Vendor/DrWav.cpp
+        PROPERTIES COMPILE_OPTIONS "-w")
 
 # assimp/Slang headers are needed at compile time by MeshImporter/ShaderImporter
 # (their link is on the executables below). msdf-atlas-gen (plus its msdfgen core/ext) headers back

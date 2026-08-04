@@ -688,6 +688,89 @@ namespace Veng
         u32 IndexCount = 0;
     };
 
+    /// @brief How a cooked audio clip stores its samples.
+    ///
+    /// Stored as the underlying integer of CookedAudioHeader::Storage; the engine mirrors it as
+    /// Veng::Audio::AudioStorage. Integer values are stable — persisted in cooked blobs.
+    enum class CookedAudioStorage : u32
+    {
+        /// @brief Interleaved PCM decoded at cook time; the payload is ready-to-mix samples.
+        ///
+        /// The short-effect form: the source is decoded to PCM offline, so playback is a direct
+        /// buffer read with no per-play decode. The sample format is CookedAudioHeader::SampleFormat.
+        Pcm = 0,
+        /// @brief The source's encoded bitstream, decoded incrementally at play time.
+        ///
+        /// The long-music form: the cook keeps the encoded bytes (CookedAudioHeader::Codec names the
+        /// codec), so residency costs the encoded size rather than the decoded PCM. The runtime
+        /// decodes the resident buffer incrementally, never on the audio callback thread.
+        Encoded = 1,
+    };
+
+    /// @brief The sample format of a Pcm cooked audio payload.
+    ///
+    /// Stored as the underlying integer of CookedAudioHeader::SampleFormat; the engine mirrors it as
+    /// Veng::Audio::AudioSampleFormat. Only meaningful under CookedAudioStorage::Pcm.
+    enum class CookedAudioSampleFormat : u32
+    {
+        /// @brief 32-bit float samples, interleaved, in [-1, 1] — the mixer's native format.
+        F32 = 0,
+        /// @brief 16-bit signed-integer samples, interleaved; the loader converts to float on load.
+        I16 = 1,
+    };
+
+    /// @brief The codec of an Encoded cooked audio payload.
+    ///
+    /// Stored as the underlying integer of CookedAudioHeader::Codec; the engine mirrors it as
+    /// Veng::Audio::AudioCodec. Only meaningful under CookedAudioStorage::Encoded.
+    enum class CookedAudioCodec : u32
+    {
+        /// @brief No encoded codec — the payload is raw PCM (a Pcm clip reports this).
+        None = 0,
+        /// @brief Ogg Vorbis; the runtime decodes it incrementally with the vendored Vorbis decoder.
+        Vorbis = 1,
+    };
+
+    /// @brief The current audio-clip-format version.
+    ///
+    /// Bumped on any CookedAudioHeader layout change; the loader rejects a blob whose Version != this.
+    /// The header is read by a fixed-offset memcpy, so a field added without a version bump is misread
+    /// as garbage rather than tolerated.
+    inline constexpr u32 CookedAudioVersion = 1u;
+
+    /// @brief Cooked header for an audio-clip asset.
+    ///
+    /// An audio clip is one playable sound. The cook-time mode decides how it is stored: a
+    /// Storage of Pcm carries interleaved samples decoded offline (short, overlapping-playable
+    /// effects), and Encoded carries the source's Vorbis bitstream for incremental decode (long
+    /// music and beds). The two are the same primitive — samples through a voice — differing only
+    /// in whether the decode happened at cook time or happens at play time.
+    ///
+    /// The blob is the header followed by the payload:
+    ///   CookedAudioStorage::Pcm     — FrameCount * Channels samples in SampleFormat, interleaved
+    ///   CookedAudioStorage::Encoded — the encoded Codec bitstream (Vorbis), byte for byte
+    ///
+    /// SampleRate, Channels, and FrameCount describe the decoded signal in both cases — for an
+    /// Encoded clip they are read from the bitstream header at cook time, so a consumer knows the
+    /// clip's shape without decoding it.
+    struct CookedAudioHeader
+    {
+        /// @brief Must equal CookedAudioVersion; the loader rejects mismatches.
+        u32 Version = 0;
+        /// @brief How the payload is stored; underlying CookedAudioStorage integer.
+        u32 Storage = 0;
+        /// @brief PCM sample format; underlying CookedAudioSampleFormat integer (Pcm storage only).
+        u32 SampleFormat = 0;
+        /// @brief Encoded payload codec; underlying CookedAudioCodec integer (Encoded storage only).
+        u32 Codec = 0;
+        /// @brief Sample rate of the decoded signal, in Hz.
+        u32 SampleRate = 0;
+        /// @brief Channel count (1 = mono, 2 = stereo).
+        u32 Channels = 0;
+        /// @brief Number of sample frames in the decoded signal.
+        u64 FrameCount = 0;
+    };
+
     /// @brief The current input-map-format version.
     ///
     /// Bumped on any CookedInputMapHeader layout change; the loader rejects a blob whose

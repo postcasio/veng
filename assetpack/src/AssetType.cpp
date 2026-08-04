@@ -231,5 +231,10 @@ namespace Veng
                            .DisplayName = "CollisionShape",
                            .Glyph = "COL",
                            .HandleFieldType = AssetHandleFieldTypes::CollisionShape});
+        registry.Register({.Id = AssetTypes::AudioClip,
+                           .Name = "AudioClip",
+                           .DisplayName = "AudioClip",
+                           .Glyph = "AUD",
+                           .HandleFieldType = AssetHandleFieldTypes::AudioClip});
     }
 }

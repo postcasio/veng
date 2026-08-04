@@ -29,6 +29,7 @@ namespace Veng
     static_assert(AssetHandleFieldTypes::TableSchema == TypeIdOf<AssetHandle<TableSchema>>());
     static_assert(AssetHandleFieldTypes::DataTable == TypeIdOf<AssetHandle<DataTable>>());
     static_assert(AssetHandleFieldTypes::CollisionShape == TypeIdOf<AssetHandle<CollisionShape>>());
+    static_assert(AssetHandleFieldTypes::AudioClip == TypeIdOf<AssetHandle<Audio::AudioClip>>());
 
     /// @brief Whether an asset of type @p actual may fill an AssetHandle field expecting @p expected.
     ///

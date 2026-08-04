@@ -1,6 +1,7 @@
 #include <Veng/Cook/BuiltinImporters.h>
 
 #include "Importers/AnimationImporter.h"
+#include "Importers/AudioImporter.h"
 #include "Importers/CollisionShapeImporter.h"
 #include "Importers/EnvironmentImporter.h"
 #include "Importers/FontImporter.h"
@@ -27,6 +28,7 @@ namespace Veng::Cook
         cooker.Register(CreateUnique<SkeletonImporter>());
         cooker.Register(CreateUnique<AnimationImporter>());
         cooker.Register(CreateUnique<CollisionShapeImporter>());
+        cooker.Register(CreateUnique<AudioImporter>());
         cooker.Register(CreateUnique<EnvironmentImporter>());
         cooker.Register(CreateUnique<FontImporter>());
     }

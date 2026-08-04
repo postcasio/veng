@@ -25,6 +25,10 @@ namespace Veng
     class DataTable;
     struct RawAsset;
     struct CollisionShape;
+    namespace Audio
+    {
+        class AudioClip;
+    }
     namespace Gui
     {
         class UIDocument;
@@ -159,6 +163,8 @@ VE_LEAF(::Veng::AssetHandle<::Veng::DataTable>, 0xCC431A7163938F1DULL,
 VE_LEAF(::Veng::AssetHandle<::Veng::RawAsset>, 0x05A5061C9E34F8D3ULL,
         ::Veng::FieldClass::AssetHandle);
 VE_LEAF(::Veng::AssetHandle<::Veng::CollisionShape>, 0x65CD07D328B875D1ULL,
+        ::Veng::FieldClass::AssetHandle);
+VE_LEAF(::Veng::AssetHandle<::Veng::Audio::AudioClip>, 0x8E4CE12FC2D9A1B1ULL,
         ::Veng::FieldClass::AssetHandle);
 
 // Entity is an intra-scene reference, not a value leaf — the prefab loader

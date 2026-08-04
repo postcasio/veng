@@ -43,6 +43,7 @@
 
 #include <Veng/Audio/AudioBuffer.h>
 #include <Veng/Audio/AudioBus.h>
+#include <Veng/Audio/AudioClip.h>
 #include <Veng/Audio/AudioDevice.h>
 #include <Veng/Audio/AudioEngine.h>
 #include <Veng/Audio/Voice.h>

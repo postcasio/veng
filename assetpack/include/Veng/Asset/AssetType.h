@@ -85,6 +85,8 @@ namespace Veng
         inline constexpr AssetTypeId DataTable{0x29EAA6FA75196517ULL};
         /// @brief Solver-neutral collision geometry: a convex point cloud or a triangle mesh (see CookedCollisionShapeHeader).
         inline constexpr AssetTypeId CollisionShape{0xE8DD0068DFCF2691ULL};
+        /// @brief A playable sound: decoded PCM or an encoded Vorbis stream (see CookedAudioHeader).
+        inline constexpr AssetTypeId AudioClip{0x3239B85A97C228A8ULL};
     }
 
     /// @brief The reflection TypeIds of the AssetHandle\<T\> leaves that reference a builtin type.
@@ -132,6 +134,8 @@ namespace Veng
         inline constexpr u64 DataTable = 0xCC431A7163938F1DULL;
         /// @brief TypeId of AssetHandle\<CollisionShape\>.
         inline constexpr u64 CollisionShape = 0x65CD07D328B875D1ULL;
+        /// @brief TypeId of AssetHandle\<Audio::AudioClip\>.
+        inline constexpr u64 AudioClip = 0x8E4CE12FC2D9A1B1ULL;
     }
 
     /// @brief What a registry records about one asset type.
@@ -240,7 +244,7 @@ namespace Veng
         std::unique_ptr<Impl> m_Impl;
     };
 
-    /// @brief Pre-fills a registry with the nineteen asset types the engine defines.
+    /// @brief Pre-fills a registry with the twenty asset types the engine defines.
     ///
     /// Every host calls this on the registry it owns before any other registration, so a
     /// manifest naming a builtin resolves without the consumer re-declaring it.
