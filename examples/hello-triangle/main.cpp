@@ -234,7 +234,9 @@ Intent MapInputToIntent(const PlayerInput& input)
     // Mouse X yaws the pawn: Intent.Look.x is the commanded turn in radians for the tick, which
     // CharacterMovementSystem integrates about the character's own up. Negated so moving the mouse
     // right turns the view right, and scaled to radians per raw mouse count — comparable to the
-    // pitch scale below, since both turn the view by the same rate per mouse delta.
+    // pitch scale below, since both turn the view by the same rate per mouse delta. When that up is
+    // non-vertical (the character stands in the Radial gravity well authored in OnWorldLoaded) the
+    // horizon banks as you turn — that is the field model, not a bug; see the note on that source.
     constexpr f32 YawSensitivity = 0.005f;
     const vec2 move = input.GetValue(Actions::Move);
     const vec2 look = input.GetValue(Actions::Look);
@@ -789,6 +791,14 @@ protected:
         // and inward — rather than straight down, the visible proof that "down" is evaluated per
         // body from the field. Its region covers the cubes; a body outside every source would feel
         // no gravity at all, which is the free-fall state the field model makes real.
+        //
+        // The player character stands in this same Radial field, so its "up" points away from the
+        // source origin rather than along world +Y, and tilts as it moves. The first-person camera
+        // keeps its horizon level to that local up (CharacterState::Up), so turning or walking
+        // visibly banks the view against the flat-authored scene. That roll is the field model
+        // working — a character on a planet or a spinning ring turns about its own up — not a camera
+        // bug. For a level, non-banking first-person feel, give the player a Uniform (world-down)
+        // source instead.
         const Entity gravityField = scene.CreateEntity();
         scene.Add<Transform>(gravityField, Transform{.Position = vec3(0.0f, -6.0f, 6.5f)});
         scene.Add<GravitySource>(gravityField, GravitySource{
