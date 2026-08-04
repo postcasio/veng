@@ -4,6 +4,7 @@
 #include "SkyCubemapBake.h"
 #include "AtmospherePrecompute.h"
 
+#include <algorithm>
 #include <span>
 #include <vector>
 
@@ -72,7 +73,16 @@ namespace Veng::Renderer
             SkyCubemapBake::Create(m_Context, m_Ibl->GetSetLayout(), HdrFormat, SkyBakeFaceSize);
     }
 
-    SkyResolver::~SkyResolver() = default;
+    SkyResolver::~SkyResolver()
+    {
+        // Cancel any deferred SH readback still in flight so its completion — which writes members
+        // of this resolver — never fires after it is gone.
+        AsyncReadback& readback = m_Context.GetAsyncReadback();
+        for (const AsyncReadbackHandle handle : m_ShReadback.Handles)
+        {
+            readback.Cancel(handle);
+        }
+    }
 
     void SkyResolver::Resolve(SceneView& view)
     {
@@ -254,13 +264,15 @@ namespace Veng::Renderer
         const bool baking = bakedMaterial || bakedAtmosphere;
 
         // A bake is all-or-nothing against the frame's remaining view budget: a half-filled cube
-        // marked clean would show a permanently wrong sky, so a frame without room for every face —
-        // twice as many on the SH tier, whose readback bake claims its own set — records no bake at
-        // all and leaves the dirty signal standing for the next frame with room. This frame's skybox
-        // then samples the cube as the last bake left it.
-        const u32 bakeSlots = m_ResolvedSkyLighting == SkyLighting::SH
-                                  ? 2 * SkyCubemapBake::CubeFaces
-                                  : SkyCubemapBake::CubeFaces;
+        // marked clean would show a permanently wrong sky, so a frame without room for every face
+        // records no bake at all and leaves the dirty signal standing for the next frame with room.
+        // This frame's skybox then samples the cube as the last bake left it. The SH tier's first
+        // bake needs twice as many, because its cold-start readback bakes a second cube through an
+        // immediate submit that still draws from this frame's view budget; every later SH re-bake
+        // reads the display bake back deferred and claims only the display bake's own six.
+        const bool shColdSeed = m_ResolvedSkyLighting == SkyLighting::SH && !m_SkyShValid;
+        const u32 bakeSlots =
+            shColdSeed ? 2 * SkyCubemapBake::CubeFaces : SkyCubemapBake::CubeFaces;
         const bool bakeAffordable =
             m_Context.GetBindlessRegistry().GetRemainingViews() >= bakeSlots;
 
@@ -285,30 +297,29 @@ namespace Veng::Renderer
                             view.SunDirection != m_LastBakedAtmosphereSun;
             }
 
-            // The SH tier's self-contained readback bake runs first, before the frame's display bake
-            // records into cmd: its immediate submit (bake + copy + download) records its barriers
-            // off the persistent image-layout tracker, so it must see the tracker as the display
-            // bake left it last frame, not as this frame's not-yet-submitted display bake would. It
-            // leaves the cube freshly baked in a sampled layout, which the display bake below then
-            // re-records over into cmd. Both ride the bake dirty signal, so a static sky pays once.
-            if (m_ResolvedSkyLighting == SkyLighting::SH)
+            // The SH tier's cold start runs first, before the frame's display bake records into cmd:
+            // while no coefficients have been projected yet — a sky's first bake, or a tier just
+            // switched to SH — there is nothing to defer to, so a single synchronous readback of the
+            // reduced cube seeds them. Its immediate submit (bake + reduce + copy + download) records
+            // barriers off the persistent image-layout tracker, so it must see the tracker as the
+            // display bake left it last frame, not as this frame's not-yet-submitted display bake
+            // would. It bakes its own cube, so it seeds even on a frame the display bake is clean.
+            if (shColdSeed)
             {
-                if (bakeDirty || !m_SkyShValid)
-                {
-                    const vector<u8> faces =
-                        bakedMaterial ? m_SkyBake->BakeAndDownload(*material)
-                                      : m_SkyBake->BakeAtmosphereAndDownload(
-                                            skyPipeline, m_Atmosphere->GetSet(), view.Atmosphere,
-                                            view.SunDirection, view.AtmosphereIntensity);
-                    m_SkySh =
-                        EnvironmentIbl::ProjectCubeToIrradianceSh(faces, m_SkyBake->GetFaceSize());
-                    m_SkyShValid = true;
-                }
+                const vector<u8> faces =
+                    bakedMaterial
+                        ? m_SkyBake->BakeAndDownload(*material)
+                        : m_SkyBake->BakeAtmosphereAndDownload(skyPipeline, m_Atmosphere->GetSet(),
+                                                               view.Atmosphere, view.SunDirection,
+                                                               view.AtmosphereIntensity);
+                m_SkySh = EnvironmentIbl::ProjectCubeToIrradianceSh(
+                    faces, m_SkyBake->GetShReadbackFaceSize());
+                m_SkyShValid = true;
             }
 
             // The display bake into the frame command buffer, so the skybox pass samples the cube
-            // this frame. Recorded after the SH readback (above) and before the IBL convolution
-            // (below), which reads the cube this bake fills.
+            // this frame. Recorded before the deferred SH readback and the IBL convolution (below),
+            // both of which read the cube this bake fills.
             if (bakeDirty)
             {
                 if (bakedMaterial)
@@ -326,6 +337,15 @@ namespace Veng::Renderer
                 }
                 m_LastBakedSkyMaterial = material;
                 m_LastBakedSkyMaterialRevision = material != nullptr ? material->GetRevision() : 0;
+            }
+
+            // The steady-state SH readback: every re-bake after the first reads the display bake's
+            // own cube back without blocking, from a reduced level, with the projection deferred a
+            // frame or two — so a static or occasionally-rebaked SH sky costs one bake. Skipped on
+            // the cold bake, whose coefficients were seeded synchronously above.
+            if (bakeDirty && m_ResolvedSkyLighting == SkyLighting::SH && !shColdSeed)
+            {
+                BeginDeferredShReadback(cmd);
             }
 
             // IBL convolves the freshly-filled bake cube into the split-sum maps in this command
@@ -371,6 +391,58 @@ namespace Veng::Renderer
         else
         {
             m_LastSkyShEnvironment = nullptr;
+        }
+    }
+
+    void SkyResolver::BeginDeferredShReadback(CommandBuffer& cmd)
+    {
+        AsyncReadback& readback = m_Context.GetAsyncReadback();
+
+        // Supersede any still-in-flight readback: its completion would write coefficients this bake
+        // has already replaced, and its staging buffers are no longer wanted.
+        for (const AsyncReadbackHandle handle : m_ShReadback.Handles)
+        {
+            readback.Cancel(handle);
+        }
+        m_ShReadback.Handles.clear();
+
+        // Reduce the just-baked display cube to the readback level in this frame's command buffer.
+        m_SkyBake->RecordReductionMips(cmd);
+
+        const u32 faceSize = m_SkyBake->GetShReadbackFaceSize();
+        const usize faceBytes = static_cast<usize>(faceSize) * faceSize * 8; // RGBA16F
+        m_ShReadback.FaceSize = faceSize;
+        m_ShReadback.Faces.assign(faceBytes * SkyCubemapBake::CubeFaces, 0);
+        m_ShReadback.Remaining = SkyCubemapBake::CubeFaces;
+
+        // One non-blocking readback per face of the reduced level; the completions land together a
+        // few frames on, accumulate the faces layer-major, and reproject once the last arrives.
+        for (u32 face = 0; face < SkyCubemapBake::CubeFaces; ++face)
+        {
+            const AsyncReadbackHandle handle = readback.Request({
+                .Name = "Sky SH Readback",
+                .Image = m_SkyBake->GetCubeImage(),
+                .MipLevel = m_SkyBake->GetShReadbackMipLevel(),
+                .ArrayLayer = face,
+                .RestoreTo = AccessKind::Sample,
+                .OnComplete =
+                    [this, face, faceBytes](const std::span<const u8> bytes)
+                {
+                    if (bytes.size() == faceBytes)
+                    {
+                        std::ranges::copy(
+                            bytes, m_ShReadback.Faces.begin() +
+                                       static_cast<vector<u8>::difference_type>(face * faceBytes));
+                    }
+                    if (m_ShReadback.Remaining > 0 && --m_ShReadback.Remaining == 0)
+                    {
+                        m_SkySh = EnvironmentIbl::ProjectCubeToIrradianceSh(m_ShReadback.Faces,
+                                                                            m_ShReadback.FaceSize);
+                        m_SkyShValid = true;
+                    }
+                },
+            });
+            m_ShReadback.Handles.push_back(handle);
         }
     }
 

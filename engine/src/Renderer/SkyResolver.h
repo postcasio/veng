@@ -6,6 +6,7 @@
 #include "SkySourceKind.h"
 
 #include <Veng/Math/SphericalHarmonics.h>
+#include <Veng/Renderer/AsyncReadback.h>
 
 namespace Veng
 {
@@ -149,6 +150,17 @@ namespace Veng::Renderer
     private:
         SkyResolver(Context& context, AssetManager& assets);
 
+        /// @brief Reduces the just-baked cube and reads it back deferred to reproject the skylight SH.
+        ///
+        /// The steady-state SH path (every re-bake after the first): records the reduction blit
+        /// chain into @p cmd and requests a non-blocking per-face readback of the reduced level.
+        /// The completions, delivered a frame or two later, accumulate the six faces and reproject
+        /// m_SkySh — so a dirty SH sky costs one bake and is lit by the previous bake's coefficients
+        /// for the frame in between. Supersedes any still-in-flight readback so a stale completion
+        /// never overwrites fresher coefficients.
+        /// @param cmd The frame command buffer the reduction blits are recorded into.
+        void BeginDeferredShReadback(CommandBuffer& cmd);
+
         Context& m_Context;
 
         /// @brief Image-based-lighting maps + their generation pipelines.
@@ -280,5 +292,26 @@ namespace Veng::Renderer
 
         /// @brief Whether m_SkySh holds a projected set (false until the first projection).
         bool m_SkyShValid = false;
+
+        /// @brief A deferred SH readback in flight: the reduced cube read back without blocking.
+        ///
+        /// One per-face readback rides the frame command buffer; the completions accumulate the six
+        /// faces into Faces and, once Remaining reaches zero, reproject m_SkySh. Handles is kept so a
+        /// superseding bake — or this resolver's destruction — can cancel a still-in-flight readback
+        /// before its completion writes stale coefficients.
+        struct ShReadback
+        {
+            /// @brief The six per-face readbacks in flight, for cancellation.
+            vector<AsyncReadbackHandle> Handles;
+            /// @brief The reduced cube being assembled, six faces layer-major, RGBA16F.
+            vector<u8> Faces;
+            /// @brief The reduced level's face edge length in texels.
+            u32 FaceSize = 0;
+            /// @brief Faces not yet delivered; the projection runs when this reaches zero.
+            u32 Remaining = 0;
+        };
+
+        /// @brief The deferred SH readback in flight (empty when none is).
+        ShReadback m_ShReadback;
     };
 }

@@ -69,6 +69,18 @@ namespace Veng::Renderer
         /// caller checks the frame's remaining view budget against this before recording one.
         static constexpr u32 CubeFaces = 6;
 
+        /// @brief Face edge length the SH readback reduces the cube to before reading it back.
+        ///
+        /// A spherical-harmonic ambient tier projects nine order-2 coefficients, which resolve
+        /// angular features no finer than roughly 45°. A cube at 64 texels per face samples the
+        /// sphere at ~1.4° — far finer than the basis can represent — so reading back the full
+        /// display face (which a sky material sizes for point features like a star, thousands of
+        /// texels per face) to produce those nine numbers is wasted bandwidth and CPU. The bake
+        /// reduces the cube to this size through a box-averaging blit chain and reads that level.
+        /// The projection's own per-texel solid-angle weight makes it a proper spherical integral
+        /// at any face resolution, so the reduction is a partial evaluation of the same integral.
+        static constexpr u32 ShReadbackFaceSize = 64;
+
         /// @brief Records the six face renders of `material` into the radiance cube.
         ///
         /// The caller gates this on its sky dirty signal; each call overwrites the cube in place.
@@ -82,17 +94,20 @@ namespace Veng::Renderer
         /// @pre The frame's remaining view budget covers CubeFaces slots — the caller reserves them.
         void Bake(CommandBuffer& cmd, const MaterialInstance& material);
 
-        /// @brief Bakes `material` and returns a host-side snapshot of the six radiance faces.
+        /// @brief Bakes `material` and returns a host-side snapshot of the reduced radiance faces.
         ///
-        /// The device-free path the cheap SH ambient arm reads from: bakes into the owned cube
-        /// through a self-contained immediate submit, copies all six layers into one tightly-packed
-        /// RGBA16F buffer (layer-major), and blocks until the download completes — so the returned
-        /// bytes are the freshly-baked radiance regardless of any frame command buffer's ordering.
-        /// Overwrites the cube in place, so a later Bake into the frame command buffer still points
-        /// the skybox at the current radiance. Called once on the sky dirty signal (a static sky
-        /// pays one readback), so the stall is bounded.
+        /// The blocking readback the SH ambient arm seeds its first frame from: bakes into the owned
+        /// cube through a self-contained immediate submit, reduces it to `ShReadbackFaceSize` through
+        /// the box-averaging blit chain, copies the reduced level's six layers into one
+        /// tightly-packed RGBA16F buffer (layer-major), and blocks until the download completes — so
+        /// the returned bytes are the freshly-baked radiance regardless of any frame command
+        /// buffer's ordering. Overwrites the cube in place, so a later Bake into the frame command
+        /// buffer still points the skybox at the current radiance. Reserved for the SH tier's cold
+        /// start, where no prior coefficients exist to defer to; the steady path reads the display
+        /// bake's cube back without blocking through RecordReductionMips + AsyncReadback.
         /// @param material The resident Sky-domain material to bake.
-        /// @return The six cube faces, layer-major, RGBA16F (`GetFaceSize()`² texels each).
+        /// @return The six reduced cube faces, layer-major, RGBA16F (`GetShReadbackFaceSize()`²
+        ///         texels each).
         /// @pre material's domain is MaterialDomain::Sky and its param block is uploaded this frame.
         /// @pre The frame's remaining view budget covers CubeFaces slots — the caller reserves them.
         [[nodiscard]] vector<u8> BakeAndDownload(const MaterialInstance& material);
@@ -118,26 +133,41 @@ namespace Veng::Renderer
                             const Ref<DescriptorSet>& atmosphereSet, const Atmosphere& atmosphere,
                             const vec3& sunDirection, f32 intensity);
 
-        /// @brief Bakes the atmosphere and returns a host-side snapshot of the six radiance faces.
+        /// @brief Bakes the atmosphere and returns a host-side snapshot of the reduced radiance faces.
         ///
-        /// The device-free path the cheap SH ambient arm reads from: bakes the atmosphere into the
-        /// owned cube through a self-contained immediate submit, copies all six layers into one
-        /// tightly-packed RGBA16F buffer (layer-major), and blocks until the download completes — so
-        /// the returned bytes are the freshly-baked radiance regardless of any frame command
-        /// buffer's ordering. Overwrites the cube in place, so a later BakeAtmosphere into the frame
-        /// command buffer still points the skybox at the current radiance.
+        /// The blocking readback the SH ambient arm seeds its first frame from: bakes the atmosphere
+        /// into the owned cube through a self-contained immediate submit, reduces it to
+        /// `ShReadbackFaceSize` through the box-averaging blit chain, copies the reduced level's six
+        /// layers into one tightly-packed RGBA16F buffer (layer-major), and blocks until the
+        /// download completes — so the returned bytes are the freshly-baked radiance regardless of
+        /// any frame command buffer's ordering. Overwrites the cube in place, so a later
+        /// BakeAtmosphere into the frame command buffer still points the skybox at the current
+        /// radiance.
         /// @param pipeline      The atmosphere sky pipeline, built against the cube-face format.
         /// @param atmosphereSet The renderer's atmosphere LUT set (scattering/transmittance/sampler).
         /// @param atmosphere    The atmosphere parameters the LUTs were generated for.
         /// @param sunDirection  The normalized toward-sun direction.
         /// @param intensity     Scales the baked sky radiance + sun disc.
-        /// @return The six cube faces, layer-major, RGBA16F (`GetFaceSize()`² texels each).
+        /// @return The six reduced cube faces, layer-major, RGBA16F (`GetShReadbackFaceSize()`²
+        ///         texels each).
         /// @pre `atmosphereSet`'s LUTs were generated for `atmosphere`.
         /// @pre The frame's remaining view budget covers CubeFaces slots — the caller reserves them.
         [[nodiscard]] vector<u8> BakeAtmosphereAndDownload(const Ref<GraphicsPipeline>& pipeline,
                                                            const Ref<DescriptorSet>& atmosphereSet,
                                                            const Atmosphere& atmosphere,
                                                            const vec3& sunDirection, f32 intensity);
+
+        /// @brief Reduces the baked cube to the SH readback level through a box-averaging blit chain.
+        ///
+        /// Records a halving blit per mip step from mip 0 down to `GetShReadbackMipLevel()`, each
+        /// step a linear 2× downsample (a proper 2×2 box average) across all six layers, so the
+        /// readback level holds a spherical-integral-preserving reduction of the display face. Leaves
+        /// mip 0 in a sampled layout for the skybox pass and the readback level in a transfer layout
+        /// for the copy that follows. A no-op when the face already sits at or below
+        /// `ShReadbackFaceSize`. Records into the frame command buffer after the display bake, so the
+        /// deferred SH readback reads the cube that bake produced rather than baking a second one.
+        /// @param cmd The command buffer the reduction blits are recorded into.
+        void RecordReductionMips(CommandBuffer& cmd);
 
         /// @brief The consumer descriptor set the skybox pass binds to sample the baked cube.
         ///
@@ -154,6 +184,18 @@ namespace Veng::Renderer
         /// @brief The cube face edge length in texels.
         [[nodiscard]] u32 GetFaceSize() const { return m_FaceSize; }
 
+        /// @brief The mip level RecordReductionMips reduces to, and the SH readback reads back.
+        [[nodiscard]] u32 GetShReadbackMipLevel() const { return m_ShReadbackMip; }
+
+        /// @brief The face edge length of the reduced readback level (`GetFaceSize()` >> this level).
+        [[nodiscard]] u32 GetShReadbackFaceSize() const { return m_FaceSize >> m_ShReadbackMip; }
+
+        /// @brief Total per-face fullscreen draws this bake has recorded over its lifetime.
+        ///
+        /// One bake records CubeFaces of them; a caller reads the delta across a dirty signal to
+        /// see whether a re-bake cost one bake (six) or two (twelve). Exposed for tests.
+        [[nodiscard]] u64 GetFaceRendersRecorded() const { return m_FaceRendersRecorded; }
+
     private:
         SkyCubemapBake(Context& context, const Ref<DescriptorSetLayout>& consumerLayout,
                        Format sceneColorFormat, u32 faceSize);
@@ -164,11 +206,16 @@ namespace Veng::Renderer
         Context& m_Context;
         Format m_SceneColorFormat;
         u32 m_FaceSize;
+        u32 m_ShReadbackMip; // halving steps from the face down to ShReadbackFaceSize
+        u64 m_FaceRendersRecorded = 0;
 
         Ref<Image> m_CubeImage;
-        Ref<ImageView> m_CubeView; // Cube view — sampled by the skybox pass
+        Ref<ImageView> m_CubeView; // Cube view, mip 0 only — sampled by the skybox pass
         std::array<Ref<ImageView>, CubeFaces>
-            m_FaceViews; // one single-layer view per face — rendered
+            m_FaceViews; // one single-layer mip-0 view per face — rendered
+        // One all-six-layers view per mip from 0 to m_ShReadbackMip — for the reduction/readback
+        // layout transitions (the raw blit itself addresses subresources directly).
+        vector<Ref<ImageView>> m_MipViews;
 
         Ref<Image> m_DepthImage;     // 1×1 stand-in, holds the far-plane value (1.0)
         Ref<ImageView> m_DepthView;  // sampled as a color texture by the fragment's depth read

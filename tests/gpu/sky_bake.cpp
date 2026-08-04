@@ -312,13 +312,142 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(plusX.r > minusX.r);
     CHECK(plusX.r > 0.0f);
 
-    // BakeAndDownload is the renderer's self-contained readback: it bakes the same cube and returns
-    // the same radiance the display bake produced, so its projection matches within the round-trip.
+    // BakeAndDownload is the SH tier's cold-start readback: it bakes the same cube, reduces it to
+    // the readback level, and returns that radiance, so its projection matches the full-face one
+    // within the reduction + round-trip.
     const vector<u8> selfContained = bake->BakeAndDownload(*material.Get());
     const Sh9 shSelf =
-        EnvironmentIbl::ProjectCubeToIrradianceSh(selfContained, bake->GetFaceSize());
+        EnvironmentIbl::ProjectCubeToIrradianceSh(selfContained, bake->GetShReadbackFaceSize());
     const vec3 plusXSelf = EvalIrradiance(shSelf, vec3(1, 0, 0));
     CHECK(plusXSelf.r == doctest::Approx(plusX.r).epsilon(0.05));
+}
+
+namespace
+{
+    // Downloads a specific mip level of every cube layer into one tightly-packed staging buffer
+    // (layer-major). DownloadCube's mip-agnostic sibling — the reduction/readback level tests read
+    // both the display level (mip 0) and the reduced readback level.
+    vector<u8> DownloadCubeLevel(Context& context, SkyCubemapBake& bake, u32 mip, u32 faceSize)
+    {
+        const usize faceBytes = static_cast<usize>(faceSize) * faceSize * 8; // RGBA16F
+        const Ref<Buffer> staging = Buffer::Create(context, {
+                                                                .Name = "Sky Bake Level Readback",
+                                                                .Size = faceBytes * 6,
+                                                                .Usage = BufferUsage::TransferDst,
+                                                            });
+        const Ref<ImageView> levelView =
+            ImageView::Create(context, {
+                                           .Name = "Sky Bake Level View",
+                                           .Image = bake.GetCubeImage(),
+                                           .ViewType = ImageViewType::Array2D,
+                                           .BaseMipLevel = mip,
+                                           .MipLevels = 1,
+                                           .BaseArrayLayer = 0,
+                                           .ArrayLayers = 6,
+                                       });
+        context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                cmd.PrepareForAccess(levelView, AccessKind::TransferSrc);
+                const vk::BufferImageCopy region{
+                    .bufferOffset = 0,
+                    .bufferRowLength = 0,
+                    .bufferImageHeight = 0,
+                    .imageSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
+                                         .mipLevel = mip,
+                                         .baseArrayLayer = 0,
+                                         .layerCount = 6},
+                    .imageOffset = {.x = 0, .y = 0, .z = 0},
+                    .imageExtent = {.width = faceSize, .height = faceSize, .depth = 1},
+                };
+                Renderer::GetVkCommandBuffer(cmd).copyImageToBuffer(
+                    Renderer::GetVkImage(*bake.GetCubeImage()),
+                    vk::ImageLayout::eTransferSrcOptimal, Renderer::GetVkBuffer(*staging), 1,
+                    &region);
+                cmd.PrepareForAccess(levelView, AccessKind::Sample);
+            });
+        return staging->Download();
+    }
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "sky bake: a dirty SH-tier re-bake records one bake, not two")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+    const AssetHandle<MaterialInstance> material = CookAndLoadAnalyticSky(assets);
+
+    const Unique<EnvironmentIbl> ibl = EnvironmentIbl::Create(Context, assets);
+
+    constexpr u32 FaceSize = 64;
+    const Unique<SkyCubemapBake> bake =
+        SkyCubemapBake::Create(Context, ibl->GetSetLayout(), Format::RGBA16Sfloat, FaceSize);
+
+    // The steady-state SH path: one display bake fills the cube, and the reduced readback reads that
+    // same cube back (RecordReductionMips + a deferred copy, no face render), so a dirty SH sky
+    // costs one bake — six face renders.
+    const u64 beforeSteady = bake->GetFaceRendersRecorded();
+    Context.ImmediateCommands(
+        [&](CommandBuffer& cmd)
+        {
+            bake->Bake(cmd, *material.Get());
+            bake->RecordReductionMips(cmd);
+        });
+    CHECK(bake->GetFaceRendersRecorded() - beforeSteady == SkyCubemapBake::CubeFaces);
+
+    // The superseded readback baked the cube a second time: a display bake plus a self-contained
+    // readback bake was twelve face renders for one dirty signal, which the deferred path removes.
+    const u64 beforeCold = bake->GetFaceRendersRecorded();
+    Context.ImmediateCommands([&](CommandBuffer& cmd) { bake->Bake(cmd, *material.Get()); });
+    (void)bake->BakeAndDownload(*material.Get());
+    CHECK(bake->GetFaceRendersRecorded() - beforeCold == 2 * SkyCubemapBake::CubeFaces);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "sky bake: the reduced SH readback reads the display bake's own cube")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+    const AssetHandle<MaterialInstance> material = CookAndLoadAnalyticSky(assets);
+
+    const Unique<EnvironmentIbl> ibl = EnvironmentIbl::Create(Context, assets);
+
+    // A display face larger than the readback size, so the reduction actually runs (256 -> 128 ->
+    // 64): two halving blits to the readback level.
+    constexpr u32 FaceSize = 256;
+    const Unique<SkyCubemapBake> bake =
+        SkyCubemapBake::Create(Context, ibl->GetSetLayout(), Format::RGBA16Sfloat, FaceSize);
+    CHECK(bake->GetShReadbackFaceSize() == SkyCubemapBake::ShReadbackFaceSize);
+    CHECK(bake->GetShReadbackMipLevel() == 2);
+
+    // Bake the display face and reduce it, then project both the display level and the reduced
+    // readback level. They must agree: the reduction preserves the coefficients the full face
+    // produces, and the readback reads a validly-filled level (a wrong or unwritten level would not
+    // project to the same light) — the display bake's own cube, read back reduced rather than
+    // baked a second time.
+    Context.ImmediateCommands(
+        [&](CommandBuffer& cmd)
+        {
+            bake->Bake(cmd, *material.Get());
+            bake->RecordReductionMips(cmd);
+        });
+    const vector<u8> full = DownloadCubeLevel(Context, *bake, 0, FaceSize);
+    const vector<u8> reduced = DownloadCubeLevel(Context, *bake, bake->GetShReadbackMipLevel(),
+                                                 bake->GetShReadbackFaceSize());
+    const Sh9 shFull = EnvironmentIbl::ProjectCubeToIrradianceSh(full, FaceSize);
+    const Sh9 shReduced =
+        EnvironmentIbl::ProjectCubeToIrradianceSh(reduced, bake->GetShReadbackFaceSize());
+
+    const std::array<vec3, 4> normals = {vec3(1, 0, 0), vec3(-1, 0, 0), vec3(0, 1, 0),
+                                         glm::normalize(vec3(1, 1, 1))};
+    for (const vec3 n : normals)
+    {
+        const vec3 fromFull = EvalIrradiance(shFull, n);
+        const vec3 fromReduced = EvalIrradiance(shReduced, n);
+        CHECK(fromReduced.r == doctest::Approx(fromFull.r).epsilon(0.05));
+        CHECK(fromReduced.g == doctest::Approx(fromFull.g).epsilon(0.05));
+        CHECK(fromReduced.b == doctest::Approx(fromFull.b).epsilon(0.05));
+    }
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,

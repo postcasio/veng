@@ -22,6 +22,7 @@
 #include <Veng/Math/SphericalHarmonics.h>
 
 #include "Renderer/EnvironmentIbl.h"
+#include "Renderer/SkyCubemapBake.h"
 
 using namespace Veng;
 using namespace Veng::Renderer;
@@ -177,5 +178,85 @@ TEST_CASE("ProjectCubeToIrradianceSh: matches a reference analytic SH projection
         CHECK(fromCube.r == doctest::Approx(fromRef.r).epsilon(0.03));
         CHECK(fromCube.g == doctest::Approx(fromRef.g).epsilon(0.03));
         CHECK(fromCube.b == doctest::Approx(fromRef.b).epsilon(0.03));
+    }
+}
+
+TEST_CASE(
+    "ProjectCubeToIrradianceSh: the reduced readback size reproduces the display coefficients")
+{
+    // The SH readback reads a box-reduced cube (ShReadbackFaceSize) instead of the full display
+    // face. Order-2 SH can only represent a band-limited field, and for such a field the projection
+    // is resolution-independent — so the reduced size must reproduce the coefficients a
+    // higher-resolution face gives, within a small tolerance. That is precisely what lets the
+    // readback drop from the display face to the reduced level without moving the light. The larger
+    // size here stands in for the display face; it is deliberately not the full display resolution,
+    // whose per-field projection is a multi-second walk that belongs to a one-time sweep, not a
+    // checked-in unit case (a larger reference only tightens the agreement asserted here).
+    constexpr u32 DisplaySize = 256;
+    constexpr u32 ReducedSize = SkyCubemapBake::ShReadbackFaceSize;
+
+    struct Field
+    {
+        const char* Name;
+        vec3 (*Radiance)(vec3);
+    };
+    // Three strictly band-limited fields (polynomials of degree <= 2 in the direction, offset to
+    // stay positive): a constant sphere, a single band-1 lobe, and a band-2 quadrupole.
+    const std::array<Field, 3> fields = {{
+        {.Name = "constant", .Radiance = [](vec3) { return vec3(0.6f); }},
+        {.Name = "band-1 lobe", .Radiance = [](vec3 d) { return vec3(1.0f + 0.6f * d.y); }},
+        {.Name = "band-2 quadrupole",
+         .Radiance = [](vec3 d) { return vec3(1.0f + 0.5f * (3.0f * d.z * d.z - 1.0f)); }},
+    }};
+
+    const std::array<vec3, 6> normals = {vec3(1, 0, 0),  vec3(0, 1, 0),
+                                         vec3(0, 0, 1),  vec3(-1, 0, 0),
+                                         vec3(0, -1, 0), glm::normalize(vec3(1, 1, 1))};
+
+    for (const Field& field : fields)
+    {
+        CAPTURE(field.Name);
+        const Sh9 display = EnvironmentIbl::ProjectCubeToIrradianceSh(
+            MakeCube(DisplaySize, field.Radiance), DisplaySize);
+        const Sh9 reduced = EnvironmentIbl::ProjectCubeToIrradianceSh(
+            MakeCube(ReducedSize, field.Radiance), ReducedSize);
+        for (const vec3 n : normals)
+        {
+            const vec3 fromDisplay = EvalIrradiance(display, n);
+            const vec3 fromReduced = EvalIrradiance(reduced, n);
+            CHECK(fromReduced.r == doctest::Approx(fromDisplay.r).epsilon(0.03));
+            CHECK(fromReduced.g == doctest::Approx(fromDisplay.g).epsilon(0.03));
+            CHECK(fromReduced.b == doctest::Approx(fromDisplay.b).epsilon(0.03));
+        }
+    }
+}
+
+TEST_CASE("ProjectCubeToIrradianceSh: a constant cube is resolution-independent to a tight bound")
+{
+    // A constant radiance has no angular structure, so it carries no discretization error: every
+    // resolution integrates it to exactly pi*L, with only the RGBA16F round-trip and float
+    // summation order between two sizes. The reduced and display projections must therefore agree
+    // far tighter than any smooth field's quadrature tolerance — a bound a readback that fed a
+    // wrong (unwritten or mis-reduced) level, whose radiance would not be this constant, fails.
+    constexpr vec3 L(0.4f, 0.7f, 1.0f);
+    const Sh9 reduced = EnvironmentIbl::ProjectCubeToIrradianceSh(
+        MakeCube(SkyCubemapBake::ShReadbackFaceSize, [&](vec3) { return L; }),
+        SkyCubemapBake::ShReadbackFaceSize);
+    const Sh9 display =
+        EnvironmentIbl::ProjectCubeToIrradianceSh(MakeCube(256, [&](vec3) { return L; }), 256);
+
+    constexpr f32 Pi = 3.14159265358979323846f;
+    const std::array<vec3, 4> normals = {vec3(1, 0, 0), vec3(0, 1, 0), vec3(0, 0, 1),
+                                         glm::normalize(vec3(1, 1, 1))};
+    for (const vec3 n : normals)
+    {
+        const vec3 fromReduced = EvalIrradiance(reduced, n);
+        const vec3 fromDisplay = EvalIrradiance(display, n);
+        // Both reconstruct pi*L, and the two sizes agree to a tight bound (no discretization error).
+        CHECK(fromReduced.r == doctest::Approx(fromDisplay.r).epsilon(0.005));
+        CHECK(fromReduced.g == doctest::Approx(fromDisplay.g).epsilon(0.005));
+        CHECK(fromReduced.b == doctest::Approx(fromDisplay.b).epsilon(0.005));
+        CHECK(fromReduced.r == doctest::Approx(Pi * L.r).epsilon(0.02));
+        CHECK(fromReduced.b == doctest::Approx(Pi * L.b).epsilon(0.02));
     }
 }

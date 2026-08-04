@@ -1,5 +1,6 @@
 #include "SkyCubemapBake.h"
 
+#include <algorithm>
 #include <cstring>
 
 #include <fmt/format.h>
@@ -116,6 +117,21 @@ namespace Veng::Renderer
             return m;
         }
 
+        // Halving steps from a face of the given size down to the SH readback size: the readback
+        // level's mip index, and one less than the cube's mip count. Halts at the readback size or
+        // the first odd level, so a non-power-of-two face reduces as far as it evenly can.
+        u32 ComputeShReadbackMip(const u32 faceSize)
+        {
+            u32 mip = 0;
+            u32 size = faceSize;
+            while (size > SkyCubemapBake::ShReadbackFaceSize && (size % 2 == 0))
+            {
+                size /= 2;
+                ++mip;
+            }
+            return mip;
+        }
+
         std::array<mat4, SkyCubemapBake::CubeFaces> BuildFaceMatrices()
         {
             return {
@@ -140,23 +156,30 @@ namespace Veng::Renderer
     SkyCubemapBake::SkyCubemapBake(Context& context, const Ref<DescriptorSetLayout>& consumerLayout,
                                    const Format sceneColorFormat, const u32 faceSize)
         : m_Context(context), m_SceneColorFormat(sceneColorFormat), m_FaceSize(faceSize),
-          m_FaceInvViewProj(BuildFaceMatrices())
+          m_ShReadbackMip(ComputeShReadbackMip(faceSize)), m_FaceInvViewProj(BuildFaceMatrices())
     {
         // The radiance cube: six layers rendered as color attachments, sampled as a cube. Uses the
         // scene-color format so the baked radiance round-trips the skybox sampler with no conversion.
+        // Carries a mip chain down to the SH readback level, filled by a box-averaging blit chain
+        // (so the reduction is both a transfer source and destination); the skybox still samples
+        // mip 0 alone.
         m_CubeImage = Image::Create(m_Context,
                                     {
                                         .Name = "Sky Bake Radiance Cube",
                                         .Extent = {m_FaceSize, m_FaceSize, 1},
+                                        .MipLevels = m_ShReadbackMip + 1,
                                         .Layers = CubeFaces,
                                         .Format = m_SceneColorFormat,
                                         .Usage = ImageUsage::Sampled | ImageUsage::ColorAttachment |
-                                                 ImageUsage::TransferSrc,
+                                                 ImageUsage::TransferSrc | ImageUsage::TransferDst,
                                     });
+        // The skybox samples mip 0 only — the reduction chain is a readback path, not a display
+        // change — so the sampled cube view exposes a single mip level.
         m_CubeView = ImageView::Create(m_Context, {
                                                       .Name = "Sky Bake Radiance Cube View",
                                                       .Image = m_CubeImage,
                                                       .ViewType = ImageViewType::Cube,
+                                                      .MipLevels = 1,
                                                       .ArrayLayers = CubeFaces,
                                                   });
         for (u32 face = 0; face < CubeFaces; ++face)
@@ -169,6 +192,22 @@ namespace Veng::Renderer
                                                  .BaseArrayLayer = face,
                                                  .ArrayLayers = 1,
                                              });
+        }
+        // One all-six-layers view per mip level, for the reduction/readback layout transitions (the
+        // raw blit addresses subresources directly, but PrepareForAccess tracks through a view).
+        m_MipViews.reserve(m_ShReadbackMip + 1);
+        for (u32 mip = 0; mip <= m_ShReadbackMip; ++mip)
+        {
+            m_MipViews.push_back(
+                ImageView::Create(m_Context, {
+                                                 .Name = fmt::format("Sky Bake Mip {} View", mip),
+                                                 .Image = m_CubeImage,
+                                                 .ViewType = ImageViewType::Array2D,
+                                                 .BaseMipLevel = mip,
+                                                 .MipLevels = 1,
+                                                 .BaseArrayLayer = 0,
+                                                 .ArrayLayers = CubeFaces,
+                                             }));
         }
 
         // A 1×1 stand-in depth image holding the far-plane value (1.0), bound in the fragment's depth
@@ -301,44 +340,100 @@ namespace Veng::Renderer
             cmd.DrawFullscreenTriangle();
             cmd.EndRendering();
         }
+        m_FaceRendersRecorded += CubeFaces;
 
         // Leave the whole cube in a sampled layout for the skybox pass that samples it this frame.
         cmd.PrepareForAccess(m_CubeView, AccessKind::Sample);
     }
 
+    void SkyCubemapBake::RecordReductionMips(CommandBuffer& cmd)
+    {
+        // The display face already sits at or below the readback size; the readback reads mip 0.
+        if (m_ShReadbackMip == 0)
+        {
+            return;
+        }
+
+        u32 width = m_FaceSize;
+        u32 height = m_FaceSize;
+        for (u32 dst = 1; dst <= m_ShReadbackMip; ++dst)
+        {
+            const u32 src = dst - 1;
+            cmd.PrepareForAccess(m_MipViews[src], AccessKind::TransferSrc);
+            cmd.PrepareForAccess(m_MipViews[dst], AccessKind::TransferDst);
+
+            const u32 dstWidth = std::max(1u, width / 2);
+            const u32 dstHeight = std::max(1u, height / 2);
+            // One blit downsamples all six layers at once; a linear filter over a 2× reduction is a
+            // 2×2 box average, so the chain reaches the readback level as a spherical-integral-
+            // preserving reduction rather than a point resample.
+            const vk::ImageBlit blit{
+                .srcSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
+                                   .mipLevel = src,
+                                   .baseArrayLayer = 0,
+                                   .layerCount = CubeFaces},
+                .srcOffsets = {{vk::Offset3D{.x = 0, .y = 0, .z = 0},
+                                vk::Offset3D{.x = static_cast<i32>(width),
+                                             .y = static_cast<i32>(height),
+                                             .z = 1}}},
+                .dstSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
+                                   .mipLevel = dst,
+                                   .baseArrayLayer = 0,
+                                   .layerCount = CubeFaces},
+                .dstOffsets = {{vk::Offset3D{.x = 0, .y = 0, .z = 0},
+                                vk::Offset3D{.x = static_cast<i32>(dstWidth),
+                                             .y = static_cast<i32>(dstHeight),
+                                             .z = 1}}},
+            };
+            GetVkCommandBuffer(cmd).blitImage(
+                GetVkImage(*m_CubeImage), vk::ImageLayout::eTransferSrcOptimal,
+                GetVkImage(*m_CubeImage), vk::ImageLayout::eTransferDstOptimal, 1, &blit,
+                vk::Filter::eLinear);
+
+            width = dstWidth;
+            height = dstHeight;
+        }
+
+        // Restore mip 0 (the display cube) to a sampled layout for the skybox pass this frame; the
+        // readback level is left in TransferDst for the copy the caller records next.
+        cmd.PrepareForAccess(m_CubeView, AccessKind::Sample);
+    }
+
     vector<u8> SkyCubemapBake::BakeAndDownload(const MaterialInstance& material)
     {
-        const usize faceBytes = static_cast<usize>(m_FaceSize) * m_FaceSize * 8; // RGBA16F
+        const u32 readbackSize = GetShReadbackFaceSize();
+        const usize faceBytes = static_cast<usize>(readbackSize) * readbackSize * 8; // RGBA16F
         const Ref<Buffer> staging = Buffer::Create(m_Context, {
                                                                   .Name = "Sky Bake SH Readback",
                                                                   .Size = faceBytes * CubeFaces,
                                                                   .Usage = BufferUsage::TransferDst,
                                                               });
 
-        // A self-contained submit: bake the six faces, transition the cube to TransferSrc, copy all
-        // six layers into the staging buffer (layer-major), and restore the sampled layout — so the
-        // download reads the radiance this submit just produced, independent of the frame command
-        // buffer. Blocks (ImmediateCommands submits + waits), bounded by the once-per-signal gate.
+        // A self-contained submit: bake the six faces, reduce them to the readback level, copy that
+        // level's six layers into the staging buffer (layer-major), and restore the sampled layout —
+        // so the download reads the radiance this submit just produced, independent of the frame
+        // command buffer. Blocks (ImmediateCommands submits + waits), bounded by the cold-start gate.
         m_Context.ImmediateCommands(
             [&](CommandBuffer& cmd)
             {
                 Bake(cmd, material);
-                cmd.PrepareForAccess(m_CubeView, AccessKind::TransferSrc);
+                RecordReductionMips(cmd);
+                cmd.PrepareForAccess(m_MipViews[m_ShReadbackMip], AccessKind::TransferSrc);
                 const vk::BufferImageCopy region{
                     .bufferOffset = 0,
                     .bufferRowLength = 0,
                     .bufferImageHeight = 0,
                     .imageSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
-                                         .mipLevel = 0,
+                                         .mipLevel = m_ShReadbackMip,
                                          .baseArrayLayer = 0,
                                          .layerCount = CubeFaces},
                     .imageOffset = {.x = 0, .y = 0, .z = 0},
-                    .imageExtent = {.width = m_FaceSize, .height = m_FaceSize, .depth = 1},
+                    .imageExtent = {.width = readbackSize, .height = readbackSize, .depth = 1},
                 };
                 GetVkCommandBuffer(cmd).copyImageToBuffer(GetVkImage(*m_CubeImage),
                                                           vk::ImageLayout::eTransferSrcOptimal,
                                                           GetVkBuffer(*staging), 1, &region);
-                cmd.PrepareForAccess(m_CubeView, AccessKind::Sample);
+                cmd.PrepareForAccess(m_MipViews[m_ShReadbackMip], AccessKind::Sample);
             });
 
         return staging->Download();
@@ -418,6 +513,7 @@ namespace Veng::Renderer
             cmd.DrawFullscreenTriangle();
             cmd.EndRendering();
         }
+        m_FaceRendersRecorded += CubeFaces;
 
         // Leave the whole cube in a sampled layout for the skybox pass that samples it this frame.
         cmd.PrepareForAccess(m_CubeView, AccessKind::Sample);
@@ -429,7 +525,8 @@ namespace Veng::Renderer
                                                          const vec3& sunDirection,
                                                          const f32 intensity)
     {
-        const usize faceBytes = static_cast<usize>(m_FaceSize) * m_FaceSize * 8; // RGBA16F
+        const u32 readbackSize = GetShReadbackFaceSize();
+        const usize faceBytes = static_cast<usize>(readbackSize) * readbackSize * 8; // RGBA16F
         const Ref<Buffer> staging = Buffer::Create(m_Context, {
                                                                   .Name = "Sky Bake SH Readback",
                                                                   .Size = faceBytes * CubeFaces,
@@ -437,28 +534,29 @@ namespace Veng::Renderer
                                                               });
 
         // A self-contained submit mirroring BakeAndDownload's material path: bake the six atmosphere
-        // faces, transition the cube to TransferSrc, copy all six layers (layer-major), and restore
-        // the sampled layout — so the download reads the radiance this submit just produced.
+        // faces, reduce them to the readback level, copy that level's six layers (layer-major), and
+        // restore the sampled layout — so the download reads the radiance this submit just produced.
         m_Context.ImmediateCommands(
             [&](CommandBuffer& cmd)
             {
                 BakeAtmosphere(cmd, pipeline, atmosphereSet, atmosphere, sunDirection, intensity);
-                cmd.PrepareForAccess(m_CubeView, AccessKind::TransferSrc);
+                RecordReductionMips(cmd);
+                cmd.PrepareForAccess(m_MipViews[m_ShReadbackMip], AccessKind::TransferSrc);
                 const vk::BufferImageCopy region{
                     .bufferOffset = 0,
                     .bufferRowLength = 0,
                     .bufferImageHeight = 0,
                     .imageSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
-                                         .mipLevel = 0,
+                                         .mipLevel = m_ShReadbackMip,
                                          .baseArrayLayer = 0,
                                          .layerCount = CubeFaces},
                     .imageOffset = {.x = 0, .y = 0, .z = 0},
-                    .imageExtent = {.width = m_FaceSize, .height = m_FaceSize, .depth = 1},
+                    .imageExtent = {.width = readbackSize, .height = readbackSize, .depth = 1},
                 };
                 GetVkCommandBuffer(cmd).copyImageToBuffer(GetVkImage(*m_CubeImage),
                                                           vk::ImageLayout::eTransferSrcOptimal,
                                                           GetVkBuffer(*staging), 1, &region);
-                cmd.PrepareForAccess(m_CubeView, AccessKind::Sample);
+                cmd.PrepareForAccess(m_MipViews[m_ShReadbackMip], AccessKind::Sample);
             });
 
         return staging->Download();

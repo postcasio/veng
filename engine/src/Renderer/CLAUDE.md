@@ -465,7 +465,8 @@ buffer rings the same way.
 
 **`MaxViewsPerFrame` (32) is a budget spent against, not a contract.** Its consumers are the
 registered viewports (one slot each), one face per driven scene capture, and a sky cube bake (six
-slots, twelve on the SH tier whose readback bake claims its own six) in the frame a sky is dirty —
+slots, twelve on the SH tier's first bake, whose cold-start readback bakes its own six) in the frame
+a sky is dirty —
 so ordinary content can want more than one frame holds, and the ceiling is sized by memory the whole
 ring pays (`framesInFlight * MaxViewsPerFrame` regions of ~6 KB). `TryBeginView` therefore **returns
 false rather than asserting** when the budget is spent, warning once, and each consumer degrades:
