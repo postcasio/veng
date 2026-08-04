@@ -323,6 +323,14 @@ family registers from the editor side.
   one stepping down per cycle names a leak. The PNG encode uses stb_image_write, vendored PRIVATE into
   `src/Vendor/StbImageWrite.cpp` — never a public header. A null/unknown viewport reports "no
   viewport".
+- **`audio.*`** (`src/AudioTools.cpp`, read-only) — `audio.list_voices` reports the presented world's
+  live mix over `AudioEngine::GetVoiceInfos`: every active voice's bus, gain, pan/pitch, occlusion,
+  reverb send, looping flag, whether it is a clip or a generator, its role
+  (source/oneshot/spatial/music), and — for a spatial voice — its world position and velocity, plus
+  the music director's current track (a hex `AssetId` or null) and gain and the active-voice count. It
+  is the "what is playing?" check a driven session uses to confirm audio state without a speaker,
+  reached through `McpHost::Audio`; a host that leaves it null makes the tool report audio
+  unavailable. Always registered — reading the mix mutates nothing.
 - **`world.load_prefab` and the `entity.*` mutation verbs**
   (`src/MutationTools.cpp`, registered only when `AllowMutations` is set) —
   `entity.add_component`, `entity.remove_component`, `entity.remove_component_many`,
@@ -408,6 +416,8 @@ struct McpHost
     function<bool(const McpMutation&)>                ApplyMutation;  // optional editor routing hook
     function<void(Event&)>                            InjectInput;   // optional synthetic-input sink
     function<Renderer::Context*()>                    RenderContext; // optional presented-frame capture source
+    function<Diagnostics::Profiler*()>                Profiler;      // optional profiler source (profile.*)
+    function<Audio::AudioEngine*()>                   Audio;         // optional audio engine (audio.list_voices)
 };
 ```
 

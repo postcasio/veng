@@ -110,6 +110,21 @@
       "id": "0x4A433D1EA2E5ACF2",
       "type": "MarkerSet",
       "source": "markers/template.markers.json"
+    },
+    {
+      "id": "0x1070BCDCCD590EB7",
+      "type": "AudioClip",
+      "source": "audio/ambient.audio.json"
+    },
+    {
+      "id": "0x0E1B7F4E9340F67F",
+      "type": "AudioClip",
+      "source": "audio/music.audio.json"
+    },
+    {
+      "id": "0x26C02C9B582CDB15",
+      "type": "AudioClip",
+      "source": "audio/blip.audio.json"
     }
   ]
 }

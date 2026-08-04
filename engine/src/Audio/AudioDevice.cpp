@@ -776,6 +776,54 @@ namespace Veng::Audio
         return m_ActiveCount;
     }
 
+    vector<VoiceInfo> AudioEngine::GetVoiceInfos() const
+    {
+        vector<VoiceInfo> infos;
+        infos.reserve(m_ActiveCount);
+        for (u32 slot = 0; slot < MaxVoices; ++slot)
+        {
+            const Voice& voice = m_Voices[slot];
+            if (!voice.Active)
+            {
+                continue;
+            }
+            const Managed& managed = m_Managed[slot];
+            VoiceOrigin origin = VoiceOrigin::Source;
+            switch (managed.Kind)
+            {
+            case ManagedKind::OneShot:
+                origin = VoiceOrigin::OneShot;
+                break;
+            case ManagedKind::Spatial:
+                origin = VoiceOrigin::Spatial;
+                break;
+            case ManagedKind::Music:
+                origin = VoiceOrigin::Music;
+                break;
+            case ManagedKind::None:
+                origin = VoiceOrigin::Source;
+                break;
+            }
+            const bool spatial = managed.Kind == ManagedKind::Spatial;
+            infos.push_back(VoiceInfo{
+                .Handle = VoiceHandle{.Slot = slot, .Generation = voice.Generation},
+                .Bus = voice.Params.Bus,
+                .Origin = origin,
+                .Generator = voice.Generator != nullptr,
+                .Gain = voice.Params.Gain,
+                .Pan = voice.Params.Pan,
+                .Pitch = voice.Params.Pitch,
+                .Occlusion = voice.Params.Occlusion,
+                .ReverbSend = voice.Params.ReverbSend,
+                .Loop = voice.Params.Loop,
+                .Spatial = spatial,
+                .Position = spatial ? managed.WorldPos : vec3(0.0f),
+                .Velocity = spatial ? managed.Velocity : vec3(0.0f),
+            });
+        }
+        return infos;
+    }
+
     void AudioEngine::RetireSlot(u32 slot)
     {
         Voice& voice = m_Voices[slot];

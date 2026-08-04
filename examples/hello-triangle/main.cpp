@@ -34,6 +34,9 @@
 #include <Veng/Mcp/McpServerInfo.h>
 
 #include <Veng/Asset/InputMappingContext.h>
+#include <Veng/Audio/AudioClip.h>
+#include <Veng/Audio/AudioComponents.h>
+#include <Veng/Audio/AudioEngine.h>
 #include <Veng/Input.h>
 #include <Veng/Input/Actions.h>
 #include <Veng/Net/BlobCodec.h>
@@ -72,6 +75,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
+#include <numbers>
 #include <vector>
 
 #include <Veng/Math/AABB.h>
@@ -197,6 +201,9 @@ constexpr AssetId GameplayInputMapId{0xE65128F84910FBB9ULL};
 // `--accent` / `--tick-idle` tokens) is referenced from the document markup and resolved by the engine.
 constexpr AssetId HudDocumentId{0xB51B7421AFE8CD18ULL};
 
+// The cooked UI blip a code-triggered PlayOneShot fires through SystemContext::Audio (sample mode).
+constexpr AssetId UiBlipClipId{0xC8B2D38BFEF02557ULL};
+
 // The cooked slab model carrying the two authored attachment nodes the socket demo attaches to,
 // and the cube it parents to one of them.
 constexpr AssetId SocketSlabMeshId{0xECFBCDB0FED94D6CULL};
@@ -245,7 +252,14 @@ Intent MapInputToIntent(const PlayerInput& input)
 class ControlSystem final : public SceneSystem
 {
 public:
-    void OnUpdate(Scene& scene, const f32, const SystemContext&) override
+    // Loads the UI blip once so the Interact one-shot has a resident clip to fire; the handle is a
+    // no-op key while it streams in, so an early Interact simply plays nothing.
+    void OnStart(Scene&, const SystemContext& context) override
+    {
+        m_Blip = context.Assets.Load<Audio::AudioClip>(UiBlipClipId);
+    }
+
+    void OnUpdate(Scene& scene, const f32, const SystemContext& context) override
     {
         scene.Each<PlayerInput, Possesses>(
             [&](const Entity seat, PlayerInput& player, Possesses& possesses)
@@ -273,6 +287,10 @@ public:
                 // builtin VehicleSystem drains it — so nothing game-side runs inside the resolve query.
                 if (player.WasTriggered(Actions::Interact))
                 {
+                    // Fire a code-triggered UI blip through SystemContext::Audio, the fire-and-forget
+                    // path any system reaches; the clip retires itself when it ends.
+                    context.Audio.PlayOneShot(
+                        m_Blip, Audio::OneShotParams{.Bus = Audio::AudioBus::UI, .Gain = 0.8f});
                     FireInteract(scene, possesses.Pawn);
                 }
 
@@ -328,6 +346,9 @@ private:
             scene.Add<InteractRequest>(target, InteractRequest{.Interactor = actor});
         }
     }
+
+    // The UI blip the Interact one-shot plays, loaded once at OnStart.
+    AssetHandle<Audio::AudioClip> m_Blip;
 };
 
 VE_SYSTEM(ControlSystem, 0x1C2F5C03357C19B2ULL, "Control");
@@ -578,6 +599,47 @@ private:
 
 VE_GUI_DRIVER(HudDriver, 0xE46A19EB6642A7D3ULL, "HUD");
 
+// The runtime-generation exemplar (not a synth to reuse): a bare sine oscillator whose frequency
+// is driven live through a GeneratorParams block. Render runs on the real-time mixing thread, so it
+// only reads the latched params and writes samples — no lock, no allocation, no engine call. The
+// engine drives a generator voice as mono, so it fills `frames` samples per channel.
+struct ToneParams
+{
+    f32 Frequency = 200.0f;
+    f32 Amplitude = 0.0f;
+};
+
+class ToneGenerator final : public Audio::IAudioGenerator
+{
+public:
+    // Publishes new synthesis parameters from the main/View thread.
+    void SetParams(const ToneParams& params) { m_Params.Set(params); }
+
+    void Render(f32* out, const u32 frames, const u32 channels, const u32 sampleRate) override
+    {
+        const ToneParams params = m_Params.Get();
+        const f32 step = 2.0f * std::numbers::pi_v<f32> * params.Frequency /
+                         static_cast<f32>(sampleRate == 0 ? 1u : sampleRate);
+        for (u32 frame = 0; frame < frames; ++frame)
+        {
+            const f32 sample = std::sin(m_Phase) * params.Amplitude;
+            m_Phase += step;
+            if (m_Phase > 2.0f * std::numbers::pi_v<f32>)
+            {
+                m_Phase -= 2.0f * std::numbers::pi_v<f32>;
+            }
+            for (u32 channel = 0; channel < channels; ++channel)
+            {
+                out[frame * channels + channel] = sample;
+            }
+        }
+    }
+
+private:
+    Audio::GeneratorParams<ToneParams> m_Params;
+    f32 m_Phase = 0.0f;
+};
+
 class HelloTriangleApp final : public Application
 {
 public:
@@ -668,6 +730,7 @@ protected:
         m_DeferRestore = std::getenv("HT_DEFER_RESTORE") != nullptr;
 
         StartMcpServerIfRequested();
+        SetupAudioDemo();
 
         if (GetImGuiLayer())
         {
@@ -959,7 +1022,7 @@ protected:
         overlay.Interactive = true;
     }
 
-    void OnUpdate(const f32) override
+    void OnUpdate(const f32 delta) override
     {
         // The engine ticks the managed world's simulation (control, movement, spinners) and pushes
         // the resolved camera into the viewport each frame; the sample handles only smoke capture,
@@ -1025,6 +1088,7 @@ protected:
         PollConnectAndEnter();
         PollSwapDemo();
         PollProfileCaptureDemo();
+        PollAudioDemo(delta);
         SyncDemoChannel();
     }
 
@@ -1254,9 +1318,14 @@ protected:
 
     // Runs before ~Application, while every engine service is still alive. Drop the MCP server first:
     // its destructor stops the listener thread and closes the socket, so no in-flight tool handler can
-    // touch engine state while the rest of the app tears down. The remaining resources are members and
-    // retire in declaration order.
-    ~HelloTriangleApp() override { m_McpServer.reset(); }
+    // touch engine state while the rest of the app tears down. Then stop the generator voice while the
+    // audio engine is still alive, so the mixer no longer references the borrowed m_Tone before it is
+    // destroyed with the app. The remaining resources are members and retire in declaration order.
+    ~HelloTriangleApp() override
+    {
+        m_McpServer.reset();
+        GetAudioEngine().StopVoice(m_ToneVoice);
+    }
 
 private:
     // Constructs the MCP server when HT_MCP=<port> is set (HT_MCP=0 picks an ephemeral port), so the
@@ -1297,9 +1366,54 @@ private:
             .InjectInput = [this](Event& event) { GetInputRouter().PostInjectedEvent(event); },
             .RenderContext = [this] { return &GetRenderContext(); },
             .Profiler = [this] { return &GetProfiler(); },
+            .Audio = [this] { return &GetAudioEngine(); },
         });
 
         m_McpServer = Mcp::McpServer::Create(info, *m_McpHost);
+    }
+
+    // Sets up the runtime-generation demo, the exemplar of plan 04's two code paths:
+    //  - PlayGenerator registers the ToneGenerator as a live voice the mixer pulls samples from
+    //    each block; PollAudioDemo drives its frequency each frame through the param block.
+    //  - CreateClip wraps a short code-built PCM buffer as a one-shot clip, fired on a key (Key::G).
+    // Both are non-spatial and route to their bus. Started here so the generator voice exists in every
+    // mode (silent at amplitude 0 until PollAudioDemo runs, which the smoke path never reaches, so the
+    // golden capture is unaffected).
+    void SetupAudioDemo()
+    {
+        m_ToneVoice = GetAudioEngine().PlayGenerator(
+            &m_Tone, Audio::GeneratorVoiceParams{
+                         .Bus = Audio::AudioBus::SFX, .Spatial = false, .Gain = 0.12f});
+
+        // A short descending two-partial chirp, built in code and adopted as a clip — a finite
+        // one-shot with no source file, indistinguishable downstream from a cooked one.
+        constexpr u32 rate = 48000;
+        constexpr u32 frames = rate * 15u / 100u; // 0.15 s
+        vector<f32> samples(frames);
+        for (u32 i = 0; i < frames; ++i)
+        {
+            const f32 t = static_cast<f32>(i) / static_cast<f32>(rate);
+            const f32 env = std::exp(-t * 18.0f) * std::min(1.0f, t / 0.004f);
+            const f32 freq = 720.0f - 240.0f * (static_cast<f32>(i) / static_cast<f32>(frames));
+            samples[i] = 0.6f * env * std::sin(2.0f * std::numbers::pi_v<f32> * freq * t);
+        }
+        m_GeneratedClip = GetAudioEngine().CreateClip(
+            samples, Audio::AudioBufferFormat{.SampleRate = rate, .Channels = 1});
+    }
+
+    // Drives the generator voice's frequency from a clock (the live-parameter half of the demo) and
+    // fires the code-built one-shot on Key::G. Windowed only — the smoke path returns before it.
+    void PollAudioDemo(const f32 delta)
+    {
+        m_ToneClock += delta;
+        const f32 frequency = 200.0f + 60.0f * std::sin(m_ToneClock * 0.8f);
+        m_Tone.SetParams(ToneParams{.Frequency = frequency, .Amplitude = 0.6f});
+
+        if (GetInput().WasKeyPressed(Key::G))
+        {
+            GetAudioEngine().PlayOneShot(m_GeneratedClip,
+                                         Audio::OneShotParams{.Bus = Audio::AudioBus::UI});
+        }
     }
 
     // Reflects the m_ShowVolume toggle onto the managed scene: builds the nebula on first enable and
@@ -1716,6 +1830,14 @@ private:
     // server first. Both stay empty unless HT_MCP is set.
     optional<Mcp::McpHost> m_McpHost;
     Unique<Mcp::McpServer> m_McpServer;
+
+    // The runtime-generation demo: the app-owned sine generator (its Render runs on the mixing
+    // thread while this voice is live, so it must outlive the voice — stopped in the destructor), the
+    // handle to its live voice, the clock driving its frequency, and the code-built one-shot clip.
+    ToneGenerator m_Tone;
+    Audio::VoiceHandle m_ToneVoice;
+    f32 m_ToneClock = 0.0f;
+    AssetHandle<Audio::AudioClip> m_GeneratedClip;
 
     // Pauses the managed world's simulation so the broadphase reads `static`; never set in smoke.
     bool m_PauseSpin = false;

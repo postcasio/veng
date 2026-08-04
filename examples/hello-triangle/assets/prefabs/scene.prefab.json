@@ -5330,6 +5330,44 @@
           "Owner": 0
         }
       }
+    },
+    {
+      "components": {
+        "::Veng::Name": {
+          "Value": "Ambience"
+        },
+        "::Veng::Transform": {
+          "Position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "Rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::AudioSource": {
+          "Clip": "0xFE4B4248C884357A",
+          "Bus": "Ambience",
+          "Gain": 0.5,
+          "Looping": true,
+          "PlayOnStart": true,
+          "Spatial": false
+        },
+        "::Veng::MusicState": {
+          "Track": "0x3BD3B54356C78DB3",
+          "FadeSeconds": 1.5,
+          "Loop": true
+        }
+      }
     }
   ]
 }

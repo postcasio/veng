@@ -22,6 +22,11 @@ namespace Veng
     {
         class Profiler;
     }
+
+    namespace Audio
+    {
+        class AudioEngine;
+    }
 }
 
 namespace Veng::Mcp
@@ -187,5 +192,13 @@ namespace Veng::Mcp
         /// A build without VE_PROFILE still resolves a profiler shell whose capture verbs return a
         /// clear "disabled" error, which the tools surface as an error result.
         function<Diagnostics::Profiler*()> Profiler;
+
+        /// @brief Resolves the audio engine the audio.list_voices tool inspects, or null.
+        ///
+        /// The read-only audio tool reads the live voice table through here — bus, gain, spatial
+        /// pose, clip-or-generator, and the music director's current track. A game fills it from
+        /// GetAudioEngine(); a host that leaves it null makes the tool report audio unavailable
+        /// rather than dereferencing it. It runs on the render thread during Pump().
+        function<Audio::AudioEngine*()> Audio;
     };
 }

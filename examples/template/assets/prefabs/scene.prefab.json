@@ -27,6 +27,42 @@
           "FovY": 1.0471975511965976,
           "Near": 0.1,
           "Far": 100.0
+        },
+        "::Veng::AudioListener": {
+          "Gain": 1.0
+        }
+      }
+    },
+    {
+      "components": {
+        "::Veng::Name": {
+          "Value": "Ambience"
+        },
+        "::Veng::Transform": {
+          "Position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "Rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::AudioSource": {
+          "Clip": "0x1070BCDCCD590EB7",
+          "Bus": "Ambience",
+          "Gain": 0.5,
+          "Looping": true,
+          "PlayOnStart": true,
+          "Spatial": false
         }
       }
     },

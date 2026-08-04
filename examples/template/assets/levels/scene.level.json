@@ -1,6 +1,6 @@
 {
   "world": "0xE5B54C65A4A62A31",
-  "systems": ["0x98C368063567AB92"],
+  "systems": ["0x98C368063567AB92", "0xD6C922D9005BF08F"],
   "render": {
     "Exposure": 1.0,
     "Bloom": true,

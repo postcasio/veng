@@ -182,3 +182,21 @@ no use-after-free (on the null device `StopVoice` drives the mixer itself, there
 `GenerateSelfTestTone` builds a short, faded sine burst — a bounded, finite mono buffer.
 `AudioDevice::RunSelfTest` registers it as a one-shot; `Application` arms it only when
 `VENG_AUDIO_SELFTEST` is set, so it is a diagnostic, not a chime on every launch.
+
+## Inspecting the mix
+
+`AudioEngine::GetVoiceInfos()` returns a read-only `vector<VoiceInfo>` — one record per live voice,
+in slot order — carrying each voice's handle, bus, final gain/pan/pitch/occlusion/reverb-send, its
+loop flag, whether it is a clip or a generator, its role (`VoiceOrigin`:
+source/one-shot/spatial/music), and — for a spatial voice — the world position and velocity the
+engine holds. It takes no lock and mutates nothing: a seam for tooling, not for the mix.
+
+The MCP surface exposes it as **`audio.list_voices`** (`veng/mcp`, `src/AudioTools.cpp`): a read-only
+tool reporting the presented world's voices plus the music director's current track, so a driven
+session confirms "the right things are playing" without a speaker. It reaches the engine through
+`McpHost::Audio` and runs at the frame pump point like the other engine tools; see
+[mcp/CLAUDE.md](../../../mcp/CLAUDE.md). The engine's own consumption exemplars wire the whole
+subsystem — an authored looping `AudioSource` and an `AudioListener`, a code-triggered `PlayOneShot`
+through `SystemContext::Audio`, an authored `MusicState`, and a trivial `IAudioGenerator` +
+`CreateClip` demo — in `examples/hello-triangle` (`examples/template` takes the minimal
+listener + source), the consumer proof a new capability is held to.

@@ -54,6 +54,53 @@ namespace Veng::Audio
         vec3 Velocity{0.0f};
     };
 
+    /// @brief What role a live voice plays, for read-only inspection.
+    enum class VoiceOrigin : u8
+    {
+        /// @brief An authored AudioSource voice the AudioSystem drives.
+        Source,
+        /// @brief A non-spatial fire-and-forget one-shot (PlayOneShot).
+        OneShot,
+        /// @brief A positioned voice re-spatialized each frame (PlayAt / a spatial generator).
+        Spatial,
+        /// @brief A music-director voice.
+        Music,
+    };
+
+    /// @brief A read-only snapshot of one live voice, for inspection.
+    ///
+    /// The shape AudioEngine::GetVoiceInfos reports each active voice as. Position and Velocity are
+    /// meaningful only for a Spatial voice; a non-spatial voice leaves them zero.
+    struct VoiceInfo
+    {
+        /// @brief The voice handle (slot + generation).
+        VoiceHandle Handle;
+        /// @brief The bus the voice mixes into.
+        AudioBus Bus = AudioBus::SFX;
+        /// @brief What role the voice plays.
+        VoiceOrigin Origin = VoiceOrigin::Source;
+        /// @brief Whether the voice is fed by a live generator (true) or a PCM buffer (false).
+        bool Generator = false;
+        /// @brief Final linear gain the mixer applies.
+        f32 Gain = 0.0f;
+        /// @brief Stereo pan, -1 = left, 0 = centre, +1 = right.
+        f32 Pan = 0.0f;
+        /// @brief Resample ratio applied on top of the clip-rate conversion (Doppler pitch).
+        f32 Pitch = 1.0f;
+        /// @brief Occlusion low-pass amount, 0 = open, 1 = fully occluded.
+        f32 Occlusion = 0.0f;
+        /// @brief Send level into the master reverb, 0 = dry, 1 = full send.
+        f32 ReverbSend = 0.0f;
+        /// @brief Whether the voice loops.
+        bool Loop = false;
+        /// @brief Whether the voice is spatialized (Position/Velocity meaningful).
+        bool Spatial = false;
+        /// @brief World position, for a Spatial voice.
+        vec3 Position{0.0f};
+        /// @brief World velocity (units per second), for a Spatial voice.
+        vec3 Velocity{0.0f};
+    };
+
     /// @brief How the music director transitions to a new track.
     struct MusicTransition
     {
@@ -165,6 +212,13 @@ namespace Veng::Audio
 
         /// @brief Returns the number of live voices.
         [[nodiscard]] usize GetActiveVoiceCount() const;
+
+        /// @brief Returns a read-only snapshot of every live voice, for inspection.
+        ///
+        /// One VoiceInfo per active slot, in slot order — the mix parameters, role, and (for a
+        /// spatial voice) world pose the engine holds. A read seam for tooling; it takes no locks
+        /// and mutates nothing.
+        [[nodiscard]] vector<VoiceInfo> GetVoiceInfos() const;
 
         /// @brief Fires a non-spatial one-shot voice on a chosen bus.
         ///

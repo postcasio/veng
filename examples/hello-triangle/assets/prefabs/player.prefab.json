@@ -28,6 +28,9 @@
           "Near": 0.1,
           "Far": 100.0
         },
+        "::Veng::AudioListener": {
+          "Gain": 1.0
+        },
         "::Veng::FirstPersonRig": {
           "Target": 2,
           "EyeOffset": [

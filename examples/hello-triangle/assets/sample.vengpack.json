@@ -150,6 +150,21 @@
       "id": "0xB51B7421AFE8CD18",
       "type": "UIDocument",
       "source": "ui/hud.vui.xml"
+    },
+    {
+      "id": "0xFE4B4248C884357A",
+      "type": "AudioClip",
+      "source": "audio/ambient.audio.json"
+    },
+    {
+      "id": "0x3BD3B54356C78DB3",
+      "type": "AudioClip",
+      "source": "audio/music.audio.json"
+    },
+    {
+      "id": "0xC8B2D38BFEF02557",
+      "type": "AudioClip",
+      "source": "audio/blip.audio.json"
     }
   ]
 }
