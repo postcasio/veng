@@ -12,9 +12,15 @@ namespace Veng
     /// The character analogue of MovementSystem, and its alternative rather than its companion: it
     /// sits in the same catalogue slot, so a level names one or the other in its `systems` array —
     /// a pawn that flies names MovementSystem, a pawn that walks names this — and neither knows
-    /// about the other. It reads Intent's local-frame move vector and action bits (never raw device
-    /// state), so a player, an AI, or a remote producer that wrote the Intent drives the character
-    /// the same way.
+    /// about the other. It reads Intent's local-frame move vector, its look command, and its action
+    /// bits (never raw device state), so a player, an AI, or a remote producer that wrote the Intent
+    /// drives the character the same way.
+    ///
+    /// A character turns from Intent::Look.x — the commanded turn for the tick in radians, positive
+    /// left, about the character's *own* up (from the gravity field, not world up), so one on a curved
+    /// or rotating surface turns in the plane it stands in. The heading lives in the body's replicated
+    /// Transform::Rotation, which is what makes a remote peer's body face where it walks; pitch is
+    /// view-only through CameraLook and never touches the body.
     ///
     /// Each tick it reconciles the scene's CharacterController components against the world's
     /// capsules (creating, re-creating and destroying them so the world matches the components),

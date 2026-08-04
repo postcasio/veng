@@ -228,12 +228,14 @@ inline Net::WorldKey RegimeBKey()
 // without an Input or a scene. WASD advances in the pawn's local frame — the pawn faces its
 // local -Z (the first-person eye looks out that way), so the forward action drives move toward
 // -Z. Only the yaw drives the pawn; pitch tilts the camera about its horizon, not the body, and
-// is applied in the control system. The Mover's TurnSpeed scales the yaw.
+// is applied in the control system.
 Intent MapInputToIntent(const PlayerInput& input)
 {
-    // Mouse X yaws the pawn, negated so moving the mouse right turns the view right (the
-    // engine integrates Look.x * TurnSpeed * delta about world up).
-    constexpr f32 YawSensitivity = 0.05f;
+    // Mouse X yaws the pawn: Intent.Look.x is the commanded turn in radians for the tick, which
+    // CharacterMovementSystem integrates about the character's own up. Negated so moving the mouse
+    // right turns the view right, and scaled to radians per raw mouse count — comparable to the
+    // pitch scale below, since both turn the view by the same rate per mouse delta.
+    constexpr f32 YawSensitivity = 0.005f;
     const vec2 move = input.GetValue(Actions::Move);
     const vec2 look = input.GetValue(Actions::Look);
 

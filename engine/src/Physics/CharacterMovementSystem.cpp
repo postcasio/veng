@@ -71,6 +71,33 @@ namespace Veng
             }
             return glm::normalize(glm::angleAxis(maxAngle, axis / axisLength) * a);
         }
+
+        /// @brief Re-orthonormalizes a heading against @p up so its forward stays planar to @p up.
+        ///
+        /// Composes the shortest rotation carrying @p orientation's own up onto @p up on the left, so
+        /// the heading about the up axis is preserved exactly while the up becomes @p up. Integrating
+        /// a turn about one tick's up and then re-basing onto the next tick's up keeps the facing
+        /// orthonormal as the up slews, without accumulating drift.
+        /// @param orientation  The heading to re-base; normalized inside.
+        /// @param up           The up the result's own up is aligned onto; normalized inside.
+        /// @return The re-based, normalized heading.
+        [[nodiscard]] quat AlignUp(const quat orientation, const vec3 up)
+        {
+            const quat normalized = glm::normalize(orientation);
+            const vec3 from = glm::normalize(normalized * vec3(0.0f, 1.0f, 0.0f));
+            const vec3 to = glm::normalize(up);
+            const f32 cosine = glm::clamp(glm::dot(from, to), -1.0f, 1.0f);
+            const vec3 axis = glm::cross(from, to);
+            const f32 axisLength = glm::length(axis);
+            if (cosine > 1.0f - 1.0e-6f || axisLength < 1.0e-6f)
+            {
+                // Already aligned, or antiparallel with no unique shortest arc — the rate limit on the
+                // up means the caller never presents the latter from one tick to the next.
+                return normalized;
+            }
+            return glm::normalize(glm::angleAxis(std::acos(cosine), axis / axisLength) *
+                                  normalized);
+        }
     }
 
     void CharacterMovementSystem::OnUpdate(Scene& scene, const f32 delta,
@@ -167,12 +194,23 @@ namespace Veng
                 gravityMagnitude > 1.0e-6f ? -acceleration / gravityMagnitude : lastUp;
             const vec3 up = RotateTowards(lastUp, targetUp, MaxReorientRate * delta);
 
+            // The body turns from the look command: Intent.Look.x is the commanded turn for the tick
+            // in radians, integrated about *this tick's up* so a character on a curved or rotating
+            // surface turns in the plane it stands in rather than about world up. Positive turns left,
+            // matching CameraLook's yaw sign; the control system owns sensitivity and sign. Re-basing
+            // onto the up afterwards keeps the facing orthonormal as the up slews. The heading lives in
+            // the character's Transform.Rotation (read into entry.Pose.Rotation before the tick), which
+            // replicates like any pose — so a remote peer's body faces where it walks.
+            const quat facing =
+                AlignUp(glm::angleAxis(entry.Command.Look.x, up) * entry.Pose.Rotation, up);
+
             const bool running =
                 (entry.Command.Actions & static_cast<u32>(CharacterAction::Run)) != 0;
             const f32 speed = running ? entry.Controller.RunSpeed : entry.Controller.WalkSpeed;
-            // Move is pawn-local; rotate it into the character's facing, then UpdateCharacter
-            // projects it onto the ground plane defined by up.
-            const vec3 desired = (entry.Pose.Rotation * entry.Command.Move) * speed;
+            // Move is pawn-local; rotate it into the new facing (so movement follows where the player
+            // just turned to look, within the same tick), then UpdateCharacter projects it onto the
+            // ground plane defined by up.
+            const vec3 desired = (facing * entry.Command.Move) * speed;
             const bool jump =
                 (entry.Command.Actions & static_cast<u32>(CharacterAction::Jump)) != 0;
 
@@ -210,7 +248,10 @@ namespace Veng
 
             auto& transform = scene.Get<Transform>(entry.Owner);
             transform.Position = vec3(result.Position);
-            transform.Rotation = result.Rotation;
+            // The heading is the commanded facing, not the swept capsule's rotation: the capsule is
+            // rotationally symmetric about its up, so the solver neither turns its yaw nor needs it,
+            // and writing facing here is what makes the heading survive and accumulate across ticks.
+            transform.Rotation = facing;
         }
     }
 

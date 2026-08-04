@@ -32,6 +32,12 @@ namespace Veng
     /// character walking around a curved habitat changes its up continuously and one standing on a
     /// rotating surface changes it slowly forever. A character reached by no gravity source keeps
     /// its last up and floats — free-fall is a defined state, not a division by zero.
+    ///
+    /// The character turns from its Intent: CharacterMovementSystem integrates Intent::Look.x
+    /// (radians per tick, positive left) about that same up and stores the heading in the entity's
+    /// Transform::Rotation, so the facing replicates like any pose and movement follows it. There is
+    /// no turn-speed field here — the control system owns look sensitivity and sign. Pitch is
+    /// view-only, applied to a CameraLook on the eye, and never turns the body.
     struct CharacterController
     {
         /// @brief Capsule radius, in metres.

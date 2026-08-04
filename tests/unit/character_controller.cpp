@@ -18,8 +18,10 @@
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
 
+#include <glm/gtc/constants.hpp>
 #include <glm/gtc/quaternion.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 
@@ -450,4 +452,197 @@ TEST_CASE("A character reached by no gravity source keeps its up and does not tu
     // The capsule did not tumble: its own up still matches the resolved up.
     const vec3 bodyUp = scene->Get<Transform>(pawn).Rotation * vec3(0.0f, 1.0f, 0.0f);
     CHECK(glm::dot(bodyUp, vec3(0.0f, 1.0f, 0.0f)) > 0.999f);
+}
+
+TEST_CASE("A commanded look turns the character's heading about its up, and zero leaves it")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    const Unique<Scene> scene = Scene::Create(types);
+    scene->SetPhysicsWorld(PhysicsWorld::Create(PhysicsWorldInfo{}));
+    // No gravity source: the up holds at its +Y seed, so the turn is a clean rotation about +Y and
+    // the property under test — heading integration — is isolated from any solver settling.
+
+    const CharacterController controller = DefaultController();
+    const auto spawn = [&](const f32 lookX) -> Entity
+    {
+        const Entity pawn = scene->CreateEntity();
+        scene->Add<Transform>(pawn, Transform{.Position = vec3(0.0f, 5.0f, 0.0f)});
+        scene->Add<CharacterController>(pawn, controller);
+        scene->Add<Intent>(pawn, Intent{.Look = vec3(lookX, 0.0f, 0.0f)});
+        return pawn;
+    };
+    constexpr f32 TurnPerTick = 0.02f;
+    const Entity left = spawn(TurnPerTick);
+    const Entity right = spawn(-TurnPerTick);
+    const Entity still = spawn(0.0f);
+
+    ContextStorage storage;
+    CharacterMovementSystem characters;
+    constexpr u32 Ticks = 50;
+    for (u32 tick = 0; tick < Ticks; ++tick)
+    {
+        characters.OnUpdate(*scene, FixedStep, storage.Make());
+    }
+
+    // Signed heading about +Y, read from the facing's forward (local -Z); positive is a left turn.
+    const auto yawOf = [&](const Entity entity)
+    {
+        const vec3 forward = scene->Get<Transform>(entity).Rotation * vec3(0.0f, 0.0f, -1.0f);
+        return std::atan2(-forward.x, -forward.z);
+    };
+    const f32 expected = TurnPerTick * static_cast<f32>(Ticks);
+    CHECK(yawOf(left) == doctest::Approx(expected).epsilon(0.01));
+    CHECK(yawOf(right) == doctest::Approx(-expected).epsilon(0.01));
+    CHECK(std::abs(yawOf(still)) < 1e-4f);
+
+    // The turn is about the up, so every heading stays planar to +Y.
+    for (const Entity entity : {left, right, still})
+    {
+        const vec3 up = scene->Get<Transform>(entity).Rotation * vec3(0.0f, 1.0f, 0.0f);
+        CHECK(glm::dot(up, vec3(0.0f, 1.0f, 0.0f)) > 0.999f);
+    }
+}
+
+TEST_CASE("An authored spawn facing is preserved when the character is not commanded to turn")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    const Unique<Scene> scene = Scene::Create(types);
+    scene->SetPhysicsWorld(PhysicsWorld::Create(PhysicsWorldInfo{}));
+
+    // A uniform down field so the up resolves to +Y, and an authored heading yawed 30 degrees about
+    // it. With a zero look command the mover must leave that heading standing — no silent reset to
+    // the capsule's own rotation.
+    const Entity field = scene->CreateEntity();
+    scene->Add<Transform>(field, Transform{});
+    scene->Add<GravitySource>(field, GravitySource{.Kind = GravityKind::Uniform,
+                                                   .Direction = vec3(0.0f, -1.0f, 0.0f),
+                                                   .Magnitude = 9.81f,
+                                                   .Bounds = Region{.HalfExtents = vec3(100.0f)}});
+
+    const quat authored = glm::angleAxis(glm::radians(30.0f), vec3(0.0f, 1.0f, 0.0f));
+    const CharacterController controller = DefaultController();
+    const Entity pawn = scene->CreateEntity();
+    scene->Add<Transform>(pawn,
+                          Transform{.Position = vec3(0.0f, 5.0f, 0.0f), .Rotation = authored});
+    scene->Add<CharacterController>(pawn, controller);
+    scene->Add<Intent>(pawn, Intent{});
+
+    ContextStorage storage;
+    CharacterMovementSystem characters;
+    for (u32 tick = 0; tick < 60; ++tick)
+    {
+        characters.OnUpdate(*scene, FixedStep, storage.Make());
+    }
+
+    const vec3 authoredForward = authored * vec3(0.0f, 0.0f, -1.0f);
+    const vec3 heldForward = scene->Get<Transform>(pawn).Rotation * vec3(0.0f, 0.0f, -1.0f);
+    CHECK(glm::dot(authoredForward, heldForward) > 0.9999f);
+}
+
+TEST_CASE("A character's movement follows the heading it has just turned to")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    const Unique<Scene> scene = Scene::Create(types);
+    scene->SetPhysicsWorld(PhysicsWorld::Create(PhysicsWorldInfo{}));
+
+    const Entity field = scene->CreateEntity();
+    scene->Add<Transform>(field, Transform{});
+    scene->Add<GravitySource>(field, GravitySource{.Kind = GravityKind::Uniform,
+                                                   .Direction = vec3(0.0f, -1.0f, 0.0f),
+                                                   .Magnitude = 9.81f,
+                                                   .Bounds = Region{.HalfExtents = vec3(100.0f)}});
+
+    const Entity floor = scene->CreateEntity();
+    scene->Add<Transform>(floor, Transform{.Position = vec3(0.0f, -0.5f, 0.0f)});
+    scene->Add<RigidBody>(floor,
+                          RigidBody{.Motion = MotionType::Static, .Layer = PhysicsLayer::Static});
+    scene->Add<Collider>(
+        floor, Collider{.Shape = ColliderShape::Box, .Extents = vec3(20.0f, 0.5f, 20.0f)});
+
+    const CharacterController controller = DefaultController();
+    const Entity pawn = scene->CreateEntity();
+    scene->Add<Transform>(pawn, Transform{.Position = vec3(0.0f, 0.1f, 0.0f)});
+    scene->Add<CharacterController>(pawn, controller);
+    scene->Add<Intent>(pawn, Intent{});
+
+    ContextStorage storage;
+    CharacterMovementSystem characters;
+
+    // Settle onto the floor, then turn a quarter-turn left in place (no move command).
+    for (u32 tick = 0; tick < 30; ++tick)
+    {
+        StepPhysics(*scene, FixedStep);
+        characters.OnUpdate(*scene, FixedStep, storage.Make());
+    }
+    scene->Get<Intent>(pawn) = Intent{.Look = vec3(glm::half_pi<f32>(), 0.0f, 0.0f)};
+    StepPhysics(*scene, FixedStep);
+    characters.OnUpdate(*scene, FixedStep, storage.Make());
+
+    // After a 90-degree left turn the heading's forward is -X, and pawn-local +Z maps to world +X.
+    const vec3 forward = scene->Get<Transform>(pawn).Rotation * vec3(0.0f, 0.0f, -1.0f);
+    CHECK(forward.x < -0.99f);
+
+    // Now walk forward (pawn-local +Z) with no further turn: the displacement must follow the turned
+    // facing (toward +X), not the un-turned frame (+Z).
+    scene->Get<Intent>(pawn) = Intent{.Move = vec3(0.0f, 0.0f, 1.0f)};
+    const vec3 startPosition = scene->Get<Transform>(pawn).Position;
+    for (u32 tick = 0; tick < 60; ++tick)
+    {
+        StepPhysics(*scene, FixedStep);
+        characters.OnUpdate(*scene, FixedStep, storage.Make());
+    }
+    const vec3 displacement = scene->Get<Transform>(pawn).Position - startPosition;
+    CHECK(displacement.x > 0.5f);
+    CHECK(displacement.x > 3.0f * std::abs(displacement.z));
+}
+
+TEST_CASE("A commanded facing stays orthonormal and planar to a slewing up")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    const Unique<Scene> scene = Scene::Create(types);
+    scene->SetPhysicsWorld(PhysicsWorld::Create(PhysicsWorldInfo{}));
+
+    // A uniform field whose direction is slewed a little each tick, so the resolved up moves in the
+    // XY plane far below the reorientation cap. The character turns throughout: the property is that
+    // re-basing the integrated turn onto each tick's up keeps the facing a unit quaternion whose own
+    // up equals the resolved up, never drifting off it as the up moves.
+    const Entity field = scene->CreateEntity();
+    scene->Add<Transform>(field, Transform{});
+    scene->Add<GravitySource>(field, GravitySource{.Kind = GravityKind::Uniform,
+                                                   .Direction = vec3(0.0f, -1.0f, 0.0f),
+                                                   .Magnitude = 9.81f,
+                                                   .Bounds = Region{.HalfExtents = vec3(1000.0f)}});
+
+    const CharacterController controller = DefaultController();
+    const Entity pawn = scene->CreateEntity();
+    scene->Add<Transform>(pawn, Transform{.Position = vec3(0.0f, 5.0f, 0.0f)});
+    scene->Add<CharacterController>(pawn, controller);
+    scene->Add<Intent>(pawn, Intent{.Look = vec3(0.03f, 0.0f, 0.0f)});
+
+    ContextStorage storage;
+    CharacterMovementSystem characters;
+    constexpr u32 Ticks = 120;
+    f32 worstNormError = 0.0f;
+    f32 worstUpAlignment = 1.0f;
+    for (u32 tick = 0; tick < Ticks; ++tick)
+    {
+        // Slew the down direction from -Y toward -X by ~0.5 degrees per tick (0.15 rad/s, well under
+        // the 4 rad/s reorientation cap), so the up follows it exactly rather than being rate-limited.
+        const f32 angle = 0.0087f * static_cast<f32>(tick);
+        scene->Get<GravitySource>(field).Direction =
+            glm::angleAxis(angle, vec3(0.0f, 0.0f, 1.0f)) * vec3(0.0f, -1.0f, 0.0f);
+        characters.OnUpdate(*scene, FixedStep, storage.Make());
+
+        const quat facing = scene->Get<Transform>(pawn).Rotation;
+        worstNormError = std::max(worstNormError, std::abs(glm::length(facing) - 1.0f));
+        const vec3 facingUp = facing * vec3(0.0f, 1.0f, 0.0f);
+        worstUpAlignment =
+            std::min(worstUpAlignment, glm::dot(facingUp, scene->Get<CharacterState>(pawn).Up));
+    }
+    CHECK(worstNormError < 1e-4f);
+    CHECK(worstUpAlignment > 0.999f);
 }

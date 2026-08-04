@@ -257,8 +257,13 @@ second world query. `GroundEntity` is what makes "am I standing on something mov
 it from `Intent` — the character analogue of `MovementSystem` and its **alternative**, not its
 companion: it sits in the same catalogue slot, so a level names one or the other in its `systems`
 array (a pawn that flies names `MovementSystem`, a pawn that walks names this) and neither knows
-about the other. It reads `Intent`'s local-frame move and action bits (jump/run — `CharacterAction`),
-never raw device state, so an AI or remote `Intent` producer drives a character identically. Like the
+about the other. It reads `Intent`'s local-frame move, look and action bits (jump/run —
+`CharacterAction`), never raw device state, so an AI or remote `Intent` producer drives a character
+identically. **A character turns from `Intent::Look.x`** — the commanded turn for the tick in radians,
+positive left, integrated about the character's *own* up (from the gravity field, not world up) and
+re-based onto that up so the facing stays orthonormal as the up slews. The heading lives in the body's
+replicated `Transform::Rotation` (not in `CharacterState`), which is what makes a remote peer's body
+face where it walks; pitch is view-only through `CameraLook` and never touches the body. Like the
 other authoritative advancers it touches only the characters this peer owns (`HasAuthority`), and a
 level names it **before** `PhysicsSystem`, as it names `MovementSystem` before it, so the capsule
 moves against the previous tick's finalized world.
