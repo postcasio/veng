@@ -15,6 +15,7 @@ namespace Veng::Audio
 {
     class AudioDevice;
     class MusicDirector;
+    struct StreamVoice;
 
     /// @brief Parameters of a code-triggered non-spatial one-shot voice.
     struct OneShotParams
@@ -190,6 +191,17 @@ namespace Veng::Audio
         /// @return A handle to the voice, or an invalid handle if it was rejected.
         VoiceHandle AddVoice(const Ref<AudioBuffer>& buffer, const VoiceParams& params);
 
+        /// @brief Registers a voice for a clip, choosing the resident or streaming path by storage.
+        ///
+        /// A Pcm clip plays through AddVoice off its resident buffer; an Encoded clip plays through a
+        /// streaming voice, decoded incrementally on the engine's decode thread and drained by the
+        /// mixer exactly as a resident voice is — indistinguishable downstream. Same budget
+        /// arbitration as AddVoice. A null or unresident clip is rejected with an invalid handle.
+        /// @param clip   The clip to play.
+        /// @param params The mix parameters.
+        /// @return A handle to the voice, or an invalid handle if it was rejected.
+        VoiceHandle AddClipVoice(const AssetHandle<AudioClip>& clip, const VoiceParams& params);
+
         /// @brief Returns whether a handle still names a live voice.
         /// @param voice The handle.
         [[nodiscard]] bool IsVoiceLive(VoiceHandle voice) const;
@@ -224,8 +236,8 @@ namespace Veng::Audio
         ///
         /// A fire-and-forget voice: a non-looping clip's voice retires when it ends. Backed by the
         /// engine one-shot pool; when the pool is full the quietest pooled voice is dropped if the
-        /// incoming voice is louder, and otherwise the request is rejected. A clip with no resident
-        /// PCM buffer (unresident, or stream-only) plays nothing.
+        /// incoming voice is louder, and otherwise the request is rejected. An Encoded clip plays
+        /// through the streaming path like any other; an unresident clip plays nothing.
         /// @param clip   The clip to play.
         /// @param params The mix parameters (bus, gain, pitch, loop).
         /// @return A handle to the voice for early stop, or an invalid handle if it was rejected.
@@ -236,7 +248,7 @@ namespace Veng::Audio
         ///
         /// The voice is spatialized against the current listener like an authored AudioSource. It is
         /// fixed by default; call SetVoicePose each frame to move it. Same pool policy as
-        /// PlayOneShot; a clip with no resident PCM buffer plays nothing.
+        /// PlayOneShot; an Encoded clip plays through the streaming path, an unresident clip nothing.
         /// @param clip     The clip to play.
         /// @param worldPos The voice's world position.
         /// @param params   The spatial mix parameters.
@@ -273,6 +285,12 @@ namespace Veng::Audio
         /// @brief Returns the number of live one-shot / positioned voices in the pool (test seam).
         [[nodiscard]] usize GetManagedVoiceCount() const;
 
+        /// @brief Returns the number of sources awaiting deferred reclamation (test seam).
+        ///
+        /// A retired buffer or streaming source stays counted here until the reclamation handshake
+        /// lets it free, so a test can watch a decoder outlive its stop and then be released.
+        [[nodiscard]] usize GetPendingReclaimCount() const { return m_Deferred.size(); }
+
         /// @brief Publishes a snapshot of the current bus and voice state to the mixing thread.
         void Publish();
 
@@ -290,19 +308,26 @@ namespace Veng::Audio
             bool Active = false;
             /// @brief The slot's current generation.
             u32 Generation = 0;
-            /// @brief The owned PCM source (null for a generator voice).
+            /// @brief The owned PCM source (null for a generator or stream voice).
             Ref<AudioBuffer> Source;
-            /// @brief The borrowed on-demand source (null for a buffer voice); not owned.
+            /// @brief The borrowed on-demand source (null for a buffer or stream voice); not owned.
             IAudioGenerator* Generator = nullptr;
+            /// @brief The owned streaming source (null for a buffer or generator voice).
+            Unique<StreamVoice> Stream;
             /// @brief The mix parameters.
             VoiceParams Params;
         };
 
-        /// @brief A source awaiting reclamation once the mixer's generation passes it.
+        /// @brief A source awaiting reclamation once the referencing threads are provably past it.
         struct Deferred
         {
-            /// @brief The source to release.
+            /// @brief The buffer source to release (set for a buffer voice).
             Ref<AudioBuffer> Source;
+            /// @brief The streaming source to release (set for a stream voice).
+            ///
+            /// A stream also rides the decode thread's release ack: it is freed only once the mixer's
+            /// consumed serial passes SafeAfterSerial and the decode thread reports it released.
+            Unique<StreamVoice> Stream;
             /// @brief Free once the consumed generation exceeds this serial.
             u64 SafeAfterSerial = 0;
         };
@@ -344,6 +369,16 @@ namespace Veng::Audio
             /// @brief Occlusion low-pass drive (Spatial voices).
             f32 Occlusion = 0.0f;
         };
+
+        /// @brief Registers a streaming voice for an Encoded clip, arbitrating against the budget.
+        ///
+        /// Opens an incremental decoder over the clip, hands it to a StreamVoice the decode thread
+        /// fills, and takes a slot (evicting the quietest louder-than-incoming voice when full). The
+        /// clip handle is held on the StreamVoice so its bytes outlive the borrowing decoder.
+        /// @param clip   The Encoded clip to stream.
+        /// @param params The mix parameters.
+        /// @return A handle to the voice, or an invalid handle if it was rejected or undecodable.
+        VoiceHandle AddStreamVoice(const AssetHandle<AudioClip>& clip, const VoiceParams& params);
 
         /// @brief Deactivates a slot and routes its source to reclamation.
         void RetireSlot(u32 slot);
@@ -399,9 +434,9 @@ namespace Veng::Audio
     /// Keeps exactly one logical track playing, crossfading (equal-power) to a new track on Set and
     /// looping it. It holds at most two live Music voices — the crossfade pair — collapsing to one
     /// when a fade completes. It does not layer, stinger, or sequence; that richer interactive-music
-    /// surface is a separate capability. A stream-mode clip is the expected long-track input, but
-    /// the director plays whatever the handle resolves to (a clip with no resident PCM buffer plays
-    /// nothing).
+    /// surface is a separate capability. A stream-mode (Encoded) clip is the expected long-track
+    /// input, decoded incrementally through a streaming voice, and crossfades against a resident
+    /// track identically; the crossfade pair may mix the two freely.
     class MusicDirector
     {
     public:

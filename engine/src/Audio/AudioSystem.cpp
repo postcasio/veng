@@ -206,7 +206,7 @@ namespace Veng
         struct Candidate
         {
             Entity Source;
-            Ref<Audio::AudioBuffer> Buffer;
+            AssetHandle<Audio::AudioClip> Clip;
             Audio::VoiceParams Params;
         };
         std::vector<Candidate> candidates;
@@ -229,9 +229,11 @@ namespace Veng
                     return;
                 }
 
-                // A voice needs a resident Pcm buffer; an unresident or stream-only clip is silent.
+                // A Pcm clip plays off its resident buffer, an Encoded clip through the streaming
+                // path; only an unresident clip (neither resident nor encoded) is silent.
                 const Audio::AudioClip* clip = source.Clip.Get();
-                if (clip == nullptr || clip->Buffer() == nullptr)
+                if (clip == nullptr ||
+                    (clip->Buffer() == nullptr && clip->Storage() != Audio::AudioStorage::Encoded))
                 {
                     return;
                 }
@@ -248,7 +250,7 @@ namespace Veng
 
                 candidates.push_back(Candidate{
                     .Source = entity,
-                    .Buffer = clip->Buffer(),
+                    .Clip = source.Clip,
                     .Params = Spatialize(source, position, velocity, listener),
                 });
             });
@@ -295,7 +297,7 @@ namespace Veng
                 engine.SetVoiceParams(it->second, candidate.Params);
                 continue;
             }
-            const Audio::VoiceHandle voice = engine.AddVoice(candidate.Buffer, candidate.Params);
+            const Audio::VoiceHandle voice = engine.AddClipVoice(candidate.Clip, candidate.Params);
             if (voice.IsValid())
             {
                 m_Voices[candidate.Source] = voice;

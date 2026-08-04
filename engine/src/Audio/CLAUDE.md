@@ -19,9 +19,12 @@ exception**, and it earns it by isolation:
 > itself.** Everything the engine assumes about single threading stays true because nothing outside
 > the audio subsystem shares mutable state with that thread.
 
-The engine-external threads are miniaudio's playback callback thread (which runs `RenderBlock`), and
-miniaudio's decode job threads once a later capability enables streaming decode. Neither reaches
-engine state; the callback reads one POD `AudioFrame` and writes the output buffer.
+The engine-external threads are **two**: miniaudio's playback callback thread (which runs
+`RenderBlock`), and the **engine-owned decode thread** that keeps streaming voices' PCM rings filled
+(`DecodeThreadMain`, see [Streaming voices](#streaming-voices)). Neither reaches engine state — the
+callback reads one POD `AudioFrame` and writes the output buffer; the decode thread touches only the
+stream voices' lock-free rings and their decoders. Both are stopped and joined before any resource a
+voice references is freed.
 
 ## The Native idiom boundary
 
@@ -43,12 +46,14 @@ reader never spins, never blocks, and never sees a torn frame — the property d
 give without a seqlock. The `AudioFrame` is POD, allocation-free, and fixed-capacity (`MaxVoices`).
 
 Resource lifetime is a **handshake, not an assumption**. A `VoiceSnapshot` carries a raw pointer
-into an `AudioBuffer`'s PCM. The callback publishes the serial of the frame it is mixing
-(`ConsumedSerial`); when a voice is stopped, retired, or evicted, its source is moved to a
-main-thread deferred-free queue tagged with the last serial that referenced it, and released only
-once `ConsumedSerial` has passed that serial. So a source can never be freed while the callback is
-mid-mix on it — the contract every later plan's voice-lifetime story rests on (`AssetManager` clip
-eviction, ship-despawn teardown).
+into an `AudioBuffer`'s PCM (or a generator, or a stream voice's ring). The callback publishes the
+serial of the frame it is mixing (`ConsumedSerial`); when a voice is stopped, retired, or evicted,
+its source is moved to a main-thread deferred-free queue tagged with the last serial that referenced
+it, and released only once `ConsumedSerial` has passed that serial. So a source can never be freed
+while the callback is mid-mix on it — the contract every voice-lifetime story rests on
+(`AssetManager` clip eviction, ship-despawn teardown). A **stream voice adds a second party** to the
+handshake — the decode thread also references it — so its free waits on both the mixer's consumed
+serial *and* the decode thread's release ack (see [Streaming voices](#streaming-voices)).
 
 The reverse channel is a lock-free SPSC ring (`SpscRing.h`): when a finite voice exhausts, the
 callback posts its `{slot, generation}` and the main thread drains it in `DrainRetired()` — the
@@ -57,13 +62,15 @@ into it.
 
 ## Shutdown / device-loss join order
 
-`~AudioDevice` **stops and joins the callback thread first** (`ma_device_uninit`), before any member
-destructs, so the real-time thread is quiesced before the engine's deferred sources release. The
+`~AudioDevice` **stops and joins both engine-external threads before any member destructs**: the
+**decode thread first** (set `DecodeStop`, notify its condition variable, join), then the **callback
+thread** (`ma_device_uninit`). Once both are quiesced the engine's deferred sources — buffers, and
+the stream voices carrying decoders and clip handles — release safely as members destruct. The
 member is declared on `Application` **after the asset manager and the world runner** so it destructs
-before them: the mixing thread is joined before any clip or generator a voice may reference is freed.
-A device-loss fallback would use the same stop-then-swap ordering; v1 handles device *loss* by
-degrading to the null device (output stops, the game keeps running) and does **not** re-route to a
-new device or follow a sample-rate change.
+before them: neither mixing nor decoding is running before any clip, generator, or decoder a voice
+references is freed. Device-loss uses the same stop-then-quiesce ordering; the null-device fallback
+handles device *loss* by degrading to the null backend (output stops, the game keeps running) and
+does **not** re-route to a new device or follow a sample-rate change.
 
 ## The bus tree
 
@@ -87,7 +94,8 @@ evicts the quietest active voice if the incoming voice is louder, and otherwise 
 headless / CI / cook) has no `ma_device`. Its `Pump` runs the same `RenderBlock` mixer on the main
 thread, advancing a **virtual playback clock** so finite voices still retire through the
 retired-voice channel even with no output — a long scripted or CI client's one-shot pool does not
-fill. Every public call succeeds and voices are tracked; only emission is skipped. Because the mixer
+fill. The decode thread runs regardless of backend (it is not gated on "is there a device"), so a
+finite **stream** voice fills its ring, drains through the null `Pump`, and retires headless too. Every public call succeeds and voices are tracked; only emission is skipped. Because the mixer
 is pure CPU, the null backend is also what makes the whole contract unit-testable without hardware —
 a test publishes a voice, calls `RenderBlock`, and reads the mixed buffer.
 
@@ -176,6 +184,49 @@ spins. **Reclaiming a generator is the reclamation handshake made synchronous:**
 generator handle removes it from the live snapshot, publishes, and returns only once the callback's
 consumed serial has passed that frame — after which the caller may free the borrowed generator with
 no use-after-free (on the null device `StopVoice` drives the mixer itself, there being no RT thread).
+
+## Streaming voices
+
+A **stream voice** is the third voice source beside a resident PCM buffer and an `IAudioGenerator`,
+and it is how an **Encoded** (Vorbis) `AudioClip` plays: long music and ambient beds stay encoded in
+memory and are decoded **incrementally at play time** rather than resident as PCM. Downstream it is
+indistinguishable from a resident voice — it attenuates, pans, Dopplers, occludes, loops, and
+crossfades identically — because only the *source* of samples differs, never the mix.
+
+The shape is a producer/consumer split across the thread boundary, so the RT contract is never
+touched:
+
+- **The RT callback only drains.** Each stream voice owns a per-voice lock-free **SPSC ring of mono
+  PCM** at the clip's sample rate (`StreamVoice::Ring`, `SpscRing<f32>`), the decode thread the sole
+  producer and the callback the sole consumer. `RenderStreamChunk` pops samples through the **same
+  two-sample resampling window the generator path uses** (there is no second resampler) — the clip →
+  device rate conversion and any Doppler pitch ride that one window. An empty ring is an **underrun**:
+  the callback fills the block's remaining frames with silence and freezes the window so playback
+  resumes cleanly when samples return — it never blocks and never allocates.
+- **The decode thread fills.** One engine-owned thread (`DecodeThreadMain`) owns every active stream
+  voice's `VorbisMemoryDecoder` and, each pass, tops up any ring with room to spare
+  (`TopUpStream` — decode only what fits so nothing decoded is dropped, collapse each frame to mono,
+  push), then sleeps on a condition variable until woken. It learns of voices through an **ordered
+  command ring** (`SpscRing<StreamCommand>`): the main thread posts an `Add` when a stream starts and
+  a `Remove` when it retires. It reaches no engine state — only the rings and the decoders — so it is
+  the second sanctioned engine-external thread beside the callback.
+- **Looping is off-RT and seamless.** When a looping stream's decoder reports its end, the decode
+  thread `SeekStart`s it and keeps filling the same ring with the head samples, so the loop point
+  carries no gap. A finite (non-looping) stream instead sets `AtEnd`; the callback drains the ring,
+  sees `AtEnd`, and retires the voice through the existing lock-free retired-voice channel.
+- **Reclamation is the dual handshake.** A stream voice is referenced by two threads, so freeing it
+  waits on both: the mixer's `ConsumedSerial` must pass the last frame that named its ring (the
+  serial handshake every voice rides), **and** the decode thread must acknowledge the `Remove` by
+  setting `ReleasedByDecoder`. Only then does `CollectDeferred` free the `StreamVoice` — which holds
+  the decoder and an `AssetHandle<AudioClip>` pinning the clip's bytes — so `AssetManager` clip
+  eviction and a director track-change are use-after-free-safe.
+
+`AudioEngine::AddClipVoice` is the entry point that chooses the path by storage: a `Pcm` clip plays
+through `AddVoice` off its resident buffer, an `Encoded` clip through `AddStreamVoice`. Every clip
+consumer routes through it — the `AudioSystem`'s authored `AudioSource`s, `PlayOneShot`/`PlayAt`, and
+the `MusicDirector` — so a stream clip is accepted anywhere a resident one is. Music is the expected
+stream case (`MusicDirector::Set` streams an Encoded track and crossfades it against any mix of
+stream and resident tracks); a long authored ambient bed on an `AudioSource` is the other.
 
 ## The self-test tone
 

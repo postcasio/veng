@@ -10,6 +10,7 @@
 #include "AudioFrame.h"
 #include "Reverb.h"
 #include "SpscRing.h"
+#include "StreamVoice.h"
 
 #include <miniaudio.h>
 
@@ -17,10 +18,14 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
+#include <condition_variable>
+#include <mutex>
 #include <numbers>
 #include <span>
 #include <thread>
+#include <vector>
 
 namespace Veng::Audio
 {
@@ -93,6 +98,17 @@ namespace Veng::Audio
         SpscRing<RetiredVoice, 256> Retired;
         /// @brief The generation (published serial) the mixer has consumed up to.
         std::atomic<u64> ConsumedSerial{0};
+
+        /// @brief The main-thread → decode-thread stream registration channel (ordered).
+        SpscRing<StreamCommand, 512> DecodeCommands;
+        /// @brief The engine-external decode thread that keeps every stream voice's ring filled.
+        std::thread DecodeThread;
+        /// @brief Signals the decode thread to stop; joined before any decoder or clip is freed.
+        std::atomic<bool> DecodeStop{false};
+        /// @brief Guards the decode thread's wait; the callback thread never touches it.
+        std::mutex DecodeMutex;
+        /// @brief Wakes the decode thread when a command arrives, cutting its idle latency.
+        std::condition_variable DecodeCv;
 
         /// @brief RT-owned per-voice playback state.
         struct RtVoice
@@ -264,6 +280,185 @@ namespace Veng::Audio
             rt.GenFrac = frac;
         }
 
+        // Pulls one chunk of mono samples from a stream voice's ring into native.VoiceScratch,
+        // applying its occlusion low-pass. The ring carries mono samples at the clip's rate; Pitch
+        // and the clip->device rate conversion are the same two-sample resampling window the
+        // generator path uses (GenS0/GenS1 advanced by a fractional cursor) — no second resampler.
+        // An empty ring is an underrun: the block's remaining frames are silence and the window
+        // freezes so playback resumes cleanly when samples return. When the ring drains and the
+        // decode thread has marked the stream ended, the voice is reported exhausted so the mixer
+        // retires it. RT-thread code: it only drains the lock-free ring, never decodes.
+        void RenderStreamChunk(AudioDevice::Native& native, const VoiceSnapshot& voice,
+                               AudioDevice::Native::RtVoice& rt, u32 frames, bool& exhausted)
+        {
+            StreamVoice& stream = *voice.Stream;
+            const f64 srcRate = voice.PcmSampleRate == 0 ? static_cast<f64>(native.SampleRate)
+                                                         : static_cast<f64>(voice.PcmSampleRate);
+            const f64 ratio = (srcRate / static_cast<f64>(native.SampleRate)) *
+                              static_cast<f64>(std::clamp(voice.Pitch, 0.01f, kMaxGeneratorPitch));
+            const f32 occlusionCoef = 1.0f - std::clamp(voice.Occlusion, 0.0f, 1.0f) * 0.98f;
+
+            u32 i = 0;
+            for (; i < frames; ++i)
+            {
+                if (!rt.GenPrimed)
+                {
+                    f32 s = 0.0f;
+                    if (!stream.Ring.Pop(s))
+                    {
+                        if (stream.AtEnd.load(std::memory_order_acquire))
+                        {
+                            exhausted = true;
+                            break;
+                        }
+                        native.VoiceScratch[i] = 0.0f;
+                        continue;
+                    }
+                    rt.GenS0 = s;
+                    rt.GenS1 = stream.Ring.Pop(s) ? s : rt.GenS0;
+                    rt.GenFrac = 0.0;
+                    rt.GenPrimed = true;
+                }
+
+                const f32 sample = rt.GenS0 + (rt.GenS1 - rt.GenS0) * static_cast<f32>(rt.GenFrac);
+                rt.OcclusionState += occlusionCoef * (sample - rt.OcclusionState);
+                native.VoiceScratch[i] = rt.OcclusionState;
+
+                rt.GenFrac += ratio;
+                bool starved = false;
+                while (rt.GenFrac >= 1.0)
+                {
+                    f32 s = 0.0f;
+                    if (!stream.Ring.Pop(s))
+                    {
+                        starved = true;
+                        break;
+                    }
+                    rt.GenS0 = rt.GenS1;
+                    rt.GenS1 = s;
+                    rt.GenFrac -= 1.0;
+                }
+                if (starved)
+                {
+                    if (stream.AtEnd.load(std::memory_order_acquire))
+                    {
+                        exhausted = true;
+                    }
+                    // Freeze the fractional cursor: the next block resumes from the same window when
+                    // more samples arrive (underrun) or the voice is retired (end).
+                    rt.GenFrac = 0.0;
+                    ++i;
+                    break;
+                }
+            }
+            for (; i < frames; ++i)
+            {
+                native.VoiceScratch[i] = 0.0f;
+            }
+        }
+
+        // Fills a stream voice's ring from its decoder, off the real-time thread. Decodes only what
+        // the ring has room for (so nothing decoded is dropped), collapses each frame to mono, and —
+        // for a looping stream — seeks back to the start the instant the decoder reports its end, so
+        // the loop point carries no gap. A finite stream marks AtEnd when it runs out, which the
+        // mixer retires on. Returns whether it pushed any samples this pass.
+        bool TopUpStream(StreamVoice& stream)
+        {
+            if (stream.AtEnd.load(std::memory_order_relaxed))
+            {
+                return false;
+            }
+            usize free = stream.Ring.Free();
+            if (free == 0)
+            {
+                return false;
+            }
+
+            const u32 channels = stream.Channels == 0 ? 1 : stream.Channels;
+            bool produced = false;
+            bool progressedSinceSeek = true;
+            while (free > 0)
+            {
+                const u32 want = static_cast<u32>(std::min<usize>(free, StreamDecodeChunkFrames));
+                const std::span<f32> scratch(stream.DecodeScratch.data(),
+                                             static_cast<usize>(want) * channels);
+                const u64 got = stream.Decoder->Read(scratch);
+                if (got == 0)
+                {
+                    // A looping stream rewinds and keeps filling; a finite one ends. The
+                    // progress guard stops a degenerate empty loop from spinning this pass.
+                    if (stream.Loop && progressedSinceSeek)
+                    {
+                        stream.Decoder->SeekStart();
+                        progressedSinceSeek = false;
+                        continue;
+                    }
+                    if (!stream.Loop)
+                    {
+                        stream.AtEnd.store(true, std::memory_order_release);
+                    }
+                    break;
+                }
+                progressedSinceSeek = true;
+                for (u64 f = 0; f < got; ++f)
+                {
+                    f32 sum = 0.0f;
+                    for (u32 c = 0; c < channels; ++c)
+                    {
+                        sum += stream.DecodeScratch[f * channels + c];
+                    }
+                    // The ring has room for every sample decoded this pass (got <= want <= free).
+                    stream.Ring.Push(sum / static_cast<f32>(channels));
+                }
+                free -= got;
+                produced = true;
+            }
+            return produced;
+        }
+
+        // The engine-external decode thread: it owns every active stream voice's decoder and keeps
+        // its ring topped, learning of voices through the ordered command channel (an Add enrolls a
+        // voice into the working set; a Remove drops it and acknowledges through ReleasedByDecoder so
+        // the main thread may free it). It sleeps on the condition variable when no ring needed
+        // filling. It touches no engine state and no scene API — only the stream voices' lock-free
+        // rings and their decoders — so it is the second sanctioned engine-external thread beside the
+        // real-time callback.
+        void DecodeThreadMain(AudioDevice::Native* native)
+        {
+            std::vector<StreamVoice*> working;
+            while (!native->DecodeStop.load(std::memory_order_acquire))
+            {
+                StreamCommand cmd;
+                while (native->DecodeCommands.Pop(cmd))
+                {
+                    if (cmd.Op == StreamCommand::Kind::Add)
+                    {
+                        working.push_back(cmd.Stream);
+                    }
+                    else
+                    {
+                        std::erase(working, cmd.Stream);
+                        cmd.Stream->ReleasedByDecoder.store(true, std::memory_order_release);
+                    }
+                }
+
+                bool produced = false;
+                for (StreamVoice* stream : working)
+                {
+                    if (TopUpStream(*stream))
+                    {
+                        produced = true;
+                    }
+                }
+
+                if (!produced)
+                {
+                    std::unique_lock lock(native->DecodeMutex);
+                    native->DecodeCv.wait_for(lock, std::chrono::milliseconds(2));
+                }
+            }
+        }
+
         // Mixes one bounded chunk of the snapshot into an interleaved stereo output. Runs on the
         // real-time callback thread (or the main thread in null mode) and touches only the device's
         // own RT state — never the engine or any scene API.
@@ -283,8 +478,9 @@ namespace Veng::Audio
                 const VoiceSnapshot& voice = frame.Voices[slot];
                 AudioDevice::Native::RtVoice& rt = native.RtVoices[slot];
                 const bool isGenerator = voice.Generator != nullptr;
-                if (!voice.Active ||
-                    (!isGenerator && (voice.Pcm == nullptr || voice.PcmFrameCount == 0)))
+                const bool isStream = voice.Stream != nullptr;
+                if (!voice.Active || (!isGenerator && !isStream &&
+                                      (voice.Pcm == nullptr || voice.PcmFrameCount == 0)))
                 {
                     continue;
                 }
@@ -310,6 +506,10 @@ namespace Veng::Audio
                     // An on-demand generator is unbounded; it renders at the device rate and never
                     // retires by exhaustion — only StopVoice removes it.
                     RenderGeneratorChunk(native, voice, rt, frames);
+                }
+                else if (isStream)
+                {
+                    RenderStreamChunk(native, voice, rt, frames, exhausted);
                 }
                 else
                 {
@@ -467,6 +667,10 @@ namespace Veng::Audio
 
         m_Native->PrepareScratch(m_SampleRate, m_Channels);
 
+        // The decode thread runs regardless of backend: on the null device the main-thread Pump
+        // drains the rings it fills, so a finite stream still retires headless with no device.
+        m_Native->DecodeThread = std::thread(DecodeThreadMain, m_Native.get());
+
         Log::Info("Audio: {} backend, {} Hz, {} channels", IsNull() ? "null" : "hardware",
                   m_SampleRate, m_Channels);
 
@@ -478,9 +682,16 @@ namespace Veng::Audio
 
     AudioDevice::~AudioDevice()
     {
-        // Stop and join the callback thread before any referenced resource can be freed. Once the
-        // device is uninit'd the RT thread is quiesced, so the engine's deferred sources release
-        // safely as members destruct.
+        // Stop and join the two engine-external threads before any referenced resource can be freed:
+        // the decode thread (which owns the stream decoders) first, then the callback thread (via
+        // ma_device_uninit). Once both are quiesced the engine's deferred sources — buffers, and the
+        // stream voices carrying decoders and clip handles — release safely as members destruct.
+        if (m_Native && m_Native->DecodeThread.joinable())
+        {
+            m_Native->DecodeStop.store(true, std::memory_order_release);
+            m_Native->DecodeCv.notify_one();
+            m_Native->DecodeThread.join();
+        }
         if (m_Native && m_Native->HasDevice)
         {
             ma_device_uninit(&m_Native->Device);
@@ -658,6 +869,74 @@ namespace Veng::Audio
         m_Managed[slot] = Managed{};
         ++m_ActiveCount;
         return VoiceHandle{.Slot = slot, .Generation = voice.Generation};
+    }
+
+    VoiceHandle AudioEngine::AddStreamVoice(const AssetHandle<AudioClip>& clip,
+                                            const VoiceParams& params)
+    {
+        AudioClip* resolved = clip.Get();
+        if (resolved == nullptr || resolved->Storage() != AudioStorage::Encoded)
+        {
+            return {};
+        }
+        Result<Unique<VorbisMemoryDecoder>> decoder = resolved->OpenDecoder();
+        if (!decoder)
+        {
+            return {};
+        }
+
+        auto stream = CreateUnique<StreamVoice>();
+        stream->Clip = clip;
+        stream->Decoder = std::move(*decoder);
+        stream->Loop = params.Loop;
+        stream->Channels = stream->Decoder->Channels() == 0 ? 1 : stream->Decoder->Channels();
+        stream->SampleRate = stream->Decoder->SampleRate();
+        stream->DecodeScratch.assign(static_cast<usize>(StreamDecodeChunkFrames) * stream->Channels,
+                                     0.0f);
+
+        const u32 slot = AllocateSlot(params.Gain);
+        if (slot == VoiceHandle::InvalidSlot)
+        {
+            return {};
+        }
+
+        StreamVoice* streamPtr = stream.get();
+        Voice& voice = m_Voices[slot];
+        voice.Generation += 1;
+        voice.Active = true;
+        voice.Source = nullptr;
+        voice.Generator = nullptr;
+        voice.Stream = std::move(stream);
+        voice.Params = params;
+        m_Managed[slot] = Managed{};
+        ++m_ActiveCount;
+
+        // Enroll the stream with the decode thread so it begins filling the ring before the next mix.
+        AudioDevice::Native& native = m_Device.GetNative();
+        native.DecodeCommands.Push(
+            StreamCommand{.Op = StreamCommand::Kind::Add, .Stream = streamPtr});
+        native.DecodeCv.notify_one();
+
+        return VoiceHandle{.Slot = slot, .Generation = voice.Generation};
+    }
+
+    VoiceHandle AudioEngine::AddClipVoice(const AssetHandle<AudioClip>& clip,
+                                          const VoiceParams& params)
+    {
+        AudioClip* resolved = clip.Get();
+        if (resolved == nullptr)
+        {
+            return {};
+        }
+        if (resolved->Storage() == AudioStorage::Encoded)
+        {
+            return AddStreamVoice(clip, params);
+        }
+        if (resolved->Buffer())
+        {
+            return AddVoice(resolved->Buffer(), params);
+        }
+        return {};
     }
 
     AssetHandle<AudioClip> AudioEngine::CreateClip(const std::span<const f32> samples,
@@ -838,6 +1117,18 @@ namespace Veng::Audio
             m_Deferred.push_back(
                 Deferred{.Source = std::move(voice.Source), .SafeAfterSerial = m_PublishedSerial});
         }
+        if (voice.Stream)
+        {
+            // Tell the decode thread to drop the stream (it acks through ReleasedByDecoder), and
+            // defer the free until both the mixer's consumed serial passes this frame and the decode
+            // thread has released it — the dual handshake keeps the decoder use-after-free-safe.
+            AudioDevice::Native& native = m_Device.GetNative();
+            native.DecodeCommands.Push(
+                StreamCommand{.Op = StreamCommand::Kind::Remove, .Stream = voice.Stream.get()});
+            native.DecodeCv.notify_one();
+            m_Deferred.push_back(
+                Deferred{.Stream = std::move(voice.Stream), .SafeAfterSerial = m_PublishedSerial});
+        }
         voice.Active = false;
         voice.Source = nullptr;
         m_Managed[slot] = Managed{};
@@ -864,11 +1155,12 @@ namespace Veng::Audio
         {
             VoiceSnapshot& snapshot = frame.Voices[slot];
             const Voice& voice = m_Voices[slot];
-            if (voice.Active && (voice.Source || voice.Generator))
+            if (voice.Active && (voice.Source || voice.Generator || voice.Stream))
             {
                 snapshot.Active = true;
                 snapshot.Generation = voice.Generation;
                 snapshot.Generator = voice.Generator;
+                snapshot.Stream = voice.Stream.get();
                 if (voice.Source)
                 {
                     const std::span<const f32> samples = voice.Source->Samples();
@@ -882,7 +1174,9 @@ namespace Veng::Audio
                     snapshot.Pcm = nullptr;
                     snapshot.PcmFrameCount = 0;
                     snapshot.PcmChannels = 0;
-                    snapshot.PcmSampleRate = 0;
+                    // A stream carries its clip rate so the resampler converts to the device rate;
+                    // the ring is mono, so the buffer channel count is unused on the stream path.
+                    snapshot.PcmSampleRate = voice.Stream ? voice.Stream->SampleRate : 0;
                 }
                 snapshot.Bus = voice.Params.Bus;
                 snapshot.Gain = voice.Params.Gain;
@@ -896,6 +1190,7 @@ namespace Veng::Audio
             {
                 snapshot.Active = false;
                 snapshot.Generator = nullptr;
+                snapshot.Stream = nullptr;
                 snapshot.Pcm = nullptr;
                 snapshot.PcmFrameCount = 0;
             }
@@ -922,8 +1217,22 @@ namespace Veng::Audio
     void AudioEngine::CollectDeferred()
     {
         const u64 consumed = m_Device.GetConsumedSerial();
-        std::erase_if(m_Deferred, [consumed](const Deferred& deferred)
-                      { return consumed > deferred.SafeAfterSerial; });
+        std::erase_if(m_Deferred,
+                      [consumed](const Deferred& deferred)
+                      {
+                          if (consumed <= deferred.SafeAfterSerial)
+                          {
+                              return false;
+                          }
+                          // A stream also waits on the decode thread's release ack, so its decoder
+                          // is freed only once neither thread can still reach it.
+                          if (deferred.Stream &&
+                              !deferred.Stream->ReleasedByDecoder.load(std::memory_order_acquire))
+                          {
+                              return false;
+                          }
+                          return true;
+                      });
     }
 
     VoiceParams AudioEngine::SpatializeManaged(const Managed& managed,
@@ -984,7 +1293,12 @@ namespace Veng::Audio
                                          const OneShotParams& params)
     {
         AudioClip* resolved = clip.Get();
-        if (resolved == nullptr || !resolved->Buffer())
+        if (resolved == nullptr)
+        {
+            return {};
+        }
+        const bool encoded = resolved->Storage() == AudioStorage::Encoded;
+        if (!encoded && !resolved->Buffer())
         {
             return {};
         }
@@ -992,10 +1306,10 @@ namespace Veng::Audio
         {
             return {};
         }
-        const VoiceHandle handle = AddVoice(resolved->Buffer(), VoiceParams{.Bus = params.Bus,
-                                                                            .Gain = params.Gain,
-                                                                            .Pitch = params.Pitch,
-                                                                            .Loop = params.Loop});
+        const VoiceParams voiceParams{
+            .Bus = params.Bus, .Gain = params.Gain, .Pitch = params.Pitch, .Loop = params.Loop};
+        const VoiceHandle handle =
+            encoded ? AddStreamVoice(clip, voiceParams) : AddVoice(resolved->Buffer(), voiceParams);
         if (handle.IsValid())
         {
             m_Managed[handle.Slot] = Managed{.Kind = ManagedKind::OneShot,
@@ -1011,7 +1325,12 @@ namespace Veng::Audio
                                     const SpatialOneShotParams& params)
     {
         AudioClip* resolved = clip.Get();
-        if (resolved == nullptr || !resolved->Buffer())
+        if (resolved == nullptr)
+        {
+            return {};
+        }
+        const bool encoded = resolved->Storage() == AudioStorage::Encoded;
+        if (!encoded && !resolved->Buffer())
         {
             return {};
         }
@@ -1029,8 +1348,9 @@ namespace Veng::Audio
                               .MinDistance = params.MinDistance,
                               .MaxDistance = params.MaxDistance,
                               .Occlusion = params.OcclusionFactor};
+        const VoiceParams voiceParams = SpatializeManaged(managed, m_Listener);
         const VoiceHandle handle =
-            AddVoice(resolved->Buffer(), SpatializeManaged(managed, m_Listener));
+            encoded ? AddStreamVoice(clip, voiceParams) : AddVoice(resolved->Buffer(), voiceParams);
         if (handle.IsValid())
         {
             m_Managed[handle.Slot] = managed;
@@ -1150,7 +1470,9 @@ namespace Veng::Audio
         }
 
         AudioClip* resolved = track.Get();
-        if (resolved != nullptr && resolved->Buffer())
+        const bool playable = resolved != nullptr && (resolved->Buffer() != nullptr ||
+                                                      resolved->Storage() == AudioStorage::Encoded);
+        if (playable)
         {
             Track incoming;
             incoming.Clip = track;
@@ -1159,10 +1481,9 @@ namespace Veng::Audio
             incoming.Phase = 0.0f;
             incoming.FadeDuration = transition.FadeSeconds;
             incoming.Steady = hardCut;
-            incoming.Voice =
-                m_Engine.AddVoice(resolved->Buffer(), VoiceParams{.Bus = AudioBus::Music,
-                                                                  .Gain = TrackGain(incoming),
-                                                                  .Loop = transition.Loop});
+            incoming.Voice = m_Engine.AddClipVoice(track, VoiceParams{.Bus = AudioBus::Music,
+                                                                      .Gain = TrackGain(incoming),
+                                                                      .Loop = transition.Loop});
             if (incoming.Voice.IsValid())
             {
                 m_Engine.m_Managed[incoming.Voice.Slot].Kind = AudioEngine::ManagedKind::Music;

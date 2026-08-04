@@ -60,6 +60,12 @@ namespace Veng::Audio
         /// @return The number of sample frames written (0 at end of stream).
         [[nodiscard]] u64 Read(std::span<f32> out);
 
+        /// @brief Seeks back to the first sample, so the next Read decodes from the start.
+        ///
+        /// The seamless-loop primitive: the decode thread calls it the instant Read reports the end
+        /// of a looping stream, then keeps filling the same ring, so the loop point carries no gap.
+        void SeekStart();
+
         /// @brief Returns the channel count.
         [[nodiscard]] u32 Channels() const { return m_Channels; }
         /// @brief Returns the sample rate in Hz.

@@ -39,6 +39,20 @@ namespace Veng::Audio
             return true;
         }
 
+        /// @brief Free capacity as the producer sees it: items pushable before the ring is full.
+        ///
+        /// A producer-side query (loads its own head relaxed, the consumer's tail acquire), so it
+        /// never underestimates space the consumer has already made — a subsequent Push of at most
+        /// this many items is guaranteed to succeed. The usable capacity is Capacity - 1 (one slot
+        /// is reserved to distinguish full from empty).
+        /// @return The number of items that can be pushed before Push starts returning false.
+        [[nodiscard]] usize Free() const
+        {
+            const usize head = m_Head.load(std::memory_order_relaxed);
+            const usize tail = m_Tail.load(std::memory_order_acquire);
+            return kMask - ((head - tail) & kMask);
+        }
+
         /// @brief Pops an item (consumer side).
         /// @param out Receives the dequeued payload when one was available.
         /// @return true if an item was dequeued, false if the ring was empty.

@@ -865,6 +865,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/audio_system.cpp
             tests/unit/audio_api.cpp
             tests/unit/audio_generation.cpp
+            tests/unit/audio_streaming.cpp
             tests/unit/pure_logic.cpp
             tests/unit/task_system.cpp
             tests/unit/parallel_for.cpp
@@ -1034,6 +1035,9 @@ if (VENG_BUILD_TESTS)
     # round-trip case reads them by absolute path so it runs from any working directory.
     target_compile_definitions(veng_test_unit PRIVATE
             VENG_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
+    # The audio streaming case decodes the committed sine.ogg Vorbis fixture to drive a stream voice.
+    target_compile_definitions(veng_test_unit PRIVATE
+            VENG_COOKER_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/cooker/fixtures")
     # The surface-shader-contract gate reads the core surface verts + the shared vertex header
     # from the source tree to assert the static/skinned dedupe holds (no drift by construction).
     target_compile_definitions(veng_test_unit PRIVATE

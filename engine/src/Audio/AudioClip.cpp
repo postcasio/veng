@@ -77,6 +77,14 @@ namespace Veng::Audio
         return frames < 0 ? 0 : static_cast<u64>(frames);
     }
 
+    void VorbisMemoryDecoder::SeekStart()
+    {
+        if (m_Native->Handle != nullptr)
+        {
+            stb_vorbis_seek_start(m_Native->Handle);
+        }
+    }
+
     namespace
     {
         /// @brief Reads a fixed-offset CookedAudioHeader, or a message when the blob is too short.
