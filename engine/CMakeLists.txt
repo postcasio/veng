@@ -81,6 +81,7 @@ add_library(veng SHARED
         src/Audio/AudioBuffer.cpp
         src/Audio/AudioClip.cpp
         src/Audio/AudioDevice.cpp
+        src/Audio/AudioSystem.cpp
         src/Audio/Reverb.cpp
         src/Asset/AssetLoaderRegistry.cpp
         src/Asset/AssetManager.cpp

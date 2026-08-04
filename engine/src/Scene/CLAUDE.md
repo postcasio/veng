@@ -541,7 +541,9 @@ rejects a duplicate id. The builtins register in this order (`BuiltinSystems.cpp
 `DeviceAssignmentSystem`, `InputMappingSystem`, `MovementSystem`, `CharacterMovementSystem`,
 `RootMotionDriveSystem`, `InteractionSystem`, `VehicleSystem`, `CameraRigSystem`,
 `CharacterAnimationSystem`, `AnimationSystem`, `ConstantMotionSystem`, `RemoteCharacterBodySystem`,
-`PhysicsSystem`, `RemoteInterpolationSystem`, `TimeOfDaySystem`. Registration is GPU-free (building a system touches no `Context`/device), so
+`PhysicsSystem`, `RemoteInterpolationSystem`, `TimeOfDaySystem`, `AudioSystem` (View-phase — it
+places, spatializes, and publishes the scene's `AudioSource`s against the `AudioListener` at the
+interpolated poses the frame draws; see [../Audio/CLAUDE.md](../Audio/CLAUDE.md)). Registration is GPU-free (building a system touches no `Context`/device), so
 `RegisterBuiltinSystems` is callable in the headless cooker with no ICD — the cook reflects a
 level's named systems against the same builtins + module catalog the runtime resolves. A
 `SceneSimulation` is built either from an **ordered `SystemId` set** selecting catalog entries

@@ -1,5 +1,6 @@
 #include <Veng/Scene/BuiltinSystems.h>
 
+#include <Veng/Audio/AudioSystem.h>
 #include <Veng/Scene/AnimationSystem.h>
 #include <Veng/Scene/CameraRig.h>
 #include <Veng/Scene/CharacterAnimationSystem.h>
@@ -77,5 +78,10 @@ namespace Veng
         // Derives the sun from the scene's TimeOfDay and writes the first directional light,
         // so the sun the sky and shadows read is real world state any system can also read.
         registry.Register<TimeOfDaySystem>();
+
+        // Places, spatializes, and publishes the scene's AudioSources against the AudioListener,
+        // in the View phase so a sound sits where its emitter is drawn. Idles with no engine set,
+        // so a device-less or headless scene naming it is untouched.
+        registry.Register<AudioSystem>();
     }
 }

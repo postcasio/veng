@@ -91,6 +91,36 @@ fill. Every public call succeeds and voices are tracked; only emission is skippe
 is pure CPU, the null backend is also what makes the whole contract unit-testable without hardware —
 a test publishes a voice, calls `RenderBlock`, and reads the mixed buffer.
 
+## The scene-facing AudioSystem
+
+`AudioSystem` (`Veng/Audio/AudioSystem.h`) is the scene→device producer, the audio peer of the
+renderer's `View<Light>` gather. It is a **View-phase `SceneSystem`**, and the phase is the point:
+Sim runs fixed-step while View runs at frame rate with an interpolation `Alpha`, and the renderer
+draws each mesh at its interpolated pose — so audio resolves each `AudioSource` at the **same
+interpolated drawn pose** (`Scene::GetInterpolatedWorldTransform` at `SystemContext::Alpha`), and a
+sound sits where its emitter is drawn rather than a partial tick ahead. It resolves the single
+`AudioListener`'s live scene `Transform` (a listener at the origin when the scene has none, so
+non-spatial sound still plays), differences listener and source positions frame-to-frame for the
+Doppler velocities, and drives the `AudioEngine` voice table (which `Publish`es the snapshot).
+
+**veng computes the spatialization, not miniaudio (decision D1).** The pure functions beside the
+system — `DistanceAttenuation`, `StereoPan`, `DopplerRatio`, `ReverbSend` — produce the **final**
+`VoiceParams` the mixer consumes, so the unit tests (`tests/unit/audio_spatial.cpp`) pin the shipped
+math, not a shadow of it. A non-spatial source (`Spatial = false`) skips all of it and routes to its
+bus at `Gain`. `PlayOnStart` sources begin with the simulation, looping sources persist, and a
+finished non-looping source is dropped once the device reports it retired through the retired-voice
+channel (surfaced by `IsVoiceLive`, never a callback into the scene). When active sources exceed the
+voice cap the loudest-after-attenuation survive, a cheap partial sort matching the renderer's
+`MaxLights` clamp.
+
+**`OcclusionFactor` is an input the engine mixes, not one it computes.** The engine turns the
+factor into a per-voice low-pass (`VoiceParams::Occlusion`, `0` an exact bypass); it does **not**
+trace geometry to decide what occludes — the game supplies the factor from whatever it knows (a ray,
+a portal test). This keeps the engine general while shipping the DSP.
+
+The engine the system publishes through is set by the host (`SetEngine`); with none set the system is
+an inert no-op, so a device-less or headless scene naming it ticks harmlessly.
+
 ## The self-test tone
 
 `GenerateSelfTestTone` builds a short, faded sine burst — a bounded, finite mono buffer.

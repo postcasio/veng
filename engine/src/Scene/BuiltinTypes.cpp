@@ -2,6 +2,7 @@
 
 #include <Veng/Asset/AssetHandleType.h>
 #include <Veng/Asset/InputMappingContext.h>
+#include <Veng/Audio/AudioComponents.h>
 #include <Veng/Gui/Overlay.h>
 #include <Veng/Gui/Surface.h>
 #include <Veng/Net/Session.h>
@@ -64,6 +65,11 @@ namespace Veng
         // Autonomous constant transform velocity (drift + spin) the ConstantMotionSystem
         // integrates. MotionSpace registers transitively through ConstantMotion.
         registry.Register<ConstantMotion>();
+
+        // A placed sound and the entity whose Transform is the listener pose, consumed by the
+        // View-phase AudioSystem. Audio::AudioBus registers transitively through AudioSource's Bus.
+        registry.Register<AudioSource>();
+        registry.Register<AudioListener>();
 
         // Rigid-body simulation: what the solver simulates, the shape it collides with, the
         // overlap-only sensor, and the three constraints. MotionType, PhysicsLayer and
@@ -239,6 +245,7 @@ namespace Veng
         registry.Register<AssetHandle<Animation>>();
         registry.Register<AssetHandle<EnvironmentMap>>();
         registry.Register<AssetHandle<InputMappingContext>>();
+        registry.Register<AssetHandle<Audio::AudioClip>>();
         registry.Register<AssetHandle<Font>>();
         registry.Register<AssetHandle<Gui::StyleSheet>>();
         registry.Register<AssetHandle<Gui::UIDocument>>();
